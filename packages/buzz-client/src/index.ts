@@ -455,6 +455,7 @@ export {
   RoomViewHttpError,
 } from './room-view.js';
 export type {
+  AgentPairingAbandonView,
   AgentPairingClaimView,
   AgentDetailView,
   AgentHistoryEntry,

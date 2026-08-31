@@ -67,6 +67,7 @@ function indexer(
     readHistory: async () => null,
     readInvite: async () => null,
     claimAgentPairing: async () => null,
+    abandonAgentPairing: async () => false,
     ...overrides,
   };
 }
@@ -319,13 +320,14 @@ describe('paint-view GET server', () => {
     expect(readInvite).toHaveBeenCalledTimes(1);
   });
 
-  it('binds a private-Workspace agent pairing claim to the fresh agent identity', async () => {
+  it('keeps a legacy pairing claim Workspace-only when it does not advertise Room rollback', async () => {
     const identity = createIdentity('pairing-agent');
     const code = 'BUZZ-4S4P-ZPJP';
     const claimAgentPairing = vi.fn(async () => ({
       workspaceId: WORKSPACE,
       pairedBy: 'd'.repeat(64),
       joined: true,
+      attachedRoomIds: [ROOM],
     }));
     const base = await listen({ indexer: indexer({ claimAgentPairing }) });
     const path = '/agent-pairing/claim';
@@ -343,11 +345,82 @@ describe('paint-view GET server', () => {
       workspaceId: WORKSPACE,
       pairedBy: 'd'.repeat(64),
       joined: true,
+      attachedRoomIds: [ROOM],
     });
     expect(claimAgentPairing).toHaveBeenCalledWith(
       createHash('sha256').update(code).digest('hex'),
       identity.publicKey,
+      { inheritInviterRooms: false },
     );
+  });
+
+  it('permits inherited Rooms only when a pairing client advertises Room rollback', async () => {
+    const identity = createIdentity('rollback-aware-pairing-agent');
+    const code = 'BUZZ-4S4P-ZPJP';
+    const claimAgentPairing = vi.fn(async () => ({
+      workspaceId: WORKSPACE,
+      pairedBy: 'd'.repeat(64),
+      joined: true,
+      attachedRoomIds: [ROOM],
+    }));
+    const base = await listen({ indexer: indexer({ claimAgentPairing }) });
+    const path = '/agent-pairing/claim';
+    const response = await fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: {
+        authorization: authorization(identity, path, 'POST'),
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ code, capabilities: ['pairing-room-rollback'] }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(claimAgentPairing).toHaveBeenCalledWith(
+      createHash('sha256').update(code).digest('hex'),
+      identity.publicKey,
+      { inheritInviterRooms: true },
+    );
+  });
+
+  it('abandons only the authenticated agent’s exact pairing claim', async () => {
+    const identity = createIdentity('pairing-abandon-agent');
+    const code = 'BUZZ-4S4P-ZPJP';
+    const abandonAgentPairing = vi.fn(async () => true);
+    const base = await listen({ indexer: indexer({ abandonAgentPairing }) });
+    const path = '/agent-pairing/abandon';
+    const response = await fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: {
+        authorization: authorization(identity, path, 'POST'),
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ code: code.toLowerCase() }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ abandoned: true });
+    expect(abandonAgentPairing).toHaveBeenCalledWith(
+      createHash('sha256').update(code).digest('hex'),
+      identity.publicKey,
+    );
+  });
+
+  it('does not reveal an unclaimed pairing rollback', async () => {
+    const identity = createIdentity('pairing-abandon-miss');
+    const abandonAgentPairing = vi.fn(async () => false);
+    const base = await listen({ indexer: indexer({ abandonAgentPairing }) });
+    const path = '/agent-pairing/abandon';
+    const response = await fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: {
+        authorization: authorization(identity, path, 'POST'),
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ code: 'BUZZ-4S4P-ZPJP' }),
+    });
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({ error: 'not_found' });
   });
 
   it('uses the eighth slot for lazy selected-agent detail and has no corner-detail alias', async () => {

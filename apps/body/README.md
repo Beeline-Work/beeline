@@ -305,6 +305,14 @@ stops before persistence when an identifier is unknown or the provider refuses
 an advertised-but-retired entry, and preserves useful replacement guidance from
 the harness when it is available.
 
+For Grok, use the interactive picker rather than guessing an effort string. It
+loads the model catalog first, then offers only the selected model's supported
+reasoning efforts. Grok applies model changes through ACP, but effort is a
+launch option: a warm session keeps its existing effort, and the next cold
+activation re-reads the saved human selection before starting Grok. Switching
+to a model whose effort catalog has not yet been observed clears the old effort
+selection, preventing a model-specific effort from leaking into the new model.
+
 Every daemon restart revalidates the persisted `runtime.json` selection against
 the current live catalog before opening any ordinary ACP turn. A confirmed
 unknown or retired value produces `Model unavailable · <selected-id>`. A

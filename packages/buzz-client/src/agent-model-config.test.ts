@@ -184,6 +184,25 @@ describe('agent model/effort selection', () => {
     expect(JSON.parse(published.at(-1)?.content ?? '{}')).toEqual({ model: 'sonnet', effort: 'high' });
   });
 
+  it('clears a prior effort when a model change supplies the explicit reset marker', async () => {
+    const published: NostrEvent[] = [];
+    stubRelay(published);
+
+    await setAgentModelConfig(ctx(owner), communityId, agentIdentity.publicKey, {
+      model: 'grok-4.6',
+      effort: 'xhigh',
+    });
+    await setAgentModelConfig(ctx(owner), communityId, agentIdentity.publicKey, {
+      model: 'grok-4.5',
+      effort: null,
+    });
+
+    await expect(
+      getAgentModelConfig(ctx(owner), communityId, agentIdentity.publicKey),
+    ).resolves.toMatchObject({ model: 'grok-4.5' });
+    expect(JSON.parse(published.at(-1)?.content ?? '{}')).toEqual({ model: 'grok-4.5' });
+  });
+
   it('publishes and reads back the agent-self-authored catalog, dropping any non-allow-listed axis', async () => {
     const published: NostrEvent[] = [];
     stubRelay(published);

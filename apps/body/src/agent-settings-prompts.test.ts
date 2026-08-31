@@ -256,6 +256,65 @@ describe('pickModelAndEffort — per-harness catalog pickers', () => {
     expect(result).toEqual({ model: 'gpt-5.6-terra', effort: 'low' });
   });
 
+  it('re-reads Grok effort choices for the selected model before prompting', async () => {
+    const grok = { kind: 'grok' as const, command: 'grok', args: ['agent', 'stdio'] };
+    const fetchAgentModelCatalog = vi
+      .fn()
+      .mockResolvedValueOnce({
+        raw: [],
+        catalog: [
+          {
+            id: 'grok-model',
+            category: 'model',
+            currentValue: 'grok-4.6',
+            options: [{ id: 'grok-4.6' }, { id: 'grok-4.5' }],
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        raw: [],
+        catalog: [
+          {
+            id: 'grok-effort',
+            category: 'reasoning_effort',
+            currentValue: 'high',
+            options: [{ id: 'high' }, { id: 'medium' }, { id: 'low' }],
+          },
+        ],
+      });
+    const autocomplete = vi.fn().mockResolvedValueOnce('grok-4.5');
+    const select = vi.fn().mockResolvedValueOnce('medium');
+    vi.doMock('./model-catalog.js', () => ({ fetchAgentModelCatalog }));
+    vi.doMock('@clack/prompts', () => ({
+      select,
+      autocomplete,
+      text: vi.fn(),
+      spinner: () => ({ start: vi.fn(), stop: vi.fn() }),
+      log: { warn: vi.fn() },
+      isCancel: () => false,
+      cancel: vi.fn(),
+    }));
+
+    const { pickModelAndEffort } = await import('./agent-settings-prompts.js');
+    await expect(pickModelAndEffort(grok, {})).resolves.toEqual({
+      model: 'grok-4.5',
+      effort: 'medium',
+    });
+    expect(fetchAgentModelCatalog).toHaveBeenNthCalledWith(
+      2,
+      grok,
+      {},
+      {
+        model: 'grok-4.5',
+      },
+    );
+    expect(select.mock.calls[0]![0].options).toEqual([
+      { value: 'high', label: 'high' },
+      { value: 'medium', label: 'medium' },
+      { value: 'low', label: 'low' },
+    ]);
+  });
+
   it('filters the searchable model list by substring across id AND display name', async () => {
     const autocomplete = vi.fn().mockResolvedValueOnce('gpt-5.6-terra');
     const select = vi.fn().mockResolvedValueOnce('low');

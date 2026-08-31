@@ -6,7 +6,12 @@ import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
 import { AgentToolHostBroker } from './agent-tool-host-broker.js';
 import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
 import type { BodyConfig } from './config.js';
-import { applyAgentModelSelection, parseAdvertisedConfigOptions } from './model-config.js';
+import {
+  agentArgsWithModelSelection,
+  applyAgentModelSelection,
+  isGrokAgentCommand,
+  parseAdvertisedConfigOptions,
+} from './model-config.js';
 import { piMcpDirectToolSelection, preparePiMcpSession } from './pi-mcp-session.js';
 
 // The systemd unit's start deadline is 90s. Initialize gets 10s, session/new
@@ -122,7 +127,15 @@ export async function runUpdateFunctionalProbe(input: {
       };
     }
 
-    let spawnCommand = { command, args: [...(input.config.agentArgs ?? [])] };
+    const selectedAgent = {
+      kind: input.config.agentKind,
+      command,
+      args: input.config.agentArgs ?? [],
+    };
+    let spawnCommand = {
+      command,
+      args: agentArgsWithModelSelection(selectedAgent, input.config.modelSelection),
+    };
     if (input.config.bwrapPath) {
       const { stateDirs, tmpDir } = harnessStateDirsFromEnv(agentEnv);
       const operatorHome = input.config.operatorHome ?? homedir();
@@ -139,7 +152,7 @@ export async function runUpdateFunctionalProbe(input: {
           ...(tmpDir ? { tmpDir } : {}),
         },
         command,
-        args: input.config.agentArgs,
+        args: spawnCommand.args,
       });
     }
 
@@ -168,7 +181,11 @@ export async function runUpdateFunctionalProbe(input: {
         await applyAgentModelSelection(
           client,
           opened.sessionId,
-          parseAdvertisedConfigOptions(opened.raw),
+          parseAdvertisedConfigOptions(
+            opened.raw,
+            input.config.modelSelection.model,
+            isGrokAgentCommand(selectedAgent),
+          ),
           input.config.modelSelection,
         );
       }

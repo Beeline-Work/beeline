@@ -17,6 +17,16 @@ export function profileFilter(identities: readonly RoomViewIdentity[]) {
     : [];
 }
 
+export function agentStateFilter(identities: readonly RoomViewIdentity[]) {
+  const authors = [
+    ...new Set(identities.filter((item) => item.kind === 'agent').map((item) => item.pubkey)),
+  ];
+  // Presence records are scoped to Rooms, not to the Workspace channel. An
+  // author filter is the only bounded Workspace subscription that also sees
+  // an agent's first heartbeat, before the surface has a roomId to target.
+  return authors.length ? [{ kinds: [30078], authors, '#t': ['agent-presence'] }] : [];
+}
+
 /**
  * Resolve the latest valid human soul for one declared agent.
  *
@@ -972,14 +982,103 @@ WITH current_markers AS (
   ON CONFLICT (community_id, channel_id, pubkey) DO UPDATE SET
     role = 'member', invited_by = EXCLUDED.invited_by, joined_at = now(),
     removed_at = NULL, removed_by = NULL, hidden_at = NULL
-  RETURNING community_id, channel_id, pubkey
+  RETURNING community_id, channel_id, pubkey, joined_at
+), inviter_rooms AS (
+  SELECT room.community_id, room.id AS channel_id,
+    claim.agent_pubkey, claim.minter_pubkey
+  FROM accepted_claim claim
+  JOIN channels room ON room.community_id = claim.community_id
+    AND room.id <> claim.workspace_id
+    AND room.deleted_at IS NULL AND room.archived_at IS NULL
+  JOIN channel_members inviter ON inviter.community_id = room.community_id
+    AND inviter.channel_id = room.id AND inviter.pubkey = claim.minter_pubkey
+    AND inviter.removed_at IS NULL
+  JOIN LATERAL (
+    SELECT e.tags FROM events e
+    WHERE e.community_id = room.community_id AND e.channel_id = room.id
+      AND e.kind = 9007 AND e.deleted_at IS NULL
+    ORDER BY e.created_at ASC, e.id ASC LIMIT 1
+  ) genesis ON EXISTS (SELECT 1 FROM jsonb_array_elements(genesis.tags) t
+      WHERE t->>0 = 'community' AND t->>1 = claim.workspace_id::text)
+    AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(genesis.tags) t
+      WHERE t->>0 = 'parent')
+    AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(genesis.tags) t
+      WHERE t->>0 = 't' AND t->>1 = 'buzz-dm')
+  WHERE $3::boolean
+), room_memberships AS (
+  INSERT INTO channel_members (
+    community_id, channel_id, pubkey, role, invited_by, joined_at,
+    removed_at, removed_by, hidden_at
+  )
+  SELECT room.community_id, room.channel_id, room.agent_pubkey,
+    'member', room.minter_pubkey, now(), NULL, NULL, NULL
+  FROM inviter_rooms room
+  ON CONFLICT (community_id, channel_id, pubkey) DO UPDATE SET
+    role = 'member', invited_by = EXCLUDED.invited_by, joined_at = now(),
+    removed_at = NULL, removed_by = NULL, hidden_at = NULL
+  RETURNING community_id, channel_id, pubkey, joined_at
+), activated_claim_memberships AS (
+  SELECT member.community_id, member.channel_id, member.pubkey, member.joined_at
+  FROM membership member
+  JOIN accepted_claim claim ON claim.community_id = member.community_id
+    AND claim.workspace_id = member.channel_id AND claim.agent_pubkey = member.pubkey
+  UNION ALL
+  SELECT member.community_id, member.channel_id, member.pubkey, member.joined_at
+  FROM room_memberships member
+  JOIN accepted_claim claim ON claim.community_id = member.community_id
+    AND claim.agent_pubkey = member.pubkey
+), claim_membership_ledger AS (
+  INSERT INTO beeline_agent_pairing_claim_memberships (
+    token_hash, community_id, channel_id, agent_pubkey, joined_at
+  )
+  SELECT $1, member.community_id, member.channel_id, member.pubkey, member.joined_at
+  FROM activated_claim_memberships member
+  ON CONFLICT (token_hash, community_id, channel_id, agent_pubkey) DO UPDATE SET
+    joined_at = EXCLUDED.joined_at
 )
 SELECT claim.workspace_id, encode(claim.minter_pubkey, 'hex') AS paired_by,
-  claim.joined
+  claim.joined,
+  COALESCE(
+    (SELECT array_agg(room.channel_id ORDER BY room.channel_id) FROM room_memberships room),
+    ARRAY[]::uuid[]
+  ) AS attached_room_ids
 FROM accepted_claim claim JOIN membership member
   ON member.community_id = claim.community_id
   AND member.channel_id = claim.workspace_id
   AND member.pubkey = claim.agent_pubkey;
+`;
+
+/**
+ * Revoke only the memberships created by this exact one-shot pairing claim.
+ * The ledger records the exact join generation from every accepted activation.
+ * Rollback consumes that generation before removing it, so a retained raw code
+ * cannot revoke a later independent re-grant to the same Room. A retry after
+ * an abandoned pairing refreshes the generation and is rollbackable again.
+ */
+export const AGENT_PAIRING_ABANDON_SQL = `
+WITH exact_claim AS (
+  SELECT token_hash, community_id, agent_pubkey
+  FROM beeline_agent_pairing_claims
+  WHERE token_hash = $1 AND agent_pubkey = decode($2, 'hex')
+), consumed_generations AS (
+  DELETE FROM beeline_agent_pairing_claim_memberships ledger
+  USING exact_claim claim
+  WHERE ledger.token_hash = claim.token_hash
+    AND ledger.community_id = claim.community_id
+    AND ledger.agent_pubkey = claim.agent_pubkey
+  RETURNING ledger.community_id, ledger.channel_id, ledger.agent_pubkey, ledger.joined_at
+), removed_memberships AS (
+  UPDATE channel_members member
+  SET removed_at = now(), removed_by = decode($2, 'hex')
+  FROM consumed_generations generation
+  WHERE member.community_id = generation.community_id
+    AND member.channel_id = generation.channel_id
+    AND member.pubkey = generation.agent_pubkey
+    AND member.joined_at = generation.joined_at
+    AND member.removed_at IS NULL
+  RETURNING member.channel_id
+)
+SELECT EXISTS (SELECT 1 FROM exact_claim) AS abandoned;
 `;
 
 export const CORNER_LIST_SQL = `

@@ -180,6 +180,15 @@ describe('agent pairing and soul overlays', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/agent-pairing/claim')) {
+          agentIsMember = true;
+          return jsonResponse({
+            workspaceId: communityId,
+            pairedBy: owner.publicKey,
+            joined: true,
+            attachedRoomIds: [],
+          });
+        }
         if (String(input).endsWith('/events')) {
           const event = JSON.parse(String(init?.body)) as NostrEvent;
           published.push(event);
@@ -233,7 +242,7 @@ describe('agent pairing and soul overlays', () => {
     expect(pairing.event.tags).toContainEqual(['t', TAG_AGENT_PAIRING]);
 
     const first = await redeemAgentPairingCode(ctx(agentIdentity), pairing.code.toLowerCase());
-    expect(first).toMatchObject({ communityId, joined: true });
+    expect(first).toMatchObject({ communityId, joined: true, attachedRoomIds: [] });
     expect(first.agent.pubkey).toBe(agentIdentity.publicKey);
     expect(first.agent.raw.tags).toContainEqual(['t', TAG_AGENT]);
     expect(first.agent.raw.pubkey).toBe(agentIdentity.publicKey);
@@ -256,6 +265,7 @@ describe('agent pairing and soul overlays', () => {
             workspaceId: communityId,
             pairedBy: owner.publicKey,
             joined: true,
+            attachedRoomIds: [],
           });
         }
         if (String(input).endsWith('/events')) {
@@ -439,11 +449,96 @@ describe('agent pairing and soul overlays', () => {
     );
 
     await expect(redeemAgentPairingCode(ctx(agentIdentity), code)).rejects.toThrow(
-      'pairing code is not authorized for this private Workspace',
+      'pairing code is not authorized for this Workspace',
     );
     expect(agentIsMember).toBe(false);
     expect(published).toEqual([]);
     expect(published.some((event) => tagValues(event, 't').includes(TAG_AGENT))).toBe(false);
+  });
+
+  it('rolls an accepted claim back through the server when post-claim validation fails', async () => {
+    const code = 'BUZZ-4S4P-ZPJP';
+    const tokenHash = inviteTokenHash(code);
+    const marker = signed(owner, KIND_COMMUNITY_INVITE, [
+      ['h', communityId],
+      ['t', TAG_AGENT_PAIRING],
+      ['d', tokenHash],
+      [TAG_COMMUNITY, communityId],
+      ['expiration', String(Math.floor(Date.now() / 1000) + 600)],
+    ]);
+    const abandoned: unknown[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/agent-pairing/claim')) {
+          return jsonResponse({
+            // This simulated malformed/forged response must be rejected after
+            // the server has already installed the provisional memberships.
+            workspaceId: '22222222-2222-4222-8222-222222222222',
+            pairedBy: owner.publicKey,
+            joined: true,
+            attachedRoomIds: [],
+          });
+        }
+        if (String(input).endsWith('/agent-pairing/abandon')) {
+          abandoned.push(JSON.parse(String(init?.body)));
+          return jsonResponse({ abandoned: true });
+        }
+        const filter = filterFrom(init);
+        const kind = (filter.kinds as number[])[0];
+        if (kind === KIND_COMMUNITY_INVITE) return jsonResponse([marker]);
+        if (kind === KIND_CHANNEL_MEMBERS) {
+          return jsonResponse([
+            signed(owner, KIND_CHANNEL_MEMBERS, [
+              ['d', communityId],
+              ['p', owner.publicKey],
+            ]),
+          ]);
+        }
+        if (kind === KIND_CHANNEL_ADMINS) return jsonResponse([]);
+        if (kind === KIND_STREAM_MESSAGE || kind === 0) return jsonResponse([]);
+        return jsonResponse([]);
+      }),
+    );
+
+    await expect(redeemAgentPairingCode(ctx(agentIdentity), code)).rejects.toThrow(
+      'pairing claim did not match its signed Workspace marker',
+    );
+    expect(abandoned).toEqual([{ code }]);
+  });
+
+  it('rolls a marker-free connect claim back when post-claim identity validation fails', async () => {
+    const code = 'BUZZ-GSLD-BEES';
+    const abandoned: unknown[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/agent-pairing/claim')) {
+          return jsonResponse({
+            workspaceId: communityId,
+            pairedBy: owner.publicKey,
+            joined: true,
+            attachedRoomIds: ['22222222-2222-4222-8222-222222222222'],
+          });
+        }
+        if (String(input).endsWith('/agent-pairing/abandon')) {
+          abandoned.push(JSON.parse(String(init?.body)));
+          return jsonResponse({ abandoned: true });
+        }
+        const filter = filterFrom(init);
+        const kind = (filter.kinds as number[])[0];
+        if (kind === 0) return jsonResponse([signed(agentIdentity, 0, [])]);
+        if (kind === KIND_COMMUNITY_INVITE || kind === KIND_STREAM_MESSAGE) {
+          return jsonResponse([]);
+        }
+        return jsonResponse([]);
+      }),
+    );
+
+    await expect(redeemAgentPairingCode(ctx(agentIdentity), code)).rejects.toThrow(
+      'cannot use human identity',
+    );
+    expect(abandoned).toEqual([{ code }]);
   });
 
   it('redemption attaches the agent to every top-level Room the inviter belongs to, excluding DMs, corners, and archived Rooms', async () => {
@@ -492,6 +587,15 @@ describe('agent pairing and soul overlays', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/agent-pairing/claim')) {
+          roomMembers[roomAId]!.add(agentIdentity.publicKey);
+          return jsonResponse({
+            workspaceId: communityId,
+            pairedBy: owner.publicKey,
+            joined: true,
+            attachedRoomIds: [roomAId],
+          });
+        }
         if (String(input).endsWith('/events')) {
           const event = JSON.parse(String(init?.body)) as NostrEvent;
           published.push(event);
@@ -558,7 +662,9 @@ describe('agent pairing and soul overlays', () => {
     );
 
     const pairing = await createAgentPairingCode(ctx(owner), communityId, 600);
-    await redeemAgentPairingCode(ctx(agentIdentity), pairing.code);
+    const redeemed = await redeemAgentPairingCode(ctx(agentIdentity), pairing.code);
+
+    expect(redeemed.attachedRoomIds).toEqual([roomAId]);
 
     expect(roomMembers[roomAId]!.has(agentIdentity.publicKey)).toBe(true);
     expect(roomMembers[roomBId]!.has(agentIdentity.publicKey)).toBe(false);
@@ -569,8 +675,8 @@ describe('agent pairing and soul overlays', () => {
     const attachPublishes = published.filter(
       (event) => event.kind === KIND_PUT_USER && tagValue(event, 'p') === agentIdentity.publicKey,
     );
-    expect(attachPublishes).toHaveLength(2); // the Workspace itself + room A
-    expect(attachPublishes.some((event) => tagValue(event, 'h') === roomAId)).toBe(true);
+    expect(attachPublishes).toHaveLength(1); // only the canonical Workspace membership command
+    expect(attachPublishes.some((event) => tagValue(event, 'h') === roomAId)).toBe(false);
   });
 
   it('joins a member-authored replaceable soul overlay without changing identity authority', async () => {

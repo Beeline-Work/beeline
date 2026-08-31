@@ -212,7 +212,11 @@ or your environment.
 
 Git and GitHub credentials are already installed in the corner. Reads such as
 \`git fetch origin\`, \`git diff origin/main...HEAD\`, and \`git log\` work
-normally. When the requested work is finished:
+normally. Plain \`gh\` also has the linked repository's approved GitHub App
+access: read and write issues, inspect CI runs and failing logs for your pull
+request, re-run or cancel checks, and edit workflow files. A 404 for a
+repository resource means the App is not installed for that repository; it
+does not mean the repository is invisible. When the requested work is finished:
 
 1. Commit the intended changes on the corner's feature branch.
 2. Push that feature branch to \`origin\`.

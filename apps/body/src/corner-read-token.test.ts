@@ -103,6 +103,35 @@ describe('corner GitHub credential wiring', () => {
     expect(script).not.toContain('echo "$token"');
   });
 
+  it('passes the minted repository token unchanged to plain gh', async () => {
+    const stateDir = await tempDir('beeline-gh-token');
+    const binDir = await tempDir('beeline-gh-bin');
+    const tokenFile = `${stateDir}/token`;
+    const helperPath = `${stateDir}/helper`;
+    const wrapperPath = `${stateDir}/gh`;
+    await writeFile(
+      helperPath,
+      "#!/bin/sh\nprintf 'username=x-access-token\\npassword=all-app-scopes-token\\n'\n",
+    );
+    await writeFile(`${binDir}/gh`, `#!/bin/sh\nprintf '%s' \"$GH_TOKEN\" > '${tokenFile}'\n`);
+    await writeFile(
+      wrapperPath,
+      githubCliWrapperScript(helperPath, `${binDir}:${process.env.PATH ?? '/usr/bin:/bin'}`),
+    );
+    await Promise.all([
+      chmod(helperPath, 0o700),
+      chmod(`${binDir}/gh`, 0o700),
+      chmod(wrapperPath, 0o700),
+    ]);
+
+    const result = spawnSync(wrapperPath, ['issue', 'list'], {
+      encoding: 'utf8',
+      env: { PATH: '/usr/bin:/bin' },
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(await readFile(tokenFile, 'utf8')).toBe('all-app-scopes-token');
+  });
+
   it('accepts built JS entrypoints and rejects development TypeScript entrypoints', () => {
     expect(resolveBeelineCliEntrypoint(['node', '/opt/b/beeline-cli.mjs'])).toBe(
       '/opt/b/beeline-cli.mjs',

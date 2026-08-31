@@ -57,14 +57,19 @@ describe('GitHub App manifest flow', () => {
     expect(manifest.default_permissions).toEqual({
       contents: 'write',
       pull_requests: 'write',
-      issues: 'read',
+      issues: 'write',
+      actions: 'write',
+      workflows: 'write',
+      discussions: 'write',
       metadata: 'read',
-      administration: 'write',
       checks: 'read',
       statuses: 'read',
-      workflows: 'write',
     });
     expect(REQUIRED_GITHUB_APP_PERMISSIONS).toEqual(manifest.default_permissions);
+    expect(manifest.default_permissions).not.toHaveProperty('administration');
+    expect(manifest.default_permissions).not.toHaveProperty('secrets');
+    expect(manifest.default_permissions).not.toHaveProperty('environments');
+    expect(manifest.default_permissions).not.toHaveProperty('organization');
   });
 
   it('points the webhook at the auth service with the redirect back to setup', () => {
@@ -84,8 +89,8 @@ describe('GitHub App manifest flow', () => {
   });
 
   it('exchanges the creation code for the full credential set', async () => {
-    const fetchMock = vi.fn(async () =>
-      new Response(JSON.stringify(CONVERSION_PAYLOAD), { status: 201 }),
+    const fetchMock = vi.fn(
+      async () => new Response(JSON.stringify(CONVERSION_PAYLOAD), { status: 201 }),
     );
     vi.stubGlobal('fetch', fetchMock);
     try {
@@ -149,12 +154,13 @@ describe('GitHub App configuration drift', () => {
     permissions: {
       contents: 'write',
       pull_requests: 'write',
-      issues: 'read',
+      issues: 'write',
+      actions: 'write',
+      workflows: 'write',
+      discussions: 'write',
       metadata: 'read',
-      administration: 'write',
       checks: 'read',
       statuses: 'read',
-      workflows: 'write',
     },
   };
 
@@ -207,7 +213,9 @@ describe('GitHub App configuration drift', () => {
       (line) => lines.push(line),
     );
     expect(result).toBeUndefined();
-    expect(lines).toEqual(['[auth] GitHub App drift check skipped: GitHub app lookup failed: HTTP 502']);
+    expect(lines).toEqual([
+      '[auth] GitHub App drift check skipped: GitHub app lookup failed: HTTP 502',
+    ]);
   });
 
   it('logs exactly one actionable line on drift and one on success', async () => {
@@ -219,9 +227,8 @@ describe('GitHub App configuration drift', () => {
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain('not subscribed to events');
     lines.length = 0;
-    await checkGitHubAppDriftBestEffort(
-      { fetchApp: async () => LIVE_OK },
-      (line) => lines.push(line),
+    await checkGitHubAppDriftBestEffort({ fetchApp: async () => LIVE_OK }, (line) =>
+      lines.push(line),
     );
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain('match the required set');

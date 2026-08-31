@@ -79,8 +79,9 @@ so webhook timing cannot strand the picker. Installation callbacks verify
 membership with the encrypted GitHub user token captured during sign-in. The app's exact required
 permissions and events live in one place — `REQUIRED_GITHUB_APP_PERMISSIONS` and
 `REQUIRED_GITHUB_APP_EVENTS` in `apps/auth/src/github-manifest.ts` (contents write, pull_requests
-write, issues read, metadata read, administration write, checks read, statuses read, workflows
-write; events `star`, `issues`, `pull_request`) — and the startup drift check enforces them. The auth
+write, issues write, actions write, workflows write, discussions write, checks read, statuses read,
+metadata read; events `star`, `issues`, `pull_request`). Administration, secrets, environments, and
+organization permissions are intentionally excluded. The startup drift check enforces this set. The auth
 sidecar mints exact-repository, one-hour installation tokens for Room-member
 daemons after re-checking current relay membership and the Room's admin-authored
 repository binding. Daemons never receive the App private key. Body installs a

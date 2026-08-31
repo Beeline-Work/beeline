@@ -181,6 +181,38 @@ export async function createAgent(
   return createAgentRecord(ctx, communityId, options);
 }
 
+/**
+ * Keep an agent's one current declaration aligned with its live persona.
+ *
+ * The declaration is the shared identity record consumed by Room readers,
+ * corner surfaces, and mention routing. Reuse its agent id when refreshing it
+ * and publish only when the display name actually changed (or is missing).
+ */
+export async function syncAgentDeclaration(
+  ctx: ChannelOpsContext,
+  communityId: string,
+  options: CreateAgentOptions = {},
+): Promise<Agent> {
+  const displayName = deriveAgentDisplayName(
+    options.displayName ?? ctx.identity.name,
+    ctx.identity.publicKey,
+  );
+  const existing = (await listAgentIdentities(ctx, communityId))
+    .filter((agent) => agent.pubkey === ctx.identity.publicKey)
+    .sort((left, right) => right.createdAt - left.createdAt || right.raw.id.localeCompare(left.raw.id))[0];
+  if (existing?.displayName === displayName) return existing;
+
+  return createAgentRecord(ctx, communityId, {
+    agentId: existing?.agentId ?? options.agentId,
+    displayName,
+    ...(options.soul ?? existing?.soul ? { soul: options.soul ?? existing?.soul } : {}),
+    ...(options.personality ?? existing?.personality
+      ? { personality: options.personality ?? existing?.personality }
+      : {}),
+    ...(options.avatar ?? existing?.avatar ? { avatar: options.avatar ?? existing?.avatar } : {}),
+  });
+}
+
 async function createAgentRecord(
   ctx: ChannelOpsContext,
   communityId: string,
@@ -711,9 +743,6 @@ export async function listAgents(
       return soulProfile
         ? {
             ...agent,
-            displayName: soulProfile.name,
-            personality: soulProfile.soul,
-            avatar: soulProfile.avatar ?? agent.avatar,
             soulProfile,
           }
         : agent;

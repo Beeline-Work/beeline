@@ -347,7 +347,6 @@ export class RoomIndexer {
       agent: {
         identity: identity({
           ...agentData,
-          ...(soul ? { name: soul.name } : {}),
           ...(soul?.avatar ? { avatar: soul.avatar } : {}),
         }),
         role: agentData.role === 'owner' || agentData.role === 'admin' ? agentData.role : 'member',

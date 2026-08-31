@@ -84,7 +84,7 @@ function resolvedIdentityNameSql(
   declarationColumn = 'agent_content',
   humanNameColumn = 'name',
 ): string {
-  return `COALESCE(NULLIF(${alias}.soul_content::jsonb->>'name', ''), NULLIF(${alias}.${declarationColumn}::jsonb->>'displayName', ''), ${alias}.${humanNameColumn})`;
+  return `COALESCE(NULLIF(${alias}.${declarationColumn}::jsonb->>'displayName', ''), ${alias}.${humanNameColumn})`;
 }
 
 /** Current membership-gated daemon observation for one repository corner. */

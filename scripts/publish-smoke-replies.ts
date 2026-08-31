@@ -152,8 +152,12 @@ async function main(agentNsec: string, roomId: string, cornerId: string) {
   };
   const publishCornerRemoteState = async (
     state: 'in-review' | 'gone',
-    outcome?: 'landed' | 'abandoned',
+    input: {
+      checks?: 'passing' | 'failing';
+      outcome?: 'landed' | 'abandoned';
+    } = {},
   ) => {
+    const checks = state === 'in-review' ? (input.checks ?? 'passing') : 'unknown';
     await client.publish(
       signEvent(
         {
@@ -166,22 +170,22 @@ async function main(agentNsec: string, roomId: string, cornerId: string) {
             ['t', CORNER_REMOTE_STATE_TAG],
             ['branch', 'fm/smoke-lifecycle'],
             ['state', state],
-            ['checks', state === 'in-review' ? 'passing' : 'unknown'],
+            ['checks', checks],
             ['pr-number', String(pullRequest.number)],
             ['pr-url', pullRequest.url],
             ['target-branch', pullRequest.targetBranch],
-            ...(outcome ? [['outcome', outcome]] : []),
+            ...(input.outcome ? [['outcome', input.outcome]] : []),
           ],
           content: JSON.stringify({
             version: 1,
             cornerId,
             branch: 'fm/smoke-lifecycle',
             state,
-            checks: state === 'in-review' ? 'passing' : 'unknown',
+            checks,
             observedAt: Math.floor(Date.now() / 1_000),
             ...(state === 'in-review' ? { branchTip: pullRequest.headSha } : {}),
             pr: pullRequest,
-            ...(outcome ? { outcome } : {}),
+            ...(input.outcome ? { outcome: input.outcome } : {}),
           }),
         },
         identity.secretKey,
@@ -224,6 +228,18 @@ async function main(agentNsec: string, roomId: string, cornerId: string) {
       'SMOKE CORNER PHASE READY',
     );
     await publishCornerTurnStatus(cornerPhaseRequest.id, 'working');
+    const idleNudge = await client.messageSubmit(
+      cornerId,
+      'Completion needed: open a pull request for fm/smoke-lifecycle.',
+      {
+        extraTags: [
+          ['t', 'corner-completion-nudge'],
+          ['rung', 'pushed-no-pr'],
+          ['branch', 'fm/smoke-lifecycle'],
+        ],
+      },
+    );
+    await requireRoomViewWithinBudget(roomViews, cornerId, idleNudge, 'corner-idle-nudge');
     const cornerSteer = await waitForRelayMessage(client, cornerId, 'SMOKE CORNER STEER');
     await requireRoomViewWithinBudget(roomViews, cornerId, cornerSteer, 'corner-steer');
     const cornerReply = await client.messageSubmit(
@@ -235,7 +251,7 @@ async function main(agentNsec: string, roomId: string, cornerId: string) {
     // drives lifecycle rendering and the typed event drives the visible
     // GitHub link card. The device waits for this exact card before issuing
     // its explicit `gh merge` fixture trigger below.
-    await publishCornerRemoteState('in-review');
+    await publishCornerRemoteState('in-review', { checks: 'failing' });
     const prFact = await client.messageSubmit(cornerId, '', {
       extraTags: [
         ['t', 'daemon-fact'],
@@ -254,8 +270,10 @@ async function main(agentNsec: string, roomId: string, cornerId: string) {
       ],
     });
     await requireRoomViewWithinBudget(roomViews, cornerId, prFact, 'corner-pr-fact');
+    await waitForRelayMessage(client, cornerId, 'SMOKE CHECKS GREEN');
+    await publishCornerRemoteState('in-review', { checks: 'passing' });
     await waitForRelayMessage(client, cornerId, 'SMOKE GH MERGE');
-    await publishCornerRemoteState('gone', 'landed');
+    await publishCornerRemoteState('gone', { outcome: 'landed' });
     const landed = await client.messageSubmit(
       roomId,
       `Landed “${pullRequest.title}” into ${pullRequest.targetBranch}: ${pullRequest.url}`,
@@ -291,7 +309,19 @@ async function main(agentNsec: string, roomId: string, cornerId: string) {
         identity.secretKey,
       ),
     );
-    await publishCornerTurnStatus(cornerPhaseRequest.id, 'complete');
+    const worktreeCleaned = await client.messageSubmit(
+      roomId,
+      'Corner worktree cleaned after branch deletion.',
+      {
+        extraTags: [
+          ['t', 'daemon-fact'],
+          ['t', 'corner-worktree-cleaned'],
+          ['subchannel', cornerId],
+          ['branch', 'fm/smoke-lifecycle'],
+        ],
+      },
+    );
+    await requireRoomViewWithinBudget(roomViews, roomId, worktreeCleaned, 'corner-worktree-cleaned');
   } finally {
     stopped = true;
     if (heartbeatTimer) clearTimeout(heartbeatTimer);

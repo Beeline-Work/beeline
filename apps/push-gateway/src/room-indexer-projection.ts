@@ -454,8 +454,9 @@ export function projectEvent(data: Json, channelId: string): RoomViewMessage | u
   if (
     cornerId &&
     markers.has('daemon-fact') &&
-    markers.has('corner-branch-ended') &&
-    (tag(eventTags, 'outcome') === 'landed' || tag(eventTags, 'outcome') === 'abandoned')
+    ((markers.has('corner-branch-ended') &&
+      (tag(eventTags, 'outcome') === 'landed' || tag(eventTags, 'outcome') === 'abandoned')) ||
+      markers.has('corner-worktree-cleaned'))
   ) {
     return { ...base, presentation: 'system' };
   }

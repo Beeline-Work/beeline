@@ -224,13 +224,13 @@ const TOOLS: ToolDefinition[] = [
 }
 
 function configuredRoot(): string {
-  const candidate = process.env.BUZZ_READONLY_ROOT?.trim() || process.cwd();
+  const candidate = process.env.BEELINE_READONLY_ROOT?.trim() || process.cwd();
   return realpathSync(candidate);
 }
 
 /** Additional daemon-derived paths (e.g. corner worktrees) the read tools may
  *  access. Never model-supplied. Semicolon-separated absolute paths. */
-const EXTRA_ROOTS: string[] = (process.env.BUZZ_READONLY_EXTRA_ROOTS?.trim() ?? '')
+const EXTRA_ROOTS: string[] = (process.env.BEELINE_READONLY_EXTRA_ROOTS?.trim() ?? '')
   .split(';')
   .map((p) => p.trim())
   .filter(Boolean)
@@ -246,8 +246,8 @@ const EXTRA_ROOTS: string[] = (process.env.BUZZ_READONLY_EXTRA_ROOTS?.trim() ?? 
 const repositoryRoot = configuredRoot();
 const approvedAgentRoots = Object.fromEntries(
   [
-    ['skills', process.env.BUZZ_READONLY_AGENT_SKILLS_ROOT],
-    ['memory', process.env.BUZZ_READONLY_AGENT_MEMORY_ROOT],
+    ['skills', process.env.BEELINE_READONLY_AGENT_SKILLS_ROOT],
+    ['memory', process.env.BEELINE_READONLY_AGENT_MEMORY_ROOT],
   ].flatMap(([area, value]) => {
     if (!value?.trim()) return [];
     try {
@@ -705,7 +705,7 @@ lines.on('line', (line) => {
         protocolVersion:
           typeof params.protocolVersion === 'string' ? params.protocolVersion : '2024-11-05',
         capabilities: { tools: {} },
-        serverInfo: { name: 'buzz-readonly-mcp', version: '1.0.0' },
+        serverInfo: { name: 'beeline-readonly-mcp', version: '1.0.0' },
       });
       return;
     }

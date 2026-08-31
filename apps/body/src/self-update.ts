@@ -501,7 +501,7 @@ export async function stageRelease(
 // Atomic activation
 // ---------------------------------------------------------------------------
 
-const FORWARDER_TOOLS = ['beeline', 'buzz-agent', 'buzz-dev-mcp', 'buzz-readonly-mcp'] as const;
+const FORWARDER_TOOLS = ['beeline', 'buzz-agent', 'buzz-dev-mcp', 'beeline-readonly-mcp'] as const;
 
 function forwarderScript(tool: string): string {
   // Must stay byte-identical with relay-stack/web/install.sh's forwarder

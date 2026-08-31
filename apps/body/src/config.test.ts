@@ -11,7 +11,7 @@ import {
 const binaryEnv = {
   BUZZ_AGENT_BIN: process.execPath,
   BUZZ_DEV_MCP_BIN: process.execPath,
-  BUZZ_READONLY_MCP_BIN: process.execPath,
+  BEELINE_READONLY_MCP_BIN: process.execPath,
 };
 
 describe('loadBodyConfig relay resolution', () => {
@@ -164,7 +164,7 @@ describe('resolveReadonlyMcpCommand', () => {
     expect(() =>
       resolveReadonlyMcpCommand({
         PATH: '',
-        BUZZ_READONLY_MCP_BIN: '/definitely/missing/buzz-readonly-mcp',
+        BEELINE_READONLY_MCP_BIN: '/definitely/missing/beeline-readonly-mcp',
       }),
     ).toThrow('read-only tools unavailable');
   });
@@ -197,11 +197,9 @@ describe('resolveCodegraphCommand', () => {
 
 describe('sandbox mask configuration', () => {
   it('parses BUZZY_BODY_SANDBOX_MASK as a comma/newline-separated path list', () => {
-    expect(parseSandboxMaskEnv({ BUZZY_BODY_SANDBOX_MASK: '/srv/secrets, /etc/creds\n/home/op/.envs' })).toEqual([
-      '/srv/secrets',
-      '/etc/creds',
-      '/home/op/.envs',
-    ]);
+    expect(
+      parseSandboxMaskEnv({ BUZZY_BODY_SANDBOX_MASK: '/srv/secrets, /etc/creds\n/home/op/.envs' }),
+    ).toEqual(['/srv/secrets', '/etc/creds', '/home/op/.envs']);
   });
 
   it('is absent when unset or empty', () => {

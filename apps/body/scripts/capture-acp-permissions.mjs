@@ -5,7 +5,7 @@
  * evidence rather than a guess about a wire format.
  *
  * It drives the adapter exactly the way `src/acp.ts` does — `initialize`, then
- * `session/new` mounting one MCP server named `buzz-readonly-mcp` (the stub in
+ * `session/new` mounting one MCP server named `beeline-readonly-mcp` (the stub in
  * `acp-permission-probe-mcp.mjs`, which advertises the same six tool names as
  * `read-only-policy.ts`), then `session/prompt` — rejects every permission it
  * is asked for, and writes what it saw to JSON.
@@ -13,7 +13,7 @@
  *   node scripts/capture-acp-permissions.mjs \
  *     --agent "$(which claude-agent-acp)" \
  *     --cwd . --out /tmp/capture.json \
- *     --prompt 'Call the buzz-readonly-mcp read_file tool on "README.md". Then stop.'
+ *     --prompt 'Call the beeline-readonly-mcp read_file tool on "README.md". Then stop.'
  *
  * Needs the adapter's own credentials and makes a real model call, which is why
  * it is a script and not a test.
@@ -30,9 +30,11 @@ const cwd = resolve(args.get('--cwd') ?? process.cwd());
 const out = args.get('--out') ?? 'acp-permission-capture.json';
 const prompt =
   args.get('--prompt') ??
-  'Call the buzz-readonly-mcp read_file tool on the path "README.md", then call its git_log tool with limit 3. Do not use any built-in tool. Then stop.';
+  'Call the beeline-readonly-mcp read_file tool on the path "README.md", then call its git_log tool with limit 3. Do not use any built-in tool. Then stop.';
 if (!agent) {
-  console.error('usage: capture-acp-permissions.mjs --agent <acp-binary> [--cwd .] [--out f.json] [--prompt "..."]');
+  console.error(
+    'usage: capture-acp-permissions.mjs --agent <acp-binary> [--cwd .] [--out f.json] [--prompt "..."]',
+  );
   process.exit(2);
 }
 
@@ -68,7 +70,7 @@ child.stdout.on('data', (chunk) => {
     if (msg.id !== undefined && msg.method === undefined) {
       const p = pending.get(msg.id);
       pending.delete(msg.id);
-      if (p) (msg.error ? p.rej(new Error(JSON.stringify(msg.error))) : p.res(msg.result));
+      if (p) msg.error ? p.rej(new Error(JSON.stringify(msg.error))) : p.res(msg.result);
       continue;
     }
     if (msg.method === 'session/request_permission') {
@@ -94,13 +96,13 @@ const { sessionId } = await request('session/new', {
   cwd,
   mcpServers: [
     {
-      name: 'buzz-readonly-mcp',
+      name: 'beeline-readonly-mcp',
       command: process.execPath,
       args: [fileURLToPath(new URL('./acp-permission-probe-mcp.mjs', import.meta.url))],
       env: [],
     },
   ],
-  systemPrompt: 'You are in a read-only room. Use the buzz-readonly-mcp tools.',
+  systemPrompt: 'You are in a read-only room. Use the beeline-readonly-mcp tools.',
 });
 await request('session/prompt', { sessionId, prompt: [{ type: 'text', text: prompt }] });
 writeFileSync(out, JSON.stringify({ agent, initialize, permissions, updates }, null, 2));

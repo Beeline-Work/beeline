@@ -205,22 +205,22 @@ export function resolveReadonlyMcpCommand(env: NodeJS.ProcessEnv = process.env):
   command: string;
   args: string[];
 } {
-  const configuredBinary = env.BUZZ_READONLY_MCP_BIN;
+  const configuredBinary = env.BEELINE_READONLY_MCP_BIN;
   if (configuredBinary) {
     try {
       accessSync(configuredBinary, constants.X_OK);
       return { command: resolve(configuredBinary), args: [] };
     } catch {
       throw new Error(
-        `read-only tools unavailable: BUZZ_READONLY_MCP_BIN is not executable: ${configuredBinary}`,
+        `read-only tools unavailable: BEELINE_READONLY_MCP_BIN is not executable: ${configuredBinary}`,
       );
     }
   }
 
-  const binary = executableOnPath('buzz-readonly-mcp', env);
+  const binary = executableOnPath('beeline-readonly-mcp', env);
   if (binary) return { command: binary, args: [] };
 
-  const script = env.BUZZ_READONLY_MCP_SCRIPT;
+  const script = env.BEELINE_READONLY_MCP_SCRIPT;
   if (script && existsSync(script)) return { command: process.execPath, args: [script] };
 
   const built = firstExisting([
@@ -238,7 +238,7 @@ export function resolveReadonlyMcpCommand(env: NodeJS.ProcessEnv = process.env):
   if (source && tsx) return { command: tsx, args: [source] };
 
   throw new Error(
-    'read-only tools unavailable: buzz-readonly-mcp was not found. Reinstall Beeline or set BUZZ_READONLY_MCP_BIN / BUZZ_READONLY_MCP_SCRIPT',
+    'read-only tools unavailable: beeline-readonly-mcp was not found. Reinstall Beeline or set BEELINE_READONLY_MCP_BIN / BEELINE_READONLY_MCP_SCRIPT',
   );
 }
 

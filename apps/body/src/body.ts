@@ -1115,7 +1115,7 @@ function withReadOnlyAgentMemory(server: McpServerWire, agentMemoryDir?: string)
     ...server,
     env: [
       ...(server.env ?? []),
-      { name: 'BUZZ_READONLY_AGENT_MEMORY_ROOT', value: resolve(agentMemoryDir) },
+      { name: 'BEELINE_READONLY_AGENT_MEMORY_ROOT', value: resolve(agentMemoryDir) },
     ],
   };
 }
@@ -1128,7 +1128,7 @@ export function readOnlyMcpServer(
 ): McpServerWire {
   if (!config.readonlyMcpCommand) {
     throw new ReadOnlyToolsUnavailableError(
-      'read-only tools unavailable: buzz-readonly-mcp is required for Room sessions',
+      'read-only tools unavailable: beeline-readonly-mcp is required for Room sessions',
     );
   }
   const skillDir =
@@ -1144,11 +1144,11 @@ export function readOnlyMcpServer(
       command: config.readonlyMcpCommand,
       args: [...(config.readonlyMcpArgs ?? [])],
       env: [
-        { name: 'BUZZ_READONLY_ROOT', value: resolve(cwd) },
+        { name: 'BEELINE_READONLY_ROOT', value: resolve(cwd) },
         ...(config.agentHomeRoot
           ? [
               {
-                name: 'BUZZ_READONLY_AGENT_SKILLS_ROOT',
+                name: 'BEELINE_READONLY_AGENT_SKILLS_ROOT',
                 value: resolve(config.agentHomeRoot, skillDir, 'skills'),
               },
             ]
@@ -2794,15 +2794,9 @@ export class Body {
             : {}),
           ...(input.path ? { path: input.path } : {}),
         }),
-        getGitHubRoomInstallationToken(
-          this.config.relayBaseUrl,
-          this.agentIdentity,
-          input.roomId,
-        ),
+        getGitHubRoomInstallationToken(this.config.relayBaseUrl, this.agentIdentity, input.roomId),
       ]);
-      console.log(
-        `[body] GitHub credential wired for Room ${input.roomId}: ${wiring.helperPath}`,
-      );
+      console.log(`[body] GitHub credential wired for Room ${input.roomId}: ${wiring.helperPath}`);
       return { ...wiring.env, GH_TOKEN: granted.token };
     } catch (error) {
       console.warn('[body] GitHub corner credential unavailable:', error);
@@ -4518,11 +4512,7 @@ export class Body {
             'GitHub lifecycle and the completion ladder remain authoritative',
         );
       }
-      if (
-        request &&
-        workingAtRestart &&
-        !BODY_RESTART_CONTINUATIONS.has(restartContinuationKey)
-      ) {
+      if (request && workingAtRestart && !BODY_RESTART_CONTINUATIONS.has(restartContinuationKey)) {
         BODY_RESTART_CONTINUATIONS.add(restartContinuationKey);
         const originalPrompt = attachmentPrompt(
           request.authorPubkey,
@@ -4585,7 +4575,6 @@ export class Body {
   getAbandonedCorners(): ReadonlyMap<string, AbandonedCorner> {
     return this.abandonedCorners;
   }
-
 
   /**
    * Provision a read-only agent session for a TLC channel.
@@ -4660,11 +4649,11 @@ export class Body {
           'You are a helpful coding assistant in a read-only conversation channel.',
           NO_PERSONAL_CONNECTORS_INSTRUCTION,
           'A host turn explicitly identified as a human-authorized schedule occurrence is the one exception: that bounded schedule is the mandate for its mounted action tools and attachments.',
-          'Read-only means the repository is visible but cannot be changed: you CAN inspect its files and local git history through buzz-readonly-mcp.',
-          'Never tell a Room member that you cannot view the repository unless a buzz-readonly-mcp inspection call actually fails; report that concrete failure instead.',
-          'Use buzz-readonly-mcp to list, read, search, and inspect local git history when analysis needs repository evidence.',
+          'Read-only means the repository is visible but cannot be changed: you CAN inspect its files and local git history through beeline-readonly-mcp.',
+          'Never tell a Room member that you cannot view the repository unless a beeline-readonly-mcp inspection call actually fails; report that concrete failure instead.',
+          'Use beeline-readonly-mcp to list, read, search, and inspect local git history when analysis needs repository evidence.',
           'Those inspection tools are non-mutating and do not require human approval.',
-          'Use buzz-readonly-mcp.read_agent_file to read only your approved materialized skills or announced Workspace memory; it is read-only and does not require approval.',
+          'Use beeline-readonly-mcp.read_agent_file to read only your approved materialized skills or announced Workspace memory; it is read-only and does not require approval.',
           'Never request native shell or execute permission for listing, reading, searching, or git-history inspection; use the read-only MCP tools instead.',
           'You CANNOT create, edit, or delete repository files in this Room. The separately named workbench and memory directories are the only writable exceptions; open an isolated corner yourself for any landable change.',
           `The host always DENIES repository writes in this Room; outside a host-identified schedule occurrence it also denies every shell/execute request: ${ROOM_READ_ONLY_STEER}`,
@@ -4694,7 +4683,7 @@ export class Body {
       if (error instanceof ReadOnlyToolsUnavailableError) throw error;
       const detail = error instanceof Error ? error.message : String(error);
       throw new ReadOnlyToolsUnavailableError(
-        `read-only tools unavailable: buzz-readonly-mcp could not start (${detail})`,
+        `read-only tools unavailable: beeline-readonly-mcp could not start (${detail})`,
       );
     }
 
@@ -9186,12 +9175,11 @@ export class Body {
       const unsubscribe = await client.sessionEventsSubscribe(
         info.subchannelId,
         (sessionEvent) => {
-          void this.processPushedCornerEvent(channelId, info, sessionEvent).catch(
-            (error) =>
-              console.error(
-                `[body] Room ${channelId} pushed corner event ${sessionEvent.id} failed; poll fallback remains active:`,
-                error,
-              ),
+          void this.processPushedCornerEvent(channelId, info, sessionEvent).catch((error) =>
+            console.error(
+              `[body] Room ${channelId} pushed corner event ${sessionEvent.id} failed; poll fallback remains active:`,
+              error,
+            ),
           );
         },
         { kinds: [9], since: Math.floor(Date.now() / 1_000) },
@@ -9273,11 +9261,7 @@ export class Body {
                   [sessionEvent],
                   roomParticipants,
                 );
-                if (
-                  sessionEvent.tags.some(
-                    (tag) => tag[0] === 't' && tag[1] === 'github-event',
-                  )
-                ) {
+                if (sessionEvent.tags.some((tag) => tag[0] === 't' && tag[1] === 'github-event')) {
                   await this.pollCornerRemoteLifecycle(channelId);
                 }
                 await syncCornerSubscriptions();
@@ -9495,13 +9479,8 @@ export class Body {
       await this.restoreSubchannels(channelId, boundRepo);
       // The Workspace supervisor owns current-role discovery. It aborts this
       // loop when the Room disappears from the agent's member/admin projection.
-      await this.runRoomPushLoop(
-        channelId,
-        boundRepo,
-        'repository',
-        stopPresence,
-        opts,
-        () => this.pollRoomMaintenance(channelId, undefined, boundRepo),
+      await this.runRoomPushLoop(channelId, boundRepo, 'repository', stopPresence, opts, () =>
+        this.pollRoomMaintenance(channelId, undefined, boundRepo),
       );
     } finally {
       this.presenceGenerations.delete(channelId);
@@ -9713,11 +9692,8 @@ export class Body {
     ]);
     const dirty =
       !status.ok ||
-      projectDirtyStatus(
-        info.worktreePath,
-        status.stdout,
-        info.session.agentPrivateState,
-      ).length > 0;
+      projectDirtyStatus(info.worktreePath, status.stdout, info.session.agentPrivateState).length >
+        0;
     if (dirty) info.preserveWorktree = true;
     const existing = await this.agentRelay.queryEvents([
       {
@@ -9932,7 +9908,9 @@ export class Body {
     const corners = [...this.subchannels.values()].filter(
       (info) => info.session.parentChannelId === roomId,
     );
-    const results = await Promise.allSettled(corners.map((info) => this.observeOneCornerRemote(info)));
+    const results = await Promise.allSettled(
+      corners.map((info) => this.observeOneCornerRemote(info)),
+    );
     const failure = results.find((result) => result.status === 'rejected');
     if (failure?.status === 'rejected') throw failure.reason;
   }
@@ -10036,10 +10014,7 @@ export class Body {
     }
   }
 
-  private classifyCornerEvent(
-    evt: NostrEvent,
-    processed: Set<string>,
-  ): CornerEventClassification {
+  private classifyCornerEvent(evt: NostrEvent, processed: Set<string>): CornerEventClassification {
     if (processed.has(evt.id) || evt.pubkey === this.agentIdentity.publicKey) {
       return { status: 'skip', recordProcessed: false };
     }
@@ -10047,11 +10022,7 @@ export class Body {
     if (
       (!evt.content.trim() && attachments.length === 0) ||
       evt.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-activity') ||
-      evt.tags.some(
-        (tag) =>
-          tag[0] === 't' &&
-          tag[1] === 'body-control',
-      )
+      evt.tags.some((tag) => tag[0] === 't' && tag[1] === 'body-control')
     ) {
       return { status: 'skip', recordProcessed: false };
     }
@@ -10170,32 +10141,27 @@ export class Body {
           | undefined;
         let publishedMentionEvent: NostrEvent | undefined;
         const parentRoomId = info.session.parentChannelId;
-        await this.finishCornerTurn(
-          info,
-          agentResult,
-          'Completed the requested follow-up.',
-          {
-            replyTo: evt.id,
-            replyRootId: replyRootIdForEvent(evt),
-            ...(parentRoomId
-              ? {
-                  extraTagsForText: async (text: string) => {
-                    preparedMention = await this.prepareCornerAgentMention({
-                      roomId: parentRoomId,
-                      cornerId: info.subchannelId,
-                      writerAgentId: info.role.publicKey,
-                      sourceTurnId: evt.id,
-                      text,
-                    });
-                    return preparedMention?.tags;
-                  },
-                  captureEvent: (event: NostrEvent) => {
-                    publishedMentionEvent = event;
-                  },
-                }
-              : {}),
-          },
-        );
+        await this.finishCornerTurn(info, agentResult, 'Completed the requested follow-up.', {
+          replyTo: evt.id,
+          replyRootId: replyRootIdForEvent(evt),
+          ...(parentRoomId
+            ? {
+                extraTagsForText: async (text: string) => {
+                  preparedMention = await this.prepareCornerAgentMention({
+                    roomId: parentRoomId,
+                    cornerId: info.subchannelId,
+                    writerAgentId: info.role.publicKey,
+                    sourceTurnId: evt.id,
+                    text,
+                  });
+                  return preparedMention?.tags;
+                },
+                captureEvent: (event: NostrEvent) => {
+                  publishedMentionEvent = event;
+                },
+              }
+            : {}),
+        });
         await this.completeCornerPlan(session);
         await postAgentTurnStatus(
           subchannelId,
@@ -11013,10 +10979,7 @@ export class Body {
     try {
       const members = await listMembers(this.agentClientContext(), channelId);
       return [
-        ...new Set([
-          this.agentIdentity.publicKey,
-          ...members.map((member) => member.pubkey),
-        ]),
+        ...new Set([this.agentIdentity.publicKey, ...members.map((member) => member.pubkey)]),
       ];
     } catch (error) {
       console.warn(`[body] unable to refresh corner participants for ${channelId}:`, error);
@@ -11030,7 +10993,7 @@ export class Body {
     try {
       // Current 39001/39002 projections are authoritative. Replaying kind:9000
       // history cannot order same-second member → admin transitions and could
-        // silently demote a human admin inside the corner.
+      // silently demote a human admin inside the corner.
       const members = await listMembers(this.agentClientContext(), sourceChannelId);
       for (const member of members) {
         if (member.pubkey === this.agentIdentity.publicKey) continue;
@@ -11511,7 +11474,11 @@ export class Body {
       if (preserve || !status.ok || status.stdout.length > 0) {
         console.warn(
           `[body] preserving corner worktree ${worktreePath}: ${
-            preserve ? 'lifecycle marked it dirty' : !status.ok ? 'git status was unreadable' : 'it has uncommitted changes'
+            preserve
+              ? 'lifecycle marked it dirty'
+              : !status.ok
+                ? 'git status was unreadable'
+                : 'it has uncommitted changes'
           }`,
         );
         return;

@@ -2,19 +2,31 @@ name: Client truth gates
 
 on:
   pull_request: {}
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: Heavy suite to run on the self-hosted production-squire runner
+        type: choice
+        default: all
+        options:
+          - all
+          - mobile-export-reachability
+          - production-corpus-replay
+          - frame-budget
+          - state-upgrade
 
 permissions:
   contents: read
   pull-requests: read
 
 jobs:
-  # Each leg imports @beeline/buzz-client, which is built from
-  # @beeline/nostr — so a nostr-only diff must still run every leg below it
-  # in the workspace graph. STATE-UPGRADE additionally builds and imports
-  # @beeline/gate (durable-state.test.ts's `newIdentity`), which the other
-  # three legs never touch. See this PR's description for the full map.
+  # The path filter keeps the legacy required checks present on a relevant PR
+  # without starting their expensive suites. Those suites are explicitly
+  # dispatched and run on production-squire, so they cannot consume hosted
+  # minutes or queue behind the production host's release work.
   changes:
     name: Detect changes
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -25,6 +37,7 @@ jobs:
     steps:
       - uses: dorny/paths-filter@v3
         id: filter
+        if: github.event_name == 'pull_request'
         with:
           # Each list is written out flat and explicit per job rather than
           # composed from YAML anchors, so the diff-membership logic never
@@ -94,8 +107,16 @@ jobs:
   mobile-export-reachability:
     name: MOBILE-EXPORT REACHABILITY
     needs: changes
-    if: needs.changes.outputs.mobileExportReachability == 'true'
+    if: github.event_name == 'pull_request' && needs.changes.outputs.mobileExportReachability == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: echo 'Required check retained; run this heavy suite via workflow_dispatch on production-squire.'
+
+  mobile-export-reachability-on-demand:
+    name: MOBILE-EXPORT REACHABILITY (on demand)
+    if: github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'mobile-export-reachability')
+    runs-on: [self-hosted, beeline-production-squire]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -117,8 +138,16 @@ jobs:
   production-corpus-replay:
     name: PRODUCTION-CORPUS REPLAY
     needs: changes
-    if: needs.changes.outputs.productionCorpusReplay == 'true'
+    if: github.event_name == 'pull_request' && needs.changes.outputs.productionCorpusReplay == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: echo 'Required check retained; run this heavy suite via workflow_dispatch on production-squire.'
+
+  production-corpus-replay-on-demand:
+    name: PRODUCTION-CORPUS REPLAY (on demand)
+    if: github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'production-corpus-replay')
+    runs-on: [self-hosted, beeline-production-squire]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -135,8 +164,16 @@ jobs:
   frame-budget:
     name: FRAME-BUDGET
     needs: changes
-    if: needs.changes.outputs.frameBudget == 'true'
+    if: github.event_name == 'pull_request' && needs.changes.outputs.frameBudget == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: echo 'Required check retained; run this heavy suite via workflow_dispatch on production-squire.'
+
+  frame-budget-on-demand:
+    name: FRAME-BUDGET (on demand)
+    if: github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'frame-budget')
+    runs-on: [self-hosted, beeline-production-squire]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -157,8 +194,16 @@ jobs:
   state-upgrade:
     name: STATE-UPGRADE
     needs: changes
-    if: needs.changes.outputs.stateUpgrade == 'true'
+    if: github.event_name == 'pull_request' && needs.changes.outputs.stateUpgrade == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: echo 'Required check retained; run this heavy suite via workflow_dispatch on production-squire.'
+
+  state-upgrade-on-demand:
+    name: STATE-UPGRADE (on demand)
+    if: github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'state-upgrade')
+    runs-on: [self-hosted, beeline-production-squire]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4

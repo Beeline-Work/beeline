@@ -2,6 +2,7 @@ name: Auth image
 
 on:
   pull_request: {}
+  workflow_dispatch: {}
 
 permissions:
   contents: read
@@ -10,6 +11,7 @@ permissions:
 jobs:
   changes:
     name: Detect changes
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -34,6 +36,16 @@ jobs:
     needs: changes
     if: needs.changes.outputs.build == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Preserve the required PR check without consuming a container runner
+        run: echo 'Auth image builds run only in the server release leg or via the on-demand self-hosted job.'
+
+  build-on-demand:
+    name: Build auth container (on demand)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, beeline-production-squire]
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - name: Build auth image

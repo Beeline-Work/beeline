@@ -28,10 +28,6 @@ const serverWorkflow = readFileSync(
   resolve(mobileRoot, '../../.github/workflows/deploy-host.yml'),
   'utf8',
 );
-const postPromoteWorkflow = readFileSync(
-  resolve(mobileRoot, '../../.github/workflows/mobile-ota-post-promote.yml'),
-  'utf8',
-);
 const reconcileWorkflow = readFileSync(
   resolve(mobileRoot, '../../.github/workflows/mobile-ota-reconcile.yml'),
   'utf8',
@@ -653,25 +649,20 @@ esac
     expect(deliveryIndexScript).toContain("['merge-base', '--is-ancestor', lastTracked, head]");
   });
 
-  it('promotes before dispatching the full rehearsal and arms guarded rollback', () => {
-    expect(workflow).not.toContain('skip_canary');
+  it('promotes through the OTA ledger without an Actions device rehearsal', () => {
     expect(workflow).toContain('--status post-promote');
     expect(workflow).toContain('node scripts/ota-release.mjs promote');
     expect(unifiedWorkflow.indexOf('promote_app:')).toBeLessThan(
-      unifiedWorkflow.indexOf('post_promote_rehearsal:'),
+      unifiedWorkflow.indexOf('delivery_report:'),
     );
-    expect(postPromoteWorkflow).toContain('scripts/ota-canary.sh --ledger "$RUN_LEDGER" --promoted');
     expect(unifiedWorkflow.indexOf('promote_server:')).toBeLessThan(
       unifiedWorkflow.indexOf('promote_daemon:'),
     );
     expect(unifiedWorkflow.indexOf('promote_daemon:')).toBeLessThan(
       unifiedWorkflow.indexOf('promote_app:'),
     );
-    expect(postPromoteWorkflow).toContain('workflow_call:');
-    expect(postPromoteWorkflow).toContain('--expected-current-group "$FAILED_GROUP"');
-    expect(postPromoteWorkflow).toContain("needs.canary.result == 'failure' && needs.canary.outputs.failure_class == 'product-failure'");
-    expect(postPromoteWorkflow).toContain('Escalate rehearsal infrastructure failure without rollback');
-    expect(postPromoteWorkflow).toContain('Install mobile dependencies for EAS project context');
+    expect(unifiedWorkflow).toContain('unified-release.mjs confirm-delivery');
+    expect(unifiedWorkflow).not.toMatch(/mobile-ota-post-promote|post_promote_rehearsal|emulator|Maestro/);
     expect(rollbackWorkflow).toContain("artifact.name.startsWith('mobile-ota-ledger-')");
     expect(rollbackWorkflow).toContain('dry_run:');
     expect(rollbackWorkflow).toContain('update:list --branch production --limit 1 --json --non-interactive');
@@ -1484,32 +1475,12 @@ esac
     });
   }, 60_000);
 
-  it('the post-promotion workflow pins adb and escalates every failed promoted group', () => {
-    expect(postPromoteWorkflow).toContain('ANDROID_HOME: /home/lunchbox/android-sdk');
-    expect(postPromoteWorkflow).toContain('Put every affected merge and failure reason in escalation');
-    expect(postPromoteWorkflow).toContain("index.merges.filter((merge) => merge.state !== 'confirmed')");
-    expect(postPromoteWorkflow).toContain("merge.published?.groupId === process.env.FAILED_GROUP");
-    expect(postPromoteWorkflow).toContain('Guarded automatic rollback');
+  it('the delivery report relies on the ledger and server/daemon health, not Actions device work', () => {
     expect(workflow).toContain('Store release ledger, timings, and promotion proof');
-    expect(unifiedWorkflow).toContain('post_promote_rehearsal:');
+    expect(unifiedWorkflow).toContain('unified-release.mjs confirm-delivery');
+    expect(unifiedWorkflow).not.toMatch(/mobile-ota-post-promote|post_promote_rehearsal|emulator|Maestro/);
     expect(daemonWorkflow).toContain('Confirm every daemon restarted READY on the exact release');
     expect(serverWorkflow).toContain('verify public health');
-  });
-
-  it('the workflow records a self-describing parked reason even when the canary dies before its own handlers', () => {
-    // The canary is told where to publish its one-line parked reason...
-    expect(postPromoteWorkflow).toContain('OTA_CANARY_REASON_FILE:');
-    // ...stale reasons are cleared before the run...
-    expect(postPromoteWorkflow).toContain('rm -f "$OTA_CANARY_REASON_FILE"');
-    // ...and a failure folds that line into the escalation reason, falling
-    // back to the exit status when the shell died before writing anything.
-    const canaryStep = postPromoteWorkflow.slice(
-      postPromoteWorkflow.indexOf('Run full post-promotion Android rehearsal'),
-      postPromoteWorkflow.indexOf('Store post-promotion rehearsal evidence'),
-    );
-    expect(canaryStep).toContain('head -n 1 "$OTA_CANARY_REASON_FILE"');
-    expect(canaryStep).toContain('ota-canary.sh exited ${canary_status}');
-    expect(canaryStep).toContain('exit "$canary_status"');
   });
 
   it('the canary script owns the parked-reason contract for every preflight stage', () => {

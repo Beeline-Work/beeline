@@ -16,7 +16,7 @@ permissions:
 jobs:
   actionlint:
     name: ACTIONLINT
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'beeline-production-squire' }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4

@@ -18,9 +18,12 @@ if command -v adb >/dev/null 2>&1; then
       sleep 1
     done
   fi
-  # Ensure the client/server pair exits after every verification run. Existing
-  # orphaned zombies cannot be reaped by this script; only their parent can.
-  adb kill-server >/dev/null 2>&1 || true
+  # A shared emulator implies a shared adb server. The caller that explicitly
+  # keeps the device must leave that server alone for the next verification
+  # lane; ordinary isolated runs still clean it up as before.
+  if [[ "$KEEP_EMULATOR" != "--keep-emulator" ]]; then
+    adb kill-server >/dev/null 2>&1 || true
+  fi
 fi
 
 if [[ -x "$ANDROID_DIR/gradlew" ]]; then

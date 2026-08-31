@@ -14,7 +14,6 @@ const host = process.env.BUZZY_RELAY_HOST ?? new URL(baseUrl).host;
 const human = newIdentity('agent-removal-human');
 const agent = newIdentity('agent-removal-agent');
 const body = newIdentity('agent-removal-body');
-const mergeWorker = newIdentity('agent-removal-merge-worker');
 let checkout = '';
 /** Machine-local agent state root; the runtime no longer lives in the repo. */
 let stateHome = '';
@@ -86,17 +85,15 @@ describe.runIf(live)('live agent removal teardown', () => {
         mcpBinary: '/bin/true',
         agentIdentity: agent,
         bodyIdentity: body,
-        mergeWorkerIdentity: mergeWorker,
         supervisorRoot: stateHome,
       },
       {
         redeem: (code) => agentClient.redeemAgentPairingCode(code),
-        resolveRoom: (redeemed, repository, mergeWorkerPubkey) =>
+        resolveRoom: (redeemed, repository) =>
           agentClient.resolveRepositoryRoom(
             redeemed.communityId,
             repository,
             redeemed.pairedBy,
-            mergeWorkerPubkey,
           ),
         launch: (configPath) =>
           launchRuntimeDaemon(configPath, {

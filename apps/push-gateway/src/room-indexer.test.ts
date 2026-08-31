@@ -237,36 +237,6 @@ describe('RoomIndexer', () => {
         githubEventsEnabled: true,
       }),
     );
-    const descriptor = {
-      version: 2,
-      base: '1'.repeat(40),
-      tip: '2'.repeat(40),
-      patchId: '3'.repeat(40),
-      summary: 'One file',
-      fileCount: 1,
-      files: [{ path: 'README.md', status: 'modified', linesAdded: 1 }],
-      url: 'https://media.test/review.json',
-      sha256: '4'.repeat(64),
-      size: 100,
-    };
-    await event(
-      CORNER,
-      AGENT,
-      8,
-      30078,
-      [
-        ['h', CORNER],
-        ['d', `${CORNER}:${descriptor.tip}:artifact`],
-        ['t', 'change-review-artifact'],
-      ],
-      JSON.stringify(descriptor),
-    );
-    await event(CORNER, VIEWER, 9, 9, [
-      ['h', CORNER],
-      ['t', 'buzz-merge-approval'],
-      ['repo', 'acme/beeline'],
-      ['branch', 'refs/heads/main'],
-    ]);
     const token = `bzi_${'d'.repeat(64)}`;
     const tokenHash = createHash('sha256').update(token).digest('hex');
     await event(WORKSPACE, VIEWER, 10, 30078, [
@@ -530,13 +500,13 @@ describe('RoomIndexer', () => {
     const room = await indexer.readRoom(ROOM, VIEWER);
     expect(room?.latestAgentTurns).toEqual([]);
     expect(room?.members.some((member) => member.identity.pubkey === AGENT)).toBe(false);
-    expect(room?.corners).toMatchObject([{ corner: { id: CORNER }, status: 'open' }]);
+    expect(room?.corners).toMatchObject([{ corner: { id: CORNER }, status: 'idle' }]);
 
     const chats = await indexer.readChats(WORKSPACE, VIEWER);
     expect(chats?.chats.find((chat) => chat.room.id === ROOM)?.agentState).toBeUndefined();
 
     const corners = await indexer.readCorners(ROOM, VIEWER);
-    expect(corners?.corners).toMatchObject([{ corner: { id: CORNER }, status: 'open' }]);
+    expect(corners?.corners).toMatchObject([{ corner: { id: CORNER }, status: 'idle' }]);
   });
 
   it('keeps a predecessor-authored repository binding unverified instead of calling it absent', async () => {
@@ -954,16 +924,13 @@ describe('RoomIndexer', () => {
     expect(metadataFilter).toBeDefined();
   });
 
-  it('1. invisible review artifact projects by h/type even when storage channel_id is null', async () => {
+  it('watches remote lifecycle facts by h even when storage channel_id is null', async () => {
     const corner = await indexer.readRoom(CORNER, VIEWER);
-    const reviewFilter = corner?.watchFilters.find(
+    const lifecycleFilter = corner?.watchFilters.find(
       (filter) => filter.kinds?.includes(30078) && filter['#h']?.includes(CORNER),
     );
 
-    // All three durable review transitions are kind:30078 events tagged to
-    // the corner. A matching watch re-fetches the authoritative RoomView, so
-    // an already-open corner gains the approve control without remounting.
-    expect(reviewFilter).toBeDefined();
+    expect(lifecycleFilter).toBeDefined();
   });
 
   it('withholds reply proof from deleted or foreign ancestry', async () => {
@@ -1250,6 +1217,17 @@ describe('RoomIndexer', () => {
         text: 'CI passed for the landed checksum.',
       },
       {
+        id: '4'.repeat(64),
+        createdAt: 17,
+        pubkey: AGENT,
+        markers: ['daemon-fact', 'corner-branch-ended'],
+        extraTags: [
+          ['subchannel', CORNER],
+          ['outcome', 'landed'],
+        ],
+        text: 'Landed checksum verification into main.',
+      },
+      {
         id: '5'.repeat(64),
         createdAt: 17,
         pubkey: AGENT,
@@ -1312,6 +1290,7 @@ describe('RoomIndexer', () => {
       'Steer queued for the active turn.',
       'Permission execution acknowledged',
       'CI passed for the landed checksum.',
+      'Landed checksum verification into main.',
     ]) {
       expect(view?.messages).toContainEqual(
         expect.objectContaining({ text, presentation: 'system' }),
@@ -1323,26 +1302,7 @@ describe('RoomIndexer', () => {
     expect(view?.messages).toContainEqual(
       expect.objectContaining({ id: 'c'.repeat(64), presentation: 'card' }),
     );
-    expect(view?.messages).toContainEqual(
-      expect.objectContaining({
-        id: '7'.repeat(64),
-        presentation: 'card',
-        landSummary: {
-          cornerId: 'corner-checksum',
-          objective: 'Add checksum verification',
-          delivered: '2 commits across 3 files',
-          omitted: 'The upload protocol stayed unchanged.',
-          branch: 'main',
-          tip: '4'.repeat(40),
-          url: `https://github.com/acme/widget/commit/${'4'.repeat(40)}`,
-          approvedBy: {
-            pubkey: VIEWER,
-            name: 'Ada Lovelace',
-            handle: 'ada',
-          },
-        },
-      }),
-    );
+    expect(view?.messages).not.toContainEqual(expect.objectContaining({ id: '7'.repeat(64) }));
   });
 
   it('projects a body-control corner permission request as an approval card', async () => {
@@ -1788,7 +1748,7 @@ describe('RoomIndexer', () => {
        WHERE community_id = $1 AND EXISTS (
          SELECT 1 FROM jsonb_array_elements(tags) tag
          WHERE tag->>0 = 't'
-           AND tag->>1 IN ('buzz-corner-state', 'change-review-artifact', 'buzz-merge-approval')
+           AND tag->>1 = 'buzz-corner-remote-state'
        )`,
       [TENANT],
     );
@@ -1836,7 +1796,7 @@ describe('RoomIndexer', () => {
       ],
     );
 
-    expect((await indexer.readCorners(ROOM, VIEWER))?.corners[0]?.status).toBe('open');
+    expect((await indexer.readCorners(ROOM, VIEWER))?.corners[0]?.status).toBe('idle');
 
     const publishAgentTurn = async (id: string, createdAt: number, status: string) => {
       await postgres.query(
@@ -1871,11 +1831,11 @@ describe('RoomIndexer', () => {
     });
 
     await publishAgentTurn('5', 52, 'complete');
-    expect((await indexer.readCorners(ROOM, VIEWER))?.corners[0]?.status).toBe('open');
-    expect((await indexer.readRoom(ROOM, VIEWER))?.corners[0]?.status).toBe('open');
+    expect((await indexer.readCorners(ROOM, VIEWER))?.corners[0]?.status).toBe('idle');
+    expect((await indexer.readRoom(ROOM, VIEWER))?.corners[0]?.status).toBe('idle');
 
     await publishAgentTurn('6', 53, 'failed');
-    expect((await indexer.readCorners(ROOM, VIEWER))?.corners[0]?.status).toBe('open');
+    expect((await indexer.readCorners(ROOM, VIEWER))?.corners[0]?.status).toBe('idle');
   });
 
   it('projects the agent soul and allow-listed model catalog through the indexed agent read', async () => {
@@ -2084,11 +2044,11 @@ describe('RoomIndexer', () => {
     expect(capped?.agentsTruncated).toBe(true);
   });
 
-  it('returns corner metadata, review descriptors, and no patch body', async () => {
+  it('returns corner metadata without a review artifact body', async () => {
     physicalQueries = 0;
     const corners = await indexer.readCorners(ROOM, VIEWER);
     expect(corners).toMatchObject({ corners: [{ corner: { id: CORNER } }] });
-    expect(corners?.corners[0]?.lifecycle).toMatchObject({ lifecycle: 'APPROVED' });
+    expect(corners?.corners[0]?.lifecycle).toMatchObject({ lifecycle: 'working' });
     expect(physicalQueries).toBe(1);
 
     physicalQueries = 0;
@@ -2098,112 +2058,10 @@ describe('RoomIndexer', () => {
       room: { id: CORNER, parentId: ROOM },
       parent: { id: ROOM },
       repository: { name: 'beeline', targetBranch: 'main' },
-      review: {
-        status: 'ready',
-        artifact: { tip: '2'.repeat(40) },
-        files: [{ path: 'README.md', status: 'modified' }],
-        approvedBy: [{ name: 'Ada' }],
-      },
-      cornerLifecycle: { lifecycle: 'APPROVED' },
+      cornerLifecycle: { lifecycle: 'working' },
     });
+    expect(corner).not.toHaveProperty('review');
     expect(JSON.stringify(corner)).not.toContain('diff');
-  });
-
-  it('retains the latest review generation beyond a bounded control-event tail', async () => {
-    const descriptor = {
-      version: 2,
-      base: '5'.repeat(40),
-      tip: '6'.repeat(40),
-      patchId: '7'.repeat(40),
-      summary: 'The newer generation survives controls.',
-      fileCount: 1,
-      files: [{ path: 'apps/push-gateway/src/room-indexer.ts', status: 'modified', linesAdded: 2 }],
-      url: 'https://media.test/newer-review.json',
-      sha256: '8'.repeat(64),
-      size: 200,
-    };
-    await postgres.query(
-      `INSERT INTO events
-        (community_id, id, pubkey, created_at, kind, tags, content, channel_id, d_tag)
-       VALUES ($1, $2, $3, to_timestamp(13), 30078, $4::jsonb, $5, NULL, $6)`,
-      [
-        TENANT,
-        bytes('9'.repeat(64)),
-        bytes(AGENT),
-        JSON.stringify([
-          ['h', CORNER],
-          ['d', `${CORNER}:${descriptor.tip}:artifact`],
-          ['t', 'change-review-artifact'],
-        ]),
-        JSON.stringify(descriptor),
-        `${CORNER}:${descriptor.tip}:artifact`,
-      ],
-    );
-    // Review artifacts are durable Room facts, not transcript rows. A very
-    // long agent-turn tail therefore cannot push the newest generation out of
-    // the bounded raw event window before a cold corner open.
-    await postgres.query(
-      `INSERT INTO events
-        (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
-       SELECT $1, decode(lpad(to_hex(sequence), 64, '0'), 'hex'), $2, to_timestamp(20), 9,
-         jsonb_build_array(
-           jsonb_build_array('h', $3::text),
-           jsonb_build_array('t', 'agent-turn'),
-           jsonb_build_array('request', lpad(to_hex(sequence), 64, '0')),
-           jsonb_build_array('agent', $4::text),
-           jsonb_build_array('status', 'complete')
-         ), '', $3::uuid
-       FROM generate_series(20_000, 23_999) sequence`,
-      [TENANT, bytes(AGENT), CORNER, AGENT],
-    );
-
-    const corner = await indexer.readRoom(CORNER, VIEWER);
-
-    expect(corner?.review).toMatchObject({
-      status: 'ready',
-      artifact: { tip: descriptor.tip, summary: descriptor.summary },
-      files: descriptor.files,
-    });
-  });
-
-  it('ignores a newer review artifact forged by a non-member author', async () => {
-    const forged = {
-      version: 2,
-      base: '5'.repeat(40),
-      tip: '6'.repeat(40),
-      patchId: '7'.repeat(40),
-      summary: 'Forged review',
-      fileCount: 1,
-      files: [{ path: 'FORGED.md', status: 'added', linesAdded: 99 }],
-      url: 'https://media.test/forged-review.json',
-      sha256: '8'.repeat(64),
-      size: 200,
-    };
-    await postgres.query(
-      `INSERT INTO events
-        (community_id, id, pubkey, created_at, kind, tags, content, channel_id, d_tag)
-       VALUES ($1, $2, $3, to_timestamp(20), 30078, $4, $5, NULL, $6)`,
-      [
-        TENANT,
-        bytes('f'.repeat(64)),
-        bytes(OUTSIDER),
-        JSON.stringify([
-          ['h', CORNER],
-          ['d', `${CORNER}:${forged.tip}:artifact`],
-          ['t', 'change-review-artifact'],
-        ]),
-        JSON.stringify(forged),
-        `${CORNER}:${forged.tip}:artifact`,
-      ],
-    );
-
-    const corner = await indexer.readRoom(CORNER, VIEWER);
-
-    expect(corner?.review).toMatchObject({
-      status: 'ready',
-      artifact: { tip: '2'.repeat(40) },
-      files: [{ path: 'README.md', status: 'modified' }],
-    });
   });
 
   it('resolves only the current opaque invite capability in one query', async () => {

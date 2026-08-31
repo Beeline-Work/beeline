@@ -120,6 +120,31 @@ describe('surface liveness scheduler', () => {
     expect(applied).toEqual([2]);
   });
 
+  it('keeps reading after a live message signal until the authoritative surface contains it', async () => {
+    vi.useFakeTimers();
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce({ messages: [] })
+      .mockResolvedValueOnce({ messages: [] })
+      .mockResolvedValueOnce({ messages: [{ id: 'live-message' }] });
+    const applied: Array<{ messages: Array<{ id: string }> }> = [];
+    const scheduler = new SurfaceRefreshScheduler({
+      fetch,
+      apply: (value) => applied.push(value),
+    });
+
+    await scheduler.startAfter(Promise.resolve());
+    await vi.advanceTimersByTimeAsync(0);
+    scheduler.signalUntil((value) => value.messages.some((message) => message.id === 'live-message'));
+    await vi.advanceTimersByTimeAsync(500);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(applied.at(-1)?.messages).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(500);
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(applied.at(-1)?.messages).toEqual([{ id: 'live-message' }]);
+  });
+
   it('does not surface an error from a request overtaken by a newer generation', async () => {
     vi.useFakeTimers();
     const first = deferred<number>();

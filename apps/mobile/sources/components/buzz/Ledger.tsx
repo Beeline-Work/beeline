@@ -7,7 +7,6 @@ import { hasMessageRevealed, markMessageRevealed } from '@/buzz/message-reveal';
 import { IdentityMark } from './IdentityMark';
 import { MonoMarkdown } from './MonoMarkdown';
 import type { ChannelReferenceIndex, ChannelReferenceTarget } from '@/buzz/channel-reference';
-import type { RoomViewMessage } from '@beeline/buzz-client';
 
 /**
  * The one transcript primitive a Room and a Corner both render, in the
@@ -435,50 +434,6 @@ export function LedgerRoomUpdate({
   );
 }
 
-/** The terminal close beat: one scan-friendly block containing enough context
- * to understand a landed corner without opening its transcript. */
-export function LedgerLandDigest({
-  id,
-  digest,
-}: {
-  id: string;
-  digest: NonNullable<RoomViewMessage['landSummary']>;
-}) {
-  return (
-    <View style={styles.landDigest} testID={`land-digest-${id}`}>
-      <Text style={styles.landDigestKicker}>
-        LANDED · {digest.branch} @ {digest.tip.slice(0, 12)}
-      </Text>
-      <Text style={styles.landDigestObjective} testID={`land-digest-objective-${id}`}>
-        {digest.objective}
-      </Text>
-      <Text style={styles.landDigestRow} testID={`land-digest-delivered-${id}`}>
-        <Text style={styles.landDigestLabel}>DELIVERED </Text>
-        {digest.delivered}
-      </Text>
-      <Text style={styles.landDigestRow} testID={`land-digest-omitted-${id}`}>
-        <Text style={styles.landDigestLabel}>LEFT OUT </Text>
-        {digest.omitted}
-      </Text>
-      {digest.approvedBy ? (
-        <Text style={styles.landDigestApproval} testID={`land-digest-approver-${id}`}>
-          Approved by @{digest.approvedBy.handle}
-        </Text>
-      ) : null}
-      {digest.url ? (
-        <Pressable
-          accessibilityLabel={`Open landed commit ${digest.tip.slice(0, 12)} on GitHub`}
-          accessibilityRole="link"
-          onPress={() => void Linking.openURL(digest.url!).catch(() => undefined)}
-          testID={`land-digest-link-${id}`}
-        >
-          <Text style={styles.landDigestLink}>VIEW COMMIT ON GITHUB ↗</Text>
-        </Pressable>
-      ) : null}
-    </View>
-  );
-}
-
 /**
  * A wall of tool output, folded into one ghost line.
  *
@@ -637,58 +592,6 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.buzz.ledgerBody,
     fontSize: 13,
     lineHeight: 18,
-  },
-  landDigest: {
-    width: '100%',
-    minWidth: 0,
-    marginBottom: 16,
-    paddingHorizontal: 14,
-    paddingVertical: 13,
-    borderLeftWidth: 2,
-    borderLeftColor: theme.buzz.accent,
-    backgroundColor: theme.buzz.bgRaised,
-  },
-  landDigestKicker: {
-    ...Typography.mono(),
-    color: theme.buzz.accent,
-    fontSize: 10,
-    lineHeight: 14,
-    letterSpacing: 0.8,
-  },
-  landDigestObjective: {
-    fontFamily: theme.buzz.proseMedium,
-    marginTop: 7,
-    color: theme.buzz.ledgerBright,
-    fontSize: 15,
-    lineHeight: 21,
-  },
-  landDigestRow: {
-    fontFamily: theme.buzz.proseRegular,
-    marginTop: 7,
-    color: theme.buzz.ledgerBody,
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  landDigestLabel: {
-    ...Typography.mono(),
-    color: theme.buzz.ledgerQuiet,
-    fontSize: 9,
-    letterSpacing: 0.6,
-  },
-  landDigestApproval: {
-    ...Typography.mono(),
-    marginTop: 10,
-    color: theme.buzz.ledgerBright,
-    fontSize: 10,
-    lineHeight: 14,
-  },
-  landDigestLink: {
-    ...Typography.mono(),
-    marginTop: 9,
-    color: theme.buzz.accent,
-    fontSize: 10,
-    lineHeight: 14,
-    letterSpacing: 0.5,
   },
   marginalia: {
     position: 'absolute',

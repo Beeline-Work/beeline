@@ -198,29 +198,6 @@ describe('replaceable multi-lane reads', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('backfills every corner state through one batch when multi-key #d filters answer partially', async () => {
-    const identity = createIdentity('corner-state-reader');
-    const events = [
-      replaceableEvent('corner-1', 'buzz-corner-state:corner-1'),
-      replaceableEvent('corner-2', 'buzz-corner-state:corner-2'),
-    ];
-    let requestedFilters: Record<string, unknown>[] = [];
-    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-      requestedFilters = JSON.parse(String(init?.body)) as Record<string, unknown>[];
-      return new Response(JSON.stringify(firstKeyOnlyMatches(requestedFilters, events)), {
-        status: 200,
-      });
-    });
-    vi.stubGlobal('fetch', fetchMock);
-    const client = createBuzzClient({ baseUrl: 'https://relay.test', identity });
-
-    await expect(client.cornerStateBackfill(['corner-1', 'corner-1', 'corner-2'])).resolves.toEqual(
-      events,
-    );
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(requestedFilters).toHaveLength(2);
-  });
-
   it('subscribes to both draft lanes with independently answerable filters', async () => {
     const client = createBuzzClient({
       baseUrl: 'https://relay.test',
@@ -239,32 +216,6 @@ describe('replaceable multi-lane reads', () => {
 
     deliverFirstKeyOnlyMatches(ReconnectingTestWebSocket.instances[0]!, events);
     expect(received).toEqual(['draft', 'thought']);
-
-    unsubscribe();
-    client.disconnect();
-  });
-
-  it('subscribes to every corner state with independently answerable filters', async () => {
-    const client = createBuzzClient({
-      baseUrl: 'https://relay.test',
-      identity: createIdentity('corner-state-subscriber'),
-      skipAuth: true,
-      WebSocketImpl: ReconnectingTestWebSocket,
-    });
-    const events = [
-      replaceableEvent('corner-1', 'buzz-corner-state:corner-1'),
-      replaceableEvent('corner-2', 'buzz-corner-state:corner-2'),
-    ];
-    const received: string[] = [];
-    const unsubscribe = await client.cornerStateSubscribe(
-      ['corner-1', 'corner-1', 'corner-2'],
-      (event) => received.push(event.id),
-    );
-
-    const socket = ReconnectingTestWebSocket.instances[0]!;
-    deliverFirstKeyOnlyMatches(socket, events);
-    expect(received).toEqual(['corner-1', 'corner-2']);
-    expect(socket.sent.find((frame) => frame[0] === 'REQ')!.slice(2)).toHaveLength(2);
 
     unsubscribe();
     client.disconnect();

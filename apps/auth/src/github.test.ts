@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { generateKeyPair, exportPKCS8 } from 'jose';
-import { GitHubAppClient, GitHubOAuthClient, READ_ONLY_ROOM_TOKEN_PERMISSIONS } from './github.js';
+import { GitHubAppClient, GitHubOAuthClient } from './github.js';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -93,7 +93,7 @@ describe('GitHub-only account and repository access', () => {
     });
   });
 
-  it('downgrades a mint to exactly contents:read + metadata:read when asked for read-only', async () => {
+  it('mints the installation grant without a read-only permission downgrade', async () => {
     const { privateKey } = await generateKeyPair('RS256');
     const privateKeyPem = await exportPKCS8(privateKey);
     const fetchMock = vi
@@ -107,24 +107,16 @@ describe('GitHub-only account and repository access', () => {
     const app = new GitHubAppClient({ appId: '42', privateKey: privateKeyPem, slug: 'beeline' });
 
     await expect(
-      app.installationToken(77, {
-        repositoryIds: [9],
-        permissions: READ_ONLY_ROOM_TOKEN_PERMISSIONS,
-      }),
+      app.installationToken(77, { repositoryIds: [9] }),
     ).resolves.toMatchObject({ token: 'ro-token' });
-    // Regression pin: the request NEVER asks for any write permission. The
-    // exact object is the whole contract — a new key here would widen what a
-    // session-held token can do.
+    // GitHub applies the App installation's declared contents + pull-request
+    // permissions; the token remains pinned to this exact repository.
     expect(fetchMock.mock.calls[0]![1]).toMatchObject({
       method: 'POST',
-      body: JSON.stringify({
-        repository_ids: [9],
-        permissions: { contents: 'read', metadata: 'read' },
-      }),
+      body: JSON.stringify({ repository_ids: [9] }),
     });
     const sentBody = JSON.parse(String(fetchMock.mock.calls[0]![1].body));
-    expect(Object.keys(sentBody.permissions)).toEqual(['contents', 'metadata']);
-    expect(Object.values(sentBody.permissions)).toEqual(['read', 'read']);
+    expect(sentBody).not.toHaveProperty('permissions');
   });
 
   it('lists the installations visible to a GitHub user token', async () => {

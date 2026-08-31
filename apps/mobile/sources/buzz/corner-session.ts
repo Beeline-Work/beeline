@@ -133,30 +133,3 @@ export function cornerProcessState(
     )
     .at(-1)?.cornerProcess?.state;
 }
-
-/** How many changed paths the review card names before it counts the rest. */
-export const CHANGE_REVIEW_SUMMARY_MAX_PATHS = 2;
-
-/**
- * The review card's one line about the CHANGE — never about the agent's words.
- *
- * This slot used to render the corner's last agent message, which is the
- * concise reduction of narration the transcript already carries in full: the
- * same sentences printed a third time, right above the diff they were meant
- * to introduce. The transcript is the single source of truth for prose, so the
- * card describes what is actually up for review instead.
- *
- * `undefined` while the manifest has not loaded — "not known yet" is a
- * different answer from "nothing changed", and the caller renders its own
- * neutral line rather than a number it cannot stand behind.
- */
-export function changeReviewSummary(
-  files: readonly string[] | null | undefined,
-): string | undefined {
-  if (!files) return undefined;
-  const paths = files.map((path) => path.trim()).filter(Boolean);
-  if (!paths.length) return undefined;
-  const named = paths.slice(0, CHANGE_REVIEW_SUMMARY_MAX_PATHS);
-  const rest = paths.length - named.length;
-  return rest > 0 ? `${named.join(', ')} +${rest} more` : named.join(', ');
-}

@@ -19,6 +19,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 const RELAY = process.env.RELAY_URL || 'https://usebeeline.app';
+const RELAY_PUBLIC_ORIGIN = process.env.RELAY_PUBLIC_ORIGIN || RELAY;
 const FIXTURE_STATE_VERSION = 1;
 
 type SmokeFixtureState = {
@@ -110,7 +111,11 @@ async function main() {
   console.log('');
 
   // 2. Connect to relay
-  const ownerClient = createBuzzClient({ baseUrl: RELAY, identity: ownerIdentity });
+  const ownerClient = createBuzzClient({
+    baseUrl: RELAY,
+    publicOrigin: RELAY_PUBLIC_ORIGIN,
+    identity: ownerIdentity,
+  });
   await ownerClient.connect();
   await ensureCommunity(
     ownerClient,
@@ -127,7 +132,7 @@ async function main() {
   await ownerClient.addMember(fixture.workspaceId, identity.publicKey, 'member');
   await ownerClient.addMember(fixture.switchWorkspaceId, identity.publicKey, 'member');
 
-  const client = createBuzzClient({ baseUrl: RELAY, identity });
+  const client = createBuzzClient({ baseUrl: RELAY, publicOrigin: RELAY_PUBLIC_ORIGIN, identity });
   await client.connect();
   await client.waitUntilMember(fixture.workspaceId, identity.publicKey);
   await client.waitUntilMember(fixture.switchWorkspaceId, identity.publicKey);
@@ -155,7 +160,11 @@ async function main() {
   // A genuine registered agent participant gives the UI flow a mention target
   // and a current presence lease.
   const agentIdentity = createIdentity('buzzy-smoke-agent');
-  const agentClient = createBuzzClient({ baseUrl: RELAY, identity: agentIdentity });
+  const agentClient = createBuzzClient({
+    baseUrl: RELAY,
+    publicOrigin: RELAY_PUBLIC_ORIGIN,
+    identity: agentIdentity,
+  });
   await agentClient.connect();
   await ownerClient.addMember(workspaceId, agentIdentity.publicKey, 'member');
   await agentClient.waitUntilMember(workspaceId, agentIdentity.publicKey);
@@ -187,7 +196,11 @@ async function main() {
   // offline Agent so the device fixture also proves the hollow state without
   // relying on an unknown/not-yet-loaded presence record.
   const offlineAgentIdentity = createIdentity('buzzy-smoke-offline-agent');
-  const offlineAgentClient = createBuzzClient({ baseUrl: RELAY, identity: offlineAgentIdentity });
+  const offlineAgentClient = createBuzzClient({
+    baseUrl: RELAY,
+    publicOrigin: RELAY_PUBLIC_ORIGIN,
+    identity: offlineAgentIdentity,
+  });
   await offlineAgentClient.connect();
   await ownerClient.addMember(workspaceId, offlineAgentIdentity.publicKey, 'member');
   await offlineAgentClient.waitUntilMember(workspaceId, offlineAgentIdentity.publicKey);
@@ -205,7 +218,11 @@ async function main() {
   // it in the stable smoke Workspace makes repeated emulator captures
   // deterministic without starting a real daemon or creating notifications.
   const catalogAgentIdentity = createIdentity('buzzy-smoke-model-catalog-agent');
-  const catalogAgentClient = createBuzzClient({ baseUrl: RELAY, identity: catalogAgentIdentity });
+  const catalogAgentClient = createBuzzClient({
+    baseUrl: RELAY,
+    publicOrigin: RELAY_PUBLIC_ORIGIN,
+    identity: catalogAgentIdentity,
+  });
   await catalogAgentClient.connect();
   await ownerClient.addMember(workspaceId, catalogAgentIdentity.publicKey, 'member');
   await catalogAgentClient.waitUntilMember(workspaceId, catalogAgentIdentity.publicKey);
@@ -219,7 +236,12 @@ async function main() {
   await catalogAgentClient.waitUntilMember(channelId, catalogAgentIdentity.publicKey);
   await publishAgentModelCatalog(
     {
-      http: { baseUrl: RELAY, host: new URL(RELAY).host, identity: catalogAgentIdentity },
+      http: {
+        baseUrl: RELAY,
+        host: new URL(RELAY_PUBLIC_ORIGIN).host,
+        publicOrigin: RELAY_PUBLIC_ORIGIN,
+        identity: catalogAgentIdentity,
+      },
       identity: catalogAgentIdentity,
     },
     workspaceId,

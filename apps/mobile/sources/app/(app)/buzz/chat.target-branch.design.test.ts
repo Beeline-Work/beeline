@@ -3,13 +3,12 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
- * Source assertions for the two review-surface additions that have no render
+ * Source assertions for the target-branch proposal surface that has no render
  * harness of their own — same technique as `channels.repo.design.test.ts`.
  *
  * What is being pinned is *authority* and *honesty*, not looks: the confirm
  * writes under the viewer's own key through the owner-gated transport call,
  * a non-owner gets a plain refusal instead of a silently-ignored publish, and
- * the PREVIEW row exists only when a preview URL actually arrived.
  */
 const source = readFileSync(path.join(__dirname, 'chat', '[channelId].tsx'), 'utf8');
 const variants = readFileSync(path.join(__dirname, 'chat', 'RoomMessageVariants.tsx'), 'utf8');
@@ -69,24 +68,5 @@ describe('the target-branch proposal card', () => {
     expect(card).toContain("viewerRole === 'owner'");
     expect(card).toContain('automatically rebase onto');
     expect(card).toContain('activity ledger');
-  });
-});
-
-describe('the PREVIEW row on the change-ready card', () => {
-  it('renders only when a preview URL actually arrived', () => {
-    expect(source).toContain('{previewUrl ? (');
-    expect(source).toContain('testID="change-review-preview"');
-    expect(source).toContain('PREVIEW ↗');
-  });
-
-  it('is cleared whenever the merge target it belongs to is withdrawn', () => {
-    expect(source).toContain('const previewUrl = latestMerge?.previewUrl ?? null');
-    expect(source).toContain("find((message) => message.merge)?.merge");
-  });
-
-  it('never becomes part of the signed approval binding', () => {
-    const approve = blockFrom(source, 'const handleApprove = useCallback(', 'handleApprove');
-    expect(approve).toContain('submitMergeApproval(decodedId, mergeTarget)');
-    expect(approve).not.toContain('preview');
   });
 });

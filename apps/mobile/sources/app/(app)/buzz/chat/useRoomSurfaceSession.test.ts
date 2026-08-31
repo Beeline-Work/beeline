@@ -2,7 +2,7 @@ import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { RoomView } from '@beeline/buzz-client';
+import type { NostrEvent, RoomView } from '@beeline/buzz-client';
 
 const controls = vi.hoisted(() => ({
   cached: null as RoomView | null,
@@ -10,8 +10,13 @@ const controls = vi.hoisted(() => ({
     apply(view: RoomView): void;
     error(error: unknown): void;
     disposed: boolean;
+    expectations: Array<(view: RoomView) => boolean>;
   }>,
-  subscriptions: [] as Array<{ filters: unknown; stop: ReturnType<typeof vi.fn> }>,
+  subscriptions: [] as Array<{
+    filters: unknown;
+    stop: ReturnType<typeof vi.fn>;
+    emit(event: NostrEvent): void;
+  }>,
   transportCount: 0,
   identityPromise: null as Promise<{ publicKey: string; secretKey: Uint8Array } | null> | null,
 }));
@@ -89,9 +94,9 @@ vi.mock('@/sync/transport', () => ({
     }
     async ensureClient() {
       return {
-        surfaceSubscribe: async (filters: unknown) => {
+        surfaceSubscribe: async (filters: unknown, emit: (event: NostrEvent) => void) => {
           const stop = vi.fn();
-          controls.subscriptions.push({ filters, stop });
+          controls.subscriptions.push({ filters, stop, emit });
           return stop;
         },
       };
@@ -122,6 +127,7 @@ vi.mock('@beeline/buzz-client', async () => {
           apply: (view) => this.options.apply(view),
           error: (error) => this.options.onError(error),
           disposed: false,
+          expectations: [],
         };
         controls.schedulers.push(this.control);
       }
@@ -129,6 +135,9 @@ vi.mock('@beeline/buzz-client', async () => {
         await watch;
       }
       signal() {}
+      signalUntil(expectation: (view: RoomView) => boolean) {
+        this.control.expectations.push(expectation);
+      }
       force() {}
       dispose() {
         this.control.disposed = true;
@@ -322,6 +331,52 @@ describe('useRoomSurfaceSession', () => {
     expect(controls.subscriptions).toHaveLength(2);
     expect(firstStop).toHaveBeenCalledOnce();
     expect(current.roomSurface?.watchFilters).toEqual([{ '#d': ['agent-a'] }]);
+    await act(async () => renderer.unmount());
+  });
+
+  it('confirms a live message against RoomView instead of trusting one possibly stale refresh', async () => {
+    controls.cached = roomView('room-a');
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, {
+          channelId: 'room-a',
+          capture: () => undefined,
+        }),
+      );
+    });
+    await flushEffects();
+
+    const event: NostrEvent = {
+      id: 'f'.repeat(64),
+      pubkey: 'a'.repeat(64),
+      created_at: 10,
+      kind: 9,
+      tags: [
+        ['h', 'room-a'],
+        ['t', 'agent-message'],
+      ],
+      content: 'Delivered after the index catches up',
+      sig: '0'.repeat(128),
+    };
+    await act(async () => controls.subscriptions[0]!.emit(event));
+
+    const expectation = controls.schedulers[0]!.expectations[0]!;
+    expect(expectation(roomView('room-a'))).toBe(false);
+    expect(
+      expectation({
+        ...roomView('room-a'),
+        messages: [
+          {
+            id: event.id,
+            text: event.content,
+            createdAt: event.created_at,
+            author: { pubkey: event.pubkey, kind: 'agent', name: 'Agent' },
+            presentation: 'message',
+          },
+        ],
+      }),
+    ).toBe(true);
     await act(async () => renderer.unmount());
   });
 

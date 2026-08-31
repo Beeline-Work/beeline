@@ -124,10 +124,10 @@ describe.runIf(reachable)('agent-to-agent Room delegation', () => {
     await publishPresence(xian);
     await publishPresence(joy);
 
-    xianBody = new Body(config(resolve(root, 'xian')), human, xian, undefined, {
+    xianBody = new Body(config(resolve(root, 'xian')), human, xian, {
       statePath: resolve(root, 'xian-state.json'),
     });
-    joyBody = new Body(config(resolve(root, 'joy')), human, joy, undefined, {
+    joyBody = new Body(config(resolve(root, 'joy')), human, joy, {
       statePath: resolve(root, 'joy-state.json'),
     });
   });

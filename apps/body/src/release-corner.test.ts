@@ -79,7 +79,6 @@ function room(options: { unreleased?: string[] } = {}): {
     },
     undefined,
     undefined,
-    undefined,
     { statePath: join(root, 'state.json') },
   );
   body.registerSession({

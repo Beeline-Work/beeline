@@ -181,18 +181,6 @@ export interface RigTransport {
   ): Promise<{ worktreeId: WorktreeId; path: string; branch?: string }>;
   worktreeArchive(worktreeId: WorktreeId, opts?: { sessionId?: SessionId }): Promise<void>;
 
-  // --- Files (diff view) ---
-  changedFileRead(
-    sessionId: SessionId,
-    path: string,
-    reviewTip?: string,
-  ): Promise<{ content: string; isBinary?: boolean } | null>;
-  workspaceFilesRead(sessionId: SessionId, reviewTip?: string): Promise<ChangedFile[]>;
-  changedFilesRevert(sessionId: SessionId, paths: string[]): Promise<void>;
-
-  // --- Merge (parent-owner approve) ---
-  mergeAction(input: MergeActionInput): Promise<{ success: boolean; message?: string }>;
-
   // --- Terminals: STUB (hide UI; no live PTY) ---
   terminalCreate(_opts?: unknown): Promise<never>;
   terminalStop(_id: string): Promise<never>;

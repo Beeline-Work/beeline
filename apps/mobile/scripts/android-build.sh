@@ -9,6 +9,18 @@ readonly REPO_DIR
 readonly ANDROID_HOME="${ANDROID_HOME:-/home/lunchbox/android-sdk}"
 readonly CACHE_ROOT="${XDG_CACHE_HOME:-$HOME/.cache}"
 
+# The host-side smoke fixture may use loopback while an Android device reaches
+# that same relay through 10.0.2.2. Expo reads this configuration again during
+# Gradle, so derive the device-facing runtime origin here as well as in the
+# E2E runner.
+if [[ -n "${RELAY_PUBLIC_ORIGIN:-}" ]]; then
+  export EXPO_PUBLIC_BUZZY_RELAY_URL="${EXPO_PUBLIC_BUZZY_RELAY_URL:-$RELAY_PUBLIC_ORIGIN}"
+  export EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL="${EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL:-${RELAY_PUBLIC_ORIGIN%/}/push}"
+elif [[ -n "${RELAY_URL:-}" ]]; then
+  export EXPO_PUBLIC_BUZZY_RELAY_URL="${EXPO_PUBLIC_BUZZY_RELAY_URL:-$RELAY_URL}"
+  export EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL="${EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL:-${RELAY_URL%/}/push}"
+fi
+
 # React Native's CMake setup automatically invokes ccache when it is on PATH.
 # These settings make its keys portable between equivalent worktrees while the
 # compiler, ABI, flags, and source contents remain part of each ccache key.

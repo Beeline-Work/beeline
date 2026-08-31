@@ -1,154 +1,48 @@
-import {
-  parseChangeReviewArtifactDescriptor,
-  type ChangeReviewArtifactDescriptor,
-} from './change-review.js';
+import type {
+  CornerCheckState,
+  CornerPullRequestFact,
+  CornerRemoteState,
+} from './corner-remote-state.js';
 
-export const CORNER_GIT_PROJECTION_VERSION = 1 as const;
-export const CORNER_GIT_PROJECTION_TAG = 'corner-git-projection';
-export const CORNER_REJECTION_TAG = 'buzz-merge-rejection';
+export type CornerLifecycle = 'working' | 'in-review' | 'unknown' | 'done';
 
-export type CornerGitRelation = 'absent' | 'no-deliverable-commits-yet' | 'review' | 'contained';
-export type CornerLifecycle = 'WORKING' | 'REVIEW' | 'APPROVED' | 'REJECTED' | 'ARCHIVED';
-export type CornerArchiveFlavor = 'merged' | 'rejected' | 'closed';
-export type CornerHumanVerdict = 'approve' | 'reject';
-
-/** Replaceable mechanical Git observation used only to paint RoomView. */
-export type CornerGitProjection = {
-  readonly version: typeof CORNER_GIT_PROJECTION_VERSION;
-  readonly relation: CornerGitRelation;
-  readonly repository: string;
-  readonly targetBranch: string;
-  readonly featureBranch: string;
-  readonly featureTip?: string;
-  readonly targetTip?: string;
-  readonly mergeBase?: string;
-  readonly artifact?: ChangeReviewArtifactDescriptor;
-};
-
-export type CornerVerdictView = {
-  readonly verdict: CornerHumanVerdict;
-  readonly eventId: string;
-  readonly signerPubkey: string;
-  readonly repository: string;
-  readonly targetBranch: string;
-  readonly createdAt: number;
-};
-
+/** Paint-ready lifecycle derived only from daemon-observed git/GitHub facts. */
 export type CornerLifecycleView = {
   readonly lifecycle: CornerLifecycle;
-  readonly archiveFlavor?: CornerArchiveFlavor;
-  readonly git?: CornerGitProjection;
-  readonly verdict?: CornerVerdictView;
+  readonly branch?: string;
+  readonly checks: CornerCheckState;
+  readonly pr?: CornerPullRequestFact;
+  readonly outcome?: 'landed' | 'abandoned';
+  readonly reason?: string;
 };
 
-const SHA = /^[0-9a-f]{40}$/;
-
-export function parseCornerGitProjection(content: string): CornerGitProjection | null {
-  try {
-    const value = JSON.parse(content) as Partial<CornerGitProjection>;
-    if (
-      value.version !== CORNER_GIT_PROJECTION_VERSION ||
-      (value.relation !== 'absent' &&
-        value.relation !== 'no-deliverable-commits-yet' &&
-        value.relation !== 'review' &&
-        value.relation !== 'contained') ||
-      typeof value.repository !== 'string' ||
-      !value.repository ||
-      typeof value.targetBranch !== 'string' ||
-      !value.targetBranch ||
-      typeof value.featureBranch !== 'string' ||
-      !value.featureBranch ||
-      (value.featureTip !== undefined && !SHA.test(value.featureTip)) ||
-      (value.targetTip !== undefined && !SHA.test(value.targetTip)) ||
-      (value.mergeBase !== undefined && !SHA.test(value.mergeBase))
-    ) {
-      return null;
-    }
-    const artifact =
-      value.artifact === undefined
-        ? undefined
-        : parseChangeReviewArtifactDescriptor(JSON.stringify(value.artifact));
-    if (value.artifact !== undefined && !artifact) return null;
-    if (value.relation === 'review' && !value.featureTip) return null;
-    if (value.relation === 'contained' && !value.featureTip) return null;
-    return { ...value, ...(artifact ? { artifact } : {}) } as CornerGitProjection;
-  } catch {
-    return null;
-  }
-}
-
-/** One-release reader for the prior artifact-only relay fact. */
-export function parseCornerGitProjectionCompat(
-  content: string | undefined,
-): CornerGitProjection | undefined {
-  if (!content) return undefined;
-  const projection = parseCornerGitProjection(content);
-  if (projection) return projection;
-  const artifact = parseChangeReviewArtifactDescriptor(content);
-  if (!artifact) return undefined;
-  try {
-    const value = JSON.parse(content) as Record<string, unknown>;
-    const extended =
-      value.relation === 'review' &&
-      typeof value.repository === 'string' &&
-      value.repository &&
-      typeof value.targetBranch === 'string' &&
-      value.targetBranch &&
-      typeof value.featureBranch === 'string' &&
-      value.featureBranch
-        ? {
-            repository: value.repository,
-            targetBranch: value.targetBranch,
-            featureBranch: value.featureBranch,
-            ...(typeof value.targetTip === 'string' && SHA.test(value.targetTip)
-              ? { targetTip: value.targetTip }
-              : {}),
-          }
-        : {
-            repository: 'legacy-unverified',
-            targetBranch: 'legacy-unverified',
-            featureBranch: 'legacy-unverified',
-          };
-    return {
-      version: CORNER_GIT_PROJECTION_VERSION,
-      relation: 'review',
-      ...extended,
-      featureTip: artifact.tip,
-      mergeBase: artifact.base,
-      artifact,
-    };
-  } catch {
-    return undefined;
-  }
-}
-
-/** Pure five-state product projector. Archive is terminal and wins first. */
 export function deriveCornerLifecycle(input: {
-  readonly created: boolean;
   readonly archived: boolean;
-  readonly git?: CornerGitProjection;
-  readonly verdict?: CornerVerdictView;
+  readonly remote?: CornerRemoteState;
 }): CornerLifecycleView {
-  const facts = {
-    ...(input.git ? { git: input.git } : {}),
-    ...(input.verdict ? { verdict: input.verdict } : {}),
-  };
   if (input.archived) {
-    const archiveFlavor: CornerArchiveFlavor =
-      input.git?.relation === 'contained'
-        ? 'merged'
-        : input.verdict?.verdict === 'reject'
-          ? 'rejected'
-          : 'closed';
-    return { lifecycle: 'ARCHIVED', archiveFlavor, ...facts };
+    return {
+      lifecycle: 'done',
+      checks: input.remote?.checks ?? 'unknown',
+      ...(input.remote?.branch ? { branch: input.remote.branch } : {}),
+      ...(input.remote?.pr ? { pr: input.remote.pr } : {}),
+      ...(input.remote?.outcome ? { outcome: input.remote.outcome } : {}),
+    };
   }
-  if (input.verdict?.verdict === 'reject') return { lifecycle: 'REJECTED', ...facts };
-  if (
-    input.verdict?.verdict === 'approve' &&
-    (input.git?.relation === 'review' || input.git?.relation === 'contained')
-  ) {
-    return { lifecycle: 'APPROVED', ...facts };
-  }
-  if (input.git?.relation === 'review') return { lifecycle: 'REVIEW', ...facts };
-  return { lifecycle: 'WORKING', ...facts };
+  if (!input.remote) return { lifecycle: 'working', checks: 'unknown' };
+  return {
+    lifecycle:
+      input.remote.state === 'gone'
+        ? 'done'
+        : input.remote.state === 'in-review'
+          ? 'in-review'
+          : input.remote.state === 'unknown'
+            ? 'unknown'
+            : 'working',
+    branch: input.remote.branch,
+    checks: input.remote.checks,
+    ...(input.remote.pr ? { pr: input.remote.pr } : {}),
+    ...(input.remote.outcome ? { outcome: input.remote.outcome } : {}),
+    ...(input.remote.reason ? { reason: input.remote.reason } : {}),
+  };
 }

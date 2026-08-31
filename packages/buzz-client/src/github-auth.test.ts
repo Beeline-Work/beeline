@@ -110,7 +110,7 @@ describe('GitHub auth routes', () => {
     );
   });
 
-  it('sends read_only when a session asks for the read-only token variant', async () => {
+  it('never downgrades a corner installation token to read-only', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(
       new Response(
         JSON.stringify({
@@ -125,11 +125,9 @@ describe('GitHub auth routes', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(
-      getGitHubRoomInstallationToken('https://relay.example', identity, 'room-1', {
-        readOnly: true,
-      }),
+      getGitHubRoomInstallationToken('https://relay.example', identity, 'room-1'),
     ).resolves.toMatchObject({ token: 'room-token' });
-    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)).read_only).toBe(true);
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).not.toHaveProperty('read_only');
   });
 
   it('fetches Room repository events with since/wait options and validates the response', async () => {

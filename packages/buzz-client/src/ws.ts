@@ -15,6 +15,8 @@ type MessageHandler = (msg: unknown[]) => void;
 
 export interface RelayWsOptions {
   wsUrl: string;
+  /** Public authority used in NIP-42 proof when a local proxy owns the TCP route. */
+  authRelayUrl?: string;
   identity: Identity;
   WebSocketImpl?: WebSocketConstructor;
   skipAuth?: boolean;
@@ -288,7 +290,7 @@ export class RelayWs {
   }
 
   private respondAuth(challenge: string): Promise<void> {
-    const relayUrl = this.opts.wsUrl;
+    const relayUrl = this.opts.authRelayUrl ?? this.opts.wsUrl;
     const event = signEvent(
       {
         pubkey: this.opts.identity.publicKey,
@@ -433,11 +435,14 @@ export class RelayWs {
     // lockstep for as long as they live, which is the same herd the reconnect
     // jitter above breaks up — just spread over the whole session instead of
     // one moment.
-    this.keepaliveTimer = setTimeout(() => {
-      this.sendKeepalive();
-      this.keepaliveTimer = setInterval(() => this.sendKeepalive(), intervalMs);
-      this.keepaliveTimer.unref?.();
-    }, Math.round(intervalMs * (0.5 + Math.random() * 0.5)));
+    this.keepaliveTimer = setTimeout(
+      () => {
+        this.sendKeepalive();
+        this.keepaliveTimer = setInterval(() => this.sendKeepalive(), intervalMs);
+        this.keepaliveTimer.unref?.();
+      },
+      Math.round(intervalMs * (0.5 + Math.random() * 0.5)),
+    );
     this.keepaliveTimer.unref?.();
   }
 

@@ -6,8 +6,12 @@
  */
 import {
   AGENT_PRESENCE_HEARTBEAT_MS,
+  CORNER_REMOTE_STATE_KIND,
+  CORNER_REMOTE_STATE_TAG,
+  cornerRemoteStateKey,
   createBuzzClient,
   KIND_AGENT_PRESENCE,
+  RoomViewClient,
   loadIdentityFromNsec,
   TAG_AGENT_PRESENCE,
   type SessionEvent,
@@ -16,27 +20,53 @@ import { signEvent } from '@beeline/nostr';
 
 const [agentNsec, roomId, cornerId] = process.argv.slice(2);
 const RELAY = process.env.RELAY_URL || 'https://usebeeline.app';
-const FIRST_DEVICE_MESSAGE_TIMEOUT_MS = 180_000;
-const FOLLOW_UP_MESSAGE_TIMEOUT_MS = 90_000;
+const RELAY_PUBLIC_ORIGIN = process.env.RELAY_PUBLIC_ORIGIN || RELAY;
+const ROOMVIEW_LATENCY_BUDGET_MS = 8_000;
 
 if (!agentNsec || !roomId || !cornerId) {
   throw new Error('usage: publish-smoke-replies <agent-nsec> <room-id> <corner-id>');
 }
 
-async function waitForMessage(
+async function waitForRelayMessage(
   client: ReturnType<typeof createBuzzClient>,
   channelId: string,
   needle: string,
-  timeoutMs = FOLLOW_UP_MESSAGE_TIMEOUT_MS,
 ): Promise<SessionEvent> {
-  const deadline = Date.now() + timeoutMs;
+  let settle!: (event: SessionEvent) => void;
+  const seen = new Promise<SessionEvent>((resolve) => {
+    settle = resolve;
+  });
+  let stopped = false;
+  const stop = await client.sessionEventsSubscribe(channelId, (event) => {
+    if (!stopped && event.content?.includes(needle)) settle(event);
+  });
+  const backfill = await client.sessionEventsBackfill(channelId, { limit: 100 });
+  const existing = backfill.find((event) => event.content?.includes(needle));
+  const event = existing ?? (await seen);
+  stopped = true;
+  stop();
+  return event;
+}
+
+async function requireRoomViewWithinBudget(
+  client: RoomViewClient,
+  channelId: string,
+  event: SessionEvent,
+  label: string,
+): Promise<void> {
+  const startedAt = Date.now();
+  const deadline = startedAt + ROOMVIEW_LATENCY_BUDGET_MS;
   while (Date.now() < deadline) {
-    const events = await client.sessionEventsBackfill(channelId, { limit: 100 });
-    const match = events.find((event) => event.content?.includes(needle));
-    if (match) return match;
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    const view = await client.room(channelId);
+    if (view.messages.some((message) => message.id === event.id)) {
+      console.log(`ROOMVIEW_LATENCY ${label} ${Date.now() - startedAt}ms`);
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  throw new Error(`timed out waiting for ${needle}`);
+  throw new Error(
+    `${label} did not become visible in RoomView within ${ROOMVIEW_LATENCY_BUDGET_MS}ms`,
+  );
 }
 
 /** The device event is the proof: retries must preserve one relay event id. */
@@ -60,6 +90,12 @@ async function main(agentNsec: string, roomId: string, cornerId: string) {
   const identity = loadIdentityFromNsec(agentNsec, 'buzzy-smoke-agent');
   const client = createBuzzClient({
     baseUrl: RELAY,
+    publicOrigin: RELAY_PUBLIC_ORIGIN,
+    identity,
+  });
+  const roomViews = new RoomViewClient({
+    baseUrl: RELAY,
+    publicOrigin: RELAY_PUBLIC_ORIGIN,
     identity,
   });
   await client.connect();
@@ -107,6 +143,55 @@ async function main(agentNsec: string, roomId: string, cornerId: string) {
       ),
     );
   };
+  const pullRequest = {
+    number: 42,
+    url: 'https://github.com/lunchboxfortwo/beeline/pull/42',
+    title: 'Smoke lifecycle PR',
+    targetBranch: 'main',
+    headSha: 'a'.repeat(40),
+  };
+  const publishCornerRemoteState = async (
+    state: 'in-review' | 'gone',
+    input: {
+      checks?: 'passing' | 'failing';
+      outcome?: 'landed' | 'abandoned';
+    } = {},
+  ) => {
+    const checks = state === 'in-review' ? (input.checks ?? 'passing') : 'unknown';
+    await client.publish(
+      signEvent(
+        {
+          pubkey: identity.publicKey,
+          created_at: Math.floor(Date.now() / 1_000),
+          kind: CORNER_REMOTE_STATE_KIND,
+          tags: [
+            ['d', cornerRemoteStateKey(cornerId)],
+            ['h', cornerId],
+            ['t', CORNER_REMOTE_STATE_TAG],
+            ['branch', 'fm/smoke-lifecycle'],
+            ['state', state],
+            ['checks', checks],
+            ['pr-number', String(pullRequest.number)],
+            ['pr-url', pullRequest.url],
+            ['target-branch', pullRequest.targetBranch],
+            ...(input.outcome ? [['outcome', input.outcome]] : []),
+          ],
+          content: JSON.stringify({
+            version: 1,
+            cornerId,
+            branch: 'fm/smoke-lifecycle',
+            state,
+            checks,
+            observedAt: Math.floor(Date.now() / 1_000),
+            ...(state === 'in-review' ? { branchTip: pullRequest.headSha } : {}),
+            pr: pullRequest,
+            ...(input.outcome ? { outcome: input.outcome } : {}),
+          }),
+        },
+        identity.secretKey,
+      ),
+    );
+  };
   const schedulePresenceHeartbeat = () => {
     if (stopped) return;
     heartbeatTimer = setTimeout(() => {
@@ -120,25 +205,123 @@ async function main(agentNsec: string, roomId: string, cornerId: string) {
   try {
     await publishPresence();
     schedulePresenceHeartbeat();
-    // This first wait spans onboarding and the full pre-send smoke path. Later
-    // waits begin at the device action they coordinate with and stay tighter.
-    await waitForMessage(client, roomId, 'SMOKE ROOM SEND', FIRST_DEVICE_MESSAGE_TIMEOUT_MS);
-    await client.messageSubmit(roomId, 'SMOKE AGENT ROOM REPLY — delivered live');
+    // Relay observation is the action boundary. Navigation time before a send
+    // cannot consume its latency budget; only relay -> authoritative RoomView
+    // materialization is measured.
+    const roomSend = await waitForRelayMessage(client, roomId, 'SMOKE ROOM SEND');
+    await requireRoomViewWithinBudget(roomViews, roomId, roomSend, 'room-send');
+    const roomReply = await client.messageSubmit(roomId, 'SMOKE AGENT ROOM REPLY — delivered live');
+    await requireRoomViewWithinBudget(roomViews, roomId, roomReply, 'room-agent-reply');
     // The smoke performs a separate picker/responsiveness send before its
     // exact Beebee mention. Use that relay-backed action as the phase boundary
     // so time spent navigating and exercising the first mention cannot consume
     // the timeout for an action the device has not reached yet.
-    await waitForMessage(client, roomId, 'mention picker stayed responsive');
-    await waitForMessage(client, roomId, "@beebee what's up");
+    await waitForRelayMessage(client, roomId, 'mention picker stayed responsive');
+    await waitForRelayMessage(client, roomId, "@beebee what's up");
     await requireExactlyOneMessage(client, roomId, "@beebee what's up");
     await client.messageSubmit(roomId, "SMOKE AGENT MENTION REPLY — @beebee what's up");
-    await waitForMessage(client, roomId, 'SMOKE KEYBOARD PIN TRIGGER');
+    await waitForRelayMessage(client, roomId, 'SMOKE KEYBOARD PIN TRIGGER');
     await client.messageSubmit(roomId, 'SMOKE AGENT KEYBOARD REPLY — newest above keyboard');
-    const cornerPhaseRequest = await waitForMessage(client, roomId, 'SMOKE CORNER PHASE READY');
+    const cornerPhaseRequest = await waitForRelayMessage(
+      client,
+      roomId,
+      'SMOKE CORNER PHASE READY',
+    );
     await publishCornerTurnStatus(cornerPhaseRequest.id, 'working');
-    await waitForMessage(client, cornerId, 'SMOKE CORNER STEER');
-    await client.messageSubmit(cornerId, 'SMOKE AGENT CORNER REPLY — steering delivered live');
-    await publishCornerTurnStatus(cornerPhaseRequest.id, 'complete');
+    const idleNudge = await client.messageSubmit(
+      cornerId,
+      'Completion needed: open a pull request for fm/smoke-lifecycle.',
+      {
+        extraTags: [
+          ['t', 'corner-completion-nudge'],
+          ['rung', 'pushed-no-pr'],
+          ['branch', 'fm/smoke-lifecycle'],
+        ],
+      },
+    );
+    await requireRoomViewWithinBudget(roomViews, cornerId, idleNudge, 'corner-idle-nudge');
+    const cornerSteer = await waitForRelayMessage(client, cornerId, 'SMOKE CORNER STEER');
+    await requireRoomViewWithinBudget(roomViews, cornerId, cornerSteer, 'corner-steer');
+    const cornerReply = await client.messageSubmit(
+      cornerId,
+      'SMOKE AGENT CORNER REPLY — steering delivered live',
+    );
+    await requireRoomViewWithinBudget(roomViews, cornerId, cornerReply, 'corner-agent-reply');
+    // This mirrors the daemon's mechanical PR fact: the signed remote state
+    // drives lifecycle rendering and the typed event drives the visible
+    // GitHub link card. The device waits for this exact card before issuing
+    // its explicit `gh merge` fixture trigger below.
+    await publishCornerRemoteState('in-review', { checks: 'failing' });
+    const prFact = await client.messageSubmit(cornerId, '', {
+      extraTags: [
+        ['t', 'daemon-fact'],
+        ['t', 'corner-pr'],
+        ['t', 'github-event'],
+        ['service', 'beeline-events'],
+        ['github-event-id', `corner:${cornerId}:pr:${pullRequest.number}`],
+        ['github-event-type', 'pull-request'],
+        ['github-event-action', 'opened'],
+        ['github-event-actor', 'GitHub'],
+        ['github-event-title', pullRequest.title],
+        ['github-event-url', pullRequest.url],
+        ['pr-number', String(pullRequest.number)],
+        ['branch', 'fm/smoke-lifecycle'],
+        ['target-branch', pullRequest.targetBranch],
+      ],
+    });
+    await requireRoomViewWithinBudget(roomViews, cornerId, prFact, 'corner-pr-fact');
+    await waitForRelayMessage(client, cornerId, 'SMOKE CHECKS GREEN');
+    await publishCornerRemoteState('in-review', { checks: 'passing' });
+    await waitForRelayMessage(client, cornerId, 'SMOKE GH MERGE');
+    await publishCornerRemoteState('gone', { outcome: 'landed' });
+    const landed = await client.messageSubmit(
+      roomId,
+      `Landed “${pullRequest.title}” into ${pullRequest.targetBranch}: ${pullRequest.url}`,
+      {
+        extraTags: [
+          ['t', 'daemon-fact'],
+          ['t', 'corner-branch-ended'],
+          ['subchannel', cornerId],
+          ['outcome', 'landed'],
+          ['branch', 'fm/smoke-lifecycle'],
+          ['pr-number', String(pullRequest.number)],
+          ['url', pullRequest.url],
+          ['target-branch', pullRequest.targetBranch],
+        ],
+      },
+    );
+    await requireRoomViewWithinBudget(roomViews, roomId, landed, 'room-landed-summary');
+    // A corner is agent-owned. This is the same final kind:9002 the daemon
+    // publishes after observing GitHub's auto-deleted branch; no mobile-only
+    // lifecycle projection is involved.
+    await client.publish(
+      signEvent(
+        {
+          pubkey: identity.publicKey,
+          created_at: Math.floor(Date.now() / 1_000),
+          kind: 9002,
+          tags: [
+            ['h', cornerId],
+            ['archived', 'true'],
+          ],
+          content: '',
+        },
+        identity.secretKey,
+      ),
+    );
+    const worktreeCleaned = await client.messageSubmit(
+      roomId,
+      'Corner worktree cleaned after branch deletion.',
+      {
+        extraTags: [
+          ['t', 'daemon-fact'],
+          ['t', 'corner-worktree-cleaned'],
+          ['subchannel', cornerId],
+          ['branch', 'fm/smoke-lifecycle'],
+        ],
+      },
+    );
+    await requireRoomViewWithinBudget(roomViews, roomId, worktreeCleaned, 'corner-worktree-cleaned');
   } finally {
     stopped = true;
     if (heartbeatTimer) clearTimeout(heartbeatTimer);

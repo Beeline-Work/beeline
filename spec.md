@@ -153,12 +153,13 @@ not one account** (that scoping is the shared-session feature).
   `sessionEventsBackfill` → replay from channel history; permission respond →
   answer `session/request_permission` (acp.rs:1223).
 - **Worktrees (the edit-mode trigger = subchannel open):** `worktreeCreate` → git
-  worktree + branch on the body, open a session in it; `worktreeArchive` → remove
-  on merge/close.
+  worktree + branch on the body, open a session in it; branch deletion after a
+  merge/abandonment archives the corner and removes a clean worktree.
 - **Files (diff view):** `changedFileRead` / `workspaceFilesRead` → git diff via
   `api/git`; `changedFilesRevert` → checkout.
-- **The merge action:** emit the workflow-approval grant against the suspended
-  step's `approval_token` (signed on device); on success, summary posts + archive.
+- **The merge action:** the corner agent uses ordinary `gh` only when the human
+  asks it to merge; branch deletion is observed mechanically and posts the Room
+  summary before archive.
 
 **Stub (hide UI):** `terminalCreate/Stop/Connect` (no live PTY on the Buzz side).
 **Defer:** `sessionFork`, `sessionReset`, `rewind`, `compact`, `messageSteer`, slots/applets.
@@ -169,19 +170,14 @@ not one account** (that scoping is the shared-session feature).
 - **Research escalates into work**: analysis, explanation, summary, and other
   information-only requests must answer in the Room with inspection-only tools;
   an agent-requested mutation must not project ALLOW or open a corner.
-- **Agent in push-rights** (misconfig): the agent can push the protected branch.
-  Test an unauthorized push is rejected + a provisioning check the agent is never
-  in `push-allowed`. **Write this first.**
-- **Agent's own key accepted as the merge approval**: test a grant from the
-  agent's key does NOT merge; a human key does.
-- **Merge before the grant lands** (race): the suspended step must not merge until
-  a valid grant arrives.
-- **Agent completion lands or archives a corner**: publishing `merge-ready` is
-  not authority; target mutation and archive cleanup require an exact signed
-  human-admin approval.
-- **Approval replay / wrong-target**: the grant must bind to exact (branch tip +
-  repo); a grant for merge A is rejected for merge B.
+- **GitHub is unreachable:** keep chat available, render lifecycle truth as
+  unknown/degraded, and never archive from a failed read.
+- **Incomplete branch:** one idle fact-turn names the worst completion rung:
+  dirty/uncommitted, unpushed, or pushed without a PR.
+- **Red checks:** project one concise failing-checks status line and clear it
+  when checks recover.
 - **Two participants, one subchannel** (the multiuser proof): both attached, both
   receive `session/update`, both can submit a command.
-- **On merge**: the summary actually posts to the parent and the subchannel is
-  actually archived read-only — assert both, not the merge alone.
+- **On branch deletion:** the summary actually posts to the parent and the
+  subchannel is archived — assert both, plus clean worktree removal and dirty
+  worktree preservation.

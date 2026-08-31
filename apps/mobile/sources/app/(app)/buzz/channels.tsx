@@ -62,7 +62,7 @@ function firstParam(value: string | string[] | undefined): string | undefined {
 }
 
 function openCornerItems(corners: readonly CornerListItem[]): CornerListItem[] {
-  return corners.filter((item) => item.lifecycle.lifecycle !== 'ARCHIVED');
+  return corners.filter((item) => item.lifecycle.lifecycle !== 'done');
 }
 
 function cornerStatusWord(item: CornerListItem): string {

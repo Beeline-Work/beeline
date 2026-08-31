@@ -2,7 +2,6 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import type { NostrEvent } from '@beeline/nostr';
 import type { ModelTurnSpend, SessionReprimeRecord } from './model-spend.js';
-import type { ConcludeEpisode } from './conclude-watch.js';
 import type {
   PermissionCapacityReservation,
   PermissionCapacityResult,
@@ -43,9 +42,6 @@ interface DurableBodyData {
   sessionReprimes?: SessionReprimeRecord[];
   /** Per-Room GitHub repository-event feed cursors (auth-service event ids). */
   githubEventCursors?: Record<string, number>;
-  /** Quiet-episode conclude-watch state per corner, so a restart mid-episode
-   *  neither resets the spent nudge budget nor re-marks a resolved episode. */
-  concludeEpisodes?: Record<string, ConcludeEpisode>;
   /** Versioned P1 trust-spine reservations. Keys are immutable signed ids. */
   factory?: {
     version: 1;
@@ -80,7 +76,6 @@ function migrateDurableBodyData(candidate: unknown, path: string): DurableBodyDa
         modelTurns: legacy.modelTurns,
         sessionReprimes: legacy.sessionReprimes,
         githubEventCursors: legacy.githubEventCursors,
-        concludeEpisodes: legacy.concludeEpisodes,
         factory: legacy.factory,
       };
     }
@@ -103,7 +98,6 @@ function emptyData(): DurableBodyData {
     inboxes: {},
     modelTurns: [],
     sessionReprimes: [],
-    concludeEpisodes: {},
   };
 }
 
@@ -348,26 +342,6 @@ export class DurableBodyState {
     await this.load();
     this.data.githubEventCursors ??= {};
     this.data.githubEventCursors[channelId] = id;
-    await this.save();
-  }
-
-  /** The quiet-episode conclude-watch state for a corner; `undefined` = no quiet episode. */
-  async concludeEpisode(channelId: string): Promise<ConcludeEpisode | undefined> {
-    await this.load();
-    return this.data.concludeEpisodes?.[channelId];
-  }
-
-  async saveConcludeEpisode(
-    channelId: string,
-    episode: ConcludeEpisode | undefined,
-  ): Promise<void> {
-    await this.load();
-    if (episode === undefined) {
-      delete this.data.concludeEpisodes?.[channelId];
-    } else {
-      this.data.concludeEpisodes ??= {};
-      this.data.concludeEpisodes[channelId] = episode;
-    }
     await this.save();
   }
 

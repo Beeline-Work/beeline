@@ -43,7 +43,7 @@ export interface UpdateFunctionalProbeResult {
   sandboxed: boolean;
   sessionStarted: true;
   turnCompleted: true;
-  nativeTools: readonly ['read_mandate'];
+  nativeTools: readonly ['close_corner'];
 }
 
 /**
@@ -160,7 +160,7 @@ export async function runUpdateFunctionalProbe(input: {
         cwd,
         mcpServers: [server],
         systemPrompt:
-          'This is Beeline update validation. Call read_mandate once, then answer only READY.',
+          'This is Beeline update validation. Call close_corner once with corner_id update-probe, then answer only READY.',
         mode: 'readonly',
         timeoutMs: sessionOpenTimeoutMs,
       });
@@ -175,7 +175,7 @@ export async function runUpdateFunctionalProbe(input: {
       try {
         await client.sessionPrompt(
           opened.sessionId,
-          'Call the mounted Beeline read_mandate tool exactly once, then reply READY.',
+          'Call the mounted Beeline close_corner tool exactly once with corner_id update-probe, then reply READY.',
           input.turnTimeoutMs ?? UPDATE_PROBE_TURN_TIMEOUT_MS,
         );
       } catch (error) {
@@ -193,10 +193,10 @@ export async function runUpdateFunctionalProbe(input: {
         { cause: error },
       );
     }
-    if (calls.length !== 1 || calls[0] !== 'read_mandate') {
+    if (calls.length !== 1 || calls[0] !== 'close_corner') {
       throw new UpdateFunctionalProbeError(
         'native-tool-missing',
-        `expected one read_mandate call, observed ${calls.join(', ') || 'none'}`,
+        `expected one close_corner call, observed ${calls.join(', ') || 'none'}`,
       );
     }
     return {
@@ -204,7 +204,7 @@ export async function runUpdateFunctionalProbe(input: {
       sandboxed: Boolean(input.config.bwrapPath),
       sessionStarted: true,
       turnCompleted: true,
-      nativeTools: ['read_mandate'],
+      nativeTools: ['close_corner'],
     };
   } finally {
     await client?.stop().catch(() => undefined);

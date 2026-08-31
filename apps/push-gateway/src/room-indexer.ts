@@ -53,7 +53,6 @@ import {
   projectedRoomMessages,
   repositoryFromRows,
   repositoryResolutionFromRows,
-  reviewFromRows,
   rowData,
   safeJson,
   text,
@@ -166,7 +165,6 @@ function paintRoom(rows: readonly IndexRow[], roomId: string): RoomView | null {
     ...(cornerPlan ? { cornerPlan } : {}),
     ...(repository ? { repository } : {}),
     repositoryResolution,
-    review: reviewFromRows(rows),
     ...(parentData ? { cornerLifecycle: cornerLifecycle(roomData) } : {}),
     corners,
     watchFilters: roomFilters(

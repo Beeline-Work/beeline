@@ -29,7 +29,6 @@ describe('Buzz composer slash picker integration', () => {
       "handleWritePermission(pendingCornerRequest, 'allow')",
     );
     expect(slashDispatchCase('close-corner')).toContain('handleCloseCorner()');
-    expect(slashDispatchCase('approve')).toContain('handleApprove()');
     expect(slashDispatchCase('change-target-branch')).toContain(
       'handleConfirmTargetBranch(pendingTargetBranchProposal)',
     );

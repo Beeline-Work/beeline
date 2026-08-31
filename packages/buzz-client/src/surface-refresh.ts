@@ -9,6 +9,11 @@ export type SurfaceRefreshOptions<T> = {
   readonly onError?: (error: unknown) => void;
 };
 
+type SurfaceExpectation<T> = {
+  readonly satisfied: (value: T) => boolean;
+  readonly expiresAt: number;
+};
+
 /**
  * One deliberately small liveness scheduler per visible surface. Relay events
  * carry no durable state: they only set the dirty bit. There is never more
@@ -28,6 +33,7 @@ export class SurfaceRefreshScheduler<T> {
   private generation = 0;
   private disposed = false;
   private ready = false;
+  private expectations: SurfaceExpectation<T>[] = [];
 
   constructor(private readonly options: SurfaceRefreshOptions<T>) {
     this.minimumIntervalMs = options.minimumIntervalMs ?? 500;
@@ -55,6 +61,18 @@ export class SurfaceRefreshScheduler<T> {
     this.schedule(false);
   }
 
+  /**
+   * A relay event can arrive just before the Room index transaction that makes
+   * it paintable. Keep the dirty bit alive until the authoritative response
+   * contains the expected row, without turning unrelated control events into
+   * polling loops.
+   */
+  signalUntil(satisfied: (value: T) => boolean, timeoutMs = 5_000): void {
+    if (this.disposed) return;
+    this.expectations.push({ satisfied, expiresAt: this.now() + timeoutMs });
+    this.signal();
+  }
+
   /** Reconnect and focus are recovery boundaries, so they do not wait for quiet. */
   force(): void {
     if (this.disposed) return;
@@ -69,6 +87,7 @@ export class SurfaceRefreshScheduler<T> {
     this.generation += 1;
     this.dirty = false;
     this.firstDirtyAt = undefined;
+    this.expectations = [];
     if (this.timer) this.clearTimer(this.timer);
     this.timer = undefined;
   }
@@ -102,7 +121,17 @@ export class SurfaceRefreshScheduler<T> {
     const generation = this.generation;
     try {
       const value = await this.options.fetch();
-      if (!this.disposed && generation === this.generation) this.options.apply(value);
+      if (!this.disposed && generation === this.generation) {
+        this.options.apply(value);
+        const now = this.now();
+        this.expectations = this.expectations.filter(
+          (expectation) => expectation.expiresAt > now && !expectation.satisfied(value),
+        );
+        if (this.expectations.length > 0) {
+          this.dirty = true;
+          this.firstDirtyAt ??= now;
+        }
+      }
     } catch (error) {
       if (!this.disposed && generation === this.generation) this.options.onError?.(error);
     } finally {

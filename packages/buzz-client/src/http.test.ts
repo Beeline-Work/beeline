@@ -245,6 +245,27 @@ describe('HTTP bridge NIP-98 auth', () => {
     }
   });
 
+  it('signs the public origin when a local proxy canonicalizes the Host tenant', async () => {
+    const fetchMock = vi.fn(async () => new Response('[]', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await queryEvents(
+      {
+        baseUrl: 'http://127.0.0.1:3010',
+        host: '10.0.2.2:3010',
+        publicOrigin: 'http://10.0.2.2:3010',
+        identity,
+      },
+      [],
+      identity.publicKey,
+    );
+
+    const [request, init] = fetchMock.mock.calls[0]!;
+    expect(request).toBe('http://127.0.0.1:3010/query');
+    expect((init.headers as Record<string, string>).host).toBe('10.0.2.2:3010');
+    expect(authEvent(init).tags).toContainEqual(['u', 'http://10.0.2.2:3010/query']);
+  });
+
   it('keeps the X-Pubkey-only fallback when no signer identity is supplied', async () => {
     let headers: Record<string, string> | undefined;
     vi.stubGlobal(

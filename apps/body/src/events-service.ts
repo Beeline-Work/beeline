@@ -181,13 +181,10 @@ export async function discoverRepositoryIngestionTargets(
       const existing = grouped.get(key);
       if (existing) {
         if (!existing.rooms.includes(room.channelId)) existing.rooms.push(room.channelId);
-        // Never replace a proven merge-gate admin from another runtime view
-        // with a plain linked agent. Do replace the fallback when a later
-        // record carries the Room's persisted admin identity.
-        if (room.mergeWorker || !existing.roomProvisioners.has(room.channelId)) {
+        if (!existing.roomProvisioners.has(room.channelId)) {
           existing.roomProvisioners.set(
             room.channelId,
-            runtimeIdentity(room.mergeWorker ?? runtime.agent),
+            runtimeIdentity(runtime.agent),
           );
         }
         existing.targetBranches.add(room.repo.targetBranch.replace(/^refs\/heads\//, ''));
@@ -205,11 +202,8 @@ export async function discoverRepositoryIngestionTargets(
         relayBaseUrl: runtime.relayBaseUrl,
         relayHost: runtime.relayHost ?? new URL(runtime.relayBaseUrl).host,
         rooms: [room.channelId],
-        // The dedicated merge worker is a proven Room admin. Legacy Rooms may
-        // not persist one; retain the linked agent as a best-effort authority
-        // candidate and surface a degraded state if the relay refuses it.
         roomProvisioners: new Map([
-          [room.channelId, runtimeIdentity(room.mergeWorker ?? runtime.agent)],
+          [room.channelId, runtimeIdentity(runtime.agent)],
         ]),
         targetBranches: new Set([room.repo.targetBranch.replace(/^refs\/heads\//, '')]),
       });

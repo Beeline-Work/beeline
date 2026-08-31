@@ -114,7 +114,6 @@ describe('pairing with no repository', () => {
     cleanup.push(nonRepo);
     const agent = newIdentity('agent');
     const body = newIdentity('body');
-    const mergeWorker = newIdentity('merge-worker');
     const supervisorRoot = await stateRoot();
     let resolvedRoomCalls = 0;
     const result = await pairRepositoryAgent(
@@ -128,7 +127,6 @@ describe('pairing with no repository', () => {
         mcpBinary: '/usr/bin/mcp',
         agentIdentity: agent,
         bodyIdentity: body,
-        mergeWorkerIdentity: mergeWorker,
         supervisorRoot,
       },
       {
@@ -148,9 +146,6 @@ describe('pairing with no repository', () => {
         resolveRoom: async () => {
           resolvedRoomCalls += 1;
           throw new Error('resolveRoom must not run without a repository binding');
-        },
-        validate: async () => {
-          throw new Error('validate must not run without a repository binding');
         },
         launch: async () => 4242,
       },
@@ -187,7 +182,6 @@ describe('stored relay migration', () => {
         mcpBinary: '/usr/bin/mcp',
         agentIdentity: agent,
         bodyIdentity: newIdentity('body'),
-        mergeWorkerIdentity: newIdentity('merge-worker'),
         supervisorRoot,
       },
       {
@@ -305,11 +299,10 @@ describe('stored relay migration', () => {
 });
 
 describe('pair → run unification', () => {
-  it('binds a GitHub-style repo without provisioning a Beeline merge worker', async () => {
+  it('binds a GitHub-style repo with one agent identity', async () => {
     const root = await repository('https://example.com/team/project.git');
     const agent = newIdentity('agent');
     const body = newIdentity('body');
-    const mergeWorker = newIdentity('merge-worker');
     const supervisorRoot = await stateRoot();
     let launchedPath = '';
     const result = await pairRepositoryAgent(
@@ -324,7 +317,6 @@ describe('pair → run unification', () => {
         mcpBinary: '/usr/bin/mcp',
         agentIdentity: agent,
         bodyIdentity: body,
-        mergeWorkerIdentity: mergeWorker,
         supervisorRoot,
       },
       {
@@ -344,14 +336,12 @@ describe('pair → run unification', () => {
             },
           };
         },
-        resolveRoom: async (_pairing, binding, mergeWorkerPubkey) => {
+        resolveRoom: async (_pairing, binding) => {
           expect(binding.name).toBe('project');
-          expect(mergeWorkerPubkey).toBeUndefined();
           return {
             channelId: '22222222-2222-4222-8222-222222222222',
             created: true,
             joined: true,
-            mergeWorkerProvisioned: false,
           };
         },
         launch: async (path) => {
@@ -370,7 +360,6 @@ describe('pair → run unification', () => {
     const stored = await readRuntimeRecord(result.configPath);
     expect(stored.agent.publicKey).toBe(agent.publicKey);
     expect(stored.body.publicKey).toBe(body.publicKey);
-    expect(stored.rooms[0]!.mergeWorker).toBeUndefined();
     expect(stored.agentBinary).toBe('/usr/bin/codex-acp');
     expect(runtimeAgentCommand(stored)).toEqual({
       kind: 'codex',
@@ -399,7 +388,6 @@ describe('pair → run unification', () => {
     const root = await repository('https://example.com/team/project.git');
     const agent = newIdentity('agent');
     const body = newIdentity('body');
-    const mergeWorker = newIdentity('merge-worker');
     const supervisorRoot = await stateRoot();
     const result = await pairRepositoryAgent(
       {
@@ -410,7 +398,6 @@ describe('pair → run unification', () => {
         mcpBinary: '/usr/bin/mcp',
         agentIdentity: agent,
         bodyIdentity: body,
-        mergeWorkerIdentity: mergeWorker,
         supervisorRoot,
       },
       {
@@ -431,7 +418,6 @@ describe('pair → run unification', () => {
           channelId: '22222222-2222-4222-8222-222222222222',
           created: true,
           joined: true,
-          mergeWorkerProvisioned: true,
         }),
         launch: async () => 4242,
       },
@@ -460,7 +446,6 @@ describe('pair → run unification', () => {
         mcpBinary: '/usr/bin/mcp',
         agentIdentity: agent,
         bodyIdentity: newIdentity('body'),
-        mergeWorkerIdentity: newIdentity('merge-worker'),
         supervisorRoot,
         modelSelection: { model: 'sonnet', effort: 'high' },
       },
@@ -482,7 +467,6 @@ describe('pair → run unification', () => {
           channelId: '22222222-2222-4222-8222-222222222222',
           created: true,
           joined: true,
-          mergeWorkerProvisioned: false,
         }),
         launch: async () => 4242,
       },
@@ -506,7 +490,6 @@ describe('pair → run unification', () => {
         mcpBinary: '/usr/bin/mcp',
         agentIdentity: agent,
         bodyIdentity: newIdentity('body'),
-        mergeWorkerIdentity: newIdentity('merge-worker'),
         supervisorRoot,
       },
       {
@@ -527,7 +510,6 @@ describe('pair → run unification', () => {
           channelId: '22222222-2222-4222-8222-222222222222',
           created: true,
           joined: true,
-          mergeWorkerProvisioned: false,
         }),
         launch: async () => 4242,
       },
@@ -565,7 +547,6 @@ describe('multi-identity guard (S0) + access policy', () => {
         mcpBinary: '/usr/bin/mcp',
         agentIdentity: agent,
         bodyIdentity: newIdentity('body'),
-        mergeWorkerIdentity: newIdentity('merge-worker'),
         supervisorRoot,
         ...(extra.accessPolicy ? { accessPolicy: extra.accessPolicy } : {}),
         ...(extra.accessAllowlist ? { accessAllowlist: extra.accessAllowlist } : {}),
@@ -592,7 +573,6 @@ describe('multi-identity guard (S0) + access policy', () => {
           channelId: '22222222-2222-4222-8222-222222222222',
           created: true,
           joined: true,
-          mergeWorkerProvisioned: false,
         }),
         launch: async () => 4242,
       },
@@ -850,7 +830,6 @@ describe('runtime root migration', () => {
         mcpBinary: '/usr/bin/mcp',
         agentIdentity: agent,
         bodyIdentity: newIdentity('body'),
-        mergeWorkerIdentity: newIdentity('merge-worker'),
         supervisorRoot,
       },
       {
@@ -871,7 +850,6 @@ describe('runtime root migration', () => {
           channelId,
           created: true,
           joined: true,
-          mergeWorkerProvisioned: false,
         }),
         launch: async () => 4242,
       },
@@ -1098,7 +1076,6 @@ describe('a pair run that fails after redemption', () => {
           mcpBinary: '/usr/bin/mcp',
           agentIdentity: agent,
           bodyIdentity: newIdentity('body'),
-          mergeWorkerIdentity: newIdentity('merge-worker'),
           supervisorRoot,
         },
         {
@@ -1119,39 +1096,6 @@ describe('a pair run that fails after redemption', () => {
     ).toBe(false);
   });
 
-  it('rolls the registration back when the startup-protection check refuses', async () => {
-    const root = await repository('https://example.com/team/project.git');
-    const agent = newIdentity('agent');
-    const relay = workspace(agent.publicKey);
-
-    await expect(
-      pairRepositoryAgent(
-        {
-          code: 'BUZZ-ABCD-EFGH',
-          cwd: root,
-          relayBaseUrl: 'http://relay.test',
-          agentBinary: '/usr/bin/agent',
-          mcpBinary: '/usr/bin/mcp',
-          agentIdentity: agent,
-          bodyIdentity: newIdentity('body'),
-          mergeWorkerIdentity: newIdentity('merge-worker'),
-          supervisorRoot: await stateRoot(),
-        },
-        {
-          redeem: relay.redeem,
-          resolveRoom: async () => ({ channelId: 'room-1', created: true }),
-          validate: async () => {
-            throw new Error('agent is in push-allowed');
-          },
-          abandonPairing: relay.abandonPairing,
-          launch: async () => 1,
-        },
-      ),
-    ).rejects.toThrow('agent is in push-allowed');
-
-    expect([...relay.members]).toEqual([]);
-  });
-
   it('keeps a completed pairing when only the daemon fails to launch', async () => {
     // The runtime record is already on disk here, so the pairing is real and
     // recoverable; undoing the registration would delete a valid agent.
@@ -1169,7 +1113,6 @@ describe('a pair run that fails after redemption', () => {
           mcpBinary: '/usr/bin/mcp',
           agentIdentity: agent,
           bodyIdentity: newIdentity('body'),
-          mergeWorkerIdentity: newIdentity('merge-worker'),
           supervisorRoot: await stateRoot(),
         },
         {
@@ -1205,7 +1148,6 @@ describe('a pair run that fails after redemption', () => {
           mcpBinary: '/usr/bin/mcp',
           agentIdentity: agent,
           bodyIdentity: newIdentity('body'),
-          mergeWorkerIdentity: newIdentity('merge-worker'),
           supervisorRoot,
         },
         {

@@ -74,7 +74,6 @@ export interface UseRoomSurfaceSessionResult {
   retryHydration(): void;
   refreshSignal: RoomSurfaceRefreshSignal;
   outbox: RoomSurfaceOutboxHandle;
-  reviewTipRef: MutableRefObject<string | null>;
 }
 
 /** Owns the Room response lifecycle; presentation remains in the chat screen. */
@@ -103,7 +102,6 @@ export function useRoomSurfaceSession({
   const confirmationTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const agentPresencesRef = useRef(heartbeatPresences);
   const reconnectGraceRef = useRef(presenceReconnectGrace);
-  const reviewTipRef = useRef<string | null>(null);
   agentPresencesRef.current = heartbeatPresences;
   reconnectGraceRef.current = presenceReconnectGrace;
 
@@ -262,9 +260,6 @@ export function useRoomSurfaceSession({
       setPresenceResolved(true);
       setPresenceNow(Date.now());
 
-      reviewTipRef.current =
-        stableView.review?.status === 'ready' ? (stableView.review.artifact?.tip ?? null) : null;
-
       decoder = new LiveOverlayDecoder(
         channelId,
         new Set(
@@ -326,7 +321,22 @@ export function useRoomSurfaceSession({
           return;
         }
         if (replaying) return;
-        scheduler?.signal();
+        const markers = event.tags.flatMap((tag) =>
+          tag[0] === 't' && tag[1] ? [tag[1]] : [],
+        );
+        const expectsPaintedMessage =
+          event.kind === 9 &&
+          (markers.length === 0 ||
+            markers.some((marker) =>
+              ['agent-message', 'github-event', 'buzz-attachment'].includes(marker),
+            ));
+        if (expectsPaintedMessage) {
+          scheduler?.signalUntil((view) =>
+            view.messages.some((message) => message.id === event.id),
+          );
+        } else {
+          scheduler?.signal();
+        }
       });
       replaying = false;
       if (cancelled || generation !== watchGeneration) {
@@ -474,6 +484,5 @@ export function useRoomSurfaceSession({
     retryHydration: () => setHydrationAttempt((attempt) => attempt + 1),
     refreshSignal,
     outbox,
-    reviewTipRef,
   };
 }

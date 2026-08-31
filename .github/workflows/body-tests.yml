@@ -36,7 +36,7 @@ jobs:
       # placeholder-binary convention (e.g. `agentBinary: '/bin/false'`).
       BUZZ_AGENT_BIN: /bin/false
       BUZZ_DEV_MCP_BIN: /bin/false
-      BUZZ_READONLY_MCP_BIN: /bin/false
+      BEELINE_READONLY_MCP_BIN: /bin/false
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

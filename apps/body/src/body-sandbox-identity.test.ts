@@ -201,7 +201,7 @@ describe('mcp-inventory', () => {
         {
           agentBinary: '/agent',
           mcpBinary: '/buzz-dev-mcp',
-          readonlyMcpCommand: '/buzz-readonly-mcp',
+          readonlyMcpCommand: '/beeline-readonly-mcp',
           readonlyMcpArgs: ['--fixed-entrypoint'],
           agentEnv: {},
           workspaceRoot: '/workspace',
@@ -214,10 +214,10 @@ describe('mcp-inventory', () => {
         '/paired/repository',
       ),
     ).toEqual({
-      name: 'buzz-readonly-mcp',
-      command: '/buzz-readonly-mcp',
+      name: 'beeline-readonly-mcp',
+      command: '/beeline-readonly-mcp',
       args: ['--fixed-entrypoint'],
-      env: [{ name: 'BUZZ_READONLY_ROOT', value: '/paired/repository' }],
+      env: [{ name: 'BEELINE_READONLY_ROOT', value: '/paired/repository' }],
     });
   });
 
@@ -229,7 +229,7 @@ describe('mcp-inventory', () => {
             agentBinary: '/agent',
             agentKind: kind,
             mcpBinary: '/buzz-dev-mcp',
-            readonlyMcpCommand: '/buzz-readonly-mcp',
+            readonlyMcpCommand: '/beeline-readonly-mcp',
             agentEnv: {},
             workspaceRoot: '/workspace',
             agentHomeRoot: '/runtime/agents/agent-a/home',
@@ -243,13 +243,13 @@ describe('mcp-inventory', () => {
           '/runtime/agents/agent-a/memory/workspace-a',
         ).env,
       ).toEqual([
-        { name: 'BUZZ_READONLY_ROOT', value: '/paired/repository' },
+        { name: 'BEELINE_READONLY_ROOT', value: '/paired/repository' },
         {
-          name: 'BUZZ_READONLY_AGENT_SKILLS_ROOT',
+          name: 'BEELINE_READONLY_AGENT_SKILLS_ROOT',
           value: `/runtime/agents/agent-a/home/${kind}/skills`,
         },
         {
-          name: 'BUZZ_READONLY_AGENT_MEMORY_ROOT',
+          name: 'BEELINE_READONLY_AGENT_MEMORY_ROOT',
           value: '/runtime/agents/agent-a/memory/workspace-a',
         },
       ]);
@@ -397,7 +397,7 @@ describe('acp', () => {
       expect(captured.toolCall.kind).toBe('other');
       expect(captured).not.toHaveProperty('_meta');
       expect(captured.toolCall.rawInput).not.toHaveProperty('server');
-      expect(captured.toolCall.title).toMatch(/^mcp__buzz-readonly-mcp__/);
+      expect(captured.toolCall.title).toMatch(/^mcp__beeline_readonly_mcp__/);
       expect(isReadOnlyMcpPermissionRequest(captured)).toBe(true);
     }
   });
@@ -432,8 +432,8 @@ describe('acp', () => {
       isReadOnlyMcpPermissionRequest({
         toolCall: {
           kind: 'read',
-          title: 'Read /tmp/buzz-readonly-mcp/read_file',
-          rawInput: { path: '/tmp/buzz-readonly-mcp/read_file' },
+          title: 'Read /tmp/beeline-readonly-mcp/read_file',
+          rawInput: { path: '/tmp/beeline-readonly-mcp/read_file' },
         },
       }),
     ).toBe(false);
@@ -443,12 +443,13 @@ describe('acp', () => {
     // codex-acp forwards a real MCP envelope and spells the tool with dots.
     expect(isReadOnlyMcpPermissionRequest(CODEX_ACP_MCP_READ_FILE_PERMISSION)).toBe(true);
     for (const title of [
-      'mcp.buzz-readonly-mcp.search_text',
-      'buzz-readonly-mcp/git_show',
-      'buzz-readonly-mcp:list_files',
-      'mcp__buzz-readonly-mcp__git_diff',
-      'mcp__buzz-readonly-mcp__read_agent_file',
-      'buzz-readonly-mcp (read_file)',
+      'mcp.beeline-readonly-mcp.search_text',
+      'beeline-readonly-mcp/git_show',
+      'beeline-readonly-mcp:list_files',
+      'mcp__beeline-readonly-mcp__git_diff',
+      'mcp__beeline_readonly_mcp__git_status',
+      'mcp__beeline-readonly-mcp__read_agent_file',
+      'beeline-readonly-mcp (read_file)',
     ]) {
       expect(isReadOnlyMcpPermissionRequest({ toolCall: { kind: 'other', title } })).toBe(true);
     }
@@ -489,11 +490,11 @@ describe('acp', () => {
         _meta: { is_mcp_tool_approval: true },
         toolCall: {
           kind: 'execute',
-          title: 'mcp.buzz-readonly-mcp.shell',
-          rawInput: { server: 'buzz-readonly-mcp', tool: 'shell', arguments: {} },
+          title: 'mcp.beeline-readonly-mcp.shell',
+          rawInput: { server: 'beeline-readonly-mcp', tool: 'shell', arguments: {} },
         },
       },
-      { toolCall: { kind: 'other', title: 'mcp__buzz-readonly-mcp__write_file' } },
+      { toolCall: { kind: 'other', title: 'mcp__beeline-readonly-mcp__write_file' } },
       // Kinds that are neither reads nor recognized inspection calls.
       { toolCall: { kind: 'other', title: 'SomeBrandNewTool' } },
       { toolCall: { kind: 'think', title: 'Update TODOs: ship it' } },
@@ -513,9 +514,9 @@ describe('acp', () => {
    */
   it('never resolves a shell payload by name, however its command text reads', () => {
     for (const command of [
-      'rm -rf /tmp/buzz-readonly-mcp/read_file',
-      'cat /opt/buzz-readonly-mcp/read_file',
-      'git -C /srv/buzz-readonly-mcp commit -am buzz-readonly-mcp/read_file',
+      'rm -rf /tmp/beeline-readonly-mcp/read_file',
+      'cat /opt/beeline-readonly-mcp/read_file',
+      'git -C /srv/beeline-readonly-mcp commit -am beeline-readonly-mcp/read_file',
     ]) {
       expect(
         isReadOnlyMcpPermissionRequest({
@@ -1368,7 +1369,7 @@ describe('agent identity boundary', () => {
         }
       ).handleRoomPermissionRequest.bind(body);
 
-      const command = 'rm -rf /tmp/buzz-readonly-mcp/read_file';
+      const command = 'rm -rf /tmp/beeline-readonly-mcp/read_file';
       await expect(
         handle('room-1', { toolCall: { kind: 'execute', title: command, rawInput: { command } } }),
       ).resolves.toBe('reject');
@@ -1411,8 +1412,8 @@ describe('agent identity boundary', () => {
           _meta: { is_mcp_tool_approval: true },
           toolCall: {
             kind: 'execute',
-            title: 'mcp.buzz-readonly-mcp.read_file',
-            rawInput: { server: 'buzz-readonly-mcp', tool: 'read_file', arguments: {} },
+            title: 'mcp.beeline-readonly-mcp.read_file',
+            rawInput: { server: 'beeline-readonly-mcp', tool: 'read_file', arguments: {} },
           },
         }),
       ).resolves.toBe('allow');
@@ -1420,9 +1421,9 @@ describe('agent identity boundary', () => {
         handle('room-1', {
           toolCall: {
             kind: 'execute',
-            title: 'mcp.buzz-readonly-mcp.read_agent_file',
+            title: 'mcp.beeline-readonly-mcp.read_agent_file',
             rawInput: {
-              server: 'buzz-readonly-mcp',
+              server: 'beeline-readonly-mcp',
               tool: 'read_agent_file',
               arguments: { area: 'skills', path: 'using-beeline/SKILL.md' },
             },
@@ -1433,9 +1434,9 @@ describe('agent identity boundary', () => {
         handle('room-1', {
           toolCall: {
             kind: 'execute',
-            title: 'mcp.buzz-readonly-mcp.write_memory',
+            title: 'mcp.beeline-readonly-mcp.write_memory',
             rawInput: {
-              server: 'buzz-readonly-mcp',
+              server: 'beeline-readonly-mcp',
               tool: 'write_memory',
               arguments: { content: '# Agent memory\n' },
             },
@@ -2115,7 +2116,7 @@ describe('agent identity boundary', () => {
         ...config,
         agentCommand: '/usr/local/bin/grok',
         agentArgs: ['agent', 'stdio'],
-        readonlyMcpCommand: '/buzz-readonly-mcp',
+        readonlyMcpCommand: '/beeline-readonly-mcp',
         readonlyMcpArgs: [],
       },
       newIdentity('operator'),
@@ -2194,7 +2195,7 @@ describe('agent identity boundary', () => {
   it('mounts only the release-owned read and Beeline tool servers when provisioning a Room', async () => {
     const body = new Body({
       ...config,
-      readonlyMcpCommand: '/buzz-readonly-mcp',
+      readonlyMcpCommand: '/beeline-readonly-mcp',
       readonlyMcpArgs: ['--fixed-entrypoint'],
     });
     const client = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
@@ -2226,10 +2227,10 @@ describe('agent identity boundary', () => {
         autoApprovePermissions: false,
         mcpServers: [
           {
-            name: 'buzz-readonly-mcp',
-            command: '/buzz-readonly-mcp',
+            name: 'beeline-readonly-mcp',
+            command: '/beeline-readonly-mcp',
             args: ['--fixed-entrypoint'],
-            env: [{ name: 'BUZZ_READONLY_ROOT', value: '/paired/repo' }],
+            env: [{ name: 'BEELINE_READONLY_ROOT', value: '/paired/repo' }],
           },
           expect.objectContaining({
             name: 'beeline-agent-tools',
@@ -2244,7 +2245,7 @@ describe('agent identity boundary', () => {
       'Read-only means the repository is visible but cannot be changed',
     );
     expect(systemPrompt).toContain(
-      'Never tell a Room member that you cannot view the repository unless a buzz-readonly-mcp inspection call actually fails',
+      'Never tell a Room member that you cannot view the repository unless a beeline-readonly-mcp inspection call actually fails',
     );
     expect(JSON.stringify(create.mock.calls)).not.toContain('buzz-dev-mcp');
   });
@@ -2256,7 +2257,7 @@ describe('agent identity boundary', () => {
       accessPolicy: 'creator',
       externalMcpCapabilities: ['squire-credential-use'],
       squireConfigRoot: join(tmpdir(), 'beeline-squire-config-unit'),
-      readonlyMcpCommand: '/buzz-readonly-mcp',
+      readonlyMcpCommand: '/beeline-readonly-mcp',
     });
     vi.spyOn(body as never, 'ensureAgentInChannel' as never).mockResolvedValue(undefined as never);
     vi.spyOn(body as never, 'ensureAgentEntity' as never).mockResolvedValue(undefined as never);
@@ -2275,10 +2276,10 @@ describe('agent identity boundary', () => {
     await body.provision('room-id', { repo: 'repo', localPath: '/paired/repo' });
 
     expect(create.mock.calls[0]![0].mcpServers[0]).toEqual({
-      name: 'buzz-readonly-mcp',
-      command: '/buzz-readonly-mcp',
+      name: 'beeline-readonly-mcp',
+      command: '/beeline-readonly-mcp',
       args: [],
-      env: [{ name: 'BUZZ_READONLY_ROOT', value: '/paired/repo' }],
+      env: [{ name: 'BEELINE_READONLY_ROOT', value: '/paired/repo' }],
     });
     expect(create.mock.calls[0]![0].mcpServers[1]).toMatchObject({
       name: 'beeline-agent-tools',
@@ -2295,8 +2296,8 @@ describe('agent identity boundary', () => {
     await body.dispose();
   });
 
-  it('fails a research Room closed when buzz-readonly-mcp is unresolved', async () => {
-    const body = new Body({ ...config, workspaceRoot: '/tmp/buzzy-readonly-unavailable-unit' });
+  it('fails a research Room closed when beeline-readonly-mcp is unresolved', async () => {
+    const body = new Body({ ...config, workspaceRoot: '/tmp/beeline-readonly-unavailable-unit' });
     stubEmptyAgentHistory(body);
     const open = vi.spyOn(body, 'openSubchannel');
     const create = vi.spyOn(body as never, 'createManagedSession' as never);
@@ -2331,8 +2332,8 @@ describe('agent identity boundary', () => {
     expect(published[1]!.tags).toContainEqual(['status', 'complete']);
   });
 
-  it('does no relay or session work when buzz-readonly-mcp is unresolved', async () => {
-    const body = new Body({ ...config, workspaceRoot: '/tmp/buzzy-readonly-unavailable-unit' });
+  it('does no relay or session work when beeline-readonly-mcp is unresolved', async () => {
+    const body = new Body({ ...config, workspaceRoot: '/tmp/beeline-readonly-unavailable-unit' });
     const create = vi.spyOn(body as never, 'createManagedSession' as never);
     const relayRequest = vi.fn();
     vi.stubGlobal('fetch', relayRequest);
@@ -2345,7 +2346,7 @@ describe('agent identity boundary', () => {
   });
 
   it('never reuses an edit session as a read-only Room session', async () => {
-    const body = new Body({ ...config, readonlyMcpCommand: '/buzz-readonly-mcp' });
+    const body = new Body({ ...config, readonlyMcpCommand: '/beeline-readonly-mcp' });
     stubEmptyAgentHistory(body);
     const client = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
     body.registerSession({

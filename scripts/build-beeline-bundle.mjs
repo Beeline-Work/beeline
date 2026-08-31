@@ -255,13 +255,13 @@ async function main() {
     'export BEELINE_LIB_DIR',
   ].join('\n');
   await writeFile(
-    resolve(staging, 'bin', 'buzz-readonly-mcp'),
+    resolve(staging, 'bin', 'beeline-readonly-mcp'),
     `${wrapperPrologue}\nexec node "$BEELINE_BUNDLE_ROOT/lib/beeline/beeline-readonly-mcp.mjs"\n`,
     { mode: 0o755 },
   );
   await writeFile(
     resolve(staging, 'bin', 'beeline'),
-    `${wrapperPrologue}\n: "\${BUZZ_AGENT_BIN:=$(dirname -- "$script_path")/buzz-agent}"\n: "\${BUZZ_DEV_MCP_BIN:=$(dirname -- "$script_path")/buzz-dev-mcp}"\n: "\${BUZZ_READONLY_MCP_BIN:=$(dirname -- "$script_path")/buzz-readonly-mcp}"\n# Self-update needs to know its own install anchor (import.meta.url is defined away inside the esbuild bundle).\nexport BUZZ_AGENT_BIN BUZZ_DEV_MCP_BIN BUZZ_READONLY_MCP_BIN\nexec node "$BEELINE_BUNDLE_ROOT/lib/beeline/beeline-cli.mjs" "$@"\n`,
+    `${wrapperPrologue}\n: "\${BUZZ_AGENT_BIN:=$(dirname -- "$script_path")/buzz-agent}"\n: "\${BUZZ_DEV_MCP_BIN:=$(dirname -- "$script_path")/buzz-dev-mcp}"\n: "\${BEELINE_READONLY_MCP_BIN:=$(dirname -- "$script_path")/beeline-readonly-mcp}"\n# Self-update needs to know its own install anchor (import.meta.url is defined away inside the esbuild bundle).\nexport BUZZ_AGENT_BIN BUZZ_DEV_MCP_BIN BEELINE_READONLY_MCP_BIN\nexec node "$BEELINE_BUNDLE_ROOT/lib/beeline/beeline-cli.mjs" "$@"\n`,
     { mode: 0o755 },
   );
 
@@ -312,7 +312,7 @@ async function main() {
     version: buildVersion,
   };
   // Prove the just-written artifact installs and starts from a cwd with no
-  // checkout and no BUZZ_READONLY_MCP_* overrides. This keeps release bundles
+  // checkout and no BEELINE_READONLY_MCP_* overrides. This keeps release bundles
   // from drifting behind the read-only boundary implemented by Body.
   // Cross-platform builds cannot run this probe; manifest.json records the
   // honest per-platform verification status instead of implying it, and is

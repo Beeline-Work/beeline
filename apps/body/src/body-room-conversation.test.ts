@@ -1601,9 +1601,9 @@ describe('Room conversation and permission-gated work intent', () => {
       },
     );
 
-    expect(
-      published.some((item) => item.content.includes("couldn't produce a response")),
-    ).toBe(false);
+    expect(published.some((item) => item.content.includes("couldn't produce a response"))).toBe(
+      false,
+    );
 
     prompt.mockRejectedValueOnce(new Error('prompt cancelled'));
     await expect(
@@ -1622,7 +1622,9 @@ describe('Room conversation and permission-gated work intent', () => {
     expect(
       published.slice(-2).map((item) => item.tags.find((tag) => tag[0] === 'status')?.[1]),
     ).toEqual(['working', 'complete']);
-    expect(published.some((item) => item.content.includes("won't retry it without another message"))).toBe(false);
+    expect(
+      published.some((item) => item.content.includes("won't retry it without another message")),
+    ).toBe(false);
   });
 
   it('publishes and then honestly replaces a Room receipt before cold provisioning starts', async () => {
@@ -2141,7 +2143,7 @@ describe('Room conversation and permission-gated work intent', () => {
       agentBinary: '/nonexistent',
       mcpBinary: '/nonexistent',
       agentEnv: {},
-      workspaceRoot: '/tmp/buzzy-dm-readonly-unit',
+      workspaceRoot: '/tmp/beeline-dm-readonly-unit',
       relayBaseUrl: 'http://relay.test',
       relayHost: 'relay.test',
       relayScheme: 'http',
@@ -3184,9 +3186,9 @@ describe('Room conversation and permission-gated work intent', () => {
         _meta: { is_mcp_tool_approval: true },
         toolCall: {
           kind: 'execute',
-          title: 'mcp.buzz-readonly-mcp.read_file',
+          title: 'mcp.beeline-readonly-mcp.read_file',
           rawInput: {
-            server: 'buzz-readonly-mcp',
+            server: 'beeline-readonly-mcp',
             tool: 'read_file',
             arguments: { path: 'README.md' },
           },

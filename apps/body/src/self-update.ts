@@ -492,7 +492,7 @@ export async function stageRelease(
 // Atomic activation
 // ---------------------------------------------------------------------------
 
-const FORWARDER_TOOLS = ['beeline', 'buzz-agent', 'buzz-dev-mcp', 'buzz-readonly-mcp'] as const;
+const FORWARDER_TOOLS = ['beeline', 'buzz-agent', 'buzz-dev-mcp', 'beeline-readonly-mcp'] as const;
 
 function forwarderScript(tool: string): string {
   // Must stay byte-identical with relay-stack/web/install.sh's forwarder
@@ -736,7 +736,9 @@ export async function readUpdateAttempt(
   layout: BeelineInstallLayout,
 ): Promise<UpdateAttemptRecord | undefined> {
   try {
-    const raw = JSON.parse(await readFile(updateAttemptPath(layout), 'utf8')) as UpdateAttemptRecord;
+    const raw = JSON.parse(
+      await readFile(updateAttemptPath(layout), 'utf8'),
+    ) as UpdateAttemptRecord;
     if (
       raw.version !== 1 ||
       typeof raw.appliedAt !== 'number' ||
@@ -967,8 +969,12 @@ export class SelfUpdateManager {
     const state = await readUpdateState(this.options.layout);
     const previousAttempt = await readUpdateAttempt(this.options.layout);
     if (previousAttempt?.status === 'reverted' && !opts.force) {
-      const sameCommit = Boolean(previousAttempt.to.commit && previousAttempt.to.commit === bundle.commit);
-      const sameVersion = Boolean(previousAttempt.to.version && previousAttempt.to.version === bundle.version);
+      const sameCommit = Boolean(
+        previousAttempt.to.commit && previousAttempt.to.commit === bundle.commit,
+      );
+      const sameVersion = Boolean(
+        previousAttempt.to.version && previousAttempt.to.version === bundle.version,
+      );
       if (sameCommit || sameVersion) {
         const line =
           `release ${describeIdentity(previousAttempt.to)} reverted after a failed served-turn proof; ` +
@@ -1021,10 +1027,7 @@ export class SelfUpdateManager {
     await this.apply(verdict.published, manifestUrl);
   }
 
-  private async apply(
-    published: PublishedBundle,
-    manifestUrl: string,
-  ): Promise<void> {
+  private async apply(published: PublishedBundle, manifestUrl: string): Promise<void> {
     const now = this.options.now();
     const state = await readUpdateState(this.options.layout);
     const installed = await readInstalledBundleIdentity(this.options.layout, state);

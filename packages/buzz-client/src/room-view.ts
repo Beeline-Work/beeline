@@ -21,6 +21,7 @@ export const ROOM_VIEW_CHAT_LIMIT = 200;
 export const ROOM_VIEW_MEMBER_LIMIT = 200;
 export const ROOM_VIEW_AGENT_LIMIT = 200;
 export const ROOM_VIEW_REQUEST_TIMEOUT_MS = 8_000;
+const AGENT_PAIRING_ROOM_ROLLBACK_CAPABILITY = 'pairing-room-rollback';
 
 /** Opaque relay filters supplied by the authoritative surface query. */
 export type SurfaceWatchFilter = {
@@ -482,9 +483,13 @@ export class RoomViewClient {
   }
 
   claimAgentPairing(code: string): Promise<AgentPairingClaimView> {
-    return this.request('/agent-pairing/claim', 'POST', isAgentPairingClaimWireView, { code }).then(
-      (claim) => ({ ...claim, attachedRoomIds: claim.attachedRoomIds ?? [] }),
-    );
+    return this.request('/agent-pairing/claim', 'POST', isAgentPairingClaimWireView, {
+      code,
+      // Room inheritance is opt-in so old installed CLIs, which can only
+      // self-remove their Workspace membership, never receive memberships
+      // they cannot roll back after a local pairing failure.
+      capabilities: [AGENT_PAIRING_ROOM_ROLLBACK_CAPABILITY],
+    }).then((claim) => ({ ...claim, attachedRoomIds: claim.attachedRoomIds ?? [] }));
   }
 
   abandonAgentPairing(code: string): Promise<AgentPairingAbandonView> {

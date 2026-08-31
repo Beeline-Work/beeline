@@ -92,6 +92,28 @@ function axisValue(detail: AgentDetailView, axis: AgentModelConfigOption): strin
   return detail.selected?.effort ?? detail.runtimeSelection?.effort ?? axis.currentValue;
 }
 
+/**
+ * A model's effort choices can be model-specific. The catalog only proves an
+ * effort compatible with its own current model, so a change to any other
+ * model must explicitly clear the old human pick. That lets the next cold
+ * activation use the target model's native default instead of inheriting an
+ * invalid launch argument. This remains provider-neutral: Codex and Claude
+ * receive the same safe reset, while re-selecting the catalog's live model
+ * keeps its advertised default atomically.
+ */
+function modelSelectionInput(
+  detail: AgentDetailView,
+  axis: AgentModelConfigOption,
+  model: string,
+): AgentModelConfigInput {
+  if (axis.currentValue !== model) return { model, effort: null };
+  const effortAxis = detail.catalog.find((candidate) => candidate.category !== 'model');
+  const effort = effortAxis?.currentValue;
+  return effort && effortAxis.options.some((choice) => choice.id === effort)
+    ? { model, effort }
+    : { model, effort: null };
+}
+
 export default function BuzzMembers() {
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{
@@ -393,7 +415,9 @@ export default function BuzzMembers() {
     if (!selectedAgent || !surface?.viewer.permissions.manage) return;
     if (!isAllowedAgentModelConfigCategory(axis.category)) return;
     const input: AgentModelConfigInput =
-      axis.category === 'model' ? { model: choiceId } : { effort: choiceId };
+      axis.category === 'model'
+        ? modelSelectionInput(selectedAgent, axis, choiceId)
+        : { effort: choiceId };
     setWorking('model-config');
     setError(null);
     try {
@@ -449,9 +473,22 @@ export default function BuzzMembers() {
   };
 
   const modelAxes = useMemo(() => {
+    const advertisedModel = selectedAgent?.catalog.find(
+      (axis) => axis.category === 'model',
+    )?.currentValue;
+    const selectedModel =
+      selectedAgent?.selected?.model ?? selectedAgent?.runtimeSelection?.model;
+    const awaitingSelectedModelCatalog =
+      Boolean(advertisedModel) && Boolean(selectedModel) && advertisedModel !== selectedModel;
     return (
       selectedAgent?.catalog.filter(
-        (axis) => isAllowedAgentModelConfigCategory(axis.category) && axis.options.length > 0,
+        (axis) =>
+          isAllowedAgentModelConfigCategory(axis.category) &&
+          axis.options.length > 0 &&
+          // Effort choices may be model-specific. After a model switch, hide
+          // the old model's effort axis until the agent republishes a catalog
+          // whose current model matches the persisted human selection.
+          !(axis.category !== 'model' && awaitingSelectedModelCatalog),
       ) ?? []
     );
   }, [selectedAgent]);

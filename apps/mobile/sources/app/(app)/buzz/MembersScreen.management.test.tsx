@@ -233,6 +233,7 @@ function baseAgent() {
       {
         id: 'model',
         category: 'model',
+        currentValue: 'sonnet',
         options: [
           { id: 'sonnet', name: 'Sonnet' },
           { id: 'opus', name: 'Opus' },
@@ -241,6 +242,7 @@ function baseAgent() {
       {
         id: 'effort',
         category: 'reasoning_effort',
+        currentValue: 'low',
         options: [{ id: 'low' }, { id: 'high' }],
       },
       { id: 'mode', category: 'mode', options: [{ id: 'bypassPermissions' }] },
@@ -313,6 +315,11 @@ describe('Members workspace management', () => {
     expect(
       renderer.root.findByProps({ testID: 'model-config-activation-note' }).props.children,
     ).toContain('restarting the paired agent');
+    await press(renderer, 'model-axis-effort');
+    expect(renderer.root.findAllByProps({ testID: 'model-custom-effort' })).toHaveLength(0);
+    await press(renderer, 'model-option-effort-high');
+    expect(client.setAgentModelConfig).toHaveBeenCalledWith(WORKSPACE, AGENT, { effort: 'high' });
+
     await press(renderer, 'model-axis-model');
     await act(async () => {
       renderer.root.findByProps({ testID: 'model-search-model' }).props.onChangeText('opu');
@@ -321,12 +328,42 @@ describe('Members workspace management', () => {
     expect(renderer.root.findAllByProps({ testID: 'model-option-model-sonnet' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'model-custom-model' })).toHaveLength(0);
     await press(renderer, 'model-option-model-opus');
-    expect(client.setAgentModelConfig).toHaveBeenCalledWith(WORKSPACE, AGENT, { model: 'opus' });
+    expect(client.setAgentModelConfig).toHaveBeenCalledWith(WORKSPACE, AGENT, {
+      model: 'opus',
+      effort: null,
+    });
+    expect(renderer.root.findAllByProps({ testID: 'model-axis-effort' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'model-option-effort-high' })).toHaveLength(0);
+  });
 
-    await press(renderer, 'model-axis-effort');
-    expect(renderer.root.findAllByProps({ testID: 'model-custom-effort' })).toHaveLength(0);
-    await press(renderer, 'model-option-effort-high');
-    expect(client.setAgentModelConfig).toHaveBeenCalledWith(WORKSPACE, AGENT, { effort: 'high' });
+  it('keeps the catalog default effort atomically when selecting its live model', async () => {
+    state.agent = {
+      ...baseAgent(),
+      catalog: [
+        {
+          id: 'model',
+          category: 'model',
+          currentValue: 'opus',
+          options: [{ id: 'sonnet' }, { id: 'opus' }],
+        },
+        {
+          id: 'effort',
+          category: 'reasoning_effort',
+          currentValue: 'high',
+          options: [{ id: 'low' }, { id: 'high' }],
+        },
+      ],
+      selected: { model: 'sonnet', effort: 'low' },
+    };
+    const renderer = await render();
+    await press(renderer, `agent-${AGENT}-identity`);
+    await press(renderer, 'model-axis-model');
+    await press(renderer, 'model-option-model-opus');
+
+    expect(client.setAgentModelConfig).toHaveBeenCalledWith(WORKSPACE, AGENT, {
+      model: 'opus',
+      effort: 'high',
+    });
   });
 
   it('waits for the agent live catalog instead of guessing model IDs or effort levels', async () => {

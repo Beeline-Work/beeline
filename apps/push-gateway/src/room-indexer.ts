@@ -503,13 +503,14 @@ export class RoomIndexer {
   async claimAgentPairing(
     tokenHash: string,
     agentPubkey: string,
+    inheritInviterRooms = false,
   ): Promise<AgentPairingClaimView | null> {
     const result = await this.database.query<{
       workspace_id: string;
       paired_by: string;
       joined: boolean;
       attached_room_ids: string[];
-    }>(AGENT_PAIRING_CLAIM_SQL, [tokenHash, agentPubkey]);
+    }>(AGENT_PAIRING_CLAIM_SQL, [tokenHash, agentPubkey, inheritInviterRooms]);
     const claim = result.rows[0];
     if (!claim) return null;
     return {

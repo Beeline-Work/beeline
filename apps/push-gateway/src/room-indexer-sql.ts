@@ -987,6 +987,7 @@ WITH current_markers AS (
       WHERE t->>0 = 'parent')
     AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(genesis.tags) t
       WHERE t->>0 = 't' AND t->>1 = 'buzz-dm')
+  WHERE $3::boolean
 ), room_memberships AS (
   INSERT INTO channel_members (
     community_id, channel_id, pubkey, role, invited_by, joined_at,

@@ -28,18 +28,24 @@ const room: RoomView = {
 describe('RoomViewClient', () => {
   it('normalizes an older successful pairing claim without inherited Room IDs', async () => {
     const identity = createIdentity('room-view-pairing-compat');
+    const fetch = vi.fn(async () =>
+      Response.json({
+        workspaceId: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa',
+        pairedBy: 'b'.repeat(64),
+        joined: true,
+      }),
+    );
     const claim = await new RoomViewClient({
       baseUrl: 'https://relay.example',
       identity,
-      fetch: async () =>
-        Response.json({
-          workspaceId: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa',
-          pairedBy: 'b'.repeat(64),
-          joined: true,
-        }),
+      fetch,
     }).claimAgentPairing('BUZZ-ABCD-EFGH');
 
     expect(claim.attachedRoomIds).toEqual([]);
+    expect(JSON.parse(String(fetch.mock.calls[0]![1]?.body))).toEqual({
+      code: 'BUZZ-ABCD-EFGH',
+      capabilities: ['pairing-room-rollback'],
+    });
   });
 
   it('opens a cold Room with one physical authenticated request', async () => {

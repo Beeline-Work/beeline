@@ -190,6 +190,37 @@ describe('RoomViewClient', () => {
     ).toBe(false);
   });
 
+  it('accepts only complete typed daemon fact cards', () => {
+    const message = {
+      id: 'b'.repeat(64),
+      text: '',
+      createdAt: 3,
+      author: room.viewer.identity,
+      presentation: 'card' as const,
+      daemonFact: {
+        type: 'corner-complete' as const,
+        cornerId: '80a5a6f1-fb5a-493b-93eb-f3db33f696e6',
+        objective: 'Ship fact cards',
+        outcome: 'landed' as const,
+        pullRequest: { number: 42, url: 'https://github.com/acme/beeline/pull/42' },
+        subgoals: [{ step: 'Project the card', status: 'completed' as const }],
+      },
+    };
+    expect(isRoomViewMessage(message)).toBe(true);
+    expect(
+      isRoomViewMessage({
+        ...message,
+        daemonFact: { ...message.daemonFact, cornerId: 'not-a-corner' },
+      }),
+    ).toBe(false);
+    expect(
+      isRoomViewMessage({
+        ...message,
+        daemonFact: { ...message.daemonFact, outcome: undefined },
+      }),
+    ).toBe(false);
+  });
+
   it('limits briefing messages to the server contract', () => {
     const briefingMessage = {
       id: 'b'.repeat(64),

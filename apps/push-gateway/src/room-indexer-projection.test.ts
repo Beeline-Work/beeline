@@ -98,6 +98,7 @@ describe('room event projection', () => {
   });
 
   it('keeps a branch-ended daemon fact visible as the parent Room summary', () => {
+    const cornerId = '80a5a6f1-fb5a-493b-93eb-f3db33f696e6';
     expect(
       projectEvent(
         {
@@ -110,24 +111,48 @@ describe('room event projection', () => {
             ['h', 'room'],
             ['t', 'daemon-fact'],
             ['t', 'corner-branch-ended'],
-            ['subchannel', 'corner'],
+            ['subchannel', cornerId],
             ['outcome', 'landed'],
+            ['objective', 'Ship fact cards with archived transcript access'],
+            ['subgoal', 'Project typed fact payloads', 'completed'],
+            ['subgoal', 'Open the archived transcript', 'completed'],
+            ['pr-number', '42'],
+            ['pr-title', 'Ship fact cards'],
+            ['url', 'https://github.com/acme/beeline/pull/42'],
+            ['target-branch', 'main'],
           ],
           content: 'Landed “Smoke lifecycle PR” into main.',
         },
         'room',
       ),
     ).toMatchObject({
-      text: 'Landed “Smoke lifecycle PR” into main.',
-      presentation: 'system',
+      text: '',
+      presentation: 'card',
+      daemonFact: {
+        type: 'corner-complete',
+        cornerId,
+        objective: 'Ship fact cards with archived transcript access',
+        outcome: 'landed',
+        pullRequest: {
+          number: 42,
+          title: 'Ship fact cards',
+          url: 'https://github.com/acme/beeline/pull/42',
+          targetBranch: 'main',
+        },
+        subgoals: [
+          { step: 'Project typed fact payloads', status: 'completed' },
+          { step: 'Open the archived transcript', status: 'completed' },
+        ],
+      },
     });
   });
 
-  it('keeps a completed corner worktree fact visible in the parent Room', () => {
+  it('projects a checks-red daemon fact without reading its prose', () => {
+    const cornerId = '80a5a6f1-fb5a-493b-93eb-f3db33f696e6';
     expect(
       projectEvent(
         {
-          id: 'corner-worktree-cleaned',
+          id: 'corner-checks-failing',
           kind: 9,
           agent: true,
           pubkey: 'a'.repeat(64),
@@ -135,16 +160,25 @@ describe('room event projection', () => {
           tags: [
             ['h', 'room'],
             ['t', 'daemon-fact'],
-            ['t', 'corner-worktree-cleaned'],
-            ['subchannel', 'corner'],
+            ['t', 'corner-checks-failing'],
+            ['subchannel', cornerId],
+            ['objective', 'Ship fact cards with archived transcript access'],
+            ['pr-number', '42'],
+            ['url', 'https://github.com/acme/beeline/pull/42'],
           ],
-          content: 'Corner worktree cleaned after branch deletion.',
+          content: 'This prose is deliberately ignored by the card projection.',
         },
         'room',
       ),
     ).toMatchObject({
-      text: 'Corner worktree cleaned after branch deletion.',
-      presentation: 'system',
+      text: '',
+      presentation: 'card',
+      daemonFact: {
+        type: 'checks-failing',
+        cornerId,
+        objective: 'Ship fact cards with archived transcript access',
+        pullRequest: { number: 42, url: 'https://github.com/acme/beeline/pull/42' },
+      },
     });
   });
 

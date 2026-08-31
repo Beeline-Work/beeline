@@ -1159,7 +1159,7 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
     );
   }
 
-  it('keeps unaddressed multi-human corner chatter as context for the next mention', async () => {
+  it('delivers every multi-human corner message as a steer without requiring a mention', async () => {
     stubPublishing();
     const agent = newIdentity('addressed-corner-agent');
     const firstHuman = newIdentity('addressed-corner-first-human');
@@ -1232,13 +1232,14 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
       };
       const delivered = vi.spyOn(durableState, 'delivered');
 
-      expect(await body.pollMembers('corner-addressing')).toBe(0);
-      expect(sessionSteer).not.toHaveBeenCalled();
-      expect(delivered).toHaveBeenCalledWith('corner-addressing', chatter.id);
-
       expect(await body.pollMembers('corner-addressing')).toBe(1);
       expect(sessionSteer).toHaveBeenCalledOnce();
-      const addressedPrompt = sessionSteer.mock.calls[0]![1] as string;
+      expect(delivered).toHaveBeenCalledWith('corner-addressing', chatter.id);
+      expect(sessionSteer.mock.calls[0]![1]).toContain('Lunch is at noon.');
+
+      expect(await body.pollMembers('corner-addressing')).toBe(1);
+      expect(sessionSteer).toHaveBeenCalledTimes(2);
+      const addressedPrompt = sessionSteer.mock.calls[1]![1] as string;
       expect(addressedPrompt).toContain('Lunch is at noon.');
       expect(addressedPrompt).toContain('@agent should we change the retry policy?');
       expect(addressedPrompt).toContain('context only');

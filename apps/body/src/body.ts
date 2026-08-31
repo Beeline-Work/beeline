@@ -20,7 +20,6 @@ import { spawn } from 'node:child_process';
 import WebSocket from 'ws';
 import {
   AcpClient,
-  agentMessageRuns,
   isMutatingPermissionRequest,
   isPureRetryNarration,
   openAcpConversation,
@@ -55,7 +54,6 @@ import {
 import {
   buildAgentMessage,
   buildControlMessage,
-  publishAgentMessage as postAgentMessage,
   postControlMessage,
 } from './lifecycle-publisher.js';
 import { createAgentCommandPublisher } from './agent-commands-publish.js';
@@ -4127,8 +4125,6 @@ export class Body {
       extraTags?: readonly string[][];
       prepareTags?: (reply: string) => Promise<readonly string[][]>;
       concise?: boolean;
-      /** Suppress a byte-identical consecutive corner reply. */
-      dedupeAgainst?: string;
       captureEvent?: (event: NostrEvent) => void;
     } = {},
   ): Promise<string> {
@@ -4153,39 +4149,10 @@ export class Body {
       console.log(`[body] model produced no durable transcript output in ${channelId}`);
       return '';
     }
-    if (uploaded.attachments.length === 0 && reply === options.dedupeAgainst) {
-      console.log(`[body] suppressed duplicate consecutive agent reply in ${channelId}`);
-      return reply;
-    }
     const extraTags = options.prepareTags
       ? await options.prepareTags(reply)
       : (options.extraTags ?? []);
 
-    // A corner is a durable work transcript, not a last-message preview. ACP
-    // splits prose around tool and planning updates, so materialize every
-    // earlier prose run before the final answer. Drafts remain ephemeral; only
-    // genuine prior message runs belong in the reopened corner story.
-    const cornerProgress = session.parentChannelId
-      ? agentMessageRuns(result.updates)
-          .slice(0, -1)
-          .map((run) => stripAttachmentDirectives(stripAgentReplyPreamble(run)).trim())
-          .filter((run) => run.length > 0 && !isPureRetryNarration(run))
-      : [];
-    // Ordering is timestamp-first at the relay. Keep runs from one completed
-    // turn ordered even when they publish in the same wall-clock second.
-    const progressStartedAt = Math.floor(Date.now() / 1_000) - cornerProgress.length;
-    for (const [index, progress] of cornerProgress.entries()) {
-      await postAgentMessage(
-        channelId,
-        this.agentIdentity,
-        progress,
-        options.replyTo,
-        [],
-        [],
-        options.replyRootId,
-        progressStartedAt + index,
-      );
-    }
     let event: NostrEvent;
     if (options.replyTo) {
       event = await this.durableState.reserveReply(
@@ -8686,8 +8653,6 @@ export class Body {
         {
           ...options,
           extraTags,
-          concise: true,
-          dedupeAgainst: info.lastAgentMessageContent,
         },
       );
     };
@@ -9158,7 +9123,7 @@ export class Body {
     if (event.pubkey === this.agentIdentity.publicKey || !verifyEvent(event)) return;
     const processed = info.processedMemberEventIds ?? new Set<string>();
     info.processedMemberEventIds = processed;
-    const classification = this.classifyCornerEvent(info, event, processed);
+    const classification = this.classifyCornerEvent(event, processed);
     if (classification.status === 'skip') return;
     this.onRoomPollSuccess?.(channelId);
     if (classification.status !== 'close') {
@@ -9966,7 +9931,6 @@ export class Body {
   }
 
   private classifyCornerEvent(
-    info: SubchannelInfo,
     evt: NostrEvent,
     processed: Set<string>,
   ): CornerEventClassification {
@@ -10002,13 +9966,12 @@ export class Body {
       return { status: 'skip', recordProcessed: true };
     }
 
-    const participantPubkeys = new Set(info.participantPubkeys ?? [this.agentIdentity.publicKey]);
-    participantPubkeys.add(this.agentIdentity.publicKey);
-    participantPubkeys.add(evt.pubkey);
-    info.participantPubkeys = [...participantPubkeys];
-    if (!isChannelAddressedMessage(evt, this.agentIdentity.publicKey, info.participantPubkeys)) {
-      return { status: 'skip', recordProcessed: true };
-    }
+    // Reaching this inbox is already the addressing proof: this daemon owns
+    // the corner and the user wrote in that corner. Reapplying top-level Room
+    // mention routing here made ordinary steers disappear as soon as a parent
+    // Room had more than one human member (and the mobile corner composer
+    // correctly treats every send as addressed). All corner turns now enter
+    // the same receipt -> draft -> final publication path below.
     return {
       status: 'deliver',
       userPrompt: attachmentPrompt(evt.pubkey, evt.content, attachments),
@@ -10197,7 +10160,7 @@ export class Body {
 
       for (const evt of orderedEvents) {
         maxCreated = Math.max(maxCreated, evt.created_at);
-        const classification = this.classifyCornerEvent(info, evt, processed);
+        const classification = this.classifyCornerEvent(evt, processed);
         if (classification.status === 'skip') {
           count += await this.settleCornerEvent(info, evt, {
             count: false,

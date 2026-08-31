@@ -69,7 +69,7 @@ describe('selectPinnedCorner', () => {
     ).toBeNull();
   });
 
-  it('4. dead live bar uses a fresh indexed child-turn receipt', () => {
+  it('expires stale working gold to a quiet idle pin without losing navigation', () => {
     expect(
       selectPinnedCorner({ lifecycle: [corner('fresh', 'working', 'live')], now: NOW }),
     ).toEqual({ cornerId: 'fresh', status: 'live' });
@@ -78,7 +78,7 @@ describe('selectPinnedCorner', () => {
         lifecycle: [corner('expired-receipt', 'working', 'live', 1)],
         now: NOW,
       }),
-    ).toBeNull();
+    ).toEqual({ cornerId: 'expired-receipt', status: 'idle' });
   });
 
   it.each([
@@ -100,6 +100,12 @@ describe('selectPinnedCorner', () => {
         now: NOW,
       }),
     ).toEqual({ cornerId: 'review', status: 'open' });
+  });
+
+  it('keeps a quiet unfinished corner pinned while no turn is running', () => {
+    expect(
+      selectPinnedCorner({ lifecycle: [corner('idle-corner', 'idle', null)], now: NOW }),
+    ).toEqual({ cornerId: 'idle-corner', status: 'idle' });
   });
 
   it('prefers review-ready over working, then recency within a tier', () => {
@@ -141,6 +147,7 @@ describe('pinned-corner presentation', () => {
   it('names the opening lifecycle before it becomes active', () => {
     expect(pinnedCornerVerb('preparing')).toBe('preparing');
     expect(pinnedCornerVerb('live')).toBe('active');
+    expect(pinnedCornerVerb('idle')).toBe('idle');
   });
 
   it('shows a human branch name instead of a raw Git ref', () => {

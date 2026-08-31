@@ -253,8 +253,42 @@ env:
     id: chat-send
 - assertVisible: SMOKE CORNER STEER
 - extendedWaitUntil:
-    visible: SMOKE AGENT CORNER REPLY.*
+    visible:
+      id: turn-progress-line
     timeout: 10000
+- extendedWaitUntil:
+    visible: 'SMOKE AGENT CORNER STREAM — first chunk.*'
+    timeout: 10000
+- assertVisible:
+    id: activity-message-draft
+- takeScreenshot: corner-turn-streaming-live
+- extendedWaitUntil:
+    visible: SMOKE AGENT CORNER REPLY.*
+    timeout: 30000
+- assertNotVisible:
+    id: activity-message-draft
+- assertNotVisible:
+    id: turn-progress-line
+- takeScreenshot: corner-turn-streaming-complete
+
+# The streamed overlay is ephemeral, but the completed agent message is the
+# ordinary durable transcript row. Leave and reopen before continuing the
+# lifecycle phase so a stale in-memory overlay cannot satisfy this assertion.
+- pressKey: back
+- extendedWaitUntil:
+    visible:
+      id: chat-messages
+    timeout: 5000
+- tapOn:
+    id: corner-live-bar
+    waitToSettleTimeoutMs: 1000
+- extendedWaitUntil:
+    visible:
+      id: corner-session-header
+    timeout: 10000
+- assertVisible: SMOKE AGENT CORNER REPLY.*
+- assertNotVisible: 'SMOKE AGENT CORNER STREAM — first chunk.*'
+- takeScreenshot: corner-turn-streaming-persisted
 
 # The daemon's zero-model-call lifecycle watches the pushed branch and posts a
 # typed PR fact. The fixture uses the same state/event contract and waits on

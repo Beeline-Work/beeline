@@ -165,6 +165,10 @@ export function mapEventToNotification(
   context: NotificationContext,
   options: NotificationFormattingOptions = {},
 ): PushNotificationPlan | null {
+  // Live draft/thought/presence overlays are replaceable kind:30078 UI state,
+  // never messages. Keep this boundary here as well as in mentionsMember so a
+  // caller-provided hint cannot turn a streaming chunk into push churn.
+  if (event.kind !== 9) return null;
   const channelId = tagValue(event, 'h');
   if (!channelId) return null;
 

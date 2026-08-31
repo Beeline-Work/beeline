@@ -5,6 +5,18 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./projection": {
+      "types": "./dist/room-indexer-projection.d.ts",
+      "import": "./dist/room-indexer-projection.js",
+      "default": "./dist/room-indexer-projection.js"
+    }
+  },
   "scripts": {
     "dev": "node --import tsx src/index.ts",
     "build": "tsc -p tsconfig.json",

@@ -9,6 +9,7 @@
     "apps/body",
     "apps/gate",
     "apps/push-gateway",
+    "apps/server",
     "packages/*"
   ],
   "scripts": {

@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  CORNER_ACTIVITY_FRESHNESS_MS,
-  type RoomViewAgentTurn,
-} from '@beeline/buzz-client';
+import { CORNER_ACTIVITY_FRESHNESS_MS, type RoomViewAgentTurn } from '@beeline/buzz-client';
 import type { CornerMachineState, CornerStatus, CornerSummary } from './corners';
 import {
   COMPOSER_ACK_BOUND_MS,
@@ -38,9 +35,10 @@ const corner = (
 
 describe('selectPinnedCorner', () => {
   it('pins canonical open as a quiet preparing phase before working', () => {
-    expect(
-      selectPinnedCorner({ lifecycle: [corner('opening', 'open', null)], now: NOW }),
-    ).toEqual({ cornerId: 'opening', status: 'preparing' });
+    expect(selectPinnedCorner({ lifecycle: [corner('opening', 'open', null)], now: NOW })).toEqual({
+      cornerId: 'opening',
+      status: 'preparing',
+    });
   });
 
   it('does not pin a parent body-control corner-open message without canonical working state', () => {
@@ -71,18 +69,16 @@ describe('selectPinnedCorner', () => {
     ).toBeNull();
   });
 
-  it('4. dead live bar uses the indexed receipt state without a screen-owned freshness clock', () => {
+  it('4. dead live bar uses a fresh indexed child-turn receipt', () => {
     expect(
       selectPinnedCorner({ lifecycle: [corner('fresh', 'working', 'live')], now: NOW }),
     ).toEqual({ cornerId: 'fresh', status: 'live' });
     expect(
       selectPinnedCorner({
-        lifecycle: [
-          corner('older-receipt', 'working', 'live', 1),
-        ],
+        lifecycle: [corner('expired-receipt', 'working', 'live', 1)],
         now: NOW,
       }),
-    ).toEqual({ cornerId: 'older-receipt', status: 'live' });
+    ).toBeNull();
   });
 
   it.each([

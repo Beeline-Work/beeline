@@ -504,6 +504,7 @@ function corner(value: unknown): value is CornerListItem {
       item.status === 'idle' ||
       item.status === 'concluded' ||
       item.status === 'closed') &&
+    (item.statusAt === undefined || integer(item.statusAt)) &&
     (item.reason === undefined ||
       item.reason === 'review' ||
       item.reason === 'question' ||

@@ -165,7 +165,7 @@ const styles = StyleSheet.create((theme) => {
       color: groknight.ledgerBright,
       fontSize: 16,
       lineHeight: 25,
-      marginTop: 8,
+      marginTop: 2,
     },
     stepRow: {
       minHeight: 36,

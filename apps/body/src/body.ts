@@ -167,16 +167,12 @@ import {
 } from '@beeline/buzz-client';
 import { verifyEvent, type NostrEvent } from '@beeline/nostr';
 import { performBrokeredPush } from './push-broker.js';
-import { reviewPatchId } from './review-content.js';
+import { reviewPatchId, targetHistoryContainsPatchId } from './review-content.js';
 import { isArchivedChannelError } from './archived-channel.js';
 import type { BodyConfig, SessionMode } from './config.js';
 import { publishCritical } from './publish-delivery.js';
 import type { RepositoryTruth, RepositoryTruthCheckpoint } from './repository-truth.js';
-import {
-  AccessRefusalLimiter,
-  isSenderPermitted,
-  LEGACY_ACCESS_POLICY,
-} from './access-policy.js';
+import { AccessRefusalLimiter, isSenderPermitted, LEGACY_ACCESS_POLICY } from './access-policy.js';
 import { DurableBodyState } from './durable-state.js';
 import { PermissionRuntime, type PermissionExecutionHandle } from './permission-runtime.js';
 import { missionScriptHashMatches, runMissionScript } from './mission-script.js';
@@ -363,10 +359,7 @@ import {
   landDestinationLines,
   type LandDestination,
 } from './land-destination.js';
-import {
-  duplicateCornerOpen,
-  type OpenCornerCandidate,
-} from './corner-open-guard.js';
+import { duplicateCornerOpen, type OpenCornerCandidate } from './corner-open-guard.js';
 import {
   cornerWorktreeSweepDecision,
   probeCornerWorktree,
@@ -413,9 +406,7 @@ import {
   type ReleaseCornerBrief,
   type ReleaseRoomIntent,
 } from './release-flow.js';
-import {
-  cornerTitleFromTask,
-} from './corner-metadata.js';
+import { cornerTitleFromTask } from './corner-metadata.js';
 
 const CAPTURED_AGENT_OUTPUTS = Symbol('captured-agent-outputs');
 const AGENT_ATTACHMENT_FAILURE_REPLY =
@@ -1626,9 +1617,7 @@ type PreparedRoomDelegation =
  * both true things at once: this delivery failed, and this corner is still
  * open and waiting on you.
  */
-export const RECOVERABLE_CORNER_FAILURE_TAGS: readonly string[][] = [
-  ['status', 'failed'],
-];
+export const RECOVERABLE_CORNER_FAILURE_TAGS: readonly string[][] = [['status', 'failed']];
 
 export const CORNER_WORKTREE_UNRESTORABLE =
   'Agent restart could not restore this corner worktree; no input was discarded.';
@@ -4935,6 +4924,7 @@ export class Body {
                 repo: tagValue(ready!, 'repo') ?? this.repoId(cornerRepo),
                 branch: tagValue(ready!, 'branch') ?? cornerRepo.targetBranch ?? 'refs/heads/main',
                 tip,
+                ...(tagValue(ready!, 'patch-id') ? { patchId: tagValue(ready!, 'patch-id') } : {}),
               },
             }
           : {}),
@@ -5324,9 +5314,10 @@ export class Body {
     },
   ): Promise<SubchannelInfo> {
     // Pick up an owner-confirmed target-branch change for a newly opened corner.
-    const freshRoomRepo = roomRepo && this.refreshRepositoryTruth
-      ? await this.refreshRepositoryTruth(roomRepo, 'corner-open')
-      : roomRepo;
+    const freshRoomRepo =
+      roomRepo && this.refreshRepositoryTruth
+        ? await this.refreshRepositoryTruth(roomRepo, 'corner-open')
+        : roomRepo;
     const boundRepo = freshRoomRepo
       ? await this.cornerBoundRepo(tlcChannelId, freshRoomRepo)
       : undefined;
@@ -6226,14 +6217,20 @@ export class Body {
         `Agent-to-agent turns paused after ${AGENT_TO_AGENT_TURN_FUSE} consecutive turns. ` +
         'A human message is required before this corner can continue.';
       for (const channelId of [prepared.metadata.cornerId, prepared.metadata.roomId]) {
-        const paused = buildControlMessage('mention-budget-limit', channelId, this.agentIdentity, content, [
-          ['t', AGENT_MENTION_PAUSED_TAG],
-          ['corner', prepared.metadata.cornerId],
-          ['workspace', prepared.metadata.workspaceId],
-          ['source-event', sourceEvent.id],
-          ['chain-turns', String(prepared.metadata.chainTurns)],
-          ...owners.map((owner) => ['p', owner]),
-        ]);
+        const paused = buildControlMessage(
+          'mention-budget-limit',
+          channelId,
+          this.agentIdentity,
+          content,
+          [
+            ['t', AGENT_MENTION_PAUSED_TAG],
+            ['corner', prepared.metadata.cornerId],
+            ['workspace', prepared.metadata.workspaceId],
+            ['source-event', sourceEvent.id],
+            ['chain-turns', String(prepared.metadata.chainTurns)],
+            ...owners.map((owner) => ['p', owner]),
+          ],
+        );
         await publishEvent(paused, this.agentIdentity);
       }
       return;
@@ -6364,23 +6361,17 @@ export class Body {
           },
           dispatch.metadata,
         );
-        await this.publishAgentResult(
-          dispatch.metadata.cornerId,
-          session,
-          result,
-          '',
-          {
-            replyTo: dispatch.source.id,
-            extraTags: [
-              ['t', AGENT_MENTION_REPLY_TAG],
-              ['source-event', dispatch.source.id],
-              ...(prepared?.tags ?? []),
-            ],
-            captureEvent: (event) => {
-              published = event;
-            },
+        await this.publishAgentResult(dispatch.metadata.cornerId, session, result, '', {
+          replyTo: dispatch.source.id,
+          extraTags: [
+            ['t', AGENT_MENTION_REPLY_TAG],
+            ['source-event', dispatch.source.id],
+            ...(prepared?.tags ?? []),
+          ],
+          captureEvent: (event) => {
+            published = event;
           },
-        );
+        });
         await postAgentTurnStatus(
           dispatch.metadata.cornerId,
           this.agentIdentity,
@@ -6459,17 +6450,11 @@ export class Body {
           originalRequestId: envelope.authorizationEventId,
           cause: 'agent-exchange',
         });
-        await this.publishAgentResult(
-          channelId,
-          session,
-          result,
-          '',
-          {
-            replyTo: request.eventId,
-            replyRootId: envelope.authorizationEventId,
-            extraTags: agentExchangeTags(authorization, nextTurn, recipient),
-          },
-        );
+        await this.publishAgentResult(channelId, session, result, '', {
+          replyTo: request.eventId,
+          replyRootId: envelope.authorizationEventId,
+          extraTags: agentExchangeTags(authorization, nextTurn, recipient),
+        });
         await postAgentTurnStatus(
           channelId,
           this.agentIdentity,
@@ -7330,23 +7315,17 @@ export class Body {
         `${this.agentIdentity.publicKey}:${tlcChannelId}`;
       // Keep the refusal machine-readable without publishing diagnostic prose.
       // The ordinary turn helper deliberately normalizes failures to complete.
-      await postControlMessage(
-        'turn-receipt',
-        tlcChannelId,
-        this.agentIdentity,
-        '',
-        [
-          ['t', 'agent-turn'],
-          ['request', request.eventId],
-          ['session', receiptSessionId],
-          ['agent', this.agentIdentity.publicKey],
-          ['mode', 'readonly'],
-          ['status', 'failed'],
-          ...(this.presenceGenerations.get(tlcChannelId)
-            ? [['generation', this.presenceGenerations.get(tlcChannelId)!]]
-            : []),
-        ],
-      );
+      await postControlMessage('turn-receipt', tlcChannelId, this.agentIdentity, '', [
+        ['t', 'agent-turn'],
+        ['request', request.eventId],
+        ['session', receiptSessionId],
+        ['agent', this.agentIdentity.publicKey],
+        ['mode', 'readonly'],
+        ['status', 'failed'],
+        ...(this.presenceGenerations.get(tlcChannelId)
+          ? [['generation', this.presenceGenerations.get(tlcChannelId)!]]
+          : []),
+      ]);
       return { status: 'handled', outcome: { openedCorner: false, producedReply: true } };
     }
     // Mark a slash-command-shaped message BEFORE anything else consumes it.
@@ -7665,17 +7644,11 @@ export class Body {
       }
       if (turn.transitionedToCorner) {
         try {
-          await this.publishAgentResult(
-            tlcChannelId,
-            session,
-            result,
-            '',
-            {
-              replyTo: request.eventId,
-              ...(request.replyRootId ? { replyRootId: request.replyRootId } : {}),
-              ...(delegatedReplyTags.length ? { extraTags: delegatedReplyTags } : {}),
-            },
-          );
+          await this.publishAgentResult(tlcChannelId, session, result, '', {
+            replyTo: request.eventId,
+            ...(request.replyRootId ? { replyRootId: request.replyRootId } : {}),
+            ...(delegatedReplyTags.length ? { extraTags: delegatedReplyTags } : {}),
+          });
         } catch (publishError) {
           // The corner is already running and the request must not re-drive
           // (a redrive would race a duplicate corner); a failed announcement
@@ -8246,19 +8219,25 @@ export class Body {
         )?.name ?? fallbackAgentName(this.agentIdentity.publicKey);
       const message =
         `@${requester.replace(/^@/, '')} asked ${agent} to open a corner for: ` + input.objective;
-      const card = buildControlMessage('permission-request', input.roomId, this.agentIdentity, message, [
-        ['t', WRITE_PERMISSION_REQUEST_TAG],
-        ['permission', permissionId],
-        ['request', input.request.eventId],
-        ['requester', input.request.authorPubkey],
-        ['agent', this.agentIdentity.publicKey],
-        ['tool', input.tool],
-        ['repo', repository],
-        ['objective', input.objective],
-        ['status', 'pending'],
-        ...this.delegatedReplyTags(input.request),
-        ...audience.map((pubkey) => ['p', pubkey]),
-      ]);
+      const card = buildControlMessage(
+        'permission-request',
+        input.roomId,
+        this.agentIdentity,
+        message,
+        [
+          ['t', WRITE_PERMISSION_REQUEST_TAG],
+          ['permission', permissionId],
+          ['request', input.request.eventId],
+          ['requester', input.request.authorPubkey],
+          ['agent', this.agentIdentity.publicKey],
+          ['tool', input.tool],
+          ['repo', repository],
+          ['objective', input.objective],
+          ['status', 'pending'],
+          ...this.delegatedReplyTags(input.request),
+          ...audience.map((pubkey) => ['p', pubkey]),
+        ],
+      );
       await publishEvent(card, this.agentIdentity);
       void this.finishCornerApproval({ ...input, permissionId, repository, audience }).catch(
         (error) => console.error('[body] corner approval settlement failed:', error),
@@ -9487,7 +9466,9 @@ export class Body {
       };
     }
     const ahead = Number(
-      (await git(info.worktreePath, ['rev-list', '--count', `${targetTip}..${head}`])).stdout.trim(),
+      (
+        await git(info.worktreePath, ['rev-list', '--count', `${targetTip}..${head}`])
+      ).stdout.trim(),
     );
     if (!Number.isFinite(ahead) || ahead < 1) {
       return { reason: 'the branch has no committed work beyond the target' };
@@ -9896,9 +9877,7 @@ export class Body {
       : boundRepo.remoteName
         ? await performBrokeredPush({
             remote: boundRepo.remoteName,
-            refspecs: [
-              `${boundRepo.ownerHex ? featureBranch : tip}:refs/heads/${featureBranch}`,
-            ],
+            refspecs: [`${boundRepo.ownerHex ? featureBranch : tip}:refs/heads/${featureBranch}`],
             policy: { featureBranch, protectedRefs: [target.branch] },
             ...(forceArgs.length ? { extraArgs: forceArgs } : {}),
             cornerId: info.subchannelId,
@@ -10224,32 +10203,32 @@ export class Body {
     if (approval.id === info.landingBlockedApprovalId) return undefined;
     const approvedTip = tagValue(approval, 'tip') ?? target.tip;
     const approvedPatchId = tagValue(approval, 'patch-id');
-      const tipAdvanced = approvedTip !== target.tip;
-      const realigned = Boolean(
-        tipAdvanced && approvedPatchId && target.patchId && approvedPatchId === target.patchId,
-      );
-      info.humanMergeApproval = {
-        id: approval.id,
-        reviewer: approval.pubkey,
-        tip: target.tip,
-        approvedTip,
-        ...(approvedPatchId ? { patchId: approvedPatchId } : {}),
-        ...(realigned ? { realigned: true } : {}),
-      };
-      // Approval custody moves the corner out of waiting even when
-      // the detailed receipt needs a relay retry: landing is daemon work now.
-      await this.transitionCornerState(info, 'working');
-      const ackKey = `${approval.id}:${target.tip}`;
-      if (info.ackedApprovalId !== ackKey) {
-        info.ackedApprovalId = ackKey;
-      }
-      if (info.ackedApprovalActivityId !== ackKey) {
-        const published = await this.postLandingStage(info, 'approval-received', {
-          title: 'Approval received',
-        });
-        if (published) info.ackedApprovalActivityId = ackKey;
-      }
-      return info.humanMergeApproval;
+    const tipAdvanced = approvedTip !== target.tip;
+    const realigned = Boolean(
+      tipAdvanced && approvedPatchId && target.patchId && approvedPatchId === target.patchId,
+    );
+    info.humanMergeApproval = {
+      id: approval.id,
+      reviewer: approval.pubkey,
+      tip: target.tip,
+      approvedTip,
+      ...(approvedPatchId ? { patchId: approvedPatchId } : {}),
+      ...(realigned ? { realigned: true } : {}),
+    };
+    // Approval custody moves the corner out of waiting even when
+    // the detailed receipt needs a relay retry: landing is daemon work now.
+    await this.transitionCornerState(info, 'working');
+    const ackKey = `${approval.id}:${target.tip}`;
+    if (info.ackedApprovalId !== ackKey) {
+      info.ackedApprovalId = ackKey;
+    }
+    if (info.ackedApprovalActivityId !== ackKey) {
+      const published = await this.postLandingStage(info, 'approval-received', {
+        title: 'Approval received',
+      });
+      if (published) info.ackedApprovalActivityId = ackKey;
+    }
+    return info.humanMergeApproval;
   }
 
   /**
@@ -10572,19 +10551,15 @@ export class Body {
           status: 'failed',
           output: humanized,
         });
-        await this.postFailureFactOnce(
-          info.subchannelId,
-          `Couldn't land: ${humanized}`,
-          [
-            ['status', 'failed'],
-            ['retry', 'blocked'],
-            ['repo', target.repo],
-            ['branch', target.branch],
-            ['feature', info.featureBranch!],
-            ['tip', target.tip],
-            ['approval', approvalId],
-          ],
-        );
+        await this.postFailureFactOnce(info.subchannelId, `Couldn't land: ${humanized}`, [
+          ['status', 'failed'],
+          ['retry', 'blocked'],
+          ['repo', target.repo],
+          ['branch', target.branch],
+          ['feature', info.featureBranch!],
+          ['tip', target.tip],
+          ['approval', approvalId],
+        ]);
         await this.transitionCornerState(info, 'waiting', 'review');
         continue;
       }
@@ -10889,10 +10864,7 @@ export class Body {
    * corner's worktree being reaped) and afterwards touches nothing but the
    * relay.
    */
-  private watchLandedCommitCi(
-    info: SubchannelInfo,
-    landedTip: string,
-  ): void {
+  private watchLandedCommitCi(info: SubchannelInfo, landedTip: string): void {
     if (info.ciWatchStarted) return;
     const parentId = info.session.parentChannelId;
     const boundRepo = info.boundRepo;
@@ -11117,8 +11089,8 @@ export class Body {
   }
 
   /**
-   * The tip this corner's approved work is confirmed to sit at on the target
-   * ref, or `undefined` while it does not.
+   * The target tip that already contains this corner's reviewed work, or
+   * `undefined` while it does not.
    *
    * Reads the ref for whichever repository shape the corner is bound to: a
    * relay origin (through the merge gate's own remote), a direct git remote,
@@ -11128,24 +11100,49 @@ export class Body {
     const boundRepo = info.boundRepo;
     const target = info.mergeTarget;
     if (!boundRepo || !target) return undefined;
-    if (!(await this.findHumanMergeApproval(info))) return undefined;
-    const targetTip = boundRepo.remoteName
-      ? (
-          await this.remoteGit(boundRepo, info.worktreePath, [
-            'ls-remote',
-            boundRepo.remoteName,
-            target.branch,
-          ])
-        ).stdout
-          .trim()
-          .split(/\s+/)[0]
+    let targetRemote = boundRepo.remoteName;
+    if (targetRemote) {
+      const pushUrl = await git(info.worktreePath, ['remote', 'get-url', '--push', targetRemote]);
+      if (pushUrl.ok && pushUrl.stdout.trim()) targetRemote = pushUrl.stdout.trim();
+    }
+    const targetRead = targetRemote
+      ? await this.remoteGit(boundRepo, info.worktreePath, [
+          'ls-remote',
+          targetRemote,
+          target.branch,
+        ])
       : boundRepo.localPath
-        ? (await git(boundRepo.localPath, ['rev-parse', '--verify', target.branch])).stdout.trim()
+        ? await git(boundRepo.localPath, ['rev-parse', '--verify', target.branch])
         : undefined;
-    return targetTip === target.tip ? target.tip : undefined;
+    if (!targetRead?.ok) return undefined;
+    const targetTip = targetRead.stdout.trim().split(/\s+/)[0] ?? '';
+    if (!/^[0-9a-f]{40}$/.test(targetTip)) return undefined;
+
+    // Exact identity is the strongest possible proof and requires no merge
+    // authority inference: another actor already moved the protected ref.
+    if (targetTip === target.tip) return targetTip;
+    if (!target.patchId) return undefined;
+
+    // A squash merge changes the commit SHA but preserves Git's stable patch
+    // identity. Ensure the remote target object is locally inspectable, then
+    // compare the review artifact against one bounded recent target history.
+    const objectRoot = boundRepo.localPath ?? info.worktreePath;
+    if (!(await git(objectRoot, ['cat-file', '-e', `${targetTip}^{commit}`])).ok) {
+      if (!targetRemote) return undefined;
+      const fetched = await this.remoteGit(boundRepo, objectRoot, [
+        'fetch',
+        '--no-tags',
+        targetRemote,
+        target.branch,
+      ]);
+      if (!fetched.ok) return undefined;
+    }
+    return (await targetHistoryContainsPatchId(objectRoot, targetTip, target.patchId))
+      ? targetTip
+      : undefined;
   }
 
-  /** Archive only after human approval and the target ref reach the exact tip. */
+  /** Archive after the target ref contains the reviewed content. */
   async pollMergeCompletions(): Promise<number> {
     let merged = 0;
     for (const info of [...this.subchannels.values()]) {
@@ -11474,9 +11471,7 @@ export class Body {
           return { retry: false, reason: 'the corner review target is no longer available' };
         }
         const synced = await this.syncMovedTargetForLanding(info, target);
-        return synced.kind === 'ready'
-          ? { retry: true }
-          : { retry: false, reason: synced.reason };
+        return synced.kind === 'ready' ? { retry: true } : { retry: false, reason: synced.reason };
       },
     });
     for (const attempt of attempts) {
@@ -11601,8 +11596,7 @@ export class Body {
     if (event.pubkey === this.agentIdentity.publicKey || !verifyEvent(event)) return;
     if (
       event.tags.some(
-        (tag) =>
-          tag[0] === 't' && (tag[1] === APPROVAL_MARKER || tag[1] === CORNER_REJECTION_TAG),
+        (tag) => tag[0] === 't' && (tag[1] === APPROVAL_MARKER || tag[1] === CORNER_REJECTION_TAG),
       )
     ) {
       this.onRoomPollSuccess?.(channelId);
@@ -12066,15 +12060,11 @@ export class Body {
       `[body] corner ${info.subchannelId} commit watch failed 3 times; automatic retries stopped for ${tip.slice(0, 12)}:`,
       error,
     );
-    await this.postFailureFactOnce(
-      info.subchannelId,
-      `Couldn't prepare review: ${detail}.`,
-      [
-        ['status', 'failed'],
-        ['retry', 'blocked'],
-        ['tip', tip],
-      ],
-    ).catch((publishError) =>
+    await this.postFailureFactOnce(info.subchannelId, `Couldn't prepare review: ${detail}.`, [
+      ['status', 'failed'],
+      ['retry', 'blocked'],
+      ['tip', tip],
+    ]).catch((publishError) =>
       console.error(
         `[body] corner ${info.subchannelId} commit watch failure notice also failed:`,
         publishError,
@@ -12373,9 +12363,9 @@ export class Body {
       }
       let standingAsk = false;
       try {
-      const events = await this.agentRelay.queryEvents([
-        { kinds: [9], '#h': [info.subchannelId], limit: 100 },
-      ]);
+        const events = await this.agentRelay.queryEvents([
+          { kinds: [9], '#h': [info.subchannelId], limit: 100 },
+        ]);
         standingAsk = standingAskFromEvents(events, this.agentIdentity.publicKey);
       } catch (error) {
         console.error(`[body] working invariant read failed for ${info.subchannelId}:`, error);

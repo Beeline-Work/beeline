@@ -36,6 +36,7 @@ import {
   SelfUpdateManager,
   activeReleaseId,
   beelineInstallLayout,
+  defaultBeelineInstallLayout,
   normalizeLegacyBundleShape,
   readInstalledBundleIdentity,
   repairInstallForwarders,
@@ -305,6 +306,14 @@ function expectInstalledHelperForwarders(prefix: string, version: string): void 
 // ---------------------------------------------------------------------------
 
 describe('<prefix>/lib/beeline anchor contract', () => {
+  it('derives the npm onboarding target from the canonical user prefix', () => {
+    expect(defaultBeelineInstallLayout({ HOME: '/home/operator' })).toEqual({
+      binDir: '/home/operator/.local/bin',
+      libDir: '/home/operator/.local/lib/beeline',
+      releasesRoot: '/home/operator/.local/lib/beeline-releases',
+    });
+  });
+
   it('normalizes a symlink-resolved BEELINE_LIB_DIR back to the prefix anchor', () => {
     // What the pre-contract wrappers exported after any swap: a path INSIDE
     // the active release. Deriving the layout from it verbatim pointed the

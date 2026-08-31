@@ -76,6 +76,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
+import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import {
   compareBundleIdentity,
@@ -146,6 +147,14 @@ export function beelineInstallLayout(
   const raw = env.BEELINE_LIB_DIR?.trim();
   if (!raw) return undefined;
   return anchorLayout(raw);
+}
+
+/** Canonical first-install layout used by `npx usebeeline connect`. */
+export function defaultBeelineInstallLayout(
+  env: NodeJS.ProcessEnv = process.env,
+): BeelineInstallLayout {
+  const home = env.HOME?.trim() || homedir();
+  return anchorLayout(resolve(home, '.local', 'lib', 'beeline'));
 }
 
 /** Platform key matching build-beeline-bundle.mjs's supported set. */

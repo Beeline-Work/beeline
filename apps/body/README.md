@@ -157,17 +157,20 @@ BUZZY_LLM_MODEL=deepseek/deepseek-chat-v3.1
 
 ### CLI
 
-Install the CLI and its agent runtimes without cloning this repository (requires
-Node.js 20.11 or newer):
+Connect and install without cloning this repository (requires Node.js 20.11 or
+newer):
 
 ```bash
-curl -fsSL https://usebeeline.app/install | sh
+npx usebeeline connect
 ```
 
-The installer selects the platform bundle, verifies its checksum, and installs
-`beeline`, `buzz-agent`, `buzz-dev-mcp`, and `beeline-readonly-mcp` under `~/.local`. It is safe to run
-again and does not modify any existing `buzz` command. Ensure `~/.local/bin` is
-on `PATH`; the installer prints the exact export when it is not.
+The four-step wizard selects the harness, asks for a provider and key only when
+the harness needs one, selects a model, and captures the agent soul. Browser
+approval supplies the identity without a pairing code. The command verifies the
+current release bundle, installs it under the canonical `~/.local` layout, and
+starts the supervised agent service.
+
+The lower-level commands below remain available for development and recovery.
 
 ```bash
 # Supported user path: pair the agent identity and launch its durable daemon.

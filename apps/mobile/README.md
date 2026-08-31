@@ -17,45 +17,58 @@ production OTA channels.
 
 ## OTA release governor
 
-`main` is a candidate source, not a release trigger. The
-[`mobile-ota.yml`](../../.github/workflows/mobile-ota.yml) workflow publishes an
-immutable update group to the `beta` branch, installs the latest `beta-apk` on
-the host's existing Android emulator, runs the real Room open/send/reply Maestro
-smoke, then republishes that exact group to `production`. It never rebuilds the
-JavaScript or assets during promotion.
+Every `main` commit enters the cumulative delivery ledger. An owner or firstmate
+can also dispatch [`mobile-ota.yml`](../../.github/workflows/mobile-ota.yml) to
+deliver the current `main` immediately. The GitHub-hosted fast path installs and
+builds the SDKs, validates the app in parallel with the immutable `beta` export,
+republishes that exact group to `production`, and fails unless the ledger proves
+that production contains the current head. Its run summary reports queue,
+setup, validation/export, promotion, and trigger-to-promotion seconds; a
+commanded run is red when promotion takes ten minutes or longer.
 
-The first beta binary for a runtime (and every later native/runtimeVersion
-change) must be built once before an OTA candidate can pass the canary:
+The full Android emulator rehearsal is deliberately after promotion in
+[`mobile-ota-post-promote.yml`](../../.github/workflows/mobile-ota-post-promote.yml),
+so the single self-hosted runner cannot delay the owner's phone. It installs a
+`production-apk`, waits until the app reports the exact promoted Android update
+and production channel, and runs the full Room open/send/reply Maestro smoke.
+Failure automatically republishes the recorded predecessor only if the failed
+group is still production. If a newer delivery has moved production, rollback
+is skipped so an old canary can never overwrite newer bytes. Every affected
+merge and the failure reason are written to the `Undelivered merges` issue.
+
+The first production binary for a runtime (and every later
+native/runtimeVersion change) must be built once before the post-promotion
+rehearsal can run:
 
 ```sh
 cd apps/mobile
-npx --yes eas-cli@22.2.0 build --profile beta-apk --platform android --non-interactive
+npx --yes eas-cli@22.2.0 build --profile production-apk --platform android --non-interactive
 ```
 
-A beta-channel binary is the only possible canary vehicle: the OTA update
-channel is baked into the APK at build time (`EXPO_UPDATES_CHANNEL`), so a
-production-channel binary for the same runtimeVersion cannot fetch the beta
-candidate group. Until that build exists, the governor parks promotion with
-that exact remediation recorded in the release ledger (`canary.status:
-"blocked"` plus `reason`), and never records a broken canary as success.
+The OTA update channel is baked into the APK (`EXPO_UPDATES_CHANNEL`). The
+post-promotion rehearsal therefore uses a production-channel binary and the
+production update ids written by the exact-group republish, rather than
+re-testing the beta ids.
 
-The canary is locally runnable and self-limits to nine minutes. It reuses the
-named AVD and either downloads the latest successful `beta-apk` or installs an
-operator-supplied APK:
+The canary is locally runnable and self-limits to ten minutes. It reuses the
+named AVD and either downloads the latest successful channel-matched APK or
+installs an operator-supplied APK:
 
 ```sh
 cd apps/mobile
 EXPO_TOKEN=... scripts/ota-canary.sh --ledger /path/to/mobile-ota-ledger.json
-# or: BEELINE_BETA_APK=/path/to/beta.apk scripts/ota-canary.sh --ledger ...
+# exact promoted bytes:
+EXPO_TOKEN=... scripts/ota-canary.sh --ledger /path/to/mobile-ota-ledger.json --promoted
+# or: BEELINE_PRODUCTION_APK=/path/to/production.apk scripts/ota-canary.sh --ledger ... --promoted
 ```
 
 Every successful release stores `candidateGroupId`, the republished production
 group, and `previousProductionGroupId` in the `mobile-ota-ledger-<run-id>`
-workflow artifact. Choose `rollback` in the workflow dispatch UI to republish
-that recorded predecessor; `rollback_group` can override it with another known
-good group. The only emergency publish path is a captain-only manual `release`
-dispatch with `skip_canary=true`; it defaults to false and is recorded in the
-ledger.
+workflow artifact. Manual recovery lives in the clearly named
+[`mobile-ota-rollback.yml`](../../.github/workflows/mobile-ota-rollback.yml);
+`rollback_group` can override the recorded predecessor. Receipt-only checks
+live in [`mobile-ota-reconcile.yml`](../../.github/workflows/mobile-ota-reconcile.yml),
+whose name and summary explicitly say that green does not mean a release.
 Native changes still require a binary rebuild and runtimeVersion bump; the
 governor does not relax that compatibility boundary.
 

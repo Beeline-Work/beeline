@@ -34,7 +34,6 @@ import { Modal } from '@/modal';
 import { BuzzRigTransport } from '@/sync/transport';
 import {
   type ChannelRole,
-  type MergeTarget,
   type RoomRepository,
   type GitHubInstallationAccess,
   type AgentCommandList,
@@ -99,7 +98,11 @@ import {
   type CornerStatus,
   type CornerSummary,
 } from '@/buzz/corners';
-import { cornerActionSurface } from '@/buzz/corner-attention';
+import {
+  cornerActionSurface,
+  cornerReviewPanelMountState,
+  mergeTargetFromCornerLifecycle,
+} from '@/buzz/corner-attention';
 import { personIdentityLabel, shortMemberNpub } from '@/buzz/member-display';
 import { useVerifiedNip05Status } from '@/buzz/nip05-verification';
 import {
@@ -124,6 +127,7 @@ import {
   type OwnerGrantNeeded,
 } from '@/components/buzz/OwnerGrantNeededCard';
 import {
+  humanBranchName,
   isPinnedCornerLive,
   pinnedCornerVerb,
   selectPinnedCorner,
@@ -554,25 +558,9 @@ export default function BuzzChat() {
       setCornerOpenRepoPrompt(false);
     }
   }, [roomRepoAccessIssue, roomRepositoryState]);
-  const mergeTarget = useMemo<MergeTarget | null>(
-    () => {
-      const lifecycle = roomSurface?.cornerLifecycle;
-      const projection = lifecycle?.git;
-      if (
-        !lifecycle ||
-        (lifecycle.lifecycle !== 'REVIEW' && lifecycle.lifecycle !== 'APPROVED') ||
-        projection?.relation !== 'review' ||
-        !projection.featureTip
-      )
-        return null;
-      return {
-        repo: projection.repository,
-        branch: projection.targetBranch,
-        tip: projection.featureTip,
-        ...(projection.artifact?.patchId ? { patchId: projection.artifact.patchId } : {}),
-      };
-    },
-    [roomSurface],
+  const mergeTarget = useMemo(
+    () => mergeTargetFromCornerLifecycle(roomSurface?.cornerLifecycle),
+    [roomSurface?.cornerLifecycle],
   );
   const latestMerge = useMemo(
     () => [...(roomSurface?.messages ?? [])].reverse().find((message) => message.merge)?.merge,
@@ -1277,6 +1265,12 @@ export default function BuzzChat() {
       : canonicalCorner?.machineState === 'concluded' || canonicalCorner?.machineState === 'closed'
         ? 'done'
         : 'idle';
+  const reviewPanelMountState = cornerReviewPanelMountState({
+    isCorner,
+    archived: isArchived,
+    mergeTarget,
+    sessionFinished: sessionState === 'done',
+  });
 
   // A notification may outlive the corner it names. Once relay truth says the
   // target disappeared or finished, replace it with the parent Room carried by
@@ -1506,7 +1500,7 @@ export default function BuzzChat() {
       const subject = cornerAgentDisplay?.name ?? 'agent';
       // The branch is the truest name for what a corner is doing; the corner's
       // own slug is the fallback, and both beat an opaque id.
-      const target = mergeTarget?.branch ?? headerTitle ?? undefined;
+      const target = humanBranchName(mergeTarget?.branch) ?? headerTitle ?? undefined;
       // This corner's own canonical WORKING lease, not an ACP turn/draft or
       // some other corner's history. The lease expires at the shared horizon.
       if (sessionState === 'working')
@@ -3173,7 +3167,7 @@ export default function BuzzChat() {
             ) : null
           }
           ListHeaderComponent={
-            isCorner && !isArchived && sessionState === 'done' ? (
+            reviewPanelMountState ? (
               <View style={styles.cornerReviewFooter}>
                 {cornerAction.kind === 'review' ? (
                   <HullSurface strength="raised" style={styles.approvalBar}>

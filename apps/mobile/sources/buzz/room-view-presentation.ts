@@ -5,6 +5,7 @@ import type {
   ChatListWorkspace,
   CommunityMember,
   RoomView,
+  RoomViewIdentity,
   RoomViewMember,
   RoomViewMessage,
   WorkspaceView,
@@ -141,6 +142,8 @@ export type ChatDisplayMessage = {
   text: string;
   isUser: boolean;
   timestamp: number;
+  /** Current server-resolved identity for this row; never replace it with a local label cache. */
+  authorIdentity?: RoomViewIdentity;
   pubkey?: string;
   isArchivedNotice?: boolean;
   isSystemNotice?: boolean;
@@ -240,6 +243,7 @@ export function displayRoomMessage(
       ? { isUser: false }
       : {
           isUser: message.author.pubkey === viewerPubkey,
+          authorIdentity: message.author,
           pubkey: message.author.pubkey,
         }),
     reference: message.reference,
@@ -300,6 +304,24 @@ export function displayRoomMessage(
         }
       : {}),
   };
+}
+
+/**
+ * One identity source for Room and corner composers/transcripts.
+ * Message authorship refreshes membership presentation from the current
+ * server view; the newest loaded row wins over any label painted from disk.
+ */
+export function conversationIdentityByPubkey(
+  members: readonly RoomViewMember[],
+  messages: readonly ChatDisplayMessage[],
+): Map<string, RoomViewIdentity> {
+  const identities = new Map(members.map((member) => [member.identity.pubkey, member.identity]));
+  for (const message of messages) {
+    if (message.authorIdentity) {
+      identities.set(message.authorIdentity.pubkey, message.authorIdentity);
+    }
+  }
+  return identities;
 }
 
 export function displayRoomMessages(

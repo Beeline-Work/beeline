@@ -13,16 +13,18 @@ import {
 } from './display-name.js';
 
 describe('agent presentation names', () => {
-  it('derives a stable spoken first name and lowercase handle from the pubkey', () => {
-    const name = fallbackAgentName('ab'.repeat(32));
-    expect(fallbackAgentName('ab'.repeat(32))).toBe(name);
-    expect(name).toMatch(/^\p{Lu}\p{Ll}+$/u);
-    expect(agentHandle(name, 'ab'.repeat(32))).toBe(name.toLowerCase());
+  it('makes every unresolved agent visibly synthetic instead of manufacturing a first name', () => {
+    const codexPubkey = `54f4d261${'0'.repeat(56)}`;
+    expect(fallbackAgentName(codexPubkey)).toBe('Agent 54f4d261');
+    expect(fallbackAgentName(codexPubkey)).not.toBe('Arlo');
+    expect(fallbackAgentName('ab'.repeat(32))).toMatch(/^Agent [0-9a-f]{8}$/u);
+    expect(agentHandle(fallbackAgentName(codexPubkey), codexPubkey)).toBe('agent54f4d261');
   });
 
-  it('gives people the same stable friendly default while allowing full authored names', () => {
+  it('keeps the stable friendly first-name fallback exclusive to people', () => {
     const pubkey = 'cd'.repeat(32);
-    expect(fallbackPersonName(pubkey)).toBe(fallbackAgentName(pubkey));
+    expect(fallbackPersonName(pubkey)).toMatch(/^\p{Lu}\p{Ll}+$/u);
+    expect(fallbackPersonName(pubkey)).not.toBe(fallbackAgentName(pubkey));
     expect(normalizePersonName('  Ada   Lovelace  ')).toBe('Ada Lovelace');
     expect(personHandle('Ada Lovelace', pubkey)).toBe('adalovelace');
     expect(normalizePersonName('   ')).toBeNull();
@@ -34,7 +36,7 @@ describe('agent presentation names', () => {
     expect(resolveAgentName('Charles', 'agent')).toBe('Charles');
     expect(resolveAgentName('Quiet Keeper', 'agent')).toBe('Quiet Keeper');
     expect(resolveAgentName('ox-prime', 'agent')).toBe('ox-prime');
-    // Genuinely unusable authored values still take the deterministic pool.
+    // Genuinely unusable authored values still take the deterministic fallback.
     expect(resolveAgentName('   ', 'agent')).toBe(fallbackAgentName('agent'));
     expect(resolveAgentName(undefined, 'agent')).toBe(fallbackAgentName('agent'));
     expect(resolveAgentName('x'.repeat(64), 'agent')).toBe(fallbackAgentName('agent'));
@@ -71,10 +73,9 @@ describe('agent presentation names', () => {
     expect(first).not.toBe(second);
     const firstName = deriveAgentDisplayName(DEFAULT_AGENT_IDENTITY_NAME, first);
     const secondName = deriveAgentDisplayName(DEFAULT_AGENT_IDENTITY_NAME, second);
-    // Both resolve to real spoken seed names, and they differ per pubkey —
-    // the shared "buzzy-agent"/"Buzzy" label is gone.
-    expect(firstName).toMatch(/^\p{Lu}\p{Ll}+$/u);
-    expect(secondName).toMatch(/^\p{Lu}\p{Ll}+$/u);
+    // Both resolve to visibly synthetic labels, and they differ per pubkey.
+    expect(firstName).toBe('Agent 11111111');
+    expect(secondName).toBe('Agent 22222222');
     expect(firstName).not.toBe(secondName);
   });
 });

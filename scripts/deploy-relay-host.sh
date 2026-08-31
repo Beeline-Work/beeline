@@ -15,9 +15,12 @@
 #      recreated once below: by the full stack reconciliation when config
 #      changes, otherwise by an auth-only reconciliation.
 #   3. the TRACKED production stack config (relay-stack/prod/{compose.yml,
-#      nginx.conf}) -> /home/lunchbox/buzz-router-relay-prod/{compose.yml,
-#      relay-front/nginx.conf}, followed by `docker compose up -d` for the
-#      full stack. Before
+#      nginx.conf,materializer-upstream.conf}) ->
+#      /home/lunchbox/buzz-router-relay-prod/{compose.yml,
+#      relay-front/nginx.conf,relay-front/materializer-upstream.conf}.  The
+#      materializer moves through a healthy, read-only candidate before the
+#      old container is stopped; auth and relay are then recreated in place.
+#      Before
 #      this existed, production's compose/nginx were hand-maintained on the
 #      host and infra merges (e.g. the #340 push gateway) silently landed
 #      nowhere.
@@ -49,7 +52,10 @@
 #
 #   beeline-runner ALL=(root) NOPASSWD: /usr/bin/install -o lunchbox -g lunchbox -m 644 /home/beeline-runner/beeline-deploy-stage/compose.yml /home/lunchbox/buzz-router-relay-prod/compose.yml
 #   beeline-runner ALL=(root) NOPASSWD: /usr/bin/install -o lunchbox -g lunchbox -m 644 /home/beeline-runner/beeline-deploy-stage/nginx.conf /home/lunchbox/buzz-router-relay-prod/relay-front/nginx.conf
-#   beeline-runner ALL=(root) NOPASSWD: /usr/bin/docker compose -p buzz-router-prod --env-file /home/lunchbox/buzz-router-relay-prod/.env -f /home/lunchbox/buzz-router-relay-prod/compose.yml up -d --remove-orphans
+#   beeline-runner ALL=(root) NOPASSWD: /usr/bin/install -o lunchbox -g lunchbox -m 644 /home/beeline-runner/beeline-deploy-stage/materializer-upstream.conf /home/lunchbox/buzz-router-relay-prod/relay-front/materializer-upstream.conf
+#   beeline-runner ALL=(root) NOPASSWD: /usr/bin/docker compose -p buzz-router-prod-cutover --env-file /home/lunchbox/buzz-router-relay-prod/.env -f /home/beeline-runner/beeline-deploy-stage/compose.materializer-candidate.yml up -d --no-deps
+#   beeline-runner ALL=(root) NOPASSWD: /usr/bin/docker compose -p buzz-router-prod-cutover --env-file /home/lunchbox/buzz-router-relay-prod/.env -f /home/beeline-runner/beeline-deploy-stage/compose.materializer-candidate.yml down --remove-orphans
+#   beeline-runner ALL=(root) NOPASSWD: /usr/bin/docker compose -p buzz-router-prod --env-file /home/lunchbox/buzz-router-relay-prod/.env -f /home/lunchbox/buzz-router-relay-prod/compose.yml up -d --no-deps --force-recreate materializer auth relay
 #   beeline-runner ALL=(lunchbox) NOPASSWD: /usr/bin/env XDG_RUNTIME_DIR=/run/user/1000 /usr/bin/systemctl --user is-active beeline-events.service
 #   beeline-runner ALL=(lunchbox) NOPASSWD: /usr/bin/env XDG_RUNTIME_DIR=/run/user/1000 /usr/bin/systemctl --user is-enabled beeline-events.service
 #   beeline-runner ALL=(lunchbox) NOPASSWD: /usr/bin/env XDG_RUNTIME_DIR=/run/user/1000 /usr/bin/systemctl --user disable --now beeline-events.service
@@ -158,8 +164,14 @@ preflight_privileges() {
     "$STACK_STAGE_DIR/compose.yml" "$PROJECT_DIR/compose.yml"
   preflight_sudo_rule root /usr/bin/install -o lunchbox -g lunchbox -m 644 \
     "$STACK_STAGE_DIR/nginx.conf" "$PROJECT_DIR/relay-front/nginx.conf"
+  preflight_sudo_rule root /usr/bin/install -o lunchbox -g lunchbox -m 644 \
+    "$STACK_STAGE_DIR/materializer-upstream.conf" "$PROJECT_DIR/relay-front/materializer-upstream.conf"
+  preflight_sudo_rule root /usr/bin/docker compose -p buzz-router-prod-cutover \
+    --env-file "$PROJECT_DIR/.env" -f "$STACK_STAGE_DIR/compose.materializer-candidate.yml" up -d --no-deps
+  preflight_sudo_rule root /usr/bin/docker compose -p buzz-router-prod-cutover \
+    --env-file "$PROJECT_DIR/.env" -f "$STACK_STAGE_DIR/compose.materializer-candidate.yml" down --remove-orphans
   preflight_sudo_rule root /usr/bin/docker compose -p buzz-router-prod \
-    --env-file "$PROJECT_DIR/.env" -f "$PROJECT_DIR/compose.yml" up -d --remove-orphans
+    --env-file "$PROJECT_DIR/.env" -f "$PROJECT_DIR/compose.yml" up -d --no-deps --force-recreate materializer auth relay
 
   # An absent legacy unit is not touched by this deploy, so do not require
   # stale systemctl grants after the one-way migration has completed.
@@ -348,7 +360,8 @@ diff -r --brief -x dl "$STAGE/web" "$WEBROOT" >/dev/null || {
 }
 
 # ---------------------------------------------------------------------------
-# 4b. Roll out the TRACKED production stack config (compose.yml + nginx.conf).
+# 4b. Roll out the TRACKED production stack config and make the RoomView
+#     materializer cutover without a relay-front gap.
 #     relay-stack/{compose.yml,nginx.conf} are the ISOLATED gate stack
 #     (name: buzzy-gate); production is tracked under relay-stack/prod/.
 #     The cutover is deliberately ordered and one-way: validate and stage
@@ -358,14 +371,18 @@ diff -r --brief -x dl "$STAGE/web" "$WEBROOT" >/dev/null || {
 # ---------------------------------------------------------------------------
 LIVE_COMPOSE=$PROJECT_DIR/compose.yml
 LIVE_NGINX=$PROJECT_DIR/relay-front/nginx.conf
+LIVE_MATERIALIZER_UPSTREAM=$PROJECT_DIR/relay-front/materializer-upstream.conf
 
 [ -f "$REPO_STACK/compose.yml" ] || die "no relay-stack/prod/compose.yml in checkout ($CHECKOUT)"
 [ -f "$REPO_STACK/nginx.conf" ] || die "no relay-stack/prod/nginx.conf in checkout ($CHECKOUT)"
+[ -f "$REPO_STACK/materializer-upstream.conf" ] || die "no materializer upstream selector in checkout ($CHECKOUT)"
+[ -f "$REPO_STACK/compose.materializer-candidate.yml" ] || die "no materializer candidate compose file in checkout ($CHECKOUT)"
 
 log "staging production stack config"
 mkdir -p "$STAGE/stack"
-cp "$REPO_STACK/compose.yml" "$REPO_STACK/nginx.conf" "$STAGE/stack/"
-for f in compose.yml nginx.conf; do
+cp "$REPO_STACK/compose.yml" "$REPO_STACK/nginx.conf" "$REPO_STACK/materializer-upstream.conf" \
+  "$REPO_STACK/compose.materializer-candidate.yml" "$STAGE/stack/"
+for f in compose.yml nginx.conf materializer-upstream.conf compose.materializer-candidate.yml; do
   cmp -s "$REPO_STACK/$f" "$STAGE/stack/$f" || die "staged $f differs from checkout — aborting before anything was touched"
 done
 
@@ -430,6 +447,22 @@ reload_relay_front_nginx() {
   log "relay-front nginx reloaded (HUP)"
 }
 
+# Change only the request-time RoomView backend selector and HUP the existing
+# front.  Nginx keeps accepting connections across HUP, so this does not create
+# the stop/start 502 window that a relay-front recreation would.
+select_materializer_upstream() {
+  local upstream=$1
+  case "$upstream" in
+    materializer|materializer-next) ;;
+    *) echo "!! invalid materializer upstream: $upstream" >&2; return 1 ;;
+  esac
+  # shellcheck disable=SC2016 # $roomview_upstream is nginx syntax, not shell expansion.
+  printf 'set $roomview_upstream %s;\n' "$upstream" > "$STACK_STAGE_DIR/materializer-upstream.conf"
+  place_stack_file materializer-upstream.conf "$LIVE_MATERIALIZER_UPSTREAM" || return 1
+  reload_relay_front_nginx
+  log "RoomView traffic now uses $upstream"
+}
+
 retire_events_service() {
   local active enabled
   if events_service_absent; then
@@ -470,67 +503,70 @@ stop_tail_containers() {
   done
 }
 
-# Wait without changing the fixed sudo command shape. All services with an
-# application healthcheck must be healthy, and relay-front (which deliberately
-# has no healthcheck) must be running. This closes the gap where `up -d`
-# returned while auth still served 502s during run 32684876277.
-wait_for_stack_ready() {
-  local service expected cid actual all_ready
+wait_for_service_health() {
+  local project=$1 service=$2 cid actual
   for _ in $(seq 1 36); do
-    all_ready=1
-    for service in auth materializer relay relay-front; do
-      expected=healthy
-      [ "$service" = "relay-front" ] && expected=running
-      cid=$(docker ps -aq \
-        --filter label=com.docker.compose.project=buzz-router-prod \
-        --filter label=com.docker.compose.service="$service" | head -1)
-      if [ -z "$cid" ]; then
-        all_ready=0
-        continue
-      fi
+    cid=$(docker ps -aq --filter label=com.docker.compose.project="$project" \
+      --filter label=com.docker.compose.service="$service" | head -1)
+    if [ -n "$cid" ]; then
       actual=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$cid" 2>/dev/null || true)
-      [ "$actual" = "$expected" ] || all_ready=0
-    done
-    if [ "$all_ready" = 1 ]; then
-      log "production stack health verified"
-      return 0
+      if [ "$actual" = healthy ]; then
+        log "$project/$service health verified"
+        return 0
+      fi
     fi
     sleep 5
   done
-  echo "!! production stack did not become healthy within 180s" >&2
-  for service in auth materializer relay relay-front; do
-    cid=$(docker ps -aq \
-      --filter label=com.docker.compose.project=buzz-router-prod \
-      --filter label=com.docker.compose.service="$service" | head -1)
-    [ -z "$cid" ] || docker inspect --format "$service: status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}" "$cid" >&2 || true
-  done
+  echo "!! $project/$service did not become healthy within 180s" >&2
   return 1
 }
 
-reconcile_full_stack() {
-  local compose_log=$STAGE/stack-up.log
-  # shellcheck disable=SC2024 # Capture the sudo command's output in this unprivileged parent shell.
+start_materializer_candidate() {
+  local candidate_log=$STAGE/materializer-candidate.log
+  # shellcheck disable=SC2024 # Capture privileged command output in this runner-owned stage file.
+  if ! sudo -n /usr/bin/docker compose -p buzz-router-prod-cutover \
+      --env-file "$PROJECT_DIR/.env" -f "$STACK_STAGE_DIR/compose.materializer-candidate.yml" \
+      up -d --no-deps >"$candidate_log" 2>&1; then
+    tail -20 "$candidate_log" >&2
+    return 1
+  fi
+  wait_for_service_health buzz-router-prod-cutover materializer-next
+}
+
+stop_materializer_candidate() {
+  sudo -n /usr/bin/docker compose -p buzz-router-prod-cutover \
+    --env-file "$PROJECT_DIR/.env" -f "$STACK_STAGE_DIR/compose.materializer-candidate.yml" \
+    down --remove-orphans >/dev/null
+}
+
+recreate_application_services() {
+  local compose_log=$STAGE/application-services-up.log
+  # shellcheck disable=SC2024 # Capture privileged command output in this runner-owned stage file.
   if ! sudo -n /usr/bin/docker compose -p buzz-router-prod \
-      --env-file "$PROJECT_DIR/.env" -f "$LIVE_COMPOSE" up -d --remove-orphans \
-      >"$compose_log" 2>&1; then
+      --env-file "$PROJECT_DIR/.env" -f "$LIVE_COMPOSE" \
+      up -d --no-deps --force-recreate materializer auth relay >"$compose_log" 2>&1; then
     tail -20 "$compose_log" >&2
     return 1
   fi
-  wait_for_stack_ready
+  wait_for_service_health buzz-router-prod materializer
 }
 
 mkdir -p "$STACK_STAGE_DIR"
-cp "$STAGE/stack/compose.yml" "$STAGE/stack/nginx.conf" "$STACK_STAGE_DIR/"
+cp "$STAGE/stack/compose.yml" "$STAGE/stack/nginx.conf" \
+  "$STAGE/stack/materializer-upstream.conf" "$STAGE/stack/compose.materializer-candidate.yml" "$STACK_STAGE_DIR/"
 
 CUTOVER_STARTED=1
 retire_events_service || die "standalone repository-events retirement failed"
 place_stack_file compose.yml "$LIVE_COMPOSE" || die "production compose placement failed"
 place_stack_file nginx.conf "$LIVE_NGINX" || die "production nginx placement failed"
-stop_tail_containers || die "tail consumer retirement failed"
-log "applying production stack (docker compose up -d)"
-reconcile_full_stack || die "production stack convergence failed"
-reload_relay_front_nginx || die "production nginx reload failed"
-log "production stack rolled out"
+start_materializer_candidate || die "materializer candidate did not become healthy; old stack remains live"
+select_materializer_upstream materializer-next || die "could not move RoomView traffic to the healthy candidate"
+stop_tail_containers || die "old materializer retirement failed after candidate traffic switch"
+log "recreating production application services behind the healthy candidate"
+recreate_application_services || die "production materializer recreation failed while candidate remains serving RoomView"
+select_materializer_upstream materializer || die "could not return RoomView traffic to the new materializer"
+stop_materializer_candidate || die "could not remove the drained materializer candidate"
+log "production application services rolled out without a RoomView gap"
 
 # ---------------------------------------------------------------------------
 # 5. PUBLIC verification — the only proof that counts.

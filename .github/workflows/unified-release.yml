@@ -30,7 +30,7 @@ concurrency:
 
 jobs:
   initialize:
-    runs-on: [self-hosted, beeline-production-squire]
+    runs-on: [self-hosted, beeline-prod-host]
     outputs:
       release_sha: ${{ steps.identity.outputs.release_sha }}
       release_version: ${{ steps.identity.outputs.release_version }}
@@ -138,7 +138,7 @@ jobs:
 
   artifact_gate:
     needs: [initialize, app_artifact, daemon_artifact, server_artifact]
-    runs-on: [self-hosted, beeline-production-squire]
+    runs-on: [self-hosted, beeline-prod-host]
     outputs:
       promotion_epoch: ${{ steps.clock.outputs.promotion_epoch }}
     steps:
@@ -211,7 +211,7 @@ jobs:
 
   confirm_server:
     needs: [initialize, promote_server]
-    runs-on: [self-hosted, beeline-production-squire]
+    runs-on: [self-hosted, beeline-prod-host]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -237,7 +237,7 @@ jobs:
 
   confirm_daemon:
     needs: [initialize, promote_daemon]
-    runs-on: [self-hosted, beeline-production-squire]
+    runs-on: [self-hosted, beeline-prod-host]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -265,7 +265,7 @@ jobs:
 
   confirm_app:
     needs: [initialize, artifact_gate, promote_app]
-    runs-on: [self-hosted, beeline-production-squire]
+    runs-on: [self-hosted, beeline-prod-host]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -298,7 +298,7 @@ jobs:
 
   delivery_report:
     needs: [initialize, confirm_app]
-    runs-on: [self-hosted, beeline-production-squire]
+    runs-on: [self-hosted, beeline-prod-host]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -357,7 +357,7 @@ jobs:
   not_delivered:
     if: always() && needs.delivery_report.result != 'success'
     needs: [initialize, delivery_report]
-    runs-on: [self-hosted, beeline-production-squire]
+    runs-on: [self-hosted, beeline-prod-host]
     steps:
       - name: Report the aligned release as not delivered
         env:
@@ -383,7 +383,7 @@ jobs:
       - promote_daemon
       - promote_app
       - delivery_report
-    runs-on: [self-hosted, beeline-production-squire]
+    runs-on: [self-hosted, beeline-prod-host]
     steps:
       - name: Retry the whole release only if it is still current main
         uses: actions/github-script@v7

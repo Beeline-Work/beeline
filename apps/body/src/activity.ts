@@ -1245,15 +1245,11 @@ export function postAgentTurnStatus(
   generationId?: string,
 ): Promise<void> {
   const receiptStatus = status === 'failed' ? 'complete' : status;
-  const message =
-    receiptStatus === 'working'
-      ? 'Agent is thinking…'
-      : 'Agent reply complete.';
   return publishLifecycleMessage({
     kind: 'turn-receipt',
     channelId,
     owner,
-    content: message,
+    content: '',
     tags: [
       ['t', AGENT_TURN_TAG],
       ['request', requestId],
@@ -1278,7 +1274,7 @@ export function postCornerSessionStatus(
     kind: 'corner-session-live',
     channelId,
     owner,
-    content: 'Corner session live.',
+    content: '',
     tags: [
       ['t', CORNER_SESSION_TAG],
       ['session', sessionId],

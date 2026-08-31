@@ -10,7 +10,6 @@ import {
   type RepositoryBinding,
   type RoomRepository,
 } from '@beeline/buzz-client';
-import type { NostrEvent } from '@beeline/nostr';
 import { git, gitAuthed, type GitResult, type Identity } from '@beeline/gate';
 import { Body, type BoundRepo, type RoomEditPolicy } from './body.js';
 import type { ScheduledTurnRequest } from './work-calendar.js';
@@ -160,22 +159,6 @@ export const DEFAULT_ROOM_DISCOVERY_RETRY_MS = 10 * 60_000;
  */
 export const DEFAULT_ROOM_DISCOVERY_TRANSIENT_RETRY_MS = 30_000;
 
-const ROOM_JOIN_NOTICE_TAG = 'buzz-agent-room-join-notice';
-const ROOM_JOIN_NOTICE_QUERY_LIMIT = 20;
-const ROOM_JOIN_UNAVAILABLE_STATUS = 'repository-unavailable';
-const ROOM_JOIN_RECOVERED_STATUS = 'repository-recovered';
-const ROOM_JOIN_FAILURE_PREFIX = "Agent unavailable: I could not access this Room's repository.";
-const ROOM_JOIN_RECOVERY_TEXT =
-  'Agent available again: repository access recovered and this Room is ready.';
-
-function hasEventTag(event: NostrEvent, name: string, value: string): boolean {
-  return event.tags.some((tag) => tag[0] === name && tag[1] === value);
-}
-
-function compareEvents(left: NostrEvent, right: NostrEvent): number {
-  return left.created_at - right.created_at || left.id.localeCompare(right.id);
-}
-
 /**
  * Known-DURABLE join failures keep the long park.
  *
@@ -297,14 +280,6 @@ export class RoomRuntimeCoordinator {
   private readonly githubApp: GitHubAppRuntime | undefined;
   private readonly namedRepositoryResolutions = new Map<string, Promise<BoundRepo>>();
   private readonly quarantine: RoomQuarantineStateMachine;
-  /**
-   * Rooms whose durable join-notice state has been checked this process.
-   * A failed read/publish is deliberately not cached, so the ordinary
-   * reconcile path retries it without a second checker or timer.
-   */
-  private readonly settledRoomJoinNotices = new Set<string>();
-  /** A successful failure publish is relay-visible even before query projection catches up. */
-  private readonly publishedRoomJoinFailures = new Map<string, NostrEvent>();
   /**
    * Rooms the relay has authoritatively reported as ARCHIVED, held inert for
    * this daemon process: never served again, never retried, and never even
@@ -743,7 +718,6 @@ export class RoomRuntimeCoordinator {
             'join',
             (async () => {
               if (this.running.has(channelId)) {
-                await this.reconcileRoomJoinNotice(client, channelId, { kind: 'recovered' });
                 return;
               }
               // One Room that cannot be joined is a fact about that Room, not about
@@ -815,25 +789,8 @@ export class RoomRuntimeCoordinator {
                   this.startConversationRoom(channelId, target.kind);
                 }
                 this.quarantine.noteSuccess(channelId);
-                await this.reconcileRoomJoinNotice(client, channelId, { kind: 'recovered' });
               } catch (error) {
-                const discovery = this.noteRoomDiscoveryFailure(channelId, error);
-                if (discovery.announced) {
-                  await this.reconcileRoomJoinNotice(client, channelId, {
-                    kind: 'failed',
-                    retryLabel: discovery.retryLabel,
-                  }).catch((noticeError: unknown) =>
-                    isArchivedChannelError(noticeError)
-                      ? this.noteArchivedRoom(
-                          channelId,
-                          'join-status notice was refused: channel is archived',
-                        )
-                      : console.warn(
-                          `[thin-core] Room ${channelId} join-status notice could not be sent:`,
-                          noticeError,
-                        ),
-                  );
-                }
+                this.noteRoomDiscoveryFailure(channelId, error);
               }
             })(),
           );
@@ -853,137 +810,6 @@ export class RoomRuntimeCoordinator {
       throw error;
     } finally {
       client.disconnect();
-    }
-  }
-
-  /**
-   * Read the bounded, agent-authored Room tail plus tagged join notices. The
-   * tail is only for the pre-tag legacy failure currently visible in peddle;
-   * new episodes use the targeted tag filter. A recovery is resolved only
-   * when it references the exact failure event (or is the legacy closure
-   * published after that failure).
-   */
-  private async readRoomJoinNoticeState(
-    client: BuzzClient,
-    channelId: string,
-  ): Promise<{ failure?: NostrEvent; recovered: boolean }> {
-    // Production BuzzClient always owns this data door. A few narrow unit
-    // stubs intentionally omit unrelated relay reads; absence there means no
-    // durable notice rather than noisy retry logging.
-    if (typeof client.query !== 'function') return { recovered: false };
-    const events = await client.query([
-      {
-        kinds: [9],
-        authors: [this.agent.publicKey],
-        '#h': [channelId],
-        '#t': [ROOM_JOIN_NOTICE_TAG],
-        limit: ROOM_JOIN_NOTICE_QUERY_LIMIT,
-      },
-      {
-        kinds: [9],
-        authors: [this.agent.publicKey],
-        '#h': [channelId],
-        limit: ROOM_JOIN_NOTICE_QUERY_LIMIT,
-      },
-    ]);
-    const byId = new Map(events.map((event) => [event.id, event]));
-    const published = this.publishedRoomJoinFailures.get(channelId);
-    if (published) byId.set(published.id, published);
-    const ordered = [...byId.values()].sort(compareEvents);
-    const failure = ordered
-      .filter(
-        (event) =>
-          (hasEventTag(event, 't', ROOM_JOIN_NOTICE_TAG) &&
-            hasEventTag(event, 'status', ROOM_JOIN_UNAVAILABLE_STATUS)) ||
-          event.content.startsWith(ROOM_JOIN_FAILURE_PREFIX),
-      )
-      .at(-1);
-    if (!failure) return { recovered: false };
-    const recovered = ordered.some(
-      (event) =>
-        (hasEventTag(event, 't', ROOM_JOIN_NOTICE_TAG) &&
-          hasEventTag(event, 'status', ROOM_JOIN_RECOVERED_STATUS) &&
-          hasEventTag(event, 'failure', failure.id)) ||
-        (event.content === ROOM_JOIN_RECOVERY_TEXT && compareEvents(event, failure) > 0),
-    );
-    return { failure, recovered };
-  }
-
-  /**
-   * The single Room join-notice data door. Both failure and recovery first
-   * reconcile the relay-visible status episode; process-local quarantine is
-   * never evidence that a captain-visible notice exists.
-   */
-  private async reconcileRoomJoinNotice(
-    client: BuzzClient,
-    channelId: string,
-    desired: { kind: 'failed'; retryLabel: string } | { kind: 'recovered' },
-  ): Promise<void> {
-    if (desired.kind === 'recovered' && this.settledRoomJoinNotices.has(channelId)) return;
-    if (desired.kind === 'failed') this.settledRoomJoinNotices.delete(channelId);
-    let state: { failure?: NostrEvent; recovered: boolean };
-    try {
-      state = await this.readRoomJoinNoticeState(client, channelId);
-    } catch (error) {
-      if (desired.kind === 'failed') {
-        console.warn(
-          `[thin-core] Room ${channelId} existing join notice could not be read; ` +
-            'publishing the current failure:',
-          error,
-        );
-        state = { recovered: false };
-      } else {
-        console.warn(
-          `[thin-core] Room ${channelId} join-recovery notice could not be reconciled:`,
-          error,
-        );
-        return;
-      }
-    }
-
-    if (desired.kind === 'failed') {
-      if (state.failure && !state.recovered) {
-        this.publishedRoomJoinFailures.set(channelId, state.failure);
-        return;
-      }
-      const event = await client.messageSubmit(
-        channelId,
-        `${ROOM_JOIN_FAILURE_PREFIX} I will retry automatically in ${desired.retryLabel}.`,
-        {
-          extraTags: [
-            ['t', ROOM_JOIN_NOTICE_TAG],
-            ['status', ROOM_JOIN_UNAVAILABLE_STATUS],
-          ],
-        },
-      );
-      this.publishedRoomJoinFailures.set(channelId, event);
-      return;
-    }
-
-    if (!state.failure || state.recovered) {
-      this.settledRoomJoinNotices.add(channelId);
-      this.publishedRoomJoinFailures.delete(channelId);
-      return;
-    }
-    try {
-      await client.messageSubmit(channelId, ROOM_JOIN_RECOVERY_TEXT, {
-        extraTags: [
-          ['t', ROOM_JOIN_NOTICE_TAG],
-          ['status', ROOM_JOIN_RECOVERED_STATUS],
-          ['failure', state.failure.id],
-        ],
-      });
-      this.settledRoomJoinNotices.add(channelId);
-      this.publishedRoomJoinFailures.delete(channelId);
-    } catch (noticeError) {
-      if (isArchivedChannelError(noticeError)) {
-        this.noteArchivedRoom(channelId, 'join-recovery notice was refused: channel is archived');
-      } else {
-        console.warn(
-          `[thin-core] Room ${channelId} join-recovery notice could not be reconciled:`,
-          noticeError,
-        );
-      }
     }
   }
 

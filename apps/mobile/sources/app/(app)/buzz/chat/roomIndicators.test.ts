@@ -79,6 +79,8 @@ describe('the corner line and the turn indicator are independent', () => {
     for (const cornerState of CORNER_STATE) expect(turn).not.toContain(cornerState);
     expect(turn).toContain('pendingAckSentAt');
     expect(turn).toContain('composerAckNow');
+    expect(turn).toContain("label: 'waiting on agent…'");
+    expect(turn).not.toContain('no confirmation yet');
   });
 
   it('keeps the Corner-only transcript policy out of Room rendering', () => {

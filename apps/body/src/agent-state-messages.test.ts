@@ -120,22 +120,16 @@ describe('the daemon-published agent state notices stay deleted', () => {
     expect(reconnectCatch).not.toContain('postControlMessage');
   });
 
-  it('reconciles failure and recovery through one durable Room-notice door', () => {
+  it('keeps Room join failure and recovery in operator logs, never Room chat', () => {
     const reconcile = daemon.slice(
       daemon.indexOf('async reconcile('),
       daemon.indexOf('private roomRoot('),
     );
     expect(reconcile.length).toBeGreaterThan(0);
-    expect(reconcile).toContain('reconcileRoomJoinNotice');
-    expect(reconcile).toContain("kind: 'failed'");
-    expect(reconcile).toContain("kind: 'recovered'");
-    // The retry cadence is dynamic (durable failures say ten minutes,
-    // transient ones say thirty seconds) but it is always stated plainly.
-    expect(daemon).toContain('I will retry automatically in ${desired.retryLabel}.');
-    expect(reconcile).toContain("'10 minutes'");
-    expect(reconcile).not.toContain("I can't get to this room's repo");
-    expect(daemon).toContain('Agent available again: repository access recovered');
-    expect(daemon).toContain("'#t': [ROOM_JOIN_NOTICE_TAG]");
-    expect(daemon.match(/client\.messageSubmit\(/g)).toHaveLength(2);
+    expect(reconcile).not.toContain('reconcileRoomJoinNotice');
+    expect(daemon).not.toContain('buzz-agent-room-join-notice');
+    expect(daemon).not.toContain("Agent unavailable: I could not access this Room's repository");
+    expect(daemon).not.toContain('Agent available again: repository access recovered');
+    expect(daemon).not.toContain('client.messageSubmit(');
   });
 });

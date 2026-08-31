@@ -1570,7 +1570,7 @@ export default function BuzzChat() {
 
   // A single deadline-scheduled timer (never a ticking interval — see the
   // presence clock above) so the composer flips from "buzzing…" to the
-  // honest "no confirmation yet" the instant the bound elapses, not on
+  // honest "waiting on agent" the instant the bound elapses, not on
   // whatever unrelated re-render happens to follow.
   useEffect(() => {
     if (!pendingAck) return;
@@ -1594,7 +1594,7 @@ export default function BuzzChat() {
    * Before that receipt exists, `pendingAck` (armed the instant a
    * message addressed to an agent is sent — see `handleSend`) fills the dead
    * air with an immediate local "buzzing…"; past `COMPOSER_ACK_BOUND_MS` with
-   * still no receipt it becomes an honest "no confirmation yet" rather than
+   * still no receipt it becomes an honest "waiting on agent" rather than
    * silently disappearing or lying about a turn that hasn't started.
    */
   const composerAck = useMemo((): { label: string; tone: 'live' | 'quiet' } | null => {
@@ -1614,7 +1614,7 @@ export default function BuzzChat() {
       return { label: `${subject} thinking…`, tone: 'live' };
     }
     if (state.kind === 'buzzing') return { label: 'buzzing…', tone: 'live' };
-    return { label: 'no confirmation yet…', tone: 'quiet' };
+    return { label: 'waiting on agent…', tone: 'quiet' };
   }, [activeAgentTurn, agentByPubkey, agentsOffline, composerAckNow, isCorner, pendingAck]);
 
   useEffect(() => {

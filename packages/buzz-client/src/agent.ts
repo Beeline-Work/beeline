@@ -6,13 +6,7 @@
  * merge gate can query: role mistakes never turn that key into a human approver.
  */
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
-import {
-  communityChannels,
-  communityMembers,
-  communityRoomIds,
-  getCommunity,
-  inviteTokenHash,
-} from './community.js';
+import { communityChannels, communityMembers, getCommunity, inviteTokenHash } from './community.js';
 import { publishEvent, queryEvents } from './http.js';
 import {
   KIND_AGENT_SOUL,
@@ -43,7 +37,6 @@ import type {
 } from './types.js';
 import {
   getChannelCommunityId,
-  getChannelMetadata,
   isMember,
   removeMember,
   setMemberRole,
@@ -199,17 +192,19 @@ export async function syncAgentDeclaration(
   );
   const existing = (await listAgentIdentities(ctx, communityId))
     .filter((agent) => agent.pubkey === ctx.identity.publicKey)
-    .sort((left, right) => right.createdAt - left.createdAt || right.raw.id.localeCompare(left.raw.id))[0];
+    .sort(
+      (left, right) => right.createdAt - left.createdAt || right.raw.id.localeCompare(left.raw.id),
+    )[0];
   if (existing?.displayName === displayName) return existing;
 
   return createAgentRecord(ctx, communityId, {
     agentId: existing?.agentId ?? options.agentId,
     displayName,
-    ...(options.soul ?? existing?.soul ? { soul: options.soul ?? existing?.soul } : {}),
-    ...(options.personality ?? existing?.personality
+    ...((options.soul ?? existing?.soul) ? { soul: options.soul ?? existing?.soul } : {}),
+    ...((options.personality ?? existing?.personality)
       ? { personality: options.personality ?? existing?.personality }
       : {}),
-    ...(options.avatar ?? existing?.avatar ? { avatar: options.avatar ?? existing?.avatar } : {}),
+    ...((options.avatar ?? existing?.avatar) ? { avatar: options.avatar ?? existing?.avatar } : {}),
   });
 }
 
@@ -302,41 +297,6 @@ export async function createAgentPairingCode(
   );
   await publishEvent(ctx.http, event);
   return { code, tokenHash, communityId, expiresAt, mintedBy: event.pubkey, event };
-}
-
-/**
- * Attach a redeemed agent to every top-level Room the pairing code's minter
- * currently belongs to — the app no longer asks which Room, so redemption
- * mirrors human Workspace-join propagation directly: DMs, corners, and
- * archived Rooms excluded (`communityRoomIds`, same rule
- * `migrateSuccessorMemberships` uses). Best-effort per Room so one relay
- * hiccup or unprojectable self-join never blocks the rest, and re-running it
- * on a retried redemption is a no-op for rooms already attached.
- */
-async function attachAgentToInviterRooms(
-  ctx: ChannelOpsContext,
-  communityId: string,
-  agentPubkey: string,
-  inviterPubkey: string,
-): Promise<void> {
-  for (const channelId of await communityRoomIds(ctx, communityId)) {
-    if ((await getChannelMetadata(ctx, channelId))?.archived) continue;
-    if (!(await isMember(ctx, channelId, inviterPubkey))) continue;
-    if (await isMember(ctx, channelId, agentPubkey)) continue;
-    try {
-      await setMemberRole(ctx, channelId, agentPubkey, 'member', {
-        extraTags: [
-          [TAG_COMMUNITY, communityId],
-          ['agent-invite', agentPubkey],
-        ],
-      });
-      await waitUntilMember(ctx, channelId, agentPubkey);
-    } catch (error) {
-      console.warn(
-        `[buzz-client] could not attach agent ${agentPubkey.slice(0, 12)}… to room ${channelId}: ${String(error)}`,
-      );
-    }
-  }
 }
 
 interface AgentPairingMarker {
@@ -448,8 +408,13 @@ export async function redeemAgentPairingCode(
     .map(parseAgent)
     .find((agent) => agent?.pubkey === ctx.identity.publicKey);
   if (minterVisibleBeforeJoin && ours) {
-    await attachAgentToInviterRooms(ctx, communityId, ctx.identity.publicKey, pairing.event.pubkey);
-    return { communityId, pairedBy: pairing.event.pubkey, agent: ours, joined: false };
+    return {
+      communityId,
+      pairedBy: pairing.event.pubkey,
+      agent: ours,
+      joined: false,
+      attachedRoomIds: [],
+    };
   }
   if (minterVisibleBeforeJoin && matchingRedemptions.some((event) => isAgentIdentityEvent(event))) {
     throw new Error('agent pairing code has already been redeemed');
@@ -463,30 +428,32 @@ export async function redeemAgentPairingCode(
     );
   }
   let joinedForPairing = false;
+  let claimedForPairing = false;
+  let attachedRoomIds: string[] = [];
   try {
     if (!wasMember) {
       joinedForPairing = true;
-      if (!minterVisibleBeforeJoin) {
-        // Private Workspace projections are intentionally hidden from this
-        // fresh key. The server-indexed claim boundary verifies the signed
-        // global marker against authoritative membership and reserves its hash
-        // for this exact agent before granting the bootstrap membership.
-        let claim;
-        try {
-          claim = await new RoomViewClient({
-            baseUrl: ctx.http.baseUrl,
-            identity: ctx.identity,
-          }).claimAgentPairing(code);
-        } catch (error) {
-          if (error instanceof RoomViewHttpError && error.status === 404) {
-            throw new Error('pairing code is not authorized for this private Workspace');
-          }
-          throw error;
+      // The server-indexed claim is the single authority boundary that can
+      // atomically reserve this code and inherit the minter's current Rooms.
+      // A new agent cannot author effective Room membership commands itself:
+      // production projects those only from a current Room admin.
+      let claim;
+      try {
+        claim = await new RoomViewClient({
+          baseUrl: ctx.http.baseUrl,
+          identity: ctx.identity,
+        }).claimAgentPairing(code);
+      } catch (error) {
+        if (error instanceof RoomViewHttpError && error.status === 404) {
+          throw new Error('pairing code is not authorized for this Workspace');
         }
-        if (claim.workspaceId !== communityId || claim.pairedBy !== pairing.event.pubkey) {
-          throw new Error('pairing claim did not match its signed Workspace marker');
-        }
+        throw error;
       }
+      claimedForPairing = true;
+      if (claim.workspaceId !== communityId || claim.pairedBy !== pairing.event.pubkey) {
+        throw new Error('pairing claim did not match its signed Workspace marker');
+      }
+      attachedRoomIds = [...claim.attachedRoomIds];
       // Publish the canonical relay membership command from inside. This is
       // what creates the ordinary signed event/projections; the server claim
       // is only the narrow one-shot bootstrap for a private Workspace.
@@ -517,17 +484,12 @@ export async function redeemAgentPairingCode(
       .map(parseAgent)
       .find((agent) => agent?.pubkey === ctx.identity.publicKey);
     if (ours) {
-      await attachAgentToInviterRooms(
-        ctx,
-        communityId,
-        ctx.identity.publicKey,
-        pairing.event.pubkey,
-      );
       return {
         communityId,
         pairedBy: pairing.event.pubkey,
         agent: ours,
         joined: joinedForPairing,
+        attachedRoomIds,
       };
     }
     if (matchingRedemptions.some((event) => isAgentIdentityEvent(event))) {
@@ -541,12 +503,18 @@ export async function redeemAgentPairingCode(
       tokenHash,
     );
     joinedForPairing = false;
-    await attachAgentToInviterRooms(ctx, communityId, ctx.identity.publicKey, pairing.event.pubkey);
-    return { communityId, pairedBy: pairing.event.pubkey, agent, joined: !wasMember };
+    return {
+      communityId,
+      pairedBy: pairing.event.pubkey,
+      agent,
+      joined: !wasMember,
+      attachedRoomIds,
+    };
   } catch (error) {
     // The capability-scoped membership already landed. Any failed authority
     // check or registration must not leave an outsider in the Workspace.
-    if (joinedForPairing) await abandonAgentPairing(ctx, communityId);
+    if (claimedForPairing) await abandonAgentPairing(ctx, communityId, code);
+    else if (joinedForPairing) await abandonAgentPairing(ctx, communityId);
     throw error;
   }
 }
@@ -773,16 +741,42 @@ export interface AgentSoulAuthorResolution {
  * dropping the membership the agent just added is what actually makes the
  * ghost disappear from the app.
  *
- * This is a self-removal — the agent's own key signing kind:9001 for itself —
- * NOT `removeAgent`, which is an admin action and explicitly refuses an agent
- * caller. It never throws: it only ever runs while a real pairing error is
- * already propagating, and a relay that declines the self-removal must not
- * replace that error with its own.
+ * When the pairing code is available, the authenticated claim endpoint
+ * atomically removes every Workspace/Room membership that exact claim created.
+ * Older callers fall back to a self-removal — the agent's own key signing
+ * kind:9001 for itself — never `removeAgent`, which is an admin action. It
+ * never throws because the original pairing failure remains authoritative.
  */
 export async function abandonAgentPairing(
   ctx: ChannelOpsContext,
   communityId: string,
+  pairingCode?: string,
 ): Promise<boolean> {
+  if (pairingCode) {
+    try {
+      const abandoned = await new RoomViewClient({
+        baseUrl: ctx.http.baseUrl,
+        identity: ctx.identity,
+      }).abandonAgentPairing(pairingCode);
+      if (abandoned.abandoned) return true;
+      return false;
+    } catch {
+      // Retain the existing Workspace-only self-removal below as a best-effort
+      // fallback, but report failure so the caller can surface that inherited
+      // Room memberships may still need operator cleanup.
+      try {
+        if (await isMember(ctx, communityId, ctx.identity.publicKey)) {
+          await removeMember(ctx, communityId, ctx.identity.publicKey, {
+            extraTags: [[TAG_COMMUNITY, communityId]],
+          });
+          await waitUntilNotMember(ctx, communityId, ctx.identity.publicKey);
+        }
+      } catch {
+        // The original pairing error remains authoritative.
+      }
+      return false;
+    }
+  }
   try {
     if (!(await isMember(ctx, communityId, ctx.identity.publicKey))) return true;
     await removeMember(ctx, communityId, ctx.identity.publicKey, {

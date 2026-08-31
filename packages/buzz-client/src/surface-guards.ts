@@ -325,7 +325,7 @@ function watchFilters(value: unknown): boolean {
       if (!filter) return false;
       return Object.entries(filter).every(([key, entry]) => {
         if (key === 'kinds') return Array.isArray(entry) && entry.every(integer);
-        if (key === 'authors' || key === '#h' || key === '#d' || key === '#p') {
+        if (key === 'authors' || key === '#h' || key === '#d' || key === '#p' || key === '#t') {
           return Array.isArray(entry) && entry.every((item) => typeof item === 'string');
         }
         return false;

@@ -300,8 +300,10 @@ import {
 } from './trusty-squire-storage.js';
 import {
   applyAgentModelSelection,
+  agentArgsWithModelSelection,
   filterAllowedModelConfigOptions,
   filterModelOptionsByCredentials,
+  isGrokAgentCommand,
   parseAdvertisedConfigOptions,
   withEffectiveCurrentValues,
 } from './model-config.js';
@@ -547,10 +549,11 @@ const PUBLISHED_COMMAND_SIGNATURES = new Set<string>();
 function probeAdvertisedModelCatalog(config: BodyConfig): Promise<AgentModelConfigOption[]> {
   const command = config.agentCommand ?? config.agentBinary;
   if (!command) return Promise.resolve([]);
-  const key = JSON.stringify([command, config.agentArgs ?? []]);
+  const agent = { kind: config.agentKind, command, args: config.agentArgs ?? [] };
+  const key = JSON.stringify([agent, config.modelSelection ?? null]);
   let probe = MODEL_CATALOG_PROBES.get(key);
   if (!probe) {
-    probe = fetchAgentModelCatalog({ command, args: config.agentArgs ?? [] }, config.agentEnv)
+    probe = fetchAgentModelCatalog(agent, config.agentEnv, config.modelSelection)
       .then((result) => result.catalog)
       .catch((error) => {
         console.error('[body] could not probe the agent model catalog:', error);
@@ -2956,7 +2959,10 @@ export class Body {
     env: Record<string, string>,
   ): Promise<{ command: string; args: string[] }> {
     const command = this.config.agentCommand ?? this.config.agentBinary;
-    const args = this.config.agentArgs;
+    const args = agentArgsWithModelSelection(
+      { kind: this.config.agentKind, command, args: this.config.agentArgs ?? [] },
+      this.config.modelSelection,
+    );
     if (!this.config.bwrapPath) {
       if (this.squireIsolationRequired()) {
         throw new Error('Trusty Squire activation refused without bubblewrap isolation');
@@ -3154,7 +3160,14 @@ export class Body {
     const workbench = workbenchTemplate ? { ...workbenchTemplate } : undefined;
     let client = new AcpClient({
       agentCommand: this.config.agentCommand ?? this.config.agentBinary,
-      agentArgs: this.config.agentArgs,
+      agentArgs: agentArgsWithModelSelection(
+        {
+          kind: this.config.agentKind,
+          command: this.config.agentCommand ?? this.config.agentBinary,
+          args: this.config.agentArgs ?? [],
+        },
+        this.config.modelSelection,
+      ),
       agentEnv: this.config.agentEnv,
       autoApprovePermissions: input.autoApprovePermissions,
       permissionHandler: input.permissionHandler,
@@ -3181,6 +3194,12 @@ export class Body {
       ...(sessionIdleMs ? { idleMs: sessionIdleMs } : {}),
       activate: async () => {
         if (client.isAlive && session.sessionId) return session.sessionId;
+        // Grok's reasoning effort is a launch-only option. Re-read and
+        // validate a human override before building the cold process argv so
+        // an in-app change takes effect on the next physical session rather
+        // than waiting for a daemon restart. Warm Grok sessions deliberately
+        // return above and retain their already-launched effort.
+        await this.refreshGrokLaunchModelSelection(input.communityId);
         // The ACP session cwd is also the child's process cwd, so a harness
         // that keys per-project state off its own cwd matches this session.
         await mkdir(input.cwd, { recursive: true });
@@ -3485,18 +3504,12 @@ export class Body {
    * both are logged and skipped.
    */
   private async applyModelConfigForSession(
-    client: Pick<AcpClient, 'setConfigOption'>,
+    client: Pick<AcpClient, 'setConfigOption' | 'setModel'>,
     sessionId: string,
     communityId: string,
     sessionNewRaw: unknown,
     session: AgentSession,
   ): Promise<void> {
-    const rawConfigOptions = parseAdvertisedConfigOptions(sessionNewRaw);
-    const catalogOptions = filterModelOptionsByCredentials(
-      filterAllowedModelConfigOptions(rawConfigOptions),
-      this.config.agentEnv,
-    );
-    session.modelConfigOptions = catalogOptions;
     let selection: Awaited<ReturnType<typeof getAgentModelConfig>> = null;
     try {
       selection = await getAgentModelConfig(
@@ -3510,6 +3523,20 @@ export class Body {
     // A human's in-app pick (#223) always wins; the pair-time `--model`/
     // `--effort` default only fills in until one exists.
     const applied = selection ?? this.config.modelSelection;
+    const rawConfigOptions = parseAdvertisedConfigOptions(
+      sessionNewRaw,
+      applied?.model,
+      isGrokAgentCommand({
+        kind: this.config.agentKind,
+        command: this.config.agentCommand ?? this.config.agentBinary,
+        args: this.config.agentArgs ?? [],
+      }),
+    );
+    const catalogOptions = filterModelOptionsByCredentials(
+      filterAllowedModelConfigOptions(rawConfigOptions),
+      this.config.agentEnv,
+    );
+    session.modelConfigOptions = catalogOptions;
     if (catalogOptions.length) {
       // Publish the catalog with the EFFECTIVE selection stamped onto it:
       // the harness's raw `currentValue` is its pre-application default and
@@ -3648,10 +3675,57 @@ export class Body {
   }): Promise<void> {
     const command = this.config.agentCommand ?? this.config.agentBinary;
     await validateAgentModelSelection(
-      { command, args: this.config.agentArgs ?? [] },
+      { kind: this.config.agentKind, command, args: this.config.agentArgs ?? [] },
       this.config.agentEnv,
       selection,
     );
+  }
+
+  /**
+   * A Grok effort cannot be changed through ACP after the process starts.
+   * Refresh its persisted human selection at the cold-process boundary,
+   * validating it with the live harness before allowing it to shape argv.
+   * Other harnesses retain their existing per-session ACP application path.
+   */
+  private async refreshGrokLaunchModelSelection(communityId?: string): Promise<void> {
+    const command = this.config.agentCommand ?? this.config.agentBinary;
+    if (
+      !communityId ||
+      !isGrokAgentCommand({
+        kind: this.config.agentKind,
+        command,
+        args: this.config.agentArgs ?? [],
+      })
+    ) {
+      return;
+    }
+    let human: Awaited<ReturnType<typeof getAgentModelConfig>> = null;
+    try {
+      human = await getAgentModelConfig(
+        this.agentClientContext(),
+        communityId,
+        this.agentIdentity.publicKey,
+      );
+    } catch (error) {
+      // A transient relay read must not prevent a cold session from using its
+      // last known validated selection; normal post-session reconciliation
+      // will retry on the next activation.
+      console.error('[body] failed to refresh Grok launch model config:', error);
+      return;
+    }
+    if (!human) return;
+    const selection = {
+      ...(human.model ? { model: human.model } : {}),
+      ...(human.effort ? { effort: human.effort } : {}),
+    };
+    try {
+      await this.validateLiveModelSelection(selection);
+    } catch (error) {
+      this.config.modelUnavailable = modelUnavailableState(selection, error);
+      throw error;
+    }
+    this.config.modelSelection = selection;
+    this.config.modelUnavailable = undefined;
   }
 
   /**

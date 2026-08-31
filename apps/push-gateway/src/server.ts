@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { NIP98_KIND, verifyEvent, verifyNip98Header, type NostrEvent } from '@beeline/nostr';
 import type {
+  AgentPairingAbandonView,
   AgentDetailView,
   AgentPairingClaimView,
   ChatListView,
@@ -95,6 +96,7 @@ export interface RegistrationServerHooks {
       tokenHash: string,
       agentPubkey: string,
     ) => Promise<AgentPairingClaimView | null>;
+    readonly abandonAgentPairing: (tokenHash: string, agentPubkey: string) => Promise<boolean>;
     readonly log?: (line: string) => void;
   };
 }
@@ -381,6 +383,65 @@ export function createRegistrationServer(
           logIndexer(
             hooks.indexer,
             `[indexer] request surface=agent-pairing-claim status=${status} duration_ms=${Math.round(performance.now() - startedAt)}`,
+          );
+        }
+      }
+
+      if (request.method === 'POST' && request.url === '/agent-pairing/abandon' && hooks.indexer) {
+        const startedAt = performance.now();
+        let status = 500;
+        try {
+          const pubkey = authenticateIndexerRequest(
+            request,
+            response,
+            hooks.indexer,
+            'POST',
+            '/agent-pairing/abandon',
+          );
+          if (!pubkey) {
+            status = 401;
+            return;
+          }
+          let body: unknown;
+          try {
+            body = await readJson(request);
+          } catch {
+            status = 404;
+            json(response, status, { error: 'not_found' }, PRIVATE_HEADERS);
+            return;
+          }
+          const rawCode =
+            body && typeof body === 'object' && 'code' in body
+              ? (body as { code?: unknown }).code
+              : undefined;
+          const code = typeof rawCode === 'string' ? rawCode.trim().toUpperCase() : '';
+          if (!AGENT_PAIRING_CODE.test(code)) {
+            status = 404;
+            json(response, status, { error: 'not_found' }, PRIVATE_HEADERS);
+            return;
+          }
+          const abandoned = await hooks.indexer.abandonAgentPairing(
+            createHash('sha256').update(code).digest('hex'),
+            pubkey,
+          );
+          status = abandoned ? 200 : 404;
+          const result: AgentPairingAbandonView = { abandoned };
+          json(response, status, abandoned ? result : { error: 'not_found' }, PRIVATE_HEADERS);
+          return;
+        } catch (error) {
+          status = 503;
+          const detail = error instanceof Error ? error.message : String(error);
+          logIndexer(
+            hooks.indexer,
+            `[indexer] agent pairing abandon failed error=${JSON.stringify(detail)}`,
+          );
+          if (response.headersSent) response.destroy();
+          else json(response, status, { error: 'temporarily_unavailable' }, PRIVATE_HEADERS);
+          return;
+        } finally {
+          logIndexer(
+            hooks.indexer,
+            `[indexer] request surface=agent-pairing-abandon status=${status} duration_ms=${Math.round(performance.now() - startedAt)}`,
           );
         }
       }

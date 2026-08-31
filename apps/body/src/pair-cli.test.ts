@@ -209,6 +209,30 @@ describe('beeline pair — pairing code admission', () => {
   });
 });
 
+describe('beeline pair — success output', () => {
+  it('reports inherited Room attachment separately from the optional repository binding', async () => {
+    const source = await readFile(pairCommandPath, 'utf8');
+    const printPairResult = source.slice(
+      source.indexOf('function printPairResult('),
+      source.indexOf('async function runPairCommand('),
+    );
+
+    expect(printPairResult).toContain('rooms: attached to');
+    expect(printPairResult).toContain('rooms: no current inviter Rooms');
+    expect(printPairResult).not.toContain('repo: none — add this agent to a Room');
+  });
+
+  it('passes the raw pairing code to server-authorized rollback after a later pair failure', async () => {
+    const source = await readFile(pairCommandPath, 'utf8');
+    const pairCommand = source.slice(
+      source.indexOf('async function pairOneAgent('),
+      source.indexOf('function printPairResult('),
+    );
+
+    expect(pairCommand).toContain('client.abandonAgentPairing(pairing.communityId, code)');
+  });
+});
+
 describe('beeline pair — repository resolution', () => {
   it('never derives a repository binding from cwd when --repo is absent', async () => {
     const source = await readFile(pairCommandPath, 'utf8');

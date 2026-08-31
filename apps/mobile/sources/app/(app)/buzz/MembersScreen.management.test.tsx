@@ -307,6 +307,12 @@ describe('Members workspace management', () => {
     await press(renderer, `agent-${AGENT}-identity`);
 
     expect(renderer.root.findAllByProps({ testID: 'model-axis-mode' })).toHaveLength(0);
+    expect(
+      renderer.root.findByProps({ testID: 'model-config-activation-note' }).props.children,
+    ).toContain('next session starts');
+    expect(
+      renderer.root.findByProps({ testID: 'model-config-activation-note' }).props.children,
+    ).toContain('restarting the paired agent');
     await press(renderer, 'model-axis-model');
     await act(async () => {
       renderer.root.findByProps({ testID: 'model-search-model' }).props.onChangeText('opu');
@@ -323,7 +329,7 @@ describe('Members workspace management', () => {
     expect(client.setAgentModelConfig).toHaveBeenCalledWith(WORKSPACE, AGENT, { effort: 'high' });
   });
 
-  it('replaces the reported zero-axis dead end with model and fixed-level effort controls', async () => {
+  it('waits for the agent live catalog instead of guessing model IDs or effort levels', async () => {
     state.agent = {
       ...baseAgent(),
       catalog: [],
@@ -334,27 +340,14 @@ describe('Members workspace management', () => {
     await press(renderer, `agent-${AGENT}-identity`);
 
     expect(renderer.root.findByProps({ testID: 'model-catalog-missing' })).toBeDefined();
-    expect(renderer.root.findByProps({ testID: 'model-axis-model' })).toBeDefined();
-    expect(renderer.root.findByProps({ testID: 'model-axis-effort' })).toBeDefined();
-    expect(
-      renderer.root
-        .findByProps({ testID: 'model-axis-model' })
-        .findAllByType('Text')
-        .some((text: any) => text.props.children === 'gpt-5.6-sol'),
-    ).toBe(true);
-    expect(
-      renderer.root
-        .findByProps({ testID: 'model-axis-effort' })
-        .findAllByType('Text')
-        .some((text: any) => text.props.children === 'medium'),
-    ).toBe(true);
-    await press(renderer, 'model-axis-effort');
-    expect(renderer.root.findByProps({ testID: 'model-option-effort-low' })).toBeDefined();
-    expect(renderer.root.findByProps({ testID: 'model-option-effort-medium' })).toBeDefined();
-    expect(renderer.root.findAllByProps({ testID: 'model-custom-effort' })).toHaveLength(0);
-    await press(renderer, 'model-axis-model');
-    expect(renderer.root.findByProps({ testID: 'model-search-model' })).toBeDefined();
-    expect(renderer.root.findByProps({ testID: 'model-custom-model' })).toBeDefined();
+    expect(renderer.root.findAllByProps({ testID: 'model-axis-model' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'model-axis-effort' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'model-custom-model' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'model-option-effort-low' })).toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: 'model-catalog-missing' }).props.children).toContain(
+      'during beeline pair',
+    );
+    expect(client.setAgentModelConfig).not.toHaveBeenCalled();
   });
 
   it('edits the human-authored soul fields through setAgentSoul', async () => {

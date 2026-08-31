@@ -297,6 +297,14 @@ lines.on('line', (line) => {
       process.exit(65);
     }
     send({ jsonrpc: '2.0', id: message.id, result: {} });
+  } else if (message.method === 'session/set_model') {
+    // Grok's standard ACP model path deliberately differs from the portable
+    // configOptions setter. Keep this exact wire assertion here so changing
+    // AcpClient.setModel back into set_config_option fails the regression.
+    if (message.params.sessionId !== 'portable-session-id' || message.params.modelId !== 'grok-4.5') {
+      process.exit(67);
+    }
+    send({ jsonrpc: '2.0', id: message.id, result: { modelId: 'grok-4.5' } });
   } else if (message.method === 'session/prompt') {
     promptId = message.id;
   } else if (message.method === '_session/steering') {
@@ -1055,6 +1063,22 @@ describe('AcpClient live steering', () => {
     await prompt;
     expect(client.isAlive).toBe(true);
     await client.stop();
+  });
+
+  it('uses the standard ACP session/set_model request for session-model catalogs', async () => {
+    const client = new AcpClient({
+      agentCommand: await fakeArgumentAgent(),
+      agentArgs: ['acp', '--profile', 'operator'],
+      agentEnv: {},
+    });
+    await client.start();
+    try {
+      await expect(client.setModel('portable-session-id', 'grok-4.5')).resolves.toEqual({
+        modelId: 'grok-4.5',
+      });
+    } finally {
+      await client.stop();
+    }
   });
 
   it.each([

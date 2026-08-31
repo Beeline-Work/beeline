@@ -24,7 +24,9 @@ import {
 import type { DatabaseQueryable } from './database.js';
 import {
   AGENT_DETAIL_SQL,
+  AGENT_PAIRING_ABANDON_SQL,
   AGENT_PAIRING_CLAIM_SQL,
+  agentStateFilter,
   CHAT_LIST_SQL,
   CHAT_PREVIEW_LIMIT,
   CORNER_LIST_SQL,
@@ -265,6 +267,7 @@ export class RoomIndexer {
       watchFilters: [
         { kinds: [...DURABLE_KINDS], '#h': [workspaceId] },
         ...profileFilter(roster.map((member) => member.identity)),
+        ...agentStateFilter(agents.map((member) => member.identity)),
       ],
     };
   }
@@ -505,6 +508,7 @@ export class RoomIndexer {
       workspace_id: string;
       paired_by: string;
       joined: boolean;
+      attached_room_ids: string[];
     }>(AGENT_PAIRING_CLAIM_SQL, [tokenHash, agentPubkey]);
     const claim = result.rows[0];
     if (!claim) return null;
@@ -512,7 +516,16 @@ export class RoomIndexer {
       workspaceId: claim.workspace_id,
       pairedBy: claim.paired_by,
       joined: claim.joined,
+      attachedRoomIds: claim.attached_room_ids,
     };
+  }
+
+  async abandonAgentPairing(tokenHash: string, agentPubkey: string): Promise<boolean> {
+    const result = await this.database.query<{ abandoned: boolean }>(AGENT_PAIRING_ABANDON_SQL, [
+      tokenHash,
+      agentPubkey,
+    ]);
+    return result.rows[0]?.abandoned === true;
   }
 
   async readCorners(roomId: string, viewerPubkey: string): Promise<CornerListView | null> {

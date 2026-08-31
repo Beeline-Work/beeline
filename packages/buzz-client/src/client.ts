@@ -713,8 +713,8 @@ export class BuzzClient {
   }
 
   /** Best-effort undo of this identity's own pairing registration. Never throws. */
-  abandonAgentPairing(communityId: string): Promise<boolean> {
-    return abandonAgentPairing(this.ctx, communityId);
+  abandonAgentPairing(communityId: string, pairingCode?: string): Promise<boolean> {
+    return abandonAgentPairing(this.ctx, communityId, pairingCode);
   }
 
   resolveRepositoryRoom(

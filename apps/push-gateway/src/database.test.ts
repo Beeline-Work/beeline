@@ -5,6 +5,7 @@ import {
   DatabaseEventReader,
   PostgresReservationPersistence,
   deleteSnapshotContract,
+  migrateAgentPairingClaims,
   migrateMaterializerReservations,
   migrateRoomReadMarks,
   type DatabaseQueryable,
@@ -39,6 +40,48 @@ describe('shared materializer reservation store', () => {
         `SELECT to_regclass('beeline_room_read_marks')::text AS name`,
       );
       expect(table.rows[0]?.name).toBe('beeline_room_read_marks');
+    } finally {
+      await postgres.close();
+    }
+  });
+
+  it('adds the pairing membership ledger beside existing pairing claims', async () => {
+    const postgres = new PGlite();
+    const database: DatabaseQueryable = {
+      query: async <Row>(text: string, values?: unknown[]) => {
+        const result = await postgres.query(text, values as never[] | undefined);
+        return { rows: result.rows as Row[] };
+      },
+    };
+    try {
+      await postgres.exec(`
+        CREATE TABLE beeline_agent_pairing_claims (
+          token_hash text PRIMARY KEY,
+          community_id uuid NOT NULL,
+          workspace_id uuid NOT NULL,
+          minter_pubkey bytea NOT NULL,
+          agent_pubkey bytea NOT NULL,
+          claimed_at timestamptz NOT NULL DEFAULT now()
+        );
+        CREATE TABLE beeline_agent_pairing_claim_memberships (
+          token_hash text NOT NULL,
+          community_id uuid NOT NULL,
+          channel_id uuid NOT NULL,
+          agent_pubkey bytea NOT NULL,
+          PRIMARY KEY (token_hash, community_id, channel_id, agent_pubkey)
+        );
+      `);
+
+      await migrateAgentPairingClaims(database);
+      await migrateAgentPairingClaims(database);
+      const table = await database.query<{ name: string | null; joined_at: string | null }>(
+        `SELECT to_regclass('beeline_agent_pairing_claim_memberships')::text AS name,
+          (SELECT data_type FROM information_schema.columns
+           WHERE table_name = 'beeline_agent_pairing_claim_memberships'
+             AND column_name = 'joined_at') AS joined_at`,
+      );
+      expect(table.rows[0]?.name).toBe('beeline_agent_pairing_claim_memberships');
+      expect(table.rows[0]?.joined_at).toBe('timestamp with time zone');
     } finally {
       await postgres.close();
     }

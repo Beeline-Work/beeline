@@ -636,6 +636,28 @@ describe('abandonAgentPairing', () => {
     expect(published).toEqual([]);
   });
 
+  it('uses the server-authorized claim rollback to remove inherited Room memberships', async () => {
+    const requests: Array<{ input: string; body?: unknown }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        requests.push({
+          input: String(input),
+          body: init?.body ? JSON.parse(String(init.body)) : undefined,
+        });
+        return jsonResponse({ abandoned: true });
+      }),
+    );
+
+    await expect(abandonAgentPairing(ctx(), communityId, 'BUZZ-4S4P-ZPJP')).resolves.toBe(true);
+    expect(requests).toEqual([
+      {
+        input: 'http://relay.test/agent-pairing/abandon',
+        body: { code: 'BUZZ-4S4P-ZPJP' },
+      },
+    ]);
+  });
+
   it('swallows a relay refusal instead of replacing the real pairing error', async () => {
     vi.stubGlobal(
       'fetch',

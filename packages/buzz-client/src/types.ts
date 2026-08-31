@@ -47,6 +47,8 @@ export interface RedeemAgentPairingResult {
   pairedBy: string;
   agent: Agent;
   joined: boolean;
+  /** Current top-level Rooms inherited atomically from the pairing-code minter. */
+  attachedRoomIds: string[];
 }
 
 /** Stable Room-level repository identity. Secrets from remote URLs are never retained. */

@@ -123,6 +123,31 @@ describe('room event projection', () => {
     });
   });
 
+  it('keeps a completed corner worktree fact visible in the parent Room', () => {
+    expect(
+      projectEvent(
+        {
+          id: 'corner-worktree-cleaned',
+          kind: 9,
+          agent: true,
+          pubkey: 'a'.repeat(64),
+          createdAt: 12,
+          tags: [
+            ['h', 'room'],
+            ['t', 'daemon-fact'],
+            ['t', 'corner-worktree-cleaned'],
+            ['subchannel', 'corner'],
+          ],
+          content: 'Corner worktree cleaned after branch deletion.',
+        },
+        'room',
+      ),
+    ).toMatchObject({
+      text: 'Corner worktree cleaned after branch deletion.',
+      presentation: 'system',
+    });
+  });
+
   it('keeps the completed plan durable while projecting current tool activity only live', () => {
     const row = {
       section: 'event',

@@ -226,13 +226,19 @@ env:
       id: corner-status-working
     direction: UP
     timeout: 10000
+- takeScreenshot: corner-ripout-working
 - tapOn:
     id: corner-status-working
 - extendedWaitUntil:
     visible:
       id: corner-session-header
     timeout: 10000
+- takeScreenshot: corner-ripout-opened
 - assertVisible: I am ready for a steering message.
+- extendedWaitUntil:
+    visible: 'Completion needed: open a pull request for fm/smoke-lifecycle.'
+    timeout: 10000
+- takeScreenshot: corner-ripout-idle-nudge
 - tapOn:
     id: chat-input
 - inputText: SMOKE CORNER STEER
@@ -253,6 +259,16 @@ env:
     timeout: 10000
 - assertVisible: 'GitHub created a new PR: Smoke lifecycle PR'
 - takeScreenshot: corner-ripout-pr-fact
+- extendedWaitUntil:
+    visible: '.*checks failing.*'
+    timeout: 10000
+- takeScreenshot: corner-ripout-checks-red
+- tapOn:
+    id: chat-input
+- inputText: SMOKE CHECKS GREEN
+- tapOn:
+    id: chat-send
+- assertNotVisible: '.*checks failing.*'
 
 # The fixture only completes this phase after the device's explicit merge
 # command reaches the relay. It then observes branch death, posts the parent
@@ -261,11 +277,13 @@ env:
 - tapOn:
     id: chat-input
 - inputText: SMOKE GH MERGE
+- takeScreenshot: corner-ripout-gh-merge-command
 - tapOn:
     id: chat-send
 - extendedWaitUntil:
     visible: Corner archived (read-only)
     timeout: 10000
+- takeScreenshot: corner-ripout-gh-merge
 
 # The merge command leaves the corner composer focused. Dismiss it first, then
 # leave the pushed corner route for its parent Room; `chat-messages` exists on
@@ -280,6 +298,12 @@ env:
 - extendedWaitUntil:
     visible: Landed.*Smoke lifecycle PR.*
     timeout: 10000
+- takeScreenshot: corner-ripout-landed-summary
 - assertNotVisible:
     id: corner-status-working
+- takeScreenshot: corner-ripout-corner-removed
+- extendedWaitUntil:
+    visible: Corner worktree cleaned after branch deletion.
+    timeout: 10000
 - takeScreenshot: corner-ripout-archived
+- takeScreenshot: corner-ripout-worktree-cleaned

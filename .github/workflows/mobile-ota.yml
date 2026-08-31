@@ -16,8 +16,8 @@ on:
         type: string
         required: true
       retry_attempt:
-        type: number
-        default: 1
+        type: string
+        default: '1'
         required: false
     outputs:
       production_group_id:

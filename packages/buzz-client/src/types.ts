@@ -47,6 +47,8 @@ export interface RedeemAgentPairingResult {
   pairedBy: string;
   agent: Agent;
   joined: boolean;
+  /** Current top-level Rooms inherited atomically from the pairing-code minter. */
+  attachedRoomIds: string[];
 }
 
 /** Stable Room-level repository identity. Secrets from remote URLs are never retained. */
@@ -173,11 +175,18 @@ export interface AgentCommandList {
 export interface AgentModelConfigInput {
   /** The chosen `model` option's id. Absent leaves the current model choice alone. */
   model?: string;
-  /** The chosen effort/thought-level option's id. */
-  effort?: string;
+  /**
+   * The chosen effort/thought-level option's id. `null` intentionally clears
+   * the prior human selection, allowing the next session to use the selected
+   * model's own default rather than inheriting an incompatible effort.
+   */
+  effort?: string | null;
 }
 
-export interface AgentModelConfig extends AgentModelConfigInput {
+/** A persisted selection never carries an explicit clear marker. */
+export interface AgentModelConfig {
+  model?: string;
+  effort?: string;
   communityId: string;
   agentPubkey: string;
   authoredBy: string;

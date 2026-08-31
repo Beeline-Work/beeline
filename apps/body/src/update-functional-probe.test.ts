@@ -47,6 +47,12 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import readline from 'node:readline';
 const mode = process.argv[2];
+const expectedGrokArgs = process.env.EXPECT_GROK_ARGS
+  ? JSON.parse(process.env.EXPECT_GROK_ARGS)
+  : undefined;
+if (expectedGrokArgs && JSON.stringify(process.argv.slice(2)) !== JSON.stringify(expectedGrokArgs)) {
+  process.exit(35);
+}
 let server;
 const reply = (id, result) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id, result }) + '\\n');
 const lines = readline.createInterface({ input: process.stdin });
@@ -55,6 +61,24 @@ lines.on('line', (line) => {
   if (message.method === 'initialize') return reply(message.id, { agentCapabilities: {} });
   if (message.method === 'session/new') {
     server = message.params.mcpServers[0];
+    if (expectedGrokArgs) {
+      return reply(message.id, {
+        sessionId: 'probe-session',
+        models: {
+          currentModelId: 'grok-4.5',
+          availableModels: [
+            {
+              modelId: 'grok-4.5',
+              name: 'Grok 4.5',
+              _meta: {
+                reasoningEffort: 'medium',
+                reasoningEfforts: [{ value: 'medium', label: 'Medium' }],
+              },
+            },
+          ],
+        },
+      });
+    }
     if (mode === 'pi-cold-start') {
       const piDir = process.env.PI_CODING_AGENT_DIR;
       const models = JSON.parse(readFileSync(resolve(piDir, 'models.json'), 'utf8'));
@@ -65,6 +89,12 @@ lines.on('line', (line) => {
       setTimeout(() => reply(message.id, { sessionId: 'probe-session', configOptions: [] }), 750);
     } else if (mode !== 'hang') reply(message.id, { sessionId: 'probe-session', configOptions: [] });
     return;
+  }
+  if (message.method === 'session/set_model') {
+    if (message.params.sessionId !== 'probe-session' || message.params.modelId !== 'grok-4.5') {
+      process.exit(36);
+    }
+    return reply(message.id, {});
   }
   if (message.method !== 'session/prompt') return;
   const child = spawn(server.command, server.args, {
@@ -247,5 +277,54 @@ describe('functional update probe', () => {
       turnCompleted: true,
       nativeTools: ['close_corner'],
     });
+  });
+
+  it('preserves selected Grok launch args inside the bubblewrap command', async () => {
+    const fixture = await fixtureConfig();
+    const fakeBwrap = resolve(fixture.runtimeDir, 'fake-bwrap');
+    await writeFile(
+      fakeBwrap,
+      `#!/bin/sh
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--" ]; then
+    shift
+    exec "$@"
+  fi
+  shift
+done
+exit 64
+`,
+      { mode: 0o700 },
+    );
+    await chmod(fakeBwrap, 0o700);
+    const harness = fixture.config.agentArgs![0]!;
+    fixture.config = {
+      ...fixture.config,
+      agentKind: 'grok',
+      agentArgs: [harness, 'agent', 'stdio'],
+      agentEnv: {
+        ...fixture.config.agentEnv,
+        EXPECT_GROK_ARGS: JSON.stringify([
+          'agent',
+          '--model',
+          'grok-4.5',
+          '--reasoning-effort',
+          'medium',
+          'stdio',
+        ]),
+      },
+      bwrapPath: fakeBwrap,
+      modelSelection: { model: 'grok-4.5', effort: 'medium' },
+    };
+
+    await expect(
+      runUpdateFunctionalProbe({
+        ...fixture,
+        releaseId: 'grok-sandboxed-selection',
+        sandboxRequired: true,
+        sessionTimeoutMs: 3_000,
+        turnTimeoutMs: 3_000,
+      }),
+    ).resolves.toMatchObject({ sandboxed: true, sessionStarted: true, turnCompleted: true });
   });
 });

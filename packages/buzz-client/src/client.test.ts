@@ -96,6 +96,38 @@ function deliverFirstKeyOnlyMatches(
   }
 }
 
+/** Match the server's event filter semantics for the narrow watch tests. */
+function matchesFilterRelayFaithfully(filter: Record<string, unknown>, event: NostrEvent): boolean {
+  if (Array.isArray(filter.kinds) && !filter.kinds.some((kind) => kind === event.kind))
+    return false;
+  if (Array.isArray(filter.authors) && !filter.authors.some((author) => author === event.pubkey))
+    return false;
+  return Object.entries(filter)
+    .filter(([key]) => key.startsWith('#'))
+    .every(([key, values]) => {
+      const tagName = key.slice(1);
+      return (
+        Array.isArray(values) &&
+        event.tags.some((tag) => tag[0] === tagName && values.includes(tag[1]))
+      );
+    });
+}
+
+function deliverRelayFaithfully(
+  socket: ReconnectingTestWebSocket,
+  events: readonly NostrEvent[],
+): void {
+  for (const request of socket.sent.filter((frame) => frame[0] === 'REQ')) {
+    const subscriptionId = request[1] as string;
+    const filter = request[2] as Record<string, unknown>;
+    for (const event of events) {
+      if (matchesFilterRelayFaithfully(filter, event)) {
+        socket.receive(['EVENT', subscriptionId, event]);
+      }
+    }
+  }
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
@@ -306,6 +338,52 @@ describe('replaceable multi-lane reads', () => {
     const unsubscribe = await pending;
     expect(received).toEqual(['overlap']);
 
+    unsubscribe();
+    client.disconnect();
+  });
+
+  it('does not signal a Workspace refresh for non-presence agent state', async () => {
+    const agent = 'a'.repeat(64);
+    const client = createBuzzClient({
+      baseUrl: 'https://relay.test',
+      identity: createIdentity('workspace-presence-subscriber'),
+      skipAuth: true,
+      WebSocketImpl: ReconnectingTestWebSocket,
+    });
+    const received: string[] = [];
+    const pending = client.surfaceSubscribe(
+      [{ kinds: [30078], authors: [agent], '#t': ['agent-presence'] }],
+      (event) => received.push(event.id),
+    );
+
+    await vi.waitFor(() => expect(ReconnectingTestWebSocket.instances).toHaveLength(1));
+    const socket = ReconnectingTestWebSocket.instances[0]!;
+    await vi.waitFor(() =>
+      expect(socket.sent.filter((frame) => frame[0] === 'REQ')).toHaveLength(1),
+    );
+    const request = socket.sent.find((frame) => frame[0] === 'REQ')!;
+    expect(request[2]).toEqual({ kinds: [30078], authors: [agent], '#t': ['agent-presence'] });
+
+    deliverRelayFaithfully(socket, [
+      {
+        ...replaceableEvent('draft-state', 'agent-draft:room'),
+        tags: [
+          ['d', 'agent-draft:room'],
+          ['t', 'agent-draft'],
+        ],
+      },
+      {
+        ...replaceableEvent('presence-state', 'agent-presence:room'),
+        tags: [
+          ['d', 'agent-presence:room'],
+          ['t', 'agent-presence'],
+        ],
+      },
+    ]);
+    socket.receive(['EOSE', request[1]]);
+
+    const unsubscribe = await pending;
+    expect(received).toEqual(['presence-state']);
     unsubscribe();
     client.disconnect();
   });

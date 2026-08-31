@@ -94,8 +94,10 @@ async function main(): Promise<void> {
         readCorners: (roomId, pubkey) => indexer.readCorners(roomId, pubkey),
         readHistory: (roomId, pubkey, before) => indexer.readHistory(roomId, pubkey, before),
         readInvite: (tokenHash, readerPubkey) => indexer.readInvite(tokenHash, readerPubkey),
-        claimAgentPairing: (tokenHash, agentPubkey) =>
-          indexer.claimAgentPairing(tokenHash, agentPubkey),
+        abandonAgentPairing: (tokenHash, agentPubkey) =>
+          indexer.abandonAgentPairing(tokenHash, agentPubkey),
+        claimAgentPairing: (tokenHash, agentPubkey, options) =>
+          indexer.claimAgentPairing(tokenHash, agentPubkey, options.inheritInviterRooms),
       },
     });
     await new Promise<void>((resolve, reject) => {

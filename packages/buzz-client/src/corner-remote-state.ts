@@ -12,6 +12,8 @@ export interface CornerPullRequestFact {
   title: string;
   targetBranch: string;
   headSha: string;
+  mergedAt?: string;
+  mergedBy?: string;
 }
 
 export interface CornerRemoteState {
@@ -44,7 +46,11 @@ function isPullRequestFact(value: unknown): value is CornerPullRequestFact {
     typeof record.targetBranch === 'string' &&
     Boolean(record.targetBranch.trim()) &&
     typeof record.headSha === 'string' &&
-    /^[0-9a-f]{40}$/i.test(record.headSha)
+    /^[0-9a-f]{40}$/i.test(record.headSha) &&
+    (record.mergedAt === undefined ||
+      (typeof record.mergedAt === 'string' && Boolean(record.mergedAt.trim()))) &&
+    (record.mergedBy === undefined ||
+      (typeof record.mergedBy === 'string' && Boolean(record.mergedBy.trim())))
   );
 }
 

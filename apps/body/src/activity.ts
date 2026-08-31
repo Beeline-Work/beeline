@@ -483,7 +483,8 @@ export interface CompactActivityPlan {
  * A corner plan cannot depend on a harness choosing to emit ACP `plan`
  * updates. Body can seed the projection with the task-authored plan from the
  * hidden corner-metadata turn. When neither source provides steps, the
- * projection reports only that work is underway instead of inventing a plan.
+ * projection publishes the objective without inventing turn narration as a
+ * plan item.
  */
 export type ActivityProjectionController = (() => void) & {
   startPlan(objective: string, authoredPlan?: CompactActivityPlan): Promise<void>;
@@ -836,7 +837,7 @@ export function projectActivity(
     const distilled = safePlanObjective(objective);
     return {
       ...(distilled ? { objective: distilled } : {}),
-      items: [{ step: 'Working…', status: 'in_progress' }],
+      items: [],
     };
   };
   const flush = () => {

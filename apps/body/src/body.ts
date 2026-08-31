@@ -749,9 +749,17 @@ function falseNegativeCornerClaim(message: string): boolean {
  */
 function groundRoomCoordinationClaims(
   message: string,
-  evidence: { cornerRecordCreated: boolean; cornerName?: string },
+  evidence: { cornerRecordCreated: boolean; cornerName?: string; cornerId?: string },
 ): string {
   if (evidence.cornerRecordCreated && falseNegativeCornerClaim(message)) {
+    return roomCornerAnnouncement(evidence.cornerName);
+  }
+  // The daemon-fact card (see openSubchannel) is now the one visible artifact
+  // of a corner opening. A model that echoes its raw open_corner tool result
+  // — the literal corner id it was just handed back — is dumping machine
+  // state into the transcript instead of a real answer; the freshly minted
+  // id could not plausibly appear in genuine prose any other way.
+  if (evidence.cornerRecordCreated && evidence.cornerId && message.includes(evidence.cornerId)) {
     return roomCornerAnnouncement(evidence.cornerName);
   }
   const claims = roomCoordinationClaims(message);
@@ -4764,7 +4772,7 @@ export class Body {
     roomRepo: BoundRepo | undefined,
     intent: string,
     request: ChannelTaskRequest,
-    options?: { objective?: string; mission?: MissionCornerAuthority },
+    options?: { objective?: string; mission?: MissionCornerAuthority; suppressOpenCard?: boolean },
   ): Promise<SubchannelInfo> {
     const existing = this.liveSubchannelForRequest(tlcChannelId, request.eventId);
     if (existing) return Promise.resolve(existing);
@@ -4838,6 +4846,13 @@ export class Body {
       objective?: string;
       mission?: MissionCornerAuthority;
       onCreated?: (cornerId: string, name: string, objective: string) => void;
+      /**
+       * The approval-granted flows already publish their own linked
+       * "Corner approved by @X — view →" card as the visible artifact of the
+       * open. Suppress the daemon-fact open card there so a Room never shows
+       * two cards for the same corner.
+       */
+      suppressOpenCard?: boolean;
     },
   ): Promise<SubchannelInfo> {
     // Pick up an owner-confirmed target-branch change for a newly opened corner.
@@ -4920,6 +4935,24 @@ export class Body {
           ['task', taskDescription],
         ],
       );
+      // The typed daemon-fact card is the one visible artifact of a corner
+      // opening — a linked card with tap-through navigation, not raw prose.
+      // Skipped when the approval-granted flows already published their own
+      // "Corner approved by @X — view →" card for this exact open.
+      if (!options?.suppressOpenCard) {
+        await postControlMessage(
+          'corner-open-fact',
+          tlcChannelId,
+          agentId,
+          `Corner opened: ${cornerName}`,
+          [
+            ['t', 'corner-open'],
+            ['subchannel', subchannelId],
+            ['objective', taskDescription || request.content.trim() || cornerName],
+            ['name', cornerName],
+          ],
+        );
+      }
     }
     // A publish acknowledgement is not membership truth. Do not create the
     // worktree or launch the coding session until the relay projection proves
@@ -7152,6 +7185,9 @@ export class Body {
         ...(openedCornerForRequest?.cornerName
           ? { cornerName: openedCornerForRequest.cornerName }
           : {}),
+        ...(openedCornerForRequest?.subchannelId
+          ? { cornerId: openedCornerForRequest.subchannelId }
+          : {}),
       });
       if (groundedAgentText !== result.agentText) {
         console.warn(
@@ -7856,7 +7892,7 @@ export class Body {
           input.roomRepo,
           input.objective,
           input.request,
-          { objective: input.objective },
+          { objective: input.objective, suppressOpenCard: true },
         );
         await this.postWritePermissionStatus(
           input.roomId,
@@ -7983,13 +8019,15 @@ export class Body {
         if (namedTarget) await this.assertRepositorySafety(tlcChannelId, boundRepo);
         const info =
           objective === turn.request.content
-            ? await this.openSubchannel(tlcChannelId, boundRepo, objective, turn.request)
+            ? await this.openSubchannel(tlcChannelId, boundRepo, objective, turn.request, {
+                suppressOpenCard: true,
+              })
             : await this.openSubchannel(
                 tlcChannelId,
                 boundRepo,
                 objective,
                 { ...turn.request, content: objective },
-                { objective },
+                { objective, suppressOpenCard: true },
               );
         turn.transitionedToCorner = true;
         // This is the first event that says the corner exists. It is emitted

@@ -27,6 +27,7 @@ export type LifecyclePublicationKind =
   | 'mention-budget-limit'
   | 'mention-delivery'
   | 'corner-created'
+  | 'corner-open-fact'
   | 'archived'
   | 'turn-receipt'
   | 'corner-session-live'
@@ -73,7 +74,8 @@ export function buildLifecycleMessage(input: LifecycleMessageInput): NostrEvent 
     input.kind === 'pull-request-fact' ||
     input.kind === 'checks-failing-fact' ||
     input.kind === 'completion-nudge' ||
-    input.kind === 'branch-ended';
+    input.kind === 'branch-ended' ||
+    input.kind === 'corner-open-fact';
   const marker = modelOutput ? 'agent-message' : daemonFact ? 'daemon-fact' : 'body-control';
   return signEvent(
     {

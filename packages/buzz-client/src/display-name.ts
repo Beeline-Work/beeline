@@ -1,4 +1,4 @@
-/** Stable spoken names for agent identities. Presentation only; never authority. */
+/** Stable friendly fallback names for human identities. Presentation only; never authority. */
 const FIRST_NAMES = [
   'Ada',
   'Alden',
@@ -84,10 +84,14 @@ function stableHash(value: string): number {
 }
 
 export function fallbackAgentName(pubkey: string): string {
-  return FIRST_NAMES[stableHash(pubkey.toLowerCase()) % FIRST_NAMES.length]!;
+  const normalized = pubkey.trim().toLowerCase();
+  const publicKeyPrefix = /^[0-9a-f]{8}/u.exec(normalized)?.[0];
+  const syntheticId =
+    publicKeyPrefix ?? stableHash(normalized).toString(16).padStart(8, '0').slice(0, 8);
+  return `Agent ${syntheticId}`;
 }
 
-/** Human identities use the same stable, friendly first-name pool as Agents. */
+/** Human identities keep a stable, friendly first-name fallback. */
 export function fallbackPersonName(pubkey: string): string {
   return FIRST_NAMES[stableHash(pubkey.toLowerCase()) % FIRST_NAMES.length]!;
 }
@@ -139,9 +143,9 @@ export const DEFAULT_BODY_IDENTITY_NAME = 'beeline-body';
  * the pre-Beeline-rebrand marker kept so identities paired before the rename
  * are still classified as system placeholders rather than authored names.
  * They are placeholders, never operator choices and never SHARED: each one
- * resolves to a stable spoken name derived from that agent's own pubkey
- * (`fallbackAgentName`/`fallbackPersonName`, the same seed-name pool people
- * get), so a Workspace of soul-less agents still shows distinct identities.
+ * resolves to a visibly synthetic label derived from that agent's own pubkey
+ * (`Agent 54f4d261`), so a resolver miss cannot masquerade as an authored
+ * human name and a Workspace of soul-less agents still shows distinct identities.
  * A human-authored soul overlay overrides wherever one exists. See
  * `deriveAgentDisplayName`.
  */
@@ -171,8 +175,8 @@ function normalizeAuthoredAgentName(value: string): string {
  * Preserve a reasonable authored agent name — one spoken word ("Ada") or a
  * compound an operator actually chose ("Quiet Keeper", "ox-prime"). A
  * system-generic marker or a genuinely unusable value falls back to the
- * deterministic pubkey-derived first name, which keeps every agent's default
- * identity DISTINCT (two freshly paired agents never share one label).
+ * deterministic, visibly synthetic pubkey label, which keeps every agent's
+ * default identity DISTINCT.
  */
 export function resolveAgentName(value: string | undefined, pubkey: string): string {
   const authored = value?.trim();
@@ -192,8 +196,8 @@ export function resolveAgentName(value: string | undefined, pubkey: string): str
  * - an authored, reasonable name passes through untouched;
  * - any system-generic marker (`beeline-agent`, the pre-rebrand
  *   `buzzy-agent`, the bare `"Agent"` guard) resolves to the stable,
- *   pubkey-derived seed name — distinct per agent, never one shared label;
- * - no name at all takes that same deterministic pool.
+ *   pubkey-derived synthetic label — distinct per agent, never one shared label;
+ * - no name at all takes that same deterministic form.
  */
 export function deriveAgentDisplayName(value: string | undefined | null, pubkey: string): string {
   return resolveAgentName(value ?? undefined, pubkey);

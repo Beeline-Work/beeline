@@ -387,14 +387,24 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   onDismiss,
 }: OrdinaryLedgerMessageProps) {
   const isOwn = message.isUser;
-  const isAgent = message.isAgentAuthor || message.isAgentActivity || Boolean(agent);
+  const indexedAuthor = message.authorIdentity;
+  const currentAgent =
+    indexedAuthor?.kind === 'agent'
+      ? {
+          pubkey: indexedAuthor.pubkey,
+          displayName: indexedAuthor.name,
+          ...(indexedAuthor.avatar ? { avatar: indexedAuthor.avatar } : {}),
+          ...(agent?.soulProfile ? { soulProfile: agent.soulProfile } : {}),
+        }
+      : agent;
+  const isAgent = indexedAuthor?.kind === 'agent' || message.isAgentAuthor || message.isAgentActivity || Boolean(currentAgent);
   const display = isAgent
-    ? resolvePendingAgentDisplay(message.pubkey ?? 'unknown-agent', agent, participantsHydrated)
+    ? resolvePendingAgentDisplay(message.pubkey ?? indexedAuthor?.pubkey ?? 'unknown-agent', currentAgent, participantsHydrated)
     : null;
   const isSelfSteer = isOwn && !isAgent;
   const voiceName = isAgent
-    ? display?.name ?? personName ?? shortMemberNpub(message.pubkey ?? '')
-    : personName ?? (message.pubkey ? shortMemberNpub(message.pubkey) : 'SOMEONE');
+    ? indexedAuthor?.name ?? display?.name ?? personName ?? shortMemberNpub(message.pubkey ?? '')
+    : indexedAuthor?.name ?? personName ?? (message.pubkey ? shortMemberNpub(message.pubkey) : 'SOMEONE');
   const markSeed = message.pubkey ?? (isSelfSteer ? viewerPubkey || 'self' : 'unknown-person');
   const byline: LedgerByline | undefined = continued
     ? undefined

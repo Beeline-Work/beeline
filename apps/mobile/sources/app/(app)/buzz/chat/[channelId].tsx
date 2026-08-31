@@ -46,6 +46,7 @@ import {
 } from '@beeline/buzz-client';
 import {
   createRoomMessageProjector,
+  conversationIdentityByPubkey,
   displayRoomMessages,
   mergeDisplayPages,
   type ChatDisplayMessage,
@@ -644,6 +645,12 @@ export default function BuzzChat() {
     () => mergeDisplayPages(durableMessages, roomSendFrame.optimistic),
     [durableMessages, roomSendFrame.optimistic],
   );
+  // Current server message authors refresh the same membership roster that
+  // drives Room and corner bylines, mention suggestions, and mention glossing.
+  const conversationIdentities = useMemo(
+    () => conversationIdentityByPubkey(roomSurface?.members ?? [], combinedMessages),
+    [combinedMessages, roomSurface?.members],
+  );
   // Open on the tail; older history reveals from what's already resident here
   // first, then pages in from the relay once that's exhausted.
   const unprojectedMessages = useMemo(
@@ -718,29 +725,44 @@ export default function BuzzChat() {
     () =>
       (roomSurface?.members ?? [])
         .filter((member) => member.identity.kind === 'agent')
-        .map((member) => memberAgent(member, roomSurface?.room.workspaceId ?? '')),
-    [roomSurface?.members, roomSurface?.room.workspaceId],
+        .map((member) =>
+          memberAgent(
+            {
+              ...member,
+              identity: conversationIdentities.get(member.identity.pubkey) ?? member.identity,
+            },
+            roomSurface?.room.workspaceId ?? '',
+          ),
+        ),
+    [conversationIdentities, roomSurface?.members, roomSurface?.room.workspaceId],
   );
   const availablePeople = useMemo(
     () =>
       (roomSurface?.members ?? [])
         .filter((member) => member.identity.kind === 'human')
-        .map((member) => ({ pubkey: member.identity.pubkey, role: member.role })),
-    [roomSurface?.members],
+        .map((member) => ({
+          pubkey: member.identity.pubkey,
+          role: member.role,
+          identity: conversationIdentities.get(member.identity.pubkey) ?? member.identity,
+        })),
+    [conversationIdentities, roomSurface?.members],
   );
   const selectedMembersRaw = useMemo(
     () =>
-      (roomSurface?.members ?? []).map((member) => ({
-        pubkey: member.identity.pubkey,
-        role: member.role,
-        kind: member.identity.kind,
-        identity: {
-          kind: member.identity.kind,
-          displayName: member.identity.name,
-          handle: member.identity.handle,
-        },
-      })),
-    [roomSurface?.members],
+      (roomSurface?.members ?? []).map((member) => {
+        const identity = conversationIdentities.get(member.identity.pubkey) ?? member.identity;
+        return {
+          pubkey: identity.pubkey,
+          role: member.role,
+          kind: identity.kind,
+          identity: {
+            kind: identity.kind,
+            displayName: identity.name,
+            handle: identity.handle,
+          },
+        };
+      }),
+    [conversationIdentities, roomSurface?.members],
   );
   // The membership projection rebuilds every wrapper object on each snapshot
   // commit. Downstream memos (memberOptions, roomParticipants) and ultimately
@@ -759,12 +781,15 @@ export default function BuzzChat() {
     () =>
       (roomSurface?.members ?? [])
         .filter((member) => member.identity.kind === 'human')
-        .map((member) => ({
-          pubkey: member.identity.pubkey,
-          name: member.identity.name,
-          ...(member.identity.avatar ? { avatar: member.identity.avatar } : {}),
-        })),
-    [roomSurface?.members],
+        .map((member) => {
+          const identity = conversationIdentities.get(member.identity.pubkey) ?? member.identity;
+          return {
+            pubkey: identity.pubkey,
+            name: identity.name,
+            ...(identity.avatar ? { avatar: identity.avatar } : {}),
+          };
+        }),
+    [conversationIdentities, roomSurface?.members],
   );
   const participantsHydrated = roomSurface !== null;
   const agentByPubkey = useMemo(
@@ -941,10 +966,10 @@ export default function BuzzChat() {
   );
   const activeMention = useMemo(
     () =>
-      !parentChannelId && inputSelection.start === inputSelection.end
+      inputSelection.start === inputSelection.end
         ? activeMentionAtCursor(inputText, inputSelection.start)
         : null,
-    [inputSelection.end, inputSelection.start, inputText, parentChannelId],
+    [inputSelection.end, inputSelection.start, inputText],
   );
   const mentionMenuKey = activeMention
     ? `${inputText}:${activeMention.start}:${activeMention.end}`
@@ -1552,7 +1577,10 @@ export default function BuzzChat() {
         messageId: message.relayId ?? message.id,
         authorName: message.isUser
           ? 'You'
-          : (agentDisplay?.name ?? personName ?? shortMemberNpub(message.pubkey ?? '')),
+          : (message.authorIdentity?.name ??
+            agentDisplay?.name ??
+            personName ??
+            shortMemberNpub(message.pubkey ?? '')),
         ...(message.pubkey ? { authorPubkey: message.pubkey } : {}),
         isAgent,
         preview: message.text.trim() || attachmentPreview || 'Attachment',
@@ -1653,9 +1681,7 @@ export default function BuzzChat() {
       );
       const mentionedAgent = replyTarget?.isAgent
         ? replyTarget.authorPubkey
-        : parentChannelId
-          ? undefined
-          : (selectedMentionedAgent ?? mentionedAgentPubkey(text, mentionableAgents));
+        : (selectedMentionedAgent ?? mentionedAgentPubkey(text, mentionableAgents));
       // Sign before append. The authoritative event id is the optimistic row
       // identity and the durable outbox key from its first frame onward.
       preparedEvent = replyTarget
@@ -1685,6 +1711,11 @@ export default function BuzzChat() {
         text,
         isUser: true,
         timestamp: preparedEvent.created_at,
+        authorIdentity: roomSurface?.viewer.identity ?? {
+          pubkey: userPubkey,
+          kind: 'human',
+          name: 'You',
+        },
         pubkey: userPubkey,
         reference: undefined,
         ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),

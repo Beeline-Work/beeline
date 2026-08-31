@@ -21,7 +21,7 @@
     "prebuild": "rm -rf android ios && expo prebuild",
     "typecheck": "tsc --noEmit",
     "postinstall": "patch-package || true; (command -v setup-skia-web >/dev/null && setup-skia-web public) || true",
-    "eas-build-post-install": "tsc -p scripts/tsconfig.eas-nostr.json && tsc -p scripts/tsconfig.eas-buzz-client.json",
+    "eas-build-post-install": "tsc -p scripts/tsconfig.eas-nostr.json && tsc -p scripts/tsconfig.eas-api-contract.json && tsc -p scripts/tsconfig.eas-buzz-client.json",
     "generate-theme": "tsx sources/theme.gen.ts",
     "identity-mark:proof": "node scripts/render-identity-axis-proof.mjs",
     "web:test": "expo start --web --non-interactive",
@@ -35,6 +35,7 @@
     "preset": "jest-expo"
   },
   "dependencies": {
+    "@beeline/api-contract": "file:../../packages/api-contract",
     "@beeline/buzz-client": "file:../../packages/buzz-client",
     "@beeline/nostr": "file:../../packages/nostr",
     "@codemirror/lang-cpp": "^6.0.3",

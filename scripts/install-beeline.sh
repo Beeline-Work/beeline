@@ -17,6 +17,7 @@ done
 cd "$repo_root"
 npm install
 npm run build -w @beeline/nostr
+npm run build -w @beeline/api-contract
 npm run build -w @beeline/buzz-client
 npm run build -w @beeline/gate
 npm run build -w @beeline/body

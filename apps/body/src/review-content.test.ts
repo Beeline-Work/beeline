@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
-import { reviewPatchId } from './review-content.js';
+import { reviewPatchId, targetHistoryContainsPatchId } from './review-content.js';
 
 const roots: string[] = [];
 
@@ -58,5 +58,18 @@ describe('reviewPatchId', () => {
     git(root, ['commit', '-qam', 'change reviewed content']);
 
     expect(await reviewPatchId(root, base, git(root, ['rev-parse', 'HEAD']))).not.toBe(before);
+  });
+
+  it('finds the reviewed patch after it is squash-merged under a different SHA', async () => {
+    const { root, base, reviewed } = fixture();
+    const patchId = await reviewPatchId(root, base, reviewed);
+    git(root, ['checkout', '-q', 'main']);
+    git(root, ['merge', '--squash', 'feature']);
+    git(root, ['commit', '-qm', 'squash reviewed change']);
+    const squashTip = git(root, ['rev-parse', 'HEAD']);
+
+    expect(squashTip).not.toBe(reviewed);
+    expect(patchId).toMatch(/^[0-9a-f]{40}$/);
+    await expect(targetHistoryContainsPatchId(root, squashTip, patchId!)).resolves.toBe(true);
   });
 });

@@ -1,3 +1,5 @@
+import { CORNER_ACTIVITY_FRESHNESS_MS } from '@beeline/buzz-client';
+
 /**
  * Corner lifecycle + presentation for every Buzz surface.
  *
@@ -8,13 +10,7 @@
  * `needs-attention` (needs-decision), `failed`, `merged`, `archived`; `null`
  * or absence means idle / nothing reportable.
  */
-export type CornerStatus =
-  | 'live'
-  | 'open'
-  | 'needs-attention'
-  | 'failed'
-  | 'merged'
-  | 'archived';
+export type CornerStatus = 'live' | 'open' | 'needs-attention' | 'failed' | 'merged' | 'archived';
 export type CornerMachineState = 'open' | 'working' | 'waiting' | 'idle' | 'concluded' | 'closed';
 export type CornerSuperState = 'working' | 'needs-human' | 'finished';
 
@@ -49,13 +45,35 @@ export type CornerSummary = {
   lastActivityAt?: number;
 };
 
-/** Compatibility presentation of the already-derived server lifecycle. */
+/** Resolve the indexed machine fact at paint time. Working is a lease whose
+ * timestamp comes from the child turn receipt; durable lifecycle states do
+ * not expire. */
 export function currentCornerStatus(
   corner: Pick<CornerSummary, 'status' | 'machineState' | 'machineReason' | 'stateAt'>,
-  _now = Date.now(),
+  now = Date.now(),
 ): CornerStatus | null {
   if (!corner.machineState) return null;
-  return corner.status;
+  switch (corner.machineState) {
+    case 'open':
+    case 'idle':
+      return null;
+    case 'working':
+      if (
+        corner.stateAt === undefined ||
+        Math.abs(now - corner.stateAt * 1_000) > CORNER_ACTIVITY_FRESHNESS_MS
+      ) {
+        return null;
+      }
+      return 'live';
+    case 'waiting':
+      if (corner.machineReason === 'review') return 'open';
+      if (corner.machineReason === 'failure') return 'failed';
+      return 'needs-attention';
+    case 'concluded':
+      return 'merged';
+    case 'closed':
+      return 'archived';
+  }
 }
 
 /**

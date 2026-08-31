@@ -96,6 +96,16 @@ describe('live streaming turn', () => {
     expect(renderer.root.findAllByType('Pressable')).toHaveLength(0);
   });
 
+  it('keeps prose tight to the tool line it follows', () => {
+    const renderer = render(
+      <ActivityTimeline active items={[TOOLS[0]!]} messageDraft="The result follows the call." />,
+    );
+
+    expect(
+      renderer.root.findByProps({ testID: 'activity-message-draft' }).props.textStyle.marginTop,
+    ).toBeLessThanOrEqual(3);
+  });
+
   it('routes streamed prose through the Room-style Markdown renderer', () => {
     const renderer = render(
       <ActivityTimeline

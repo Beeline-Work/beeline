@@ -76,6 +76,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
+import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import {
   compareBundleIdentity,
@@ -146,6 +147,14 @@ export function beelineInstallLayout(
   const raw = env.BEELINE_LIB_DIR?.trim();
   if (!raw) return undefined;
   return anchorLayout(raw);
+}
+
+/** Canonical first-install layout used by `npx usebeeline connect`. */
+export function defaultBeelineInstallLayout(
+  env: NodeJS.ProcessEnv = process.env,
+): BeelineInstallLayout {
+  const home = env.HOME?.trim() || homedir();
+  return anchorLayout(resolve(home, '.local', 'lib', 'beeline'));
 }
 
 /** Platform key matching build-beeline-bundle.mjs's supported set. */
@@ -736,7 +745,9 @@ export async function readUpdateAttempt(
   layout: BeelineInstallLayout,
 ): Promise<UpdateAttemptRecord | undefined> {
   try {
-    const raw = JSON.parse(await readFile(updateAttemptPath(layout), 'utf8')) as UpdateAttemptRecord;
+    const raw = JSON.parse(
+      await readFile(updateAttemptPath(layout), 'utf8'),
+    ) as UpdateAttemptRecord;
     if (
       raw.version !== 1 ||
       typeof raw.appliedAt !== 'number' ||
@@ -967,8 +978,12 @@ export class SelfUpdateManager {
     const state = await readUpdateState(this.options.layout);
     const previousAttempt = await readUpdateAttempt(this.options.layout);
     if (previousAttempt?.status === 'reverted' && !opts.force) {
-      const sameCommit = Boolean(previousAttempt.to.commit && previousAttempt.to.commit === bundle.commit);
-      const sameVersion = Boolean(previousAttempt.to.version && previousAttempt.to.version === bundle.version);
+      const sameCommit = Boolean(
+        previousAttempt.to.commit && previousAttempt.to.commit === bundle.commit,
+      );
+      const sameVersion = Boolean(
+        previousAttempt.to.version && previousAttempt.to.version === bundle.version,
+      );
       if (sameCommit || sameVersion) {
         const line =
           `release ${describeIdentity(previousAttempt.to)} reverted after a failed served-turn proof; ` +
@@ -1021,10 +1036,7 @@ export class SelfUpdateManager {
     await this.apply(verdict.published, manifestUrl);
   }
 
-  private async apply(
-    published: PublishedBundle,
-    manifestUrl: string,
-  ): Promise<void> {
+  private async apply(published: PublishedBundle, manifestUrl: string): Promise<void> {
     const now = this.options.now();
     const state = await readUpdateState(this.options.layout);
     const installed = await readInstalledBundleIdentity(this.options.layout, state);

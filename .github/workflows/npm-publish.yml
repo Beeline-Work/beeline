@@ -1,0 +1,54 @@
+name: Publish usebeeline to npm
+
+on:
+  workflow_run:
+    workflows: [Unified production release]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: unified-release-index
+          path: ${{ runner.temp }}/release
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+      - name: Install an OIDC-capable npm CLI
+        run: npm install --global npm@^11.15.0
+      - name: Install dependencies
+        run: npm ci
+      - name: Build package
+        run: |
+          npm run build -w @beeline/nostr
+          npm run build -w @beeline/buzz-client
+          npm run build -w @beeline/gate
+          npm run build -w @beeline/body
+          npm run build -w usebeeline
+      - name: Apply unified release version
+        id: version
+        run: |
+          release_version=$(node -e "const r=require(process.argv[1]);if(!/^v[0-9]+\\.[0-9]+\\.[0-9]+$/.test(r.version)||r.sourceSha!==process.argv[2])process.exit(1);process.stdout.write(r.version.slice(1))" "$RUNNER_TEMP/release/unified-release.json" "${{ github.event.workflow_run.head_sha }}")
+          npm version "$release_version" --no-git-tag-version --workspace usebeeline
+          echo "value=$release_version" >> "$GITHUB_OUTPUT"
+      - name: Publish with provenance
+        run: |
+          if npm view "usebeeline@${{ steps.version.outputs.value }}" version >/dev/null 2>&1; then
+            echo "usebeeline@${{ steps.version.outputs.value }} is already published"
+            exit 0
+          fi
+          npm publish --provenance --workspace usebeeline

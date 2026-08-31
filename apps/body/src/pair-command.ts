@@ -289,6 +289,8 @@ async function pairOneAgent(input: {
   modelSelection?: { model?: string; effort?: string };
   externalMcpCapabilities?: ExternalMcpCapability[];
   sharedSkills?: string[];
+  /** Initial self-signed declaration fields created by device onboarding. */
+  agentProfile?: { displayName: string; personality: string };
   /** Offer the clack model/effort/access/auto-response pickers when their flags weren't given. */
   interactiveUi?: boolean;
 }): Promise<PairRuntimeResult> {
@@ -383,7 +385,7 @@ async function pairOneAgent(input: {
         mcpBinary: localConfig.mcpBinary,
       },
       {
-        redeem: (pairingCode) => client.redeemAgentPairingCode(pairingCode),
+        redeem: (pairingCode) => client.redeemAgentPairingCode(pairingCode, input.agentProfile),
         resolveRoom: (pairing, repository) =>
           client.resolveRepositoryRoom(pairing.communityId, repository, pairing.pairedBy),
         // Undo this agent's own Workspace registration when a later pair step
@@ -410,6 +412,49 @@ async function pairOneAgent(input: {
     spinner?.stop(pc.red('Pairing failed.'));
     throw error;
   }
+}
+
+export interface DevicePairingGrant {
+  pairingCode: string;
+  agentSecretKey: string;
+  bodySecretKey: string;
+  agentName: string;
+  harness: Exclude<AgentKind, 'reference' | 'custom'>;
+  model: string;
+  soul: string;
+  workspaceId: string;
+  workspaceName: string;
+  llmEnvFile?: string;
+}
+
+/** Finish device onboarding only from the newly installed canonical launcher. */
+export async function completeDevicePairing(grant: DevicePairingGrant): Promise<PairRuntimeResult> {
+  const selectedAgent = await selectPairAgentCommand({
+    explicitKind: grant.harness,
+    env: process.env,
+    cwd: process.cwd(),
+    interactive: true,
+    confirmInstall: async () => true,
+  });
+  const result = await pairOneAgent({
+    code: grant.pairingCode,
+    selectedAgent,
+    agentIdentity: identityFromKey(grant.agentSecretKey, grant.agentName),
+    bodyIdentity: identityFromKey(grant.bodySecretKey, DEFAULT_BODY_IDENTITY_NAME),
+    cwd: process.cwd(),
+    repo: null,
+    progressLabel: 'Connecting agent…',
+    progressDone: (pid) => `Connected (pid ${pid}).`,
+    ...(grant.llmEnvFile ? { llmEnvFile: grant.llmEnvFile } : {}),
+    access: 'creator',
+    modelSelection: { model: grant.model },
+    agentProfile: { displayName: grant.agentName, personality: grant.soul },
+    interactiveUi: false,
+  });
+  if (result.pairing.communityId !== grant.workspaceId) {
+    throw new Error('approved Workspace did not match the pairing grant');
+  }
+  return result;
 }
 
 function printPairResult(result: PairRuntimeResult): void {

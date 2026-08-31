@@ -877,7 +877,7 @@ WITH current_markers AS (
     AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
       WHERE t->>0 = 't' AND t->>1 = 'buzz-agent-pairing')
   ORDER BY e.community_id, e.pubkey, e.created_at DESC, e.id DESC
-), candidates AS (
+), marker_candidates AS (
   SELECT marker.community_id, workspace.id AS workspace_id,
     marker.pubkey AS minter_pubkey
   FROM current_markers marker
@@ -907,6 +907,23 @@ WITH current_markers AS (
       WHERE t->>0 = 'expiration' LIMIT 1) ~ '^[0-9]+$'
     AND (SELECT t->>1 FROM jsonb_array_elements(marker.tags) t
       WHERE t->>0 = 'expiration' LIMIT 1)::numeric > extract(epoch FROM now())::bigint
+), device_candidates AS (
+  SELECT device_grant.community_id, device_grant.workspace_id,
+    device_grant.minter_pubkey
+  FROM beeline_agent_connect_grants device_grant
+  JOIN channels workspace ON workspace.community_id = device_grant.community_id
+    AND workspace.id = device_grant.workspace_id
+    AND workspace.deleted_at IS NULL AND workspace.archived_at IS NULL
+  JOIN channel_members minter ON minter.community_id = workspace.community_id
+    AND minter.channel_id = workspace.id AND minter.pubkey = device_grant.minter_pubkey
+    AND minter.removed_at IS NULL
+  WHERE device_grant.token_hash = $1
+    AND device_grant.agent_pubkey = decode($2, 'hex')
+    AND device_grant.expires_at > now()
+), candidates AS (
+  SELECT * FROM marker_candidates
+  UNION
+  SELECT * FROM device_candidates
 ), candidate AS (
   SELECT * FROM candidates WHERE (SELECT count(*) FROM candidates) = 1
 ), existing_claim AS (

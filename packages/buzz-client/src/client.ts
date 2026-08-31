@@ -708,8 +708,11 @@ export class BuzzClient {
     return createAgentPairingCode(this.ctx, communityId, expiresInSeconds);
   }
 
-  redeemAgentPairingCode(code: string): Promise<RedeemAgentPairingResult> {
-    return redeemAgentPairingCode(this.ctx, code);
+  redeemAgentPairingCode(
+    code: string,
+    options?: Pick<CreateAgentOptions, 'displayName' | 'personality'>,
+  ): Promise<RedeemAgentPairingResult> {
+    return redeemAgentPairingCode(this.ctx, code, options);
   }
 
   /** Best-effort undo of this identity's own pairing registration. Never throws. */

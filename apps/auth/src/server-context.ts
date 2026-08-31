@@ -14,11 +14,7 @@ import {
 } from 'node:crypto';
 import { AuthStore, type ManagedIdentity } from './store.js';
 import { OidcClient } from './oidc.js';
-import {
-  GitHubAppClient,
-  GitHubOAuthClient,
-  type GitHubIdentity,
-} from './github.js';
+import { GitHubAppClient, GitHubOAuthClient, type GitHubIdentity } from './github.js';
 import {
   appSetupEnvBlock,
   buildAppManifest,
@@ -426,6 +422,24 @@ export function createAuthRouteContext(options: AuthServerOptions) {
     const decipher = createDecipheriv('aes-256-gcm', githubTokenKey, parts[0]!);
     decipher.setAuthTag(parts[1]!);
     return Buffer.concat([decipher.update(parts[2]!), decipher.final()]).toString('utf8');
+  };
+  type AgentConnectIdentity = {
+    issuer: string;
+    audience: string;
+    subject: string;
+  };
+  let agentConnectApproval: (
+    tenant: AuthTenant,
+    flow: import('./store.js').OidcFlow,
+    identity: AgentConnectIdentity,
+  ) => Promise<boolean> = async () => false;
+  const completeAgentConnectApproval = (
+    tenant: AuthTenant,
+    flow: import('./store.js').OidcFlow,
+    identity: AgentConnectIdentity,
+  ) => agentConnectApproval(tenant, flow, identity);
+  const setAgentConnectApproval = (approval: typeof agentConnectApproval): void => {
+    agentConnectApproval = approval;
   };
   const reconcileGitHubInstallations = async (
     community: string,
@@ -956,6 +970,8 @@ export function createAuthRouteContext(options: AuthServerOptions) {
     flowCookieName,
     encryptGitHubToken,
     decryptGitHubToken,
+    completeAgentConnectApproval,
+    setAgentConnectApproval,
     reconcileGitHubInstallations,
     tenantFor,
     wakeGitHubRepoEventWaiters,

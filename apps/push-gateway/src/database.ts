@@ -100,11 +100,24 @@ ALTER TABLE IF EXISTS beeline_agent_pairing_claim_memberships
   ADD COLUMN IF NOT EXISTS joined_at timestamptz;
 `;
 
+const AGENT_CONNECT_GRANT_SQL = `
+CREATE TABLE IF NOT EXISTS beeline_agent_connect_grants (
+  token_hash text PRIMARY KEY CHECK (token_hash ~ '^[0-9a-f]{64}$'),
+  community_id uuid NOT NULL,
+  workspace_id uuid NOT NULL,
+  minter_pubkey bytea NOT NULL,
+  agent_pubkey bytea NOT NULL,
+  expires_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+`;
+
 /** Durable single-use reservation for private-Workspace agent pairing codes. */
 export async function migrateAgentPairingClaims(database: DatabaseQueryable): Promise<void> {
   await database.query(AGENT_PAIRING_CLAIM_SQL);
   await database.query(AGENT_PAIRING_CLAIM_MEMBERSHIP_SQL);
   await database.query(AGENT_PAIRING_CLAIM_MEMBERSHIP_GENERATION_SQL);
+  await database.query(AGENT_CONNECT_GRANT_SQL);
 }
 
 const DELETE_SNAPSHOT_CONTRACT_SQL = [

@@ -36,6 +36,12 @@ packages/nostr/*
 !packages/nostr/tsconfig.json
 !packages/nostr/src
 !packages/nostr/src/**
+!packages/api-contract
+packages/api-contract/*
+!packages/api-contract/package.json
+!packages/api-contract/tsconfig.json
+!packages/api-contract/src
+!packages/api-contract/src/**
 !packages/buzz-client
 packages/buzz-client/*
 !packages/buzz-client/package.json

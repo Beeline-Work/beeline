@@ -93,24 +93,23 @@ describe('GitHub-only account and repository access', () => {
     });
   });
 
-  it('mints the installation grant without a read-only permission downgrade', async () => {
+  it('mints the exact-repository grant without a permission downgrade', async () => {
     const { privateKey } = await generateKeyPair('RS256');
     const privateKeyPem = await exportPKCS8(privateKey);
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ token: 'ro-token', expires_at: '2030-01-01T00:00:00Z' }), {
-          status: 201,
-        }),
-      );
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify({ token: 'ro-token', expires_at: '2030-01-01T00:00:00Z' }), {
+        status: 201,
+      }),
+    );
     vi.stubGlobal('fetch', fetchMock);
     const app = new GitHubAppClient({ appId: '42', privateKey: privateKeyPem, slug: 'beeline' });
 
-    await expect(
-      app.installationToken(77, { repositoryIds: [9] }),
-    ).resolves.toMatchObject({ token: 'ro-token' });
-    // GitHub applies the App installation's declared contents + pull-request
-    // permissions; the token remains pinned to this exact repository.
+    await expect(app.installationToken(77, { repositoryIds: [9] })).resolves.toMatchObject({
+      token: 'ro-token',
+    });
+    // GitHub applies every permission approved for the App installation; the
+    // token remains pinned to this exact repository without a code-only or
+    // read-only downgrade.
     expect(fetchMock.mock.calls[0]![1]).toMatchObject({
       method: 'POST',
       body: JSON.stringify({ repository_ids: [9] }),

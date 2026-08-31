@@ -3,9 +3,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  DAEMON_DISTRESS_EXIT_STATUS,
   DELIBERATE_REMOVAL_EXIT_STATUS,
+  UNKNOWN_AGENT_EXIT_STATUS,
   agentServiceUnit,
   installAgentService,
+  isCanonicalInstalledLauncher,
   disableAgentService,
 } from './systemd.js';
 
@@ -17,22 +20,18 @@ afterEach(async () => {
 
 describe('systemd supervision contract', () => {
   it('renders notify readiness, progress watchdog, bounded stop and deliberate-removal policy', () => {
-    const unit = agentServiceUnit(
-      '/opt/beeline/bin/beeline',
-      '/home/operator/.local/share/fnm/node-versions/v24.0.0/installation/bin/node',
-      '/usr/local/bin:/usr/bin',
-    );
+    const unit = agentServiceUnit();
     expect(unit).toContain('Type=notify');
     expect(unit).toContain('Environment=BEELINE_MANAGED_BY_SYSTEMD=1');
     expect(unit).toContain('Restart=always');
-    expect(unit).toContain(`RestartPreventExitStatus=${DELIBERATE_REMOVAL_EXIT_STATUS}`);
+    expect(unit).toContain(
+      `RestartPreventExitStatus=${DAEMON_DISTRESS_EXIT_STATUS} ${DELIBERATE_REMOVAL_EXIT_STATUS} ${UNKNOWN_AGENT_EXIT_STATUS}`,
+    );
     expect(unit).toContain('WatchdogSec=180s');
     expect(unit).toContain('TimeoutStopSec=10min');
     expect(unit).toContain('KillMode=control-group');
-    expect(unit).toContain(
-      'Environment="PATH=/home/operator/.local/share/fnm/node-versions/v24.0.0/installation/bin:/usr/local/bin:/usr/bin"',
-    );
-    expect(unit).toContain('ExecStart="/opt/beeline/bin/beeline" daemon --agent %i');
+    expect(unit).toContain('ExecStart=%h/.local/bin/beeline daemon --agent %i');
+    expect(unit).not.toContain('Environment="PATH=');
   });
 
   it('installs, enables, starts, and returns the supervised main pid', async () => {
@@ -50,10 +49,12 @@ describe('systemd supervision contract', () => {
     });
     const pubkey = 'a'.repeat(64);
     const pid = await installAgentService(pubkey, {
-      entrypoint: '/opt/beeline/bin/beeline',
-      nodePath: '/opt/fnm/node-v24/bin/node',
-      nodeVersion: '24.1.0',
-      env: { XDG_CONFIG_HOME: root, PATH: '/usr/bin:/bin' },
+      env: {
+        HOME: '/operator',
+        BEELINE_LIB_DIR: '/operator/.local/lib/beeline',
+        XDG_CONFIG_HOME: root,
+      },
+      invocationPath: '/operator/.local/lib/beeline/lib/beeline/beeline-cli.mjs',
       run,
     });
 
@@ -78,20 +79,35 @@ describe('systemd supervision contract', () => {
       ],
     ]);
     expect(await readFile(join(root, 'systemd/user/beeline-agent@.service'), 'utf8')).toContain(
-      'Environment="PATH=/opt/fnm/node-v24/bin:/usr/bin:/bin"',
+      'ExecStart=%h/.local/bin/beeline daemon --agent %i',
     );
   });
 
-  it('refuses installation below the supported Node floor before touching systemd', async () => {
+  it('refuses a worktree invocation before touching the shared user unit', async () => {
     const run = vi.fn(async () => ({ stdout: '' }));
     await expect(
       installAgentService('d'.repeat(64), {
-        nodePath: '/usr/bin/node',
-        nodeVersion: '18.20.8',
+        env: { HOME: '/operator', BEELINE_LIB_DIR: '/operator/.local/lib/beeline' },
+        invocationPath: '/worktree/apps/body/src/cli.ts',
         run,
       }),
-    ).rejects.toThrow(/Node\.js 20\.11\.0 or newer.*activate your fnm\/nvm version/i);
+    ).rejects.toThrow(/refusing to modify.*canonical.*launcher/i);
     expect(run).not.toHaveBeenCalled();
+  });
+
+  it("accepts only the installed launcher's stable lib anchor", () => {
+    expect(
+      isCanonicalInstalledLauncher(
+        { HOME: '/operator', BEELINE_LIB_DIR: '/operator/.local/lib/beeline' },
+        '/operator/.local/lib/beeline/lib/beeline/beeline-cli.mjs',
+      ),
+    ).toBe(true);
+    expect(
+      isCanonicalInstalledLauncher(
+        { HOME: '/operator', BEELINE_LIB_DIR: '/operator/.local/lib/beeline' },
+        '/worktree/apps/body/src/cli.ts',
+      ),
+    ).toBe(false);
   });
 
   it('waits for an already-running unit to publish a replacement MainPID', async () => {
@@ -106,9 +122,14 @@ describe('systemd supervision contract', () => {
       };
     });
 
-    await expect(installAgentService('c'.repeat(64), { run, waitTimeoutMs: 1_000 })).resolves.toBe(
-      222,
-    );
+    await expect(
+      installAgentService('c'.repeat(64), {
+        env: { HOME: '/operator', BEELINE_LIB_DIR: '/operator/.local/lib/beeline' },
+        invocationPath: '/operator/.local/lib/beeline/lib/beeline/beeline-cli.mjs',
+        run,
+        waitTimeoutMs: 1_000,
+      }),
+    ).resolves.toBe(222);
     expect(calls).toContainEqual([
       'restart',
       '--no-block',

@@ -173,11 +173,17 @@ export async function runUpdateFunctionalProbe(input: {
         );
       }
       try {
-        await client.sessionPrompt(
+        const served = await client.sessionPrompt(
           opened.sessionId,
           'Call the mounted Beeline close_corner tool exactly once with corner_id update-probe, then reply READY.',
           input.turnTimeoutMs ?? UPDATE_PROBE_TURN_TIMEOUT_MS,
         );
+        if (!served.agentText.trim()) {
+          throw new UpdateFunctionalProbeError(
+            'turn-failed',
+            'the harness completed a session/prompt without an agent answer',
+          );
+        }
       } catch (error) {
         throw new UpdateFunctionalProbeError(
           'turn-failed',

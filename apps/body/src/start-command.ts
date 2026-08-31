@@ -1,4 +1,4 @@
-import { dirname, resolve } from 'node:path';
+import { dirname } from 'node:path';
 import * as clack from '@clack/prompts';
 import pc from 'picocolors';
 import { formatAgentCommand } from './agent-command.js';
@@ -12,13 +12,7 @@ import {
   selectRuntimeConfigPaths,
   stopRuntimeDaemon,
 } from './runtime.js';
-import { beelineInstallLayout } from './self-update.js';
 import { installAgentService } from './systemd.js';
-
-export function stableBeelineEntrypoint(): string {
-  const layout = beelineInstallLayout(process.env);
-  return layout ? resolve(layout.binDir, 'beeline') : resolve(process.argv[1]!);
-}
 
 /**
  * How long a restart waits for the running daemon to finish its graceful
@@ -107,9 +101,7 @@ async function startRuntime(
       report(`[buzz] agent daemon is running (pid ${existingPid}); draining it before supervision`);
       await stopRuntimeDaemon(configPath, { timeoutMs: 30 * 60_000 });
     }
-    const pid = await installAgentService(runtime.agent.publicKey, {
-      entrypoint: stableBeelineEntrypoint(),
-    });
+    const pid = await installAgentService(runtime.agent.publicKey);
     report(`[buzz] agent daemon supervised by systemd (pid ${pid})`);
     return;
   }

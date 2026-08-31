@@ -2,10 +2,10 @@
  * `beeline update` — the on-demand half of the daemon self-update path.
  *
  * Applies the published bundle to the local install (download, sha256
- * verify, atomic swap) and, for every daemon currently running, leaves an
- * update request the daemon consumes within one tick — the daemon then
- * restarts onto the new bundle through its own busy gate, so an operator can
- * never interrupt agent work by updating.
+ * verify, atomic swap) and records one bounded confirmation attempt. Running
+ * daemons observe the stable anchor at their completed progress tick, drain,
+ * then restart through systemd; the replacement must serve a real turn before
+ * the deadline or the anchor is rolled back and a durable alert is recorded.
  */
 import pc from 'picocolors';
 import {
@@ -20,16 +20,13 @@ import {
   activeReleaseId,
   archiveUrlFor,
   beelineInstallLayout,
-  clearFailedUpdatePin,
-  clearPendingUpdate,
   describeIdentity,
   hostPlatformKey,
-  queueRestartRequest,
   readInstalledBundleIdentity,
-  readPendingUpdate,
+  readUpdateAttempt,
   readUpdateState,
-  recordFailedUpdatePin,
   rollbackToPreviousRelease,
+  writeUpdateAttempt,
   type BeelineInstallLayout,
 } from './self-update.js';
 import {
@@ -48,8 +45,7 @@ ${pc.dim('Usage:')}
                                      running daemons restart onto it once idle
   beeline update --check             Report only — no download, no swap
   beeline update --status            Show installed identity, releases, and state
-  beeline update --rollback          Restore the previous release (queued restart)
-  beeline update --clear-pin         Re-enable a release paused after rollback
+  beeline update --rollback          Restore the previous release (stable-anchor restart)
   beeline update --force             Apply even when the comparison is indeterminate
   beeline update --manifest-url <u>  Override the published manifest URL
 
@@ -89,7 +85,7 @@ async function printStatus(layout: BeelineInstallLayout): Promise<void> {
   const installed = await readInstalledBundleIdentity(layout);
   const active = await activeReleaseId(layout);
   const state = await readUpdateState(layout);
-  const pending = await readPendingUpdate(layout);
+  const attempt = await readUpdateAttempt(layout);
   console.log(`${pc.bold('installed bundle')}  ${describeIdentity(installed)}`);
   console.log(`${pc.bold('active release')}    ${active ?? 'none (legacy layout, never updated)'}`);
   if (state.lastCheckAt) {
@@ -97,39 +93,27 @@ async function printStatus(layout: BeelineInstallLayout): Promise<void> {
       `${pc.bold('last check')}         ${new Date(state.lastCheckAt).toISOString()} — ${state.lastCheckResult ?? 'unknown'}`,
     );
   }
-  if (state.lastApplied) {
+  if (attempt) {
     console.log(
-      `${pc.bold('last applied')}       ${describeIdentity(state.lastApplied.identity)} at ${new Date(state.lastApplied.at).toISOString()} (previous: ${state.lastApplied.previousReleaseId ?? 'none'})`,
-    );
-  }
-  if (state.lastRollback) {
-    console.log(
-      `${pc.bold('last rollback')}      ${state.lastRollback.releaseId} -> ${state.lastRollback.toReleaseId} (${state.lastRollback.reason})`,
-    );
-  }
-  if (state.updatePin) {
-    console.log(
-      `${pc.bold('updates paused')}      ${describeIdentity(state.updatePin.identity)} (${state.updatePin.reason}); clear with --clear-pin`,
-    );
-  }
-  if (pending) {
-    console.log(
-      `${pc.bold('pending update')}     -> ${describeIdentity(pending.to)}, applied ${new Date(pending.appliedAt).toISOString()}, awaiting health confirmation`,
+      `${pc.bold('update attempt')}      ${attempt.status}: ${describeIdentity(attempt.to)} ` +
+        `(previous: ${attempt.previousReleaseId ?? 'none'}, confirm by ${new Date(attempt.confirmBy).toISOString()})` +
+        `${attempt.failure ? ` — ${attempt.failure}` : ''}`,
     );
   }
 }
 
-async function queueRestartOnRunningDaemons(): Promise<number> {
+async function runningDaemonProbeIds(): Promise<string[]> {
   const running = await runningDaemonConfigPaths();
+  const ids: string[] = [];
   for (const configPath of running) {
     const runtime = await readRuntimeRecord(configPath).catch(() => undefined);
-    await queueRestartRequest(configPath);
+    if (runtime?.agent.publicKey) ids.push(runtime.agent.publicKey);
     console.log(
       `[beeline] daemon ${runtime?.agent.publicKey?.slice(0, 12) ?? configPath} is running; ` +
-        'it will restart onto the new bundle once its current work finishes (never mid-turn).',
+        'it will observe the install anchor and restart once its current work finishes (never mid-turn).',
     );
   }
-  return running.length;
+  return [...new Set(ids)].sort();
 }
 
 export async function runUpdateCommand(args: string[]): Promise<void> {
@@ -148,42 +132,22 @@ export async function runUpdateCommand(args: string[]): Promise<void> {
   const force = args.includes('--force');
   const rollback = args.includes('--rollback');
 
-  if (args.includes('--clear-pin')) {
-    const cleared = await withInstallLock(layout, () => clearFailedUpdatePin(layout));
-    console.log(
-      cleared
-        ? '[beeline] cleared the failed-release update pin; automatic updates are enabled again.'
-        : '[beeline] no failed-release update pin was set.',
-    );
-    return;
-  }
-
   if (rollback) {
-    const state = await readUpdateState(layout);
-    const previous = state.lastApplied?.previousReleaseId;
+    const attempt = await readUpdateAttempt(layout);
+    const previous = attempt?.previousReleaseId;
     if (!previous) throw new Error('no previous release recorded to roll back to');
-    const failedRelease =
-      (await activeReleaseId(layout)) ?? state.lastApplied?.releaseId ?? 'unknown';
-    const failedIdentity = (await readInstalledBundleIdentity(layout, state)) ?? {};
     await withInstallLock(layout, async () => {
       await rollbackToPreviousRelease(layout, previous);
-      await clearPendingUpdate(layout);
-      await recordFailedUpdatePin(
-        layout,
-        {
-          from: {},
-          to: failedIdentity,
-          releaseId: failedRelease,
-          previousReleaseId: previous,
-          appliedAt: Date.now(),
-        },
-        'operator rolled the release back',
-      );
+      await writeUpdateAttempt(layout, {
+        ...attempt,
+        status: 'reverted',
+        failure: 'operator rolled the release back',
+      });
     });
     console.log(`[beeline] rolled back to release ${previous}.`);
-    const running = await queueRestartOnRunningDaemons();
+    const running = await runningDaemonProbeIds();
     console.log(
-      running > 0
+      running.length > 0
         ? '[beeline] running daemons will restart onto it once idle.'
         : '[beeline] no running daemon; the rollback takes effect on the next `beeline start`.',
     );
@@ -228,19 +192,18 @@ export async function runUpdateCommand(args: string[]): Promise<void> {
   }
 
   console.log(`[beeline] applying ${publishedLabel} …`);
+  const requiredProbeIds = await runningDaemonProbeIds();
   const manager = new SelfUpdateManager({
     layout,
     env: process.env,
-    // No daemon context here: the CLI applies the bundle but NEVER restarts
-    // anything itself — running daemons pick the swap up through their own
-    // busy gate via the update request written below.
+    // This command only swaps the stable anchor. The daemon coordinator owns
+    // every restart after it observes that anchor on a completed tick.
     isIdle: () => true,
-    restartHandover: false,
+    requiredProbeIds,
   });
   await withInstallLock(layout, () => manager.checkAndApply({ force: true }));
   console.log('[beeline] bundle applied (sha256 verified, previous release kept for rollback).');
-  const running = await queueRestartOnRunningDaemons();
-  if (running === 0) {
+  if (requiredProbeIds.length === 0) {
     console.log(
       '[beeline] no running daemon found; the new bundle is used on the next `beeline start`.',
     );

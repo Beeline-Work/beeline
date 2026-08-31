@@ -1,7 +1,7 @@
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 
-interface PendingUpdateRollbackAlert {
+interface UpdateRollbackAlert {
   version: 1;
   releaseId: string;
   createdAt: number;
@@ -11,7 +11,7 @@ export function updateRollbackAlertPath(runtimeDir: string): string {
   return resolve(runtimeDir, 'update-rollback-alert.json');
 }
 
-async function writeAlert(runtimeDir: string, alert: PendingUpdateRollbackAlert): Promise<void> {
+async function writeAlert(runtimeDir: string, alert: UpdateRollbackAlert): Promise<void> {
   const path = updateRollbackAlertPath(runtimeDir);
   const staged = `${path}.${process.pid}.tmp`;
   await mkdir(dirname(path), { recursive: true });
@@ -31,11 +31,11 @@ export async function queueUpdateRollbackAlert(
 
 async function readUpdateRollbackAlert(
   runtimeDir: string,
-): Promise<PendingUpdateRollbackAlert | undefined> {
+): Promise<UpdateRollbackAlert | undefined> {
   try {
     const value = JSON.parse(
       await readFile(updateRollbackAlertPath(runtimeDir), 'utf8'),
-    ) as PendingUpdateRollbackAlert;
+    ) as UpdateRollbackAlert;
     if (value.version !== 1 || typeof value.releaseId !== 'string') return undefined;
     return value;
   } catch {
@@ -43,13 +43,19 @@ async function readUpdateRollbackAlert(
   }
 }
 
-/** Drain the operator-local rollback record without adding daemon prose to chat. */
-export async function publishPendingUpdateRollbackAlert(input: {
+/**
+ * Report, but never consume, the operator-local rollback record. This is the
+ * loud durable fact for a release that was reverted before it served a turn.
+ * We intentionally do not revive daemon diagnostic chat for it.
+ */
+export async function reportUpdateRollback(input: {
   runtimeDir: string;
 }): Promise<boolean> {
   const pending = await readUpdateRollbackAlert(input.runtimeDir);
   if (!pending) return false;
-  console.error(`[thin-core] update rollback retained as operator state: ${pending.releaseId}`);
-  await rm(updateRollbackAlertPath(input.runtimeDir), { force: true });
+  console.error(
+    `[thin-core] UPDATE ROLLBACK: ${pending.releaseId}; durable operator record: ` +
+      updateRollbackAlertPath(input.runtimeDir),
+  );
   return true;
 }

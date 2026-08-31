@@ -9,7 +9,7 @@
  *   1. identity reporting from an installed (deliberately older) bundle
  *   2. busy gate: an update requested mid-work WAITS, staged but not swapped
  *   3. atomic swap + restart onto the new bundle (proving WHICH cli came up)
- *   4. health confirmation clearing the rollback journal
+ *   4. a served-turn proof marking the one update attempt confirmed
  *   5. checksum mismatch aborting loudly with the installed bundle untouched
  *   6. rollback when an applied update never becomes healthy
  */
@@ -26,12 +26,17 @@ import {
   activateRelease,
   activeReleaseId,
   beelineInstallLayout,
-  confirmPendingUpdate,
   hostPlatformKey,
   readInstalledBundleIdentity,
-  readPendingUpdate,
-  settlePendingUpdateOnStart,
+  readUpdateAttempt,
+  settleUpdateAttemptOnStart,
+  writeUpdateAttempt,
 } from '../src/self-update.js';
+import {
+  reportUpdateRollback,
+  queueUpdateRollbackAlert,
+  updateRollbackAlertPath,
+} from '../src/update-rollback-alert.js';
 
 const roots: string[] = [];
 async function tempDir(prefix) {
@@ -66,6 +71,9 @@ async function buildBundle(commit, version) {
   const staging = await tempDir(`build-${commit}`);
   await mkdir(join(staging, 'lib', 'beeline'), { recursive: true });
   await writeFile(join(staging, 'lib', 'beeline', 'beeline-cli.mjs'), STUB_CLI);
+  await writeFile(join(staging, 'lib', 'beeline', 'squire-mcp-proxy.mjs'), 'process.exit(0);\n');
+  await writeFile(join(staging, 'lib', 'beeline', 'agent-tool-mcp-proxy.mjs'), 'process.exit(0);\n');
+  await writeFile(join(staging, 'lib', 'beeline', 'pi-mcp-adapter.mjs'), 'export {};\n');
   await writeFile(
     join(staging, 'bundle.json'),
     `${JSON.stringify({ schemaVersion: 1, platform: hostPlatformKey(), commit, version }, null, 2)}\n`,
@@ -133,39 +141,31 @@ try {
   serveManifest(newer);
 
   let idle = false;
-  const notices = [];
-  let restartRequested = false;
   const manager = new SelfUpdateManager({
     layout,
-    watchRuntimeDirs: [runtimeDir],
     env: { BEELINE_UPDATE_MANIFEST_URL: `${baseUrl}/dl/manifest.json` },
     idleTimeoutMs: 400,
     idlePollMs: 20,
     isIdle: () => idle,
-    notify: (text) => notices.push(text),
-    requestRestart: () => { restartRequested = true; },
     logger: () => undefined,
   });
 
   // --- 2. busy: the update waits -------------------------------------------
   say('2. agent work is running — the update must WAIT');
   await manager.checkAndApply();
-  console.log(`staged: ${existsSync(join(layout.releasesRoot, newer.commit))}, swapped: ${await activeReleaseId(layout) !== 'legacy'}, restart requested: ${restartRequested}`);
+  console.log(`staged: ${existsSync(join(layout.releasesRoot, newer.commit))}, swapped: ${await activeReleaseId(layout) !== 'legacy'}`);
 
   // --- 3. idle: atomic swap + restart --------------------------------------
   say('3. work finished — swap atomically and restart onto the new bundle');
   idle = true;
   await manager.checkAndApply();
   console.log(`active release: ${await activeReleaseId(layout)}  (previous kept: ${existsSync(join(layout.releasesRoot, 'aaa111old'))})`);
-  console.log(`room notice: ${notices.at(-1)}`);
-  const pid = await manager.launchReplacement(configPath);
-  const startedPath = join(runtimeDir, 'daemon-started.json');
-  for (let w = 0; w < 15000 && !existsSync(startedPath); w += 100) await new Promise((r) => setTimeout(r, 100));
-  console.log(`replacement daemon pid ${pid} came up as commit ${JSON.parse(await readFile(startedPath, 'utf8')).commit}`);
-  process.kill(pid, 'SIGTERM');
+  console.log('the stable anchor now points at the candidate; the daemon coordinator owns the successor restart.');
 
-  // --- 4. healthy: journal cleared ------------------------------------------
-  say('4. new bundle confirms healthy', `journal cleared: ${await confirmPendingUpdate(layout)}, pending now: ${await readPendingUpdate(layout)}`);
+  // --- 4. healthy: served turn confirms --------------------------------------
+  const attempt = await readUpdateAttempt(layout);
+  await writeUpdateAttempt(layout, { ...attempt, status: 'confirmed' });
+  say('4. new bundle served a turn', `attempt now: ${(await readUpdateAttempt(layout)).status}`);
 
   // --- 5. checksum mismatch aborts loudly -----------------------------------
   say('5. corrupt/mismatched download aborts without touching the install');
@@ -189,17 +189,21 @@ try {
   say('6. an applied update that never starts is rolled back at next start');
   const broken = await buildBundle('ccc333bad', '2026.03.01');
   await writeFile(join(broken.tarballPath.replace('.tar.gz', '-dir'), 'placeholder'), 'x').catch(() => undefined);
-  // Simulate: release activated but never healthy (stale journal).
-  const { writePendingUpdateFixture } = await import('../src/self-update.js');
-  await writePendingUpdateFixture(layout, {
+  // Simulate: release activated but never served a turn before its deadline.
+  const { writeUpdateAttemptFixture } = await import('../src/self-update.js');
+  await writeUpdateAttemptFixture(layout, {
     from: { commit: 'bbb222new', version: '2026.02.05' },
     to: { commit: broken.commit, version: broken.version },
     releaseId: broken.commit,
     previousReleaseId: 'aaa111old',
     appliedAt: Date.now() - 10 * 60_000,
   });
-  const settle = await settlePendingUpdateOnStart(layout);
-  console.log(`settle verdict: ${settle.kind}; active release restored to: ${await activeReleaseId(layout)}`);
+  const settle = await settleUpdateAttemptOnStart(layout);
+  if (settle.kind === 'rolled-back') {
+    await queueUpdateRollbackAlert(runtimeDir, settle.record.releaseId);
+    await reportUpdateRollback({ runtimeDir });
+  }
+  console.log(`settle verdict: ${settle.kind}; active release restored to: ${await activeReleaseId(layout)}; durable outcome: ${(await readUpdateAttempt(layout)).status}; record: ${updateRollbackAlertPath(runtimeDir)}`);
 } finally {
   server.close();
   for (const dir of roots) await rm(dir, { recursive: true, force: true }).catch(() => undefined);

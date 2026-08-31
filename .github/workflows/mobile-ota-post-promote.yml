@@ -43,6 +43,7 @@ jobs:
     outputs:
       reason: ${{ steps.rehearsal.outputs.reason }}
       exit_code: ${{ steps.rehearsal.outputs.exit_code }}
+      failure_class: ${{ steps.rehearsal.outputs.failure_class }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -89,11 +90,12 @@ jobs:
           EXPO_TOKEN_SECRET: ${{ secrets.EXPO_TOKEN }}
           ANDROID_HOME: /home/lunchbox/android-sdk
           OTA_CANARY_REASON_FILE: ${{ runner.temp }}/ota-canary-reason.txt
+          OTA_CANARY_OUTCOME_FILE: ${{ runner.temp }}/ota-canary-outcome.txt
           RUN_LEDGER: ${{ runner.temp }}/promoted-release/mobile-ota-ledger.json
         run: |
           set -euo pipefail
           if [ -n "$EXPO_TOKEN_SECRET" ]; then export EXPO_TOKEN="$EXPO_TOKEN_SECRET"; fi
-          rm -f "$OTA_CANARY_REASON_FILE"
+          rm -f "$OTA_CANARY_REASON_FILE" "$OTA_CANARY_OUTCOME_FILE"
           started="$(date +%s)"
           set +e
           scripts/ota-canary.sh --ledger "$RUN_LEDGER" --promoted
@@ -101,21 +103,31 @@ jobs:
           set -e
           elapsed="$(( $(date +%s) - started ))"
           reason="post-promotion rehearsal passed"
+          failure_class="passed"
           if [ "$canary_status" -ne 0 ]; then
+            failure_class="infrastructure-failure"
             reason="ota-canary.sh exited ${canary_status} after ${elapsed}s"
+            if [ "$canary_status" -eq 1 ] && \
+              [ "$(head -n 1 "$OTA_CANARY_OUTCOME_FILE" 2>/dev/null || true)" = "product-assertion-failure" ]; then
+              failure_class="product-failure"
+            fi
             if [ -s "$OTA_CANARY_REASON_FILE" ]; then
               detail="$(head -n 1 "$OTA_CANARY_REASON_FILE" | cut -c1-400)"
               reason="${reason}: ${detail}"
             fi
           fi
-          echo "exit_code=$canary_status" >> "$GITHUB_OUTPUT"
-          echo "reason=$reason" >> "$GITHUB_OUTPUT"
+          {
+            echo "exit_code=$canary_status"
+            echo "failure_class=$failure_class"
+            echo "reason=$reason"
+          } >> "$GITHUB_OUTPUT"
           {
             echo "## Post-promotion rehearsal"
             echo
             echo "- Production group: \`${{ inputs.production_group_id }}\`"
             echo "- Source main: \`${{ inputs.source_sha }}\`"
             echo "- Full rehearsal: ${elapsed}s"
+            echo "- Classification: ${failure_class}"
             echo "- Result: ${reason}"
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$canary_status"
@@ -127,6 +139,7 @@ jobs:
           name: mobile-ota-post-promote-${{ github.run_id }}
           path: |
             ${{ runner.temp }}/ota-canary-reason.txt
+            ${{ runner.temp }}/ota-canary-outcome.txt
             ${{ runner.temp }}/promoted-release/mobile-ota-ledger.json
           if-no-files-found: warn
           retention-days: 90
@@ -134,7 +147,7 @@ jobs:
   rollback:
     name: Restore predecessor if failed group is still live
     needs: canary
-    if: always() && needs.canary.result == 'failure'
+    if: always() && needs.canary.result == 'failure' && needs.canary.outputs.failure_class == 'product-failure'
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
@@ -154,6 +167,13 @@ jobs:
           path: ${{ runner.temp }}/promoted-release
           run-id: ${{ inputs.source_run_id }}
           github-token: ${{ github.token }}
+
+      # EAS resolves app.config.js and its local Expo plugins. This hosted
+      # rollback runner starts from a clean checkout, so it must install the
+      # mobile workspace before the guarded update:list can prove production.
+      - name: Install mobile dependencies for EAS project context
+        working-directory: apps/mobile
+        run: npm ci
 
       - name: Guarded automatic rollback
         id: rollback
@@ -272,5 +292,44 @@ jobs:
               }
               await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: canonical.number, body: report });
             } else if (hasFailedGroup) {
+              await github.rest.issues.create({ owner: context.repo.owner, repo: context.repo.repo, title: 'Undelivered merges', body: report });
+            }
+
+  attention:
+    name: Escalate rehearsal infrastructure failure without rollback
+    needs: canary
+    if: always() && needs.canary.result == 'failure' && needs.canary.outputs.failure_class != 'product-failure'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Put infrastructure failures in Undelivered merges
+        uses: actions/github-script@v7
+        env:
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          FAILED_GROUP: ${{ inputs.production_group_id }}
+          FAILURE_REASON: ${{ needs.canary.outputs.reason }}
+          FAILURE_CLASS: ${{ needs.canary.outputs.failure_class }}
+        with:
+          script: |
+            const failureClass = process.env.FAILURE_CLASS || 'infrastructure-failure';
+            const failureReason = process.env.FAILURE_REASON || 'post-promotion rehearsal job failed before it could classify the failure';
+            const all = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner, repo: context.repo.repo, state: 'all', per_page: 100,
+            });
+            const canonical = all.find((issue) => !issue.pull_request && issue.title === 'Undelivered merges');
+            const report = [
+              'The post-promotion rehearsal failed in its infrastructure. Production was not rolled back because no completed product assertion proved the promoted bytes broken.',
+              '',
+              `Failure class: \`${failureClass}\``,
+              `Production group: \`${process.env.FAILED_GROUP}\``,
+              `Reason: ${failureReason.replaceAll('|', '\\|')}`,
+              '',
+              `Source delivery run: ${process.env.SOURCE_RUN_ID}. Post-promotion run: ${context.runId}.`,
+            ].join('\n');
+            if (canonical) {
+              if (canonical.state !== 'open') {
+                await github.rest.issues.update({ owner: context.repo.owner, repo: context.repo.repo, issue_number: canonical.number, state: 'open' });
+              }
+              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: canonical.number, body: report });
+            } else {
               await github.rest.issues.create({ owner: context.repo.owner, repo: context.repo.repo, title: 'Undelivered merges', body: report });
             }

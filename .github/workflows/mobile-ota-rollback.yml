@@ -7,6 +7,11 @@ on:
         description: Optional known-good source group; defaults to the latest release ledger predecessor
         type: string
         required: false
+      dry_run:
+        description: Verify EAS rollback prerequisites and print the rollback command without changing production
+        type: boolean
+        default: false
+        required: false
 
 permissions:
   actions: read
@@ -68,6 +73,12 @@ jobs:
           fi
           echo "group_id=$group" >> "$GITHUB_OUTPUT"
 
+      # EAS loads app.config.js and its local Expo plugins before it can issue
+      # the guarded update:list/republish operation.
+      - name: Install mobile dependencies for EAS project context
+        working-directory: apps/mobile
+        run: npm ci
+
       - name: Republish rollback group to production
         working-directory: apps/mobile
         env:
@@ -77,7 +88,19 @@ jobs:
           set -euo pipefail
           if [ -n "$EXPO_TOKEN_SECRET" ]; then export EXPO_TOKEN="$EXPO_TOKEN_SECRET"; fi
           if [ -z "${EXPO_TOKEN:-}" ]; then exit 2; fi
-          node scripts/ota-release.mjs rollback --group "$ROLLBACK_GROUP" --ledger "$RUNNER_TEMP/mobile-ota-rollback.json"
+          # This read-only probe exercises the same EAS project loading and
+          # production lookup that must succeed before an automatic rollback.
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            npx --yes eas-cli@22.2.0 update:list --branch production --limit 1 --json --non-interactive >/dev/null
+          fi
+          args=(rollback --group "$ROLLBACK_GROUP" --ledger "$RUNNER_TEMP/mobile-ota-rollback.json")
+          if [ "${{ inputs.dry_run }}" = "true" ]; then args+=(--dry-run); fi
+          node scripts/ota-release.mjs "${args[@]}"
+
+      - name: Record rollback dry-run proof
+        if: inputs.dry_run
+        run: |
+          printf '%s\n' '{"status":"dry-run","operation":"guarded-rollback-command"}' > "$RUNNER_TEMP/mobile-ota-rollback.json"
 
       - uses: actions/upload-artifact@v4
         with:

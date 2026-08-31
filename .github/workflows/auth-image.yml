@@ -1,20 +1,38 @@
 name: Auth image
 
 on:
-  pull_request:
-    paths:
-      - '.github/workflows/auth-image.yml'
-      - '.dockerignore'
-      - 'apps/auth/**'
-      - 'packages/buzz-client/**'
-      - 'packages/nostr/**'
-      - 'package.json'
-      - 'package-lock.json'
-      - 'tsconfig.base.json'
+  pull_request: {}
+
+permissions:
+  contents: read
+  pull-requests: read
 
 jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      build: ${{ steps.filter.outputs.build }}
+    steps:
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            build:
+              - '.github/workflows/auth-image.yml'
+              - '.dockerignore'
+              - 'apps/auth/**'
+              - 'packages/buzz-client/**'
+              - 'packages/nostr/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'tsconfig.base.json'
+
   build:
     name: Build auth container
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -69,6 +69,7 @@ vi.mock('@/components/buzz/Ledger', async () => {
 
 import {
   GitHubEventCard,
+  DaemonFactCard,
   OrdinaryLedgerMessage,
   TargetBranchProposalCard,
   WritePermissionCard,
@@ -158,6 +159,30 @@ describe('Room message variant components', () => {
       act(() => renderer.root.findByType('Pressable').props.onPress());
       expect(onOpenUrl).toHaveBeenLastCalledWith(githubEvent.url);
     }
+  });
+
+  it('uses the GitHub-card shell for daemon facts and opens the archived corner', () => {
+    const onOpenCorner = vi.fn();
+    const renderer = render(
+      <DaemonFactCard
+        message={message({
+          daemonFact: {
+            type: 'corner-complete',
+            cornerId: '80a5a6f1-fb5a-493b-93eb-f3db33f696e6',
+            objective: 'Ship fact cards with archived transcript access',
+            outcome: 'landed',
+            pullRequest: { number: 42, url: 'https://github.com/acme/beeline/pull/42' },
+            subgoals: [{ step: 'Open the archived transcript', status: 'completed' }],
+          },
+        })}
+        onOpenCorner={onOpenCorner}
+      />,
+    );
+    act(() =>
+      renderer.root.findByProps({ testID: 'daemon-fact-card-corner-complete' }).props.onPress(),
+    );
+    expect(onOpenCorner).toHaveBeenCalledWith('80a5a6f1-fb5a-493b-93eb-f3db33f696e6');
+    expect(renderer.root.findAllByType('HullSurface')).toHaveLength(1);
   });
 
   it('memoizes ordinary rows across unrelated presence changes and updates the affected speaker', () => {

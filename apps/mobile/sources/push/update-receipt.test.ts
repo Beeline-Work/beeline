@@ -18,6 +18,9 @@ vi.mock('react-native', () => ({ Platform: { OS: 'android' } }));
 vi.mock('@/buzz/runtime-config', () => ({
   getBuzzRuntimeConfig: () => ({ pushGatewayUrl: 'https://push.example' }),
 }));
+vi.mock('@/sync/appConfig', () => ({
+  loadAppConfig: () => ({ releaseVersion: 'v0.0.1', releaseSha: '1'.repeat(40) }),
+}));
 
 import { reportRunningUpdateReceipt, runningUpdateGroup } from './update-receipt';
 
@@ -55,6 +58,8 @@ describe('mobile OTA device receipt', () => {
           channel: 'production',
           group: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
           runtimeVersion: '21',
+          releaseVersion: 'v0.0.1',
+          sourceSha: '1'.repeat(40),
           environment: 'physical',
         }),
       }),

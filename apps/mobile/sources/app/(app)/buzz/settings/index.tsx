@@ -17,6 +17,7 @@ import { WORKSPACES_LABEL } from '@/buzz/vocabulary';
 import { PixelGateReveal } from '@/components/buzz/MonoHull';
 import { Typography } from '@/constants/Typography';
 import { BuzzRigTransport } from '@/sync/transport';
+import { loadAppConfig } from '@/sync/appConfig';
 import {
   createManualUpdateState,
   isManualUpdateBusy,
@@ -47,6 +48,7 @@ export default function BuzzSettings() {
   );
   const manualUpdateBusy = isManualUpdateBusy(manualUpdate);
   const manualUpdateStatus = manualUpdateMessage(manualUpdate);
+  const release = loadAppConfig();
 
   useEffect(() => {
     let cancelled = false;
@@ -191,6 +193,10 @@ export default function BuzzSettings() {
             </Text>
             <Text style={styles.rowSubtitle} testID="ota-update-channel">
               Channel: {Updates.channel ?? 'not configured'}
+            </Text>
+            <Text style={styles.rowSubtitle} testID="ota-release-version">
+              Release: {release.releaseVersion ?? 'development'}
+              {release.releaseSha ? ` · ${release.releaseSha.slice(0, 12)}` : ''}
             </Text>
             {manualUpdateStatus && (
               <Text

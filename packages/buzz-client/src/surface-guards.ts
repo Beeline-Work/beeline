@@ -257,6 +257,47 @@ function githubEvent(value: unknown): boolean {
   );
 }
 
+function daemonFact(value: unknown): boolean {
+  const item = record(value);
+  const pullRequest = item?.pullRequest === undefined ? undefined : record(item.pullRequest);
+  if (
+    !item ||
+    (item.type !== 'corner-complete' &&
+      item.type !== 'checks-failing' &&
+      item.type !== 'worktree-cleaned') ||
+    typeof item.cornerId !== 'string' ||
+    !UUID.test(item.cornerId) ||
+    typeof item.objective !== 'string' ||
+    !item.objective.trim() ||
+    (item.outcome !== undefined && item.outcome !== 'landed' && item.outcome !== 'abandoned') ||
+    (pullRequest !== undefined &&
+      (!pullRequest ||
+        (pullRequest.number !== undefined &&
+          (!Number.isSafeInteger(pullRequest.number) || Number(pullRequest.number) <= 0)) ||
+        !optionalString(pullRequest.title) ||
+        !githubUrl(pullRequest.url) ||
+        !optionalString(pullRequest.targetBranch))) ||
+    (item.subgoals !== undefined &&
+      (!Array.isArray(item.subgoals) ||
+        !item.subgoals.every((subgoal) => {
+          const entry = record(subgoal);
+          return Boolean(
+            entry &&
+            typeof entry.step === 'string' &&
+            entry.step.trim() &&
+            (entry.status === 'pending' ||
+              entry.status === 'in_progress' ||
+              entry.status === 'completed'),
+          );
+        })))
+  ) {
+    return false;
+  }
+  return (
+    item.type !== 'corner-complete' || item.outcome === 'landed' || item.outcome === 'abandoned'
+  );
+}
+
 export function isRoomViewMessage(value: unknown): value is RoomViewMessage {
   const item = record(value);
   const reference = item?.reference === undefined ? undefined : record(item.reference);
@@ -303,7 +344,8 @@ export function isRoomViewMessage(value: unknown): value is RoomViewMessage {
     (item.corner === undefined || messageCorner(item.corner)) &&
     (item.permission === undefined || messagePermission(item.permission)) &&
     (item.targetBranch === undefined || targetBranch(item.targetBranch)) &&
-    (item.githubEvent === undefined || githubEvent(item.githubEvent)),
+    (item.githubEvent === undefined || githubEvent(item.githubEvent)) &&
+    (item.daemonFact === undefined || daemonFact(item.daemonFact)),
   );
 }
 

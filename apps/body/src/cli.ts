@@ -87,6 +87,7 @@ import {
   type ModelTurnSpend,
   type SessionReprimeRecord,
 } from './model-spend.js';
+import { writeDaemonReleaseStatus } from './release-status.js';
 
 function usage(exitCode = 1): void {
   console.error(`
@@ -340,6 +341,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
     return rollbackAlertDrain;
   };
   let loadedRelease: string | undefined;
+  let loadedReleaseIdentity: Awaited<ReturnType<typeof readInstalledBundleIdentity>> | undefined;
   let update: ManagedUpdateHandoff | undefined;
   let pendingSuccessor = false;
   let successorRolledBack = false;
@@ -357,6 +359,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
       pendingSuccessor = true;
     }
     loadedRelease = await activeReleaseId(layout);
+    loadedReleaseIdentity = await readInstalledBundleIdentity(layout);
     update = await ManagedUpdateHandoff.create(layout, runtimeDir, Date.now, {
       requiredProbeIds: [...(await runningRuntimeProbeIds(process.env)), runtime.agent.publicKey],
     });
@@ -402,6 +405,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
           );
         }
         await clearDaemonStartFailures(runtimeDir);
+        await writeDaemonReleaseStatus(runtimeDir, runtime.agent.publicKey, loadedReleaseIdentity);
         await notifier.ready(`ready; loaded_release=${loadedRelease ?? 'development'}`);
         ready = true;
       },

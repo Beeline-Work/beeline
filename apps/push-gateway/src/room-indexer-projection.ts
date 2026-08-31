@@ -94,6 +94,67 @@ function githubEventCard(
   };
 }
 
+function daemonFactCard(
+  values: readonly string[][],
+): NonNullable<RoomViewMessage['daemonFact']> | undefined {
+  const cornerId = text(tag(values, 'subchannel'));
+  const objective = text(tag(values, 'objective'));
+  if (!cornerId || !/^[0-9a-f-]{36}$/i.test(cornerId) || !objective) return undefined;
+  const subgoals = values.flatMap((value) => {
+    const [name, step, status] = value;
+    return name === 'subgoal' &&
+      step &&
+      (status === 'pending' || status === 'in_progress' || status === 'completed')
+      ? [{ step, status: status as 'pending' | 'in_progress' | 'completed' }]
+      : [];
+  });
+  const pullRequestUrl = text(tag(values, 'url'));
+  const pullRequest =
+    pullRequestUrl && /^https:\/\/github\.com\/[^\s]+$/i.test(pullRequestUrl)
+      ? {
+          ...(Number.isSafeInteger(Number(tag(values, 'pr-number'))) &&
+          Number(tag(values, 'pr-number')) > 0
+            ? { number: Number(tag(values, 'pr-number')) }
+            : {}),
+          ...(text(tag(values, 'pr-title')) ? { title: text(tag(values, 'pr-title')) } : {}),
+          url: pullRequestUrl,
+          ...(text(tag(values, 'target-branch'))
+            ? { targetBranch: text(tag(values, 'target-branch')) }
+            : {}),
+        }
+      : undefined;
+  if (markerSet(values).has('corner-branch-ended')) {
+    const outcome = tag(values, 'outcome');
+    if (outcome !== 'landed' && outcome !== 'abandoned') return undefined;
+    return {
+      type: 'corner-complete',
+      cornerId,
+      objective,
+      outcome,
+      ...(pullRequest ? { pullRequest } : {}),
+      ...(subgoals.length ? { subgoals } : {}),
+    };
+  }
+  if (markerSet(values).has('corner-checks-failing')) {
+    return {
+      type: 'checks-failing',
+      cornerId,
+      objective,
+      ...(pullRequest ? { pullRequest } : {}),
+      ...(subgoals.length ? { subgoals } : {}),
+    };
+  }
+  if (markerSet(values).has('corner-worktree-cleaned')) {
+    return {
+      type: 'worktree-cleaned',
+      cornerId,
+      objective,
+      ...(subgoals.length ? { subgoals } : {}),
+    };
+  }
+  return undefined;
+}
+
 export function identity(data: Json): RoomViewIdentity {
   const pubkey = String(data.pubkey ?? '');
   const fallback = pubkey
@@ -451,14 +512,9 @@ export function projectEvent(data: Json, channelId: string): RoomViewMessage | u
   // decoder below (which intentionally accepts only live corner statuses).
   // Otherwise a valid landed/abandoned summary carrying `subchannel` is
   // discarded before the RoomView client can observe the archive sequence.
-  if (
-    cornerId &&
-    markers.has('daemon-fact') &&
-    ((markers.has('corner-branch-ended') &&
-      (tag(eventTags, 'outcome') === 'landed' || tag(eventTags, 'outcome') === 'abandoned')) ||
-      markers.has('corner-worktree-cleaned'))
-  ) {
-    return { ...base, presentation: 'system' };
+  if (cornerId && markers.has('daemon-fact')) {
+    const daemonFact = daemonFactCard(eventTags);
+    return daemonFact ? { ...base, text: '', presentation: 'card', daemonFact } : undefined;
   }
   if (cornerId) {
     const status = tag(eventTags, 'status');

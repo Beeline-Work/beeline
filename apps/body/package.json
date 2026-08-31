@@ -26,6 +26,11 @@
       "types": "./dist/events-state.d.ts",
       "import": "./dist/events-state.js",
       "default": "./dist/events-state.js"
+    },
+    "./release-status": {
+      "types": "./dist/release-status.d.ts",
+      "import": "./dist/release-status.js",
+      "default": "./dist/release-status.js"
     }
   },
   "scripts": {

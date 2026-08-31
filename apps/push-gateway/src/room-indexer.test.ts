@@ -933,6 +933,23 @@ describe('RoomIndexer', () => {
     expect(lifecycleFilter).toBeDefined();
   });
 
+  it('serves an archived corner transcript read-only to its members', async () => {
+    await postgres.query(
+      `UPDATE channels SET archived_at = now() WHERE community_id = $1 AND id = $2`,
+      [TENANT, CORNER],
+    );
+
+    const archived = await indexer.readRoom(CORNER, VIEWER);
+
+    expect(archived).toMatchObject({
+      room: { id: CORNER, archived: true },
+      viewer: { permissions: { send: false } },
+    });
+    expect(archived?.messages).toEqual(
+      expect.arrayContaining([expect.objectContaining({ text: 'Working' })]),
+    );
+  });
+
   it('withholds reply proof from deleted or foreign ancestry', async () => {
     const foreignParentId = 'c'.repeat(64);
     const foreignReplyId = 'd'.repeat(64);
@@ -1224,6 +1241,7 @@ describe('RoomIndexer', () => {
         extraTags: [
           ['subchannel', CORNER],
           ['outcome', 'landed'],
+          ['objective', 'Add checksum verification'],
         ],
         text: 'Landed checksum verification into main.',
       },
@@ -1290,7 +1308,6 @@ describe('RoomIndexer', () => {
       'Steer queued for the active turn.',
       'Permission execution acknowledged',
       'CI passed for the landed checksum.',
-      'Landed checksum verification into main.',
     ]) {
       expect(view?.messages).toContainEqual(
         expect.objectContaining({ text, presentation: 'system' }),
@@ -1301,6 +1318,17 @@ describe('RoomIndexer', () => {
     );
     expect(view?.messages).toContainEqual(
       expect.objectContaining({ id: 'c'.repeat(64), presentation: 'card' }),
+    );
+    expect(view?.messages).toContainEqual(
+      expect.objectContaining({
+        presentation: 'card',
+        daemonFact: expect.objectContaining({
+          type: 'corner-complete',
+          cornerId: CORNER,
+          objective: 'Add checksum verification',
+          outcome: 'landed',
+        }),
+      }),
     );
     expect(view?.messages).not.toContainEqual(expect.objectContaining({ id: '7'.repeat(64) }));
   });

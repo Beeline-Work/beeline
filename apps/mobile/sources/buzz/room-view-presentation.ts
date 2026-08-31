@@ -182,6 +182,8 @@ export type ChatDisplayMessage = {
   };
   /** Repository activity is a typed surface, never a transcript speaker. */
   githubEvent?: NonNullable<RoomViewMessage['githubEvent']>;
+  /** Daemon lifecycle facts are server-projected cards, never prose rows. */
+  daemonFact?: NonNullable<RoomViewMessage['daemonFact']>;
   writePermission?: {
     permissionId: string;
     requestId: string;
@@ -218,19 +220,32 @@ export function displayRoomMessage(
   viewerPubkey: string,
 ): ChatDisplayMessage {
   const githubEvent = message.githubEvent ? { ...message.githubEvent } : undefined;
+  const daemonFact = message.daemonFact
+    ? {
+        ...message.daemonFact,
+        ...(message.daemonFact.pullRequest
+          ? { pullRequest: { ...message.daemonFact.pullRequest } }
+          : {}),
+        ...(message.daemonFact.subgoals
+          ? { subgoals: message.daemonFact.subgoals.map((subgoal) => ({ ...subgoal })) }
+          : {}),
+      }
+    : undefined;
   return {
     id: message.id,
     relayId: message.id,
     text: message.text,
     timestamp: message.createdAt,
-    ...(githubEvent
+    ...(githubEvent || daemonFact
       ? { isUser: false }
       : {
           isUser: message.author.pubkey === viewerPubkey,
           pubkey: message.author.pubkey,
         }),
     reference: message.reference,
-    ...(!githubEvent && message.author.kind === 'agent' ? { isAgentAuthor: true } : {}),
+    ...(!githubEvent && !daemonFact && message.author.kind === 'agent'
+      ? { isAgentAuthor: true }
+      : {}),
     ...(message.presentation === 'system' ? { isSystemNotice: true } : {}),
     ...(message.presentation === 'activity' ? { isAgentActivity: true } : {}),
     ...(message.activity ? { activity: activityItems(message) } : {}),
@@ -265,6 +280,7 @@ export function displayRoomMessage(
         }
       : {}),
     ...(githubEvent ? { githubEvent } : {}),
+    ...(daemonFact ? { daemonFact } : {}),
     ...(message.permission
       ? {
           writePermission: {

@@ -139,6 +139,23 @@ export type RoomViewMessage = {
     readonly branch?: string;
     readonly targetBranch?: string;
   };
+  /** A daemon-authored repository lifecycle fact, rendered as an actionable card. */
+  readonly daemonFact?: {
+    readonly type: 'corner-complete' | 'checks-failing' | 'worktree-cleaned';
+    readonly cornerId: string;
+    readonly objective: string;
+    readonly outcome?: 'landed' | 'abandoned';
+    readonly pullRequest?: {
+      readonly number?: number;
+      readonly title?: string;
+      readonly url: string;
+      readonly targetBranch?: string;
+    };
+    readonly subgoals?: readonly {
+      readonly step: string;
+      readonly status: 'pending' | 'in_progress' | 'completed';
+    }[];
+  };
 };
 
 export type RoomViewer = {

@@ -2239,6 +2239,13 @@ describe('agent identity boundary', () => {
         ],
       }),
     );
+    const systemPrompt = create.mock.calls[0]![0].systemPrompt;
+    expect(systemPrompt).toContain(
+      'Read-only means the repository is visible but cannot be changed',
+    );
+    expect(systemPrompt).toContain(
+      'Never tell a Room member that you cannot view the repository unless a buzz-readonly-mcp inspection call actually fails',
+    );
     expect(JSON.stringify(create.mock.calls)).not.toContain('buzz-dev-mcp');
   });
 

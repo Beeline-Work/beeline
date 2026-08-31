@@ -316,34 +316,47 @@ export function cornerSummaries(view: Pick<RoomView, 'corners'>): CornerSummary[
   return view.corners.map((item) => {
     const lifecycle = item.lifecycle.lifecycle;
     const machineState =
-      lifecycle === 'REVIEW' || lifecycle === 'APPROVED'
-        ? 'waiting'
+      lifecycle === 'ARCHIVED'
+        ? item.lifecycle.archiveFlavor === 'merged'
+          ? 'concluded'
+          : 'closed'
         : lifecycle === 'REJECTED'
           ? 'closed'
-          : lifecycle === 'ARCHIVED'
-            ? item.lifecycle.archiveFlavor === 'merged'
-              ? 'concluded'
-              : 'closed'
-            : 'idle';
+          : item.status === 'working'
+            ? 'working'
+            : lifecycle === 'REVIEW' || item.status === 'waiting'
+              ? 'waiting'
+              : item.status === 'open'
+                ? 'open'
+                : item.status === 'concluded'
+                  ? 'concluded'
+                  : item.status === 'closed'
+                    ? 'closed'
+                    : 'idle';
     const status =
-      lifecycle === 'REVIEW' || lifecycle === 'APPROVED'
-        ? 'open'
+      machineState === 'working'
+        ? 'live'
         : lifecycle === 'REJECTED'
           ? 'archived'
           : lifecycle === 'ARCHIVED'
             ? item.lifecycle.archiveFlavor === 'merged'
               ? 'merged'
               : 'archived'
-            : null;
+            : machineState === 'waiting'
+              ? item.reason === 'failure'
+                ? 'failed'
+                : item.reason === 'question'
+                  ? 'needs-attention'
+                  : 'open'
+              : null;
     return {
       id: item.corner.id,
       name: item.corner.name,
       status,
       machineState,
-      ...(lifecycle === 'REVIEW' || lifecycle === 'APPROVED'
-        ? { machineReason: 'review' as const }
-        : {}),
-      stateAt: item.corner.updatedAt,
+      ...(machineState === 'waiting' ? { machineReason: 'review' as const } : {}),
+      ...(machineState === 'waiting' && item.reason ? { machineReason: item.reason } : {}),
+      stateAt: item.statusAt ?? item.corner.updatedAt,
       openerPubkey: item.agent?.pubkey ?? '',
       ...(item.agent ? { agentPubkey: item.agent.pubkey } : {}),
     } as CornerSummary;

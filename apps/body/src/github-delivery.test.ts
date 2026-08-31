@@ -127,9 +127,7 @@ describe('GitHub-origin delivery', () => {
     const publishes = events.filter((event) => Array.isArray(event.tags));
     expect(
       publishes.some((event) =>
-        event.tags.some(
-          (tag) => tag[0] === 't' && tag[1] === CORNER_GIT_PROJECTION_TAG,
-        ),
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === CORNER_GIT_PROJECTION_TAG),
       ),
     ).toBe(true);
     expect(
@@ -159,9 +157,7 @@ describe('GitHub-origin delivery', () => {
     ).toThrow();
     expect(
       events.filter((event) =>
-        event.tags.some(
-          (tag) => tag[0] === 't' && tag[1] === CORNER_GIT_PROJECTION_TAG,
-        ),
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === CORNER_GIT_PROJECTION_TAG),
       ),
     ).toHaveLength(1);
     expect(
@@ -218,12 +214,12 @@ describe('GitHub-origin delivery', () => {
 
     expect(modelTurn).not.toHaveBeenCalled();
     expect(restartedInfo.mergeTarget?.tip).toBe(rewrittenTip);
-    expect(run(worktree, ['ls-remote', remote, 'refs/heads/feature/corner'])).toContain(rewrittenTip);
+    expect(run(worktree, ['ls-remote', remote, 'refs/heads/feature/corner'])).toContain(
+      rewrittenTip,
+    );
     expect(
       events.filter((event) =>
-        event.tags.some(
-          (tag) => tag[0] === 't' && tag[1] === CORNER_GIT_PROJECTION_TAG,
-        ),
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === CORNER_GIT_PROJECTION_TAG),
       ),
     ).toHaveLength(2);
   });
@@ -261,9 +257,7 @@ describe('GitHub-origin delivery', () => {
     });
     expect(
       events.some((event) =>
-        event.tags.some(
-          (tag) => tag[0] === 't' && tag[1] === CORNER_GIT_PROJECTION_TAG,
-        ),
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === CORNER_GIT_PROJECTION_TAG),
       ),
     ).toBe(true);
     expect(
@@ -271,16 +265,41 @@ describe('GitHub-origin delivery', () => {
     ).toBeUndefined();
     expect(info.humanMergeApproval).toBeUndefined();
 
-    // Even if the target ref reaches the feature tip out-of-band, Body cannot
-    // infer authority from repository state and archive the corner.
+    // Another actor can land the exact feature tip out-of-band. Body performs
+    // no protected-ref write here; it observes the landed content and retires
+    // the now-finished corner.
     run(worktree, ['push', remote, `${tip}:refs/heads/main`]);
     vi.spyOn(body as never, 'findHumanMergeApproval' as never).mockResolvedValue(
       undefined as never,
     );
-    const archive = vi.spyOn(body, 'archiveSubchannel');
-    await expect(body.pollMergeCompletions()).resolves.toBe(0);
-    expect(archive).not.toHaveBeenCalled();
-    expect(info.archived).toBe(false);
+    const archive = vi.spyOn(body, 'archiveSubchannel').mockResolvedValue();
+    await expect(body.pollMergeCompletions()).resolves.toBe(1);
+    expect(archive).toHaveBeenCalledWith(info.subchannelId);
+    expect(info.landedTip).toBe(tip);
+  });
+
+  it('retires a review-ready corner after its patch is squash-merged externally', async () => {
+    const { root, remote, worktree, info, body } = await repository();
+    captureEvents();
+    const reviewedTip = run(worktree, ['rev-parse', 'HEAD']);
+    await expect(publish(body, info)).resolves.toBe(true);
+    const patchId = info.mergeTarget?.patchId;
+
+    run(root, ['merge', '--squash', 'feature/corner']);
+    run(root, ['commit', '-m', 'Squash landed corner work']);
+    run(root, ['push', 'origin', 'main']);
+    const squashTip = run(root, ['rev-parse', 'HEAD']);
+    expect(squashTip).not.toBe(reviewedTip);
+    expect(patchId).toMatch(/^[0-9a-f]{40}$/);
+
+    vi.spyOn(body as never, 'findHumanMergeApproval' as never).mockResolvedValue(
+      undefined as never,
+    );
+    const archive = vi.spyOn(body, 'archiveSubchannel').mockResolvedValue();
+
+    await expect(body.pollMergeCompletions()).resolves.toBe(1);
+    expect(info.landedTip).toBe(squashTip);
+    expect(archive).toHaveBeenCalledWith(info.subchannelId);
   });
 
   it('lands a non-relay target only after an exact human approval is recorded', async () => {
@@ -305,9 +324,7 @@ describe('GitHub-origin delivery', () => {
 
     expect(run(worktree, ['ls-remote', remote, 'refs/heads/main'])).toContain(tip);
     expect(
-      events.find((event) =>
-        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'land-summary'),
-      ),
+      events.find((event) => event.tags.some((tag) => tag[0] === 't' && tag[1] === 'land-summary')),
     ).toBeDefined();
   });
 });
@@ -368,9 +385,7 @@ describe('a moved target is standing authorization to update the feature branch'
 
     expect(prompts).toHaveLength(1);
     expect(prompts[0]).toContain(`main moved to ${moved}`);
-    expect(prompts[0]).toMatch(
-      /bring this branch up to date and make it land, whatever it takes/i,
-    );
+    expect(prompts[0]).toMatch(/bring this branch up to date and make it land, whatever it takes/i);
     const refreshedTip = run(worktree, ['rev-parse', 'HEAD']);
     expect(refreshedTip).not.toBe(tip);
     expect(run(worktree, ['merge-base', '--is-ancestor', moved, refreshedTip])).toBe('');
@@ -387,9 +402,7 @@ describe('a moved target is standing authorization to update the feature branch'
     const ready = events
       .filter((event) => Array.isArray(event.tags))
       .filter((event) =>
-        event.tags.some(
-          (tag) => tag[0] === 't' && tag[1] === CORNER_GIT_PROJECTION_TAG,
-        ),
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === CORNER_GIT_PROJECTION_TAG),
       );
     expect(ready).toHaveLength(2);
     expect(run(worktree, ['ls-remote', remote, 'refs/heads/feature/corner'])).toContain(
@@ -464,9 +477,7 @@ describe('preview deployment URL on the review card', () => {
   function reviewProjectionTags(events: NostrEvent[]): string[][] {
     return (
       events.find((event) =>
-        event.tags.some(
-          (tag) => tag[0] === 't' && tag[1] === CORNER_GIT_PROJECTION_TAG,
-        ),
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === CORNER_GIT_PROJECTION_TAG),
       )?.tags ?? []
     );
   }

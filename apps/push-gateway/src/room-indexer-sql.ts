@@ -245,6 +245,44 @@ function withoutModelAvailabilityNoticeSql(eventAlias: string): string {
   return `NOT (${eventAlias}.tags @> '[["t", "buzz-agent-model-unavailable"]]'::jsonb)`;
 }
 
+/** Pre-`agent-message` assistant prose embedded in an activity JSON batch. */
+function legacyActivityModelOutputSql(eventAlias: string): string {
+  const document = `(CASE WHEN pg_input_is_valid(${eventAlias}.content, 'jsonb')
+    THEN ${eventAlias}.content::jsonb ELSE '{}'::jsonb END)`;
+  const update = `${document}->'update'`;
+  const candidates = `(CASE WHEN jsonb_typeof(${update}->'updates') = 'array'
+    THEN ${update}->'updates' ELSE jsonb_build_array(${update}) END)`;
+  return `(
+    ${eventAlias}.tags @> '[["t", "agent-activity"]]'::jsonb
+    AND EXISTS (
+      SELECT 1 FROM jsonb_array_elements(${candidates}) legacy_chunk
+      WHERE legacy_chunk->>'sessionUpdate' = 'agent_message_chunk'
+        AND jsonb_typeof(legacy_chunk->'content'->'text') = 'string'
+        AND btrim(legacy_chunk->'content'->>'text') <> ''
+    )
+  )`;
+}
+
+/** Current replaceable activity record carrying the corner's latest plan. */
+function agentActivityPlanSql(eventAlias: string): string {
+  const document = `(CASE WHEN pg_input_is_valid(${eventAlias}.content, 'jsonb')
+    THEN ${eventAlias}.content::jsonb ELSE '{}'::jsonb END)`;
+  const update = `${document}->'update'`;
+  return `(
+    ${eventAlias}.tags @> '[["t", "agent-activity"]]'::jsonb
+    AND (
+      jsonb_typeof(${update}->'plan') = 'object'
+      OR (
+        jsonb_typeof(${update}->'updates') = 'array'
+        AND EXISTS (
+          SELECT 1 FROM jsonb_array_elements(${update}->'updates') plan_update
+          WHERE jsonb_typeof(plan_update->'plan') = 'object'
+        )
+      )
+    )
+  )`;
+}
+
 export const ROOM_SQL = `
 WITH candidates AS (
   SELECT c.community_id, c.id, c.name, c.description, c.visibility, c.created_at, c.updated_at,
@@ -1008,7 +1046,8 @@ WITH candidates AS (
   SELECT DISTINCT ON (e.channel_id)
     e.community_id, e.channel_id AS corner_id,
     (SELECT t->>1 FROM jsonb_array_elements(e.tags) t
-      WHERE t->>0 = 'status' AND t->>1 IN ('working', 'complete', 'failed') LIMIT 1) AS status
+      WHERE t->>0 = 'status' AND t->>1 IN ('working', 'complete', 'failed') LIMIT 1) AS status,
+    e.created_at AS status_at
   FROM corners c
   JOIN events e ON e.community_id = c.community_id AND e.channel_id = c.id
     AND e.kind = 9 AND e.deleted_at IS NULL
@@ -1059,6 +1098,7 @@ SELECT 'corner', jsonb_build_object(
   'verdictTargetBranch', corner_verdict.branch,
   'verdictCreatedAt', extract(epoch FROM corner_verdict.created_at)::bigint,
   'latestTurnStatus', corner_turn.status,
+  'latestTurnCreatedAt', extract(epoch FROM corner_turn.status_at)::bigint,
   'agentPubkey', encode(c.created_by, 'hex'),
   'agentName', ${resolvedIdentityNameSql('resolved')},
   'agentHandle', resolved.handle,
@@ -1133,23 +1173,53 @@ WITH candidates AS (
     SELECT e.* FROM events e WHERE e.community_id = a.community_id AND e.channel_id = a.id
       AND e.deleted_at IS NULL AND e.kind = 9
       AND ${withoutModelAvailabilityNoticeSql('e')}
-      AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) marker
-        WHERE marker->>0 = 't' AND COALESCE(marker->>1, '') <> ''
-          AND marker->>1 NOT IN (
-            'agent-message', 'buzz-agent-exchange', 'buzz-agent-delegation', 'buzz-agent-request', 'buzz-attachment'
-          ))
       AND (
-        btrim(e.content) <> ''
-        OR EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) marker
-          WHERE marker->>0 = 't' AND marker->>1 = 'buzz-attachment')
+        (
+          NOT EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) marker
+            WHERE marker->>0 = 't' AND COALESCE(marker->>1, '') <> ''
+              AND marker->>1 NOT IN (
+                'agent-message', 'buzz-agent-exchange', 'buzz-agent-delegation', 'buzz-agent-request', 'buzz-attachment'
+              ))
+          AND (
+            btrim(e.content) <> ''
+            OR EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) marker
+              WHERE marker->>0 = 't' AND marker->>1 = 'buzz-attachment')
+          )
+        )
+        OR ${legacyActivityModelOutputSql('e')}
       )
     ORDER BY e.created_at DESC, e.id ASC LIMIT ${ROOM_VIEW_MESSAGE_LIMIT}
+  ) e ON true
+), plan_event AS (
+  -- The current publisher stores activity as kind:30078. Keep exactly the
+  -- newest structurally valid plan outside the transcript budget so a cold
+  -- reopen still paints completed steps after terminal activity settles.
+  SELECT e.* FROM authorized a JOIN LATERAL (
+    SELECT e.* FROM events e
+    JOIN channel_members member ON member.community_id = e.community_id
+      AND member.channel_id = a.id AND member.pubkey = e.pubkey
+      AND member.removed_at IS NULL
+    WHERE e.community_id = a.community_id
+      AND e.deleted_at IS NULL AND e.kind = 30078
+      AND e.d_tag LIKE 'buzz-agent-activity:' || a.id::text || ':%'
+      AND ${agentActivityPlanSql('e')}
+      AND EXISTS (
+        SELECT 1 FROM events declaration
+        WHERE declaration.community_id = e.community_id
+          AND declaration.pubkey = e.pubkey
+          AND declaration.kind = 9 AND declaration.deleted_at IS NULL
+          AND declaration.tags @> '[["t", "buzz-agent"]]'::jsonb
+          AND declaration.tags @> jsonb_build_array(jsonb_build_array('h', a.workspace_id))
+      )
+    ORDER BY e.created_at DESC, e.id DESC LIMIT 1
   ) e ON true
 ), page AS (
   SELECT raw.* FROM raw_page raw
   UNION ALL
   SELECT conversation.* FROM conversation_page conversation
   WHERE NOT EXISTS (SELECT 1 FROM raw_page raw WHERE raw.id = conversation.id)
+  UNION ALL
+  SELECT plan.* FROM plan_event plan
 ), newest_message AS (
   SELECT e.community_id, e.channel_id, e.created_at, e.id FROM page e
   ORDER BY e.created_at DESC, e.id ASC LIMIT 1
@@ -1189,6 +1259,28 @@ WITH candidates AS (
   WHERE e.tags @> '[["t", "buzz-agent"]]'::jsonb
     AND e.tags @> jsonb_build_array(jsonb_build_array('h', a.workspace_id))
   ORDER BY e.community_id, e.pubkey, e.created_at DESC, e.id DESC
+), corner_turn_latest AS MATERIALIZED (
+  SELECT DISTINCT ON (e.channel_id)
+    e.community_id, e.channel_id AS corner_id,
+    (SELECT t->>1 FROM jsonb_array_elements(e.tags) t
+      WHERE t->>0 = 'status' AND t->>1 IN ('working', 'complete', 'failed') LIMIT 1) AS status,
+    e.created_at AS status_at
+  FROM family f
+  JOIN events e ON e.community_id = f.community_id AND e.channel_id = f.id
+    AND e.kind = 9 AND e.deleted_at IS NULL
+  JOIN channel_members member ON member.community_id = e.community_id
+    AND member.channel_id = e.channel_id AND member.pubkey = e.pubkey
+    AND member.removed_at IS NULL
+  JOIN agent_declarations agent ON agent.community_id = e.community_id
+    AND agent.pubkey = e.pubkey
+  WHERE e.tags @> '[["t", "agent-turn"]]'::jsonb
+    AND e.tags @> jsonb_build_array(jsonb_build_array('h', f.id::text))
+    AND e.tags @> jsonb_build_array(jsonb_build_array('agent', encode(e.pubkey, 'hex')))
+    AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
+      WHERE t->>0 = 'request' AND t->>1 ~ '^[0-9a-f]{64}$')
+    AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
+      WHERE t->>0 = 'status' AND t->>1 IN ('working', 'complete', 'failed'))
+  ORDER BY e.channel_id, e.created_at DESC, e.id DESC
 ), latest_agent_turns AS MATERIALIZED (
   SELECT DISTINCT ON (e.pubkey)
     e.pubkey, e.created_at, e.tags
@@ -1333,6 +1425,8 @@ SELECT 'sibling', jsonb_build_object(
   'verdictRepository', corner_verdict.repo,
   'verdictTargetBranch', corner_verdict.branch,
   'verdictCreatedAt', extract(epoch FROM corner_verdict.created_at)::bigint,
+  'latestTurnStatus', corner_turn.status,
+  'latestTurnCreatedAt', extract(epoch FROM corner_turn.status_at)::bigint,
   'agentPubkey', encode(f.created_by, 'hex'),
   'agentName', ${resolvedIdentityNameSql('resolved')},
   'agentHandle', resolved.handle,
@@ -1340,6 +1434,8 @@ SELECT 'sibling', jsonb_build_object(
   'agent', resolved.agent_content IS NOT NULL
 ) FROM family f JOIN authorized a ON true
 JOIN identities resolved ON resolved.community_id = f.community_id AND resolved.pubkey = f.created_by
+LEFT JOIN corner_turn_latest corner_turn ON corner_turn.community_id = f.community_id
+  AND corner_turn.corner_id = f.id
 ${cornerFactsLateralSql('f', 'COALESCE(a.parent_id, a.id)', 'a.workspace_id')}
 UNION ALL
 SELECT 'repository-candidate', jsonb_build_object('content', e.content)

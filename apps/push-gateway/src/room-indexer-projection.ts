@@ -219,6 +219,33 @@ function activityDetail(value: unknown): RoomViewActivity | undefined {
   };
 }
 
+/**
+ * Before completed assistant turns had their own `agent-message` marker, ACP
+ * message chunks were stored only inside `agent-activity` batches. They are
+ * model output, not daemon diagnostics. Recover the authored text while
+ * leaving every thought/tool/control field private or machine-only.
+ */
+function legacyActivityModelOutput(content: string): string | undefined {
+  const parsed = safeJson(content);
+  if (!parsed) return undefined;
+  const update = json(parsed.update);
+  const candidates =
+    update.sessionUpdate === 'activity_batch' && Array.isArray(update.updates)
+      ? update.updates
+      : [update];
+  const output = candidates
+    .flatMap((candidate) => {
+      const chunk = json(candidate);
+      if (chunk.sessionUpdate !== 'agent_message_chunk') return [];
+      const chunkContent = json(chunk.content);
+      const value = chunkContent.text ?? chunk.text;
+      return typeof value === 'string' ? [value] : [];
+    })
+    .join('')
+    .trim();
+  return output || undefined;
+}
+
 const HIDDEN_MARKERS = new Set([
   TAG_AGENT,
   TAG_AGENT_DRAFT,
@@ -234,16 +261,11 @@ const HIDDEN_MARKERS = new Set([
   'buzz-permission-execution',
   'beeline-agent-tool-result',
   'buzz-work-schedule-paused',
-  'agent-activity',
   'buzz-agent-model-unavailable',
 ]);
 
 /** Durable machine-authored Room lines that the client renders as status text. */
-const SYSTEM_MARKERS = new Set([
-  'github-event-health',
-  'steer-queued',
-  'slash-command-notice',
-]);
+const SYSTEM_MARKERS = new Set(['github-event-health', 'steer-queued', 'slash-command-notice']);
 
 /**
  * Typed kind:9 events are machine records unless they opt into one of the
@@ -264,10 +286,32 @@ export function projectEvent(data: Json, channelId: string): RoomViewMessage | u
   const markers = markerSet(eventTags);
   const eventIdentity = identity(data);
   const content = String(data.content ?? '');
+  const legacyModelOutput = markers.has(TAG_AGENT_ACTIVITY)
+    ? legacyActivityModelOutput(content)
+    : undefined;
+  if (
+    legacyModelOutput &&
+    eventIdentity.kind === 'agent' &&
+    !isRetiredAgentNotice(legacyModelOutput)
+  ) {
+    return {
+      id: String(data.id ?? ''),
+      text: legacyModelOutput,
+      createdAt: integer(data.createdAt),
+      author: eventIdentity,
+      presentation: 'message',
+    };
+  }
   // Legacy daemon machine records occasionally used kind:9 with a serialized
   // payload. They are typed records, never chat, even before their writers are
-  // migrated to replaceable non-rendered kinds.
-  if (integer(data.kind) === 9 && eventIdentity.kind === 'agent' && safeJson(content)) {
+  // migrated to replaceable non-rendered kinds. `agent-activity` is the one
+  // typed exception: current plan/tool facts still have a decoder below.
+  if (
+    integer(data.kind) === 9 &&
+    eventIdentity.kind === 'agent' &&
+    !markers.has(TAG_AGENT_ACTIVITY) &&
+    safeJson(content)
+  ) {
     return undefined;
   }
   const permissionMarker =
@@ -646,7 +690,9 @@ export function projectedHistoryPage(
     cursor = json(row.data);
     examined += 1;
     const message = projectEvent(cursor, channelId);
-    if (message) messages.push(message);
+    if (message && (message.presentation !== 'activity' || message.durableFact)) {
+      messages.push(message);
+    }
     if (messages.length === ROOM_VIEW_MESSAGE_LIMIT) break;
   }
   messages.sort(
@@ -769,10 +815,19 @@ export function cornerLifecycle(data: Json): CornerLifecycleView {
 
 export function cornerItem(data: Json, latest?: RoomViewMessage): CornerListItem {
   const lifecycle = cornerLifecycle(data);
+  const corner = header(data);
   const stateTags = tags(data.statusTags);
   const rawStatus = tag(stateTags, 'state');
   const status = rawStatus === 'waiting-on-human' ? 'waiting' : rawStatus;
   const latestTurnStatus = text(data.latestTurnStatus);
+  // A review artifact is durable, but a newer child-channel WORKING receipt
+  // is the current paint fact while the agent handles steering (or an
+  // approved target-sync turn). Once the receipt becomes complete/failed the
+  // review lifecycle mounts again. Terminal archive/rejection still wins.
+  const hasLiveWorkingTurn =
+    latestTurnStatus === 'working' &&
+    lifecycle.lifecycle !== 'ARCHIVED' &&
+    lifecycle.lifecycle !== 'REJECTED';
   const agentData = {
     pubkey: data.agentPubkey,
     name: data.agentName,
@@ -781,24 +836,27 @@ export function cornerItem(data: Json, latest?: RoomViewMessage): CornerListItem
     agent: data.agent,
   };
   return {
-    corner: header(data),
+    corner,
     lifecycle,
     status:
       lifecycle.lifecycle === 'ARCHIVED'
         ? 'closed'
-        : lifecycle.lifecycle === 'REVIEW'
-          ? 'waiting'
-          : lifecycle.lifecycle === 'APPROVED' || lifecycle.lifecycle === 'REJECTED'
+        : lifecycle.lifecycle === 'REJECTED'
+          ? 'closed'
+          : hasLiveWorkingTurn
             ? 'working'
-            : lifecycle.lifecycle === 'WORKING' && latestTurnStatus === 'working'
-              ? 'working'
-              : status === 'working' ||
-                status === 'waiting' ||
-                status === 'idle' ||
-                status === 'concluded' ||
-                status === 'closed'
-                ? status
-                : 'open',
+            : lifecycle.lifecycle === 'REVIEW'
+              ? 'waiting'
+              : lifecycle.lifecycle === 'APPROVED'
+                ? 'working'
+                : status === 'working' ||
+                    status === 'waiting' ||
+                    status === 'idle' ||
+                    status === 'concluded' ||
+                    status === 'closed'
+                  ? status
+                  : 'open',
+    statusAt: hasLiveWorkingTurn ? integer(data.latestTurnCreatedAt) : corner.updatedAt,
     ...(lifecycle.lifecycle === 'REVIEW'
       ? { reason: 'review' as const }
       : ['review', 'question', 'failure'].includes(tag(stateTags, 'reason') ?? '')

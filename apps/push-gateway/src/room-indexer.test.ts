@@ -369,12 +369,44 @@ describe('RoomIndexer', () => {
         CORNER,
       ],
     );
-    // A terminal corner no longer returns settled activity rows. Plans are
-    // activity receipts rather than a second durable lifecycle store.
+    // Pre-agent-message corners carried their authored answer only inside an
+    // activity batch. It belongs in the bounded conversation lane even after
+    // later machine receipts exhaust the raw page.
+    const legacyReplyId = 'c'.repeat(64);
     await postgres.query(
       `INSERT INTO events
         (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
-       VALUES ($1, $2, $3, to_timestamp(499), 9, $4, $5, $6)`,
+       VALUES ($1, $2, $3, to_timestamp(19), 9, $4, $5, $6)`,
+      [
+        TENANT,
+        bytes(legacyReplyId),
+        bytes(AGENT),
+        JSON.stringify([
+          ['h', CORNER],
+          ['t', 'agent-activity'],
+          ['session', 'legacy-corner-turn'],
+        ]),
+        JSON.stringify({
+          sessionId: 'legacy-corner-turn',
+          update: {
+            sessionUpdate: 'activity_batch',
+            updates: [
+              {
+                sessionUpdate: 'agent_message_chunk',
+                content: { type: 'text', text: 'The older model reply also survives.' },
+              },
+            ],
+          },
+        }),
+        CORNER,
+      ],
+    );
+    // Activity rows themselves leave the terminal transcript, but their last
+    // complete plan remains the objective panel's durable fixture.
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, d_tag, channel_id)
+       VALUES ($1, $2, $3, to_timestamp(499), 30078, $4, $5, $6, NULL)`,
       [
         TENANT,
         bytes('f'.repeat(64)),
@@ -394,7 +426,7 @@ describe('RoomIndexer', () => {
             },
           },
         }),
-        CORNER,
+        `buzz-agent-activity:${CORNER}:first-corner-turn`,
       ],
     );
     await postgres.query(
@@ -449,10 +481,18 @@ describe('RoomIndexer', () => {
           text: 'The first durable corner reply survives a late open.',
           presentation: 'message',
         }),
+        expect.objectContaining({
+          id: legacyReplyId,
+          text: 'The older model reply also survives.',
+          presentation: 'message',
+        }),
       ]),
     );
     expect(lateOpen?.messages.some((message) => message.presentation === 'activity')).toBe(false);
-    expect(lateOpen?.cornerPlan).toBeUndefined();
+    expect(lateOpen?.cornerPlan).toEqual({
+      objective: 'Keep the objective and checklist visible after completion.',
+      items: [{ step: 'Persist the plan', status: 'completed' }],
+    });
   });
 
   it('indexes a Room repository by its parameterized d key without channel_id', async () => {
@@ -1821,10 +1861,18 @@ describe('RoomIndexer', () => {
     };
 
     await publishAgentTurn('4', 49, 'working');
-    expect((await indexer.readCorners(ROOM, VIEWER))?.corners[0]?.status).toBe('working');
+    expect((await indexer.readCorners(ROOM, VIEWER))?.corners[0]).toMatchObject({
+      status: 'working',
+      statusAt: 49,
+    });
+    expect((await indexer.readRoom(ROOM, VIEWER))?.corners[0]).toMatchObject({
+      status: 'working',
+      statusAt: 49,
+    });
 
     await publishAgentTurn('5', 52, 'complete');
     expect((await indexer.readCorners(ROOM, VIEWER))?.corners[0]?.status).toBe('open');
+    expect((await indexer.readRoom(ROOM, VIEWER))?.corners[0]?.status).toBe('open');
 
     await publishAgentTurn('6', 53, 'failed');
     expect((await indexer.readCorners(ROOM, VIEWER))?.corners[0]?.status).toBe('open');

@@ -21,6 +21,10 @@ const updates = vi.hoisted(() => ({
   fetchUpdateAsync: vi.fn(),
   reloadAsync: vi.fn(),
 }));
+const appConfig = vi.hoisted(() => ({
+  releaseVersion: 'v0.0.1',
+  releaseSha: '1234567890abcdef1234567890abcdef12345678',
+}));
 
 vi.mock('expo-router', () => ({ router: navigation }));
 vi.mock('expo-updates', () => ({
@@ -43,6 +47,7 @@ vi.mock('@/sync/transport', () => ({
     }
   },
 }));
+vi.mock('@/sync/appConfig', () => ({ loadAppConfig: () => appConfig }));
 vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
 }));
@@ -129,6 +134,11 @@ describe('Buzz global Settings', () => {
     expect(renderer.root.findByProps({ testID: 'ota-update-channel' }).props.children).toEqual([
       'Channel: ',
       'preview',
+    ]);
+    expect(renderer.root.findByProps({ testID: 'ota-release-version' }).props.children).toEqual([
+      'Release: ',
+      'v0.0.1',
+      ' · 1234567890ab',
     ]);
   });
 

@@ -103,6 +103,39 @@ describe('paint-view GET server', () => {
     );
   }
 
+  it('reports the aligned server release and daemon READY records in health', async () => {
+    const base = await listen({
+      releaseStatus: async () => ({
+        version: 'v0.0.1',
+        sourceSha: '1'.repeat(40),
+        daemons: [
+          {
+            agentPubkey: 'a'.repeat(64),
+            state: 'ready',
+            releaseVersion: 'v0.0.1',
+            sourceSha: '1'.repeat(40),
+            pid: 42,
+            readyAt: '2026-08-31T12:00:00.000Z',
+          },
+        ],
+      }),
+    });
+
+    const response = await fetch(`${base}/health`);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      release: { version: 'v0.0.1', sourceSha: '1'.repeat(40) },
+      daemons: [
+        {
+          state: 'ready',
+          releaseVersion: 'v0.0.1',
+          sourceSha: '1'.repeat(40),
+        },
+      ],
+    });
+  });
+
   it('returns one whole directly renderable Room view and permits read replay', async () => {
     const identity = createIdentity('member');
     const readRoom = vi.fn(async (_roomId: string, pubkey: string) => roomView(pubkey));
@@ -368,6 +401,8 @@ describe('paint-view GET server', () => {
       channel: 'production',
       group: '99999999-8888-7777-6666-555555555555',
       runtimeVersion: '21',
+      releaseVersion: 'v0.0.1',
+      sourceSha: '1'.repeat(40),
       environment: 'physical',
     };
 

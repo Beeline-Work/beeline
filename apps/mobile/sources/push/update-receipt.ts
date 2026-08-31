@@ -6,6 +6,7 @@ import * as Device from 'expo-device';
 import * as Updates from 'expo-updates';
 import { Platform } from 'react-native';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
+import { loadAppConfig } from '@/sync/appConfig';
 
 const DEVICE_ID_KEY = '@beeline/mobile-update-receipt/device-id';
 const RECEIPT_TIMEOUT_MS = 7_500;
@@ -60,6 +61,7 @@ export async function reportRunningUpdateReceipt(identity: Identity): Promise<vo
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), RECEIPT_TIMEOUT_MS);
   try {
+    const release = loadAppConfig();
     const response = await fetch(receiptUrl, {
       method: 'POST',
       headers: {
@@ -78,6 +80,8 @@ export async function reportRunningUpdateReceipt(identity: Identity): Promise<vo
         channel: Updates.channel ?? null,
         group: runningUpdateGroup(Updates.manifest),
         runtimeVersion: Updates.runtimeVersion ?? null,
+        releaseVersion: release.releaseVersion ?? null,
+        sourceSha: release.releaseSha ?? null,
         environment: Device.isDevice ? 'physical' : 'emulator',
       }),
       signal: controller.signal,

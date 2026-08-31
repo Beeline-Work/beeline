@@ -51,9 +51,10 @@ vi.mock('react-native-reanimated', () => ({
 vi.mock('expo-router', () => ({ router: { replace: vi.fn() } }));
 
 vi.mock('@/auth/buzz-identity-storage', () => ({
-  loadBuzzIdentity: vi.fn(() =>
-    controls.identityPromise ??
-    Promise.resolve({ publicKey: 'viewer', secretKey: new Uint8Array(32) }),
+  loadBuzzIdentity: vi.fn(
+    () =>
+      controls.identityPromise ??
+      Promise.resolve({ publicKey: 'viewer', secretKey: new Uint8Array(32) }),
   ),
   getEffectiveRelayUrl: vi.fn(async () => 'https://relay.test'),
 }));
@@ -100,9 +101,8 @@ vi.mock('@/sync/transport', () => ({
 }));
 
 vi.mock('@beeline/buzz-client', async () => {
-  const actual = await vi.importActual<typeof import('@beeline/buzz-client')>(
-    '@beeline/buzz-client',
-  );
+  const actual =
+    await vi.importActual<typeof import('@beeline/buzz-client')>('@beeline/buzz-client');
   return {
     ...actual,
     RoomViewClient: class {
@@ -231,10 +231,12 @@ async function flushEffects() {
 }
 
 beforeAll(() => {
-  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
-    true;
+  (
+    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  ).IS_REACT_ACT_ENVIRONMENT = true;
   vi.spyOn(console, 'error').mockImplementation((message?: unknown, ...args: unknown[]) => {
-    if (typeof message === 'string' && message.startsWith('react-test-renderer is deprecated')) return;
+    if (typeof message === 'string' && message.startsWith('react-test-renderer is deprecated'))
+      return;
     originalConsoleError(message, ...args);
   });
 });
@@ -251,7 +253,7 @@ beforeEach(() => {
 });
 
 describe('useRoomSurfaceSession', () => {
-  it('does not turn durable WORKING lifecycle into a live bar without a child turn receipt', async () => {
+  it('lights the gold bar from a fresh indexed child-turn receipt', async () => {
     let renderer!: ReactTestRenderer;
     await act(async () => {
       renderer = create(React.createElement(LiveCornerHarness, { channelId: 'room-a' }));
@@ -276,8 +278,12 @@ describe('useRoomSurfaceSession', () => {
               createdAt: stateAt,
               updatedAt: stateAt,
             },
-            lifecycle: { lifecycle: 'WORKING' },
+            // The review card remains mounted during steering. The fresh
+            // receipt must temporarily light the Room bar anyway.
+            lifecycle: { lifecycle: 'REVIEW' },
             status: 'working',
+            statusAt: stateAt,
+            reason: 'review',
             agent: { pubkey: 'agent-a', kind: 'agent', name: 'Agent' },
           },
         ],
@@ -285,7 +291,9 @@ describe('useRoomSurfaceSession', () => {
       await Promise.resolve();
     });
 
-    expect(renderer.root.findAllByProps({ testID: 'corner-status-working' })).toHaveLength(0);
+    expect(
+      renderer.root.findAllByProps({ testID: 'corner-status-working' }).length,
+    ).toBeGreaterThan(0);
     await act(async () => renderer.unmount());
   });
 

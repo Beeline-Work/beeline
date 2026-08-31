@@ -347,6 +347,9 @@ export type CornerListItem = {
   readonly corner: RoomViewHeader;
   readonly lifecycle: CornerLifecycleView;
   readonly status: 'open' | 'working' | 'waiting' | 'idle' | 'concluded' | 'closed';
+  /** Timestamp of the fact that produced `status`. A working status uses the
+   * latest child turn receipt rather than the corner metadata timestamp. */
+  readonly statusAt?: number;
   readonly reason?: 'review' | 'question' | 'failure';
   readonly agent?: RoomViewIdentity;
   readonly latestMessage?: {

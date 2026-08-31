@@ -516,7 +516,9 @@ function cornerLifecycle(value: unknown): boolean {
           typeof pr.targetBranch === 'string' &&
           pr.targetBranch.length > 0 &&
           typeof pr.headSha === 'string' &&
-          /^[0-9a-f]{40}$/i.test(pr.headSha))),
+          /^[0-9a-f]{40}$/i.test(pr.headSha) &&
+          optionalString(pr.mergedAt) &&
+          optionalString(pr.mergedBy))),
   );
 }
 

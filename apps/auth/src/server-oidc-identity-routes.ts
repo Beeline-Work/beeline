@@ -1,5 +1,6 @@
 import type { GitHubIdentity } from './github.js';
 import type { AuthRouteContext } from './server-context.js';
+import { agentConnectApprovedPage } from './server-agent-connect-routes.js';
 export function registerServerOidcIdentityRoutes(context: AuthRouteContext): void {
   const {
     app,
@@ -33,6 +34,7 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
     sha256,
     verifyBindEvent,
     verifyNip98Header,
+    completeAgentConnectApproval,
   } = context;
   app.get('/health', async () => ({ ok: true }));
 
@@ -130,6 +132,14 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
     const query = request.query as Record<string, unknown>;
     const appRedirect = query.app_redirect;
     const appState = query.app_state;
+    const deviceUserCode = query.device_user_code;
+    if (deviceUserCode !== undefined && (appRedirect !== undefined || appState !== undefined)) {
+      throw new ProtocolError(
+        400,
+        'invalid_request',
+        'device approval cannot be combined with a native app redirect',
+      );
+    }
     if ((appRedirect === undefined) !== (appState === undefined)) {
       throw new ProtocolError(
         400,
@@ -139,6 +149,7 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
     }
     let appRedirectUri: string | null = null;
     let boundAppState: string | null = null;
+    let deviceCodeHash: string | null = null;
     if (appRedirect !== undefined && appState !== undefined) {
       const associatedRedirect = `${tenant.origin}/auth/github/mobile-callback`;
       if (
@@ -157,6 +168,23 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
       appRedirectUri = appRedirect;
       boundAppState = appState;
     }
+    if (deviceUserCode !== undefined) {
+      if (typeof deviceUserCode !== 'string') {
+        throw new ProtocolError(400, 'invalid_request', 'device connection code is invalid');
+      }
+      const device = await options.store.findAgentConnectDeviceByUserCode(
+        deviceUserCode.toUpperCase(),
+      );
+      if (
+        !device ||
+        device.tenantCommunity !== tenant.community ||
+        device.expiresAt.getTime() < now().getTime() ||
+        device.approvedAt
+      ) {
+        throw new ProtocolError(404, 'unknown_device', 'device connection not found');
+      }
+      deviceCodeHash = device.deviceCodeHash;
+    }
     const issuedAt = now();
     const state = randomToken();
     const verifier = randomToken();
@@ -173,6 +201,7 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
       redirectUri,
       appRedirectUri,
       appState: boundAppState,
+      deviceCodeHash,
       createdAt: issuedAt,
       expiresAt: new Date(issuedAt.getTime() + flowTtlMs),
     });
@@ -245,6 +274,15 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
       encryptGitHubToken(identity.accessToken),
       now(),
     );
+    if (flow.deviceCodeHash) {
+      await completeAgentConnectApproval(tenant, flow, identity);
+      noStore(reply);
+      reply.header(
+        'content-security-policy',
+        "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'",
+      );
+      return reply.type('text/html; charset=utf-8').send(agentConnectApprovedPage());
+    }
     return issueBindChallenge(tenant, flow, identity, reply);
   });
 

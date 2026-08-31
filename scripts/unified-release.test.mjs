@@ -101,6 +101,8 @@ test('one workflow owns parallel builds, ordered promotion, retry, and the final
   assert.ok(workflow.indexOf('promote_app:') < workflow.indexOf('post_promote_rehearsal:'));
   assert.match(workflow, /unified-release\.mjs report --state/);
   assert.match(workflow, /A newer main sha superseded this whole release/);
+  assert.doesNotMatch(workflow, /push:\s*\n\s*branches:/);
+  assert.match(workflow, /^on:\s*\n\s*workflow_dispatch:/m);
   for (const componentWorkflow of [mobile, daemon, server]) {
     assert.match(componentWorkflow, /workflow_call:/);
     assert.doesNotMatch(componentWorkflow, /push:\s*\n\s*branches:/);

@@ -678,7 +678,47 @@ export const CORNER_TURN_SUMMARY_MAX_CHARS = 480;
 export const CORNER_TURN_SUMMARY_MAX_ITEMS = 3;
 export const CORNER_ARCHIVE_FALLBACK_SUMMARY = 'Corner closed without a completed summary.';
 export const CORNER_TURN_SUMMARY_INSTRUCTION =
-  'Finish with only a concise user-facing summary: one sentence or up to three short bullets saying what changed, which checks passed, and what you deliberately left out (say "Nothing" when there was no deliberate omission). Do not narrate your process, restate the request, or include multi-paragraph detail.';
+  'Finish with only a concise user-facing summary: one sentence or up to three short bullets saying the current result, which checks passed, and the next action when one remains. Answer status questions plainly in the first sentence. Do not narrate your process, restate the request, add report boilerplate, or include multi-paragraph detail.';
+
+export function isCornerMergeCommand(content: string): boolean {
+  const normalized = content.trim().replace(/[.!]+$/g, '');
+  if (
+    !normalized ||
+    /\?|\b(?:do not|don['’]t|never|not yet|should|can|could|did|has|have)\b/i.test(normalized)
+  ) {
+    return false;
+  }
+  return /^(?:(?:please\s+)?(?:go ahead\s+and\s+)?(?:merge|land)(?:\s+(?:it|this|the\s+(?:pr|pull request)))?(?:\s+(?:now|when\s+(?:it(?:'s| is)?\s+)?clean))?|finish\s+the\s+merge)$/i.test(
+    normalized,
+  );
+}
+
+export function cornerLifecycleStatus(
+  state: CornerRemoteState | undefined,
+  mergeRequested = false,
+): string {
+  if (!state)
+    return 'GitHub lifecycle fact: no PR state has been observed yet. Next action: wait for the automatic GitHub recheck.';
+  if (state.state === 'gone' && state.outcome === 'landed') {
+    return `GitHub lifecycle fact: ${landedCornerSummary(state)}`;
+  }
+  if (state.state === 'unknown') {
+    return `GitHub lifecycle fact: merge status is unknown (${state.reason ?? 'GitHub has not answered'}). Next action: the daemon will recheck automatically.`;
+  }
+  if (!state.pr) {
+    return `GitHub lifecycle fact: ${state.branch} has no open pull request. Next action: push the branch and open its PR.`;
+  }
+  const mergeability = state.pr.mergeability ?? 'unknown';
+  const next =
+    mergeability === 'dirty'
+      ? 'the corner agent must rebase onto the target, resolve conflicts, repair tests, and push'
+      : mergeability === 'clean' && mergeRequested
+        ? 'the standing human merge command authorizes the corner agent to merge and verify the PR'
+        : mergeability === 'clean'
+          ? 'wait for an explicit human merge command'
+          : 'wait for GitHub to finish computing mergeability';
+  return `GitHub lifecycle fact: PR #${state.pr.number} is open and ${mergeability === 'dirty' ? 'has merge conflicts' : mergeability === 'clean' ? 'is conflict-free' : 'has unknown mergeability'}; checks are ${state.checks}. Next action: ${next}.`;
+}
 const UNVERIFIED_ROOM_COORDINATION_REPLY =
   'No Beeline corner or mission record was created, so no coordinated work started.';
 
@@ -926,6 +966,10 @@ export interface SubchannelInfo {
   boundRepo?: BoundRepo;
   /** Latest semantic GitHub branch/PR observation published for this corner. */
   remoteState?: CornerRemoteState;
+  /** Durable human command, restored from the signed corner transcript. */
+  mergeRequested?: { eventId: string; authorPubkey: string };
+  /** Last GitHub head/base generation handed to the corner agent per action. */
+  githubAgentCoordinates?: Set<string>;
   /** Once true, a later authoritative missing branch is a completion signal. */
   remoteBranchSeen?: boolean;
   /** One completion-ladder fact per corner, persisted by its relay marker. */
@@ -2333,6 +2377,11 @@ export class Body {
   private readonly autoDeleteBranchRepositories = new Set<string>();
   /** Prevent overlapping timer and webhook-hint reads for one corner. */
   private readonly observingCornerRemotes = new Set<string>();
+  /** Coalesced GitHub hint listener, deliberately one source and no plugin registry. */
+  private readonly githubHintPasses = new Map<
+    string,
+    { rerun: boolean; eventId: string; task: Promise<void> }
+  >();
   /**
    * Release proposals awaiting a person's confirmation, one per Room. Held in
    * memory on purpose: a lost proposal costs a re-ask, and a proposal that
@@ -3893,7 +3942,7 @@ export class Body {
             }
           }
         },
-        turn.trigger === 'schedule' ? 'background' : undefined,
+        turn.trigger === 'schedule' || turn.trigger === 'github' ? 'background' : undefined,
       );
       // The backend turn is over. Persisting spend is bookkeeping only.
       await this.durableState
@@ -4225,7 +4274,6 @@ export class Body {
           {
             kinds: [9],
             '#h': [subchannelId],
-            authors: [this.agentIdentity.publicKey],
             limit: 5_000,
           },
         ]);
@@ -4422,6 +4470,7 @@ export class Body {
             cornerRepo.targetBranch,
           )}.`,
           'Merge the pull request with gh only when a human explicitly asks. Never push or merge directly into the target branch.',
+          'When a turn includes GitHub lifecycle facts, answer merge-status questions from those facts in the first sentence and offer the next action. Never use “Deliberate omission(s)” report boilerplate.',
           'To abandon the work, delete the remote feature branch. Branch deletion is the completion signal; the daemon archives the corner.',
           'A tool or skill can be unavailable or fail to initialize (for example codegraph before its index is ready). Treat that as a normal recoverable error for that one call and continue the task with what you have; never abort the task because a single tool or skill is missing.',
           'You may call any skill available to you, but only when the current task explicitly calls for it or names it directly. Never auto-trigger a skill (e.g. a design/UX review skill) on routine or trivial work.',
@@ -4468,11 +4517,19 @@ export class Body {
         (a, b) => b.created_at - a.created_at || b.id.localeCompare(a.id),
       );
       const lastAgentMessageContent = newestEvents.find(
-        (event) => tagValue(event, 't') === 'agent-message',
+        (event) =>
+          event.pubkey === this.agentIdentity.publicKey && tagValue(event, 't') === 'agent-message',
       )?.content;
       const participantPubkeys = await this.cornerParticipants(subchannelId, [
         ...(request ? [request.authorPubkey] : []),
       ]);
+      const restoredMergeRequest = newestEvents.find(
+        (event) =>
+          event.pubkey !== this.agentIdentity.publicKey &&
+          participantPubkeys.includes(event.pubkey) &&
+          verifyEvent(event) &&
+          isCornerMergeCommand(event.content),
+      );
       const info: SubchannelInfo = {
         subchannelId,
         worktreePath,
@@ -4485,6 +4542,14 @@ export class Body {
         ...(restoredMission ? { mission: restoredMission } : {}),
         taskDescription: restoredTaskDescription,
         participantPubkeys,
+        ...(restoredMergeRequest
+          ? {
+              mergeRequested: {
+                eventId: restoredMergeRequest.id,
+                authorPubkey: restoredMergeRequest.pubkey,
+              },
+            }
+          : {}),
         ...(lastAgentMessageContent ? { lastAgentMessageContent } : {}),
         ...(request ? { request } : {}),
       };
@@ -5040,6 +5105,7 @@ export class Body {
                 boundRepo.targetBranch,
               )}.`,
               'Merge that pull request with gh only when a human explicitly asks. Never push or merge directly into the target branch.',
+              'When a turn includes GitHub lifecycle facts, answer merge-status questions from those facts in the first sentence and offer the next action. Never use “Deliberate omission(s)” report boilerplate.',
               'To abandon the work, delete the remote feature branch. Do not call close_corner for a repository corner; branch deletion archives it automatically.',
             ]
           : [
@@ -9262,7 +9328,11 @@ export class Body {
                   roomParticipants,
                 );
                 if (sessionEvent.tags.some((tag) => tag[0] === 't' && tag[1] === 'github-event')) {
-                  await this.pollCornerRemoteLifecycle(channelId);
+                  await this.dispatchRoomLifecycleEvent({
+                    trigger: 'github',
+                    roomId: channelId,
+                    eventId: sessionEvent.id,
+                  });
                 }
                 await syncCornerSubscriptions();
               })
@@ -9833,7 +9903,144 @@ export class Body {
     return targetContainsCornerPatch(info.worktreePath, targetTip, cornerTip);
   }
 
-  private async observeOneCornerRemote(info: SubchannelInfo): Promise<void> {
+  /** Re-check the human/mission authority at the scheduler boundary, not at hint receipt. */
+  private async assertGithubCornerTurnAuthority(info: SubchannelInfo): Promise<void> {
+    const parentId = info.session.parentChannelId;
+    if (!parentId) throw new Error('GitHub corner trigger has no parent Room');
+    await this.reconcileCornerExistence(parentId);
+    if (info.archived) throw new Error('GitHub corner trigger is no longer live');
+    const principal = info.mergeRequested?.authorPubkey ?? info.request?.authorPubkey;
+    if (!principal || !(await isMember(this.agentClientContext(), parentId, principal))) {
+      throw new Error('GitHub corner trigger no longer has a current human principal');
+    }
+  }
+
+  /**
+   * One background turn from a mechanically verified PR fact. The daemon
+   * never edits branch content or invokes Git itself here; the corner agent is
+   * the sole actuator and GitHub is re-read after it finishes.
+   */
+  private startGithubPullRequestTurn(
+    info: SubchannelInfo,
+    state: CornerRemoteState,
+    action: 'resolve-conflicts' | 'merge',
+    githubEventId?: string,
+  ): void {
+    const pr = state.pr;
+    const originalRequestId = info.mergeRequested?.eventId ?? info.request?.eventId;
+    const principalPubkey = info.mergeRequested?.authorPubkey ?? info.request?.authorPubkey;
+    if (!pr || !originalRequestId || !principalPubkey) return;
+    const generation = `${pr.headSha}:${pr.baseSha ?? pr.targetBranch}`;
+    // A fresh event may legitimately retry an unchanged dirty head after an
+    // agent turn failed before pushing. The event id is part of the debounce
+    // coordinate; the event-free mechanical recheck gets one bounded retry.
+    const coordinate = `${action}:${generation}:${githubEventId ?? 'mechanical-recheck'}`;
+    info.githubAgentCoordinates ??= new Set();
+    if (info.githubAgentCoordinates.has(coordinate)) return;
+    if (this.runningAgentTasks.has(info.subchannelId)) return;
+    if (info.session.client.activeRunId(info.session.sessionId)) return;
+    info.githubAgentCoordinates.add(coordinate);
+
+    const requestId = githubEventId ?? `github-${action}-${randomUUID()}`;
+    const sessionId = info.session.logicalSessionId ?? info.session.sessionId;
+    const mergeAuthorized = Boolean(info.mergeRequested);
+    const objective =
+      action === 'resolve-conflicts'
+        ? [
+            `GitHub reports that pull request #${pr.number} (${pr.url}) has merge conflicts with ${pr.targetBranch}.`,
+            `Rebase ${info.featureBranch} onto the current origin/${pr.targetBranch}, resolve every conflict, repair tests broken by the rebase, run the relevant checks, commit the complete result, and push the feature branch.`,
+            'Use --force-with-lease if the rebase requires a non-fast-forward feature-branch update. Never edit or push the target branch directly.',
+            mergeAuthorized
+              ? 'The human merge command remains active. After the PR is conflict-free, merge it with gh and verify the GitHub result in this same turn; do not ask again.'
+              : 'No human has authorized a merge. Stop after the conflict-free feature branch is pushed; do not merge the PR.',
+          ].join('\n\n')
+        : [
+            `GitHub reports that pull request #${pr.number} (${pr.url}) is conflict-free, and the human merge command remains active.`,
+            'Merge the pull request with gh now, then verify from GitHub that it actually merged. If the target moved and conflicts reappear, resolve them, repair tests, push, retry the merge, and verify without asking the human again.',
+            'Never push directly to the target branch.',
+          ].join('\n\n');
+    const task = (async () => {
+      await this.noteCornerTurnStart(info);
+      await postAgentTurnStatus(
+        info.subchannelId,
+        this.agentIdentity,
+        requestId,
+        sessionId,
+        'working',
+        this.presenceGenerations.get(info.subchannelId),
+      );
+      try {
+        const result = await this.promptAgent(
+          info.session,
+          [
+            objective,
+            cornerLifecycleStatus(state, mergeAuthorized),
+            CORNER_TURN_SUMMARY_INSTRUCTION,
+          ].join('\n\n'),
+          {
+            channelId: info.subchannelId,
+            requestId,
+            originalRequestId,
+            cause: 'github',
+            trigger: 'github',
+            rootEventId: originalRequestId,
+            principalPubkey,
+            beforeModelActivation: () => this.assertGithubCornerTurnAuthority(info),
+          },
+        );
+        if (!info.archived) {
+          await this.finishCornerTurn(info, result, 'GitHub follow-up finished.');
+          await postAgentTurnStatus(
+            info.subchannelId,
+            this.agentIdentity,
+            requestId,
+            sessionId,
+            'complete',
+            this.presenceGenerations.get(info.subchannelId),
+          );
+        }
+      } catch (error) {
+        if (!info.archived) {
+          await postAgentTurnStatus(
+            info.subchannelId,
+            this.agentIdentity,
+            requestId,
+            sessionId,
+            'failed',
+            this.presenceGenerations.get(info.subchannelId),
+          ).catch(() => undefined);
+        }
+        console.error(`[body] GitHub ${action} turn failed for ${info.subchannelId}:`, error);
+      } finally {
+        this.runningAgentTasks.delete(info.subchannelId);
+        await this.observeOneCornerRemote(info).catch((error) =>
+          console.error(
+            `[body] post-GitHub-turn observation failed for ${info.subchannelId}:`,
+            error,
+          ),
+        );
+      }
+    })();
+    this.runningAgentTasks.set(info.subchannelId, task);
+  }
+
+  private driveGithubPullRequest(
+    info: SubchannelInfo,
+    state: CornerRemoteState,
+    githubEventId?: string,
+  ): void {
+    if (state.state !== 'in-review' || !state.pr) return;
+    if (state.pr.mergeability === 'dirty') {
+      this.startGithubPullRequestTurn(info, state, 'resolve-conflicts', githubEventId);
+    } else if (state.pr.mergeability === 'clean' && info.mergeRequested) {
+      this.startGithubPullRequestTurn(info, state, 'merge', githubEventId);
+    }
+  }
+
+  private async observeOneCornerRemote(
+    info: SubchannelInfo,
+    githubEventId?: string,
+  ): Promise<void> {
     if (
       info.archived ||
       !info.boundRepo ||
@@ -9893,6 +10100,7 @@ export class Body {
       if (observed.state === 'in-review' && observed.pr) {
         await this.publishPullRequestFactOnce(info, observed);
         await this.publishChecksFailingFactOnce(info, observed);
+        this.driveGithubPullRequest(info, observed, githubEventId);
       }
       if (observed.state === 'gone' && !branchAbsentBeforeFirstPush) {
         await this.finishCornerFromBranchDeath(info, observed);
@@ -9913,6 +10121,46 @@ export class Body {
     );
     const failure = results.find((result) => result.status === 'rejected');
     if (failure?.status === 'rejected') throw failure.reason;
+  }
+
+  /**
+   * Generic Room event-listener seam beside scheduled dispatch. GitHub is the
+   * only source today: events are debounced per corner and are never trusted
+   * as lifecycle truth; each pass forces the bounded GitHub API observation.
+   */
+  private async dispatchRoomLifecycleEvent(input: {
+    trigger: 'github';
+    roomId: string;
+    eventId: string;
+  }): Promise<void> {
+    await this.reconcileCornerExistence(input.roomId);
+    const corners = [...this.subchannels.values()].filter(
+      (info) => !info.archived && info.session.parentChannelId === input.roomId,
+    );
+    await Promise.all(
+      corners.map(async (info) => {
+        const existing = this.githubHintPasses.get(info.subchannelId);
+        if (existing) {
+          existing.rerun = true;
+          existing.eventId = input.eventId;
+          return existing.task;
+        }
+        const pass = { rerun: false, eventId: input.eventId, task: Promise.resolve() };
+        pass.task = (async () => {
+          do {
+            pass.rerun = false;
+            const eventId = pass.eventId;
+            await this.observeOneCornerRemote(info, eventId);
+          } while (pass.rerun && !info.archived);
+        })().finally(() => {
+          if (this.githubHintPasses.get(info.subchannelId) === pass) {
+            this.githubHintPasses.delete(info.subchannelId);
+          }
+        });
+        this.githubHintPasses.set(info.subchannelId, pass);
+        return pass.task;
+      }),
+    );
   }
 
   private async pollRoomMaintenance(
@@ -10071,6 +10319,9 @@ export class Body {
     userPrompt: string,
   ): Promise<CornerTurnDeliveryOutcome> {
     const { subchannelId, session } = info;
+    if (info.boundRepo && isCornerMergeCommand(evt.content)) {
+      info.mergeRequested = { eventId: evt.id, authorPubkey: evt.pubkey };
+    }
     await this.noteCornerTurnStart(info);
     await postAgentTurnStatus(
       subchannelId,
@@ -10092,6 +10343,10 @@ export class Body {
           session,
           [
             prompt,
+            cornerLifecycleStatus(info.remoteState, Boolean(info.mergeRequested)),
+            info.mergeRequested?.eventId === evt.id
+              ? 'This is an explicit human merge command. It remains active end-to-end: if the PR conflicts, resolve it, repair tests, push the feature branch, then merge with gh and verify the GitHub result without asking again.'
+              : '',
             info.boundRepo
               ? `GitHub is the lifecycle authority. Work on ${info.featureBranch}, push it and open its PR with gh when finished; merge with gh only when a human explicitly asks. Never push or merge directly into ${shortBranchName(
                   info.boundRepo.targetBranch,

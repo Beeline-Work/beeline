@@ -90,20 +90,54 @@ describe('RepositoryEventsCore', () => {
       }),
     };
     const published: NostrEvent[] = [];
-    await new RepositoryEventsCore(new RepositoryEventsState(durable.persistence), source, newIdentity('events-service'), {
-      publish: async (_target, event) => published.push(event),
-      now: () => 1_000,
-    }).tick([target()]);
+    await new RepositoryEventsCore(
+      new RepositoryEventsState(durable.persistence),
+      source,
+      newIdentity('events-service'),
+      {
+        publish: async (_target, event) => published.push(event),
+        now: () => 1_000,
+      },
+    ).tick([target()]);
 
     expect(published).toHaveLength(2);
-    expect(published.map((event) => event.tags.find((tag) => tag[0] === 'github-event-id')?.[1])).toEqual([
-      '2',
-      '1',
-    ]);
-    expect(published.map((event) => event.tags.find((tag) => tag[0] === 'github-event-type')?.[1])).toEqual([
-      'pull-request',
-      'issue',
-    ]);
+    expect(
+      published.map((event) => event.tags.find((tag) => tag[0] === 'github-event-id')?.[1]),
+    ).toEqual(['2', '1']);
+    expect(
+      published.map((event) => event.tags.find((tag) => tag[0] === 'github-event-type')?.[1]),
+    ).toEqual(['pull-request', 'issue']);
+  });
+
+  it('publishes lifecycle hints without the agent-message presentation tag', async () => {
+    const durable = durableState();
+    const source: RepositoryEventSource = {
+      read: async () => ({
+        head: '3',
+        sourceEventIds: ['3'],
+        events: [
+          {
+            ...normalized('3'),
+            type: 'lifecycle-hint',
+            action: 'synchronize',
+            title: undefined,
+            url: undefined,
+          },
+        ],
+      }),
+    };
+    const published: NostrEvent[] = [];
+    await new RepositoryEventsCore(
+      new RepositoryEventsState(durable.persistence),
+      source,
+      newIdentity('events-service-hint'),
+      { publish: async (_target, event) => published.push(event), now: () => 1_000 },
+    ).tick([target()]);
+
+    expect(published).toHaveLength(1);
+    expect(published[0]!.tags).toContainEqual(['t', 'github-event']);
+    expect(published[0]!.tags).not.toContainEqual(['t', 'agent-message']);
+    expect(published[0]!.tags).toContainEqual(['github-event-type', 'lifecycle-hint']);
   });
 
   it('resumes its durable cursor without duplicate cards across restart', async () => {

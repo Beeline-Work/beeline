@@ -154,6 +154,7 @@ async function main() {
     process.env.BEELINE_BUNDLE_VERSION ?? new Date().toISOString().slice(0, 10).replace(/-/g, '.');
 
   run('npm', ['run', 'build', '-w', '@beeline/nostr']);
+  run('npm', ['run', 'build', '-w', '@beeline/api-contract']);
   run('npm', ['run', 'build', '-w', '@beeline/buzz-client']);
   run('npm', ['run', 'build', '-w', '@beeline/gate']);
   run('npm', ['run', 'build', '-w', '@beeline/body']);

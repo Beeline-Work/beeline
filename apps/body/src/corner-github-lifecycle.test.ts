@@ -19,15 +19,17 @@ const response = (body: unknown, status = 200) =>
     headers: { 'content-type': 'application/json' },
   });
 
-const pull = (mergedAt: string | null = null) => ({
+const pull = (mergedAt: string | null = null, mergeable: boolean | null = true) => ({
   number: 7,
   html_url: 'https://github.com/acme/widget/pull/7',
   title: 'Ship the lifecycle',
-  base: { ref: 'main' },
+  base: { ref: 'main', sha: 'c'.repeat(40) },
   head: { sha: 'b'.repeat(40) },
   state: mergedAt ? 'closed' : 'open',
   merged_at: mergedAt,
   merged_by: mergedAt ? { login: 'octocat' } : null,
+  mergeable,
+  mergeable_state: mergeable === false ? 'dirty' : mergeable === true ? 'clean' : 'unknown',
 });
 
 describe('GitHub corner lifecycle observation', () => {
@@ -36,6 +38,7 @@ describe('GitHub corner lifecycle observation', () => {
       .fn<typeof fetch>()
       .mockResolvedValueOnce(response({ object: { sha: 'a'.repeat(40) } }))
       .mockResolvedValueOnce(response([pull()]))
+      .mockResolvedValueOnce(response(pull(null, false)))
       .mockResolvedValueOnce(
         response({ check_runs: [{ status: 'completed', conclusion: 'failure' }] }),
       )
@@ -59,7 +62,37 @@ describe('GitHub corner lifecycle observation', () => {
         number: 7,
         url: 'https://github.com/acme/widget/pull/7',
         targetBranch: 'main',
+        mergeability: 'dirty',
+        baseSha: 'c'.repeat(40),
       },
+    });
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      3,
+      'https://api.test/repos/acme/widget/pulls/7',
+      expect.anything(),
+    );
+  });
+
+  it('keeps a lazily-computed GitHub mergeability verdict unknown for the next hint', async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(response({ object: { sha: 'a'.repeat(40) } }))
+      .mockResolvedValueOnce(response([pull(null, null)]))
+      .mockResolvedValueOnce(response(pull(null, null)))
+      .mockResolvedValueOnce(response({ check_runs: [] }))
+      .mockResolvedValueOnce(response({ state: 'pending' }));
+
+    await expect(
+      observeCornerRemote({
+        repo,
+        cornerId: 'corner',
+        featureBranch: 'fm/change',
+        token: 'token',
+        fetchImpl,
+      }),
+    ).resolves.toMatchObject({
+      state: 'in-review',
+      pr: { mergeability: 'unknown' },
     });
   });
 

@@ -1,8 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import {
-  GitHubEventsApiSource,
-  normalizeGitHubEvent,
-} from './github-events.js';
+import { GitHubEventsApiSource, normalizeGitHubEvent } from './github-events.js';
 
 function raw(
   type: string,
@@ -76,7 +73,7 @@ describe('normalizeGitHubEvent', () => {
     ].map(normalizeGitHubEvent);
 
     expect(events.map((event) => event && [event.type, event.action])).toEqual([
-      undefined,
+      ['lifecycle-hint', 'target-push'],
       ['pull-request', 'opened'],
       ['pull-request', 'merged'],
       ['issue', 'opened'],
@@ -93,8 +90,10 @@ describe('normalizeGitHubEvent', () => {
     });
   });
 
-  it('excludes every push, including a zero-commit push, and high-churn actions', () => {
-    expect(normalizeGitHubEvent(raw('PushEvent', { ref: 'refs/heads/main', commits: [] }))).toBeUndefined();
+  it('turns branch pushes and PR synchronize events into lifecycle hints', () => {
+    expect(
+      normalizeGitHubEvent(raw('PushEvent', { ref: 'refs/heads/main', commits: [] })),
+    ).toMatchObject({ type: 'lifecycle-hint', action: 'target-push' });
     expect(
       normalizeGitHubEvent(
         raw('PullRequestEvent', {
@@ -102,7 +101,7 @@ describe('normalizeGitHubEvent', () => {
           pull_request: { number: 7, title: 'Land it' },
         }),
       ),
-    ).toBeUndefined();
+    ).toMatchObject({ type: 'lifecycle-hint', action: 'synchronize' });
   });
 });
 
@@ -140,7 +139,7 @@ describe('GitHubEventsApiSource', () => {
 
     expect(result.head).toBe('103');
     expect(result.sourceEventIds).toEqual(['103', '102']);
-    expect(result.events.map((event) => event.id)).toEqual(['102']);
+    expect(result.events.map((event) => event.id)).toEqual(['103', '102']);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 

@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import {
   assertAllArtifactsBuilt,
   confirmPromotion,
-  confirmRehearsal,
+  confirmDelivery,
   deliveryReport,
   initializeRelease,
   markBuilt,
@@ -64,13 +64,13 @@ test('a newer sha supersedes the whole release and freezes every old leg', () =>
   );
 });
 
-test('delivery refuses mixed versions and requires aligned rehearsal proof', () => {
+test('delivery refuses mixed versions and requires aligned ledger proof', () => {
   const state = builtRelease();
   for (const component of ['server', 'daemon', 'app']) {
     confirmPromotion(state, component, { version: 'v0.0.1', sourceSha: SHA_1 });
   }
-  assert.throws(() => deliveryReport(state), /not aligned and rehearsed/i);
-  confirmRehearsal(state, { version: 'v0.0.1', sourceSha: SHA_1 });
+  assert.throws(() => deliveryReport(state), /not aligned and ledger-confirmed/i);
+  confirmDelivery(state, { version: 'v0.0.1', sourceSha: SHA_1 });
   assert.throws(
     () =>
       deliveryReport(state, {
@@ -98,8 +98,10 @@ test('one workflow owns parallel builds, ordered promotion, retry, and the final
   assert.match(workflow, /artifact is \$\{identity\.version\}@\$\{identity\.sourceSha\}/);
   assert.ok(workflow.indexOf('promote_server:') < workflow.indexOf('promote_daemon:'));
   assert.ok(workflow.indexOf('promote_daemon:') < workflow.indexOf('promote_app:'));
-  assert.ok(workflow.indexOf('promote_app:') < workflow.indexOf('post_promote_rehearsal:'));
+  assert.ok(workflow.indexOf('promote_app:') < workflow.indexOf('delivery_report:'));
   assert.match(workflow, /unified-release\.mjs report --state/);
+  assert.match(workflow, /unified-release\.mjs confirm-delivery --state/);
+  assert.doesNotMatch(workflow, /post_promote_rehearsal|mobile-ota-post-promote|emulator|Maestro/);
   assert.match(workflow, /A newer main sha superseded this whole release/);
   assert.doesNotMatch(workflow, /push:\s*\n\s*branches:/);
   assert.match(workflow, /^on:\s*\n\s*workflow_dispatch:/m);

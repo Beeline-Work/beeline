@@ -27,6 +27,7 @@ Committed home for project-intrinsic agent knowledge: rule + authoritative file 
 - **Corner agents own the GitHub workflow.** Finish means commit, push the feature branch, and run `gh pr create`; merge only when the human explicitly says so; abandon means delete the branch. Body observes this mechanically and never performs a merge.
 - `fm/*` branches stack; check `gh pr list --json baseRefName,headRefName` before assuming a file is on `main`; `fm-integration-verify` ↔ `origin/fm/buzzy-integrated`; `git branch -a --contains <commit>` finds the source branch.
 - Cherry-picks off `feature/*` can omit a declaration referenced only as context — `npm run typecheck` catches it. Two branches adding trailing params to one function: match slots to call sites on `origin/main`. Merging `origin/main` into stale `fm/*` conflicts mostly on `relay-stack/web/dl/` artifacts — pick either, regenerate via `npm run bundle:beeline`. Interleaved `describe(...)` conflicts: rebuild siblings from `git show <sha>:<path>`, verify with `npx esbuild`.
+- **Resolve merges as one batch gate:** enumerate every textual conflict and semantic overlap before editing, resolve the complete set in one pass, then run one integration matrix spanning every affected subsystem plus a single conflict-resolution review before push. Do not push or review piecemeal conflict fixes.
 - **Stacked PRs merged base-first do not propagate** — re-target to `main`; verify with `git grep <symbol> origin/main`.
 
 ## Corner GitHub credential boundary

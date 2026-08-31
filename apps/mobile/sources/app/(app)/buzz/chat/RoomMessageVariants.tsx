@@ -288,10 +288,12 @@ export const DaemonFactCard = React.memo(function DaemonFactCard({
         : 'ABANDONED · Remote branch deleted'
       : fact.type === 'checks-failing'
         ? `CHECKS FAILING${fact.pullRequest ? ` · PR #${fact.pullRequest.number ?? ''}` : ''}`
-        : 'WORKTREE CLEANED';
+        : fact.type === 'corner-open'
+          ? fact.objective
+          : 'WORKTREE CLEANED';
   return (
     <RepositoryFactCard
-      title={fact.objective}
+      title={fact.type === 'corner-open' ? fact.name! : fact.objective}
       body={body}
       subgoals={fact.subgoals}
       actionLabel={fact.type === 'corner-complete' ? 'OPEN ARCHIVED CORNER →' : 'OPEN CORNER →'}

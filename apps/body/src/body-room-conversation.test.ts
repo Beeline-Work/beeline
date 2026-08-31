@@ -2876,7 +2876,9 @@ describe('Room conversation and permission-gated work intent', () => {
     expect(resolveNamedRepository).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'lunchboxfortwo/buzzy', kind: 'github' }),
     );
-    expect(open).toHaveBeenCalledWith('parent-channel', targetRepo, request.content, request);
+    expect(open).toHaveBeenCalledWith('parent-channel', targetRepo, request.content, request, {
+      suppressOpenCard: true,
+    });
     expect(turn.transitionedToCorner).toBe(true);
     expect(
       published.find((event) =>
@@ -3212,7 +3214,7 @@ describe('Room conversation and permission-gated work intent', () => {
    *  permission handler opens a corner and marks the turn
    *  transitionedToCorner exactly as production does. */
   async function replyInRoomWithMidTurnCornerTransition(options: {
-    readonly agentText: string;
+    readonly agentText: string | ((cornerId: string) => string);
     readonly requestMutation?: boolean;
   }): Promise<{ readonly published: NostrEvent[]; readonly eventId: string }> {
     const body = new Body({
@@ -3241,7 +3243,11 @@ describe('Room conversation and permission-gated work intent', () => {
           toolCall: { kind: 'edit', title: 'str_replace README.md' },
         });
       }
-      return { stopReason: 'end_turn', updates: [], agentText: options.agentText, toolCalls: [] };
+      const subchannels = Reflect.get(body, 'subchannels') as Map<string, { subchannelId: string }>;
+      const cornerId = [...subchannels.keys()][0] ?? '';
+      const agentText =
+        typeof options.agentText === 'function' ? options.agentText(cornerId) : options.agentText;
+      return { stopReason: 'end_turn', updates: [], agentText, toolCalls: [] };
     });
     body.registerSession({
       channelId: 'parent-channel',
@@ -3359,6 +3365,27 @@ describe('Room conversation and permission-gated work intent', () => {
         event.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-message'),
       )?.content,
     ).toBe(claim);
+  });
+
+  it('replaces a raw open_corner tool-result echo with the canonical announcement', async () => {
+    // Production evidence (owner screenshot, 2026-08-31): the model echoed its
+    // own open_corner tool result as prose — "Corner opened successfully. ·
+    // Corner: <uuid> · Branch: ... · Scope: ..." — instead of a real answer.
+    // The daemon-fact card is now the one visible artifact of the open; the
+    // Room reply must never dump the raw id/branch back into the transcript.
+    const { published } = await replyInRoomWithMidTurnCornerTransition({
+      agentText: (cornerId) =>
+        `Corner opened successfully. · Corner: ${cornerId} · Branch: feature/corner · Scope: repo`,
+    });
+    const reply = published.find((event) =>
+      event.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-message'),
+    );
+    expect(reply?.content).not.toMatch(
+      /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i,
+    );
+    expect(reply?.content).toBe(
+      'This needs repository edits, so I moved it into the fix-the-retry-loop corner — follow the work there.',
+    );
   });
 
   it('replaces the captured false completion claim when no corner records exist', async () => {

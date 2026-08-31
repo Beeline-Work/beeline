@@ -1202,19 +1202,14 @@ describe('RoomRuntimeCoordinator per-Room discovery isolation', () => {
     expect(String(unservableLogs[0]![0])).toContain('could not be joined');
     // Parked, not re-attempted on every pass.
     expect(materialize).toHaveBeenCalledTimes(1);
-    expect(client.messageSubmit).toHaveBeenCalledTimes(1);
-    expect(client.messageSubmit).toHaveBeenCalledWith(
-      'unservable-room',
-      expect.stringContaining('I will retry automatically in 10 minutes'),
-      expect.objectContaining({ extraTags: expect.any(Array) }),
-    );
+    expect(client.messageSubmit).not.toHaveBeenCalled();
 
     // Past the retry cadence it is tried again — an operator who fixes the
     // underlying cause is still picked up, just not by polling every 5s.
     now += Math.ceil(DEFAULT_ROOM_DISCOVERY_RETRY_MS * 1.2) + 1;
     await supervisor.reconcile();
     expect(materialize).toHaveBeenCalledTimes(2);
-    expect(client.messageSubmit).toHaveBeenCalledTimes(1);
+    expect(client.messageSubmit).not.toHaveBeenCalled();
   });
 
   it('retries a transient join failure on the short cadence instead of the ten-minute park', async () => {
@@ -1242,11 +1237,7 @@ describe('RoomRuntimeCoordinator per-Room discovery isolation', () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     await supervisor.reconcile();
-    expect(client.messageSubmit).toHaveBeenCalledWith(
-      'unservable-room',
-      expect.stringContaining('I will retry automatically in 30 seconds.'),
-      expect.objectContaining({ extraTags: expect.any(Array) }),
-    );
+    expect(client.messageSubmit).not.toHaveBeenCalled();
 
     // Past the SHORT cadence it is tried again — not held for ten minutes.
     // Backoff is intentionally jittered by ±20%; advance beyond its upper bound.
@@ -1255,7 +1246,7 @@ describe('RoomRuntimeCoordinator per-Room discovery isolation', () => {
     expect(materialize).toHaveBeenCalledTimes(2);
   });
 
-  it('closes a durable legacy repository failure after restart exactly once', async () => {
+  it('does not publish a recovery for a durable legacy repository failure', async () => {
     const runtime = runtimeNoRooms('repository-recovery-agent');
     const room: RoomRuntimeRecord = {
       channelId: '3f37b271-1a12-4d2a-b002-202b3f3582b9',
@@ -1322,26 +1313,7 @@ describe('RoomRuntimeCoordinator per-Room discovery isolation', () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     await firstCoordinator.reconcile();
-    expect(client.messageSubmit).toHaveBeenCalledWith(
-      '3f37b271-1a12-4d2a-b002-202b3f3582b9',
-      expect.stringContaining('repository access recovered'),
-      expect.objectContaining({
-        extraTags: expect.arrayContaining([
-          ['t', 'buzz-agent-room-join-notice'],
-          ['status', 'repository-recovered'],
-          ['failure', 'f'.repeat(64)],
-        ]),
-      }),
-    );
-    expect(client.query).toHaveBeenCalledWith([
-      expect.objectContaining({
-        '#h': [room.channelId],
-        '#t': ['buzz-agent-room-join-notice'],
-        limit: 20,
-      }),
-      expect.objectContaining({ '#h': [room.channelId], limit: 20 }),
-    ]);
-    expect(client.messageSubmit).toHaveBeenCalledTimes(1);
+    expect(client.messageSubmit).not.toHaveBeenCalled();
 
     const restartedCoordinator = new RoomRuntimeCoordinator(
       runtime,
@@ -1353,7 +1325,7 @@ describe('RoomRuntimeCoordinator per-Room discovery isolation', () => {
     );
     await restartedCoordinator.reconcile();
 
-    expect(client.messageSubmit).toHaveBeenCalledTimes(1);
+    expect(client.messageSubmit).not.toHaveBeenCalled();
   });
 
   it('does not publish an orphan recovery for a join failure that never produced a notice', async () => {
@@ -1404,11 +1376,11 @@ describe('RoomRuntimeCoordinator per-Room discovery isolation', () => {
 
     await supervisor.reconcile();
 
-    expect(client.query).toHaveBeenCalled();
+    expect(client.query).not.toHaveBeenCalled();
     expect(client.messageSubmit).not.toHaveBeenCalled();
   });
 
-  it('publishes the visible Room notice when the token broker returns its 403', async () => {
+  it('keeps a token-broker 403 in operator logs instead of Room chat', async () => {
     const runtime = runtimeNoRooms('broker-denied-agent');
     const client = discoveryClient(runtime);
     client.listMyChannels.mockResolvedValue([
@@ -1431,11 +1403,7 @@ describe('RoomRuntimeCoordinator per-Room discovery isolation', () => {
 
     await expect(supervisor.reconcile()).resolves.toBe('member');
 
-    expect(client.messageSubmit).toHaveBeenCalledWith(
-      'unservable-room',
-      expect.stringContaining("I could not access this Room's repository"),
-      expect.objectContaining({ extraTags: expect.any(Array) }),
-    );
+    expect(client.messageSubmit).not.toHaveBeenCalled();
   });
 });
 

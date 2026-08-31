@@ -98,6 +98,7 @@ case "$cmd" in
   network)
     ;;
   run)
+    log "run $*"
     user=""
     mount=""
     previous=""
@@ -531,6 +532,11 @@ test('first rollout moves RoomView through a healthy candidate before recreating
   assert.equal(r.readLive('compose.yml'), fs.readFileSync(TRACKED_COMPOSE, 'utf8'));
   assert.equal(r.readLive('relay-front/nginx.conf'), fs.readFileSync(TRACKED_NGINX, 'utf8'));
   assert.equal(
+    r.readLive('relay-front/materializer-upstream.conf'),
+    'map $host $roomview_upstream {\n  default materializer;\n}\n',
+    'the first live nginx reload must have its HTTP-context-valid selector already in place',
+  );
+  assert.equal(
     fs.readFileSync(path.join(r.dlRoot, 'beeline-linux-x64.tar.gz'), 'utf8'),
     'host-local release bundle\n',
     'the checkout web-tree swap must preserve the external /dl store',
@@ -565,6 +571,21 @@ test('first rollout moves RoomView through a healthy candidate before recreating
   assert.ok(r.stdout.includes('buzz-router-prod-cutover/materializer-next health verified'));
   assert.ok(r.sudoLog().includes('disable --now beeline-events.service'), r.sudoLog());
   assert.equal(r.eventsRunning(), false, 'standalone events unit must stay retired after success');
+
+  const installs = r
+    .sudoLog()
+    .split('\n')
+    .filter((line) => !line.includes(' -l ') && line.includes('/usr/bin/install'));
+  const selectorInstall = installs.findIndex((line) => line.endsWith('/relay-front/materializer-upstream.conf'));
+  const nginxInstall = installs.findIndex((line) => line.endsWith('/relay-front/nginx.conf'));
+  assert.notEqual(selectorInstall, -1, r.sudoLog());
+  assert.notEqual(nginxInstall, -1, r.sudoLog());
+  assert.ok(selectorInstall < nginxInstall, r.sudoLog());
+  assert.match(
+    r.dockerLog(),
+    /run .*nginx\.conf:\/etc\/nginx\/nginx\.conf:ro .*materializer-upstream\.conf:\/etc\/beeline-front\/materializer-upstream\.conf:ro/,
+    'the staged nginx validation must mount every included staged config file',
+  );
 
   // nginx changes upstreams by HUP only; it is never stopped/recreated.
   assert.equal(

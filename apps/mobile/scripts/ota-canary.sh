@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Install the latest beta-channel APK on the existing AVD, let it fetch the
-# candidate, then run the real Room open/send/reply Maestro smoke. The outer
-# timeout is part of the contract: a wedged emulator can never hold promotion
-# for more than ten minutes.
+# Install the channel-matched APK on the existing AVD, let it fetch the exact
+# ledger update, then run the real Room open/send/reply Maestro smoke. The outer
+# timeout is part of the contract: a wedged emulator can never delay the
+# verification verdict and any guarded rollback for more than ten minutes.
 #
 # Exit codes: 0 canary passed; 1 smoke/flow failure; 2 environment or setup
-# failure (the release governor PARKS promotion on this with an actionable
-# reason recorded in the ledger); 124 the ten-minute deadline fired.
+# failure (the caller records one actionable reason); 124 the ten-minute
+# deadline fired.
 #
 # Parked-reason contract (round-2 hardening of #490): every preflight or
 # runner-environment failure must be SELF-DESCRIBING. park() prints one
@@ -24,10 +24,38 @@ readonly APP_ID="app.usebeeline.mobile"
 readonly MAX_SECONDS="${OTA_CANARY_MAX_SECONDS:-600}"
 readonly UPDATE_APPLY_TIMEOUT="${OTA_CANARY_UPDATE_APPLY_TIMEOUT_SECONDS:-120}"
 readonly UPDATE_PROBE_TIMEOUT="${OTA_CANARY_UPDATE_PROBE_TIMEOUT_SECONDS:-5}"
+readonly ORIGINAL_ARGS=("$@")
+
+ledger=""
+release_stage="beta"
+while (($#)); do
+  case "$1" in
+    --ledger)
+      ledger="${2:-}"
+      shift 2
+      ;;
+    --promoted)
+      release_stage="production"
+      shift
+      ;;
+    *)
+      echo "usage: ota-canary.sh --ledger <mobile-ota-ledger.json> [--promoted]" >&2
+      exit 1
+      ;;
+  esac
+done
+readonly release_stage
+if [[ "$release_stage" == "production" ]]; then
+  readonly BUILD_PROFILE="production-apk"
+  readonly SUPPLIED_APK_ENV="BEELINE_PRODUCTION_APK"
+else
+  readonly BUILD_PROFILE="beta-apk"
+  readonly SUPPLIED_APK_ENV="BEELINE_BETA_APK"
+fi
 
 park() {
   local reason="${1:-unknown OTA canary environment or setup failure}"
-  echo "OTA canary parked promotion: $reason" >&2
+  echo "OTA canary stopped: $reason" >&2
   if [[ -n "${OTA_CANARY_REASON_FILE:-}" ]]; then
     printf '%s\n' "$reason" > "$OTA_CANARY_REASON_FILE" 2>/dev/null || true
   fi
@@ -83,7 +111,7 @@ OTA canary cannot find the Android platform-tools binary (adb).
 Searched: PATH, \$ANDROID_HOME/platform-tools/adb, \$ANDROID_SDK_ROOT/platform-tools/adb.
 Fix: install platform-tools on the release host or set ANDROID_HOME to the
 SDK root in the release-governor job, then re-run the canary step.
-Production promotion stays parked until the canary passes.
+The caller keeps the failure visible until the environment is repaired.
 EOF
   park "adb is not resolvable on the release-host runner (searched PATH, ANDROID_HOME/platform-tools/adb, ANDROID_SDK_ROOT/platform-tools/adb)"
 fi
@@ -107,7 +135,7 @@ if [[ "${OTA_CANARY_DEADLINE_ACTIVE:-0}" != "1" ]]; then
     park "OTA_CANARY_MAX_SECONDS must be between 1 and 600 (got ${MAX_SECONDS})"
   fi
   exec timeout --foreground --signal=TERM "${MAX_SECONDS}s" \
-    env OTA_CANARY_DEADLINE_ACTIVE=1 "$0" "$@"
+    env OTA_CANARY_DEADLINE_ACTIVE=1 "$0" "${ORIGINAL_ARGS[@]}"
 fi
 
 if ! [[ "$UPDATE_APPLY_TIMEOUT" =~ ^[0-9]+$ ]] ||
@@ -147,35 +175,21 @@ if (( device_ready_status != 0 )); then
   esac
 fi
 
-ledger=""
-while (($#)); do
-  case "$1" in
-    --ledger)
-      ledger="${2:-}"
-      shift 2
-      ;;
-    *)
-      echo "usage: ota-canary.sh --ledger <mobile-ota-ledger.json>" >&2
-      exit 1
-      ;;
-  esac
-done
-
 if [[ ! -f "$ledger" ]]; then
   park "canary ledger not found: $ledger; the beta-candidate publish step must succeed before the canary runs"
 fi
 
 set +e
-candidate_group="$(node -e 'const x=require(process.argv[1]); process.stdout.write(x.candidateGroupId || "")' "$ledger")"
-android_update="$(node -e 'const x=require(process.argv[1]); process.stdout.write(x.androidUpdateId || "")' "$ledger")"
-android_runtime="$(node -e 'const x=require(process.argv[1]); const update=x.candidateUpdates?.find((item) => item.platform === "android"); process.stdout.write(update?.runtimeVersion || "")' "$ledger")"
+candidate_group="$(node -e 'const x=require(process.argv[1]); const stage=process.argv[2]; process.stdout.write(stage === "production" ? (x.production?.groupId || "") : (x.candidateGroupId || ""))' "$ledger" "$release_stage")"
+android_update="$(node -e 'const x=require(process.argv[1]); const stage=process.argv[2]; const update=(stage === "production" ? x.production?.updates : x.candidateUpdates)?.find((item) => item.platform === "android"); process.stdout.write(update?.id || "")' "$ledger" "$release_stage")"
+android_runtime="$(node -e 'const x=require(process.argv[1]); const stage=process.argv[2]; const update=(stage === "production" ? x.production?.updates : x.candidateUpdates)?.find((item) => item.platform === "android"); process.stdout.write(update?.runtimeVersion || "")' "$ledger" "$release_stage")"
 ledger_status=$?
 set -e
 if (( ledger_status != 0 )); then
   park "canary ledger at $ledger is unreadable or malformed JSON (node exited ${ledger_status}); the release-governor candidate step must produce a readable mobile-ota-ledger.json"
 fi
 if [[ -z "$candidate_group" || -z "$android_update" ]]; then
-  park "canary ledger is missing candidateGroupId or androidUpdateId: $ledger"
+  park "canary ledger is missing the ${release_stage} group or Android update id: $ledger"
 fi
 
 temporary="$(mktemp -d)"
@@ -186,13 +200,13 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-apk="${BEELINE_BETA_APK:-}"
+apk="${!SUPPLIED_APK_ENV:-}"
 if [[ -z "$apk" ]]; then
   build_json="$temporary/beta-build.json"
   build_args=(
     build:list
     --platform android
-    --build-profile beta-apk
+    --build-profile "$BUILD_PROFILE"
     --status finished
     --limit 1
     --json
@@ -219,20 +233,20 @@ if [[ -z "$apk" ]]; then
   url_status=$?
   set -e
   if (( url_status != 0 )) || [[ -z "$build_url" ]]; then
-    park "EAS has no finished beta-apk Android build for runtime version ${android_runtime:-unknown}. A beta-channel binary is the only possible canary vehicle because the OTA update channel is baked into the APK at build time; production-channel binaries cannot fetch the beta candidate group. Fix once per runtime version: cd apps/mobile && npx --yes eas-cli@22.2.0 build --profile beta-apk --platform android --non-interactive, then re-run the release governor."
+    park "EAS has no finished ${BUILD_PROFILE} Android build for runtime version ${android_runtime:-unknown}. The OTA channel is baked into the APK, so post-promotion verification requires a production-channel binary and pre-promotion verification requires a beta-channel binary. Fix once per runtime version: cd apps/mobile && npx --yes eas-cli@22.2.0 build --profile ${BUILD_PROFILE} --platform android --non-interactive, then re-run the release governor."
   fi
-  apk="$temporary/beeline-beta.apk"
+  apk="$temporary/beeline-${release_stage}.apk"
   if ! curl --fail --location --silent --show-error "$build_url" --output "$apk"; then
-    park "could not download the beta APK from EAS (curl failed fetching the recorded buildUrl); check network access on the release host and that the build artifact still exists, then re-run the governor"
+    park "could not download the ${release_stage} APK from EAS (curl failed fetching the recorded buildUrl); check network access on the release host and that the build artifact still exists, then re-run the governor"
   fi
 fi
 
 if [[ ! -f "$apk" ]]; then
-  park "operator-supplied BEELINE_BETA_APK does not exist: $apk; point it at a beta-channel (EXPO_UPDATES_CHANNEL=beta) APK built for runtime version ${android_runtime:-unknown}, or unset it to let the canary download the latest EAS beta-apk build"
+  park "operator-supplied ${SUPPLIED_APK_ENV} does not exist: $apk; point it at a ${release_stage}-channel APK built for runtime version ${android_runtime:-unknown}, or unset it to let the canary download the latest ${BUILD_PROFILE} build"
 fi
 
-# -r preserves the dedicated beta binary registration while replacing any
-# older beta build. pm clear then gives the smoke its normal cold-device state.
+# -r preserves the channel-matched binary registration while replacing any
+# older build. pm clear then gives the smoke its normal cold-device state.
 # A differently-signed existing installation (e.g. an operator's locally-built
 # apk:release artifact vs the EAS-keyed beta binary) makes adb refuse the
 # update with INSTALL_FAILED_UPDATE_INCOMPATIBLE; the canary owns exactly this
@@ -253,12 +267,12 @@ case "$install_output" in
     install_status=$?
     set -e
     if (( install_status != 0 )); then
-      park "adb install of the beta APK failed on $DEVICE even after removing the differently-signed existing package: ${install_output}"
+      park "adb install of the ${release_stage} APK failed on $DEVICE even after removing the differently-signed existing package: ${install_output}"
     fi
     ;;
   *)
     if (( install_status != 0 )); then
-      park "adb install of the beta APK failed on $DEVICE: ${install_output}"
+      park "adb install of the ${release_stage} APK failed on $DEVICE: ${install_output}"
     fi
     ;;
 esac
@@ -283,6 +297,7 @@ while (( SECONDS <= update_deadline )); do
     MAESTRO_VERIFY_UPDATE_ONLY=1 \
     MAESTRO_UPDATE_IDENTITY_TIMEOUT_SECONDS="$UPDATE_PROBE_TIMEOUT" \
     EXPECTED_ANDROID_UPDATE_ID="$android_update" \
+    EXPECTED_UPDATE_CHANNEL="$release_stage" \
       "$MOBILE_DIR/scripts/maestro-e2e.sh" >"$update_probe_log" 2>&1; then
     cat "$update_probe_log"
     update_applied=1
@@ -300,7 +315,7 @@ while (( SECONDS <= update_deadline )); do
 done
 if (( update_applied != 1 )); then
   probe_reason="$(tail -n 1 "$update_probe_log" 2>/dev/null || true)"
-  park "expected beta Android update $android_update was not reported running on $DEVICE within ${UPDATE_APPLY_TIMEOUT}s; update fetch/reload did not converge${probe_reason:+ (last probe: $probe_reason)}"
+  park "expected ${release_stage} Android update $android_update was not reported running on $DEVICE within ${UPDATE_APPLY_TIMEOUT}s; update fetch/reload did not converge${probe_reason:+ (last probe: $probe_reason)}"
 fi
 
 smoke_log="$temporary/maestro-smoke.log"
@@ -310,6 +325,7 @@ MAESTRO_SKIP_BUILD=1 \
 MAESTRO_KEEP_DEVICE=1 \
 MAESTRO_FLOW="$MOBILE_DIR/e2e/ota-canary.yaml" \
 EXPECTED_ANDROID_UPDATE_ID="$android_update" \
+EXPECTED_UPDATE_CHANNEL="$release_stage" \
 EXPECTED_UPDATE_GROUP_ID="$candidate_group" \
   "$MOBILE_DIR/scripts/maestro-e2e.sh" 2>&1 | tee "$smoke_log"
 smoke_status=$?
@@ -327,4 +343,4 @@ if (( smoke_status != 0 )); then
   exit "$smoke_status"
 fi
 
-echo "OTA canary passed for beta group $candidate_group (Android update $android_update)."
+echo "OTA canary passed for ${release_stage} group $candidate_group (Android update $android_update)."

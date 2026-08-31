@@ -293,7 +293,7 @@ describe('projectActivity granularity', () => {
     ]);
   });
 
-  it('publishes the objective with one honest working state when the harness never plans', async () => {
+  it('publishes only the objective when the harness never supplies plan items', async () => {
     const projection = projectActivity(client as unknown as AcpClient, channelId, owner, sessionId);
 
     // This is the first agent-activity event of the corner turn. No ACP plan
@@ -326,16 +326,14 @@ describe('projectActivity granularity', () => {
       return content.update.updates.flatMap((update) => (update.plan ? [update.plan] : []));
     }) as Array<{ objective?: string; items: Array<{ step: string; status: string }> }>;
 
-    expect(plans.map((plan) => plan.items)).toEqual([
-      [{ step: 'Working…', status: 'in_progress' }],
-      [{ step: 'Working…', status: 'completed' }],
-    ]);
+    expect(plans.map((plan) => plan.items)).toEqual([[]]);
     expect(plans[0]!.objective).not.toContain('\n');
     expect(plans[0]!.objective).not.toContain('**');
     expect(plans[0]!.objective!.length).toBeLessThanOrEqual(160);
     expect(JSON.stringify(plans)).not.toContain('Inspect the relevant code');
     expect(JSON.stringify(plans)).not.toContain('Implement the change');
     expect(JSON.stringify(plans)).not.toContain('Verify and summarize the result');
+    expect(JSON.stringify(plans)).not.toContain('Working');
   });
 
   it('keeps the opening objective write-once across later turns and plan updates', async () => {

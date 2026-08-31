@@ -121,7 +121,6 @@ import {
   type OwnerGrantNeeded,
 } from '@/components/buzz/OwnerGrantNeededCard';
 import {
-  humanBranchName,
   isPinnedCornerLive,
   pinnedCornerVerb,
   selectPinnedCorner,
@@ -622,7 +621,7 @@ export default function BuzzChat() {
     append: addMessages,
     remove: removeOptimistic,
     clear: clearOptimistic,
-  } = useRoomSendFrame(durableMessages, committedMessageIds, isCorner);
+  } = useRoomSendFrame(durableMessages, committedMessageIds);
   roomSurfaceBindingsRef.current = {
     resetTranscript: () => {
       roomMessageProjector.reset();
@@ -1404,33 +1403,7 @@ export default function BuzzChat() {
     const named = (subject: string, verb: string, target?: string) =>
       target ? `${subject} ${verb}: ${target}` : `${subject} ${verb}`;
 
-    if (isCorner) {
-      const subject = cornerAgentDisplay?.name ?? 'agent';
-      // The branch is the truest name for what a corner is doing; the corner's
-      // own slug is the fallback, and both beat an opaque id.
-      const target =
-        humanBranchName(roomSurface?.cornerLifecycle?.branch) ?? headerTitle ?? undefined;
-      if (roomSurface?.cornerLifecycle?.checks === 'failing') {
-        return { label: named(subject, 'checks failing', target), live: false };
-      }
-      if (roomSurface?.cornerLifecycle?.lifecycle === 'unknown') {
-        return { label: named(subject, 'GitHub state unknown', target), live: false };
-      }
-      if (roomSurface?.cornerLifecycle?.lifecycle === 'in-review') {
-        return { label: named(subject, 'PR open', target), live: false };
-      }
-      // This corner's own canonical WORKING lease, not an ACP turn/draft or
-      // some other corner's history. The lease expires at the shared horizon.
-      if (sessionState === 'working')
-        return { label: named(subject, 'active', target), live: true };
-      if (displayedCornerStatus === 'open') {
-        return { label: named(subject, 'ready for review', target), live: false };
-      }
-      if (displayedCornerStatus === 'needs-attention' || displayedCornerStatus === 'failed') {
-        return { label: named(subject, 'needs attention', target), live: false };
-      }
-      return null;
-    }
+    if (isCorner) return null;
 
     // selectPinnedCorner names any open corner — working, waiting on a
     // human, or review-ready — and excludes only a terminal one. The line's
@@ -1464,18 +1437,11 @@ export default function BuzzChat() {
     };
   }, [
     agentByPubkey,
-    cornerAgentDisplay,
     cornerLifecycle,
-    displayedCornerStatus,
-    headerTitle,
     isCorner,
     pinnedCorner,
     pinnedCornerCard,
     resolvedChannelName,
-    roomSurface?.cornerLifecycle?.branch,
-    roomSurface?.cornerLifecycle?.checks,
-    roomSurface?.cornerLifecycle?.lifecycle,
-    sessionState,
   ]);
 
   // Once the matching server-indexed receipt lands there is nothing left for
@@ -3039,13 +3005,13 @@ export default function BuzzChat() {
         {/* The Room's only active-corner affordance: one pinned line naming
             who is working and what on, gold and breathing while the work is
             live. Never a scroll element — see CornerLiveBar. */}
-        {!isArchived && cornerLiveBar && (
+        {!isCorner && !isArchived && cornerLiveBar && (
           <CornerLiveBar
             label={cornerLiveBar.label}
             live={cornerLiveBar.live}
             // A Room bar always acts. Corrupt/missing lifecycle data is
             // explained by openCorner instead of disappearing in a guard.
-            onPress={!isCorner ? () => openCorner(cornerLiveBar.cornerId) : undefined}
+            onPress={() => openCorner(cornerLiveBar.cornerId)}
           />
         )}
         {/* The ordinary per-turn indicator, independent of the line above: a

@@ -146,6 +146,7 @@ import {
   CORNER_REMOTE_STATE_TAG,
   cornerRemoteStateKey,
   parseCornerRemoteState,
+  type CornerPullRequestFact,
   type CornerRemoteState,
 } from '@beeline/buzz-client';
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
@@ -364,7 +365,12 @@ import {
   type ReleaseRoomIntent,
 } from './release-flow.js';
 import { cornerTitleFromTask } from './corner-metadata.js';
-import { enableDeleteBranchOnMerge, observeCornerRemote } from './corner-github-lifecycle.js';
+import {
+  enableDeleteBranchOnMerge,
+  landedCornerSummary,
+  observeCornerRemote,
+} from './corner-github-lifecycle.js';
+import { targetContainsCornerPatch } from './review-content.js';
 
 const CAPTURED_AGENT_OUTPUTS = Symbol('captured-agent-outputs');
 const AGENT_ATTACHMENT_FAILURE_REPLY =
@@ -9702,7 +9708,7 @@ export class Body {
       const plan = info.session.activityProjection?.currentPlan() ?? info.session.resumePlan;
       const primary =
         state.outcome === 'landed'
-          ? `Landed${state.pr ? ` “${state.pr.title}” into ${state.pr.targetBranch}: ${state.pr.url}` : ` ${state.branch}`}.`
+          ? landedCornerSummary(state)
           : `Abandoned ${state.branch}; its remote branch was deleted.`;
       const content = dirty
         ? `${primary} The dirty worktree was preserved at ${info.worktreePath}.`
@@ -9720,6 +9726,7 @@ export class Body {
               ['pr-title', state.pr.title],
               ['url', state.pr.url],
               ['target-branch', state.pr.targetBranch],
+              ...(state.pr.mergedBy ? [['merged-by', state.pr.mergedBy]] : []),
             ]
           : []),
         ...(dirty ? [['worktree-preserved', info.worktreePath]] : []),
@@ -9789,6 +9796,43 @@ export class Body {
     if (!published) throw new Error('checks failing fact publication was not accepted');
   }
 
+  /**
+   * Prove that the corner's exact content already exists on the target ref.
+   * Direct ancestry covers ordinary merges; stable patch identity covers a
+   * squash whose target SHA necessarily differs from the corner SHA.
+   */
+  private async targetContainsCornerChange(
+    info: SubchannelInfo,
+    candidate: { branchTip: string; pull?: CornerPullRequestFact },
+  ): Promise<boolean> {
+    const repo = info.boundRepo;
+    if (!repo) return false;
+    const targetName =
+      candidate.pull?.targetBranch ?? repo.targetBranch?.replace(/^refs\/heads\//, '');
+    if (!targetName) return false;
+    const targetRef = targetName.startsWith('refs/') ? targetName : `refs/heads/${targetName}`;
+    const remote = repo.remoteName ?? 'origin';
+    const fetched = await this.remoteGit(repo, info.worktreePath, [
+      'fetch',
+      '--no-tags',
+      remote,
+      targetRef,
+    ]);
+    if (!fetched.ok) return false;
+    const targetTip = (await git(info.worktreePath, ['rev-parse', 'FETCH_HEAD'])).stdout.trim();
+    if (!/^[0-9a-f]{40}$/i.test(targetTip)) return false;
+
+    const preferredTip = candidate.pull?.headSha ?? candidate.branchTip;
+    const preferredExists = await git(info.worktreePath, [
+      'cat-file',
+      '-e',
+      `${preferredTip}^{commit}`,
+    ]);
+    const cornerTip = preferredExists.ok ? preferredTip : candidate.branchTip;
+    if (!/^[0-9a-f]{40}$/i.test(cornerTip)) return false;
+    return targetContainsCornerPatch(info.worktreePath, targetTip, cornerTip);
+  }
+
   private async observeOneCornerRemote(info: SubchannelInfo): Promise<void> {
     if (
       info.archived ||
@@ -9827,6 +9871,7 @@ export class Body {
         cornerId: info.subchannelId,
         featureBranch: info.featureBranch,
         token,
+        targetContainsChange: (candidate) => this.targetContainsCornerChange(info, candidate),
       });
       const branchAbsentBeforeFirstPush =
         observed.state === 'gone' && !info.remoteBranchSeen && !observed.pr;

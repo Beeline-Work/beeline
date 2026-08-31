@@ -91,10 +91,24 @@ describe('the corner line and the turn indicator are independent', () => {
   it('renders the two as separate, independently-gated lines', () => {
     // Neither is nested in the other's condition, so a Room can show one, the
     // other, both, or neither.
-    expect(chatSource).toContain('{!isArchived && cornerLiveBar && (');
+    expect(chatSource).toContain('{!isCorner && !isArchived && cornerLiveBar && (');
     expect(chatSource).toContain('{!isArchived && composerAck && (');
     expect(chatSource).toContain('<TurnProgressLine');
     expect(chatSource).toContain('label={composerAck.label}');
+  });
+
+  it('keeps the corner navigation line in the parent Room and names the human corner', () => {
+    const cornerLine = memoBody('cornerLiveBar');
+    expect(cornerLine).toContain('if (isCorner) return null');
+    expect(cornerLine).toContain('displayCornerTitle(');
+    expect(cornerLine).not.toContain('humanBranchName(');
+  });
+
+  it('uses one optimistic-send overlay for both Rooms and corners', () => {
+    expect(chatSource).toContain('useRoomSendFrame(durableMessages, committedMessageIds)');
+    expect(chatSource).not.toContain(
+      'useRoomSendFrame(durableMessages, committedMessageIds, isCorner)',
+    );
   });
 
   it('keeps the corner line the only tappable one', () => {

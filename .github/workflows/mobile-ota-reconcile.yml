@@ -1,0 +1,130 @@
+# Receipt-only maintenance. A green run here never means a release occurred.
+name: Mobile OTA receipt reconciliation (does not release)
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+  issues: write
+
+concurrency:
+  group: mobile-ota-receipt-reconciliation
+  cancel-in-progress: true
+
+jobs:
+  reconcile:
+    name: Confirm owner receipt only; no publish or promotion
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: State non-release scope in summary
+        run: |
+          {
+            echo "## Receipt reconciliation only"
+            echo
+            echo "This workflow cannot publish or promote an OTA update. Green means only that the receipt check completed."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Initialize runner-local path
+        run: echo "DELIVERY_INDEX=$RUNNER_TEMP/mobile-ota-delivery-index.json" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v4
+
+      - name: Locate latest delivery index
+        id: latest
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const artifacts = await github.rest.actions.listArtifactsForRepo({ owner: context.repo.owner, repo: context.repo.repo, name: 'mobile-ota-delivery-index', per_page: 100 });
+            const latest = artifacts.data.artifacts.filter((artifact) => !artifact.expired).sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+            if (!latest?.workflow_run?.id) return core.setFailed('No delivery index artifact exists.');
+            core.setOutput('run_id', String(latest.workflow_run.id));
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: mobile-ota-delivery-index
+          path: ${{ runner.temp }}/latest-index
+          run-id: ${{ steps.latest.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Query owner device and confirm matching production group
+        working-directory: apps/mobile
+        env:
+          OWNER_PUBKEY: ${{ secrets.MOBILE_OTA_OWNER_PUBKEY }}
+          RECEIPT_TOKEN: ${{ secrets.MOBILE_OTA_RECEIPT_TOKEN }}
+          RECEIPT_ORIGIN: ${{ vars.MOBILE_OTA_RECEIPT_ORIGIN || 'https://usebeeline.app/push' }}
+        run: |
+          set -euo pipefail
+          cp "$RUNNER_TEMP/latest-index/mobile-ota-delivery-index.json" "$DELIVERY_INDEX"
+          readarray -t delivery < <(node scripts/ota-release.mjs delivery-target --index "$DELIVERY_INDEX")
+          group="${delivery[0]#group_id=}"
+          updates="${delivery[1]#update_ids=}"
+          if [ -n "$group" ] && [ -n "$OWNER_PUBKEY" ] && [ -n "$RECEIPT_TOKEN" ]; then
+            if curl --fail --silent --show-error --max-time 15 \
+              -H "Authorization: Bearer $RECEIPT_TOKEN" \
+              "$RECEIPT_ORIGIN/update-receipts/$OWNER_PUBKEY" \
+              -o "$RUNNER_TEMP/owner-update-receipt.json"; then
+              node scripts/ota-release.mjs confirm --index "$DELIVERY_INDEX" \
+                --receipt "$RUNNER_TEMP/owner-update-receipt.json" --group "$group" --update-ids "$updates"
+            else
+              echo "Owner receipt endpoint unavailable; the next reconciliation will retry." >&2
+            fi
+          fi
+          node scripts/ota-release.mjs list-undelivered --index "$DELIVERY_INDEX" --output "$RUNNER_TEMP/mobile-ota-undelivered.json"
+
+      - name: Recheck canonical index before writing
+        id: latest_before_write
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const artifacts = await github.rest.actions.listArtifactsForRepo({ owner: context.repo.owner, repo: context.repo.repo, name: 'mobile-ota-delivery-index', per_page: 100 });
+            const latest = artifacts.data.artifacts.filter((artifact) => !artifact.expired).sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+            if (latest?.workflow_run?.id) core.setOutput('run_id', String(latest.workflow_run.id));
+
+      - name: Download a production index published during reconciliation
+        if: steps.latest_before_write.outputs.run_id != '' && steps.latest_before_write.outputs.run_id != steps.latest.outputs.run_id
+        uses: actions/download-artifact@v4
+        with:
+          name: mobile-ota-delivery-index
+          path: ${{ runner.temp }}/recheck-index
+          run-id: ${{ steps.latest_before_write.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Merge receipt proof without dropping a concurrent production release
+        if: steps.latest_before_write.outputs.run_id != '' && steps.latest_before_write.outputs.run_id != steps.latest.outputs.run_id
+        working-directory: apps/mobile
+        run: |
+          set -euo pipefail
+          cp "$DELIVERY_INDEX" "$RUNNER_TEMP/reconciled-overlay.json"
+          node scripts/ota-release.mjs merge-reconciliation \
+            --base "$RUNNER_TEMP/recheck-index/mobile-ota-delivery-index.json" \
+            --overlay "$RUNNER_TEMP/reconciled-overlay.json" \
+            --output "$DELIVERY_INDEX"
+          node scripts/ota-release.mjs list-undelivered --index "$DELIVERY_INDEX" --output "$RUNNER_TEMP/mobile-ota-undelivered.json"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mobile-ota-delivery-index
+          path: |
+            ${{ runner.temp }}/mobile-ota-delivery-index.json
+            ${{ runner.temp }}/mobile-ota-undelivered.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Close caught-up escalation
+        uses: actions/github-script@v7
+        env:
+          DELIVERY_INDEX: ${{ runner.temp }}/mobile-ota-delivery-index.json
+        with:
+          script: |
+            const fs = require('node:fs');
+            const index = JSON.parse(fs.readFileSync(process.env.DELIVERY_INDEX, 'utf8'));
+            if (index.merges.some((merge) => merge.state !== 'confirmed')) return;
+            const issues = await github.paginate(github.rest.issues.listForRepo, { owner: context.repo.owner, repo: context.repo.repo, state: 'open', per_page: 100 });
+            for (const issue of issues.filter((entry) => !entry.pull_request && entry.title === 'Undelivered merges')) {
+              await github.rest.issues.update({ owner: context.repo.owner, repo: context.repo.repo, issue_number: issue.number, state: 'closed', state_reason: 'completed' });
+            }

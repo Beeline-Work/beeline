@@ -1,9 +1,9 @@
 appId: app.usebeeline.mobile
-name: Beta OTA release canary
+name: OTA release canary
 env:
   EXPECTED_ANDROID_UPDATE_ID: ${EXPECTED_ANDROID_UPDATE_ID}
 ---
-# ota-canary.sh has already polled this exact update id and beta channel before
+# ota-canary.sh has already polled this exact update id and requested channel before
 # invoking Maestro. Start the product flow without repeating that proven gate.
 - pressKey: back
 - runFlow: smoke.yaml

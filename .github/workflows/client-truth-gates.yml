@@ -1,34 +1,100 @@
 name: Client truth gates
 
 on:
-  pull_request:
-    paths:
-      - 'packages/buzz-client/**'
-      - 'apps/push-gateway/src/room-indexer.ts'
-      - 'apps/push-gateway/src/room-indexer*.test.ts'
-      - 'apps/push-gateway/src/fixtures/production-room-events-*.json'
-      - 'apps/mobile/sources/buzz/**'
-      - 'apps/mobile/sources/sync/transport/**'
-      - 'apps/mobile/sources/app/(app)/buzz/chat/**'
-      - 'apps/body/src/durable-state.ts'
-      - 'apps/body/src/durable-state.test.ts'
-      - 'apps/body/src/fixtures/durable-state/**'
-      - 'package.json'
-      - 'package-lock.json'
-      - 'tsconfig.base.json'
-      - 'turbo.json'
-      - 'apps/mobile/package.json'
-      - 'apps/mobile/package-lock.json'
-      - 'apps/mobile/tsconfig.json'
-      - 'apps/mobile/app.config.js'
-      - '.github/workflows/client-truth-gates.yml'
+  pull_request: {}
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
+  # Each leg imports @beeline/buzz-client, which is built from
+  # @beeline/nostr — so a nostr-only diff must still run every leg below it
+  # in the workspace graph. STATE-UPGRADE additionally builds and imports
+  # @beeline/gate (durable-state.test.ts's `newIdentity`), which the other
+  # three legs never touch. See this PR's description for the full map.
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      mobileExportReachability: ${{ steps.filter.outputs.mobileExportReachability }}
+      productionCorpusReplay: ${{ steps.filter.outputs.productionCorpusReplay }}
+      frameBudget: ${{ steps.filter.outputs.frameBudget }}
+      stateUpgrade: ${{ steps.filter.outputs.stateUpgrade }}
+    steps:
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          # Each list is written out flat and explicit per job rather than
+          # composed from YAML anchors, so the diff-membership logic never
+          # depends on how dorny/paths-filter treats a nested-list merge.
+          filters: |
+            mobileExportReachability:
+              - 'packages/nostr/**'
+              - 'packages/buzz-client/**'
+              - 'apps/mobile/package.json'
+              - 'apps/mobile/package-lock.json'
+              - 'apps/mobile/tsconfig.json'
+              - 'apps/mobile/app.config.js'
+              - 'apps/mobile/sources/buzz/**'
+              - 'apps/mobile/sources/sync/transport/**'
+              - 'apps/mobile/sources/app/(app)/buzz/chat/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'tsconfig.base.json'
+              - 'turbo.json'
+              - '.github/workflows/client-truth-gates.yml'
+            productionCorpusReplay:
+              - 'packages/nostr/**'
+              - 'packages/buzz-client/**'
+              - 'apps/push-gateway/src/room-indexer.ts'
+              - 'apps/push-gateway/src/room-indexer*.test.ts'
+              - 'apps/push-gateway/src/fixtures/production-room-events-*.json'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'tsconfig.base.json'
+              - 'turbo.json'
+              - '.github/workflows/client-truth-gates.yml'
+            frameBudget:
+              - 'packages/nostr/**'
+              - 'packages/buzz-client/**'
+              - 'apps/mobile/package.json'
+              - 'apps/mobile/package-lock.json'
+              - 'apps/mobile/tsconfig.json'
+              - 'apps/mobile/app.config.js'
+              - 'apps/mobile/sources/buzz/**'
+              - 'apps/mobile/sources/sync/transport/**'
+              - 'apps/mobile/sources/app/(app)/buzz/chat/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'tsconfig.base.json'
+              - 'turbo.json'
+              - '.github/workflows/client-truth-gates.yml'
+            stateUpgrade:
+              - 'packages/nostr/**'
+              - 'packages/buzz-client/**'
+              - 'apps/gate/**'
+              - 'apps/mobile/package.json'
+              - 'apps/mobile/package-lock.json'
+              - 'apps/mobile/tsconfig.json'
+              - 'apps/mobile/app.config.js'
+              - 'apps/mobile/sources/buzz/**'
+              - 'apps/mobile/sources/sync/transport/**'
+              - 'apps/mobile/sources/app/(app)/buzz/chat/**'
+              - 'apps/body/src/durable-state.ts'
+              - 'apps/body/src/durable-state.test.ts'
+              - 'apps/body/src/fixtures/durable-state/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'tsconfig.base.json'
+              - 'turbo.json'
+              - '.github/workflows/client-truth-gates.yml'
+
   mobile-export-reachability:
     name: MOBILE-EXPORT REACHABILITY
+    needs: changes
+    if: needs.changes.outputs.mobileExportReachability == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -50,6 +116,8 @@ jobs:
 
   production-corpus-replay:
     name: PRODUCTION-CORPUS REPLAY
+    needs: changes
+    if: needs.changes.outputs.productionCorpusReplay == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -66,6 +134,8 @@ jobs:
 
   frame-budget:
     name: FRAME-BUDGET
+    needs: changes
+    if: needs.changes.outputs.frameBudget == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -86,6 +156,8 @@ jobs:
 
   state-upgrade:
     name: STATE-UPGRADE
+    needs: changes
+    if: needs.changes.outputs.stateUpgrade == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

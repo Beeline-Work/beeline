@@ -1,25 +1,44 @@
 name: Body test suite
 
 on:
-  pull_request:
-    paths:
-      - 'apps/body/**'
-      - 'packages/nostr/**'
-      - 'packages/buzz-client/**'
-      - 'apps/gate/**'
-      - 'package.json'
-      - 'package-lock.json'
-      - 'tsconfig.base.json'
-      - 'turbo.json'
-      - '.github/workflows/body-tests.yml'
+  pull_request: {}
   workflow_dispatch: {}
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
+  # A skipped (not absent) required job posts a passing check, so a diff
+  # that cannot touch @beeline/body still lets the PR merge — see the path
+  # map in this PR's description for how each category maps to a job.
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      body: ${{ steps.filter.outputs.body }}
+    steps:
+      - uses: dorny/paths-filter@v3
+        id: filter
+        if: github.event_name == 'pull_request'
+        with:
+          filters: |
+            body:
+              - 'apps/body/**'
+              - 'packages/nostr/**'
+              - 'packages/buzz-client/**'
+              - 'apps/gate/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'tsconfig.base.json'
+              - 'turbo.json'
+              - '.github/workflows/body-tests.yml'
+
   body-suite:
     name: BODY SUITE
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.body == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:

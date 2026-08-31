@@ -125,7 +125,7 @@ function parseMcpTools(stdout) {
     if (message.id !== 2) continue;
     return (message.result?.tools ?? []).map((tool) => tool.name);
   }
-  fail('installed buzz-readonly-mcp did not answer tools/list');
+  fail('installed beeline-readonly-mcp did not answer tools/list');
 }
 
 export function parseSquireAuthentication(received, proxyPath) {
@@ -200,8 +200,8 @@ async function main() {
       BEELINE_INSTALL_DIR: binDir,
       BEELINE_INSTALL_LIB_DIR: libDir,
     };
-    delete env.BUZZ_READONLY_MCP_BIN;
-    delete env.BUZZ_READONLY_MCP_SCRIPT;
+    delete env.BEELINE_READONLY_MCP_BIN;
+    delete env.BEELINE_READONLY_MCP_SCRIPT;
     delete env.BUZZ_DEV_MCP_BIN;
     delete env.BUZZ_AGENT_BIN;
 
@@ -211,7 +211,7 @@ async function main() {
     });
     if (
       !stripAnsi(installed.stdout).includes(
-        'beeline, buzz-agent, buzz-dev-mcp, and buzz-readonly-mcp',
+        'beeline, buzz-agent, buzz-dev-mcp, and beeline-readonly-mcp',
       )
     ) {
       fail(`installer success line omitted the read-only helper:\n${installed.stdout}`);
@@ -234,9 +234,9 @@ async function main() {
     await verifySquireProxy(agentToolProxy, bareCwd, runtimeEnv);
     await access(resolve(libDir, 'lib', 'beeline', 'pi-mcp-adapter.mjs'), constants.F_OK);
 
-    const probe = await run(resolve(binDir, 'buzz-readonly-mcp'), [], {
+    const probe = await run(resolve(binDir, 'beeline-readonly-mcp'), [], {
       cwd: bareCwd,
-      env: { ...runtimeEnv, BUZZ_READONLY_ROOT: bareCwd },
+      env: { ...runtimeEnv, BEELINE_READONLY_ROOT: bareCwd },
       input:
         JSON.stringify({
           jsonrpc: '2.0',
@@ -266,7 +266,7 @@ async function main() {
       agentEnv: {
         // The probe must mirror a real host launch (a login shell with node on
         // PATH): agentEnv is the ACP child's whole environment, and the
-        // buzz-readonly-mcp wrapper execs `node`.
+        // beeline-readonly-mcp wrapper execs `node`.
         PATH: process.env.PATH ?? '',
         BUZZ_AGENT_PROVIDER: 'openai',
         OPENAI_COMPAT_API_KEY: 'install-probe',
@@ -287,10 +287,10 @@ async function main() {
         mode: 'readonly',
         mcpServers: [
           {
-            name: 'buzz-readonly-mcp',
+            name: 'beeline-readonly-mcp',
             command: match[1],
             args: [],
-            env: [{ name: 'BUZZ_READONLY_ROOT', value: bareCwd }],
+            env: [{ name: 'BEELINE_READONLY_ROOT', value: bareCwd }],
           },
         ],
       });

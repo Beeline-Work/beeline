@@ -137,7 +137,7 @@ async function buildStubBundle(commit: string, version: string): Promise<StubBun
     });
   }
   await writeFile(
-    join(staging, 'bin', 'buzz-readonly-mcp'),
+    join(staging, 'bin', 'beeline-readonly-mcp'),
     stubBeelineWrapper().replace('beeline-cli.mjs', 'beeline-readonly-mcp.mjs'),
     { mode: 0o755 },
   );
@@ -273,20 +273,20 @@ function expectInstalledHelperForwarders(prefix: string, version: string): void 
     ).toMatchObject({ status: 0, stdout: expect.stringContaining(`${tool}-stub ${version}`) });
   }
 
-  const readonlyMcp = spawnSync(join(prefix, 'bin', 'buzz-readonly-mcp'), [], {
+  const readonlyMcp = spawnSync(join(prefix, 'bin', 'beeline-readonly-mcp'), [], {
     encoding: 'utf8',
     timeout: 30_000,
     env: { ...process.env, BEELINE_LIB_DIR: '' },
   });
   expect(
     { status: readonlyMcp.status ?? -1, stderr: readonlyMcp.stderr ?? '' },
-    `fresh-shell buzz-readonly-mcp failed\nstderr:\n${readonlyMcp.stderr ?? ''}`,
+    `fresh-shell beeline-readonly-mcp failed\nstderr:\n${readonlyMcp.stderr ?? ''}`,
   ).toMatchObject({ status: 0 });
 
   // Body gives buzz-agent the release wrapper path but an allowlisted env
   // without BEELINE_LIB_DIR. That direct launch must resolve the same entry.
   const directReadonlyMcp = spawnSync(
-    join(prefix, 'lib', 'beeline', 'bin', 'buzz-readonly-mcp'),
+    join(prefix, 'lib', 'beeline', 'bin', 'beeline-readonly-mcp'),
     [],
     {
       encoding: 'utf8',
@@ -296,7 +296,7 @@ function expectInstalledHelperForwarders(prefix: string, version: string): void 
   );
   expect(
     { status: directReadonlyMcp.status ?? -1, stderr: directReadonlyMcp.stderr ?? '' },
-    `direct bundle buzz-readonly-mcp failed\nstderr:\n${directReadonlyMcp.stderr ?? ''}`,
+    `direct bundle beeline-readonly-mcp failed\nstderr:\n${directReadonlyMcp.stderr ?? ''}`,
   ).toMatchObject({ status: 0 });
 }
 
@@ -422,7 +422,7 @@ describe('<prefix>/lib/beeline anchor contract', () => {
       await mkdir(join(releaseDir, 'lib', 'beeline'), { recursive: true });
       await mkdir(join(releaseDir, 'bin'), { recursive: true });
       await mkdir(join(prefix, 'bin'), { recursive: true });
-      for (const tool of ['beeline', 'buzz-agent', 'buzz-dev-mcp', 'buzz-readonly-mcp']) {
+      for (const tool of ['beeline', 'buzz-agent', 'buzz-dev-mcp', 'beeline-readonly-mcp']) {
         await writeFile(join(releaseDir, 'bin', tool), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
       }
       await symlink(join('beeline-releases', 'fix9'), join(prefix, 'lib', 'beeline'));
@@ -443,7 +443,7 @@ describe('<prefix>/lib/beeline anchor contract', () => {
       expect(rewritten).toContain('export BEELINE_LIB_DIR="$prefix_dir/lib/beeline"');
       expect(rewritten).toContain('exec "$prefix_dir/lib/beeline/bin/beeline" "$@"');
       // And every shipped tool got the same treatment.
-      for (const tool of ['buzz-agent', 'buzz-dev-mcp', 'buzz-readonly-mcp']) {
+      for (const tool of ['buzz-agent', 'buzz-dev-mcp', 'beeline-readonly-mcp']) {
         expect(await readFile(join(prefix, 'bin', tool), 'utf8')).toContain(
           `exec "$prefix_dir/lib/beeline/bin/${tool}" "$@"`,
         );

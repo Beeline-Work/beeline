@@ -15,7 +15,7 @@ by projecting agent activity into the relay channel.
 │   ├── Room B Body ──► killable Room/corner ACP processes     │
 │   └── bounded scheduler + durable per-channel inbox          │
 │                │                                             │
-│                ├── read mode MCP ──► buzz-readonly-mcp       │
+│                ├── read mode MCP ──► beeline-readonly-mcp   │
 │                ├── edit mode MCP ──► buzz-dev-mcp            │
 │                ├── opted-in Squire ─► host credential broker │
 │                └── batched session/update ──► relay          │
@@ -23,7 +23,7 @@ by projecting agent activity into the relay channel.
 ```
 
 - **TLC (read-only):** ACP session with Beeline's fixed
-  `buzz-readonly-mcp` inspection surface mounted. It can list and read files,
+  `beeline-readonly-mcp` inspection surface mounted. It can list and read files,
   perform bounded literal search, and inspect local commit history/diffs. It
   exposes no shell, raw git arguments, filesystem mutation, package install, or
   server process. The agent converses normally. Pure analysis, explanation,
@@ -116,23 +116,23 @@ Trusty Squire state still fails closed until the bubblewrap self-test passes.
 
 ## Configuration (env vars)
 
-| Variable                            | Required | Default                 | Description                                                                                                                                                                                                                                          |
-| ----------------------------------- | -------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `BUZZ_AGENT_BIN`                    | No       | explicit reference only | Reference `buzz-agent` override                                                                                                                                                                                                                      |
-| `BUZZ_DEV_MCP_BIN`                  | No       | auto-detect             | Path to `buzz-dev-mcp` binary                                                                                                                                                                                                                        |
-| `BUZZ_READONLY_MCP_BIN`             | No       | bundled/auto-detect     | Path to Beeline's inspection-only MCP                                                                                                                                                                                                                |
-| `BUZZY_RELAY_HOST`                  | No       | `usebeeline.app`        | Relay HTTP/WS host (`relay.buzzrouter.com` remains an accepted alias)                                                                                                                                                                                |
-| `BUZZY_RELAY_SCHEME`                | No       | `https`                 | Relay scheme                                                                                                                                                                                                                                         |
-| `BUZZY_BODY_WORKSPACE`              | No       | `./body-workspace`      | Agent workspace root                                                                                                                                                                                                                                 |
-| `BUZZY_BODY_LLM_FILE`               | No       | —                       | Path to LLM credentials env file                                                                                                                                                                                                                     |
-| `BUZZY_BODY_MAX_SESSIONS`           | No       | dynamic                 | Optional fixed Workspace-wide live ACP process ceiling                                                                                                                                                                                               |
-| `BUZZY_BODY_MAX_SESSIONS_PER_ROOM`  | No       | `10`                    | Per-Room live ACP ceiling; invalid values use 10. Higher values add resident-process RAM (typically hundreds of MB each) and can reach provider concurrency limits/HTTP 429 sooner; token spend is unchanged because queued corners do the same work |
-| `BUZZY_BODY_MAX_SESSIONS_FLOOR`     | No       | `4`                     | Minimum dynamic Workspace ceiling; actual ceiling is `max(floor, per-room × active Rooms)`                                                                                                                                                           |
-| `BUZZY_BODY_SESSION_IDLE_MS`        | No       | `300000`                | Idle time before process suspension                                                                                                                                                                                                                  |
-| `BUZZ_BODY_KEY`                     | No       | auto                    | Body operator Nostr nsec/hex                                                                                                                                                                                                                         |
-| `BUZZ_AGENT_KEY`                    | No       | —                       | Legacy provision/start override; `beeline pair` ignores it and always mints a fresh identity, unless `--use-env-key` opts into reusing it                                                                                                            |
-| `BUZZY_BODY_AUTO_APPROVE`           | No       | `1`                     | Auto-approve permissions inside edit corners only                                                                                                                                                                                                    |
-| `BUZZY_BODY_SANDBOX`                | No       | `bwrap`                 | `off` disables the bubblewrap OS sandbox for ACP children (overrides `runtime.json`'s `sandbox`)                                                                                                                                                     |
+| Variable                           | Required | Default                 | Description                                                                                                                                                                                                                                          |
+| ---------------------------------- | -------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BUZZ_AGENT_BIN`                   | No       | explicit reference only | Reference `buzz-agent` override                                                                                                                                                                                                                      |
+| `BUZZ_DEV_MCP_BIN`                 | No       | auto-detect             | Path to `buzz-dev-mcp` binary                                                                                                                                                                                                                        |
+| `BEELINE_READONLY_MCP_BIN`         | No       | bundled/auto-detect     | Path to Beeline's inspection-only MCP                                                                                                                                                                                                                |
+| `BUZZY_RELAY_HOST`                 | No       | `usebeeline.app`        | Relay HTTP/WS host (`relay.buzzrouter.com` remains an accepted alias)                                                                                                                                                                                |
+| `BUZZY_RELAY_SCHEME`               | No       | `https`                 | Relay scheme                                                                                                                                                                                                                                         |
+| `BUZZY_BODY_WORKSPACE`             | No       | `./body-workspace`      | Agent workspace root                                                                                                                                                                                                                                 |
+| `BUZZY_BODY_LLM_FILE`              | No       | —                       | Path to LLM credentials env file                                                                                                                                                                                                                     |
+| `BUZZY_BODY_MAX_SESSIONS`          | No       | dynamic                 | Optional fixed Workspace-wide live ACP process ceiling                                                                                                                                                                                               |
+| `BUZZY_BODY_MAX_SESSIONS_PER_ROOM` | No       | `10`                    | Per-Room live ACP ceiling; invalid values use 10. Higher values add resident-process RAM (typically hundreds of MB each) and can reach provider concurrency limits/HTTP 429 sooner; token spend is unchanged because queued corners do the same work |
+| `BUZZY_BODY_MAX_SESSIONS_FLOOR`    | No       | `4`                     | Minimum dynamic Workspace ceiling; actual ceiling is `max(floor, per-room × active Rooms)`                                                                                                                                                           |
+| `BUZZY_BODY_SESSION_IDLE_MS`       | No       | `300000`                | Idle time before process suspension                                                                                                                                                                                                                  |
+| `BUZZ_BODY_KEY`                    | No       | auto                    | Body operator Nostr nsec/hex                                                                                                                                                                                                                         |
+| `BUZZ_AGENT_KEY`                   | No       | —                       | Legacy provision/start override; `beeline pair` ignores it and always mints a fresh identity, unless `--use-env-key` opts into reusing it                                                                                                            |
+| `BUZZY_BODY_AUTO_APPROVE`          | No       | `1`                     | Auto-approve permissions inside edit corners only                                                                                                                                                                                                    |
+| `BUZZY_BODY_SANDBOX`               | No       | `bwrap`                 | `off` disables the bubblewrap OS sandbox for ACP children (overrides `runtime.json`'s `sandbox`)                                                                                                                                                     |
 
 For a remote-backed Room, origin is truth and the checkout under the supervisor
 repository cache is disposable. The daemon fetches that remote at Room join,
@@ -165,7 +165,7 @@ curl -fsSL https://usebeeline.app/install | sh
 ```
 
 The installer selects the platform bundle, verifies its checksum, and installs
-`beeline`, `buzz-agent`, `buzz-dev-mcp`, and `buzz-readonly-mcp` under `~/.local`. It is safe to run
+`beeline`, `buzz-agent`, `buzz-dev-mcp`, and `beeline-readonly-mcp` under `~/.local`. It is safe to run
 again and does not modify any existing `buzz` command. Ensure `~/.local/bin` is
 on `PATH`; the installer prints the exact export when it is not.
 
@@ -556,7 +556,7 @@ into the process environment.
 
 - **The boundary IS the MCP mount:** stock buzz-dev-mcp always registers `shell`,
   `str_replace`, etc. There is no env flag to disable write tools. The body
-  mounts its own narrow `buzz-readonly-mcp` in Rooms and never mounts
+  mounts its own narrow `beeline-readonly-mcp` in Rooms and never mounts
   `buzz-dev-mcp` there. The inspection server uses repository-root-contained
   read APIs and fixed local git commands; it has no shell or mutation tool. A
   Room ALLOW never approves the original tool against the paired checkout; it

@@ -4,7 +4,7 @@
  *
  * Reproduce them with `scripts/capture-acp-permissions.mjs`, which drives the
  * adapter exactly the way `src/acp.ts` does — `initialize`, then `session/new`
- * mounting one MCP server named `buzz-readonly-mcp` (a stub advertising the
+ * mounting one MCP server named `beeline-readonly-mcp` (a stub advertising the
  * same six tool names as `read-only-policy.ts`), then `session/prompt` — and
  * records every `session/request_permission` it sends. Only `sessionId` /
  * `toolCallId` values are as recorded; nothing else is edited.
@@ -15,8 +15,8 @@
  * with the tool's fully-qualified name as `title`, a `kind` of `other`, and the
  * tool's own arguments as `rawInput` — no `_meta.is_mcp_tool_approval`, no
  * `rawInput.server`, no `rawInput.tool`. And the name is spelled
- * `mcp__<server>__<tool>`, not `mcp.<server>.<tool>`: a double underscore, which
- * matches none of the dot/slash/space suffix forms. Those are the two facts
+ * `mcp__<normalized_server>__<tool>`, not `mcp.<server>.<tool>`: punctuation in
+ * the server name and the separators are underscores. Those are the two facts
  * that decided whether the reported `read_file` / `git_log` / `git_show` calls
  * were allowed, and both are recorded here rather than assumed.
  *
@@ -35,7 +35,7 @@ export const CLAUDE_ACP_MCP_READ_FILE_PERMISSION = {
   toolCall: {
     toolCallId: 'toolu_01X5rknhKdLzoRCzZWyjZ4Lm',
     rawInput: { path: 'README.md' },
-    title: 'mcp__buzz-readonly-mcp__read_file',
+    title: 'mcp__beeline_readonly_mcp__read_file',
     kind: 'other',
     content: [],
   },
@@ -52,7 +52,7 @@ export const CLAUDE_ACP_MCP_GIT_SHOW_PERMISSION = {
   toolCall: {
     toolCallId: 'toolu_01GL9JRhrFLz5pp4e6erhqg2',
     rawInput: { revision: 'HEAD' },
-    title: 'mcp__buzz-readonly-mcp__git_show',
+    title: 'mcp__beeline_readonly_mcp__git_show',
     kind: 'other',
     content: [],
   },
@@ -69,7 +69,7 @@ export const CLAUDE_ACP_MCP_GIT_LOG_PERMISSION = {
   toolCall: {
     toolCallId: 'toolu_019JEBchtoeQGhGYnCj1SnCs',
     rawInput: { limit: 3 },
-    title: 'mcp__buzz-readonly-mcp__git_log',
+    title: 'mcp__beeline_readonly_mcp__git_log',
     kind: 'other',
     content: [],
   },
@@ -88,9 +88,7 @@ export const CLAUDE_ACP_NATIVE_WRITE_PERMISSION = {
     rawInput: { file_path: '/tmp/beeline-probe.txt', content: 'hi' },
     title: 'Write /tmp/beeline-probe.txt',
     kind: 'edit',
-    content: [
-      { type: 'diff', path: '/tmp/beeline-probe.txt', oldText: null, newText: 'hi' },
-    ],
+    content: [{ type: 'diff', path: '/tmp/beeline-probe.txt', oldText: null, newText: 'hi' }],
     locations: [{ path: '/tmp/beeline-probe.txt' }],
   },
 } as const;
@@ -108,9 +106,7 @@ export const CLAUDE_ACP_NATIVE_BASH_PERMISSION = {
     rawInput: { command: 'npm run typecheck', description: 'Run repository typecheck' },
     title: 'npm run typecheck',
     kind: 'execute',
-    content: [
-      { type: 'content', content: { type: 'text', text: 'Run repository typecheck' } },
-    ],
+    content: [{ type: 'content', content: { type: 'text', text: 'Run repository typecheck' } }],
   },
 } as const;
 
@@ -139,7 +135,11 @@ export const CODEX_ACP_MCP_READ_FILE_PERMISSION = {
   _meta: { is_mcp_tool_approval: true },
   toolCall: {
     kind: 'execute',
-    title: 'mcp.buzz-readonly-mcp.read_file',
-    rawInput: { server: 'buzz-readonly-mcp', tool: 'read_file', arguments: { path: 'README.md' } },
+    title: 'mcp.beeline-readonly-mcp.read_file',
+    rawInput: {
+      server: 'beeline-readonly-mcp',
+      tool: 'read_file',
+      arguments: { path: 'README.md' },
+    },
   },
 } as const;

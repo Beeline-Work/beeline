@@ -125,7 +125,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/buzz-client
+      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client
       - name: Install mobile dependencies
         working-directory: apps/mobile
         run: npm ci
@@ -156,7 +156,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/buzz-client
+      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client
       # Replay the sanitized production event capture through the server indexer,
       # then validate and page the paint-ready DTO through the new client contract.
       - run: npm test -w @beeline/push-gateway -- --run src/room-indexer.production-corpus.test.ts
@@ -182,7 +182,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/buzz-client
+      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client
       # The isolated mobile app resolves `expo/tsconfig.base.json` (vitest's
       # tsconfig parse) and its file-linked @beeline/* deps only from its own
       # node_modules — a root-only npm ci never provides it.
@@ -212,7 +212,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/buzz-client
+      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client
       # The body durable-state suite imports @beeline/gate's package entry,
       # which only resolves from its built dist.
       - run: npm run build -w @beeline/gate

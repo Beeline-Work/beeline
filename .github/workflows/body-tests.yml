@@ -81,9 +81,9 @@ jobs:
       # namespaces (common under AppArmor hardening).
       - run: sudo apt-get update && sudo apt-get install -y bubblewrap
       - run: npm ci
-      # apps/body imports these three workspaces from their built dist, not
+      # apps/body imports these workspaces from their built dist, not
       # their TS source (package.json "main"/"exports" point at dist/).
-      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/buzz-client && npm run build -w @beeline/gate
+      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client && npm run build -w @beeline/gate
       - name: Run the hermetic Body suite
         working-directory: apps/body
         run: npx vitest run

@@ -1,0 +1,11 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM"],
+    "outDir": "../node_modules/@beeline/api-contract/dist",
+    "rootDir": "../node_modules/@beeline/api-contract/src",
+    "preserveSymlinks": true
+  },
+  "include": ["../node_modules/@beeline/api-contract/src/**/*"],
+  "exclude": ["../node_modules/@beeline/api-contract/src/**/*.test.ts"]
+}

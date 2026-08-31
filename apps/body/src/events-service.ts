@@ -182,10 +182,7 @@ export async function discoverRepositoryIngestionTargets(
       if (existing) {
         if (!existing.rooms.includes(room.channelId)) existing.rooms.push(room.channelId);
         if (!existing.roomProvisioners.has(room.channelId)) {
-          existing.roomProvisioners.set(
-            room.channelId,
-            runtimeIdentity(runtime.agent),
-          );
+          existing.roomProvisioners.set(room.channelId, runtimeIdentity(runtime.agent));
         }
         existing.targetBranches.add(room.repo.targetBranch.replace(/^refs\/heads\//, ''));
         continue;
@@ -202,9 +199,7 @@ export async function discoverRepositoryIngestionTargets(
         relayBaseUrl: runtime.relayBaseUrl,
         relayHost: runtime.relayHost ?? new URL(runtime.relayBaseUrl).host,
         rooms: [room.channelId],
-        roomProvisioners: new Map([
-          [room.channelId, runtimeIdentity(runtime.agent)],
-        ]),
+        roomProvisioners: new Map([[room.channelId, runtimeIdentity(runtime.agent)]]),
         targetBranches: new Set([room.repo.targetBranch.replace(/^refs\/heads\//, '')]),
       });
     }
@@ -348,6 +343,7 @@ function activityCard(
   event: RepositoryEvent,
   now: number,
 ): NostrEvent {
+  const lifecycleHint = event.type === 'lifecycle-hint';
   return signEvent(
     {
       pubkey: identity.publicKey,
@@ -355,7 +351,7 @@ function activityCard(
       kind: 9,
       tags: [
         ['h', roomId],
-        ['t', 'agent-message'],
+        ...(lifecycleHint ? [] : [['t', 'agent-message']]),
         ['t', GITHUB_EVENT_TAG],
         ['repo', target.fullName],
         ['workspace', target.workspaceId],
@@ -363,8 +359,8 @@ function activityCard(
         ['github-event-type', event.type],
         ['github-event-action', event.action],
         ['github-event-actor', event.actor],
-        ['github-event-title', event.title],
-        ['github-event-url', event.url],
+        ...(event.title ? [['github-event-title', event.title]] : []),
+        ...(event.url ? [['github-event-url', event.url]] : []),
         ['github-event-id', event.id],
       ],
       // The typed fields above are the only card contract. Deliberately do

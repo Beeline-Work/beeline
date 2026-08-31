@@ -256,3 +256,36 @@ export function latestPublishedDelivery(indexPath) {
   if (!merge) return null;
   return { groupId: merge.published.groupId, updateIds: merge.published.updateIds };
 }
+
+export function mergeReconciliation(options) {
+  if (!options.base || !options.overlay || !options.output) {
+    invalid('merge-reconciliation requires --base, --overlay, and --output');
+  }
+  const base = readDeliveryIndex(options.base);
+  const overlay = readDeliveryIndex(options.overlay);
+  const bySha = new Map(base.merges.map((merge) => [merge.sha, merge]));
+  const overlayOnly = [];
+
+  for (const observed of overlay.merges) {
+    const current = bySha.get(observed.sha);
+    if (!current) {
+      overlayOnly.push(observed);
+      bySha.set(observed.sha, observed);
+      continue;
+    }
+    if (
+      observed.state === 'confirmed' &&
+      current.state === 'published' &&
+      observed.confirmed?.groupId === current.published?.groupId
+    ) {
+      current.state = 'confirmed';
+      current.confirmed = observed.confirmed;
+    }
+  }
+
+  // Reconciliation starts from an older index, so any overlay-only entries
+  // precede the latest production index. Keep the newest merge last because
+  // initDelivery uses that entry as its Git discovery boundary.
+  base.merges = [...overlayOnly, ...base.merges];
+  writeDeliveryIndex(options.output, base);
+}

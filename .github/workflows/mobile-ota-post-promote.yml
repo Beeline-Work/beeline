@@ -1,0 +1,276 @@
+# Full Android rehearsal of the bytes already promoted by mobile-ota.yml.
+# A failed rehearsal restores the recorded predecessor only when production
+# still points at the failed group; a newer release always wins.
+name: Mobile OTA post-promotion rehearsal and guarded rollback
+
+on:
+  workflow_call:
+    inputs:
+      source_run_id:
+        type: string
+        required: true
+      source_sha:
+        type: string
+        required: true
+      production_group_id:
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Production-delivery workflow run containing the exact ledger
+        type: string
+        required: true
+      source_sha:
+        description: Main commit that was promoted
+        type: string
+        required: true
+      production_group_id:
+        description: Exact production group to rehearse
+        type: string
+        required: true
+
+permissions:
+  actions: write
+  contents: read
+  issues: write
+
+jobs:
+  canary:
+    name: Full Maestro smoke on promoted production bytes
+    runs-on: [self-hosted, beeline-prod-host]
+    timeout-minutes: 20
+    outputs:
+      reason: ${{ steps.rehearsal.outputs.reason }}
+      exit_code: ${{ steps.rehearsal.outputs.exit_code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Download exact promoted ledger
+        uses: actions/download-artifact@v4
+        with:
+          name: mobile-ota-ledger-${{ inputs.source_run_id }}
+          path: ${{ runner.temp }}/promoted-release
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Verify dispatch matches signed release artifact
+        working-directory: apps/mobile
+        env:
+          EXPECTED_SHA: ${{ inputs.source_sha }}
+          EXPECTED_GROUP: ${{ inputs.production_group_id }}
+          RUN_LEDGER: ${{ runner.temp }}/promoted-release/mobile-ota-ledger.json
+        run: |
+          set -euo pipefail
+          node - "$RUN_LEDGER" "$EXPECTED_SHA" "$EXPECTED_GROUP" <<'NODE'
+            const ledger = require(process.argv[2]);
+            if (ledger.sourceSha !== process.argv[3]) throw new Error('source SHA input does not match ledger');
+            if (ledger.production?.groupId !== process.argv[4]) throw new Error('production group input does not match ledger');
+            if (ledger.production?.sourceGroupId !== ledger.candidateGroupId) throw new Error('ledger does not prove exact-group promotion');
+          NODE
+
+      - name: Install mobile dependencies and build SDKs
+        working-directory: apps/mobile
+        run: |
+          npm ci
+          npm run eas-build-post-install
+
+      - name: Run full post-promotion Android rehearsal
+        id: rehearsal
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN_SECRET: ${{ secrets.EXPO_TOKEN }}
+          ANDROID_HOME: /home/lunchbox/android-sdk
+          OTA_CANARY_REASON_FILE: ${{ runner.temp }}/ota-canary-reason.txt
+          RUN_LEDGER: ${{ runner.temp }}/promoted-release/mobile-ota-ledger.json
+        run: |
+          set -euo pipefail
+          if [ -n "$EXPO_TOKEN_SECRET" ]; then export EXPO_TOKEN="$EXPO_TOKEN_SECRET"; fi
+          rm -f "$OTA_CANARY_REASON_FILE"
+          started="$(date +%s)"
+          set +e
+          scripts/ota-canary.sh --ledger "$RUN_LEDGER" --promoted
+          canary_status=$?
+          set -e
+          elapsed="$(( $(date +%s) - started ))"
+          reason="post-promotion rehearsal passed"
+          if [ "$canary_status" -ne 0 ]; then
+            reason="ota-canary.sh exited ${canary_status} after ${elapsed}s"
+            if [ -s "$OTA_CANARY_REASON_FILE" ]; then
+              detail="$(head -n 1 "$OTA_CANARY_REASON_FILE" | cut -c1-400)"
+              reason="${reason}: ${detail}"
+            fi
+          fi
+          echo "exit_code=$canary_status" >> "$GITHUB_OUTPUT"
+          echo "reason=$reason" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Post-promotion rehearsal"
+            echo
+            echo "- Production group: \`${{ inputs.production_group_id }}\`"
+            echo "- Source main: \`${{ inputs.source_sha }}\`"
+            echo "- Full rehearsal: ${elapsed}s"
+            echo "- Result: ${reason}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$canary_status"
+
+      - name: Store post-promotion rehearsal evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-ota-post-promote-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/ota-canary-reason.txt
+            ${{ runner.temp }}/promoted-release/mobile-ota-ledger.json
+          if-no-files-found: warn
+          retention-days: 90
+
+  rollback:
+    name: Restore predecessor if failed group is still live
+    needs: canary
+    if: always() && needs.canary.result == 'failure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Download exact promoted ledger for rollback authority
+        uses: actions/download-artifact@v4
+        with:
+          name: mobile-ota-ledger-${{ inputs.source_run_id }}
+          path: ${{ runner.temp }}/promoted-release
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Guarded automatic rollback
+        id: rollback
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN_SECRET: ${{ secrets.EXPO_TOKEN }}
+          FAILED_GROUP: ${{ inputs.production_group_id }}
+          RUN_LEDGER: ${{ runner.temp }}/promoted-release/mobile-ota-ledger.json
+          ROLLBACK_LEDGER: ${{ runner.temp }}/mobile-ota-rollback.json
+        run: |
+          set -euo pipefail
+          if [ -n "$EXPO_TOKEN_SECRET" ]; then export EXPO_TOKEN="$EXPO_TOKEN_SECRET"; fi
+          if [ -z "${EXPO_TOKEN:-}" ]; then echo "EXPO_TOKEN is unavailable for automatic rollback." >&2; exit 2; fi
+          PREVIOUS_GROUP="$(node -e '
+            const ledger = require(process.argv[1]);
+            if (ledger.production?.groupId !== process.argv[2]) throw new Error("failed group input does not match release ledger");
+            if (!ledger.previousProductionGroupId) throw new Error("promoted ledger has no predecessor to restore");
+            process.stdout.write(ledger.previousProductionGroupId);
+          ' "$RUN_LEDGER" "$FAILED_GROUP")"
+          if [ -z "$PREVIOUS_GROUP" ]; then echo "Promoted ledger has no predecessor to restore." >&2; exit 2; fi
+          node scripts/ota-release.mjs rollback \
+            --group "$PREVIOUS_GROUP" \
+            --expected-current-group "$FAILED_GROUP" \
+            --ledger "$ROLLBACK_LEDGER"
+          node - "$ROLLBACK_LEDGER" >> "$GITHUB_STEP_SUMMARY" <<'NODE'
+            const ledger = require(process.argv[2]);
+            console.log('## Automatic rollback');
+            console.log('');
+            if (ledger.status === 'rolled-back') {
+              console.log(`Restored predecessor \`${ledger.sourceGroupId}\` as production group \`${ledger.productionGroupId}\`.`);
+            } else {
+              console.log(`Rollback skipped safely because production now points at \`${ledger.observedCurrentGroupId ?? 'unknown'}\`, not the failed group.`);
+            }
+          NODE
+
+      - name: Store rollback proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-ota-auto-rollback-${{ github.run_id }}
+          path: ${{ runner.temp }}/mobile-ota-rollback.json
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Put every affected merge and failure reason in escalation
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          FAILED_GROUP: ${{ inputs.production_group_id }}
+          FAILURE_REASON: ${{ needs.canary.outputs.reason }}
+        with:
+          script: |
+            const failureReason = process.env.FAILURE_REASON || 'post-promotion rehearsal job failed before the canary could report a reason';
+            const artifacts = await github.rest.actions.listArtifactsForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'mobile-ota-delivery-index',
+              per_page: 100,
+            });
+            const indexArtifact = artifacts.data.artifacts
+              .filter((artifact) => !artifact.expired)
+              .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+            const undelivered = [];
+            if (indexArtifact) {
+              const download = await github.rest.actions.downloadArtifact({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                artifact_id: indexArtifact.id,
+                archive_format: 'zip',
+              });
+              const fs = require('node:fs');
+              const path = require('node:path');
+              const zip = path.join(process.env.RUNNER_TEMP, 'source-index.zip');
+              fs.writeFileSync(zip, Buffer.from(download.data));
+              const { execFileSync } = require('node:child_process');
+              const out = path.join(process.env.RUNNER_TEMP, 'source-index');
+              fs.mkdirSync(out, { recursive: true });
+              execFileSync('unzip', ['-q', zip, '-d', out]);
+              const index = JSON.parse(fs.readFileSync(path.join(out, 'mobile-ota-delivery-index.json'), 'utf8'));
+              undelivered.push(...index.merges.filter((merge) => merge.state !== 'confirmed'));
+            }
+            const all = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner, repo: context.repo.repo, state: 'all', per_page: 100,
+            });
+            const canonical = all.find((issue) => !issue.pull_request && issue.title === 'Undelivered merges');
+            const rows = undelivered.length > 0
+              ? undelivered.map((merge) => {
+                  const failedGroup = merge.published?.groupId === process.env.FAILED_GROUP;
+                  const failure = merge.failures?.at(-1);
+                  const reason = failedGroup
+                    ? failureReason
+                    : failure
+                      ? `${failure.class}: ${failure.reason}`
+                      : merge.state === 'published'
+                        ? 'awaiting owner-device receipt'
+                        : 'awaiting production delivery';
+                  return `| \`${merge.sha.slice(0, 12)}\` | ${failedGroup ? 'post-promote failed' : merge.state} | ${reason.replaceAll('|', '\\|')} |`;
+                })
+              : [`| \`${{ inputs.source_sha }}\` | post-promote failed | ${failureReason.replaceAll('|', '\\|')} |`];
+            const hasFailedGroup = undelivered.some((merge) => merge.published?.groupId === process.env.FAILED_GROUP);
+            const report = [
+              'The full rehearsal failed on bytes already promoted to the owner production group. Guarded automatic rollback ran; these merges must ride the next production promotion.',
+              '',
+              `Failed production group: \`${process.env.FAILED_GROUP}\``,
+              '',
+              '| Commit | State | Reason |',
+              '|---|---|---|',
+              ...rows,
+              '',
+              `Source delivery run: ${process.env.SOURCE_RUN_ID}. Post-promotion run: ${context.runId}.`,
+            ].join('\n');
+            if (canonical) {
+              if (hasFailedGroup && canonical.state !== 'open') {
+                await github.rest.issues.update({ owner: context.repo.owner, repo: context.repo.repo, issue_number: canonical.number, state: 'open' });
+              }
+              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: canonical.number, body: report });
+            } else if (hasFailedGroup) {
+              await github.rest.issues.create({ owner: context.repo.owner, repo: context.repo.repo, title: 'Undelivered merges', body: report });
+            }

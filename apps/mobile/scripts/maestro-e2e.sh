@@ -13,6 +13,7 @@ readonly REPO_DIR
 readonly APK="$MOBILE_DIR/android/app/build/outputs/apk/release/app-release.apk"
 readonly FLOW="${MAESTRO_FLOW:-$MOBILE_DIR/e2e/smoke.yaml}"
 readonly EXPECTED_UPDATE_ID="${EXPECTED_ANDROID_UPDATE_ID:-}"
+readonly EXPECTED_UPDATE_CHANNEL="${EXPECTED_UPDATE_CHANNEL:-beta}"
 readonly UPDATE_IDENTITY_TIMEOUT="${MAESTRO_UPDATE_IDENTITY_TIMEOUT_SECONDS:-10}"
 
 reply_fixture_pid=""
@@ -46,6 +47,10 @@ fi
 
 if [[ -z "$EXPECTED_UPDATE_ID" ]]; then
   echo "Maestro environment error: EXPECTED_ANDROID_UPDATE_ID is required; refusing to run any flow without identifying the JS update on $DEVICE." >&2
+  exit 2
+fi
+if [[ "$EXPECTED_UPDATE_CHANNEL" != "beta" && "$EXPECTED_UPDATE_CHANNEL" != "production" ]]; then
+  echo "Maestro environment error: EXPECTED_UPDATE_CHANNEL must be beta or production (got $EXPECTED_UPDATE_CHANNEL)." >&2
   exit 2
 fi
 if ! [[ "$UPDATE_IDENTITY_TIMEOUT" =~ ^[0-9]+$ ]] ||
@@ -109,15 +114,15 @@ verify_running_update_identity() {
       )"
       observed_update="${observed_update:-unavailable}"
       observed_channel="${observed_channel:-unavailable}"
-      if [[ "$observed_update" == "$EXPECTED_UPDATE_ID" && "$observed_channel" == "beta" ]]; then
-        echo "Maestro update identity verified: $EXPECTED_UPDATE_ID (channel beta)."
+      if [[ "$observed_update" == "$EXPECTED_UPDATE_ID" && "$observed_channel" == "$EXPECTED_UPDATE_CHANNEL" ]]; then
+        echo "Maestro update identity verified: $EXPECTED_UPDATE_ID (channel $EXPECTED_UPDATE_CHANNEL)."
         return 0
       fi
     fi
     sleep 1
   done
 
-  echo "Maestro environment error: refusing to run $FLOW because $APP_ID on $DEVICE reported update '$observed_update' on channel '$observed_channel'; expected '$EXPECTED_UPDATE_ID' on channel 'beta'." >&2
+  echo "Maestro environment error: refusing to run $FLOW because $APP_ID on $DEVICE reported update '$observed_update' on channel '$observed_channel'; expected '$EXPECTED_UPDATE_ID' on channel '$EXPECTED_UPDATE_CHANNEL'." >&2
   return 2
 }
 

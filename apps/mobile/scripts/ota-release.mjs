@@ -10,6 +10,7 @@ import {
   listUndelivered,
   markBuilt,
   markPublished,
+  mergeReconciliation,
   readJson,
   recordFailure,
   writeJson,
@@ -215,8 +216,8 @@ function publish(options) {
 }
 
 function markCanary(options) {
-  if (!['passed', 'skipped', 'blocked'].includes(options.status)) {
-    fail('mark-canary --status must be passed, skipped, or blocked');
+  if (!['passed', 'post-promote', 'blocked'].includes(options.status)) {
+    fail('mark-canary --status must be passed, post-promote, or blocked');
   }
   const reason = typeof options.reason === 'string' ? options.reason.trim() : '';
   if (options.status === 'blocked' && !reason) {
@@ -235,12 +236,12 @@ function markCanary(options) {
 function promote(options) {
   const ledger = readLedger(options.ledger);
   if (ledger.status !== 'beta') fail(`Cannot promote ledger status ${ledger.status}.`);
-  if (!['passed', 'skipped'].includes(ledger.canary?.status)) {
+  if (!['passed', 'post-promote'].includes(ledger.canary?.status)) {
     const parked =
       ledger.canary?.status === 'blocked' && ledger.canary.reason
         ? ` Promotion is parked: ${ledger.canary.reason}`
         : '';
-    fail(`Refusing production promotion before a passed or explicitly skipped canary.${parked}`);
+    fail(`Refusing production promotion without a passed or explicitly post-promote canary.${parked}`);
   }
   const message = `promote beta ${ledger.candidateGroupId} (${ledger.sourceSha.slice(0, 12)})`;
   const result = runEas(
@@ -287,6 +288,42 @@ function promote(options) {
   }
 }
 
+function assertPromotion(options) {
+  const ledger = readLedger(options.ledger);
+  if (ledger.status !== 'production') {
+    fail(`Production promotion did not complete; ledger status is ${ledger.status}.`);
+  }
+  if (
+    !ledger.candidateGroupId ||
+    !ledger.production?.groupId ||
+    ledger.production.sourceGroupId !== ledger.candidateGroupId ||
+    !Array.isArray(ledger.production.updates) ||
+    ledger.production.updates.length === 0
+  ) {
+    fail('Production promotion proof is incomplete or does not name the exact beta source group.');
+  }
+  const platforms = new Set(ledger.production.updates.map((update) => update.platform));
+  if (!platforms.has('android') || !platforms.has('ios')) {
+    fail('Production promotion proof must contain both Android and iOS updates.');
+  }
+
+  if (options.index) {
+    const index = readJson(options.index);
+    const head = index.merges?.find((merge) => merge.sha === ledger.sourceSha);
+    if (
+      !head ||
+      !['published', 'confirmed'].includes(head.state) ||
+      head.published?.groupId !== ledger.production.groupId
+    ) {
+      fail('Delivery index does not prove that the current main head was published to production.');
+    }
+  }
+
+  console.log(`production_group_id=${ledger.production.groupId}`);
+  console.log(`source_group_id=${ledger.production.sourceGroupId}`);
+  console.log(`source_sha=${ledger.sourceSha}`);
+}
+
 function deliveryTarget(options) {
   const delivery = latestPublishedDelivery(options.index) ?? { groupId: '', updateIds: [] };
   const lines = [`group_id=${delivery.groupId}`, `update_ids=${delivery.updateIds.join(',')}`];
@@ -295,6 +332,29 @@ function deliveryTarget(options) {
 
 function rollback(options) {
   if (!options.group) fail('rollback requires --group');
+  if (options.expectedCurrentGroup) {
+    const current = runEas(
+      ['update:list', '--branch', 'production', '--limit', '1', '--json', '--non-interactive'],
+      { dryRun: options.dryRun },
+    );
+    if (!options.dryRun) {
+      const currentGroup = firstGroupId(current);
+      if (currentGroup !== options.expectedCurrentGroup) {
+        writeLedger(options.ledger, {
+          schemaVersion: 1,
+          status: 'rollback-skipped-superseded',
+          sourceGroupId: options.group,
+          expectedCurrentGroupId: options.expectedCurrentGroup,
+          observedCurrentGroupId: currentGroup,
+          recordedAt: isoNow(),
+        });
+        console.log(
+          `Rollback skipped: production moved from ${options.expectedCurrentGroup} to ${currentGroup ?? 'unknown'}.`,
+        );
+        return;
+      }
+    }
+  }
   const message = `rollback production to ${options.group}`;
   const result = runEas(
     [
@@ -339,6 +399,9 @@ try {
     case 'promote':
       promote(options);
       break;
+    case 'assert-promotion':
+      assertPromotion(options);
+      break;
     case 'rollback':
       rollback(options);
       break;
@@ -357,9 +420,12 @@ try {
     case 'delivery-target':
       deliveryTarget(options);
       break;
+    case 'merge-reconciliation':
+      mergeReconciliation(options);
+      break;
     default:
       fail(
-        'Usage: ota-release.mjs <init-delivery|publish|mark-canary|promote|rollback|record-failure|confirm|list-undelivered|classify-failure|delivery-target> [options]',
+        'Usage: ota-release.mjs <init-delivery|publish|mark-canary|promote|assert-promotion|rollback|record-failure|confirm|list-undelivered|classify-failure|delivery-target|merge-reconciliation> [options]',
       );
   }
 } catch (error) {

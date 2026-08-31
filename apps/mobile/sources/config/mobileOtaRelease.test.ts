@@ -16,6 +16,18 @@ const workflow = readFileSync(
   resolve(mobileRoot, '../../.github/workflows/mobile-ota.yml'),
   'utf8',
 );
+const postPromoteWorkflow = readFileSync(
+  resolve(mobileRoot, '../../.github/workflows/mobile-ota-post-promote.yml'),
+  'utf8',
+);
+const reconcileWorkflow = readFileSync(
+  resolve(mobileRoot, '../../.github/workflows/mobile-ota-reconcile.yml'),
+  'utf8',
+);
+const rollbackWorkflow = readFileSync(
+  resolve(mobileRoot, '../../.github/workflows/mobile-ota-rollback.yml'),
+  'utf8',
+);
 
 function runRelease(args: string[], env: Record<string, string> = {}) {
   return spawnSync(process.execPath, [releaseScript, ...args], {
@@ -68,6 +80,21 @@ describe('mobile OTA release governor', () => {
     ]);
     expect(rollback.status).toBe(0);
     expect(rollback.stdout).toContain(
+      'update:republish --group known-good-group --destination-branch production',
+    );
+    const guardedRollback = runRelease([
+      'rollback',
+      '--dry-run',
+      '--group',
+      'known-good-group',
+      '--expected-current-group',
+      'failed-production-group',
+      '--ledger',
+      ledger,
+    ]);
+    expect(guardedRollback.status).toBe(0);
+    expect(guardedRollback.stdout).toContain('update:list --branch production');
+    expect(guardedRollback.stdout).toContain(
       'update:republish --group known-good-group --destination-branch production',
     );
   }, 60_000);
@@ -135,6 +162,110 @@ esac
     });
   }, 60_000);
 
+  it('fails loudly unless the ledger and delivery index prove exact production promotion', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-assert-promotion-'));
+    const ledgerPath = join(directory, 'ledger.json');
+    const indexPath = join(directory, 'index.json');
+    const sha = 'a'.repeat(40);
+    const production = {
+      sourceGroupId: 'candidate-group',
+      groupId: 'production-group',
+      updates: [
+        { id: 'prod-android', platform: 'android' },
+        { id: 'prod-ios', platform: 'ios' },
+      ],
+    };
+    writeFileSync(ledgerPath, JSON.stringify({
+      status: 'production',
+      sourceSha: sha,
+      candidateGroupId: 'candidate-group',
+      production,
+    }));
+    writeFileSync(indexPath, JSON.stringify({
+      schemaVersion: 1,
+      merges: [{ sha, state: 'published', published: { groupId: 'production-group' } }],
+    }));
+
+    const proved = runRelease([
+      'assert-promotion', '--ledger', ledgerPath, '--index', indexPath,
+    ]);
+    expect(proved.status).toBe(0);
+    expect(proved.stdout).toContain('production_group_id=production-group');
+    expect(proved.stdout).toContain(`source_sha=${sha}`);
+
+    writeFileSync(indexPath, JSON.stringify({
+      schemaVersion: 1,
+      merges: [{ sha, state: 'built' }],
+    }));
+    const missing = runRelease([
+      'assert-promotion', '--ledger', ledgerPath, '--index', indexPath,
+    ]);
+    expect(missing.status).toBe(1);
+    expect(missing.stderr).toContain('does not prove that the current main head was published');
+  });
+
+  it('never lets a stale failed canary roll back a newer production group', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-guarded-rollback-'));
+    const ledgerPath = join(directory, 'rollback.json');
+    const callsPath = join(directory, 'calls.log');
+    const fakeEas = join(directory, 'fake-eas.sh');
+    writeFileSync(
+      fakeEas,
+      `#!/bin/sh
+printf '%s\\n' "$*" >> "${callsPath}"
+case "$1" in
+  update:list) printf '[{"id":"new-android","platform":"android","group":"newer-production"}]\\n' ;;
+  update:republish) printf '[{"id":"rollback-android","platform":"android","group":"rollback-group"},{"id":"rollback-ios","platform":"ios","group":"rollback-group"}]\\n' ;;
+  *) exit 9 ;;
+esac
+`,
+    );
+    chmodSync(fakeEas, 0o755);
+
+    const result = runRelease([
+      'rollback', '--group', 'known-good', '--expected-current-group', 'failed-production',
+      '--ledger', ledgerPath,
+    ], { EAS_CLI_PATH: fakeEas });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('Rollback skipped');
+    expect(readFileSync(callsPath, 'utf8')).not.toContain('update:republish');
+    expect(JSON.parse(readFileSync(ledgerPath, 'utf8'))).toMatchObject({
+      status: 'rollback-skipped-superseded',
+      expectedCurrentGroupId: 'failed-production',
+      observedCurrentGroupId: 'newer-production',
+    });
+  });
+
+  it('records an automatic rollback only when the failed group is still production', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-automatic-rollback-'));
+    const ledgerPath = join(directory, 'rollback.json');
+    const fakeEas = join(directory, 'fake-eas.sh');
+    writeFileSync(
+      fakeEas,
+      `#!/bin/sh
+case "$1" in
+  update:list) printf '[{"id":"failed-android","platform":"android","group":"failed-production"}]\\n' ;;
+  update:republish) printf '[{"id":"rollback-android","platform":"android","group":"rollback-group"},{"id":"rollback-ios","platform":"ios","group":"rollback-group"}]\\n' ;;
+  *) exit 9 ;;
+esac
+`,
+    );
+    chmodSync(fakeEas, 0o755);
+
+    const result = runRelease([
+      'rollback', '--group', 'known-good', '--expected-current-group', 'failed-production',
+      '--ledger', ledgerPath,
+    ], { EAS_CLI_PATH: fakeEas });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(readFileSync(ledgerPath, 'utf8'))).toMatchObject({
+      status: 'rolled-back',
+      sourceGroupId: 'known-good',
+      productionGroupId: 'rollback-group',
+    });
+  });
+
   it('tracks every merge through pending, built, published, and physical-device confirmation', () => {
     const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-delivery-index-'));
     const ledgerPath = join(directory, 'ledger.json');
@@ -193,7 +324,7 @@ esac
     expect(JSON.parse(readFileSync(ledgerPath, 'utf8')).delivery.state).toBe('confirmed');
   }, 60_000);
 
-  it('classifies three failed attempts and keeps them queryable for one escalation', () => {
+  it('classifies failed attempts and keeps every undelivered merge queryable for escalation', () => {
     const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-failures-'));
     const ledgerPath = join(directory, 'ledger.json');
     const indexPath = join(directory, 'index.json');
@@ -226,7 +357,8 @@ esac
     expect(workflow).toContain("title: 'Undelivered merges'");
     expect(workflow).toContain('if (attempt >= 3)');
     expect(workflow).toContain('createWorkflowDispatch');
-    expect(workflow).toContain('maxFailures < 3');
+    expect(workflow).not.toContain('maxFailures < 3');
+    expect(workflow).toContain("else await github.rest.issues.create");
     expect(deliveryIndexScript).toContain("['merge-base', '--is-ancestor', lastTracked, head]");
     expect(deliveryIndexScript).toContain('`${rangeStart}..${head}`');
   }, 60_000);
@@ -312,13 +444,64 @@ esac
 
     expect(result.status).toBe(0);
     expect(result.stdout).toBe('group_id=current\nupdate_ids=android,ios\n');
-    expect(workflow.match(/ota-release\.mjs delivery-target/g)).toHaveLength(2);
+    expect(`${workflow}\n${reconcileWorkflow}`.match(/ota-release\.mjs delivery-target/g)).toHaveLength(2);
 
     index.merges[1].state = 'confirmed';
     writeFileSync(indexPath, JSON.stringify(index));
     expect(runRelease(['delivery-target', '--index', indexPath]).stdout).toBe(
       'group_id=\nupdate_ids=\n',
     );
+  });
+
+  it('rebases receipt confirmation onto a concurrent release without dropping its merges', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-reconcile-race-'));
+    const basePath = join(directory, 'base.json');
+    const overlayPath = join(directory, 'overlay.json');
+    const outputPath = join(directory, 'output.json');
+    const overlayOnlySha = '4'.repeat(40);
+    const staleSha = '5'.repeat(40);
+    const matchingSha = '6'.repeat(40);
+    const newSha = '7'.repeat(40);
+    writeFileSync(basePath, JSON.stringify({
+      schemaVersion: 1,
+      merges: [
+        { sha: staleSha, state: 'published', published: { groupId: 'new-group' } },
+        { sha: matchingSha, state: 'published', published: { groupId: 'same-group' } },
+        { sha: newSha, state: 'published', published: { groupId: 'new-group' } },
+      ],
+    }));
+    writeFileSync(overlayPath, JSON.stringify({
+      schemaVersion: 1,
+      merges: [
+        { sha: overlayOnlySha, state: 'confirmed', confirmed: { groupId: 'old-group' } },
+        {
+          sha: staleSha,
+          state: 'confirmed',
+          confirmed: { groupId: 'old-group', deviceId: 'owner-device' },
+        },
+        {
+          sha: matchingSha,
+          state: 'confirmed',
+          confirmed: { groupId: 'same-group', deviceId: 'owner-device' },
+        },
+      ],
+    }));
+
+    const result = runRelease([
+      'merge-reconciliation', '--base', basePath, '--overlay', overlayPath, '--output', outputPath,
+    ]);
+
+    expect(result.status).toBe(0);
+    const merged = JSON.parse(readFileSync(outputPath, 'utf8'));
+    expect(merged.merges).toHaveLength(4);
+    expect(merged.merges[0].sha).toBe(overlayOnlySha);
+    expect(merged.merges.at(-1).sha).toBe(newSha);
+    expect(merged.merges.find((merge: { sha: string }) => merge.sha === staleSha).state).toBe('published');
+    expect(merged.merges.find((merge: { sha: string }) => merge.sha === matchingSha)).toMatchObject({
+      state: 'confirmed',
+      confirmed: { groupId: 'same-group' },
+    });
+    expect(merged.merges.find((merge: { sha: string }) => merge.sha === newSha).state).toBe('published');
   });
 
   it('does not confirm delivery from a non-physical or unrelated receipt', () => {
@@ -348,33 +531,63 @@ esac
     expect(JSON.parse(readFileSync(indexPath, 'utf8')).merges[0].state).toBe('published');
   });
 
-  it('reconciles owner receipts without hardcoding an identity or bypassing the canary', () => {
-    expect(workflow).toContain('MOBILE_OTA_OWNER_PUBKEY');
-    expect(workflow).toContain('MOBILE_OTA_RECEIPT_TOKEN');
-    expect(workflow).toContain("cron: '*/15 * * * *'");
-    expect(workflow).toContain('node scripts/ota-release.mjs confirm');
-    expect(workflow.indexOf('Run Android beta canary')).toBeLessThan(
-      workflow.indexOf('Promote the canary-proven bytes to production'),
-    );
+  it('splits receipt-only reconciliation from production delivery conclusions', () => {
+    expect(reconcileWorkflow).toContain('MOBILE_OTA_OWNER_PUBKEY');
+    expect(reconcileWorkflow).toContain('MOBILE_OTA_RECEIPT_TOKEN');
+    expect(reconcileWorkflow).toContain("cron: '*/15 * * * *'");
+    expect(reconcileWorkflow).toContain('node scripts/ota-release.mjs confirm');
+    expect(reconcileWorkflow).toContain('does not release');
+    expect(reconcileWorkflow).not.toContain('ota-release.mjs promote');
+    expect(reconcileWorkflow).toContain('Recheck canonical index before writing');
+    expect(reconcileWorkflow).toContain('ota-release.mjs merge-reconciliation');
+    expect(workflow).not.toContain("cron: '*/15 * * * *'");
     expect(workflow).not.toMatch(/branches: \[main\][\s\S]{0,120}paths:/);
   });
 
-  it('keeps canary before promotion and exposes an off-by-default emergency bypass', () => {
-    expect(workflow).toContain('default: false');
-    expect(workflow).toContain('scripts/ota-canary.sh');
-    expect(workflow).toContain('node scripts/ota-release.mjs promote');
-    expect(workflow.indexOf('scripts/ota-canary.sh')).toBeLessThan(
-      workflow.indexOf('node scripts/ota-release.mjs promote'),
-    );
-    expect(workflow).toContain("artifact.name.startsWith('mobile-ota-ledger-')");
-    expect(workflow).toContain('previousProductionGroupId');
-    expect(workflow).toContain('github.paginate(github.rest.actions.listWorkflowRuns');
+  it('makes a commanded run measure and enforce trigger-to-promotion under ten minutes', () => {
+    expect(workflow).toContain('getWorkflowRun');
+    expect(workflow).toContain("core.exportVariable('TRIGGER_EPOCH'");
+    expect(workflow).toContain('trigger_to_promotion');
+    expect(workflow).toContain('Mobile OTA delivery timing');
+    expect(workflow).toContain('if [ "$elapsed" -ge 600 ]');
+    expect(workflow).toContain('assert-promotion --ledger "$RUN_LEDGER" --index "$DELIVERY_INDEX"');
+    expect(workflow).toContain('**NOT DELIVERED:** production promotion proof was not produced.');
+    expect(workflow).toContain("delivered: ${{ steps.promotion.outcome == 'success' }}");
+    expect(workflow).toContain("needs.release.outputs.delivered != 'true'");
   });
 
-  it('bounds the canary and tests the candidate runtime without rebuilding native code', () => {
+  it('runs validation beside candidate export and safely supersedes stale cumulative releases', () => {
+    expect(workflow).toContain('Validate while exporting and publishing the beta candidate');
+    expect(workflow).toContain('validation_pid=$!');
+    expect(workflow).toContain('wait "$validation_pid"');
+    expect(workflow).toContain('parallel_candidate_wall');
+    expect(workflow).toMatch(/group: mobile-ota-production-delivery\s+cancel-in-progress: true/);
+    expect(workflow).toContain('--before "$PUSH_BEFORE"');
+    expect(deliveryIndexScript).toContain("['merge-base', '--is-ancestor', lastTracked, head]");
+  });
+
+  it('promotes before dispatching the full rehearsal and arms guarded rollback', () => {
+    expect(workflow).not.toContain('skip_canary');
+    expect(workflow).toContain('--status post-promote');
+    expect(workflow).toContain('node scripts/ota-release.mjs promote');
+    expect(workflow.indexOf('node scripts/ota-release.mjs promote')).toBeLessThan(
+      workflow.indexOf('uses: ./.github/workflows/mobile-ota-post-promote.yml'),
+    );
+    expect(postPromoteWorkflow).toContain('scripts/ota-canary.sh --ledger "$RUN_LEDGER" --promoted');
+    expect(workflow).toContain("if: always() && steps.promotion.outcome == 'success'");
+    expect(workflow).toContain("if: always() && needs.release.outputs.delivered == 'true'");
+    expect(postPromoteWorkflow).toContain('workflow_call:');
+    expect(postPromoteWorkflow).toContain('--expected-current-group "$FAILED_GROUP"');
+    expect(postPromoteWorkflow).toContain("needs.canary.result == 'failure'");
+    expect(rollbackWorkflow).toContain("artifact.name.startsWith('mobile-ota-ledger-')");
+  });
+
+  it('bounds the canary and tests either the beta or promoted production runtime without rebuilding native code', () => {
     expect(canaryScript).toContain('MAX_SECONDS="${OTA_CANARY_MAX_SECONDS:-600}"');
     expect(canaryScript).toContain('MAX_SECONDS > 600');
-    expect(canaryScript).toContain('--build-profile beta-apk');
+    expect(canaryScript).toContain('BUILD_PROFILE="beta-apk"');
+    expect(canaryScript).toContain('BUILD_PROFILE="production-apk"');
+    expect(canaryScript).toContain('--build-profile "$BUILD_PROFILE"');
     expect(canaryScript).toContain('--runtime-version "$android_runtime"');
     expect(canaryScript).toContain('MAESTRO_SKIP_BUILD=1');
     expect(canaryScript).toContain('EXPECTED_ANDROID_UPDATE_ID="$android_update"');
@@ -391,7 +604,8 @@ esac
   it('makes update identity a mandatory gate before every requested Maestro flow', () => {
     expect(maestroScript).toContain('EXPECTED_ANDROID_UPDATE_ID is required');
     expect(maestroScript).toContain('verify_running_update_identity');
-    expect(maestroScript).toContain('$observed_channel" == "beta"');
+    expect(maestroScript).toContain('$observed_channel" == "$EXPECTED_UPDATE_CHANNEL"');
+    expect(maestroScript).toContain('EXPECTED_UPDATE_CHANNEL must be beta or production');
     expect(maestroScript.indexOf('verify_running_update_identity')).toBeLessThan(
       maestroScript.indexOf('npx tsx scripts/provision-smoke.ts'),
     );
@@ -476,6 +690,31 @@ esac
       return ledger;
     }
 
+    function writeProductionLedger(directory: string): string {
+      const ledger = join(directory, 'ledger.json');
+      writeFileSync(
+        ledger,
+        JSON.stringify({
+          status: 'production',
+          sourceSha: '1234567890abcdef',
+          candidateGroupId: 'candidate-group',
+          production: {
+            sourceGroupId: 'candidate-group',
+            groupId: 'production-group',
+            updates: [
+              {
+                id: 'production-android',
+                platform: 'android',
+                group: 'production-group',
+                runtimeVersion: '21',
+              },
+            ],
+          },
+        }),
+      );
+      return ledger;
+    }
+
     function stubAdbSdk(directory: string, devicesOutput: string): string {
       const platformTools = join(directory, 'platform-tools');
       mkdirSync(platformTools, { recursive: true });
@@ -525,6 +764,25 @@ esac
       expect(result.status).toBe(2);
       expect(result.stderr).toContain('BEELINE_BETA_APK');
       expect(result.stderr).toContain('missing.apk');
+    }, 60_000);
+
+    it('selects the production APK and promoted Android identity for post-promotion rehearsal', () => {
+      const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-promoted-apk-'));
+      const sdkRoot = stubAdbSdk(
+        directory,
+        'List of devices attached\nemulator-5554\tdevice',
+      );
+      const ledger = writeProductionLedger(directory);
+
+      const result = runCanary(['--ledger', ledger, '--promoted'], {
+        ANDROID_HOME: sdkRoot,
+        BEELINE_PRODUCTION_APK: join(directory, 'missing-production.apk'),
+      });
+
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain('BEELINE_PRODUCTION_APK');
+      expect(result.stderr).toContain('production-channel APK');
+      expect(result.stderr).not.toContain('missing the production group or Android update id');
     }, 60_000);
 
     it('resolves the runner-local Maestro install when the non-login PATH omits it', () => {
@@ -1107,34 +1365,29 @@ esac
     });
   }, 60_000);
 
-  it('the workflow parks the ledger record on canary failure and pins where adb lives', () => {
-    expect(workflow).toContain('ANDROID_HOME: /home/lunchbox/android-sdk');
-    expect(workflow).toContain("--status blocked");
-    expect(workflow.indexOf('--status blocked')).toBeLessThan(
-      workflow.indexOf('node scripts/ota-release.mjs promote'),
-    );
-    expect(workflow).toMatch(/Store run release ledger[\s\S]*?if: always\(\) && steps\.initialize\.outcome == 'success'/);
+  it('the post-promotion workflow pins adb and escalates every failed promoted group', () => {
+    expect(postPromoteWorkflow).toContain('ANDROID_HOME: /home/lunchbox/android-sdk');
+    expect(postPromoteWorkflow).toContain('Put every affected merge and failure reason in escalation');
+    expect(postPromoteWorkflow).toContain("index.merges.filter((merge) => merge.state !== 'confirmed')");
+    expect(postPromoteWorkflow).toContain("merge.published?.groupId === process.env.FAILED_GROUP");
+    expect(postPromoteWorkflow).toContain('Guarded automatic rollback');
+    expect(workflow).toMatch(/Store release ledger, timings, and promotion proof[\s\S]*?if: always\(\) && steps\.initialize\.outcome == 'success'/);
   });
 
   it('the workflow records a self-describing parked reason even when the canary dies before its own handlers', () => {
     // The canary is told where to publish its one-line parked reason...
-    expect(workflow).toContain('OTA_CANARY_REASON_FILE:');
+    expect(postPromoteWorkflow).toContain('OTA_CANARY_REASON_FILE:');
     // ...stale reasons are cleared before the run...
-    expect(workflow).toContain('rm -f "$OTA_CANARY_REASON_FILE"');
-    // ...and a failure folds that line into the ledger reason, falling back to
-    // an exit-code classification when the shell died before writing anything.
-    const canaryStep = workflow.slice(
-      workflow.indexOf('Run Android beta canary'),
-      workflow.indexOf('Record captain-ordered canary skip'),
+    expect(postPromoteWorkflow).toContain('rm -f "$OTA_CANARY_REASON_FILE"');
+    // ...and a failure folds that line into the escalation reason, falling
+    // back to the exit status when the shell died before writing anything.
+    const canaryStep = postPromoteWorkflow.slice(
+      postPromoteWorkflow.indexOf('Run full post-promotion Android rehearsal'),
+      postPromoteWorkflow.indexOf('Store post-promotion rehearsal evidence'),
     );
     expect(canaryStep).toContain('head -n 1 "$OTA_CANARY_REASON_FILE"');
-    expect(canaryStep).toContain('environment/setup failure');
-    expect(canaryStep).toContain('ten-minute canary deadline fired');
-    expect(canaryStep).toContain('canary flow failure');
-    // Blocked is recorded BEFORE the step re-exits with the canary's status.
-    expect(canaryStep.indexOf('--status blocked')).toBeLessThan(
-      canaryStep.indexOf('exit "$canary_status"'),
-    );
+    expect(canaryStep).toContain('ota-canary.sh exited ${canary_status}');
+    expect(canaryStep).toContain('exit "$canary_status"');
   });
 
   it('the canary script owns the parked-reason contract for every preflight stage', () => {
@@ -1146,9 +1399,9 @@ esac
     // config, ledger missing/shape, EAS listing, empty build list, download,
     // supplied APK missing, install/pm-clear/launch/warm-up device failures.
     expect(parkCalls).toBeGreaterThanOrEqual(14);
-    // The empty-beta-apk-build parking names the exact remediation.
-    expect(canaryScript).toContain('no finished beta-apk Android build');
-    expect(canaryScript).toContain('build --profile beta-apk --platform android --non-interactive');
+    // The empty channel-matched APK parking names the exact remediation.
+    expect(canaryScript).toContain('no finished ${BUILD_PROFILE} Android build');
+    expect(canaryScript).toContain('build --profile ${BUILD_PROFILE} --platform android --non-interactive');
   });
 
   it('a provisioning-bootstrap death parks self-describingly instead of exiting as a generic smoke failure', () => {

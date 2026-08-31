@@ -1,0 +1,87 @@
+name: Mobile OTA rollback recovery (does not release current main)
+
+on:
+  workflow_dispatch:
+    inputs:
+      rollback_group:
+        description: Optional known-good source group; defaults to the latest release ledger predecessor
+        type: string
+        required: false
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  rollback:
+    name: Republish last-known-good production group
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Find latest successful production-delivery ledger
+        if: inputs.rollback_group == ''
+        id: ledger_run
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const runs = await github.paginate(github.rest.actions.listWorkflowRuns, { owner: context.repo.owner, repo: context.repo.repo, workflow_id: 'mobile-ota.yml', status: 'success', per_page: 100 });
+            for (const run of runs) {
+              const artifacts = await github.rest.actions.listWorkflowRunArtifacts({ owner: context.repo.owner, repo: context.repo.repo, run_id: run.id });
+              if (artifacts.data.artifacts.some((artifact) => artifact.name.startsWith('mobile-ota-ledger-') && !artifact.expired)) {
+                core.setOutput('run_id', String(run.id)); return;
+              }
+            }
+            core.setFailed('No non-expired successful Mobile OTA production-delivery ledger was found.');
+
+      - name: Download last-known-good ledger
+        if: inputs.rollback_group == ''
+        uses: actions/download-artifact@v4
+        with:
+          pattern: mobile-ota-ledger-*
+          path: ${{ runner.temp }}/last-good
+          merge-multiple: true
+          run-id: ${{ steps.ledger_run.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Resolve rollback source group
+        id: rollback_source
+        env:
+          EXPLICIT_GROUP: ${{ inputs.rollback_group }}
+        run: |
+          set -euo pipefail
+          group="$EXPLICIT_GROUP"
+          if [ -z "$group" ]; then
+            group="$(node -e '
+              const fs = require("node:fs"); const path = require("node:path");
+              const root = process.argv[1];
+              const file = fs.readdirSync(root, { recursive: true }).find((entry) => entry.endsWith("mobile-ota-ledger.json"));
+              if (!file) throw new Error("downloaded artifact has no mobile-ota-ledger.json");
+              const ledger = JSON.parse(fs.readFileSync(path.join(root, file), "utf8"));
+              if (!ledger.previousProductionGroupId) throw new Error("release ledger has no previousProductionGroupId");
+              process.stdout.write(ledger.previousProductionGroupId);
+            ' "$RUNNER_TEMP/last-good")"
+          fi
+          echo "group_id=$group" >> "$GITHUB_OUTPUT"
+
+      - name: Republish rollback group to production
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN_SECRET: ${{ secrets.EXPO_TOKEN }}
+          ROLLBACK_GROUP: ${{ steps.rollback_source.outputs.group_id }}
+        run: |
+          set -euo pipefail
+          if [ -n "$EXPO_TOKEN_SECRET" ]; then export EXPO_TOKEN="$EXPO_TOKEN_SECRET"; fi
+          if [ -z "${EXPO_TOKEN:-}" ]; then exit 2; fi
+          node scripts/ota-release.mjs rollback --group "$ROLLBACK_GROUP" --ledger "$RUNNER_TEMP/mobile-ota-rollback.json"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mobile-ota-rollback-${{ github.run_id }}
+          path: ${{ runner.temp }}/mobile-ota-rollback.json
+          if-no-files-found: error
+          retention-days: 90

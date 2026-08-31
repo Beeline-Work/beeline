@@ -1530,7 +1530,7 @@ esac
     expect(replyFixture).toContain("['status', status]");
     expect(replyFixture).toContain("'Agent is thinking…' : 'Agent reply complete.'");
     expect(replyFixture).toMatch(
-      /SMOKE CORNER PHASE READY[\s\S]*?publishCornerTurnStatus\(cornerPhaseRequest\.id, 'working'\)[\s\S]*?SMOKE CORNER STEER[\s\S]*?publishCornerTurnStatus\(cornerPhaseRequest\.id, 'complete'\)/,
+      /SMOKE CORNER PHASE READY[\s\S]*?publishCornerTurnStatus\(cornerPhaseRequest\.id, 'working'\)[\s\S]*?SMOKE CORNER STEER[\s\S]*?publishCornerRemoteState\('in-review', \{ checks: 'failing' \}\)[\s\S]*?SMOKE CHECKS GREEN[\s\S]*?publishCornerRemoteState\('in-review', \{ checks: 'passing' \}\)[\s\S]*?SMOKE GH MERGE[\s\S]*?publishCornerRemoteState\('gone', \{ outcome: 'landed' \}\)/,
     );
     const cornerPhaseCheckpoint = replyFixture.indexOf(
       'const cornerPhaseRequest = await waitForRelayMessage(',
@@ -1619,7 +1619,7 @@ esac
 
     expect(smoke.match(/SMOKE AGENT ROOM REPLY\.\*/g)).toHaveLength(1);
     expect(smoke).toMatch(
-      /visible: "\.\*still accepting input"[\s\S]*?timeout: 1000\n\n# Selecting Beebee[\s\S]*?- eraseText/,
+      /inputText: ['"] still accepting input['"][\s\S]*?visible: ['"]\.\*still accepting input['"][\s\S]*?timeout: 1000[\s\S]*?- eraseText/,
     );
   });
 

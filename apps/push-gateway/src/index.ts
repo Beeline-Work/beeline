@@ -11,6 +11,7 @@ import { TokenRegistry } from './registry.js';
 import { RoomIndexer } from './room-indexer.js';
 import { createRegistrationServer } from './server.js';
 import { startHostedRepositoryEvents } from './hosted-events.js';
+import { readDaemonReleaseFleetStatus } from '@beeline/body/release-status';
 
 async function main(): Promise<void> {
   const config = loadPushGatewayConfig();
@@ -76,6 +77,11 @@ async function main(): Promise<void> {
         return gateway.sendTestNotification(pubkey);
       },
       pushHealth: () => pushHealth,
+      releaseStatus: async () => ({
+        version: process.env.BEELINE_RELEASE_VERSION,
+        sourceSha: process.env.BEELINE_RELEASE_SHA,
+        daemons: await readDaemonReleaseFleetStatus(process.env),
+      }),
       otaReceiptAdminToken: config.otaReceiptAdminToken,
       indexer: {
         publicOrigin: config.indexerPublicOrigin,

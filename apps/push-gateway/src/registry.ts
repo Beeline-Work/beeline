@@ -11,6 +11,8 @@ export interface DeviceUpdateReceipt {
   channel: string | null;
   group: string | null;
   runtimeVersion: string | null;
+  releaseVersion: string | null;
+  sourceSha: string | null;
   environment: 'physical' | 'emulator';
   reportedAt: string;
 }
@@ -44,8 +46,13 @@ export class TokenRegistry {
       }
       if (parsed.version === 2 && Array.isArray(parsed.updateReceipts)) {
         for (const receipt of parsed.updateReceipts) {
-          if (!TokenRegistry.validReceipt(receipt)) continue;
-          registry.updateReceipts.set(`${receipt.pubkey}:${receipt.deviceId}`, receipt);
+          const migrated = {
+            ...receipt,
+            releaseVersion: receipt.releaseVersion ?? null,
+            sourceSha: receipt.sourceSha ?? null,
+          };
+          if (!TokenRegistry.validReceipt(migrated)) continue;
+          registry.updateReceipts.set(`${migrated.pubkey}:${migrated.deviceId}`, migrated);
         }
       }
     } catch (error) {
@@ -70,6 +77,8 @@ export class TokenRegistry {
       (receipt.channel === null || (receipt.channel.length > 0 && receipt.channel.length <= 128)) &&
       (receipt.group === null || /^[0-9a-z-]{8,128}$/i.test(receipt.group)) &&
       (receipt.runtimeVersion === null || receipt.runtimeVersion.length <= 128) &&
+      (receipt.releaseVersion === null || /^v\d+\.\d+\.\d+$/.test(receipt.releaseVersion)) &&
+      (receipt.sourceSha === null || /^[0-9a-f]{7,64}$/.test(receipt.sourceSha)) &&
       ['physical', 'emulator'].includes(receipt.environment) &&
       !Number.isNaN(Date.parse(receipt.reportedAt))
     );

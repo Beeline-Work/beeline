@@ -207,6 +207,8 @@ export default {
                 consoleLoggingDefault,
                 buildCommitSha: buildMetadata.commitSha,
                 buildCommitTimestamp: buildMetadata.commitTimestamp,
+                releaseVersion: process.env.EXPO_PUBLIC_BEELINE_RELEASE_VERSION,
+                releaseSha: process.env.EXPO_PUBLIC_BEELINE_RELEASE_SHA || buildMetadata.commitSha,
                 buzzyRelayUrl,
                 buzzyPushGatewayUrl,
             }

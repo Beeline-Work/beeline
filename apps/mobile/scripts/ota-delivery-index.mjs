@@ -109,6 +109,7 @@ export function initDelivery(options) {
     schemaVersion: 2,
     status: 'pending',
     sourceSha: options.sha,
+    ...(options.releaseVersion ? { releaseVersion: options.releaseVersion } : {}),
     sourceRef: options.ref,
     createdAt: isoNow(),
     delivery: { state: 'pending', runId: options.runId, attempt },
@@ -134,6 +135,7 @@ export function markPublished(indexPath, publication) {
       groupId: publication.groupId,
       updateIds: publication.updateIds,
       headSha: publication.headSha,
+      releaseVersion: publication.releaseVersion,
       publishedAt: publication.publishedAt,
     };
   }
@@ -203,6 +205,8 @@ export function confirmDelivery(options) {
   const receipt = devices.find(
     (device) =>
       device?.environment === 'physical' &&
+      (!options.releaseVersion || device.releaseVersion === options.releaseVersion) &&
+      (!options.sha || device.sourceSha === options.sha) &&
       (device.group === options.group || (device.updateId && updateIds.has(device.updateId))),
   );
   if (!receipt) return { confirmed: false, groupId: options.group };
@@ -218,6 +222,8 @@ export function confirmDelivery(options) {
       channel: receipt.channel ?? null,
       deviceId: receipt.deviceId,
       reportedAt: receipt.reportedAt,
+      releaseVersion: receipt.releaseVersion ?? null,
+      sourceSha: receipt.sourceSha ?? null,
       confirmedAt: isoNow(),
     };
     count += 1;
@@ -254,7 +260,12 @@ export function latestPublishedDelivery(indexPath) {
     .merges.filter((entry) => entry.state === 'published')
     .at(-1);
   if (!merge) return null;
-  return { groupId: merge.published.groupId, updateIds: merge.published.updateIds };
+  return {
+    groupId: merge.published.groupId,
+    updateIds: merge.published.updateIds,
+    releaseVersion: merge.published.releaseVersion ?? merge.releaseVersion ?? '',
+    sourceSha: merge.published.headSha ?? merge.sha,
+  };
 }
 
 export function mergeReconciliation(options) {

@@ -244,7 +244,7 @@ signal and archives the corner. Repository-less corners still use
 - **Agent memory** (\`$BUZZY_AGENT_MEMORY_DIR\`): yours alone, persists across
   sessions, Rooms, and restarts within this Workspace, and writable even in a
   read-only Room. Read \`MEMORY.md\`, then replace it with the complete curated
-  contents through \`buzz-readonly-mcp.write_memory\`. Shell writes to memory
+  contents through \`beeline-readonly-mcp.write_memory\`. Shell writes to memory
   are always denied. It is not a
   license to write anywhere else and must never hold
   secrets or credentials.

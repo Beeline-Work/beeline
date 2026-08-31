@@ -182,6 +182,64 @@ describe('room event projection', () => {
     });
   });
 
+  it('projects a corner-open daemon fact with its human name and objective', () => {
+    const cornerId = '80a5a6f1-fb5a-493b-93eb-f3db33f696e6';
+    expect(
+      projectEvent(
+        {
+          id: 'corner-open',
+          kind: 9,
+          agent: true,
+          pubkey: 'a'.repeat(64),
+          createdAt: 13,
+          tags: [
+            ['h', 'room'],
+            ['t', 'daemon-fact'],
+            ['t', 'corner-open'],
+            ['subchannel', cornerId],
+            ['objective', 'Fix the flaky auth test'],
+            ['name', 'Fix flaky auth test'],
+          ],
+          content: 'Corner opened: Fix flaky auth test',
+        },
+        'room',
+      ),
+    ).toMatchObject({
+      text: '',
+      presentation: 'card',
+      daemonFact: {
+        type: 'corner-open',
+        cornerId,
+        objective: 'Fix the flaky auth test',
+        name: 'Fix flaky auth test',
+      },
+    });
+  });
+
+  it('discards a corner-open daemon fact missing its human name', () => {
+    const cornerId = '80a5a6f1-fb5a-493b-93eb-f3db33f696e6';
+    expect(
+      projectEvent(
+        {
+          id: 'corner-open-unnamed',
+          kind: 9,
+          agent: true,
+          pubkey: 'a'.repeat(64),
+          createdAt: 13,
+          tags: [
+            ['h', 'room'],
+            ['t', 'daemon-fact'],
+            ['t', 'corner-open'],
+            ['subchannel', cornerId],
+            ['objective', 'Fix the flaky auth test'],
+          ],
+          content: 'Corner opened',
+        },
+        'room',
+      ),
+    ).toBeUndefined();
+  });
+
   it('keeps the completed plan durable while projecting current tool activity only live', () => {
     const row = {
       section: 'event',

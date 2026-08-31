@@ -26,4 +26,21 @@ describe('daemon lifecycle publication boundary', () => {
     expect(event.kind).toBe(9);
     expect(event.content).toBe('Agent reply complete.');
   });
+
+  it('marks a corner-open fact as a daemon-fact card', () => {
+    const event = buildLifecycleMessage({
+      kind: 'corner-open-fact',
+      channelId: 'room',
+      owner: newIdentity('agent'),
+      content: 'Corner opened: Fix flaky auth test',
+      tags: [
+        ['t', 'corner-open'],
+        ['subchannel', '80a5a6f1-fb5a-493b-93eb-f3db33f696e6'],
+        ['objective', 'Fix the flaky auth test'],
+        ['name', 'Fix flaky auth test'],
+      ],
+    });
+
+    expect(event.tags.filter((tag) => tag[0] === 't')).toContainEqual(['t', 'daemon-fact']);
+  });
 });

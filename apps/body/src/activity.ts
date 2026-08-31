@@ -483,7 +483,8 @@ export interface CompactActivityPlan {
  * A corner plan cannot depend on a harness choosing to emit ACP `plan`
  * updates. Body can seed the projection with the task-authored plan from the
  * hidden corner-metadata turn. When neither source provides steps, the
- * projection reports only that work is underway instead of inventing a plan.
+ * projection publishes the objective without inventing turn narration as a
+ * plan item.
  */
 export type ActivityProjectionController = (() => void) & {
   startPlan(objective: string, authoredPlan?: CompactActivityPlan): Promise<void>;
@@ -836,7 +837,7 @@ export function projectActivity(
     const distilled = safePlanObjective(objective);
     return {
       ...(distilled ? { objective: distilled } : {}),
-      items: [{ step: 'Working…', status: 'in_progress' }],
+      items: [],
     };
   };
   const flush = () => {
@@ -948,7 +949,13 @@ export function projectActivity(
               : {}),
           items: compactAuthoredPlan.items,
         }
-      : fallbackPlan(pinnedObjective ?? objective);
+      : currentPlan?.items.length
+        // A later turn (a follow-up, a nudge, a completion-ladder check) that
+        // brings no fresh plan of its own must not blank a checklist an
+        // earlier turn already published — that is the finished corner
+        // losing its sub-goals, not an honest "no plan yet" state.
+        ? { ...currentPlan, ...(pinnedObjective ? { objective: pinnedObjective } : {}) }
+        : fallbackPlan(pinnedObjective ?? objective);
     await publishPlan(currentPlan);
   };
   controller.completePlan = async () => {

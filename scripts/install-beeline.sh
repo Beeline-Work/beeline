@@ -72,7 +72,7 @@ fi
 
 npm link --workspace @beeline/body
 
-for installed_command in beeline buzz-agent buzz-dev-mcp buzz-readonly-mcp; do
+for installed_command in beeline buzz-agent buzz-dev-mcp beeline-readonly-mcp; do
   resolved="$(PATH="$global_bin:/usr/bin:/bin" command -v "$installed_command" || true)"
   if [[ -z "$resolved" ]]; then
     echo "install-beeline: $installed_command was installed in $global_bin, which is not on PATH" >&2

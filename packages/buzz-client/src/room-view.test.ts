@@ -255,6 +255,35 @@ describe('RoomViewClient', () => {
     ).toBe(false);
   });
 
+  it('accepts a corner-open daemon fact card only with its human name', () => {
+    const message = {
+      id: 'b'.repeat(64),
+      text: '',
+      createdAt: 3,
+      author: room.viewer.identity,
+      presentation: 'card' as const,
+      daemonFact: {
+        type: 'corner-open' as const,
+        cornerId: '80a5a6f1-fb5a-493b-93eb-f3db33f696e6',
+        objective: 'Fix the flaky auth test',
+        name: 'Fix flaky auth test',
+      },
+    };
+    expect(isRoomViewMessage(message)).toBe(true);
+    expect(
+      isRoomViewMessage({
+        ...message,
+        daemonFact: { ...message.daemonFact, name: undefined },
+      }),
+    ).toBe(false);
+    expect(
+      isRoomViewMessage({
+        ...message,
+        daemonFact: { ...message.daemonFact, name: '   ' },
+      }),
+    ).toBe(false);
+  });
+
   it('limits briefing messages to the server contract', () => {
     const briefingMessage = {
       id: 'b'.repeat(64),

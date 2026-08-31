@@ -38,7 +38,7 @@ function RoomSendHarness({
   committedIds: ReadonlySet<string>;
   capture: (hook: RoomSendHook) => void;
 }) {
-  const hook = useRoomSendFrame(transcript, committedIds, false);
+  const hook = useRoomSendFrame(transcript, committedIds);
   capture(hook);
   return React.createElement(
     'room-send-overlay',
@@ -213,6 +213,34 @@ describe('FRAME-BUDGET gate — server-indexed Room surfaces', () => {
     });
     expect(hook.frame.transcript).toBe(guardedDurable);
     expect(hook.frame.optimistic).toEqual([]);
+    act(() => renderer.unmount());
+  });
+
+  it('uses the same append-only optimistic overlay for Rooms and corners', () => {
+    const incoming = [
+      { id: 'sent-first', text: 'First', isUser: true, timestamp: 20 },
+      { id: 'sent-second', text: 'Second', isUser: true, timestamp: 10 },
+    ] satisfies ChatDisplayMessage[];
+    let hook!: RoomSendHook;
+    let renderer!: ReactTestRenderer;
+
+    act(() => {
+      renderer = create(
+        React.createElement(RoomSendHarness, {
+          transcript: [],
+          committedIds: new Set<string>(),
+          capture: (next: RoomSendHook) => {
+            hook = next;
+          },
+        }),
+      );
+    });
+    act(() => hook.append(incoming));
+
+    expect(hook.frame.optimistic.map((message) => message.id)).toEqual([
+      'sent-first',
+      'sent-second',
+    ]);
     act(() => renderer.unmount());
   });
 

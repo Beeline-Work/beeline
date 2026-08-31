@@ -553,7 +553,10 @@ export class RoomIndexer {
         const data = json(row.data);
         const id = String(data.id ?? '');
         return cornerItem(data, previews.get(id));
-      });
+      })
+      .sort(
+        (a, b) => b.corner.createdAt - a.corner.createdAt || b.corner.id.localeCompare(a.corner.id),
+      );
     return {
       room: header(roomData),
       corners,

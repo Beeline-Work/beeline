@@ -146,6 +146,7 @@ import {
   CORNER_REMOTE_STATE_TAG,
   cornerRemoteStateKey,
   parseCornerRemoteState,
+  type CornerPullRequestFact,
   type CornerRemoteState,
 } from '@beeline/buzz-client';
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
@@ -368,8 +369,10 @@ import {
 import { cornerTitleFromTask } from './corner-metadata.js';
 import {
   enableDeleteBranchOnMerge,
+  landedCornerSummary,
   observeCornerRemote,
 } from './corner-github-lifecycle.js';
+import { targetContainsCornerPatch } from './review-content.js';
 
 const CAPTURED_AGENT_OUTPUTS = Symbol('captured-agent-outputs');
 const AGENT_ATTACHMENT_FAILURE_REPLY =
@@ -749,9 +752,17 @@ function falseNegativeCornerClaim(message: string): boolean {
  */
 function groundRoomCoordinationClaims(
   message: string,
-  evidence: { cornerRecordCreated: boolean; cornerName?: string },
+  evidence: { cornerRecordCreated: boolean; cornerName?: string; cornerId?: string },
 ): string {
   if (evidence.cornerRecordCreated && falseNegativeCornerClaim(message)) {
+    return roomCornerAnnouncement(evidence.cornerName);
+  }
+  // The daemon-fact card (see openSubchannel) is now the one visible artifact
+  // of a corner opening. A model that echoes its raw open_corner tool result
+  // — the literal corner id it was just handed back — is dumping machine
+  // state into the transcript instead of a real answer; the freshly minted
+  // id could not plausibly appear in genuine prose any other way.
+  if (evidence.cornerRecordCreated && evidence.cornerId && message.includes(evidence.cornerId)) {
     return roomCornerAnnouncement(evidence.cornerName);
   }
   const claims = roomCoordinationClaims(message);
@@ -1115,7 +1126,7 @@ function withReadOnlyAgentMemory(server: McpServerWire, agentMemoryDir?: string)
     ...server,
     env: [
       ...(server.env ?? []),
-      { name: 'BUZZ_READONLY_AGENT_MEMORY_ROOT', value: resolve(agentMemoryDir) },
+      { name: 'BEELINE_READONLY_AGENT_MEMORY_ROOT', value: resolve(agentMemoryDir) },
     ],
   };
 }
@@ -1128,7 +1139,7 @@ export function readOnlyMcpServer(
 ): McpServerWire {
   if (!config.readonlyMcpCommand) {
     throw new ReadOnlyToolsUnavailableError(
-      'read-only tools unavailable: buzz-readonly-mcp is required for Room sessions',
+      'read-only tools unavailable: beeline-readonly-mcp is required for Room sessions',
     );
   }
   const skillDir =
@@ -1144,11 +1155,11 @@ export function readOnlyMcpServer(
       command: config.readonlyMcpCommand,
       args: [...(config.readonlyMcpArgs ?? [])],
       env: [
-        { name: 'BUZZ_READONLY_ROOT', value: resolve(cwd) },
+        { name: 'BEELINE_READONLY_ROOT', value: resolve(cwd) },
         ...(config.agentHomeRoot
           ? [
               {
-                name: 'BUZZ_READONLY_AGENT_SKILLS_ROOT',
+                name: 'BEELINE_READONLY_AGENT_SKILLS_ROOT',
                 value: resolve(config.agentHomeRoot, skillDir, 'skills'),
               },
             ]
@@ -2794,15 +2805,9 @@ export class Body {
             : {}),
           ...(input.path ? { path: input.path } : {}),
         }),
-        getGitHubRoomInstallationToken(
-          this.config.relayBaseUrl,
-          this.agentIdentity,
-          input.roomId,
-        ),
+        getGitHubRoomInstallationToken(this.config.relayBaseUrl, this.agentIdentity, input.roomId),
       ]);
-      console.log(
-        `[body] GitHub credential wired for Room ${input.roomId}: ${wiring.helperPath}`,
-      );
+      console.log(`[body] GitHub credential wired for Room ${input.roomId}: ${wiring.helperPath}`);
       return { ...wiring.env, GH_TOKEN: granted.token };
     } catch (error) {
       console.warn('[body] GitHub corner credential unavailable:', error);
@@ -4589,11 +4594,7 @@ export class Body {
             'GitHub lifecycle and the completion ladder remain authoritative',
         );
       }
-      if (
-        request &&
-        workingAtRestart &&
-        !BODY_RESTART_CONTINUATIONS.has(restartContinuationKey)
-      ) {
+      if (request && workingAtRestart && !BODY_RESTART_CONTINUATIONS.has(restartContinuationKey)) {
         BODY_RESTART_CONTINUATIONS.add(restartContinuationKey);
         const originalPrompt = attachmentPrompt(
           request.authorPubkey,
@@ -4656,7 +4657,6 @@ export class Body {
   getAbandonedCorners(): ReadonlyMap<string, AbandonedCorner> {
     return this.abandonedCorners;
   }
-
 
   /**
    * Provision a read-only agent session for a TLC channel.
@@ -4731,11 +4731,11 @@ export class Body {
           'You are a helpful coding assistant in a read-only conversation channel.',
           NO_PERSONAL_CONNECTORS_INSTRUCTION,
           'A host turn explicitly identified as a human-authorized schedule occurrence is the one exception: that bounded schedule is the mandate for its mounted action tools and attachments.',
-          'Read-only means the repository is visible but cannot be changed: you CAN inspect its files and local git history through buzz-readonly-mcp.',
-          'Never tell a Room member that you cannot view the repository unless a buzz-readonly-mcp inspection call actually fails; report that concrete failure instead.',
-          'Use buzz-readonly-mcp to list, read, search, and inspect local git history when analysis needs repository evidence.',
+          'Read-only means the repository is visible but cannot be changed: you CAN inspect its files and local git history through beeline-readonly-mcp.',
+          'Never tell a Room member that you cannot view the repository unless a beeline-readonly-mcp inspection call actually fails; report that concrete failure instead.',
+          'Use beeline-readonly-mcp to list, read, search, and inspect local git history when analysis needs repository evidence.',
           'Those inspection tools are non-mutating and do not require human approval.',
-          'Use buzz-readonly-mcp.read_agent_file to read only your approved materialized skills or announced Workspace memory; it is read-only and does not require approval.',
+          'Use beeline-readonly-mcp.read_agent_file to read only your approved materialized skills or announced Workspace memory; it is read-only and does not require approval.',
           'Never request native shell or execute permission for listing, reading, searching, or git-history inspection; use the read-only MCP tools instead.',
           'You CANNOT create, edit, or delete repository files in this Room. The separately named workbench and memory directories are the only writable exceptions; open an isolated corner yourself for any landable change.',
           `The host always DENIES repository writes in this Room; outside a host-identified schedule occurrence it also denies every shell/execute request: ${ROOM_READ_ONLY_STEER}`,
@@ -4765,7 +4765,7 @@ export class Body {
       if (error instanceof ReadOnlyToolsUnavailableError) throw error;
       const detail = error instanceof Error ? error.message : String(error);
       throw new ReadOnlyToolsUnavailableError(
-        `read-only tools unavailable: buzz-readonly-mcp could not start (${detail})`,
+        `read-only tools unavailable: beeline-readonly-mcp could not start (${detail})`,
       );
     }
 
@@ -4846,7 +4846,7 @@ export class Body {
     roomRepo: BoundRepo | undefined,
     intent: string,
     request: ChannelTaskRequest,
-    options?: { objective?: string; mission?: MissionCornerAuthority },
+    options?: { objective?: string; mission?: MissionCornerAuthority; suppressOpenCard?: boolean },
   ): Promise<SubchannelInfo> {
     const existing = this.liveSubchannelForRequest(tlcChannelId, request.eventId);
     if (existing) return Promise.resolve(existing);
@@ -4920,6 +4920,13 @@ export class Body {
       objective?: string;
       mission?: MissionCornerAuthority;
       onCreated?: (cornerId: string, name: string, objective: string) => void;
+      /**
+       * The approval-granted flows already publish their own linked
+       * "Corner approved by @X — view →" card as the visible artifact of the
+       * open. Suppress the daemon-fact open card there so a Room never shows
+       * two cards for the same corner.
+       */
+      suppressOpenCard?: boolean;
     },
   ): Promise<SubchannelInfo> {
     // Pick up an owner-confirmed target-branch change for a newly opened corner.
@@ -5002,6 +5009,24 @@ export class Body {
           ['task', taskDescription],
         ],
       );
+      // The typed daemon-fact card is the one visible artifact of a corner
+      // opening — a linked card with tap-through navigation, not raw prose.
+      // Skipped when the approval-granted flows already published their own
+      // "Corner approved by @X — view →" card for this exact open.
+      if (!options?.suppressOpenCard) {
+        await postControlMessage(
+          'corner-open-fact',
+          tlcChannelId,
+          agentId,
+          `Corner opened: ${cornerName}`,
+          [
+            ['t', 'corner-open'],
+            ['subchannel', subchannelId],
+            ['objective', taskDescription || request.content.trim() || cornerName],
+            ['name', cornerName],
+          ],
+        );
+      }
     }
     // A publish acknowledgement is not membership truth. Do not create the
     // worktree or launch the coding session until the relay projection proves
@@ -7234,6 +7259,9 @@ export class Body {
         ...(openedCornerForRequest?.cornerName
           ? { cornerName: openedCornerForRequest.cornerName }
           : {}),
+        ...(openedCornerForRequest?.subchannelId
+          ? { cornerId: openedCornerForRequest.subchannelId }
+          : {}),
       });
       if (groundedAgentText !== result.agentText) {
         console.warn(
@@ -7938,7 +7966,7 @@ export class Body {
           input.roomRepo,
           input.objective,
           input.request,
-          { objective: input.objective },
+          { objective: input.objective, suppressOpenCard: true },
         );
         await this.postWritePermissionStatus(
           input.roomId,
@@ -8065,13 +8093,15 @@ export class Body {
         if (namedTarget) await this.assertRepositorySafety(tlcChannelId, boundRepo);
         const info =
           objective === turn.request.content
-            ? await this.openSubchannel(tlcChannelId, boundRepo, objective, turn.request)
+            ? await this.openSubchannel(tlcChannelId, boundRepo, objective, turn.request, {
+                suppressOpenCard: true,
+              })
             : await this.openSubchannel(
                 tlcChannelId,
                 boundRepo,
                 objective,
                 { ...turn.request, content: objective },
-                { objective },
+                { objective, suppressOpenCard: true },
               );
         turn.transitionedToCorner = true;
         // This is the first event that says the corner exists. It is emitted
@@ -9257,12 +9287,11 @@ export class Body {
       const unsubscribe = await client.sessionEventsSubscribe(
         info.subchannelId,
         (sessionEvent) => {
-          void this.processPushedCornerEvent(channelId, info, sessionEvent).catch(
-            (error) =>
-              console.error(
-                `[body] Room ${channelId} pushed corner event ${sessionEvent.id} failed; poll fallback remains active:`,
-                error,
-              ),
+          void this.processPushedCornerEvent(channelId, info, sessionEvent).catch((error) =>
+            console.error(
+              `[body] Room ${channelId} pushed corner event ${sessionEvent.id} failed; poll fallback remains active:`,
+              error,
+            ),
           );
         },
         { kinds: [9], since: Math.floor(Date.now() / 1_000) },
@@ -9344,11 +9373,7 @@ export class Body {
                   [sessionEvent],
                   roomParticipants,
                 );
-                if (
-                  sessionEvent.tags.some(
-                    (tag) => tag[0] === 't' && tag[1] === 'github-event',
-                  )
-                ) {
+                if (sessionEvent.tags.some((tag) => tag[0] === 't' && tag[1] === 'github-event')) {
                   await this.pollCornerRemoteLifecycle(channelId);
                 }
                 await syncCornerSubscriptions();
@@ -9566,13 +9591,8 @@ export class Body {
       await this.restoreSubchannels(channelId, boundRepo);
       // The Workspace supervisor owns current-role discovery. It aborts this
       // loop when the Room disappears from the agent's member/admin projection.
-      await this.runRoomPushLoop(
-        channelId,
-        boundRepo,
-        'repository',
-        stopPresence,
-        opts,
-        () => this.pollRoomMaintenance(channelId, undefined, boundRepo),
+      await this.runRoomPushLoop(channelId, boundRepo, 'repository', stopPresence, opts, () =>
+        this.pollRoomMaintenance(channelId, undefined, boundRepo),
       );
     } finally {
       this.presenceGenerations.delete(channelId);
@@ -9784,11 +9804,8 @@ export class Body {
     ]);
     const dirty =
       !status.ok ||
-      projectDirtyStatus(
-        info.worktreePath,
-        status.stdout,
-        info.session.agentPrivateState,
-      ).length > 0;
+      projectDirtyStatus(info.worktreePath, status.stdout, info.session.agentPrivateState).length >
+        0;
     if (dirty) info.preserveWorktree = true;
     const existing = await this.agentRelay.queryEvents([
       {
@@ -9803,7 +9820,7 @@ export class Body {
       const plan = info.session.activityProjection?.currentPlan() ?? info.session.resumePlan;
       const primary =
         state.outcome === 'landed'
-          ? `Landed${state.pr ? ` “${state.pr.title}” into ${state.pr.targetBranch}: ${state.pr.url}` : ` ${state.branch}`}.`
+          ? landedCornerSummary(state)
           : `Abandoned ${state.branch}; its remote branch was deleted.`;
       const content = dirty
         ? `${primary} The dirty worktree was preserved at ${info.worktreePath}.`
@@ -9821,6 +9838,7 @@ export class Body {
               ['pr-title', state.pr.title],
               ['url', state.pr.url],
               ['target-branch', state.pr.targetBranch],
+              ...(state.pr.mergedBy ? [['merged-by', state.pr.mergedBy]] : []),
             ]
           : []),
         ...(dirty ? [['worktree-preserved', info.worktreePath]] : []),
@@ -9890,6 +9908,43 @@ export class Body {
     if (!published) throw new Error('checks failing fact publication was not accepted');
   }
 
+  /**
+   * Prove that the corner's exact content already exists on the target ref.
+   * Direct ancestry covers ordinary merges; stable patch identity covers a
+   * squash whose target SHA necessarily differs from the corner SHA.
+   */
+  private async targetContainsCornerChange(
+    info: SubchannelInfo,
+    candidate: { branchTip: string; pull?: CornerPullRequestFact },
+  ): Promise<boolean> {
+    const repo = info.boundRepo;
+    if (!repo) return false;
+    const targetName =
+      candidate.pull?.targetBranch ?? repo.targetBranch?.replace(/^refs\/heads\//, '');
+    if (!targetName) return false;
+    const targetRef = targetName.startsWith('refs/') ? targetName : `refs/heads/${targetName}`;
+    const remote = repo.remoteName ?? 'origin';
+    const fetched = await this.remoteGit(repo, info.worktreePath, [
+      'fetch',
+      '--no-tags',
+      remote,
+      targetRef,
+    ]);
+    if (!fetched.ok) return false;
+    const targetTip = (await git(info.worktreePath, ['rev-parse', 'FETCH_HEAD'])).stdout.trim();
+    if (!/^[0-9a-f]{40}$/i.test(targetTip)) return false;
+
+    const preferredTip = candidate.pull?.headSha ?? candidate.branchTip;
+    const preferredExists = await git(info.worktreePath, [
+      'cat-file',
+      '-e',
+      `${preferredTip}^{commit}`,
+    ]);
+    const cornerTip = preferredExists.ok ? preferredTip : candidate.branchTip;
+    if (!/^[0-9a-f]{40}$/i.test(cornerTip)) return false;
+    return targetContainsCornerPatch(info.worktreePath, targetTip, cornerTip);
+  }
+
   private async observeOneCornerRemote(info: SubchannelInfo): Promise<void> {
     if (
       info.archived ||
@@ -9928,6 +9983,7 @@ export class Body {
         cornerId: info.subchannelId,
         featureBranch: info.featureBranch,
         token,
+        targetContainsChange: (candidate) => this.targetContainsCornerChange(info, candidate),
       });
       const branchAbsentBeforeFirstPush =
         observed.state === 'gone' && !info.remoteBranchSeen && !observed.pr;
@@ -9964,7 +10020,9 @@ export class Body {
     const corners = [...this.subchannels.values()].filter(
       (info) => info.session.parentChannelId === roomId,
     );
-    const results = await Promise.allSettled(corners.map((info) => this.observeOneCornerRemote(info)));
+    const results = await Promise.allSettled(
+      corners.map((info) => this.observeOneCornerRemote(info)),
+    );
     const failure = results.find((result) => result.status === 'rejected');
     if (failure?.status === 'rejected') throw failure.reason;
   }
@@ -10068,10 +10126,7 @@ export class Body {
     }
   }
 
-  private classifyCornerEvent(
-    evt: NostrEvent,
-    processed: Set<string>,
-  ): CornerEventClassification {
+  private classifyCornerEvent(evt: NostrEvent, processed: Set<string>): CornerEventClassification {
     if (processed.has(evt.id) || evt.pubkey === this.agentIdentity.publicKey) {
       return { status: 'skip', recordProcessed: false };
     }
@@ -10079,11 +10134,7 @@ export class Body {
     if (
       (!evt.content.trim() && attachments.length === 0) ||
       evt.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-activity') ||
-      evt.tags.some(
-        (tag) =>
-          tag[0] === 't' &&
-          tag[1] === 'body-control',
-      )
+      evt.tags.some((tag) => tag[0] === 't' && tag[1] === 'body-control')
     ) {
       return { status: 'skip', recordProcessed: false };
     }
@@ -10202,32 +10253,27 @@ export class Body {
           | undefined;
         let publishedMentionEvent: NostrEvent | undefined;
         const parentRoomId = info.session.parentChannelId;
-        await this.finishCornerTurn(
-          info,
-          agentResult,
-          'Completed the requested follow-up.',
-          {
-            replyTo: evt.id,
-            replyRootId: replyRootIdForEvent(evt),
-            ...(parentRoomId
-              ? {
-                  extraTagsForText: async (text: string) => {
-                    preparedMention = await this.prepareCornerAgentMention({
-                      roomId: parentRoomId,
-                      cornerId: info.subchannelId,
-                      writerAgentId: info.role.publicKey,
-                      sourceTurnId: evt.id,
-                      text,
-                    });
-                    return preparedMention?.tags;
-                  },
-                  captureEvent: (event: NostrEvent) => {
-                    publishedMentionEvent = event;
-                  },
-                }
-              : {}),
-          },
-        );
+        await this.finishCornerTurn(info, agentResult, 'Completed the requested follow-up.', {
+          replyTo: evt.id,
+          replyRootId: replyRootIdForEvent(evt),
+          ...(parentRoomId
+            ? {
+                extraTagsForText: async (text: string) => {
+                  preparedMention = await this.prepareCornerAgentMention({
+                    roomId: parentRoomId,
+                    cornerId: info.subchannelId,
+                    writerAgentId: info.role.publicKey,
+                    sourceTurnId: evt.id,
+                    text,
+                  });
+                  return preparedMention?.tags;
+                },
+                captureEvent: (event: NostrEvent) => {
+                  publishedMentionEvent = event;
+                },
+              }
+            : {}),
+        });
         await this.completeCornerPlan(session);
         await postAgentTurnStatus(
           subchannelId,
@@ -11045,10 +11091,7 @@ export class Body {
     try {
       const members = await listMembers(this.agentClientContext(), channelId);
       return [
-        ...new Set([
-          this.agentIdentity.publicKey,
-          ...members.map((member) => member.pubkey),
-        ]),
+        ...new Set([this.agentIdentity.publicKey, ...members.map((member) => member.pubkey)]),
       ];
     } catch (error) {
       console.warn(`[body] unable to refresh corner participants for ${channelId}:`, error);
@@ -11062,7 +11105,7 @@ export class Body {
     try {
       // Current 39001/39002 projections are authoritative. Replaying kind:9000
       // history cannot order same-second member → admin transitions and could
-        // silently demote a human admin inside the corner.
+      // silently demote a human admin inside the corner.
       const members = await listMembers(this.agentClientContext(), sourceChannelId);
       for (const member of members) {
         if (member.pubkey === this.agentIdentity.publicKey) continue;
@@ -11543,7 +11586,11 @@ export class Body {
       if (preserve || !status.ok || status.stdout.length > 0) {
         console.warn(
           `[body] preserving corner worktree ${worktreePath}: ${
-            preserve ? 'lifecycle marked it dirty' : !status.ok ? 'git status was unreadable' : 'it has uncommitted changes'
+            preserve
+              ? 'lifecycle marked it dirty'
+              : !status.ok
+                ? 'git status was unreadable'
+                : 'it has uncommitted changes'
           }`,
         );
         return;

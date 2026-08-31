@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { readFileSync } from 'node:fs';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
-import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatDisplayMessage } from '@/buzz/room-view-presentation';
 
@@ -195,6 +195,31 @@ describe('Room message variant components', () => {
     );
     expect(onOpenCorner).toHaveBeenCalledWith('80a5a6f1-fb5a-493b-93eb-f3db33f696e6');
     expect(renderer.root.findAllByType('HullSurface')).toHaveLength(1);
+  });
+
+  it('renders the corner-open daemon fact as a linked card with the human name and objective', () => {
+    const onOpenCorner = vi.fn();
+    const renderer = render(
+      <DaemonFactCard
+        message={message({
+          daemonFact: {
+            type: 'corner-open',
+            cornerId: '80a5a6f1-fb5a-493b-93eb-f3db33f696e6',
+            objective: 'Fix the flaky auth test',
+            name: 'Fix flaky auth test',
+          },
+        })}
+        onOpenCorner={onOpenCorner}
+      />,
+    );
+    const card = renderer.root.findByProps({ testID: 'daemon-fact-card-corner-open' });
+    const texts = renderer.root
+      .findAllByType('Text')
+      .map((node: ReactTestInstance) => node.props.children);
+    expect(texts).toContain('Fix flaky auth test');
+    expect(texts).toContain('Fix the flaky auth test');
+    act(() => card.props.onPress());
+    expect(onOpenCorner).toHaveBeenCalledWith('80a5a6f1-fb5a-493b-93eb-f3db33f696e6');
   });
 
   it('memoizes ordinary rows across unrelated presence changes and updates the affected speaker', () => {

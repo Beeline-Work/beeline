@@ -7,7 +7,7 @@ import { isTrustySquireMcpLaunch } from './external-mcp-capabilities.js';
 /**
  * Operator-configured MCP tool servers for corner edit sessions.
  *
- * Beeline's own inventory is fixed per surface (`buzz-readonly-mcp` for Rooms,
+ * Beeline's own inventory is fixed per surface (`beeline-readonly-mcp` for Rooms,
  * `buzz-dev-mcp` + codegraph for corners). Some work genuinely needs the
  * operator's own project-specific tool servers. This module is the "beeline
  * runtime config list" half of that: a JSON file inside the agent's runtime directory that
@@ -33,7 +33,7 @@ import { isTrustySquireMcpLaunch } from './external-mcp-capabilities.js';
 
 /** Names Body mounts itself; an operator entry may not shadow them. */
 const RESERVED_MCP_SERVER_NAMES = new Set([
-  'buzz-readonly-mcp',
+  'beeline-readonly-mcp',
   'buzz-dev-mcp',
   'codegraph',
   'squire',

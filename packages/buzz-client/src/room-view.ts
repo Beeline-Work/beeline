@@ -142,7 +142,7 @@ export type RoomViewMessage = {
   };
   /** A daemon-authored repository lifecycle fact, rendered as an actionable card. */
   readonly daemonFact?: {
-    readonly type: 'corner-complete' | 'checks-failing' | 'worktree-cleaned';
+    readonly type: 'corner-complete' | 'checks-failing' | 'worktree-cleaned' | 'corner-open';
     readonly cornerId: string;
     readonly objective: string;
     readonly outcome?: 'landed' | 'abandoned';
@@ -156,6 +156,8 @@ export type RoomViewMessage = {
       readonly step: string;
       readonly status: 'pending' | 'in_progress' | 'completed';
     }[];
+    /** The corner's human title. Only 'corner-open' carries this. */
+    readonly name?: string;
   };
 };
 

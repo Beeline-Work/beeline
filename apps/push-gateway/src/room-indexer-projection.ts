@@ -152,6 +152,16 @@ function daemonFactCard(
       ...(subgoals.length ? { subgoals } : {}),
     };
   }
+  if (markerSet(values).has('corner-open')) {
+    const name = text(tag(values, 'name'));
+    if (!name) return undefined;
+    return {
+      type: 'corner-open',
+      cornerId,
+      objective,
+      name,
+    };
+  }
   return undefined;
 }
 

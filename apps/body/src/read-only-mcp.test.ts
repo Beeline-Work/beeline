@@ -44,14 +44,14 @@ function git(args: string[]): string {
 
 function server() {
   return {
-    name: 'buzz-readonly-mcp',
+    name: 'beeline-readonly-mcp',
     command: process.execPath,
     args: ['--import', tsxLoader, serverPath],
     cwd: repository,
     env: {
-      BUZZ_READONLY_ROOT: repository,
-      BUZZ_READONLY_AGENT_SKILLS_ROOT: skills,
-      BUZZ_READONLY_AGENT_MEMORY_ROOT: memory,
+      BEELINE_READONLY_ROOT: repository,
+      BEELINE_READONLY_AGENT_SKILLS_ROOT: skills,
+      BEELINE_READONLY_AGENT_MEMORY_ROOT: memory,
     },
   };
 }
@@ -109,7 +109,7 @@ describe('hasWriteTools', () => {
   });
 });
 
-describe('buzz-readonly-mcp', () => {
+describe('beeline-readonly-mcp', () => {
   it('advertises only the fixed Room inventory', async () => {
     const tools = await listMcpToolNames(server());
     expect(tools).toEqual(expectedToolNames);

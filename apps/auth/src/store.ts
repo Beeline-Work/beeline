@@ -69,6 +69,7 @@ const MIGRATIONS = [
   )`,
   `ALTER TABLE beeline_oidc_flows ADD COLUMN IF NOT EXISTS app_redirect_uri TEXT`,
   `ALTER TABLE beeline_oidc_flows ADD COLUMN IF NOT EXISTS app_state TEXT`,
+  `ALTER TABLE beeline_oidc_flows ADD COLUMN IF NOT EXISTS device_code_hash CHAR(64)`,
   `CREATE TABLE IF NOT EXISTS beeline_bind_tickets (
     ticket_hash CHAR(64) PRIMARY KEY,
     challenge TEXT NOT NULL,
@@ -126,6 +127,39 @@ const MIGRATIONS = [
   `CREATE INDEX IF NOT EXISTS beeline_bind_tickets_expiry_idx ON beeline_bind_tickets (expires_at)`,
   `CREATE INDEX IF NOT EXISTS beeline_nip98_replays_expiry_idx ON beeline_nip98_replays (expires_at)`,
   `CREATE INDEX IF NOT EXISTS beeline_nip05_names_pubkey_idx ON beeline_nip05_names (pubkey)`,
+  `CREATE TABLE IF NOT EXISTS beeline_agent_connect_devices (
+    device_code_hash CHAR(64) PRIMARY KEY,
+    user_code TEXT NOT NULL UNIQUE,
+    code_challenge CHAR(64) NOT NULL,
+    tenant_community TEXT NOT NULL,
+    harness TEXT NOT NULL,
+    provider TEXT,
+    model TEXT NOT NULL,
+    soul TEXT NOT NULL,
+    agent_name TEXT NOT NULL,
+    sealed_credentials TEXT,
+    pairing_token_hash CHAR(64),
+    workspace_id UUID,
+    paired_by BYTEA,
+    agent_pubkey BYTEA,
+    created_at TIMESTAMPTZ NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    approved_at TIMESTAMPTZ,
+    consumed_at TIMESTAMPTZ,
+    CHECK (code_challenge ~ '^[0-9a-f]{64}$'),
+    CHECK (pairing_token_hash IS NULL OR pairing_token_hash ~ '^[0-9a-f]{64}$')
+  )`,
+  `CREATE INDEX IF NOT EXISTS beeline_agent_connect_devices_expiry_idx
+    ON beeline_agent_connect_devices (expires_at)`,
+  `CREATE TABLE IF NOT EXISTS beeline_agent_connect_grants (
+    token_hash TEXT PRIMARY KEY CHECK (token_hash ~ '^[0-9a-f]{64}$'),
+    community_id UUID NOT NULL,
+    workspace_id UUID NOT NULL,
+    minter_pubkey BYTEA NOT NULL,
+    agent_pubkey BYTEA NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
   `CREATE TABLE IF NOT EXISTS beeline_identity_handles (
     community TEXT NOT NULL,
     pubkey CHAR(64) NOT NULL,
@@ -295,6 +329,7 @@ interface FlowRow extends QueryResultRow {
   redirect_uri: string;
   app_redirect_uri: string | null;
   app_state: string | null;
+  device_code_hash: string | null;
   created_at: unknown;
   expires_at: unknown;
 }
@@ -309,6 +344,7 @@ export interface OidcFlow {
   redirectUri: string;
   appRedirectUri: string | null;
   appState: string | null;
+  deviceCodeHash?: string | null;
   createdAt: Date;
   expiresAt: Date;
 }
@@ -364,6 +400,71 @@ export interface IdentityLink {
   subject: string;
   pubkey: string;
   createdAt: Date;
+}
+
+export interface AgentConnectDevice {
+  deviceCodeHash: string;
+  userCode: string;
+  codeChallenge: string;
+  tenantCommunity: string;
+  harness: string;
+  provider?: string;
+  model: string;
+  soul: string;
+  agentName: string;
+  sealedCredentials?: string;
+  pairingTokenHash?: string;
+  workspaceId?: string;
+  pairedBy?: string;
+  agentPubkey?: string;
+  createdAt: Date;
+  expiresAt: Date;
+  approvedAt?: Date;
+  consumedAt?: Date;
+}
+
+interface AgentConnectDeviceRow extends QueryResultRow {
+  device_code_hash: string;
+  user_code: string;
+  code_challenge: string;
+  tenant_community: string;
+  harness: string;
+  provider: string | null;
+  model: string;
+  soul: string;
+  agent_name: string;
+  sealed_credentials: string | null;
+  pairing_token_hash: string | null;
+  workspace_id: string | null;
+  paired_by: Uint8Array | null;
+  agent_pubkey: Uint8Array | null;
+  created_at: unknown;
+  expires_at: unknown;
+  approved_at: unknown | null;
+  consumed_at: unknown | null;
+}
+
+function agentConnectDeviceFromRow(row: AgentConnectDeviceRow): AgentConnectDevice {
+  return {
+    deviceCodeHash: row.device_code_hash,
+    userCode: row.user_code,
+    codeChallenge: row.code_challenge,
+    tenantCommunity: row.tenant_community,
+    harness: row.harness,
+    ...(row.provider ? { provider: row.provider } : {}),
+    model: row.model,
+    soul: row.soul,
+    agentName: row.agent_name,
+    ...(row.sealed_credentials ? { sealedCredentials: row.sealed_credentials } : {}),
+    ...(row.pairing_token_hash ? { pairingTokenHash: row.pairing_token_hash } : {}),
+    ...(row.workspace_id ? { workspaceId: row.workspace_id } : {}),
+    ...(row.paired_by ? { pairedBy: Buffer.from(row.paired_by).toString('hex') } : {}),
+    ...(row.agent_pubkey ? { agentPubkey: Buffer.from(row.agent_pubkey).toString('hex') } : {}),
+    createdAt: asDate(row.created_at),
+    expiresAt: asDate(row.expires_at),
+    ...(row.approved_at ? { approvedAt: asDate(row.approved_at) } : {}),
+    ...(row.consumed_at ? { consumedAt: asDate(row.consumed_at) } : {}),
+  };
 }
 
 /**
@@ -456,6 +557,7 @@ function flowFromRow(row: FlowRow): OidcFlow {
     redirectUri: row.redirect_uri,
     appRedirectUri: row.app_redirect_uri,
     appState: row.app_state,
+    deviceCodeHash: row.device_code_hash,
     createdAt: asDate(row.created_at),
     expiresAt: asDate(row.expires_at),
   };
@@ -533,8 +635,8 @@ export class AuthStore {
     ]);
     await this.database.query(
       `INSERT INTO beeline_oidc_flows
-        (state_hash, community, issuer, audience, nonce, pkce_verifier, browser_session_hash, redirect_uri, app_redirect_uri, app_state, created_at, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+        (state_hash, community, issuer, audience, nonce, pkce_verifier, browser_session_hash, redirect_uri, app_redirect_uri, app_state, device_code_hash, created_at, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
       [
         stateHash,
         flow.community,
@@ -546,6 +648,7 @@ export class AuthStore {
         flow.redirectUri,
         flow.appRedirectUri,
         flow.appState,
+        flow.deviceCodeHash ?? null,
         flow.createdAt,
         flow.expiresAt,
       ],
@@ -561,10 +664,203 @@ export class AuthStore {
       `UPDATE beeline_oidc_flows
        SET consumed_at = $3
        WHERE state_hash = $1 AND browser_session_hash = $2 AND consumed_at IS NULL AND expires_at >= $3
-       RETURNING community, issuer, audience, nonce, pkce_verifier, browser_session_hash, redirect_uri, app_redirect_uri, app_state, created_at, expires_at`,
+       RETURNING community, issuer, audience, nonce, pkce_verifier, browser_session_hash, redirect_uri, app_redirect_uri, app_state, device_code_hash, created_at, expires_at`,
       [stateHash, browserSessionHash, now],
     );
     return result.rows[0] ? flowFromRow(result.rows[0]) : null;
+  }
+
+  async identityLinkForSubject(
+    community: string,
+    issuer: string,
+    audience: string,
+    subject: string,
+  ): Promise<IdentityLink | null> {
+    const result = await this.database.query<
+      QueryResultRow & {
+        community: string;
+        issuer: string;
+        audience: string;
+        subject: string;
+        pubkey: string;
+        created_at: unknown;
+      }
+    >(
+      `SELECT community, issuer, audience, subject, pubkey, created_at
+       FROM beeline_identity_links
+       WHERE community = $1 AND issuer = $2 AND audience = $3 AND subject = $4
+       LIMIT 1`,
+      [community, issuer, audience, subject],
+    );
+    const row = result.rows[0];
+    return row
+      ? {
+          community: row.community,
+          issuer: row.issuer,
+          audience: row.audience,
+          subject: row.subject,
+          pubkey: row.pubkey,
+          createdAt: asDate(row.created_at),
+        }
+      : null;
+  }
+
+  async latestWorkspaceForMember(
+    memberPubkey: string,
+    relayCommunityIds: readonly string[],
+  ): Promise<{ workspaceId: string; name: string } | null> {
+    if (!/^[0-9a-f]{64}$/.test(memberPubkey) || relayCommunityIds.length === 0) return null;
+    const result = await this.database.query<
+      QueryResultRow & { workspace_id: string; name: string }
+    >(
+      `SELECT workspace.id::text AS workspace_id, workspace.name
+       FROM channels workspace
+       JOIN channel_members member
+         ON member.community_id = workspace.community_id
+        AND member.channel_id = workspace.id
+        AND member.pubkey = decode($1, 'hex')
+        AND member.removed_at IS NULL
+       JOIN LATERAL (
+         SELECT event.tags FROM events event
+         WHERE event.community_id = workspace.community_id
+           AND event.channel_id = workspace.id
+           AND event.kind = 9007
+           AND event.deleted_at IS NULL
+         ORDER BY event.created_at ASC, event.id ASC LIMIT 1
+       ) genesis ON EXISTS (
+         SELECT 1 FROM jsonb_array_elements(genesis.tags) tag
+         WHERE tag->>0 = 'community' AND tag->>1 = workspace.id::text
+       )
+       WHERE workspace.community_id = ANY($2::uuid[])
+         AND workspace.deleted_at IS NULL
+         AND workspace.archived_at IS NULL
+       ORDER BY workspace.updated_at DESC, workspace.id ASC
+       LIMIT 1`,
+      [memberPubkey, relayCommunityIds],
+    );
+    const row = result.rows[0];
+    return row ? { workspaceId: row.workspace_id, name: row.name } : null;
+  }
+
+  async createAgentConnectDevice(device: AgentConnectDevice): Promise<void> {
+    await this.database.query(`DELETE FROM beeline_agent_connect_devices WHERE expires_at < $1`, [
+      device.createdAt,
+    ]);
+    await this.database.query(
+      `INSERT INTO beeline_agent_connect_devices (
+         device_code_hash, user_code, code_challenge, tenant_community,
+         harness, provider, model, soul, agent_name, created_at, expires_at
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      [
+        device.deviceCodeHash,
+        device.userCode,
+        device.codeChallenge,
+        device.tenantCommunity,
+        device.harness,
+        device.provider ?? null,
+        device.model,
+        device.soul,
+        device.agentName,
+        device.createdAt,
+        device.expiresAt,
+      ],
+    );
+  }
+
+  async findAgentConnectDeviceByUserCode(userCode: string): Promise<AgentConnectDevice | null> {
+    const result = await this.database.query<AgentConnectDeviceRow>(
+      `SELECT device_code_hash, user_code, code_challenge, tenant_community,
+              harness, provider, model, soul, agent_name, sealed_credentials,
+              pairing_token_hash, workspace_id, paired_by, agent_pubkey,
+              created_at, expires_at, approved_at, consumed_at
+       FROM beeline_agent_connect_devices WHERE user_code = $1`,
+      [userCode],
+    );
+    return result.rows[0] ? agentConnectDeviceFromRow(result.rows[0]) : null;
+  }
+
+  async findAgentConnectDevice(deviceCodeHash: string): Promise<AgentConnectDevice | null> {
+    const result = await this.database.query<AgentConnectDeviceRow>(
+      `SELECT device_code_hash, user_code, code_challenge, tenant_community,
+              harness, provider, model, soul, agent_name, sealed_credentials,
+              pairing_token_hash, workspace_id, paired_by, agent_pubkey,
+              created_at, expires_at, approved_at, consumed_at
+       FROM beeline_agent_connect_devices WHERE device_code_hash = $1`,
+      [deviceCodeHash],
+    );
+    return result.rows[0] ? agentConnectDeviceFromRow(result.rows[0]) : null;
+  }
+
+  async approveAgentConnectDevice(input: {
+    deviceCodeHash: string;
+    workspaceId: string;
+    pairedBy: string;
+    agentPubkey: string;
+    pairingTokenHash: string;
+    sealedCredentials: string;
+    now: Date;
+  }): Promise<boolean> {
+    return this.database.transaction(async (transaction) => {
+      const approved = await transaction.query<QueryResultRow>(
+        `UPDATE beeline_agent_connect_devices
+         SET workspace_id = $2::uuid,
+             paired_by = decode($3, 'hex'),
+             agent_pubkey = decode($4, 'hex'),
+             pairing_token_hash = $5,
+             sealed_credentials = $6,
+             approved_at = $7
+         WHERE device_code_hash = $1
+           AND approved_at IS NULL
+           AND consumed_at IS NULL
+           AND expires_at >= $7
+         RETURNING device_code_hash`,
+        [
+          input.deviceCodeHash,
+          input.workspaceId,
+          input.pairedBy,
+          input.agentPubkey,
+          input.pairingTokenHash,
+          input.sealedCredentials,
+          input.now,
+        ],
+      );
+      if (approved.rowCount !== 1) return false;
+      const grant = await transaction.query<QueryResultRow>(
+        `INSERT INTO beeline_agent_connect_grants (
+           token_hash, community_id, workspace_id, minter_pubkey, agent_pubkey,
+           expires_at, created_at
+         )
+         SELECT pairing_token_hash, workspace.community_id, workspace_id,
+                paired_by, agent_pubkey, expires_at, $2
+         FROM beeline_agent_connect_devices device
+         JOIN channels workspace ON workspace.id = device.workspace_id
+         WHERE device.device_code_hash = $1
+         RETURNING token_hash`,
+        [input.deviceCodeHash, input.now],
+      );
+      if (grant.rowCount !== 1) throw new Error('device approval did not create a pairing grant');
+      return true;
+    });
+  }
+
+  async consumeAgentConnectDevice(
+    deviceCodeHash: string,
+    now: Date,
+  ): Promise<AgentConnectDevice | null> {
+    const result = await this.database.query<AgentConnectDeviceRow>(
+      `UPDATE beeline_agent_connect_devices
+       SET consumed_at = $2
+       WHERE device_code_hash = $1
+         AND approved_at IS NOT NULL
+         AND consumed_at IS NULL
+         AND expires_at >= $2
+       RETURNING device_code_hash, user_code, code_challenge, tenant_community,
+                 harness, provider, model, soul, agent_name, sealed_credentials,
+                 pairing_token_hash, workspace_id, paired_by, agent_pubkey,
+                 created_at, expires_at, approved_at, consumed_at`,
+      [deviceCodeHash, now],
+    );
+    return result.rows[0] ? agentConnectDeviceFromRow(result.rows[0]) : null;
   }
 
   async createTicket(ticketHash: string, ticket: BindTicket): Promise<void> {
@@ -1035,10 +1331,7 @@ export class AuthStore {
   }
 
   /** Whether any ACTIVE recorded installation in the Workspace covers an account login. */
-  async githubActiveInstallationCoversAccount(
-    community: string,
-    login: string,
-  ): Promise<boolean> {
+  async githubActiveInstallationCoversAccount(community: string, login: string): Promise<boolean> {
     const result = await this.database.query<QueryResultRow>(
       `SELECT 1 AS covered FROM beeline_github_installations
        WHERE community = $1 AND lower(account_login) = lower($2) AND status = 'active'
@@ -1325,10 +1618,11 @@ export class AuthStore {
     // resolves onto the repository's current name without re-binding.
     const priorId = await this.storedGitHubRepositoryIdForName(community, fullName);
     if (priorId !== undefined) {
-      const healed = await this.gitHubRepositoryAccessRow(
-        `AND r.repository_id = $3::bigint`,
-        [community, pubkey, priorId],
-      );
+      const healed = await this.gitHubRepositoryAccessRow(`AND r.repository_id = $3::bigint`, [
+        community,
+        pubkey,
+        priorId,
+      ]);
       if (healed?.accessible) return { ...healed, resolvedFullName: healed.fullName };
     }
     return exact ?? { accessible: false, reason: 'not_granted' };
@@ -1456,10 +1750,9 @@ export class AuthStore {
     }
     // Bounded history: an offline daemon catches up within this window and no
     // backlog can grow past it. Cheap enough to run on every insert batch.
-    await this.database.query(
-      `DELETE FROM beeline_github_repo_events WHERE received_at < $1`,
-      [new Date(now.getTime() - GITHUB_REPO_EVENT_RETENTION_MS)],
-    );
+    await this.database.query(`DELETE FROM beeline_github_repo_events WHERE received_at < $1`, [
+      new Date(now.getTime() - GITHUB_REPO_EVENT_RETENTION_MS),
+    ]);
   }
 
   /** The stored activity for one repository newer than `sinceId`, oldest first. */
@@ -1481,18 +1774,20 @@ export class AuthStore {
       receivedAt: string;
     }>
   > {
-    const result = await this.database.query<QueryResultRow & {
-      id: string | number;
-      full_name: string;
-      event_type: string;
-      action: string;
-      actor: string;
-      number: number | null;
-      title: string | null;
-      url: string | null;
-      summary: string;
-      received_at: string | Date;
-    }>(
+    const result = await this.database.query<
+      QueryResultRow & {
+        id: string | number;
+        full_name: string;
+        event_type: string;
+        action: string;
+        actor: string;
+        number: number | null;
+        title: string | null;
+        url: string | null;
+        summary: string;
+        received_at: string | Date;
+      }
+    >(
       `SELECT id, full_name, event_type, action, actor, number, title, url, summary, received_at
        FROM beeline_github_repo_events
        WHERE full_name = $1 AND id > $2

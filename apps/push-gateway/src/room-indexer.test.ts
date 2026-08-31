@@ -2208,4 +2208,27 @@ describe('RoomIndexer', () => {
     );
     await expect(indexer.claimAgentPairing(tokenHash, OUTSIDER)).resolves.toBeNull();
   });
+
+  it('accepts a short-lived auth grant only for its exact agent identity', async () => {
+    const tokenHash = createHash('sha256').update('BUZZ-GOLD-BEES').digest('hex');
+    await postgres.query(
+      `INSERT INTO beeline_agent_connect_grants
+        (token_hash, community_id, workspace_id, minter_pubkey, agent_pubkey,
+         expires_at, created_at)
+       VALUES ($1, $2, $3, $4, $5, now() + interval '10 minutes', now())`,
+      [tokenHash, TENANT, WORKSPACE, bytes(VIEWER), bytes(OUTSIDER)],
+    );
+
+    await expect(indexer.claimAgentPairing(tokenHash, 'e'.repeat(64))).resolves.toBeNull();
+    await expect(indexer.claimAgentPairing(tokenHash, OUTSIDER)).resolves.toEqual({
+      workspaceId: WORKSPACE,
+      pairedBy: VIEWER,
+      joined: true,
+    });
+    await expect(indexer.claimAgentPairing(tokenHash, OUTSIDER)).resolves.toEqual({
+      workspaceId: WORKSPACE,
+      pairedBy: VIEWER,
+      joined: false,
+    });
+  });
 });

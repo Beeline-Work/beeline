@@ -117,6 +117,7 @@ Committed home for project-intrinsic agent knowledge: rule + authoritative file 
 ## Mobile OTA release
 
 - **One production release authority:** `unified-release.yml` + `scripts/unified-release.mjs` assign a human semver (starting `v0.0.1`) to one exact main SHA, build every artifact before the gate, then confirm server → daemon → app → device rehearsal. Component workflows are reusable legs only; mixed identities are NOT delivered. Coverage: `scripts/unified-release.test.mjs`, `mobileOtaRelease.test.ts`, `release-status.test.ts`.
+- **A merge to `main` never releases.** `unified-release.yml` triggers on `workflow_dispatch` only (no `push`); `gh workflow run unified-release.yml` (no inputs releases current main head) is the sole way a release starts. The workflow's own `retry` job re-dispatches itself the same way via `createWorkflowDispatch` with `release_sha`/`release_version`/`retry_attempt`.
 - `mobile-ota.yml` builds/promotes only when called by the unified release; `ota-release.mjs` owns beta/exact-group EAS operations, and `ota-delivery-index.mjs` owns pending → built → published → physical-device-confirmed state. Canary runs on operator `emulator-5554`; ledger records `previousProductionGroupId`; a `beta-apk` binary is the ONLY canary vehicle (`EXPO_UPDATES_CHANNEL` baked at build). Native changes need a rebuild + runtimeVersion bump. Smoke reply waits start at phase markers (`publish-smoke-replies.ts`). Coverage: `mobileOtaRelease.test.ts`.
 
 ## GitHub identity and repository authority

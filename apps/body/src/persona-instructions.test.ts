@@ -16,6 +16,7 @@ import {
   appendPersonaSessionInstructions,
   personaTurnPrefixForHarness,
   prepareNativePersonaInstructions,
+  renderedAgentIdentityInstructions,
 } from './persona-instructions.js';
 import { AGENT_PRIVATE_STATE_ENV, agentPrivateStateInstructions } from './agent-private-state.js';
 
@@ -30,6 +31,11 @@ afterEach(async () => {
 });
 
 describe('Workspace persona session instructions', () => {
+  it('tells every harness that the rendered handle is its own address', () => {
+    expect(renderedAgentIdentityInstructions('Ox', 'ox')).toContain('identity is Ox (@ox)');
+    expect(renderedAgentIdentityInstructions('Ox', 'ox')).toContain('mentioning @ox is addressed to you');
+  });
+
   it('threads the saved persona through ACP without writing it into the tracked repository', async () => {
     const temporaryDirectory = await mkdtemp(resolve(tmpdir(), 'beeline-persona-'));
     temporaryDirectories.push(temporaryDirectory);

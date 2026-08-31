@@ -128,6 +128,7 @@ export {
 export * from './permission-request.js';
 export * from './agent-access-config.js';
 export * from './scheduled-turn.js';
+export { syncAgentDeclaration } from './agent.js';
 
 export {
   AGENT_PRESENCE_HEARTBEAT_MS,

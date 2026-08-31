@@ -1618,7 +1618,7 @@ describe('RoomIndexer', () => {
     });
   });
 
-  it('uses the current Workspace soul name on every indexed agent surface', async () => {
+  it('uses the one current declaration name on every indexed agent surface', async () => {
     await postgres.query(
       `INSERT INTO channel_members (community_id, channel_id, pubkey, role, removed_at)
        VALUES ($1, $2, $3, 'member', to_timestamp(14))`,
@@ -1672,13 +1672,13 @@ describe('RoomIndexer', () => {
 
     expect(workspace).toMatchObject({
       members: [{ identity: { pubkey: VIEWER, name: 'Ada' } }],
-      agents: [{ identity: { pubkey: AGENT, name: 'Codex' } }],
+      agents: [{ identity: { pubkey: AGENT, name: 'Milo' } }],
     });
     expect(chats).toMatchObject({
-      chats: [{ latestMessage: { author: { pubkey: AGENT, name: 'Codex' } } }],
+      chats: [{ latestMessage: { author: { pubkey: AGENT, name: 'Milo' } } }],
     });
     expect(detail).toMatchObject({
-      agent: { identity: { pubkey: AGENT, name: 'Codex' } },
+      agent: { identity: { pubkey: AGENT, name: 'Milo' } },
     });
     expect(room).toMatchObject({
       members: expect.arrayContaining([
@@ -1688,7 +1688,7 @@ describe('RoomIndexer', () => {
         expect.objectContaining({
           identity: expect.objectContaining({
             pubkey: AGENT,
-            name: 'Codex',
+            name: 'Milo',
           }),
         }),
       ]),
@@ -1697,7 +1697,7 @@ describe('RoomIndexer', () => {
           text: 'Ready',
           author: expect.objectContaining({
             pubkey: AGENT,
-            name: 'Codex',
+            name: 'Milo',
           }),
         }),
       ]),
@@ -1705,7 +1705,7 @@ describe('RoomIndexer', () => {
         expect.objectContaining({
           agent: expect.objectContaining({
             pubkey: AGENT,
-            name: 'Codex',
+            name: 'Milo',
           }),
         }),
       ],
@@ -1716,7 +1716,7 @@ describe('RoomIndexer', () => {
           text: 'Ready',
           author: expect.objectContaining({
             pubkey: AGENT,
-            name: 'Codex',
+            name: 'Milo',
           }),
         }),
       ]),
@@ -1726,12 +1726,12 @@ describe('RoomIndexer', () => {
         {
           agent: expect.objectContaining({
             pubkey: AGENT,
-            name: 'Codex',
+            name: 'Milo',
           }),
           latestMessage: expect.objectContaining({
             author: expect.objectContaining({
               pubkey: AGENT,
-              name: 'Codex',
+              name: 'Milo',
             }),
           }),
         },
@@ -1902,7 +1902,7 @@ describe('RoomIndexer', () => {
     );
 
     await expect(indexer.readAgent(WORKSPACE, AGENT, VIEWER)).resolves.toMatchObject({
-      agent: { identity: { name: 'Clara' } },
+      agent: { identity: { name: 'Milo' } },
       soul: {
         name: 'Clara',
         instructions: 'Keep the tests green.',
@@ -1923,7 +1923,7 @@ describe('RoomIndexer', () => {
       selected: { model: 'opus', effort: 'high' },
     });
     await expect(indexer.readWorkspace(WORKSPACE, VIEWER)).resolves.toMatchObject({
-      agents: [{ identity: { name: 'Clara' } }],
+      agents: [{ identity: { name: 'Milo' } }],
     });
     const detail = await indexer.readAgent(WORKSPACE, AGENT, VIEWER);
     expect(detail?.watchFilters).toContainEqual({

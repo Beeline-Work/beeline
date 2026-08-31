@@ -1,4 +1,5 @@
 import { generateKeypair, signEvent } from '@beeline/nostr';
+import { agentHandle } from '@beeline/buzz-client';
 import { describe, expect, it, vi } from 'vitest';
 import {
   AGENT_DELEGATION_DEFAULT_MAX_HOPS,
@@ -126,6 +127,18 @@ describe('signed agent mentions', () => {
 });
 
 describe('Room agent delegation', () => {
+  it('recognizes the declaration-derived rendered handle as self', () => {
+    const self = generateKeypair();
+    const displayName = 'Ox';
+    const handle = agentHandle(displayName, self.publicKey);
+
+    expect(
+      roomAgentMention(`@${handle} how would you fix both?`, [
+        { handle, pubkey: self.publicKey, kind: 'agent' },
+      ], self.publicKey),
+    ).toEqual({ status: 'self', handle });
+  });
+
   it('finds markdown- and punctuation-delimited handles in text order', () => {
     const self = generateKeypair();
     const codex = generateKeypair();

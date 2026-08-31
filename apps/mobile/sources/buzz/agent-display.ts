@@ -12,16 +12,16 @@ export type AgentDisplayIdentity = {
 };
 
 /**
- * Resolve authority-free presentation. A valid human-authored soul overlay
- * name wins; otherwise the agent's own registered `displayName` wins; only
- * an agent with neither falls back to the stable pubkey-derived name.
+ * Resolve authority-free presentation from the agent's one self-signed
+ * declaration. A soul may shape personality and artwork, but never supplies
+ * a competing name or @handle.
  */
 export function resolveAgentDisplayIdentity(
   pubkey: string,
   agent?: Pick<Agent, 'pubkey' | 'displayName' | 'avatar' | 'soulProfile'> | null,
 ): AgentDisplayIdentity {
   const overlay = agent?.soulProfile;
-  const name = resolveAgentName(overlay?.name ?? agent?.displayName, pubkey);
+  const name = resolveAgentName(agent?.displayName, pubkey);
   const overlayPersonality = overlay?.soul.trim();
   // Once a human soul exists, its absent avatar explicitly selects the generated mark.
   const avatarUrl = overlay ? overlay.avatar?.trim() : agent?.avatar?.trim();
@@ -31,7 +31,7 @@ export function resolveAgentDisplayIdentity(
     personality: overlayPersonality || 'Steady, practical, and ready to help.',
     avatarSeed: overlay?.avatarSeed.trim() || pubkey || 'unknown-agent',
     ...(avatarUrl ? { avatarUrl } : {}),
-    hasSoul: Boolean(overlay && resolveAgentName(overlay.name, pubkey) === overlay.name.trim()),
+    hasSoul: Boolean(overlay),
   };
 }
 
@@ -102,7 +102,6 @@ type NameableAgent = Pick<Agent, 'pubkey' | 'displayName' | 'soulProfile'>;
  * later Workspace's real soul name for the same pubkey from ever winning.
  */
 function namesItsAgent(agent: NameableAgent): boolean {
-  if (agent.soulProfile?.name?.trim()) return true;
   const displayName = agent.displayName?.trim();
   return Boolean(displayName) && displayName !== fallbackAgentName(agent.pubkey);
 }

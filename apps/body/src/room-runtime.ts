@@ -555,6 +555,22 @@ export class RoomRuntimeCoordinator {
     );
   }
 
+  /**
+   * The declaration is the one display/handle authority for this agent. Keep
+   * it current before serving Rooms, and repeat safely on each reconciliation
+   * so a daemon restart repairs a stale pre-existing record.
+   */
+  private async syncAgentDisplayDeclaration(client: BuzzClient): Promise<void> {
+    const agents = await client.listAgents(this.runtime.communityId, { forceRefresh: true });
+    const own = agents.find((agent) => agent.pubkey === this.agent.publicKey);
+    const displayName = own?.soulProfile?.name ?? this.agent.name;
+    // Legacy test doubles and older, already-running built SDKs do not have
+    // this method. A freshly started daemon always does; keep a mixed-version
+    // process serving while its next restart picks up the declaration repair.
+    if (typeof client.syncAgentDeclaration !== 'function') return;
+    await client.syncAgentDeclaration(this.runtime.communityId, { displayName });
+  }
+
   async reconcile(): Promise<WorkspaceMembershipStatus> {
     const client = createBuzzClient({
       baseUrl: this.runtime.relayBaseUrl,
@@ -598,6 +614,18 @@ export class RoomRuntimeCoordinator {
         return 'not-member';
       }
       this.workspaceRemovalConfirmations = 0;
+      try {
+        await this.syncAgentDisplayDeclaration(client);
+      } catch (error) {
+        // A temporary declaration read/write failure must not darken every
+        // Room. The next reconciliation retries; the successful write is
+        // idempotent and repairs any stale declaration before presentation.
+        console.error(
+          `[thin-core] agent display declaration sync failed for Workspace ` +
+            `${this.runtime.communityId}; will retry:`,
+          error,
+        );
+      }
       const memberships = await client.listMyChannels();
       const desired = new Map<string, DesiredChannel>();
       await mapWithConcurrency(memberships, ROOM_JOIN_CONCURRENCY, async (membership) => {

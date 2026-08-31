@@ -21,7 +21,7 @@ describe('agent display identity', () => {
     expect(first.avatarSeed).toBe(pubkey);
   });
 
-  it('uses a validated soul overlay for name, personality, and avatar seed', () => {
+  it('uses a soul overlay for personality and avatar seed, not a competing name', () => {
     const pubkey = 'agent-public-key';
     const display = resolveAgentDisplayIdentity(pubkey, {
       pubkey,
@@ -40,8 +40,8 @@ describe('agent display identity', () => {
     });
 
     expect(display).toMatchObject({
-      name: 'Ada',
-      handle: 'ada',
+      name: fallbackAgentName(pubkey),
+      handle: fallbackAgentName(pubkey).toLowerCase(),
       personality: 'Keeps the suite green.',
       avatarSeed: 'chrome-warden-soul',
       avatarUrl: 'https://example.test/ada-soul.png',
@@ -49,10 +49,7 @@ describe('agent display identity', () => {
     });
   });
 
-  it('preserves an authored compound overlay as the agent name and handle', () => {
-    // Operator-chosen names are identity, not noise: a multi-word soul name
-    // renders verbatim and its handle strips only non-alphanumerics. The old
-    // single-word rule silently replaced it with a random first name.
+  it('does not let a compound soul name replace the declaration handle', () => {
     const pubkey = 'legacy-agent';
     const display = resolveAgentDisplayIdentity(pubkey, {
       pubkey,
@@ -67,8 +64,8 @@ describe('agent display identity', () => {
         raw: {} as never,
       },
     });
-    expect(display.name).toBe('Chrome Warden');
-    expect(display.handle).toBe('chromewarden');
+    expect(display.name).toBe(fallbackAgentName(pubkey));
+    expect(display.handle).toBe(fallbackAgentName(pubkey).toLowerCase());
     expect(display.hasSoul).toBe(true);
   });
 
@@ -88,7 +85,7 @@ describe('agent display identity', () => {
     expect(display.hasSoul).toBe(false);
   });
 
-  it('prefers a validated soul overlay name over the agent record displayName', () => {
+  it('keeps the registered declaration name when a soul has a different name', () => {
     const pubkey = 'beebee-pubkey';
     const display = resolveAgentDisplayIdentity(pubkey, {
       pubkey,
@@ -105,7 +102,7 @@ describe('agent display identity', () => {
       },
     });
 
-    expect(display.name).toBe('Ada');
+    expect(display.name).toBe('Beebee');
   });
 
   it('falls back to the pubkey-derived name only when neither an overlay nor a displayName is known', () => {
@@ -233,7 +230,7 @@ describe('the transcript’s agent roster', () => {
     expect(resolveAgentDisplayIdentity(beebee, merged.get(beebee)).name).toBe('Beebee');
   });
 
-  it('never drops a soulProfile the merge finds just because an earlier entry already won the pubkey', () => {
+  it('keeps a later soulProfile without letting it rename an earlier declaration', () => {
     // The merge must UNION fields across entries for the same pubkey, not
     // keep one whole incoming object and discard the other. A pairing-only
     // entry from one Workspace (real displayName, e.g. a human-typed name
@@ -245,7 +242,8 @@ describe('the transcript’s agent roster', () => {
       { pubkey: beebee, displayName: '', soulProfile: rosterEntry.soulProfile },
     ];
     const merged = mergeAgentRosters([pairingOnly, souledWorkspace]);
-    expect(resolveAgentDisplayIdentity(beebee, merged.get(beebee)).name).toBe('Beebee');
+    expect(merged.get(beebee)?.soulProfile).toEqual(rosterEntry.soulProfile);
+    expect(resolveAgentDisplayIdentity(beebee, merged.get(beebee)).name).toBe('Alden');
   });
 
   it('ignores roster rows with no pubkey rather than keying on undefined', () => {

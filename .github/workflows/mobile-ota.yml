@@ -31,7 +31,7 @@ permissions:
 jobs:
   build:
     if: inputs.phase == 'build'
-    runs-on: [self-hosted, beeline-production-squire]
+    runs-on: [self-hosted, beeline-prod-host]
     timeout-minutes: 15
     env:
       CURRENT_ATTEMPT: ${{ inputs.retry_attempt }}
@@ -141,7 +141,7 @@ jobs:
 
   promote:
     if: inputs.phase == 'promote'
-    runs-on: [self-hosted, beeline-production-squire]
+    runs-on: [self-hosted, beeline-prod-host]
     timeout-minutes: 10
     outputs:
       production_group_id: ${{ steps.promotion.outputs.production_group_id }}

@@ -363,6 +363,41 @@ describe('projectActivity granularity', () => {
     ]);
   });
 
+  it('preserves prior plan items across a follow-up turn that supplies no new plan', async () => {
+    // A corner's second (and later) turn — a human follow-up, a nudge, a
+    // completion-ladder check — calls startPlan again with only the objective.
+    // That must not wipe the checklist a prior turn already published and
+    // completed: the owner-reported bug is exactly this, items vanishing once
+    // the corner reaches a finished/archived state.
+    const projection = projectActivity(client as unknown as AcpClient, channelId, owner, sessionId);
+
+    await projection.startPlan('Fix the corner checklist.');
+    emit({
+      sessionUpdate: 'plan',
+      entries: [
+        { content: 'Find the renderer', status: 'completed' },
+        { content: 'Wire the highlighter', status: 'in_progress' },
+      ],
+    });
+    await vi.advanceTimersByTimeAsync(5_000);
+    await projection.completePlan();
+
+    await projection.startPlan('Fix the corner checklist.');
+    projection();
+
+    const plans = published.flatMap((event) => {
+      const content = JSON.parse(event.content) as {
+        update: { updates: Array<{ plan?: { items: Array<{ step: string; status: string }> } }> };
+      };
+      return content.update.updates.flatMap((update) => (update.plan ? [update.plan.items] : []));
+    });
+
+    expect(plans.at(-1)).toEqual([
+      { step: 'Find the renderer', status: 'completed' },
+      { step: 'Wire the highlighter', status: 'completed' },
+    ]);
+  });
+
   it('publishes different task-authored plans for two different corner transcripts', async () => {
     const authProjection = projectActivity(
       client as unknown as AcpClient,

@@ -949,7 +949,13 @@ export function projectActivity(
               : {}),
           items: compactAuthoredPlan.items,
         }
-      : fallbackPlan(pinnedObjective ?? objective);
+      : currentPlan?.items.length
+        // A later turn (a follow-up, a nudge, a completion-ladder check) that
+        // brings no fresh plan of its own must not blank a checklist an
+        // earlier turn already published — that is the finished corner
+        // losing its sub-goals, not an honest "no plan yet" state.
+        ? { ...currentPlan, ...(pinnedObjective ? { objective: pinnedObjective } : {}) }
+        : fallbackPlan(pinnedObjective ?? objective);
     await publishPlan(currentPlan);
   };
   controller.completePlan = async () => {

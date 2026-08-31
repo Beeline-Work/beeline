@@ -68,6 +68,9 @@ case "$cmd" in
       if [ "$prev" = "--filter" ] && echo "$a" | grep -q "service=materializer" && [ -f "$STATE/materializer-running" ]; then
         echo "gwcontainerid"
       fi
+      if [ "$prev" = "--filter" ] && echo "$a" | grep -q "service=materializer-next" && [ -f "$STATE/materializer-next-running" ]; then
+        echo "candidatecontainerid"
+      fi
       if [ "$prev" = "--filter" ] && echo "$a" | grep -q "service=push-gateway" && [ -f "$STATE/push-gateway-running" ]; then
         echo "legacygwcontainerid"
       fi
@@ -88,7 +91,7 @@ case "$cmd" in
     for last in "$@"; do :; done
     case "$last" in
       frontcontainerid) echo "running" ;;
-      authcontainerid|gwcontainerid|legacygwcontainerid|relaycontainerid) echo "healthy" ;;
+      authcontainerid|gwcontainerid|candidatecontainerid|legacygwcontainerid|relaycontainerid) echo "healthy" ;;
       *) echo "missing fixture container" >&2; exit 1 ;;
     esac
     ;;
@@ -170,10 +173,15 @@ case "$cmd" in
         fi
         ;;
     esac
-    # Only a FULL-stack up can be made to fail; the pre-existing auth-only
-    # recreation always succeeds.
+    # The separate candidate is allowed to overlap the production materializer;
+    # it is read-only and becomes the temporary RoomView upstream.
     case "$*" in
-      *"up -d --no-deps auth") ;;
+      *"-p buzz-router-prod-cutover"*"up -d --no-deps"*)
+        touch "$STATE/materializer-next-running"
+        ;;
+      *"-p buzz-router-prod-cutover"*"down --remove-orphans"*)
+        rm -f "$STATE/materializer-next-running"
+        ;;
       *"up -d"*)
         if [ -f "$STATE/push-gateway-running" ] || [ -f "$STATE/materializer-running" ]; then
           echo "tail owner overlap" >&2
@@ -217,7 +225,7 @@ case "$1" in
     fi
     src="$7"; dst="$8"
     case "$dst" in
-      */compose.yml|*/relay-front/nginx.conf) ;;
+      */compose.yml|*/relay-front/nginx.conf|*/relay-front/materializer-upstream.conf) ;;
       *) echo "sudoers REFUSAL (install dest)" >&2; exit 1 ;;
     esac
     [ "$listing" = 1 ] && exit 0
@@ -225,7 +233,7 @@ case "$1" in
     ;;
   /usr/bin/docker)
     shift
-    if [ "$1" != "compose" ] || [ "$2" != "-p" ] || [ "$3" != "buzz-router-prod" ]; then
+    if [ "$1" != "compose" ] || [ "$2" != "-p" ] || { [ "$3" != "buzz-router-prod" ] && [ "$3" != "buzz-router-prod-cutover" ]; }; then
       echo "sudoers REFUSAL (compose project)" >&2; exit 1
     fi
     shift 3
@@ -237,9 +245,17 @@ case "$1" in
       esac
     done
     case "$rest" in
-      " up -d --remove-orphans")
+      " up -d --no-deps")
         [ "$listing" = 1 ] && exit 0
-        exec __BIN__/docker compose -p buzz-router-prod up -d --remove-orphans
+        exec __BIN__/docker compose -p buzz-router-prod-cutover up -d --no-deps
+        ;;
+      " down --remove-orphans")
+        [ "$listing" = 1 ] && exit 0
+        exec __BIN__/docker compose -p buzz-router-prod-cutover down --remove-orphans
+        ;;
+      " up -d --no-deps --force-recreate materializer auth relay")
+        [ "$listing" = 1 ] && exit 0
+        exec __BIN__/docker compose -p buzz-router-prod up -d --no-deps --force-recreate materializer auth relay
         ;;
       *) echo "sudoers REFUSAL (compose args):$rest" >&2; exit 1 ;;
     esac
@@ -322,6 +338,9 @@ async function withPublicServer(fn, opts = {}) {
     } else if (req.url === '/workspaces') {
       res.statusCode = 401;
       res.end('{"error":"valid_identity_authorization_required"}');
+    } else if (req.url === '/room/deploy-proof') {
+      res.statusCode = opts.roomStatus?.() ?? 200;
+      res.end('{"room":"available"}');
     } else {
       res.statusCode = 404;
       res.end();
@@ -410,18 +429,40 @@ function runDeploy(opts) {
   if (opts.denySudoCommand === 'compose-up') {
     write(
       path.join(stateDir, 'deny-sudo-rule'),
-      `root:/usr/bin/docker compose -p buzz-router-prod --env-file ${path.join(proj, '.env')} -f ${path.join(proj, 'compose.yml')} up -d --remove-orphans\n`,
+      `root:/usr/bin/docker compose -p buzz-router-prod-cutover --env-file ${path.join(proj, '.env')} -f ${path.join(stackStageDir, 'compose.materializer-candidate.yml')} up -d --no-deps\n`,
     );
   }
 
   makeFakeBin(binDir, stateDir);
 
   let publicBase = '';
+  const roomStatus = () => {
+    const selector = path.join(proj, 'relay-front', 'materializer-upstream.conf');
+    const upstream = fs.existsSync(selector) ? fs.readFileSync(selector, 'utf8') : 'legacy';
+    if (upstream.includes('materializer-next')) {
+      return fs.existsSync(path.join(stateDir, 'materializer-next-running')) ? 200 : 502;
+    }
+    return fs.existsSync(path.join(stateDir, 'materializer-running')) ||
+      fs.existsSync(path.join(stateDir, 'push-gateway-running'))
+      ? 200
+      : 502;
+  };
   return withPublicServer(async (base, closeServer) => {
     publicBase = base;
     // Async spawn, NOT execFileSync: the public-verification round-trips hit
     // an HTTP server hosted in THIS process, so the event loop must keep
     // running while the deploy script waits on curl.
+    const roomCodes = [];
+    let hammering = opts.hammerRoom === true;
+    const hammer = (async () => {
+      while (hammering) {
+        try {
+          roomCodes.push((await fetch(`${base}/room/deploy-proof`)).status);
+        } catch {
+          roomCodes.push(599);
+        }
+      }
+    })();
     const result = await new Promise((resolve) => {
       const child = spawn('bash', process.env.DEBUG_DEPLOY_TEST ? ['-x', SCRIPT] : [SCRIPT], {
         cwd: REPO,
@@ -448,6 +489,8 @@ function runDeploy(opts) {
       });
       child.on('close', (status) => resolve({ status: status ?? 1, stdout, stderr }));
     });
+    hammering = false;
+    await hammer;
     closeServer();
     if (process.env.DEBUG_DEPLOY_TEST) {
       fs.writeFileSync(
@@ -466,6 +509,7 @@ function runDeploy(opts) {
       runtimeStateDir,
       eventsStateDir,
       dlRoot,
+      roomCodes,
       readLive: (rel) => fs.readFileSync(path.join(proj, rel), 'utf8'),
       sudoLog: () =>
         fs.existsSync(path.join(stateDir, 'sudo.log'))
@@ -478,10 +522,10 @@ function runDeploy(opts) {
       eventsRunning: () => fs.existsSync(path.join(stateDir, 'events-running')),
       materializerRunning: () => fs.existsSync(path.join(stateDir, 'materializer-running')),
     };
-  }, { ...opts, dlRoot });
+  }, { ...opts, dlRoot, roomStatus });
 }
 
-test('first rollout installs both config files, runs one full reconcile through the existing sudo rule, and waits for health', async () => {
+test('first rollout moves RoomView through a healthy candidate before recreating application services', async () => {
   const r = await runDeploy({});
   assert.equal(r.status, 0, `stderr: ${r.stderr}\nstdout: ${r.stdout}`);
   assert.equal(r.readLive('compose.yml'), fs.readFileSync(TRACKED_COMPOSE, 'utf8'));
@@ -492,41 +536,56 @@ test('first rollout installs both config files, runs one full reconcile through 
     'the checkout web-tree swap must preserve the external /dl store',
   );
 
-  // Exactly one FULL-stack up through sudo. Auth is part of this reconcile,
-  // never raced by a preceding auth-only container replacement.
+  // The candidate starts before the old materializer is stopped. Nginx is HUP
+  // reloaded to each backend instead of restarting the front.
   const ups = r
     .dockerLog()
     .split('\n')
     .filter((l) => l.includes('compose ') && l.includes('up -d') && !l.includes('--no-deps auth'));
-  assert.equal(ups.length, 1, r.dockerLog());
-  assert.ok(ups[0].includes('-p buzz-router-prod'));
-  assert.ok(ups[0].endsWith('up -d --remove-orphans'));
+  assert.equal(ups.length, 2, r.dockerLog());
+  assert.ok(ups[0].includes('-p buzz-router-prod-cutover'));
+  assert.ok(ups[1].includes('-p buzz-router-prod'));
   const dockerOperations = r.dockerLog().trim().split('\n');
   const legacyStop = dockerOperations.findIndex(
     (line) => line === 'docker stop legacygwcontainerid',
   );
-  const materializerStart = dockerOperations.findIndex((line) => line.includes('up -d'));
+  const candidateStart = dockerOperations.findIndex((line) => line.includes('buzz-router-prod-cutover up -d'));
+  const materializerStart = dockerOperations.findIndex((line) => line.includes('buzz-router-prod up -d'));
+  assert.notEqual(candidateStart, -1, r.dockerLog());
+  assert.ok(candidateStart < legacyStop, r.dockerLog());
   assert.notEqual(legacyStop, -1, r.dockerLog());
   assert.ok(legacyStop < materializerStart, r.dockerLog());
   assert.equal(
     r
       .sudoLog()
       .split('\n')
-      .filter((l) => l.includes('--no-deps auth')).length,
-    0,
+      .filter((l) => !l.includes(' -l ') && l.includes('--force-recreate materializer auth relay')).length,
+    1,
   );
-  assert.ok(r.stdout.includes('production stack health verified'));
+  assert.ok(r.stdout.includes('buzz-router-prod-cutover/materializer-next health verified'));
   assert.ok(r.sudoLog().includes('disable --now beeline-events.service'), r.sudoLog());
   assert.equal(r.eventsRunning(), false, 'standalone events unit must stay retired after success');
 
-  // nginx HUP reload happened exactly once.
+  // nginx changes upstreams by HUP only; it is never stopped/recreated.
   assert.equal(
     r
       .dockerLog()
       .split('\n')
       .filter((l) => l.includes('kill -s HUP')).length,
-    1,
+    2,
   );
+});
+
+test('RoomView hammer sees zero 5xx throughout the materializer cutover', async () => {
+  const r = await runDeploy({ hammerRoom: true, existingMaterializer: true });
+  assert.equal(r.status, 0, `stderr: ${r.stderr}\nstdout: ${r.stdout}`);
+  assert.ok(r.roomCodes.length > 10, `expected sustained RoomView traffic, got ${r.roomCodes.length}`);
+  assert.deepEqual(
+    r.roomCodes.filter((status) => status >= 500),
+    [],
+    `RoomView 5xx during cutover: ${r.roomCodes.join(', ')}`,
+  );
+  console.log(`RoomView cutover hammer: ${r.roomCodes.length} requests, 0 5xx`);
 });
 
 test('a manifest that references a missing release-store bundle fails before the web tree changes', async () => {
@@ -559,7 +618,7 @@ test('a denied exact compose sudo rule parks before any running consumer is stop
   assert.match(r.stderr, /deploy preflight failed/);
   assert.match(
     r.stderr,
-    /beeline-runner ALL=\(root\) NOPASSWD: \/usr\/bin\/docker compose -p buzz-router-prod .* up -d --remove-orphans/,
+    /beeline-runner ALL=\(root\) NOPASSWD: \/usr\/bin\/docker compose -p buzz-router-prod-cutover .* up -d --no-deps/,
     'the deploy must print the exact missing sudoers rule for the operator',
   );
 });
@@ -661,6 +720,15 @@ test('production materializer preserves persisted absolute runtime roots inside 
   }
 });
 
+test('the cutover candidate is read-only and keeps the production materializer network alias', () => {
+  const candidate = composeConfig('relay-stack/prod/compose.materializer-candidate.yml').services[
+    'materializer-next'
+  ];
+  assert.equal(candidate.environment.BUZZY_MATERIALIZER_DISABLE_PUSH_DELIVERY, 'true');
+  assert.equal(candidate.environment.BUZZY_MATERIALIZER_DISABLE_REPOSITORY_EVENTS, 'true');
+  assert.ok(candidate.networks['buzz-net'].aliases.includes('materializer-next'));
+});
+
 test('local materializer stays credential-free and does not mount an operator runtime', () => {
   const materializer = composeConfig('relay-stack/compose.yml').services.materializer;
   assert.equal(materializer.environment.XDG_STATE_HOME, undefined);
@@ -693,13 +761,13 @@ test('a repeated deploy places tracked config and converges once', async () => {
     r
       .dockerLog()
       .split('\n')
-      .filter((l) => l.includes('compose ') && l.includes('up -d') && !l.includes('--no-deps auth'))
+      .filter((l) => l.includes('compose ') && l.includes('up -d') && !l.includes('compose -f'))
       .length,
-    1,
+    2,
   );
   const dockerOperations = r.dockerLog().trim().split('\n');
   const currentStop = dockerOperations.findIndex((line) => line === 'docker stop gwcontainerid');
-  const materializerStart = dockerOperations.findIndex((line) => line.includes('up -d'));
+  const materializerStart = dockerOperations.findIndex((line) => line.includes('buzz-router-prod up -d'));
   assert.notEqual(currentStop, -1, r.dockerLog());
   assert.ok(currentStop < materializerStart, r.dockerLog());
   assert.equal(
@@ -707,7 +775,7 @@ test('a repeated deploy places tracked config and converges once', async () => {
       .dockerLog()
       .split('\n')
       .filter((l) => l.includes('kill -s HUP')).length,
-    1,
+    2,
   );
 });
 
@@ -720,7 +788,7 @@ test('cutover refuses to start while any previous tail owner remains running', a
     r
       .dockerLog()
       .split('\n')
-      .some((line) => line.includes('compose ') && line.includes('up -d')),
+      .some((line) => line.includes('buzz-router-prod up -d')),
     false,
     r.dockerLog(),
   );
@@ -766,7 +834,7 @@ test('compose validation never resolves real env_file secrets: an unreadable env
     assert.ok(variant.includes(secret), 'fixture must actually reference the unreadable file');
     const r = await runDeploy({ liveCompose: variant });
     assert.equal(r.status, 0, `stderr: ${r.stderr}\nstdout: ${r.stdout}`);
-    assert.ok(r.stdout.includes('production stack rolled out'));
+    assert.ok(r.stdout.includes('production application services rolled out without a RoomView gap'));
     // The transformation was validation-only: the DEPLOYED compose carries
     // the repo's real env_file reference (deployed bytes converge to the
     // tracked file, never to the pre-deploy live variant).

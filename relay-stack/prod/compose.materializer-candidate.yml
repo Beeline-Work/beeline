@@ -1,0 +1,53 @@
+# Temporary, side-effect-free RoomView backend used by the production deploy.
+#
+# deploy-relay-host.sh copies this alongside the staged compose.yml and starts
+# it under the separate `buzz-router-prod-cutover` project.  It joins the live
+# network under the stable `materializer-next` name, so nginx can move only the
+# RoomView traffic after its healthcheck passes.  The real materializer remains
+# the sole push-delivery and repository-events owner; this candidate serves
+# indexed reads only.
+services:
+  materializer-next:
+    image: ${BUZZY_MATERIALIZER_IMAGE:-beeline-materializer:production}
+    env_file:
+      - /home/lunchbox/buzz-router-relay-prod/beeline-github.env
+    environment:
+      NODE_ENV: production
+      PORT: '8788'
+      BUZZY_PUSH_HOST: 0.0.0.0
+      BUZZY_PUSH_DATABASE_URL: postgres://${POSTGRES_USER:-buzz}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-buzz}
+      BUZZY_PUSH_SA_FILE: /run/secrets/buzzy-fcm-service-account.json
+      BUZZY_PUSH_REGISTRY_FILE: /var/lib/buzzy-push/registrations.json
+      BUZZY_INDEXER_PUBLIC_ORIGIN: https://usebeeline.app
+      BUZZY_OTA_RECEIPT_ADMIN_TOKEN: ${BUZZY_OTA_RECEIPT_ADMIN_TOKEN:-}
+      XDG_STATE_HOME: ${BEELINE_RUNTIME_STATE_DIR:-/home/lunchbox/.local/state}
+      BEELINE_EVENTS_STATE_DIR: /var/lib/beeline-events
+      BUZZY_MATERIALIZER_DISABLE_PUSH_DELIVERY: 'true'
+      BUZZY_MATERIALIZER_DISABLE_REPOSITORY_EVENTS: 'true'
+    volumes:
+      - ${BUZZY_PUSH_SA_HOST_FILE:-/home/lunchbox/buzzy-push-gateway/secrets/fcm-service-account.json}:/run/secrets/buzzy-fcm-service-account.json:ro
+      - ${BUZZY_PUSH_STATE_DIR:-/home/lunchbox/buzzy-push-gateway/state}:/var/lib/buzzy-push
+      - ${BEELINE_RUNTIME_STATE_DIR:-/home/lunchbox/.local/state}:${BEELINE_RUNTIME_STATE_DIR:-/home/lunchbox/.local/state}:ro
+      - ${BEELINE_EVENTS_HOST_STATE_DIR:-/home/lunchbox/.local/state/beeline/events}:/var/lib/beeline-events
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:8788/workspaces').then(r=>{if(r.status!==401)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    restart: 'no'
+    networks:
+      buzz-net:
+        aliases:
+          - materializer-next
+
+networks:
+  buzz-net:
+    external: true
+    name: buzz-router-prod_buzz-net

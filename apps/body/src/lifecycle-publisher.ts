@@ -31,6 +31,7 @@ export type LifecyclePublicationKind =
   | 'turn-receipt'
   | 'corner-session-live'
   | 'pull-request-fact'
+  | 'checks-failing-fact'
   | 'completion-nudge'
   | 'branch-ended'
   | 'rearmed-failure';
@@ -70,6 +71,7 @@ export function buildLifecycleMessage(input: LifecycleMessageInput): NostrEvent 
   const modelOutput = input.kind === 'model-output';
   const daemonFact =
     input.kind === 'pull-request-fact' ||
+    input.kind === 'checks-failing-fact' ||
     input.kind === 'completion-nudge' ||
     input.kind === 'branch-ended';
   const marker = modelOutput ? 'agent-message' : daemonFact ? 'daemon-fact' : 'body-control';

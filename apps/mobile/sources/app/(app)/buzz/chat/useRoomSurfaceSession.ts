@@ -321,13 +321,13 @@ export function useRoomSurfaceSession({
           return;
         }
         if (replaying) return;
-        const markers = event.tags.flatMap((tag) =>
+        const markers = event.tags.flatMap((tag: string[]) =>
           tag[0] === 't' && tag[1] ? [tag[1]] : [],
         );
         const expectsPaintedMessage =
           event.kind === 9 &&
           (markers.length === 0 ||
-            markers.some((marker) =>
+            markers.some((marker: string) =>
               ['agent-message', 'github-event', 'buzz-attachment'].includes(marker),
             ));
         if (expectsPaintedMessage) {

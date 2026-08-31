@@ -660,6 +660,9 @@ esac
             // executable so they do not depend on the developer/CI account's
             // optional ~/.maestro installation.
             MAESTRO_BIN: defaultMaestro,
+            // The script accepts the governor's Node.js executable explicitly
+            // because its intentionally narrow runner PATH may not contain it.
+            NODE_BIN: process.execPath,
             PATH: barePath,
             ...env,
           },
@@ -740,6 +743,24 @@ esac
       expect(result.stderr).toContain('platform-tools');
       expect(result.stderr).toContain('ANDROID_HOME');
       expect(result.stderr).not.toContain('requires the existing Android emulator');
+    }, 60_000);
+
+    it('parks with an actionable reason when Node.js is absent from the runner environment', () => {
+      const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-no-node-'));
+      const sdkRoot = stubAdbSdk(
+        directory,
+        'List of devices attached\nemulator-5554\tdevice',
+      );
+      const ledger = writeBetaLedger(directory);
+
+      const result = runCanary(['--ledger', ledger], {
+        ANDROID_HOME: sdkRoot,
+        NODE_BIN: join(directory, 'missing-node'),
+      });
+
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain('Node.js is not executable');
+      expect(result.stderr).toContain('NODE_BIN and PATH');
     }, 60_000);
 
     it('resolves adb from ANDROID_HOME when PATH lacks it and proceeds past the device gate', () => {

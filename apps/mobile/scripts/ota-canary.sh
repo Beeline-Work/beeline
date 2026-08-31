@@ -105,6 +105,23 @@ resolve_maestro() {
   return 1
 }
 
+# The test runner and release host may launch this script with a narrowed PATH
+# that does not include the Node.js executable used to start the governor.
+# Accept that executable explicitly, while retaining PATH lookup for ordinary
+# local invocations.
+resolve_node() {
+  if [[ -n "${NODE_BIN:-}" ]]; then
+    [[ -x "$NODE_BIN" ]] || return 1
+    printf '%s' "$NODE_BIN"
+    return 0
+  fi
+  if command -v node >/dev/null 2>&1; then
+    command -v node
+    return 0
+  fi
+  return 1
+}
+
 if ! ADB_BIN="$(resolve_adb)"; then
   cat >&2 <<EOF
 OTA canary cannot find the Android platform-tools binary (adb).
@@ -179,10 +196,14 @@ if [[ ! -f "$ledger" ]]; then
   park "canary ledger not found: $ledger; the beta-candidate publish step must succeed before the canary runs"
 fi
 
+if ! NODE_BIN_RESOLVED="$(resolve_node)"; then
+  park "Node.js is not executable on the release-host runner (searched NODE_BIN and PATH). Set NODE_BIN to the Node.js executable used by the release governor, then re-run the canary"
+fi
+
 set +e
-candidate_group="$(node -e 'const x=require(process.argv[1]); const stage=process.argv[2]; process.stdout.write(stage === "production" ? (x.production?.groupId || "") : (x.candidateGroupId || ""))' "$ledger" "$release_stage")"
-android_update="$(node -e 'const x=require(process.argv[1]); const stage=process.argv[2]; const update=(stage === "production" ? x.production?.updates : x.candidateUpdates)?.find((item) => item.platform === "android"); process.stdout.write(update?.id || "")' "$ledger" "$release_stage")"
-android_runtime="$(node -e 'const x=require(process.argv[1]); const stage=process.argv[2]; const update=(stage === "production" ? x.production?.updates : x.candidateUpdates)?.find((item) => item.platform === "android"); process.stdout.write(update?.runtimeVersion || "")' "$ledger" "$release_stage")"
+candidate_group="$("$NODE_BIN_RESOLVED" -e 'const x=require(process.argv[1]); const stage=process.argv[2]; process.stdout.write(stage === "production" ? (x.production?.groupId || "") : (x.candidateGroupId || ""))' "$ledger" "$release_stage")"
+android_update="$("$NODE_BIN_RESOLVED" -e 'const x=require(process.argv[1]); const stage=process.argv[2]; const update=(stage === "production" ? x.production?.updates : x.candidateUpdates)?.find((item) => item.platform === "android"); process.stdout.write(update?.id || "")' "$ledger" "$release_stage")"
+android_runtime="$("$NODE_BIN_RESOLVED" -e 'const x=require(process.argv[1]); const stage=process.argv[2]; const update=(stage === "production" ? x.production?.updates : x.candidateUpdates)?.find((item) => item.platform === "android"); process.stdout.write(update?.runtimeVersion || "")' "$ledger" "$release_stage")"
 ledger_status=$?
 set -e
 if (( ledger_status != 0 )); then
@@ -223,7 +244,7 @@ if [[ -z "$apk" ]]; then
     park "could not list EAS builds (npx eas-cli@22.2.0 exited ${build_status}); check EXPO_TOKEN and network access on the release host, then re-run the governor"
   fi
   set +e
-  build_url="$(node -e '
+  build_url="$("$NODE_BIN_RESOLVED" -e '
     const builds = require(process.argv[1]);
     const build = Array.isArray(builds) ? builds[0] : builds?.data?.[0];
     const url = build?.artifacts?.buildUrl ?? build?.artifacts?.applicationArchiveUrl;

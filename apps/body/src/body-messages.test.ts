@@ -1062,7 +1062,7 @@ describe('corner narrative persistence', () => {
     expect(drafts.slice(0, -1).every((event) => event.kind !== 9)).toBe(true);
   });
 
-  it('persists every distinct agent-message run in a corner transcript', async () => {
+  it('persists only the final model run, exactly like a Room reply', async () => {
     const published = stubPublishing();
     const body = newBody(newIdentity('corner-story-agent'));
     const opening = 'Opening a corner — preparing the workspace.';
@@ -1097,7 +1097,7 @@ describe('corner narrative persistence', () => {
       'Done.',
     );
 
-    expect(agentMessages(published).map((event) => event.content)).toEqual([opening, progress, final]);
+    expect(agentMessages(published).map((event) => event.content)).toEqual([final]);
   });
 
   it('publishes a Grok message chunk as a live draft before the ACP turn completes', async () => {
@@ -1198,7 +1198,7 @@ describe('corner narrative persistence', () => {
     expect(conciseCornerTurnSummary('```\nconsole.log("fixed");\n```')).toBe('');
   });
 
-  it('delivers every untagged solo-human turn but suppresses identical consecutive replies', async () => {
+  it('delivers every untagged corner turn even when the parent has multiple members', async () => {
     const published = stubPublishing();
     const agent = newIdentity('steer-narration-agent');
     const human = newIdentity('steer-human');
@@ -1227,6 +1227,11 @@ describe('corner narrative persistence', () => {
         session,
         lastPolledAt: 0,
         archived: false,
+        participantPubkeys: [
+          agent.publicKey,
+          human.publicKey,
+          newIdentity('other-human').publicKey,
+        ],
         taskDescription: 'Publish the mockup through a Cloudflare tunnel.',
       });
 
@@ -1257,9 +1262,9 @@ describe('corner narrative persistence', () => {
         'Publish the mockup through a Cloudflare tunnel.',
       ]);
       const messages = agentMessages(published);
-      expect(messages).toHaveLength(1);
-      expect(messages[0]!.content).toContain('Applied the requested follow-up tweak.');
-      expect(messages[0]!.content).toContain('Ran the suite again; still green.');
+      expect(messages).toHaveLength(3);
+      expect(messages.every((message) => message.content.includes('Applied the requested follow-up tweak.'))).toBe(true);
+      expect(messages.every((message) => message.content.includes('Ran the suite again; still green.'))).toBe(true);
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }

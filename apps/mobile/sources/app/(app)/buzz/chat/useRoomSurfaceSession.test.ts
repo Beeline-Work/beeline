@@ -17,6 +17,7 @@ const controls = vi.hoisted(() => ({
     stop: ReturnType<typeof vi.fn>;
     emit(event: NostrEvent): void;
   }>,
+  replayEvents: [] as NostrEvent[],
   transportCount: 0,
   identityPromise: null as Promise<{ publicKey: string; secretKey: Uint8Array } | null> | null,
 }));
@@ -97,6 +98,7 @@ vi.mock('@/sync/transport', () => ({
         surfaceSubscribe: async (filters: unknown, emit: (event: NostrEvent) => void) => {
           const stop = vi.fn();
           controls.subscriptions.push({ filters, stop, emit });
+          for (const event of controls.replayEvents) emit(event);
           return stop;
         },
       };
@@ -257,6 +259,7 @@ beforeEach(() => {
   controls.schedulers.length = 0;
   controls.subscriptions.length = 0;
   controls.transportCount = 0;
+  controls.replayEvents.length = 0;
   controls.identityPromise = null;
   vi.clearAllMocks();
 });
@@ -373,6 +376,129 @@ describe('useRoomSurfaceSession', () => {
             createdAt: event.created_at,
             author: { pubkey: event.pubkey, kind: 'agent', name: 'Agent' },
             presentation: 'message',
+          },
+        ],
+      }),
+    ).toBe(true);
+    await act(async () => renderer.unmount());
+  });
+
+  it('confirms turn receipts and parent lifecycle summaries against indexed Room state', async () => {
+    controls.cached = roomView('room-a');
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, {
+          channelId: 'room-a',
+          capture: () => undefined,
+        }),
+      );
+    });
+    await flushEffects();
+
+    const turn = {
+      id: '1'.repeat(64),
+      pubkey: 'a'.repeat(64),
+      created_at: 10,
+      kind: 9,
+      tags: [
+        ['h', 'room-a'],
+        ['t', 'body-control'],
+        ['t', 'agent-turn'],
+        ['request', '2'.repeat(64)],
+        ['status', 'working'],
+      ],
+      content: '',
+      sig: '0'.repeat(128),
+    } satisfies NostrEvent;
+    await act(async () => controls.subscriptions[0]!.emit(turn));
+    const turnExpectation = controls.schedulers[0]!.expectations[0]!;
+    expect(turnExpectation(roomView('room-a'))).toBe(false);
+    expect(
+      turnExpectation({
+        ...roomView('room-a'),
+        latestAgentTurns: [
+          {
+            requestId: '2'.repeat(64),
+            agentPubkey: turn.pubkey,
+            status: 'working',
+            createdAt: turn.created_at,
+          },
+        ],
+      }),
+    ).toBe(true);
+
+    const landed = {
+      ...turn,
+      id: '3'.repeat(64),
+      tags: [
+        ['h', 'room-a'],
+        ['t', 'daemon-fact'],
+        ['t', 'corner-branch-ended'],
+        ['subchannel', 'corner-a'],
+        ['outcome', 'landed'],
+      ],
+      content: 'Landed “Smoke lifecycle PR” into main.',
+    } satisfies NostrEvent;
+    await act(async () => controls.subscriptions[0]!.emit(landed));
+    const landedExpectation = controls.schedulers[0]!.expectations[1]!;
+    expect(landedExpectation(roomView('room-a'))).toBe(false);
+    expect(
+      landedExpectation({
+        ...roomView('room-a'),
+        messages: [
+          {
+            id: landed.id,
+            text: landed.content,
+            createdAt: landed.created_at,
+            author: { pubkey: landed.pubkey, kind: 'agent', name: 'Agent' },
+            presentation: 'system',
+          },
+        ],
+      }),
+    ).toBe(true);
+    await act(async () => renderer.unmount());
+  });
+
+  it('keeps a fresh replayed working receipt alive until the opening Corner GET indexes it', async () => {
+    controls.replayEvents.push({
+      id: '4'.repeat(64),
+      pubkey: 'a'.repeat(64),
+      created_at: Math.floor(Date.now() / 1_000),
+      kind: 9,
+      tags: [
+        ['h', 'corner-a'],
+        ['t', 'body-control'],
+        ['t', 'agent-turn'],
+        ['request', '5'.repeat(64)],
+        ['status', 'working'],
+      ],
+      content: '',
+      sig: '0'.repeat(128),
+    });
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, {
+          channelId: 'corner-a',
+          capture: () => undefined,
+        }),
+      );
+    });
+    await flushEffects();
+
+    expect(controls.schedulers[0]!.expectations).toHaveLength(1);
+    const expectation = controls.schedulers[0]!.expectations[0]!;
+    expect(expectation(roomView('corner-a'))).toBe(false);
+    expect(
+      expectation({
+        ...roomView('corner-a'),
+        latestAgentTurns: [
+          {
+            requestId: '5'.repeat(64),
+            agentPubkey: 'a'.repeat(64),
+            status: 'working',
+            createdAt: Math.floor(Date.now() / 1_000),
           },
         ],
       }),

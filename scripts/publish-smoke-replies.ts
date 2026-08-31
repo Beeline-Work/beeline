@@ -8,6 +8,8 @@ import {
   AGENT_PRESENCE_HEARTBEAT_MS,
   CORNER_REMOTE_STATE_KIND,
   CORNER_REMOTE_STATE_TAG,
+  KIND_AGENT_DRAFT,
+  agentDraftKey,
   cornerRemoteStateKey,
   createBuzzClient,
   KIND_AGENT_PRESENCE,
@@ -87,6 +89,7 @@ async function requireExactlyOneMessage(
 }
 
 async function main(agentNsec: string, roomId: string, cornerId: string) {
+  const cornerProofOnly = process.env.SMOKE_CORNER_PROOF_ONLY === '1';
   const identity = loadIdentityFromNsec(agentNsec, 'buzzy-smoke-agent');
   const client = createBuzzClient({
     baseUrl: RELAY,
@@ -138,6 +141,28 @@ async function main(agentNsec: string, roomId: string, cornerId: string) {
             ['status', status],
           ],
           content: status === 'working' ? 'Agent is thinking…' : 'Agent reply complete.',
+        },
+        identity.secretKey,
+      ),
+    );
+  };
+  const publishCornerDraft = (requestId: string, content: string, closed = false) => {
+    return client.publish(
+      signEvent(
+        {
+          pubkey: identity.publicKey,
+          created_at: Math.floor(Date.now() / 1_000),
+          kind: KIND_AGENT_DRAFT,
+          tags: [
+            ['d', agentDraftKey(cornerId)],
+            ['h', cornerId],
+            ['t', 'agent-draft'],
+            ['agent', identity.publicKey],
+            ['session', 'smoke-corner-session'],
+            ['request', requestId],
+            ...(closed ? [['status', 'closed']] : []),
+          ],
+          content,
         },
         identity.secretKey,
       ),
@@ -208,20 +233,25 @@ async function main(agentNsec: string, roomId: string, cornerId: string) {
     // Relay observation is the action boundary. Navigation time before a send
     // cannot consume its latency budget; only relay -> authoritative RoomView
     // materialization is measured.
-    const roomSend = await waitForRelayMessage(client, roomId, 'SMOKE ROOM SEND');
-    await requireRoomViewWithinBudget(roomViews, roomId, roomSend, 'room-send');
-    const roomReply = await client.messageSubmit(roomId, 'SMOKE AGENT ROOM REPLY — delivered live');
-    await requireRoomViewWithinBudget(roomViews, roomId, roomReply, 'room-agent-reply');
-    // The smoke performs a separate picker/responsiveness send before its
-    // exact Beebee mention. Use that relay-backed action as the phase boundary
-    // so time spent navigating and exercising the first mention cannot consume
-    // the timeout for an action the device has not reached yet.
-    await waitForRelayMessage(client, roomId, 'mention picker stayed responsive');
-    await waitForRelayMessage(client, roomId, "@beebee what's up");
-    await requireExactlyOneMessage(client, roomId, "@beebee what's up");
-    await client.messageSubmit(roomId, "SMOKE AGENT MENTION REPLY — @beebee what's up");
-    await waitForRelayMessage(client, roomId, 'SMOKE KEYBOARD PIN TRIGGER');
-    await client.messageSubmit(roomId, 'SMOKE AGENT KEYBOARD REPLY — newest above keyboard');
+    if (!cornerProofOnly) {
+      const roomSend = await waitForRelayMessage(client, roomId, 'SMOKE ROOM SEND');
+      await requireRoomViewWithinBudget(roomViews, roomId, roomSend, 'room-send');
+      const roomReply = await client.messageSubmit(
+        roomId,
+        'SMOKE AGENT ROOM REPLY — delivered live',
+      );
+      await requireRoomViewWithinBudget(roomViews, roomId, roomReply, 'room-agent-reply');
+      // The smoke performs a separate picker/responsiveness send before its
+      // exact Beebee mention. Use that relay-backed action as the phase boundary
+      // so time spent navigating and exercising the first mention cannot consume
+      // the timeout for an action the device has not reached yet.
+      await waitForRelayMessage(client, roomId, 'mention picker stayed responsive');
+      await waitForRelayMessage(client, roomId, "@beebee what's up");
+      await requireExactlyOneMessage(client, roomId, "@beebee what's up");
+      await client.messageSubmit(roomId, "SMOKE AGENT MENTION REPLY — @beebee what's up");
+      await waitForRelayMessage(client, roomId, 'SMOKE KEYBOARD PIN TRIGGER');
+      await client.messageSubmit(roomId, 'SMOKE AGENT KEYBOARD REPLY — newest above keyboard');
+    }
     const cornerPhaseRequest = await waitForRelayMessage(
       client,
       roomId,
@@ -240,13 +270,27 @@ async function main(agentNsec: string, roomId: string, cornerId: string) {
       },
     );
     await requireRoomViewWithinBudget(roomViews, cornerId, idleNudge, 'corner-idle-nudge');
+    await publishCornerTurnStatus(cornerPhaseRequest.id, 'complete');
     const cornerSteer = await waitForRelayMessage(client, cornerId, 'SMOKE CORNER STEER');
     await requireRoomViewWithinBudget(roomViews, cornerId, cornerSteer, 'corner-steer');
+    await publishCornerTurnStatus(cornerSteer.id, 'working');
+    await publishCornerDraft(cornerSteer.id, 'SMOKE AGENT CORNER STREAM — first chunk');
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+    await publishCornerDraft(
+      cornerSteer.id,
+      'SMOKE AGENT CORNER STREAM — first chunk, then second chunk',
+    );
+    // Maestro deliberately settles after each Android action. Keep the live
+    // state open across those independent assertions and the screenshot; the
+    // completed-reply wait below owns the longer terminal deadline.
+    await new Promise((resolve) => setTimeout(resolve, 15_000));
     const cornerReply = await client.messageSubmit(
       cornerId,
       'SMOKE AGENT CORNER REPLY — steering delivered live',
     );
     await requireRoomViewWithinBudget(roomViews, cornerId, cornerReply, 'corner-agent-reply');
+    await publishCornerDraft(cornerSteer.id, '', true);
+    await publishCornerTurnStatus(cornerSteer.id, 'complete');
     // This mirrors the daemon's mechanical PR fact: the signed remote state
     // drives lifecycle rendering and the typed event drives the visible
     // GitHub link card. The device waits for this exact card before issuing
@@ -321,7 +365,12 @@ async function main(agentNsec: string, roomId: string, cornerId: string) {
         ],
       },
     );
-    await requireRoomViewWithinBudget(roomViews, roomId, worktreeCleaned, 'corner-worktree-cleaned');
+    await requireRoomViewWithinBudget(
+      roomViews,
+      roomId,
+      worktreeCleaned,
+      'corner-worktree-cleaned',
+    );
   } finally {
     stopped = true;
     if (heartbeatTimer) clearTimeout(heartbeatTimer);

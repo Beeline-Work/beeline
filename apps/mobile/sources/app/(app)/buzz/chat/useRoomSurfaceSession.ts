@@ -19,6 +19,7 @@ import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-s
 import { createRoomOutbox, mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { BuzzRigTransport } from '@/sync/transport';
 import {
+  AGENT_TURN_FRESHNESS_MS,
   mergeAgentPresence,
   mergeAgentPresenceBatch,
   type RoomAgentPresence,
@@ -26,6 +27,14 @@ import {
 import { ROOM_LABEL } from '@/buzz/vocabulary';
 
 const OUTBOX_CONFIRMATION_TIMEOUT_MS = 15_000;
+
+function eventTag(event: { tags: string[][] }, name: string): string | undefined {
+  return event.tags.find((tag) => tag[0] === name)?.[1];
+}
+
+function eventMarkers(event: { tags: string[][] }): string[] {
+  return event.tags.flatMap((tag) => (tag[0] === 't' && tag[1] ? [tag[1]] : []));
+}
 
 type RoomOutbox = ReturnType<typeof createRoomOutbox>;
 
@@ -320,15 +329,37 @@ export function useRoomSurfaceSession({
           applyDecodedOverlay(overlay);
           return;
         }
+        const markers = eventMarkers(event);
+        const requestId = eventTag(event, 'request');
+        const replayedFreshWorkingReceipt =
+          replaying &&
+          eventTag(event, 'status') === 'working' &&
+          Math.abs(Date.now() - event.created_at * 1_000) < AGENT_TURN_FRESHNESS_MS;
+        if (
+          event.kind === 9 &&
+          eventTag(event, 'h') === channelId &&
+          markers.includes('agent-turn') &&
+          requestId &&
+          (!replaying || replayedFreshWorkingReceipt)
+        ) {
+          scheduler?.signalUntil((view) =>
+            view.latestAgentTurns.some((turn) => turn.requestId === requestId),
+          );
+          return;
+        }
         if (replaying) return;
-        const markers = event.tags.flatMap((tag: string[]) =>
-          tag[0] === 't' && tag[1] ? [tag[1]] : [],
-        );
         const expectsPaintedMessage =
           event.kind === 9 &&
+          eventTag(event, 'h') === channelId &&
           (markers.length === 0 ||
             markers.some((marker: string) =>
-              ['agent-message', 'github-event', 'buzz-attachment'].includes(marker),
+              [
+                'agent-message',
+                'github-event',
+                'buzz-attachment',
+                'corner-branch-ended',
+                'corner-worktree-cleaned',
+              ].includes(marker),
             ));
         if (expectsPaintedMessage) {
           scheduler?.signalUntil((view) =>

@@ -10,14 +10,13 @@ import {
 } from './agent-display';
 
 describe('agent display identity', () => {
-  it('creates a stable friendly fallback without exposing key fragments', () => {
+  it('creates a stable visibly synthetic fallback from the key prefix', () => {
     const pubkey = 'abcdef0123456789abcdef0123456789';
     const first = resolveAgentDisplayIdentity(pubkey);
 
     expect(first).toEqual(resolveAgentDisplayIdentity(pubkey));
-    expect(first.name).toMatch(/^[A-Z][a-z]+$/);
-    expect(first.handle).toBe(first.name.toLowerCase());
-    expect(first.name.toLowerCase()).not.toContain(pubkey.slice(0, 6));
+    expect(first.name).toBe('Agent abcdef01');
+    expect(first.handle).toBe('agentabcdef01');
     expect(first.avatarSeed).toBe(pubkey);
   });
 
@@ -41,7 +40,7 @@ describe('agent display identity', () => {
 
     expect(display).toMatchObject({
       name: fallbackAgentName(pubkey),
-      handle: fallbackAgentName(pubkey).toLowerCase(),
+      handle: fallbackAgentName(pubkey).toLowerCase().replace(/[^a-z0-9]/gu, ''),
       personality: 'Keeps the suite green.',
       avatarSeed: 'chrome-warden-soul',
       avatarUrl: 'https://example.test/ada-soul.png',
@@ -65,7 +64,9 @@ describe('agent display identity', () => {
       },
     });
     expect(display.name).toBe(fallbackAgentName(pubkey));
-    expect(display.handle).toBe(fallbackAgentName(pubkey).toLowerCase());
+    expect(display.handle).toBe(
+      fallbackAgentName(pubkey).toLowerCase().replace(/[^a-z0-9]/gu, ''),
+    );
     expect(display.hasSoul).toBe(true);
   });
 
@@ -124,8 +125,8 @@ describe('corner card agent identity resolution', () => {
   });
 
   it('falls back to the message signer when the declared tag misses the roster', () => {
-    // A stale/mismatched `agent` tag must not force the pubkey-hash fallback
-    // name ("Alden") when the event's own signer is a known registered agent.
+    // A stale/mismatched `agent` tag must not force the synthetic pubkey
+    // fallback when the event's own signer is a known registered agent.
     expect(
       resolveCornerCardAgentPubkey('stale-tag-pubkey', 'beebee-pubkey', isRegisteredAgent),
     ).toBe('beebee-pubkey');
@@ -218,7 +219,7 @@ describe('the transcript’s agent roster', () => {
     // `displayName: fallbackAgentName(pubkey)` — never an empty string. An
     // agent paired into a second Workspace (or attached there some other way)
     // carries exactly that placeholder displayName in that Workspace's
-    // roster, with no soul overlay. This regressed the transcript ("Alden")
+    // roster, with no soul overlay. This regressed the transcript (a synthetic fallback)
     // while the Members screen, scoped to the one Workspace that actually
     // authored the soul, kept showing the real name ("Beebee") for the
     // identical pubkey.

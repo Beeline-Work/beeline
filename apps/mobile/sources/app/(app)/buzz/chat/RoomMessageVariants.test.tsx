@@ -1,10 +1,12 @@
 import * as React from 'react';
+import { readFileSync } from 'node:fs';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatDisplayMessage } from '@/buzz/room-view-presentation';
 
 const ledgerEntryRender = vi.hoisted(() => vi.fn());
+const conversationSource = readFileSync(new URL('./[channelId].tsx', import.meta.url), 'utf8');
 
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
@@ -101,6 +103,16 @@ function message(overrides: Partial<ChatDisplayMessage>): ChatDisplayMessage {
 }
 
 describe('Room message variant components', () => {
+  it('keeps Room and corner conversations on one composer, mention, and transcript component path', () => {
+    expect(conversationSource.match(/testID="chat-input"/g)).toHaveLength(1);
+    expect(conversationSource.match(/<AttachmentPickerSheet/g)).toHaveLength(1);
+    expect(conversationSource.match(/<OrdinaryLedgerMessage/g)).toHaveLength(1);
+    expect(conversationSource.match(/testID="mention-suggestions"/g)).toHaveLength(1);
+    expect(conversationSource).toContain('inputSelection.start === inputSelection.end\n        ? activeMentionAtCursor');
+    expect(conversationSource).not.toContain('!parentChannelId && inputSelection.start === inputSelection.end');
+    expect(conversationSource).not.toMatch(/parentChannelId\s*\?\s*undefined\s*:\s*\(selectedMentionedAgent/);
+  });
+
   it('shows write actions only to the permitted audience and routes an allowed corner action', () => {
     const onDecision = vi.fn();
     const onOpenCorner = vi.fn();
@@ -209,5 +221,29 @@ describe('Room message variant components', () => {
     act(() => renderer.update(<OrdinaryLedgerMessage {...stable} speakerOnline />));
     expect(ledgerEntryRender).toHaveBeenCalledTimes(2);
     expect(ledgerEntryRender.mock.lastCall?.[0].byline.mark.alive).toBe(true);
+  });
+
+  it('uses the current server author label and shared mention renderer over stale roster data', () => {
+    const agentPubkey = 'agent';
+    render(
+      <OrdinaryLedgerMessage
+        message={message({ id: 'current-identity', text: '@codex has the latest result', pubkey: agentPubkey, isAgentAuthor: true, authorIdentity: { pubkey: agentPubkey, kind: 'agent', name: 'Codex', handle: 'codex' }, mentionPubkeys: [agentPubkey] })}
+        agent={{ pubkey: agentPubkey, displayName: 'Arlo' }}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerOnline
+        continued={false}
+        participantHandles={[{ pubkey: agentPubkey, handle: 'codex' }]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+
+    expect(ledgerEntryRender.mock.lastCall?.[0]).toMatchObject({ byline: { name: 'Codex' }, mentionHandles: ['codex'] });
   });
 });

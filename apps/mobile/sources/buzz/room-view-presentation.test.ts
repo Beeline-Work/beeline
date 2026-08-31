@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { RoomViewMessage } from '@beeline/buzz-client';
 import {
+  conversationIdentityByPubkey,
   cornerSummaries,
+  createRoomMessageProjector,
   displayRoomMessage,
   mergeDisplayPages,
   type ChatDisplayMessage,
@@ -81,8 +83,36 @@ describe('Room view presentation', () => {
     expect(displayRoomMessage(message, 'a'.repeat(64))).toMatchObject({
       id: 'system-notice',
       text: 'A scheduled run is paused.',
+      authorIdentity: message.author,
       isSystemNotice: true,
       isAgentAuthor: true,
+    });
+  });
+
+  it('re-resolves a stale roster label from each current server message projection', () => {
+    const agentPubkey = 'b'.repeat(64);
+    const viewerPubkey = 'a'.repeat(64);
+    const staleMember = {
+      identity: { pubkey: agentPubkey, kind: 'agent' as const, name: 'Arlo', handle: 'arlo' },
+      role: 'member' as const,
+    };
+    const indexedMessage = (name: string, handle: string): RoomViewMessage => ({
+      id: 'identity-message',
+      text: `Hello from ${name}`,
+      createdAt: 12,
+      author: { pubkey: agentPubkey, kind: 'agent', name, handle },
+      presentation: 'message',
+    });
+    const projector = createRoomMessageProjector();
+
+    const cached = projector.project([indexedMessage('Arlo', 'arlo')], viewerPubkey);
+    expect(conversationIdentityByPubkey([staleMember], cached).get(agentPubkey)?.name).toBe('Arlo');
+
+    const fresh = projector.project([indexedMessage('Codex', 'codex')], viewerPubkey);
+    expect(fresh[0]).not.toBe(cached[0]);
+    expect(conversationIdentityByPubkey([staleMember], fresh).get(agentPubkey)).toMatchObject({
+      name: 'Codex',
+      handle: 'codex',
     });
   });
 

@@ -100,7 +100,7 @@ Committed home for project-intrinsic agent knowledge: rule + authoritative file 
 
 - **GitHub is lifecycle truth.** `corner-github-lifecycle.ts` reads the branch, pull request, and checks with a bounded scoped token. Unknown/degraded state never blocks chat and never causes archive.
 - **Completion ladder nudges once per idle episode.** The daemon names only the worst unfinished rung: dirty/uncommitted, unpushed, or pushed-without-PR. It makes no model call.
-- **Branch death is the done signal.** Auth enables delete-on-merge per linked repository. When the feature branch disappears, Body classifies the known PR outcome, posts one parent Room summary, archives the child, and reaps only a proven-clean worktree.
+- **Branch death or target patch containment is the done signal.** Auth enables delete-on-merge per linked repository. When the feature branch disappears, or `review-content.ts` proves its stable patch is already in the target, Body classifies the known PR outcome, posts one parent Room summary, archives the child, and reaps only a proven-clean worktree. Coverage: `corner-github-lifecycle.test.ts`, `review-content.test.ts`.
 - **Lifecycle-critical publications ride outages out** (`publishCritical`, `publish-delivery.ts`; 5xx/408/429 transient, other 4xx fail fast).
 
 ## Daemon self-update and CLI bundle

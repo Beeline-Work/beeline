@@ -14,7 +14,9 @@ type GitHubPull = {
   title?: unknown;
   base?: unknown;
   head?: unknown;
+  state?: unknown;
   merged_at?: unknown;
+  merged_by?: unknown;
 };
 
 export interface ObserveCornerRemoteInput {
@@ -25,6 +27,10 @@ export interface ObserveCornerRemoteInput {
   fetchImpl?: typeof fetch;
   apiBaseUrl?: string;
   now?: () => number;
+  targetContainsChange?: (candidate: {
+    branchTip: string;
+    pull?: CornerPullRequestFact;
+  }) => Promise<boolean>;
 }
 
 function repoCoordinates(repo: BoundRepo): { owner: string; name: string } | undefined {
@@ -55,6 +61,7 @@ async function json(response: Response): Promise<unknown> {
 function pullFact(value: GitHubPull): CornerPullRequestFact | undefined {
   const base = value.base as { ref?: unknown } | undefined;
   const head = value.head as { sha?: unknown } | undefined;
+  const mergedBy = value.merged_by as { login?: unknown } | undefined;
   if (
     !Number.isSafeInteger(value.number) ||
     Number(value.number) <= 0 ||
@@ -74,7 +81,20 @@ function pullFact(value: GitHubPull): CornerPullRequestFact | undefined {
     title: value.title.trim(),
     targetBranch: base.ref,
     headSha: head.sha,
+    ...(typeof value.merged_at === 'string' && value.merged_at.trim()
+      ? { mergedAt: value.merged_at }
+      : {}),
+    ...(typeof mergedBy?.login === 'string' && mergedBy.login.trim()
+      ? { mergedBy: mergedBy.login.trim().slice(0, 100) }
+      : {}),
   };
+}
+
+export function landedCornerSummary(state: CornerRemoteState): string {
+  const pr = state.pr;
+  if (!pr) return `Merged externally: ${state.branch}.`;
+  const actor = pr.mergedBy ? ` by ${pr.mergedBy}` : '';
+  return `Merged externally${actor}: “${pr.title}” into ${pr.targetBranch}: ${pr.url}.`;
 }
 
 async function checkState(input: {
@@ -163,7 +183,7 @@ export async function observeCornerRemote(
       const fact = pullFact(pull);
       return fact ? [{ pull, fact }] : [];
     });
-    const open = normalized.find(({ pull }) => pull.merged_at == null);
+    const open = normalized.find(({ pull }) => pull.state === 'open' && pull.merged_at == null);
     const merged = normalized.find(({ pull }) => typeof pull.merged_at === 'string');
     if (branchResponse.status === 404) {
       const selected = merged ?? open;
@@ -194,6 +214,26 @@ export async function observeCornerRemote(
           fetchImpl,
         })
       : 'unknown';
+    if (
+      !open &&
+      input.targetContainsChange &&
+      (await input.targetContainsChange({
+        branchTip,
+        ...(merged ? { pull: merged.fact } : {}),
+      }))
+    ) {
+      return {
+        version: 1,
+        cornerId: input.cornerId,
+        branch: input.featureBranch,
+        state: 'gone',
+        checks: 'unknown',
+        observedAt,
+        branchTip,
+        ...(merged ? { pr: merged.fact } : {}),
+        outcome: 'landed',
+      };
+    }
     return {
       version: 1,
       cornerId: input.cornerId,
@@ -202,7 +242,7 @@ export async function observeCornerRemote(
       checks,
       observedAt,
       branchTip,
-      ...(open ? { pr: open.fact } : {}),
+      ...(open ? { pr: open.fact } : merged ? { pr: merged.fact } : {}),
     };
   } catch (error) {
     return {

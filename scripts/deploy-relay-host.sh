@@ -254,6 +254,7 @@ manual_recovery() {
 !! Continue the new stack forward with these exact commands:
 !! sudo -n -u lunchbox /usr/bin/env XDG_RUNTIME_DIR=/run/user/1000 /usr/bin/systemctl --user disable --now beeline-events.service
 !! sudo -n /usr/bin/install -o lunchbox -g lunchbox -m 644 $STACK_STAGE_DIR/compose.yml $PROJECT_DIR/compose.yml
+!! sudo -n /usr/bin/install -o lunchbox -g lunchbox -m 644 $STACK_STAGE_DIR/materializer-upstream.conf $PROJECT_DIR/relay-front/materializer-upstream.conf
 !! sudo -n /usr/bin/install -o lunchbox -g lunchbox -m 644 $STACK_STAGE_DIR/nginx.conf $PROJECT_DIR/relay-front/nginx.conf
 !! docker ps -q --filter label=com.docker.compose.project=buzz-router-prod --filter label=com.docker.compose.service=push-gateway | xargs -r docker stop
 !! docker ps -q --filter label=com.docker.compose.project=buzz-router-prod --filter label=com.docker.compose.service=materializer | xargs -r docker stop
@@ -419,6 +420,7 @@ docker network create beeline-nginx-test >/dev/null 2>&1 || true
 if ! docker run --rm --network beeline-nginx-test \
       --network-alias relay --network-alias auth --network-alias materializer \
       -v "$STAGE/stack/nginx.conf:/etc/nginx/nginx.conf:ro" \
+      -v "$STAGE/stack/materializer-upstream.conf:/etc/beeline-front/materializer-upstream.conf:ro" \
       nginx:1.27-alpine nginx -t >/dev/null 2>&1; then
   docker network rm beeline-nginx-test >/dev/null 2>&1 || true
   die "staged nginx.conf fails nginx -t — aborting before anything was touched"
@@ -457,7 +459,7 @@ select_materializer_upstream() {
     *) echo "!! invalid materializer upstream: $upstream" >&2; return 1 ;;
   esac
   # shellcheck disable=SC2016 # $roomview_upstream is nginx syntax, not shell expansion.
-  printf 'set $roomview_upstream %s;\n' "$upstream" > "$STACK_STAGE_DIR/materializer-upstream.conf"
+  printf 'map $host $roomview_upstream {\n  default %s;\n}\n' "$upstream" > "$STACK_STAGE_DIR/materializer-upstream.conf"
   place_stack_file materializer-upstream.conf "$LIVE_MATERIALIZER_UPSTREAM" || return 1
   reload_relay_front_nginx
   log "RoomView traffic now uses $upstream"
@@ -558,6 +560,7 @@ cp "$STAGE/stack/compose.yml" "$STAGE/stack/nginx.conf" \
 CUTOVER_STARTED=1
 retire_events_service || die "standalone repository-events retirement failed"
 place_stack_file compose.yml "$LIVE_COMPOSE" || die "production compose placement failed"
+place_stack_file materializer-upstream.conf "$LIVE_MATERIALIZER_UPSTREAM" || die "production materializer upstream placement failed"
 place_stack_file nginx.conf "$LIVE_NGINX" || die "production nginx placement failed"
 start_materializer_candidate || die "materializer candidate did not become healthy; old stack remains live"
 select_materializer_upstream materializer-next || die "could not move RoomView traffic to the healthy candidate"

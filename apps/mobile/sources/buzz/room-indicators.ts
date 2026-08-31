@@ -16,18 +16,18 @@ import type { RoomViewAgentTurn } from '@beeline/buzz-client';
  *   channel (`postAgentTurnStatus`, `apps/body/src/body.ts`). It is transient,
  *   it names no corner, and it is nothing to tap.
  *
- *   **A corner is active.** A child edit channel exists and its canonical
- *   parameterized-replaceable state record says `working` within the freshness
- *   horizon. Parent-Room kind:9 body-control `corner-open` / `corner-close`
- *   messages are transcript history only and are never lifecycle authority.
+ *   **A corner is open.** A non-terminal child edit channel exists. Its
+ *   canonical parameterized-replaceable state decides whether the pin is
+ *   working, waiting, in review, preparing, or quietly idle. Parent-Room
+ *   kind:9 control history is never lifecycle authority.
  *
  * `selectPinnedCorner` takes canonical corner state and nothing else; the turn
  * indicator and transcript control messages cannot promote a corner into it.
  */
 export type PinnedCorner = {
   cornerId: string;
-  /** `preparing` is the pinned-only projection of canonical machine OPEN. */
-  status: CornerStatus | 'preparing';
+  /** Pinned-only projections for canonical OPEN and quiet-but-unfinished. */
+  status: CornerStatus | 'preparing' | 'idle';
 };
 
 export type PinnedCornerInput = {
@@ -125,16 +125,16 @@ const PIN_RELEVANCE: Record<string, number> = {
   failed: 3,
   merged: 3,
   archived: 3,
+  idle: 4,
 };
 
 /**
  * The one corner the pinned line may name, or `null` for none.
  *
  * The line's presence means "this corner is open and worth returning to" —
- * `live` (working), `needs-attention` (waiting on a human), and `open`
- * (review-ready) all qualify. Only a terminal status (`merged`/`failed`/
- * `archived`) is "no line". When several corners qualify at once, a
- * review-ready one wins, then a working one, then the most recently active.
+ * working, waiting, review-ready, preparing, and quiet idle all qualify. Only
+ * a terminal status (`merged`/`archived`) is "no line". When several corners
+ * qualify at once, an actionable one wins; idle remains the fallback.
  */
 export function selectPinnedCorner(input: PinnedCornerInput): PinnedCorner | null {
   const status = new Map<string, PinnedCorner['status']>();
@@ -147,7 +147,7 @@ export function selectPinnedCorner(input: PinnedCornerInput): PinnedCorner | nul
     if (!corner.machineState) continue;
     const canonical = currentCornerStatus(corner, input.now);
     if (corner.machineState === 'open') status.set(corner.id, 'preparing');
-    else if (canonical !== null) status.set(corner.id, canonical);
+    else status.set(corner.id, canonical ?? 'idle');
     seenAt.set(
       corner.id,
       Math.max(seenAt.get(corner.id) ?? 0, corner.lastActivityAt ?? corner.createdAt ?? 0),
@@ -155,7 +155,7 @@ export function selectPinnedCorner(input: PinnedCornerInput): PinnedCorner | nul
   }
 
   const candidates = [...status.entries()]
-    .filter(([, value]) => value === 'preparing' || !isCornerTerminal(value))
+    .filter(([, value]) => value === 'preparing' || value === 'idle' || !isCornerTerminal(value))
     .sort(
       ([leftId, left], [rightId, right]) =>
         PIN_RELEVANCE[left] - PIN_RELEVANCE[right] ||
@@ -185,6 +185,7 @@ export function isPinnedCornerReadyForReview(status: PinnedCorner['status']): bo
 
 export function pinnedCornerVerb(status: PinnedCorner['status']): string {
   if (status === 'preparing') return 'preparing';
+  if (status === 'idle') return 'idle';
   if (isPinnedCornerReadyForReview(status)) return 'ready for review';
   return isPinnedCornerLive(status) ? 'active' : 'needs attention';
 }

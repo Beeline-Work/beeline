@@ -1532,7 +1532,11 @@ esac
 
     const smoke = readFileSync(join(mobileRoot, 'e2e', 'smoke.yaml'), 'utf8');
     expect(smoke).toMatch(/visible: SMOKE AGENT ROOM REPLY\.\*[\s\S]*?timeout: 10000/);
-    expect(smoke).toMatch(/visible: SMOKE AGENT CORNER REPLY\.\*[\s\S]*?timeout: 10000/);
+    expect(smoke).toMatch(/visible: SMOKE AGENT CORNER REPLY\.\*[\s\S]*?timeout: 30000/);
+    expect(smoke).toContain('id: turn-progress-line');
+    expect(smoke).toContain('id: activity-message-draft');
+    expect(smoke).toContain('corner-turn-streaming-live');
+    expect(smoke).toContain('corner-turn-streaming-persisted');
   });
 
   it('provisions a human-accessible corner and publishes its durable turn lifecycle', () => {

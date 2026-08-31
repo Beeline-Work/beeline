@@ -110,6 +110,24 @@ describe('mapEventToNotification', () => {
     ).toBeNull();
   });
 
+  it('never turns replaceable model draft chunks into pushes', () => {
+    const draft = {
+      ...event([
+        ['h', 'corner-123'],
+        ['p', 'recipient'],
+        ['t', 'agent-draft'],
+      ]),
+      kind: 30078,
+    };
+    expect(
+      mapEventToNotification(
+        draft,
+        { roomName: 'Corner', persistentWorkspaceRoom: true },
+        { recipientMentioned: true },
+      ),
+    ).toBeNull();
+  });
+
   it('never pushes repository activity, even when its text looks like an agent question', () => {
     const repositoryActivity = event(
       [

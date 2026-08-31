@@ -254,6 +254,7 @@ const HIDDEN_MARKERS = new Set([
   'body-control',
   'agent-turn',
   'corner-session',
+  'buzz-agent-room-join-notice',
   'buzz-merge-approval',
   'buzz-write-permission-response',
   'buzz-permission-decision',

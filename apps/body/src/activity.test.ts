@@ -25,6 +25,8 @@ import {
   AGENT_MESSAGE_TAG,
   buildAgentMessage,
   postAgentMessage,
+  postAgentTurnStatus,
+  postCornerSessionStatus,
   retractAgentDraft,
   retractAgentPresence,
   postSteerQueuedNotice,
@@ -38,6 +40,20 @@ import {
 } from '@beeline/buzz-client';
 
 const published = mocks.published;
+
+describe('daemon lifecycle receipts', () => {
+  it('publishes turn and corner state as empty typed records, never filler prose', async () => {
+    const owner = newIdentity('agent');
+    published.length = 0;
+
+    await postAgentTurnStatus('room', owner, 'request', 'session', 'working');
+    await postCornerSessionStatus('corner', owner, 'session', 'live', 1);
+
+    expect(published.map((event) => event.content)).toEqual(['', '']);
+    expect(published[0]?.tags).toContainEqual(['t', 'agent-turn']);
+    expect(published[1]?.tags).toContainEqual(['t', 'corner-session']);
+  });
+});
 
 function toolCall(
   toolCallId: string,

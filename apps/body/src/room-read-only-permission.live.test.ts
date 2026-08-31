@@ -12,7 +12,7 @@
  * The unit coverage in `body.test.ts` drives the captured payloads
  * (`fixtures/claude-agent-acp-permissions.ts`). This drives the actual adapter:
  * it spawns `claude-agent-acp` exactly the way `acp.ts` does, mounts one MCP
- * server named `buzz-readonly-mcp` advertising the same six tool names as
+ * server named `beeline-readonly-mcp` advertising the same six tool names as
  * `read-only-policy.ts`, answers every `session/request_permission` with
  * Beeline's own `isReadOnlyMcpPermissionRequest`, and asserts what the harness
  * was actually told: read_file / git_log / git_show allowed, Write and Bash
@@ -131,10 +131,10 @@ async function runRoomTurn(prompt: string, timeoutMs = 180_000): Promise<Answere
     const session = await request('session/new', {
       cwd: REPO_ROOT,
       mcpServers: [
-        { name: 'buzz-readonly-mcp', command: process.execPath, args: [PROBE_MCP], env: [] },
+        { name: 'beeline-readonly-mcp', command: process.execPath, args: [PROBE_MCP], env: [] },
       ],
       systemPrompt:
-        'You are in a read-only conversation channel. Use buzz-readonly-mcp to inspect the repository.',
+        'You are in a read-only conversation channel. Use beeline-readonly-mcp to inspect the repository.',
     });
     await Promise.race([
       request('session/prompt', {
@@ -154,42 +154,34 @@ async function runRoomTurn(prompt: string, timeoutMs = 180_000): Promise<Answere
 }
 
 describe('a Room keeps its reads and loses its writes, against a real ACP harness', () => {
-  it(
-    'allows read_file / git_log / git_show',
-    async () => {
-      const answered = await runRoomTurn(
-        'Call the buzz-readonly-mcp read_file tool on the path "README.md", then its git_log tool ' +
-          'with limit 3, then its git_show tool with revision "HEAD". Use no built-in tool. Then stop.',
-      );
-      if (answered.length === 0) {
-        console.warn(`[live] ${ADAPTER} unavailable; skipping the Room read proof`);
-        return;
-      }
-      const reads = answered.filter((entry) => entry.title.includes('buzz-readonly-mcp'));
-      expect(reads.length).toBeGreaterThan(0);
-      for (const read of reads) {
-        // The exact shape that used to be denied: no MCP envelope, kind 'other'.
-        expect(read.decision).toBe('allow');
-      }
-    },
-    240_000,
-  );
+  it('allows read_file / git_log / git_show', async () => {
+    const answered = await runRoomTurn(
+      'Call the beeline-readonly-mcp read_file tool on the path "README.md", then its git_log tool ' +
+        'with limit 3, then its git_show tool with revision "HEAD". Use no built-in tool. Then stop.',
+    );
+    if (answered.length === 0) {
+      console.warn(`[live] ${ADAPTER} unavailable; skipping the Room read proof`);
+      return;
+    }
+    const reads = answered.filter((entry) => entry.title.includes('beeline_readonly_mcp'));
+    expect(reads.length).toBeGreaterThan(0);
+    for (const read of reads) {
+      // The exact shape that used to be denied: no MCP envelope, kind 'other'.
+      expect(read.decision).toBe('allow');
+    }
+  }, 240_000);
 
-  it(
-    'denies a write and a shell command',
-    async () => {
-      const answered = await runRoomTurn(
-        'Using your BUILT-IN tools only: create a file /tmp/beeline-room-probe.txt containing the ' +
-          'word hi, then run the shell command `npm run typecheck`. Then stop.',
-      );
-      if (answered.length === 0) {
-        console.warn(`[live] ${ADAPTER} unavailable; skipping the Room write proof`);
-        return;
-      }
-      const mutations = answered.filter((entry) => entry.kind === 'edit' || entry.kind === 'execute');
-      expect(mutations.length).toBeGreaterThan(0);
-      for (const mutation of mutations) expect(mutation.decision).toBe('reject');
-    },
-    240_000,
-  );
+  it('denies a write and a shell command', async () => {
+    const answered = await runRoomTurn(
+      'Using your BUILT-IN tools only: create a file /tmp/beeline-room-probe.txt containing the ' +
+        'word hi, then run the shell command `npm run typecheck`. Then stop.',
+    );
+    if (answered.length === 0) {
+      console.warn(`[live] ${ADAPTER} unavailable; skipping the Room write proof`);
+      return;
+    }
+    const mutations = answered.filter((entry) => entry.kind === 'edit' || entry.kind === 'execute');
+    expect(mutations.length).toBeGreaterThan(0);
+    for (const mutation of mutations) expect(mutation.decision).toBe('reject');
+  }, 240_000);
 });

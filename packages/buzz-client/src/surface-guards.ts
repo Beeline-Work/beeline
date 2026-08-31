@@ -264,12 +264,15 @@ function daemonFact(value: unknown): boolean {
     !item ||
     (item.type !== 'corner-complete' &&
       item.type !== 'checks-failing' &&
-      item.type !== 'worktree-cleaned') ||
+      item.type !== 'worktree-cleaned' &&
+      item.type !== 'corner-open') ||
     typeof item.cornerId !== 'string' ||
     !UUID.test(item.cornerId) ||
     typeof item.objective !== 'string' ||
     !item.objective.trim() ||
     (item.outcome !== undefined && item.outcome !== 'landed' && item.outcome !== 'abandoned') ||
+    !optionalString(item.name) ||
+    (item.type === 'corner-open' && (typeof item.name !== 'string' || !item.name.trim())) ||
     (pullRequest !== undefined &&
       (!pullRequest ||
         (pullRequest.number !== undefined &&
@@ -516,7 +519,9 @@ function cornerLifecycle(value: unknown): boolean {
           typeof pr.targetBranch === 'string' &&
           pr.targetBranch.length > 0 &&
           typeof pr.headSha === 'string' &&
-          /^[0-9a-f]{40}$/i.test(pr.headSha))),
+          /^[0-9a-f]{40}$/i.test(pr.headSha) &&
+          optionalString(pr.mergedAt) &&
+          optionalString(pr.mergedBy))),
   );
 }
 

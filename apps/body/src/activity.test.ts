@@ -293,7 +293,7 @@ describe('projectActivity granularity', () => {
     ]);
   });
 
-  it('publishes the objective with one honest working state when the harness never plans', async () => {
+  it('publishes only the objective when the harness never supplies plan items', async () => {
     const projection = projectActivity(client as unknown as AcpClient, channelId, owner, sessionId);
 
     // This is the first agent-activity event of the corner turn. No ACP plan
@@ -326,16 +326,14 @@ describe('projectActivity granularity', () => {
       return content.update.updates.flatMap((update) => (update.plan ? [update.plan] : []));
     }) as Array<{ objective?: string; items: Array<{ step: string; status: string }> }>;
 
-    expect(plans.map((plan) => plan.items)).toEqual([
-      [{ step: 'Working…', status: 'in_progress' }],
-      [{ step: 'Working…', status: 'completed' }],
-    ]);
+    expect(plans.map((plan) => plan.items)).toEqual([[]]);
     expect(plans[0]!.objective).not.toContain('\n');
     expect(plans[0]!.objective).not.toContain('**');
     expect(plans[0]!.objective!.length).toBeLessThanOrEqual(160);
     expect(JSON.stringify(plans)).not.toContain('Inspect the relevant code');
     expect(JSON.stringify(plans)).not.toContain('Implement the change');
     expect(JSON.stringify(plans)).not.toContain('Verify and summarize the result');
+    expect(JSON.stringify(plans)).not.toContain('Working');
   });
 
   it('keeps the opening objective write-once across later turns and plan updates', async () => {
@@ -362,6 +360,41 @@ describe('projectActivity granularity', () => {
       'Publish the mockup through a Cloudflare tunnel.',
       'Publish the mockup through a Cloudflare tunnel.',
       'Publish the mockup through a Cloudflare tunnel.',
+    ]);
+  });
+
+  it('preserves prior plan items across a follow-up turn that supplies no new plan', async () => {
+    // A corner's second (and later) turn — a human follow-up, a nudge, a
+    // completion-ladder check — calls startPlan again with only the objective.
+    // That must not wipe the checklist a prior turn already published and
+    // completed: the owner-reported bug is exactly this, items vanishing once
+    // the corner reaches a finished/archived state.
+    const projection = projectActivity(client as unknown as AcpClient, channelId, owner, sessionId);
+
+    await projection.startPlan('Fix the corner checklist.');
+    emit({
+      sessionUpdate: 'plan',
+      entries: [
+        { content: 'Find the renderer', status: 'completed' },
+        { content: 'Wire the highlighter', status: 'in_progress' },
+      ],
+    });
+    await vi.advanceTimersByTimeAsync(5_000);
+    await projection.completePlan();
+
+    await projection.startPlan('Fix the corner checklist.');
+    projection();
+
+    const plans = published.flatMap((event) => {
+      const content = JSON.parse(event.content) as {
+        update: { updates: Array<{ plan?: { items: Array<{ step: string; status: string }> } }> };
+      };
+      return content.update.updates.flatMap((update) => (update.plan ? [update.plan.items] : []));
+    });
+
+    expect(plans.at(-1)).toEqual([
+      { step: 'Find the renderer', status: 'completed' },
+      { step: 'Wire the highlighter', status: 'completed' },
     ]);
   });
 

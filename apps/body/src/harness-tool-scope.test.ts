@@ -65,7 +65,7 @@ async function capturedSessionNew(basename: string): Promise<Record<string, unkn
   try {
     await client.sessionNew({
       cwd: tmpdir(),
-      mcpServers: [{ name: 'buzz-readonly-mcp', command: '/bin/true' }],
+      mcpServers: [{ name: 'beeline-readonly-mcp', command: '/bin/true' }],
       systemPrompt: 'Beeline room boundary.',
     });
   } finally {
@@ -188,7 +188,7 @@ describe('every session/new the daemon sends', () => {
         systemPrompt?: { append?: string };
       };
     };
-    expect(params.mcpServers.map((server) => server.name)).toEqual(['buzz-readonly-mcp']);
+    expect(params.mcpServers.map((server) => server.name)).toEqual(['beeline-readonly-mcp']);
     expect(params._meta?.claudeCode?.options?.strictMcpConfig).toBeUndefined();
     expect(params._meta?.claudeCode?.options?.settingSources).toEqual(['user']);
     expect(JSON.parse(params._meta?.claudeCode?.options?.settings ?? '{}')).toEqual(

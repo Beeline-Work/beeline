@@ -33,9 +33,9 @@ describe('Pi MCP generated-extension route', () => {
     expect(
       piMcpDirectToolSelection([
         { name: 'beeline-agent-tools', command: '/bin/true' },
-        { name: 'buzz-readonly-mcp', command: '/bin/true' },
+        { name: 'beeline-readonly-mcp', command: '/bin/true' },
       ]),
-    ).toBe('beeline-agent-tools,buzz-readonly-mcp');
+    ).toBe('beeline-agent-tools,beeline-readonly-mcp');
   });
 
   it('materializes the exact session inventory with data-only serialization', async () => {

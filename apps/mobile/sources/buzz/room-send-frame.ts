@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import { mergeDisplayPages, type ChatDisplayMessage } from '@/buzz/room-view-presentation';
+import type { ChatDisplayMessage } from '@/buzz/room-view-presentation';
 import { reconcileOptimisticMessage } from '@/buzz/reconcileOptimisticMessage';
 
 export type RoomSendFrame = {
@@ -45,13 +45,13 @@ export function appendOptimisticMessages(
  * The React state boundary driven by the Room composer.
  *
  * A hook keeps the regression test on the actual append → state update →
- * projection path without mounting the full chat screen. Corner append keeps
- * its pre-existing sorted merge; only Rooms take the constant-size overlay.
+ * projection path without mounting the full chat screen. Rooms and corners
+ * share this constant-size append-only overlay; the screen performs their one
+ * chronological merge with durable history.
  */
 export function useRoomSendFrame(
   transcript: ChatDisplayMessage[],
   committedIds: ReadonlySet<string>,
-  isCorner: boolean,
 ) {
   const [optimisticMessages, setOptimisticMessages] = useState<ChatDisplayMessage[]>([]);
   const frame = useMemo(
@@ -60,16 +60,9 @@ export function useRoomSendFrame(
   );
   const append = useCallback(
     (incoming: readonly ChatDisplayMessage[]) => {
-      setOptimisticMessages((current) =>
-        isCorner
-          ? mergeDisplayPages(
-              current,
-              incoming.map((message) => ({ ...message, isNew: true })),
-            )
-          : appendOptimisticMessages(current, incoming),
-      );
+      setOptimisticMessages((current) => appendOptimisticMessages(current, incoming));
     },
-    [isCorner],
+    [],
   );
   const reconcile = useCallback((optimisticId: string, eventId: string) => {
     setOptimisticMessages((current) => reconcileOptimisticMessage(current, optimisticId, eventId));

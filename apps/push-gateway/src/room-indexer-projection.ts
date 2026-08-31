@@ -772,6 +772,7 @@ export function cornerItem(data: Json, latest?: RoomViewMessage): CornerListItem
   const stateTags = tags(data.statusTags);
   const rawStatus = tag(stateTags, 'state');
   const status = rawStatus === 'waiting-on-human' ? 'waiting' : rawStatus;
+  const latestTurnStatus = text(data.latestTurnStatus);
   const agentData = {
     pubkey: data.agentPubkey,
     name: data.agentName,
@@ -789,13 +790,15 @@ export function cornerItem(data: Json, latest?: RoomViewMessage): CornerListItem
           ? 'waiting'
           : lifecycle.lifecycle === 'APPROVED' || lifecycle.lifecycle === 'REJECTED'
             ? 'working'
-            : status === 'working' ||
+            : lifecycle.lifecycle === 'WORKING' && latestTurnStatus === 'working'
+              ? 'working'
+              : status === 'working' ||
                 status === 'waiting' ||
                 status === 'idle' ||
                 status === 'concluded' ||
                 status === 'closed'
-              ? status
-              : 'open',
+                ? status
+                : 'open',
     ...(lifecycle.lifecycle === 'REVIEW'
       ? { reason: 'review' as const }
       : ['review', 'question', 'failure'].includes(tag(stateTags, 'reason') ?? '')

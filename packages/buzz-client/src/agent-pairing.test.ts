@@ -507,6 +507,40 @@ describe('agent pairing and soul overlays', () => {
     expect(abandoned).toEqual([{ code }]);
   });
 
+  it('rolls a marker-free connect claim back when post-claim identity validation fails', async () => {
+    const code = 'BUZZ-GSLD-BEES';
+    const abandoned: unknown[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/agent-pairing/claim')) {
+          return jsonResponse({
+            workspaceId: communityId,
+            pairedBy: owner.publicKey,
+            joined: true,
+            attachedRoomIds: ['22222222-2222-4222-8222-222222222222'],
+          });
+        }
+        if (String(input).endsWith('/agent-pairing/abandon')) {
+          abandoned.push(JSON.parse(String(init?.body)));
+          return jsonResponse({ abandoned: true });
+        }
+        const filter = filterFrom(init);
+        const kind = (filter.kinds as number[])[0];
+        if (kind === 0) return jsonResponse([signed(agentIdentity, 0, [])]);
+        if (kind === KIND_COMMUNITY_INVITE || kind === KIND_STREAM_MESSAGE) {
+          return jsonResponse([]);
+        }
+        return jsonResponse([]);
+      }),
+    );
+
+    await expect(redeemAgentPairingCode(ctx(agentIdentity), code)).rejects.toThrow(
+      'cannot use human identity',
+    );
+    expect(abandoned).toEqual([{ code }]);
+  });
+
   it('redemption attaches the agent to every top-level Room the inviter belongs to, excluding DMs, corners, and archived Rooms', async () => {
     const roomAId = '22222222-2222-4222-8222-222222222222';
     const roomBId = '33333333-3333-4333-8333-333333333333';

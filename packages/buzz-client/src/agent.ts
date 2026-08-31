@@ -388,73 +388,74 @@ export async function redeemAgentPairingCode(
   const tokenHash = inviteTokenHash(code);
   const pairing = await findAgentPairingMarker(ctx, tokenHash);
   let claimedJoin: AgentPairingClaimView | undefined;
-  if (!pairing) {
-    try {
-      claimedJoin = await new RoomViewClient({
-        baseUrl: ctx.http.baseUrl,
-        identity: ctx.identity,
-      }).claimAgentPairing(code);
-    } catch (error) {
-      if (error instanceof RoomViewHttpError && error.status === 404) {
-        throw new Error(
-          'pairing code was not found; if the code was created by an older app, regenerate it after updating',
-        );
+  let communityId: string | undefined;
+  let joinedForPairing = false;
+  let claimedForPairing = false;
+  try {
+    if (!pairing) {
+      try {
+        claimedJoin = await new RoomViewClient({
+          baseUrl: ctx.http.baseUrl,
+          identity: ctx.identity,
+        }).claimAgentPairing(code);
+      } catch (error) {
+        if (error instanceof RoomViewHttpError && error.status === 404) {
+          throw new Error(
+            'pairing code was not found; if the code was created by an older app, regenerate it after updating',
+          );
+        }
+        throw error;
       }
-      throw error;
+      claimedForPairing = true;
+      communityId = claimedJoin.workspaceId;
     }
-    if (!claimedJoin) {
+    let pairedBy: string;
+    if (pairing) {
+      communityId = pairing.communityId;
+      pairedBy = pairing.event.pubkey;
+    } else {
+      if (!claimedJoin) throw new Error('pairing claim did not resolve');
+      communityId = claimedJoin.workspaceId;
+      pairedBy = claimedJoin.pairedBy;
+    }
+    if (ctx.identity.publicKey === pairedBy) {
       throw new Error(
-        'pairing code was not found; if the code was created by an older app, regenerate it after updating',
+        "cannot pair the installer's human identity as its own agent; " +
+          'run the Members-page pairing command without BUZZ_AGENT_KEY or BUZZ_PRIVATE_KEY so Beeline mints a fresh agent keypair',
       );
     }
-  }
-  let communityId: string;
-  let pairedBy: string;
-  if (pairing) {
-    communityId = pairing.communityId;
-    pairedBy = pairing.event.pubkey;
-  } else {
-    if (!claimedJoin) throw new Error('pairing claim did not resolve');
-    communityId = claimedJoin.workspaceId;
-    pairedBy = claimedJoin.pairedBy;
-  }
-  if (ctx.identity.publicKey === pairedBy) {
-    throw new Error(
-      "cannot pair the installer's human identity as its own agent; " +
-        'run the Members-page pairing command without BUZZ_AGENT_KEY or BUZZ_PRIVATE_KEY so Beeline mints a fresh agent keypair',
-    );
-  }
-  await assertAgentKeyHasNoHumanProfile(ctx, ctx.identity.publicKey);
-  const membersBeforeJoin = await communityMembers(ctx, communityId);
-  const minterVisibleBeforeJoin = membersBeforeJoin.some((member) => member.pubkey === pairedBy);
-  let matchingRedemptions = await matchingAgentPairingRedemptions(ctx, tokenHash);
-  let ours = matchingRedemptions
-    .map(parseAgent)
-    .find((agent) => agent?.pubkey === ctx.identity.publicKey);
-  if (minterVisibleBeforeJoin && ours) {
-    return {
-      communityId,
-      pairedBy,
-      agent: ours,
-      joined: false,
-      attachedRoomIds: [...(claimedJoin?.attachedRoomIds ?? [])],
-    };
-  }
-  if (minterVisibleBeforeJoin && matchingRedemptions.some((event) => isAgentIdentityEvent(event))) {
-    throw new Error('agent pairing code has already been redeemed');
-  }
-  if (pairing && pairing.expiresAt <= now()) throw new Error('agent pairing code has expired');
-  const wasMember = membersBeforeJoin.some((member) => member.pubkey === ctx.identity.publicKey);
-  if (wasMember && !claimedJoin) {
-    throw new Error(
-      `cannot pair existing human Workspace member ${ctx.identity.publicKey} as an agent; ` +
-        'run the Members-page pairing command again so Beeline mints a fresh agent keypair',
-    );
-  }
-  let joinedForPairing = claimedJoin?.joined ?? false;
-  let claimedForPairing = claimedJoin !== undefined;
-  let attachedRoomIds = [...(claimedJoin?.attachedRoomIds ?? [])];
-  try {
+    await assertAgentKeyHasNoHumanProfile(ctx, ctx.identity.publicKey);
+    const membersBeforeJoin = await communityMembers(ctx, communityId);
+    const minterVisibleBeforeJoin = membersBeforeJoin.some((member) => member.pubkey === pairedBy);
+    let matchingRedemptions = await matchingAgentPairingRedemptions(ctx, tokenHash);
+    let ours = matchingRedemptions
+      .map(parseAgent)
+      .find((agent) => agent?.pubkey === ctx.identity.publicKey);
+    if (minterVisibleBeforeJoin && ours) {
+      return {
+        communityId,
+        pairedBy,
+        agent: ours,
+        joined: false,
+        attachedRoomIds: [...(claimedJoin?.attachedRoomIds ?? [])],
+      };
+    }
+    if (
+      minterVisibleBeforeJoin &&
+      matchingRedemptions.some((event) => isAgentIdentityEvent(event))
+    ) {
+      throw new Error('agent pairing code has already been redeemed');
+    }
+    if (pairing && pairing.expiresAt <= now()) throw new Error('agent pairing code has expired');
+    const wasMember = membersBeforeJoin.some((member) => member.pubkey === ctx.identity.publicKey);
+    if (wasMember && !claimedJoin) {
+      throw new Error(
+        `cannot pair existing human Workspace member ${ctx.identity.publicKey} as an agent; ` +
+          'run the Members-page pairing command again so Beeline mints a fresh agent keypair',
+      );
+    }
+    joinedForPairing = claimedJoin?.joined ?? false;
+    let attachedRoomIds = [...(claimedJoin?.attachedRoomIds ?? [])];
     if (!wasMember && !claimedJoin) {
       // The server-indexed claim is the single authority boundary that can
       // atomically reserve this code and inherit the minter's current Rooms.
@@ -544,8 +545,8 @@ export async function redeemAgentPairingCode(
   } catch (error) {
     // The capability-scoped membership already landed. Any failed authority
     // check or registration must not leave an outsider in the Workspace.
-    if (claimedForPairing) await abandonAgentPairing(ctx, communityId, code);
-    else if (joinedForPairing) await abandonAgentPairing(ctx, communityId);
+    if (claimedForPairing && communityId) await abandonAgentPairing(ctx, communityId, code);
+    else if (joinedForPairing && communityId) await abandonAgentPairing(ctx, communityId);
     throw error;
   }
 }

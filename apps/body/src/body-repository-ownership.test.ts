@@ -38,6 +38,310 @@ vi.mock('@beeline/buzz-client', async (importOriginal) => {
   return { ...actual, createBuzzClient: mocks.createBuzzClient };
 });
 
+describe('GitHub-triggered corner merge loop', () => {
+  it('turns a real conflict hint into agent repair, standing-command merge, and cleanup', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'buzzy-github-merge-loop-'));
+    const bare = join(root, 'remote.git');
+    const source = join(root, 'source');
+    const corner = join(root, 'corner');
+    const gitEnv = {
+      ...process.env,
+      GIT_TERMINAL_PROMPT: '0',
+      GIT_CONFIG_NOSYSTEM: '1',
+      GIT_EDITOR: 'true',
+    };
+    const runGit = (cwd: string, args: string[], allowFailure = false) => {
+      const result = spawnSync('git', args, { cwd, env: gitEnv, encoding: 'utf8' });
+      if (!allowFailure && result.status !== 0) throw new Error(String(result.stderr));
+      return result;
+    };
+    try {
+      runGit(root, ['init', '--bare', '-q', bare]);
+      runGit(root, ['init', '-q', '-b', 'main', source]);
+      runGit(source, ['config', 'user.name', 'Merge Loop Test']);
+      runGit(source, ['config', 'user.email', 'merge-loop@test.invalid']);
+      await writeFile(join(source, 'shared.txt'), 'base\n');
+      runGit(source, ['add', 'shared.txt']);
+      runGit(source, ['commit', '-qm', 'base']);
+      runGit(source, ['remote', 'add', 'origin', bare]);
+      runGit(source, ['push', '-q', '-u', 'origin', 'main']);
+      runGit(source, ['worktree', 'add', '-q', '-b', 'feature/conflict', corner, 'main']);
+      await writeFile(join(corner, 'shared.txt'), 'feature\n');
+      runGit(corner, ['add', 'shared.txt']);
+      runGit(corner, ['commit', '-qm', 'feature']);
+      runGit(corner, ['push', '-q', '-u', 'origin', 'feature/conflict']);
+      await writeFile(join(source, 'shared.txt'), 'target\n');
+      runGit(source, ['add', 'shared.txt']);
+      runGit(source, ['commit', '-qm', 'target moved']);
+      runGit(source, ['push', '-q', 'origin', 'main']);
+
+      let phase: 'dirty' | 'clean' | 'merged' = 'dirty';
+      let mergedHead = '';
+      const published: NostrEvent[] = [];
+      const agent = newIdentity('github-merge-loop-agent');
+      const human = newIdentity('github-merge-loop-human');
+      const create = signEvent(
+        {
+          pubkey: agent.publicKey,
+          created_at: 1,
+          kind: 9007,
+          tags: [
+            ['h', 'corner-conflict'],
+            ['parent', 'room-conflict'],
+          ],
+          content: '',
+        },
+        agent.secretKey,
+      );
+      const members = signEvent(
+        {
+          pubkey: agent.publicKey,
+          created_at: 1,
+          kind: 39002,
+          tags: [
+            ['d', 'room-conflict'],
+            ['h', 'room-conflict'],
+            ['p', human.publicKey, '', 'member'],
+          ],
+          content: '',
+        },
+        agent.secretKey,
+      );
+      const ref = (name: string) =>
+        runGit(root, ['--git-dir', bare, 'rev-parse', `refs/heads/${name}`]).stdout.trim();
+      const pull = () => ({
+        number: 7,
+        html_url: 'https://github.com/acme/widget/pull/7',
+        title: 'Resolve and merge',
+        base: { ref: 'main', sha: ref('main') },
+        head: { sha: phase === 'merged' ? mergedHead : ref('feature/conflict') },
+        state: phase === 'merged' ? 'closed' : 'open',
+        merged_at: phase === 'merged' ? '2026-08-31T18:00:00Z' : null,
+        merged_by: phase === 'merged' ? { login: 'corner-agent' } : null,
+        mergeable: phase === 'dirty' ? false : true,
+        mergeable_state: phase === 'dirty' ? 'dirty' : 'clean',
+      });
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+          const url = String(input);
+          if (url.includes('api.github.com')) {
+            if (init?.method === 'PATCH') return new Response('{}', { status: 200 });
+            if (url.includes('/git/ref/heads/feature/conflict')) {
+              return phase === 'merged'
+                ? new Response('{}', { status: 404 })
+                : new Response(JSON.stringify({ object: { sha: ref('feature/conflict') } }));
+            }
+            if (url.includes('/pulls?')) return new Response(JSON.stringify([pull()]));
+            if (url.endsWith('/pulls/7')) return new Response(JSON.stringify(pull()));
+            if (url.includes('/check-runs')) {
+              return new Response(
+                JSON.stringify({ check_runs: [{ status: 'completed', conclusion: 'success' }] }),
+              );
+            }
+            if (url.endsWith('/status')) return new Response(JSON.stringify({ state: 'success' }));
+          }
+          if (url.endsWith('/query')) {
+            const filters = JSON.parse(String(init?.body)) as Array<{ kinds?: number[] }>;
+            return new Response(
+              JSON.stringify(
+                filters.some((filter) => filter.kinds?.includes(9007))
+                  ? [create]
+                  : filters.some((filter) => filter.kinds?.includes(39002))
+                    ? [members]
+                    : [],
+              ),
+              { status: 200 },
+            );
+          }
+          if (init?.body) published.push(JSON.parse(String(init.body)) as NostrEvent);
+          return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+        }),
+      );
+
+      const prompts: string[] = [];
+      const sessionPrompt = vi.fn(async (_sessionId: string, prompt: string) => {
+        prompts.push(prompt);
+        if (prompt.includes('has merge conflicts')) {
+          runGit(corner, ['fetch', '-q', 'origin', 'main']);
+          expect(runGit(corner, ['rebase', 'origin/main'], true).status).not.toBe(0);
+          await writeFile(join(corner, 'shared.txt'), 'resolved feature and target\n');
+          runGit(corner, ['add', 'shared.txt']);
+          runGit(corner, ['rebase', '--continue']);
+          runGit(corner, ['push', '-q', '--force-with-lease', 'origin', 'feature/conflict']);
+          phase = 'clean';
+          return {
+            stopReason: 'end_turn',
+            updates: [],
+            agentText: 'Conflicts resolved and pushed.',
+            toolCalls: [],
+          };
+        }
+        expect(prompt).toContain('human merge command remains active');
+        mergedHead = ref('feature/conflict');
+        runGit(source, ['fetch', '-q', 'origin', 'feature/conflict']);
+        runGit(source, ['merge', '--ff-only', 'origin/feature/conflict']);
+        runGit(source, ['push', '-q', 'origin', 'main']);
+        runGit(source, ['push', '-q', 'origin', '--delete', 'feature/conflict']);
+        phase = 'merged';
+        return {
+          stopReason: 'end_turn',
+          updates: [],
+          agentText: 'Merged and verified on GitHub.',
+          toolCalls: [],
+        };
+      });
+      const body = new Body(
+        {
+          agentBinary: '/nonexistent',
+          mcpBinary: '/nonexistent',
+          agentEnv: {},
+          workspaceRoot: root,
+          relayBaseUrl: 'https://relay.example',
+          relayHost: 'relay.example',
+          relayScheme: 'https',
+          relayWsUrl: 'wss://relay.example',
+          autoApprovePermissions: true,
+        },
+        undefined,
+        agent,
+        { repositoryAccessToken: async () => 'bounded-token' },
+      );
+      stubEmptyAgentHistory(body);
+      Reflect.set(body, 'agentRelay', {
+        queryEvents: vi.fn(async () => []),
+        publishEvent: vi.fn(async (event: NostrEvent) => {
+          published.push(event);
+        }),
+      });
+      vi.spyOn(body as never, 'reconcileCornerExistence' as never).mockResolvedValue(
+        undefined as never,
+      );
+      vi.spyOn(body as never, 'finishCornerTurn' as never).mockResolvedValue(undefined as never);
+      const session = {
+        channelId: 'corner-conflict',
+        parentChannelId: 'room-conflict',
+        sessionId: 'session-conflict',
+        client: {
+          sessionPrompt,
+          sessionSteer: vi.fn(),
+          sessionCancel: vi.fn(),
+          activeRunId: () => undefined,
+        },
+        lifecycle: {
+          activate: vi.fn(async () => 'session-conflict'),
+          suspend: vi.fn(async () => undefined),
+        },
+      } as never;
+      const info = {
+        subchannelId: 'corner-conflict',
+        worktreePath: corner,
+        featureBranch: 'feature/conflict',
+        role: agent,
+        session,
+        lastPolledAt: 0,
+        archived: false,
+        boundRepo: {
+          repo: 'acme/widget',
+          repositoryId: 'acme/widget',
+          remoteUrl: 'git://github.com/acme/widget',
+          remoteName: 'origin',
+          localPath: source,
+          targetBranch: 'refs/heads/main',
+          truth: {
+            binding: {
+              key: 'github:1',
+              name: 'acme/widget',
+              remote: 'git://github.com/acme/widget',
+              localOnly: false,
+            },
+          },
+        },
+        request: {
+          eventId: 'human-original',
+          authorPubkey: human.publicKey,
+          content: 'Implement the change.',
+          createdAt: 1,
+        },
+        mergeRequested: { eventId: 'human-merge', authorPubkey: human.publicKey },
+      } as never;
+      body.registerSubchannel(info);
+
+      await Reflect.get(body, 'dispatchRoomLifecycleEvent').call(body, {
+        trigger: 'github',
+        roomId: 'room-conflict',
+        eventId: 'github-hint',
+      });
+      await body.waitForAgentTasks();
+      await body.waitForAgentTasks();
+
+      expect(prompts).toHaveLength(2);
+      expect(prompts[0]).toContain('Rebase feature/conflict onto the current origin/main');
+      expect(prompts[1]).toContain('Merge the pull request with gh now');
+      expect(phase).toBe('merged');
+      expect(body.getSubchannels().has('corner-conflict')).toBe(false);
+      expect(existsSync(corner)).toBe(false);
+      expect(runGit(root, ['--git-dir', bare, 'rev-parse', 'refs/heads/main']).stdout.trim()).toBe(
+        mergedHead,
+      );
+      expect(
+        runGit(root, ['--git-dir', bare, 'rev-parse', 'refs/heads/feature/conflict'], true).status,
+      ).not.toBe(0);
+      expect(
+        published.some(
+          (event) =>
+            event.tags.some((tag) => tag[0] === 't' && tag[1] === 'corner-branch-ended') &&
+            event.tags.some((tag) => tag[0] === 'h' && tag[1] === 'room-conflict') &&
+            event.content.includes('Merged externally by corner-agent'),
+        ),
+      ).toBe(true);
+      expect(
+        published.some(
+          (event) =>
+            event.kind === 9002 &&
+            event.tags.some((tag) => tag[0] === 'h' && tag[1] === 'corner-conflict') &&
+            event.tags.some((tag) => tag[0] === 'archived' && tag[1] === 'true'),
+        ),
+      ).toBe(true);
+      const closedProgress = published.filter((event) =>
+        event.tags.some((tag) => tag[0] === 'status' && tag[1] === 'closed'),
+      );
+      expect(closedProgress).toHaveLength(2);
+      expect(closedProgress.every((event) => event.content === '')).toBe(true);
+      const closedPresence = published.find((event) =>
+        event.tags.some((tag) => tag[0] === 'terminal' && tag[1] === 'closed'),
+      );
+      expect(closedPresence?.content).toBe('offline');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('distinguishes a merge command from a merge-status question', () => {
+    expect(isCornerMergeCommand('merge it')).toBe(true);
+    expect(isCornerMergeCommand('go ahead and merge when clean')).toBe(true);
+    expect(isCornerMergeCommand('did you merge?')).toBe(false);
+    expect(
+      cornerLifecycleStatus({
+        version: 1,
+        cornerId: 'corner',
+        branch: 'feature/conflict',
+        state: 'in-review',
+        checks: 'passing',
+        observedAt: 1,
+        pr: {
+          number: 7,
+          url: 'https://github.com/acme/widget/pull/7',
+          title: 'Resolve and merge',
+          targetBranch: 'main',
+          headSha: 'a'.repeat(40),
+          mergeability: 'dirty',
+        },
+      }),
+    ).toContain('has merge conflicts');
+  });
+});
+
 import {
   AGENT_EXCHANGE_MAX_MESSAGES,
   agentTurnFailureJournalDetail,
@@ -54,6 +358,7 @@ import {
   conciseLandSummary,
   isMovedTargetLandFailure,
   cornerArchiveSummary,
+  cornerLifecycleStatus,
   CORNER_CLOSE_TAG,
   CORNER_TARGET_SYNC_INSTRUCTION,
   CORNER_TURN_SUMMARY_INSTRUCTION,
@@ -66,6 +371,7 @@ import {
   taskDescriptionFromCornerRequest,
   taskSlugForCornerIntent,
   isChannelAddressedMessage,
+  isCornerMergeCommand,
   isChannelWorkIntent,
   isReadOnlyInformationRequest,
   isRepositoryMutationRequest,

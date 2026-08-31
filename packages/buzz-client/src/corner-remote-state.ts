@@ -5,6 +5,7 @@ export const CORNER_REMOTE_STATE_TAG = 'buzz-corner-remote-state';
 
 export type CornerRemoteStateName = 'working' | 'in-review' | 'gone' | 'unknown';
 export type CornerCheckState = 'passing' | 'failing' | 'pending' | 'unknown';
+export type CornerMergeability = 'clean' | 'dirty' | 'unknown';
 
 export interface CornerPullRequestFact {
   number: number;
@@ -12,6 +13,10 @@ export interface CornerPullRequestFact {
   title: string;
   targetBranch: string;
   headSha: string;
+  /** GitHub's conflict-only verdict. `clean` may still have failing checks. */
+  mergeability?: CornerMergeability;
+  /** Base generation used to re-arm conflict repair when the target moves. */
+  baseSha?: string;
   mergedAt?: string;
   mergedBy?: string;
 }
@@ -47,6 +52,10 @@ function isPullRequestFact(value: unknown): value is CornerPullRequestFact {
     Boolean(record.targetBranch.trim()) &&
     typeof record.headSha === 'string' &&
     /^[0-9a-f]{40}$/i.test(record.headSha) &&
+    (record.mergeability === undefined ||
+      ['clean', 'dirty', 'unknown'].includes(String(record.mergeability))) &&
+    (record.baseSha === undefined ||
+      (typeof record.baseSha === 'string' && /^[0-9a-f]{40}$/i.test(record.baseSha))) &&
     (record.mergedAt === undefined ||
       (typeof record.mergedAt === 'string' && Boolean(record.mergedAt.trim()))) &&
     (record.mergedBy === undefined ||
@@ -83,9 +92,9 @@ export function parseCornerRemoteStateContent(content: string): CornerRemoteStat
   return value as unknown as CornerRemoteState;
 }
 
-export function parseCornerRemoteState(event: Pick<NostrEvent, 'kind' | 'tags' | 'content'>):
-  | CornerRemoteState
-  | undefined {
+export function parseCornerRemoteState(
+  event: Pick<NostrEvent, 'kind' | 'tags' | 'content'>,
+): CornerRemoteState | undefined {
   if (
     event.kind !== CORNER_REMOTE_STATE_KIND ||
     !event.tags.some((tag) => tag[0] === 't' && tag[1] === CORNER_REMOTE_STATE_TAG)

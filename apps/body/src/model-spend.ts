@@ -9,7 +9,8 @@ export type ModelTurnCause =
   | 'restart-continuation'
   | 'agent-exchange'
   | 'agent-mention'
-  | 'schedule';
+  | 'schedule'
+  | 'github';
 
 export interface ModelTurnAttribution {
   /** Event that immediately caused this invocation. */
@@ -17,7 +18,7 @@ export interface ModelTurnAttribution {
   /** Original human request when the immediate cause is a bounded continuation. */
   originalRequestId: string;
   cause: ModelTurnCause;
-  trigger?: 'human' | 'agent' | 'schedule';
+  trigger?: 'human' | 'agent' | 'schedule' | 'github';
   rootEventId?: string;
   principalPubkey?: string;
   commissionedByAgentPubkey?: string;

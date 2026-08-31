@@ -17,6 +17,8 @@ type GitHubPull = {
   state?: unknown;
   merged_at?: unknown;
   merged_by?: unknown;
+  mergeable?: unknown;
+  mergeable_state?: unknown;
 };
 
 export interface ObserveCornerRemoteInput {
@@ -60,6 +62,7 @@ async function json(response: Response): Promise<unknown> {
 
 function pullFact(value: GitHubPull): CornerPullRequestFact | undefined {
   const base = value.base as { ref?: unknown } | undefined;
+  const baseSha = (value.base as { sha?: unknown } | undefined)?.sha;
   const head = value.head as { sha?: unknown } | undefined;
   const mergedBy = value.merged_by as { login?: unknown } | undefined;
   if (
@@ -81,6 +84,12 @@ function pullFact(value: GitHubPull): CornerPullRequestFact | undefined {
     title: value.title.trim(),
     targetBranch: base.ref,
     headSha: head.sha,
+    ...(value.mergeable === false || value.mergeable_state === 'dirty'
+      ? { mergeability: 'dirty' as const }
+      : value.mergeable === true
+        ? { mergeability: 'clean' as const }
+        : { mergeability: 'unknown' as const }),
+    ...(typeof baseSha === 'string' && /^[0-9a-f]{40}$/i.test(baseSha) ? { baseSha } : {}),
     ...(typeof value.merged_at === 'string' && value.merged_at.trim()
       ? { mergedAt: value.merged_at }
       : {}),
@@ -106,9 +115,12 @@ async function checkState(input: {
 }): Promise<CornerCheckState> {
   try {
     const [checksResponse, statusResponse] = await Promise.all([
-      input.fetchImpl(`${input.apiBase}${input.path}/commits/${input.sha}/check-runs?per_page=100`, {
-        headers: headers(input.token),
-      }),
+      input.fetchImpl(
+        `${input.apiBase}${input.path}/commits/${input.sha}/check-runs?per_page=100`,
+        {
+          headers: headers(input.token),
+        },
+      ),
       input.fetchImpl(`${input.apiBase}${input.path}/commits/${input.sha}/status`, {
         headers: headers(input.token),
       }),
@@ -175,7 +187,9 @@ export async function observeCornerRemote(
       ),
     ]);
     if ((branchResponse.status !== 404 && !branchResponse.ok) || !pullsResponse.ok) {
-      throw new Error(`GitHub lifecycle read failed (${branchResponse.status}/${pullsResponse.status})`);
+      throw new Error(
+        `GitHub lifecycle read failed (${branchResponse.status}/${pullsResponse.status})`,
+      );
     }
     const pulls = await json(pullsResponse);
     if (!Array.isArray(pulls)) throw new Error('GitHub pull request response is invalid');
@@ -183,7 +197,7 @@ export async function observeCornerRemote(
       const fact = pullFact(pull);
       return fact ? [{ pull, fact }] : [];
     });
-    const open = normalized.find(({ pull }) => pull.state === 'open' && pull.merged_at == null);
+    let open = normalized.find(({ pull }) => pull.state === 'open' && pull.merged_at == null);
     const merged = normalized.find(({ pull }) => typeof pull.merged_at === 'string');
     if (branchResponse.status === 404) {
       const selected = merged ?? open;
@@ -198,12 +212,26 @@ export async function observeCornerRemote(
         outcome: merged ? 'landed' : 'abandoned',
       };
     }
-    const branchBody = (await json(branchResponse)) as
-      | { object?: { sha?: unknown } }
-      | undefined;
+    const branchBody = (await json(branchResponse)) as { object?: { sha?: unknown } } | undefined;
     const branchTip = branchBody?.object?.sha;
     if (typeof branchTip !== 'string' || !/^[0-9a-f]{40}$/i.test(branchTip)) {
       throw new Error('GitHub branch response is invalid');
+    }
+    if (open) {
+      // The list endpoint intentionally omits `mergeable`, and GitHub may
+      // return null while its background calculation is still running. The
+      // repository-event hint and the 30s lifecycle backstop both re-enter
+      // this bounded read until GitHub has a verdict.
+      const detailResponse = await fetchImpl(`${apiBase}${path}/pulls/${open.fact.number}`, {
+        headers: headers(input.token),
+      });
+      if (!detailResponse.ok) {
+        throw new Error(`GitHub pull request detail read failed (${detailResponse.status})`);
+      }
+      const detail = (await json(detailResponse)) as GitHubPull | undefined;
+      const detailedFact = detail ? pullFact(detail) : undefined;
+      if (!detailedFact) throw new Error('GitHub pull request detail response is invalid');
+      open = { pull: detail!, fact: detailedFact };
     }
     const checks = open
       ? await checkState({

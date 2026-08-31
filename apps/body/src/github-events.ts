@@ -1,8 +1,8 @@
 /** GitHub Events API ingestion normalized behind one source-neutral shape. */
 
 /** The deliberately small GitHub activity vocabulary that Rooms display. */
-export type RepositoryEventType = 'pull-request' | 'issue';
-export type RepositoryEventAction = 'opened' | 'closed' | 'merged';
+export type RepositoryEventType = 'pull-request' | 'issue' | 'lifecycle-hint';
+export type RepositoryEventAction = 'opened' | 'closed' | 'merged' | 'synchronize' | 'target-push';
 
 export interface RepositoryEvent {
   source: 'github-poll';
@@ -12,8 +12,8 @@ export interface RepositoryEvent {
   action: RepositoryEventAction;
   actor: string;
   occurredAt: string;
-  title: string;
-  url: string;
+  title?: string;
+  url?: string;
 }
 
 export interface GitHubRepositoryTarget {
@@ -103,8 +103,11 @@ export function normalizeGitHubEvent(value: unknown): RepositoryEvent | undefine
 
   if (type === 'PullRequestEvent') {
     const action = string(payload.action);
-    if (action !== 'opened' && action !== 'closed') return undefined;
     const pull = record(payload.pull_request);
+    if (action === 'synchronize') {
+      return { ...base, type: 'lifecycle-hint', action };
+    }
+    if (action !== 'opened' && action !== 'closed') return undefined;
     const title = string(pull?.title);
     const url = httpsUrl(pull?.html_url);
     if (!title || !url) return undefined;
@@ -117,6 +120,12 @@ export function normalizeGitHubEvent(value: unknown): RepositoryEvent | undefine
       title,
       url,
     };
+  }
+
+  if (type === 'PushEvent') {
+    const ref = string(payload.ref);
+    if (!ref?.startsWith('refs/heads/')) return undefined;
+    return { ...base, type: 'lifecycle-hint', action: 'target-push' };
   }
 
   if (type === 'IssuesEvent') {

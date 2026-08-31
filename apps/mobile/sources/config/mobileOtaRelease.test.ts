@@ -724,6 +724,12 @@ esac
 
   describe('canary runner environment classification', () => {
     const barePath = '/usr/bin:/bin';
+    const noAdbPath = mkdtempSync(join(tmpdir(), 'beeline-no-adb-path-'));
+    for (const command of ['cat', 'dirname']) {
+      const wrapper = join(noAdbPath, command);
+      writeFileSync(wrapper, `#!/bin/sh\nexec /usr/bin/${command} "$@"\n`);
+      chmodSync(wrapper, 0o755);
+    }
     const defaultMaestroDirectory = mkdtempSync(join(tmpdir(), 'beeline-maestro-stub-'));
     const defaultMaestro = join(defaultMaestroDirectory, 'maestro');
     writeFileSync(defaultMaestro, '#!/bin/sh\nexit 0\n');
@@ -734,7 +740,7 @@ esac
       env: Record<string, string | undefined> = {},
     ) {
       return spawnSync(
-        'bash',
+        '/bin/bash',
         [join(mobileRoot, 'scripts/ota-canary.sh'), ...args],
         {
           cwd: mobileRoot,
@@ -752,7 +758,10 @@ esac
             // The script accepts the governor's Node.js executable explicitly
             // because its intentionally narrow runner PATH may not contain it.
             NODE_BIN: process.execPath,
-            PATH: barePath,
+            PATH: env.PATH ??
+              (env.ANDROID_HOME
+                ? `${env.ANDROID_HOME}/platform-tools:${barePath}`
+                : noAdbPath),
             ...env,
           },
         },

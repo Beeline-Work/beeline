@@ -22,6 +22,19 @@ import {
   isCornerNeedsYou,
   type CornerStatus,
 } from '@/buzz/corners';
+import type { MergeTarget } from '@beeline/buzz-client';
+
+/** Structural subset of the server-indexed lifecycle needed by this surface. */
+type ReviewLifecycle = {
+  lifecycle: 'WORKING' | 'REVIEW' | 'APPROVED' | 'REJECTED' | 'ARCHIVED';
+  git?: {
+    relation: 'absent' | 'no-deliverable-commits-yet' | 'review' | 'contained';
+    repository: string;
+    targetBranch: string;
+    featureTip?: string;
+    artifact?: { patchId?: string };
+  };
+};
 
 /** The projected transcript shape this derivation reads. A structural subset
  * of `ChatDisplayMessage` so tests need no React Native mocks. */
@@ -65,6 +78,45 @@ export type CornerActionSurface =
   | { kind: 'review' }
   | { kind: 'attention'; card: CornerAttentionCard }
   | { kind: 'nothing-ready' };
+
+/** Build the signed merge target only from the server-indexed lifecycle fact. */
+export function mergeTargetFromCornerLifecycle(
+  lifecycle: ReviewLifecycle | undefined,
+): MergeTarget | null {
+  const projection = lifecycle?.git;
+  if (
+    !lifecycle ||
+    (lifecycle.lifecycle !== 'REVIEW' && lifecycle.lifecycle !== 'APPROVED') ||
+    projection?.relation !== 'review' ||
+    !projection.featureTip
+  ) {
+    return null;
+  }
+  return {
+    repo: projection.repository,
+    branch: projection.targetBranch,
+    tip: projection.featureTip,
+    ...(projection.artifact?.patchId ? { patchId: projection.artifact.patchId } : {}),
+  };
+}
+
+export type CornerReviewPanelMountState = 'review' | 'nothing-ready' | null;
+
+/**
+ * The review panel mounts from durable review truth, never from the corner-list
+ * narration. A concluded session may still show the legacy empty state, but a
+ * REVIEW/APPROVED merge target wins even while that list reports `waiting`.
+ */
+export function cornerReviewPanelMountState(input: {
+  isCorner: boolean;
+  archived: boolean;
+  mergeTarget: MergeTarget | null;
+  sessionFinished: boolean;
+}): CornerReviewPanelMountState {
+  if (!input.isCorner || input.archived) return null;
+  if (input.mergeTarget) return 'review';
+  return input.sessionFinished ? 'nothing-ready' : null;
+}
 
 const DETAIL_MAX_CHARS = 240;
 

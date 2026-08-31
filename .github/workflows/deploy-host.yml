@@ -1,34 +1,18 @@
-# Deploy the production relay host on merge ("latest from main" deploys).
-#
-# Every push to main lands BOTH the code and the live host: the self-hosted
-# runner (label: beeline-prod-host) executes ON the production host — the host
-# is not reachable from the internet (Cloudflare tunnel only, no inbound
-# ports), so a GitHub-hosted runner could never reach it and no server
-# credential is stored in GitHub. The job runs scripts/deploy-relay-host.sh,
-# which swaps the tracked web assets while preserving the workflow-owned /dl
-# release store, rebuilds/recreates auth, and verifies the PUBLIC URL.
-#
-# A bundle-input merge can trigger this deploy before its native bundle build
-# finishes. That first run leaves /dl in place. beeline-bundle.yml publishes
-# the new release to the host-local store and then dispatches this workflow
-# again, ordering the bundle publication before the final deploy verification.
-#
-# TRUST NOTE: a self-hosted runner means anyone who can merge to this repo
-# can execute code on the production host. Today that is the captain alone —
-# agents cannot merge — so the exposure is bounded, but it is a stated,
-# accepted trade, not an unremarked one.
-name: Deploy relay host
+name: Server release leg
 
 on:
-  push:
-    branches:
-      - main
-  workflow_dispatch:
+  workflow_call:
     inputs:
-      drill:
-        description: "Failure drill: 'fail-public' corrupts one staged file post-local-check to exercise the rollback path end-to-end"
-        required: false
-        default: ''
+      phase:
+        description: Build exact server images or promote those already-built images
+        type: string
+        required: true
+      release_sha:
+        type: string
+        required: true
+      release_version:
+        type: string
+        required: true
 
 permissions:
   contents: read
@@ -42,15 +26,49 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
-    name: Deploy web + auth to production host
-    # Only the dedicated runner on the production host may pick this up;
-    # a GitHub-hosted runner has no route to the target and must never try.
+  build:
+    if: inputs.phase == 'build'
     runs-on: [self-hosted, beeline-prod-host]
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: Deploy tracked web assets + auth image, verify public URL
+        with:
+          ref: ${{ inputs.release_sha }}
+      - name: Build SHA-pinned server images without changing production
+        run: ./scripts/build-release-server-images.sh
+        env:
+          BEELINE_RELEASE_SHA: ${{ inputs.release_sha }}
+          BEELINE_RELEASE_VERSION: ${{ inputs.release_version }}
+      - name: Record the verified server artifact identity
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/server-release"
+          node - "$RUNNER_TEMP/server-release/identity.json" "$RELEASE_VERSION" "$RELEASE_SHA" <<'NODE'
+          const fs = require('node:fs');
+          fs.writeFileSync(process.argv[2], JSON.stringify({
+            version: process.argv[3], sourceSha: process.argv[4], images: ['auth', 'materializer'],
+          }));
+          NODE
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-artifact-${{ inputs.release_sha }}
+          path: ${{ runner.temp }}/server-release/identity.json
+          if-no-files-found: error
+          retention-days: 7
+
+  promote:
+    if: inputs.phase == 'promote'
+    runs-on: [self-hosted, beeline-prod-host]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_sha }}
+      - name: Promote exact prebuilt server images and verify public health
         run: ./scripts/deploy-relay-host.sh
         env:
-          BEELINE_DEPLOY_DRILL: ${{ inputs.drill || '' }}
+          BEELINE_PREBUILT_IMAGES: '1'
+          BEELINE_RELEASE_SHA: ${{ inputs.release_sha }}
+          BEELINE_RELEASE_VERSION: ${{ inputs.release_version }}

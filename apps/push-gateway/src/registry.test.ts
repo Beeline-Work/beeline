@@ -52,6 +52,8 @@ describe('TokenRegistry', () => {
       channel: 'production',
       group: '99999999-8888-7777-6666-555555555555',
       runtimeVersion: '21',
+      releaseVersion: 'v0.0.1',
+      sourceSha: '1'.repeat(40),
       environment: 'physical' as const,
     };
 

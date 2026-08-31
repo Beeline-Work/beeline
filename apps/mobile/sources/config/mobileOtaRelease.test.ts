@@ -16,6 +16,18 @@ const workflow = readFileSync(
   resolve(mobileRoot, '../../.github/workflows/mobile-ota.yml'),
   'utf8',
 );
+const unifiedWorkflow = readFileSync(
+  resolve(mobileRoot, '../../.github/workflows/unified-release.yml'),
+  'utf8',
+);
+const daemonWorkflow = readFileSync(
+  resolve(mobileRoot, '../../.github/workflows/beeline-bundle.yml'),
+  'utf8',
+);
+const serverWorkflow = readFileSync(
+  resolve(mobileRoot, '../../.github/workflows/deploy-host.yml'),
+  'utf8',
+);
 const postPromoteWorkflow = readFileSync(
   resolve(mobileRoot, '../../.github/workflows/mobile-ota-post-promote.yml'),
   'utf8',
@@ -384,11 +396,10 @@ esac
     expect(merge.failures.map((failure: { class: string }) => failure.class)).toEqual(
       failures.map((failure) => failure[2]),
     );
-    expect(workflow).toContain("title: 'Undelivered merges'");
-    expect(workflow).toContain('if (attempt >= 3)');
-    expect(workflow).toContain('createWorkflowDispatch');
-    expect(workflow).not.toContain('maxFailures < 3');
-    expect(workflow).toContain("else await github.rest.issues.create");
+    expect(unifiedWorkflow).toContain('createWorkflowDispatch');
+    expect(unifiedWorkflow).toContain("if (main.data.sha !== process.env.RELEASE_SHA)");
+    expect(unifiedWorkflow).toContain('A newer main sha superseded this whole release');
+    expect(unifiedWorkflow).not.toContain('maxFailures < 3');
     expect(deliveryIndexScript).toContain("['merge-base', '--is-ancestor', lastTracked, head]");
     expect(deliveryIndexScript).toContain('`${rangeStart}..${head}`');
   }, 60_000);
@@ -417,7 +428,7 @@ esac
 
     expect(JSON.parse(readFileSync(indexPath, 'utf8')).merges.map((merge: { sha: string }) => merge.sha))
       .toEqual(expected);
-    expect(workflow).toContain('--before "$PUSH_BEFORE"');
+    expect(workflow).toContain('--before "${PUSH_BEFORE:-}"');
     expect(workflow).not.toContain("require('node:child_process')");
   });
 
@@ -464,7 +475,17 @@ esac
       schemaVersion: 1,
       merges: [
         { sha: '1'.repeat(40), state: 'confirmed', published: { groupId: 'old', updateIds: ['old-id'] } },
-        { sha: '2'.repeat(40), state: 'published', published: { groupId: 'current', updateIds: ['android', 'ios'] } },
+        {
+          sha: '2'.repeat(40),
+          releaseVersion: 'v0.0.2',
+          state: 'published',
+          published: {
+            groupId: 'current',
+            updateIds: ['android', 'ios'],
+            releaseVersion: 'v0.0.2',
+            headSha: '2'.repeat(40),
+          },
+        },
         { sha: '3'.repeat(40), state: 'built' },
       ],
     };
@@ -473,13 +494,15 @@ esac
     const result = runRelease(['delivery-target', '--index', indexPath]);
 
     expect(result.status).toBe(0);
-    expect(result.stdout).toBe('group_id=current\nupdate_ids=android,ios\n');
+    expect(result.stdout).toBe(
+      `group_id=current\nupdate_ids=android,ios\nrelease_version=v0.0.2\nsource_sha=${'2'.repeat(40)}\n`,
+    );
     expect(`${workflow}\n${reconcileWorkflow}`.match(/ota-release\.mjs delivery-target/g)).toHaveLength(2);
 
     index.merges[1].state = 'confirmed';
     writeFileSync(indexPath, JSON.stringify(index));
     expect(runRelease(['delivery-target', '--index', indexPath]).stdout).toBe(
-      'group_id=\nupdate_ids=\n',
+      'group_id=\nupdate_ids=\nrelease_version=\nsource_sha=\n',
     );
   });
 
@@ -561,6 +584,38 @@ esac
     expect(JSON.parse(readFileSync(indexPath, 'utf8')).merges[0].state).toBe('published');
   });
 
+  it('refuses a physical app receipt from a different aligned release', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-release-receipt-'));
+    const indexPath = join(directory, 'index.json');
+    const receiptPath = join(directory, 'receipt.json');
+    const sha = '4'.repeat(40);
+    writeFileSync(indexPath, JSON.stringify({
+      schemaVersion: 1,
+      merges: [{
+        sha,
+        state: 'published',
+        published: { groupId: 'production-group', updateIds: ['production-update'] },
+      }],
+    }));
+    writeFileSync(receiptPath, JSON.stringify({ devices: [{
+      environment: 'physical',
+      group: 'production-group',
+      updateId: 'production-update',
+      releaseVersion: 'v0.0.2',
+      sourceSha: '5'.repeat(40),
+    }] }));
+
+    const result = runRelease([
+      'confirm', '--index', indexPath, '--receipt', receiptPath,
+      '--group', 'production-group', '--update-ids', 'production-update',
+      '--release-version', 'v0.0.1', '--sha', sha,
+    ]);
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ confirmed: false, groupId: 'production-group' });
+    expect(JSON.parse(readFileSync(indexPath, 'utf8')).merges[0].state).toBe('published');
+  });
+
   it('splits receipt-only reconciliation from production delivery conclusions', () => {
     expect(reconcileWorkflow).toContain('MOBILE_OTA_OWNER_PUBKEY');
     expect(reconcileWorkflow).toContain('MOBILE_OTA_RECEIPT_TOKEN');
@@ -574,16 +629,17 @@ esac
     expect(workflow).not.toMatch(/branches: \[main\][\s\S]{0,120}paths:/);
   });
 
-  it('makes a commanded run measure and enforce trigger-to-promotion under ten minutes', () => {
-    expect(workflow).toContain('getWorkflowRun');
-    expect(workflow).toContain("core.exportVariable('TRIGGER_EPOCH'");
-    expect(workflow).toContain('trigger_to_promotion');
-    expect(workflow).toContain('Mobile OTA delivery timing');
-    expect(workflow).toContain('if [ "$elapsed" -ge 600 ]');
+  it('measures the aligned roll from its all-artifacts gate and enforces ten minutes', () => {
+    expect(unifiedWorkflow).toContain('getWorkflowRun');
+    expect(unifiedWorkflow).toContain("core.setOutput('trigger_epoch'");
+    expect(unifiedWorkflow).toContain('promotion_epoch=$(date +%s)');
+    expect(unifiedWorkflow).toContain('promotion_elapsed="$(( now - ${{ needs.artifact_gate.outputs.promotion_epoch }} ))"');
+    expect(unifiedWorkflow).toContain('fix_to_phone_elapsed="$(( now - ${{ needs.initialize.outputs.trigger_epoch }} ))"');
+    expect(unifiedWorkflow).toContain('test "$promotion_elapsed" -lt 600');
+    expect(unifiedWorkflow).toContain('test "$fix_to_phone_elapsed" -lt 1200');
     expect(workflow).toContain('assert-promotion --ledger "$RUN_LEDGER" --index "$DELIVERY_INDEX"');
-    expect(workflow).toContain('**NOT DELIVERED:** production promotion proof was not produced.');
-    expect(workflow).toContain("delivered: ${{ steps.promotion.outcome == 'success' }}");
-    expect(workflow).toContain("needs.release.outputs.delivered != 'true'");
+    expect(unifiedWorkflow).toContain('Refuse a mixed-version delivery report');
+    expect(unifiedWorkflow).toContain('unified-release.mjs report');
   });
 
   it('runs validation beside candidate export and safely supersedes stale cumulative releases', () => {
@@ -591,8 +647,9 @@ esac
     expect(workflow).toContain('validation_pid=$!');
     expect(workflow).toContain('wait "$validation_pid"');
     expect(workflow).toContain('parallel_candidate_wall');
-    expect(workflow).toMatch(/group: mobile-ota-production-delivery\s+cancel-in-progress: true/);
-    expect(workflow).toContain('--before "$PUSH_BEFORE"');
+    expect(unifiedWorkflow).toMatch(/group: unified-production-release\s+cancel-in-progress: true/);
+    expect(workflow).toContain('--before "${PUSH_BEFORE:-}"');
+    expect(unifiedWorkflow).toMatch(/app_artifact:[\s\S]*?daemon_artifact:[\s\S]*?server_artifact:/);
     expect(deliveryIndexScript).toContain("['merge-base', '--is-ancestor', lastTracked, head]");
   });
 
@@ -600,12 +657,16 @@ esac
     expect(workflow).not.toContain('skip_canary');
     expect(workflow).toContain('--status post-promote');
     expect(workflow).toContain('node scripts/ota-release.mjs promote');
-    expect(workflow.indexOf('node scripts/ota-release.mjs promote')).toBeLessThan(
-      workflow.indexOf('uses: ./.github/workflows/mobile-ota-post-promote.yml'),
+    expect(unifiedWorkflow.indexOf('promote_app:')).toBeLessThan(
+      unifiedWorkflow.indexOf('post_promote_rehearsal:'),
     );
     expect(postPromoteWorkflow).toContain('scripts/ota-canary.sh --ledger "$RUN_LEDGER" --promoted');
-    expect(workflow).toContain("if: always() && steps.promotion.outcome == 'success'");
-    expect(workflow).toContain("if: always() && needs.release.outputs.delivered == 'true'");
+    expect(unifiedWorkflow.indexOf('promote_server:')).toBeLessThan(
+      unifiedWorkflow.indexOf('promote_daemon:'),
+    );
+    expect(unifiedWorkflow.indexOf('promote_daemon:')).toBeLessThan(
+      unifiedWorkflow.indexOf('promote_app:'),
+    );
     expect(postPromoteWorkflow).toContain('workflow_call:');
     expect(postPromoteWorkflow).toContain('--expected-current-group "$FAILED_GROUP"');
     expect(postPromoteWorkflow).toContain("needs.canary.result == 'failure' && needs.canary.outputs.failure_class == 'product-failure'");
@@ -1429,7 +1490,10 @@ esac
     expect(postPromoteWorkflow).toContain("index.merges.filter((merge) => merge.state !== 'confirmed')");
     expect(postPromoteWorkflow).toContain("merge.published?.groupId === process.env.FAILED_GROUP");
     expect(postPromoteWorkflow).toContain('Guarded automatic rollback');
-    expect(workflow).toMatch(/Store release ledger, timings, and promotion proof[\s\S]*?if: always\(\) && steps\.initialize\.outcome == 'success'/);
+    expect(workflow).toContain('Store release ledger, timings, and promotion proof');
+    expect(unifiedWorkflow).toContain('post_promote_rehearsal:');
+    expect(daemonWorkflow).toContain('Confirm every daemon restarted READY on the exact release');
+    expect(serverWorkflow).toContain('verify public health');
   });
 
   it('the workflow records a self-describing parked reason even when the canary dies before its own handlers', () => {

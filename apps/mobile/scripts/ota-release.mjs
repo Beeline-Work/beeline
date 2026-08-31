@@ -196,6 +196,7 @@ function publish(options) {
     schemaVersion: 2,
     status: 'beta',
     sourceSha: options.sha,
+    ...(options.releaseVersion ? { releaseVersion: options.releaseVersion } : {}),
     sourceRef: options.ref,
     candidateGroupId: published.groupId,
     candidateUpdates: published.updates,
@@ -281,6 +282,7 @@ function promote(options) {
       groupId: promoted.groupId,
       updateIds: promoted.updates.map((update) => update.id),
       headSha: ledger.sourceSha,
+      releaseVersion: ledger.releaseVersion,
       publishedAt: ledger.production.promotedAt,
       runId: String(ledger.delivery?.runId ?? options.runId ?? 'unknown'),
       attempt: Number(ledger.delivery?.attempt ?? options.attempt ?? 1),
@@ -322,11 +324,22 @@ function assertPromotion(options) {
   console.log(`production_group_id=${ledger.production.groupId}`);
   console.log(`source_group_id=${ledger.production.sourceGroupId}`);
   console.log(`source_sha=${ledger.sourceSha}`);
+  if (ledger.releaseVersion) console.log(`release_version=${ledger.releaseVersion}`);
 }
 
 function deliveryTarget(options) {
-  const delivery = latestPublishedDelivery(options.index) ?? { groupId: '', updateIds: [] };
-  const lines = [`group_id=${delivery.groupId}`, `update_ids=${delivery.updateIds.join(',')}`];
+  const delivery = latestPublishedDelivery(options.index) ?? {
+    groupId: '',
+    updateIds: [],
+    releaseVersion: '',
+    sourceSha: '',
+  };
+  const lines = [
+    `group_id=${delivery.groupId}`,
+    `update_ids=${delivery.updateIds.join(',')}`,
+    `release_version=${delivery.releaseVersion}`,
+    `source_sha=${delivery.sourceSha}`,
+  ];
   console.log(lines.join('\n'));
 }
 

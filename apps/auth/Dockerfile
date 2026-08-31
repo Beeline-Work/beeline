@@ -15,7 +15,13 @@ RUN npm run build -w @beeline/nostr && npm run build -w @beeline/buzz-client && 
 
 FROM node:22-bookworm-slim AS runtime
 
-ENV NODE_ENV=production
+ARG BEELINE_RELEASE_VERSION=development
+ARG BEELINE_RELEASE_SHA=unknown
+ENV NODE_ENV=production \
+  BEELINE_RELEASE_VERSION=$BEELINE_RELEASE_VERSION \
+  BEELINE_RELEASE_SHA=$BEELINE_RELEASE_SHA
+LABEL app.usebeeline.release.version=$BEELINE_RELEASE_VERSION \
+  app.usebeeline.release.sha=$BEELINE_RELEASE_SHA
 WORKDIR /app
 
 COPY package.json package-lock.json ./

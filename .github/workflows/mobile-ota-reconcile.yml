@@ -63,13 +63,16 @@ jobs:
           readarray -t delivery < <(node scripts/ota-release.mjs delivery-target --index "$DELIVERY_INDEX")
           group="${delivery[0]#group_id=}"
           updates="${delivery[1]#update_ids=}"
+          version="${delivery[2]#release_version=}"
+          sha="${delivery[3]#source_sha=}"
           if [ -n "$group" ] && [ -n "$OWNER_PUBKEY" ] && [ -n "$RECEIPT_TOKEN" ]; then
             if curl --fail --silent --show-error --max-time 15 \
               -H "Authorization: Bearer $RECEIPT_TOKEN" \
               "$RECEIPT_ORIGIN/update-receipts/$OWNER_PUBKEY" \
               -o "$RUNNER_TEMP/owner-update-receipt.json"; then
               node scripts/ota-release.mjs confirm --index "$DELIVERY_INDEX" \
-                --receipt "$RUNNER_TEMP/owner-update-receipt.json" --group "$group" --update-ids "$updates"
+                --receipt "$RUNNER_TEMP/owner-update-receipt.json" --group "$group" --update-ids "$updates" \
+                --release-version "$version" --sha "$sha"
             else
               echo "Owner receipt endpoint unavailable; the next reconciliation will retry." >&2
             fi

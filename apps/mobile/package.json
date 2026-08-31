@@ -19,7 +19,7 @@
     "release:build:appstore:interactive": "npm run version:check && eas build --profile production --platform ios --auto-submit-with-profile=production --no-wait && eas build --profile production --platform android --auto-submit-with-profile=production --no-wait",
     "release:build:apk": "npm run version:check && eas build --profile production-apk --platform android --no-wait --non-interactive",
     "prebuild": "rm -rf android ios && expo prebuild",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "npm --prefix ../.. run build -w @beeline/api-contract && npm --prefix ../.. run build -w @beeline/nostr && npm --prefix ../.. run build -w @beeline/buzz-client && tsc --noEmit",
     "postinstall": "patch-package || true; (command -v setup-skia-web >/dev/null && setup-skia-web public) || true",
     "eas-build-post-install": "tsc -p scripts/tsconfig.eas-nostr.json && tsc -p scripts/tsconfig.eas-api-contract.json && tsc -p scripts/tsconfig.eas-buzz-client.json",
     "generate-theme": "tsx sources/theme.gen.ts",

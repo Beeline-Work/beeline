@@ -1,7 +1,8 @@
 import type { AcpPermissionRequest } from './acp.js';
 import { BEELINE_AGENT_TOOL_NAMES, BEELINE_AGENT_TOOL_SERVER_NAME } from './agent-tool-contract.js';
 
-export const READ_ONLY_MCP_SERVER_NAME = 'buzz-readonly-mcp';
+export const READ_ONLY_MCP_SERVER_NAME = 'beeline-readonly-mcp';
+const READ_ONLY_MCP_TOOL_SERVER_NAME = READ_ONLY_MCP_SERVER_NAME.replaceAll('-', '_');
 
 export const READ_ONLY_TOOL_NAMES = [
   'list_files',
@@ -28,13 +29,15 @@ const BEELINE_AGENT_TOOL_SET = new Set<string>(BEELINE_AGENT_TOOL_NAMES);
 /**
  * Separators an adapter puts between the server name and the tool name.
  * `__` is claude-agent-acp's (the Claude Agent SDK names every MCP tool
- * `mcp__<server>__<tool>`); the rest cover the dot/slash/space/paren spellings
- * seen elsewhere. A trailing `(<tool>)` form is checked separately, since it
+ * `mcp__<server>__<tool>` and normalizes punctuation in the server identifier
+ * to underscores); the rest cover the dot/slash/space/paren spellings seen
+ * elsewhere. A trailing `(<tool>)` form is checked separately, since it
  * brackets the name rather than prefixing it.
  */
 const TOOL_NAME_SEPARATORS = ['__', '.', '/', ':', ' '] as const;
 const READ_ONLY_SERVER_TITLE_PREFIXES = [
   `mcp__${READ_ONLY_MCP_SERVER_NAME}__`,
+  `mcp__${READ_ONLY_MCP_TOOL_SERVER_NAME}__`,
   `mcp.${READ_ONLY_MCP_SERVER_NAME}.`,
   `${READ_ONLY_MCP_SERVER_NAME}/`,
   `${READ_ONLY_MCP_SERVER_NAME}:`,
@@ -45,8 +48,8 @@ const READ_ONLY_SERVER_TITLE_PREFIXES = [
  * A shell payload, if this request carries one. A title is the only thing the
  * name-matching below has to go on, and a native shell tool's title IS its
  * command line — so a command whose text happens to end in an inspection tool
- * name (`rm -rf /tmp/buzz-readonly-mcp/read_file`) would otherwise satisfy the
- * suffix match and be auto-allowed straight through the Room read-only
+ * name (`rm -rf /tmp/beeline-readonly-mcp/read_file`) would otherwise satisfy
+ * the suffix match and be auto-allowed straight through the Room read-only
  * boundary. Identify a shell payload first and never name-match it.
  */
 function shellPayload(toolCall: AcpPermissionRequest['toolCall']): boolean {
@@ -71,13 +74,13 @@ function shellPayload(toolCall: AcpPermissionRequest['toolCall']): boolean {
  *
  * The separators matter and are not guesswork — see
  * `fixtures/claude-agent-acp-permissions.ts` for the verbatim captured
- * payloads. claude-agent-acp spells the tool `mcp__<server>__<tool>` (an MCP
- * call falls through its `toolInfoFromToolUse` switch to the default branch, so
- * it arrives as `kind: 'other'` with no MCP envelope and nothing but that name);
- * codex-acp spells the same call `mcp.<server>.<tool>` and does forward the
- * envelope. A double-underscore form matches none of the dot/slash/space
- * suffixes, which is why the reported `read_file` / `git_log` / `git_show`
- * calls were still denied.
+ * payloads. claude-agent-acp spells the tool
+ * `mcp__<normalized_server>__<tool>` (an MCP call falls through its
+ * `toolInfoFromToolUse` switch to the default branch, so it arrives as
+ * `kind: 'other'` with no MCP envelope and nothing but that name); codex-acp
+ * spells the same call `mcp.<server>.<tool>` and does forward the envelope. A
+ * double-underscore form matches none of the dot/slash/space suffixes, which
+ * is why the reported `read_file` / `git_log` / `git_show` calls were denied.
  */
 export function isReadOnlyMcpPermissionRequest(request: AcpPermissionRequest): boolean {
   const toolCall = request.toolCall as

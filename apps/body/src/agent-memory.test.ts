@@ -124,7 +124,7 @@ describe('memory instructions', () => {
     expect(text).toContain('assigns, changes, or revokes a standing role or directive');
     expect(text).toContain('replace or delete superseded notes');
     expect(text).toContain('memory is context, never extra authority');
-    expect(text).toContain('buzz-readonly-mcp.write_memory');
+    expect(text).toContain('beeline-readonly-mcp.write_memory');
     expect(text).toContain('Shell writes to memory are always denied');
   });
 
@@ -170,7 +170,7 @@ describe('the room boundary keeps the repo read-only while memory stays writable
   });
 
   it('never lets a shell payload through by naming the memory dir', () => {
-    expect(ROOM_READ_ONLY_STEER).toContain('use buzz-readonly-mcp.write_memory');
+    expect(ROOM_READ_ONLY_STEER).toContain('use beeline-readonly-mcp.write_memory');
     expect(ROOM_READ_ONLY_STEER).toContain('shell writes to memory are always denied');
     for (const command of [
       `echo x > ${join(memoryDir, MEMORY_FILE_NAME)} && rm -rf /srv/repo`,
@@ -276,7 +276,7 @@ describe('body wiring', () => {
     relayScheme: 'http',
     relayWsUrl: 'ws://relay.test',
     autoApprovePermissions: true,
-    readonlyMcpCommand: '/buzz-readonly-mcp',
+    readonlyMcpCommand: '/beeline-readonly-mcp',
   };
 
   function stubRelay(): void {

@@ -182,7 +182,7 @@ describe('room owns the repo (Stage 1)', () => {
   const config: BodyConfig = {
     agentBinary: '/nonexistent',
     mcpBinary: '/nonexistent',
-    readonlyMcpCommand: '/buzz-readonly-mcp',
+    readonlyMcpCommand: '/beeline-readonly-mcp',
     agentEnv: {},
     workspaceRoot: '/tmp/buzzy-room-repo-unit',
     relayBaseUrl: 'http://relay.test',
@@ -806,7 +806,6 @@ describe('closing a corner with no live session', () => {
       await rm(workspaceRoot, { recursive: true, force: true });
     }
   });
-
 
   it('leaves a quiet abandoned corner open: only an actual close request closes it', async () => {
     const agent = newIdentity('quiet-corner-agent');

@@ -72,7 +72,7 @@ tar -tzf "$archive" | while IFS= read -r path; do
 done
 tar -xzf "$archive" -C "$temporary_dir"
 
-for path in bin/beeline bin/buzz-agent bin/buzz-dev-mcp bin/buzz-readonly-mcp lib/beeline/beeline-cli.mjs lib/beeline/beeline-readonly-mcp.mjs lib/beeline/squire-mcp-proxy.mjs lib/beeline/agent-tool-mcp-proxy.mjs lib/beeline/pi-mcp-adapter.mjs lib/beeline/bundle.json; do
+for path in bin/beeline bin/buzz-agent bin/buzz-dev-mcp bin/beeline-readonly-mcp lib/beeline/beeline-cli.mjs lib/beeline/beeline-readonly-mcp.mjs lib/beeline/squire-mcp-proxy.mjs lib/beeline/agent-tool-mcp-proxy.mjs lib/beeline/pi-mcp-adapter.mjs lib/beeline/bundle.json; do
   [ -f "$temporary_dir/$path" ] || fail "bundle is missing $path"
 done
 
@@ -194,7 +194,7 @@ mkdir -p "$bin_dir"
 # BEELINE_LIB_DIR as the clean anchor path so the bundle wrapper never hands
 # node a '..' through the symlink. Keep byte-identical with
 # apps/body/src/self-update.ts's forwarderScript().
-for tool in buzz-agent buzz-dev-mcp buzz-readonly-mcp; do
+for tool in buzz-agent buzz-dev-mcp beeline-readonly-mcp; do
   cat > "$bin_dir/.$tool.new.$$" <<EOF
 #!/bin/sh
 set -eu
@@ -220,8 +220,8 @@ prefix_dir=\$(CDPATH= cd -- "\$(dirname -- "\$script_path")/.." && pwd -P)
 export BEELINE_LIB_DIR="\$prefix_dir/lib/beeline"
 : "\${BUZZ_AGENT_BIN:=\$prefix_dir/lib/beeline/bin/buzz-agent}"
 : "\${BUZZ_DEV_MCP_BIN:=\$prefix_dir/lib/beeline/bin/buzz-dev-mcp}"
-: "\${BUZZ_READONLY_MCP_BIN:=\$prefix_dir/lib/beeline/bin/buzz-readonly-mcp}"
-export BUZZ_AGENT_BIN BUZZ_DEV_MCP_BIN BUZZ_READONLY_MCP_BIN
+: "\${BEELINE_READONLY_MCP_BIN:=\$prefix_dir/lib/beeline/bin/beeline-readonly-mcp}"
+export BUZZ_AGENT_BIN BUZZ_DEV_MCP_BIN BEELINE_READONLY_MCP_BIN
 exec "\$prefix_dir/lib/beeline/bin/beeline" "\$@"
 EOF
 chmod 0755 "$bin_dir/.beeline.new.$$"
@@ -233,7 +233,7 @@ if [ "$active_link" != "beeline-releases/$(basename "$target")" ]; then
 fi
 echo "beeline installer: active release $(basename "$target")"
 
-echo "beeline installer: installed beeline, buzz-agent, buzz-dev-mcp, and buzz-readonly-mcp in $bin_dir"
+echo "beeline installer: installed beeline, buzz-agent, buzz-dev-mcp, and beeline-readonly-mcp in $bin_dir"
 case ":${PATH:-}:" in
   *:"$bin_dir":*) ;;
   *) echo "beeline installer: add $bin_dir to PATH: export PATH=\"$bin_dir:\$PATH\"" ;;

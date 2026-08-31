@@ -15,7 +15,7 @@ by projecting agent activity into the relay channel.
 │   ├── Room B Body ──► killable Room/corner ACP processes     │
 │   └── bounded scheduler + durable per-channel inbox          │
 │                │                                             │
-│                ├── read mode MCP ──► buzz-readonly-mcp       │
+│                ├── read mode MCP ──► beeline-readonly-mcp   │
 │                ├── edit mode MCP ──► buzz-dev-mcp            │
 │                ├── opted-in Squire ─► host credential broker │
 │                └── batched session/update ──► relay          │
@@ -23,7 +23,7 @@ by projecting agent activity into the relay channel.
 ```
 
 - **TLC (read-only):** ACP session with Beeline's fixed
-  `buzz-readonly-mcp` inspection surface mounted. It can list and read files,
+  `beeline-readonly-mcp` inspection surface mounted. It can list and read files,
   perform bounded literal search, and inspect local commit history/diffs. It
   exposes no shell, raw git arguments, filesystem mutation, package install, or
   server process. The agent converses normally. Pure analysis, explanation,
@@ -120,7 +120,7 @@ Trusty Squire state still fails closed until the bubblewrap self-test passes.
 | ---------------------------------- | -------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `BUZZ_AGENT_BIN`                   | No       | explicit reference only | Reference `buzz-agent` override                                                                                                                                                                                                                      |
 | `BUZZ_DEV_MCP_BIN`                 | No       | auto-detect             | Path to `buzz-dev-mcp` binary                                                                                                                                                                                                                        |
-| `BUZZ_READONLY_MCP_BIN`            | No       | bundled/auto-detect     | Path to Beeline's inspection-only MCP                                                                                                                                                                                                                |
+| `BEELINE_READONLY_MCP_BIN`         | No       | bundled/auto-detect     | Path to Beeline's inspection-only MCP                                                                                                                                                                                                                |
 | `BUZZY_RELAY_HOST`                 | No       | `usebeeline.app`        | Relay HTTP/WS host (`relay.buzzrouter.com` remains an accepted alias)                                                                                                                                                                                |
 | `BUZZY_RELAY_SCHEME`               | No       | `https`                 | Relay scheme                                                                                                                                                                                                                                         |
 | `BUZZY_BODY_WORKSPACE`             | No       | `./body-workspace`      | Agent workspace root                                                                                                                                                                                                                                 |
@@ -559,7 +559,7 @@ into the process environment.
 
 - **The boundary IS the MCP mount:** stock buzz-dev-mcp always registers `shell`,
   `str_replace`, etc. There is no env flag to disable write tools. The body
-  mounts its own narrow `buzz-readonly-mcp` in Rooms and never mounts
+  mounts its own narrow `beeline-readonly-mcp` in Rooms and never mounts
   `buzz-dev-mcp` there. The inspection server uses repository-root-contained
   read APIs and fixed local git commands; it has no shell or mutation tool. A
   Room ALLOW never approves the original tool against the paired checkout; it

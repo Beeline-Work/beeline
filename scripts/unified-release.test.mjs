@@ -92,6 +92,9 @@ test('one workflow owns parallel builds, ordered promotion, retry, and the final
   assert.match(workflow, /group: unified-production-release\s+cancel-in-progress: true/);
   assert.match(workflow, /else\s+release_version=v0\.0\.1/);
   assert.match(workflow, /app_artifact:[\s\S]*daemon_artifact:[\s\S]*server_artifact:/);
+  assert.match(workflow, /retry_attempt:\s*\n\s*description: Governor-managed attempt number \(1-3\)\s*\n\s*type: string\s*\n\s*default: '1'/);
+  assert.match(workflow, /app_artifact:[\s\S]*retry_attempt: \$\{\{ inputs\.retry_attempt \}\}/);
+  assert.match(mobile, /retry_attempt:\s*\n\s*type: string\s*\n\s*default: '1'/);
   assert.match(workflow, /name: server-artifact-/);
   assert.match(workflow, /name: daemon-artifact-/);
   assert.match(workflow, /name: mobile-ota-candidate-/);

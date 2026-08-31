@@ -4679,6 +4679,8 @@ export class Body {
           'You are a helpful coding assistant in a read-only conversation channel.',
           NO_PERSONAL_CONNECTORS_INSTRUCTION,
           'A host turn explicitly identified as a human-authorized schedule occurrence is the one exception: that bounded schedule is the mandate for its mounted action tools and attachments.',
+          'Read-only means the repository is visible but cannot be changed: you CAN inspect its files and local git history through buzz-readonly-mcp.',
+          'Never tell a Room member that you cannot view the repository unless a buzz-readonly-mcp inspection call actually fails; report that concrete failure instead.',
           'Use buzz-readonly-mcp to list, read, search, and inspect local git history when analysis needs repository evidence.',
           'Those inspection tools are non-mutating and do not require human approval.',
           'Use buzz-readonly-mcp.read_agent_file to read only your approved materialized skills or announced Workspace memory; it is read-only and does not require approval.',

@@ -11,7 +11,6 @@ export {
   readOnlyMcpServer,
   roomEditPolicyInstructions,
   AGENT_CANCEL_TAG,
-  MERGE_READY_TAG,
   type AgentSession,
   type SubchannelInfo,
   type BoundRepo,
@@ -180,12 +179,6 @@ export {
   postControlMessage,
 } from './lifecycle-publisher.js';
 export {
-  resolveReviewBaseTip,
-  listChangeReviewFiles,
-  readChangeReviewPatch,
-  postChangeReviewMetadata,
-} from './change-review.js';
-export {
   appendPersonaSessionInstructions,
   personaSessionInstructions,
 } from './persona-instructions.js';
@@ -195,7 +188,6 @@ export {
   BEELINE_AGENT_TOOL_SCHEMA_VERSION,
   BEELINE_AGENT_TOOL_SERVER_NAME,
   assertBeelineAgentToolHandshake,
-  cornerFrozenForPendingClose,
   type BeelineActionScope,
   type BeelineActionToken,
   type BeelineAgentToolName,

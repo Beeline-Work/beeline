@@ -17,7 +17,6 @@ export function registerServerGithubInstallationRoutes(context: AuthRouteContext
     githubInstallationId,
     publicUrl,
     ProtocolError,
-    READ_ONLY_ROOM_TOKEN_PERMISSIONS,
     resolveGitHubRepositoryAccess,
     randomToken,
     sha256,
@@ -378,14 +377,6 @@ export function registerServerGithubInstallationRoutes(context: AuthRouteContext
     const body = request.body as Record<string, unknown>;
     const pubkey = typeof body.pubkey === 'string' ? body.pubkey : '';
     const roomId = typeof body.room_id === 'string' ? body.room_id : '';
-    // Read-only variant for agent SESSIONS (a corner fetching a private repo
-    // to check currency against origin). The mint below pins GitHub's
-    // permissions to read only, so the token cannot push or write on any ref.
-    // Absent means the daemon's default mint — unchanged.
-    const readOnly = body.read_only;
-    if (readOnly !== undefined && typeof readOnly !== 'boolean') {
-      throw new ProtocolError(400, 'invalid_request', 'read_only must be a boolean');
-    }
     const relayAuthorizations = Array.isArray(body.relay_authorizations)
       ? body.relay_authorizations.filter((value): value is string => typeof value === 'string')
       : [];
@@ -487,8 +478,6 @@ export function registerServerGithubInstallationRoutes(context: AuthRouteContext
     // reconciliation, pending-link recording) run against the binding
     // author's CURRENT key, so a replaced device key keeps full repository
     // authority over bindings its predecessor authored. The daemon also
-    // learns the resolved owner key here (`authorized_by`) so merge-approval
-    // verification can accept the successor without knowing the ledger.
     const ownerPubkey = authority.currentAuthorizedBy ?? authority.authorizedBy;
     const usable = (candidate: typeof access): boolean =>
       candidate.accessible && !!candidate.installationId && !!candidate.repositoryId;
@@ -604,7 +593,6 @@ export function registerServerGithubInstallationRoutes(context: AuthRouteContext
     }
     const installation = await options.github.app.installationToken(access.installationId, {
       repositoryIds: [access.repositoryId],
-      ...(readOnly ? { permissions: READ_ONLY_ROOM_TOKEN_PERMISSIONS } : {}),
     });
     noStore(reply);
     return reply.send({
@@ -612,9 +600,6 @@ export function registerServerGithubInstallationRoutes(context: AuthRouteContext
       expires_at: installation.expiresAt,
       installation_id: access.installationId,
       full_name: resolvedFullName,
-      // The binding author's current key after succession — the daemon treats
-      // an exact-tip approval signed by this key as owner-signed.
-      authorized_by: ownerPubkey,
     });
   });
 

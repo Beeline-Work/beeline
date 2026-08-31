@@ -72,13 +72,12 @@ describe('summarizeGitFailure', () => {
   });
 
   it('passes already human-written text through, shortening any bare 40-hex sha', () => {
-    const reason =
-      'merge approval REFUSED: human admin role required (signer role=none)';
+    const reason = 'pull request creation failed: repository permission required';
     expect(summarizeGitFailure(reason)).toBe(reason);
 
-    const withSha = `no valid approval binding owner/repo refs/heads/main -> ${'a'.repeat(40)}`;
+    const withSha = `remote rejected owner/repo refs/heads/main -> ${'a'.repeat(40)}`;
     expect(summarizeGitFailure(withSha)).toBe(
-      `no valid approval binding owner/repo refs/heads/main -> ${'a'.repeat(7)}`,
+      `remote rejected owner/repo refs/heads/main -> ${'a'.repeat(7)}`,
     );
   });
 

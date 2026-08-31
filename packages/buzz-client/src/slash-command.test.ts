@@ -48,10 +48,9 @@ describe('matchSlashCommand', () => {
 });
 
 describe('BEELINE_SLASH_COMMANDS', () => {
-  it('is exactly the six composer verbs that work today', () => {
+  it('is exactly the five composer verbs that work today', () => {
     expect([...BEELINE_SLASH_COMMANDS]).toEqual([
       'open-corner',
-      'approve',
       'change-target-branch',
       'add-agent',
       'invite',
@@ -60,14 +59,14 @@ describe('BEELINE_SLASH_COMMANDS', () => {
   });
 
   it('classifies its own verbs and foreign ones distinctly', () => {
-    expect(isBeelineSlashCommand('approve')).toBe(true);
+    expect(isBeelineSlashCommand('approve')).toBe(false);
     expect(isBeelineSlashCommand('/OPEN-CORNER'.slice(1))).toBe(true);
     expect(isBeelineSlashCommand('loop')).toBe(false);
   });
 
   it('renders a slash-prefixed list for the daemon notice copy', () => {
     expect(beelineSlashCommandList()).toBe(
-      '/open-corner, /approve, /change-target-branch, /add-agent, /invite, /close-corner',
+      '/open-corner, /change-target-branch, /add-agent, /invite, /close-corner',
     );
   });
 });

@@ -4,9 +4,8 @@
  * Every case here is shaped from a trail read off the captain's live Room
  * rather than from what the daemon's own code looked like it did:
  *
- *  - Corner `8731c8ce` carried a human merge approval for tip `df01b054` and
- *    answered it with 100 byte-identical "couldn't land" cards over 100
- *    minutes, then went permanently silent with the approval still valid.
+ *  - Corner `8731c8ce` lost both its worktree and branch while its agent was
+ *    still running.
  *  - Five corners were still non-terminal on the relay while their worktrees
  *    AND their feature branches were gone from the serving checkout; the
  *    daemon's only response was to re-publish "could not restore this corner
@@ -114,7 +113,6 @@ function corner(subchannelId = 'corner-1'): Fixture {
     },
     undefined,
     undefined,
-    undefined,
     { statePath: resolve(root, 'state.json') },
   );
   const info: SubchannelInfo = {
@@ -185,13 +183,6 @@ function archivedProjection(subchannelId: string): unknown {
   };
 }
 
-function approve(body: Body, info: SubchannelInfo, tip: string): void {
-  info.humanMergeApproval = { id: 'signed-human-approval', reviewer: 'human-admin', tip };
-  vi.spyOn(body as never, 'findHumanMergeApproval' as never).mockResolvedValue(
-    info.humanMergeApproval as never,
-  );
-}
-
 function call<T>(body: Body, method: string, ...args: unknown[]): Promise<T> {
   const fn = Reflect.get(body, method) as (this: Body, ...rest: unknown[]) => Promise<T>;
   return fn.call(body, ...args);
@@ -211,7 +202,6 @@ function sweeperBody(root: string): Body {
       relayWsUrl: 'ws://relay.test',
       autoApprovePermissions: true,
     },
-    undefined,
     undefined,
     undefined,
     { statePath: resolve(root, `sweeper-state-${Math.random().toString(36).slice(2)}.json`) },
@@ -443,101 +433,6 @@ describe('probing a corner directory', () => {
   it('is unknown, never clean, when the target ref cannot be resolved', async () => {
     const fixture = corner();
     expect((await probeCornerWorktree(fixture.worktree, [])).unknown).toBe(true);
-  });
-});
-
-describe('an approved change lands even while a corner is mid-turn', () => {
-  it('runs the land poll before the corner member poll, not behind it', async () => {
-    const fixture = corner();
-    const order: string[] = [];
-    // The live shape: a corner forwarding a human message awaits the whole
-    // agent turn. Anything sequenced after it in the maintenance chain waits
-    // that long too, which is what kept approvals from landing.
-    let releaseTurn = (): void => {};
-    const turn = new Promise<void>((res) => {
-      releaseTurn = res;
-    });
-    vi.spyOn(fixture.body as never, 'pollMembers' as never).mockImplementation((async () => {
-      order.push('members:start');
-      await turn;
-      order.push('members:end');
-      return 0;
-    }) as never);
-    vi.spyOn(fixture.body as never, 'pollDirectRemoteApprovals' as never).mockImplementation(
-      (async () => {
-        order.push('land');
-        return 0;
-      }) as never,
-    );
-    vi.spyOn(fixture.body as never, 'pollMergeCompletions' as never).mockResolvedValue(0 as never);
-    vi.spyOn(fixture.body as never, 'reconcileCornerExistence' as never).mockResolvedValue(
-      undefined as never,
-    );
-    vi.spyOn(fixture.body as never, 'pollAbandonedCornerCloses' as never).mockResolvedValue(
-      undefined as never,
-    );
-    vi.spyOn(fixture.body as never, 'pollUntrackedCornerCloses' as never).mockResolvedValue(
-      undefined as never,
-    );
-    captureEvents();
-
-    const maintenance = call(fixture.body, 'pollRoomMaintenance', 'room-channel', undefined, {
-      ...fixture.info.boundRepo,
-    });
-    // Give the chain every chance to reach the land poll while the turn is
-    // still running. If landing sits behind the member poll it cannot.
-    await new Promise((res) => setTimeout(res, 30));
-    expect(order).toContain('land');
-    expect(order).not.toContain('members:end');
-
-    releaseTurn();
-    await maintenance;
-  });
-});
-
-describe('a land that cannot be attempted is never silent', () => {
-  it('reports a remote it could not read instead of skipping forever', async () => {
-    const fixture = corner();
-    // Point the remote at nothing: `ls-remote` fails rather than answering,
-    // which the old code read as "the feature ref has not caught up" and
-    // returned `skip` for, on every tick, with nothing published anywhere.
-    git(fixture.worktree, ['remote', 'set-url', 'origin', resolve(fixture.root, 'gone.git')]);
-    approve(fixture.body, fixture.info, fixture.tip);
-    fixture.info.mergeTarget = {
-      repo: 'remote/repo-key',
-      branch: 'refs/heads/main',
-      tip: fixture.tip,
-    };
-    const events = captureEvents();
-
-    await call(fixture.body, 'pollDirectRemoteApprovals');
-
-    const failures = events.filter((event) =>
-      event.tags.some((tag) => tag[0] === 't' && tag[1] === 'buzz-rearmed-failure'),
-    );
-    expect(failures.length).toBeGreaterThan(0);
-    expect(failures[0]!.content).toContain("Couldn't land:");
-  });
-
-  it('states an unchanged refusal once, not once per maintenance tick', async () => {
-    const fixture = corner();
-    git(fixture.worktree, ['remote', 'set-url', 'origin', resolve(fixture.root, 'gone.git')]);
-    approve(fixture.body, fixture.info, fixture.tip);
-    fixture.info.mergeTarget = {
-      repo: 'remote/repo-key',
-      branch: 'refs/heads/main',
-      tip: fixture.tip,
-    };
-    const events = captureEvents();
-
-    for (let tick = 0; tick < 5; tick++) await call(fixture.body, 'pollDirectRemoteApprovals');
-
-    const failures = events.filter(
-      (event) =>
-        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'buzz-rearmed-failure') &&
-        event.content.startsWith("Couldn't land:"),
-    );
-    expect(failures).toHaveLength(1);
   });
 });
 

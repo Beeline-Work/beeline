@@ -54,8 +54,7 @@ export type MissionExercise =
       totalReservedTokens: number;
       scriptRuntimeSeconds: number;
     }
-  | { kind: 'corner'; operation: 'open' | 'close'; targetAgentPubkey: string }
-  | { kind: 'land'; cornerId: string; sourceSha: string };
+  | { kind: 'corner'; operation: 'open' | 'close'; targetAgentPubkey: string };
 
 export interface MissionActionInput {
   reader: PermissionFreshReader;
@@ -108,19 +107,6 @@ export async function resolveMissionGrant(
   return { reference, request, decision, scope };
 }
 
-function zeroControllerAllocation(boundary: MissionControlScope) {
-  const controller = boundary.targetAllocations.find(
-    (allocation) => allocation.agentPubkey === boundary.controllerAgentPubkey,
-  );
-  if (!controller) throw new Error('mission controller allocation is missing');
-  return {
-    agentPubkey: controller.agentPubkey,
-    maxActiveCorners: 0,
-    maxReservedTokensPerDay: 0,
-    maxTotalReservedTokens: 0,
-  };
-}
-
 export function attenuateMissionScope(
   boundary: MissionControlScope,
   exercise: MissionExercise,
@@ -163,38 +149,25 @@ export function attenuateMissionScope(
           revisionDigest: exercise.revisionDigest,
         },
       ],
-      land: false,
     };
   }
-  if (exercise.kind === 'corner') {
-    const target = boundary.targetAllocations.find(
-      (allocation) => allocation.agentPubkey === exercise.targetAgentPubkey,
-    );
-    if (!target) throw new Error('mission corner target allocation is missing');
-    return {
-      ...common,
-      cornerOperations: [exercise.operation],
-      scheduleOperations: [],
-      targetAllocations: [
-        {
-          agentPubkey: target.agentPubkey,
-          maxActiveCorners: exercise.operation === 'open' ? 1 : 0,
-          maxReservedTokensPerDay: 0,
-          maxTotalReservedTokens: 0,
-        },
-      ],
-      scheduleAllocations: [],
-      land: false,
-    };
-  }
+  const target = boundary.targetAllocations.find(
+    (allocation) => allocation.agentPubkey === exercise.targetAgentPubkey,
+  );
+  if (!target) throw new Error('mission corner target allocation is missing');
   return {
     ...common,
-    cornerOperations: [],
+    cornerOperations: [exercise.operation],
     scheduleOperations: [],
-    targetAllocations: [zeroControllerAllocation(boundary)],
+    targetAllocations: [
+      {
+        agentPubkey: target.agentPubkey,
+        maxActiveCorners: exercise.operation === 'open' ? 1 : 0,
+        maxReservedTokensPerDay: 0,
+        maxTotalReservedTokens: 0,
+      },
+    ],
     scheduleAllocations: [],
-    land: true,
-    landBinding: { cornerId: exercise.cornerId, sourceSha: exercise.sourceSha },
   };
 }
 

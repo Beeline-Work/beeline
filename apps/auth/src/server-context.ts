@@ -17,7 +17,6 @@ import { OidcClient } from './oidc.js';
 import {
   GitHubAppClient,
   GitHubOAuthClient,
-  READ_ONLY_ROOM_TOKEN_PERMISSIONS,
   type GitHubIdentity,
 } from './github.js';
 import {
@@ -991,7 +990,6 @@ export function createAuthRouteContext(options: AuthServerOptions) {
     GITHUB_SIGN_IN_DEEP_LINK,
     GITHUB_INSTALLATION_DEEP_LINK,
     sha256Bytes,
-    READ_ONLY_ROOM_TOKEN_PERMISSIONS,
     extractGitHubRepoEvent,
     resolveGitHubRepositoryAccess,
     appSetupEnvBlock,

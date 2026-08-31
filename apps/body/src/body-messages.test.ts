@@ -88,7 +88,6 @@ import {
   WRITE_PERMISSION_BACKSTOP_POLL_MS,
 } from './body.js';
 import {
-  buildMergeApproval,
   buildPermissionDecision,
   buildPermissionRequest,
   defaultPermissionGrantEnvelope,
@@ -101,10 +100,6 @@ import { AcpClient, isMutatingPermissionRequest } from './acp.js';
 import { newIdentity } from '@beeline/gate';
 import {
   WRITE_PERMISSION_RESPONSE_TAG,
-  CHANGE_REVIEW_ARTIFACT_TAG,
-  CHANGE_REVIEW_ARTIFACT_VERSION,
-  CHANGE_REVIEW_EVENT_KIND,
-  parseChangeReviewArtifactDescriptor,
   setAgentModelConfig,
   AGENT_PRESENCE_HEARTBEAT_MS,
   AGENT_PRESENCE_STALE_MS,
@@ -317,44 +312,6 @@ describe('first-class assistant messages', () => {
     expect(published).toHaveLength(1);
     expect(published[0]!.kind).toBe(9);
     expect(published[0]!.tags).toContainEqual(['t', 'agent-message']);
-  });
-
-  it('all corner turn call sites funnel through the one-final-message merge gate', () => {
-    const source = readFileSync(new URL('./body.ts', import.meta.url), 'utf8');
-    const gateCallSites = source.match(/this\.finishCornerTurnAgainstMergeGate\(/g) ?? [];
-    expect(source).not.toContain('summaryOnly');
-    expect(source).not.toContain('createNarrativeCommitter');
-    expect(gateCallSites).toHaveLength(2);
-  });
-
-  it('the corner merge-gate instruction carries the external-gate failure-honesty rule at every turn call site', () => {
-    // Live reproduction (corner "Fix-corner-open-to-use-model-summary", Ox,
-    // 2026-08-23): an external gate that could not initialize left the review
-    // panel empty while the agent told the human to approve. The one shared
-    // instruction must say what to do instead, and every corner turn call site
-    // (opening turn + follow-ups + the conclude nudge) must carry it — a claim
-    // of readiness with no published review target sends the human's approval
-    // nowhere.
-    const source = readFileSync(new URL('./body.ts', import.meta.url), 'utf8');
-    expect(source).toMatch(
-      /fails to initialize or run[^']*quote its exact error[^']*never ask for approval/,
-    );
-    // Declaration plus exactly the three corner turn prompts.
-    expect(source.match(/CORNER_MERGE_GATE_INSTRUCTION/g)).toHaveLength(3);
-  });
-
-  it('reserves target synchronization for one merge-press follow-up turn', () => {
-    const source = readFileSync(new URL('./body.ts', import.meta.url), 'utf8');
-    expect(CORNER_TARGET_SYNC_INSTRUCTION).toMatch(/one explicit automatic follow-up/i);
-    expect(CORNER_TARGET_SYNC_INSTRUCTION).toMatch(/you own all branch-content work/i);
-    expect(source).toMatch(
-      /moved to \$\{targetTip\}[^`]*bring this branch up to date and make it land, whatever it takes/i,
-    );
-    expect(source).not.toMatch(/silent:\s*true[\s\S]{0,800}target-sync/i);
-    // Declaration, new/restored system prompts, opening/follow-up turns, and
-    // the conclude watch's nudge. The actual sync prompt is emitted only after
-    // a signed merge press fails its first ff-only landing attempt.
-    expect(source.match(/CORNER_TARGET_SYNC_INSTRUCTION/g)).toHaveLength(5);
   });
 
   it('strips only a leading Codex skill-budget warning', () => {
@@ -717,7 +674,6 @@ describe('first-class assistant messages', () => {
       },
       undefined,
       newIdentity('workbench-recycle-agent'),
-      undefined,
       { scheduler },
     );
     vi.spyOn(Reflect.get(body, 'durableState'), 'recordModelTurn').mockResolvedValue(undefined);

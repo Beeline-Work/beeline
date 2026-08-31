@@ -23,13 +23,13 @@ import { createHash, timingSafeEqual } from 'node:crypto';
  * — nothing invented:
  * - contents write        git clone/fetch/push with installation tokens
  *                         (`gitWithInstallationToken`, apps/body/github-app.ts)
- * - pull_requests write   PR surface for review flow
+ * - pull_requests write   agents create and merge corner pull requests with gh
  * - issues read           issues webhook payloads (github-repo-events.ts)
  * - metadata read         required for every GitHub App
  * - administration write  organization repository creation via installation
  *                         token (server.ts createRepository path)
- * - checks read           ci-watch.ts / preview-url.ts check-runs reads
- * - statuses read         ci-watch.ts / preview-url.ts commit-status reads
+ * - checks read           corner lifecycle polling reads check-runs
+ * - statuses read         corner lifecycle polling reads commit statuses
  * - workflows write       corners push commits that may add/modify
  *                         .github/workflows files; API pushes of workflow
  *                         files require this permission

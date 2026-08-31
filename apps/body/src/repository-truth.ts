@@ -4,8 +4,8 @@
  * A remote binding declares the remote as truth and a checkout under
  * `repositoriesRoot` as a disposable cache. A local-only binding explicitly
  * declares its own checkout as truth. The pairing checkout is retained only
- * as private history for the opt-in post-land fast-forward; callers must not
- * use it as an agent cwd, a corner base, a land target, or recap content.
+ * as private history; callers must not use it as an agent cwd, a corner base,
+ * a target, or recap content.
  */
 import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -25,7 +25,7 @@ import {
   repositoryDirectoryName,
 } from './repository-path.js';
 
-export type RepositoryTruthCheckpoint = 'room-join' | 'corner-open' | 'land' | 'recap';
+export type RepositoryTruthCheckpoint = 'room-join' | 'corner-open' | 'remote-observe' | 'recap';
 
 export interface RemoteRepositoryIdentity {
   /** Current display name, after a provider-side rename. */
@@ -53,25 +53,10 @@ export interface RepositoryTruth {
   pairingRepositoryKey?: string;
 }
 
-export type PairingCheckoutSyncResult =
-  | { status: 'disabled' | 'not-applicable' | 'already-current' }
-  | { status: 'fast-forwarded'; from: string; to: string }
-  | {
-      status: 'refused';
-      reason:
-        | 'missing'
-        | 'not-same-repository'
-        | 'dirty'
-        | 'wrong-branch'
-        | 'local-commits'
-        | 'fetch-failed';
-    };
-
 export interface RepositoryTruthResolverOptions {
   repositoriesRoot: string;
   relayBaseUrl?: string;
   agent?: Identity;
-  syncOperatorCheckout?: boolean;
   /** Provider lookup seam. GitHub App-backed callers use it to follow renames. */
   resolveRemoteIdentity?: (
     binding: RepositoryBinding,
@@ -645,55 +630,4 @@ export class RepositoryTruthResolver {
     return refreshed;
   }
 
-  /**
-   * Opt-in convenience after a successful land. Refuses every shape that
-   * could consume captain work: dirt, another branch, or local-only commits.
-   */
-  async syncPairingCheckout(
-    truth: RepositoryTruth,
-    landedTip: string,
-  ): Promise<PairingCheckoutSyncResult> {
-    if (!this.#options.syncOperatorCheckout) return { status: 'disabled' };
-    const checkout = truth.pairingCheckout;
-    if (!checkout) return { status: 'not-applicable' };
-    if (!existsSync(checkout)) return { status: 'refused', reason: 'missing' };
-    let local: LocalRepositoryBinding;
-    try {
-      local = await inspectLocalRepositoryBounded(checkout);
-    } catch {
-      return { status: 'refused', reason: 'not-same-repository' };
-    }
-    if (local.repository.key !== (truth.pairingRepositoryKey ?? truth.binding.key)) {
-      return { status: 'refused', reason: 'not-same-repository' };
-    }
-    if ((await git(checkout, ['status', '--porcelain'])).stdout.trim()) {
-      return { status: 'refused', reason: 'dirty' };
-    }
-    const branch = (await git(checkout, ['branch', '--show-current'])).stdout.trim();
-    if (branch !== truth.targetBranch) return { status: 'refused', reason: 'wrong-branch' };
-    const remoteName = local.remoteName ?? truth.remoteName ?? 'origin';
-    const fetched =
-      truth.kind === 'remote'
-        ? await this.runRemoteGit(
-            checkout,
-            ['fetch', '--prune', remoteName],
-            truth.binding,
-            truth.roomId,
-          )
-        : await git(checkout, [
-            'fetch',
-            '--no-tags',
-            truth.checkoutPath,
-            `refs/heads/${truth.targetBranch}`,
-          ]);
-    if (!fetched.ok) return { status: 'refused', reason: 'fetch-failed' };
-    const from = (await git(checkout, ['rev-parse', 'HEAD'])).stdout.trim();
-    if (from === landedTip) return { status: 'already-current' };
-    if (!(await git(checkout, ['merge-base', '--is-ancestor', from, landedTip])).ok) {
-      return { status: 'refused', reason: 'local-commits' };
-    }
-    const advanced = await git(checkout, ['merge', '--ff-only', landedTip]);
-    if (!advanced.ok) return { status: 'refused', reason: 'local-commits' };
-    return { status: 'fast-forwarded', from, to: landedTip };
-  }
 }

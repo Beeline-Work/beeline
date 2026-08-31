@@ -19,6 +19,8 @@ import {
 export interface HttpBridgeOptions {
   baseUrl: string;
   host: string;
+  /** Public origin authenticated by a Host-canonicalizing local proxy. */
+  publicOrigin?: string;
   /** Identity used only to sign short-lived, host-bound NIP-98 request auth. */
   identity?: Pick<Identity, 'secretKey' | 'publicKey'>;
   /** Pre-signed exact-request NIP-98 proof, for a server relaying one authorized read. */
@@ -81,7 +83,7 @@ function currentFetchId(): number {
 }
 
 function queryCachePrefix(opts: HttpBridgeOptions, pubkey: string): string {
-  return `${opts.baseUrl.replace(/\/$/, '')}\u0000${opts.host}\u0000${pubkey}\u0000`;
+  return `${opts.baseUrl.replace(/\/$/, '')}\u0000${opts.host}\u0000${opts.publicOrigin ?? ''}\u0000${pubkey}\u0000`;
 }
 
 function invalidateQueryCache(opts: HttpBridgeOptions, pubkey: string): void {
@@ -304,11 +306,17 @@ function bridgeHeaders(
     headers.authorization = nip98AuthHeader(
       opts.identity.secretKey,
       opts.identity.publicKey,
-      url,
+      authorizationUrl(opts, url),
       method,
     );
   }
   return headers;
+}
+
+function authorizationUrl(opts: HttpBridgeOptions, requestUrl: string): string {
+  if (!opts.publicOrigin) return requestUrl;
+  const request = new URL(requestUrl);
+  return `${opts.publicOrigin.replace(/\/$/, '')}${request.pathname}${request.search}`;
 }
 
 function publishRetryDelayMs(failedAttempt: number): number {

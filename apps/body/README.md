@@ -133,11 +133,10 @@ Trusty Squire state still fails closed until the bubblewrap self-test passes.
 | `BUZZ_AGENT_KEY`                    | No       | —                       | Legacy provision/start override; `beeline pair` ignores it and always mints a fresh identity, unless `--use-env-key` opts into reusing it                                                                                                            |
 | `BUZZY_BODY_AUTO_APPROVE`           | No       | `1`                     | Auto-approve permissions inside edit corners only                                                                                                                                                                                                    |
 | `BUZZY_BODY_SANDBOX`                | No       | `bwrap`                 | `off` disables the bubblewrap OS sandbox for ACP children (overrides `runtime.json`'s `sandbox`)                                                                                                                                                     |
-| `BUZZY_BODY_SYNC_OPERATOR_CHECKOUT` | No       | `0`                     | `1` opts into clean, same-branch, fast-forward-only post-land pairing-checkout sync                                                                                                                                                                  |
 
 For a remote-backed Room, origin is truth and the checkout under the supervisor
 repository cache is disposable. The daemon fetches that remote at Room join,
-corner open, and land. The checkout used during pairing is history only; it is
+corner open, and remote-state observation. The checkout used during pairing is history only; it is
 never an agent cwd or a recap source. Local-only Rooms explicitly declare their
 canonical checkout as truth and never fall back to an operator tree.
 
@@ -269,7 +268,7 @@ beeline spend --day 2026-08-20 --json
 npm run body -- provision <channel-uuid>
 
 # Keep the body attached: addressed chat stays in the read-only Room; human-
-# authorized edits use corners, and signed corner approvals land + archive
+# authorized edits use corners, and GitHub branch death archives them
 npm run body -- serve <channel-uuid> <repo-owner-hex> <repo-name>
 
 # Open a subchannel (edit session) under a TLC
@@ -336,13 +335,13 @@ auto-approval and selecting one Squire profile never authorize the other.
 Pass both profile names as a comma-separated `--mcp` value only when the agent
 needs both capabilities.
 
-For an existing repository Room, pairing ensures the pairing human and the
-Room's dedicated merge-worker identity are admins, then joins the agent as a
-plain member. The worker discovers every change opened in that Room and lands a
-feature tip only after an approval for that corner from a human admin; agent-signed
-approvals remain refused. Both pairing and daemon/`serve` startup assert that the
-agent cannot push the protected branch and exit fatally on unsafe policy. The
-machine identities, known Room bindings, repo roots, and daemon state live under
+For an existing repository Room, pairing joins the agent as a plain member.
+Each edit corner receives an exact-repository GitHub App token and ordinary
+`git`/`gh` tooling. The agent pushes its feature branch and opens a pull request;
+it merges only on an explicit human instruction. The daemon observes the branch
+and PR mechanically, posts the PR fact, reports red checks, and treats branch
+death as completion. The machine identities, known Room bindings, repo roots,
+and daemon state live under
 `<state-root>/beeline/agents/<agent-pubkey>/` with mode `0600`; a compatibility
 pointer may remain under a paired repository's git common directory. `pair`
 always generates a fresh agent key in machine-local state; it never reads
@@ -382,7 +381,7 @@ explicit `reference` fallback instead uses the operator's local environment or
 `BUZZY_BODY_LLM_FILE`; pairing neither requests nor stores a Beeline LLM key.
 Souls are separate, human-signed persona overlays. Their name, personality, and
 intent are passed directly into ACP session instructions; they are never written
-into a repository and cannot grant permissions or approve merges. The remaining
+into a repository and cannot grant permissions or authorize GitHub operations. The remaining
 explicit `serve`/`open` commands are internal diagnostic compatibility surfaces,
 not part of the user pairing workflow.
 
@@ -401,9 +400,9 @@ only the first valid decision counts; replayed or exhausted actions fail closed.
 `mission.control` is a Tier 1 captain-signed boundary in that same ledger, not a
 second grant system. It names one chief-of-staff controller, Workspace and Room,
 exact repository and target ref, permitted corner and schedule operations,
-exact target agents, non-overlapping per-target and per-schedule budget slices,
-and optional standing-land authority. Every schedule revision digest, firing,
-target activation, mission-corner open/continuation/close, and landing is
+exact target agents, and non-overlapping per-target and per-schedule budget slices.
+Every schedule revision digest, firing, target activation, and mission-corner
+open/continuation/close is
 attenuated from that grant, charged to the existing ledger, and fresh-checked
 for current membership, role, expiry, revocation, usage, and budget. The chief
 of staff may supply a new exact schedule revision digest within its static
@@ -461,12 +460,6 @@ inside the same repository. A failed run becomes one durable system line rather
 than a chat turn, and repeated failures pause the schedule after the configured
 bound (at most three for mission scripts).
 
-When the grant includes standing land, a mission corner may advance only its
-exact granted repository and protected ref through the ordinary push broker.
-The broker fresh-binds the Room, controller, corner lineage, exact source SHA,
-and target ref and remains fast-forward-only. Ordinary corners still require
-their separately signed human corner approval.
-
 ### Repository event consumer
 
 GitHub activity is owned by the relay host's single materializer process, not
@@ -478,11 +471,10 @@ exist for GitHub Enterprise and testing. Agent units do not receive these
 credentials. The consumer's dedicated non-agent Nostr identity remains under
 `~/.local/state/beeline/events/` and its former JSON delivery reservations are
 imported into the materializer's Postgres store.
-On discovery, each Room's dedicated merge-gate admin enrolls that service key
-as a normal member before the first configuration read or card; repository
-cards are still authored only by the service key. A legacy Room without a
-stored admin fails visibly and retries until an authorized Room identity is
-available instead of advancing its GitHub cursor silently.
+On discovery, the Room daemon enrolls that service key as a normal member before
+the first configuration read or card; repository cards are authored only by
+the service key. A Room without a current authorized member fails visibly and
+retries instead of advancing its GitHub cursor silently.
 
 The service scans durable runtime records, groups Room bindings into one poll
 per GitHub repository per Workspace, and fans one compact ambient card to each
@@ -581,11 +573,9 @@ into the process environment.
   repo-less normal Room may request a corner only by naming an exact
   `owner/repo`; the signed human prompt displays and binds that target, and
   clone/access failures leave the Room read-only. Agent completion
-  can publish only the feature ref and `merge-ready`. Ordinary target landing
-  and archive cleanup require an independently verified approval for that
-  corner from a device-held human admin; a mission corner may instead use the
-  distinct, freshly verified standing-land slice of its captain-signed
-  `mission.control` grant.
+  pushes its feature branch and opens a pull request with ordinary `git` and
+  `gh`. A merge requires an explicit human instruction; GitHub branch death is
+  the daemon's completion signal.
 - **The permission handler is the policy; bubblewrap is the floor.** The Room
   read-only rule and the corner worktree rule are enforced in the ACP permission
   callback (`session-sandbox.ts`), which only binds a harness that actually asks

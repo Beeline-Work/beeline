@@ -356,7 +356,6 @@ export class RoomRuntimeCoordinator {
       repositoriesRoot: this.sharedRepositoriesRoot(),
       relayBaseUrl: runtime.relayBaseUrl,
       agent: this.agent,
-      syncOperatorCheckout: process.env.BUZZY_BODY_SYNC_OPERATOR_CHECKOUT === '1',
       ...(this.githubApp
         ? {
             resolveRemoteIdentity: (binding: RepositoryBinding, roomId?: string) =>
@@ -760,7 +759,6 @@ export class RoomRuntimeCoordinator {
                       target.roomRepository,
                     );
                     replacement.root = room.root;
-                    replacement.mergeWorker = room.mergeWorker;
                     const roomIndex = this.runtime.rooms.indexOf(room);
                     this.runtime.rooms[roomIndex] = replacement;
                     room = replacement;
@@ -947,17 +945,14 @@ export class RoomRuntimeCoordinator {
       config,
       runtimeIdentity(this.runtime.body),
       this.agent,
-      room.mergeWorker ? runtimeIdentity(room.mergeWorker) : undefined,
       {
         scheduler: this.scheduler,
         relaySocket: this.relaySocket,
         statePath: resolve(workspaceRoot, 'body-state.json'),
         resolveNamedRepository: (target) => this.resolveNamedRepository(channelId, target),
         refreshRepositoryTruth: (repo, checkpoint) => this.refreshBoundRepo(repo, checkpoint),
-        syncPairingCheckout: (repo, tip) => this.syncPairingCheckout(repo, tip),
         runRepositoryGit: (repo, cwd, args) => this.runRepositoryGit(repo, cwd, args),
         repositoryAccessToken: (repo) => this.repositoryAccessToken(repo),
-        resolveBindingOwnerKey: (repo) => this.resolveBindingOwnerKey(repo),
         onRoomPollSuccess: health.poll,
         onRoomPollFailure: health.failure,
         onRoomPresence: health.presence,
@@ -1001,7 +996,7 @@ export class RoomRuntimeCoordinator {
     const workspaceRoot = this.roomRoot(channelId);
     const config: BodyConfig = this.roomBodyConfig(workspaceRoot);
     const startedAt = this.now();
-    const body = new Body(config, runtimeIdentity(this.runtime.body), this.agent, undefined, {
+    const body = new Body(config, runtimeIdentity(this.runtime.body), this.agent, {
       scheduler: this.scheduler,
       relaySocket: this.relaySocket,
       statePath: resolve(workspaceRoot, 'body-state.json'),
@@ -1164,18 +1159,6 @@ export class RoomRuntimeCoordinator {
     return this.githubApp.repositoryInstallationToken(binding, repo.truth?.roomId);
   }
 
-  /**
-   * The Room binding author's CURRENT key after succession (auth-service
-   * answer; undefined when unknown/non-GitHub). Lets Body accept a merge
-   * approval signed by the successor of the identity that authored the
-   * binding without teaching the daemon the succession ledger.
-   */
-  private async resolveBindingOwnerKey(repo: BoundRepo): Promise<string | undefined> {
-    const binding = repo.truth?.binding;
-    if (!binding?.remote?.startsWith('git://github.com/')) return undefined;
-    return this.githubApp?.bindingOwnerKey(binding, repo.truth?.roomId);
-  }
-
   private async refreshBoundRepo(
     repo: BoundRepo,
     checkpoint: RepositoryTruthCheckpoint,
@@ -1189,16 +1172,6 @@ export class RoomRuntimeCoordinator {
       ...refreshed,
       ...(repo.repositoryId ? { repositoryId: repo.repositoryId } : {}),
     };
-  }
-
-  private async syncPairingCheckout(repo: BoundRepo, landedTip: string): Promise<void> {
-    if (!repo.truth) return;
-    const result = await this.repositoryTruth.syncPairingCheckout(repo.truth, landedTip);
-    if (result.status === 'fast-forwarded') {
-      console.log(`[thin-core] pairing checkout fast-forwarded to ${landedTip.slice(0, 12)}`);
-    } else if (result.status === 'refused') {
-      console.warn(`[thin-core] pairing checkout sync refused: ${result.reason}`);
-    }
   }
 
   /**

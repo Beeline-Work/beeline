@@ -89,6 +89,28 @@ afterEach(() => {
 });
 
 describe('wsQueryEvents', () => {
+  it('signs NIP-42 for a Host-canonicalizing proxy instead of its loopback TCP route', async () => {
+    const identity = createIdentity('ws-public-auth-origin');
+    const ws = new RelayWs({
+      wsUrl: 'ws://127.0.0.1:3010',
+      authRelayUrl: 'ws://10.0.2.2:3010',
+      identity,
+      WebSocketImpl: FakeWebSocket as unknown as typeof WebSocket,
+    });
+
+    const connecting = ws.connect();
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    const socket = FakeWebSocket.instances[0]!;
+    socket.receive(['AUTH', 'canonical-tenant-challenge']);
+    await vi.waitFor(() => expect(socket.sent[0]?.[0]).toBe('AUTH'));
+
+    const auth = socket.sent[0]?.[1] as NostrEvent;
+    expect(auth.tags).toContainEqual(['relay', 'ws://10.0.2.2:3010']);
+    socket.receive(['OK', auth.id, true]);
+    await connecting;
+    ws.close();
+  });
+
   it('resolves with the collected events on EOSE and never leaves the subId subscribed', async () => {
     const identity = createIdentity('ws-query-eose');
     const ws = new RelayWs({
@@ -184,7 +206,6 @@ describe('wsQueryEvents', () => {
     ws.close();
   });
 });
-
 
 /**
  * Every client that loses its socket to the SAME relay event used to come back
@@ -321,7 +342,10 @@ describe('relay connection loss is retried forever', () => {
     return socket;
   }
 
-  async function connectedWs(): Promise<{ ws: RelayWs; identity: ReturnType<typeof createIdentity> }> {
+  async function connectedWs(): Promise<{
+    ws: RelayWs;
+    identity: ReturnType<typeof createIdentity>;
+  }> {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const identity = createIdentity('ws-reconnect');
     const ws = new RelayWs({
@@ -397,7 +421,10 @@ describe('relay connection loss is retried forever', () => {
       // Half-open TCP: the peer vanished without any close frame reaching us.
       lastSocket().failWithoutClose();
 
-      await waitFor(() => FakeWebSocket.instances.length >= 2 && ws.connected, 'post-error re-dial');
+      await waitFor(
+        () => FakeWebSocket.instances.length >= 2 && ws.connected,
+        'post-error re-dial',
+      );
       const req = lastSocket().sent.find((frame) => frame[0] === 'REQ');
       expect(req).toBeDefined();
       lastSocket().receive(['EVENT', req![1] as string, fakeEvent('resurrected')]);

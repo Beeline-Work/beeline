@@ -1,4 +1,4 @@
-import type { ChangedFile, MessageSubmitInput, SessionId } from './rig-transport';
+import type { MessageSubmitInput, SessionId } from './rig-transport';
 import {
   RoomViewClient,
   createBuzzClient,
@@ -8,17 +8,13 @@ import {
   startGitHubInstallation,
   createGitHubRepository,
   getGitHubRepositoryAccess,
-  parseChangeReviewArtifact,
   type AgentCommandList,
   type AttachmentReference,
   type BuzzClient,
-  type ChangeReviewArtifact,
-  type ChangeReviewArtifactDescriptor,
   type GitHubInstallationAccess,
   type GitHubRepositoryAccessResult,
   type Identity,
   type KnownMessageReference,
-  type MergeTarget,
   type RoomRepository,
   type RoomRepositoryInput,
   type WritePermissionDecision,
@@ -48,7 +44,6 @@ function sharedClient(identity: Identity, baseUrl: string): BuzzClient {
 export class BuzzRigTransport {
   private client: BuzzClient | null = null;
   private readonly outgoingPublishes = new Map<string, Promise<string>>();
-  private readonly reviewArtifacts = new Map<string, Promise<ChangeReviewArtifact>>();
 
   constructor(
     private readonly identity: Identity,
@@ -266,107 +261,6 @@ export class BuzzRigTransport {
 
   githubRepositoryAccess(fullName: string): Promise<GitHubRepositoryAccessResult> {
     return getGitHubRepositoryAccess(this.baseUrl, this.identity, fullName);
-  }
-
-  private async readReviewArtifact(
-    sessionId: string,
-    descriptor: ChangeReviewArtifactDescriptor,
-  ): Promise<ChangeReviewArtifact> {
-    const key = `${sessionId}\u0000${descriptor.tip}\u0000${descriptor.sha256}`;
-    const existing = this.reviewArtifacts.get(key);
-    if (existing) return existing;
-    const reading = (async () => {
-      const response = await fetch(descriptor.url);
-      if (!response.ok) throw new Error(`Review artifact download failed (${response.status})`);
-      const artifact = parseChangeReviewArtifact(
-        new Uint8Array(await response.arrayBuffer()),
-        descriptor,
-      );
-      if (!artifact)
-        throw new Error(
-          `Review artifact failed integrity check for ${descriptor.tip.slice(0, 12)}`,
-        );
-      return artifact;
-    })();
-    this.reviewArtifacts.set(key, reading);
-    void reading.catch(() => this.reviewArtifacts.delete(key));
-    return reading;
-  }
-
-  async changedFileRead(
-    sessionId: SessionId,
-    path: string,
-    reviewTip?: string,
-  ): Promise<{ content: string; isBinary?: boolean } | null> {
-    const review = (await this.views().room(sessionId)).review;
-    const descriptor = review?.artifact;
-    if (!descriptor || (reviewTip && descriptor.tip !== reviewTip)) return null;
-    const artifact = await this.readReviewArtifact(sessionId, descriptor);
-    const file = artifact.files.find((candidate) => candidate.path === path);
-    if (!file || file.renderUnavailableReason === 'too-large') return null;
-    if (file.diff === undefined) throw new Error(`Missing diff for ${path}`);
-    return { content: file.diff, ...(file.isBinary ? { isBinary: true } : {}) };
-  }
-
-  async workspaceFilesRead(sessionId: SessionId, reviewTip?: string): Promise<ChangedFile[]> {
-    const review = (await this.views().room(sessionId)).review;
-    const descriptor = review?.artifact;
-    if (!descriptor || (reviewTip && descriptor.tip !== reviewTip)) return [];
-    const artifact = await this.readReviewArtifact(sessionId, descriptor);
-    return artifact.files.map(({ diff: _diff, ...file }) => file);
-  }
-
-  async getSubchannelMergeTarget(
-    subchannelId: string,
-  ): Promise<
-    { target: MergeTarget; channelId: string; authorPubkey: string } | { reason: string } | null
-  > {
-    const view = await this.views().room(subchannelId);
-    for (const message of [...view.messages].reverse()) {
-      if (message.merge?.action === 'not-ready')
-        return message.text ? { reason: message.text } : null;
-      if (
-        message.merge?.action === 'ready' &&
-        message.merge.repository &&
-        message.merge.branch &&
-        message.merge.tip
-      ) {
-        return {
-          target: {
-            repo: message.merge.repository,
-            branch: message.merge.branch,
-            tip: message.merge.tip,
-          },
-          channelId: view.parent?.id ?? '',
-          authorPubkey: message.author.pubkey,
-        };
-      }
-    }
-    return null;
-  }
-
-  async submitMergeApproval(
-    subchannelId: string,
-    target: MergeTarget,
-  ): Promise<{ success: boolean; message?: string }> {
-    try {
-      await (await this.getClient()).submitMergeApproval(subchannelId, target);
-      return { success: true, message: 'Approval sent for merge' };
-    } catch (reason) {
-      return { success: false, message: String(reason) };
-    }
-  }
-
-  async submitMergeRejection(
-    subchannelId: string,
-    target: MergeTarget,
-  ): Promise<{ success: boolean; message?: string }> {
-    try {
-      await (await this.getClient()).submitMergeRejection(subchannelId, target);
-      return { success: true, message: 'Rejection sent for review' };
-    } catch (reason) {
-      return { success: false, message: String(reason) };
-    }
   }
 
   async isChannelArchived(channelId: string): Promise<boolean> {

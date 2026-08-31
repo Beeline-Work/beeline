@@ -122,10 +122,10 @@ describe.runIf(reachable)('human-authorized agent exchange', () => {
     await publishPresence(xian, 'online');
     await publishPresence(joy, 'online');
 
-    xianBody = new Body(config(resolve(root, 'xian')), human, xian, undefined, {
+    xianBody = new Body(config(resolve(root, 'xian')), human, xian, {
       statePath: resolve(root, 'xian-state.json'),
     });
-    joyBody = new Body(config(resolve(root, 'joy')), human, joy, undefined, {
+    joyBody = new Body(config(resolve(root, 'joy')), human, joy, {
       statePath: resolve(root, 'joy-state.json'),
     });
   });

@@ -56,8 +56,6 @@ export { nip98AuthHeader, buildNip98Event, NIP98_KIND } from './nip98.js';
 
 export { isRegisteredAgentIdentity } from './agent-identity.js';
 
-export { buildApproval, verifyApproval, APPROVAL_MARKER, type MergeTarget } from './approval.js';
-
 export {
   authorizeHumanAuthority,
   type HumanAuthorityDependencies,
@@ -65,20 +63,3 @@ export {
   type HumanAuthorityRole,
   type HumanKeyCustody,
 } from './human-authority.js';
-
-export {
-  attemptMerge,
-  authorizeReviewer,
-  DurableMergeGate,
-  roomMergeCandidates,
-  type MergeRequest,
-  type MergeOutcome,
-  type ReviewerKeyCustody,
-  type ReviewerAuthorityDependencies,
-  type ReviewerAuthorityResult,
-  type RoomMergeServiceConfig,
-  type RoomMergeCandidate,
-  type RoomMergeAttempt,
-  type RoomMergeAttemptStart,
-  type RoomMergePollHooks,
-} from './worker.js';

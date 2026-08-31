@@ -55,7 +55,6 @@ import {
 import {
   buildAgentMessage,
   buildControlMessage,
-  buildLifecycleMessage,
   publishAgentMessage as postAgentMessage,
   postControlMessage,
 } from './lifecycle-publisher.js';
@@ -68,17 +67,11 @@ import {
   createRelayClient,
   publishEvent,
   archiveChannel,
-  assertAgentNotPushAllowed,
-  DurableMergeGate,
   git,
   gitAuthed,
   isRegisteredAgentIdentity,
-  APPROVAL_MARKER,
-  authorizeReviewer,
-  verifyApproval,
   type Identity,
   type RelayClient,
-  type RelayReader,
   type GitResult,
 } from '@beeline/gate';
 import {
@@ -88,12 +81,6 @@ import {
   isMember,
   isAgentPresenceOnline,
   newerAgentPresence,
-  CHANGE_REVIEW_ARTIFACT_TAG,
-  CHANGE_REVIEW_ARTIFACT_VERSION,
-  CORNER_GIT_PROJECTION_TAG,
-  CORNER_GIT_PROJECTION_VERSION,
-  CORNER_REJECTION_TAG,
-  verifyMergeRejection,
   KIND_AGENT_PRESENCE,
   KIND_AGENT_DRAFT,
   TAG_AGENT_PRESENCE,
@@ -126,6 +113,7 @@ import {
   getAgentModelCatalog,
   publishAgentCommands,
   getRoomRepository,
+  getGitHubRoomInstallationToken,
   KIND_AGENT_ACCESS_CONFIG,
   agentAccessConfigKey,
   resolveAgentAccessAuthority,
@@ -143,14 +131,8 @@ import {
   agentDraftKey,
   agentThoughtKey,
   agentPresenceKey,
-  assertCornerStateTransition,
-  isCornerTerminalState,
   DEFAULT_AGENT_IDENTITY_NAME,
   DEFAULT_BODY_IDENTITY_NAME,
-  type CornerMachineReason,
-  type CornerMachineState,
-  type ChangeReviewFile,
-  type ChangeReviewArtifact,
   type AgentHistoryEntry,
   type RoomViewMessage,
   permissionActionId,
@@ -162,12 +144,13 @@ import {
   type PermissionRequestV1,
   type ParsedPermissionDecision,
   type ParsedPermissionRequest,
-  DEFAULT_RELAY_BASE_URL,
-  isProductionRelayHost,
+  CORNER_REMOTE_STATE_KIND,
+  CORNER_REMOTE_STATE_TAG,
+  cornerRemoteStateKey,
+  parseCornerRemoteState,
+  type CornerRemoteState,
 } from '@beeline/buzz-client';
-import { verifyEvent, type NostrEvent } from '@beeline/nostr';
-import { performBrokeredPush } from './push-broker.js';
-import { reviewPatchId, targetHistoryContainsPatchId } from './review-content.js';
+import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
 import { isArchivedChannelError } from './archived-channel.js';
 import type { BodyConfig, SessionMode } from './config.js';
 import { publishCritical } from './publish-delivery.js';
@@ -183,12 +166,6 @@ import {
   verifyMissionAction,
   type MissionCornerAuthority,
 } from './mission-authority.js';
-import {
-  freshConcludeEpisode,
-  standingAskFromEvents,
-  type ConcludeEpisode,
-} from './conclude-watch.js';
-import { workingInvariantAlarm } from './corner-liveness.js';
 import {
   NAMED_REPOSITORY_PERMISSION_COMMAND,
   namedRepositoryTargetFromPermission,
@@ -218,7 +195,7 @@ import {
   hasLocalTrustySquireState,
   prepareRoomAgentHome,
 } from './agent-home.js';
-import { prepareGitReadTokenHelper, resolveBeelineCliEntrypoint } from './corner-read-token.js';
+import { prepareGitHubCredentialHelper, resolveBeelineCliEntrypoint } from './corner-read-token.js';
 import type { RelaySocketLease, SharedRelaySocket } from './relay-socket.js';
 import {
   appendPersonaSessionInstructions,
@@ -238,12 +215,6 @@ import {
   prepareAgentMemory,
   type AgentMemory,
 } from './agent-memory.js';
-import {
-  listChangeReviewFiles,
-  postChangeReviewMetadata,
-  readChangeReviewPatch,
-  resolveReviewBaseTip,
-} from './change-review.js';
 import {
   AGENT_ATTACHMENT_DIRECTIVE,
   MAX_AGENT_ATTACHMENT_BYTES,
@@ -299,7 +270,6 @@ import {
   BEELINE_MANDATE_DEFAULTS_VERSION,
   type BeelineActionScope,
   type BeelineAgentToolName,
-  cornerFrozenForPendingClose,
   type ReadMandateResult,
 } from './agent-tool-contract.js';
 import { piMcpDirectToolSelection, preparePiMcpSession } from './pi-mcp-session.js';
@@ -354,11 +324,6 @@ import {
 import { readCornerGitResumeState } from './corner-resume.js';
 import { isCornerCloseRequest } from './corner-close-intent.js';
 import { completedModelSpend, failedModelSpend, type ModelTurnAttribution } from './model-spend.js';
-import {
-  commitUrlForRemote,
-  landDestinationLines,
-  type LandDestination,
-} from './land-destination.js';
 import { duplicateCornerOpen, type OpenCornerCandidate } from './corner-open-guard.js';
 import {
   cornerWorktreeSweepDecision,
@@ -383,18 +348,11 @@ import {
 import {
   credentialMaskPaths,
   harnessHomeStateDirs,
-  mergeGateStateDirs,
   resolveGitCommonDir,
   wrapAgentCommand,
   type SandboxSessionSpec,
 } from './bwrap-sandbox.js';
 import { NO_PERSONAL_CONNECTORS_INSTRUCTION, toolScopeWarning } from './harness-tool-scope.js';
-import {
-  describeCiOutcome,
-  resolveGitHubRepo,
-  watchCommitCi,
-  type CiWatchOptions,
-} from './ci-watch.js';
 import {
   isReleaseConfirmation,
   releaseBriefing,
@@ -407,6 +365,10 @@ import {
   type ReleaseRoomIntent,
 } from './release-flow.js';
 import { cornerTitleFromTask } from './corner-metadata.js';
+import {
+  enableDeleteBranchOnMerge,
+  observeCornerRemote,
+} from './corner-github-lifecycle.js';
 
 const CAPTURED_AGENT_OUTPUTS = Symbol('captured-agent-outputs');
 const AGENT_ATTACHMENT_FAILURE_REPLY =
@@ -670,7 +632,7 @@ export function agentTurnFailureReply(error: unknown): string | undefined {
  * the periodic connected-socket liveness refresh). Overridable per loop via
  * `opts.pollMs`, which the push loop no longer uses for actual polling.
  */
-export const ROOM_WS_MAINTENANCE_TICK_MS = 60_000;
+export const ROOM_WS_MAINTENANCE_TICK_MS = 30_000;
 
 /**
  * How often a Body sweeps its corners pool for stray worktrees — corner
@@ -715,24 +677,6 @@ export const CORNER_TURN_SUMMARY_MAX_ITEMS = 3;
 export const CORNER_ARCHIVE_FALLBACK_SUMMARY = 'Corner closed without a completed summary.';
 export const CORNER_TURN_SUMMARY_INSTRUCTION =
   'Finish with only a concise user-facing summary: one sentence or up to three short bullets saying what changed, which checks passed, and what you deliberately left out (say "Nothing" when there was no deliberate omission). Do not narrate your process, restate the request, or include multi-paragraph detail.';
-export const CORNER_MERGE_GATE_INSTRUCTION =
-  'Do not tell the human to approve this work or claim that a review target exists. After your turn, Beeline checks the worktree and publishes the review target itself. If that check rejects the work, Beeline reports the gate status separately and preserves your reply; it does not start a hidden correction turn.' +
-  ' An external merge/validation gate you run (e.g. no-mistakes) shares this rule: if it fails to initialize or run, quote its exact error in your reply, report the work as NOT ready, and never ask for approval — an approval the human sends while no review target is published goes nowhere.';
-export const CORNER_TARGET_SYNC_INSTRUCTION =
-  'Do not preemptively fetch, merge, or rebase the target merely to prepare a review. The committed review stays mounted as-is. Only when a signed merge press cannot fast-forward does Beeline start one explicit automatic follow-up with the exact target tip; in that turn you own all branch-content work needed to land, including the sync, conflict resolution, test fixes, and commit. Never ask the human to perform git mechanics.';
-
-/**
- * A corner's live draft is visible before the host can inspect git.
- * Hold readiness/approval claims out of that early stream; the unmodified
- * final response is published after `publishMergeReady` succeeds.
- */
-export function withoutPrematureMergeClaims(message: string): string {
-  return message
-    .split('\n')
-    .map((line) => (/\b(?:approv\w*|ready)\b/i.test(line) ? '' : line))
-    .join('\n');
-}
-
 const UNVERIFIED_ROOM_COORDINATION_REPLY =
   'No Beeline corner or mission record was created, so no coordinated work started.';
 
@@ -878,22 +822,6 @@ export function cornerArchiveSummary(
   return conciseCornerTurnSummary(candidate ?? '') || CORNER_ARCHIVE_FALLBACK_SUMMARY;
 }
 
-/** Pull one explicit scope boundary out of the agent's already-published
- * completion summary. The land digest never starts another model turn merely
- * to rewrite facts. When the summary names no omission, say so without
- * pretending the daemon can infer product intent from a git diff. */
-export function deliberateLandOmission(summary: string | undefined): string {
-  const normalized = conciseCornerTurnSummary(summary ?? '');
-  const candidates = normalized
-    .split(/\n+|(?<=[.!?])\s+(?=[A-Z0-9])/)
-    .map((line) => line.replace(/^(?:[-*•]|\d+[.)])\s+/, '').trim())
-    .filter(Boolean);
-  const explicit = candidates.find((line) =>
-    /\b(?:did not|didn't|left out|excluded|out of scope|not touch|unchanged)\b/i.test(line),
-  );
-  return explicit ? shortenSummaryItem(explicit, 180) : 'Nothing beyond the reviewed change.';
-}
-
 /**
  * How long a Room's socket must stay down before the daemon will state, on the
  * record, that its agent is offline.
@@ -994,8 +922,19 @@ export interface SubchannelInfo {
   archiveChannelNotified?: boolean;
   /** Repository this edit session will push to. */
   boundRepo?: BoundRepo;
+  /** Latest semantic GitHub branch/PR observation published for this corner. */
+  remoteState?: CornerRemoteState;
+  /** Once true, a later authoritative missing branch is a completion signal. */
+  remoteBranchSeen?: boolean;
+  /** One completion-ladder fact per corner, persisted by its relay marker. */
+  completionNudgePosted?: boolean;
+  /** Dirty worktree preserved after remote branch completion. */
+  preserveWorktree?: boolean;
+  /** Relay no longer reports this corner; cleanup remains retryable. */
+  missingFromRelay?: boolean;
   /** Exact standing grant lineage for a mission-derived corner. */
   mission?: MissionCornerAuthority;
+  missionCloseAdmitted?: boolean;
   /** Human request that caused the agent to open this subchannel. */
   request?: ChannelTaskRequest;
   /** Display name of this corner, as the Room sees it. */
@@ -1006,173 +945,10 @@ export interface SubchannelInfo {
   participantPubkeys?: string[];
   /** When this corner was opened, in ms — used to spot a repeated open-a-corner. */
   openedAt?: number;
-  /** Current work tip advertised for this corner's one merge. */
-  mergeTarget?: { repo: string; branch: string; tip: string; patchId?: string };
-  /** Latest agent-authored completion summary. */
-  mergeSummary?: string;
-  /** Exact tip whose content-addressed review artifact was published. */
-  reviewArtifactPublishedTip?: string;
-  /** Deterministic change summary carried by that artifact. */
-  reviewArtifactSummary?: string;
-  /**
-   * A tool-driven close is frozen at this exact review coordinate until its
-   * signed approval advances, it is explicitly abandoned, or host recovery
-   * reopens it. New ACP turns may not mutate the worktree while this stands.
-   */
-  toolClosePending?: {
-    turnId: string;
-    sourceSha: string;
-    targetRef: string;
-    requestId: string;
-    eventId: string;
-  };
-  /** Exact reason from the latest rejected merge-readiness check. Cleared only
-   *  after a real review target is published. */
-  lastMergeNotReadyReason?: string;
-  /** A merge-gate verdict parks conclude-watch until a human starts a new turn. */
-  mergeGateBlocked?: { reason: string; targetTip?: string };
-  /** Approval whose bounded landing attempt parked; only a newer press retries it. */
-  landingBlockedApprovalId?: string;
   /** Process-local consecutive agent-message guard, seeded on restore. */
   lastAgentMessageContent?: string;
-  /** Last review-delivery failure line, seeded on restore so a retry/race
-   *  cannot append the same body-control card twice. */
-  lastReviewFailureContent?: string;
-  /** Signed human approval for this corner's one merge into its target branch. */
-  humanMergeApproval?: {
-    id: string;
-    reviewer: string;
-    /** Current corner tip that will land under the standing approval. */
-    tip: string;
-    /** Tip visible on the signed card. Differs after any later corner work. */
-    approvedTip?: string;
-    patchId?: string;
-    realigned?: boolean;
-  };
-  /** Latest approval-read outage already surfaced for this review tip. The
-   *  poll keeps retrying, but the transcript gets one durable reason card
-   *  instead of one identical card per maintenance tick. */
-  lastApprovalReadFailure?: { tip: string; reason: string };
-  /** Approval id + current target tip whose acceptance was confirmed
-   *  published. Later work keeps the approval id but publishes a fresh landing
-   *  receipt naming the current tip. */
-  ackedApprovalId?: string;
-  /** Approval id + target tip whose transcript activity receipt was published. */
-  ackedApprovalActivityId?: string;
-  /** Process-local suppression for byte-identical landing activity receipts. */
-  landingStageReceipts?: Map<string, string>;
-  /**
-   * What the human was actually shown for review, captured when merge-ready
-   * was published. The corner's worktree can no longer derive this once the
-   * target ref has advanced to the landed tip (the review base and the tip
-   * collapse onto each other), so the landed-work recap reads it from here.
-   */
-  reviewedChange?: {
-    base: string;
-    tip: string;
-    commitCount: number;
-    fileCount: number;
-    files: string[];
-  };
-  /**
-   * The last land refusal already told to the human, so an unchanged refusal
-   * is not restated on every maintenance tick.
-   *
-   * The land poll genuinely re-attempts the same approval each tick (that is
-   * what makes its `retry: auto` posture honest), and it published a card
-   * every time — observed live as 100+ byte-identical "couldn't land" cards
-   * over 100 minutes in one corner, and 117 in another. One statement of a
-   * standing condition is the message; the ninety-ninth is noise that buries
-   * the transcript the human has to read to understand it.
-   */
-  lastLandFailure?: { tip: string; reason: string };
-  /**
-   * Tip this corner's approved work is CONFIRMED to sit at on the target ref.
-   *
-   * Recorded by whichever path actually landed it, because `mergeTarget` — the
-   * only other record of the tip — is withdrawn by `publishMergeReady` as a
-   * direct consequence of landing: once the target branch holds the corner's
-   * work, the worktree has nothing left to review, so the next follow-up
-   * turn's tail clears it. Everything terminal (the recap, the merge summary,
-   * the archive) reads this instead, so a corner that landed can never be
-   * stranded by its own success.
-   */
-  landedTip?: string;
-  /**
-   * The landed-work recap is durably on the wire in the parent Room.
-   *
-   * Set only once `publishEvent` has actually accepted it — never on entry to
-   * the attempt. Claiming it up front made a single transient relay refusal
-   * permanent: every later poll returned at the guard and the Room was never
-   * told anything, which is one of the two ways the live recap went missing.
-   * `landSummaryInFlight` is what keeps the attempt itself exactly-once.
-   */
-  landSummaryPosted?: boolean;
-  /** Recap attempts spent, capped at MAX_LAND_SUMMARY_ATTEMPTS before the archive proceeds. */
-  landSummaryAttempts?: number;
-  /** A post-land CI watch is already running for this corner's landed commit. */
-  ciWatchStarted?: boolean;
   /** Successfully forwarded member events, preventing same-second relay replays. */
   processedMemberEventIds?: Set<string>;
-  /** The merge-summary card was confirmed published. Idempotency for a corner
-   *  whose archive is deferred past the tick that landed it (an active turn),
-   *  so the summary is not restated while that turn drains. */
-  mergeSummaryPosted?: boolean;
-  /**
-   * The land is complete and this corner is draining toward archive. No new
-   * member turn may start. A genuinely active turn finishes before teardown;
-   * an idle warm process is suspended immediately so it cannot hold the
-   * worktree open until the ordinary minutes-long idle sweep.
-   *
-   * Set by `pollMergeCompletions`; consumed by the active turn's `finally`, the
-   * scheduler's `suspended` transition, or the per-corner maintenance visit.
-   */
-  archiveWhenSessionRetires?: boolean;
-  missionCloseAdmitted?: boolean;
-  /** Relay existence failed authoritatively. Cleanup retries use the missing-
-   * channel reap path rather than trying to archive a channel that is gone. */
-  missingFromRelay?: boolean;
-  /**
-   * Newest feature-branch tip the harness-independent commit watch has already
-   * evaluated through `publishMergeReady`.
-   *
-   * The turn tail (`finishCornerTurnAgainstMergeGate`) only runs when an ACP
-   * turn actually RESOLVES — and harnesses differ in what that takes. pi-acp
-   * executes reads/writes/shell before the daemon ever sees them, so any turn
-   * that dies mid-flight (stall timeout, process exit, relay outage during the
-   * completion publish) leaves committed work on the corner branch with no
-   * review card and no retry until a human sends another message. The commit
-   * watch closes that gap from signals every harness produces identically:
-   * commits appearing on the branch in a clean worktree. Set only after
-   * `publishMergeReady` resolves (never on entry), so a transient failure is
-   * re-attempted on the next maintenance tick for the same tip.
-   */
-  observedReviewTip?: string;
-  /** Bounded failures spent by the commit watch for one exact tip. A new tip
-   * starts fresh; after the budget is spent, automatic retries stop. */
-  commitWatchFailure?: { tip: string; attempts: number };
-  /**
-   * Quiet-episode state for the conclude watch: the record that a turn ended
-   * without any of the four terminal states, how many bounded conclude
-   * nudges this episode already spent, and whether its stalled card went
-   * out. Hydrated from `DurableBodyState` on restore so a restart mid-episode
-   * neither resets the spent budget nor re-marks a resolved episode.
-   */
-  conclude?: ConcludeEpisode;
-  /**
-   * The daemon-authoritative lifecycle state this daemon last
-   * published for this corner (`open` / `working` / `waiting`+reason /
-   * `idle` / `concluded` / `closed`). This in-memory copy is BOTH the edge-trigger
-   * baseline — an unchanged state is never republished, the #369
-   * transition-only discipline — and what `publishAttentionTransition`
-   * compares against, replacing that function's relay history re-read. It is
-   * seeded from the corner's own state record at restore so suppression and
-   * edge-triggering survive a restart.
-   */
-  cornerState?: { state: CornerMachineState; reason?: CornerMachineReason };
-  /** A failure transition has changed the state word but its legacy
-   * human-readable parent card has not yet been durably published. */
-  attentionNarrativePending?: boolean;
   /**
    * In-memory turn epoch, bumped by `noteCornerTurnStart`. The turn tail's
    * async state evaluation captures it and refuses to speak if a newer turn
@@ -1326,16 +1102,6 @@ export interface BoundRepo {
 
 export type RoomEditPolicy = 'repository' | 'named-repository' | 'direct-message';
 
-/** Result of one attempt to advance a non-relay target ref to an approved tip.
- *  `skip` is "not this tick" (a later poll retries); `failed` carries the raw
- *  reason, humanized once at the publish site. */
-type LandOutcome = { kind: 'skip' } | { kind: 'landed' } | { kind: 'failed'; reason: string };
-
-type TargetSyncOutcome =
-  | { kind: 'ready'; targetTip: string }
-  | { kind: 'moved'; reason: string; targetTip: string }
-  | { kind: 'blocked'; reason: string; targetTip?: string };
-
 /** A Room cannot safely start unless its fixed inspection MCP is available. */
 export class ReadOnlyToolsUnavailableError extends Error {
   override readonly name = 'ReadOnlyToolsUnavailableError';
@@ -1435,7 +1201,7 @@ export function roomEditPolicyInstructions(
     : `Attempt this exact native command: ${TARGET_BRANCH_PROPOSAL_COMMAND} --branch <branch>`;
   return [
     'When requested work requires repository changes, call the mounted open_corner tool with the concrete objective.',
-    'Opening a corner needs no human approval because it commits, pushes, reviews, and lands nothing. Signed human merge approval remains the only path that lands code.',
+    'Opening a corner needs no human approval. Repository work finishes through its corner branch and GitHub pull request.',
     'Do not attempt an in-Room mutation as a control signal and do not emit a prose marker.',
     'Never claim that work started until the host transitions you into an edit session.',
     // The branch a Room lands to is Room configuration signed by its owner, so
@@ -1647,32 +1413,6 @@ function cornerAlreadyReported(events: readonly NostrEvent[], prefix: string): b
   return Boolean(newest?.content.startsWith(prefix));
 }
 
-export const MERGE_READY_TAG = 'merge-ready';
-export const LANDED_TAG = 'landed';
-/** Wire tag for the approval-acknowledgement card the daemon publishes when it
- *  consumes an approval — accepted, or rejected with the plain reason (a stale
- *  tip must never hang the app's DELIVERING state). */
-export const APPROVAL_ACK_TAG = 'buzz-merge-approval-ack';
-/** Deterministic host recap posted to the PARENT Room when a corner's work lands. */
-export const LAND_SUMMARY_TAG = 'land-summary';
-
-type ChangeReviewPublication = {
-  summary: string;
-};
-/**
- * The one post-land CI verdict, threaded to the land recap above. Published
- * only when CI actually decided — see `Body.watchLandedCommitCi`.
- */
-export const CI_RESULT_TAG = 'ci-result';
-/** Spacing, budget, and no-CI grace for the post-land CI watch. */
-export const CI_WATCH_POLL_MS = 30_000;
-export const CI_WATCH_TIMEOUT_MS = 15 * 60_000;
-export const CI_WATCH_NONE_GRACE_MS = 120_000;
-/**
- * The ambient GitHub repository-activity card in a Room. Ordinary agent-voice
- * kind:9 messages, matching the CI-watch/land-recap precedent, tagged so
- * clients can distinguish them from conversation.
- */
 /**
  * How long a release proposal stays confirmable. Long enough for a person to
  * read the summary and think; short enough that a "yes" to something else
@@ -1683,60 +1423,6 @@ export const RELEASE_PROPOSAL_TTL_MS = 30 * 60_000;
 /** A release the agent has offered to cut, waiting on a person's confirmation. */
 interface PendingReleaseProposal extends ReleaseCornerBrief {
   expiresAt: number;
-}
-/**
- * Truthful retry posture for a corner-scoped delivery failure. `auto` retries
- * the same operation, `realigning` runs the target-sync turn, and `blocked`
- * means nothing further happens until a human says something. Never guess: a
- * missing tag means "unknown", which a client renders without a retry claim.
- */
-export type DeliveryRetryPosture = 'auto' | 'realigning' | 'blocked';
-
-/**
- * Maintenance ticks a refused land recap may hold a landed corner's archive
- * open for. Past this the teardown proceeds and the Room goes without — but
- * only after this many logged refusals naming the precise reason.
- */
-export const MAX_LAND_SUMMARY_ATTEMPTS = 3;
-
-/** The message of a caught unknown, without a stack, for a one-line log. */
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-/**
- * Is this land refusal the "someone else advanced the target branch" shape —
- * the one class of land failure the corner's own agent can actually fix, by
- * rebasing its feature branch onto the new tip?
- *
- * Recognizes both wordings the two non-relay land paths produce: the raw git
- * rejection a `push` returns (`landOnDirectRemote`), and the plain sentence
- * `landInLocalCheckout` writes itself for the identical situation after its
- * `merge-base --is-ancestor` check fails.
- */
-export function isMovedTargetLandFailure(reason: string): boolean {
-  return /non-fast-forward|\[rejected\]|fetch first|not (?:a |possible to )?fast[- ]forward|cannot lock ref|update_ref failed|has moved on since|ff merge failed/i.test(
-    reason,
-  );
-}
-
-/**
- * Keep a landed-work recap readable in a Room: no fenced code, no raw 40-hex
- * plumbing, and a hard line cap. Same spirit as `summarizeGitFailure` — a
- * person reading their Room on a phone gets the story, never the tooling. The
- * landed commit id is appended by the caller, so a sha the agent quotes inside
- * its own prose is shortened rather than repeated at full length.
- */
-export function conciseLandSummary(text: string, maxLines = 7): string {
-  return text
-    .replace(/```[\s\S]*?```/g, ' ')
-    .replace(/\b[0-9a-f]{40}\b/gi, (sha) => sha.slice(0, 7))
-    .split('\n')
-    .map((line) => line.replace(/\s+$/, ''))
-    .filter((line) => line.trim().length > 0)
-    .slice(0, maxLines)
-    .join('\n')
-    .trim();
 }
 export const AGENT_CANCEL_TAG = 'buzz-agent-cancel';
 /** Human-triggered corner close: archives the subchannel (not just the active turn). */
@@ -2288,8 +1974,7 @@ export function cornerObjectiveFromConversation(
  *
  * A direct @ mention always addresses this agent. In a two-party Room the
  * sole human can speak naturally because there is nobody else to address.
- * Machine-held merge workers are removed before `roomParticipants` reaches
- * this helper, so they never make a human/agent conversation look multi-party.
+ * Current membership is resolved before this helper receives the Room roster.
  */
 export function isChannelAddressedMessage(
   event: NostrEvent,
@@ -2454,7 +2139,6 @@ export class Body {
   private subchannels = new Map<string, SubchannelInfo>();
   private bodyIdentity: Identity;
   private agentIdentity: Identity;
-  private mergeWorkerIdentity?: Identity;
   private processedRequestIds = new Set<string>();
   /**
    * Event ids currently mid-processing in `processChannelRequestEvents`. The
@@ -2542,15 +2226,6 @@ export class Body {
    */
   private inFlightSubchannelPolls = new Set<string>();
   /**
-   * Corners with a landed-work recap attempt in flight. The same claim/release
-   * shape again: the land path and the completion poll can both reach
-   * `postCornerLandSummary` for one corner at once, and a recap that has to ask
-   * the agent for prose is easily long enough for that. Released on failure —
-   * `SubchannelInfo.landSummaryPosted` is the permanent half, and it is only
-   * ever set once the relay has actually taken the event.
-   */
-  private landSummaryInFlight = new Set<string>();
-  /**
    * Channels that already carry an unanswered queued-steer acknowledgement.
    * Keeps the ack to at most one per channel per active turn no matter how
    * many steers pile up behind it; cleared the moment the channel is seen
@@ -2579,8 +2254,6 @@ export class Body {
       reason: string;
     }
   >();
-  /** Corners whose old branch-scoped review must be republished on the new target. */
-  private branchSwitchReviewRepublishes = new Set<string>();
   /** Last owner-authorized target observed per Room; read failures may never
    *  roll an already-switched corner back to the daemon's startup snapshot. */
   private confirmedRoomTargetBranches = new Map<string, string>();
@@ -2591,7 +2264,6 @@ export class Body {
   private permissionRuntime: PermissionRuntime;
   private permissionReader: PermissionFreshReader;
   private agentRelay: RelayClient;
-  private mergeWorkerRelay?: RelayClient;
   private pendingRoomTurns = new Map<string, PendingRoomTurn>();
   /** Provenance exists only while one prompt is actually driving its ACP session. */
   private activePermissionTurns = new Map<string, ActivePermissionTurn>();
@@ -2646,36 +2318,19 @@ export class Body {
     repo: BoundRepo,
     checkpoint: RepositoryTruthCheckpoint,
   ) => Promise<BoundRepo>;
-  private syncPairingCheckout?: (repo: BoundRepo, landedTip: string) => Promise<void>;
   private runRepositoryGit?: (repo: BoundRepo, cwd: string, args: string[]) => Promise<GitResult>;
   private repositoryAccessToken?: (repo: BoundRepo) => Promise<string | undefined>;
-  /** Binding author's current key after succession (auth-service answer). */
-  private resolveBindingOwnerKey?: (repo: BoundRepo) => Promise<string | undefined>;
   /** Rate limiter for the access-policy auto-response: one refusal per sender per window. */
   private readonly accessRefusals = new AccessRefusalLimiter();
-  private readonly workingInvariantAlarms = new Set<string>();
   private readonly publishingFailureFacts = new Set<string>();
   private onRoomPollSuccess?: (channelId: string) => void;
   private onRoomPollFailure?: (channelId: string, retryInMs: number) => void;
   private onRoomPresence?: (channelId: string, status: 'online' | 'offline') => void;
   private runScheduleNow?: (scheduleId: string) => Promise<{ runId: string; eventId: string }>;
-  /**
-   * Post-land CI watches still running. They deliberately outlive the corner
-   * they report on (it is archived seconds after the land), so shutdown is the
-   * only thing that ends one early: `dispose()` aborts the signal and drains
-   * this set rather than leaving a timer holding the daemon open.
-   */
-  private readonly pendingCiWatches = new Set<Promise<void>>();
-  /** One coalesced approval pass per Room. A pushed approval arriving while a
-   * pass is already reading relay state requests one immediate second pass,
-   * closing the read-before-event race without allowing overlapping lands. */
-  private readonly approvalLandingPasses = new Map<
-    string,
-    { rerun: boolean; pushedApprovals: Map<string, NostrEvent>; task: Promise<void> }
-  >();
-  private readonly ciWatchAbort = new AbortController();
-  /** Test seam: poll cadence/transport for the CI watch. Never set in production. */
-  private ciWatchOptions: Partial<CiWatchOptions> = {};
+  /** Repositories whose GitHub auto-delete-on-merge setting was confirmed. */
+  private readonly autoDeleteBranchRepositories = new Set<string>();
+  /** Prevent overlapping timer and webhook-hint reads for one corner. */
+  private readonly observingCornerRemotes = new Set<string>();
   /**
    * Release proposals awaiting a person's confirmation, one per Room. Held in
    * memory on purpose: a lost proposal costs a re-ask, and a proposal that
@@ -2691,7 +2346,6 @@ export class Body {
     config: BodyConfig,
     bodyIdentity?: Identity,
     agentIdentity?: Identity,
-    mergeWorkerIdentity?: Identity,
     services: {
       scheduler?: SessionScheduler;
       statePath?: string;
@@ -2700,10 +2354,8 @@ export class Body {
         repo: BoundRepo,
         checkpoint: RepositoryTruthCheckpoint,
       ) => Promise<BoundRepo>;
-      syncPairingCheckout?: (repo: BoundRepo, landedTip: string) => Promise<void>;
       runRepositoryGit?: (repo: BoundRepo, cwd: string, args: string[]) => Promise<GitResult>;
       repositoryAccessToken?: (repo: BoundRepo) => Promise<string | undefined>;
-      resolveBindingOwnerKey?: (repo: BoundRepo) => Promise<string | undefined>;
       onRoomPollSuccess?: (channelId: string) => void;
       onRoomPollFailure?: (channelId: string, retryInMs: number) => void;
       onRoomPresence?: (channelId: string, status: 'online' | 'offline') => void;
@@ -2725,7 +2377,6 @@ export class Body {
     }
     this.bodyIdentity = bodyIdentity ?? newIdentity(DEFAULT_BODY_IDENTITY_NAME);
     this.agentIdentity = agentIdentity ?? newIdentity(DEFAULT_AGENT_IDENTITY_NAME);
-    this.mergeWorkerIdentity = mergeWorkerIdentity;
     const relayConfig = { baseUrl: config.relayBaseUrl, host: config.relayHost };
     this.agentRelay = createRelayClient(this.agentIdentity, relayConfig);
     this.publishPermissionReceipt =
@@ -2733,9 +2384,6 @@ export class Body {
       (async (event) => {
         await publishEvent(event, this.agentIdentity);
       });
-    this.mergeWorkerRelay = mergeWorkerIdentity
-      ? createRelayClient(mergeWorkerIdentity, relayConfig)
-      : undefined;
     this.scheduler =
       services.scheduler ??
       new SessionScheduler({
@@ -2746,10 +2394,8 @@ export class Body {
     this.ownsScheduler = !services.scheduler;
     this.resolveNamedRepository = services.resolveNamedRepository;
     this.refreshRepositoryTruth = services.refreshRepositoryTruth;
-    this.syncPairingCheckout = services.syncPairingCheckout;
     this.runRepositoryGit = services.runRepositoryGit;
     this.repositoryAccessToken = services.repositoryAccessToken;
-    this.resolveBindingOwnerKey = services.resolveBindingOwnerKey;
     this.onRoomPollSuccess = services.onRoomPollSuccess;
     this.onRoomPollFailure = services.onRoomPollFailure;
     this.onRoomPresence = services.onRoomPresence;
@@ -2826,8 +2472,6 @@ export class Body {
       agentToolSchedules: (workspaceId, roomId) => this.agentToolSchedules(workspaceId, roomId),
       publishAgentToolScheduleIndex: (workspaceId, scheduleIds) =>
         this.publishAgentToolScheduleIndex(workspaceId, scheduleIds),
-      missionCornerFresh: (info) => this.missionCornerFresh(info),
-      findHumanMergeApproval: (info) => this.findHumanMergeApproval(info),
       repoId: (repo) => this.repoId(repo),
       runScheduleNow: () => this.runScheduleNow,
       liveSubchannelForRequest: (roomId, requestId) =>
@@ -2840,11 +2484,7 @@ export class Body {
         this.startCornerTaskOnce(info, prompt, taskInstructions, attribution),
       cornerOpenTaskPrompt,
       requestCornerApproval: (input) => this.requestCornerApproval(input),
-      publishMergeReady: (info) => this.publishMergeReady(info),
-      forceSuspend: (channelId) => this.scheduler.forceSuspend(channelId),
       archiveSubchannel: (channelId) => this.archiveSubchannel(channelId),
-      runApprovalLandingPass: (roomId, mergeGate) => this.runApprovalLandingPass(roomId, mergeGate),
-      pollMergeCompletions: () => this.pollMergeCompletions(),
       candidateBytes: (session, candidate) => this.candidateBytes(session, candidate),
     });
     this.assertDistinctAgentIdentity(this.agentIdentity);
@@ -3131,34 +2771,39 @@ export class Body {
     });
   }
 
-  /**
-   * Git env entries wiring the read-only repository credential helper into a
-   * corner session (`corner-read-token.ts`). Strictly best-effort: any
-   * failure — unwritable state dir, dev/tsx entrypoint, missing runtime pin —
-   * degrades to today's behaviour (no private-repo fetch) with one advisory
-   * line, and never blocks or fails the session. Only GitHub-backed repos
-   * qualify; relay-origin and local-only repos are skipped by the caller.
-   */
-  private async gitReadTokenEnv(input: {
+  /** Mint and wire the repository-scoped GitHub App credential for a corner. */
+  private async cornerGitHubCredentialEnv(input: {
     roomId: string;
     stateDir: string;
+    path?: string;
   }): Promise<Record<string, string> | undefined> {
     try {
       const cliEntrypoint = resolveBeelineCliEntrypoint();
-      if (!cliEntrypoint || !this.config.runtimeConfigPath) return undefined;
-      const wiring = await prepareGitReadTokenHelper({
-        roomId: input.roomId,
-        stateDir: input.stateDir,
-        nodePath: process.execPath,
-        cliEntrypoint,
-        runtimeConfigPath: this.config.runtimeConfigPath,
-      });
+      const [wiring, granted] = await Promise.all([
+        prepareGitHubCredentialHelper({
+          roomId: input.roomId,
+          stateDir: input.stateDir,
+          ...(cliEntrypoint && this.config.runtimeConfigPath
+            ? {
+                nodePath: process.execPath,
+                cliEntrypoint,
+                runtimeConfigPath: this.config.runtimeConfigPath,
+              }
+            : {}),
+          ...(input.path ? { path: input.path } : {}),
+        }),
+        getGitHubRoomInstallationToken(
+          this.config.relayBaseUrl,
+          this.agentIdentity,
+          input.roomId,
+        ),
+      ]);
       console.log(
-        `[body] read-only git credential helper wired for Room ${input.roomId}: ${wiring.helperPath}`,
+        `[body] GitHub credential wired for Room ${input.roomId}: ${wiring.helperPath}`,
       );
-      return wiring.env;
+      return { ...wiring.env, GH_TOKEN: granted.token };
     } catch (error) {
-      console.warn('[body] read-only git credential helper unavailable:', error);
+      console.warn('[body] GitHub corner credential unavailable:', error);
       return undefined;
     }
   }
@@ -3371,19 +3016,6 @@ export class Body {
       // Re-check at spawn time so restored corners and worktrees created by an
       // older daemon are repaired before the agent runs its first command.
       if (input.worktreePath) await this.provisionWorktreeToolchain(input.worktreePath);
-      // Same bind-try-vs-mkdir reasoning as the harness roots above: the merge
-      // gate cannot create its own state root on a read-only $HOME, so create
-      // it here, in the daemon, before the child is confined. Corner-only: a
-      // Room never writes the gate and gains no bind for it.
-      const gateStateDirs = mergeGateStateDirs();
-      for (const dir of gateStateDirs) {
-        try {
-          mkdirSync(dir, { recursive: true });
-        } catch {
-          // Best effort: an unwritable home just means bind-try skips it.
-        }
-      }
-      spec.mergeGateStateDirs = gateStateDirs;
     }
     return wrapAgentCommand({ bwrapPath: this.config.bwrapPath, spec, command, args });
   }
@@ -3507,11 +3139,10 @@ export class Body {
     agentMemory?: AgentMemory;
     /**
      * When set (corner edit sessions on a GitHub-backed repo), the session's
-     * git environment gets a read-only credential helper for private-repo
-     * fetches — see `corner-read-token.ts`. `roomId` is the PARENT Room id;
-     * `stateDir` must be session-private and writable in the sandbox.
+     * git environment gets a repository-scoped GitHub App token plus an
+     * on-demand git credential helper. `roomId` is the PARENT Room id.
      */
-    gitReadCredential?: { roomId: string; stateDir: string };
+    gitHubCredential?: { roomId: string; stateDir: string };
     /**
      * Read-only Room policy duplicated into turn content for ACP adapters that
      * ignore `session/new.systemPrompt` (notably pi-acp and codex-acp).
@@ -3555,8 +3186,11 @@ export class Body {
         // that keys per-project state off its own cwd matches this session.
         await mkdir(input.cwd, { recursive: true });
         const baseSessionEnv = await this.sessionAgentEnv();
-        const readTokenEnv = input.gitReadCredential
-          ? await this.gitReadTokenEnv(input.gitReadCredential)
+        const gitHubCredentialEnv = input.gitHubCredential
+          ? await this.cornerGitHubCredentialEnv({
+              ...input.gitHubCredential,
+              ...(baseSessionEnv.PATH ? { path: baseSessionEnv.PATH } : {}),
+            })
           : undefined;
         let sessionEnv: Record<string, string> = {
           ...baseSessionEnv,
@@ -3565,7 +3199,7 @@ export class Body {
             : {}),
           ...(input.agentMemory ? { [AGENT_MEMORY_ENV]: input.agentMemory.dir } : {}),
           ...(workbench ? { [WORKBENCH_ENV]: workbench.dir } : {}),
-          ...(readTokenEnv ?? {}),
+          ...(gitHubCredentialEnv ?? {}),
         };
         if (this.config.agentKind === 'pi' && sessionEnv.PI_CODING_AGENT_DIR) {
           sessionEnv = {
@@ -4128,19 +3762,14 @@ export class Body {
     prompt: string,
     turn: ModelTurnAttribution & {
       channelId: string;
-      /** Keep an internal continuation off the human transcript until its
-       *  host-side verdict is known. Used by merge-gate correction turns so
-       *  an agent cannot advertise approval before a target exists. */
+      /** Keep an internal host-directed continuation off the human transcript. */
       silent?: boolean;
-      /** Corner turns only: hide readiness/approval claims from the live
-       *  stream until the host has published an actual merge target. */
-      withholdMergeClaims?: boolean;
       /** Calendar authority is re-read after background scheduler admission,
        * immediately before the ACP model invocation. */
       beforeModelActivation?: () => Promise<void>;
     },
     activeRoomTurn?: PendingRoomTurn,
-  ): Promise<PromptResult & { withheldMergeClaim?: boolean }> {
+  ): Promise<PromptResult> {
     const draft = !turn.silent
       ? createDraftStreamer(
           turn.channelId,
@@ -4156,7 +3785,6 @@ export class Body {
           session.logicalSessionId ?? session.sessionId,
         )
       : undefined;
-    let withheldMergeClaim = false;
     const permissionTurn: ActivePermissionTurn = {
       requestId: turn.requestId,
       ...(turn.originalRequestId ? { originalRequestId: turn.originalRequestId } : {}),
@@ -4209,11 +3837,7 @@ export class Body {
             modelCallStartedAt = new Date().toISOString();
             const publishMessageDraft = (fullText: string) => {
               const visible = fullText;
-              const gateSafeVisible = turn.withholdMergeClaims
-                ? withoutPrematureMergeClaims(visible)
-                : visible;
-              if (gateSafeVisible !== visible) withheldMergeClaim = true;
-              draft?.onChunk(gateSafeVisible);
+              draft?.onChunk(visible);
             };
             let typedStreamSeen = false;
             const promptCall = session.client.sessionPrompt(
@@ -4334,10 +3958,7 @@ export class Body {
       }
       await Promise.all([draft?.finish(), thought?.finish()]);
     }
-    return {
-      ...result,
-      ...(withheldMergeClaim ? { withheldMergeClaim: true } : {}),
-    };
+    return result;
   }
 
   /**
@@ -4822,8 +4443,12 @@ export class Body {
           `You are working in a git worktree: ${worktreePath}`,
           `Your feature branch is: ${featureBranch}`,
           'Continue from the structured resume brief and repository state. Never start a second task.',
-          'Never merge, push or change the target branch, or archive this corner; only a signed human approval may authorize those effects.',
-          CORNER_TARGET_SYNC_INSTRUCTION,
+          'GitHub credentials are installed. Fetch, diff, log, push this feature branch, and use plain gh normally.',
+          `When work is finished, push ${featureBranch} and open a pull request targeting ${shortBranchName(
+            cornerRepo.targetBranch,
+          )}.`,
+          'Merge the pull request with gh only when a human explicitly asks. Never push or merge directly into the target branch.',
+          'To abandon the work, delete the remote feature branch. Branch deletion is the completion signal; the daemon archives the corner.',
           'A tool or skill can be unavailable or fail to initialize (for example codegraph before its index is ready). Treat that as a normal recoverable error for that one call and continue the task with what you have; never abort the task because a single tool or skill is missing.',
           'You may call any skill available to you, but only when the current task explicitly calls for it or names it directly. Never auto-trigger a skill (e.g. a design/UX review skill) on routine or trivial work.',
         ].join('\n'),
@@ -4848,14 +4473,10 @@ export class Body {
         ...(restoredCornerMemory ? { agentMemory: restoredCornerMemory } : {}),
         ...(communityId ? { communityId } : {}),
         ...(cornerRepo.truth?.binding.remote?.startsWith('git://github.com/') && agentPrivateState
-          ? { gitReadCredential: { roomId: parentChannelId, stateDir: agentPrivateState.root } }
+          ? { gitHubCredential: { roomId: parentChannelId, stateDir: agentPrivateState.root } }
           : {}),
       });
       const cursor = await this.durableState.cursor(subchannelId);
-      // Quiet-episode state survives restarts so a mid-episode corner
-      // neither gets its spent nudge budget back nor a duplicate stalled
-      // card on resume.
-      const concludeRecord = await this.durableState.concludeEpisode(subchannelId);
       const requestId = control ? tagValue(control, 'request') : undefined;
       const requestEvent = requestId
         ? parentEvents.find((event) => event.id === requestId)
@@ -4872,31 +4493,9 @@ export class Body {
       const newestEvents = [...events].sort(
         (a, b) => b.created_at - a.created_at || b.id.localeCompare(a.id),
       );
-      const ready = newestEvents.find((event) =>
-        event.tags.some(
-          (tag) => tag[0] === 't' && (tag[1] === MERGE_READY_TAG || tag[1] === LANDED_TAG),
-        ),
-      );
-      const tip = ready ? tagValue(ready, 'tip') : undefined;
       const lastAgentMessageContent = newestEvents.find(
         (event) => tagValue(event, 't') === 'agent-message',
       )?.content;
-      const latestReviewDelivery = newestEvents.find(
-        (event) =>
-          event.tags.some(
-            (tag) => tag[0] === 't' && (tag[1] === MERGE_READY_TAG || tag[1] === 'body-control'),
-          ) &&
-          (event.tags.some((tag) => tag[0] === 't' && tag[1] === MERGE_READY_TAG) ||
-            event.content.startsWith("Couldn't prepare this change for review:")),
-      );
-      const lastReviewFailureContent = latestReviewDelivery?.content.startsWith(
-        "Couldn't prepare this change for review:",
-      )
-        ? latestReviewDelivery.content
-        : undefined;
-      const latestLandingBlock = newestEvents.find(
-        (event) => tagValue(event, 't') === 'landing-blocked',
-      );
       const participantPubkeys = await this.cornerParticipants(subchannelId, [
         ...(request ? [request.authorPubkey] : []),
       ]);
@@ -4913,78 +4512,34 @@ export class Body {
         taskDescription: restoredTaskDescription,
         participantPubkeys,
         ...(lastAgentMessageContent ? { lastAgentMessageContent } : {}),
-        ...(lastReviewFailureContent ? { lastReviewFailureContent } : {}),
-        ...(latestLandingBlock && tagValue(latestLandingBlock, 'approval')
-          ? { landingBlockedApprovalId: tagValue(latestLandingBlock, 'approval') }
-          : {}),
         ...(request ? { request } : {}),
-        ...(tip
-          ? {
-              mergeTarget: {
-                repo: tagValue(ready!, 'repo') ?? this.repoId(cornerRepo),
-                branch: tagValue(ready!, 'branch') ?? cornerRepo.targetBranch ?? 'refs/heads/main',
-                tip,
-                ...(tagValue(ready!, 'patch-id') ? { patchId: tagValue(ready!, 'patch-id') } : {}),
-              },
-            }
-          : {}),
-        ...(concludeRecord ? { conclude: concludeRecord } : {}),
       };
       session.lastPolledAt = cursor.createdAt;
       this.registerSubchannel(info);
       this.abandonedCorners.delete(subchannelId);
-      // Seed the state-machine baseline from the corner's own state record
-      // and re-assert any derivable current state (a restored review
-      // target stays waiting/review). Edge suppression across a
-      // restart depends on this baseline being accurate.
-      await this.seedCornerStateFromRecord(info, events);
-      if (tip && ready?.tags.some((tag) => tag[0] === 't' && tag[1] === MERGE_READY_TAG)) {
-        // Re-publish the immutable artifact pointer when restoring a card;
-        // content addressing makes this safe and closes any interrupted write.
-        try {
-          await this.publishMergeReady(info);
-        } catch (error) {
-          if (asRelayPublishError(error).kind === 'ROOM_ARCHIVED') {
-            // An archived Room will refuse this deterministic artifact
-            // coordinate forever. Mark this restored tip settled so the
-            // maintenance commit watch cannot re-drive it.
-            info.observedReviewTip = tip;
-            info.commitWatchFailure = undefined;
-            console.error(
-              `[body] restored corner ${subchannelId} review artifact publish refused because its Room is archived; retry stopped:`,
-              error,
-            );
-          } else {
-            console.error(
-              `[body] restored corner ${subchannelId} review artifact publish failed; maintenance will retry:`,
-              error,
-            );
-          }
-        }
-      }
+      await this.restoreCornerRemoteState(info);
       // The original human request remains the authority for unfinished
       // commissioned work. Resume it once for this daemon process, never
       // re-run the opening prompt from scratch and never loop from a
       // maintenance tick. A second restore call in the same process is a
       // no-op; another daemon restart gets one new continuation attempt.
       const restartContinuationKey = `${this.agentIdentity.publicKey}:${subchannelId}`;
-      // A restart is not a fact about the task. Auto-resume ONLY a corner
-      // that was actively working when the daemon died; a corner parked on
-      // a needs-you verdict (moved target, failed delivery, nothing yet
-      // committed) stays parked — blockMovedTarget literally promises
-      // "nothing is continuing on its own", and re-driving it here is
-      // what republished fresh working/needs-attention cards on every
-      // restart, re-golding the deck while nobody was working.
-      const workingAtRestart = info.cornerState?.state === 'working';
-      if (request && !tip && !workingAtRestart) {
+      // A restart is not a new task. Resume only when the newest turn receipt
+      // was still working; a completed/failed turn is handled mechanically by
+      // the completion ladder and GitHub lifecycle watcher.
+      const latestTurnReceipt = newestEvents.find((event) =>
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-turn'),
+      );
+      const workingAtRestart =
+        latestTurnReceipt !== undefined && tagValue(latestTurnReceipt, 'status') === 'working';
+      if (request && !workingAtRestart) {
         console.log(
-          `[body] corner ${subchannelId} not resumed after restart: standing verdict is ` +
-            `${info.cornerState?.state ?? 'unknown'}; waiting on a person instead of re-driving the original request`,
+          `[body] corner ${subchannelId} not resumed after restart: no active working turn; ` +
+            'GitHub lifecycle and the completion ladder remain authoritative',
         );
       }
       if (
         request &&
-        !tip &&
         workingAtRestart &&
         !BODY_RESTART_CONTINUATIONS.has(restartContinuationKey)
       ) {
@@ -5509,11 +5064,14 @@ export class Body {
         ...(boundRepo
           ? [
               'Commit your changes to the feature branch when appropriate.',
-              'Never merge, push or change the target branch, or archive this corner. Stop after committing the feature branch; only a signed human approval may authorize landing and archive cleanup.',
-              CORNER_TARGET_SYNC_INSTRUCTION,
+              `When the work is finished, push ${featureBranch} to origin and open its pull request with plain gh targeting ${shortBranchName(
+                boundRepo.targetBranch,
+              )}.`,
+              'Merge that pull request with gh only when a human explicitly asks. Never push or merge directly into the target branch.',
+              'To abandon the work, delete the remote feature branch. Do not call close_corner for a repository corner; branch deletion archives it automatically.',
             ]
           : [
-              'Do not initialize Git or claim that this work can land. After delivering the artifacts, close the corner with disposition abandon.',
+              'Do not initialize Git or claim that this work can land. After delivering the artifacts, call close_corner with this corner id.',
             ]),
         'A tool or skill can be unavailable or fail to initialize (for example codegraph before its index is ready). Treat that as a normal recoverable error for that one call and continue the task with what you have; never abort the task because a single tool or skill is missing.',
         'You may call any skill available to you, but only when the current task explicitly calls for it or names it directly. Never auto-trigger a skill (e.g. a design/UX review skill) on routine or trivial work.',
@@ -5527,8 +5085,7 @@ export class Body {
           : []),
         ...(intent ? [`User intent: ${intent}`] : []),
       ].join('\n'),
-      // A corner is the agent's isolated worktree. Target landing and archive
-      // cleanup remain behind an independently verified signed human approval.
+      // A corner is the agent's isolated worktree; GitHub owns repository delivery.
       autoApprovePermissions: true,
       // cd-guard backstop: deny a command that would escape the worktree into
       // the shared checkout, even if the harness leaks past cwd isolation.
@@ -5552,7 +5109,7 @@ export class Body {
       ...(cornerMemory ? { agentMemory: cornerMemory } : {}),
       ...(communityId ? { communityId } : {}),
       ...(boundRepo?.truth?.binding.remote?.startsWith('git://github.com/') && agentPrivateState
-        ? { gitReadCredential: { roomId: tlcChannelId, stateDir: agentPrivateState.root } }
+        ? { gitHubCredential: { roomId: tlcChannelId, stateDir: agentPrivateState.root } }
         : {}),
     });
 
@@ -5576,14 +5133,10 @@ export class Body {
       taskDescription,
       participantPubkeys,
       openedAt: Date.now(),
-      cornerState: { state: 'open' },
       ...(request ? { request } : {}),
     };
 
     this.subchannels.set(subchannelId, info);
-    // OPEN was published before workspace preparation; move to WORKING only
-    // once the session actor is registered and ready to receive the turn.
-    await this.transitionCornerState(info, 'working');
 
     const repoId = boundRepo ? this.repoId(boundRepo) : undefined;
     const targetBranch = boundRepo?.targetBranch ?? 'refs/heads/main';
@@ -6513,9 +6066,7 @@ export class Body {
       identity: this.agentIdentity,
     });
     try {
-      return (await client.listMembers(channelId))
-        .map((member) => member.pubkey)
-        .filter((pubkey) => pubkey !== this.mergeWorkerIdentity?.publicKey);
+      return (await client.listMembers(channelId)).map((member) => member.pubkey);
     } finally {
       client.disconnect();
     }
@@ -9113,16 +8664,10 @@ export class Body {
     });
   }
 
-  /**
-   * Run the deterministic merge gate once, then publish the model's original
-   * answer regardless of the verdict. Gate failures are daemon-authored status
-   * records; they never become hidden correction prompts or replacement agent
-   * speech.
-   */
-  private async finishCornerTurnAgainstMergeGate(
+  /** Publish the model's corner answer. GitHub owns repository completion. */
+  private async finishCornerTurn(
     info: SubchannelInfo,
-    initialResult: PromptResult & { withheldMergeClaim?: boolean },
-    _attribution: ModelTurnAttribution,
+    initialResult: PromptResult,
     fallback: string,
     options: {
       replyTo?: string;
@@ -9130,10 +8675,10 @@ export class Body {
       extraTagsForText?: (text: string) => Promise<readonly string[][] | undefined>;
       captureEvent?: (event: NostrEvent) => void;
     } = {},
-  ): Promise<boolean> {
+  ): Promise<void> {
     const publishResult = async (): Promise<void> => {
       const extraTags = await options.extraTagsForText?.(initialResult.agentText);
-      info.mergeSummary = await this.publishAgentResult(
+      info.lastAgentMessageContent = await this.publishAgentResult(
         info.subchannelId,
         info.session,
         initialResult,
@@ -9145,28 +8690,9 @@ export class Body {
           dedupeAgainst: info.lastAgentMessageContent,
         },
       );
-      info.lastAgentMessageContent = info.mergeSummary;
     };
-    if (info.archived) return false;
-    if (!info.boundRepo) {
-      await publishResult();
-      await this.transitionCornerState(info, 'idle');
-      return true;
-    }
-    let ready = false;
-    try {
-      ready = await this.publishMergeReady(info);
-    } catch (error) {
-      const reason = `The merge gate could not complete: ${summarizeGitFailure(String(error))}`;
-      info.lastMergeNotReadyReason = reason;
-      info.mergeGateBlocked = { reason };
-      console.error(`[body] corner ${info.subchannelId} merge gate failed:`, error);
-    }
-    if (!ready && info.lastMergeNotReadyReason) {
-      info.mergeGateBlocked ??= { reason: info.lastMergeNotReadyReason };
-    }
+    if (info.archived) return;
     if (!info.archived) await publishResult();
-    return ready;
   }
 
   /** Start the requested work without blocking discovery/UI updates. */
@@ -9188,17 +8714,6 @@ export class Body {
     attribution: ModelTurnAttribution,
   ): void {
     if (this.runningAgentTasks.has(info.subchannelId)) return;
-    if (
-      cornerFrozenForPendingClose({
-        pending: info.toolClosePending,
-        approved: Boolean(info.humanMergeApproval),
-      })
-    ) {
-      console.log(
-        `[body] corner ${info.subchannelId}: agent turn refused while tool close is pending`,
-      );
-      return;
-    }
     const task = (async () => {
       const requestId = attribution.requestId;
       const sessionId = info.session.logicalSessionId ?? info.session.sessionId;
@@ -9220,10 +8735,9 @@ export class Body {
           info.boundRepo
             ? [
                 'Implement the following human request in this worktree.',
-                'Keep all edits on the current feature branch. Commit the completed work.',
-                'Do not merge, push or change the target branch, or archive this corner.',
-                CORNER_TARGET_SYNC_INSTRUCTION,
-                CORNER_MERGE_GATE_INSTRUCTION,
+                `Keep all edits on ${info.featureBranch}. Commit and push the completed work, then open its pull request with gh.`,
+                `Target ${shortBranchName(info.boundRepo.targetBranch)}. Merge with gh only when a human explicitly asks; never push or merge directly into the target branch.`,
+                'To abandon this repository corner, delete its remote feature branch. Do not call close_corner.',
                 CORNER_TURN_SUMMARY_INSTRUCTION,
                 '',
                 taskInstructions,
@@ -9239,7 +8753,6 @@ export class Body {
           {
             ...attribution,
             channelId: info.subchannelId,
-            withholdMergeClaims: Boolean(info.boundRepo),
           },
         );
         // The corner may have been closed (archived) while this turn was
@@ -9252,10 +8765,9 @@ export class Body {
           | undefined;
         let publishedMentionEvent: NostrEvent | undefined;
         const parentRoomId = info.session.parentChannelId;
-        const ready = await this.finishCornerTurnAgainstMergeGate(
+        await this.finishCornerTurn(
           info,
           result,
-          attribution,
           '',
           parentRoomId
             ? {
@@ -9281,13 +8793,9 @@ export class Body {
           this.agentIdentity,
           requestId,
           sessionId,
-          ready ? 'complete' : 'failed',
+          'complete',
           this.presenceGenerations.get(info.subchannelId),
         );
-        // A turn that resolved without a review target opens a quiet episode
-        // for the conclude watch — unless a failure card already declared
-        // state 4 below, which never reaches this line.
-        this.noteCornerTurnEnd(info, ready);
         if (preparedMention && publishedMentionEvent) {
           await this.finishCornerAgentMention(preparedMention, publishedMentionEvent);
         }
@@ -9296,9 +8804,6 @@ export class Body {
         // routinely surfaces here as a rejected prompt — that is the close
         // working as intended, not a failure to report.
         if (info.archived) return;
-        // State machine: the turn crashed. Gated on an actionable artifact —
-        // a crashed turn with nothing published is idle, never gold.
-        this.noteCornerFailure(info);
         await postAgentTurnStatus(
           info.subchannelId,
           this.agentIdentity,
@@ -9309,90 +8814,15 @@ export class Body {
         ).catch(() => undefined);
       } finally {
         this.runningAgentTasks.delete(info.subchannelId);
-        await this.runDeferredLandArchive(info.subchannelId);
+        await this.observeOneCornerRemote(info).catch((error) =>
+          console.error(`[body] corner ${info.subchannelId} completion observation failed:`, error),
+        );
       }
     })();
     this.runningAgentTasks.set(info.subchannelId, task);
   }
 
-  /** Read the exact target tip only after a signed press needs a model-owned sync. */
-  private async currentReviewTargetTip(
-    info: SubchannelInfo,
-    targetBranch: string,
-  ): Promise<{ tip?: string; reason?: string }> {
-    const boundRepo = info.boundRepo!;
-    const remote = boundRepo.remoteName;
-    if (remote) {
-      // Review against the endpoint landing will PUSH to. Git permits a
-      // separate fetch URL (preview tests and real mirrors use one), and
-      // checking that endpoint would certify the wrong target branch.
-      const pushUrl = await git(info.worktreePath, ['remote', 'get-url', '--push', remote]);
-      const targetRemote = pushUrl.ok && pushUrl.stdout.trim() ? pushUrl.stdout.trim() : remote;
-      const targetLs = await this.remoteGit(boundRepo, info.worktreePath, [
-        'ls-remote',
-        targetRemote,
-        targetBranch,
-      ]);
-      if (!targetLs.ok) {
-        return {
-          reason:
-            targetLs.stderr.trim() ||
-            `Could not read ${targetBranch} on ${remote} to verify that this corner is up to date.`,
-        };
-      }
-      const tip = targetLs.stdout.trim().split(/\s+/)[0];
-      return /^[0-9a-f]{40}$/.test(tip ?? '')
-        ? { tip }
-        : { reason: `The target branch ${targetBranch} no longer exists on ${remote}.` };
-    }
-
-    const localTarget = await git(info.worktreePath, ['rev-parse', '--verify', targetBranch]);
-    const tip = localTarget.stdout.trim();
-    return localTarget.ok && /^[0-9a-f]{40}$/.test(tip)
-      ? { tip }
-      : { reason: `Could not resolve the local target branch ${targetBranch}.` };
-  }
-
-  /**
-   * Read the feature ref from the remote's push endpoint. This is the only
-   * safe compare-and-set baseline after a daemon restart: process memory may
-   * not remember the tip published by the previous daemon generation.
-   */
-  private async currentRemoteFeatureTip(
-    info: SubchannelInfo,
-    boundRepo: BoundRepo,
-  ): Promise<string | undefined> {
-    const remote = boundRepo.remoteName;
-    if (!remote) return undefined;
-    const pushUrl = await git(info.worktreePath, ['remote', 'get-url', '--push', remote]);
-    const targetRemote = pushUrl.ok && pushUrl.stdout.trim() ? pushUrl.stdout.trim() : remote;
-    const featureRef = `refs/heads/${info.featureBranch}`;
-    const result = await this.remoteGit(boundRepo, info.worktreePath, [
-      'ls-remote',
-      targetRemote,
-      featureRef,
-    ]);
-    if (!result.ok) return undefined;
-    const tip = result.stdout.trim().split(/\s+/)[0];
-    return /^[0-9a-f]{40}$/.test(tip ?? '') ? tip : undefined;
-  }
-
-  /** Publish one review-delivery failure line, even when two host paths race. */
-  private async postReviewFailureOnce(
-    info: SubchannelInfo,
-    content: string,
-    tags: string[][],
-  ): Promise<boolean> {
-    const published = await this.postFailureFactOnce(info.subchannelId, content, tags);
-    if (published) info.lastReviewFailureContent = content;
-    return published;
-  }
-
-  /**
-   * Publish one re-armed failure fact per byte-identical cause + review tip.
-   * The relay lookup makes the guard survive daemon restarts; the process-local
-   * set closes the race between concurrent maintenance paths.
-   */
+  /** Publish one durable failure fact per byte-identical cause. */
   private async postFailureFactOnce(
     channelId: string,
     content: string,
@@ -9414,10 +8844,7 @@ export class Body {
             limit: 100,
           },
         ])
-        .catch((error) => {
-          console.error(`[body] failure-fact dedupe read failed for ${channelId}:`, error);
-          return [];
-        });
+        .catch(() => []);
       if (
         existing.some(
           (event) =>
@@ -9438,1492 +8865,6 @@ export class Body {
     }
   }
 
-  /** Mechanically verify the model left one clean, committed branch containing the exact target. */
-  private async verifyTargetSyncResult(
-    info: SubchannelInfo,
-    targetTip: string,
-  ): Promise<{ tip?: string; reason?: string }> {
-    const status = await git(info.worktreePath, [
-      'status',
-      '--porcelain=v1',
-      '--untracked-files=all',
-      '-z',
-    ]);
-    if (!status.ok) return { reason: 'git status could not verify the worktree' };
-    const dirty = projectDirtyStatus(
-      info.worktreePath,
-      status.stdout,
-      info.session.agentPrivateState,
-    );
-    if (dirty.length > 0) {
-      return { reason: `the worktree still has uncommitted paths: ${dirty.join(', ')}` };
-    }
-    const head = (await git(info.worktreePath, ['rev-parse', 'HEAD'])).stdout.trim();
-    if (!/^[0-9a-f]{40}$/.test(head)) return { reason: 'the branch tip could not be read' };
-    if (!(await git(info.worktreePath, ['merge-base', '--is-ancestor', targetTip, head])).ok) {
-      return {
-        reason: `the branch does not contain target ${targetTip.slice(0, 12)}`,
-      };
-    }
-    const ahead = Number(
-      (
-        await git(info.worktreePath, ['rev-list', '--count', `${targetTip}..${head}`])
-      ).stdout.trim(),
-    );
-    if (!Number.isFinite(ahead) || ahead < 1) {
-      return { reason: 'the branch has no committed work beyond the target' };
-    }
-    return { tip: head };
-  }
-
-  /**
-   * Give one exact target generation to the corner model. The model owns every
-   * content-changing operation; the daemon only observes the resulting git
-   * state. This is a visible ordinary ACP turn, never a hidden gate-rejection
-   * continuation and never an automatic retry loop.
-   */
-  private async syncTargetWithAgent(
-    info: SubchannelInfo,
-    targetBranch: string,
-    targetTip: string,
-    originalRequestId: string,
-  ): Promise<TargetSyncOutcome> {
-    const branch = targetBranch.replace(/^refs\/heads\//, '');
-    const requestId = `target-sync-${randomUUID()}`;
-    const sessionId = info.session.logicalSessionId ?? info.session.sessionId;
-    const task = (async (): Promise<TargetSyncOutcome> => {
-      try {
-        await this.transitionCornerState(info, 'working');
-        await postAgentTurnStatus(
-          info.subchannelId,
-          this.agentIdentity,
-          requestId,
-          sessionId,
-          'working',
-          this.presenceGenerations.get(info.subchannelId),
-        );
-        const result = await this.promptAgent(
-          info.session,
-          [
-            `${branch} moved to ${targetTip}. Bring this branch up to date and make it land, whatever it takes.`,
-            'You own all branch content work for this sync: fetch the exact target, replay or merge the feature work, resolve every conflict, fix tests broken by the replay, run the relevant checks, and commit the complete result.',
-            'Do not merge or push the target branch. Do not ask the human to perform git mechanics. Finish this one turn only after the feature branch is clean, committed, and contains the target tip.',
-            CORNER_TURN_SUMMARY_INSTRUCTION,
-          ].join('\n\n'),
-          {
-            channelId: info.subchannelId,
-            requestId,
-            originalRequestId,
-            cause: 'corner-follow-up',
-            withholdMergeClaims: true,
-          },
-        );
-        const verified = await this.verifyTargetSyncResult(info, targetTip);
-        const reported = stripAttachmentDirectives(stripAgentReplyPreamble(result.agentText))
-          .trim()
-          .replace(/\s+/g, ' ')
-          .slice(0, CORNER_TURN_SUMMARY_MAX_CHARS);
-        if (!verified.tip) {
-          const reason = [
-            reported ? `Codex reported: ${reported}.` : 'Codex returned no completion summary.',
-            `Verification failed because ${verified.reason ?? 'the branch was not merge-ready'}.`,
-          ].join(' ');
-          await postAgentTurnStatus(
-            info.subchannelId,
-            this.agentIdentity,
-            requestId,
-            sessionId,
-            'failed',
-            this.presenceGenerations.get(info.subchannelId),
-          );
-          return { kind: 'blocked', reason, targetTip };
-        }
-        await postAgentTurnStatus(
-          info.subchannelId,
-          this.agentIdentity,
-          requestId,
-          sessionId,
-          'complete',
-          this.presenceGenerations.get(info.subchannelId),
-        );
-        return { kind: 'ready', targetTip };
-      } catch (error) {
-        await postAgentTurnStatus(
-          info.subchannelId,
-          this.agentIdentity,
-          requestId,
-          sessionId,
-          'failed',
-          this.presenceGenerations.get(info.subchannelId),
-        ).catch(() => undefined);
-        return {
-          kind: 'blocked',
-          reason: `Codex could not complete the target-sync turn: ${summarizeGitFailure(errorText(error))}`,
-          targetTip,
-        };
-      }
-    })();
-    let registeredTask: Promise<void> | undefined;
-    if (!this.runningAgentTasks.has(info.subchannelId)) {
-      registeredTask = task.then(() => undefined);
-      this.runningAgentTasks.set(info.subchannelId, registeredTask);
-    }
-    try {
-      return await task;
-    } finally {
-      if (registeredTask && this.runningAgentTasks.get(info.subchannelId) === registeredTask) {
-        this.runningAgentTasks.delete(info.subchannelId);
-        await this.runDeferredLandArchive(info.subchannelId);
-      }
-    }
-  }
-
-  /** Build the one complete payload stored by content hash. */
-  private async buildChangeReviewArtifact(
-    info: SubchannelInfo,
-    base: string,
-    tip: string,
-    patchId: string,
-    inputFiles: ChangeReviewFile[],
-    projection: {
-      repository: string;
-      targetBranch: string;
-      targetTip?: string;
-      featureBranch: string;
-    },
-  ): Promise<ChangeReviewPublication> {
-    const files: ChangeReviewArtifact['files'] = [];
-    for (const inputFile of inputFiles) {
-      const file = { ...inputFile };
-      const patch = await readChangeReviewPatch(info.worktreePath, base, tip, file);
-      file.patchBytes = patch.patchBytes;
-      if (patch.renderUnavailableReason) {
-        file.renderUnavailableReason = patch.renderUnavailableReason;
-      } else {
-        files.push({ ...file, diff: patch.content });
-        continue;
-      }
-      files.push(file);
-    }
-    const subject = await git(info.worktreePath, ['log', '-1', '--format=%s', `${base}..${tip}`]);
-    const namedFiles = files.slice(0, 2).map((file) => file.path);
-    const fileFallback = `Changed ${namedFiles.join(', ')}${files.length > 2 ? ` +${files.length - 2} more` : ''}`;
-    const summary = subject.ok && subject.stdout.trim() ? subject.stdout.trim() : fileFallback;
-    const artifact: ChangeReviewArtifact = {
-      version: CHANGE_REVIEW_ARTIFACT_VERSION,
-      base,
-      tip,
-      patchId,
-      summary,
-      files,
-    };
-    const bytes = new TextEncoder().encode(JSON.stringify(artifact));
-    const client = createBuzzClient({
-      baseUrl: this.config.relayBaseUrl,
-      host: this.config.relayHost,
-      identity: this.agentIdentity,
-    });
-    try {
-      const uploaded = await client.uploadMedia(bytes, 'application/json');
-      await postChangeReviewMetadata(
-        info.subchannelId,
-        this.agentIdentity,
-        `${CORNER_GIT_PROJECTION_TAG}:${info.subchannelId}`,
-        JSON.stringify({
-          version: CHANGE_REVIEW_ARTIFACT_VERSION,
-          base,
-          tip,
-          patchId,
-          summary,
-          fileCount: files.length,
-          files: files.map(({ diff: _diff, ...file }) => file),
-          url: uploaded.url,
-          sha256: uploaded.sha256,
-          size: uploaded.size,
-          relation: 'review',
-          repository: projection.repository,
-          targetBranch: projection.targetBranch,
-          featureBranch: projection.featureBranch,
-          featureTip: tip,
-          ...(projection.targetTip ? { targetTip: projection.targetTip } : {}),
-          mergeBase: base,
-        }),
-        [
-          ['t', CHANGE_REVIEW_ARTIFACT_TAG],
-          ['t', CORNER_GIT_PROJECTION_TAG],
-          ['r', tip],
-          ['base', base],
-          ['tip', tip],
-          ['patch-id', patchId],
-          ['x', uploaded.sha256],
-        ],
-        this.agentRelay,
-      );
-    } finally {
-      client.disconnect();
-    }
-    return { summary };
-  }
-
-  /** Upload one content-addressed review and publish its one atomic relay fact. */
-  private async publishChangeReviewArtifact(
-    info: SubchannelInfo,
-    base: string,
-    tip: string,
-    patchId: string,
-    files: ChangeReviewFile[],
-    projection: {
-      repository: string;
-      targetBranch: string;
-      targetTip?: string;
-      featureBranch: string;
-    },
-  ): Promise<ChangeReviewPublication> {
-    if (info.reviewArtifactPublishedTip === tip && info.reviewArtifactSummary) {
-      return { summary: info.reviewArtifactSummary };
-    }
-    const publication = await this.buildChangeReviewArtifact(
-      info,
-      base,
-      tip,
-      patchId,
-      files,
-      projection,
-    );
-    info.reviewArtifactPublishedTip = tip;
-    info.reviewArtifactSummary = publication.summary;
-    return publication;
-  }
-
-  /** Publish one replaceable mechanical Git observation without inventing lifecycle prose. */
-  private async publishCornerGitProjection(
-    info: SubchannelInfo,
-    projection: {
-      relation: 'absent' | 'no-deliverable-commits-yet' | 'review' | 'contained';
-      repository: string;
-      targetBranch: string;
-      featureBranch: string;
-      featureTip?: string;
-      targetTip?: string;
-      mergeBase?: string;
-    },
-  ): Promise<void> {
-    await postChangeReviewMetadata(
-      info.subchannelId,
-      this.agentIdentity,
-      `${CORNER_GIT_PROJECTION_TAG}:${info.subchannelId}`,
-      JSON.stringify({ version: CORNER_GIT_PROJECTION_VERSION, ...projection }),
-      [
-        ['t', CORNER_GIT_PROJECTION_TAG],
-        ['relation', projection.relation],
-        ...(projection.featureTip ? [['tip', projection.featureTip]] : []),
-        ...(projection.targetTip ? [['target-tip', projection.targetTip]] : []),
-        ...(projection.mergeBase ? [['base', projection.mergeBase]] : []),
-      ],
-      this.agentRelay,
-    );
-  }
-
-  /**
-   * Withdraw the one daemon-owned READY fact. Cards and cached review fields
-   * are history; this canonical IDLE transition is what every Room/corner
-   * projection consumes when current forge or relay truth no longer proves a
-   * human-actionable change.
-   */
-  private async withdrawMergeReadiness(info: SubchannelInfo): Promise<void> {
-    info.mergeTarget = undefined;
-    info.reviewArtifactPublishedTip = undefined;
-    info.reviewArtifactSummary = undefined;
-    info.toolClosePending = undefined;
-    info.observedReviewTip = undefined;
-    // A few narrow unit fixtures exercise review narration without modelling
-    // a parent Room. Real registered corners always have one; only they can
-    // publish the durable state edge.
-    if (!info.session.parentChannelId) return;
-    if (!info.archived && (!info.cornerState || !isCornerTerminalState(info.cornerState.state))) {
-      await this.transitionCornerState(info, 'idle');
-    }
-  }
-
-  /** Push the agent's feature tip and publish the corner's current review. */
-  private async publishMergeReady(info: SubchannelInfo): Promise<boolean> {
-    const boundRepo = info.boundRepo;
-    const featureBranch = info.featureBranch;
-    if (!boundRepo || !featureBranch || info.archived) return false;
-    const tip = (await git(info.worktreePath, ['rev-parse', 'HEAD'])).stdout.trim();
-    if (!/^[0-9a-f]{40}$/.test(tip)) return false;
-    const targetBranch = boundRepo.targetBranch ?? 'refs/heads/main';
-    const target = {
-      repo: this.repoId(boundRepo),
-      branch: targetBranch,
-      tip,
-      patchId: undefined as string | undefined,
-    };
-    const targetTipResult = await git(info.worktreePath, ['rev-parse', target.branch]);
-    const observedTargetTip = targetTipResult.ok ? targetTipResult.stdout.trim() : undefined;
-    const projectionMeta = {
-      repository: target.repo,
-      targetBranch: target.branch,
-      ...(observedTargetTip && /^[0-9a-f]{40}$/.test(observedTargetTip)
-        ? { targetTip: observedTargetTip }
-        : {}),
-      featureBranch,
-    };
-    // Review publication is intentionally independent of target freshness.
-    // The card records the committed feature tip and stays mounted until a
-    // newer feature commit replaces it or the corner lands/closes. Only the
-    // signed merge press checks whether that tip can fast-forward the target.
-    const base = await resolveReviewBaseTip(info.worktreePath, target.branch);
-    const files = await listChangeReviewFiles(info.worktreePath, base, tip);
-    target.patchId = await reviewPatchId(info.worktreePath, base, tip);
-    if (files.length === 0 || !target.patchId) {
-      // Never advertise HEAD as reviewable when the agent's actual work is
-      // uncommitted, or when it made no committed change. An older ready tip
-      // must be withdrawn too, otherwise a human could approve stale work.
-      const withdrawnTarget = info.mergeTarget;
-      const commitCount =
-        Number(
-          (await git(info.worktreePath, ['rev-list', '--count', `${base}..${tip}`])).stdout.trim(),
-        ) || 0;
-      const contained =
-        files.length === 0 &&
-        (info.reviewedChange?.tip === tip || info.landedTip === tip) &&
-        (await git(info.worktreePath, ['merge-base', '--is-ancestor', tip, target.branch])).ok;
-      await this.publishCornerGitProjection(info, {
-        relation:
-          files.length > 0 ? 'review' : contained ? 'contained' : 'no-deliverable-commits-yet',
-        repository: target.repo,
-        targetBranch: target.branch,
-        featureBranch,
-        featureTip: tip,
-        ...(observedTargetTip && /^[0-9a-f]{40}$/.test(observedTargetTip)
-          ? { targetTip: observedTargetTip }
-          : {}),
-        mergeBase: base,
-      });
-      const detail =
-        files.length > 0 && !target.patchId
-          ? 'The reviewed-content identity could not be computed. The review card was not published, so no approval can be misapplied.'
-          : withdrawnTarget
-            ? `The previously published merge target ${withdrawnTarget.tip} is stale and has been withdrawn because the current tip has no remaining diff against ${target.branch}.`
-            : commitCount === 0
-              ? `No committed change is available for this turn. The current tip matches the review base on ${target.branch}.`
-              : `The branch has ${commitCount} committed ${commitCount === 1 ? 'change' : 'changes'}, but their combined diff against ${target.branch} is empty.`;
-      info.lastMergeNotReadyReason = detail;
-      info.mergeGateBlocked = { reason: detail };
-      await this.withdrawMergeReadiness(info);
-      return false;
-    }
-    info.lastMergeNotReadyReason = undefined;
-    info.mergeGateBlocked = undefined;
-    // Snapshot what this review actually contains while the base is still
-    // derivable — once the target ref advances to this tip, `base` and `tip`
-    // collapse and the landed-work recap could no longer name a single file.
-    info.reviewedChange = {
-      base,
-      tip,
-      commitCount:
-        Number(
-          (await git(info.worktreePath, ['rev-list', '--count', `${base}..${tip}`])).stdout.trim(),
-        ) || 0,
-      fileCount: files.length,
-      files: files.slice(0, 5).map((file) => file.path),
-    };
-    const existingReviewTarget = info.mergeTarget?.tip === tip;
-    // A newer commit supersedes the old card immediately. Delivery of its
-    // replacement may fail, but the previous tip is no longer the current
-    // live change and therefore cannot remain READY while that work runs.
-    if (info.mergeTarget && !existingReviewTarget) {
-      await this.withdrawMergeReadiness(info);
-    }
-    let reviewArtifact: ChangeReviewPublication | undefined;
-    if (existingReviewTarget) {
-      try {
-        reviewArtifact = await this.publishChangeReviewArtifact(
-          info,
-          base,
-          tip,
-          target.patchId!,
-          files,
-          projectionMeta,
-        );
-      } catch (error) {
-        await this.withdrawMergeReadiness(info);
-        throw error;
-      }
-      if (info.mergeTarget?.tip === tip) {
-        return true;
-      }
-    }
-
-    // A model-owned rebase can rewrite this corner's feature history. Derive
-    // the lease from the remote ref itself, never from restart-lost process
-    // memory: if the observed remote tip is not an ancestor of the new tip,
-    // replace exactly that observed sha and abort if anything moves meanwhile.
-    const remoteFeatureTip = boundRepo.remoteName
-      ? await this.currentRemoteFeatureTip(info, boundRepo)
-      : undefined;
-    const rewritten = remoteFeatureTip
-      ? !(await git(info.worktreePath, ['merge-base', '--is-ancestor', remoteFeatureTip, tip])).ok
-      : false;
-    const forceArgs = rewritten
-      ? [`--force-with-lease=refs/heads/${featureBranch}:${remoteFeatureTip}`]
-      : [];
-    // The feature-branch publish is a brokered push: classified (this corner's
-    // own branch → allowed), audited, then performed by the daemon with its
-    // own credentials. A refusal never reaches git at all.
-    const push = existingReviewTarget
-      ? { ok: true as const, status: 0, stdout: '', stderr: '' }
-      : boundRepo.remoteName
-        ? await performBrokeredPush({
-            remote: boundRepo.remoteName,
-            refspecs: [`${boundRepo.ownerHex ? featureBranch : tip}:refs/heads/${featureBranch}`],
-            policy: { featureBranch, protectedRefs: [target.branch] },
-            ...(forceArgs.length ? { extraArgs: forceArgs } : {}),
-            cornerId: info.subchannelId,
-            sessionId: info.session.logicalSessionId ?? info.session.sessionId,
-            runGit: async (args) => await this.remoteGit(boundRepo!, info.worktreePath, args),
-          })
-        : { ok: true as const, status: 0, stdout: '', stderr: '' };
-    if (!push.ok) {
-      // State machine: delivery failed. Gated on whether a published,
-      // actionable review target actually stands — otherwise idle, never gold.
-      this.noteCornerFailure(info);
-      await this.postReviewFailureOnce(
-        info,
-        `Couldn't prepare this change for review: ${summarizeGitFailure(push.stderr)}`,
-        [
-          ...RECOVERABLE_CORNER_FAILURE_TAGS,
-          ['repo', target.repo],
-          ['branch', target.branch],
-          ['tip', target.tip],
-        ],
-      );
-      return false;
-    }
-    // The content-addressed artifact and its one relay pointer must both land
-    // before the merge-ready card exists.
-    try {
-      reviewArtifact ??= await this.publishChangeReviewArtifact(
-        info,
-        base,
-        tip,
-        target.patchId!,
-        files,
-        projectionMeta,
-      );
-    } catch (error) {
-      await this.withdrawMergeReadiness(info);
-      throw error;
-    }
-
-    // The Git projection is the review surface. No lifecycle prose or second
-    // merge-ready fact is published; the indexer derives REVIEW directly from
-    // the one replaceable projection written above.
-    info.mergeTarget = target;
-    info.lastReviewFailureContent = undefined;
-    // A fresh review is a fresh land attempt: whatever the previous tip could
-    // not do is no longer the standing condition being reported.
-    info.lastLandFailure = undefined;
-    // A target-sync or later work turn may have advanced the tip. Re-read the
-    // durable corner approval immediately so the current work can land without
-    // another human tap.
-    if (info.humanMergeApproval) await this.findHumanMergeApproval(info);
-    return true;
-  }
-
-  /**
-   * Find a standing approval for this corner + repository + target branch from
-   * a device-held human admin, never an agent. The signed tip and patch id are
-   * review snapshots; ongoing work in the same corner does not spend approval.
-   */
-  /**
-   * Key succession (auth-service answer, no ledger knowledge here): when the
-   * signer is not itself a channel admin, an approval may still be
-   * owner-signed — if it comes from the CURRENT key of the identity that
-   * authored the Room's repository binding. The auth service resolves that
-   * key for us in its room-token answer (`resolveBindingOwnerKey`), so a
-   * replaced device key keeps approval authority over rooms its predecessor
-   * set up. The registered-agent refusal is re-checked fail-closed first:
-   * succession only ever moves authority between human-held keys.
-   */
-  private async isBindingOwnerSuccessor(
-    pubkey: string,
-    info: SubchannelInfo,
-    relay: RelayReader = this.agentRelay,
-  ): Promise<boolean> {
-    if (!info.boundRepo || !this.resolveBindingOwnerKey) return false;
-    try {
-      const agentSigner = await isRegisteredAgentIdentity(pubkey, relay);
-      if (agentSigner) return false;
-    } catch {
-      return false; // cannot prove the signer is human → fail closed
-    }
-    try {
-      const ownerKey = await this.resolveBindingOwnerKey(info.boundRepo);
-      return Boolean(ownerKey) && ownerKey === pubkey;
-    } catch (error) {
-      console.error('[body] binding-owner resolution failed; approval refused:', error);
-      return false;
-    }
-  }
-
-  /**
-   * Durable one-line landing progress in the ordinary transcript activity
-   * stream. Each stage gets a stable id so a live in-progress line and its
-   * terminal receipt collapse exactly like an ACP tool call.
-   */
-  private async postLandingStage(
-    info: SubchannelInfo,
-    stage: 'approval-received' | 'realigning' | 'running-gate' | 'pushing' | 'landed' | 'failed',
-    options: { title: string; status?: 'in_progress' | 'completed' | 'failed'; output?: string },
-  ): Promise<boolean> {
-    const approvalId = info.humanMergeApproval?.id ?? info.mergeTarget?.tip ?? 'pending';
-    const tip = info.mergeTarget?.tip;
-    const receiptKey = `${approvalId}:${tip ?? 'unknown'}:${stage}`;
-    const receiptValue = `${options.status ?? 'completed'}:${options.title}:${options.output ?? ''}`;
-    info.landingStageReceipts ??= new Map();
-    if (info.landingStageReceipts.get(receiptKey) === receiptValue) return true;
-    const published = await publishCritical(
-      () =>
-        postAgentActivityBatch(
-          info.subchannelId,
-          this.agentIdentity,
-          {
-            sessionId: `landing:${approvalId}`,
-            channelId: info.subchannelId,
-            events: [
-              {
-                sessionUpdate: 'tool_activity',
-                toolCallId: `landing:${approvalId}:${stage}`,
-                kind: 'execute',
-                title: options.title,
-                status: options.status ?? 'completed',
-                ...(options.output ? { output: options.output } : {}),
-              },
-            ],
-          },
-          [['approval', approvalId], ['delivery-stage', stage], ...(tip ? [['tip', tip]] : [])],
-        ),
-      {
-        label: `${stage} activity for corner ${info.subchannelId}`,
-        onGiveUp: (error) =>
-          console.error(`[body] ${stage} activity refused for ${info.subchannelId}:`, error),
-      },
-    );
-    if (published) info.landingStageReceipts.set(receiptKey, receiptValue);
-    return published;
-  }
-
-  private landingStageIsInProgress(info: SubchannelInfo, stage: 'realigning' | 'pushing'): boolean {
-    return [...(info.landingStageReceipts ?? new Map()).entries()].some(
-      ([key, value]) => key.endsWith(`:${stage}`) && value.startsWith('in_progress:'),
-    );
-  }
-
-  /**
-   * Read approvals through the same live Room socket that already proves this
-   * daemon can read the Room. Stored runtimes from the relay-domain move may
-   * still carry a stale HTTP Host tenant: that path returns a non-retryable
-   * 404 even while the Room's WS feed and default relay publications work.
-   *
-   * The configured HTTP reader remains the first backstop for standalone
-   * Body/tests. The shipped default relay reader is the final bounded fallback
-   * and is intentionally created only after the configured read fails.
-   */
-  private async queryMergeApprovals(
-    info: SubchannelInfo,
-    filters: Record<string, unknown>[],
-  ): Promise<{ approvals: NostrEvent[]; relay: RelayReader }> {
-    const attempts: Array<{ relay: RelayReader; query: () => Promise<NostrEvent[]> }> = [];
-    const parentId = info.session.parentChannelId;
-    const roomClient = parentId ? this.roomSockets.get(parentId) : undefined;
-    if (roomClient?.socket?.connected) {
-      const relay: RelayReader = {
-        queryEvents: async (nextFilters) => [...(await roomClient.query(nextFilters))],
-      };
-      attempts.push({ relay, query: async () => await relay.queryEvents(filters) });
-    }
-    attempts.push({
-      relay: this.agentRelay,
-      query: async () => [...(await this.agentRelay.queryEvents(filters))],
-    });
-
-    const configuredOrigin = this.config.relayBaseUrl.replace(/\/$/, '');
-    const configuredHost = this.config.relayHost.toLowerCase();
-    const defaultOrigin = DEFAULT_RELAY_BASE_URL;
-    if (configuredOrigin !== defaultOrigin || !isProductionRelayHost(configuredHost)) {
-      const relay = createRelayClient(this.agentIdentity);
-      attempts.push({
-        relay,
-        query: async () => [...(await relay.queryEvents(filters))],
-      });
-    }
-
-    const errors: string[] = [];
-    for (const attempt of attempts) {
-      try {
-        return { approvals: await attempt.query(), relay: attempt.relay };
-      } catch (error) {
-        errors.push(error instanceof Error ? error.message : String(error));
-      }
-    }
-    throw new Error(errors.at(-1) ?? 'approval query failed without a reason');
-  }
-
-  private async findHumanMergeApproval(
-    info: SubchannelInfo,
-    pushedApprovals: readonly NostrEvent[] = [],
-  ): Promise<SubchannelInfo['humanMergeApproval']> {
-    const target = info.mergeTarget;
-    if (!target) return undefined;
-    info.humanMergeApproval = undefined;
-
-    let approvals: NostrEvent[];
-    let approvalRelay: RelayReader;
-    try {
-      ({ approvals, relay: approvalRelay } = await this.queryMergeApprovals(info, [
-        {
-          kinds: [9],
-          '#h': [info.subchannelId],
-          '#t': [APPROVAL_MARKER],
-          limit: 100,
-        },
-        {
-          kinds: [9],
-          '#h': [info.subchannelId],
-          '#t': [CORNER_REJECTION_TAG],
-          limit: 100,
-        },
-      ]));
-    } catch (error) {
-      const reason = (error instanceof Error ? error.message : String(error))
-        .replace(/^queryEvents failed:\s*/i, '')
-        .trim();
-      console.error('[body] human merge approval lookup failed closed:', error);
-      if (
-        info.lastApprovalReadFailure?.tip !== target.tip ||
-        info.lastApprovalReadFailure.reason !== reason
-      ) {
-        // This is an automatic retry, not a question for the owner. Compose
-        // with the durable lifecycle model as working so the deck never
-        // falsely golds a corner whose daemon is recovering on its own.
-        await this.transitionCornerState(info, 'working');
-        const surfaced = await publishCritical(
-          () =>
-            this.postFailureFactOnce(
-              info.subchannelId,
-              `Cannot read approvals: ${reason}; retrying.`,
-              [
-                ...RECOVERABLE_CORNER_FAILURE_TAGS,
-                ['delivery', 'approval-read-failed'],
-                ['retry', 'auto' satisfies DeliveryRetryPosture],
-                ['repo', target.repo],
-                ['branch', target.branch],
-                ['tip', target.tip],
-                ...(target.patchId ? [['patch-id', target.patchId]] : []),
-              ],
-            ).then(() => undefined),
-          {
-            label: `approval-read failure for corner ${info.subchannelId}`,
-            onGiveUp: (publishError) =>
-              console.error(
-                '[body] approval-read failure card could not be published; will retry:',
-                publishError,
-              ),
-          },
-        );
-        if (surfaced) info.lastApprovalReadFailure = { tip: target.tip, reason };
-      }
-      return undefined;
-    }
-    info.lastApprovalReadFailure = undefined;
-    // The live event is already a signed relay fact. Include it in this pass
-    // instead of waiting for the relay's query projection to catch up; the
-    // same signature, corner/target binding and human-admin checks below still
-    // apply, using the relay reader that proved authority.
-    for (const approval of pushedApprovals) {
-      if (
-        !approvals.some((candidate) => candidate.id === approval.id) &&
-        approval.tags.some((tag) => tag[0] === 'h' && tag[1] === info.subchannelId)
-      ) {
-        approvals.push(approval);
-      }
-    }
-    // Oldest first: the first still-authoritative signed human verdict is the
-    // corner's one durable verdict. Approval and rejection are queried as
-    // separate single-key filters because production relays may only honor
-    // the first value in a multi-value tag filter.
-    approvals.sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id));
-    const validVerdicts: Array<{ event: NostrEvent; rejection: boolean }> = [];
-    for (const approval of approvals) {
-      if (!verifyEvent(approval)) continue;
-      if (approval.pubkey === this.agentIdentity.publicKey) continue;
-      const marker = tagValue(approval, 't');
-      const rejection = marker === CORNER_REJECTION_TAG;
-      if (
-        rejection
-          ? !verifyMergeRejection(approval, approval.pubkey, target, info.subchannelId)
-          : !verifyApproval(approval, approval.pubkey, target, info.subchannelId)
-      )
-        continue;
-      const authority = await authorizeReviewer({
-        pubkey: approval.pubkey,
-        relay: approvalRelay,
-        channelId: info.subchannelId,
-        custody: 'device',
-      });
-      if (!authority.authorized) {
-        const viaSuccession = await this.isBindingOwnerSuccessor(
-          approval.pubkey,
-          info,
-          approvalRelay,
-        );
-        if (!viaSuccession) continue;
-      }
-      validVerdicts.push({ event: approval, rejection });
-    }
-    const first = validVerdicts[0];
-    if (!first) return undefined;
-    const conflict = validVerdicts.find((candidate) => candidate.rejection !== first.rejection);
-    if (conflict) {
-      console.error(
-        `[body] conflicting corner verdict ignored corner=${info.subchannelId} ` +
-          `first=${first.event.id}:${first.rejection ? 'reject' : 'approve'} ` +
-          `later=${conflict.event.id}:${conflict.rejection ? 'reject' : 'approve'}`,
-      );
-    }
-    if (first.rejection) {
-      if (!info.archived) await this.archiveSubchannel(info.subchannelId);
-      return undefined;
-    }
-    const approval = first.event;
-    // A failed press stays the first verdict, but an ordinary maintenance tick
-    // cannot silently create a second landing attempt for that same event.
-    if (approval.id === info.landingBlockedApprovalId) return undefined;
-    const approvedTip = tagValue(approval, 'tip') ?? target.tip;
-    const approvedPatchId = tagValue(approval, 'patch-id');
-    const tipAdvanced = approvedTip !== target.tip;
-    const realigned = Boolean(
-      tipAdvanced && approvedPatchId && target.patchId && approvedPatchId === target.patchId,
-    );
-    info.humanMergeApproval = {
-      id: approval.id,
-      reviewer: approval.pubkey,
-      tip: target.tip,
-      approvedTip,
-      ...(approvedPatchId ? { patchId: approvedPatchId } : {}),
-      ...(realigned ? { realigned: true } : {}),
-    };
-    // Approval custody moves the corner out of waiting even when
-    // the detailed receipt needs a relay retry: landing is daemon work now.
-    await this.transitionCornerState(info, 'working');
-    const ackKey = `${approval.id}:${target.tip}`;
-    if (info.ackedApprovalId !== ackKey) {
-      info.ackedApprovalId = ackKey;
-    }
-    if (info.ackedApprovalActivityId !== ackKey) {
-      const published = await this.postLandingStage(info, 'approval-received', {
-        title: 'Approval received',
-      });
-      if (published) info.ackedApprovalActivityId = ackKey;
-    }
-    return info.humanMergeApproval;
-  }
-
-  /**
-   * Advance a direct git remote's protected ref to the approved tip.
-   * `skip` means "nothing to do on this tick" (the feature ref hasn't caught
-   * up, or the target already sits at the approved tip).
-   */
-  private async landOnDirectRemote(
-    info: SubchannelInfo,
-    remote: string,
-    target: NonNullable<SubchannelInfo['mergeTarget']>,
-  ): Promise<LandOutcome> {
-    // `ls-remote` reaching the remote and `ls-remote` failing used to be the
-    // same answer here: both produced empty stdout, both compared unequal to
-    // the approved tip, and both returned `skip`. So a credential prompt, a
-    // DNS blip or a rate limit made an approved corner sit silently forever —
-    // no card, no log, nothing to distinguish it from "the feature ref hasn't
-    // caught up yet". Only a successful read may decide anything.
-    const featureLs = await this.remoteGit(info.boundRepo!, info.worktreePath, [
-      'ls-remote',
-      remote,
-      `refs/heads/${info.featureBranch}`,
-    ]);
-    if (!featureLs.ok) {
-      return {
-        kind: 'failed',
-        reason: featureLs.stderr.trim() || `could not read ${remote} to check the approved change`,
-      };
-    }
-    const featureTip = featureLs.stdout.trim().split(/\s+/)[0];
-    if (!featureTip) {
-      // The remote has no such branch, so the approved commit was never
-      // published there. A later poll cannot change that on its own.
-      return {
-        kind: 'failed',
-        reason:
-          `The branch ${info.featureBranch} is no longer on ${remote}, ` +
-          'so the approved change has nothing to land from.',
-      };
-    }
-    if (featureTip !== target.tip) return { kind: 'skip' };
-    const targetLs = await this.remoteGit(info.boundRepo!, info.worktreePath, [
-      'ls-remote',
-      remote,
-      target.branch,
-    ]);
-    if (!targetLs.ok) {
-      return {
-        kind: 'failed',
-        reason:
-          targetLs.stderr.trim() ||
-          `could not read ${target.branch} on ${remote} to check whether it moved`,
-      };
-    }
-    const targetTip = targetLs.stdout.trim().split(/\s+/)[0];
-    if (targetTip === target.tip) return { kind: 'skip' };
-
-    // `--follow-tags` carries any ANNOTATED tag reachable from the approved
-    // tip and missing from the remote — which is how a release corner's tag
-    // reaches the remote at all. It is scoped by construction: only tags
-    // reachable from the current corner tip, only tags the remote does
-    // not already have, and only annotated ones (a lightweight tag is left
-    // behind on purpose, since it carries no authorship of its own).
-    //
-    // This is THE protected-ref brokered push: the approval was verified by
-    // `findHumanMergeApproval` (signature, human-admin authority, and this
-    // corner + repo + target branch binding)
-    // before we got here. The broker receives the resulting current tip and
-    // re-checks it against the refspec before using daemon credentials.
-    await this.postLandingStage(info, 'pushing', { title: 'Pushing', status: 'in_progress' });
-    let missionExecution: PermissionExecutionHandle | undefined;
-    const repositoryKey = info.boundRepo?.truth?.binding.key;
-    if (info.mission) {
-      if (
-        !repositoryKey ||
-        repositoryKey !== info.mission.repository.key ||
-        target.branch !== info.mission.repository.targetBranch
-      ) {
-        return { kind: 'failed', reason: 'fresh mission repository/ref binding does not match' };
-      }
-      const action = await resolveMissionAction({
-        reader: this.permissionReader,
-        reference: info.mission,
-        workspaceId: info.mission.workspaceId,
-        roomId: info.mission.roomId,
-        principalPubkey: info.mission.principalPubkey,
-        repository: info.mission.repository,
-        executorPubkey: this.agentIdentity.publicKey,
-        exercise: {
-          kind: 'land',
-          cornerId: info.subchannelId,
-          sourceSha: target.tip,
-        },
-        ordinal: missionActionOrdinal(`land:${info.subchannelId}:${target.tip}`),
-        idempotencyKey: `mission-land:${info.subchannelId}:${target.tip}`,
-      });
-      if (!action) return { kind: 'failed', reason: 'mission standing land grant is invalid' };
-      const begun = await this.permissionRuntime.begin({ action, attempt: 1 });
-      if (begun.status !== 'started') {
-        return {
-          kind: 'failed',
-          reason: begun.status === 'refused' ? begun.reason : `mission-land-${begun.status}`,
-        };
-      }
-      missionExecution = begun.execution;
-    }
-    try {
-      const land = await performBrokeredPush({
-        remote,
-        refspecs: [`${target.tip}:${target.branch}`],
-        policy: { featureBranch: info.featureBranch, protectedRefs: [target.branch] },
-        extraArgs: ['--follow-tags'],
-        authorization: info.mission
-          ? {
-              kind: 'mission-standing-land',
-              verified: true,
-              missionId: info.mission.missionId,
-              grantEventId: info.mission.grantEventId,
-              roomId: info.mission.roomId,
-              controllerAgentPubkey: info.mission.controllerAgentPubkey,
-              repositoryKey: info.mission.repository.key,
-              targetRef: info.mission.repository.targetBranch,
-              cornerId: info.subchannelId,
-              sourceSha: target.tip,
-            }
-          : {
-              kind: 'corner-approval',
-              verified: true,
-              approval: {
-                cornerId: info.subchannelId,
-                repo: target.repo,
-                branch: target.branch,
-                approvedTip: info.humanMergeApproval?.approvedTip ?? target.tip,
-                reviewerPubkey: info.humanMergeApproval?.reviewer ?? '',
-              },
-            },
-        repository: info.mission
-          ? {
-              repositoryKey: repositoryKey!,
-              roomId: info.mission.roomId,
-              controllerAgentPubkey: info.mission.controllerAgentPubkey,
-            }
-          : undefined,
-        cornerId: info.subchannelId,
-        sessionId: info.session.logicalSessionId ?? info.session.sessionId,
-        runGit: async (args) => await this.remoteGit(info.boundRepo!, info.worktreePath, args),
-      });
-      return land.ok ? { kind: 'landed' } : { kind: 'failed', reason: land.stderr };
-    } finally {
-      if (missionExecution) {
-        await this.permissionRuntime.complete({
-          execution: missionExecution,
-          status: 'succeeded',
-          result: 'mission-land-attempted',
-        });
-      }
-    }
-  }
-
-  /**
-   * Land into a local-only repository — one with no origin at all, so there is
-   * nothing to push to and the DAEMON itself must move the target branch.
-   *
-   * The corner's worktree is a linked `git worktree` of `localPath`, so the
-   * approved tip is already in that repository's object store; landing is a
-   * ref advance, not a transfer. It stays fast-forward-only, which is the
-   * local equivalent of the remote path's non-fast-forward rejection: if the
-   * target branch moved since this corner was approved, the change is
-   * refused rather than force-landed. When the target branch is the one
-   * checked out at `localPath`, `merge --ff-only` is used so the operator's
-   * working tree and index move with the ref instead of silently reading as
-   * "everything reverted"; otherwise the ref is advanced with a compare-and-set
-   * on the tip we just verified.
-   *
-   * A tag the corner created (a release corner's annotated tag) needs no
-   * equivalent of the remote path's `--follow-tags`: the corner's worktree is a
-   * linked worktree of THIS repository, so its tags are already in the same ref
-   * store the land is advancing. There is nowhere to carry them to.
-   */
-  private async landInLocalCheckout(
-    localPath: string,
-    target: NonNullable<SubchannelInfo['mergeTarget']>,
-    info?: SubchannelInfo,
-  ): Promise<LandOutcome> {
-    const branch = target.branch.replace(/^refs\/heads\//, '');
-    const ref = `refs/heads/${branch}`;
-    const current = await git(localPath, ['rev-parse', '--verify', ref]);
-    if (!current.ok) {
-      return {
-        kind: 'failed',
-        reason: `The ${branch} branch no longer exists in this repository.`,
-      };
-    }
-    const targetTip = current.stdout.trim();
-    if (targetTip === target.tip) return { kind: 'skip' };
-    if (!(await git(localPath, ['cat-file', '-e', `${target.tip}^{commit}`])).ok) {
-      return {
-        kind: 'failed',
-        reason: 'The approved change is no longer present in this repository.',
-      };
-    }
-    // Fast-forward only — a diverged target is a moved target.
-    if (!(await git(localPath, ['merge-base', '--is-ancestor', targetTip, target.tip])).ok) {
-      return {
-        kind: 'failed',
-        reason: `The ${branch} branch has moved on since this change was approved — it needs to be rebased before it can land.`,
-      };
-    }
-
-    const checkedOut = (await git(localPath, ['symbolic-ref', '--quiet', 'HEAD'])).stdout.trim();
-    if (info) {
-      await this.postLandingStage(info, 'pushing', { title: 'Pushing', status: 'in_progress' });
-    }
-    const land =
-      checkedOut === ref
-        ? await git(localPath, ['merge', '--ff-only', target.tip])
-        : await git(localPath, ['update-ref', ref, target.tip, targetTip]);
-    return land.ok ? { kind: 'landed' } : { kind: 'failed', reason: land.stderr };
-  }
-
-  /**
-   * Land non-relay work only after a signed human-admin approval verified for
-   * this corner's merge into its target branch. The agent completion
-   * path may push its feature ref, but can never advance the target ref itself.
-   *
-   * Covers both non-relay shapes: a direct git remote (push the approved tip)
-   * and a local-only repository with no remote at all (advance the branch in
-   * the checkout ourselves). The local shape used to fall out of this loop
-   * entirely on `!remote`, so an approved local corner never landed and its
-   * approval event was left to be forwarded to the agent as chat.
-   */
-  private async pollDirectRemoteApprovals(
-    pushedApprovals: readonly NostrEvent[] = [],
-  ): Promise<number> {
-    let landed = 0;
-    for (const info of this.subchannels.values()) {
-      let boundRepo = info.boundRepo;
-      let remote = boundRepo?.remoteName;
-      let target = info.mergeTarget;
-      // Relay-origin repos land through the merge gate, never here.
-      if (
-        info.archived ||
-        info.landedTip ||
-        this.runningAgentTasks.has(info.subchannelId) ||
-        !boundRepo ||
-        boundRepo.ownerHex ||
-        !target
-      )
-        continue;
-      if (!remote && !boundRepo.localPath) continue;
-      if (info.mission) {
-        // Standing mission land is deliberately remote-only: local ref writes
-        // do not pass through the credential/ref-policy broker.
-        if (!remote) continue;
-      } else {
-        const approval = await this.findHumanMergeApproval(info, pushedApprovals);
-        if (!approval || approval.id === info.landingBlockedApprovalId) continue;
-      }
-
-      await this.postLandingStage(info, 'running-gate', { title: 'Running gate' });
-      const approvalId = info.mission?.grantEventId ?? info.humanMergeApproval!.id;
-      info.landingBlockedApprovalId = undefined;
-      const landing = await (async () => {
-        let currentTarget = target!;
-        let currentRepo = boundRepo!;
-        let currentRemote = remote;
-        const refresh = async (): Promise<void> => {
-          if (!this.refreshRepositoryTruth) return;
-          currentRepo = await this.refreshRepositoryTruth(currentRepo, 'land');
-          info.boundRepo = currentRepo;
-          currentRemote = currentRepo.remoteName;
-        };
-        const attempt = async (): Promise<LandOutcome> =>
-          currentRemote
-            ? await this.landOnDirectRemote(info, currentRemote, currentTarget)
-            : await this.landInLocalCheckout(currentRepo.localPath!, currentTarget, info);
-
-        await refresh();
-        let outcome = await attempt();
-        if (outcome.kind === 'failed' && isMovedTargetLandFailure(outcome.reason)) {
-          const synced = await this.syncMovedTargetForLanding(info, currentTarget);
-          if (synced.kind === 'blocked') {
-            outcome = { kind: 'failed', reason: synced.reason };
-          } else if (synced.kind === 'moved') {
-            outcome = { kind: 'failed', reason: synced.reason };
-          } else if (!info.mergeTarget) {
-            outcome = {
-              kind: 'failed',
-              reason: 'the Codex-updated change could not be republished for landing',
-            };
-          } else {
-            currentTarget = info.mergeTarget;
-            await this.postLandingStage(info, 'running-gate', { title: 'Running gate' });
-            await refresh();
-            outcome = await attempt();
-          }
-        }
-        return {
-          boundRepo: currentRepo,
-          remote: currentRemote,
-          target: currentTarget,
-          outcome,
-        };
-      })();
-      boundRepo = landing.boundRepo;
-      remote = landing.remote;
-      target = landing.target;
-      let { outcome } = landing;
-      if (outcome.kind === 'skip') continue;
-      if (outcome.kind === 'failed') {
-        const humanized = summarizeGitFailure(outcome.reason);
-        if (info.landingBlockedApprovalId === approvalId) {
-          continue;
-        }
-        info.lastLandFailure = { tip: target.tip, reason: humanized };
-        info.landingBlockedApprovalId = approvalId;
-        const failureStage = this.landingStageIsInProgress(info, 'pushing') ? 'pushing' : 'failed';
-        await this.postLandingStage(info, failureStage, {
-          title: failureStage === 'pushing' ? 'Pushing' : 'Landing failed',
-          status: 'failed',
-          output: humanized,
-        });
-        await this.postFailureFactOnce(info.subchannelId, `Couldn't land: ${humanized}`, [
-          ['status', 'failed'],
-          ['retry', 'blocked'],
-          ['repo', target.repo],
-          ['branch', target.branch],
-          ['feature', info.featureBranch!],
-          ['tip', target.tip],
-          ['approval', approvalId],
-        ]);
-        await this.transitionCornerState(info, 'waiting', 'review');
-        continue;
-      }
-
-      // The land is proven HERE — this is the only moment every non-relay
-      // shape (a direct-remote push, a local fast-forward, and the re-land
-      // after a moved-target self-heal) is known to have succeeded. Recapping
-      // from `pollMergeCompletions` alone made the recap depend on that poll
-      // re-deriving the land from `info.mergeTarget`, which landing itself is
-      // what destroys.
-      //
-      // Recorded BEFORE anything is published about it. Landing is a one-shot:
-      // the very next visit sees the target ref already at the approved tip and
-      // returns `skip`, so this block runs exactly once — and it used to write
-      // `landedTip` only after two awaited relay publishes, either of which
-      // throws out of the whole poll on an ordinary transient refusal. The
-      // corner then had no `landedTip`, and once the next corner turn's
-      // `publishMergeReady` withdrew `mergeTarget` there was nothing left for
-      // `confirmedLandedTip` to re-derive either: no recap, no summary, no
-      // archive, forever. That is the live miss this ordering closes.
-      if (this.refreshRepositoryTruth) {
-        try {
-          boundRepo = await this.refreshRepositoryTruth(boundRepo, 'recap');
-          info.boundRepo = boundRepo;
-        } catch (error) {
-          // The push already landed. A failed cache refresh may delay local
-          // visibility, but it must not misreport or retry the land itself.
-          console.error(
-            `[body] post-land repository refresh failed for ${info.subchannelId}:`,
-            error,
-          );
-        }
-      }
-      info.landedTip = target.tip;
-      info.landingBlockedApprovalId = undefined;
-      if (this.landingStageIsInProgress(info, 'pushing')) {
-        await this.postLandingStage(info, 'pushing', { title: 'Pushing', status: 'completed' });
-      }
-      await this.postLandingStage(info, 'landed', {
-        title: `Landed at ${target.tip.slice(0, 12)}`,
-      });
-      if (this.syncPairingCheckout) {
-        await this.syncPairingCheckout(boundRepo, target.tip).catch((error) =>
-          console.error(`[body] pairing-checkout sync failed for ${info.subchannelId}:`, error),
-        );
-      }
-      console.log(
-        `[body] landed corner ${info.subchannelId} on ${target.branch} at ${target.tip.slice(0, 12)}`,
-      );
-
-      // Both status publishes are announcements ABOUT a land that already
-      // happened, and neither is retryable by re-running the land (see above).
-      // They ARE worth riding out a transient relay outage for, though — each
-      // gets the bounded critical-publish loop, and a final refusal is logged
-      // and stepped over rather than allowed to cost this corner its recap —
-      // or to abort the loop and starve every corner behind it of its own land.
-      await this.recapLandedCorner(info, target.tip);
-      landed++;
-    }
-    return landed;
-  }
-
-  /**
-   * Ask the corner model to own one target sync for this signed merge press.
-   * The daemon performs no rebase or conflict edit; it only verifies,
-   * republishes the truthful card, and lets the ff-only land continue.
-   */
-  private async syncMovedTargetForLanding(
-    info: SubchannelInfo,
-    target: NonNullable<SubchannelInfo['mergeTarget']>,
-  ): Promise<TargetSyncOutcome> {
-    const approvalId = info.humanMergeApproval?.id ?? target.tip;
-    await this.postLandingStage(info, 'realigning', {
-      title: 'Realigning',
-      status: 'in_progress',
-    });
-    const currentTarget = info.boundRepo
-      ? await this.currentReviewTargetTip(info, target.branch)
-      : { reason: 'repository binding is unavailable for automatic target synchronization' };
-    if (!currentTarget.tip) {
-      return {
-        kind: 'blocked',
-        reason: currentTarget.reason ?? 'the current target tip could not be read',
-      };
-    }
-    const synced = await this.syncTargetWithAgent(
-      info,
-      target.branch,
-      currentTarget.tip,
-      approvalId,
-    );
-    if (synced.kind !== 'ready') return synced;
-
-    const newestTarget = await this.currentReviewTargetTip(info, target.branch);
-    if (!newestTarget.tip) {
-      return {
-        kind: 'blocked',
-        reason: newestTarget.reason ?? 'the target could not be re-read after the Codex sync turn',
-        targetTip: currentTarget.tip,
-      };
-    }
-    if (newestTarget.tip !== currentTarget.tip) {
-      return {
-        kind: 'moved',
-        reason: `${target.branch.replace(/^refs\/heads\//, '')} moved again to ${newestTarget.tip.slice(0, 12)} during the Codex sync turn`,
-        targetTip: newestTarget.tip,
-      };
-    }
-
-    info.mergeTarget = undefined;
-    info.lastLandFailure = undefined;
-    if (!(await this.publishMergeReady(info))) {
-      return {
-        kind: 'blocked',
-        reason: info.lastMergeNotReadyReason ?? 'the Codex-updated branch could not be revalidated',
-        targetTip: currentTarget.tip,
-      };
-    }
-    await this.postLandingStage(info, 'realigning', {
-      title: 'Realigning',
-      status: 'completed',
-    });
-    return { kind: 'ready', targetTip: currentTarget.tip };
-  }
-
-  /**
-   * One deterministic host recap in the PARENT Room when a corner's work
-   * actually lands — the only way a Room reader learns what a corner delivered
-   * without opening it, and never a maintenance-initiated model turn.
-   *
-   * Terminal land only: the caller has already confirmed the target ref sits
-   * at the approved tip, which is true for every repo kind (relay-origin work
-   * lands through the merge gate, direct/local work through
-   * `pollDirectRemoteApprovals`, and both converge here). Exactly once per
-   * corner, and entirely best-effort — a failed publish must never hold up the
-   * archive that follows.
-   *
-   * Returns the published event id so the CI report that follows the land can
-   * be threaded to this recap rather than arriving in the Room as an orphan
-   * line about a commit nobody is looking at any more.
-   */
-  private async postCornerLandSummary(
-    info: SubchannelInfo,
-    landedTip: string,
-  ): Promise<string | undefined> {
-    if (info.landSummaryPosted) return undefined;
-    const parentId = info.session.parentChannelId;
-    if (!parentId) {
-      this.noteLandRecap(info, 'skipped', 'the corner has no parent Room');
-      return undefined;
-    }
-    // Claimed synchronously (no `await` between check and add), the same shape
-    // `inFlightRequestIds` uses: the land path and the completion poll can be
-    // inside this function for the same corner at once, and a recap turn is
-    // long enough for that to be routine. The claim is RELEASED in `finally`,
-    // so a failed attempt is retried rather than burned — unlike
-    // `landSummaryPosted`, which now only ever means "the relay took it".
-    if (this.landSummaryInFlight.has(info.subchannelId)) return undefined;
-    this.landSummaryInFlight.add(info.subchannelId);
-    info.landSummaryAttempts = (info.landSummaryAttempts ?? 0) + 1;
-    this.noteLandRecap(
-      info,
-      'attempting',
-      `tip=${landedTip.slice(0, 12)} room=${parentId} attempt=${info.landSummaryAttempts}`,
-    );
-    try {
-      return await this.publishCornerLandSummary(info, landedTip, parentId);
-    } finally {
-      this.landSummaryInFlight.delete(info.subchannelId);
-    }
-  }
-
-  /** One line per outcome, so a recap that never arrives is never also silent in the log. */
-  private noteLandRecap(
-    info: SubchannelInfo,
-    outcome: 'attempting' | 'published' | 'refused' | 'skipped' | 'degraded',
-    detail: string,
-  ): void {
-    const line = `[body] land recap ${outcome} for corner ${info.subchannelId}: ${detail}`;
-    if (outcome === 'refused') console.error(line);
-    else console.log(line);
-  }
-
-  /** The recap itself. Split out purely so the in-flight claim above owns one `finally`. */
-  private async publishCornerLandSummary(
-    info: SubchannelInfo,
-    landedTip: string,
-    parentId: string,
-  ): Promise<string | undefined> {
-    const branch = (
-      info.mergeTarget?.branch ??
-      info.boundRepo?.targetBranch ??
-      'refs/heads/main'
-    ).replace(/^refs\/heads\//, '');
-    const objective = info.request?.content
-      ? taskDescriptionFromCornerRequest(info.request.content).slice(0, 240)
-      : '';
-    const change = info.reviewedChange;
-    const changeLine = change
-      ? `${change.commitCount} ${change.commitCount === 1 ? 'commit' : 'commits'} across ` +
-        `${change.fileCount} ${change.fileCount === 1 ? 'file' : 'files'}` +
-        (change.files.length
-          ? ` (${change.files.slice(0, 3).join(', ')}${change.fileCount > 3 ? ', …' : ''})`
-          : '')
-      : 'the work committed in this corner';
-    // Where it actually went comes from the same truth object that supplied
-    // the session cwd, corner base, and land target. Pairing-root history is
-    // intentionally not an agent-visible recap input.
-    let remoteUrl = info.boundRepo?.truth?.remoteUrl ?? info.boundRepo?.remoteUrl;
-    if (!remoteUrl) {
-      const remoteName = info.boundRepo?.remoteName;
-      if (remoteName) {
-        const remote = await git(info.worktreePath, ['remote', 'get-url', remoteName]);
-        remoteUrl = remote.ok ? remote.stdout.trim() : undefined;
-      }
-    }
-    const destination: LandDestination = {
-      branch,
-      tip: landedTip,
-      ...(remoteUrl ? { remoteUrl } : {}),
-    };
-    const landedLine = landDestinationLines(destination)[0]!;
-    const commitUrl = commitUrlForRemote(remoteUrl, landedTip);
-    const omitted = deliberateLandOmission(info.mergeSummary);
-    const approval = info.humanMergeApproval;
-    let approver: { pubkey: string; name: string; handle: string } | undefined;
-    if (approval) {
-      const attribution = await this.roomAuthorAttributions(parentId, [approval.reviewer])
-        .then((authors) => authors.get(approval.reviewer))
-        .catch(() => undefined);
-      const name = attribution?.name ?? fallbackPersonName(approval.reviewer);
-      approver = {
-        pubkey: approval.reviewer,
-        name,
-        handle: attribution?.handle ?? personHandle(name, approval.reviewer),
-      };
-    }
-
-    const recap = [
-      objective
-        ? `Set out to: ${objective}`
-        : `Set out to finish the work in ${info.featureBranch}.`,
-      `Landed: ${changeLine}.`,
-      landedLine,
-      `Left out: ${omitted}`,
-      ...(approver ? [`Approved by @${approver.handle}.`] : []),
-      ...(commitUrl ? [commitUrl] : []),
-    ].join('\n');
-    // Recap composition is deterministic host work. A land often arrives on
-    // a maintenance tick, and no fresh human message authorized another model
-    // call merely to rewrite facts the host already has.
-
-    const event = buildLifecycleMessage({
-      kind: 'landed-digest',
-      channelId: parentId,
-      owner: this.agentIdentity,
-      content: recap,
-      tags: [
-        ['t', LAND_SUMMARY_TAG],
-        ['subchannel', info.subchannelId],
-        ['feature', info.featureBranch!],
-        ['branch', branch],
-        ['tip', landedTip],
-        ['objective', objective || `Finish the work in ${info.featureBranch!}`],
-        ['delivered', changeLine],
-        ['omitted', omitted],
-        ...(approver
-          ? [
-              ['approver', approver.pubkey],
-              ['approver-name', approver.name],
-              ['approver-handle', approver.handle],
-            ]
-          : []),
-        ...(commitUrl ? [['url', commitUrl]] : []),
-        ['agent', this.agentIdentity.publicKey],
-      ],
-    });
-    await publishEvent(event, this.agentIdentity);
-    // Only now. Everything above is re-attemptable; a relay that took the
-    // event is the one fact that makes a second recap a duplicate.
-    info.landSummaryPosted = true;
-    this.noteLandRecap(info, 'published', `event=${event.id} room=${parentId}`);
-    return event.id;
-  }
-
-  /**
-   * Follow a landed commit's CI and say — once — how it went.
-   *
-   * A land is not the end of the story: the change is on the branch, and the
-   * next thing every reader wants is whether it went green. This is the one
-   * follow-up, threaded to the land recap, and it is silent unless there is a
-   * verdict: a repository with no CI, a still-running pipeline past the watch
-   * budget, an unreadable API, and every non-GitHub remote (local-only,
-   * relay-origin, another host) all produce no message and no error. Silence is
-   * the correct answer to "I don't know", and a Room full of "CI status
-   * unknown" lines would be worse than one that only ever speaks when it has
-   * something to report.
-   *
-   * Fire-and-forget by design — the corner is archived immediately after the
-   * land, so this must outlive it: it captures every fact it needs up front
-   * (the repository is read through the canonical checkout, which survives the
-   * corner's worktree being reaped) and afterwards touches nothing but the
-   * relay.
-   */
-  private watchLandedCommitCi(info: SubchannelInfo, landedTip: string): void {
-    if (info.ciWatchStarted) return;
-    const parentId = info.session.parentChannelId;
-    const boundRepo = info.boundRepo;
-    // Relay-origin repositories are hosted by the Buzz relay and have no
-    // GitHub checks to read; a local-only repository has no remote at all.
-    if (!parentId || !boundRepo || boundRepo.ownerHex || !boundRepo.remoteName) return;
-    const repoDir = boundRepo.localPath ?? info.worktreePath;
-    info.ciWatchStarted = true;
-
-    const branch = (
-      info.mergeTarget?.branch ??
-      boundRepo.targetBranch ??
-      'refs/heads/main'
-    ).replace(/^refs\/heads\//, '');
-    const subchannelId = info.subchannelId;
-    const watch = (async () => {
-      // The canonical checkout survives corner archive; resolve through the
-      // deadline-bound Git worker without blocking the core loop.
-      const repoRef = await resolveGitHubRepo(repoDir, boundRepo.remoteName!);
-      if (!repoRef) return;
-      const token = this.ciWatchOptions.token ?? (await this.repositoryAccessToken?.(boundRepo));
-      const conclusion = await watchCommitCi(repoRef, landedTip, {
-        pollMs: CI_WATCH_POLL_MS,
-        timeoutMs: CI_WATCH_TIMEOUT_MS,
-        noneGraceMs: CI_WATCH_NONE_GRACE_MS,
-        signal: this.ciWatchAbort.signal,
-        ...this.ciWatchOptions,
-        ...(token ? { token } : {}),
-      });
-      const message = describeCiOutcome(conclusion, { branch, tip: landedTip });
-      if (!message) return;
-      console.log(`[body] ${message}`);
-    })()
-      .catch((error) => console.error(`[body] CI watch failed for ${subchannelId}:`, error))
-      .finally(() => this.pendingCiWatches.delete(watch));
-    this.pendingCiWatches.add(watch);
-  }
-
-  /**
-   * Tell the parent Room what this corner delivered, and follow the landed
-   * commit's CI — once per corner, from whichever path landed it.
-   *
-   * A direct land and the completion poll that follows it in the same tick
-   * both call this, so the exactly-once property lives here rather than
-   * resting on each half's own internal guard. Entirely best-effort: neither
-   * half may hold up the teardown that follows a land.
-   */
-  private async recapLandedCorner(info: SubchannelInfo, landedTip: string): Promise<void> {
-    // A proven land is a canonical terminal conclusion. The later archive
-    // advances this to CLOSED after the session retires and cleanup completes.
-    if (!info.archived) await this.transitionCornerState(info, 'concluded');
-    if (info.landSummaryPosted) return;
-    await this.postCornerLandSummary(info, landedTip).catch((error) => {
-      this.noteLandRecap(info, 'refused', errorText(error));
-      return undefined;
-    });
-    this.watchLandedCommitCi(info, landedTip);
-  }
-
   /**
    * Apply an owner-confirmed Room target-branch binding to every open corner.
    * A binding change updates review coordinates but never changes branch
@@ -10938,7 +8879,6 @@ export class Body {
     for (const info of this.subchannels.values()) {
       if (info.archived) {
         this.branchSwitchActivityRetries.delete(info.subchannelId);
-        this.branchSwitchReviewRepublishes.delete(info.subchannelId);
         continue;
       }
       if (
@@ -10948,39 +8888,12 @@ export class Body {
       ) {
         continue;
       }
-      if (shortBranchName(info.boundRepo.targetBranch) === branch) {
-        if (
-          this.branchSwitchReviewRepublishes.has(info.subchannelId) &&
-          !this.branchSwitchActivityRetries.has(info.subchannelId)
-        ) {
-          try {
-            await this.publishMergeReady(info);
-            this.branchSwitchReviewRepublishes.delete(info.subchannelId);
-          } catch (error) {
-            console.error(
-              `[body] branch-switch review republish failed for ${info.subchannelId}; will retry:`,
-              error,
-            );
-          }
-        }
-        continue;
-      }
+      if (shortBranchName(info.boundRepo.targetBranch) === branch) continue;
       const previousBranch = info.boundRepo.targetBranch ?? 'refs/heads/main';
-      const hadReview =
-        Boolean(info.mergeTarget || info.humanMergeApproval) ||
-        this.branchSwitchReviewRepublishes.has(info.subchannelId);
-      if (hadReview) this.branchSwitchReviewRepublishes.add(info.subchannelId);
-      // The binding is authoritative. Updating it never mutates the feature
-      // branch; a signed merge press owns any required target sync later.
-      info.mergeTarget = undefined;
-      info.humanMergeApproval = undefined;
-      info.ackedApprovalId = undefined;
-      info.ackedApprovalActivityId = undefined;
-      info.lastLandFailure = undefined;
       const sessionId = info.session.logicalSessionId ?? info.session.sessionId;
       info.boundRepo = { ...info.boundRepo, targetBranch };
       info.session.resumeTargetRef = targetBranch;
-      const reason = `This corner now targets ${branch}. Any required sync happens after merge approval.`;
+      const reason = `This corner now targets ${branch}.`;
       const activity = {
         sessionId,
         channelId: info.subchannelId,
@@ -10999,17 +8912,6 @@ export class Body {
         );
       }
       changed += 1;
-      if (hadReview && !this.branchSwitchActivityRetries.has(info.subchannelId)) {
-        try {
-          await this.publishMergeReady(info);
-          this.branchSwitchReviewRepublishes.delete(info.subchannelId);
-        } catch (error) {
-          console.error(
-            `[body] branch-switch review republish failed for ${info.subchannelId}; will retry:`,
-            error,
-          );
-        }
-      }
     }
     return changed;
   }
@@ -11062,137 +8964,6 @@ export class Body {
     }
   }
 
-  /**
-   * Whether the archive that follows a land may proceed without the Room having
-   * been told what the corner delivered.
-   *
-   * A landed corner is deleted from every map the moment it is archived, so an
-   * archive is the last chance the recap ever gets. A refused publish therefore
-   * holds the teardown for a few maintenance ticks — but only a few: a corner
-   * left open forever because the relay will not take one kind:9 event is a
-   * worse failure than a Room that missed a recap, and by then the refusal has
-   * been logged `MAX_LAND_SUMMARY_ATTEMPTS` times with its precise reason.
-   */
-  private landRecapSettled(info: SubchannelInfo): boolean {
-    if (info.landSummaryPosted) return true;
-    // A corner with no parent Room has nowhere to recap TO, and
-    // `postCornerLandSummary` returns without spending an attempt on it — so
-    // without this it would hold its own archive open forever.
-    if (!info.session.parentChannelId) return true;
-    if ((info.landSummaryAttempts ?? 0) < MAX_LAND_SUMMARY_ATTEMPTS) return false;
-    this.noteLandRecap(
-      info,
-      'skipped',
-      `giving up after ${info.landSummaryAttempts} attempts; archiving without a recap`,
-    );
-    return true;
-  }
-
-  /**
-   * The target tip that already contains this corner's reviewed work, or
-   * `undefined` while it does not.
-   *
-   * Reads the ref for whichever repository shape the corner is bound to: a
-   * relay origin (through the merge gate's own remote), a direct git remote,
-   * or a local-only checkout the daemon advanced itself.
-   */
-  private async confirmedLandedTip(info: SubchannelInfo): Promise<string | undefined> {
-    const boundRepo = info.boundRepo;
-    const target = info.mergeTarget;
-    if (!boundRepo || !target) return undefined;
-    let targetRemote = boundRepo.remoteName;
-    if (targetRemote) {
-      const pushUrl = await git(info.worktreePath, ['remote', 'get-url', '--push', targetRemote]);
-      if (pushUrl.ok && pushUrl.stdout.trim()) targetRemote = pushUrl.stdout.trim();
-    }
-    const targetRead = targetRemote
-      ? await this.remoteGit(boundRepo, info.worktreePath, [
-          'ls-remote',
-          targetRemote,
-          target.branch,
-        ])
-      : boundRepo.localPath
-        ? await git(boundRepo.localPath, ['rev-parse', '--verify', target.branch])
-        : undefined;
-    if (!targetRead?.ok) return undefined;
-    const targetTip = targetRead.stdout.trim().split(/\s+/)[0] ?? '';
-    if (!/^[0-9a-f]{40}$/.test(targetTip)) return undefined;
-
-    // Exact identity is the strongest possible proof and requires no merge
-    // authority inference: another actor already moved the protected ref.
-    if (targetTip === target.tip) return targetTip;
-    if (!target.patchId) return undefined;
-
-    // A squash merge changes the commit SHA but preserves Git's stable patch
-    // identity. Ensure the remote target object is locally inspectable, then
-    // compare the review artifact against one bounded recent target history.
-    const objectRoot = boundRepo.localPath ?? info.worktreePath;
-    if (!(await git(objectRoot, ['cat-file', '-e', `${targetTip}^{commit}`])).ok) {
-      if (!targetRemote) return undefined;
-      const fetched = await this.remoteGit(boundRepo, objectRoot, [
-        'fetch',
-        '--no-tags',
-        targetRemote,
-        target.branch,
-      ]);
-      if (!fetched.ok) return undefined;
-    }
-    return (await targetHistoryContainsPatchId(objectRoot, targetTip, target.patchId))
-      ? targetTip
-      : undefined;
-  }
-
-  /** Archive after the target ref contains the reviewed content. */
-  async pollMergeCompletions(): Promise<number> {
-    let merged = 0;
-    for (const info of [...this.subchannels.values()]) {
-      if (info.archived || !info.boundRepo) continue;
-      // `info.landedTip` is the fallback for a corner whose land was already
-      // confirmed by another path and whose approvable `mergeTarget` has since
-      // been withdrawn — which is what `publishMergeReady` does on the first
-      // follow-up turn after a land, since the worktree then holds nothing the
-      // target branch does not already have. Without it a landed corner could
-      // never be recapped, summarized or archived at all.
-      // A land path records `landedTip` before posting the recap, whose state
-      // transition concludes the corner. Prefer that host-grounded fact: re-
-      // reading the same approval here would try to move concluded -> working
-      // and strand teardown on an invalid lifecycle transition.
-      const landedTip = info.landedTip ?? (await this.confirmedLandedTip(info));
-      if (!landedTip) continue;
-      info.landedTip = landedTip;
-      // The work is durably on the target ref — the one moment a Room reader
-      // can be told, in the agent's own voice, what this corner delivered.
-      await this.recapLandedCorner(info, landedTip);
-      // The archive deletes this corner from every map, so it is the recap's
-      // last chance. A refusal that is still worth re-attempting holds the
-      // teardown for this tick rather than taking the record with it.
-      if (!this.landRecapSettled(info)) continue;
-      if (!info.mergeSummaryPosted) {
-        await this.postMergeSummary(
-          info.subchannelId,
-          info.mergeSummary ?? `Merged ${info.featureBranch} at ${landedTip.slice(0, 12)}…`,
-        );
-        // Set only after the publish resolved: a refusal must cost this flag
-        // nothing, so a later tick re-attempts rather than skipping forever.
-        info.mergeSummaryPosted = true;
-      }
-      // A confirmed land closes the corner. Mark the drain before inspecting
-      // the session so no later member poll can start another turn. An active
-      // turn is allowed to finish; an idle warm process is proactively
-      // suspended now instead of waiting minutes for the scheduler's idle
-      // sweep. The suspension callback and this call share the idempotent
-      // archive path.
-      info.archiveWhenSessionRetires = true;
-      if (this.channelTurnActive(info.subchannelId)) {
-        console.log(`[body] landed corner ${info.subchannelId} is draining its active turn`);
-        merged++;
-        continue;
-      }
-      await this.runDeferredLandArchive(info.subchannelId);
-      merged++;
-    }
-    return merged;
-  }
 
   /**
    * One corner-session process-state transition, as reported by the Workspace
@@ -11231,7 +9002,6 @@ export class Body {
       session.processState = state;
       session.processStateSequence = Math.max(Date.now(), (session.processStateSequence ?? 0) + 1);
     }
-    if (state === 'suspended') await this.runDeferredLandArchive(channelId);
     if (!changed || initialSuspended || this.disposed) return;
     await postCornerSessionStatus(
       channelId,
@@ -11248,50 +9018,6 @@ export class Body {
       }
       console.error(`[body] failed to publish corner session state ${state}:`, error);
     });
-  }
-
-  /**
-   * Archive a landed corner whose teardown was held for its live session, once
-   * that session has actually retired.
-   *
-   * Called from two places: the session lifecycle's `suspended` transition (the
-   * scheduler's suspend/retire path knows the exact moment) and the per-corner
-   * maintenance visit as a backstop. A no-op unless the corner actually holds a
-   * deferred archive, so every other suspended transition costs nothing.
-   */
-  private async runDeferredLandArchive(subchannelId: string): Promise<void> {
-    const info = this.subchannels.get(subchannelId);
-    if (!info?.archiveWhenSessionRetires || info.archived) return;
-    if (this.channelTurnActive(subchannelId)) return;
-    try {
-      if (
-        info.session.processState === 'live' ||
-        info.session.processState === 'waiting-for-slot'
-      ) {
-        console.log(`[body] draining landed corner ${subchannelId}: suspending idle session`);
-        await this.scheduler.suspend(subchannelId);
-      }
-      const drained = this.subchannels.get(subchannelId);
-      if (!drained || drained.archived || this.channelTurnActive(subchannelId)) return;
-      // A no-op suspend means the scheduler still owns a task/admission
-      // boundary. Its lifecycle notification or the next maintenance visit
-      // retries after that boundary clears; never force-stop it here.
-      if (
-        drained.session.processState === 'live' ||
-        drained.session.processState === 'waiting-for-slot'
-      )
-        return;
-      console.log(`[body] archiving landed corner ${subchannelId}: session drained`);
-      await this.archiveSubchannel(subchannelId);
-    } catch (error) {
-      // The maintenance backstop retries; nothing here may break the scheduler
-      // callback this runs under (`notifyState` swallows, but loudly hiding a
-      // real failure would strand the corner unarchived with no trace).
-      console.error(
-        `[body] drain/archive of landed corner ${subchannelId} failed; will retry:`,
-        error,
-      );
-    }
   }
 
   /** One authoritative metadata read seam, overrideable by focused tests. */
@@ -11382,7 +9108,6 @@ export class Body {
     await this.stopManagedSession(info.session).catch(() => undefined);
     this.squireBroker?.revokeChannel(info.subchannelId);
     this.agentTools.revoke(info.subchannelId);
-    await this.transitionCornerState(info, 'closed');
     await this.retractCornerActivityRecords(parentRoomId, info.subchannelId);
     await this.removeWorktree(
       info.subchannelId,
@@ -11421,193 +9146,25 @@ export class Body {
         await this.reapMissingCorner(info);
         continue;
       }
-      // WORKING is a 90-second lease. Reconcile refreshes that one state while
-      // its actor exists; every other state remains transition-only.
-      if (info.cornerState?.state === 'working') {
-        await this.transitionCornerState(info, 'working', undefined, true);
-      }
     }
   }
 
-  /**
-   * Keep a Room's request stream on one authenticated WS. HTTP is deliberately
-   * only a slow backstop: the subscription is the delivery path and reconnects
-   * from the durable per-Room cursor so a dropped socket cannot lose a turn.
-   */
-  /** Run relay-origin gate attempts and project their daemon-owned stages. */
-  private async pollMergeGateApprovals(
-    mergeGate: DurableMergeGate,
-    pushedApprovals: readonly NostrEvent[] = [],
-  ): Promise<void> {
-    for (const info of this.subchannels.values()) {
-      if (info.archived || info.landedTip || !info.boundRepo?.ownerHex || !info.mergeTarget)
-        continue;
-      if (!(await this.findHumanMergeApproval(info, pushedApprovals))) continue;
-      await this.postLandingStage(info, 'running-gate', { title: 'Running gate' });
-    }
-
-    const attempts = await mergeGate.poll(pushedApprovals, {
-      shouldAttempt: (attempt) => {
-        const info = this.subchannels.get(attempt.candidate.subchannelId);
-        return (
-          !info ||
-          (!this.runningAgentTasks.has(info.subchannelId) &&
-            info.landingBlockedApprovalId !== attempt.approvalId)
-        );
-      },
-      onAttemptStart: async (attempt) => {
-        const info = this.subchannels.get(attempt.candidate.subchannelId);
-        if (info && !info.archived) {
-          await this.postLandingStage(info, 'pushing', {
-            title: 'Pushing',
-            status: 'in_progress',
-          });
-        }
-      },
-      onMovedTarget: async (attempt) => {
-        const info = this.subchannels.get(attempt.candidate.subchannelId);
-        const target = info?.mergeTarget;
-        if (!info || info.archived || !target) {
-          return { retry: false, reason: 'the corner review target is no longer available' };
-        }
-        const synced = await this.syncMovedTargetForLanding(info, target);
-        return synced.kind === 'ready' ? { retry: true } : { retry: false, reason: synced.reason };
-      },
-    });
-    for (const attempt of attempts) {
-      console.log(
-        `[gate] ${attempt.outcome.merged ? 'LANDED' : attempt.outcome.reason} ` +
-          `${attempt.candidate.featureBranch} approval=${attempt.approvalId}`,
-      );
-      const info = this.subchannels.get(attempt.candidate.subchannelId);
-      if (attempt.outcome.merged) {
-        if (info && !info.archived && info.mergeTarget) {
-          info.landingBlockedApprovalId = undefined;
-          info.landedTip = info.mergeTarget.tip;
-          if (this.landingStageIsInProgress(info, 'pushing')) {
-            await this.postLandingStage(info, 'pushing', {
-              title: 'Pushing',
-              status: 'completed',
-            });
-          }
-          await this.postLandingStage(info, 'landed', {
-            title: `Landed at ${info.mergeTarget.tip.slice(0, 12)}`,
-          });
-          if (this.refreshRepositoryTruth && info.boundRepo) {
-            try {
-              info.boundRepo = await this.refreshRepositoryTruth(info.boundRepo, 'land');
-            } catch (error) {
-              console.error(
-                `[body] post-gate repository refresh failed for ${info.subchannelId}:`,
-                error,
-              );
-            }
-          }
-          if (this.syncPairingCheckout && info.boundRepo) {
-            await this.syncPairingCheckout(info.boundRepo, info.mergeTarget.tip).catch((error) =>
-              console.error(`[body] pairing-checkout sync failed for ${info.subchannelId}:`, error),
-            );
-          }
-        }
-        continue;
-      }
-      if (!info || info.archived) continue;
-      const target = info.mergeTarget;
-      if (info.landingBlockedApprovalId === attempt.approvalId) continue;
-      const humanized = summarizeGitFailure(attempt.outcome.reason);
-      const failureStage = this.landingStageIsInProgress(info, 'pushing') ? 'pushing' : 'failed';
-      await this.postLandingStage(info, failureStage, {
-        title: failureStage === 'pushing' ? 'Pushing' : 'Landing failed',
-        status: 'failed',
-        output: humanized,
-      });
-      const failureTags: string[][] = [
-        ['status', 'failed'],
-        ['retry', 'blocked'],
-        ['approval', attempt.approvalId],
-      ];
-      if (target) {
-        failureTags.push(['repo', target.repo], ['branch', target.branch], ['tip', target.tip]);
-      }
-      info.landingBlockedApprovalId = attempt.approvalId;
-      await this.postFailureFactOnce(
-        attempt.candidate.subchannelId,
-        `Couldn't land: ${humanized}`,
-        failureTags,
-      ).catch((error) =>
-        console.error(
-          `[body] failed to publish merge-gate failure for ${attempt.candidate.subchannelId}:`,
-          error,
-        ),
-      );
-      if (target) await this.transitionCornerState(info, 'waiting', 'review');
-    }
-  }
-
-  /**
-   * One approval pass per Room, shared by WS wakes and the maintenance
-   * backstop. A wake during an in-flight read schedules one immediate rerun so
-   * the approval cannot fall into the read-before-delivery gap.
-   */
-  private async runApprovalLandingPass(
-    channelId: string,
-    mergeGate?: DurableMergeGate,
-    pushedApproval?: NostrEvent,
-  ): Promise<void> {
-    const existing = this.approvalLandingPasses.get(channelId);
-    if (existing) {
-      if (pushedApproval) existing.pushedApprovals.set(pushedApproval.id, pushedApproval);
-      existing.rerun = true;
-      return await existing.task;
-    }
-    const state = {
-      rerun: false,
-      pushedApprovals: new Map<string, NostrEvent>(),
-      task: Promise.resolve(),
-    };
-    if (pushedApproval) state.pushedApprovals.set(pushedApproval.id, pushedApproval);
-    const task = (async () => {
-      do {
-        state.rerun = false;
-        const pushedApprovals = [...state.pushedApprovals.values()];
-        state.pushedApprovals.clear();
-        await this.pollDirectRemoteApprovals(pushedApprovals);
-        if (mergeGate) {
-          await this.pollMergeGateApprovals(mergeGate, pushedApprovals);
-          await this.pollMergeCompletions();
-        }
-      } while ((state.rerun || state.pushedApprovals.size > 0) && !this.disposed);
-    })().finally(() => {
-      if (this.approvalLandingPasses.get(channelId) === state) {
-        this.approvalLandingPasses.delete(channelId);
-      }
-    });
-    state.task = task;
-    this.approvalLandingPasses.set(channelId, state);
-    await task;
-  }
-
+  /** Deliver a pushed corner steer or close immediately; polling is recovery only. */
   private async processPushedCornerEvent(
     channelId: string,
     info: SubchannelInfo,
     event: NostrEvent,
-    mergeGate?: DurableMergeGate,
   ): Promise<void> {
     if (event.pubkey === this.agentIdentity.publicKey || !verifyEvent(event)) return;
-    if (
-      event.tags.some(
-        (tag) => tag[0] === 't' && (tag[1] === APPROVAL_MARKER || tag[1] === CORNER_REJECTION_TAG),
-      )
-    ) {
-      this.onRoomPollSuccess?.(channelId);
-      await this.runApprovalLandingPass(channelId, mergeGate, event);
-      return;
-    }
-
     const processed = info.processedMemberEventIds ?? new Set<string>();
     info.processedMemberEventIds = processed;
-    if (this.classifyCornerEvent(info, event, processed).status !== 'close') return;
+    const classification = this.classifyCornerEvent(info, event, processed);
+    if (classification.status === 'skip') return;
     this.onRoomPollSuccess?.(channelId);
+    if (classification.status !== 'close') {
+      await this.pollMembers(info.subchannelId);
+      return;
+    }
     await this.durableState.enqueue(info.subchannelId, [event]);
     if (info.archived) {
       await this.settleCornerEvent(info, event, { count: false, recordProcessed: true });
@@ -11626,10 +9183,9 @@ export class Body {
   }
 
   /** Add live lifecycle REQs for every open corner in this Room. */
-  private async syncCornerApprovalSubscriptions(
+  private async syncCornerSubscriptions(
     channelId: string,
     client: ReturnType<typeof createBuzzClient>,
-    mergeGate: DurableMergeGate | undefined,
     subscriptions: Map<string, () => void>,
   ): Promise<void> {
     for (const [cornerId, unsubscribe] of subscriptions) {
@@ -11650,7 +9206,7 @@ export class Body {
       const unsubscribe = await client.sessionEventsSubscribe(
         info.subchannelId,
         (sessionEvent) => {
-          void this.processPushedCornerEvent(channelId, info, sessionEvent, mergeGate).catch(
+          void this.processPushedCornerEvent(channelId, info, sessionEvent).catch(
             (error) =>
               console.error(
                 `[body] Room ${channelId} pushed corner event ${sessionEvent.id} failed; poll fallback remains active:`,
@@ -11671,7 +9227,6 @@ export class Body {
     presence: ReturnType<typeof startAgentPresence>,
     opts: { pollMs?: number; signal?: AbortSignal },
     maintenance: () => Promise<void>,
-    mergeGate?: DurableMergeGate,
   ): Promise<void> {
     const reconnectBackoff = new RoomPollBackoff(1_000);
     while (!opts.signal?.aborted && !this.disposed) {
@@ -11681,26 +9236,14 @@ export class Body {
       let offClose: (() => void) | undefined;
       let removeAbortListener: (() => void) | undefined;
       let maintenanceTimer: ReturnType<typeof setInterval> | undefined;
-      const cornerApprovalSubscriptions = new Map<string, () => void>();
-      let approvalSubscriptionTail = Promise.resolve();
-      const syncApprovalSubscriptions = () => {
-        approvalSubscriptionTail = approvalSubscriptionTail.then(
-          () =>
-            this.syncCornerApprovalSubscriptions(
-              channelId,
-              client!,
-              mergeGate,
-              cornerApprovalSubscriptions,
-            ),
-          () =>
-            this.syncCornerApprovalSubscriptions(
-              channelId,
-              client!,
-              mergeGate,
-              cornerApprovalSubscriptions,
-            ),
+      const cornerSubscriptions = new Map<string, () => void>();
+      let cornerSubscriptionTail = Promise.resolve();
+      const syncCornerSubscriptions = () => {
+        cornerSubscriptionTail = cornerSubscriptionTail.then(
+          () => this.syncCornerSubscriptions(channelId, client!, cornerSubscriptions),
+          () => this.syncCornerSubscriptions(channelId, client!, cornerSubscriptions),
         );
-        return approvalSubscriptionTail;
+        return cornerSubscriptionTail;
       };
       try {
         // One REQ on the daemon's shared socket, not another authenticated
@@ -11750,7 +9293,14 @@ export class Body {
                   [sessionEvent],
                   roomParticipants,
                 );
-                await syncApprovalSubscriptions();
+                if (
+                  sessionEvent.tags.some(
+                    (tag) => tag[0] === 't' && tag[1] === 'github-event',
+                  )
+                ) {
+                  await this.pollCornerRemoteLifecycle(channelId);
+                }
+                await syncCornerSubscriptions();
               })
               .catch((error) =>
                 console.error(`[body] Room ${channelId} pushed event failed:`, error),
@@ -11758,7 +9308,7 @@ export class Body {
           },
           { since },
         );
-        await syncApprovalSubscriptions();
+        await syncCornerSubscriptions();
         this.onRoomPollSuccess?.(channelId);
         if (reconnectBackoff.recovered()) {
           console.log(`[body] Room ${channelId} WS reconnected`);
@@ -11781,8 +9331,8 @@ export class Body {
         const tickMs = opts.pollMs ?? ROOM_WS_MAINTENANCE_TICK_MS;
         const tick = () => {
           if (client?.socket?.connected) this.onRoomPollSuccess?.(channelId);
-          void syncApprovalSubscriptions().catch((error) =>
-            console.error(`[body] Room ${channelId} approval subscription refresh failed:`, error),
+          void syncCornerSubscriptions().catch((error) =>
+            console.error(`[body] Room ${channelId} corner subscription refresh failed:`, error),
           );
           void maintenance();
         };
@@ -11831,9 +9381,9 @@ export class Body {
         // Drop this Room's REQ first; the shared socket keeps serving its
         // siblings, and only an owned socket is actually closed by release().
         unsubscribe?.();
-        await approvalSubscriptionTail.catch(() => undefined);
-        for (const unsubscribeApproval of cornerApprovalSubscriptions.values()) {
-          unsubscribeApproval();
+        await cornerSubscriptionTail.catch(() => undefined);
+        for (const unsubscribeCorner of cornerSubscriptions.values()) {
+          unsubscribeCorner();
         }
         release?.();
         if (this.roomSockets.get(channelId) === client) this.roomSockets.delete(channelId);
@@ -11961,19 +9511,6 @@ export class Body {
     try {
       await this.assertRepositorySafety(channelId, boundRepo);
 
-      const mergeGate =
-        this.mergeWorkerIdentity && boundRepo.ownerHex
-          ? new DurableMergeGate({
-              worker: this.mergeWorkerIdentity,
-              ownerHex: boundRepo.ownerHex,
-              repo: boundRepo.repo,
-              channelId,
-              targetBranch: boundRepo.targetBranch ?? 'refs/heads/main',
-              ...(this.mergeWorkerRelay ? { relay: this.mergeWorkerRelay } : {}),
-            })
-          : undefined;
-      this.agentTools.setMergeGate(channelId, mergeGate);
-
       await this.provision(channelId, boundRepo);
       await this.restoreSubchannels(channelId, boundRepo);
       // The Workspace supervisor owns current-role discovery. It aborts this
@@ -11984,416 +9521,17 @@ export class Body {
         'repository',
         stopPresence,
         opts,
-        () => this.pollRoomMaintenance(channelId, mergeGate, boundRepo),
-        mergeGate,
+        () => this.pollRoomMaintenance(channelId, undefined, boundRepo),
       );
     } finally {
-      this.agentTools.deleteMergeGate(channelId);
       this.presenceGenerations.delete(channelId);
       await stopPresence();
     }
   }
 
-  /**
-   * Harness-independent merge-present watch.
-   *
-   * The ONLY trigger for publishing a review card used to be a completed ACP
-   * turn (`finishCornerTurnAgainstMergeGate`). That shape silently favours
-   * harnesses whose turn lifecycle the daemon can fully observe: codex-acp
-   * routes every tool through `session/request_permission`, so the daemon sees
-   * each step and the turn resolves through the protocol. pi-acp runs
-   * reads/writes/edits/shell BEFORE the daemon sees them and emits them as
-   * post-hoc `tool_call` telemetry — when one of those turns dies before its
-   * final response (idle-timeout cancel, adapter exit, a relay refusal during
-   * the completion publish), the commits it already made sit on the feature
-   * branch with no review card and no retry until a human sends another
-   * message. Observed live on the owner's host: pi corners holding real
-   * committed work whose parent Room only ever showed "Nothing committed is
-   * ready for review" / "Work stopped" cards, never a review target.
-   *
-   * The fix reads the one signal every harness produces identically — the git
-   * worktree itself. When a served corner holds committed work beyond its
-   * target branch in a clean tree, and no turn is running that would publish
-   * its own tail, this evaluates the same `publishMergeReady` gate the turn
-   * tail uses. It is deliberately BOUNDED to new tips (see
-   * `SubchannelInfo.observedReviewTip`) so a corner mid-task is never nagged:
-   * dirty trees and tips already reviewed or landed are skipped before any
-   * relay write, and the not-ready card publishes once per tip.
-   */
-  private async pollCornerCommitWatch(): Promise<void> {
-    for (const info of [...this.subchannels.values()]) {
-      try {
-        await this.observeCornerCommits(info);
-      } catch (error) {
-        await this.noteCommitWatchFailure(info, error);
-      }
-    }
-  }
-
-  private async noteCommitWatchFailure(info: SubchannelInfo, error: unknown): Promise<void> {
-    const tip = (await git(info.worktreePath, ['rev-parse', 'HEAD'])).stdout.trim();
-    const previous = info.commitWatchFailure;
-    const attempts = previous?.tip === tip ? previous.attempts + 1 : 1;
-    info.commitWatchFailure = { tip, attempts };
-    if (info.mergeTarget?.tip === tip && info.reviewArtifactPublishedTip !== tip) {
-      console.error(
-        `[body] corner ${info.subchannelId} review artifact publish failed (attempt ${attempts}); will keep retrying because a merge-ready card is already visible:`,
-        error,
-      );
-      return;
-    }
-    if (attempts < 3) {
-      console.error(
-        `[body] corner ${info.subchannelId} commit watch failed (attempt ${attempts}/3); will retry:`,
-        error,
-      );
-      return;
-    }
-
-    // Uploads are content-addressed and the pointer has one deterministic
-    // coordinate, so a later explicit turn can safely retry either step.
-    if (/^[0-9a-f]{40}$/.test(tip)) info.observedReviewTip = tip;
-    info.mergeTarget = undefined;
-    const detail = summarizeGitFailure(error instanceof Error ? error.message : String(error));
-    info.lastMergeNotReadyReason = `Review metadata failed after 3 attempts: ${detail}`;
-    console.error(
-      `[body] corner ${info.subchannelId} commit watch failed 3 times; automatic retries stopped for ${tip.slice(0, 12)}:`,
-      error,
-    );
-    await this.postFailureFactOnce(info.subchannelId, `Couldn't prepare review: ${detail}.`, [
-      ['status', 'failed'],
-      ['retry', 'blocked'],
-      ['tip', tip],
-    ]).catch((publishError) =>
-      console.error(
-        `[body] corner ${info.subchannelId} commit watch failure notice also failed:`,
-        publishError,
-      ),
-    );
-  }
-
-  private async observeCornerCommits(info: SubchannelInfo): Promise<void> {
-    if (!info.boundRepo || info.archived || info.landedTip) return;
-    if (
-      cornerFrozenForPendingClose({
-        pending: info.toolClosePending,
-        approved: Boolean(info.humanMergeApproval),
-      })
-    )
-      return;
-    // An in-flight turn owns its own merge-present tail — both the success
-    // path and the merge-gate feedback loop. Watching underneath it would
-    // publish half-finished work or race the tail's own verdict.
-    if (this.runningAgentTasks.has(info.subchannelId)) return;
-    if (info.session.client?.activeRunId?.(info.session.sessionId)) return;
-    const tip = (await git(info.worktreePath, ['rev-parse', 'HEAD'])).stdout.trim();
-    if (!/^[0-9a-f]{40}$/.test(tip)) return;
-    if (info.landedTip === tip) return;
-    // A published card is a snapshot of committed feature work. Target
-    // movement never re-enters review publication or withdraws it; freshness
-    // is checked only when a signed merge press reaches the landing path.
-    if (info.mergeTarget?.tip === tip) {
-      info.observedReviewTip = tip;
-      info.commitWatchFailure = undefined;
-      return;
-    }
-    if (info.observedReviewTip === tip) return;
-
-    // Cheap local pre-check so a mid-work worktree never reaches review
-    // publication from this path. Branch ancestry is deliberately irrelevant:
-    // stale committed work still gets a merge card and is synced only on press.
-    const status = (
-      await git(info.worktreePath, ['status', '--porcelain=v1', '--untracked-files=all', '-z'])
-    ).stdout;
-    if (projectDirtyStatus(info.worktreePath, status, info.session.agentPrivateState).length > 0) {
-      return;
-    }
-    const ready = await this.publishMergeReady(info);
-    // Settled: mark the tip evaluated so this exact tip is never re-driven
-    // from the watch (the ready card's idempotency lives in
-    // `publishMergeTarget`; the not-ready card must state once per tip, not
-    // once per tick). A throw above skips this line, so transient failures
-    // retry next tick.
-    info.observedReviewTip = tip;
-    info.commitWatchFailure = undefined;
-    console.log(
-      `[body] corner ${info.subchannelId} commit watch: ${
-        ready ? 'published review' : 'evaluated, not ready'
-      } at ${tip.slice(0, 12)}`,
-    );
-  }
-
-  // ---------------------------------------------------------------------
-  // Conclude watch — "never idle".
-  //
-  // A corner turn may end in exactly four states: still working, a fresh
-  // question to the human, a reviewable change presented, or a declared
-  // failure. When a turn resolves with NONE of those holding (the agent only
-  // reports progress and stops), `noteCornerTurnEnd` opens a quiet episode and the
-  // maintenance tick below drives the corner to a terminal outcome with a
-  // bounded conclude steer through the same path human messages take.
-  // ---------------------------------------------------------------------
-
-  /**
-   * THE one funnel for the corner state record. Edge-triggered against the
-   * in-memory `info.cornerState` baseline: an unchanged state is never
-   * republished (the #369 transition-only discipline — a fresh timestamp on
-   * an unchanged verdict is exactly how restarts re-golded parked corners).
-   * Callers that own a terminal transition await it. Convenience emission
-   * sites may use `setCornerState`, but a failed publish rolls the in-memory
-   * baseline back so the next tick can retry instead of suppressing a state
-   * that never became durable.
-   */
-  private transitionCornerState(
-    info: SubchannelInfo,
-    state: CornerMachineState,
-    reason?: CornerMachineReason,
-    force = false,
-  ): Promise<void> {
-    if (this.disposed) return Promise.resolve();
-    if (info.archived && state !== 'closed') return Promise.resolve();
-    const previous = info.cornerState;
-    if (!force && previous && previous.state === state && previous.reason === reason) {
-      return Promise.resolve();
-    }
-    // Stored runtimes and narrow unit fixtures may predate the canonical
-    // record. Migrate them through the real initial edge instead of letting a
-    // later state appear ex nihilo. The second publish is sequenced after the
-    // durable OPEN write, preserving the same table every new corner uses.
-    if (!previous && state !== 'open' && state !== 'closed') {
-      return this.transitionCornerState(info, 'open').then(() =>
-        this.transitionCornerState(info, state, reason, force),
-      );
-    }
-    assertCornerStateTransition(previous?.state, state);
-    const desired = { state, ...(reason !== undefined ? { reason } : {}) };
-    info.cornerState = desired;
-    return Promise.resolve();
-  }
-
-  private setCornerState(
-    info: SubchannelInfo,
-    state: CornerMachineState,
-    reason?: CornerMachineReason,
-    force = false,
-  ): void {
-    void this.transitionCornerState(info, state, reason, force).catch((error) =>
-      console.error(`[body] corner state publish failed for ${info.subchannelId}:`, error),
-    );
-  }
-
-  /**
-   * The turn tail's state word, promoted from the conclude watch's ask
-   * detection: a turn that resolved WITHOUT a review target either ended on a
-   * standing question for a person (`waiting`/`question`) or in plain
-   * idleness (`idle`). This is the one genuinely new emission the never-idle
-   * conclude watch (#389) makes deterministic — the same read that decides
-   * whether to nudge now also decides what the corner is doing while quiet.
-   *
-   * Deliberately async and guarded: a queued human message that starts a new
-   * turn before this resolves must win (`turnSeq` guard), and an unreadable
-   * corner channel keeps the last word standing rather than guessing.
-   */
-  private async evaluateCornerTailState(
-    info: SubchannelInfo,
-    turnSeq: number | undefined,
-  ): Promise<void> {
-    try {
-      if (info.archived || info.mergeTarget) return;
-      const events = await this.agentRelay.queryEvents([
-        { kinds: [9], '#h': [info.subchannelId], limit: 100 },
-      ]);
-      if (
-        info.archived ||
-        info.turnSeq !== turnSeq ||
-        this.runningAgentTasks.has(info.subchannelId)
-      ) {
-        return;
-      }
-      if (standingAskFromEvents(events, this.agentIdentity.publicKey)) {
-        await this.transitionCornerState(info, 'waiting', 'question');
-      } else {
-        await this.transitionCornerState(info, 'idle');
-      }
-      console.log(
-        `[body] corner ${info.subchannelId} tail state: ${info.cornerState?.state}` +
-          (info.cornerState?.reason ? `/${info.cornerState.reason}` : ''),
-      );
-    } catch (error) {
-      console.error(
-        `[body] corner ${info.subchannelId} tail state evaluation failed; keeping last word:`,
-        error,
-      );
-    }
-  }
-
-  /**
-   * Seed a restored corner from its state record, then re-publish that current
-   * daemon-owned word with a fresh monotonic timestamp. Planned shutdown says
-   * nothing; the replacement daemon is the actor that reasserts liveness.
-   * A pre-migration corner with no record is reconstructed only from durable
-   * daemon facts: review target, quiet conclude episode, otherwise working.
-   */
-  private async seedCornerStateFromRecord(
-    info: SubchannelInfo,
-    legacyEvents: readonly NostrEvent[] = [],
-  ): Promise<void> {
-    const foundRecord = false;
-    // Stage-2 migration only: a corner created by an older daemon has no
-    // record. Preserve a genuine standing ask, and keep a legacy parked
-    // failure/attention card quiet instead of re-driving its original task.
-    // Once every corner has a record, stage 3 deletes this branch with the
-    // reader fallback; it is deliberately not used by transition suppression.
-    const legacyQuestion =
-      !foundRecord && standingAskFromEvents(legacyEvents, this.agentIdentity.publicKey);
-    const legacyParked =
-      !foundRecord &&
-      legacyEvents.some((event) => {
-        const status = tagValue(event, 'display-status') ?? tagValue(event, 'status');
-        return status === 'needs-attention' || status === 'failed';
-      });
-    const current: { state: CornerMachineState; reason?: CornerMachineReason } = info.mergeTarget
-      ? ({ state: 'waiting', reason: 'review' } as const)
-      : legacyQuestion
-        ? ({ state: 'waiting', reason: 'question' } as const)
-        : legacyParked
-          ? ({ state: 'idle' } as const)
-          : (info.cornerState ??
-            (info.conclude?.quietSince !== undefined || info.conclude?.stalledNotified
-              ? ({ state: 'idle' } as const)
-              : ({ state: 'working' } as const)));
-    if (!foundRecord) await this.transitionCornerState(info, 'open');
-    await this.transitionCornerState(info, current.state, current.reason, true);
-  }
-
-  /**
-   * The `failure` emission, gated per the owner's sharpening (2026-08-23):
-   * waiting golds ONLY for something the person can actually act on
-   * — a published review target (retry/approve) or a standing question. A
-   * concluded/stopped/"couldn't-deliver" worker with NEITHER has nothing for
-   * a person to do, so it publishes plain `idle` and never golds the deck.
-   */
-  private noteCornerFailure(info: SubchannelInfo): void {
-    if (info.mergeTarget) {
-      const alreadyFailure =
-        info.cornerState?.state === 'waiting' && info.cornerState.reason === 'failure';
-      this.setCornerState(info, 'waiting', 'failure');
-      if (!alreadyFailure) info.attentionNarrativePending = true;
-    } else {
-      this.setCornerState(info, 'idle');
-    }
-  }
-
-  private persistConcludeEpisode(info: SubchannelInfo): void {
-    void this.durableState
-      .saveConcludeEpisode(info.subchannelId, info.conclude)
-      .catch((error) =>
-        console.error(`[body] failed to persist conclude state for ${info.subchannelId}:`, error),
-      );
-  }
-
-  /** A human message (or human-opened task) starts a turn: any standing quiet
-   *  episode is over and its spent budget does not carry into the new one.
-   *  A turn start is also the state machine's `working` emission — this one
-   *  funnel covers open-follow-up turns, realign turns, and restart
-   *  continuations alike, because every working turn enters here. */
+  /** A human message (or human-opened task) advances the in-memory turn epoch. */
   private async noteCornerTurnStart(info: SubchannelInfo): Promise<void> {
     info.turnSeq = (info.turnSeq ?? 0) + 1;
-    // No ACP turn or draft may start until the canonical WORKING heartbeat is
-    // durable. If the relay refuses it, the caller fails before prompting.
-    if (!info.archived) await this.transitionCornerState(info, 'working');
-    // A human-authored turn is the only thing that releases a merge-gate
-    // blocker. The conflict coordinate itself stays available as prompt
-    // context until a successful gate proves it resolved.
-    info.mergeGateBlocked = undefined;
-    if (!info.conclude || info.conclude.quietSince !== undefined || info.conclude.nudges > 0) {
-      info.conclude = freshConcludeEpisode();
-      this.persistConcludeEpisode(info);
-    }
-  }
-
-  /** A corner turn resolved. `ready` = a review target was published (state 3);
-   *  anything else that is not a declared failure lands here as a quiet
-   *  episode for the conclude watch to evaluate on the next maintenance tick —
-   *  and as the tail state emission (`question` when a standing ask exists,
-   *  `idle` otherwise), which is the same read the watch itself performs. */
-  private noteCornerTurnEnd(info: SubchannelInfo, ready: boolean): void {
-    if (info.archived) return;
-    const turnSeq = info.turnSeq;
-    if (ready) {
-      info.conclude = freshConcludeEpisode();
-      this.persistConcludeEpisode(info);
-      return;
-    }
-    if (info.mergeGateBlocked) {
-      info.conclude = freshConcludeEpisode();
-      this.persistConcludeEpisode(info);
-      return;
-    }
-    const episode = info.conclude ?? freshConcludeEpisode();
-    episode.quietSince = Date.now();
-    info.conclude = episode;
-    this.persistConcludeEpisode(info);
-    // The tail state word is decided off the relay's own view of the corner
-    // channel (final agent messages are relay-only); fire-and-forget with the
-    // epoch guard inside so a newer turn always wins.
-    void this.evaluateCornerTailState(info, turnSeq);
-  }
-
-  /**
-   * A quiet unfinished corner is an uptime defect, never authority for a new
-   * model turn. Emit one operator-local diagnostic per request/tip and leave
-   * the transcript untouched.
-   */
-  private async pollConcludeWatch(): Promise<void> {
-    for (const info of [...this.subchannels.values()]) {
-      const episode = info.conclude;
-      if (
-        !episode?.quietSince ||
-        info.archived ||
-        info.landedTip ||
-        info.archiveWhenSessionRetires ||
-        info.mergeTarget ||
-        info.mergeGateBlocked ||
-        info.landingBlockedApprovalId ||
-        this.runningAgentTasks.has(info.subchannelId) ||
-        info.session.client?.activeRunId?.(info.session.sessionId)
-      ) {
-        continue;
-      }
-      let standingAsk = false;
-      try {
-        const events = await this.agentRelay.queryEvents([
-          { kinds: [9], '#h': [info.subchannelId], limit: 100 },
-        ]);
-        standingAsk = standingAskFromEvents(events, this.agentIdentity.publicKey);
-      } catch (error) {
-        console.error(`[body] working invariant read failed for ${info.subchannelId}:`, error);
-        continue;
-      }
-      if (standingAsk) continue;
-      const requestId = info.request?.eventId ?? 'unknown';
-      const tip = (await git(info.worktreePath, ['rev-parse', 'HEAD'])).stdout.trim();
-      const cursor = await this.durableState.cursor(info.subchannelId);
-      const alarm = workingInvariantAlarm({
-        cornerId: info.subchannelId,
-        requestId,
-        lastReceipt: 'complete',
-        queuedDelivery:
-          this.steerQueuedChannels.has(info.subchannelId) ||
-          this.inFlightSubchannelPolls.has(info.subchannelId)
-            ? 'queued'
-            : 'none',
-        sessionHealth: info.session.client?.isAlive ? 'alive' : 'down',
-        processHealth: info.session.processState ?? 'unknown',
-        relayCursor: cursor.createdAt,
-        gitTip: tip || 'unknown',
-      });
-      if (!this.workingInvariantAlarms.has(alarm.key)) {
-        this.workingInvariantAlarms.add(alarm.key);
-        console.error(alarm.message);
-      }
-    }
   }
 
   /**
@@ -12401,9 +9539,336 @@ export class Body {
    * child poll or merge check is retried on this Room's next tick; it cannot
    * dispose this Room or interfere with another Room's Body instance.
    */
+  private async publishCornerRemoteState(
+    info: SubchannelInfo,
+    state: CornerRemoteState,
+  ): Promise<void> {
+    const semantic = (value: CornerRemoteState | undefined) =>
+      value ? JSON.stringify({ ...value, observedAt: 0 }) : undefined;
+    if (semantic(info.remoteState) === semantic(state)) return;
+    const event = signEvent(
+      {
+        pubkey: this.agentIdentity.publicKey,
+        created_at: state.observedAt,
+        kind: CORNER_REMOTE_STATE_KIND,
+        tags: [
+          ['d', cornerRemoteStateKey(info.subchannelId)],
+          ['h', info.subchannelId],
+          ['t', CORNER_REMOTE_STATE_TAG],
+          ['branch', state.branch],
+          ['state', state.state],
+          ['checks', state.checks],
+          ...(state.pr
+            ? [
+                ['pr-number', String(state.pr.number)],
+                ['pr-url', state.pr.url],
+                ['target-branch', state.pr.targetBranch],
+              ]
+            : []),
+          ...(state.outcome ? [['outcome', state.outcome]] : []),
+        ],
+        content: JSON.stringify(state),
+      },
+      this.agentIdentity.secretKey,
+    );
+    const published = await publishCritical(
+      async () => {
+        await this.agentRelay.publishEvent(event);
+      },
+      { label: `corner remote state ${info.subchannelId}` },
+    );
+    if (!published) throw new Error('corner remote state publication was not accepted');
+    info.remoteState = state;
+  }
+
+  private async restoreCornerRemoteState(info: SubchannelInfo): Promise<void> {
+    if (info.remoteState) return;
+    const events = await this.agentRelay.queryEvents([
+      {
+        kinds: [CORNER_REMOTE_STATE_KIND],
+        authors: [this.agentIdentity.publicKey],
+        '#d': [cornerRemoteStateKey(info.subchannelId)],
+        limit: 1,
+      },
+    ]);
+    const latest = events.sort(
+      (a, b) => b.created_at - a.created_at || b.id.localeCompare(a.id),
+    )[0];
+    const state = latest ? parseCornerRemoteState(latest) : undefined;
+    if (!state) return;
+    info.remoteState = state;
+    if (state.branchTip || state.pr || state.state === 'in-review') info.remoteBranchSeen = true;
+  }
+
+  private async publishPullRequestFactOnce(
+    info: SubchannelInfo,
+    state: CornerRemoteState,
+  ): Promise<void> {
+    const pr = state.pr;
+    if (!pr) return;
+    const existing = await this.agentRelay.queryEvents([
+      {
+        kinds: [9],
+        authors: [this.agentIdentity.publicKey],
+        '#h': [info.subchannelId],
+        '#t': ['corner-pr'],
+        limit: 100,
+      },
+    ]);
+    if (existing.some((event) => tagValue(event, 'pr-number') === String(pr.number))) return;
+    const event = buildControlMessage(
+      'pull-request-fact',
+      info.subchannelId,
+      this.agentIdentity,
+      `Pull request opened: ${pr.title} → ${pr.targetBranch}`,
+      [
+        ['t', 'corner-pr'],
+        ['t', 'github-event'],
+        ['service', 'beeline-events'],
+        ['github-event-id', `corner:${info.subchannelId}:pr:${pr.number}`],
+        ['github-event-type', 'pull-request'],
+        ['github-event-action', 'opened'],
+        ['github-event-actor', 'GitHub'],
+        ['github-event-title', pr.title],
+        ['github-event-url', pr.url],
+        ['pr-number', String(pr.number)],
+        ['branch', state.branch],
+        ['target-branch', pr.targetBranch],
+      ],
+    );
+    const published = await publishCritical(
+      async () => {
+        await this.agentRelay.publishEvent(event);
+      },
+      { label: `pull request fact ${info.subchannelId}#${pr.number}` },
+    );
+    if (!published) throw new Error('pull request fact publication was not accepted');
+  }
+
+  private async publishCompletionNudgeOnce(
+    info: SubchannelInfo,
+    state: CornerRemoteState,
+    branchAbsentBeforeFirstPush: boolean,
+  ): Promise<void> {
+    if (info.completionNudgePosted || this.runningAgentTasks.has(info.subchannelId)) return;
+    if (info.session.client?.activeRunId?.(info.session.sessionId)) return;
+    const existing = await this.agentRelay.queryEvents([
+      {
+        kinds: [9],
+        authors: [this.agentIdentity.publicKey],
+        '#h': [info.subchannelId],
+        '#t': ['corner-completion-nudge'],
+        limit: 1,
+      },
+    ]);
+    if (existing.length > 0) {
+      info.completionNudgePosted = true;
+      return;
+    }
+    const status = await git(info.worktreePath, [
+      'status',
+      '--porcelain=v1',
+      '--untracked-files=all',
+      '-z',
+    ]);
+    if (!status.ok) return;
+    const dirty = projectDirtyStatus(
+      info.worktreePath,
+      status.stdout,
+      info.session.agentPrivateState,
+    );
+    let rung: 'dirty' | 'unpushed' | 'pushed-no-pr' | undefined;
+    let content = '';
+    if (dirty.length > 0) {
+      rung = 'dirty';
+      content = 'Completion needed: commit or discard the remaining worktree changes.';
+    } else {
+      const head = (await git(info.worktreePath, ['rev-parse', 'HEAD'])).stdout.trim();
+      if (
+        branchAbsentBeforeFirstPush ||
+        (/^[0-9a-f]{40}$/i.test(head) && state.branchTip && head !== state.branchTip)
+      ) {
+        rung = 'unpushed';
+        content = `Completion needed: push ${state.branch} to origin.`;
+      } else if (state.state === 'working' && state.branchTip && !state.pr) {
+        rung = 'pushed-no-pr';
+        content = `Completion needed: open a pull request for ${state.branch}.`;
+      }
+    }
+    if (!rung) return;
+    const event = buildControlMessage(
+      'completion-nudge',
+      info.subchannelId,
+      this.agentIdentity,
+      content,
+      [
+        ['t', 'corner-completion-nudge'],
+        ['rung', rung],
+        ['branch', state.branch],
+      ],
+    );
+    const published = await publishCritical(
+      async () => {
+        await this.agentRelay.publishEvent(event);
+      },
+      { label: `completion nudge ${info.subchannelId}` },
+    );
+    if (!published) throw new Error('completion nudge publication was not accepted');
+    info.completionNudgePosted = true;
+  }
+
+  private async finishCornerFromBranchDeath(
+    info: SubchannelInfo,
+    state: CornerRemoteState,
+  ): Promise<void> {
+    if (info.archived || this.runningAgentTasks.has(info.subchannelId)) return;
+    if (info.session.client?.activeRunId?.(info.session.sessionId)) return;
+    const parentId = info.session.parentChannelId;
+    if (!parentId || !state.outcome) return;
+    const status = await git(info.worktreePath, [
+      'status',
+      '--porcelain=v1',
+      '--untracked-files=all',
+      '-z',
+    ]);
+    const dirty =
+      !status.ok ||
+      projectDirtyStatus(
+        info.worktreePath,
+        status.stdout,
+        info.session.agentPrivateState,
+      ).length > 0;
+    if (dirty) info.preserveWorktree = true;
+    const existing = await this.agentRelay.queryEvents([
+      {
+        kinds: [9],
+        authors: [this.agentIdentity.publicKey],
+        '#h': [parentId],
+        '#t': ['corner-branch-ended'],
+        limit: 500,
+      },
+    ]);
+    if (!existing.some((event) => tagValue(event, 'subchannel') === info.subchannelId)) {
+      const primary =
+        state.outcome === 'landed'
+          ? `Landed${state.pr ? ` “${state.pr.title}” into ${state.pr.targetBranch}: ${state.pr.url}` : ` ${state.branch}`}.`
+          : `Abandoned ${state.branch}; its remote branch was deleted.`;
+      const content = dirty
+        ? `${primary} The dirty worktree was preserved at ${info.worktreePath}.`
+        : primary;
+      const event = buildControlMessage(
+        'branch-ended',
+        parentId,
+        this.agentIdentity,
+        content,
+        [
+          ['t', 'corner-branch-ended'],
+          ['subchannel', info.subchannelId],
+          ['outcome', state.outcome],
+          ['branch', state.branch],
+          ...(state.pr
+            ? [
+                ['pr-number', String(state.pr.number)],
+                ['url', state.pr.url],
+                ['target-branch', state.pr.targetBranch],
+              ]
+            : []),
+          ...(dirty ? [['worktree-preserved', info.worktreePath]] : []),
+        ],
+      );
+      const published = await publishCritical(
+        async () => {
+          await this.agentRelay.publishEvent(event);
+        },
+        { label: `branch completion summary ${info.subchannelId}` },
+      );
+      if (!published) throw new Error('branch completion summary publication was not accepted');
+    }
+    info.archiveParentNotified = true;
+    await this.archiveSubchannel(info.subchannelId);
+  }
+
+  private async observeOneCornerRemote(info: SubchannelInfo): Promise<void> {
+    if (
+      info.archived ||
+      !info.boundRepo ||
+      !info.featureBranch ||
+      !info.boundRepo.truth?.binding.remote?.startsWith('git://github.com/')
+    )
+      return;
+    if (this.observingCornerRemotes.has(info.subchannelId)) return;
+    this.observingCornerRemotes.add(info.subchannelId);
+    try {
+      await this.restoreCornerRemoteState(info);
+      let token: string;
+      try {
+        token = (await this.repositoryAccessToken?.(info.boundRepo)) ?? '';
+        if (!token) throw new Error('GitHub installation token is unavailable');
+      } catch (error) {
+        await this.publishCornerRemoteState(info, {
+          version: 1,
+          cornerId: info.subchannelId,
+          branch: info.featureBranch,
+          state: 'unknown',
+          checks: 'unknown',
+          observedAt: Math.floor(Date.now() / 1_000),
+          reason: error instanceof Error ? error.message.slice(0, 240) : 'GitHub is unreachable.',
+        });
+        return;
+      }
+      const repositoryKey = this.repoId(info.boundRepo);
+      if (!this.autoDeleteBranchRepositories.has(repositoryKey)) {
+        const enabled = await enableDeleteBranchOnMerge({ repo: info.boundRepo, token });
+        if (enabled) this.autoDeleteBranchRepositories.add(repositoryKey);
+      }
+      const observed = await observeCornerRemote({
+        repo: info.boundRepo,
+        cornerId: info.subchannelId,
+        featureBranch: info.featureBranch,
+        token,
+      });
+      const branchAbsentBeforeFirstPush =
+        observed.state === 'gone' && !info.remoteBranchSeen && !observed.pr;
+      const effective: CornerRemoteState = branchAbsentBeforeFirstPush
+        ? {
+            version: 1,
+            cornerId: observed.cornerId,
+            branch: observed.branch,
+            state: 'working',
+            checks: 'unknown',
+            observedAt: observed.observedAt,
+            reason: 'Feature branch has not been pushed yet.',
+          }
+        : observed;
+      if (observed.state === 'working' || observed.state === 'in-review') {
+        info.remoteBranchSeen = true;
+      }
+      await this.publishCornerRemoteState(info, effective);
+      if (observed.state === 'in-review' && observed.pr) {
+        await this.publishPullRequestFactOnce(info, observed);
+      }
+      if (observed.state === 'gone' && !branchAbsentBeforeFirstPush) {
+        await this.finishCornerFromBranchDeath(info, observed);
+        return;
+      }
+      await this.publishCompletionNudgeOnce(info, effective, branchAbsentBeforeFirstPush);
+    } finally {
+      this.observingCornerRemotes.delete(info.subchannelId);
+    }
+  }
+
+  private async pollCornerRemoteLifecycle(roomId: string): Promise<void> {
+    const corners = [...this.subchannels.values()].filter(
+      (info) => info.session.parentChannelId === roomId,
+    );
+    const results = await Promise.allSettled(corners.map((info) => this.observeOneCornerRemote(info)));
+    const failure = results.find((result) => result.status === 'rejected');
+    if (failure?.status === 'rejected') throw failure.reason;
+  }
+
   private async pollRoomMaintenance(
     channelId: string,
-    mergeGate?: DurableMergeGate,
+    _retiredMergeGate?: unknown,
     boundRepo?: BoundRepo,
     options?: { cornerDiscovery?: boolean },
   ): Promise<void> {
@@ -12425,22 +9890,10 @@ export class Body {
       );
       return;
     }
-    // Landing runs BEFORE the corner member poll, and the ordering is
-    // load-bearing rather than cosmetic.
-    //
-    // `pollMembers` forwards a human's message into the corner's ACP session
-    // and AWAITS the whole turn (`promptNewTurn`), which is bounded only by
-    // the idle timeout and routinely runs for many minutes. Everything after
-    // it in this strictly sequential chain waited on it — so while any one
-    // corner in the Room had an agent working, no approved change anywhere in
-    // that Room could land. That is the "approvals sometimes don't land"
-    // report: nothing is broken about the land itself, it just never gets a
-    // turn. The land polls are pure git + relay work with their own bounded
-    // timeouts, so putting them first costs the member poll nothing.
-    await guarded('merge approval pass', () => this.runApprovalLandingPass(channelId, mergeGate));
-    await guarded('merge completion poll', () => this.pollMergeCompletions());
-    // Local cleanup may inspect many worktrees. Keep it behind the bounded
-    // approval path so maintenance cannot delay an already-authorized land.
+    // GitHub branch and PR truth is the repository-corner lifecycle authority.
+    // Run it before any potentially long member turn so a branch deletion can
+    // archive promptly and a newly-opened PR reaches the transcript quickly.
+    await guarded('corner remote lifecycle', () => this.pollCornerRemoteLifecycle(channelId));
     await guarded('stray worktree prune', () => this.pruneStrayCornerWorktrees(boundRepo));
     await guarded('workbench sweep', () => this.sweepWorkbench(channelId));
     // A confirmed Room-config branch switch moves every open corner before any
@@ -12451,13 +9904,6 @@ export class Body {
         this.reconcileRoomTargetBranch(channelId, boundRepo),
       );
     }
-    // Harness-independent review publication: committed work on a corner branch
-    // presents for review even when its harness produced no completable turn
-    // for the daemon to observe (pi-acp bypasses ACP-observed tool calls
-    // entirely). Runs after the land polls so an already-landed corner is
-    // skipped via `landedTip`, and before the member poll so a review card is
-    // on the wire before any queued steer starts a new turn.
-    await guarded('corner commit watch', () => this.pollCornerCommitWatch());
     await guarded('corner member poll', async () => {
       const results = await Promise.allSettled(
         [...this.subchannels.keys()].map((subchannelId) => this.pollMembers(subchannelId)),
@@ -12465,13 +9911,11 @@ export class Body {
       const failed = results.find((result) => result.status === 'rejected');
       if (failed?.status === 'rejected') throw failed.reason;
     });
-    // Never-idle: a corner whose latest turn ended without any of the four
-    // terminal states (working / ask / review / failure) gets one bounded
-    // conclude steer. Runs AFTER the member poll so a queued human message
-    // starts its own real turn first, and after the commit watch so freshly
-    // committed work is already published (or visibly pending) before this
-    // decides anything.
-    await guarded('corner conclude watch', () => this.pollConcludeWatch());
+    // A follow-up may have pushed or opened/merged a PR. Re-read mechanically
+    // after the member turn rather than asking a model to narrate lifecycle.
+    await guarded('corner remote lifecycle after turns', () =>
+      this.pollCornerRemoteLifecycle(channelId),
+    );
     // ...and a corner that fell out of local tracking altogether is in no map
     // for that watch to read, so its close request is re-derived from the relay
     // first. Runs before the watch below so an adopted corner closes on this
@@ -12486,41 +9930,17 @@ export class Body {
     await guarded('abandoned corner close watch', () => this.pollAbandonedCornerCloses(channelId));
   }
 
-  /**
-   * Startup hard gate: establish the agent's actual Room membership first,
-   * then fail closed unless that identity is excluded from protected pushes.
-   */
+  /** Startup hard gate: establish the agent's actual Room membership. */
   async assertRepositorySafety(channelId: string, boundRepo: BoundRepo): Promise<void> {
     if (!(await isMember(this.agentClientContext(), channelId, this.agentIdentity.publicKey))) {
       throw new Error(`agent is not an invited member of repository Room ${channelId}`);
     }
-    if (!boundRepo.ownerHex) return;
-    await assertAgentNotPushAllowed({
-      ownerHex: boundRepo.ownerHex,
-      repo: boundRepo.repo,
-      agentPubkey: this.agentIdentity.publicKey,
-      protectedRef: boundRepo.targetBranch ?? 'refs/heads/main',
-      relay: this.agentRelay,
-    });
+    void boundRepo;
   }
 
   /** Test/CLI synchronization point; never exposes task credentials or prompt data. */
   async waitForAgentTasks(): Promise<void> {
     await Promise.all([...this.runningAgentTasks.values()]);
-  }
-
-  /** Retained API compatibility: merge summaries are no longer transcript events. */
-  async postMergeSummary(subchannelId: string, summary: string): Promise<void> {
-    const info = this.subchannels.get(subchannelId);
-    if (!info) {
-      throw new Error(`Subchannel ${subchannelId} not found`);
-    }
-    const parentId = info.session.parentChannelId;
-    if (!parentId) {
-      throw new Error(`Subchannel ${subchannelId} has no parent TLC`);
-    }
-
-    console.log(`[body] merge summary corner=${subchannelId} room=${parentId}: ${summary}`);
   }
 
   /**
@@ -12542,7 +9962,6 @@ export class Body {
       return await this.pollMembersOnce(subchannelId);
     } finally {
       this.inFlightSubchannelPolls.delete(subchannelId);
-      await this.runDeferredLandArchive(subchannelId);
     }
   }
 
@@ -12561,9 +9980,7 @@ export class Body {
       evt.tags.some(
         (tag) =>
           tag[0] === 't' &&
-          (tag[1] === 'body-control' ||
-            tag[1] === APPROVAL_MARKER ||
-            tag[1] === CORNER_REJECTION_TAG),
+          tag[1] === 'body-control',
       )
     ) {
       return { status: 'skip', recordProcessed: false };
@@ -12578,14 +9995,6 @@ export class Body {
       isCornerCloseRequest(evt.content)
     ) {
       return { status: 'close' };
-    }
-    if (
-      cornerFrozenForPendingClose({
-        pending: info.toolClosePending,
-        approved: Boolean(info.humanMergeApproval),
-      })
-    ) {
-      return { status: 'retry' };
     }
     // Agent-authored mention replies are transcript records, never a second
     // dispatch signal into the corner session.
@@ -12643,8 +10052,11 @@ export class Body {
           session,
           [
             prompt,
-            CORNER_TARGET_SYNC_INSTRUCTION,
-            CORNER_MERGE_GATE_INSTRUCTION,
+            info.boundRepo
+              ? `GitHub is the lifecycle authority. Work on ${info.featureBranch}, push it and open its PR with gh when finished; merge with gh only when a human explicitly asks. Never push or merge directly into ${shortBranchName(
+                  info.boundRepo.targetBranch,
+                )}.`
+              : 'This corner has no repository. Deliver its artifacts, then call close_corner with this corner id.',
             CORNER_TURN_SUMMARY_INSTRUCTION,
           ].join('\n\n'),
           {
@@ -12652,7 +10064,6 @@ export class Body {
             requestId: evt.id,
             originalRequestId: evt.id,
             cause: 'corner-follow-up',
-            withholdMergeClaims: true,
           },
         );
       };
@@ -12690,14 +10101,9 @@ export class Body {
           | undefined;
         let publishedMentionEvent: NostrEvent | undefined;
         const parentRoomId = info.session.parentChannelId;
-        const ready = await this.finishCornerTurnAgainstMergeGate(
+        await this.finishCornerTurn(
           info,
           agentResult,
-          {
-            requestId: evt.id,
-            originalRequestId: evt.id,
-            cause: 'corner-follow-up',
-          },
           'Completed the requested follow-up.',
           {
             replyTo: evt.id,
@@ -12727,10 +10133,9 @@ export class Body {
           this.agentIdentity,
           evt.id,
           session.logicalSessionId ?? session.sessionId,
-          ready ? 'complete' : 'failed',
+          'complete',
           this.presenceGenerations.get(subchannelId),
         );
-        this.noteCornerTurnEnd(info, ready);
         if (preparedMention && publishedMentionEvent) {
           await this.finishCornerAgentMention(preparedMention, publishedMentionEvent);
         }
@@ -12774,11 +10179,6 @@ export class Body {
       );
       return 0;
     }
-    if (info.archiveWhenSessionRetires) {
-      await this.runDeferredLandArchive(subchannelId);
-      return 0;
-    }
-
     const session = info.session;
     const durableCursor = await this.durableState.cursor(subchannelId);
     const since = Math.max(info.lastPolledAt, durableCursor.createdAt);
@@ -12919,35 +10319,19 @@ export class Body {
       this.squireBroker?.revokeChannel(subchannelId);
       this.agentTools.revoke(subchannelId);
 
-      // CLOSED is the durable lifecycle authority. Publish it, then overwrite
-      // replaceable activity records before any channel write becomes illegal.
-      await this.transitionCornerState(info, 'closed');
+      // Clear replaceable activity records before the archive makes child
+      // writes illegal. GitHub branch death plus channel archive are the
+      // lifecycle facts; no parallel corner-state machine is published.
       if (parentId) await this.retractCornerActivityRecords(parentId, subchannelId);
 
-      // Post status messages BEFORE archiving (relay rejects events on archived channels).
-      // Last chance. Everything below deletes this corner from every map, so a
-      // land whose recap has not reached the Room yet — a human closing the
-      // corner in the window after the land, or a refusal the completion poll
-      // never got to re-attempt — loses it here or never. `info.archived` is
-      // already true above, so this takes the deterministic path and costs one
-      // publish, not an agent turn against the session just stopped.
-      if (
-        info.landedTip &&
-        !info.landSummaryPosted &&
-        (info.landSummaryAttempts ?? 0) < MAX_LAND_SUMMARY_ATTEMPTS
-      ) {
-        await this.recapLandedCorner(info, info.landedTip);
-      }
       if (parentId && !info.archiveParentNotified) {
-        // `mergeSummary` is process-local. Recover the last completed response
-        // from durable conversation state when a restarted daemon closes the
-        // corner, and keep old/verbose stored replies within the current compact
-        // card contract.
+        // Recover the last completed response from durable conversation state
+        // when a restarted daemon explicitly closes a repo-less corner.
         const durableSummary = [...(await this.agentHistory(scId))]
           .reverse()
           .find((entry) => entry.type === 'agent-message' && entry.body.trim())
           ?.body.trim();
-        const archiveSummary = cornerArchiveSummary(info.mergeSummary, durableSummary);
+        const archiveSummary = cornerArchiveSummary(info.lastAgentMessageContent, durableSummary);
         await postControlMessage('archived', parentId, this.agentIdentity, archiveSummary, [
           ['subchannel', subchannelId],
           ['status', 'archived'],
@@ -12981,7 +10365,13 @@ export class Body {
       // of the three relay publishes above left nothing on disk for
       // `restoreSubchannels` to find on the next restart — a permanent
       // zombie corner, visible as "open" forever despite being dead.
-      await this.removeWorktree(scId, worktreePath, featureBranch, info.boundRepo);
+      await this.removeWorktree(
+        scId,
+        worktreePath,
+        featureBranch,
+        info.boundRepo,
+        info.preserveWorktree,
+      );
 
       // Remove from active state.
       this.sessions.delete(subchannelId);
@@ -13556,9 +10946,7 @@ export class Body {
       return [
         ...new Set([
           this.agentIdentity.publicKey,
-          ...members
-            .map((member) => member.pubkey)
-            .filter((pubkey) => pubkey !== this.mergeWorkerIdentity?.publicKey),
+          ...members.map((member) => member.pubkey),
         ]),
       ];
     } catch (error) {
@@ -13573,13 +10961,11 @@ export class Body {
     try {
       // Current 39001/39002 projections are authoritative. Replaying kind:9000
       // history cannot order same-second member → admin transitions and could
-      // silently demote the human reviewer inside the corner.
+        // silently demote a human admin inside the corner.
       const members = await listMembers(this.agentClientContext(), sourceChannelId);
       for (const member of members) {
         if (member.pubkey === this.agentIdentity.publicKey) continue;
-        if (member.pubkey !== this.mergeWorkerIdentity?.publicKey) {
-          participantPubkeys.push(member.pubkey);
-        }
+        participantPubkeys.push(member.pubkey);
         const role = member.role === 'owner' || member.role === 'admin' ? member.role : 'member';
         await setMemberRole(this.agentIdentity, targetChannelId, member.pubkey, role);
       }
@@ -13774,7 +11160,6 @@ export class Body {
       writablePaths: [
         worktreePath,
         ...(gitCommonDir ? [gitCommonDir] : []),
-        ...(boundRepo ? mergeGateStateDirs() : []),
         ...additionalWritablePaths,
       ],
       additionalWritablePaths,
@@ -14031,6 +11416,7 @@ export class Body {
     worktreePath: string,
     _featureBranch: string | undefined,
     boundRepo?: BoundRepo,
+    preserve = false,
   ): Promise<void> {
     const legacyGitDir = worktreePath.includes('.worktrees')
       ? resolve(this.config.workspaceRoot, `.git-${subchannelId.slice(0, 12)}`)
@@ -14046,14 +11432,34 @@ export class Body {
           ? resolve(worktreePath, discoveredCommonDir.stdout.trim())
           : undefined);
 
-    // Ask git first so its linked-worktree registry is cleaned along with the
-    // directory. A plain directory (or a stale registry) legitimately makes
-    // this fail, so filesystem removal remains the fallback.
-    if (existsSync(worktreePath) && registryRoot) {
-      await git(registryRoot, ['worktree', 'remove', '--force', worktreePath]);
+    if (existsSync(worktreePath) && boundRepo) {
+      const status = await git(worktreePath, [
+        'status',
+        '--porcelain=v1',
+        '--untracked-files=all',
+        '-z',
+      ]);
+      if (preserve || !status.ok || status.stdout.length > 0) {
+        console.warn(
+          `[body] preserving corner worktree ${worktreePath}: ${
+            preserve ? 'lifecycle marked it dirty' : !status.ok ? 'git status was unreadable' : 'it has uncommitted changes'
+          }`,
+        );
+        return;
+      }
     }
 
-    if (existsSync(worktreePath)) {
+    // Clean repository worktrees are removed through Git without force. A
+    // refusal is evidence we did not fully inspect or understand the path, so
+    // preserve it and retry rather than falling back to recursive deletion.
+    if (existsSync(worktreePath) && registryRoot) {
+      const removed = await git(registryRoot, ['worktree', 'remove', worktreePath]);
+      if (!removed.ok) {
+        throw new Error(
+          `refusing to force-remove corner worktree ${worktreePath}: ${removed.stderr.trim()}`,
+        );
+      }
+    } else if (existsSync(worktreePath)) {
       await rm(worktreePath, { recursive: true, force: true });
     }
     if (existsSync(worktreePath)) {
@@ -14313,16 +11719,6 @@ export class Body {
     }
     await this.drainPermissionReceiptOutbox().catch((error) =>
       console.error('[body] governed permission receipt drain failed during shutdown:', error),
-    );
-    // A post-land CI watch can be minutes from its next poll; ending the wait
-    // is what stops shutdown blocking on it.
-    this.ciWatchAbort.abort();
-    await Promise.allSettled([...this.pendingCiWatches]);
-    // A pushed approval starts deterministic daemon work outside any harness
-    // turn. Graceful daemon replacement drains that work too, so suspending or
-    // replacing the ACP process can never strand an already-picked-up land.
-    await Promise.allSettled(
-      [...this.approvalLandingPasses.values()].map((landingPass) => landingPass.task),
     );
     this.releaseProposals.clear();
     // The Room push loops own their own REQ teardown via their `finally`; only

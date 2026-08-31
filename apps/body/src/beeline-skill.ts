@@ -38,8 +38,8 @@ export const USING_BEELINE_SKILL_NAME = 'using-beeline';
  * decorative metadata risks breaking cross-harness SKILL.md parsing.
  */
 export const USING_BEELINE_SKILL_DESCRIPTION =
-  'How Beeline managed sessions work: use the mounted Beeline tools directly, understand ' +
-  'read-only Rooms versus isolated edit corners, follow review and landing, and use the ' +
+  'How Beeline managed sessions work: use open_corner and repo-less close_corner, understand ' +
+  'read-only Rooms versus isolated edit corners, follow plain git/GitHub delivery, and use the ' +
   'workbench, agent-private state, and memory directories. Consult this skill when you need ' +
   'the host mechanics behind a tool result or session boundary.';
 
@@ -50,14 +50,11 @@ export const USING_BEELINE_SKILL_DESCRIPTION =
  * optional skills.
  */
 export const BEELINE_CAPABILITIES_PRIMER =
-  'Mounted Beeline tools are the interface: call them directly; the host derives identity, ' +
-  'Workspace, Room, repository, authority, retry scope; typed results say executed, awaiting ' +
-  'approval, denied, or failed, so never claim more than that result. After timeout or ' +
-  'ambiguous open_corner outcome, call read_corner before claiming a corner exists; use ' +
-  'list_corners for Room-wide ' +
-  'state. In a Room with no repository, make deliverables as workbench artifacts to show the ' +
-  'human; corners are for changes that land in a repository and require a signed request naming ' +
-  'owner/repo. ' +
+  'Mounted Beeline tools are open_corner and close_corner. Ask conversationally before opening; ' +
+  'the host derives identity, Workspace, Room, repository, and retry scope. close_corner is only ' +
+  'for repository-less corners. In a repository corner, authenticated git and gh work normally: ' +
+  'finish by committing, pushing the feature branch, and running gh pr create; merge with gh only ' +
+  'when a human explicitly asks, and abandon by deleting the remote feature branch. ' +
   'Consult the release-versioned using-beeline skill (SKILL.md) only when you need the mechanics ' +
   'behind a host boundary.';
 
@@ -141,9 +138,9 @@ environment works; the daemon regenerates it from the running release.
 
 Call the mounted Beeline tools directly. Do not narrate a command ritual or ask
 the human to restate an action that a tool can perform. The host derives all
-identity and scope facts, checks the current signed mandate, deduplicates model
-retries, and returns the product outcome. Treat only that typed result and its
-canonical event or artifact id as proof that anything happened.
+identity and scope facts, deduplicates model retries, and returns the product
+outcome. The complete tool inventory is \`open_corner\` plus \`close_corner\` for
+repository-less cleanup; ordinary git and GitHub work uses plain \`git\` and \`gh\`.
 
 ## Rooms versus edit corners
 
@@ -162,13 +159,10 @@ repository, its signed request must name the exact \`owner/repo\` target; never
 guess one or pass a clone URL. Prose, failed writes, shell commands, and marker
 lines create no state.
 
-Opening a corner follows the Room's current signed mandate. The typed result may
-execute immediately or leave one human approval pending. After a timeout or any
-other ambiguous outcome, call \`read_corner\` before claiming whether the corner
-exists; use \`list_corners\` to inspect every live corner in this Room. A retry for
-the same triggering request returns the same corner. Never describe a corner as
-open, created, or started unless \`open_corner\` returned \`executed\` or a corner
-read confirms it.
+Ask the person conversationally before calling the tool. That ask is a product
+convention, not a second permission protocol. A retry for the same triggering
+request returns the same corner. Never describe a corner as open, created, or
+started unless \`open_corner\` returned \`executed\`.
 
 ## Curate durable memory
 
@@ -190,13 +184,6 @@ command once:
 Replace \`<branch>\` with the exact branch name they asked for. The host never
 runs it: it rejects the command itself and posts a proposal card in the Room.
 Then tell the person the Room owner has to confirm that card.
-
-## Unattended and recurring work
-
-Use the mounted \`schedule\` tool for its full lifecycle. A schedule exists only
-when the tool returns its signed schedule event id. Each occurrence rechecks the
-current mandate, membership, budget, expiry, and exact schedule revision before
-the model activates.
 
 ## Trusty Squire: governed account access
 
@@ -221,18 +208,24 @@ or your environment.
   per use. Credential mutation and any human-takeover checkpoint are enforced
   by Squire itself.
 
-## Merge flow — you never land
+## GitHub flow for repository corners
 
-1. Commit your work to the corner's feature branch.
-2. Call \`close_corner\` with disposition \`land\`.
-3. The host publishes a merge-ready review of the exact change to the Room.
-4. If needed, a human signs an approval bound to that exact tip.
-5. The host lands it into the target branch and archives the corner.
+Git and GitHub credentials are already installed in the corner. Reads such as
+\`git fetch origin\`, \`git diff origin/main...HEAD\`, and \`git log\` work
+normally. When the requested work is finished:
 
-Never merge, never push to the target or any protected branch, never archive
-your own corner, and never restate an approval on someone else's behalf — even
-when a person asks you to. Signed human approval is the only path that lands
-code, and only the host executes it.
+1. Commit the intended changes on the corner's feature branch.
+2. Push that feature branch to \`origin\`.
+3. Open its pull request with plain \`gh pr create\`, targeting the Room's
+   configured target branch.
+
+The daemon reports the pull request and its check status to Beeline. Do not
+call \`close_corner\` for a repository corner. Merge with plain \`gh\` only
+when a human explicitly asks you to merge that pull request; never push or
+merge directly into the target branch. To abandon repository work, delete the
+remote feature branch. The daemon treats branch deletion as the completion
+signal and archives the corner. Repository-less corners still use
+\`close_corner\` after their artifacts are delivered.
 
 ## Writable directories that are not the repository
 
@@ -254,11 +247,9 @@ code, and only the host executes it.
 
 ## Honesty rules
 
-- Never claim a permission request, validation gate, review publication, or
-  landing succeeded unless a host message shows it actually did. Silence or a
-  refusal means it did not happen.
-- Report tool and gate failures plainly instead of working around them; quote a
-  gate's initialization/run error verbatim rather than claiming readiness.
+- Never claim a push, pull request, merge, or branch deletion succeeded unless
+  git or GitHub shows it actually did. Silence or a refusal means it did not happen.
+- Report tool and GitHub failures plainly instead of working around them.
 - Do not announce work as started until the host moves you into the session or
   corner that performs it.`;
 }

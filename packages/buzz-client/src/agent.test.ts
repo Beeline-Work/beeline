@@ -9,6 +9,7 @@ import {
   listAgents,
   parseAgent,
   removeAgent,
+  syncAgentDeclaration,
 } from './agent.js';
 import { createAgentIdentity, createIdentity } from './identity.js';
 import {
@@ -219,6 +220,50 @@ describe('agent entity model', () => {
     expect(agent.displayName).toBe('Quiet Keeper');
     expect(published[0]!.tags).toContainEqual(['name', 'Quiet Keeper']);
     expect(published[0]!.content).toContain('"displayName":"Quiet Keeper"');
+  });
+
+  it('refreshes a stale declaration once, then stays quiet while the name agrees', async () => {
+    const published: NostrEvent[] = [];
+    const stale = signed(
+      agentIdentity,
+      KIND_STREAM_MESSAGE,
+      [
+        ['h', communityId],
+        ['t', TAG_AGENT],
+        ['d', '22222222-2222-4222-8222-222222222222'],
+        ['p', agentIdentity.publicKey],
+        ['name', 'Arlo'],
+        [TAG_COMMUNITY, communityId],
+      ],
+      JSON.stringify({ displayName: 'Arlo' }),
+    );
+    const declarations = [stale];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/events')) {
+          const event = JSON.parse(String(init?.body)) as NostrEvent;
+          published.push(event);
+          declarations.push(event);
+          return jsonResponse({ accepted: true });
+        }
+        const filter = filterFrom(init);
+        if ((filter.kinds as number[])[0] === KIND_CREATE_GROUP) return jsonResponse([communityCreate()]);
+        if ((filter.kinds as number[])[0] === KIND_CHANNEL_MEMBERS) return jsonResponse([memberState()]);
+        if ((filter['#t'] as string[] | undefined)?.includes(TAG_AGENT)) return jsonResponse(declarations);
+        return jsonResponse([]);
+      }),
+    );
+
+    const first = await syncAgentDeclaration(ctx(), communityId, { displayName: 'Ox' });
+    const second = await syncAgentDeclaration(ctx(), communityId, { displayName: 'Ox' });
+
+    expect(first.displayName).toBe('Ox');
+    expect(second.displayName).toBe('Ox');
+    expect(second.agentId).toBe('22222222-2222-4222-8222-222222222222');
+    expect(published).toHaveLength(1);
+    expect(published[0]!.tags).toContainEqual(['name', 'Ox']);
+    expect(published[0]!.content).toContain('"displayName":"Ox"');
   });
 
   it('keeps the agent security marker latched even when record metadata is malformed', () => {

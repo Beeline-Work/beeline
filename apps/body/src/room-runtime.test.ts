@@ -22,6 +22,7 @@ function fakeBuzzClient(overrides: Partial<BuzzClient> = {}): BuzzClient {
     isMember: vi.fn().mockResolvedValue(true),
     listMyChannels: vi.fn().mockResolvedValue([]),
     listAgents: vi.fn().mockResolvedValue([]),
+    syncAgentDeclaration: vi.fn().mockResolvedValue(undefined),
     getChannelMetadata: vi.fn().mockResolvedValue(null),
     connect: vi.fn().mockResolvedValue(undefined),
     socket: {
@@ -1601,6 +1602,31 @@ describe('RoomRuntimeCoordinator agent soul freshness', () => {
     supervisor.running.set('some-room', { body: { refreshPersonaForSoulUpdate } });
     return { supervisor, refreshPersonaForSoulUpdate };
   }
+
+  it('refreshes the startup declaration from the current persona name', async () => {
+    const runtime = runtimeNoRooms('declaration');
+    const syncAgentDeclaration = vi.fn().mockResolvedValue(undefined);
+    mocks.createBuzzClient.mockReturnValue(
+      fakeBuzzClient({
+        listAgents: vi.fn().mockResolvedValue([
+          {
+            pubkey: runtime.agent.publicKey,
+            displayName: 'Arlo',
+            soulProfile: { updatedAt: 100, name: 'Ox', soul: 'a persona' },
+          },
+        ]),
+        syncAgentDeclaration,
+      }),
+    );
+    const supervisor = new RoomRuntimeCoordinator(
+      runtime,
+      `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
+      {} as BodyConfig,
+    );
+
+    await expect(supervisor.reconcile()).resolves.toBe('member');
+    expect(syncAgentDeclaration).toHaveBeenCalledWith(runtime.communityId, { displayName: 'Ox' });
+  });
 
   it('never refreshes on the first read — it only seeds the baseline', async () => {
     const runtime = runtimeNoRooms('baseline');

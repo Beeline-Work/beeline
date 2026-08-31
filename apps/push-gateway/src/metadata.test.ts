@@ -19,7 +19,7 @@ function unsignedEvent(kind: number, tags: string[][]): NostrEvent {
 }
 
 describe('NotificationMetadataResolver', () => {
-  it('prefers the durable human-authored soul after its author leaves, then caches it', async () => {
+  it('keeps notification presentation on the self-signed declaration after a soul changes', async () => {
     const agent = createIdentity('legacy name');
     const human = createIdentity('human');
     const roomMetadata = unsignedEvent(39000, [
@@ -95,7 +95,7 @@ describe('NotificationMetadataResolver', () => {
       workspaceName: 'Product Engineering',
       fixtureCandidates: ['Launch room', 'owner/repository', 'Product Engineering'],
       fixtureMarkers: [],
-      senderName: 'Ada',
+      senderName: 'Legacy Name',
     });
     await expect(resolver.resolve(message, reader)).resolves.toEqual({
       roomName: 'Launch room',
@@ -104,7 +104,7 @@ describe('NotificationMetadataResolver', () => {
       workspaceName: 'Product Engineering',
       fixtureCandidates: ['Launch room', 'owner/repository', 'Product Engineering'],
       fixtureMarkers: [],
-      senderName: 'Ada',
+      senderName: 'Legacy Name',
     });
     expect(query).toHaveBeenCalledTimes(3);
   });

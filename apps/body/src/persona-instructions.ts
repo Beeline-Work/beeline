@@ -53,6 +53,18 @@ export function personaSessionInstructions(profile: AgentSoulProfile | undefined
   ].join('\n');
 }
 
+/**
+ * The rendered name and @handle come from the daemon-refreshed agent
+ * declaration. Keep this separate from the human-authored persona so every
+ * harness receives the same addressing fact, even without a soul.
+ */
+export function renderedAgentIdentityInstructions(name: string, handle: string): string {
+  return [
+    `Your Beeline Room identity is ${name} (@${handle}).`,
+    `A message mentioning @${handle} is addressed to you. Answer it; never decline because a local runtime label differs.`,
+  ].join('\n');
+}
+
 export function appendPersonaSessionInstructions(
   baseInstructions: string,
   profile: AgentSoulProfile | undefined,

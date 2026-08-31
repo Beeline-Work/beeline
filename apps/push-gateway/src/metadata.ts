@@ -381,29 +381,7 @@ export class NotificationMetadataResolver {
       .sort((left, right) => right.createdAt - left.createdAt);
     const agent = agentRecords[0];
     if (agent) {
-      const agentAuthors = new Set(
-        events
-          .map((event) => parseAgent(event))
-          .filter((record): record is NonNullable<typeof record> => record !== null)
-          .map((record) => record.pubkey),
-      );
-      const soul = latest(
-        events.filter((event) => {
-          const profile = parseAgentSoul(event);
-          return Boolean(
-            profile &&
-            profile.agentPubkey === pubkey &&
-            (!communityId ||
-              (profile.communityId === communityId && !agentAuthors.has(profile.authoredBy))),
-          );
-        }),
-      );
-      const soulProfile = soul ? parseAgentSoul(soul) : null;
-      // A soul remains the assigned display name after its human author rotates
-      // or leaves. The relay accepted it while that signer was a member, and a
-      // removed key cannot publish a replacement; requiring CURRENT membership
-      // made durable Codex/Ox/Clara assignments fall back to seed names.
-      return { name: resolveAgentName(soulProfile?.name ?? agent.displayName, pubkey) };
+      return { name: resolveAgentName(agent.displayName, pubkey) };
     }
     return personPresentation(events, pubkey, communityId) ?? { name: fallbackPersonName(pubkey) };
   }

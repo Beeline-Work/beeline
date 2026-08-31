@@ -16,6 +16,7 @@ import {
   removeAgent,
   redeemAgentPairingCode,
   setAgentSoul,
+  syncAgentDeclaration,
 } from './agent.js';
 import {
   getAgentModelCatalog,
@@ -650,6 +651,13 @@ export class BuzzClient {
   /** Register this client's key as a self-signed agent in a community. */
   async createAgent(communityId: string, options?: CreateAgentOptions): Promise<Agent> {
     const agent = await createAgent(this.ctx, communityId, options);
+    this.agentListCache.delete(communityId);
+    return agent;
+  }
+
+  /** Refresh this key's single shared display declaration without relay spam. */
+  async syncAgentDeclaration(communityId: string, options?: CreateAgentOptions): Promise<Agent> {
+    const agent = await syncAgentDeclaration(this.ctx, communityId, options);
     this.agentListCache.delete(communityId);
     return agent;
   }

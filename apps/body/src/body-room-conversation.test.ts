@@ -1531,7 +1531,7 @@ describe('Room conversation and permission-gated work intent', () => {
     expect(published).toHaveLength(3);
     expect(published[0]).toMatchObject({
       kind: 9,
-      content: expect.stringContaining('thinking'),
+      content: '',
     });
     expect(published[0]!.tags).toContainEqual(['t', 'agent-turn']);
     expect(published[0]!.tags).toContainEqual(['status', 'working']);
@@ -1543,6 +1543,7 @@ describe('Room conversation and permission-gated work intent', () => {
     expect(published[1]!.tags).toContainEqual(['t', 'agent-message']);
     expect(published[2]!.tags).toContainEqual(['t', 'agent-turn']);
     expect(published[2]!.tags).toContainEqual(['status', 'complete']);
+    expect(published[2]!.content).toBe('');
 
     prompt
       .mockResolvedValueOnce({

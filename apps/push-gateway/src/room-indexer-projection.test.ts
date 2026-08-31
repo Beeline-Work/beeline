@@ -7,6 +7,29 @@ import {
 } from './room-indexer-projection.js';
 
 describe('room event projection', () => {
+  it('never renders production-shaped Room join diagnostics as agent conversation', () => {
+    expect(
+      projectEvent(
+        {
+          id: 'legacy-room-join-notice',
+          kind: 9,
+          agent: true,
+          pubkey: 'a'.repeat(64),
+          createdAt: 1_777_000_000,
+          tags: [
+            ['h', '3f37b271-1a12-4d2a-b002-202b3f3582b9'],
+            ['t', 'buzz-agent-room-join-notice'],
+            ['status', 'repository-unavailable'],
+          ],
+          content:
+            "Agent unavailable: I could not access this Room's repository. " +
+            'I will retry automatically in 30 seconds.',
+        },
+        '3f37b271-1a12-4d2a-b002-202b3f3582b9',
+      ),
+    ).toBeUndefined();
+  });
+
   it('never renders daemon-authored kind:9 JSON documents as chat bubbles', () => {
     for (const [marker, payload] of [
       [

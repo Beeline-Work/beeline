@@ -1,0 +1,27 @@
+name: Mobile OTA reusable-call probe
+
+on:
+  push:
+    branches: [fm/fix-release-app-leg]
+  workflow_dispatch:
+    inputs:
+      retry_attempt:
+        description: Probe retry attempt
+        type: number
+        default: 1
+        required: true
+
+permissions:
+  actions: write
+  contents: read
+  issues: write
+
+jobs:
+  app_artifact:
+    uses: ./.github/workflows/mobile-ota.yml
+    with:
+      phase: build
+      release_sha: ${{ github.sha }}
+      release_version: v0.0.0
+      retry_attempt: ${{ inputs.retry_attempt || 1 }}
+    secrets: inherit

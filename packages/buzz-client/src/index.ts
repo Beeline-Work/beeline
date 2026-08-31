@@ -57,6 +57,7 @@ export {
   type CornerPullRequestFact,
   type CornerRemoteState,
   type CornerRemoteStateName,
+  type CornerMergeability,
 } from './corner-remote-state.js';
 export {
   DEFAULT_RELAY_HOST,

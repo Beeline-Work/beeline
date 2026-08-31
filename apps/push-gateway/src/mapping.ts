@@ -1,4 +1,4 @@
-import { CORNER_GIT_PROJECTION_TAG, fallbackPersonName } from '@beeline/buzz-client';
+import { fallbackPersonName } from '@beeline/buzz-client';
 import type { NostrEvent } from '@beeline/nostr';
 
 const tagValue = (event: NostrEvent, name: string): string | undefined =>
@@ -46,7 +46,7 @@ export interface NotificationFormattingOptions {
 }
 
 export type PushNotificationType =
-  'mention' | 'direct-message' | 'merge-approval-request' | 'actionable-failure';
+  'mention' | 'direct-message' | 'pull-request-opened' | 'actionable-failure';
 
 const MESSAGE_PREVIEW_LENGTH = 120;
 function normalizedDisplayText(value: string | undefined, maxLength: number): string | undefined {
@@ -169,18 +169,15 @@ export function mapEventToNotification(
   if (!channelId) return null;
 
   const markers = tagValues(event, 't');
-  if (markers.includes('github-event')) return null;
-  const isMergeRequest =
-    event.kind === 30078 &&
-    markers.includes(CORNER_GIT_PROJECTION_TAG) &&
-    tagValue(event, 'relation') === 'review' &&
-    Boolean(tagValue(event, 'repo') && tagValue(event, 'branch') && tagValue(event, 'tip'));
+  const isPullRequestFact =
+    event.kind === 9 && markers.includes('corner-pr') && markers.includes('github-event');
   const mentioned = options.recipientMentioned === true;
   const actionableFailure = isActionableHumanFailureEvent(event);
-  if (!mentioned && !context.isDirectMessage && !isMergeRequest && !actionableFailure) return null;
+  if (!mentioned && !context.isDirectMessage && !isPullRequestFact && !actionableFailure)
+    return null;
   const attentionTarget = tagValue(event, 'subchannel') ?? channelId;
-  const type: PushNotificationType = isMergeRequest
-    ? 'merge-approval-request'
+  const type: PushNotificationType = isPullRequestFact
+    ? 'pull-request-opened'
     : mentioned
       ? 'mention'
       : context.isDirectMessage
@@ -193,8 +190,8 @@ export function mapEventToNotification(
   const senderHandle =
     normalizedDisplayText(context.senderHandle, 80)?.replace(/^@+/, '') ?? senderName;
   const showMessagePreview = options.showMessagePreview ?? true;
-  const preview = isMergeRequest
-    ? 'Review the latest committed change'
+  const preview = isPullRequestFact
+    ? formatMessagePreview(event.content)
     : formatMessagePreview(event.content);
   const bodyMessage = showMessagePreview && preview ? preview : 'New message';
   const composedTitle = locationTitle(
@@ -203,19 +200,20 @@ export function mapEventToNotification(
     resolvedRoomName,
   );
   const cornerId =
-    isMergeRequest || context.parentChannelId
+    isPullRequestFact || context.parentChannelId
       ? channelId
       : type === 'actionable-failure'
         ? attentionTarget
         : undefined;
   const destinationChannelId = cornerId ?? channelId;
   const roomId = context.parentChannelId ?? channelId;
-  const target = isMergeRequest ? 'approval' : type === 'actionable-failure' ? 'corner' : 'message';
+  const target =
+    isPullRequestFact || type === 'actionable-failure' ? 'corner' : 'message';
 
   return {
     channelId,
-    title: isMergeRequest
-      ? 'Merge approval requested'
+    title: isPullRequestFact
+      ? 'Pull request opened'
       : context.isDirectMessage
         ? senderName
         : (composedTitle ?? senderName),
@@ -229,7 +227,6 @@ export function mapEventToNotification(
       eventId: event.id,
       ...(cornerId ? { cornerId } : {}),
       ...(target === 'message' ? { messageId: event.id } : {}),
-      ...(target === 'approval' ? { approvalId: event.id } : {}),
     },
   };
 }

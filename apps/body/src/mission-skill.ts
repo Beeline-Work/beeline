@@ -58,8 +58,8 @@ regenerates it from the running release.
 ## First corner: bootstrap
 
 The HUMAN provisions and binds the mission repo once — creating the repository
-Room and binding it is their action, never yours. You never provision, bind,
-authorize, or land the mission repo yourself.
+Room and binding it is their action, never yours. You never provision or bind
+the mission repo yourself.
 
 Your first corner in the mission repo runs the scaffold flow:
 
@@ -67,8 +67,7 @@ Your first corner in the mission repo runs the scaffold flow:
    three convention files that do not exist yet (\`${MISSION_FILES.join(' / ')}\`) and
    never overwrites existing ones.
 2. Conduct the bootstrap interview below, fill in what you learn, commit the
-   three files on your feature branch. They reach the repo through the normal
-   signed review and landing flow, like any other change.
+   three files on your feature branch, push it, and open a pull request.
 
 ## The bootstrap interview (bounded)
 
@@ -145,10 +144,9 @@ Surface to the human immediately:
 Everything else stays in the repo and the roll-ups. An escalation states the
 decision needed and your recommendation, not just the problem.
 
-## Landing discipline
+## Pull-request discipline
 
-The mission repo lands through the ordinary signed review flow: commit to your
-corner's feature branch, publish the review, let a human approval land it.
-Never push to the target branch yourself, never rewrite history, and never
-claim a landing happened until the host confirms it.`;
+Commit to your corner's feature branch, push it, and open a pull request with
+ordinary \`git\` and \`gh\`. Merge only when the human explicitly asks you to.
+Never claim a merge happened until GitHub confirms it.`;
 }

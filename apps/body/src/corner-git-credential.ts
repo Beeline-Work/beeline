@@ -1,14 +1,12 @@
 /**
  * `beeline corner-git-credential` — the git credential-helper backend the
- * daemon wires into corner sessions for private-repo READS.
+ * daemon wires into GitHub-backed corner sessions.
  *
  * git invokes this with the credential protocol on stdin (`get` + key=value
- * lines). It answers with a fresh, READ-ONLY GitHub App installation token:
- * the auth service mints it with `permissions: { contents: "read",
- * metadata: "read" }` pinned to the Room repository's id, so the token cannot
- * push or write on any ref. Authority is exactly the daemon's own room-token
- * path (agent must be a current member of the Room bound to that repo) — the
- * session never names a repository and never holds a push-capable credential.
+ * lines). It answers with a fresh repository-scoped GitHub App installation
+ * token. Authority is exactly the daemon's own room-token path (agent must be
+ * a current member of the Room bound to that repo); the session never names a
+ * repository.
  */
 import {
   getGitHubRoomInstallationToken,
@@ -26,7 +24,6 @@ export interface CornerGitCredentialDeps {
     relayBaseUrl: string,
     identity: Pick<Identity, 'secretKey' | 'publicKey'>,
     roomId: string,
-    options: { readOnly?: boolean },
   ) => Promise<GitHubRoomInstallationToken>;
 }
 
@@ -83,15 +80,8 @@ export async function runCornerGitCredentialCommand(
       return 1;
     }
     const granted =
-      (await deps.fetchToken?.(resolved.relayBaseUrl, resolved.identity, roomId, {
-        readOnly: true,
-      })) ??
-      (await getGitHubRoomInstallationToken(
-        resolved.relayBaseUrl,
-        resolved.identity,
-        roomId,
-        { readOnly: true },
-      ));
+      (await deps.fetchToken?.(resolved.relayBaseUrl, resolved.identity, roomId)) ??
+      (await getGitHubRoomInstallationToken(resolved.relayBaseUrl, resolved.identity, roomId));
     process.stdout.write('username=x-access-token\n');
     process.stdout.write(`password=${granted.token}\n`);
     return 0;
@@ -99,7 +89,7 @@ export async function runCornerGitCredentialCommand(
     // Plain language only: this lands in the agent's tool output. Never echo
     // token material or raw relay/auth internals.
     console.error(
-      '[body] read-only repository token unavailable:',
+      '[body] repository token unavailable:',
       error instanceof Error ? error.message : String(error),
     );
     return 1;

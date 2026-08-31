@@ -35,9 +35,7 @@
     "test": "vitest run",
     "pretest:live": "npm run build -w @beeline/nostr && npm run build -w @beeline/buzz-client && npm run build -w @beeline/gate && npm run build -w @beeline/body",
     "test:live": "vitest run --config vitest.live.config.ts",
-    "probe:agent-tools": "node --import tsx scripts/probe-agent-tool-mount.ts",
-    "repro:target-branch": "node --import tsx scripts/repro-target-branch-proposal.ts",
-    "repro:pi-commit-watch": "npm run build -w @beeline/gate >/dev/null 2>&1; node --import tsx scripts/repro-pi-commit-watch.ts"
+    "repro:target-branch": "node --import tsx scripts/repro-target-branch-proposal.ts"
   },
   "dependencies": {
     "@beeline/buzz-client": "*",

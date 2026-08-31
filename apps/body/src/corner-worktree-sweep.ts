@@ -16,10 +16,9 @@
  *     feature branch that never landed, or an editor's worth of uncommitted
  *     changes — and nothing looked before deleting.
  *
- * Observed live: the captain's Room had five corners still non-terminal on the
- * relay (two of them carrying a human merge approval) whose worktrees and
- * feature branches were both gone from the serving checkout, and one agent
- * reported its live corner worktree vanishing under it.
+ * Observed live: the captain's Room had five corners still non-terminal whose
+ * worktrees and feature branches were both gone from the serving checkout, and
+ * one agent reported its live corner worktree vanishing under it.
  *
  * So this module answers the question the sweep should have been asking: does
  * this directory still hold anything a person would miss? Everything it cannot

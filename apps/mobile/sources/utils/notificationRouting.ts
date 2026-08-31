@@ -28,13 +28,12 @@ function nonEmptyString(value: unknown): string | undefined {
 
 export type BuzzNotificationTarget = {
   type: string;
-  target: 'message' | 'approval' | 'corner';
+  target: 'message' | 'corner';
   roomId: string;
   channelId: string;
   cornerId?: string;
   eventId?: string;
   messageId?: string;
-  approvalId?: string;
 };
 
 /** Parse the FCM string-only data contract without trusting arbitrary route input. */
@@ -50,11 +49,9 @@ export function getBuzzNotificationTargetFromData(data: unknown): BuzzNotificati
   const cornerId = nonEmptyString(getObjectValue(normalizedData, 'cornerId'));
   const targetValue = nonEmptyString(getObjectValue(normalizedData, 'target'));
   const target: BuzzNotificationTarget['target'] =
-    targetValue === 'message' || targetValue === 'approval' || targetValue === 'corner'
+    targetValue === 'message' || targetValue === 'corner'
       ? targetValue
-      : type === 'merge-approval-request'
-        ? 'approval'
-        : type === 'agent-attention'
+      : type === 'agent-attention' || type === 'pull-request-opened'
           ? 'corner'
           : 'message';
   const channelId = cornerId && target !== 'message' ? cornerId : rawChannelId;
@@ -63,7 +60,6 @@ export function getBuzzNotificationTargetFromData(data: unknown): BuzzNotificati
     (cornerId && cornerId !== rawChannelId ? rawChannelId : channelId);
   const eventId = nonEmptyString(getObjectValue(normalizedData, 'eventId'));
   const messageId = nonEmptyString(getObjectValue(normalizedData, 'messageId'));
-  const approvalId = nonEmptyString(getObjectValue(normalizedData, 'approvalId'));
   return {
     type,
     target,
@@ -72,7 +68,6 @@ export function getBuzzNotificationTargetFromData(data: unknown): BuzzNotificati
     ...(cornerId ? { cornerId } : {}),
     ...(eventId ? { eventId } : {}),
     ...(messageId ? { messageId } : {}),
-    ...(approvalId ? { approvalId } : {}),
   };
 }
 
@@ -122,9 +117,6 @@ export function navigateToBuzzTargetFromNotification(
           : {}),
         ...(!useFallback && target.target === 'message' && target.messageId
           ? { notificationMessageId: target.messageId }
-          : {}),
-        ...(!useFallback && target.target === 'approval' && target.approvalId
-          ? { notificationApprovalId: target.approvalId }
           : {}),
         ...(!useFallback ? { notificationTarget: target.target } : {}),
       },

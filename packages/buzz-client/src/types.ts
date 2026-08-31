@@ -370,17 +370,6 @@ export interface MessageSubmitOpts {
   extraTags?: string[][];
 }
 
-export interface MergeTarget {
-  /** `<ownerHex>/<repo>` — matches the git URL path. */
-  repo: string;
-  /** Full target ref, e.g. `refs/heads/main`. */
-  branch: string;
-  /** 40-hex work tip visible when this merge target was published. */
-  tip: string;
-  /** Stable identity of the visible reviewed diff. */
-  patchId?: string;
-}
-
 export interface BuzzClientConfig {
   /**
    * Relay HTTP origin, e.g. `http://127.0.0.1:3010`.
@@ -390,8 +379,14 @@ export interface BuzzClientConfig {
   /** Optional explicit WebSocket endpoint. Defaults to the endpoint derived from baseUrl. */
   wsUrl?: string;
   /**
+   * Public relay origin for NIP-98 and NIP-42 signing when a local proxy is
+   * used for the TCP connection. Defaults to `baseUrl`.
+   */
+  publicOrigin?: string;
+  /**
    * Host header authority the relay bound its deployment community under.
-   * Defaults to the host:port of `baseUrl`. Must match NIP-98 `u` in production.
+   * Defaults to `publicOrigin` when supplied, otherwise the host:port of
+   * `baseUrl`.
    */
   host?: string;
   /** Client identity (must be set before signed ops). */

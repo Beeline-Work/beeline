@@ -21,7 +21,6 @@ types in [`src/room-view.ts`](./src/room-view.ts).
 | Agent activity bus   | body-projected kind:9 with `#t=agent-activity` — classified on subscribe/backfill                                                                  |
 | Permission ledger    | signed request/decision/revocation/execution wire types, including the attenuated `mission.control` boundary                                       |
 | Schedule receipts    | deterministic run ids plus signed queued/working/complete/failed/skipped receipt builders and parsers                                              |
-| Merge Approve        | `buildMergeApproval` / `submitMergeApproval` — **P0 gate shape** (same tags as `@beeline/gate`)                                                    |
 
 ### WebSocket choice
 
@@ -45,8 +44,9 @@ Local open stack auth: `X-Pubkey` on HTTP bridge. Production: NIP-98 host-bound
 - **Agent is an identity, not a role.** A `#t=buzz-agent` record is self-signed
   by the agent key and points to its community. Optional soul/personality/avatar
   values are caller-supplied metadata; this package never generates them.
-- **Never rely on `require-approval` git policy** (not enforced). Merge approval is
-  the signed kind:9 marker the gate worker verifies.
+- **Corner completion is GitHub-native.** Agents push their feature branch and
+  open or merge pull requests with `git` and `gh`; clients render the daemon's
+  verified PR and branch facts rather than signing a Beeline merge decision.
 
 ## Scripts
 
@@ -112,13 +112,6 @@ const stop = await client.sessionEventsSubscribe(channelId, (ev) => {
 
 await client.messageSubmit(channelId, 'ship it', { mentionAgent: agentPubkey });
 const history = await client.sessionEventsBackfill(channelId, { limit: 100 });
-
-const approval = client.buildMergeApproval(channelId, {
-  repo: `${ownerHex}/repo`,
-  branch: 'refs/heads/main',
-  tip: featureTip40Hex,
-});
-await client.publish(approval);
 
 const communityId = await client.createCommunity('Acme');
 await client.waitUntilMember(communityId, me.publicKey);

@@ -8,15 +8,12 @@ import {
   isRetiredAgentNotice,
   normalizeRoomRepositoryContent,
   parseAttachmentTags,
-  parseChangeReviewArtifactDescriptor,
   deriveCornerLifecycle,
-  parseCornerGitProjectionCompat,
+  parseCornerRemoteStateContent,
   type ChatListWorkspace,
   type CornerListItem,
   type CornerLifecycleView,
-  type CornerVerdictView,
   type RoomRepositoryView,
-  type RoomReviewView,
   type RoomViewAgentTurn,
   type RoomViewActivity,
   type RoomViewHeader,
@@ -84,7 +81,17 @@ function githubEventCard(
     !/^https:\/\/github\.com\/[^\s]+$/i.test(url)
   )
     return undefined;
-  return { type, action, actor, title, url };
+  return {
+    type,
+    action,
+    actor,
+    title,
+    url,
+    ...(text(tag(values, 'branch')) ? { branch: text(tag(values, 'branch')) } : {}),
+    ...(text(tag(values, 'target-branch'))
+      ? { targetBranch: text(tag(values, 'target-branch')) }
+      : {}),
+  };
 }
 
 export function identity(data: Json): RoomViewIdentity {
@@ -378,56 +385,6 @@ export function projectEvent(data: Json, channelId: string): RoomViewMessage | u
     return githubEvent ? { ...base, text: '', presentation: 'card', githubEvent } : undefined;
   }
 
-  if (markers.has('land-summary')) {
-    const cornerId = tag(eventTags, 'subchannel');
-    const objective = tag(eventTags, 'objective');
-    const delivered = tag(eventTags, 'delivered');
-    const omitted = tag(eventTags, 'omitted');
-    const branch = tag(eventTags, 'branch');
-    const tip = tag(eventTags, 'tip');
-    const url = tag(eventTags, 'url');
-    const approverPubkey = tag(eventTags, 'approver');
-    const approverName = tag(eventTags, 'approver-name');
-    const approverHandle = tag(eventTags, 'approver-handle');
-    // Old recap events lacked the typed envelope. Keep their text visible as
-    // a system line; only a complete new-generation digest gets the card.
-    if (
-      !cornerId ||
-      !objective ||
-      !delivered ||
-      !omitted ||
-      !branch ||
-      !/^[0-9a-f]{40}$/i.test(tip ?? '')
-    ) {
-      return { ...base, presentation: 'system' };
-    }
-    return {
-      ...base,
-      presentation: 'card',
-      landSummary: {
-        cornerId,
-        objective,
-        delivered,
-        omitted,
-        branch,
-        tip: tip!,
-        ...(url?.startsWith('https://') ? { url } : {}),
-        ...(approverPubkey &&
-        /^[0-9a-f]{64}$/.test(approverPubkey) &&
-        approverName &&
-        approverHandle
-          ? {
-              approvedBy: {
-                pubkey: approverPubkey,
-                name: approverName,
-                handle: approverHandle,
-              },
-            }
-          : {}),
-      },
-    };
-  }
-
   if (permissionMarker) {
     const status = tag(eventTags, 'status');
     const agentPubkey = tag(eventTags, 'agent') ?? eventIdentity.pubkey;
@@ -488,47 +445,20 @@ export function projectEvent(data: Json, channelId: string): RoomViewMessage | u
     };
   }
 
-  const mergeAction = markers.has('merge-ready')
-    ? 'ready'
-    : markers.has('buzz-merge-approval-ack')
-      ? 'approval-ack'
-      : tag(eventTags, 'status') === 'failed' && !tag(eventTags, 'subchannel')
-        ? 'failed'
-        : markers.has('landed') || tag(eventTags, 'delivery') === 'landed'
-          ? 'landed'
-          : undefined;
-  if (mergeAction) {
-    const retry = tag(eventTags, 'retry');
-    const decision = tag(eventTags, 'decision');
-    const state = tag(eventTags, 'state');
-    return {
-      ...base,
-      presentation: mergeAction === 'ready' ? 'card' : 'system',
-      merge: {
-        action: mergeAction,
-        ...(tag(eventTags, 'repo') ? { repository: tag(eventTags, 'repo') } : {}),
-        ...(tag(eventTags, 'branch') ? { branch: tag(eventTags, 'branch') } : {}),
-        ...(tag(eventTags, 'tip') ? { tip: tag(eventTags, 'tip') } : {}),
-        ...(tag(eventTags, 'patch-id') ? { patchId: tag(eventTags, 'patch-id') } : {}),
-        ...(tag(eventTags, 'preview')?.startsWith('https://')
-          ? { previewUrl: tag(eventTags, 'preview') }
-          : {}),
-        ...(retry === 'auto' || retry === 'realigning' || retry === 'blocked' ? { retry } : {}),
-        ...(tag(eventTags, 'approval') ? { approvalId: tag(eventTags, 'approval') } : {}),
-        ...(decision === 'accepted' || decision === 'rejected' ? { decision } : {}),
-        ...(state === 'landing' ||
-        state === 'realigning' ||
-        state === 'realigned' ||
-        state === 'content-changed' ||
-        state === 'tip-moved'
-          ? { state }
-          : {}),
-        ...(tag(eventTags, 'rejected-tip') ? { rejectedTip: tag(eventTags, 'rejected-tip') } : {}),
-      },
-    };
-  }
-
   const cornerId = tag(eventTags, 'subchannel');
+  // Branch death is the daemon's terminal lifecycle fact. It belongs in the
+  // parent Room as a durable status line, not in the generic corner-card
+  // decoder below (which intentionally accepts only live corner statuses).
+  // Otherwise a valid landed/abandoned summary carrying `subchannel` is
+  // discarded before the RoomView client can observe the archive sequence.
+  if (
+    cornerId &&
+    markers.has('daemon-fact') &&
+    markers.has('corner-branch-ended') &&
+    (tag(eventTags, 'outcome') === 'landed' || tag(eventTags, 'outcome') === 'abandoned')
+  ) {
+    return { ...base, presentation: 'system' };
+  }
   if (cornerId) {
     const status = tag(eventTags, 'status');
     if (
@@ -757,78 +687,21 @@ export function repositoryResolutionFromRows(
   return rowData(rows, 'repository-candidate') ? 'unverified' : 'none';
 }
 
-export function reviewFromRows(rows: readonly IndexRow[]): RoomReviewView {
-  const reviewData = rowData(rows, 'review');
-  const descriptor =
-    reviewData && text(reviewData.content)
-      ? (parseCornerGitProjectionCompat(text(reviewData.content))?.artifact ??
-        parseChangeReviewArtifactDescriptor(text(reviewData.content)!))
-      : null;
-  const notReady = text(rowData(rows, 'not-ready')?.reason);
-  const approvedBy = rows
-    .filter((row) => row.section === 'approval')
-    .map((row) => identity(json(row.data)))
-    .filter(
-      (candidate, index, all) =>
-        all.findIndex((other) => other.pubkey === candidate.pubkey) === index,
-    );
-  return descriptor
-    ? { status: 'ready', artifact: descriptor, files: descriptor.files, approvedBy }
-    : notReady
-      ? { status: 'not-ready', reason: notReady, files: [], approvedBy }
-      : { status: 'none', files: [], approvedBy };
-}
-
 export function cornerLifecycle(data: Json): CornerLifecycleView {
-  const git = parseCornerGitProjectionCompat(text(data.gitProjectionContent));
-  const rawVerdict = text(data.verdict);
-  const eventId = text(data.verdictEventId);
-  const signerPubkey = text(data.verdictPubkey);
-  const repository = text(data.verdictRepository);
-  const targetBranch = text(data.verdictTargetBranch);
-  const candidate: CornerVerdictView | undefined =
-    (rawVerdict === 'approve' || rawVerdict === 'reject') &&
-    eventId &&
-    /^[0-9a-f]{64}$/.test(eventId) &&
-    signerPubkey &&
-    /^[0-9a-f]{64}$/.test(signerPubkey) &&
-    repository &&
-    targetBranch &&
-    (!git ||
-      git.repository === 'legacy-unverified' ||
-      (git.repository === repository && git.targetBranch === targetBranch))
-      ? {
-          verdict: rawVerdict,
-          eventId,
-          signerPubkey,
-          repository,
-          targetBranch,
-          createdAt: integer(data.verdictCreatedAt),
-        }
-      : undefined;
+  const content = text(data.remoteStateContent);
+  const remote = content ? parseCornerRemoteStateContent(content) : undefined;
   return deriveCornerLifecycle({
-    created: true,
     archived: data.archived === true,
-    ...(git ? { git } : {}),
-    ...(candidate ? { verdict: candidate } : {}),
+    ...(remote ? { remote } : {}),
   });
 }
 
 export function cornerItem(data: Json, latest?: RoomViewMessage): CornerListItem {
   const lifecycle = cornerLifecycle(data);
   const corner = header(data);
-  const stateTags = tags(data.statusTags);
-  const rawStatus = tag(stateTags, 'state');
-  const status = rawStatus === 'waiting-on-human' ? 'waiting' : rawStatus;
   const latestTurnStatus = text(data.latestTurnStatus);
-  // A review artifact is durable, but a newer child-channel WORKING receipt
-  // is the current paint fact while the agent handles steering (or an
-  // approved target-sync turn). Once the receipt becomes complete/failed the
-  // review lifecycle mounts again. Terminal archive/rejection still wins.
   const hasLiveWorkingTurn =
-    latestTurnStatus === 'working' &&
-    lifecycle.lifecycle !== 'ARCHIVED' &&
-    lifecycle.lifecycle !== 'REJECTED';
+    latestTurnStatus === 'working' && lifecycle.lifecycle !== 'done';
   const agentData = {
     pubkey: data.agentPubkey,
     name: data.agentName,
@@ -840,29 +713,12 @@ export function cornerItem(data: Json, latest?: RoomViewMessage): CornerListItem
     corner,
     lifecycle,
     status:
-      lifecycle.lifecycle === 'ARCHIVED'
+      lifecycle.lifecycle === 'done'
         ? 'closed'
-        : lifecycle.lifecycle === 'REJECTED'
-          ? 'closed'
-          : hasLiveWorkingTurn
-            ? 'working'
-            : lifecycle.lifecycle === 'REVIEW'
-              ? 'waiting'
-              : lifecycle.lifecycle === 'APPROVED'
-                ? 'working'
-                : status === 'working' ||
-                    status === 'waiting' ||
-                    status === 'idle' ||
-                    status === 'concluded' ||
-                    status === 'closed'
-                  ? status
-                  : 'open',
+        : hasLiveWorkingTurn
+          ? 'working'
+          : 'idle',
     statusAt: hasLiveWorkingTurn ? integer(data.latestTurnCreatedAt) : corner.updatedAt,
-    ...(lifecycle.lifecycle === 'REVIEW'
-      ? { reason: 'review' as const }
-      : ['review', 'question', 'failure'].includes(tag(stateTags, 'reason') ?? '')
-        ? { reason: tag(stateTags, 'reason') as 'review' | 'question' | 'failure' }
-        : {}),
     ...(text(data.agentPubkey) ? { agent: identity(agentData) } : {}),
     ...(latest
       ? {

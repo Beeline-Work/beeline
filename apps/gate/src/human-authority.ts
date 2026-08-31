@@ -1,10 +1,10 @@
 /**
  * Shared agent-first human authority verifier.
  *
- * Merge approval and factory permissions use the same trust order: prove the
- * signer is not a registered agent before considering mutable roles, require
- * device custody, then resolve the current Room role from the same relay
- * reader. Lookup uncertainty is fail-closed but retryable.
+ * Factory permissions prove the signer is not a registered agent before
+ * considering mutable roles, require device custody, then resolve the current
+ * Room role from the same relay reader. Lookup uncertainty is fail-closed but
+ * retryable.
  */
 import { isRegisteredAgentIdentity } from './agent-identity.js';
 import { resolveChannelRole, type ChannelRole } from './provisioning.js';

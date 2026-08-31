@@ -14,7 +14,6 @@ import type { CornerStatus, CornerSummary } from '@/buzz/corners';
 
 export type AgentTurnStatus = 'working' | 'complete' | 'failed';
 export type CornerProcessState = 'live' | 'suspended' | 'waiting-for-slot';
-export type DeliveryRetryPosture = 'auto' | 'realigning' | 'blocked';
 export type AgentPresentation = Pick<Agent, 'pubkey' | 'displayName' | 'avatar' | 'soulProfile'>;
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -143,7 +142,6 @@ export type ChatDisplayMessage = {
   isUser: boolean;
   timestamp: number;
   pubkey?: string;
-  isMergeSummary?: boolean;
   isArchivedNotice?: boolean;
   isSystemNotice?: boolean;
   isAgentAuthor?: boolean;
@@ -154,7 +152,6 @@ export type ChatDisplayMessage = {
   activity?: AgentActivityItem[];
   agentThought?: string;
   agentMessageDraft?: string;
-  mergeNotReadyTransition?: string;
   durableFact?: { kind: 'failure' | 'merge' | 'action' };
   attachments?: AttachmentReference[];
   mentionPubkeys?: string[];
@@ -185,8 +182,6 @@ export type ChatDisplayMessage = {
   };
   /** Repository activity is a typed surface, never a transcript speaker. */
   githubEvent?: NonNullable<RoomViewMessage['githubEvent']>;
-  /** One typed close digest, rendered independently of speaker prose. */
-  landSummary?: NonNullable<RoomViewMessage['landSummary']>;
   writePermission?: {
     permissionId: string;
     requestId: string;
@@ -270,7 +265,6 @@ export function displayRoomMessage(
         }
       : {}),
     ...(githubEvent ? { githubEvent } : {}),
-    ...(message.landSummary ? { landSummary: { ...message.landSummary } } : {}),
     ...(message.permission
       ? {
           writePermission: {
@@ -288,9 +282,6 @@ export function displayRoomMessage(
             ...(message.permission.cornerId ? { subchannelId: message.permission.cornerId } : {}),
           },
         }
-      : {}),
-    ...(message.merge?.action === 'not-ready' && message.text.trim()
-      ? { mergeNotReadyTransition: message.text.trim() }
       : {}),
   };
 }
@@ -316,32 +307,28 @@ export function cornerSummaries(view: Pick<RoomView, 'corners'>): CornerSummary[
   return view.corners.map((item) => {
     const lifecycle = item.lifecycle.lifecycle;
     const machineState =
-      lifecycle === 'ARCHIVED'
-        ? item.lifecycle.archiveFlavor === 'merged'
+      lifecycle === 'done'
+        ? item.lifecycle.outcome === 'landed'
           ? 'concluded'
           : 'closed'
-        : lifecycle === 'REJECTED'
-          ? 'closed'
-          : item.status === 'working'
-            ? 'working'
-            : lifecycle === 'REVIEW' || item.status === 'waiting'
-              ? 'waiting'
-              : item.status === 'open'
-                ? 'open'
-                : item.status === 'concluded'
-                  ? 'concluded'
-                  : item.status === 'closed'
-                    ? 'closed'
-                    : 'idle';
+        : item.status === 'working'
+          ? 'working'
+          : item.status === 'waiting'
+            ? 'waiting'
+            : item.status === 'open'
+              ? 'open'
+              : item.status === 'concluded'
+                ? 'concluded'
+                : item.status === 'closed'
+                  ? 'closed'
+                  : 'idle';
     const status =
       machineState === 'working'
         ? 'live'
-        : lifecycle === 'REJECTED'
-          ? 'archived'
-          : lifecycle === 'ARCHIVED'
-            ? item.lifecycle.archiveFlavor === 'merged'
-              ? 'merged'
-              : 'archived'
+        : lifecycle === 'done'
+          ? item.lifecycle.outcome === 'landed'
+            ? 'merged'
+            : 'archived'
             : machineState === 'waiting'
               ? item.reason === 'failure'
                 ? 'failed'
@@ -354,7 +341,6 @@ export function cornerSummaries(view: Pick<RoomView, 'corners'>): CornerSummary[
       name: item.corner.name,
       status,
       machineState,
-      ...(machineState === 'waiting' ? { machineReason: 'review' as const } : {}),
       ...(machineState === 'waiting' && item.reason ? { machineReason: item.reason } : {}),
       stateAt: item.statusAt ?? item.corner.updatedAt,
       openerPubkey: item.agent?.pubkey ?? '',

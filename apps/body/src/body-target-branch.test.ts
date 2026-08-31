@@ -88,7 +88,6 @@ import {
   WRITE_PERMISSION_BACKSTOP_POLL_MS,
 } from './body.js';
 import {
-  buildMergeApproval,
   buildPermissionDecision,
   buildPermissionRequest,
   defaultPermissionGrantEnvelope,
@@ -101,10 +100,6 @@ import { AcpClient, isMutatingPermissionRequest } from './acp.js';
 import { newIdentity } from '@beeline/gate';
 import {
   WRITE_PERMISSION_RESPONSE_TAG,
-  CHANGE_REVIEW_ARTIFACT_TAG,
-  CHANGE_REVIEW_ARTIFACT_VERSION,
-  CHANGE_REVIEW_EVENT_KIND,
-  parseChangeReviewArtifactDescriptor,
   setAgentModelConfig,
   AGENT_PRESENCE_HEARTBEAT_MS,
   AGENT_PRESENCE_STALE_MS,
@@ -183,49 +178,6 @@ afterEach(() => {
 function stubEmptyAgentHistory(body: Body): void {
   vi.spyOn(body as never, 'agentHistory' as never).mockResolvedValue([] as never);
 }
-describe('moved-target land refusals are classified, and recaps stay readable', () => {
-  it('recognizes both wordings the two non-relay land paths produce', () => {
-    // The raw rejection a remote push returns...
-    expect(
-      isMovedTargetLandFailure(
-        'To /tmp/remote.git\n ! [rejected]        abc -> main (non-fast-forward)\nhint: Updates were rejected',
-      ),
-    ).toBe(true);
-    // ...and the sentence the local-checkout path writes for the same thing.
-    expect(
-      isMovedTargetLandFailure(
-        'The master branch has moved on since this change was approved — it needs to be rebased before it can land.',
-      ),
-    ).toBe(true);
-    // A branch-rules decline is a different problem and must not be rebased at.
-    expect(isMovedTargetLandFailure('remote: error: pre-receive hook declined')).toBe(false);
-    expect(isMovedTargetLandFailure('Permission denied (publickey).')).toBe(false);
-  });
-
-  it('caps a recap and strips fenced output and raw shas', () => {
-    const summary = conciseLandSummary(
-      [
-        'Set out to add a haiku.',
-        '```',
-        'git log --oneline',
-        '```',
-        `Landed at ${'a'.repeat(40)}.`,
-        'one',
-        'two',
-        'three',
-        'four',
-        'five',
-        'six',
-      ].join('\n'),
-    );
-
-    expect(summary.split('\n')).toHaveLength(7);
-    expect(summary).not.toContain('```');
-    expect(summary).not.toContain('a'.repeat(40));
-    expect(summary).toContain(`Landed at ${'a'.repeat(7)}.`);
-  });
-});
-
 describe('the Room target branch changes by owner confirm, never by the agent', () => {
   const admin = newIdentity('target-branch-admin');
   const roomId = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';

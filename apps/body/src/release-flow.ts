@@ -11,15 +11,12 @@
  *      rather than recalled by a model (`summarizeUnreleasedWork`).
  *   2. A held proposal — so a person's plain "yes" a minute later still means
  *      "cut it" (`isReleaseConfirmation`, held per Room by the caller).
- *   3. One affordance at the far end: the land push carries the corner's
- *      annotated tag (`--follow-tags` in `Body.landOnDirectRemote`), which is
- *      why the corner brief below insists on an ANNOTATED tag — a lightweight
- *      one is not carried by `--follow-tags` and would land a release commit
- *      with no tag on the remote.
+ *   3. One constraint at the far end: the corner brief requires an ANNOTATED
+ *      tag so the agent can push the release tag explicitly with the branch.
  *
  * Everything else — bumping the version, writing the changelog, choosing the
  * number — is the repository's own process, run by the corner agent, and it
- * ends in the ordinary merge-ready review every other corner ends in.
+ * ends by pushing its branch and opening a pull request.
  */
 import { git } from '@beeline/gate';
 

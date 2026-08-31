@@ -223,8 +223,7 @@ export function permissionScopeAllows(boundary: PermissionScope, action: Permiss
         includes(boundary.cornerOperations, action.cornerOperations) &&
         includes(boundary.scheduleOperations, action.scheduleOperations) &&
         targetsAllowed &&
-        schedulesAllowed &&
-        (!action.land || boundary.land)
+        schedulesAllowed
       );
     }
     default:

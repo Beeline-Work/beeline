@@ -87,11 +87,11 @@ function resolvedIdentityNameSql(
   return `COALESCE(NULLIF(${alias}.soul_content::jsonb->>'name', ''), NULLIF(${alias}.${declarationColumn}::jsonb->>'displayName', ''), ${alias}.${humanNameColumn})`;
 }
 
-/** Current mechanical Git fact plus the first current-authority human verdict. */
+/** Current membership-gated daemon observation for one repository corner. */
 function cornerFactsLateralSql(
   cornerAlias: string,
-  parentIdSql: string,
-  workspaceIdSql: string,
+  _parentIdSql: string,
+  _workspaceIdSql: string,
 ): string {
   return `LEFT JOIN LATERAL (
     SELECT e.content FROM events e
@@ -102,32 +102,9 @@ function cornerFactsLateralSql(
       AND e.deleted_at IS NULL
       AND e.tags @> jsonb_build_array(jsonb_build_array('h', ${cornerAlias}.id::text))
       AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
-        WHERE t->>0 = 't' AND t->>1 IN ('corner-git-projection', 'change-review-artifact'))
+        WHERE t->>0 = 't' AND t->>1 = 'buzz-corner-remote-state')
     ORDER BY e.created_at DESC, e.id DESC LIMIT 1
-  ) corner_projection ON true
-  LEFT JOIN LATERAL (
-    SELECT e.id, e.pubkey, e.created_at,
-      (SELECT t->>1 FROM jsonb_array_elements(e.tags) t WHERE t->>0 = 'repo' LIMIT 1) AS repo,
-      (SELECT t->>1 FROM jsonb_array_elements(e.tags) t WHERE t->>0 = 'branch' LIMIT 1) AS branch,
-      CASE WHEN e.tags @> '[["t", "buzz-merge-rejection"]]'::jsonb
-        THEN 'reject' ELSE 'approve' END AS verdict
-    FROM events e
-    JOIN channel_members signer ON signer.community_id = e.community_id
-      AND signer.channel_id = ${parentIdSql} AND signer.pubkey = e.pubkey
-      AND signer.removed_at IS NULL AND signer.role IN ('owner', 'admin')
-    WHERE e.community_id = ${cornerAlias}.community_id AND e.kind = 9
-      AND e.channel_id = ${cornerAlias}.id AND e.deleted_at IS NULL
-      AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
-        WHERE t->>0 = 't' AND t->>1 IN ('buzz-merge-approval', 'buzz-merge-rejection'))
-      AND NOT EXISTS (
-        SELECT 1 FROM events author_agent
-        WHERE author_agent.community_id = e.community_id AND author_agent.pubkey = e.pubkey
-          AND author_agent.kind = 9 AND author_agent.deleted_at IS NULL
-          AND author_agent.tags @> '[["t", "buzz-agent"]]'::jsonb
-          AND author_agent.tags @> jsonb_build_array(jsonb_build_array('h', ${workspaceIdSql}))
-      )
-    ORDER BY e.created_at ASC, e.id ASC LIMIT 1
-  ) corner_verdict ON true`;
+  ) corner_projection ON true`;
 }
 
 export function roomFilters(
@@ -1090,13 +1067,7 @@ SELECT 'corner', jsonb_build_object(
   'archived', c.archived_at IS NOT NULL,
   'createdAt', extract(epoch FROM c.created_at)::bigint,
   'updatedAt', extract(epoch FROM c.updated_at)::bigint,
-  'gitProjectionContent', corner_projection.content,
-  'verdict', corner_verdict.verdict,
-  'verdictEventId', encode(corner_verdict.id, 'hex'),
-  'verdictPubkey', encode(corner_verdict.pubkey, 'hex'),
-  'verdictRepository', corner_verdict.repo,
-  'verdictTargetBranch', corner_verdict.branch,
-  'verdictCreatedAt', extract(epoch FROM corner_verdict.created_at)::bigint,
+  'remoteStateContent', corner_projection.content,
   'latestTurnStatus', corner_turn.status,
   'latestTurnCreatedAt', extract(epoch FROM corner_turn.status_at)::bigint,
   'agentPubkey', encode(c.created_by, 'hex'),
@@ -1319,13 +1290,7 @@ SELECT 'room' AS section, jsonb_build_object(
   'archived', a.archived_at IS NOT NULL,
   'createdAt', extract(epoch FROM a.created_at)::bigint,
   'updatedAt', extract(epoch FROM a.updated_at)::bigint,
-  'gitProjectionContent', corner_projection.content,
-  'verdict', corner_verdict.verdict,
-  'verdictEventId', encode(corner_verdict.id, 'hex'),
-  'verdictPubkey', encode(corner_verdict.pubkey, 'hex'),
-  'verdictRepository', corner_verdict.repo,
-  'verdictTargetBranch', corner_verdict.branch,
-  'verdictCreatedAt', extract(epoch FROM corner_verdict.created_at)::bigint,
+  'remoteStateContent', corner_projection.content,
   'directMessage', CASE WHEN
     EXISTS (SELECT 1 FROM jsonb_array_elements(a.tags) t
       WHERE t->>0 = 't' AND t->>1 = 'buzz-dm')
@@ -1418,13 +1383,7 @@ SELECT 'sibling', jsonb_build_object(
   'archived', f.archived_at IS NOT NULL,
   'createdAt', extract(epoch FROM f.created_at)::bigint,
   'updatedAt', extract(epoch FROM f.updated_at)::bigint,
-  'gitProjectionContent', corner_projection.content,
-  'verdict', corner_verdict.verdict,
-  'verdictEventId', encode(corner_verdict.id, 'hex'),
-  'verdictPubkey', encode(corner_verdict.pubkey, 'hex'),
-  'verdictRepository', corner_verdict.repo,
-  'verdictTargetBranch', corner_verdict.branch,
-  'verdictCreatedAt', extract(epoch FROM corner_verdict.created_at)::bigint,
+  'remoteStateContent', corner_projection.content,
   'latestTurnStatus', corner_turn.status,
   'latestTurnCreatedAt', extract(epoch FROM corner_turn.status_at)::bigint,
   'agentPubkey', encode(f.created_by, 'hex'),
@@ -1467,30 +1426,5 @@ FROM authorized a JOIN LATERAL (
       WHERE t->>0 = 't' AND t->>1 = 'buzz-room-repository')
   ORDER BY e.created_at DESC, e.id DESC LIMIT 1
 ) e ON true
-UNION ALL
-SELECT 'review', jsonb_build_object('content', e.content)
-FROM authorized a JOIN LATERAL (
-  SELECT e.content FROM events e
-  JOIN channel_members author ON author.community_id = e.community_id
-    AND author.channel_id = a.id AND author.pubkey = e.pubkey
-    AND author.removed_at IS NULL
-  WHERE e.community_id = a.community_id AND e.kind = 30078
-    AND e.deleted_at IS NULL
-    AND e.tags @> jsonb_build_array(jsonb_build_array('h', a.id::text))
-    AND e.tags @> '[["t", "change-review-artifact"]]'::jsonb
-  ORDER BY e.created_at DESC, e.id DESC LIMIT 1
-) e ON true
-UNION ALL
-SELECT 'approval', jsonb_build_object(
-  'pubkey', encode(e.pubkey, 'hex'), 'name', resolved.name,
-  'handle', resolved.handle, 'avatar', resolved.avatar, 'agent', false
-) FROM authorized a
-JOIN events e ON e.community_id = a.community_id AND e.channel_id = a.id
-  AND e.kind = 9 AND e.deleted_at IS NULL
-  AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
-    WHERE t->>0 = 't' AND t->>1 = 'buzz-merge-approval')
-JOIN channel_members approver ON approver.community_id = a.community_id
-  AND approver.channel_id = COALESCE(a.parent_id, a.id) AND approver.pubkey = e.pubkey
-  AND approver.removed_at IS NULL AND approver.role IN ('owner', 'admin')
-LEFT JOIN identities resolved ON resolved.community_id = e.community_id AND resolved.pubkey = e.pubkey;
+;
 `;

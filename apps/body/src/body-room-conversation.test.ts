@@ -88,7 +88,6 @@ import {
   WRITE_PERMISSION_BACKSTOP_POLL_MS,
 } from './body.js';
 import {
-  buildMergeApproval,
   buildPermissionDecision,
   buildPermissionRequest,
   defaultPermissionGrantEnvelope,
@@ -101,10 +100,6 @@ import { AcpClient, isMutatingPermissionRequest } from './acp.js';
 import { newIdentity } from '@beeline/gate';
 import {
   WRITE_PERMISSION_RESPONSE_TAG,
-  CHANGE_REVIEW_ARTIFACT_TAG,
-  CHANGE_REVIEW_ARTIFACT_VERSION,
-  CHANGE_REVIEW_EVENT_KIND,
-  parseChangeReviewArtifactDescriptor,
   setAgentModelConfig,
   AGENT_PRESENCE_HEARTBEAT_MS,
   AGENT_PRESENCE_STALE_MS,
@@ -280,7 +275,7 @@ describe('Room conversation and permission-gated work intent', () => {
     'Explain what the session scheduler does.',
     'summarize the authentication flow',
     'What does isChannelWorkIntent do?',
-    'Find where merge approval is verified.',
+    'Find where pull request state is verified.',
     'In one sentence, what is the purpose of a repository Room?',
     "I'd like you to explain how corners work.",
   ])('locks a pure information request to read-only Room analysis: %s', (content) => {
@@ -2810,7 +2805,6 @@ describe('Room conversation and permission-gated work intent', () => {
       },
       undefined,
       undefined,
-      undefined,
       { resolveNamedRepository },
     );
     vi.spyOn(body as never, 'cornerOpenAudience' as never).mockResolvedValue([
@@ -2920,7 +2914,6 @@ describe('Room conversation and permission-gated work intent', () => {
       },
       undefined,
       undefined,
-      undefined,
       { resolveNamedRepository },
     );
     vi.spyOn(body as never, 'cornerOpenAudience' as never).mockResolvedValue([
@@ -2992,7 +2985,6 @@ describe('Room conversation and permission-gated work intent', () => {
         relayWsUrl: 'ws://relay.test',
         autoApprovePermissions: true,
       },
-      undefined,
       undefined,
       undefined,
       { resolveNamedRepository },
@@ -3534,63 +3526,6 @@ describe('Room conversation and permission-gated work intent', () => {
     expect(replies[0]!.content).toContain('incident-fix-1');
     expect(replies[0]!.content).toMatch(/corner/i);
     expect(replies[0]!.content).not.toMatch(/rejected|no edit session|no repository changes/i);
-  });
-
-  it('returns timeout-recovery truth for the triggering request and lists the opening corner', async () => {
-    const body = new Body({
-      agentBinary: '/nonexistent',
-      mcpBinary: '/nonexistent',
-      agentEnv: {},
-      workspaceRoot: '/tmp/buzzy-corner-truth',
-      relayBaseUrl: 'http://relay.test',
-      relayHost: 'relay.test',
-      relayScheme: 'http',
-      relayWsUrl: 'ws://relay.test',
-      autoApprovePermissions: true,
-    });
-    const request = {
-      eventId: 'd'.repeat(64),
-      authorPubkey: human.publicKey,
-      content: 'Fix the corner timeout',
-      createdAt: 1,
-    };
-    (Reflect.get(body, 'pendingRoomTurns') as Map<string, unknown>).set('parent-channel', {
-      request,
-      permissionHandled: false,
-      transitionedToCorner: false,
-      readOnlyInformationRequest: false,
-    });
-    (Reflect.get(body, 'cornerOpenAttempts') as Map<string, unknown>).set(request.eventId, {
-      roomId: 'parent-channel',
-      requestId: request.eventId,
-      objective: request.content,
-      cornerId: 'corner-created-before-timeout',
-      name: 'Fix corner timeout',
-    });
-
-    const binding = {
-      channelId: 'parent-channel',
-      roomId: 'parent-channel',
-      workspaceId: 'workspace',
-    };
-    await expect(
-      Reflect.get(body, 'invokeAgentTool').call(body, binding, 'read_corner', {}),
-    ).resolves.toEqual({
-      request_id: request.eventId,
-      exists: true,
-      state: 'opening',
-      corner: {
-        corner_id: 'corner-created-before-timeout',
-        name: 'Fix corner timeout',
-        objective: request.content,
-        state: 'opening',
-      },
-    });
-    await expect(
-      Reflect.get(body, 'invokeAgentTool').call(body, binding, 'list_corners', {}),
-    ).resolves.toMatchObject({
-      corners: [{ corner_id: 'corner-created-before-timeout', state: 'opening' }],
-    });
   });
 
   it('publishes one audience-scoped approval card for repeated corner requests', async () => {

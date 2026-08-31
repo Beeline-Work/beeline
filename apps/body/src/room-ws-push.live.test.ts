@@ -65,7 +65,7 @@ describe.runIf(reachable)('Body Room WebSocket push', () => {
     // transition instead.
     let connections = 0;
     const presence: string[] = [];
-    const body = new Body(config, newIdentity('ws-push-operator'), agent, undefined, {
+    const body = new Body(config, newIdentity('ws-push-operator'), agent, {
       onRoomPollSuccess: () => {},
       onRoomPresence: (_channelId, status) => {
         presence.push(status);

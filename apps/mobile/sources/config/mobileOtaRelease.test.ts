@@ -1451,28 +1451,31 @@ esac
     );
   });
 
-  it('keeps the remote reply fixture alive through the flow before the first device send', () => {
+  it('starts each propagation budget at relay observation and proves RoomView visibility within seconds', () => {
     const replyFixture = readFileSync(
       resolve(mobileRoot, '../../scripts/publish-smoke-replies.ts'),
       'utf8',
     );
-    const initialWait = replyFixture.match(/FIRST_DEVICE_MESSAGE_TIMEOUT_MS = ([\d_]+);/);
-    const followUpWait = replyFixture.match(/FOLLOW_UP_MESSAGE_TIMEOUT_MS = ([\d_]+);/);
-
-    expect(initialWait).not.toBeNull();
-    expect(followUpWait).not.toBeNull();
-    expect(Number(initialWait![1].replaceAll('_', ''))).toBeGreaterThanOrEqual(180_000);
-    expect(Number(initialWait![1].replaceAll('_', ''))).toBeGreaterThan(
-      Number(followUpWait![1].replaceAll('_', '')),
+    const budget = replyFixture.match(/ROOMVIEW_LATENCY_BUDGET_MS = ([\d_]+);/);
+    expect(budget).not.toBeNull();
+    expect(Number(budget![1].replaceAll('_', ''))).toBeLessThanOrEqual(8_000);
+    expect(replyFixture).toContain(
+      "const roomSend = await waitForRelayMessage(client, roomId, 'SMOKE ROOM SEND')",
     );
     expect(replyFixture).toContain(
-      "await waitForMessage(client, roomId, 'SMOKE ROOM SEND', FIRST_DEVICE_MESSAGE_TIMEOUT_MS)",
+      "await requireRoomViewWithinBudget(roomViews, roomId, roomSend, 'room-send')",
+    );
+    expect(replyFixture).toContain(
+      "const cornerSteer = await waitForRelayMessage(client, cornerId, 'SMOKE CORNER STEER')",
+    );
+    expect(replyFixture).toContain(
+      "await requireRoomViewWithinBudget(roomViews, cornerId, cornerSteer, 'corner-steer')",
     );
     const pickerCheckpoint = replyFixture.indexOf(
-      "await waitForMessage(client, roomId, 'mention picker stayed responsive')",
+      "await waitForRelayMessage(client, roomId, 'mention picker stayed responsive')",
     );
     const exactMentionWait = replyFixture.indexOf(
-      'await waitForMessage(client, roomId, "@beebee what\'s up")',
+      'await waitForRelayMessage(client, roomId, "@beebee what\'s up")',
     );
     const exactMentionCount = replyFixture.indexOf(
       'await requireExactlyOneMessage(client, roomId, "@beebee what\'s up")',
@@ -1488,7 +1491,8 @@ esac
     );
 
     const smoke = readFileSync(join(mobileRoot, 'e2e', 'smoke.yaml'), 'utf8');
-    expect(smoke).toMatch(/visible: SMOKE AGENT ROOM REPLY\.\*[\s\S]*?timeout: 30000/);
+    expect(smoke).toMatch(/visible: SMOKE AGENT ROOM REPLY\.\*[\s\S]*?timeout: 10000/);
+    expect(smoke).toMatch(/visible: SMOKE AGENT CORNER REPLY\.\*[\s\S]*?timeout: 10000/);
   });
 
   it('provisions a human-accessible corner and publishes its durable turn lifecycle', () => {
@@ -1529,10 +1533,10 @@ esac
       /SMOKE CORNER PHASE READY[\s\S]*?publishCornerTurnStatus\(cornerPhaseRequest\.id, 'working'\)[\s\S]*?SMOKE CORNER STEER[\s\S]*?publishCornerTurnStatus\(cornerPhaseRequest\.id, 'complete'\)/,
     );
     const cornerPhaseCheckpoint = replyFixture.indexOf(
-      'const cornerPhaseRequest = await waitForMessage(',
+      'const cornerPhaseRequest = await waitForRelayMessage(',
     );
     const cornerSteerWait = replyFixture.indexOf(
-      "await waitForMessage(client, cornerId, 'SMOKE CORNER STEER')",
+      "await waitForRelayMessage(client, cornerId, 'SMOKE CORNER STEER')",
     );
     expect(cornerPhaseCheckpoint).toBeGreaterThan(-1);
     expect(cornerSteerWait).toBeGreaterThan(cornerPhaseCheckpoint);

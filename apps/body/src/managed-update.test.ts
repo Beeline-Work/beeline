@@ -33,7 +33,7 @@ const functionalProof = {
   sandboxed: true,
   sessionStarted: true as const,
   turnCompleted: true as const,
-  nativeTools: ['read_mandate'] as const,
+  nativeTools: ['close_corner'] as const,
 };
 
 async function layoutFixture(): Promise<{
@@ -406,7 +406,7 @@ if (generation > 1) {
   if (!handoff || handoff.desiredRelease !== loadedRelease) process.exit(70);
 if (!(await proveLoadedReleaseReady(layout, runtimeDir, loadedRelease, { functionalProof: {
   harness: 'fixture-acp', sandboxed: true, sessionStarted: true,
-  turnCompleted: true, nativeTools: ['read_mandate']
+  turnCompleted: true, nativeTools: ['close_corner']
 } }))) process.exit(71);
   const successorReadyAt = Date.now();
   await notifier.ready('ready; loaded_release=' + loadedRelease);

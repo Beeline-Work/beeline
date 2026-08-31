@@ -2,13 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { basename } from 'node:path';
 import type { McpServerWire } from './acp.js';
 import { buildAgentMessage } from './activity.js';
-import {
-  DurableMergeGate,
-  git,
-  publishEvent,
-  type Identity,
-  type RelayClient,
-} from '@beeline/gate';
+import { publishEvent, type Identity, type RelayClient } from '@beeline/gate';
 import {
   createBuzzClient,
   listMembers,
@@ -49,7 +43,6 @@ import {
   type BeelineActionToken,
   type BeelineAgentToolName,
   type BeelineScheduleOperation,
-  type CloseCornerDisposition,
   type CornerReadResult,
   type DeliverAudience,
   type DirectToolResult,
@@ -105,8 +98,6 @@ export interface BodyAgentToolsHost {
     workspaceId: string,
     scheduleIds: readonly string[],
   ): Promise<NostrEvent>;
-  missionCornerFresh(info: SubchannelInfo): Promise<boolean>;
-  findHumanMergeApproval(info: SubchannelInfo): Promise<SubchannelInfo['humanMergeApproval']>;
   repoId(repo: BoundRepo): string;
   runScheduleNow():
     ((scheduleId: string) => Promise<{ runId: string; eventId: string }>) | undefined;
@@ -134,11 +125,7 @@ export interface BodyAgentToolsHost {
     objective: string;
     tool: string;
   }): Promise<{ request_id: string; event_id: string; message: string }>;
-  publishMergeReady(info: SubchannelInfo): Promise<boolean>;
-  forceSuspend(channelId: string): Promise<void>;
   archiveSubchannel(channelId: string): Promise<void>;
-  runApprovalLandingPass(roomId: string, mergeGate?: DurableMergeGate): Promise<void>;
-  pollMergeCompletions(): Promise<number>;
   candidateBytes(session: AgentSession, candidate: AgentOutputCandidate): Promise<Uint8Array>;
 }
 
@@ -154,7 +141,6 @@ export class BodyAgentTools {
   private readonly agentToolKernel = new AuthorizeOrRequestKernel();
   readonly roomRepositories = new Map<string, BoundRepo>();
   private readonly agentToolMandates = new Map<string, ReadMandateResult>();
-  private readonly roomMergeGates = new Map<string, DurableMergeGate | undefined>();
 
   constructor(private readonly host: BodyAgentToolsHost) {}
 
@@ -181,10 +167,6 @@ export class BodyAgentTools {
   private get runScheduleNow():
     ((scheduleId: string) => Promise<{ runId: string; eventId: string }>) | undefined {
     return this.host.runScheduleNow();
-  }
-
-  private get scheduler(): { forceSuspend(channelId: string): Promise<void> } {
-    return { forceSuspend: (channelId) => this.host.forceSuspend(channelId) };
   }
 
   private get activePermissionTurns(): {
@@ -237,16 +219,6 @@ export class BodyAgentTools {
     return this.host.agentClientContext();
   }
 
-  private missionCornerFresh(info: SubchannelInfo): Promise<boolean> {
-    return this.host.missionCornerFresh(info);
-  }
-
-  private findHumanMergeApproval(
-    info: SubchannelInfo,
-  ): Promise<SubchannelInfo['humanMergeApproval']> {
-    return this.host.findHumanMergeApproval(info);
-  }
-
   private repoId(repo: BoundRepo): string {
     return this.host.repoId(repo);
   }
@@ -287,20 +259,8 @@ export class BodyAgentTools {
     return this.host.requestCornerApproval(input);
   }
 
-  private publishMergeReady(info: SubchannelInfo): Promise<boolean> {
-    return this.host.publishMergeReady(info);
-  }
-
   private archiveSubchannel(channelId: string): Promise<void> {
     return this.host.archiveSubchannel(channelId);
-  }
-
-  private runApprovalLandingPass(roomId: string, mergeGate?: DurableMergeGate): Promise<void> {
-    return this.host.runApprovalLandingPass(roomId, mergeGate);
-  }
-
-  private pollMergeCompletions(): Promise<number> {
-    return this.host.pollMergeCompletions();
   }
 
   private candidateBytes(
@@ -318,14 +278,6 @@ export class BodyAgentTools {
     this.agentToolMandates.set(roomId, mandate);
   }
 
-  setMergeGate(roomId: string, mergeGate: DurableMergeGate | undefined): void {
-    this.roomMergeGates.set(roomId, mergeGate);
-  }
-
-  deleteMergeGate(roomId: string): void {
-    this.roomMergeGates.delete(roomId);
-  }
-
   revoke(channelId: string): void {
     this.agentToolBroker.revoke(channelId);
   }
@@ -334,7 +286,6 @@ export class BodyAgentTools {
     await this.agentToolBroker.close();
     this.roomRepositories.clear();
     this.agentToolMandates.clear();
-    this.roomMergeGates.clear();
   }
 
   async authorizedExternalServers(channelId: string): Promise<McpServerWire[]> {
@@ -361,7 +312,7 @@ export class BodyAgentTools {
 
   private agentToolDedupKey(
     channelId: string,
-    tool: BeelineAgentToolName,
+    tool: string,
     objective: string,
   ): string {
     const turn = this.activePermissionTurns.get(channelId);
@@ -431,22 +382,12 @@ export class BodyAgentTools {
     const grants = [...standing.grants];
     if (requestedScope?.type === 'corner.close') {
       const info = this.subchannels.get(requestedScope.cornerId);
-      const defaultAbandon = requestedScope.disposition === 'abandon';
-      const missionLand =
-        requestedScope.disposition === 'land' &&
-        Boolean(info?.mission && (await this.missionCornerFresh(info)));
-      const approvedLand =
-        requestedScope.disposition === 'land' &&
-        Boolean(info && (await this.findHumanMergeApproval(info)));
-      if (defaultAbandon || missionLand || approvedLand) {
+      if (info && !info.boundRepo) {
         grants.push({
           action: 'corner.close',
           scope: requestedScope,
-          source: defaultAbandon ? 'default' : missionLand ? 'mission' : 'signed-grant',
-          event_id:
-            info?.humanMergeApproval?.id ??
-            info?.mission?.grantEventId ??
-            standing.generation.event_id,
+          source: 'default',
+          event_id: standing.generation.event_id,
         });
       }
     }
@@ -463,7 +404,7 @@ export class BodyAgentTools {
 
   private async publishAgentToolReceipt(input: {
     channelId: string;
-    tool: BeelineAgentToolName;
+    tool: string;
     status: 'executed' | 'failed';
     action: string;
     resultId?: string;
@@ -511,37 +452,30 @@ export class BodyAgentTools {
     tool: BeelineAgentToolName,
     args: Record<string, unknown>,
   ): Promise<unknown> {
-    if (tool === 'read_mandate') {
-      if (Object.keys(args).length > 0) {
-        return {
-          status: 'denied',
-          code: 'invalid_arguments',
-          message: 'read_mandate accepts no arguments.',
-        };
-      }
-      return this.host.currentAgentToolMandate(binding.workspaceId, binding.roomId);
-    }
-    if (tool === 'read_corner') return this.invokeReadCornerTool(binding, args);
-    if (tool === 'list_corners') return this.invokeListCornersTool(binding, args);
-    if (tool === 'request_mandate') return this.invokeRequestMandateTool(binding, args);
     if (tool === 'open_corner') return this.invokeOpenCornerTool(binding, args);
-    if (tool === 'close_corner') return this.invokeCloseCornerTool(binding, args);
-    if (tool === 'schedule') return this.invokeScheduleTool(binding, args);
-    return this.invokeDeliverTool(binding, args);
+    return this.invokeCloseCornerTool(binding, args);
   }
 
   private cornerReadSummary(info: SubchannelInfo): NonNullable<CornerReadResult['corner']> {
-    const state = info.cornerState?.state ?? 'open';
+    const remoteState = info.remoteState?.state;
+    const state =
+      remoteState === 'gone'
+        ? 'concluded'
+        : remoteState === 'in-review'
+          ? 'waiting'
+          : remoteState === 'working'
+            ? 'working'
+            : 'open';
     return {
       corner_id: info.subchannelId,
       name: info.cornerName ?? info.taskDescription ?? info.featureBranch ?? 'Untitled corner',
       objective: info.taskDescription ?? '',
       ...(info.featureBranch ? { feature_ref: info.featureBranch } : {}),
-      state: state === 'closed' ? 'concluded' : state,
+      state,
     };
   }
 
-  private invokeReadCornerTool(
+  invokeReadCornerTool(
     binding: { channelId: string; roomId: string; workspaceId: string },
     args: Record<string, unknown>,
   ): CornerReadResult | DirectToolResult<never> {
@@ -589,7 +523,7 @@ export class BodyAgentTools {
     return { request_id: request.eventId, exists: false, state: attempt ? 'opening' : 'not_found' };
   }
 
-  private invokeListCornersTool(
+  invokeListCornersTool(
     binding: { channelId: string; roomId: string; workspaceId: string },
     args: Record<string, unknown>,
   ): ListCornersResult | DirectToolResult<never> {
@@ -676,38 +610,22 @@ export class BodyAgentTools {
       };
     }
     if (action === 'corner.close') {
-      this.assertToolArgKeys(raw, [
-        'type',
-        'corner_id',
-        'disposition',
-        'repository_key',
-        'target_ref',
-        'source_sha',
-      ]);
+      this.assertToolArgKeys(raw, ['type', 'corner_id']);
       const cornerId = this.stringToolArg(raw, 'corner_id', { required: true, max: 256 })!;
-      const disposition = this.stringToolArg(raw, 'disposition', { required: true, max: 16 });
-      if (cornerId !== binding.channelId || (disposition !== 'land' && disposition !== 'abandon')) {
+      if (cornerId !== binding.channelId) {
         throw new AgentToolKnownFailure(
           'corner_scope_mismatch',
-          'The requested mandate must name this bound corner and a closed disposition.',
+          'The requested mandate must name this bound corner.',
         );
       }
       const info = this.subchannels.get(cornerId);
       if (!info || info.session.parentChannelId !== binding.roomId) {
         throw new AgentToolKnownFailure('corner_unavailable', 'The bound corner is unavailable.');
       }
-      const sourceSha = (await git(info.worktreePath, ['rev-parse', 'HEAD'])).stdout.trim();
-      if (!/^[0-9a-f]{40}$/.test(sourceSha)) {
-        throw new AgentToolKnownFailure('corner_tip_unavailable', 'The corner tip is unavailable.');
-      }
-      if (
-        (raw.repository_key !== undefined && raw.repository_key !== repositoryKey) ||
-        (raw.target_ref !== undefined && raw.target_ref !== targetRef) ||
-        (raw.source_sha !== undefined && raw.source_sha !== sourceSha)
-      ) {
+      if (info.boundRepo) {
         throw new AgentToolKnownFailure(
-          'corner_scope_mismatch',
-          'The requested close scope is stale or outside this session binding.',
+          'repository_corner_auto_closes',
+          'Repository-backed corners close automatically when their GitHub branch is deleted.',
         );
       }
       return {
@@ -715,8 +633,6 @@ export class BodyAgentTools {
         workspaceId: binding.workspaceId,
         roomId: binding.roomId,
         cornerId,
-        disposition,
-        ...(repositoryKey && targetRef ? { repositoryKey, targetRef, sourceSha } : {}),
       };
     }
     if (action === 'artifact.deliver') {
@@ -763,7 +679,7 @@ export class BodyAgentTools {
     };
   }
 
-  private async invokeRequestMandateTool(
+  async invokeRequestMandateTool(
     binding: { channelId: string; roomId: string; workspaceId: string },
     args: Record<string, unknown>,
   ): Promise<RequestMandateResult> {
@@ -811,26 +727,10 @@ export class BodyAgentTools {
           result: { mandate },
         }),
         requestApproval: async () => {
-          if (scope.type !== 'corner.close' || scope.disposition !== 'land') {
-            throw new AgentToolKnownFailure(
-              'approval_unavailable',
-              'This mandate action cannot create an approval request.',
-            );
-          }
-          const info = this.subchannels.get(scope.cornerId);
-          const turnId = this.activePermissionTurns.get(binding.channelId)?.requestId;
-          if (!info || !turnId) {
-            throw new AgentToolKnownFailure(
-              'no_active_turn',
-              'This mandate request requires an active corner turn.',
-            );
-          }
-          const pending = await this.prepareToolCloseForReview(info, turnId);
-          return {
-            request_id: pending.requestId,
-            event_id: pending.eventId,
-            message: 'The exact reviewed tip is frozen and waiting for owner approval.',
-          };
+          throw new AgentToolKnownFailure(
+            'approval_unavailable',
+            'This mandate action cannot create an approval request.',
+          );
         },
       });
       if (direct.status !== 'executed') return direct;
@@ -1036,7 +936,7 @@ export class BodyAgentTools {
     return candidate;
   }
 
-  private async invokeScheduleTool(
+  async invokeScheduleTool(
     binding: { channelId: string; roomId: string; workspaceId: string },
     args: Record<string, unknown>,
   ): Promise<DirectToolResult<unknown>> {
@@ -1343,67 +1243,13 @@ export class BodyAgentTools {
     };
   }
 
-  private async prepareToolCloseForReview(
-    info: SubchannelInfo,
-    turnId: string,
-    suspendWriter = true,
-  ): Promise<{ requestId: string; eventId: string; sourceSha: string; targetRef: string }> {
-    if (!(await this.publishMergeReady(info)) || !info.mergeTarget) {
-      throw new AgentToolKnownFailure(
-        'corner_not_reviewable',
-        'The corner is not reviewable. Commit intended changes and resolve dirty or untracked files.',
-      );
-    }
-    const pending = {
-      turnId,
-      sourceSha: info.mergeTarget.tip,
-      targetRef: info.mergeTarget.branch,
-      requestId: info.mergeTarget.tip,
-      eventId: info.mergeTarget.tip,
-    };
-    info.toolClosePending = pending;
-    // End this physical writer shortly after its result crosses MCP. New turns
-    // are rejected by the pending-close guard below; the worktree stays intact
-    // for the existing landing pipeline.
-    if (suspendWriter) {
-      const timer = setTimeout(() => {
-        try {
-          info.session.client.sessionCancel(info.session.sessionId);
-        } catch {
-          // A completed/retired turn is already frozen.
-        }
-        void this.scheduler
-          .forceSuspend(info.subchannelId)
-          .catch((error) =>
-            console.error(`[body] pending close suspend failed for ${info.subchannelId}:`, error),
-          );
-      }, 250);
-      timer.unref?.();
-    }
-    return pending;
-  }
-
   private async invokeCloseCornerTool(
     binding: { channelId: string; roomId: string; workspaceId: string },
     args: Record<string, unknown>,
-  ): Promise<
-    DirectToolResult<{
-      corner_id: string;
-      disposition: CloseCornerDisposition;
-      state: 'closed';
-      landed_tip?: string;
-    }>
-  > {
+  ): Promise<DirectToolResult<{ corner_id: string; state: 'closed' }>> {
     try {
+      this.assertToolArgKeys(args, ['corner_id']);
       const cornerId = this.stringToolArg(args, 'corner_id', { required: true, max: 256 })!;
-      const rawDisposition = this.stringToolArg(args, 'disposition', { required: true, max: 16 });
-      if (rawDisposition !== 'land' && rawDisposition !== 'abandon') {
-        throw new AgentToolKnownFailure(
-          'invalid_arguments',
-          'disposition must be land or abandon.',
-        );
-      }
-      const disposition: CloseCornerDisposition = rawDisposition;
       if (binding.channelId !== cornerId) {
         throw new AgentToolKnownFailure(
           'corner_scope_mismatch',
@@ -1414,114 +1260,45 @@ export class BodyAgentTools {
       if (!info || info.archived || info.session.parentChannelId !== binding.roomId) {
         throw new AgentToolKnownFailure('corner_unavailable', 'The bound corner is unavailable.');
       }
-      if (disposition === 'land' && !info.boundRepo) {
+      if (info.boundRepo) {
         return {
           status: 'denied',
-          code: 'landing_unavailable',
+          code: 'repository_corner_auto_closes',
           message:
-            'This corner has no repository or feature branch to land. Deliver its artifacts, then close it with disposition abandon.',
+            'Repository-backed corners close automatically after their GitHub branch is merged or deleted.',
         };
-      }
-      const head = info.boundRepo
-        ? (await git(info.worktreePath, ['rev-parse', 'HEAD'])).stdout.trim()
-        : undefined;
-      if (info.boundRepo && !/^[0-9a-f]{40}$/.test(head ?? '')) {
-        throw new AgentToolKnownFailure('corner_tip_unavailable', 'The corner tip is unavailable.');
       }
       const scope: BeelineActionScope = {
         type: 'corner.close',
         workspaceId: binding.workspaceId,
         roomId: binding.roomId,
         cornerId,
-        disposition,
-        ...(info.boundRepo
-          ? {
-              repositoryKey:
-                info.boundRepo.truth?.binding.key ??
-                info.boundRepo.repositoryKey ??
-                this.repoId(info.boundRepo),
-              targetRef: info.boundRepo.targetBranch ?? 'refs/heads/main',
-              sourceSha: head!,
-            }
-          : {}),
       };
-      const turnId = this.activePermissionTurns.get(binding.channelId)?.requestId;
-      if (!turnId) {
-        throw new AgentToolKnownFailure('no_active_turn', 'This tool requires an active turn.');
-      }
-      return await this.agentToolKernel.authorizeOrRequest<{
-        corner_id: string;
-        disposition: CloseCornerDisposition;
-        state: 'closed';
-        landed_tip?: string;
-      }>({
+      return await this.agentToolKernel.authorizeOrRequest<{ corner_id: string; state: 'closed' }>({
         action: 'corner.close',
         scope,
-        dedupKey: this.agentToolDedupKey(
-          binding.channelId,
-          'close_corner',
-          `${cornerId}:${disposition}`,
-        ),
+        dedupKey: this.agentToolDedupKey(binding.channelId, 'close_corner', cornerId),
         readMandate: () =>
           this.host.currentAgentToolMandate(binding.workspaceId, binding.roomId, scope),
         execute: async () => {
-          if (disposition === 'abandon') {
-            const receipt = await this.publishAgentToolReceipt({
-              channelId: cornerId,
-              tool: 'close_corner',
-              status: 'executed',
-              action: 'corner.close',
-              resultId: cornerId,
-              extraTags: [['disposition', 'abandon']],
-            });
-            await this.archiveSubchannel(cornerId);
-            return {
-              event_id: receipt.id,
-              result: { corner_id: cornerId, disposition, state: 'closed' as const },
-            };
-          }
-          await this.prepareToolCloseForReview(info, turnId, false);
-          await this.runApprovalLandingPass(
-            binding.roomId,
-            this.roomMergeGates.get(binding.roomId),
-          );
-          await this.pollMergeCompletions();
-          if (!info.landedTip) {
-            throw new AgentToolKnownFailure(
-              'landing_not_confirmed',
-              'The target ref has not confirmed the reviewed tip.',
-              true,
-            );
-          }
           const receipt = await this.publishAgentToolReceipt({
-            channelId: binding.roomId,
+            channelId: cornerId,
             tool: 'close_corner',
             status: 'executed',
             action: 'corner.close',
             resultId: cornerId,
-            extraTags: [
-              ['corner', cornerId],
-              ['disposition', 'land'],
-              ['tip', info.landedTip],
-            ],
           });
+          await this.archiveSubchannel(cornerId);
           return {
             event_id: receipt.id,
-            result: {
-              corner_id: cornerId,
-              disposition,
-              state: 'closed' as const,
-              landed_tip: info.landedTip,
-            },
+            result: { corner_id: cornerId, state: 'closed' as const },
           };
         },
         requestApproval: async () => {
-          const pending = await this.prepareToolCloseForReview(info, turnId);
-          return {
-            request_id: pending.requestId,
-            event_id: pending.eventId,
-            message: 'The exact reviewed tip is frozen and waiting for owner approval.',
-          };
+          throw new AgentToolKnownFailure(
+            'approval_unavailable',
+            'Repository-less corner close does not create an approval request.',
+          );
         },
       });
     } catch (error) {
@@ -1529,7 +1306,7 @@ export class BodyAgentTools {
     }
   }
 
-  private async invokeDeliverTool(
+  async invokeDeliverTool(
     binding: { channelId: string; roomId: string; workspaceId: string },
     args: Record<string, unknown>,
   ): Promise<

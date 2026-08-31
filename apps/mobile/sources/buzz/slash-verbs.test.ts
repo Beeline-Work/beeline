@@ -11,7 +11,6 @@ import {
 const allAvailable: SlashVerbAvailability = {
   canOpenCorner: true,
   canCloseCorner: true,
-  canApprove: true,
   canChangeTargetBranch: true,
   canAddAgent: true,
   canInvitePerson: true,
@@ -33,14 +32,13 @@ describe('Buzz composer built-in slash verbs', () => {
     );
     expect(verbs.map((verb) => verb.command)).toEqual([
       'open-corner',
-      'approve',
       'add-agent',
       'invite',
     ]);
   });
 
   it('filters by command or visible control label as the person types', () => {
-    expect(availableSlashVerbs(allAvailable, 'app').map((verb) => verb.id)).toEqual(['approve']);
+    expect(availableSlashVerbs(allAvailable, 'app')).toEqual([]);
     expect(availableSlashVerbs(allAvailable, 'target').map((verb) => verb.id)).toEqual([
       'change-target-branch',
     ]);
@@ -60,7 +58,6 @@ describe('the composer verb list stays in sync with the daemon vocabulary', () =
     expect(commands).toEqual([...BEELINE_SLASH_COMMANDS]);
     expect(commands).toEqual([
       'open-corner',
-      'approve',
       'change-target-branch',
       'add-agent',
       'invite',

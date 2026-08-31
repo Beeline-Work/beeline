@@ -78,7 +78,7 @@ lines.on('line', (line) => {
     while ((newline = buffer.indexOf('\\n')) >= 0) {
       const response = JSON.parse(buffer.slice(0, newline));
       buffer = buffer.slice(newline + 1);
-      if (response.id === 1) child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'read_mandate', arguments: {} } }) + '\\n');
+      if (response.id === 1) child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'close_corner', arguments: { corner_id: 'update-probe' } } }) + '\\n');
       if (response.id === 2) {
         child.kill();
         reply(message.id, { stopReason: 'end_turn' });
@@ -162,7 +162,7 @@ describe('functional update probe', () => {
       {
         sessionStarted: true,
         turnCompleted: true,
-        nativeTools: ['read_mandate'],
+        nativeTools: ['close_corner'],
       },
       10_000,
     );
@@ -229,7 +229,7 @@ describe('functional update probe', () => {
       harness: 'pi',
       sessionStarted: true,
       turnCompleted: true,
-      nativeTools: ['read_mandate'],
+      nativeTools: ['close_corner'],
     });
   });
 });

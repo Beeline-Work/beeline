@@ -22,7 +22,6 @@ import {
   type WorkspaceListView,
   type WorkspaceView,
 } from './room-view.js';
-import { parseChangeReviewArtifactDescriptor } from './change-review.js';
 
 const HEX = /^[0-9a-f]{64}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -39,10 +38,6 @@ function integer(value: unknown): value is number {
 
 function optionalString(value: unknown): boolean {
   return value === undefined || typeof value === 'string';
-}
-
-function optionalBoolean(value: unknown): boolean {
-  return value === undefined || typeof value === 'boolean';
 }
 
 function stringArray(value: unknown, itemGuard: (item: string) => boolean = () => true): boolean {
@@ -192,65 +187,6 @@ function messageCorner(value: unknown): boolean {
   );
 }
 
-function messageMerge(value: unknown): boolean {
-  const item = record(value);
-  return Boolean(
-    item &&
-    (item.action === 'ready' ||
-      item.action === 'not-ready' ||
-      item.action === 'landed' ||
-      item.action === 'failed' ||
-      item.action === 'approval-ack') &&
-    optionalString(item.repository) &&
-    optionalString(item.branch) &&
-    optionalString(item.tip) &&
-    optionalString(item.patchId) &&
-    (item.previewUrl === undefined || httpUrl(item.previewUrl)) &&
-    (item.retry === undefined ||
-      item.retry === 'auto' ||
-      item.retry === 'realigning' ||
-      item.retry === 'blocked') &&
-    optionalString(item.approvalId) &&
-    (item.decision === undefined || item.decision === 'accepted' || item.decision === 'rejected') &&
-    (item.state === undefined ||
-      item.state === 'landing' ||
-      item.state === 'realigning' ||
-      item.state === 'realigned' ||
-      item.state === 'content-changed' ||
-      item.state === 'tip-moved') &&
-    optionalString(item.rejectedTip),
-  );
-}
-
-function messageLandSummary(value: unknown): boolean {
-  const item = record(value);
-  const approvedBy = item?.approvedBy === undefined ? undefined : record(item.approvedBy);
-  return Boolean(
-    item &&
-    typeof item.cornerId === 'string' &&
-    item.cornerId.length > 0 &&
-    typeof item.objective === 'string' &&
-    item.objective.length > 0 &&
-    typeof item.delivered === 'string' &&
-    item.delivered.length > 0 &&
-    typeof item.omitted === 'string' &&
-    item.omitted.length > 0 &&
-    typeof item.branch === 'string' &&
-    item.branch.length > 0 &&
-    typeof item.tip === 'string' &&
-    /^[0-9a-f]{40}$/i.test(item.tip) &&
-    (item.url === undefined || httpUrl(item.url)) &&
-    (approvedBy === undefined ||
-      (approvedBy &&
-        typeof approvedBy.pubkey === 'string' &&
-        HEX.test(approvedBy.pubkey) &&
-        typeof approvedBy.name === 'string' &&
-        approvedBy.name.length > 0 &&
-        typeof approvedBy.handle === 'string' &&
-        approvedBy.handle.length > 0)),
-  );
-}
-
 function messagePermission(value: unknown): boolean {
   const item = record(value);
   return Boolean(
@@ -365,8 +301,6 @@ export function isRoomViewMessage(value: unknown): value is RoomViewMessage {
       item.durableFact === 'merge' ||
       item.durableFact === 'action') &&
     (item.corner === undefined || messageCorner(item.corner)) &&
-    (item.merge === undefined || messageMerge(item.merge)) &&
-    (item.landSummary === undefined || messageLandSummary(item.landSummary)) &&
     (item.permission === undefined || messagePermission(item.permission)) &&
     (item.targetBranch === undefined || targetBranch(item.targetBranch)) &&
     (item.githubEvent === undefined || githubEvent(item.githubEvent)),
@@ -516,38 +450,32 @@ function corner(value: unknown): value is CornerListItem {
 
 function cornerLifecycle(value: unknown): boolean {
   const item = record(value);
-  if (
-    !item ||
-    (item.lifecycle !== 'WORKING' &&
-      item.lifecycle !== 'REVIEW' &&
-      item.lifecycle !== 'APPROVED' &&
-      item.lifecycle !== 'REJECTED' &&
-      item.lifecycle !== 'ARCHIVED') ||
-    (item.archiveFlavor !== undefined &&
-      item.archiveFlavor !== 'merged' &&
-      item.archiveFlavor !== 'rejected' &&
-      item.archiveFlavor !== 'closed')
-  ) {
-    return false;
-  }
-  const verdict = item.verdict === undefined ? undefined : record(item.verdict);
-  if (
-    verdict !== undefined &&
-    (!verdict ||
-      (verdict.verdict !== 'approve' && verdict.verdict !== 'reject') ||
-      typeof verdict.eventId !== 'string' ||
-      !HEX.test(verdict.eventId) ||
-      typeof verdict.signerPubkey !== 'string' ||
-      !HEX.test(verdict.signerPubkey) ||
-      typeof verdict.repository !== 'string' ||
-      !verdict.repository ||
-      typeof verdict.targetBranch !== 'string' ||
-      !verdict.targetBranch ||
-      !integer(verdict.createdAt))
-  ) {
-    return false;
-  }
-  return true;
+  const pr = item?.pr === undefined ? undefined : record(item.pr);
+  return Boolean(
+    item &&
+      (item.lifecycle === 'working' ||
+        item.lifecycle === 'in-review' ||
+        item.lifecycle === 'unknown' ||
+        item.lifecycle === 'done') &&
+      (item.checks === 'passing' ||
+        item.checks === 'failing' ||
+        item.checks === 'pending' ||
+        item.checks === 'unknown') &&
+      optionalString(item.branch) &&
+      (item.outcome === undefined || item.outcome === 'landed' || item.outcome === 'abandoned') &&
+      optionalString(item.reason) &&
+      (pr === undefined ||
+        (pr &&
+          integer(pr.number) &&
+          pr.number > 0 &&
+          githubUrl(pr.url) &&
+          typeof pr.title === 'string' &&
+          pr.title.length > 0 &&
+          typeof pr.targetBranch === 'string' &&
+          pr.targetBranch.length > 0 &&
+          typeof pr.headSha === 'string' &&
+          /^[0-9a-f]{40}$/i.test(pr.headSha))),
+  );
 }
 
 function repository(value: unknown): boolean {
@@ -570,49 +498,6 @@ function repository(value: unknown): boolean {
 
 function repositoryResolution(value: unknown): boolean {
   return value === 'repository' || value === 'none' || value === 'unverified';
-}
-
-function reviewFile(value: unknown): boolean {
-  const item = record(value);
-  return Boolean(
-    item &&
-    typeof item.path === 'string' &&
-    item.path.length > 0 &&
-    (item.previousPath === undefined || typeof item.previousPath === 'string') &&
-    (item.status === 'added' ||
-      item.status === 'modified' ||
-      item.status === 'deleted' ||
-      item.status === 'renamed' ||
-      item.status === 'copied' ||
-      item.status === 'type-changed' ||
-      item.status === 'unmerged') &&
-    (item.linesAdded === undefined || integer(item.linesAdded)) &&
-    (item.linesRemoved === undefined || integer(item.linesRemoved)) &&
-    optionalBoolean(item.isBinary) &&
-    (item.patchBytes === undefined || integer(item.patchBytes)) &&
-    (item.renderUnavailableReason === undefined || item.renderUnavailableReason === 'too-large'),
-  );
-}
-
-function review(value: unknown): boolean {
-  const item = record(value);
-  if (
-    !item ||
-    (item.status !== 'none' && item.status !== 'not-ready' && item.status !== 'ready') ||
-    !optionalString(item.reason) ||
-    !Array.isArray(item.files) ||
-    !item.files.every(reviewFile) ||
-    !Array.isArray(item.approvedBy) ||
-    !item.approvedBy.every(identity)
-  ) {
-    return false;
-  }
-  if (item.artifact === undefined) return item.status !== 'ready';
-  try {
-    return parseChangeReviewArtifactDescriptor(JSON.stringify(item.artifact)) !== null;
-  } catch {
-    return false;
-  }
 }
 
 function modelSelection(value: unknown): boolean {
@@ -669,7 +554,6 @@ export function isRoomView(value: unknown): value is RoomView {
     item.corners.every(corner) &&
     (item.repository === undefined || repository(item.repository)) &&
     repositoryResolution(item.repositoryResolution) &&
-    (item.review === undefined || review(item.review)) &&
     (item.cornerLifecycle === undefined || cornerLifecycle(item.cornerLifecycle)) &&
     watchFilters(item.watchFilters),
   );

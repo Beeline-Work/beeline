@@ -77,23 +77,18 @@ describe('the using-beeline skill content', () => {
     expect(markdown).toContain('read-only conversation channel');
     expect(markdown).toContain('edit corner');
     expect(markdown).toContain("corner's feature branch");
-    expect(markdown.toLowerCase()).toContain('you never land');
+    expect(markdown).toContain('Nothing you say or write in a Room ever lands');
   });
 
-  it('uses the mounted corner and schedule tools without prose compatibility rituals', () => {
+  it('documents the exact two tools and plain GitHub flow', () => {
     const markdown = usingBeelineSkillMarkdown('r');
     expect(markdown).toContain('Call `open_corner`');
-    expect(markdown).toContain('mounted `schedule` tool');
+    expect(markdown).toContain('`open_corner` plus `close_corner`');
+    expect(markdown).toContain('plain `gh pr create`');
+    expect(markdown).not.toContain('mounted `schedule` tool');
     expect(markdown).not.toContain('CORNER_REQUEST');
     expect(markdown).not.toContain(`${NAMED_REPOSITORY_PERMISSION_COMMAND} --repo owner/repo`);
     expect(markdown).toContain(`${TARGET_BRANCH_PROPOSAL_COMMAND} --branch <branch>`);
-  });
-
-  it('documents current scheduler execution checks', () => {
-    const markdown = usingBeelineSkillMarkdown('r');
-    expect(markdown).toContain('signed schedule event id');
-    expect(markdown).toContain('Each occurrence rechecks the\ncurrent mandate');
-    expect(markdown).not.toContain('`schedule.change` grant');
   });
 
   it('teaches governed Squire access without treating a missing profile as blanket inability', () => {
@@ -140,10 +135,10 @@ describe('the using-beeline skill content', () => {
 
   it('states the prohibited actions and honesty rules', () => {
     const markdown = usingBeelineSkillMarkdown('r');
-    expect(markdown).toContain('Never merge, never push to the target or any protected branch');
-    expect(markdown).toContain('never archive\nyour own corner');
+    expect(markdown).toContain('Merge with plain `gh` only\nwhen a human explicitly asks');
+    expect(markdown).toContain('never push or\nmerge directly into the target branch');
     expect(markdown).toContain('Honesty rules');
-    expect(markdown).toContain('unless a host message shows it actually did');
+    expect(markdown).toContain('git or GitHub shows it actually did');
   });
 });
 
@@ -184,9 +179,9 @@ describe('managed-skill materialization on session activation', () => {
       expect(lstatSync(skill).isSymbolicLink()).toBe(false);
       const generated = readFileSync(skill, 'utf8');
       expect(generated).toContain(beelineSkillReleaseStamp('release-a'));
-      expect(generated).toContain('mounted `schedule` tool');
-      expect(generated).toContain('Each occurrence rechecks the');
-      expect(generated).not.toContain('target-agent crons');
+      expect(generated).toContain('`open_corner` plus `close_corner`');
+      expect(generated).toContain('plain `gh pr create`');
+      expect(generated).not.toContain('mounted `schedule` tool');
     }
 
     // Regeneration on the next activation makes upgrades automatic.
@@ -324,31 +319,29 @@ describe('session-start capability awareness', () => {
   });
 
   it('makes tools the direct interface without a when-to-use catalog', () => {
-    expect(BEELINE_CAPABILITIES_PRIMER).toContain('Mounted Beeline tools are the interface');
-    expect(BEELINE_CAPABILITIES_PRIMER).toContain('call them directly');
+    expect(BEELINE_CAPABILITIES_PRIMER).toContain(
+      'Mounted Beeline tools are open_corner and close_corner',
+    );
     expect(BEELINE_CAPABILITIES_PRIMER).toContain('host derives identity');
-    expect(BEELINE_CAPABILITIES_PRIMER).toContain('typed results say executed');
+    expect(BEELINE_CAPABILITIES_PRIMER).toContain('authenticated git and gh work normally');
     expect(BEELINE_CAPABILITIES_PRIMER).not.toContain('CORNER_REQUEST');
     expect(BEELINE_CAPABILITIES_PRIMER).not.toContain('schedule.change');
     expect(BEELINE_CAPABILITIES_PRIMER).not.toContain('squire-credential-use');
   });
 
-  it('sends repo-less deliverables to the workbench and reserves corners for named landable work', () => {
+  it('reserves close_corner for repository-less cleanup', () => {
     expect(BEELINE_CAPABILITIES_PRIMER).toContain(
-      'In a Room with no repository, make deliverables as workbench artifacts to show the human; ' +
-        'corners are for changes that land in a repository and require a signed request naming ' +
-        'owner/repo.',
+      'close_corner is only for repository-less corners',
     );
   });
 
-  it('grounds action claims in canonical host results', () => {
-    expect(BEELINE_CAPABILITIES_PRIMER).toContain('never claim more than that result');
-    expect(usingBeelineSkillMarkdown('r')).toContain('canonical event or artifact id');
+  it('grounds completion claims in git and GitHub', () => {
+    expect(usingBeelineSkillMarkdown('r')).toContain('git or GitHub shows it actually did');
   });
 
-  it('keeps detailed schedule and Squire mechanics in the reference, not the primer', () => {
+  it('keeps detailed Squire mechanics in the reference, not the primer', () => {
     const markdown = usingBeelineSkillMarkdown('r');
-    expect(markdown).toContain('Unattended and recurring work');
+    expect(markdown).not.toContain('Unattended and recurring work');
     expect(markdown).toContain('Trusty Squire: governed account access');
     expect(BEELINE_CAPABILITIES_PRIMER).not.toContain('Trusty Squire');
   });

@@ -2,9 +2,8 @@
  * Delivery discipline for lifecycle-critical publications
  * (`publish-delivery.ts`).
  *
- * The 2026-08-23 incident: a merge-ready card was published once, straight
- * into a 502 window (the deploy bouncing relay-front), and never retried —
- * the corner read NOTHING READY TO MERGE YET forever. These tests pin the
+ * A lifecycle fact published once into a relay deploy bounce can leave the
+ * owner-facing state permanently stale. These tests pin the
  * classifier (what is worth retrying) and the loop's contract (retry
  * transient failures with bounded backoff; give up honestly otherwise).
  */

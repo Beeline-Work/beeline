@@ -199,12 +199,6 @@ describe('durable state schema migration', () => {
       beforeTokens: 5,
       afterTokens: 3,
     };
-    const concludeEpisode = {
-      quietSince: 1_700_000_000,
-      nudges: 1,
-      lastNudgeAt: 1_700_000_100,
-      stalledNotified: true,
-    };
     const factory = {
       version: 1,
       permissionActionClaims: ['permission-claim'],
@@ -225,7 +219,6 @@ describe('durable state schema migration', () => {
         modelTurns: [modelTurn],
         sessionReprimes: [sessionReprime],
         githubEventCursors: { room: 77 },
-        concludeEpisodes: { room: concludeEpisode },
         factory,
       }),
     );
@@ -240,7 +233,7 @@ describe('durable state schema migration', () => {
     expect(persisted.modelTurns).toEqual([modelTurn]);
     expect(persisted.sessionReprimes).toEqual([sessionReprime]);
     expect(persisted.githubEventCursors).toEqual({ room: 77 });
-    expect(persisted.concludeEpisodes).toEqual({ room: concludeEpisode });
+    expect(persisted).not.toHaveProperty('concludeEpisodes');
     expect(persisted.factory).toEqual(factory);
     const restarted = new DurableBodyState(path);
     expect(await restarted.cursor('room')).toEqual({
@@ -251,7 +244,6 @@ describe('durable state schema migration', () => {
     expect(await restarted.modelTurns()).toEqual([modelTurn]);
     expect(await restarted.sessionReprimes()).toEqual([sessionReprime]);
     expect(await restarted.githubEventCursor('room')).toBe(77);
-    expect(await restarted.concludeEpisode('room')).toEqual(concludeEpisode);
     expect(await restarted.claimPermissionAction('permission-claim')).toBe('duplicate');
   });
 });

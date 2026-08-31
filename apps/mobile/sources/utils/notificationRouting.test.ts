@@ -19,16 +19,6 @@ const roomSurfaceSessionSource = readFileSync(
 const appLayoutSource = readFileSync(new URL('../app/_layout.tsx', import.meta.url), 'utf8');
 
 describe('getBuzzChannelIdFromNotificationData', () => {
-  it('routes merge approval notifications to their corner instead of a parent Room', () => {
-    expect(
-      getBuzzChannelIdFromNotificationData({
-        channelId: 'parent-room',
-        cornerId: 'review-corner',
-        type: 'merge-approval-request',
-      }),
-    ).toBe('review-corner');
-  });
-
   it('keeps ordinary channel activity on its channel', () => {
     expect(
       getBuzzChannelIdFromNotificationData({
@@ -188,38 +178,6 @@ describe('navigateToBuzzNotificationResponse', () => {
     );
   });
 
-  it('opens merge-ready notifications on the corner approval surface', () => {
-    const navigate = vi.fn();
-
-    navigateToBuzzTargetFromNotification(
-      { navigate },
-      {
-        type: 'merge-approval-request',
-        target: 'approval',
-        roomId: 'parent-room',
-        channelId: 'corner-review',
-        cornerId: 'corner-review',
-        eventId: 'merge-ready-event',
-        approvalId: 'merge-ready-event',
-      },
-      'response-approval',
-    );
-
-    expect(navigate).toHaveBeenCalledWith(
-      {
-        pathname: '/buzz/chat/[channelId]',
-        params: {
-          channelId: 'corner-review',
-          parent: 'parent-room',
-          notificationApprovalId: 'merge-ready-event',
-          notificationFallbackChannelId: 'parent-room',
-          notificationResponseId: 'response-approval',
-          notificationTarget: 'approval',
-        },
-      },
-      { dangerouslySingular: true },
-    );
-  });
 });
 
 describe('navigateToBuzzChannelFromNotification', () => {
@@ -263,9 +221,8 @@ describe('navigateToBuzzChannelFromNotification', () => {
     expect(appLayoutSource).toContain('navigateToBuzzNotificationResponse(router, response)');
   });
 
-  it('anchors messages and approvals, then replaces a missing corner with its parent Room', () => {
+  it('anchors messages, then replaces a missing corner with its parent Room', () => {
     expect(buzzChatSource).toMatch(/scrollToIndex\(\{\s*index: visibleIndex/);
-    expect(buzzChatSource).toContain('scrollToOffset({ offset: 0');
     expect(buzzChatSource).toContain('canonicalCornerStatus === \'archived\'');
     expect(buzzChatSource).toContain('roomSurface.parent === undefined');
     expect(buzzChatSource).toContain('params: { channelId: fallbackId, notificationResponseId }');

@@ -88,9 +88,6 @@ export interface MissionControlScope {
   scheduleOperations: MissionScheduleOperation[];
   targetAllocations: MissionTargetAllocation[];
   scheduleAllocations: MissionScheduleAllocation[];
-  /** Standing land authority is exact to `repository`; false grants none. */
-  land: boolean;
-  landBinding?: { cornerId: string; sourceSha: string };
 }
 
 export const MAX_MISSION_RESERVED_TOKENS = 100_000_000;
@@ -733,8 +730,7 @@ export function parsePermissionScope(value: unknown): PermissionScope | undefine
           );
         }) ||
         (scheduleOperations.length > 0 && scheduleAllocations.length === 0) ||
-        (input.land !== true && input.land !== false) ||
-        (cornerOperations.length === 0 && scheduleOperations.length === 0 && input.land === false)
+        (cornerOperations.length === 0 && scheduleOperations.length === 0)
       ) {
         return undefined;
       }
@@ -749,7 +745,6 @@ export function parsePermissionScope(value: unknown): PermissionScope | undefine
         scheduleOperations,
         targetAllocations,
         scheduleAllocations,
-        land: input.land,
       };
     }
     default:

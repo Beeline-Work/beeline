@@ -1,110 +1,65 @@
 import { describe, expect, it } from 'vitest';
-import {
-  deriveCornerLifecycle,
-  parseCornerGitProjection,
-  type CornerGitProjection,
-  type CornerVerdictView,
-} from './corner-product-state.js';
+import { deriveCornerLifecycle } from './corner-product-state.js';
+import type { CornerRemoteState } from './corner-remote-state.js';
 
-const git = (relation: CornerGitProjection['relation']): CornerGitProjection => ({
+const remote = (overrides: Partial<CornerRemoteState> = {}): CornerRemoteState => ({
   version: 1,
-  relation,
-  repository: 'owner/repo',
-  targetBranch: 'refs/heads/main',
-  featureBranch: 'fm/change',
-  ...(relation === 'review' || relation === 'contained' ? { featureTip: 'a'.repeat(40) } : {}),
-  ...(relation === 'review'
-    ? {
-        artifact: {
-          version: 2,
-          base: 'b'.repeat(40),
-          tip: 'a'.repeat(40),
-          patchId: 'c'.repeat(40),
-          summary: 'Change',
-          fileCount: 1,
-          files: [{ path: 'a.ts', status: 'modified' }],
-          url: 'https://example.test/review.json',
-          sha256: 'd'.repeat(64),
-          size: 10,
-        },
-      }
-    : {}),
+  cornerId: 'corner',
+  branch: 'fm/change',
+  state: 'working',
+  checks: 'unknown',
+  observedAt: 1,
+  ...overrides,
 });
 
-const verdict = (value: CornerVerdictView['verdict']): CornerVerdictView => ({
-  verdict: value,
-  eventId: 'e'.repeat(64),
-  signerPubkey: 'f'.repeat(64),
-  repository: 'owner/repo',
-  targetBranch: 'refs/heads/main',
-  createdAt: 1,
-});
-
-describe('corner five-state projector', () => {
-  it.each([
-    [{ created: true, archived: false }, 'WORKING'],
-    [{ created: true, archived: false, git: git('review') }, 'REVIEW'],
-    [
-      { created: true, archived: false, git: git('review'), verdict: verdict('approve') },
-      'APPROVED',
-    ],
-    [
-      { created: true, archived: false, git: git('review'), verdict: verdict('reject') },
-      'REJECTED',
-    ],
-  ] as const)('derives %s as %s', (input, lifecycle) => {
-    expect(deriveCornerLifecycle(input).lifecycle).toBe(lifecycle);
+describe('GitHub-derived corner lifecycle', () => {
+  it('shows a live branch as working', () => {
+    expect(deriveCornerLifecycle({ archived: false, remote: remote() })).toMatchObject({
+      lifecycle: 'working',
+      branch: 'fm/change',
+    });
   });
 
-  it('3. list close invalidation makes archived terminal with only derived flavors', () => {
-    expect(
-      deriveCornerLifecycle({ created: true, archived: true, git: git('contained') }),
-    ).toMatchObject({
-      lifecycle: 'ARCHIVED',
-      archiveFlavor: 'merged',
-    });
+  it('shows an open pull request as in review with GitHub facts intact', () => {
+    const pr = {
+      number: 12,
+      url: 'https://github.com/acme/repo/pull/12',
+      title: 'Ship it',
+      targetBranch: 'main',
+      headSha: 'a'.repeat(40),
+    };
     expect(
       deriveCornerLifecycle({
-        created: true,
-        archived: true,
-        git: git('review'),
-        verdict: verdict('reject'),
+        archived: false,
+        remote: remote({ state: 'in-review', checks: 'failing', pr }),
       }),
-    ).toMatchObject({ lifecycle: 'ARCHIVED', archiveFlavor: 'rejected' });
-    expect(deriveCornerLifecycle({ created: true, archived: true })).toMatchObject({
-      lifecycle: 'ARCHIVED',
-      archiveFlavor: 'closed',
+    ).toEqual({
+      lifecycle: 'in-review',
+      branch: 'fm/change',
+      checks: 'failing',
+      pr,
     });
   });
 
-  it('keeps REVIEW mechanical when its optional artifact is temporarily unavailable', () => {
+  it('renders GitHub read failure as unknown without inventing completion', () => {
     expect(
-      parseCornerGitProjection(JSON.stringify({ ...git('review'), artifact: undefined })),
-    ).toMatchObject({ relation: 'review', featureTip: 'a'.repeat(40) });
+      deriveCornerLifecycle({
+        archived: false,
+        remote: remote({ state: 'unknown', checks: 'unknown', reason: 'github unavailable' }),
+      }),
+    ).toMatchObject({ lifecycle: 'unknown', reason: 'github unavailable' });
   });
 
-  it('2. hidden transcript cards cannot hide an approval from the lifecycle DTO', () => {
-    const projected = deriveCornerLifecycle({
-      created: true,
-      archived: false,
-      git: git('review'),
-      verdict: verdict('approve'),
-    });
-    expect(projected.lifecycle).toBe('APPROVED');
-    expect(Object.keys(projected)).not.toContain('presentation');
-  });
-
-  it('rejection archives without changing the recoverable feature branch', () => {
-    const projected = deriveCornerLifecycle({
-      created: true,
-      archived: true,
-      git: git('review'),
-      verdict: verdict('reject'),
-    });
-    expect(projected).toMatchObject({
-      lifecycle: 'ARCHIVED',
-      archiveFlavor: 'rejected',
-      git: { featureBranch: 'fm/change' },
+  it('uses branch death or archive as done', () => {
+    expect(
+      deriveCornerLifecycle({
+        archived: false,
+        remote: remote({ state: 'gone', outcome: 'landed', checks: 'passing' }),
+      }),
+    ).toMatchObject({ lifecycle: 'done', outcome: 'landed' });
+    expect(deriveCornerLifecycle({ archived: true })).toEqual({
+      lifecycle: 'done',
+      checks: 'unknown',
     });
   });
 });

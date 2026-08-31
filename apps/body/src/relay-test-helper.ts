@@ -33,13 +33,10 @@ export function relayQueryResponse(
 }
 
 /**
- * Minimal relay `/upload` responder for Body tests that publish a single
- * review artifact. `Body.buildChangeReviewArtifact` uploads the complete
- * review once as authenticated binary bytes (`uploadMedia`, a `PUT` with a
- * `Uint8Array` body and an `X-SHA-256` header) and publishes one pointer to
- * the returned descriptor — it is never a JSON Nostr event, so a fixture
- * that only understands `/query` and event publication must not try to
- * `JSON.parse` this request's body.
+ * Minimal relay `/upload` responder for Body attachment tests. `uploadMedia`
+ * sends authenticated binary bytes (a `PUT` with a `Uint8Array` body and an
+ * `X-SHA-256` header), not a JSON Nostr event, so a fixture that only
+ * understands `/query` and event publication must not parse this body.
  */
 export function mediaUploadResponse(
   input: string | URL | Request,

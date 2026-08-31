@@ -1,6 +1,5 @@
 import { nip98AuthHeader } from '@beeline/nostr';
 import type { AttachmentReference } from './attachment.js';
-import type { ChangeReviewArtifactDescriptor, ChangeReviewFile } from './change-review.js';
 import type { AgentModelConfigOption, AgentModelSelection, Identity } from './types.js';
 import type { KnownMessageReference } from './reply-proof.js';
 import type { CornerLifecycleView } from './corner-product-state.js';
@@ -109,35 +108,6 @@ export type RoomViewMessage = {
     readonly id: string;
     readonly status: 'open' | 'working' | 'waiting' | 'idle' | 'concluded' | 'closed';
   };
-  readonly merge?: {
-    readonly action: 'ready' | 'not-ready' | 'landed' | 'failed' | 'approval-ack';
-    readonly repository?: string;
-    readonly branch?: string;
-    readonly tip?: string;
-    readonly patchId?: string;
-    readonly previewUrl?: string;
-    readonly retry?: 'auto' | 'realigning' | 'blocked';
-    readonly approvalId?: string;
-    readonly decision?: 'accepted' | 'rejected';
-    readonly state?: 'landing' | 'realigning' | 'realigned' | 'content-changed' | 'tip-moved';
-    readonly rejectedTip?: string;
-  };
-  /** Typed, host-grounded close digest for one landed corner. The event text
-   * remains a legacy fallback; clients render these fields as one block. */
-  readonly landSummary?: {
-    readonly cornerId: string;
-    readonly objective: string;
-    readonly delivered: string;
-    readonly omitted: string;
-    readonly branch: string;
-    readonly tip: string;
-    readonly url?: string;
-    readonly approvedBy?: {
-      readonly pubkey: string;
-      readonly name: string;
-      readonly handle: string;
-    };
-  };
   readonly permission?: {
     readonly permissionId: string;
     readonly requestId: string;
@@ -165,6 +135,8 @@ export type RoomViewMessage = {
     readonly actor: string;
     readonly title: string;
     readonly url: string;
+    readonly branch?: string;
+    readonly targetBranch?: string;
   };
 };
 
@@ -204,8 +176,7 @@ export type RoomView = {
   readonly cornerPlan?: RoomViewActivity['plan'];
   readonly repository?: RoomRepositoryView;
   readonly repositoryResolution: RoomRepositoryResolution;
-  readonly review?: RoomReviewView;
-  /** Canonical five-state lifecycle for this Room when it is a corner. */
+  /** GitHub-derived lifecycle for this Room when it is a repository corner. */
   readonly cornerLifecycle?: CornerLifecycleView;
   readonly corners: readonly CornerListItem[];
   readonly watchFilters: readonly SurfaceWatchFilter[];
@@ -388,16 +359,13 @@ export type RoomRepositoryView = {
  */
 export type RoomRepositoryResolution = 'repository' | 'none' | 'unverified';
 
-export type RoomReviewView = {
-  readonly status: 'none' | 'not-ready' | 'ready';
-  readonly reason?: string;
-  readonly artifact?: ChangeReviewArtifactDescriptor;
-  readonly files: readonly ChangeReviewFile[];
-  readonly approvedBy: readonly RoomViewIdentity[];
-};
-
 export type RoomViewClientOptions = {
   readonly baseUrl: string;
+  /**
+   * Public origin authenticated by the server. Node-only fixtures may connect
+   * through a local proxy while that proxy canonicalizes their public tenant.
+   */
+  readonly publicOrigin?: string;
   readonly identity: Pick<Identity, 'secretKey' | 'publicKey'>;
   readonly fetch?: typeof fetch;
   /** Diagnostic hook fired exactly once immediately before each physical fetch. */
@@ -419,10 +387,12 @@ export class RoomViewHttpError extends Error {
 
 export class RoomViewClient {
   private readonly baseUrl: string;
+  private readonly authorizationBaseUrl: string;
   private readonly fetchImpl: typeof fetch;
 
   constructor(private readonly options: RoomViewClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, '');
+    this.authorizationBaseUrl = options.publicOrigin?.replace(/\/$/, '') ?? this.baseUrl;
     this.fetchImpl = options.fetch ?? fetch;
   }
 
@@ -497,7 +467,7 @@ export class RoomViewClient {
           authorization: nip98AuthHeader(
             this.options.identity.secretKey,
             this.options.identity.publicKey,
-            url,
+            `${this.authorizationBaseUrl}${path}`,
             method,
           ),
           ...(body === undefined ? {} : { 'content-type': 'application/json' }),

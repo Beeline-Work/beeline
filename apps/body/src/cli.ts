@@ -42,7 +42,7 @@ import {
   type AgentRuntimeRecord,
 } from './runtime.js';
 import { runRelayCommand } from './relay-command.js';
-import { assertRuntimeSafe, runStartCommand } from './start-command.js';
+import { runStartCommand } from './start-command.js';
 import { runPairCommand } from './pair-command.js';
 import { runMissionScaffoldCommand } from './mission-scaffold-command.js';
 import { runUpdateCommand } from './self-update-cli.js';
@@ -237,9 +237,6 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
     log: console.log,
   });
   const agent = runtimeAgentCommand(runtime);
-  // This assertion deliberately sits outside the retry loop: unsafe branch
-  // policy is a fatal startup error, not a transient Room-loop failure.
-  await assertRuntimeSafe(runtime);
   await writeFile(resolve(dirname(configPath), 'daemon.pid'), `${process.pid}\n`, { mode: 0o600 });
   const env: NodeJS.ProcessEnv = {
     ...process.env,
@@ -601,9 +598,9 @@ async function main(): Promise<void> {
   }
 
   // Git credential-helper backend wired into corner sessions for private-repo
-  // READS (`corner-read-token.ts`). Non-interactive by construction: git is
-  // never a human at a keyboard. Mints only ever carry read-only permissions
-  // pinned to one repository id — never a push-capable credential (#376).
+  // reads and writes (`corner-read-token.ts`). Non-interactive by construction:
+  // git is never a human at a keyboard. Mints are pinned to the Room's exact
+  // GitHub App repository grant; branch protection remains GitHub's boundary.
   if (command === 'corner-git-credential') {
     process.exitCode = await runCornerGitCredentialCommand(args.slice(1));
     return;

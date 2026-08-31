@@ -96,8 +96,8 @@ export interface BodyConfig {
   /**
    * Absolute path to this daemon's runtime.json, injected by the daemon
    * launcher (`runStoredDaemon`). Corner-session git credential helpers
-   * (`corner-read-token.ts`) exec the CLI against it to mint read-only
-   * repository tokens through this daemon's own identity and relay base.
+   * (`corner-read-token.ts`) exec the CLI against it to mint repository-scoped
+   * GitHub App tokens through this daemon's own identity and relay base.
    * Absent for standalone/test Bodies: those simply never wire the helper.
    */
   runtimeConfigPath?: string;
@@ -376,8 +376,6 @@ export const AGENT_ENV_PASSTHROUGH_PREFIXES = [
   'CODEX_',
   'GOOSE_',
   'PI_',
-  'GH_',
-  'GITHUB_',
   'GITLAB_',
   'GIT_',
   'NPM_',
@@ -430,28 +428,6 @@ function isPassthroughName(name: string, extra: Set<string>): boolean {
 }
 
 /**
- * Push-capable repository credential variables NEVER handed to an ACP child,
- * even when a passthrough prefix (`GH_`, `GITHUB_`) or an explicit
- * `BUZZY_BODY_AGENT_ENV_PASSTHROUGH` entry would otherwise carry them.
- *
- * This is the structural half of "an agent can never land on main without
- * the owner's signed approval": sessions get git access only through the
- * daemon's ref-policy broker (`push-broker.ts`), never through a token of
- * their own. The denylist is applied LAST, after every other rule, so no
- * configuration can re-introduce one; reads keep working unauthenticated for
- * public repos, and private-repo fetches are performed by the daemon.
- */
-export const REPO_PUSH_CREDENTIAL_ENV_DENYLIST = [
-  'GH_TOKEN',
-  'GH_ENTERPRISE_TOKEN',
-  'GITHUB_TOKEN',
-  // An ssh-agent socket is a keyring: reachable inside the mount namespace
-  // (connecting is not a filesystem write), so it hands over exactly the
-  // push capability this list exists to remove.
-  'SSH_AUTH_SOCK',
-] as const;
-
-/**
  * Build the env map for an ACP agent child process.
  * Maps `BUZZY_LLM_*` (egress helper) onto `OPENAI_COMPAT_*` + `BUZZ_AGENT_PROVIDER=openai`.
  * Never logs secret values.
@@ -487,10 +463,6 @@ export function buildAgentEnv(
   for (const [name, value] of Object.entries(merged)) {
     if (isPassthroughName(name, extraPassthrough)) agentEnv[name] = value;
   }
-  // Structural, last-word credential removal — see the denylist above. Runs
-  // after EVERY other source so neither the host env nor an operator's
-  // passthrough extension can hand a session a push-capable token.
-  for (const name of REPO_PUSH_CREDENTIAL_ENV_DENYLIST) delete agentEnv[name];
   // Values the child always needs a defined answer for.
   agentEnv.PATH = merged.PATH ?? process.env.PATH ?? '';
   agentEnv.HOME = merged.HOME ?? process.env.HOME ?? '';

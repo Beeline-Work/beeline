@@ -136,10 +136,10 @@ export default function BuzzCorners() {
           <Text style={styles.count}>{surface.corners.length}</Text>
         </HullSurface>
         <HullSurface strength="raised" style={styles.modelPanel}>
-          <Text style={styles.modelTitle}>YOLO INSIDE · HUMAN GATE AT COLLAPSE</Text>
+          <Text style={styles.modelTitle}>YOLO INSIDE · GITHUB IS THE LIFECYCLE</Text>
           <Text style={styles.modelText}>
-            Agents iterate inside their own {CORNER_LABEL}. Only a person can approve collapsing it
-            into the protected line.
+            Agents iterate inside their own {CORNER_LABEL}, push a branch, and open a pull request.
+            A merged or deleted branch closes the work automatically.
           </Text>
         </HullSurface>
         {!!error && (
@@ -187,11 +187,9 @@ export default function BuzzCorners() {
                 </View>
                 <CornerGlyph
                   status={
-                    item.lifecycle.lifecycle === 'REVIEW' ||
-                    item.lifecycle.lifecycle === 'APPROVED'
+                    item.lifecycle.lifecycle === 'in-review'
                       ? 'open'
-                      : item.lifecycle.lifecycle === 'REJECTED' ||
-                          item.lifecycle.lifecycle === 'ARCHIVED'
+                      : item.lifecycle.lifecycle === 'done'
                         ? 'archived'
                         : null
                   }

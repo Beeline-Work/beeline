@@ -1,4 +1,4 @@
-import { CORNER_ACTIVITY_FRESHNESS_MS } from '@beeline/buzz-client';
+const CORNER_ACTIVITY_FRESHNESS_MS = 90_000;
 
 /**
  * Corner lifecycle + presentation for every Buzz surface.

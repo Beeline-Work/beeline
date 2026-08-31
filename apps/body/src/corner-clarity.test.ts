@@ -128,10 +128,10 @@ describe('a corner opened by a bare imperative still knows what it is for', () =
     expect(
       cornerObjectiveFromConversation([
         entry('first, rename the room list'),
-        entry('actually, fix the merge approval path instead'),
+        entry('actually, fix the pull request status path instead'),
         entry('ok open a corner'),
       ]),
-    ).toBe('actually, fix the merge approval path instead');
+    ).toBe('actually, fix the pull request status path instead');
   });
 });
 

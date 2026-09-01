@@ -99,7 +99,7 @@ ${pc.dim('Usage:')}
   beeline archive <subchannel-uuid>         Archive subchannel
   beeline pair <BUZZ-XXXX-XXXX> [options]   Pair an agent (optionally to this repo)
                                             and start its durable daemon
-  beeline connect [BUZZ-XXXX-XXXX]          Install and connect an app-authorized agent
+  beeline connect [XXXXXXXX-XXXXXXXX]       Install and connect an app-authorized agent
   beeline start [agent-pubkey]              Start — or RESTART when already running,
                                             stopping cleanly after in-flight work —
                                             this repo's (or, outside a repo, this

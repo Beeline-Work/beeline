@@ -50,6 +50,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@beeline/api-contract": "*",
     "@beeline/buzz-client": "*",
     "@beeline/nostr": "*",
     "fastify": "^5.1.0",

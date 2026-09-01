@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { normalizeAgentPairingCode } from '@beeline/api-contract/phone';
 import { isReasonableAgentName } from '@beeline/buzz-client';
 import { generateKeypair } from '@beeline/nostr';
 import { GITHUB_IDENTITY_AUDIENCE } from './github.js';
@@ -9,7 +10,6 @@ const SUPPORTED_HARNESSES = new Set(['codex', 'claude', 'goose', 'pi', 'grok']);
 const PROVIDER_REQUIRED = new Set(['goose', 'pi']);
 const SUPPORTED_PROVIDERS = new Set(['openrouter', 'openai', 'anthropic', 'google', 'xai']);
 const PAIRING_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-const APP_PAIRING_CODE = /^BUZZ-[A-Z0-9]{4,8}-[A-Z0-9]{4,8}$/;
 
 function pairingPart(): string {
   const bytes = randomBytes(4);
@@ -97,15 +97,14 @@ export function registerServerAgentConnectRoutes(context: AuthRouteContext): voi
       throw new ProtocolError(400, 'invalid_request', 'expected agent connection request');
     }
     const body = request.body as Record<string, unknown>;
-    const pairingCode =
-      typeof body.pairing_code === 'string' ? body.pairing_code.trim().toUpperCase() : '';
+    const pairingCode = normalizeAgentPairingCode(body.pairing_code);
     const harness = typeof body.harness === 'string' ? body.harness.trim().toLowerCase() : '';
     const provider = typeof body.provider === 'string' ? body.provider.trim().toLowerCase() : '';
     const model = typeof body.model === 'string' ? body.model.trim().slice(0, 200) : '';
     const soul = typeof body.soul === 'string' ? body.soul.trim().slice(0, 1_000) : '';
     const agentName =
       typeof body.agent_name === 'string' ? body.agent_name.trim().replace(/\s+/g, ' ') : '';
-    if (!APP_PAIRING_CODE.test(pairingCode)) {
+    if (!pairingCode) {
       throw new ProtocolError(400, 'invalid_pairing_code', 'pairing code is invalid');
     }
     if (!SUPPORTED_HARNESSES.has(harness)) {

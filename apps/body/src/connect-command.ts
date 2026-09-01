@@ -3,6 +3,7 @@ import { chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { stdin, stdout } from 'node:process';
 import * as clack from '@clack/prompts';
+import { normalizeAgentPairingCode } from '@beeline/api-contract/phone';
 import { AGENT_NAME_MAX_LENGTH, isReasonableAgentName } from '@beeline/buzz-client';
 import { AUTO_DETECT_AGENT_KINDS, resolveAgentCommand, type AgentKind } from './agent-command.js';
 import { clackPromptOutput, unwrapPrompt } from './clack-support.js';
@@ -286,10 +287,12 @@ export function requestConnectGrant(
   selection: ConnectWizardResult,
   fetchImpl: typeof fetch,
 ): Promise<DeviceGrantResponse> {
+  const normalizedPairingCode = normalizeAgentPairingCode(pairingCode);
+  if (!normalizedPairingCode) throw new Error('invalid pairing code');
   return jsonRequest<DeviceGrantResponse>(
     `${baseUrl}/auth/agent/connect`,
     {
-      pairing_code: pairingCode.trim().toUpperCase(),
+      pairing_code: normalizedPairingCode,
       harness: selection.harness,
       ...(selection.provider ? { provider: selection.provider } : {}),
       model: selection.model,
@@ -413,7 +416,8 @@ export async function runConnectCommand(
     code?.trim() ||
     (await clackPrompts.text({
       message: brass('Pairing code from the app'),
-      validate: (value) => (value.trim() ? undefined : 'Pairing code is required'),
+      validate: (value) =>
+        normalizeAgentPairingCode(value) ? undefined : 'Enter the pairing code shown in the app',
     }));
   const selection = await collectConnectWizard();
   const fetchImpl = options.fetchImpl ?? fetch;

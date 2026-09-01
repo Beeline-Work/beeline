@@ -669,7 +669,7 @@ describe('monolith integration', () => {
     });
     expect(pairing.status).toBe(200);
     const pairingResult = (await pairing.json()) as { code: string; expiresAt: number };
-    expect(pairingResult.code).toMatch(/^BUZZ-[0-9A-F]{8}-[0-9A-F]{8}$/);
+    expect(pairingResult.code).toMatch(/^[0-9A-F]{8}-[0-9A-F]{8}$/);
 
     // The connect lane exchanges an app-minted code as the new agent. Exercise
     // the same named operation with an agent-scoped bearer so this legacy API

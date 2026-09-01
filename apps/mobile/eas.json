@@ -33,6 +33,11 @@
   },
   "submit": {
     "production": {
+      "android": {
+        "serviceAccountKeyPath": "$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON",
+        "track": "internal",
+        "releaseStatus": "draft"
+      },
       "ios": {
         "appleTeamId": "89KT3SWYAF",
         "ascAppId": "6803948500",
@@ -41,6 +46,14 @@
         "ascApiKeyPath": "$EXPO_ASC_API_KEY_PATH",
         "ascApiKeyId": "$EXPO_ASC_KEY_ID",
         "ascApiKeyIssuerId": "$EXPO_ASC_ISSUER_ID"
+      }
+    },
+    "beta": {
+      "extends": "production",
+      "android": {
+        "serviceAccountKeyPath": "$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON",
+        "track": "beta",
+        "releaseStatus": "draft"
       }
     }
   }

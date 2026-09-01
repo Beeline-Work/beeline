@@ -17,6 +17,7 @@
     "release": "node ./release.cjs",
     "release:build:appstore": "sh ./release-production.sh",
     "release:build:appstore:interactive": "npm run version:check && eas build --profile production --platform ios --auto-submit-with-profile=production --no-wait && eas build --profile production --platform android --auto-submit-with-profile=production --no-wait",
+    "release:build:stores:beta": "npm run version:check && eas build --profile production --platform all --auto-submit-with-profile=beta --no-wait --non-interactive",
     "release:build:apk": "npm run version:check && eas build --profile production-apk --platform android --no-wait --non-interactive",
     "prebuild": "rm -rf android ios && expo prebuild",
     "typecheck": "tsc --noEmit",

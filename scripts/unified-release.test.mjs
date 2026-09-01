@@ -104,6 +104,13 @@ test('one workflow owns parallel builds, ordered promotion, retry, and the final
   assert.ok(workflow.indexOf('promote_app:') < workflow.indexOf('delivery_report:'));
   assert.match(workflow, /unified-release\.mjs report --state/);
   assert.match(workflow, /unified-release\.mjs confirm-delivery --state/);
+  assert.match(server, /flyctl auth whoami/);
+  assert.match(server, /flyctl deploy \. \\\n\s+--config apps\/server\/fly\.toml \\\n\s+--dockerfile apps\/server\/Dockerfile \\\n\s+--app beeline-server/);
+  assert.match(server, /--build-arg "BEELINE_RELEASE_SHA=\$RELEASE_SHA"/);
+  assert.doesNotMatch(server, /deploy-relay-host\.sh/);
+  assert.match(workflow, /https:\/\/server\.usebeeline\.app\/readyz/);
+  assert.match(workflow, /https:\/\/server\.usebeeline\.app\/version/);
+  assert.match(workflow, /deployed\.version !== version \|\| deployed\.sourceSha !== sourceSha/);
   assert.doesNotMatch(workflow, /post_promote_rehearsal|mobile-ota-post-promote|emulator|Maestro/);
   assert.match(workflow, /A newer main sha superseded this whole release/);
   assert.doesNotMatch(workflow, /push:\s*\n\s*branches:/);

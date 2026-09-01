@@ -88,9 +88,9 @@ services:
     networks:
       - buzz-net
 
-  # One relay-side process hosts push delivery, repository-event intake, and
-  # the direct Room indexer. Its image is built by deploy-relay-host.sh from
-  # apps/push-gateway/Dockerfile and pinned by tag (same shape as auth above).
+  # One relay-side process historically hosted push delivery,
+  # repository-event intake, and the direct Room indexer. Its image was built
+  # from apps/push-gateway/Dockerfile and pinned by tag.
   # FCM credentials and device registration remain host-local.
   materializer:
     image: ${BUZZY_MATERIALIZER_IMAGE:-beeline-materializer:production}
@@ -139,8 +139,8 @@ services:
     image: nginx:1.27-alpine
     # nginx must load its config from a DIRECTORY bind-mount, not from a
     # single-file bind-mount of nginx.conf. A single-file bind pins the inode at
-    # container creation, and deploy-relay-host.sh places new config through
-    # `install`, which replaces the file's inode while the front runs - so the
+    # container creation, and atomic config replacement changes the file's
+    # inode while the front runs - so the
     # container kept reading an orphaned, pre-deploy inode and every HUP reload
     # silently re-applied the OLD bytes. A directory bind tracks member files as
     # they are created/replaced inside it (the exact property the web tree below

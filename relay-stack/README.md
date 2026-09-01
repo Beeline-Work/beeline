@@ -46,10 +46,8 @@ npm run bundle:beeline -- --platform darwin-arm64
 Each local build writes `web/dl/manifest.json`, a tarball, and its checksum
 sidecar as ignored build outputs. CI (`.github/workflows/beeline-bundle.yml`)
 publishes the verified set directly to the production host's persistent
-`relay-front/web/dl/` store; Git carries none of those generated files.
-`scripts/deploy-relay-host.sh` deliberately excludes that store from web-tree
-rsync and fails before deployment if its manifest references a missing or
-mis-hashed file. nginx continues to serve:
+`relay-front/web/dl/` store; Git carries none of those generated files. The
+Fly monolith server leg does not touch that store. nginx continues to serve:
 
 - `/install` as `text/x-shellscript`
 - `/dl/beeline-<os>-<arch>.tar.gz` and its `.sha256` sidecar

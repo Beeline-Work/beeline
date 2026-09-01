@@ -215,6 +215,13 @@ async function route(
     json(response, 200, { ok: true });
     return;
   }
+  if (method === 'GET' && url.pathname === '/version') {
+    json(response, 200, {
+      version: process.env.BEELINE_RELEASE_VERSION ?? 'development',
+      sourceSha: process.env.BEELINE_RELEASE_SHA ?? 'unknown',
+    });
+    return;
+  }
   if (method === 'POST' && url.pathname === '/v1/auth/github/exchange') {
     const input = await body(request);
     if (typeof input.oidcToken !== 'string') throw new Error('oidcToken is required');

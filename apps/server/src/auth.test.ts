@@ -37,6 +37,42 @@ describe('opaque token ceremony', () => {
     const tokens = await auth.exchangeGitHubOidc('proof');
     expect(tokens.identityId).toBe(legacy);
     expect(await auth.authenticatePhone(tokens.accessToken)).toBe(legacy);
+    const memberships = await db.query(
+      `SELECT 1 FROM memberships WHERE identity_id=$1 AND room_id IS NULL AND removed_at IS NULL`,
+      [legacy],
+    );
+    expect(memberships.rowCount).toBe(0);
+  });
+  it('adds each newly created identity to the one shared Beeline Welcome workspace', async () => {
+    const firstAuth = new TokenAuth(db, async () => ({
+      subject: 'first-sign-in',
+      login: 'first',
+      name: 'First',
+    }));
+    const secondAuth = new TokenAuth(db, async () => ({
+      subject: 'second-sign-in',
+      login: 'second',
+      name: 'Second',
+    }));
+
+    const first = await firstAuth.exchangeGitHubOidc('proof');
+    await firstAuth.exchangeGitHubOidc('proof-again');
+    const second = await secondAuth.exchangeGitHubOidc('proof');
+
+    const workspaces = await db.query<{ id: string; name: string }>(
+      `SELECT id,name FROM workspaces`,
+    );
+    expect(workspaces.rows).toEqual([
+      { id: 'bee11e00-0000-4000-8000-000000000001', name: 'Beeline Welcome' },
+    ]);
+    const memberships = await db.query<{ identity_id: string; role: string }>(
+      `SELECT identity_id,role FROM memberships WHERE room_id IS NULL ORDER BY identity_id`,
+    );
+    expect(memberships.rows).toEqual(
+      [first.identityId, second.identityId]
+        .sort()
+        .map((identity_id) => ({ identity_id, role: 'member' })),
+    );
   });
   it('redeems only the one-use auth ticket and receives no GitHub access token', async () => {
     const request = vi.fn(async (_url: string, init?: RequestInit) => {

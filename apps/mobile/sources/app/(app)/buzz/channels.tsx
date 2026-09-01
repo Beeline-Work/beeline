@@ -426,6 +426,22 @@ export default function BuzzChannels() {
     [activeCommunityId],
   );
 
+  if (workspaceList?.workspaces.length === 0) {
+    return (
+      <View
+        style={[styles.center, { paddingTop: insets.top }]}
+        testID="workspace-list-empty"
+      >
+        <Text style={styles.emptyTitle}>No rooms yet</Text>
+        <Text style={styles.emptyCopy}>Create a Workspace to start adding Rooms.</Text>
+        <MonoButton
+          label="CREATE WORKSPACE"
+          onPress={() => router.push('/buzz/community' as Href)}
+          testID="empty-create-workspace"
+        />
+      </View>
+    );
+  }
   if (!chatList && !error) {
     return (
       <View style={[styles.center, { paddingTop: insets.top }]}>
@@ -530,6 +546,23 @@ export default function BuzzChannels() {
             <View style={styles.empty}>
               <Text style={styles.emptyTitle}>No rooms yet</Text>
               <Text style={styles.emptyCopy}>Start a Room to begin.</Text>
+              {!viewerIsAgent && (
+                <View style={styles.emptyActions}>
+                  <MonoButton
+                    label="ADD ROOM"
+                    onPress={() => setShowCreateRoom(true)}
+                    style={styles.emptyAction}
+                    testID="empty-add-room"
+                  />
+                  <MonoButton
+                    label="INVITE AGENT"
+                    onPress={() => compose('agent')}
+                    style={styles.emptyAction}
+                    testID="empty-invite-agent"
+                    variant="secondary"
+                  />
+                </View>
+              )}
             </View>
           }
           renderItem={({ item }: { item: ChatListItem }) => {
@@ -742,6 +775,8 @@ const styles = StyleSheet.create((theme) => {
     empty: { alignItems: 'center', gap: 8, padding: 24 },
     emptyTitle: { ...Typography.default('semiBold'), color: hull.textPrimary, fontSize: 18 },
     emptyCopy: { ...Typography.default(), color: hull.textMuted, fontSize: 12 },
+    emptyActions: { width: '100%', maxWidth: 280, gap: 10, paddingTop: 10 },
+    emptyAction: { width: '100%' },
     roomCell: {
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: hull.border,

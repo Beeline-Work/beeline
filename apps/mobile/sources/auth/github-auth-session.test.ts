@@ -25,6 +25,7 @@ const {
   resumeInitialGitHubInstallation,
   resumeInitialGitHubSignIn,
   runGitHubInstallationSession,
+  startGitHubSignInWebFlow,
 } = await import('./github-auth-session');
 
 const STATE = 's'.repeat(43);
@@ -57,6 +58,32 @@ describe('GitHub auth session redirects', () => {
   it('uses the installed app scheme for sign-in completion', () => {
     expect(githubSignInRedirectUri()).toBe('beeline://buzz/github-callback');
     expect(createURL).toHaveBeenCalledWith('buzz/github-callback');
+  });
+
+  it('keeps monolith authorization on the monolith so GitHub returns there', () => {
+    const start = startGitHubSignInWebFlow(STATE, {
+      relayUrl: 'https://usebeeline.app',
+      pushGatewayUrl: 'https://usebeeline.app/push',
+      monolithUrl: 'https://server.usebeeline.app',
+      monolithEnabled: true,
+    });
+
+    expect(new URL(start.authorizationUrl)).toMatchObject({
+      origin: 'https://server.usebeeline.app',
+      pathname: '/auth/github/start',
+    });
+    expect(start.redirectUri).toBe('beeline://buzz/github-callback');
+  });
+
+  it('leaves the legacy authorization origin unchanged outside monolith mode', () => {
+    const start = startGitHubSignInWebFlow(STATE, {
+      relayUrl: 'https://usebeeline.app',
+      pushGatewayUrl: 'https://usebeeline.app/push',
+      monolithUrl: 'https://server.usebeeline.app',
+      monolithEnabled: false,
+    });
+
+    expect(new URL(start.authorizationUrl).origin).toBe('https://usebeeline.app');
   });
 
   it('uses the installed app scheme for GitHub App installation completion', () => {

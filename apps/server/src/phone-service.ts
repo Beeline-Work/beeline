@@ -1015,17 +1015,24 @@ export class PhoneService {
     if (!(await this.hasRoomAccess(input.roomId, author))) throw new Error('room access denied');
     const id = input.messageId ?? messageId();
     if (!/^[0-9a-f]{64}$/.test(id)) throw new Error('messageId is invalid');
-    await this.database.query(
-      `INSERT INTO messages(id,room_id,author_id,text,attachments,mention_ids) VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb)`,
-      [
-        id,
-        input.roomId,
-        author,
-        input.text,
-        JSON.stringify(input.attachments ?? []),
-        JSON.stringify(input.mentions ?? []),
-      ],
+    const attachments = JSON.stringify(input.attachments ?? []);
+    const mentions = JSON.stringify(input.mentions ?? []);
+    const values = [id, input.roomId, author, input.text, attachments, mentions];
+    const inserted = await this.database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,attachments,mention_ids)
+       VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb) ON CONFLICT(id) DO NOTHING`,
+      values,
     );
+    if (!inserted.rowCount) {
+      const retry = await this.database.query(
+        `SELECT 1 FROM messages
+         WHERE id=$1 AND room_id=$2 AND author_id=$3 AND text=$4
+           AND attachments=$5::jsonb AND mention_ids=$6::jsonb
+           AND reply_to_message_id IS NULL`,
+        values,
+      );
+      if (!retry.rowCount) throw new Error('messageId is invalid');
+    }
     return { messageId: id };
   }
   private async sendReply(input: Input<'sendRoomReply'>, author: string) {
@@ -1037,19 +1044,31 @@ export class PhoneService {
       throw new Error('reply parent is not in this room');
     const id = input.messageId ?? messageId();
     if (!/^[0-9a-f]{64}$/.test(id)) throw new Error('messageId is invalid');
-    await this.database.query(
-      `INSERT INTO messages(id,room_id,author_id,text,attachments,mention_ids,reply_to_message_id,root_message_id) VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8)`,
-      [
-        id,
-        input.roomId,
-        author,
-        input.text,
-        JSON.stringify(input.attachments ?? []),
-        JSON.stringify(input.mentions ?? []),
-        input.parentMessageId,
-        parent.rows[0].root_message_id ?? input.parentMessageId,
-      ],
+    const values = [
+      id,
+      input.roomId,
+      author,
+      input.text,
+      JSON.stringify(input.attachments ?? []),
+      JSON.stringify(input.mentions ?? []),
+      input.parentMessageId,
+      parent.rows[0].root_message_id ?? input.parentMessageId,
+    ];
+    const inserted = await this.database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,attachments,mention_ids,reply_to_message_id,root_message_id)
+       VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8) ON CONFLICT(id) DO NOTHING`,
+      values,
     );
+    if (!inserted.rowCount) {
+      const retry = await this.database.query(
+        `SELECT 1 FROM messages
+         WHERE id=$1 AND room_id=$2 AND author_id=$3 AND text=$4
+           AND attachments=$5::jsonb AND mention_ids=$6::jsonb
+           AND reply_to_message_id=$7 AND root_message_id=$8`,
+        values,
+      );
+      if (!retry.rowCount) throw new Error('messageId is invalid');
+    }
     return { messageId: id };
   }
   private async decidePermission(input: Input<'decideWritePermission'>, viewerId: string) {

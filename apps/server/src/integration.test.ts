@@ -10,6 +10,7 @@ import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { createBeelineServer } from './server.js';
 import { PushDeliveryLoop } from './background.js';
+import { isCommunityInviteToken } from '@beeline/api-contract/phone';
 
 const HUMAN = createHash('sha256').update('github:owner').digest('hex');
 const AGENT = 'b'.repeat(64);
@@ -40,11 +41,11 @@ describe('monolith integration', () => {
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,$4,$2,'owner'),($1,$4,$3,'member')`,
       [WORKSPACE, HUMAN, AGENT, ROOM],
     );
-    auth = new TokenAuth(database, async () => ({
-      subject: 'owner',
-      login: 'owner',
-      name: 'Owner',
-    }));
+    auth = new TokenAuth(database, async (proof) =>
+      proof === 'recipient-proof'
+        ? { subject: 'recipient', login: 'recipient', name: 'Recipient' }
+        : { subject: 'owner', login: 'owner', name: 'Owner' },
+    );
     const phone = new PhoneService(database, 'http://placeholder');
     const live = new LiveHub();
     const daemon = new DaemonService(database, live);
@@ -164,6 +165,43 @@ describe('monolith integration', () => {
       text: 'Different payload',
     });
     expect(conflicting.status).toBe(400);
+  });
+
+  it('mints, resolves, and redeems an invite through the phone HTTP surface', async () => {
+    const created = await request('/v1/phone/operations/createInvite', 'POST', {
+      workspaceId: WORKSPACE,
+    });
+    expect(created.status).toBe(200);
+    const invite = (await created.json()) as { token: string; expiresAt: number };
+    expect(isCommunityInviteToken(invite.token)).toBe(true);
+    expect(invite.token).toMatch(/^bzi_[0-9a-f]{64}$/);
+
+    const recipient = await auth.exchangeGitHubOidc('recipient-proof');
+    const resolved = await request(
+      '/v1/phone/operations/resolveInvite',
+      'POST',
+      { token: invite.token },
+      recipient.accessToken,
+    );
+    expect(resolved.status).toBe(200);
+    expect(await resolved.json()).toMatchObject({
+      name: 'Hive',
+      expiresAt: Math.floor(invite.expiresAt / 1_000),
+    });
+
+    const redeemed = await request(
+      '/v1/phone/operations/redeemInvite',
+      'POST',
+      { token: invite.token },
+      recipient.accessToken,
+    );
+    expect(redeemed.status).toBe(200);
+    expect(await redeemed.json()).toEqual({ joined: true, workspaceId: WORKSPACE });
+    const membership = await database.query<{ role: string }>(
+      `SELECT role FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`,
+      [WORKSPACE, recipient.identityId],
+    );
+    expect(membership.rows).toEqual([{ role: 'member' }]);
   });
 
   it('creates Rooms with or without an installed repository binding', async () => {

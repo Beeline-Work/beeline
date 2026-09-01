@@ -13,7 +13,11 @@ import type {
   WorkspaceListView,
   WorkspaceView,
 } from '@beeline/api-contract/phone';
-import type { PhoneOperationMap } from '@beeline/api-contract/phone';
+import {
+  createCommunityInviteToken,
+  isCommunityInviteToken,
+  type PhoneOperationMap,
+} from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import type { GitHubOperations } from './github-operations.js';
 import { collapsePermissionCards } from '@beeline/push-gateway/projection';
@@ -727,6 +731,7 @@ export class PhoneService {
 
   async readInvite(rawToken: string, viewerId: string): Promise<InviteView | null> {
     void viewerId;
+    if (!isCommunityInviteToken(rawToken)) return null;
     const result = await this.database.query<{
       name: string;
       avatar: string | null;
@@ -1334,7 +1339,7 @@ export class PhoneService {
   }
   private async createInvite(input: Input<'createInvite'>, viewerId: string) {
     await this.requireWorkspaceManager(input.workspaceId, viewerId);
-    const value = token('bzi');
+    const value = createCommunityInviteToken(randomBytes(32));
     const expiresAt = Date.now() + 7 * 86400_000;
     await this.database.query(
       `INSERT INTO invites(token_hash,workspace_id,created_by,expires_at) VALUES($1,$2,$3,$4)`,
@@ -1343,6 +1348,7 @@ export class PhoneService {
     return { token: value, expiresAt };
   }
   private async redeemInvite(input: Input<'redeemInvite'>, viewerId: string) {
+    if (!isCommunityInviteToken(input.token)) throw new Error('invalid invite token');
     const result = await this.database.query<{ workspace_id: string }>(
       `UPDATE invites SET consumed_at=now() WHERE token_hash=$1 AND expires_at>now() AND consumed_at IS NULL RETURNING workspace_id`,
       [hash(input.token)],

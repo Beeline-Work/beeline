@@ -159,6 +159,64 @@ describe('daemon API client against the local monolith', () => {
       status: 'working',
       objective: 'Verify the monolith cut',
     });
+    await client.execute('postCornerRemoteState', {
+      cornerId: corner.cornerId,
+      branch: 'fm/verify-monolith-cut',
+      state: 'in-review',
+      checks: 'passing',
+      pullRequest: {
+        number: 812,
+        url: 'https://github.com/lunchboxfortwo/beeline/pull/812',
+        title: 'Verify the monolith cut',
+        targetBranch: 'main',
+        headSha: '1'.repeat(40),
+        mergeability: 'clean',
+      },
+    });
+    expect(
+      (
+        await database.query<{ lifecycle: Record<string, unknown> }>(
+          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+          [corner.cornerId],
+        )
+      ).rows[0]?.lifecycle,
+    ).toEqual(
+      expect.objectContaining({
+        lifecycle: 'in-review',
+        checks: 'passing',
+        pr: expect.objectContaining({ number: 812, targetBranch: 'main' }),
+      }),
+    );
+
+    await client.execute('postRoomMessage', {
+      roomId: ROOM,
+      text: 'Merged pull request #812 into main.',
+      presentation: 'card',
+      tags: { cornerId: corner.cornerId, outcome: 'landed' },
+    });
+    await client.execute('postCornerRemoteState', {
+      cornerId: corner.cornerId,
+      branch: 'fm/verify-monolith-cut',
+      state: 'gone',
+      checks: 'passing',
+    });
+    await client.execute('archiveCorner', { cornerId: corner.cornerId });
+    expect(
+      (
+        await database.query<{ archived: boolean }>(
+          `SELECT archived_at IS NOT NULL archived FROM rooms WHERE id=$1`,
+          [corner.cornerId],
+        )
+      ).rows[0]?.archived,
+    ).toBe(true);
+    expect(
+      (
+        await database.query<{ text: string }>(
+          `SELECT text FROM messages WHERE room_id=$1 AND presentation='card' ORDER BY created_at DESC LIMIT 1`,
+          [ROOM],
+        )
+      ).rows[0]?.text,
+    ).toBe('Merged pull request #812 into main.');
     await expect(client.execute('listRoomCorners', { roomId: ROOM })).resolves.toEqual(
       expect.objectContaining({
         corners: [expect.objectContaining({ cornerId: corner.cornerId, parentRoomId: ROOM })],

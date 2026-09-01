@@ -7,9 +7,9 @@ import {
   type CommunityInviteRecord,
   type Identity,
 } from '@beeline/buzz-client';
+import { isCommunityInviteToken } from '@beeline/api-contract/phone';
 import { WORKSPACE_LABEL } from './vocabulary';
 
-const TOKEN_PATTERN = /^bzi_[0-9a-f]{64}$/;
 // Keep custom invite parsing aligned with the installed schemes in app.config.js.
 const MOBILE_APP_SCHEMES = ['beeline'] as const;
 
@@ -29,7 +29,7 @@ function firstValue(value: string | string[] | undefined): string {
 export function parseCommunityInviteToken(value: string | string[] | undefined): string | null {
   const input = firstValue(value).trim();
   if (!input) return null;
-  if (TOKEN_PATTERN.test(input)) return input;
+  if (isCommunityInviteToken(input)) return input;
 
   try {
     const url = new URL(input);
@@ -44,7 +44,7 @@ export function parseCommunityInviteToken(value: string | string[] | undefined):
       candidate = url.pathname.replace(/^\//, '');
     }
     const decoded = decodeURIComponent(candidate);
-    return TOKEN_PATTERN.test(decoded) ? decoded : null;
+    return isCommunityInviteToken(decoded) ? decoded : null;
   } catch {
     return null;
   }
@@ -58,6 +58,13 @@ export function buildCommunityInviteUrl(token: string, relayUrl: string): string
     throw new Error('relay URL must use HTTP or HTTPS');
   }
   return `${relay.origin}/join/${encodeURIComponent(parsed)}`;
+}
+
+export function resolveCommunityInvitePublicOrigin(
+  effectiveRelayUrl: string,
+  runtime: { readonly monolithEnabled: boolean; readonly relayUrl: string },
+): string {
+  return runtime.monolithEnabled ? runtime.relayUrl : effectiveRelayUrl;
 }
 
 export function resolveCommunityInviteRelayUrl(

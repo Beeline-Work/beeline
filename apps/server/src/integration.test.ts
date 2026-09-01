@@ -1,4 +1,5 @@
 import { createHash, createHmac } from 'node:crypto';
+import { request as httpRequest } from 'node:http';
 import { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
@@ -13,6 +14,7 @@ import { PushDeliveryLoop } from './background.js';
 import { GitHubOperations } from './github-operations.js';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { isCommunityInviteToken } from '@beeline/api-contract/phone';
+import { createMonolithAuth, type MonolithAuthMount } from './monolith-auth.js';
 
 const HUMAN = createHash('sha256').update('github:owner').digest('hex');
 const AGENT = 'b'.repeat(64);
@@ -27,6 +29,7 @@ describe('monolith integration', () => {
   let accessToken: string;
   let daemonToken: string;
   let sendPushTest: ReturnType<typeof vi.fn>;
+  let mountedAuth: MonolithAuthMount;
   let completeInstallation: ReturnType<typeof vi.fn>;
   let processWebhook: ReturnType<typeof vi.fn>;
   beforeEach(async () => {
@@ -81,6 +84,26 @@ describe('monolith integration', () => {
     const phone = new PhoneService(database, 'http://placeholder', github, sendPushTest);
     const live = new LiveHub();
     const daemon = new DaemonService(database, live);
+    mountedAuth = await createMonolithAuth(database, 'https://server.test', undefined, {
+      createDaemonExchange: (agentId, transaction) =>
+        auth.createDaemonExchange(agentId, transaction),
+      env: {
+        NODE_ENV: 'test',
+        BUZZY_AUTH_TENANTS_JSON: JSON.stringify([
+          {
+            host: 'server.test',
+            community: 'integration-community',
+            roomCommunityIds: ['integration-community'],
+            origin: 'https://server.test',
+          },
+        ]),
+        BUZZY_AUTH_OIDC_ISSUER: 'https://accounts.example',
+        BUZZY_AUTH_OIDC_AUTHORIZATION_ENDPOINT: 'https://accounts.example/authorize',
+        BUZZY_AUTH_OIDC_TOKEN_ENDPOINT: 'https://accounts.example/token',
+        BUZZY_AUTH_OIDC_JWKS_URI: 'https://accounts.example/jwks',
+        BUZZY_AUTH_OIDC_CLIENT_ID: 'test-client',
+      },
+    });
     completeInstallation = vi.fn(async () => 'beeline://buzz/github-installation?installed=1');
     processWebhook = vi.fn(async () => undefined);
     server = createBeelineServer({
@@ -89,6 +112,7 @@ describe('monolith integration', () => {
       phone,
       daemon,
       live,
+      authHandler: mountedAuth.handle,
       mediaMaximumBytes: 1024 * 1024,
       github: {
         webhookSecret: 'webhook-secret',
@@ -107,6 +131,7 @@ describe('monolith integration', () => {
   });
   afterEach(async () => {
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
+    if (mountedAuth) await mountedAuth.close();
     if (database) await database.close();
   });
   const request = async (path: string, method = 'GET', payload?: unknown, token = accessToken) =>
@@ -213,9 +238,9 @@ describe('monolith integration', () => {
     const bobToken = await phoneToken('bob');
     const aliceId = createHash('sha256').update('github:alice').digest('hex');
     const bobId = createHash('sha256').update('github:bob').digest('hex');
-    const migratedOwnerWorkspaces = (await (
-      await request('/v1/phone/workspaces')
-    ).json()) as { workspaces: Array<{ name: string }> };
+    const migratedOwnerWorkspaces = (await (await request('/v1/phone/workspaces')).json()) as {
+      workspaces: Array<{ name: string }>;
+    };
     expect(migratedOwnerWorkspaces.workspaces).toContainEqual(
       expect.objectContaining({ name: 'Beeline Welcome' }),
     );
@@ -305,6 +330,60 @@ describe('monolith integration', () => {
       403,
     );
     expect((await operation('leaveWorkspace', { workspaceId })).status).toBe(403);
+  });
+
+  it('emits one workspace push and one Room note across explicit member adds', async () => {
+    const aliceToken = await phoneToken('alice');
+    const aliceId = createHash('sha256').update('github:alice').digest('hex');
+    const workspaceId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+    await operation('createWorkspace', { workspaceId, name: 'Tubing Crew' });
+    const room = (await (
+      await operation('createRoom', { workspaceId, name: 'Planning' })
+    ).json()) as { id: string };
+    await operation('registerPushDevice', {
+      token: 'owner-explicit-add-device-token-1234567890',
+      platform: 'ios',
+      environment: 'physical',
+    });
+    const send = vi.fn().mockResolvedValue(undefined);
+    const loop = new PushDeliveryLoop(database, { send });
+
+    expect(
+      await (
+        await operation('addWorkspaceMember', {
+          workspaceId,
+          memberId: aliceId,
+          role: 'member',
+        })
+      ).json(),
+    ).toEqual({ joined: true });
+    expect(await loop.runOnce()).toBe(1);
+    expect(send).toHaveBeenLastCalledWith(
+      'owner-explicit-add-device-token-1234567890',
+      expect.objectContaining({ text: 'alice joined Tubing Crew' }),
+    );
+
+    expect(
+      await (await operation('addRoomMember', { roomId: room.id, memberId: aliceId })).json(),
+    ).toEqual({ joined: true });
+    expect(await loop.runOnce()).toBe(1);
+    expect(send).toHaveBeenCalledTimes(2);
+    const roomView = (await (
+      await request(`/v1/phone/rooms/${room.id}`, 'GET', undefined, aliceToken)
+    ).json()) as { messages: Array<{ text: string; presentation: string }> };
+    expect(roomView.messages).toContainEqual(
+      expect.objectContaining({ text: 'alice joined', presentation: 'system' }),
+    );
+    const chats = (await (await request(`/v1/phone/workspaces/${workspaceId}/chats`)).json()) as {
+      chats: Array<{ room: { id: string }; latestMessage?: { text: string }; unread: boolean }>;
+    };
+    expect(chats.chats).toContainEqual(
+      expect.objectContaining({
+        room: expect.objectContaining({ id: room.id }),
+        latestMessage: expect.objectContaining({ text: 'alice joined' }),
+        unread: true,
+      }),
+    );
   });
 
   it('proves send -> read -> daemon prompt -> reply -> WebSocket invalidation and overlays', async () => {
@@ -426,6 +505,125 @@ describe('monolith integration', () => {
       [WORKSPACE, recipient.identityId],
     );
     expect(membership.rows).toEqual([{ role: 'member' }]);
+  });
+
+  it('publishes one note per joined Room and one push when a person redeems an invite', async () => {
+    const recipient = await auth.exchangeGitHubOidc('recipient-proof');
+    const secondRoom = (await (
+      await operation('createRoom', { workspaceId: WORKSPACE, name: 'Workshop' })
+    ).json()) as { id: string };
+    await operation('registerPushDevice', {
+      token: 'owner-person-join-device-token-1234567890',
+      platform: 'ios',
+      environment: 'physical',
+    });
+    const invite = (await (await operation('createInvite', { workspaceId: WORKSPACE })).json()) as {
+      token: string;
+    };
+
+    const redeemed = await request(
+      '/v1/phone/operations/redeemInvite',
+      'POST',
+      { token: invite.token },
+      recipient.accessToken,
+    );
+    expect(redeemed.status).toBe(200);
+
+    const notes = await database.query<{
+      room_id: string;
+      text: string;
+      presentation: string;
+    }>(
+      `SELECT room_id,text,presentation FROM messages
+       WHERE author_id=$1 AND card_type='member-joined' ORDER BY room_id`,
+      [recipient.identityId],
+    );
+    expect(notes.rows).toEqual(
+      [ROOM, secondRoom.id]
+        .sort()
+        .map((room_id) => ({ room_id, text: 'recipient joined', presentation: 'system' })),
+    );
+
+    const send = vi.fn().mockResolvedValue(undefined);
+    const loop = new PushDeliveryLoop(database, { send });
+    expect(await loop.runOnce()).toBe(1);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(
+      'owner-person-join-device-token-1234567890',
+      expect.objectContaining({ text: 'recipient joined Hive' }),
+    );
+  });
+
+  it('publishes one note per joined Room and one push through agent connect', async () => {
+    const secondRoom = (await (
+      await operation('createRoom', { workspaceId: WORKSPACE, name: 'Workshop' })
+    ).json()) as { id: string };
+    await operation('registerPushDevice', {
+      token: 'owner-agent-join-device-token-1234567890',
+      platform: 'android',
+      environment: 'physical',
+    });
+    const pairing = (await (
+      await operation('createAgentPairingCode', { workspaceId: WORKSPACE })
+    ).json()) as { code: string };
+
+    const connectPayload = JSON.stringify({
+      pairing_code: pairing.code,
+      harness: 'codex',
+      model: 'gpt-5.6',
+      soul: 'Practical and kind.',
+      agent_name: 'Terra',
+    });
+    const connected = await new Promise<{ status: number; body: Record<string, string> }>(
+      (resolve, reject) => {
+        const outgoing = httpRequest(`${origin}/auth/agent/connect`, {
+          method: 'POST',
+          headers: {
+            host: 'server.test',
+            'content-type': 'application/json',
+            'content-length': Buffer.byteLength(connectPayload),
+          },
+        });
+        outgoing.once('error', reject);
+        outgoing.once('response', (incoming) => {
+          const chunks: Buffer[] = [];
+          incoming.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+          incoming.on('end', () =>
+            resolve({
+              status: incoming.statusCode ?? 0,
+              body: JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, string>,
+            }),
+          );
+        });
+        outgoing.end(connectPayload);
+      },
+    );
+    expect(connected.status).toBe(200);
+    const grant = connected.body as { agent_pubkey: string };
+
+    const notes = await database.query<{
+      room_id: string;
+      text: string;
+      presentation: string;
+    }>(
+      `SELECT room_id,text,presentation FROM messages
+       WHERE author_id=$1 AND card_type='member-joined' ORDER BY room_id`,
+      [grant.agent_pubkey],
+    );
+    expect(notes.rows).toEqual(
+      [ROOM, secondRoom.id]
+        .sort()
+        .map((room_id) => ({ room_id, text: 'Terra joined', presentation: 'system' })),
+    );
+
+    const send = vi.fn().mockResolvedValue(undefined);
+    const loop = new PushDeliveryLoop(database, { send });
+    expect(await loop.runOnce()).toBe(1);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(
+      'owner-agent-join-device-token-1234567890',
+      expect.objectContaining({ text: 'Terra joined Hive' }),
+    );
   });
 
   it('creates Rooms with or without an installed repository binding', async () => {
@@ -779,9 +977,7 @@ describe('monolith integration', () => {
     expect(await removed.text()).toBe('');
 
     expect(
-      (
-        await database.query(`SELECT 1 FROM push_devices WHERE token=$1`, [token])
-      ).rowCount,
+      (await database.query(`SELECT 1 FROM push_devices WHERE token=$1`, [token])).rowCount,
     ).toBe(0);
     expect(
       (
@@ -805,11 +1001,13 @@ describe('monolith integration', () => {
     const otherWorkspace = '55555555-5555-4555-8555-555555555555';
     const otherAgent = 'e'.repeat(64);
     await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Other')`, [otherWorkspace]);
-    await database.query(
-      `INSERT INTO identities(id,kind,name) VALUES($1,'agent','Other agent')`,
-      [otherAgent],
-    );
-    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [otherAgent, HUMAN]);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Other agent')`, [
+      otherAgent,
+    ]);
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [
+      otherAgent,
+      HUMAN,
+    ]);
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member')`,
       [otherWorkspace, otherAgent],

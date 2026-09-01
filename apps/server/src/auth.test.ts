@@ -123,6 +123,65 @@ describe('opaque token ceremony', () => {
         .map((identity_id) => ({ identity_id, role: 'member' })),
     );
   });
+  it('joins new sign-ins to existing Welcome Rooms with one note and one push event', async () => {
+    const welcomeId = 'bee11e00-0000-4000-8000-000000000001';
+    const roomId = '11111111-1111-4111-8111-111111111111';
+    const firstAuth = new TokenAuth(db, async () => ({
+      subject: 'welcome-first',
+      login: 'first',
+      name: 'First',
+    }));
+    const first = await firstAuth.exchangeGitHubOidc('proof');
+    await db.query(
+      `INSERT INTO rooms(id,workspace_id,created_by,name) VALUES($1,$2,$3,'Welcome Room')`,
+      [roomId, welcomeId, first.identityId],
+    );
+    await db.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
+      [welcomeId, roomId, first.identityId],
+    );
+    await db.query(
+      `INSERT INTO push_devices(token,identity_id,platform,environment)
+       VALUES('welcome-device-token-12345678901234567890',$1,'ios','physical')`,
+      [first.identityId],
+    );
+    const secondAuth = new TokenAuth(db, async () => ({
+      subject: 'welcome-second',
+      login: 'second',
+      name: 'Second',
+    }));
+
+    const second = await secondAuth.exchangeGitHubOidc('proof');
+
+    expect(
+      (
+        await db.query(
+          `SELECT 1 FROM memberships
+           WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
+          [roomId, second.identityId],
+        )
+      ).rowCount,
+    ).toBe(1);
+    expect(
+      (
+        await db.query<{ text: string; presentation: string }>(
+          `SELECT text,presentation FROM messages
+           WHERE room_id=$1 AND author_id=$2 AND card_type='member-joined'`,
+          [roomId, second.identityId],
+        )
+      ).rows,
+    ).toEqual([{ text: 'second joined', presentation: 'system' }]);
+    expect(
+      (
+        await db.query(
+          `SELECT 1 FROM workspace_join_notification_devices device
+           JOIN workspace_join_notifications notification ON notification.id=device.notification_id
+           WHERE notification.joining_identity_id=$1`,
+          [second.identityId],
+        )
+      ).rowCount,
+    ).toBe(1);
+  });
   it('redeems only the one-use auth ticket and receives no GitHub access token', async () => {
     const request = vi.fn(async (_url: string, init?: RequestInit) => {
       expect(init?.method).toBe('POST');

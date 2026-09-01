@@ -43,6 +43,46 @@ describe('opaque token ceremony', () => {
     );
     expect(memberships.rowCount).toBe(0);
   });
+  it('preserves an existing Workspace membership when its owner signs in', async () => {
+    const captain = 'c'.repeat(64);
+    const tubingCrew = '11111111-1111-4111-8111-111111111111';
+    await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Captain')`, [captain]);
+    await db.query(
+      `INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience)
+       VALUES('github','captain',$1,'https://github.com','old-client')`,
+      [captain],
+    );
+    await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Tubing Crew')`, [tubingCrew]);
+    await db.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'owner')`,
+      [tubingCrew, captain],
+    );
+    const auth = new TokenAuth(db, async () => ({
+      subject: 'captain',
+      login: 'captain',
+      name: 'Captain',
+    }));
+
+    await auth.exchangeGitHubOidc('proof');
+
+    const workspaces = await db.query<{ id: string; name: string }>(
+      `SELECT id,name FROM workspaces ORDER BY id`,
+    );
+    expect(workspaces.rows).toEqual([{ id: tubingCrew, name: 'Tubing Crew' }]);
+    const memberships = await db.query<{
+      workspace_id: string;
+      identity_id: string;
+      role: string;
+    }>(
+      `SELECT workspace_id,identity_id,role FROM memberships
+       WHERE identity_id=$1 AND room_id IS NULL AND removed_at IS NULL`,
+      [captain],
+    );
+    expect(memberships.rows).toEqual([
+      { workspace_id: tubingCrew, identity_id: captain, role: 'owner' },
+    ]);
+  });
   it('adds each newly created identity to the one shared Beeline Welcome workspace', async () => {
     const firstAuth = new TokenAuth(db, async () => ({
       subject: 'first-sign-in',

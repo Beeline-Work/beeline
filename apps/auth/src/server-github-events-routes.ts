@@ -242,58 +242,54 @@ export function registerServerGithubEventsRoutes(context: AuthRouteContext): voi
     if (!(await options.store.claimGitHubWebhookDelivery(deliveryId, now()))) {
       return reply.code(202).send({ accepted: true, duplicate: true });
     }
-    if (isRepoActivityEvent) {
-      try {
+    try {
+      if (isRepoActivityEvent) {
         const record = extractGitHubRepoEvent(event, body);
         if (record) {
           await options.store.saveGitHubRepoEvents([{ ...record, deliveryId }], now());
           wakeGitHubRepoEventWaiters(record.fullName);
         }
-      } catch (error) {
-        await options.store.releaseGitHubWebhookDelivery(deliveryId);
-        throw error;
-      }
-      return reply.code(202).send({ accepted: true });
-    }
-    try {
-      const installationId = githubInstallationId(body.installation);
-      const action = typeof body.action === 'string' ? body.action : '';
-      if (event === 'installation') {
-        if (action === 'deleted') {
-          await options.store.markGitHubInstallationStatus(installationId, 'revoked', now());
-        } else if (action === 'suspend') {
-          await options.store.markGitHubInstallationStatus(installationId, 'suspended', now());
-        } else if (action === 'unsuspend') {
-          await options.store.markGitHubInstallationStatus(installationId, 'active', now());
+      } else {
+        const installationId = githubInstallationId(body.installation);
+        const action = typeof body.action === 'string' ? body.action : '';
+        if (event === 'installation') {
+          if (action === 'deleted') {
+            await options.store.markGitHubInstallationStatus(installationId, 'revoked', now());
+          } else if (action === 'suspend') {
+            await options.store.markGitHubInstallationStatus(installationId, 'suspended', now());
+          } else if (action === 'unsuspend') {
+            await options.store.markGitHubInstallationStatus(installationId, 'active', now());
+          }
+        } else if (event === 'installation_repositories') {
+          const addedRaw = Array.isArray(body.repositories_added) ? body.repositories_added : [];
+          const removedRaw = Array.isArray(body.repositories_removed)
+            ? body.repositories_removed
+            : [];
+          const added = addedRaw.map((repository) =>
+            githubRepositoryFromPayload(repository, installationId),
+          );
+          const removedIds = removedRaw.map((repository) => {
+            if (!repository || typeof repository !== 'object' || Array.isArray(repository)) {
+              throw new ProtocolError(400, 'invalid_webhook', 'invalid removed repository payload');
+            }
+            const id = (repository as Record<string, unknown>).id;
+            if (typeof id !== 'number' || !Number.isSafeInteger(id)) {
+              throw new ProtocolError(400, 'invalid_webhook', 'invalid removed repository payload');
+            }
+            return id;
+          });
+          await options.store.applyGitHubRepositoryChanges(installationId, added, removedIds, now());
+          // Repositories just added to an installation complete any pending
+          // Room link waiting on them. Inside the delivery's try block: a
+          // failure releases the delivery so GitHub redelivers and the
+          // idempotent activation re-runs.
+          await completeActivatedRoomLinks(
+            webhookTenant.community,
+            added.map((repository) => repository.fullName),
+          );
         }
-      } else if (event === 'installation_repositories') {
-        const addedRaw = Array.isArray(body.repositories_added) ? body.repositories_added : [];
-        const removedRaw = Array.isArray(body.repositories_removed)
-          ? body.repositories_removed
-          : [];
-        const added = addedRaw.map((repository) =>
-          githubRepositoryFromPayload(repository, installationId),
-        );
-        const removedIds = removedRaw.map((repository) => {
-          if (!repository || typeof repository !== 'object' || Array.isArray(repository)) {
-            throw new ProtocolError(400, 'invalid_webhook', 'invalid removed repository payload');
-          }
-          const id = (repository as Record<string, unknown>).id;
-          if (typeof id !== 'number' || !Number.isSafeInteger(id)) {
-            throw new ProtocolError(400, 'invalid_webhook', 'invalid removed repository payload');
-          }
-          return id;
-        });
-        await options.store.applyGitHubRepositoryChanges(installationId, added, removedIds, now());
-        // Repositories just added to an installation complete any pending
-        // Room link waiting on them. Inside the delivery's try block: a
-        // failure releases the delivery so GitHub redelivers and the
-        // idempotent activation re-runs.
-        await completeActivatedRoomLinks(
-          webhookTenant.community,
-          added.map((repository) => repository.fullName),
-        );
       }
+      await options.github.onWebhook?.(event, body);
     } catch (error) {
       await options.store.releaseGitHubWebhookDelivery(deliveryId);
       throw error;

@@ -46,9 +46,18 @@ async function main() {
           : {}),
       }
     : undefined;
-  const mountedAuth = await createMonolithAuth(database, publicOrigin, githubClients);
+  let github: GitHubOperations | undefined;
+  const processGitHubWebhook = async (event: string, payload: unknown) => {
+    if (!github) throw new Error('GitHub webhook processor is unavailable');
+    await github.processWebhook(event, payload);
+  };
+  const mountedAuth = await createMonolithAuth(
+    database,
+    publicOrigin,
+    githubClients ? { ...githubClients, onWebhook: processGitHubWebhook } : undefined,
+  );
   const auth = new TokenAuth(database, verifierFromEnvironment(mountedAuth.verifyGitHubTicket));
-  const github = githubClients
+  github = githubClients
     ? new GitHubOperations(
         database,
         githubClients.oauth,
@@ -91,7 +100,7 @@ async function main() {
       ...(github
         ? {
             roomToken: async (_identityId: string, roomId: string) => github.roomToken(roomId),
-            onWebhook: (event: string, payload: unknown) => github.processWebhook(event, payload),
+            onWebhook: processGitHubWebhook,
             completeInstallation: (state: string, installationId: number) =>
               github.completeInstallation(state, installationId),
           }

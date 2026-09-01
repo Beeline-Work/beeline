@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { projectEvent } from '@beeline/push-gateway/projection';
 import { isRoomView } from '@beeline/api-contract/phone';
-import { migrate } from './database.js';
+import { measureDatabaseBreakdown, migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { SnapshotImporter, type LegacySnapshot } from './importer.js';
 import { PhoneService } from './phone-service.js';
@@ -9,11 +9,13 @@ import { PhoneService } from './phone-service.js';
 const OWNER = 'a'.repeat(64);
 const AGENT = 'b'.repeat(64);
 const REMOVED = 'c'.repeat(64);
+const ORPHAN_MEDIA_OWNER = 'd'.repeat(64);
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
 const DM = '33333333-3333-4333-8333-333333333333';
 const CORNER = '44444444-4444-4444-8444-444444444444';
 const ARCHIVED = '55555555-5555-4555-8555-555555555555';
+const DELETED_ROOM = '66666666-6666-4666-8666-666666666666';
 const MESSAGE = '1'.repeat(64);
 const REPLY = '2'.repeat(64);
 const ATTACHMENT = '3'.repeat(64);
@@ -27,7 +29,6 @@ const BASE = 2_000_000_000;
 function snapshot(): LegacySnapshot {
   return {
     identities: [
-      { id: OWNER, kind: 'human', name: 'Owner' },
       {
         id: AGENT,
         kind: 'agent',
@@ -38,6 +39,7 @@ function snapshot(): LegacySnapshot {
         effort: 'high',
         catalog: [{ id: 'model', category: 'model', options: [{ id: 'gpt-5' }] }],
       },
+      { id: OWNER, kind: 'human', name: 'Owner' },
       { id: REMOVED, kind: 'human', name: 'Former' },
     ],
     workspaces: [
@@ -51,6 +53,26 @@ function snapshot(): LegacySnapshot {
       },
     ],
     rooms: [
+      {
+        id: CORNER,
+        workspaceId: WORKSPACE,
+        createdBy: AGENT,
+        parentId: ROOM,
+        name: 'Migration corner',
+        visibility: 'invite-only',
+        archived: false,
+        objective: 'Build monolith',
+        remoteStateContent: JSON.stringify({
+          version: 1,
+          cornerId: CORNER,
+          branch: 'fm/monolith',
+          state: 'in-review',
+          checks: 'passing',
+          observedAt: BASE + 8,
+        }),
+        createdAt: BASE - 70,
+        updatedAt: BASE + 15,
+      },
       {
         id: ROOM,
         workspaceId: WORKSPACE,
@@ -69,16 +91,6 @@ function snapshot(): LegacySnapshot {
         directParticipants: [OWNER, AGENT],
         createdAt: BASE - 80,
         updatedAt: BASE + 10,
-      },
-      {
-        id: CORNER,
-        workspaceId: WORKSPACE,
-        parentId: ROOM,
-        name: 'Migration corner',
-        visibility: 'invite-only',
-        archived: false,
-        createdAt: BASE - 70,
-        updatedAt: BASE + 15,
       },
       {
         id: ARCHIVED,
@@ -100,6 +112,7 @@ function snapshot(): LegacySnapshot {
       { workspaceId: WORKSPACE, roomId: DM, identityId: OWNER, role: 'member', removed: false },
       { workspaceId: WORKSPACE, roomId: DM, identityId: AGENT, role: 'member', removed: false },
       { workspaceId: WORKSPACE, roomId: CORNER, identityId: AGENT, role: 'owner', removed: false },
+      { workspaceId: WORKSPACE, roomId: CORNER, identityId: OWNER, role: 'member', removed: false },
       {
         workspaceId: WORKSPACE,
         roomId: ARCHIVED,
@@ -146,8 +159,14 @@ function snapshot(): LegacySnapshot {
         tags: [
           ['h', ROOM],
           ['t', 'buzz-attachment'],
-          ['imeta', 'url http://old.invalid/media/a', 'm image/png', 'size 4'],
-          ['attachment', 'http://old.invalid/media/a', 'proof.png'],
+          [
+            'imeta',
+            'url https://alternate.invalid/media/a',
+            'm image/png',
+            'size 4',
+            'thumb https://alternate.invalid/media/a-thumb',
+          ],
+          ['attachment', 'https://alternate.invalid/media/a', 'proof.png'],
         ],
         content: 'proof',
         createdAt: BASE + 2,
@@ -251,7 +270,11 @@ function snapshot(): LegacySnapshot {
         createdAt: BASE + 7,
       },
     ],
-    readMarks: [{ roomId: ROOM, identityId: OWNER, messageId: GITHUB, createdAt: BASE + 6 }],
+    readMarks: [
+      { roomId: ROOM, identityId: OWNER, messageId: GITHUB, createdAt: BASE + 6 },
+      { roomId: DELETED_ROOM, identityId: OWNER, messageId: GITHUB, createdAt: BASE + 6 },
+    ],
+    presences: [{ roomId: ROOM, agentId: AGENT, status: 'online', createdAt: BASE + 9 }],
     schedules: [
       {
         scheduleId: 'daily',
@@ -266,6 +289,13 @@ function snapshot(): LegacySnapshot {
           timezone: 'UTC',
           mandate: 'Check',
         },
+      },
+      {
+        scheduleId: 'deleted-room',
+        agentId: AGENT,
+        roomId: DELETED_ROOM,
+        revision: 1,
+        schedule: { scheduleId: 'deleted-room', revision: 1, status: 'active' },
       },
     ],
     github: {
@@ -294,9 +324,16 @@ function snapshot(): LegacySnapshot {
       {
         legacyUrl: 'http://old.invalid/media/a',
         bytesBase64: Buffer.from('tiny').toString('base64'),
-        ownerId: OWNER,
+        ownerId: ORPHAN_MEDIA_OWNER,
         mimeType: 'image/png',
         name: 'proof.png',
+      },
+      {
+        legacyUrl: 'http://old.invalid/media/a-thumb',
+        bytesBase64: Buffer.from('thumb').toString('base64'),
+        ownerId: ORPHAN_MEDIA_OWNER,
+        mimeType: 'image/jpeg',
+        name: 'proof-thumb.jpg',
       },
     ],
   };
@@ -313,12 +350,14 @@ describe('direct snapshot importer and RoomView parity', () => {
     const source = snapshot();
     const report = await new SnapshotImporter(db).import(source);
     expect(report.imported).toMatchObject({
-      identity: 3,
+      identity: 4,
+      agent: 1,
       workspace: 1,
       room: 4,
-      membership: 10,
+      membership: 11,
       event: 8,
       'read-mark': 1,
+      presence: 1,
       schedule: 1,
       'github-identity-link': 1,
       'github-user-token': 1,
@@ -326,8 +365,15 @@ describe('direct snapshot importer and RoomView parity', () => {
       'github-repository': 1,
       'push-device': 1,
       'update-receipt': 1,
-      media: 1,
+      media: 2,
     });
+    expect(
+      (
+        await db.query<{ name: string }>(`SELECT name FROM identities WHERE id=$1`, [
+          ORPHAN_MEDIA_OWNER,
+        ])
+      ).rows[0]?.name,
+    ).toBe('Person dddddddd');
     const phone = new PhoneService(db, 'https://server.example');
     const actual = await phone.readRoom(ROOM, OWNER);
     expect(actual).not.toBeNull();
@@ -354,12 +400,30 @@ describe('direct snapshot importer and RoomView parity', () => {
     expect(normalize(actual!.messages)).toEqual(normalize(oldMessages));
     expect(actual!.room.archived).toBe(false);
     expect(actual!.members.map((member) => member.identity.pubkey)).toEqual([AGENT, OWNER]);
+    expect(actual!.members.find((member) => member.identity.pubkey === AGENT)?.presence).toEqual({
+      status: 'online',
+      observedAt: BASE + 9,
+      roomId: ROOM,
+    });
     expect(actual!.corners).toHaveLength(1);
+    expect(actual!.corners[0]).toMatchObject({
+      agent: { pubkey: AGENT },
+      lifecycle: { lifecycle: 'in-review', checks: 'passing', branch: 'fm/monolith' },
+      status: 'idle',
+    });
+    expect(
+      (await db.query<{ parent_id: string }>(`SELECT parent_id FROM rooms WHERE id=$1`, [CORNER]))
+        .rows[0]?.parent_id,
+    ).toBe(ROOM);
     expect((await phone.readRoom(DM, OWNER))?.directMessage?.participants).toEqual([OWNER, AGENT]);
     expect((await phone.readRoom(ARCHIVED, OWNER))?.room.archived).toBe(true);
     expect((await phone.readRoom(CORNER, AGENT))?.cornerPlan).toEqual({
       objective: 'Build monolith',
       items: [{ step: 'Import', status: 'completed' }],
+    });
+    expect((await phone.readRoom(CORNER, AGENT))?.cornerLifecycle).toMatchObject({
+      lifecycle: 'in-review',
+      checks: 'passing',
     });
     expect((await phone.readAgent(WORKSPACE, AGENT, OWNER))?.soul?.instructions).toBe(
       'Ship carefully',
@@ -371,6 +435,11 @@ describe('direct snapshot importer and RoomView parity', () => {
     expect((await phone.readWorkspace(WORKSPACE, OWNER))?.workspace.avatar).toMatch(
       /^https:\/\/server\.example\/v1\/media\//,
     );
+    expect(
+      (await measureDatabaseBreakdown(db)).media.find(
+        (row) => row.type === 'referenced-by-kept-message',
+      ),
+    ).toMatchObject({ objects: 2, bytes: 9 });
     expect(
       (await phone.readChats(WORKSPACE, OWNER))?.chats.find((chat) => chat.room.id === ROOM)
         ?.unread,
@@ -399,7 +468,7 @@ describe('direct snapshot importer and RoomView parity', () => {
       'injected importer interruption',
     );
     const report = await importer.import(snapshot(), 'restartable');
-    expect(report.skipped.identity).toBe(3);
+    expect(report.skipped.identity).toBe(4);
     expect(
       (await db.query<{ count: string }>(`SELECT count(*)::text count FROM messages`)).rows[0]
         ?.count,
@@ -416,8 +485,7 @@ describe('direct snapshot importer and RoomView parity', () => {
 
 function normalize(value: unknown): unknown {
   return JSON.parse(JSON.stringify(value), (_key, item) =>
-    typeof item === 'string' &&
-    (item.includes('/v1/media/') || item === 'http://old.invalid/media/a')
+    typeof item === 'string' && (item.includes('/v1/media/') || item.includes('/media/a'))
       ? '<media>'
       : item,
   );

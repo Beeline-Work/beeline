@@ -70,7 +70,7 @@ import { CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import {
   COMPOSER_ACK_BOUND_MS,
   hasComposerAckReceipt,
-  selectComposerAckState,
+  selectComposerAckPresentation,
 } from '@/buzz/room-indicators';
 import { useRoomSendFrame } from '@/buzz/room-send-frame';
 import { projectActiveTurnStream } from '@/buzz/live-turn-stream';
@@ -1484,24 +1484,24 @@ export default function BuzzChat() {
    * silently disappearing or lying about a turn that hasn't started.
    */
   const composerAck = useMemo((): { label: string; tone: 'live' | 'quiet' } | null => {
-    const state = selectComposerAckState({
+    return selectComposerAckPresentation({
       isCorner,
       agentsOffline,
       ...(activeAgentTurn?.agentPubkey ? { activeTurnPubkey: activeAgentTurn.agentPubkey } : {}),
       ...(pendingAck ? { pendingAckSentAt: pendingAck.sentAt } : {}),
       now: composerAckNow,
+      conversationIdentities,
+      agentsByPubkey: agentByPubkey,
     });
-    if (!state) return null;
-    if (state.kind === 'thinking') {
-      const subject = resolveAgentDisplayIdentity(
-        state.agentPubkey,
-        agentByPubkey.get(state.agentPubkey),
-      ).name;
-      return { label: `${subject} thinking…`, tone: 'live' };
-    }
-    if (state.kind === 'buzzing') return { label: 'buzzing…', tone: 'live' };
-    return { label: 'waiting on agent…', tone: 'quiet' };
-  }, [activeAgentTurn, agentByPubkey, agentsOffline, composerAckNow, isCorner, pendingAck]);
+  }, [
+    activeAgentTurn,
+    agentByPubkey,
+    agentsOffline,
+    composerAckNow,
+    conversationIdentities,
+    isCorner,
+    pendingAck,
+  ]);
 
   useEffect(() => {
     // Presence only changes at a lease/dormancy deadline. A five-second clock here

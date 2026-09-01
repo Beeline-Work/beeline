@@ -78,6 +78,7 @@ import {
 import { registerBuzzPushNotifications } from '@/push/buzz-push-registration';
 import { BuzzRigTransport } from '@/sync/transport';
 import { Typography } from '@/constants/Typography';
+import { monolithSession } from '@/auth/monolith-session';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { t } from '@/text';
 
@@ -301,6 +302,21 @@ export default function BuzzOnboarding() {
     const relayUrl = getBuzzRuntimeConfig().relayUrl;
     void (async () => {
       const initialUrl = await Linking.getInitialURL().catch(() => null);
+      if (getBuzzRuntimeConfig().monolithEnabled) {
+        const challenge =
+          (await resumeInitialGitHubSignIn(() => Promise.resolve(initialUrl))) ??
+          (await loadPendingGitHubBindChallenge());
+        if (challenge) {
+          await monolithSession.exchangeGitHubTicket(challenge.ticket);
+          await clearPendingGitHubSignInState();
+          if (alive) router.replace('/buzz/channels');
+          return;
+        }
+        if (await monolithSession.identityId()) {
+          if (alive) router.replace('/buzz/channels');
+        }
+        return;
+      }
       const coldChallenge =
         (await resumeInitialGitHubSignIn(() => Promise.resolve(initialUrl))) ??
         (await loadPendingGitHubBindChallenge());
@@ -379,6 +395,26 @@ export default function BuzzOnboarding() {
     clearOnboardingNotice();
     setNotice(null);
     try {
+      if (getBuzzRuntimeConfig().monolithEnabled) {
+        const state = randomState();
+        const redirectUri = githubSignInRedirectUri();
+        const start = startGitHubBind(getBuzzRuntimeConfig().relayUrl, { redirectUri, state });
+        await persistGitHubSignInState(state);
+        const callbackUrl = await waitForAuthCallback({
+          redirectUri: start.redirectUri,
+          openAuthSession: () => WebBrowser.openAuthSessionAsync(
+            start.authorizationUrl,
+            start.redirectUri,
+            authSessionOptions(Platform.OS, start.redirectUri),
+          ),
+          subscribeToUrls: (listener) => Linking.addEventListener('url', ({ url }) => listener(url)),
+        });
+        const challenge = await resumeGitHubSignInCallback(callbackUrl);
+        await monolithSession.exchangeGitHubTicket(challenge.ticket);
+        await clearPendingGitHubSignInState();
+        router.replace('/buzz/channels');
+        return;
+      }
       const identity =
         existingIdentity.current ??
         (await loadPendingGitHubIdentity()) ??
@@ -645,6 +681,7 @@ export default function BuzzOnboarding() {
 
   const canRetryBind = notice?.retryable === true && pendingBind.current !== null;
   const signInLabel = 'Continue with GitHub';
+  const monolithEnabled = getBuzzRuntimeConfig().monolithEnabled;
 
   if (namingIdentity) {
     const normalized = normalizeManagedHandle(nameInput);
@@ -842,7 +879,7 @@ export default function BuzzOnboarding() {
         </View>
       )}
 
-      {showAdvanced && (
+      {!monolithEnabled && showAdvanced && (
         <PixelGateReveal style={styles.importPanel}>
           <Text style={styles.sectionLabel}>ADVANCED · NEW NOSTR KEY</Text>
           <Text style={styles.keyGuide}>
@@ -931,7 +968,7 @@ export default function BuzzOnboarding() {
             disabled={loading || status === 'checking_device' || status === 'binding'}
           />
         ) : null}
-        <MonoButton
+        {!monolithEnabled && <MonoButton
           labelStyle={styles.buttonLabel}
           label={showAdvanced ? 'Hide Advanced' : 'Advanced'}
           variant="secondary"
@@ -941,7 +978,7 @@ export default function BuzzOnboarding() {
           }}
           disabled={loading}
           testID="onboarding-advanced"
-        />
+        />}
       </View>
     </View>
   );

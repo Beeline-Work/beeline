@@ -5,7 +5,7 @@ This document defines Phase C's credential transition. Phase B implements and te
 ## Phone
 
 1. The cutover OTA keeps the existing signed identity long enough to complete the existing GitHub identity flow.
-2. The phone gives the resulting GitHub proof to `POST /v1/auth/github/exchange` and receives a 15-minute access token plus a rotating 30-day refresh token.
+2. The phone gives the resulting one-use GitHub bind ticket to `POST /v1/auth/github/exchange`. The monolith redeems it server-to-server through `/auth/github/phone-exchange`, which atomically consumes the short-lived ticket and returns only the verified identity proof. No raw GitHub token crosses or is stored by the phone or monolith. The phone receives a 15-minute access token plus a rotating 30-day refresh token.
 3. The refresh token is stored in SecureStore. Access tokens remain memory-only. Each refresh consumes the previous refresh token; reuse invalidates the whole token family.
 4. The owner-device OTA receipt must show the cutover build before the maintenance cut proceeds. A phone without a refresh token sees one GitHub sign-in, not an empty Room list.
 5. Only after the complete final-import smoke flow passes may the old phone key be retired. This is a forward-only data-format cut; the old snapshot is forensic recovery, not a post-cut write target.

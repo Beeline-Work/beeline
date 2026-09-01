@@ -12,6 +12,7 @@ export type PhoneOperationMap = {
   createWorkspace: { input: NamedWorkspaceInput; output: IdResult };
   updateWorkspace: { input: UpdateWorkspaceInput; output: void };
   leaveWorkspace: { input: WorkspaceInput; output: void };
+  addWorkspaceMember: { input: WorkspaceMemberInput; output: MembershipResult };
   createRoom: { input: CreateRoomInput; output: IdResult };
   updateRoom: { input: UpdateRoomInput; output: void };
   deleteRoom: { input: RoomInput; output: void };
@@ -21,7 +22,7 @@ export type PhoneOperationMap = {
   resolveDirectMessage: { input: ResolveDirectMessageInput; output: DirectMessageResult };
   createInvite: { input: WorkspaceInput; output: InviteTokenResult };
   resolveInvite: { input: InviteTokenInput; output: InviteView };
-  redeemInvite: { input: InviteTokenInput; output: MembershipResult };
+  redeemInvite: { input: InviteTokenInput; output: InviteMembershipResult };
   createAgentPairingCode: { input: WorkspaceInput; output: PairingCodeResult };
   claimAgentPairing: { input: PairingCodeInput; output: AgentPairingClaimView };
   updateAgentSoul: { input: UpdateAgentSoulInput; output: void };
@@ -58,11 +59,18 @@ export type WorkspaceInput = { readonly workspaceId: string };
 export type RoomInput = { readonly roomId: string };
 export type WorkspaceAgentInput = WorkspaceInput & { readonly agentId: string };
 export type RoomMemberInput = RoomInput & { readonly memberId: string };
+export type WorkspaceMemberInput = WorkspaceInput & {
+  readonly memberId: string;
+  readonly role: 'owner' | 'admin' | 'member';
+};
 export type NamedWorkspaceInput = { readonly name: string; readonly workspaceId?: string };
 export type IdResult = { readonly id: string };
 export type MembershipResult = { readonly joined: boolean };
+export type InviteMembershipResult = MembershipResult & { readonly workspaceId: string };
 export type MessageWriteResult = { readonly messageId: string };
 export type SendRoomMessageInput = RoomInput & {
+  /** Client-generated retry/optimistic identity. Random 32-byte hex. */
+  readonly messageId?: string;
   readonly text: string;
   readonly mentions?: readonly string[];
   readonly attachments?: readonly AttachmentReference[];

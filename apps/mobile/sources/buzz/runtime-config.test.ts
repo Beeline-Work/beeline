@@ -19,6 +19,21 @@ describe('getBuzzRuntimeConfig', () => {
     mocks.loadAppConfig.mockReturnValue({});
 
     expect(getBuzzRuntimeConfig().pushGatewayUrl).toBe('https://usebeeline.app/push');
+    expect(getBuzzRuntimeConfig()).toMatchObject({
+      monolithEnabled: false,
+      monolithUrl: 'https://beeline-server.fly.dev',
+    });
+  });
+
+  it('lets an OTA bundle flip the one monolith transport switch', () => {
+    mocks.loadAppConfig.mockReturnValue({
+      buzzyMonolithEnabled: true,
+      buzzyMonolithUrl: 'https://monolith.example/',
+    });
+    expect(getBuzzRuntimeConfig()).toMatchObject({
+      monolithEnabled: true,
+      monolithUrl: 'https://monolith.example',
+    });
   });
 
   it('preserves the permanent push.buzzrouter.com alias when configured', () => {

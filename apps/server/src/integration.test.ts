@@ -94,10 +94,12 @@ describe('monolith integration', () => {
     await next(socket, 'subscribed');
     const sent = await request('/v1/phone/operations/sendRoomMessage', 'POST', {
       roomId: ROOM,
+      messageId: 'c'.repeat(64),
       text: 'Please inspect this',
     });
     expect(sent.status).toBe(200);
     const { messageId } = (await sent.json()) as { messageId: string };
+    expect(messageId).toBe('c'.repeat(64));
     const room = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as {
       messages: Array<{ id: string; text: string }>;
     };

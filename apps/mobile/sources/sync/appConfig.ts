@@ -1,5 +1,4 @@
 import Constants from 'expo-constants';
-import { requireOptionalNativeModule } from 'expo-modules-core';
 
 export interface AppConfig {
     postHogKey?: string;
@@ -10,6 +9,8 @@ export interface AppConfig {
     releaseSha?: string;
     buzzyRelayUrl?: string;
     buzzyPushGatewayUrl?: string;
+    buzzyMonolithUrl?: string;
+    buzzyMonolithEnabled?: boolean;
 }
 
 /**
@@ -25,33 +26,7 @@ export function loadAppConfig(): AppConfig {
     const config: Partial<AppConfig> = {};
 
     try {
-        // 1. Try ExponentConstants native module directly
-        const ExponentConstants = requireOptionalNativeModule('ExponentConstants');
-        if (ExponentConstants && ExponentConstants.manifest) {
-            let exponentManifest = ExponentConstants.manifest;
-
-            // On Android, manifest is passed as JSON string
-            if (typeof exponentManifest === 'string') {
-                try {
-                    exponentManifest = JSON.parse(exponentManifest);
-                } catch (e) {
-                    console.warn('[loadAppConfig] Failed to parse ExponentConstants.manifest:', e);
-                }
-            }
-
-            // Look for app config in various locations
-            const appConfig = exponentManifest?.extra?.app;
-            if (appConfig && typeof appConfig === 'object') {
-                Object.assign(config, appConfig);
-                console.log('[loadAppConfig] Loaded from ExponentConstants:', Object.keys(config));
-            }
-        }
-    } catch (e) {
-        console.warn('[loadAppConfig] Error accessing ExponentConstants:', e);
-    }
-
-    try {
-        // 2. Try Constants.expoConfig
+        // Expo resolves embedded and OTA manifests into this runtime view.
         if (Constants.expoConfig?.extra?.app) {
             const appConfig = Constants.expoConfig.extra.app;
             if (typeof appConfig === 'object') {
@@ -80,6 +55,12 @@ export function loadAppConfig(): AppConfig {
     if (process.env.EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL && config.buzzyPushGatewayUrl !== process.env.EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL) {
         console.log('[loadAppConfig] Override buzzyPushGatewayUrl from EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL');
         config.buzzyPushGatewayUrl = process.env.EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL;
+    }
+    if (process.env.EXPO_PUBLIC_BUZZY_MONOLITH_URL) {
+        config.buzzyMonolithUrl = process.env.EXPO_PUBLIC_BUZZY_MONOLITH_URL;
+    }
+    if (process.env.EXPO_PUBLIC_BUZZY_MONOLITH_ENABLED) {
+        config.buzzyMonolithEnabled = process.env.EXPO_PUBLIC_BUZZY_MONOLITH_ENABLED === 'true';
     }
     if (process.env.EXPO_PUBLIC_BEELINE_RELEASE_VERSION) {
         config.releaseVersion = process.env.EXPO_PUBLIC_BEELINE_RELEASE_VERSION;

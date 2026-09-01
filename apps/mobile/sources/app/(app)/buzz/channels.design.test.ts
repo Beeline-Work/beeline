@@ -8,11 +8,11 @@ const composeSource = readFileSync(
   'utf8',
 );
 const roomViewSource = readFileSync(
-  new URL('../../../../../../packages/buzz-client/src/room-view.ts', import.meta.url),
+  new URL('../../../../../../packages/api-contract/src/phone-types.ts', import.meta.url),
   'utf8',
 );
 const surfaceGuardSource = readFileSync(
-  new URL('../../../../../../packages/buzz-client/src/surface-guards.ts', import.meta.url),
+  new URL('../../../../../../packages/api-contract/src/phone-guards.ts', import.meta.url),
   'utf8',
 );
 

@@ -4,20 +4,20 @@ import { router } from 'expo-router';
 import {
   KIND_AGENT_DRAFT,
   LiveOverlayDecoder,
-  RoomViewClient,
-  RoomViewHttpError,
   SurfaceRefreshScheduler,
   applyLiveOverlay,
   isRoomView,
   type LiveOverlay,
   type RoomView,
 } from '@beeline/buzz-client';
+import { RoomViewClient, RoomViewHttpError } from '@/sync/transport/room-view-client';
 
 import { loadBuzzIdentity, getEffectiveRelayUrl } from '@/auth/buzz-identity-storage';
 import { displayRoomMessages, reconcileRoomView, type ChatDisplayMessage } from '@/buzz/room-view-presentation';
 import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-storage';
 import { createRoomOutbox, mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { BuzzRigTransport } from '@/sync/transport';
+import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 import {
   AGENT_TURN_FRESHNESS_MS,
   mergeAgentPresence,
@@ -318,8 +318,25 @@ export function useRoomSurfaceSession({
       if (!currentTransport) return;
       const client = await currentTransport.ensureClient();
       let replaying = true;
-      const stop = await client.surfaceSubscribe(filters, (event) => {
+      const stop = await client.surfaceSubscribe(filters, (event: Parameters<LiveOverlayDecoder['decode']>[0] | MonolithSurfaceEvent) => {
         if (cancelled || generation !== watchGeneration) return;
+        if ('monolithLive' in event) {
+          const live = (event as MonolithSurfaceEvent).monolithLive;
+          if (live.type === 'invalidate') {
+            scheduler?.signal();
+          } else if (live.type === 'presence') {
+            applyDecodedOverlay({ kind: 'presence', key: `presence:${live.agentId}:${live.roomId}`, agentPubkey: live.agentId, status: live.status, createdAt: live.observedAt });
+          } else if (live.type === 'draft') {
+            applyDecodedOverlay({ kind: 'draft', key: `draft:${live.agentId}:${live.turnId}`, stableId: `live-turn:${live.turnId}`, agentPubkey: live.agentId, requestId: live.turnId, text: live.text, closed: false, createdAt: Math.floor(Date.now() / 1000) });
+          } else if (live.type === 'thought') {
+            applyDecodedOverlay({ kind: 'thought', key: `thought:${live.agentId}:${live.turnId}`, agentPubkey: live.agentId, sessionId: live.turnId, text: live.text, closed: false, createdAt: Math.floor(Date.now() / 1000) });
+          } else if (live.type === 'retract') {
+            applyDecodedOverlay(live.kind === 'draft'
+              ? { kind: 'draft', key: `draft:${live.agentId}:${live.turnId}`, stableId: `live-turn:${live.turnId}`, agentPubkey: live.agentId, requestId: live.turnId, closed: true, createdAt: Math.floor(Date.now() / 1000) }
+              : { kind: 'thought', key: `thought:${live.agentId}:${live.turnId}`, agentPubkey: live.agentId, sessionId: live.turnId, closed: true, createdAt: Math.floor(Date.now() / 1000) });
+          }
+          return;
+        }
         if (!decoder && event.kind === KIND_AGENT_DRAFT) {
           pendingOverlayEvents = [...pendingOverlayEvents.slice(-63), event];
           return;
@@ -433,7 +450,11 @@ export function useRoomSurfaceSession({
 
         scheduler = new SurfaceRefreshScheduler({
           fetch: () => nextRoomClient.room(channelId),
-          apply: (view) => applyView(view, identity.publicKey, relayUrl, true),
+          apply: (view) => {
+            applyView(view, identity.publicKey, relayUrl, true);
+            const latest = view.messages.at(-1);
+            if (latest) void nextRoomClient.markRead(channelId, latest.id).catch(() => undefined);
+          },
           onError: (error) => {
             if (cancelled) return;
             const terminal =

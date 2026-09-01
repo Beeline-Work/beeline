@@ -807,6 +807,11 @@ export class PhoneService {
       case 'leaveWorkspace':
         await this.leaveWorkspace(input as Input<'leaveWorkspace'>, viewerId);
         return undefined as Output<Name>;
+      case 'addWorkspaceMember':
+        return (await this.addWorkspaceMember(
+          input as Input<'addWorkspaceMember'>,
+          viewerId,
+        )) as Output<Name>;
       case 'createRoom':
         return (await this.createRoom(input as Input<'createRoom'>, viewerId)) as Output<Name>;
       case 'updateRoom':
@@ -1008,7 +1013,8 @@ export class PhoneService {
 
   private async sendMessage(input: Input<'sendRoomMessage'>, author: string) {
     if (!(await this.hasRoomAccess(input.roomId, author))) throw new Error('room access denied');
-    const id = messageId();
+    const id = input.messageId ?? messageId();
+    if (!/^[0-9a-f]{64}$/.test(id)) throw new Error('messageId is invalid');
     await this.database.query(
       `INSERT INTO messages(id,room_id,author_id,text,attachments,mention_ids) VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb)`,
       [
@@ -1029,7 +1035,8 @@ export class PhoneService {
     );
     if (!parent.rows[0] || !(await this.hasRoomAccess(input.roomId, author)))
       throw new Error('reply parent is not in this room');
-    const id = messageId();
+    const id = input.messageId ?? messageId();
+    if (!/^[0-9a-f]{64}$/.test(id)) throw new Error('messageId is invalid');
     await this.database.query(
       `INSERT INTO messages(id,room_id,author_id,text,attachments,mention_ids,reply_to_message_id,root_message_id) VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8)`,
       [
@@ -1154,6 +1161,23 @@ export class PhoneService {
       [input.roomId, input.memberId],
     );
   }
+  private async addWorkspaceMember(input: Input<'addWorkspaceMember'>, viewerId: string) {
+    await this.requireWorkspaceManager(input.workspaceId, viewerId);
+    return this.database.transaction(async (database) => {
+      const updated = await database.query(
+        `UPDATE memberships SET role=$3,removed_at=NULL
+         WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`,
+        [input.workspaceId, input.memberId, input.role],
+      );
+      if (updated.rowCount) return { joined: false };
+      const inserted = await database.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+         VALUES($1,NULL,$2,$3) ON CONFLICT DO NOTHING`,
+        [input.workspaceId, input.memberId, input.role],
+      );
+      return { joined: inserted.rowCount > 0 };
+    });
+  }
   private async resolveDirectMessage(input: Input<'resolveDirectMessage'>, viewerId: string) {
     const participants = [viewerId, input.participantId].sort();
     const found = await this.database.query<{ id: string }>(
@@ -1196,7 +1220,7 @@ export class PhoneService {
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member') ON CONFLICT DO NOTHING`,
       [row.workspace_id, viewerId],
     );
-    return { joined: joined.rowCount > 0 };
+    return { joined: joined.rowCount > 0, workspaceId: row.workspace_id };
   }
   private async createPairing(input: Input<'createAgentPairingCode'>, viewerId: string) {
     await this.requireWorkspaceManager(input.workspaceId, viewerId);
@@ -1530,6 +1554,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'createWorkspace',
   'updateWorkspace',
   'leaveWorkspace',
+  'addWorkspaceMember',
   'createRoom',
   'updateRoom',
   'deleteRoom',

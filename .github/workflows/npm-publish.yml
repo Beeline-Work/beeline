@@ -67,7 +67,7 @@ jobs:
               exit 1
             fi
           fi
-          npm version "$release_version" --no-git-tag-version --workspace usebeeline
+          npm version "$release_version" --allow-same-version --no-git-tag-version --workspace usebeeline
           echo "value=$release_version" >> "$GITHUB_OUTPUT"
       - name: Publish with provenance
         run: |

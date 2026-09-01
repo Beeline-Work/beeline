@@ -105,9 +105,12 @@ test('one workflow owns parallel builds, ordered promotion, retry, and the final
   assert.match(workflow, /unified-release\.mjs report --state/);
   assert.match(workflow, /unified-release\.mjs confirm-delivery --state/);
   assert.match(server, /flyctl auth whoami/);
+  assert.match(server, /name: Deploy the exact release SHA to the monolith/);
+  assert.match(server, /test "\$\(git rev-parse HEAD\)" = "\$RELEASE_SHA"/);
   assert.match(server, /flyctl deploy \. \\\n\s+--config apps\/server\/fly\.toml \\\n\s+--dockerfile apps\/server\/Dockerfile \\\n\s+--app beeline-server/);
   assert.match(server, /--build-arg "BEELINE_RELEASE_SHA=\$RELEASE_SHA"/);
   assert.doesNotMatch(server, /deploy-relay-host\.sh/);
+  assert.match(workflow, /name: Confirm monolith readiness and exact deployed image/);
   assert.match(workflow, /https:\/\/server\.usebeeline\.app\/readyz/);
   assert.match(workflow, /https:\/\/server\.usebeeline\.app\/version/);
   assert.match(workflow, /deployed\.version !== version \|\| deployed\.sourceSha !== sourceSha/);

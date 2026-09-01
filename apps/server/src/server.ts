@@ -88,7 +88,9 @@ export function createBeelineServer(options: ServerOptions): Server {
         message.includes('too large') ||
         message.includes('size is outside')
           ? 400
-          : message.includes('already linked') || message.includes('conflict')
+          : message.includes('already linked') ||
+              message.includes('already claimed') ||
+              message.includes('conflict')
             ? 409
             : message.includes('access denied') || message.includes('manager')
               ? 403

@@ -73,10 +73,14 @@ export class TokenAuth {
         [id, github.name, github.login, github.avatar ?? null, github.subject, this.now()],
       );
       await database.query(
-        `INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience)
-         VALUES('github',$1,$2,'https://github.com',$3)
-         ON CONFLICT(provider,subject) DO UPDATE SET identity_id=EXCLUDED.identity_id`,
-        [github.subject, id, GITHUB_IDENTITY_AUDIENCE],
+        `INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience,provider_login)
+         VALUES('github',$1,$2,'https://github.com',$3,$4)
+         ON CONFLICT(provider,subject) DO UPDATE SET
+           identity_id=EXCLUDED.identity_id,
+           issuer=EXCLUDED.issuer,
+           audience=EXCLUDED.audience,
+           provider_login=EXCLUDED.provider_login`,
+        [github.subject, id, GITHUB_IDENTITY_AUDIENCE, github.login],
       );
       if (created.rows[0]) {
         await database.query(

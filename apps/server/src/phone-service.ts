@@ -977,7 +977,7 @@ export class PhoneService {
       case 'getManagedIdentity':
         return (await this.managedIdentity(viewerId)) as Output<Name>;
       case 'adoptGitHubHandle':
-        return (await this.managedIdentity(viewerId)) as Output<Name>;
+        return (await this.adoptGitHubHandle(viewerId)) as Output<Name>;
       case 'claimManagedHandle':
         if (
           !/^[a-z0-9](?:[a-z0-9._-]{0,28}[a-z0-9])?$/.test(
@@ -985,10 +985,7 @@ export class PhoneService {
           )
         )
           throw new Error('invalid managed handle');
-        await this.database.query(`UPDATE identities SET handle=$2,updated_at=now() WHERE id=$1`, [
-          viewerId,
-          (input as Input<'claimManagedHandle'>).handle,
-        ]);
+        await this.claimManagedHandle(viewerId, (input as Input<'claimManagedHandle'>).handle);
         return (await this.managedIdentity(viewerId)) as Output<Name>;
       case 'listGitHubRepositories':
         if ((input as Input<'listGitHubRepositories'>).refresh)
@@ -1495,6 +1492,29 @@ export class PhoneService {
       ...(id.handle ? { handle: id.handle } : {}),
       ...(id.avatar ? { avatar: id.avatar } : {}),
     };
+  }
+  private async claimManagedHandle(viewerId: string, handle: string) {
+    const claimed = await this.database.query(
+      `UPDATE identities AS identity SET handle=$2,updated_at=now()
+       WHERE identity.id=$1 AND NOT EXISTS(
+         SELECT 1 FROM identities AS other
+         WHERE other.id<>$1 AND lower(other.handle)=lower($2)
+       )`,
+      [viewerId, handle],
+    );
+    if (claimed.rowCount === 0) throw new Error('managed handle is already claimed');
+  }
+  private async adoptGitHubHandle(viewerId: string) {
+    const link = (
+      await this.database.query<{ provider_login: string | null }>(
+        `SELECT provider_login FROM identity_external_links
+         WHERE provider='github' AND identity_id=$1`,
+        [viewerId],
+      )
+    ).rows[0];
+    if (!link?.provider_login) throw new Error('GitHub handle is not available');
+    await this.claimManagedHandle(viewerId, link.provider_login.toLowerCase());
+    return this.managedIdentity(viewerId);
   }
   private async identityRecovery(viewerId: string) {
     const rows = await this.database.query<{ id: string; handle: string | null }>(

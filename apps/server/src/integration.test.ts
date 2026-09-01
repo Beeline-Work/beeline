@@ -334,9 +334,14 @@ describe('monolith integration', () => {
     expect(claimed.status).toBe(200);
     await expect(claimed.json()).resolves.toMatchObject({ handle: 'captain.owner' });
     expect((await operation('claimManagedHandle', { handle: 'Not Valid' })).status).toBe(400);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Other','already-taken')`,
+      ['d'.repeat(64)],
+    );
+    expect((await operation('claimManagedHandle', { handle: 'already-taken' })).status).toBe(409);
     await expect((await operation('adoptGitHubHandle')).json()).resolves.toMatchObject({
       personId: HUMAN,
-      handle: 'captain.owner',
+      handle: 'owner',
     });
     await expect((await operation('getIdentityRecovery')).json()).resolves.toEqual({
       candidates: [],

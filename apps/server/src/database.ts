@@ -168,9 +168,15 @@ CREATE TABLE IF NOT EXISTS identity_external_links (
   identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
   issuer text NOT NULL,
   audience text NOT NULL,
+  provider_login text,
   created_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (provider, subject)
 );
+ALTER TABLE identity_external_links ADD COLUMN IF NOT EXISTS provider_login text;
+UPDATE identity_external_links AS link SET provider_login=identity.handle
+FROM identities AS identity
+WHERE link.provider='github' AND link.identity_id=identity.id
+  AND link.provider_login IS NULL AND identity.handle IS NOT NULL;
 CREATE INDEX IF NOT EXISTS identity_external_links_identity_idx ON identity_external_links(identity_id);
 UPDATE identity_external_links SET audience='github'
 WHERE provider='github' AND audience<>'github';

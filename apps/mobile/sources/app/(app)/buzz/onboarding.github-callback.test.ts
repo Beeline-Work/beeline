@@ -10,6 +10,15 @@ const linking = vi.hoisted(() => ({
   listener: null as ((event: { url: string }) => void) | null,
 }));
 const browser = vi.hoisted(() => ({ open: vi.fn() }));
+const runtime = vi.hoisted(() => ({
+  current: {
+    relayUrl: 'https://relay.test',
+    pushGatewayUrl: 'https://relay.test/push',
+    monolithUrl: 'https://server.usebeeline.app',
+    monolithEnabled: false,
+  },
+}));
+const monolith = vi.hoisted(() => ({ exchangeGitHubTicket: vi.fn(async () => undefined) }));
 const identityStorage = vi.hoisted(() => ({
   load: vi.fn(),
   save: vi.fn(async () => undefined),
@@ -101,8 +110,9 @@ vi.mock('@/buzz/person-name', () => ({
   savePreferredPersonName: vi.fn(async () => undefined),
 }));
 vi.mock('@/buzz/runtime-config', () => ({
-  getBuzzRuntimeConfig: () => ({ relayUrl: 'https://relay.test' }),
+  getBuzzRuntimeConfig: () => runtime.current,
 }));
+vi.mock('@/auth/monolith-session', () => ({ monolithSession: monolith }));
 vi.mock('@/text', () => ({ t: (key: string) => key }));
 vi.mock('@/push/buzz-push-registration', () => ({
   registerBuzzPushNotifications: vi.fn(async () => undefined),
@@ -203,6 +213,7 @@ describe('GitHub callback delivery into onboarding', () => {
     clearOnboardingNotice();
     linking.initialUrl = null;
     linking.listener = null;
+    runtime.current.monolithEnabled = false;
     identityStorage.pending = null;
     identityStorage.load.mockResolvedValue(null);
     identityStorage.save.mockResolvedValue(undefined);
@@ -218,6 +229,31 @@ describe('GitHub callback delivery into onboarding', () => {
     sdk.lookupManagedIdentity.mockResolvedValue(null);
     profileClient.getGlobalPersonProfile.mockResolvedValue(null);
     profileClient.setGlobalPersonProfile.mockClear();
+  });
+
+  it('opens monolith sign-in on server.usebeeline.app and exchanges its callback there', async () => {
+    runtime.current.monolithEnabled = true;
+    browser.open.mockImplementation(async (authorizationUrl: string) => {
+      const authorization = new URL(authorizationUrl);
+      expect(authorization.origin).toBe('https://server.usebeeline.app');
+      expect(authorization.pathname).toBe('/auth/github/start');
+      const state = authorization.searchParams.get('app_state')!;
+      queueMicrotask(() => linking.listener?.({ url: callbackUrl(state) }));
+      return { type: 'dismiss' };
+    });
+    const tree = await render();
+    const signIn = tree.root.find(
+      (node: any) => node.type === 'MonoButton' && node.props.label === 'Continue with GitHub',
+    );
+
+    await act(async () => {
+      await signIn.props.onPress();
+    });
+
+    expect(browser.open).toHaveBeenCalledTimes(1);
+    expect(monolith.exchangeGitHubTicket).toHaveBeenCalledWith('t'.repeat(43));
+    expect(sdk.finish).not.toHaveBeenCalled();
+    expect(navigation.replace).toHaveBeenCalledWith('/buzz/channels');
   });
 
   it('renders GitHub on the first frame without waiting for auth capabilities', () => {

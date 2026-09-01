@@ -19,7 +19,6 @@ import {
   finishOidcBind,
   recoverOidcBind,
   lookupRecovery,
-  startGitHubBind,
   type Identity,
   type ManagedIdentity,
   type OidcBindChallenge,
@@ -53,12 +52,12 @@ import {
 import { authSessionOptions } from '@/auth/auth-session';
 import {
   clearPendingGitHubSignInState,
-  githubSignInRedirectUri,
   loadPendingGitHubBindChallenge,
   persistGitHubSignInState,
   resumeGitHubSignInCallback,
   resumeInitialGitHubInstallation,
   resumeInitialGitHubSignIn,
+  startGitHubSignInWebFlow,
 } from '@/auth/github-auth-session';
 import {
   clearPersonNameOnboardingPending,
@@ -395,10 +394,10 @@ export default function BuzzOnboarding() {
     clearOnboardingNotice();
     setNotice(null);
     try {
-      if (getBuzzRuntimeConfig().monolithEnabled) {
+      const runtime = getBuzzRuntimeConfig();
+      if (runtime.monolithEnabled) {
         const state = randomState();
-        const redirectUri = githubSignInRedirectUri();
-        const start = startGitHubBind(getBuzzRuntimeConfig().monolithUrl, { redirectUri, state });
+        const start = startGitHubSignInWebFlow(state, runtime);
         await persistGitHubSignInState(state);
         const callbackUrl = await waitForAuthCallback({
           redirectUri: start.redirectUri,
@@ -422,9 +421,7 @@ export default function BuzzOnboarding() {
       await savePendingGitHubIdentity(identity);
       existingIdentity.current = identity;
       const state = randomState();
-      const authBaseUrl = getBuzzRuntimeConfig().relayUrl;
-      const redirectUri = githubSignInRedirectUri();
-      const start = startGitHubBind(authBaseUrl, { redirectUri, state });
+      const start = startGitHubSignInWebFlow(state, runtime);
       await persistGitHubSignInState(state);
       const callbackUrl = await waitForAuthCallback({
         redirectUri: start.redirectUri,

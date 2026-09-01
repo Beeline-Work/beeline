@@ -1,6 +1,13 @@
 import * as Linking from 'expo-linking';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { OidcBindError, parseOidcBindCallback, type OidcBindChallenge } from '@beeline/buzz-client';
+import {
+  OidcBindError,
+  parseOidcBindCallback,
+  startGitHubBind,
+  type OidcBindChallenge,
+  type OidcBindStart,
+} from '@beeline/buzz-client';
+import { getBuzzRuntimeConfig, type BuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { waitForAuthCallbackResult } from './onboarding-state';
 
 const PENDING_SIGN_IN_STATE_KEY = 'buzzy.github-sign-in-state.v1';
@@ -101,6 +108,18 @@ function createRepositoryReturnMonitor(
 
 export function githubSignInRedirectUri(): string {
   return Linking.createURL('buzz/github-callback');
+}
+
+/** Keep the browser authorize origin on the same stack that will consume its one-use ticket. */
+export function startGitHubSignInWebFlow(
+  state: string,
+  runtime: BuzzRuntimeConfig = getBuzzRuntimeConfig(),
+): OidcBindStart {
+  const authBaseUrl = runtime.monolithEnabled ? runtime.monolithUrl : runtime.relayUrl;
+  return startGitHubBind(authBaseUrl, {
+    redirectUri: githubSignInRedirectUri(),
+    state,
+  });
 }
 
 export function githubInstallationRedirectUri(): string {

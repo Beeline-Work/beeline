@@ -204,6 +204,47 @@ describe('monolith integration', () => {
     expect(membership.rows).toEqual([{ role: 'member' }]);
   });
 
+  it('creates Rooms with or without an installed repository binding', async () => {
+    await database.query(
+      `INSERT INTO github_installations(installation_id,owner_id,account_login,account_type) VALUES(42,$1,'owner','User')`,
+      [HUMAN],
+    );
+    await database.query(
+      `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch) VALUES(77,42,'owner/worker','trunk')`,
+    );
+
+    const plain = await request('/v1/phone/operations/createRoom', 'POST', {
+      workspaceId: WORKSPACE,
+      name: 'Plain Room',
+    });
+    expect(plain.status).toBe(200);
+    const plainId = ((await plain.json()) as { id: string }).id;
+    expect((await new PhoneService(database, origin).readRoom(plainId, HUMAN))?.repository).toBeUndefined();
+
+    const bound = await request('/v1/phone/operations/createRoom', 'POST', {
+      workspaceId: WORKSPACE,
+      name: 'Repository Room',
+      repositoryId: 77,
+    });
+    expect(bound.status).toBe(200);
+    const boundId = ((await bound.json()) as { id: string }).id;
+    expect((await new PhoneService(database, origin).readRoom(boundId, HUMAN))?.repository).toEqual(
+      expect.objectContaining({
+        key: 'github:77',
+        name: 'owner/worker',
+        remote: 'git://github.com/owner/worker',
+        targetBranch: 'trunk',
+        githubInstallationId: 42,
+      }),
+    );
+    const chats = (await (
+      await request(`/v1/phone/workspaces/${WORKSPACE}/chats`)
+    ).json()) as { chats: Array<{ room: { id: string }; repositoryName?: string }> };
+    expect(chats.chats.find((item) => item.room.id === boundId)?.repositoryName).toBe(
+      'owner/worker',
+    );
+  });
+
   it('rotates refresh tokens and rejects stale phone and daemon credentials', async () => {
     const initial = await auth.exchangeGitHubOidc('proof');
     const refreshed = await request(

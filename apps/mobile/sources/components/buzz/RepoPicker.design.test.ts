@@ -6,7 +6,7 @@ const linkageSource = readFileSync(new URL('../../buzz/room-repo-picker.ts', imp
 
 describe('GitHub repository picker launch flow', () => {
   it('keeps search, account grouping, create, and add-installation actions in one picker', () => {
-    expect(source).toContain('Search repos or paste github.com/owner/repo');
+    expect(source).toContain('Search or paste owner/repo');
     expect(source).toContain('installation.accountLogin');
     expect(source).toContain('＋ Create a new repo');
     expect(source).toContain('＋ Add an account or organization');

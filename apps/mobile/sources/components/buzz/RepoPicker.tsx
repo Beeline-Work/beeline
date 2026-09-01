@@ -152,7 +152,7 @@ export const RepoPicker = memo(function RepoPicker({
           setQuery(value);
           setPendingLinkage(null);
         }}
-        placeholder="Search repos or paste github.com/owner/repo"
+        placeholder="Search or paste owner/repo"
         placeholderTextColor={groknight.dim}
         style={styles.search}
         value={query}

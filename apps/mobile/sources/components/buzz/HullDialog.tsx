@@ -370,7 +370,7 @@ const styles = StyleSheet.create((theme) => {
       elevation: 18,
     },
     dialogSurface: { width: '100%' },
-    dialogCopy: { paddingHorizontal: 22, paddingTop: 22, paddingBottom: 16 },
+    dialogCopy: { flexShrink: 1, paddingHorizontal: 22, paddingTop: 22, paddingBottom: 16 },
     dialogTitle: {
       ...Typography.default('semiBold'),
       fontFamily: hull.proseSemibold,

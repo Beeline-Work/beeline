@@ -220,13 +220,13 @@ describe('Members agent invitation flow', () => {
     );
   });
 
-  it('immediately shows the one-command connect flow, with no pairing-code request', async () => {
+  it('mints a fresh code and shows the exact one-command connect flow', async () => {
     const renderer = await render();
 
     expect(renderer.root.findByProps({ testID: 'invite-agent-flow' })).toBeDefined();
-    expect(client.createAgentPairingCode).not.toHaveBeenCalled();
+    expect(client.createAgentPairingCode).toHaveBeenCalledWith(WORKSPACE);
     const command = renderer.root.findByProps({ testID: 'pair-agent-command' }).props.children;
-    expect(command).toBe('npx usebeeline connect');
+    expect(command).toBe('npx usebeeline connect BZA_TEST_PAIRING');
   });
 
   it('honours the person-invite deep link without a second tap', async () => {

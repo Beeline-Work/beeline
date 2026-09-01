@@ -11,9 +11,14 @@ import {
 } from '@beeline/buzz-client';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
-import { createCommunityInviteUrl, parseCommunityInviteToken } from '@/buzz/community-invite';
+import {
+  createCommunityInviteUrl,
+  parseCommunityInviteToken,
+  resolveCommunityInvitePublicOrigin,
+} from '@/buzz/community-invite';
 import { loadActiveCommunityId, saveActiveCommunityId } from '@/buzz/community-storage';
 import { ensurePersonNameForWorkspace } from '@/buzz/person-name';
+import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { BuzzRigTransport } from '@/sync/transport';
@@ -125,7 +130,11 @@ export default function BuzzCommunityCreateOrJoin() {
       const communityId = await client.createCommunity(name);
       await client.waitUntilMember(communityId, identity.publicKey);
       await ensurePersonNameForWorkspace(client, communityId, identity.publicKey);
-      const inviteUrl = await createCommunityInviteUrl(client, communityId, relayUrl);
+      const inviteUrl = await createCommunityInviteUrl(
+        client,
+        communityId,
+        resolveCommunityInvitePublicOrigin(relayUrl, getBuzzRuntimeConfig()),
+      );
       await saveActiveCommunityId(identity.publicKey, communityId);
       router.replace({
         pathname: '/buzz/channels',

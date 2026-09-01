@@ -8,6 +8,7 @@ const SUPPORTED_HARNESSES = new Set(['codex', 'claude', 'goose', 'pi', 'grok']);
 const PROVIDER_REQUIRED = new Set(['goose', 'pi']);
 const SUPPORTED_PROVIDERS = new Set(['openrouter', 'openai', 'anthropic', 'google', 'xai']);
 const PAIRING_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const APP_PAIRING_CODE = /^BUZZ-[A-Z0-9]{4,8}-[A-Z0-9]{4,8}$/;
 
 function pairingPart(): string {
   const bytes = randomBytes(4);
@@ -88,6 +89,78 @@ export function registerServerAgentConnectRoutes(context: AuthRouteContext): voi
     encryptGitHubToken,
     decryptGitHubToken,
   } = context;
+
+  app.post('/auth/agent/connect', async (request, reply) => {
+    tenantFor(request);
+    if (!request.body || typeof request.body !== 'object') {
+      throw new ProtocolError(400, 'invalid_request', 'expected agent connection request');
+    }
+    const body = request.body as Record<string, unknown>;
+    const pairingCode =
+      typeof body.pairing_code === 'string' ? body.pairing_code.trim().toUpperCase() : '';
+    const harness = typeof body.harness === 'string' ? body.harness.trim().toLowerCase() : '';
+    const provider = typeof body.provider === 'string' ? body.provider.trim().toLowerCase() : '';
+    const model = typeof body.model === 'string' ? body.model.trim().slice(0, 200) : '';
+    const soul = typeof body.soul === 'string' ? body.soul.trim().slice(0, 1_000) : '';
+    const agentName =
+      typeof body.agent_name === 'string' ? body.agent_name.trim().replace(/\s+/g, ' ') : '';
+    if (!APP_PAIRING_CODE.test(pairingCode)) {
+      throw new ProtocolError(400, 'invalid_pairing_code', 'pairing code is invalid');
+    }
+    if (!SUPPORTED_HARNESSES.has(harness)) {
+      throw new ProtocolError(400, 'invalid_harness', 'unsupported agent harness');
+    }
+    if (PROVIDER_REQUIRED.has(harness) && !SUPPORTED_PROVIDERS.has(provider)) {
+      throw new ProtocolError(400, 'invalid_provider', 'this harness requires a provider');
+    }
+    if (!PROVIDER_REQUIRED.has(harness) && provider) {
+      throw new ProtocolError(400, 'invalid_provider', 'this harness supplies its own provider');
+    }
+    if (!model || !soul || !agentName || !isReasonableAgentName(agentName)) {
+      throw new ProtocolError(400, 'invalid_request', 'agent name, model, and soul are required');
+    }
+    if (!options.claimAgentPairingCode) {
+      throw new ProtocolError(503, 'connect_unavailable', 'agent connection is unavailable');
+    }
+
+    const agent = generateKeypair();
+    const bodyIdentity = generateKeypair();
+    const claim = await options.claimAgentPairingCode({
+      code: pairingCode,
+      agentPubkey: agent.publicKey,
+      agentName,
+      model,
+      soul,
+    });
+    if (claim.status === 'not_found') {
+      throw new ProtocolError(404, 'pairing_code_not_found', 'pairing code was not found');
+    }
+    if (claim.status === 'expired') {
+      throw new ProtocolError(410, 'pairing_code_expired', 'pairing code has expired');
+    }
+    if (claim.status === 'already_claimed') {
+      throw new ProtocolError(409, 'pairing_code_claimed', 'pairing code was already claimed');
+    }
+    if (claim.status !== 'claimed') {
+      throw new ProtocolError(500, 'connect_failed', 'agent connection failed');
+    }
+
+    noStore(reply);
+    return reply.send({
+      pairing_code: pairingCode,
+      agent_secret_key: Buffer.from(agent.secretKey).toString('hex'),
+      agent_pubkey: agent.publicKey,
+      body_secret_key: Buffer.from(bodyIdentity.secretKey).toString('hex'),
+      workspace_id: claim.workspaceId,
+      workspace_name: claim.workspaceName,
+      paired_by: claim.pairedBy,
+      agent_name: agentName,
+      harness,
+      ...(provider ? { provider } : {}),
+      model,
+      soul,
+    });
+  });
 
   app.post('/auth/device/connect', async (request, reply) => {
     const tenant = tenantFor(request);

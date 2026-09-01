@@ -6,6 +6,7 @@ import { buildAuthServer } from '@beeline/auth/server';
 import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
 import type { VerifyGitHubOidc } from './auth.js';
 import type { SqlDatabase } from './database.js';
+import { PhoneService } from './phone-service.js';
 
 export interface MonolithAuthMount {
   handle(request: IncomingMessage, response: ServerResponse): void;
@@ -31,6 +32,7 @@ export async function createMonolithAuth(
   // needs the same query/transaction contract and must not own or close the pool.
   const store = new AuthStore(database as unknown as TransactionalDatabase);
   await store.migrate();
+  const pairing = new PhoneService(database, publicOrigin);
   const app = buildAuthServer({
     store,
     oidc: oidcClientFromEnvironment(env),
@@ -39,6 +41,7 @@ export async function createMonolithAuth(
     secureCookies: env.NODE_ENV === 'production',
     githubSetupToken: env.BUZZY_AUTH_SETUP_TOKEN,
     logger: false,
+    claimAgentPairingCode: (input) => pairing.claimAgentConnectPairing(input),
   });
   await app.ready();
 

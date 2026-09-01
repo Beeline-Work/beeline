@@ -164,4 +164,33 @@ describe('monolith Room send path', () => {
       }),
     );
   });
+
+  it('passes the selected installed repository id through Room creation', async () => {
+    controls.fetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ id: ROOM }), { status: 200 }),
+    );
+    const transport = new MonolithRigTransport(identity);
+
+    await transport.createRoom('Repository Room', {
+      communityId: 'workspace-id',
+      repository: {
+        key: 'github:77',
+        name: 'owner/worker',
+        remote: 'git://github.com/owner/worker',
+        githubInstallationId: 42,
+        defaultBranch: 'trunk',
+      },
+    });
+
+    expect(controls.fetch).toHaveBeenCalledWith(
+      'https://server.example/v1/phone/operations/createRoom',
+      expect.objectContaining({
+        body: JSON.stringify({
+          workspaceId: 'workspace-id',
+          name: 'Repository Room',
+          repositoryId: 77,
+        }),
+      }),
+    );
+  });
 });

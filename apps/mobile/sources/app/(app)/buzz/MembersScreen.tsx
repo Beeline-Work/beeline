@@ -19,7 +19,11 @@ import {
 } from '@beeline/buzz-client';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
-import { createCommunityInviteUrl } from '@/buzz/community-invite';
+import {
+  createCommunityInviteUrl,
+  resolveCommunityInvitePublicOrigin,
+} from '@/buzz/community-invite';
+import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { defaultAgentPersona } from '@/buzz/agent-persona';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
@@ -284,7 +288,13 @@ export default function BuzzMembers() {
     setWorking('invite-person');
     setError(null);
     try {
-      const url = await createCommunityInviteUrl(await writeClient(), workspaceId, relayUrl);
+      const runtime = getBuzzRuntimeConfig();
+      const publicInviteOrigin = resolveCommunityInvitePublicOrigin(relayUrl, runtime);
+      const url = await createCommunityInviteUrl(
+        await writeClient(),
+        workspaceId,
+        publicInviteOrigin,
+      );
       await Share.share({ message: url });
     } catch (reason) {
       setError(`Could not create person invite: ${String(reason)}`);
@@ -293,13 +303,22 @@ export default function BuzzMembers() {
     }
   };
 
-  /** The public connect wizard binds the agent to the signed-in user's Workspace. */
-  const openAgentInvite = () => {
+  /** The app-minted code is the complete authorization for the public connect wizard. */
+  const openAgentInvite = async () => {
     if (!surface?.viewer.permissions.manage || !workspaceId) return;
     setAgentInviteOpen(true);
     setSelectedAgent(null);
-    setPairCommand(CONNECT_AGENT_COMMAND);
+    setPairCommand(null);
     setError(null);
+    setWorking('pair-agent');
+    try {
+      const pairing = await (await writeClient()).createAgentPairingCode(workspaceId);
+      setPairCommand(`${CONNECT_AGENT_COMMAND} ${pairing.code}`);
+    } catch (reason) {
+      setError(`Could not create agent invite: ${String(reason)}`);
+    } finally {
+      setWorking(null);
+    }
   };
 
   useEffect(() => {
@@ -309,7 +328,7 @@ export default function BuzzMembers() {
       void invitePerson();
     } else if (requestedAction === 'add-agent') {
       requestedActionHandledRef.current = true;
-      openAgentInvite();
+      void openAgentInvite();
     }
     // The route intent is consume-once. The handlers intentionally read the
     // current authenticated surface at that moment rather than reopening on
@@ -555,7 +574,7 @@ export default function BuzzMembers() {
               <MonoButton
                 label="INVITE AGENT"
                 disabled={busy}
-                onPress={openAgentInvite}
+                onPress={() => void openAgentInvite()}
                 variant="secondary"
                 labelStyle={styles.actionLabel}
                 testID="invite-agent"

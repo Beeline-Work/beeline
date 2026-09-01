@@ -8,6 +8,7 @@ import {
   database,
   githubState,
   startCookie,
+  state,
   useAuthServerFixture,
 } from './server-test-fixture.js';
 
@@ -168,5 +169,74 @@ describe('agent connect device exchange', () => {
       payload: { device_code: device.device_code, code_verifier: verifier },
     });
     expect(replay.statusCode).toBe(409);
+  });
+});
+
+describe('app-authorized agent connect', () => {
+  useAuthServerFixture();
+
+  const payload = {
+    pairing_code: 'BUZZ-1234ABCD-5678EF90',
+    harness: 'codex',
+    model: 'gpt-5.4',
+    soul: 'Brisk, practical, and kind.',
+    agent_name: 'Scout',
+  };
+
+  it('returns a complete grant immediately and reserves the app-minted code', async () => {
+    let claimed: Parameters<typeof state.agentPairingClaim>[0] | undefined;
+    state.agentPairingClaim = async (input) => {
+      claimed = input;
+      return {
+        status: 'claimed',
+        workspaceId: WORKSPACE,
+        workspaceName: 'Brass Works',
+        pairedBy: 'a'.repeat(64),
+      };
+    };
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/auth/agent/connect',
+      headers: { host: alphaTenant.host },
+      payload,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json<Record<string, string>>()).toMatchObject({
+      pairing_code: payload.pairing_code,
+      workspace_id: WORKSPACE,
+      workspace_name: 'Brass Works',
+      paired_by: 'a'.repeat(64),
+      agent_name: 'Scout',
+      harness: 'codex',
+      model: 'gpt-5.4',
+      soul: payload.soul,
+    });
+    expect(response.json<Record<string, string>>().agent_secret_key).toMatch(/^[0-9a-f]{64}$/);
+    expect(response.json<Record<string, string>>().body_secret_key).toMatch(/^[0-9a-f]{64}$/);
+    expect(response.json<Record<string, string>>().agent_pubkey).toMatch(/^[0-9a-f]{64}$/);
+    expect(claimed).toMatchObject({
+      code: payload.pairing_code,
+      agentName: 'Scout',
+      model: 'gpt-5.4',
+      soul: payload.soul,
+    });
+    expect(claimed?.agentPubkey).toBe(response.json<Record<string, string>>().agent_pubkey);
+  });
+
+  it.each([
+    ['expired', 410, 'pairing code has expired'],
+    ['already_claimed', 409, 'pairing code was already claimed'],
+  ] as const)('returns a clear 4xx for a %s code', async (status, expectedCode, message) => {
+    state.agentPairingClaim = async () => ({ status });
+    const response = await app.inject({
+      method: 'POST',
+      url: '/auth/agent/connect',
+      headers: { host: alphaTenant.host },
+      payload,
+    });
+    expect(response.statusCode).toBe(expectedCode);
+    expect(response.json()).toMatchObject({ message });
   });
 });

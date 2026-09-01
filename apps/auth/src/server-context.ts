@@ -694,18 +694,12 @@ export function createAuthRouteContext(options: AuthServerOptions) {
   };
 
   const deliverNativeCompletion = (reply: FastifyReply, target: URL) => {
-    if (target.protocol === 'http:' || target.protocol === 'https:') {
-      return reply.redirect(target.toString(), 302);
-    }
     noStore(reply);
-    reply.header(
-      'content-security-policy',
-      "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'",
-    );
-    // Android Custom Tabs can briefly expose the terminal response while the
-    // app deep link is dispatched. Give that transition a real immediate
-    // handoff page instead of a blank document.
-    return reply.type('text/html; charset=utf-8').send(nativeReturnPage(target));
+    // ASWebAuthenticationSession and Android's auth-session polyfill finish
+    // only when the browser navigates to the registered callback URL. An HTML
+    // meta refresh can leave the completion page visible without dispatching
+    // the custom scheme back to the installed app.
+    return reply.redirect(target.toString(), 302);
   };
 
   const issueBindChallenge = async (

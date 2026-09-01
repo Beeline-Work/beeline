@@ -9,7 +9,10 @@ const consoleLoggingDefault = process.env.NODE_ENV !== 'production';
 const buzzyRelayUrl = process.env.EXPO_PUBLIC_BUZZY_RELAY_URL || 'https://usebeeline.app';
 const buzzyPushGatewayUrl = process.env.EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL || 'https://usebeeline.app/push';
 const buzzyMonolithUrl = process.env.EXPO_PUBLIC_BUZZY_MONOLITH_URL || 'https://server.usebeeline.app';
-const buzzyMonolithEnabled = process.env.EXPO_PUBLIC_BUZZY_MONOLITH_ENABLED === 'true';
+// Phase C production cut: every OTA built from this revision uses the monolith.
+// The release governor's immutable source SHA + release version now prove the
+// transport choice without depending on an unrecorded build-host environment.
+const buzzyMonolithEnabled = true;
 
 function git(args) {
     try {

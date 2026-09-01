@@ -53,6 +53,7 @@
 #   beeline-runner ALL=(root) NOPASSWD: /usr/bin/install -o lunchbox -g lunchbox -m 644 /home/beeline-runner/beeline-deploy-stage/compose.yml /home/lunchbox/buzz-router-relay-prod/compose.yml
 #   beeline-runner ALL=(root) NOPASSWD: /usr/bin/install -o lunchbox -g lunchbox -m 644 /home/beeline-runner/beeline-deploy-stage/nginx.conf /home/lunchbox/buzz-router-relay-prod/relay-front/nginx.conf
 #   beeline-runner ALL=(root) NOPASSWD: /usr/bin/install -o lunchbox -g lunchbox -m 644 /home/beeline-runner/beeline-deploy-stage/materializer-upstream.conf /home/lunchbox/buzz-router-relay-prod/relay-front/materializer-upstream.conf
+#   beeline-runner ALL=(root) NOPASSWD: /usr/bin/install -o lunchbox -g lunchbox -m 644 /home/beeline-runner/beeline-deploy-stage/cutover-write-freeze.conf /home/lunchbox/buzz-router-relay-prod/relay-front/cutover-write-freeze.conf
 #   beeline-runner ALL=(root) NOPASSWD: /usr/bin/docker compose -p buzz-router-prod-cutover --env-file /home/lunchbox/buzz-router-relay-prod/.env -f /home/beeline-runner/beeline-deploy-stage/compose.materializer-candidate.yml up -d --no-deps
 #   beeline-runner ALL=(root) NOPASSWD: /usr/bin/docker compose -p buzz-router-prod-cutover --env-file /home/lunchbox/buzz-router-relay-prod/.env -f /home/beeline-runner/beeline-deploy-stage/compose.materializer-candidate.yml down --remove-orphans
 #   beeline-runner ALL=(root) NOPASSWD: /usr/bin/docker compose -p buzz-router-prod --env-file /home/lunchbox/buzz-router-relay-prod/.env -f /home/lunchbox/buzz-router-relay-prod/compose.yml up -d --no-deps --force-recreate materializer auth relay
@@ -166,6 +167,8 @@ preflight_privileges() {
     "$STACK_STAGE_DIR/nginx.conf" "$PROJECT_DIR/relay-front/nginx.conf"
   preflight_sudo_rule root /usr/bin/install -o lunchbox -g lunchbox -m 644 \
     "$STACK_STAGE_DIR/materializer-upstream.conf" "$PROJECT_DIR/relay-front/materializer-upstream.conf"
+  preflight_sudo_rule root /usr/bin/install -o lunchbox -g lunchbox -m 644 \
+    "$STACK_STAGE_DIR/cutover-write-freeze.conf" "$PROJECT_DIR/relay-front/cutover-write-freeze.conf"
   preflight_sudo_rule root /usr/bin/docker compose -p buzz-router-prod-cutover \
     --env-file "$PROJECT_DIR/.env" -f "$STACK_STAGE_DIR/compose.materializer-candidate.yml" up -d --no-deps
   preflight_sudo_rule root /usr/bin/docker compose -p buzz-router-prod-cutover \
@@ -373,17 +376,19 @@ diff -r --brief -x dl "$STAGE/web" "$WEBROOT" >/dev/null || {
 LIVE_COMPOSE=$PROJECT_DIR/compose.yml
 LIVE_NGINX=$PROJECT_DIR/relay-front/nginx.conf
 LIVE_MATERIALIZER_UPSTREAM=$PROJECT_DIR/relay-front/materializer-upstream.conf
+LIVE_CUTOVER_FREEZE=$PROJECT_DIR/relay-front/cutover-write-freeze.conf
 
 [ -f "$REPO_STACK/compose.yml" ] || die "no relay-stack/prod/compose.yml in checkout ($CHECKOUT)"
 [ -f "$REPO_STACK/nginx.conf" ] || die "no relay-stack/prod/nginx.conf in checkout ($CHECKOUT)"
 [ -f "$REPO_STACK/materializer-upstream.conf" ] || die "no materializer upstream selector in checkout ($CHECKOUT)"
+[ -f "$REPO_STACK/cutover-write-freeze.conf" ] || die "no cutover freeze include in checkout ($CHECKOUT)"
 [ -f "$REPO_STACK/compose.materializer-candidate.yml" ] || die "no materializer candidate compose file in checkout ($CHECKOUT)"
 
 log "staging production stack config"
 mkdir -p "$STAGE/stack"
-cp "$REPO_STACK/compose.yml" "$REPO_STACK/nginx.conf" "$REPO_STACK/materializer-upstream.conf" \
+cp "$REPO_STACK/compose.yml" "$REPO_STACK/nginx.conf" "$REPO_STACK/materializer-upstream.conf" "$REPO_STACK/cutover-write-freeze.conf" \
   "$REPO_STACK/compose.materializer-candidate.yml" "$STAGE/stack/"
-for f in compose.yml nginx.conf materializer-upstream.conf compose.materializer-candidate.yml; do
+for f in compose.yml nginx.conf materializer-upstream.conf cutover-write-freeze.conf compose.materializer-candidate.yml; do
   cmp -s "$REPO_STACK/$f" "$STAGE/stack/$f" || die "staged $f differs from checkout — aborting before anything was touched"
 done
 
@@ -421,6 +426,7 @@ if ! docker run --rm --network beeline-nginx-test \
       --network-alias relay --network-alias auth --network-alias materializer \
       -v "$STAGE/stack/nginx.conf:/etc/nginx/nginx.conf:ro" \
       -v "$STAGE/stack/materializer-upstream.conf:/etc/beeline-front/materializer-upstream.conf:ro" \
+      -v "$STAGE/stack/cutover-write-freeze.conf:/etc/beeline-front/cutover-write-freeze.conf:ro" \
       nginx:1.27-alpine nginx -t >/dev/null 2>&1; then
   docker network rm beeline-nginx-test >/dev/null 2>&1 || true
   die "staged nginx.conf fails nginx -t — aborting before anything was touched"
@@ -555,12 +561,14 @@ recreate_application_services() {
 
 mkdir -p "$STACK_STAGE_DIR"
 cp "$STAGE/stack/compose.yml" "$STAGE/stack/nginx.conf" \
-  "$STAGE/stack/materializer-upstream.conf" "$STAGE/stack/compose.materializer-candidate.yml" "$STACK_STAGE_DIR/"
+  "$STAGE/stack/materializer-upstream.conf" "$STAGE/stack/cutover-write-freeze.conf" \
+  "$STAGE/stack/compose.materializer-candidate.yml" "$STACK_STAGE_DIR/"
 
 CUTOVER_STARTED=1
 retire_events_service || die "standalone repository-events retirement failed"
 place_stack_file compose.yml "$LIVE_COMPOSE" || die "production compose placement failed"
 place_stack_file materializer-upstream.conf "$LIVE_MATERIALIZER_UPSTREAM" || die "production materializer upstream placement failed"
+place_stack_file cutover-write-freeze.conf "$LIVE_CUTOVER_FREEZE" || die "production cutover freeze placement failed"
 place_stack_file nginx.conf "$LIVE_NGINX" || die "production nginx placement failed"
 start_materializer_candidate || die "materializer candidate did not become healthy; old stack remains live"
 select_materializer_upstream materializer-next || die "could not move RoomView traffic to the healthy candidate"

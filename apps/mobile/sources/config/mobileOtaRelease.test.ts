@@ -36,6 +36,7 @@ const rollbackWorkflow = readFileSync(
   resolve(mobileRoot, '../../.github/workflows/mobile-ota-rollback.yml'),
   'utf8',
 );
+const appConfig = readFileSync(join(mobileRoot, 'app.config.js'), 'utf8');
 
 function runRelease(args: string[], env: Record<string, string> = {}) {
   return spawnSync(process.execPath, [releaseScript, ...args], {
@@ -46,6 +47,13 @@ function runRelease(args: string[], env: Record<string, string> = {}) {
 }
 
 describe('mobile OTA release governor', () => {
+  it('pins the final-cut OTA transport to the monolith in source', () => {
+    expect(appConfig).toContain('const buzzyMonolithEnabled = true;');
+    expect(appConfig).not.toContain(
+      "const buzzyMonolithEnabled = process.env.EXPO_PUBLIC_BUZZY_MONOLITH_ENABLED",
+    );
+  });
+
   it('dry-runs beta publish and exact-group production operations with pinned EAS CLI', () => {
     const publish = runRelease([
       'publish',

@@ -226,7 +226,7 @@ case "$1" in
     fi
     src="$7"; dst="$8"
     case "$dst" in
-      */compose.yml|*/relay-front/nginx.conf|*/relay-front/materializer-upstream.conf) ;;
+      */compose.yml|*/relay-front/nginx.conf|*/relay-front/materializer-upstream.conf|*/relay-front/cutover-write-freeze.conf) ;;
       *) echo "sudoers REFUSAL (install dest)" >&2; exit 1 ;;
     esac
     [ "$listing" = 1 ] && exit 0
@@ -532,6 +532,10 @@ test('first rollout moves RoomView through a healthy candidate before recreating
   assert.equal(r.readLive('compose.yml'), fs.readFileSync(TRACKED_COMPOSE, 'utf8'));
   assert.equal(r.readLive('relay-front/nginx.conf'), fs.readFileSync(TRACKED_NGINX, 'utf8'));
   assert.equal(
+    r.readLive('relay-front/cutover-write-freeze.conf'),
+    fs.readFileSync(path.join(REPO, 'relay-stack/prod/cutover-write-freeze.conf'), 'utf8'),
+  );
+  assert.equal(
     r.readLive('relay-front/materializer-upstream.conf'),
     'map $host $roomview_upstream {\n  default materializer;\n}\n',
     'the first live nginx reload must have its HTTP-context-valid selector already in place',
@@ -583,7 +587,7 @@ test('first rollout moves RoomView through a healthy candidate before recreating
   assert.ok(selectorInstall < nginxInstall, r.sudoLog());
   assert.match(
     r.dockerLog(),
-    /run .*nginx\.conf:\/etc\/nginx\/nginx\.conf:ro .*materializer-upstream\.conf:\/etc\/beeline-front\/materializer-upstream\.conf:ro/,
+    /run .*nginx\.conf:\/etc\/nginx\/nginx\.conf:ro .*materializer-upstream\.conf:\/etc\/beeline-front\/materializer-upstream\.conf:ro .*cutover-write-freeze\.conf:\/etc\/beeline-front\/cutover-write-freeze\.conf:ro/,
     'the staged nginx validation must mount every included staged config file',
   );
 

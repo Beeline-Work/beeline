@@ -37,6 +37,14 @@ Set these site-specific commands. Each verify command must exit nonzero until th
 | `CUTOVER_REOPEN_COMMAND`            | Enable writes on the monolith only.                                                                                                                                                                                                                  |
 | `CUTOVER_REOPEN_VERIFY_COMMAND`     | Prove a bounded monolith write succeeds and the old API remains read-only.                                                                                                                                                                           |
 
+The production implementations live in `scripts/cutover-hooks/`. Copy
+`cutover.env.template` to a mode-0600 file outside the repository, replace its
+placeholders, and source it from the protected operator shell. Before the cut,
+build `@beeline/server` from the deployed release checkout and run
+`scripts/cutover-hooks/generate-daemon-manifest.sh`; it validates both v2
+runtimes before calling `TokenAuth.createDaemonExchange` and refuses to replace
+an existing protected manifest.
+
 The import calls `npm run import -w @beeline/server` with `DATABASE_URL` as the target. It deliberately does not pass `--include-media`; the report must say `mediaBytes: 0` and fit the Neon limit.
 
 ## Execute

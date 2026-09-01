@@ -69,11 +69,7 @@ import {
 } from '@/buzz/person-name';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { BeelineMark } from '@/components/buzz/BeelineMark';
-import {
-  HullSurface,
-  MonoButton,
-  PixelGateReveal,
-} from '@/components/buzz/MonoHull';
+import { HullSurface, MonoButton, PixelGateReveal } from '@/components/buzz/MonoHull';
 import { registerBuzzPushNotifications } from '@/push/buzz-push-registration';
 import { BuzzRigTransport } from '@/sync/transport';
 import { Typography } from '@/constants/Typography';
@@ -203,7 +199,7 @@ export default function BuzzOnboarding() {
         }
         await savePreferredPersonName(identity.publicKey, displayName).catch(() => undefined);
         await clearPersonNameOnboardingPending().catch(() => undefined);
-        router.replace('/buzz/channels');
+        router.replace('/beeline/channels');
       };
       const managedIdentity =
         suppliedManagedIdentity ??
@@ -216,7 +212,7 @@ export default function BuzzOnboarding() {
         const resolved = await resolveOnboardingPersonName(client, identity.publicKey);
         if (!resolved.needsPrompt) {
           await clearPersonNameOnboardingPending();
-          router.replace('/buzz/channels');
+          router.replace('/beeline/channels');
           return;
         }
       }
@@ -229,7 +225,7 @@ export default function BuzzOnboarding() {
         const preferred = await loadPreferredPersonName(identity.publicKey);
         if (preferred) {
           await clearPersonNameOnboardingPending();
-          router.replace('/buzz/channels');
+          router.replace('/beeline/channels');
           return;
         }
       }
@@ -308,11 +304,11 @@ export default function BuzzOnboarding() {
         if (challenge) {
           await monolithSession.exchangeGitHubTicket(challenge.ticket);
           await clearPendingGitHubSignInState();
-          if (alive) router.replace('/buzz/channels');
+          if (alive) router.replace('/beeline/channels');
           return;
         }
         if (await monolithSession.identityId()) {
-          if (alive) router.replace('/buzz/channels');
+          if (alive) router.replace('/beeline/channels');
         }
         return;
       }
@@ -401,17 +397,19 @@ export default function BuzzOnboarding() {
         await persistGitHubSignInState(state);
         const callbackUrl = await waitForAuthCallback({
           redirectUri: start.redirectUri,
-          openAuthSession: () => WebBrowser.openAuthSessionAsync(
-            start.authorizationUrl,
-            start.redirectUri,
-            authSessionOptions(Platform.OS, start.redirectUri),
-          ),
-          subscribeToUrls: (listener) => Linking.addEventListener('url', ({ url }) => listener(url)),
+          openAuthSession: () =>
+            WebBrowser.openAuthSessionAsync(
+              start.authorizationUrl,
+              start.redirectUri,
+              authSessionOptions(Platform.OS, start.redirectUri),
+            ),
+          subscribeToUrls: (listener) =>
+            Linking.addEventListener('url', ({ url }) => listener(url)),
         });
         const challenge = await resumeGitHubSignInCallback(callbackUrl);
         await monolithSession.exchangeGitHubTicket(challenge.ticket);
         await clearPendingGitHubSignInState();
-        router.replace('/buzz/channels');
+        router.replace('/beeline/channels');
         return;
       }
       const identity =
@@ -651,12 +649,11 @@ export default function BuzzOnboarding() {
         // The authenticated hosted claim is authoritative. Relay profile
         // publication is best-effort here and can reconcile on next launch.
       }
-      await savePreferredPersonName(
-        namingIdentity.publicKey,
-        claim.identity.displayName,
-      ).catch(() => undefined);
+      await savePreferredPersonName(namingIdentity.publicKey, claim.identity.displayName).catch(
+        () => undefined,
+      );
       await clearPersonNameOnboardingPending().catch(() => undefined);
-      router.replace('/buzz/channels');
+      router.replace('/beeline/channels');
     } catch (error) {
       const taken = error instanceof Nip05ClaimError && error.code === 'name_taken';
       setNotice({
@@ -698,9 +695,7 @@ export default function BuzzOnboarding() {
             />
           </View>
           <Text style={styles.nameTitle}>{t('beelineIdentity.handleCeremonyTitle')}</Text>
-          <Text style={styles.nameBody}>
-            {t('beelineIdentity.handleCeremonyBody')}
-          </Text>
+          <Text style={styles.nameBody}>{t('beelineIdentity.handleCeremonyBody')}</Text>
           <TextInput
             accessibilityLabel={t('beelineIdentity.handleAccessibility')}
             autoCapitalize="none"
@@ -720,9 +715,7 @@ export default function BuzzOnboarding() {
             value={nameInput}
           />
           <Text style={styles.nameHandle}>
-            {normalized
-              ? `${normalized}@usebeeline.app`
-              : t('beelineIdentity.handleRules')}
+            {normalized ? `${normalized}@usebeeline.app` : t('beelineIdentity.handleRules')}
           </Text>
           {notice && (
             <View accessibilityRole="alert" style={styles.noticePanel}>
@@ -866,7 +859,9 @@ export default function BuzzOnboarding() {
         <Text style={styles.title} testID="onboarding-wordmark">
           beeline<Text style={styles.titlePeriod}>.</Text>
         </Text>
-        <Text style={styles.subtitle} testID="onboarding-tagline">workspace for all intelligence</Text>
+        <Text style={styles.subtitle} testID="onboarding-tagline">
+          workspace for all intelligence
+        </Text>
       </View>
 
       {notice && (
@@ -934,8 +929,8 @@ export default function BuzzOnboarding() {
           <View style={styles.recoveryActions}>
             <Text style={styles.recoveryWarning}>
               Replacing the device key moves this GitHub link to your new key. Your Workspaces,
-              Rooms, and repository approvals follow this account — agents and people you work
-              with keep working with you, no re-invites.
+              Rooms, and repository approvals follow this account — agents and people you work with
+              keep working with you, no re-invites.
             </Text>
             <MonoButton
               labelStyle={styles.buttonLabel}
@@ -965,17 +960,19 @@ export default function BuzzOnboarding() {
             disabled={loading || status === 'checking_device' || status === 'binding'}
           />
         ) : null}
-        {!monolithEnabled && <MonoButton
-          labelStyle={styles.buttonLabel}
-          label={showAdvanced ? 'Hide Advanced' : 'Advanced'}
-          variant="secondary"
-          onPress={() => {
-            setShowAdvanced((value) => !value);
-            setNotice(Platform.OS === 'web' ? WEB_NOTICE : null);
-          }}
-          disabled={loading}
-          testID="onboarding-advanced"
-        />}
+        {!monolithEnabled && (
+          <MonoButton
+            labelStyle={styles.buttonLabel}
+            label={showAdvanced ? 'Hide Advanced' : 'Advanced'}
+            variant="secondary"
+            onPress={() => {
+              setShowAdvanced((value) => !value);
+              setNotice(Platform.OS === 'web' ? WEB_NOTICE : null);
+            }}
+            disabled={loading}
+            testID="onboarding-advanced"
+          />
+        )}
       </View>
     </View>
   );
@@ -983,214 +980,226 @@ export default function BuzzOnboarding() {
 
 const styles = StyleSheet.create((theme) => {
   const groknight = theme.buzz;
-  return ({
-  container: {
-    flex: 1,
-    paddingHorizontal: 24,
-    justifyContent: 'center',
-    backgroundColor: groknight.bgVoid,
-  },
-  brandSurface: { alignItems: 'center', marginBottom: 28 },
-  title: {
-    // Canonical brand family (theme prose voice, Space Grotesk) — the login
-    // wordmark is a brand surface, not a logo-font exception.
-    ...Typography.default('semiBold'),
-    fontFamily: groknight.proseSemibold,
-    fontSize: 28,
-    lineHeight: 32,
-    color: groknight.textPrimary,
-    textAlign: 'center',
-    marginTop: 2,
-    marginBottom: 8,
-  },
-  // The trailing period of the `beeline.` wordmark is the one brass glyph.
-  // Same canonical family as the title it nests inside, per the typography
-  // governor (every Text style names an app font).
-  titlePeriod: {
-    ...Typography.default('semiBold'),
-    fontFamily: groknight.proseSemibold,
-    color: groknight.accent,
-  },
-  // Canonical brand family on the login buttons' labels (theme prose voice).
-  buttonLabel: { fontFamily: groknight.proseSemibold },
-  subtitle: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    maxWidth: 320,
-    fontSize: 14,
-    lineHeight: 20,
-    color: groknight.textSecondary,
-    textAlign: 'center',
-  },
-  noticePanel: {
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    backgroundColor: groknight.bgHighlight,
-    padding: 12,
-    marginBottom: 16,
-  },
-  statusLabel: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 11,
-    lineHeight: 15,
-    letterSpacing: 0.8,
-    marginBottom: 4,
-  },
-  noticeText: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    color: groknight.textSecondary,
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  importPanel: { marginBottom: 16 },
-  sectionLabel: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textMuted,
-    fontSize: 11,
-    lineHeight: 15,
-    letterSpacing: 0.8,
-    marginBottom: 4,
-  },
-  keyGuide: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    color: groknight.textSecondary,
-    fontSize: 14,
-    lineHeight: 20,
-    marginBottom: 10,
-  },
-  input: {
-    ...Typography.mono(),
-    minHeight: 48,
-    borderWidth: 1,
-    borderColor: groknight.border,
-    borderRadius: 3,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 13,
-    color: groknight.textPrimary,
-    backgroundColor: groknight.bgBase,
-  },
-  inputFocused: { borderWidth: 2, borderColor: groknight.focus, paddingHorizontal: 11 },
-  importAction: { marginTop: 10 },
-  actions: { gap: 10 },
-  recoveryActions: { gap: 10 },
-  recoveryWarning: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    color: groknight.textSecondary,
-    fontSize: 13,
-    lineHeight: 19,
-  },
-  custodyNote: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    marginTop: 18,
-    color: groknight.textMuted,
-    fontSize: 11,
-    lineHeight: 16,
-    textAlign: 'center',
-    letterSpacing: 0.2,
-  },
-  advancedDivider: {
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
-    marginTop: 16,
-    marginBottom: 16,
-  },
-  keyBox: { paddingHorizontal: 12, paddingVertical: 10, marginTop: 6, marginBottom: 10 },
-  keyText: {
-    ...Typography.mono(),
-    color: groknight.textPrimary,
-    fontSize: 12,
-    lineHeight: 18,
-  },
-  keyActions: { flexDirection: 'row', gap: 10, marginBottom: 16 },
-  keyAction: {
-    minHeight: 44,
-    paddingHorizontal: 13,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  keyActionText: {
-    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
-    color: groknight.chrome,
-    fontSize: 12,
-  },
-  keyDiscard: { marginTop: 10 },
-  warning: { flexDirection: 'row', gap: 10, marginBottom: 16 },
-  warningGlyph: {
-    ...Typography.default('semiBold'),
-    color: groknight.chrome,
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  warningText: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    flex: 1,
-    minWidth: 0,
-    color: groknight.textSecondary,
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  confirmRow: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 44 },
-  confirmBox: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  confirmText: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    flex: 1,
-    minWidth: 0,
-    color: groknight.textPrimary,
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  confirmTextIdle: { color: groknight.textDisabled },
-  confirmHint: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    marginBottom: 10,
-    color: groknight.textMuted,
-    fontSize: 12,
-    lineHeight: 16,
-  },
-  namePanel: { width: '100%', maxWidth: 420, alignSelf: 'center' },
-  nameAvatar: { alignItems: 'center', marginTop: 18, marginBottom: 18 },
-  nameTitle: {
-    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
-    color: groknight.textPrimary,
-    fontSize: 26,
-    lineHeight: 32,
-    textAlign: 'center',
-  },
-  nameBody: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    marginTop: 10,
-    marginBottom: 18,
-    color: groknight.textSecondary,
-    fontSize: 14,
-    lineHeight: 20,
-    textAlign: 'center',
-  },
-  nameInput: {
-    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
-    minHeight: 52,
-    borderWidth: 1,
-    borderColor: groknight.border,
-    borderRadius: 3,
-    paddingHorizontal: 14,
-    color: groknight.textPrimary,
-    backgroundColor: groknight.bgBase,
-    fontSize: 18,
-    textAlign: 'center',
-  },
-  nameHandle: {
-    ...Typography.mono('semiBold'),
-    marginTop: 8,
-    marginBottom: 18,
-    color: groknight.textMuted,
-    fontSize: 11,
-    letterSpacing: 0.5,
-    textAlign: 'center',
-  },
-  });
+  return {
+    container: {
+      flex: 1,
+      paddingHorizontal: 24,
+      justifyContent: 'center',
+      backgroundColor: groknight.bgVoid,
+    },
+    brandSurface: { alignItems: 'center', marginBottom: 28 },
+    title: {
+      // Canonical brand family (theme prose voice, Space Grotesk) — the login
+      // wordmark is a brand surface, not a logo-font exception.
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      fontSize: 28,
+      lineHeight: 32,
+      color: groknight.textPrimary,
+      textAlign: 'center',
+      marginTop: 2,
+      marginBottom: 8,
+    },
+    // The trailing period of the `beeline.` wordmark is the one brass glyph.
+    // Same canonical family as the title it nests inside, per the typography
+    // governor (every Text style names an app font).
+    titlePeriod: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      color: groknight.accent,
+    },
+    // Canonical brand family on the login buttons' labels (theme prose voice).
+    buttonLabel: { fontFamily: groknight.proseSemibold },
+    subtitle: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      maxWidth: 320,
+      fontSize: 14,
+      lineHeight: 20,
+      color: groknight.textSecondary,
+      textAlign: 'center',
+    },
+    noticePanel: {
+      borderWidth: 1,
+      borderColor: groknight.borderStrong,
+      backgroundColor: groknight.bgHighlight,
+      padding: 12,
+      marginBottom: 16,
+    },
+    statusLabel: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textPrimary,
+      fontSize: 11,
+      lineHeight: 15,
+      letterSpacing: 0.8,
+      marginBottom: 4,
+    },
+    noticeText: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      color: groknight.textSecondary,
+      fontSize: 14,
+      lineHeight: 20,
+    },
+    importPanel: { marginBottom: 16 },
+    sectionLabel: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textMuted,
+      fontSize: 11,
+      lineHeight: 15,
+      letterSpacing: 0.8,
+      marginBottom: 4,
+    },
+    keyGuide: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      color: groknight.textSecondary,
+      fontSize: 14,
+      lineHeight: 20,
+      marginBottom: 10,
+    },
+    input: {
+      ...Typography.mono(),
+      minHeight: 48,
+      borderWidth: 1,
+      borderColor: groknight.border,
+      borderRadius: 3,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      fontSize: 13,
+      color: groknight.textPrimary,
+      backgroundColor: groknight.bgBase,
+    },
+    inputFocused: { borderWidth: 2, borderColor: groknight.focus, paddingHorizontal: 11 },
+    importAction: { marginTop: 10 },
+    actions: { gap: 10 },
+    recoveryActions: { gap: 10 },
+    recoveryWarning: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      color: groknight.textSecondary,
+      fontSize: 13,
+      lineHeight: 19,
+    },
+    custodyNote: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      marginTop: 18,
+      color: groknight.textMuted,
+      fontSize: 11,
+      lineHeight: 16,
+      textAlign: 'center',
+      letterSpacing: 0.2,
+    },
+    advancedDivider: {
+      borderBottomWidth: 1,
+      borderBottomColor: groknight.border,
+      marginTop: 16,
+      marginBottom: 16,
+    },
+    keyBox: { paddingHorizontal: 12, paddingVertical: 10, marginTop: 6, marginBottom: 10 },
+    keyText: {
+      ...Typography.mono(),
+      color: groknight.textPrimary,
+      fontSize: 12,
+      lineHeight: 18,
+    },
+    keyActions: { flexDirection: 'row', gap: 10, marginBottom: 16 },
+    keyAction: {
+      minHeight: 44,
+      paddingHorizontal: 13,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    keyActionText: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      color: groknight.chrome,
+      fontSize: 12,
+    },
+    keyDiscard: { marginTop: 10 },
+    warning: { flexDirection: 'row', gap: 10, marginBottom: 16 },
+    warningGlyph: {
+      ...Typography.default('semiBold'),
+      color: groknight.chrome,
+      fontSize: 13,
+      lineHeight: 18,
+    },
+    warningText: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      flex: 1,
+      minWidth: 0,
+      color: groknight.textSecondary,
+      fontSize: 13,
+      lineHeight: 18,
+    },
+    confirmRow: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 44 },
+    confirmBox: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textPrimary,
+      fontSize: 14,
+      lineHeight: 20,
+    },
+    confirmText: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      flex: 1,
+      minWidth: 0,
+      color: groknight.textPrimary,
+      fontSize: 14,
+      lineHeight: 20,
+    },
+    confirmTextIdle: { color: groknight.textDisabled },
+    confirmHint: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      marginBottom: 10,
+      color: groknight.textMuted,
+      fontSize: 12,
+      lineHeight: 16,
+    },
+    namePanel: { width: '100%', maxWidth: 420, alignSelf: 'center' },
+    nameAvatar: { alignItems: 'center', marginTop: 18, marginBottom: 18 },
+    nameTitle: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      color: groknight.textPrimary,
+      fontSize: 26,
+      lineHeight: 32,
+      textAlign: 'center',
+    },
+    nameBody: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      marginTop: 10,
+      marginBottom: 18,
+      color: groknight.textSecondary,
+      fontSize: 14,
+      lineHeight: 20,
+      textAlign: 'center',
+    },
+    nameInput: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      minHeight: 52,
+      borderWidth: 1,
+      borderColor: groknight.border,
+      borderRadius: 3,
+      paddingHorizontal: 14,
+      color: groknight.textPrimary,
+      backgroundColor: groknight.bgBase,
+      fontSize: 18,
+      textAlign: 'center',
+    },
+    nameHandle: {
+      ...Typography.mono('semiBold'),
+      marginTop: 8,
+      marginBottom: 18,
+      color: groknight.textMuted,
+      fontSize: 11,
+      letterSpacing: 0.5,
+      textAlign: 'center',
+    },
+  };
 });

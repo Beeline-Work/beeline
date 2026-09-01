@@ -446,7 +446,7 @@ export function useAuthServerFixture(): void {
         level: 'warn',
         stream: { write: (line: string) => state.logLines.push(line) },
       },
-      nativeRedirectUris: ['beeline://buzz/oidc-callback'],
+      nativeRedirectUris: ['beeline://beeline/oidc-callback'],
     });
   });
 
@@ -483,7 +483,7 @@ export async function bindGitHubIdentity(
   identity: Keypair,
   appState: string,
 ): Promise<Record<string, unknown>> {
-  const redirectUri = 'beeline://buzz/github-callback';
+  const redirectUri = 'beeline://beeline/github-callback';
   const start = await app.inject({
     method: 'GET',
     url: `/auth/github/start?app_redirect=${encodeURIComponent(redirectUri)}&app_state=${appState}`,

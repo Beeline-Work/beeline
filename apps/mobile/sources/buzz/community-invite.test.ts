@@ -33,6 +33,7 @@ vi.mock('@beeline/buzz-client', async (importOriginal) => {
 
 // This is the exact shape minted by PhoneService through the shared contract.
 const token = createCommunityInviteToken(Uint8Array.from({ length: 32 }, (_, index) => index));
+const legacyHexToken = `bzi_${'a'.repeat(64)}`;
 const legacyMonolithToken = `bzi_${'A'.repeat(42)}_`;
 
 beforeEach(() => {
@@ -82,11 +83,7 @@ describe('community invite links', () => {
     const createInvite = vi.fn().mockResolvedValue({ token });
 
     await expect(
-      createCommunityInviteUrl(
-        { createInvite },
-        'community-123',
-        'https://usebeeline.app',
-      ),
+      createCommunityInviteUrl({ createInvite }, 'community-123', 'https://usebeeline.app'),
     ).resolves.toBe(`https://usebeeline.app/join/${token}`);
     expect(createInvite).toHaveBeenCalledWith('community-123');
   });
@@ -97,6 +94,7 @@ describe('community invite links', () => {
     expect(parseCommunityInviteToken(`https://relay.buzzrouter.com/join/${token}`)).toBe(token);
     expect(parseCommunityInviteToken(`http://127.0.0.1:3010/join/${token}`)).toBe(token);
     expect(parseCommunityInviteToken(`beeline://join/${token}`)).toBe(token);
+    expect(parseCommunityInviteToken(legacyHexToken)).toBe(legacyHexToken);
     expect(parseCommunityInviteToken(legacyMonolithToken)).toBe(legacyMonolithToken);
   });
 
@@ -168,9 +166,7 @@ describe('community invite links', () => {
     };
     const client = {
       getCommunity: vi.fn().mockResolvedValue(community),
-      communityMembers: vi.fn().mockResolvedValue([
-        { pubkey: owner.publicKey, role: 'owner' },
-      ]),
+      communityMembers: vi.fn().mockResolvedValue([{ pubkey: owner.publicKey, role: 'owner' }]),
     };
     buzzClientMocks.findCommunityInvite.mockResolvedValue({
       tokenHash: inviteTokenHash(token),

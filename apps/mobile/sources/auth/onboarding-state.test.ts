@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { OidcBindError } from '@beeline/buzz-client';
-import {
-  nextOnboardingStatus,
-  noticeForAuthError,
-  waitForAuthCallback,
-} from './onboarding-state';
+import { nextOnboardingStatus, noticeForAuthError, waitForAuthCallback } from './onboarding-state';
 
 describe('provider onboarding error states', () => {
   it.each([
@@ -39,7 +35,11 @@ describe('provider onboarding error states', () => {
 
   it('names both real ways out of a device-key conflict', () => {
     const notice = noticeForAuthError(
-      new OidcBindError('identity_conflict', 'identity is already bound to another public key', 409),
+      new OidcBindError(
+        'identity_conflict',
+        'identity is already bound to another public key',
+        409,
+      ),
     );
     expect(notice.title).toBe('DEVICE KEY ALREADY LINKED · IDENTITY_CONFLICT');
     expect(notice.message).toContain('Replace it');
@@ -60,7 +60,7 @@ describe('provider onboarding error states', () => {
 
 describe('provider onboarding completion', () => {
   it('returns a matching custom-scheme callback directly from the browser result', async () => {
-    const redirectUri = 'beeline://buzz/github-callback';
+    const redirectUri = 'beeline://beeline/github-callback';
     const callbackUrl = `${redirectUri}?state=${'s'.repeat(43)}`;
 
     await expect(
@@ -73,7 +73,7 @@ describe('provider onboarding completion', () => {
   });
 
   it('keeps a successful HTTPS callback when Android reports the browser dismissed first', async () => {
-    const redirectUri = 'beeline://buzz/github-callback';
+    const redirectUri = 'beeline://beeline/github-callback';
     const callbackUrl = `${redirectUri}?state=${'s'.repeat(43)}&ticket=${'t'.repeat(43)}`;
     let onUrl: ((url: string) => void) | null = null;
 
@@ -99,7 +99,7 @@ describe('provider onboarding completion', () => {
   it('still treats a real browser close with no callback as cancellation', async () => {
     await expect(
       waitForAuthCallback({
-        redirectUri: 'beeline://buzz/github-callback',
+        redirectUri: 'beeline://beeline/github-callback',
         openAuthSession: async () => ({ type: 'dismiss' }),
         subscribeToUrls: () => ({ remove: () => undefined }),
         callbackGraceMs: 0,

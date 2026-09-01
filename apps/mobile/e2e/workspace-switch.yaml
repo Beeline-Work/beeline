@@ -15,7 +15,7 @@ env:
 # 1. Land on the Room index (smoke.yaml ends inside a Room transcript) and
 #    assert the initial Workspace keeps its identity: the rail renders THIS
 #    device's workspace mark (deterministic glyph/picture).
-- openLink: beeline://buzz/channels?communityId=${SMOKE_WORKSPACE_ID}
+- openLink: beeline://beeline/channels?communityId=${SMOKE_WORKSPACE_ID}
 - extendedWaitUntil:
     visible:
       id: room-list

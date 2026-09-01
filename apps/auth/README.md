@@ -67,7 +67,7 @@ token that can authorize `/events`, `/query`, WebSockets, or Room state.
 Run this as a small sidecar on the existing Beeline network with the existing
 PostgreSQL service. `relay-front` routes `/auth/`, `/nip05/`, and the exact
 `/.well-known/nostr.json` endpoint to it while preserving the original `Host`.
-All other relay traffic remains on Buzz.
+All other relay traffic remains on the existing relay service.
 
 GitHub follows the same bind-ticket transaction through `/auth/github/start`
 and `/auth/github/callback`. After binding, `/auth/github/install/start` opens

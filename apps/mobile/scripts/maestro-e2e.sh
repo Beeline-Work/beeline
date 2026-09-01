@@ -108,7 +108,7 @@ verify_running_update_identity() {
     # deterministic and reaches Settings.
     if ! adb -s "$DEVICE" shell am start -W \
       -a android.intent.action.VIEW \
-      -d 'beeline://buzz/settings' \
+      -d 'beeline://beeline/settings' \
       "$APP_ID/.MainActivity" >/dev/null; then
       echo "Maestro environment error: could not open the app-owned OTA identity surface on $DEVICE." >&2
       return 2
@@ -156,7 +156,7 @@ deep_link_handlers="$(
   adb -s "$DEVICE" shell cmd package query-activities --brief \
     -a android.intent.action.VIEW \
     -c android.intent.category.BROWSABLE \
-    -d 'beeline://buzz/channels'
+    -d 'beeline://beeline/channels'
 )" || {
   echo "Maestro environment error: could not enumerate beeline:// handlers on $DEVICE." >&2
   exit 2

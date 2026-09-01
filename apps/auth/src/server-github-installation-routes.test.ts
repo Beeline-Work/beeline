@@ -403,7 +403,6 @@ describe('GitHub installation, repositories, and token routes', () => {
       installationId: 77,
       repositoryIds: [42],
     });
-
   });
 
   it('completes an organization installation even when the user-token listing cannot verify it', async () => {
@@ -428,7 +427,7 @@ describe('GitHub installation, repositories, and token routes', () => {
       },
       payload: {
         pubkey: identity.publicKey,
-        redirect_uri: 'beeline://buzz/github-installation',
+        redirect_uri: 'beeline://beeline/github-installation',
       },
     });
     expect(installStart.statusCode).toBe(200);
@@ -442,7 +441,7 @@ describe('GitHub installation, repositories, and token routes', () => {
     // The state-bound GitHub redirect from the installing org admin is the
     // authority; the unavailable listing is logged, never fatal.
     expect(installed.statusCode).toBe(302);
-    expect(installed.headers.location).toBe('beeline://buzz/github-installation?installed=1');
+    expect(installed.headers.location).toBe('beeline://beeline/github-installation?installed=1');
     await expect(
       store.githubInstallationsForPubkey(alphaTenant.community, identity.publicKey),
     ).resolves.toEqual([
@@ -484,7 +483,7 @@ describe('GitHub installation, repositories, and token routes', () => {
       },
       payload: {
         pubkey: identity.publicKey,
-        redirect_uri: 'beeline://buzz/github-installation',
+        redirect_uri: 'beeline://beeline/github-installation',
       },
     });
     const installUrl = new URL(installStart.json().authorization_url);
@@ -1112,7 +1111,7 @@ describe('GitHub installation, repositories, and token routes', () => {
 
   it('completes GitHub sign-in with a direct redirect to the installed app', async () => {
     const appState = 'g'.repeat(43);
-    const redirectUri = 'beeline://buzz/github-callback';
+    const redirectUri = 'beeline://beeline/github-callback';
     const start = await app.inject({
       method: 'GET',
       url: `/auth/github/start?app_redirect=${encodeURIComponent(redirectUri)}&app_state=${appState}`,
@@ -1157,7 +1156,7 @@ describe('GitHub installation, repositories, and token routes', () => {
     expect(handoff.statusCode).toBe(200);
     expect(handoff.headers['content-type']).toContain('text/html');
     expect(handoff.body).toContain('Return to Beeline');
-    expect(handoff.body).toContain('beeline://buzz/github-callback?state=');
+    expect(handoff.body).toContain('beeline://beeline/github-callback?state=');
     expect(handoff.body).toContain(`state=${appState}`);
     expect(handoff.body).not.toContain('Route GET:');
 
@@ -1167,7 +1166,7 @@ describe('GitHub installation, repositories, and token routes', () => {
       headers: { host: alphaTenant.host },
     });
     expect(installationHandoff.statusCode).toBe(200);
-    expect(installationHandoff.body).toContain('beeline://buzz/github-installation?installed=1');
+    expect(installationHandoff.body).toContain('beeline://beeline/github-installation?installed=1');
   });
 
   it('reconciles a missed GitHub installation callback onto the current identity after pubkey churn', async () => {
@@ -1807,7 +1806,7 @@ describe('GitHub installation, repositories, and token routes', () => {
       },
       payload: {
         pubkey: identity.publicKey,
-        redirect_uri: 'beeline://buzz/github-installation',
+        redirect_uri: 'beeline://beeline/github-installation',
       },
     });
     expect(installStart.statusCode).toBe(200);
@@ -1818,7 +1817,7 @@ describe('GitHub installation, repositories, and token routes', () => {
       headers: { host: alphaTenant.host },
     });
     expect(installed.statusCode).toBe(302);
-    expect(installed.headers.location).toBe('beeline://buzz/github-installation?installed=1');
+    expect(installed.headers.location).toBe('beeline://beeline/github-installation?installed=1');
 
     const manageStartUrl = 'https://alpha.example/auth/github/install/start?intent=manage';
     const manageStart = await app.inject({
@@ -1835,7 +1834,7 @@ describe('GitHub installation, repositories, and token routes', () => {
       },
       payload: {
         pubkey: identity.publicKey,
-        redirect_uri: 'beeline://buzz/github-installation',
+        redirect_uri: 'beeline://beeline/github-installation',
         installation_id: 77,
       },
     });

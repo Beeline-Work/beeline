@@ -72,7 +72,7 @@ describe('the corner line and the turn indicator are independent', () => {
   });
 
   it('the local pre-receipt ack never derives from any corner signal either', () => {
-    // "buzzing…" is armed the instant a message is sent and cleared the
+    // "sending…" is armed the instant a message is sent and cleared the
     // instant the real receipt lands — it must not be able to see a corner's
     // pinned-selection state any more than the receipt-driven branch can.
     const turn = memoBody('composerAck');

@@ -10,9 +10,9 @@ import { MEMBERS_GLYPH, MEMBERS_LABEL } from './vocabulary';
  * different words and only one of them carried a mark at all.
  */
 const MEMBERS_ENTRY_POINTS = [
-  '../app/(app)/buzz/channels.tsx',
-  '../app/(app)/buzz/MembersScreen.tsx',
-  '../app/(app)/buzz/settings/workspace.tsx',
+  '../app/(app)/beeline/channels.tsx',
+  '../app/(app)/beeline/MembersScreen.tsx',
+  '../app/(app)/beeline/settings/workspace.tsx',
   '../components/buzz/CommunityInviteEntry.tsx',
 ];
 

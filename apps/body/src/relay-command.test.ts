@@ -5,7 +5,12 @@ import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { newIdentity } from '@beeline/gate';
 import { runRelayCommand } from './relay-command.js';
-import { findAgentRuntimeConfigPaths, inspectLocalRepository, readRuntimeRecord, updateRuntimeRelay } from './runtime.js';
+import {
+  findAgentRuntimeConfigPaths,
+  inspectLocalRepository,
+  readRuntimeRecord,
+  updateRuntimeRelay,
+} from './runtime.js';
 
 const cleanup: string[] = [];
 
@@ -69,30 +74,35 @@ describe('beeline relay set legacy runtimes', () => {
     const lifecycle: string[] = [];
     const output: string[] = [];
 
-    await runRelayCommand(args.map((arg) => (arg === '<pubkey>' ? legacy.pubkey : arg)), {
-      cwd: () => root,
-      findHostRuntimes: (cwd) => findAgentRuntimeConfigPaths({ XDG_STATE_HOME: stateHome }, cwd),
-      stopRuntime: async (configPath) => {
-        expect(configPath).toBe(legacy.configPath);
-        lifecycle.push('stop');
-        return 101;
+    await runRelayCommand(
+      args.map((arg) => (arg === '<pubkey>' ? legacy.pubkey : arg)),
+      {
+        cwd: () => root,
+        findHostRuntimes: (cwd) => findAgentRuntimeConfigPaths({ XDG_STATE_HOME: stateHome }, cwd),
+        stopRuntime: async (configPath) => {
+          expect(configPath).toBe(legacy.configPath);
+          lifecycle.push('stop');
+          return 101;
+        },
+        updateRuntime: async (configPath, relayUrl) => {
+          lifecycle.push('update');
+          return updateRuntimeRelay(configPath, relayUrl);
+        },
+        launchRuntime: async (configPath) => {
+          expect(configPath).toBe(legacy.configPath);
+          lifecycle.push('start');
+          return 202;
+        },
+        log: (line) => output.push(line),
       },
-      updateRuntime: async (configPath, relayUrl) => {
-        lifecycle.push('update');
-        return updateRuntimeRelay(configPath, relayUrl);
-      },
-      launchRuntime: async (configPath) => {
-        expect(configPath).toBe(legacy.configPath);
-        lifecycle.push('start');
-        return 202;
-      },
-      log: (line) => output.push(line),
-    });
+    );
 
     expect(lifecycle).toEqual(['stop', 'update', 'start']);
-    expect((await readRuntimeRecord(legacy.configPath)).relayBaseUrl).toBe('https://usebeeline.app');
-    expect(output).toContain('[buzz] found 1 paired agent runtime(s); updating 1.');
-    expect(output).toContain('[buzz] updated 1 paired agent runtime(s).');
+    expect((await readRuntimeRecord(legacy.configPath)).relayBaseUrl).toBe(
+      'https://usebeeline.app',
+    );
+    expect(output).toContain('[beeline] found 1 paired agent runtime(s); updating 1.');
+    expect(output).toContain('[beeline] updated 1 paired agent runtime(s).');
   }
 
   it('discovers, repoints, and restarts a legacy runtime with --all', async () => {

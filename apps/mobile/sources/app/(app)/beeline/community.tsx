@@ -65,7 +65,7 @@ export default function BuzzCommunityCreateOrJoin() {
       try {
         const currentIdentity = await loadBuzzIdentity();
         if (!currentIdentity) {
-          router.replace('/buzz/onboarding');
+          router.replace('/beeline/onboarding');
           return;
         }
         const relayUrl = await getEffectiveRelayUrl();
@@ -137,7 +137,7 @@ export default function BuzzCommunityCreateOrJoin() {
       );
       await saveActiveCommunityId(identity.publicKey, communityId);
       router.replace({
-        pathname: '/buzz/channels',
+        pathname: '/beeline/channels',
         params: { communityId, inviteUrl },
       });
     } catch (err) {
@@ -159,7 +159,7 @@ export default function BuzzCommunityCreateOrJoin() {
   const selectCommunity = useCallback((communityId: string | null) => {
     if (!communityId) return;
     router.replace({
-      pathname: '/buzz/channels',
+      pathname: '/beeline/channels',
       params: { communityId },
     });
   }, []);
@@ -178,10 +178,10 @@ export default function BuzzCommunityCreateOrJoin() {
       activeCommunityId={activeCommunityId}
       onSelect={selectCommunity}
       onAdd={() => undefined}
-      onSettings={() => router.push('/buzz/settings' as Href)}
+      onSettings={() => router.push('/beeline/settings' as Href)}
       onWorkspaceSettings={(communityId) =>
         router.push({
-          pathname: '/buzz/settings/workspace',
+          pathname: '/beeline/settings/workspace',
           params: { communityId },
         } as unknown as Href)
       }

@@ -111,7 +111,7 @@ export default function WorkspaceSettings() {
         try {
           const currentIdentity = await loadBuzzIdentity();
           if (!currentIdentity) {
-            router.replace('/buzz/onboarding');
+            router.replace('/beeline/onboarding');
             return;
           }
           const currentRelayUrl = await getEffectiveRelayUrl();
@@ -405,7 +405,7 @@ export default function WorkspaceSettings() {
               supportingCopy="Invite people, connect agents, and manage roles."
               onPress={() =>
                 router.push({
-                  pathname: '/buzz/members',
+                  pathname: '/beeline/members',
                   params: { communityId },
                 } as unknown as Href)
               }
@@ -420,7 +420,7 @@ export default function WorkspaceSettings() {
               label={`${ROOM_LABEL}s`}
               supportingCopy="Create, rename, archive, and manage participants."
               onPress={() =>
-                router.push({ pathname: '/buzz/channels', params: { communityId } } as Href)
+                router.push({ pathname: '/beeline/channels', params: { communityId } } as Href)
               }
               testID="open-rooms"
             />
@@ -439,7 +439,7 @@ export default function WorkspaceSettings() {
                       }`}
                       accessibilityRole="button"
                       onPress={() =>
-                        router.push(`/buzz/chat/${encodeURIComponent(room.id)}` as Href)
+                        router.push(`/beeline/chat/${encodeURIComponent(room.id)}` as Href)
                       }
                       style={styles.roomLink}
                     >

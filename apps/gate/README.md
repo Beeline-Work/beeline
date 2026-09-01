@@ -1,19 +1,19 @@
 # `@beeline/gate`
 
 Shared relay, repository, provisioning, and factory-permission primitives for
-Beeline services. It talks to a real Buzz relay (see `relay-stack/` at the repo
+Beeline services. It talks to the Beeline relay (see `relay-stack/` at the repo
 root); it does not own corner review or landing.
 
 ## Layout
 
-| Path | Role |
-| --- | --- |
-| `src/buzz.ts` | Channel/community creation, roles, and repository announcements |
-| `src/git.ts` | Bounded Git process helpers used by daemon-side repository code |
-| `src/provisioning.ts` | Agent and Room provisioning checks |
-| `src/human-authority.ts` | Human custody and current-role verification for factory permissions |
-| `src/permission-request.ts` | Signed factory-permission requests and receipts |
-| `src/relay.ts` | Signed HTTP relay reader and publisher |
+| Path                        | Role                                                                |
+| --------------------------- | ------------------------------------------------------------------- |
+| `src/buzz.ts`               | Channel/community creation, roles, and repository announcements     |
+| `src/git.ts`                | Bounded Git process helpers used by daemon-side repository code     |
+| `src/provisioning.ts`       | Agent and Room provisioning checks                                  |
+| `src/human-authority.ts`    | Human custody and current-role verification for factory permissions |
+| `src/permission-request.ts` | Signed factory-permission requests and receipts                     |
+| `src/relay.ts`              | Signed HTTP relay reader and publisher                              |
 
 Corner agents receive a Room-scoped GitHub App installation token from Body and
 use ordinary `git` and `gh` commands. GitHub branch and pull-request state is the
@@ -39,11 +39,11 @@ cd apps/gate && npm run test:live
 
 ## Environment
 
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `BUZZY_RELAY_HOST` | `usebeeline.app` | Relay Host header and HTTP/WS authority |
-| `BUZZY_RELAY_SCHEME` | `https` | Relay HTTP scheme |
-| `BUZZY_QUERY_NSEC` | — | Signing key for authenticated CLI relay reads |
+| Variable             | Default          | Meaning                                       |
+| -------------------- | ---------------- | --------------------------------------------- |
+| `BUZZY_RELAY_HOST`   | `usebeeline.app` | Relay Host header and HTTP/WS authority       |
+| `BUZZY_RELAY_SCHEME` | `https`          | Relay HTTP scheme                             |
+| `BUZZY_QUERY_NSEC`   | —                | Signing key for authenticated CLI relay reads |
 
 Set `BUZZY_RELAY_HOST=127.0.0.1:3010`, `BUZZY_RELAY_SCHEME=http`,
 `BUZZY_RELAY_URL=http://127.0.0.1:3010`, and

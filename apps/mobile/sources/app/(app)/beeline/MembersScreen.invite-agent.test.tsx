@@ -17,7 +17,7 @@ const share = vi.hoisted(() => vi.fn(async () => undefined));
 const clipboard = vi.hoisted(() => vi.fn(async () => undefined));
 const client = vi.hoisted(() => ({
   surfaceSubscribe: vi.fn(async () => vi.fn()),
-  createInvite: vi.fn(async () => ({ token: `bzi_${'e'.repeat(64)}` })),
+  createInvite: vi.fn(async () => ({ token: `inv_${'e'.repeat(64)}` })),
   createAgentPairingCode: vi.fn(async () => ({
     code: '1234ABCD-5678EF90',
     expiresAt: 2_000_000_000,

@@ -47,7 +47,7 @@ describe('native dialog enforcement', () => {
   });
 
   it('keeps New Room in the Hull input family without a conditional helper label', () => {
-    const channels = readFileSync(path.join(sourceRoot, 'app/(app)/buzz/channels.tsx'), 'utf8');
+    const channels = readFileSync(path.join(sourceRoot, 'app/(app)/beeline/channels.tsx'), 'utf8');
     const testId = channels.indexOf('testID="new-room-dialog"');
     const start = channels.lastIndexOf('<HullDialog', testId);
     const end = channels.indexOf('</HullDialog>', start);

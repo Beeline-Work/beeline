@@ -12,7 +12,7 @@ import { ROOM_LABEL, ROOMS_LABEL } from '@/buzz/vocabulary';
 import { HullDeckMark } from '@/components/buzz/MonoHull';
 
 function selectedRoomId(pathname: string): string | null {
-  const prefix = '/buzz/chat/';
+  const prefix = '/beeline/chat/';
   if (!pathname.startsWith(prefix)) return null;
   try {
     return decodeURIComponent(pathname.slice(prefix.length).split('/')[0]!);
@@ -127,7 +127,7 @@ export const SidebarView = React.memo(function SidebarView() {
           accessibilityLabel={`Open ${ROOMS_LABEL}`}
           accessibilityRole="button"
           hitSlop={8}
-          onPress={() => router.navigate('/buzz/channels')}
+          onPress={() => router.navigate('/beeline/channels')}
           style={styles.homeButton}
         >
           <Ionicons name="grid-outline" size={17} color={stylesheet.heading.color} />
@@ -144,7 +144,9 @@ export const SidebarView = React.memo(function SidebarView() {
               key={item.room.id}
               accessibilityLabel={`Open ${ROOM_LABEL} ${item.room.name}`}
               accessibilityRole="button"
-              onPress={() => router.push(`/buzz/chat/${encodeURIComponent(item.room.id)}` as Href)}
+              onPress={() =>
+                router.push(`/beeline/chat/${encodeURIComponent(item.room.id)}` as Href)
+              }
               style={({ pressed }) => [
                 styles.roomRow,
                 activeRoomId === item.room.id && styles.roomRowSelected,
@@ -170,7 +172,7 @@ export const SidebarView = React.memo(function SidebarView() {
       <Pressable
         accessibilityLabel="Open Beeline settings"
         accessibilityRole="button"
-        onPress={() => router.push('/buzz/settings' as Href)}
+        onPress={() => router.push('/beeline/settings' as Href)}
         style={styles.settingsRow}
       >
         <Ionicons name="settings-outline" size={18} color={stylesheet.settingsText.color} />

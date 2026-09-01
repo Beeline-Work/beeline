@@ -18,7 +18,7 @@ import {
   startInviteLanding,
 } from '../../../relay-stack/web/join/invite-source.js';
 
-const INVITE_TOKEN = 'bzi_cd2f4ae16feb43b42a6566ce72ed437b38d374397b0769307c9bdcc29cfb2b38';
+const INVITE_TOKEN = 'inv_cd2f4ae16feb43b42a6566ce72ed437b38d374397b0769307c9bdcc29cfb2b38';
 
 const repoFile = (path: string) =>
   readFileSync(new URL(`../../../${path}`, import.meta.url), 'utf8');
@@ -64,7 +64,9 @@ describe('relay invite web front', () => {
     const landing = repoFile('relay-stack/web/join/index.html');
     const script = repoFile('relay-stack/web/join/invite.js');
 
-    expect(nginx).toContain('^/join/bzi_[0-9a-f]{64}/?$');
+    expect(nginx).toContain(
+      '^/join/(?:inv_[0-9a-f]{64}|bzi_(?:[0-9a-f]{64}|[A-Za-z0-9_-]{43}))/?$',
+    );
     expect(nginx).toContain('location = /join/invite.js');
     expect(nginx).toContain('proxy_pass http://relay:3000');
     expect(nginx).toContain('proxy_set_header Upgrade $http_upgrade');
@@ -78,6 +80,19 @@ describe('relay invite web front', () => {
     expect(landing).toContain('data:image/svg+xml');
     expect(script).toContain('beeline://join/');
   });
+
+  it.each([`bzi_${'a'.repeat(64)}`, `bzi_${'A'.repeat(42)}_`])(
+    'keeps an unexpired legacy invite link open in the static landing page',
+    async (token) => {
+      const page = invitePage(token);
+      vi.stubGlobal('window', page.window);
+      vi.stubGlobal('document', page.document);
+
+      startInviteLanding({ resolveWorkspace: vi.fn().mockResolvedValue('Legacy Workspace') });
+      await vi.waitFor(() => expect(page.status.textContent).toBe('Signed invite verified.'));
+      expect(page.join.href).toBe(`beeline://join/${token}`);
+    },
+  );
 
   it('isolates active media previews from the authenticated product origin', () => {
     for (const path of ['relay-stack/nginx.conf', 'relay-stack/prod/nginx.conf']) {
@@ -244,7 +259,7 @@ describe('relay invite web front', () => {
     await vi.advanceTimersByTimeAsync(50);
 
     expect(openApp).toHaveBeenCalledWith(
-      'beeline://join/bzi_cd2f4ae16feb43b42a6566ce72ed437b38d374397b0769307c9bdcc29cfb2b38',
+      'beeline://join/inv_cd2f4ae16feb43b42a6566ce72ed437b38d374397b0769307c9bdcc29cfb2b38',
     );
     expect(page.join.textContent).toBe('Get Beeline');
     expect(page.join.href).toBe(APK_DOWNLOAD_URL);
@@ -254,7 +269,7 @@ describe('relay invite web front', () => {
     await vi.advanceTimersByTimeAsync(0);
 
     expect(page.join.textContent).toBe('Open Beeline and join');
-    expect(page.join.href).toContain('beeline://join/bzi_');
+    expect(page.join.href).toContain('beeline://join/inv_');
   });
 
   it('keeps the checked-in browser bundle in sync with its source', () => {
@@ -267,6 +282,7 @@ describe('relay invite web front', () => {
       platform: 'browser',
       target: ['es2022'],
       alias: {
+        '@beeline/api-contract/phone': './packages/api-contract/src/phone.ts',
         '@beeline/buzz-client': './packages/buzz-client/src/index.ts',
         '@beeline/nostr': './packages/nostr/src/index.ts',
       },
@@ -277,7 +293,7 @@ describe('relay invite web front', () => {
   });
 });
 
-function invitePage() {
+function invitePage(token = INVITE_TOKEN) {
   const elements = {
     '#join-workspace': fakeElement(),
     '#invite-heading': fakeElement(),
@@ -294,7 +310,7 @@ function invitePage() {
   };
   const window = {
     location: {
-      pathname: `/join/${INVITE_TOKEN}`,
+      pathname: `/join/${token}`,
       origin: 'https://usebeeline.app',
       assign: vi.fn(),
     },

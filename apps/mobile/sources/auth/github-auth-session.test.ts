@@ -46,7 +46,7 @@ function bindCallback(state = STATE, issuedAt = Math.floor(Date.now() / 1_000)):
     issued_at: String(issuedAt),
     expires_at: String(issuedAt + 120),
   });
-  return `beeline://buzz/github-callback?${params}`;
+  return `beeline://beeline/github-callback?${params}`;
 }
 
 describe('GitHub auth session redirects', () => {
@@ -56,8 +56,8 @@ describe('GitHub auth session redirects', () => {
   });
 
   it('uses the installed app scheme for sign-in completion', () => {
-    expect(githubSignInRedirectUri()).toBe('beeline://buzz/github-callback');
-    expect(createURL).toHaveBeenCalledWith('buzz/github-callback');
+    expect(githubSignInRedirectUri()).toBe('beeline://beeline/github-callback');
+    expect(createURL).toHaveBeenCalledWith('beeline/github-callback');
   });
 
   it('keeps monolith authorization on the monolith so GitHub returns there', () => {
@@ -72,7 +72,7 @@ describe('GitHub auth session redirects', () => {
       origin: 'https://server.usebeeline.app',
       pathname: '/auth/github/start',
     });
-    expect(start.redirectUri).toBe('beeline://buzz/github-callback');
+    expect(start.redirectUri).toBe('beeline://beeline/github-callback');
   });
 
   it('leaves the legacy authorization origin unchanged outside monolith mode', () => {
@@ -87,17 +87,34 @@ describe('GitHub auth session redirects', () => {
   });
 
   it('uses the installed app scheme for GitHub App installation completion', () => {
-    expect(githubInstallationRedirectUri()).toBe('beeline://buzz/github-installation');
-    expect(createURL).toHaveBeenCalledWith('buzz/github-installation');
+    expect(githubInstallationRedirectUri()).toBe('beeline://beeline/github-installation');
+    expect(createURL).toHaveBeenCalledWith('beeline/github-installation');
   });
 
   it('registers both app-generated deep links as Expo Router screens', () => {
-    const signInRoute = new URL('../app/(app)/buzz/github-callback.tsx', import.meta.url);
-    const installationRoute = new URL('../app/(app)/buzz/github-installation.tsx', import.meta.url);
+    const signInRoute = new URL('../app/(app)/beeline/github-callback.tsx', import.meta.url);
+    const installationRoute = new URL(
+      '../app/(app)/beeline/github-installation.tsx',
+      import.meta.url,
+    );
     const layout = readFileSync(new URL('../app/(app)/_layout.tsx', import.meta.url), 'utf8');
 
     expect(existsSync(signInRoute)).toBe(true);
     expect(existsSync(installationRoute)).toBe(true);
+    expect(layout).toContain('name="beeline/github-callback"');
+    expect(layout).toContain('name="beeline/github-installation"');
+  });
+
+  it('keeps the previous callback routes registered during the transition', () => {
+    const legacySignInRoute = new URL('../app/(app)/buzz/github-callback.tsx', import.meta.url);
+    const legacyInstallationRoute = new URL(
+      '../app/(app)/buzz/github-installation.tsx',
+      import.meta.url,
+    );
+    const layout = readFileSync(new URL('../app/(app)/_layout.tsx', import.meta.url), 'utf8');
+
+    expect(existsSync(legacySignInRoute)).toBe(true);
+    expect(existsSync(legacyInstallationRoute)).toBe(true);
     expect(layout).toContain('name="buzz/github-callback"');
     expect(layout).toContain('name="buzz/github-installation"');
   });
@@ -119,7 +136,7 @@ describe('GitHub auth session redirects', () => {
 
   it('ignores an unrelated cold-start URL', async () => {
     await expect(
-      resumeInitialGitHubSignIn(async () => 'beeline://buzz/channels'),
+      resumeInitialGitHubSignIn(async () => 'beeline://beeline/channels'),
     ).resolves.toBeNull();
   });
 
@@ -155,11 +172,11 @@ describe('GitHub auth session redirects', () => {
 
   it('finishes installation from a warm Linking event when the browser reports dismiss', async () => {
     let onUrl: ((url: string) => void) | null = null;
-    const callbackUrl = 'beeline://buzz/github-installation?installed=1';
+    const callbackUrl = 'beeline://beeline/github-installation?installed=1';
 
     await expect(
       runGitHubInstallationSession({
-        returnPath: '/buzz/channels',
+        returnPath: '/beeline/channels',
         startInstallation: async () => 'https://github.com/apps/beeline/installations/new',
         openAuthSession: async () => {
           queueMicrotask(() => onUrl?.(callbackUrl));
@@ -172,17 +189,17 @@ describe('GitHub auth session redirects', () => {
         callbackGraceMs: 50,
       }),
     ).resolves.toBe(callbackUrl);
-    await expect(githubInstallationReturnPath()).resolves.toBe('/buzz/channels');
+    await expect(githubInstallationReturnPath()).resolves.toBe('/beeline/channels');
     await expect(resumeInitialGitHubInstallation(async () => null)).resolves.toBe(true);
     await expect(githubInstallationReturnPath()).resolves.toBeNull();
   });
 
   it('finishes installation from the direct browser return', async () => {
-    const callbackUrl = 'beeline://buzz/github-installation?installed=1';
+    const callbackUrl = 'beeline://beeline/github-installation?installed=1';
 
     await expect(
       runGitHubInstallationSession({
-        returnPath: '/buzz/channels',
+        returnPath: '/beeline/channels',
         startInstallation: async () => 'https://github.com/apps/beeline/installations/new',
         openAuthSession: async () => ({ type: 'success', url: callbackUrl }),
         subscribeToUrls: () => ({ remove: () => undefined }),
@@ -194,7 +211,7 @@ describe('GitHub auth session redirects', () => {
   it('clears installation resume state when the browser is canceled', async () => {
     await expect(
       runGitHubInstallationSession({
-        returnPath: '/buzz/channels',
+        returnPath: '/beeline/channels',
         startInstallation: async () => 'https://github.com/apps/beeline/installations/new',
         openAuthSession: async () => ({ type: 'cancel' }),
         subscribeToUrls: () => ({ remove: () => undefined }),
@@ -210,7 +227,7 @@ describe('GitHub auth session redirects', () => {
     const refreshRepositories = vi.fn(async () => undefined);
     const phases: string[] = [];
     const session = runGitHubInstallationSession({
-      returnPath: '/buzz/channels',
+      returnPath: '/beeline/channels',
       startInstallation: async () => 'https://github.com/settings/installations/7',
       openAuthSession: () =>
         new Promise((resolve) => {
@@ -247,22 +264,22 @@ describe('GitHub auth session redirects', () => {
   });
 
   it('rejects an installation callback that does not report completion', async () => {
-    await persistGitHubInstallationReturnPath('/buzz/channels');
+    await persistGitHubInstallationReturnPath('/beeline/channels');
 
     await expect(
       resumeInitialGitHubInstallation(async () =>
-        Promise.resolve('beeline://buzz/github-installation?installed=0'),
+        Promise.resolve('beeline://beeline/github-installation?installed=0'),
       ),
     ).rejects.toMatchObject({ code: 'invalid_installation' });
   });
 
   it('resumes a cold installation callback at the repo picker that launched it', async () => {
-    await persistGitHubInstallationReturnPath('/buzz/chat/room-1');
-    expect(await githubInstallationReturnPath()).toBe('/buzz/chat/room-1');
+    await persistGitHubInstallationReturnPath('/beeline/chat/room-1');
+    expect(await githubInstallationReturnPath()).toBe('/beeline/chat/room-1');
 
     await expect(
       resumeInitialGitHubInstallation(async () =>
-        Promise.resolve('beeline://buzz/github-installation?installed=1'),
+        Promise.resolve('beeline://beeline/github-installation?installed=1'),
       ),
     ).resolves.toBe(true);
     await expect(githubInstallationReturnPath()).resolves.toBeNull();

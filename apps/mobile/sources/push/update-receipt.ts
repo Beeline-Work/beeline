@@ -28,10 +28,7 @@ export function runningUpdateGroup(manifest: unknown): string | null {
   const extra = object(root?.extra);
   const eas = object(extra?.eas);
   return (
-    string(metadata?.updateGroup) ??
-    string(root?.updateGroup) ??
-    string(eas?.updateGroup) ??
-    null
+    string(metadata?.updateGroup) ?? string(root?.updateGroup) ?? string(eas?.updateGroup) ?? null
   );
 }
 
@@ -68,7 +65,9 @@ export async function reportRunningUpdateReceipt(identity: Identity): Promise<vo
         deviceId: await installationDeviceId(),
         ...(Updates.updateId ? { updateId: Updates.updateId } : {}),
         ...(Updates.channel ? { channel: Updates.channel } : {}),
-        ...(runningUpdateGroup(Updates.manifest) ? { group: runningUpdateGroup(Updates.manifest)! } : {}),
+        ...(runningUpdateGroup(Updates.manifest)
+          ? { group: runningUpdateGroup(Updates.manifest)! }
+          : {}),
         ...(Updates.runtimeVersion ? { runtimeVersion: Updates.runtimeVersion } : {}),
         ...(release.releaseVersion ? { releaseVersion: release.releaseVersion } : {}),
         ...(release.releaseSha ? { sourceSha: release.releaseSha } : {}),
@@ -79,12 +78,7 @@ export async function reportRunningUpdateReceipt(identity: Identity): Promise<vo
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        authorization: nip98AuthHeader(
-          identity.secretKey,
-          identity.publicKey,
-          receiptUrl,
-          'POST',
-        ),
+        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, receiptUrl, 'POST'),
       },
       body: JSON.stringify({
         pubkey: identity.publicKey,
@@ -101,7 +95,7 @@ export async function reportRunningUpdateReceipt(identity: Identity): Promise<vo
     });
     if (!response.ok) throw new Error(`gateway returned HTTP ${response.status}`);
     console.log(
-      `[buzzy-ota] running update reported update=${Updates.updateId ?? 'embedded'} channel=${Updates.channel ?? 'embedded'}`,
+      `[beeline-ota] running update reported update=${Updates.updateId ?? 'embedded'} channel=${Updates.channel ?? 'embedded'}`,
     );
   } finally {
     clearTimeout(timeout);

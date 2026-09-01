@@ -18,7 +18,7 @@ const modal = vi.hoisted(() => ({
 }));
 const client = vi.hoisted(() => ({
   surfaceSubscribe: vi.fn(async () => vi.fn()),
-  createInvite: vi.fn(async () => ({ token: `bzi_${'e'.repeat(64)}` })),
+  createInvite: vi.fn(async () => ({ token: `inv_${'e'.repeat(64)}` })),
   addMember: vi.fn(async (_workspaceId: string, pubkey: string, role: string) => {
     state.workspace = {
       ...state.workspace,
@@ -283,7 +283,7 @@ describe('Members workspace management', () => {
 
     expect(client.createInvite).toHaveBeenCalledWith(WORKSPACE);
     expect(share).toHaveBeenCalledWith({
-      message: `https://relay.test/join/bzi_${'e'.repeat(64)}`,
+      message: `https://relay.test/join/inv_${'e'.repeat(64)}`,
     });
   });
 

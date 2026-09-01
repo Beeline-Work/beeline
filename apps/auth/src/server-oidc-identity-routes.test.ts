@@ -35,16 +35,33 @@ describe('OIDC and identity HTTP routes', () => {
     const ticket = 'x'.repeat(43);
     const now = new Date();
     await store.createTicket(createHash('sha256').update(ticket).digest('hex'), {
-      challenge: 'challenge', community: alphaTenant.community,
-      issuer: 'https://github.com', audience: 'github-client', subject: '42',
-      createdAt: now, expiresAt: new Date(now.getTime() + 60_000),
-      attemptCount: 0, consumedAt: null, boundPubkey: null,
-      providerLogin: 'octocat', providerDisplayName: 'The Octocat',
+      challenge: 'challenge',
+      community: alphaTenant.community,
+      issuer: 'https://github.com',
+      audience: 'github-client',
+      subject: '42',
+      createdAt: now,
+      expiresAt: new Date(now.getTime() + 60_000),
+      attemptCount: 0,
+      consumedAt: null,
+      boundPubkey: null,
+      providerLogin: 'octocat',
+      providerDisplayName: 'The Octocat',
     });
-    const first = await app.inject({ method: 'POST', url: '/auth/github/phone-exchange', headers: { host: alphaTenant.host }, payload: { ticket } });
+    const first = await app.inject({
+      method: 'POST',
+      url: '/auth/github/phone-exchange',
+      headers: { host: alphaTenant.host },
+      payload: { ticket },
+    });
     expect(first.statusCode).toBe(200);
     expect(first.json()).toEqual({ subject: '42', login: 'octocat', name: 'The Octocat' });
-    const replay = await app.inject({ method: 'POST', url: '/auth/github/phone-exchange', headers: { host: alphaTenant.host }, payload: { ticket } });
+    const replay = await app.inject({
+      method: 'POST',
+      url: '/auth/github/phone-exchange',
+      headers: { host: alphaTenant.host },
+      payload: { ticket },
+    });
     expect(replay.statusCode).toBe(401);
     expect(replay.json()).toEqual({ error: 'github_ticket_used' });
   });
@@ -401,7 +418,7 @@ describe('OIDC and identity HTTP routes', () => {
     const appState = 's'.repeat(43);
     for (const [providerName, appRedirect] of [
       ['oidc', `${alphaTenant.origin}/auth/oidc/mobile-callback/`],
-      ['github', 'beeline://buzz/github-callback/'],
+      ['github', 'beeline://beeline/github-callback/'],
     ] as const) {
       const result = await app.inject({
         method: 'GET',
@@ -414,8 +431,8 @@ describe('OIDC and identity HTTP routes', () => {
     for (const [providerName, appRedirect] of [
       ['oidc', `${alphaTenant.origin}/auth/oidc/mobile-callback//`],
       ['oidc', `${alphaTenant.origin}/auth/oidc/mobile-callback?next=evil`],
-      ['github', 'beeline://buzz/github-callback//'],
-      ['github', 'beeline://buzz/github-callback#evil'],
+      ['github', 'beeline://beeline/github-callback//'],
+      ['github', 'beeline://beeline/github-callback#evil'],
     ] as const) {
       const result = await app.inject({
         method: 'GET',
@@ -431,7 +448,7 @@ describe('OIDC and identity HTTP routes', () => {
     const appState = 's'.repeat(43);
     const pubkey = 'a'.repeat(64);
     for (const scheme of ['beeline']) {
-      const signInRedirect = `${scheme}://buzz/github-callback`;
+      const signInRedirect = `${scheme}://beeline/github-callback`;
       const signIn = await app.inject({
         method: 'GET',
         url: `/auth/github/start?app_redirect=${encodeURIComponent(signInRedirect)}&app_state=${appState}`,
@@ -439,7 +456,7 @@ describe('OIDC and identity HTTP routes', () => {
       });
       expect(signIn.statusCode, signInRedirect).toBe(302);
 
-      const installationRedirect = `${scheme}://buzz/github-installation`;
+      const installationRedirect = `${scheme}://beeline/github-installation`;
       const installation = await app.inject({
         method: 'POST',
         url: '/auth/github/install/start',
@@ -448,7 +465,7 @@ describe('OIDC and identity HTTP routes', () => {
       });
       expect(installation.statusCode, installationRedirect).toBe(401);
 
-      const oidcRedirect = `${scheme}://buzz/oidc-callback`;
+      const oidcRedirect = `${scheme}://beeline/oidc-callback`;
       const oidc = await app.inject({
         method: 'GET',
         url: `/auth/oidc/start?app_redirect=${encodeURIComponent(oidcRedirect)}&app_state=${appState}`,

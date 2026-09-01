@@ -1,6 +1,2 @@
-import { Redirect } from 'expo-router';
-
-/** Hand an OS-delivered GitHub proof back to the onboarding flow. */
-export default function GitHubCallbackFallback() {
-  return <Redirect href="/buzz/onboarding" />;
-}
+// Compatibility route for browser sessions opened by app builds before the Beeline path migration.
+export { default } from '../beeline/github-callback';

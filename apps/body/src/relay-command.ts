@@ -77,7 +77,7 @@ export async function runRelayCommand(
     multipleRuntimeMessage: 'multiple paired agents match that pubkey; pass the full agent pubkey',
   });
 
-  deps.log(`[buzz] found ${unique.length} paired agent runtime(s); updating ${unique.length}.`);
+  deps.log(`[beeline] found ${unique.length} paired agent runtime(s); updating ${unique.length}.`);
   let updated = 0;
   for (const path of unique) {
     const configPath = await deps.resolveConfig(path);
@@ -102,9 +102,9 @@ export async function runRelayCommand(
     }
     updated += 1;
     deps.log(
-      `[buzz] agent ${before.agent.publicKey} relay: ${before.relayBaseUrl} -> ${requestedRelay.relayBaseUrl}`,
+      `[beeline] agent ${before.agent.publicKey} relay: ${before.relayBaseUrl} -> ${requestedRelay.relayBaseUrl}`,
     );
-    deps.log(`[buzz] agent daemon restarted (pid ${pid})`);
+    deps.log(`[beeline] agent daemon restarted (pid ${pid})`);
   }
-  deps.log(`[buzz] updated ${updated} paired agent runtime(s).`);
+  deps.log(`[beeline] updated ${updated} paired agent runtime(s).`);
 }

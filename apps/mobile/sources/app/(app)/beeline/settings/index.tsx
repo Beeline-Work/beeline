@@ -71,7 +71,7 @@ export default function BuzzSettings() {
     }
     await Promise.all([clearBuzzIdentity(), clearPendingGitHubSignInState()]);
     clearMobileSurfaceStorage();
-    router.replace('/buzz/onboarding');
+    router.replace('/beeline/onboarding');
   }, [confirmForget]);
 
   const handleManualUpdate = useCallback(async () => {
@@ -125,7 +125,7 @@ export default function BuzzSettings() {
         <TouchableOpacity
           accessibilityLabel="Open My Settings"
           accessibilityRole="button"
-          onPress={() => router.push('/buzz/settings/identity' as Href)}
+          onPress={() => router.push('/beeline/settings/identity' as Href)}
           style={styles.settingsRow}
           testID="backup-key-setting"
         >
@@ -260,7 +260,7 @@ export default function BuzzSettings() {
               <TouchableOpacity
                 accessibilityLabel="Back up key before signing out"
                 accessibilityRole="button"
-                onPress={() => router.push('/buzz/settings/identity' as Href)}
+                onPress={() => router.push('/beeline/settings/identity' as Href)}
                 style={styles.cancelButton}
                 testID="backup-before-sign-out"
               >

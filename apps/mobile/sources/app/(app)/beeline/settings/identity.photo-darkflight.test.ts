@@ -58,7 +58,14 @@ vi.mock('qrcode', () => ({ create: vi.fn(() => ({ modules: { size: 0, get: () =>
 vi.mock('react-native-svg', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: unknown) => ReactModule.createElement(name, props);
-  return { Svg: host('Svg'), Path: host('Path'), Rect: host('Rect'), Circle: host('Circle'), Polygon: host('Polygon'), G: host('G') };
+  return {
+    Svg: host('Svg'),
+    Path: host('Path'),
+    Rect: host('Rect'),
+    Circle: host('Circle'),
+    Polygon: host('Polygon'),
+    G: host('G'),
+  };
 });
 vi.mock('@beeline/buzz-client', () => ({
   adoptGitHubHandle: vi.fn(),
@@ -165,8 +172,9 @@ import { PHOTO_OVERRIDES_ENABLED } from '@/buzz/photo-overrides';
 const originalConsoleError = console.error;
 
 beforeAll(() => {
-  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
-    true;
+  (
+    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  ).IS_REACT_ACT_ENVIRONMENT = true;
   vi.spyOn(console, 'error').mockImplementation((message?: unknown, ...args: unknown[]) => {
     if (
       typeof message === 'string' &&
@@ -202,9 +210,7 @@ async function renderScreen(): Promise<ReactTestRenderer> {
 function renderedText(renderer: ReactTestRenderer): string {
   return renderer.root
     .findAllByType('Text')
-    .map((node: any) =>
-      typeof node.props.children === 'string' ? node.props.children : '',
-    )
+    .map((node: any) => (typeof node.props.children === 'string' ? node.props.children : ''))
     .join(' ');
 }
 
@@ -218,8 +224,8 @@ describe('photo-override darkflight on the settings surfaces', () => {
   it('keeps picture-setting actions unreachable on human and agent settings', () => {
     const root = new URL('../../../../../', import.meta.url).pathname;
     const surfaces = [
-      'sources/app/(app)/buzz/settings/identity.tsx',
-      'sources/app/(app)/buzz/MembersScreen.tsx',
+      'sources/app/(app)/beeline/settings/identity.tsx',
+      'sources/app/(app)/beeline/MembersScreen.tsx',
     ];
     const identitySource = readFileSync(`${root}${surfaces[0]}`, 'utf8');
     expect(identitySource).toContain('PHOTO_OVERRIDES_ENABLED &&');
@@ -257,10 +263,12 @@ describe('photo-override darkflight on the settings surfaces', () => {
       'The Octocat',
     );
     expect(renderedText(renderer)).toContain('octocat@usebeeline.app');
-    expect(renderer.root.findAllByProps({ testID: 'identity-managed-handle' }).length).toBeGreaterThan(
+    expect(
+      renderer.root.findAllByProps({ testID: 'identity-managed-handle' }).length,
+    ).toBeGreaterThan(0);
+    expect(renderer.root.findAllByProps({ testID: 'identity-person-handle-input' })).toHaveLength(
       0,
     );
-    expect(renderer.root.findAllByProps({ testID: 'identity-person-handle-input' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'identity-person-nip05-input' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'claim-handle-setting' })).toHaveLength(0);
   });

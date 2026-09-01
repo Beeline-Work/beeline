@@ -126,7 +126,7 @@ export async function selectPairAgentCommand(opts: {
       const install = await confirmInstall(`${manual}. Install now?`);
       if (!install) throw new Error(manual);
       output.write(
-        `[buzz] installing ${candidate.kind} adapter: ${formatAdapterInstallCommand(candidate.install)}\n`,
+        `[beeline] installing ${candidate.kind} adapter: ${formatAdapterInstallCommand(candidate.install)}\n`,
       );
       try {
         await runInstall(candidate.install, { cwd: opts.cwd, env: opts.env });
@@ -135,7 +135,7 @@ export async function selectPairAgentCommand(opts: {
           env: opts.env,
           cwd: opts.cwd,
         });
-        output.write(`[buzz] using ${selected.kind} (adapter installed)\n`);
+        output.write(`[beeline] using ${selected.kind} (adapter installed)\n`);
         return selected;
       } catch (installError) {
         throw new Error(
@@ -168,7 +168,7 @@ export async function selectPairAgentCommand(opts: {
       );
     }
     if (ready.length === 1) {
-      output.write(`[buzz] using ${ready[0]!.kind} (auto-detected)\n`);
+      output.write(`[beeline] using ${ready[0]!.kind} (auto-detected)\n`);
       return ready[0]!.agent;
     }
     const readyKinds = ready.map((candidate) => candidate.kind).join(', ');
@@ -179,7 +179,7 @@ export async function selectPairAgentCommand(opts: {
   }
 
   if (detected.length === 1 && detected[0]!.status === 'ready') {
-    output.write(`[buzz] using ${detected[0]!.kind} (auto-detected)\n`);
+    output.write(`[beeline] using ${detected[0]!.kind} (auto-detected)\n`);
     return detected[0]!.agent;
   }
 
@@ -191,12 +191,12 @@ export async function selectPairAgentCommand(opts: {
     const pickedKind = await selectAgent(detected);
     const selected = detected.find((candidate) => candidate.kind === pickedKind)!;
     if (selected.status === 'ready') {
-      output.write(`[buzz] using ${selected.kind} (selected)\n`);
+      output.write(`[beeline] using ${selected.kind} (selected)\n`);
       return selected.agent;
     }
     const manual = missingAdapterMessage(selected);
     output.write(
-      `[buzz] installing ${selected.kind} adapter: ${formatAdapterInstallCommand(selected.install)}\n`,
+      `[beeline] installing ${selected.kind} adapter: ${formatAdapterInstallCommand(selected.install)}\n`,
     );
     try {
       await runInstall(selected.install, { cwd: opts.cwd, env: opts.env });
@@ -205,11 +205,11 @@ export async function selectPairAgentCommand(opts: {
         env: opts.env,
         cwd: opts.cwd,
       });
-      output.write(`[buzz] using ${installed.kind} (adapter installed)\n`);
+      output.write(`[beeline] using ${installed.kind} (adapter installed)\n`);
       return installed;
     } catch (installError) {
       output.write(
-        `[buzz] could not install the ${selected.kind} adapter: ${errorMessage(installError)}\n${manual}\n`,
+        `[beeline] could not install the ${selected.kind} adapter: ${errorMessage(installError)}\n${manual}\n`,
       );
       if (detected.length === 1) {
         throw new Error(`Adapter installation failed for ${selected.kind}.`);

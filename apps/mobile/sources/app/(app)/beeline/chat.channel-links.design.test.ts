@@ -72,7 +72,7 @@ describe('channel reference links — workspace-scoped exact resolution', () => 
     // duplicate of the same route onto the stack.
     expect(handler).toContain('target.channelId === decodedId');
     expect(handler).not.toContain('router.navigate');
-    expect(handler).not.toContain('/buzz/chat/');
+    expect(handler).not.toContain('/beeline/chat/');
   });
 });
 

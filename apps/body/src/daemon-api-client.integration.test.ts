@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from '../../server/src/database.js';
 import { PgliteDatabase } from '../../server/src/test-support.js';
 import { TokenAuth } from '../../server/src/auth.js';
@@ -14,6 +14,8 @@ import { LiveHub } from '../../server/src/live.js';
 import { createBeelineServer } from '../../server/src/server.js';
 import { createMonolithAuth, type MonolithAuthMount } from '../../server/src/monolith-auth.js';
 import { DaemonApiClient } from './daemon-api-client.js';
+import { AcpClient } from './acp.js';
+import { Body } from './body.js';
 import { completeDevicePairing } from './pair-command.js';
 import { readRuntimeRecord } from './runtime.js';
 
@@ -205,6 +207,93 @@ describe('daemon API client against the local monolith', () => {
       room?.members.find((member) => member.identity.pubkey === result.runtime.agent.publicKey),
     ).toMatchObject({ presence: { status: 'online', roomId: ROOM } });
   }, 30_000);
+
+  it('answers a mention in a repo-less Room and keeps monolith presence current', async () => {
+    const exchange = await auth.createDaemonExchange(AGENT);
+    const exchanged = await fetch(`${origin}/v1/auth/daemon/exchange`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ exchangeToken: exchange.exchangeToken }),
+    });
+    const token = (await exchanged.json()) as { daemonToken: string };
+    const client = new DaemonApiClient(origin, token.daemonToken, AGENT);
+    const polled = vi.fn();
+    const body = new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot: join(supervisorRoot, 'repo-less-room'),
+        relayBaseUrl: origin,
+        relayHost: '127.0.0.1',
+        relayScheme: 'http',
+        relayWsUrl: origin.replace(/^http/, 'ws'),
+        autoApprovePermissions: true,
+        accessPolicy: 'everyone',
+      },
+      undefined,
+      { publicKey: AGENT, secretKey: 'unused-by-monolith' } as never,
+      { daemonApi: client, onRoomPollSuccess: polled },
+    );
+    const acp = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
+    vi.spyOn(acp, 'sessionPrompt').mockResolvedValue({
+      stopReason: 'end_turn',
+      updates: [],
+      agentText: 'I am Bee, and I am ready to help.',
+      toolCalls: [],
+    });
+    body.registerSession({
+      channelId: ROOM,
+      sessionId: 'repo-less-session',
+      client: acp,
+      mode: 'readonly',
+    });
+    const abort = new AbortController();
+    const loop = body.runConversationRoomLoop(ROOM, 'named-repository', {
+      pollMs: 10,
+      signal: abort.signal,
+    });
+    try {
+      await vi.waitFor(() => expect(polled).toHaveBeenCalled(), { timeout: 2_000 });
+      const visibleOnline = await phone.readRoom(ROOM, HUMAN);
+      expect(
+        visibleOnline?.members.find((member) => member.identity.pubkey === AGENT),
+      ).toMatchObject({ presence: { status: 'online', roomId: ROOM } });
+
+      const sent = await phone.execute(
+        'sendRoomMessage',
+        {
+          roomId: ROOM,
+          messageId: 'e'.repeat(64),
+          text: '@bee introduce yourself',
+          mentions: [AGENT],
+        },
+        HUMAN,
+      );
+      await vi.waitFor(
+        async () => {
+          const room = await phone.readRoom(ROOM, HUMAN);
+          expect(room?.messages).toContainEqual(
+            expect.objectContaining({
+              author: expect.objectContaining({ pubkey: AGENT }),
+              requestId: sent.messageId,
+              text: 'I am Bee, and I am ready to help.',
+            }),
+          );
+        },
+        { timeout: 3_000 },
+      );
+    } finally {
+      abort.abort();
+      await loop;
+      await body.dispose();
+    }
+
+    const visibleOffline = await phone.readRoom(ROOM, HUMAN);
+    expect(
+      visibleOffline?.members.find((member) => member.identity.pubkey === AGENT),
+    ).toMatchObject({ presence: { status: 'offline', roomId: ROOM } });
+  }, 15_000);
 
   it('exchanges a token and round-trips inbox, receipts, authority, settings, presence, and corners', async () => {
     const exchange = await auth.createDaemonExchange(AGENT);

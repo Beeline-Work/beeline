@@ -135,6 +135,7 @@ import {
   DEFAULT_BODY_IDENTITY_NAME,
   type AgentHistoryEntry,
   type RoomViewMessage,
+  AGENT_PRESENCE_HEARTBEAT_MS,
   permissionActionId,
   parsePermissionRequest,
   parsePermissionDecision,
@@ -1788,6 +1789,20 @@ export function isRepositoryMutationRequest(content: string): boolean {
   ).test(normalized);
 }
 
+/** Whether prose explicitly asks the host to open a repository corner. */
+export function isExplicitCornerOpenRequest(content: string): boolean {
+  const normalized = normalizeRoomRequest(content);
+  const directCornerCommand = new RegExp(
+    String.raw`^${REQUEST_LEAD}(?:open|create|launch|start)\s+(?:up\s+)?(?:a\s+|the\s+)?(?:new\s+)?corner\b`,
+    'i',
+  );
+  const startWorkInCornerCommand = new RegExp(
+    String.raw`^${REQUEST_LEAD}start\s+(?:(?:the|this|that)\s+)?(?:work|working)\b.{0,200}\b(?:in|inside|within)\s+(?:a\s+|the\s+)?(?:new\s+)?corner\b`,
+    'i',
+  );
+  return directCornerCommand.test(normalized) || startWorkInCornerCommand.test(normalized);
+}
+
 /**
  * A relay refusal the exact same signed event can never overcome.
  *
@@ -2090,23 +2105,7 @@ export function isChannelWorkIntent(
   if (!isChannelAddressedMessage(event, agentPubkey, roomParticipants, indexedMessages))
     return false;
 
-  const content = event.content
-    .normalize('NFKC')
-    .replace(/\s+/g, ' ')
-    .trim()
-    // Addressing is already authenticated through the signed `p` tag. Ignore
-    // a leading display-name mention when deciding whether the rest is a command.
-    .replace(/^@[\p{L}\p{N}_-]+[,:]?\s+/u, '');
-  const requestLead = String.raw`(?:(?:please|kindly)\s+|(?:can|could|would|will)\s+you\s+|i\s+(?:want|need)\s+you\s+to\s+|i(?:['’]d| would)\s+like\s+you\s+to\s+)?`;
-  const directCornerCommand = new RegExp(
-    String.raw`^${requestLead}(?:open|create|launch|start)\s+(?:up\s+)?(?:a\s+|the\s+)?(?:new\s+)?corner\b`,
-    'i',
-  );
-  const startWorkInCornerCommand = new RegExp(
-    String.raw`^${requestLead}start\s+(?:(?:the|this|that)\s+)?(?:work|working)\b.{0,200}\b(?:in|inside|within)\s+(?:a\s+|the\s+)?(?:new\s+)?corner\b`,
-    'i',
-  );
-  return directCornerCommand.test(content) || startWorkInCornerCommand.test(content);
+  return isExplicitCornerOpenRequest(event.content);
 }
 
 /** Create the relay-side child channel under the agent's own signing key. */
@@ -7385,6 +7384,30 @@ export class Body {
           : undefined;
       if (!named) {
         console.log(`[body] Room ${tlcChannelId} has no repository target for corner work`);
+        const text = 'This Room has no repository yet - bind one in Room settings.';
+        if (this.daemonApi) {
+          await this.daemonApi.execute('postRoomMessage', {
+            roomId: tlcChannelId,
+            requestId: request.eventId,
+            text,
+            presentation: 'message',
+          });
+        } else {
+          const event = await this.durableState.reserveReply(
+            tlcChannelId,
+            request.eventId,
+            buildAgentMessage(
+              tlcChannelId,
+              this.agentIdentity,
+              text,
+              request.eventId,
+              [],
+              [['request', request.eventId]],
+              request.replyRootId,
+            ),
+          );
+          await publishEvent(event, this.agentIdentity);
+        }
         return { status: 'handled', outcome: { openedCorner: false, producedReply: true } };
       }
     }
@@ -9884,82 +9907,104 @@ export class Body {
   ): Promise<void> {
     const api = this.daemonApi!;
     let cursor = await this.durableState.daemonInboxCursor(channelId);
-    await api.execute('postAgentPresence', {
-      agentId: this.agentIdentity.publicKey,
-      roomId: channelId,
-      status: this.config.modelUnavailable ? 'offline' : 'online',
-    });
-    if (!cursor) {
-      const activation = await api.execute('getRoomInbox', {
+    const availableStatus = this.config.modelUnavailable ? 'offline' : 'online';
+    const postPresence = async (status: 'online' | 'offline') => {
+      await api.execute('postAgentPresence', {
+        agentId: this.agentIdentity.publicKey,
         roomId: channelId,
-        startAtLatest: true,
+        status,
       });
-      if (activation.cursor) {
-        cursor = activation.cursor;
-        await this.durableState.setDaemonInboxCursor(channelId, cursor);
-      }
-    }
-    while (!opts.signal?.aborted && !this.disposed) {
-      try {
-        const inbox = await api.execute('getRoomInbox', {
+      this.onRoomPresence?.(channelId, status);
+    };
+    await postPresence(availableStatus);
+    let presenceTail = Promise.resolve();
+    const heartbeat = setInterval(() => {
+      presenceTail = presenceTail
+        .then(() => postPresence(availableStatus))
+        .catch((error) =>
+          console.error(`[body] monolith Room ${channelId} presence heartbeat failed:`, error),
+        );
+    }, AGENT_PRESENCE_HEARTBEAT_MS);
+    heartbeat.unref?.();
+    try {
+      if (!cursor) {
+        const activation = await api.execute('getRoomInbox', {
           roomId: channelId,
-          ...(cursor ? { after: cursor } : {}),
-          limit: 200,
+          startAtLatest: true,
         });
-        for (const item of inbox.items) {
-          if (
-            item.authorId === this.agentIdentity.publicKey ||
-            item.type !== 'message' ||
-            (item.mentionIds.length > 0 &&
-              !item.mentionIds.includes(this.agentIdentity.publicKey)) ||
-            this.processedRequestIds.has(item.id)
-          )
-            continue;
-          const authority = await api.execute('getRoomAuthority', {
-            roomId: channelId,
-            principalId: item.authorId,
-          });
-          if (!authority.member || authority.principalKind !== 'human') continue;
-          if (!this.senderAccessAllowed(item.authorId)) continue;
-          const attachments: AttachmentReference[] = item.attachments.map((attachment) => ({
-            url: attachment.url,
-            name: attachment.name ?? 'attachment',
-            mimeType: attachment.mimeType ?? 'application/octet-stream',
-            size: attachment.size ?? 0,
-            ...(attachment.thumbnailUrl ? { thumbnailUrl: attachment.thumbnailUrl } : {}),
-          }));
-          const request: ChannelTaskRequest = {
-            eventId: item.id,
-            authorPubkey: item.authorId,
-            content: item.body.trim(),
-            attachments,
-            createdAt: item.createdAt,
-            ...(item.rootMessageId ? { replyRootId: item.rootMessageId } : {}),
-          };
-          const workIntent = !isReadOnlyInformationRequest(item.body);
-          const outcome = await this.replyInRoom(
-            channelId,
-            boundRepo,
-            request,
-            editPolicy === 'repository' && workIntent,
-            editPolicy,
-            undefined,
-            workIntent,
-          );
-          if (outcome.producedReply) this.processedRequestIds.add(item.id);
-        }
-        if (inbox.cursor) {
-          cursor = inbox.cursor;
+        if (activation.cursor) {
+          cursor = activation.cursor;
           await this.durableState.setDaemonInboxCursor(channelId, cursor);
         }
-        this.onRoomPollSuccess?.(channelId);
-        await this.waitForPoll(opts.pollMs ?? 1_000, opts.signal);
-      } catch (error) {
-        if (opts.signal?.aborted || this.disposed) break;
-        this.onRoomPollFailure?.(channelId, 1_000);
-        console.error(`[body] monolith Room ${channelId} poll failed:`, error);
-        await this.waitForPoll(1_000, opts.signal);
       }
+      while (!opts.signal?.aborted && !this.disposed) {
+        try {
+          const inbox = await api.execute('getRoomInbox', {
+            roomId: channelId,
+            ...(cursor ? { after: cursor } : {}),
+            limit: 200,
+          });
+          for (const item of inbox.items) {
+            if (
+              item.authorId === this.agentIdentity.publicKey ||
+              item.type !== 'message' ||
+              (item.mentionIds.length > 0 &&
+                !item.mentionIds.includes(this.agentIdentity.publicKey)) ||
+              this.processedRequestIds.has(item.id)
+            )
+              continue;
+            const authority = await api.execute('getRoomAuthority', {
+              roomId: channelId,
+              principalId: item.authorId,
+            });
+            if (!authority.member || authority.principalKind !== 'human') continue;
+            if (!this.senderAccessAllowed(item.authorId)) continue;
+            const attachments: AttachmentReference[] = item.attachments.map((attachment) => ({
+              url: attachment.url,
+              name: attachment.name ?? 'attachment',
+              mimeType: attachment.mimeType ?? 'application/octet-stream',
+              size: attachment.size ?? 0,
+              ...(attachment.thumbnailUrl ? { thumbnailUrl: attachment.thumbnailUrl } : {}),
+            }));
+            const request: ChannelTaskRequest = {
+              eventId: item.id,
+              authorPubkey: item.authorId,
+              content: item.body.trim(),
+              attachments,
+              createdAt: item.createdAt,
+              ...(item.rootMessageId ? { replyRootId: item.rootMessageId } : {}),
+            };
+            const workIntent = isExplicitCornerOpenRequest(item.body);
+            const outcome = await this.replyInRoom(
+              channelId,
+              boundRepo,
+              request,
+              workIntent,
+              editPolicy,
+              undefined,
+              workIntent,
+            );
+            if (outcome.producedReply) this.processedRequestIds.add(item.id);
+          }
+          if (inbox.cursor) {
+            cursor = inbox.cursor;
+            await this.durableState.setDaemonInboxCursor(channelId, cursor);
+          }
+          this.onRoomPollSuccess?.(channelId);
+          await this.waitForPoll(opts.pollMs ?? 1_000, opts.signal);
+        } catch (error) {
+          if (opts.signal?.aborted || this.disposed) break;
+          this.onRoomPollFailure?.(channelId, 1_000);
+          console.error(`[body] monolith Room ${channelId} poll failed:`, error);
+          await this.waitForPoll(1_000, opts.signal);
+        }
+      }
+    } finally {
+      clearInterval(heartbeat);
+      await presenceTail;
+      await postPresence('offline').catch((error) =>
+        console.error(`[body] monolith Room ${channelId} shutdown presence failed:`, error),
+      );
     }
   }
 

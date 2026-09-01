@@ -1,12 +1,23 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   brass,
+  brassSpinner,
   collectConnectWizard,
   defaultConnectModel,
   requestConnectGrant,
   runConnectFinishCommand,
   type ConnectPrompts,
 } from './connect-command.js';
+
+const spinner = vi.hoisted(() => ({
+  start: vi.fn(),
+  stop: vi.fn(),
+}));
+
+vi.mock('@clack/prompts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@clack/prompts')>()),
+  spinner: vi.fn(() => spinner),
+}));
 
 function promptFixture(answers: string[]) {
   const calls: string[] = [];
@@ -27,6 +38,39 @@ function promptFixture(answers: string[]) {
 }
 
 describe('connect wizard', () => {
+  it('labels each completed spinner with what the step accomplished', async () => {
+    spinner.start.mockClear();
+    spinner.stop.mockClear();
+
+    await brassSpinner(
+      'Connecting to your Beeline Workspace…',
+      async () => ({ workspace_name: 'Builders' }),
+      (grant) => `Connected to ${grant.workspace_name}`,
+    );
+    await brassSpinner(
+      'Installing the Beeline daemon…',
+      async () => ({ version: '0.0.5' }),
+      (release) => `Installed Beeline helper ${release.version}`,
+    );
+    await brassSpinner(
+      'Starting your agent…',
+      async () => ({ agent_name: 'Scout' }),
+      (grant) => `Started ${grant.agent_name}`,
+    );
+
+    expect(spinner.start.mock.calls).toEqual([
+      ['Connecting to your Beeline Workspace…'],
+      ['Installing the Beeline daemon…'],
+      ['Starting your agent…'],
+    ]);
+    expect(spinner.stop.mock.calls).toEqual([
+      ['Connected to Builders'],
+      ['Installed Beeline helper 0.0.5'],
+      ['Started Scout'],
+    ]);
+    expect(spinner.stop).not.toHaveBeenCalledWith('Done');
+  });
+
   it('passes a prefix-free app pairing code through in one request without a browser ceremony', async () => {
     const fetchImpl = vi.fn(
       async () =>

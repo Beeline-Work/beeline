@@ -1,4 +1,5 @@
 import { MMKV } from 'react-native-mmkv';
+import type { NostrEvent } from '@beeline/nostr';
 import {
   SignedEventOutbox,
   SurfaceResponseCache,
@@ -58,25 +59,40 @@ function outboxKey(viewerPubkey: string, roomId: string): string {
   return `${OUTBOX_PREFIX}${viewerPubkey}.${encodeURIComponent(roomId)}`;
 }
 
-/** One mutation-lifetime owner per mounted composer. It stores exact signed frames only. */
+function isUnsignedMonolithMessage(event: NostrEvent): boolean {
+  if (event.kind !== 9 || event.sig !== '' || !/^[0-9a-f]{64}$/.test(event.id)) return false;
+  const tagNames = new Set(event.tags.map((tag) => tag[0]));
+  return (
+    event.tags.some((tag) => tag[0] === 'h' && Boolean(tag[1])) &&
+    tagNames.has('monolith-attachments') &&
+    tagNames.has('monolith-mentions')
+  );
+}
+
+/** One mutation-lifetime owner per mounted composer. It stores exact prepared frames only. */
 export function createRoomOutbox(identity: Pick<Identity, 'publicKey'>, roomId: string) {
   const key = outboxKey(identity.publicKey, roomId);
-  return new SignedEventOutbox({
-    load: async () => {
-      const encoded = mutations.getString(key);
-      if (!encoded) return [];
-      try {
-        return JSON.parse(encoded) as SignedOutboxRecord[];
-      } catch {
-        mutations.delete(key);
-        return [];
-      }
+  return new SignedEventOutbox(
+    {
+      load: async () => {
+        const encoded = mutations.getString(key);
+        if (!encoded) return [];
+        try {
+          return JSON.parse(encoded) as SignedOutboxRecord[];
+        } catch {
+          mutations.delete(key);
+          return [];
+        }
+      },
+      save: async (records) => {
+        if (records.length === 0) mutations.delete(key);
+        else mutations.set(key, JSON.stringify(records));
+      },
     },
-    save: async (records) => {
-      if (records.length === 0) mutations.delete(key);
-      else mutations.set(key, JSON.stringify(records));
+    {
+      acceptUnsignedEvent: isUnsignedMonolithMessage,
     },
-  });
+  );
 }
 
 export async function evictMobileSurfaceViewer(relayOrigin: string, viewerPubkey: string) {

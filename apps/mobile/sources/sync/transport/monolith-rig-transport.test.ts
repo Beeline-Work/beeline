@@ -1,12 +1,9 @@
-import {
-  SignedEventOutbox,
-  loadIdentityFromSecret,
-  type RoomViewMessage,
-} from '@beeline/buzz-client';
+import { type RoomViewMessage } from '@beeline/buzz-client';
 import { verifyEvent, type NostrEvent } from '@beeline/nostr';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const controls = vi.hoisted(() => ({ fetch: vi.fn() }));
+const mmkv = vi.hoisted(() => ({ stores: new Map<string, Map<string, string>>() }));
 
 vi.mock('expo-crypto', () => ({
   getRandomBytes: (length: number) => new Uint8Array(length).fill(7),
@@ -17,11 +14,38 @@ vi.mock('@/buzz/runtime-config', () => ({
 vi.mock('@/auth/monolith-session', () => ({
   monolithSession: { fetch: controls.fetch },
 }));
+vi.mock('react-native-mmkv', () => ({
+  MMKV: class {
+    private readonly values: Map<string, string>;
+
+    constructor({ id }: { id: string }) {
+      this.values = mmkv.stores.get(id) ?? new Map<string, string>();
+      mmkv.stores.set(id, this.values);
+    }
+
+    getString(key: string) {
+      return this.values.get(key);
+    }
+
+    set(key: string, value: string) {
+      this.values.set(key, value);
+    }
+
+    delete(key: string) {
+      this.values.delete(key);
+    }
+
+    getAllKeys() {
+      return [...this.values.keys()];
+    }
+  },
+}));
 
 import { MonolithRigTransport } from './monolith-rig-transport';
+import { clearMobileSurfaceStorage, createRoomOutbox } from '@/buzz/surface-storage';
 
 const ROOM = 'bb91a1c7-7cad-4fde-aafc-94fccb651ac8';
-const identity = loadIdentityFromSecret(new Uint8Array(32).fill(1));
+const identity = { publicKey: 'monolith-viewer', secretKey: new Uint8Array() };
 
 function optimisticRow(event: NostrEvent, text: string): RoomViewMessage {
   return {
@@ -37,24 +61,19 @@ async function driveHandleSendPath(
   transport: MonolithRigTransport,
   compose: () => Promise<NostrEvent>,
 ): Promise<NostrEvent> {
-  let persisted: readonly unknown[] = [];
-  const outbox = new SignedEventOutbox({
-    load: async () => [],
-    save: async (records) => {
-      persisted = records;
-    },
-  });
+  const outbox = createRoomOutbox(identity, ROOM);
   const preparedEvent = await compose();
   await outbox.enqueue(preparedEvent, optimisticRow(preparedEvent, preparedEvent.content));
   await outbox.attempted(preparedEvent.id);
   expect(outbox.get(preparedEvent.id)).toMatchObject({ status: 'pending', attempts: 1 });
   await transport.publishPreparedMessage(preparedEvent);
-  expect(persisted).toHaveLength(1);
+  expect(outbox.list()).toHaveLength(1);
   return preparedEvent;
 }
 
 describe('monolith Room send path', () => {
   beforeEach(() => {
+    clearMobileSurfaceStorage();
     controls.fetch.mockReset();
     controls.fetch.mockImplementation(async (_url: string, init: RequestInit) => {
       const input = JSON.parse(String(init.body)) as { messageId: string };
@@ -69,7 +88,8 @@ describe('monolith Room send path', () => {
       transport.composeMessage({ sessionId: ROOM, text: 'Hello from the Room' }),
     );
 
-    expect(verifyEvent(event)).toBe(true);
+    expect(event).toMatchObject({ id: '07'.repeat(32), sig: '' });
+    expect(verifyEvent(event)).toBe(false);
     expect(publish).toHaveBeenCalledOnce();
     expect(publish).toHaveBeenCalledWith(event);
     expect(controls.fetch).toHaveBeenCalledWith(
@@ -89,12 +109,32 @@ describe('monolith Room send path', () => {
       }),
     );
 
-    expect(verifyEvent(event)).toBe(true);
+    expect(event).toMatchObject({ id: '07'.repeat(32), sig: '' });
+    expect(verifyEvent(event)).toBe(false);
+    expect(event.tags).toContainEqual(['monolith-parent', 'parent-message-id']);
     expect(publish).toHaveBeenCalledOnce();
     expect(publish).toHaveBeenCalledWith(event);
     expect(controls.fetch).toHaveBeenCalledWith(
       'https://server.example/v1/phone/operations/sendRoomReply',
       expect.objectContaining({ method: 'POST' }),
     );
+  });
+
+  it('still rejects an unsigned legacy Room event', async () => {
+    const outbox = createRoomOutbox(identity, ROOM);
+    const event: NostrEvent = {
+      id: '08'.repeat(32),
+      pubkey: identity.publicKey,
+      created_at: 10,
+      kind: 9,
+      tags: [['h', ROOM]],
+      content: 'Unsigned legacy message',
+      sig: '',
+    };
+
+    await expect(outbox.enqueue(event, optimisticRow(event, event.content))).rejects.toThrow(
+      'outbox requires one pre-signed event and its exact render id',
+    );
+    expect(outbox.list()).toEqual([]);
   });
 });

@@ -1526,7 +1526,12 @@ esac
     expect(unifiedWorkflow).toContain('unified-release.mjs confirm-delivery');
     expect(unifiedWorkflow).not.toMatch(/mobile-ota-post-promote|post_promote_rehearsal|emulator|Maestro/);
     expect(daemonWorkflow).toContain('Confirm every daemon restarted READY on the exact release');
-    expect(serverWorkflow).toContain('verify public health');
+    expect(serverWorkflow).toContain('Deploy the exact release SHA to the monolith');
+    expect(serverWorkflow).toContain('test "$(git rev-parse HEAD)" = "$RELEASE_SHA"');
+    expect(serverWorkflow).toContain('--build-arg "BEELINE_RELEASE_SHA=$RELEASE_SHA"');
+    expect(unifiedWorkflow).toContain('Confirm monolith readiness and exact deployed image');
+    expect(unifiedWorkflow).toContain('https://server.usebeeline.app/readyz');
+    expect(unifiedWorkflow).toContain('https://server.usebeeline.app/version');
   });
 
   it('the canary script owns the parked-reason contract for every preflight stage', () => {

@@ -426,6 +426,21 @@ export default function BuzzChannels() {
     [activeCommunityId],
   );
 
+  if (workspaceList?.workspaces.length === 0) {
+    return (
+      <View
+        style={[styles.center, { paddingTop: insets.top }]}
+        testID="workspace-list-empty"
+      >
+        <Text style={styles.emptyTitle}>No workspaces yet</Text>
+        <Text style={styles.emptyCopy}>Create a Workspace to start adding Rooms.</Text>
+        <MonoButton
+          label="CREATE WORKSPACE"
+          onPress={() => router.push('/buzz/community' as Href)}
+        />
+      </View>
+    );
+  }
   if (!chatList && !error) {
     return (
       <View style={[styles.center, { paddingTop: insets.top }]}>

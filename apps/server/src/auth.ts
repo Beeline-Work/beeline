@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { SqlDatabase } from './database.js';
+import { ensurePersonalWorkspace } from './phone-service.js';
 
 const ACCESS_LIFETIME_MS = 15 * 60_000;
 const REFRESH_LIFETIME_MS = 30 * 24 * 60 * 60_000;
@@ -70,6 +71,7 @@ export class TokenAuth {
          ON CONFLICT(provider,subject) DO UPDATE SET identity_id=EXCLUDED.identity_id`,
         [github.subject, id],
       );
+      await ensurePersonalWorkspace(database, id);
     });
     return this.issuePhoneTokens(id, randomUUID());
   }

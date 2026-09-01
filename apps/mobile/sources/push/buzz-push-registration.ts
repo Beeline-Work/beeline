@@ -5,6 +5,7 @@ import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
+import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 
 const REGISTRATION_TIMEOUT_MS = 7_500;
 const PUSH_ENABLED_PREFIX = '@beeline/buzz-push/enabled/';
@@ -252,8 +253,9 @@ async function attemptRegistration(
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REGISTRATION_TIMEOUT_MS);
     try {
-      const registrationUrl = `${getBuzzRuntimeConfig().pushGatewayUrl}/registrations`;
-      const response = await fetch(registrationUrl, {
+      const runtime = getBuzzRuntimeConfig();
+      const registrationUrl = `${runtime.pushGatewayUrl}/registrations`;
+      const response = runtime.monolithEnabled ? null : await fetch(registrationUrl, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -272,7 +274,16 @@ async function attemptRegistration(
         }),
         signal: controller.signal,
       });
-      console.log(`[buzzy-push] POST ${registrationUrl} -> HTTP ${response.status}`);
+      if (runtime.monolithEnabled) {
+        await monolithPhoneOperation('registerPushDevice', {
+          token: nativeToken.data, platform: 'android', environment: Device.isDevice ? 'physical' : 'emulator',
+        });
+      }
+      console.log(`[buzzy-push] POST ${registrationUrl} -> HTTP ${response?.status ?? 200}`);
+      if (!response) {
+        await AsyncStorage.setItem(tokenKey(identity.publicKey), nativeToken.data);
+        return { registered: true, retryable: false, phase: 'registered' };
+      }
       if (!response.ok) {
         throw new Error(`gateway returned HTTP ${response.status}`);
       }
@@ -319,6 +330,10 @@ async function pushGatewayError(response: Response): Promise<string> {
 
 /** Send an authenticated proof-of-delivery notification to this identity's devices. */
 export async function sendBuzzPushTestNotification(identity: Identity): Promise<void> {
+  if (getBuzzRuntimeConfig().monolithEnabled) {
+    await monolithPhoneOperation('sendPushTest', {});
+    return;
+  }
   const testSendUrl = `${getBuzzRuntimeConfig().pushGatewayUrl}/test-send`;
   const controller = new AbortController();
   try {
@@ -397,6 +412,14 @@ export async function setBuzzPushEnabled(
     return disabledResult;
   }
   const registrationUrl = `${getBuzzRuntimeConfig().pushGatewayUrl}/registrations`;
+  if (getBuzzRuntimeConfig().monolithEnabled) {
+    await monolithPhoneOperation('unregisterPushDevice', {
+      token, platform: 'android', environment: Device.isDevice ? 'physical' : 'emulator',
+    });
+    await AsyncStorage.removeItem(tokenKey(identity.publicKey));
+    await saveRegistrationState(identity.publicKey, { ...disabledResult, failedAttempts: 0, updatedAt: Date.now() });
+    return disabledResult;
+  }
   const response = await fetch(registrationUrl, {
     method: 'DELETE',
     headers: {

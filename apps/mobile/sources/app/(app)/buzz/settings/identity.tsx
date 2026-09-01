@@ -30,12 +30,12 @@ import {
   normalizePersonHandle,
   normalizePersonName,
   personHandle,
-  RoomViewClient,
   startGitHubBind,
   type BuzzClient,
   type Identity,
   type ManagedIdentity,
 } from '@beeline/buzz-client';
+import { RoomViewClient } from '@/sync/transport/room-view-client';
 import {
   getEffectiveRelayUrl,
   loadBuzzIdentity,

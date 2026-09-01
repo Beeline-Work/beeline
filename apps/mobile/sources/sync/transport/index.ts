@@ -15,3 +15,4 @@ export type {
 } from './rig-transport';
 export { RigTransportNotImplementedError, RigTransportStubbedError } from './rig-transport';
 export { BuzzRigTransport } from './buzz-rig-transport';
+export { RoomViewClient, RoomViewHttpError } from './room-view-client';

@@ -1,7 +1,7 @@
-import { beforeEach, afterEach, describe, expect, it } from 'vitest';
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
-import { TokenAuth } from './auth.js';
+import { TokenAuth, verifierFromEnvironment } from './auth.js';
 
 describe('opaque token ceremony', () => {
   let db: PgliteDatabase;
@@ -37,5 +37,15 @@ describe('opaque token ceremony', () => {
     const tokens = await auth.exchangeGitHubOidc('proof');
     expect(tokens.identityId).toBe(legacy);
     expect(await auth.authenticatePhone(tokens.accessToken)).toBe(legacy);
+  });
+  it('redeems only the one-use auth ticket and receives no GitHub access token', async () => {
+    const request = vi.fn(async (_url: string, init?: RequestInit) => {
+      expect(init?.method).toBe('POST');
+      expect(JSON.parse(String(init?.body))).toEqual({ ticket: 'ticket-proof' });
+      return new Response(JSON.stringify({ subject: '42', login: 'owner', name: 'Owner' }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', request);
+    await expect(verifierFromEnvironment()('ticket-proof')).resolves.toEqual({ subject: '42', login: 'owner', name: 'Owner' });
+    vi.unstubAllGlobals();
   });
 });

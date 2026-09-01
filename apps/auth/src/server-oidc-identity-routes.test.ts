@@ -31,6 +31,24 @@ describe('OIDC and identity HTTP routes', () => {
     expect(response.json()).toEqual({ github: true, oidc: true });
   });
 
+  it('exchanges a native GitHub bind ticket for a phone proof exactly once', async () => {
+    const ticket = 'x'.repeat(43);
+    const now = new Date();
+    await store.createTicket(createHash('sha256').update(ticket).digest('hex'), {
+      challenge: 'challenge', community: alphaTenant.community,
+      issuer: 'https://github.com', audience: 'github-client', subject: '42',
+      createdAt: now, expiresAt: new Date(now.getTime() + 60_000),
+      attemptCount: 0, consumedAt: null, boundPubkey: null,
+      providerLogin: 'octocat', providerDisplayName: 'The Octocat',
+    });
+    const first = await app.inject({ method: 'POST', url: '/auth/github/phone-exchange', headers: { host: alphaTenant.host }, payload: { ticket } });
+    expect(first.statusCode).toBe(200);
+    expect(first.json()).toEqual({ subject: '42', login: 'octocat', name: 'The Octocat' });
+    const replay = await app.inject({ method: 'POST', url: '/auth/github/phone-exchange', headers: { host: alphaTenant.host }, payload: { ticket } });
+    expect(replay.statusCode).toBe(401);
+    expect(replay.json()).toEqual({ error: 'github_ticket_used' });
+  });
+
   it('auto-provisions the verified GitHub handle and display name during bind', async () => {
     const identity = generateKeypair();
     const result = await bindGitHubIdentity(identity, 'i'.repeat(43));

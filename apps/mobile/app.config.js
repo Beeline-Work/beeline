@@ -8,6 +8,8 @@ const updatesChannel = process.env.EXPO_UPDATES_CHANNEL || "production";
 const consoleLoggingDefault = process.env.NODE_ENV !== 'production';
 const buzzyRelayUrl = process.env.EXPO_PUBLIC_BUZZY_RELAY_URL || 'https://usebeeline.app';
 const buzzyPushGatewayUrl = process.env.EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL || 'https://usebeeline.app/push';
+const buzzyMonolithUrl = process.env.EXPO_PUBLIC_BUZZY_MONOLITH_URL || 'https://beeline-server.fly.dev';
+const buzzyMonolithEnabled = process.env.EXPO_PUBLIC_BUZZY_MONOLITH_ENABLED === 'true';
 
 function git(args) {
     try {
@@ -211,6 +213,8 @@ export default {
                 releaseSha: process.env.EXPO_PUBLIC_BEELINE_RELEASE_SHA || buildMetadata.commitSha,
                 buzzyRelayUrl,
                 buzzyPushGatewayUrl,
+                buzzyMonolithUrl,
+                buzzyMonolithEnabled,
             }
         },
         owner: "lunchboxfortwo"

@@ -6,7 +6,6 @@ import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   AGENT_NAME_MAX_LENGTH,
-  RoomViewClient,
   SurfaceRefreshScheduler,
   isAgentDetailView,
   isAllowedAgentModelConfigCategory,
@@ -18,6 +17,7 @@ import {
   type Identity,
   type WorkspaceView,
 } from '@beeline/buzz-client';
+import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { createCommunityInviteUrl } from '@/buzz/community-invite';
 import { defaultAgentPersona } from '@/buzz/agent-persona';

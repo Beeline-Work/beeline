@@ -4,12 +4,12 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
-  RoomViewClient,
   SurfaceRefreshScheduler,
   isWorkspaceListView,
   type Identity,
   type WorkspaceListView,
 } from '@beeline/buzz-client';
+import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { createCommunityInviteUrl, parseCommunityInviteToken } from '@/buzz/community-invite';
 import { loadActiveCommunityId, saveActiveCommunityId } from '@/buzz/community-storage';

@@ -23,6 +23,7 @@ import type { NostrEvent } from '@beeline/nostr';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import type { RepoCandidate } from '@/buzz/room-repo-picker';
 import { dedupeRepoCandidates } from '@/buzz/room-repo-picker';
+import { MonolithRigTransport } from './monolith-rig-transport';
 
 let sharedClientEntry: { key: string; client: BuzzClient } | undefined;
 
@@ -41,7 +42,7 @@ function sharedClient(identity: Identity, baseUrl: string): BuzzClient {
  * this class intentionally has no backfill, parser, reducer, selector, or
  * snapshot API.
  */
-export class BuzzRigTransport {
+class LegacyBuzzRigTransport {
   private client: BuzzClient | null = null;
   private readonly outgoingPublishes = new Map<string, Promise<string>>();
 
@@ -286,4 +287,40 @@ export class BuzzRigTransport {
   disconnect(): void {
     // Shared clients own the one authenticated socket for this viewer.
   }
+}
+
+/** The sole transport cutover seam. The legacy implementation above is unchanged. */
+export class BuzzRigTransport {
+  private readonly implementation: LegacyBuzzRigTransport | MonolithRigTransport;
+  constructor(identity: Identity, baseUrl: string = getBuzzRuntimeConfig().relayUrl) {
+    this.implementation = getBuzzRuntimeConfig().monolithEnabled
+      ? new MonolithRigTransport(identity)
+      : new LegacyBuzzRigTransport(identity, baseUrl);
+  }
+  ensureClient() { return this.implementation.ensureClient(); }
+  composeMessage(input: MessageSubmitInput, opts?: { mentionAgent?: string; mentionPubkeys?: string[] }) { return this.implementation.composeMessage(input, opts); }
+  publishPreparedMessage(event: NostrEvent) { return this.implementation.publishPreparedMessage(event); }
+  composeReplyMessage(text: string, parent: KnownMessageReference, mentionAgent?: string, attachments: AttachmentReference[] = [], mentionPubkeys: string[] = []) { return this.implementation.composeReplyMessage(text, parent, mentionAgent, attachments, mentionPubkeys); }
+  respondToWritePermission(channelId: string, permissionId: string, requestId: string, agentPubkey: string, decision: WritePermissionDecision, repository: string) { return this.implementation.respondToWritePermission(channelId, permissionId, requestId, agentPubkey, decision, repository); }
+  inviteAgentToChannel(channelId: string, agentPubkey: string, communityId: string) { return this.implementation.inviteAgentToChannel(channelId, agentPubkey, communityId); }
+  inviteWorkspaceMemberToChannel(channelId: string, memberPubkey: string, communityId: string) { return this.implementation.inviteWorkspaceMemberToChannel(channelId, memberPubkey, communityId); }
+  removeRoomMember(channelId: string, memberPubkey: string) { return this.implementation.removeRoomMember(channelId, memberPubkey); }
+  leaveRoom(channelId: string) { return this.implementation.leaveRoom(channelId); }
+  deleteRoom(channelId: string) { return this.implementation.deleteRoom(channelId); }
+  leaveWorkspace(communityId: string) { return this.implementation.leaveWorkspace(communityId); }
+  resolveDirectMessage(communityId: string, otherPubkey: string) { return this.implementation.resolveDirectMessage(communityId, otherPubkey); }
+  closeCorner(subchannelId: string) { return this.implementation.closeCorner(subchannelId); }
+  agentCommandsRead(channelId: string, agentPubkey: string, workspaceId?: string) { return this.implementation.agentCommandsRead(channelId, agentPubkey, workspaceId); }
+  roomRepositorySet(channelId: string, input: RoomRepositoryInput & { communityId?: string }) { return this.implementation.roomRepositorySet(channelId, input); }
+  roomTargetBranchSet(channelId: string, targetBranch: string) { return this.implementation.roomTargetBranchSet(channelId, targetBranch); }
+  roomGitHubEventsSet(channelId: string, enabled: boolean) { return this.implementation.roomGitHubEventsSet(channelId, enabled); }
+  workspaceRoomRepositoryCandidates(communityId: string) { return this.implementation.workspaceRoomRepositoryCandidates(communityId); }
+  workspaceGitHubAccess(options: { refresh?: boolean } = {}) { return this.implementation.workspaceGitHubAccess(options); }
+  githubInstallationStart(redirectUri: string, installationId?: number) { return this.implementation.githubInstallationStart(redirectUri, installationId); }
+  githubRepositoryCreate(input: { installationId: number; name: string; description?: string; private?: boolean }) { return this.implementation.githubRepositoryCreate(input); }
+  githubRepositoryAccess(fullName: string) { return this.implementation.githubRepositoryAccess(fullName); }
+  isChannelArchived(channelId: string) { return this.implementation.isChannelArchived(channelId); }
+  getParentChannelId(channelId: string) { return this.implementation.getParentChannelId(channelId); }
+  getPubkey() { return this.implementation.getPubkey(); }
+  disconnect() { this.implementation.disconnect(); }
 }

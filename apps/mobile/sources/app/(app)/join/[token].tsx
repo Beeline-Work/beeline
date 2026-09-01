@@ -27,6 +27,9 @@ import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { registerBuzzPushNotifications } from '@/push/buzz-push-registration';
 import { Typography } from '@/constants/Typography';
 import { PixelLoader } from '@/components/buzz/MonoHull';
+import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
+import { RoomViewClient } from '@/sync/transport/room-view-client';
+import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 
 export default function CommunityInviteJoin() {
   const { theme } = useUnistyles();
@@ -36,7 +39,7 @@ export default function CommunityInviteJoin() {
   const token = parseCommunityInviteToken(routeToken);
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [relayUrl, setRelayUrl] = useState<string | null>(null);
-  const [preview, setPreview] = useState<CommunityInvitePreview | null>(null);
+  const [preview, setPreview] = useState<CommunityInvitePreview | { name: string } | null>(null);
   const [communities, setCommunities] = useState<Community[]>([]);
   const [displayName, setDisplayName] = useState('');
   const [loading, setLoading] = useState(true);
@@ -57,11 +60,13 @@ export default function CommunityInviteJoin() {
           getEffectiveRelayUrl(),
         ]);
         const url = resolveCommunityInviteRelayUrl(incomingUrl, token, configuredRelayUrl);
-        const nextPreview = await loadCommunityInvitePreview(
-          url,
-          token,
-          currentIdentity ?? undefined,
-        );
+        if (getBuzzRuntimeConfig().monolithEnabled && !currentIdentity) {
+          router.replace('/buzz/onboarding');
+          return;
+        }
+        const nextPreview = getBuzzRuntimeConfig().monolithEnabled
+          ? await new RoomViewClient({ baseUrl: url, identity: currentIdentity! }).invite(token).then((value) => ({ name: value.name }))
+          : await loadCommunityInvitePreview(url, token, currentIdentity ?? undefined);
         let available: Community[] = [];
         if (currentIdentity) {
           const client = createBuzzClient({ baseUrl: url, identity: currentIdentity });
@@ -93,6 +98,13 @@ export default function CommunityInviteJoin() {
     setJoining(true);
     setError(null);
     try {
+      if (getBuzzRuntimeConfig().monolithEnabled) {
+        if (!identity) { router.replace('/buzz/onboarding'); return; }
+        const redemption = await monolithPhoneOperation('redeemInvite', { token });
+        await saveActiveCommunityId(identity.publicKey, redemption.workspaceId);
+        router.replace({ pathname: '/buzz/channels', params: { communityId: redemption.workspaceId } });
+        return;
+      }
       const joiningIdentity = identity ?? (await generateBuzzIdentity(displayName.trim()));
       if (!identity) await registerBuzzPushNotifications(joiningIdentity);
       const client = createBuzzClient({ baseUrl: relayUrl, identity: joiningIdentity });
@@ -118,6 +130,7 @@ export default function CommunityInviteJoin() {
       setJoining(false);
     }
   }, [displayName, identity, preview, relayUrl, token]);
+  const previewName = preview && ('community' in preview ? preview.community.name : preview.name);
 
   const selectCommunity = useCallback((communityId: string | null) => {
     if (!communityId) return;
@@ -157,10 +170,10 @@ export default function CommunityInviteJoin() {
             <>
               <View style={styles.communityMark}>
                 <Text style={styles.communityMarkText}>
-                  {preview.community.name.slice(0, 2).toUpperCase()}
+                  {previewName!.slice(0, 2).toUpperCase()}
                 </Text>
               </View>
-              <Text style={styles.title}>Join {preview.community.name}?</Text>
+              <Text style={styles.title}>Join {previewName}?</Text>
               <Text style={styles.details}>Open its {ROOM_LABEL}s and work with its Agents.</Text>
 
               {!identity && (
@@ -193,7 +206,7 @@ export default function CommunityInviteJoin() {
                 onPress={() => void handleJoin()}
               >
                 <Text style={styles.primaryButtonText}>
-                  {joining ? 'Joining…' : `Join ${preview.community.name}`}
+                  {joining ? 'Joining…' : `Join ${previewName}`}
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity

@@ -1,6 +1,17 @@
 import { vi } from 'vitest';
 import { beelineThemes } from '../buzz/groknight';
 
+(globalThis as typeof globalThis & { __DEV__?: boolean }).__DEV__ = false;
+
+vi.mock('expo-modules-core', () => ({
+  CodedError: class CodedError extends Error {},
+  EventEmitter: class EventEmitter {},
+  requireOptionalNativeModule: () => null,
+}));
+vi.mock('expo-constants', () => ({
+  default: { expoConfig: { extra: { app: {} } } },
+}));
+
 const theme = { buzz: beelineThemes.obsidian };
 
 // Production configures Unistyles before rendering. Unit tests run in Node and

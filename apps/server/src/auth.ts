@@ -200,9 +200,11 @@ export function bearer(authorization: string | undefined): string | null {
   return token.length >= 20 ? token : null;
 }
 
-/** Default verifier for Phase B local runs. Production must inject a real GitHub exchange verifier. */
+/** Redeem the auth service's one-use GitHub bind ticket; raw provider tokens never cross services. */
 export function verifierFromEnvironment(): VerifyGitHubOidc {
-  const endpoint = process.env.GITHUB_USER_ENDPOINT ?? 'https://api.github.com/user';
+  const endpoint =
+    process.env.PHONE_GITHUB_EXCHANGE_ENDPOINT ??
+    'https://usebeeline.app/auth/github/phone-exchange';
   return async (token) => {
     if (process.env.NODE_ENV !== 'production' && token.startsWith('local:')) {
       const login = token.slice('local:'.length);
@@ -210,18 +212,20 @@ export function verifierFromEnvironment(): VerifyGitHubOidc {
       return { subject: `local-${login}`, login, name: login };
     }
     const response = await fetch(endpoint, {
-      headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json' },
+      method: 'POST',
+      headers: { accept: 'application/json', 'content-type': 'application/json' },
+      body: JSON.stringify({ ticket: token }),
     });
     if (!response.ok) throw new Error('GitHub identity exchange failed');
     const body = (await response.json()) as Record<string, unknown>;
     if (
-      (typeof body.id !== 'number' && typeof body.id !== 'string') ||
+      typeof body.subject !== 'string' ||
       typeof body.login !== 'string'
     ) {
       throw new Error('GitHub identity response is invalid');
     }
     return {
-      subject: String(body.id),
+      subject: body.subject,
       login: body.login,
       name: typeof body.name === 'string' && body.name ? body.name : body.login,
       ...(typeof body.avatar_url === 'string' ? { avatar: body.avatar_url } : {}),

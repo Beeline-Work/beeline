@@ -7,6 +7,7 @@ import * as Updates from 'expo-updates';
 import { Platform } from 'react-native';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { loadAppConfig } from '@/sync/appConfig';
+import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 
 const DEVICE_ID_KEY = '@beeline/mobile-update-receipt/device-id';
 const RECEIPT_TIMEOUT_MS = 7_500;
@@ -62,6 +63,18 @@ export async function reportRunningUpdateReceipt(identity: Identity): Promise<vo
   const timeout = setTimeout(() => controller.abort(), RECEIPT_TIMEOUT_MS);
   try {
     const release = loadAppConfig();
+    if (getBuzzRuntimeConfig().monolithEnabled) {
+      await monolithPhoneOperation('reportRunningUpdate', {
+        deviceId: await installationDeviceId(),
+        ...(Updates.updateId ? { updateId: Updates.updateId } : {}),
+        ...(Updates.channel ? { channel: Updates.channel } : {}),
+        ...(runningUpdateGroup(Updates.manifest) ? { group: runningUpdateGroup(Updates.manifest)! } : {}),
+        ...(Updates.runtimeVersion ? { runtimeVersion: Updates.runtimeVersion } : {}),
+        ...(release.releaseVersion ? { releaseVersion: release.releaseVersion } : {}),
+        ...(release.releaseSha ? { sourceSha: release.releaseSha } : {}),
+      });
+      return;
+    }
     const response = await fetch(receiptUrl, {
       method: 'POST',
       headers: {

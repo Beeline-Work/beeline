@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 import type { Pool } from 'pg';
 import { PostgresDatabase } from './database.js';
@@ -50,5 +51,27 @@ describe('PostgresDatabase reconnects', () => {
     expect(work).toHaveBeenCalledTimes(1);
     expect(client.query).toHaveBeenNthCalledWith(1, 'BEGIN');
     expect(client.query).toHaveBeenNthCalledWith(2, 'COMMIT');
+  });
+
+  it('handles an error emitted by a dedicated client', async () => {
+    const client = Object.assign(new EventEmitter(), {
+      query: vi.fn(),
+      release: vi.fn(),
+    });
+    const pool = {
+      query: vi.fn(),
+      on: vi.fn(),
+      connect: vi.fn().mockResolvedValue(client),
+      end: vi.fn(),
+    } as unknown as Pool;
+    const database = new PostgresDatabase('', 5, { pool, pause: async () => {} });
+    const error = new Error('Connection terminated unexpectedly');
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const dedicated = await database.connectDedicated();
+
+    expect(client.listenerCount('error')).toBe(1);
+    expect(() => dedicated.emit('error', error)).not.toThrow();
+    expect(errorLog).toHaveBeenCalledWith('dedicated postgres client error', error);
   });
 });

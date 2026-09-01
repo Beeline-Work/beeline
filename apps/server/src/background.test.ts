@@ -9,6 +9,41 @@ import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 
 describe('background advisory-lock ownership', () => {
+  it('releases and reconnects after its dedicated connection health check fails', async () => {
+    let connections = 0;
+    let released = false;
+    let cycles = 0;
+    const connectDedicated = async (): Promise<LeaderConnection> => {
+      connections += 1;
+      const connection = connections;
+      return {
+        query: async <Row>(sql: string) => {
+          if (sql === 'SELECT 1' && connection === 1) throw new Error('connection died');
+          if (sql.includes('pg_try_advisory_lock')) return { rows: [{ locked: true }] as Row[] };
+          return { rows: [{} as Row] };
+        },
+        release: (destroy) => {
+          if (connection === 1 && destroy) released = true;
+        },
+      };
+    };
+    const leader = new BackgroundLeader(
+      { connectDedicated },
+      async () => {
+        cycles += 1;
+      },
+      1,
+    );
+    const running = leader.run();
+
+    await until(() => cycles > 0);
+    leader.stop();
+    await running;
+
+    expect(connections).toBeGreaterThanOrEqual(2);
+    expect(released).toBe(true);
+  });
+
   it('moves work to the peer after the lock-holder connection dies', async () => {
     const lock = new FakeAdvisoryLock();
     let first = 0;

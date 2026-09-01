@@ -8,7 +8,7 @@ import { TokenAuth } from './auth.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
-import { createBeelineServer } from './server.js';
+import { createBeelineServer, DEFAULT_MEDIA_MAXIMUM_BYTES } from './server.js';
 import { PushDeliveryLoop } from './background.js';
 
 const HUMAN = createHash('sha256').update('github:owner').digest('hex');
@@ -40,10 +40,10 @@ describe('monolith integration', () => {
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,$4,$2,'owner'),($1,$4,$3,'member')`,
       [WORKSPACE, HUMAN, AGENT, ROOM],
     );
-    auth = new TokenAuth(database, async () => ({
-      subject: 'owner',
-      login: 'owner',
-      name: 'Owner',
+    auth = new TokenAuth(database, async (proof) => ({
+      subject: proof === 'proof' ? 'owner' : proof,
+      login: proof === 'proof' ? 'owner' : proof,
+      name: proof === 'proof' ? 'Owner' : proof,
     }));
     const phone = new PhoneService(database, 'http://placeholder');
     const live = new LiveHub();
@@ -166,6 +166,219 @@ describe('monolith integration', () => {
     expect(conflicting.status).toBe(400);
   });
 
+  it('keeps same-timestamp message ordering in the server-owned unread mark', async () => {
+    await request('/v1/phone/operations/sendRoomMessage', 'POST', {
+      roomId: ROOM,
+      messageId: '4'.repeat(64),
+      text: 'read first',
+    });
+    await request('/v1/phone/operations/sendRoomMessage', 'POST', {
+      roomId: ROOM,
+      messageId: '5'.repeat(64),
+      text: 'same second but later',
+    });
+    await database.query(
+      `UPDATE messages SET created_at='2026-09-01T12:00:00Z' WHERE id=ANY($1::text[])`,
+      [['4'.repeat(64), '5'.repeat(64)]],
+    );
+    expect(
+      (
+        await request(`/v1/phone/rooms/${ROOM}/read`, 'POST', {
+          messageId: '4'.repeat(64),
+        })
+      ).status,
+    ).toBe(204);
+
+    const chats = (await (await request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
+      chats: Array<{ unread: boolean; latestMessage?: { id: string } }>;
+      watchFilters: Array<{ '#h'?: string[] }>;
+    };
+    expect(chats.chats[0]).toMatchObject({
+      unread: true,
+      latestMessage: { id: '5'.repeat(64) },
+    });
+    expect(chats.watchFilters.flatMap((filter) => filter['#h'] ?? [])).toContain(ROOM);
+  });
+
+  it('projects daemon permission requests live and lets the human requester decide', async () => {
+    const memberTokens = await auth.exchangeGitHubOidc('member');
+    await request('/v1/phone/operations/addWorkspaceMember', 'POST', {
+      workspaceId: WORKSPACE,
+      memberId: memberTokens.identityId,
+      role: 'member',
+    });
+    await request('/v1/phone/operations/addRoomMember', 'POST', {
+      roomId: ROOM,
+      memberId: memberTokens.identityId,
+    });
+    const socket = new WebSocket(`${origin.replace('http', 'ws')}/v1/phone/live`, [
+      `bearer.${memberTokens.accessToken}`,
+    ]);
+    await new Promise<void>((resolve, reject) => {
+      socket.once('open', () => resolve());
+      socket.once('error', reject);
+    });
+    socket.send(JSON.stringify({ type: 'subscribe', roomId: ROOM }));
+    await next(socket, 'subscribed');
+    const messageInvalidated = next(socket, 'invalidate');
+    await request('/v1/phone/operations/sendRoomMessage', 'POST', {
+      roomId: ROOM,
+      messageId: '8'.repeat(64),
+      text: 'live for another member',
+    });
+    expect(await messageInvalidated).toMatchObject({
+      type: 'invalidate',
+      roomId: ROOM,
+      reason: 'phone-write',
+    });
+    const invalidated = next(socket, 'invalidate');
+    const permissionId = 'permission-http-audit';
+    const requestId = '8'.repeat(64);
+    const requested = await request(
+      '/v1/daemon/operations/postPermissionRequest',
+      'POST',
+      {
+        roomId: ROOM,
+        principalId: memberTokens.identityId,
+        permissionId,
+        requestId,
+        scope: {
+          type: 'operation.execute',
+          connectorId: 'edit files',
+          target: 'owner/repository',
+          payloadDigest: '7'.repeat(64),
+        },
+      },
+      daemonToken,
+    );
+    expect(requested.status).toBe(200);
+    const requestedBody = (await requested.json()) as { id: string };
+    expect(await invalidated).toMatchObject({
+      type: 'invalidate',
+      roomId: ROOM,
+      reason: 'permission',
+    });
+    const retried = await request(
+      '/v1/daemon/operations/postPermissionRequest',
+      'POST',
+      {
+        roomId: ROOM,
+        principalId: memberTokens.identityId,
+        permissionId,
+        requestId,
+        scope: {
+          type: 'operation.execute',
+          connectorId: 'edit files',
+          target: 'owner/repository',
+          payloadDigest: '7'.repeat(64),
+        },
+      },
+      daemonToken,
+    );
+    expect(await retried.json()).toMatchObject({ id: requestedBody.id });
+    const room = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as {
+      messages: Array<{ permission?: Record<string, unknown> }>;
+    };
+    expect(room.messages.find((message) => message.permission)?.permission).toMatchObject({
+      permissionId,
+      requestId,
+      repository: 'owner/repository',
+      status: 'pending',
+      requester: { pubkey: memberTokens.identityId, kind: 'human' },
+      agent: { pubkey: AGENT, kind: 'agent' },
+    });
+    const mismatched = await request(
+      '/v1/phone/operations/decideWritePermission',
+      'POST',
+      {
+        roomId: ROOM,
+        permissionId,
+        requestId,
+        agentId: AGENT,
+        decision: 'allow',
+        repository: 'other/repository',
+      },
+      memberTokens.accessToken,
+    );
+    expect(mismatched.status).toBe(400);
+    const decided = await request(
+      '/v1/phone/operations/decideWritePermission',
+      'POST',
+      {
+        roomId: ROOM,
+        permissionId,
+        requestId,
+        agentId: AGENT,
+        decision: 'allow',
+        repository: 'owner/repository',
+      },
+      memberTokens.accessToken,
+    );
+    expect(decided.status).toBe(200);
+    const authority = await request(
+      '/v1/daemon/operations/getPermissionAuthority',
+      'POST',
+      { roomId: ROOM, principalId: memberTokens.identityId, permissionId },
+      daemonToken,
+    );
+    expect(await authority.json()).toMatchObject({ status: 'authorized' });
+    socket.close();
+  });
+
+  it('projects the thinking receipt and digest only for the active agent turn', async () => {
+    const requestId = '9'.repeat(64);
+    expect(
+      (
+        await request(
+          '/v1/daemon/operations/postAgentTurnReceipt',
+          'POST',
+          { agentId: AGENT, roomId: ROOM, requestId, status: 'working' },
+          daemonToken,
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await request(
+          '/v1/daemon/operations/postAgentActivity',
+          'POST',
+          {
+            agentId: AGENT,
+            roomId: ROOM,
+            requestId,
+            activity: [{ kind: 'summary', title: 'Inspected the requested files' }],
+          },
+          daemonToken,
+        )
+      ).status,
+    ).toBe(200);
+    const working = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as {
+      latestAgentTurns: Array<{ requestId: string; status: string }>;
+      messages: Array<{ activity?: Array<{ kind: string; title: string }> }>;
+    };
+    expect(working.latestAgentTurns).toContainEqual(
+      expect.objectContaining({ requestId, status: 'working' }),
+    );
+    expect(working.messages.some((message) => message.activity?.[0]?.kind === 'summary')).toBe(
+      true,
+    );
+
+    await request(
+      '/v1/daemon/operations/postAgentTurnReceipt',
+      'POST',
+      { agentId: AGENT, roomId: ROOM, requestId, status: 'complete' },
+      daemonToken,
+    );
+    const complete = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as {
+      latestAgentTurns: Array<{ requestId: string; status: string }>;
+      messages: Array<{ activity?: unknown[] }>;
+    };
+    expect(complete.latestAgentTurns).toContainEqual(
+      expect.objectContaining({ requestId, status: 'complete' }),
+    );
+    expect(complete.messages.some((message) => message.activity)).toBe(false);
+  });
+
   it('rotates refresh tokens and rejects stale phone and daemon credentials', async () => {
     const initial = await auth.exchangeGitHubOidc('proof');
     const refreshed = await request(
@@ -198,7 +411,8 @@ describe('monolith integration', () => {
     ).toBe(401);
   });
 
-  it('stores and serves media bytes through token auth with the configured cap', async () => {
+  it('stores authenticated uploads and serves capability URLs with the configured cap', async () => {
+    expect(DEFAULT_MEDIA_MAXIMUM_BYTES).toBe(25 * 1024 * 1024);
     const upload = await fetch(`${origin}/v1/phone/media`, {
       method: 'POST',
       headers: {
@@ -221,6 +435,10 @@ describe('monolith integration', () => {
     });
     expect(media.status).toBe(200);
     expect(Buffer.from(await media.arrayBuffer()).toString()).toBe('png-bytes');
+    const capabilityRead = await fetch(attachment.url);
+    expect(capabilityRead.status).toBe(200);
+    expect(capabilityRead.headers.get('cache-control')).toContain('immutable');
+    expect(Buffer.from(await capabilityRead.arrayBuffer()).toString()).toBe('png-bytes');
     expect(
       (
         await fetch(`${origin}/v1/media/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa`, {

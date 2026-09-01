@@ -8,7 +8,7 @@ primary_region = "iad"
   HOST = "0.0.0.0"
   PORT = "8080"
   DATABASE_POOL_MAX = "5"
-  MEDIA_MAX_BYTES = "10485760"
+  MEDIA_MAX_BYTES = "26214400"
   PUBLIC_ORIGIN = "https://server.usebeeline.app"
 
 [http_service]

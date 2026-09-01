@@ -7,6 +7,8 @@ import { PHONE_OPERATION_NAMES, type PhoneService } from './phone-service.js';
 import { DAEMON_OPERATION_NAMES, type DaemonService } from './daemon-service.js';
 import type { LiveHub } from './live.js';
 
+export const DEFAULT_MEDIA_MAXIMUM_BYTES = 25 * 1024 * 1024;
+
 const MAX_JSON_BYTES = 1024 * 1024;
 
 export interface GitHubServerHooks {
@@ -278,10 +280,6 @@ async function route(
 
   const identityId = await phoneIdentity(request, options);
   if (method === 'GET' && url.pathname.startsWith('/v1/media/')) {
-    if (!identityId) {
-      json(response, 401, { error: 'phone_token_required' });
-      return;
-    }
     const mediaId = url.pathname.slice('/v1/media/'.length);
     const media = (
       await options.database.query<{ bytes: Uint8Array; mime_type: string; name: string }>(
@@ -296,7 +294,7 @@ async function route(
     response.writeHead(200, {
       'content-type': media.mime_type,
       'content-length': String(media.bytes.length),
-      'cache-control': 'private, max-age=3600',
+      'cache-control': 'public, max-age=31536000, immutable',
       'content-disposition': `inline; filename="${media.name.replaceAll('"', '')}"`,
     });
     response.end(Buffer.from(media.bytes));

@@ -5,7 +5,7 @@ import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { BackgroundLeader, PushDeliveryLoop, runMaintenance } from './background.js';
 import { createFirebasePushSender } from './firebase-push.js';
-import { createBeelineServer } from './server.js';
+import { createBeelineServer, DEFAULT_MEDIA_MAXIMUM_BYTES } from './server.js';
 import { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { GitHubOperations } from './github-operations.js';
 import { createMonolithAuth } from './monolith-auth.js';
@@ -84,7 +84,7 @@ async function main() {
     phone,
     daemon,
     live,
-    mediaMaximumBytes: Number(process.env.MEDIA_MAX_BYTES ?? String(10 * 1024 * 1024)),
+    mediaMaximumBytes: Number(process.env.MEDIA_MAX_BYTES ?? String(DEFAULT_MEDIA_MAXIMUM_BYTES)),
     authHandler: mountedAuth.handle,
     github: {
       webhookSecret: process.env.GITHUB_WEBHOOK_SECRET,

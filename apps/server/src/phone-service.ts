@@ -322,7 +322,7 @@ export class PhoneService {
         latest_author_id: string | null;
         latest_author_kind: 'human' | 'agent' | null;
         latest_author_name: string | null;
-        read_at: Date | null;
+        unread: boolean;
         working: boolean;
         needs_you: boolean;
       }
@@ -332,7 +332,11 @@ export class PhoneService {
         (SELECT count(*)::text FROM memberships rm WHERE rm.room_id=r.id AND rm.removed_at IS NULL) member_count,
         (SELECT count(*)::text FROM rooms c WHERE c.parent_id=r.id) corner_count,
         lm.id latest_id,lm.text latest_text,lm.created_at latest_created_at,lm.author_id latest_author_id,
-        li.kind latest_author_kind,li.name latest_author_name, mark.message_created_at read_at,
+        li.kind latest_author_kind,li.name latest_author_name,
+        (lm.id IS NOT NULL AND (
+          mark.message_created_at IS NULL OR
+          (lm.created_at,lm.id)>(mark.message_created_at,mark.message_id)
+        )) unread,
         EXISTS(SELECT 1 FROM agent_turns t WHERE (t.room_id=r.id OR t.room_id IN (SELECT id FROM rooms WHERE parent_id=r.id)) AND t.status='working') working,
         EXISTS(SELECT 1 FROM permission_authority p WHERE (p.room_id=r.id OR p.room_id IN (SELECT id FROM rooms WHERE parent_id=r.id)) AND p.status='pending') needs_you
       FROM rooms r
@@ -375,9 +379,7 @@ export class PhoneService {
               },
             }
           : {}),
-        unread: Boolean(
-          row.latest_created_at && (!row.read_at || row.latest_created_at > row.read_at),
-        ),
+        unread: row.unread,
         ...(row.repository_key ? { repositoryName: row.repository_key.split('/').at(-1) } : {}),
         ...(row.needs_you
           ? { agentState: 'needs-you' as const }
@@ -387,7 +389,9 @@ export class PhoneService {
       })),
       viewer: await this.requireIdentity(viewerId),
       truncated: rooms.rows.length > 200,
-      watchFilters: [],
+      watchFilters: rooms.rows.length
+        ? [{ kinds: [9, 9000, 9001, 9002, 9007, 9008], '#h': rooms.rows.map((row) => row.id) }]
+        : [],
     };
   }
 
@@ -1072,33 +1076,67 @@ export class PhoneService {
     return { messageId: id };
   }
   private async decidePermission(input: Input<'decideWritePermission'>, viewerId: string) {
-    await this.requireManager(input.roomId, viewerId);
+    const pending = (
+      await this.database.query<{
+        principal_id: string;
+        request_id: string;
+        status: string;
+        card: Record<string, unknown> | null;
+      }>(
+        `SELECT p.principal_id,p.request_id,p.status,card.card
+         FROM permission_authority p
+         LEFT JOIN LATERAL (
+           SELECT m.card FROM messages m
+           WHERE m.room_id=p.room_id AND m.card_type='permission'
+             AND m.card->>'permissionId'=p.permission_id
+           ORDER BY m.created_at DESC,m.id DESC LIMIT 1
+         ) card ON true
+         WHERE p.permission_id=$1 AND p.room_id=$2`,
+        [input.permissionId, input.roomId],
+      )
+    ).rows[0];
+    if (!pending || pending.status !== 'pending') throw new Error('permission not found');
+    if (viewerId !== pending.principal_id) await this.requireManager(input.roomId, viewerId);
+    const card = pending.card;
+    const cardAgent = card?.agent as { pubkey?: unknown } | undefined;
+    if (
+      pending.request_id !== input.requestId ||
+      cardAgent?.pubkey !== input.agentId ||
+      card?.repository !== input.repository
+    )
+      throw new Error('permission decision is invalid');
     const status = input.decision === 'allow' ? 'authorized' : 'denied';
-    await this.database.query(
-      `UPDATE permission_authority SET status=$2,updated_at=now() WHERE permission_id=$1 AND room_id=$3`,
-      [input.permissionId, status, input.roomId],
-    );
     const id = messageId();
     const decider = await this.requireIdentity(viewerId);
     const agent = await this.requireIdentity(input.agentId);
-    await this.database.query(
-      `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card) VALUES ($1,$2,$3,'','card','permission',$4::jsonb)`,
-      [
-        id,
-        input.roomId,
-        viewerId,
-        JSON.stringify({
-          permissionId: input.permissionId,
-          requestId: input.requestId,
-          agent,
-          requester: decider,
-          decider,
-          tool: 'edit files',
-          repository: input.repository,
-          status: input.decision === 'allow' ? 'allowed' : 'denied',
-        }),
-      ],
-    );
+    const requester = await this.requireIdentity(pending.principal_id);
+    await this.database.transaction(async (database) => {
+      const updated = await database.query(
+        `UPDATE permission_authority SET status=$2,updated_at=now()
+         WHERE permission_id=$1 AND room_id=$3 AND status='pending'`,
+        [input.permissionId, status, input.roomId],
+      );
+      if (!updated.rowCount) throw new Error('permission not found');
+      await database.query(
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card) VALUES ($1,$2,$3,'','card','permission',$4::jsonb)`,
+        [
+          id,
+          input.roomId,
+          viewerId,
+          JSON.stringify({
+            permissionId: input.permissionId,
+            requestId: input.requestId,
+            agent,
+            requester,
+            decider,
+            tool: typeof card?.tool === 'string' ? card.tool : 'edit files',
+            repository: input.repository,
+            ...(card?.purpose === 'squire-spending' ? { purpose: 'squire-spending' } : {}),
+            status: input.decision === 'allow' ? 'allowed' : 'denied',
+          }),
+        ],
+      );
+    });
     return { messageId: id };
   }
   private async createWorkspace(input: Input<'createWorkspace'>, viewerId: string) {

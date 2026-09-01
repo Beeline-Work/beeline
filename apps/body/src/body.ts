@@ -8062,6 +8062,13 @@ export class Body {
 
   /** Human decision path retained for a named repository outside the Room binding. */
   private async cornerOpenAudience(roomId: string, requesterPubkey: string): Promise<string[]> {
+    if (this.daemonApi) {
+      const authority = await this.daemonApi.execute('getRoomAuthority', {
+        roomId,
+        principalId: requesterPubkey,
+      });
+      return authority.member && authority.principalKind === 'human' ? [requesterPubkey] : [];
+    }
     const members = await listMembers(this.agentClientContext(), roomId);
     const candidates = members.filter(
       (member) =>
@@ -8128,9 +8135,14 @@ export class Body {
           message: published.message,
         };
       }
-      const permissionId = randomUUID();
+      const permissionId = this.daemonApi
+        ? createHash('sha256')
+            .update(`corner-permission\0${input.roomId}\0${input.request.eventId}`)
+            .digest('hex')
+        : randomUUID();
       const repository = input.roomRepo ? this.repoId(input.roomRepo) : 'repo-less';
-      const audience = await this.cornerOpenAudience(input.roomId, input.request.authorPubkey);
+      const principalId = input.request.delegation?.rootHumanPubkey ?? input.request.authorPubkey;
+      const audience = await this.cornerOpenAudience(input.roomId, principalId);
       if (audience.length === 0) {
         throw new AgentToolKnownFailure(
           'approval_audience_unavailable',
@@ -8151,26 +8163,33 @@ export class Body {
         )?.name ?? fallbackAgentName(this.agentIdentity.publicKey);
       const message =
         `@${requester.replace(/^@/, '')} asked ${agent} to open a corner for: ` + input.objective;
-      const card = buildControlMessage(
-        'permission-request',
-        input.roomId,
-        this.agentIdentity,
-        message,
-        [
-          ['t', WRITE_PERMISSION_REQUEST_TAG],
-          ['permission', permissionId],
-          ['request', input.request.eventId],
-          ['requester', input.request.authorPubkey],
-          ['agent', this.agentIdentity.publicKey],
-          ['tool', input.tool],
-          ['repo', repository],
-          ['objective', input.objective],
-          ['status', 'pending'],
-          ...this.delegatedReplyTags(input.request),
-          ...audience.map((pubkey) => ['p', pubkey]),
-        ],
-      );
-      await publishEvent(card, this.agentIdentity);
+      const card = this.daemonApi
+        ? await this.daemonApi.execute('postPermissionRequest', {
+            roomId: input.roomId,
+            principalId,
+            permissionId,
+            requestId: input.request.eventId,
+            scope: {
+              type: 'operation.execute',
+              connectorId: input.tool,
+              target: repository,
+              payloadDigest: createHash('sha256').update(input.objective).digest('hex'),
+            },
+          })
+        : buildControlMessage('permission-request', input.roomId, this.agentIdentity, message, [
+            ['t', WRITE_PERMISSION_REQUEST_TAG],
+            ['permission', permissionId],
+            ['request', input.request.eventId],
+            ['requester', input.request.authorPubkey],
+            ['agent', this.agentIdentity.publicKey],
+            ['tool', input.tool],
+            ['repo', repository],
+            ['objective', input.objective],
+            ['status', 'pending'],
+            ...this.delegatedReplyTags(input.request),
+            ...audience.map((pubkey) => ['p', pubkey]),
+          ]);
+      if (!this.daemonApi) await publishEvent(card as NostrEvent, this.agentIdentity);
       void this.finishCornerApproval({ ...input, permissionId, repository, audience }).catch(
         (error) => console.error('[body] corner approval settlement failed:', error),
       );
@@ -8199,6 +8218,7 @@ export class Body {
       }
     | undefined
   > {
+    if (this.daemonApi) return undefined;
     const repository = input.roomRepo ? this.repoId(input.roomRepo) : 'repo-less';
     const events = await this.agentRelay.queryEvents([
       {
@@ -8239,6 +8259,7 @@ export class Body {
     repository: string;
     audience: string[];
   }): Promise<void> {
+    const principalId = input.request.delegation?.rootHumanPubkey ?? input.request.authorPubkey;
     let deciderPubkey: string | undefined;
     const decision = await this.waitForWritePermissionDecision(
       input.roomId,
@@ -8248,6 +8269,7 @@ export class Body {
       10 * 60_000,
       {
         allowedResponders: new Set(input.audience),
+        principalId,
         captureDecider: (pubkey) => {
           deciderPubkey = pubkey;
         },
@@ -8277,7 +8299,7 @@ export class Body {
           `Corner approved by @${deciderHandle.replace(/^@/, '')} — view →`,
           info.subchannelId,
           deciderPubkey,
-          input.request.authorPubkey,
+          principalId,
         );
         this.startCornerTaskOnce(
           info,
@@ -8300,7 +8322,7 @@ export class Body {
           `Corner approved by @${deciderHandle.replace(/^@/, '')}, but it could not start: ${this.safePermissionFailure(error)}`,
           undefined,
           deciderPubkey,
-          input.request.authorPubkey,
+          principalId,
         );
       }
       return;
@@ -8317,7 +8339,7 @@ export class Body {
         : 'The corner request expired without a decision.',
       undefined,
       deciderPubkey,
-      input.request.authorPubkey,
+      principalId,
     );
   }
 
@@ -8331,8 +8353,13 @@ export class Body {
     pendingMessage: string;
   }): Promise<void> {
     const { tlcChannelId, turn, repository, tool, objective, namedTarget, pendingMessage } = input;
-    const permissionId = randomUUID();
-    const audience = await this.cornerOpenAudience(tlcChannelId, turn.request.authorPubkey);
+    const permissionId = this.daemonApi
+      ? createHash('sha256')
+          .update(`edit-permission\0${tlcChannelId}\0${turn.request.eventId}`)
+          .digest('hex')
+      : randomUUID();
+    const principalId = turn.request.delegation?.rootHumanPubkey ?? turn.request.authorPubkey;
+    const audience = await this.cornerOpenAudience(tlcChannelId, principalId);
     if (audience.length === 0) {
       throw new AgentToolKnownFailure(
         'approval_audience_unavailable',
@@ -8341,30 +8368,45 @@ export class Body {
       );
     }
     const requesterAttribution = turn.request.delegation
-      ? (await this.roomAuthorAttributions(tlcChannelId, [turn.request.authorPubkey])).get(
-          turn.request.authorPubkey,
-        )
+      ? (await this.roomAuthorAttributions(tlcChannelId, [principalId])).get(principalId)
       : turn.request.authorAttribution;
-    const requester = requesterAttribution?.handle ?? fallbackPersonName(turn.request.authorPubkey);
-    await postControlMessage(
-      'permission-request',
-      tlcChannelId,
-      this.agentIdentity,
-      `@${requester.replace(/^@/, '')} asked ${this.agentIdentity.name || 'the agent'} to open a corner for: ${objective || pendingMessage}`,
-      [
-        ['t', WRITE_PERMISSION_REQUEST_TAG],
-        ['permission', permissionId],
-        ['request', turn.request.eventId],
-        ['requester', turn.request.authorPubkey],
-        ['agent', this.agentIdentity.publicKey],
-        ...audience.map((pubkey) => ['p', pubkey]),
-        ['tool', tool],
-        ['repo', repository],
-        ['objective', objective],
-        ['status', 'pending'],
-        ...this.delegatedReplyTags(turn.request),
-      ],
-    );
+    const requester = requesterAttribution?.handle ?? fallbackPersonName(principalId);
+    if (this.daemonApi) {
+      await this.daemonApi.execute('postPermissionRequest', {
+        roomId: tlcChannelId,
+        principalId,
+        permissionId,
+        requestId: turn.request.eventId,
+        scope: {
+          type: 'operation.execute',
+          connectorId: tool,
+          target: repository,
+          payloadDigest: createHash('sha256')
+            .update(objective || pendingMessage)
+            .digest('hex'),
+        },
+      });
+    } else {
+      await postControlMessage(
+        'permission-request',
+        tlcChannelId,
+        this.agentIdentity,
+        `@${requester.replace(/^@/, '')} asked ${this.agentIdentity.name || 'the agent'} to open a corner for: ${objective || pendingMessage}`,
+        [
+          ['t', WRITE_PERMISSION_REQUEST_TAG],
+          ['permission', permissionId],
+          ['request', turn.request.eventId],
+          ['requester', turn.request.authorPubkey],
+          ['agent', this.agentIdentity.publicKey],
+          ...audience.map((pubkey) => ['p', pubkey]),
+          ['tool', tool],
+          ['repo', repository],
+          ['objective', objective],
+          ['status', 'pending'],
+          ...this.delegatedReplyTags(turn.request),
+        ],
+      );
+    }
 
     let deciderPubkey: string | undefined;
     const decision = await this.waitForWritePermissionDecision(
@@ -8375,6 +8417,7 @@ export class Body {
       10 * 60_000,
       {
         allowedResponders: new Set(audience),
+        principalId,
         captureDecider: (pubkey) => {
           deciderPubkey = pubkey;
         },
@@ -8415,7 +8458,7 @@ export class Body {
           `Corner approved by @${deciderHandle.replace(/^@/, '')} — view →`,
           info.subchannelId,
           deciderPubkey,
-          turn.request.authorPubkey,
+          principalId,
         ).catch((statusError) =>
           console.error('[body] failed to publish direct corner navigation:', statusError),
         );
@@ -8457,7 +8500,7 @@ export class Body {
         `Corner denied by @${deciderHandle.replace(/^@/, '')}.`,
         undefined,
         deciderPubkey,
-        turn.request.authorPubkey,
+        principalId,
       );
       return;
     }
@@ -8471,7 +8514,7 @@ export class Body {
       `The edit request for ${repository} expired. The Agent remains read-only.`,
       undefined,
       undefined,
-      turn.request.authorPubkey,
+      principalId,
     );
   }
 
@@ -8889,6 +8932,29 @@ export class Body {
     deciderPubkey?: string,
     requesterPubkey?: string,
   ): Promise<void> {
+    if (this.daemonApi) {
+      const publishStatus = async () => {
+        if (
+          requesterPubkey &&
+          (status === 'allowed' || status === 'failed' || status === 'expired')
+        ) {
+          await this.daemonApi!.execute('postPermissionExecution', {
+            roomId: tlcChannelId,
+            principalId: requesterPubkey,
+            permissionId,
+            status: status === 'allowed' ? 'succeeded' : 'failed',
+            result: message,
+          });
+        }
+        await this.daemonApi!.execute('postRoomMessage', {
+          roomId: tlcChannelId,
+          requestId,
+          text: message,
+          presentation: 'system',
+        });
+      };
+      return publishStatus();
+    }
     return postControlMessage('permission-status', tlcChannelId, this.agentIdentity, message, [
       ['t', WRITE_PERMISSION_REQUEST_TAG],
       ['permission', permissionId],
@@ -8922,9 +8988,52 @@ export class Body {
     options: {
       ownerOnly?: boolean;
       allowedResponders?: ReadonlySet<string>;
+      principalId?: string;
       captureDecider?: (pubkey: string) => void;
     } = {},
   ): Promise<'allow' | 'deny' | 'timeout'> {
+    if (this.daemonApi) {
+      if (!options.principalId) throw new Error('monolith permission wait requires a principal');
+      const deadline = Date.now() + timeoutMs;
+      return new Promise<'allow' | 'deny' | 'timeout'>((resolvePromise, rejectPromise) => {
+        let settled = false;
+        let polling = false;
+        const finish = (result: 'allow' | 'deny' | 'timeout') => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          clearInterval(backstop);
+          resolvePromise(result);
+        };
+        const pollOnce = async () => {
+          if (settled || polling) return;
+          polling = true;
+          try {
+            const authority = await this.daemonApi!.execute('getPermissionAuthority', {
+              roomId: tlcChannelId,
+              principalId: options.principalId!,
+              permissionId,
+            });
+            if (authority.status === 'authorized') finish('allow');
+            if (authority.status === 'denied') finish('deny');
+          } catch (error) {
+            if (!isTransientPermissionPollError(error)) {
+              settled = true;
+              clearTimeout(timer);
+              clearInterval(backstop);
+              rejectPromise(error);
+            }
+          } finally {
+            polling = false;
+          }
+        };
+        const timer = setTimeout(() => finish('timeout'), Math.max(0, deadline - Date.now()));
+        timer.unref?.();
+        const backstop = setInterval(() => void pollOnce(), WRITE_PERMISSION_BACKSTOP_POLL_MS);
+        backstop.unref?.();
+        void pollOnce();
+      });
+    }
     const startedAt = Math.floor(Date.now() / 1000) - 1;
     const deadline = Date.now() + timeoutMs;
 

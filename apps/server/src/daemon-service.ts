@@ -608,17 +608,98 @@ export class DaemonService {
   }
   private async permissionRequest(input: Input<'postPermissionRequest'>, agentId: string) {
     await this.access(input.roomId, agentId);
-    await this.database.query(
-      `INSERT INTO permission_authority(permission_id,room_id,principal_id,request_id,scope,status) VALUES($1,$2,$3,$4,$5::jsonb,'pending') ON CONFLICT(permission_id) DO NOTHING`,
-      [
-        input.permissionId,
-        input.roomId,
-        input.principalId,
-        input.requestId,
-        JSON.stringify(input.scope),
-      ],
-    );
-    return this.writeResult();
+    const scope = input.scope;
+    const repository =
+      scope.type === 'room.create'
+        ? scope.repository?.key
+        : scope.type === 'money.spend'
+          ? scope.merchant
+          : scope.type === 'schedule.change'
+            ? scope.scheduleId
+            : scope.type === 'mission.control'
+              ? scope.missionId
+              : scope.target;
+    const tool =
+      scope.type === 'operation.execute' ||
+      scope.type === 'message.send' ||
+      scope.type === 'content.publish'
+        ? scope.connectorId
+        : scope.type;
+    const messageId = await this.database.transaction(async (database) => {
+      const inserted = await database.query(
+        `INSERT INTO permission_authority(permission_id,room_id,principal_id,request_id,scope,status)
+         VALUES($1,$2,$3,$4,$5::jsonb,'pending') ON CONFLICT(permission_id) DO NOTHING
+         RETURNING permission_id`,
+        [
+          input.permissionId,
+          input.roomId,
+          input.principalId,
+          input.requestId,
+          JSON.stringify(scope),
+        ],
+      );
+      if (!inserted.rowCount) {
+        return (
+          await database.query<{ id: string }>(
+            `SELECT id FROM messages WHERE room_id=$1 AND card_type='permission'
+             AND card->>'permissionId'=$2 ORDER BY created_at DESC,id DESC LIMIT 1`,
+            [input.roomId, input.permissionId],
+          )
+        ).rows[0]?.id;
+      }
+      const identities = await database.query<{
+        id: string;
+        kind: 'human' | 'agent';
+        name: string;
+        handle: string | null;
+        avatar: string | null;
+      }>(`SELECT id,kind,name,handle,avatar FROM identities WHERE id=ANY($1::text[])`, [
+        [input.principalId, agentId],
+      ]);
+      const requesterRow = identities.rows.find((row) => row.id === input.principalId);
+      const agentRow = identities.rows.find((row) => row.id === agentId);
+      if (!requesterRow || requesterRow.kind !== 'human' || !agentRow || agentRow.kind !== 'agent')
+        throw new Error('permission identities are invalid');
+      const requester = {
+        pubkey: requesterRow.id,
+        kind: requesterRow.kind,
+        name: requesterRow.name,
+        ...(requesterRow.handle ? { handle: requesterRow.handle } : {}),
+        ...(requesterRow.avatar ? { avatar: requesterRow.avatar } : {}),
+      };
+      const agent = {
+        pubkey: agentRow.id,
+        kind: agentRow.kind,
+        name: agentRow.name,
+        ...(agentRow.handle ? { handle: agentRow.handle } : {}),
+        ...(agentRow.avatar ? { avatar: agentRow.avatar } : {}),
+      };
+      const created = id();
+      await database.query(
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,request_id,card_type,card)
+         VALUES($1,$2,$3,'','card',$4,'permission',$5::jsonb)`,
+        [
+          created,
+          input.roomId,
+          agentId,
+          input.requestId,
+          JSON.stringify({
+            permissionId: input.permissionId,
+            requestId: input.requestId,
+            agent,
+            requester,
+            tool,
+            ...(repository ? { repository } : {}),
+            ...(scope.type === 'money.spend' ? { purpose: 'squire-spending' } : {}),
+            status: 'pending',
+          }),
+        ],
+      );
+      return created;
+    });
+    if (!messageId) throw new Error('permission request is invalid');
+    this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'permission' });
+    return { id: messageId, createdAt: Math.floor(Date.now() / 1000) };
   }
   private async permissionExecution(input: Input<'postPermissionExecution'>, agentId: string) {
     await this.access(input.roomId, agentId);

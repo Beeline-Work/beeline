@@ -176,7 +176,7 @@ describe('app-authorized agent connect', () => {
   useAuthServerFixture();
 
   const payload = {
-    pairing_code: 'BUZZ-1234ABCD-5678EF90',
+    pairing_code: '1234ABCD-5678EF90',
     harness: 'codex',
     model: 'gpt-5.4',
     soul: 'Brisk, practical, and kind.',
@@ -225,6 +225,26 @@ describe('app-authorized agent connect', () => {
     });
     expect(claimed?.agentPubkey).toBe(response.json<Record<string, string>>().agent_pubkey);
   });
+
+  it.each(['BUZZ-1234ABCD-5678EF90', 'not-a-pairing-code'])(
+    'accepts legacy pairing codes but rejects garbage (%s)',
+    async (pairingCode) => {
+      state.agentPairingClaim = async () => ({
+        status: 'claimed',
+        workspaceId: WORKSPACE,
+        workspaceName: 'Brass Works',
+        pairedBy: 'a'.repeat(64),
+        daemonExchangeToken: `bde_${'d'.repeat(43)}`,
+      });
+      const response = await app.inject({
+        method: 'POST',
+        url: '/auth/agent/connect',
+        headers: { host: alphaTenant.host },
+        payload: { ...payload, pairing_code: pairingCode },
+      });
+      expect(response.statusCode).toBe(pairingCode.startsWith('BUZZ-') ? 200 : 400);
+    },
+  );
 
   it.each([
     ['expired', 410, 'pairing code has expired'],

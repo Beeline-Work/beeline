@@ -27,7 +27,7 @@ function promptFixture(answers: string[]) {
 }
 
 describe('connect wizard', () => {
-  it('exchanges the app pairing code in one request without a browser ceremony', async () => {
+  it('passes a prefix-free app pairing code through in one request without a browser ceremony', async () => {
     const fetchImpl = vi.fn(
       async () =>
         new Response(
@@ -51,7 +51,7 @@ describe('connect wizard', () => {
     await expect(
       requestConnectGrant(
         'https://server.example',
-        'buzz-1234abcd-5678ef90',
+        '1234abcd-5678ef90',
         { name: 'Scout', harness: 'codex', model: 'gpt-5.4', soul: 'Brisk and kind.' },
         fetchImpl as unknown as typeof fetch,
       ),
@@ -59,7 +59,7 @@ describe('connect wizard', () => {
     expect(fetchImpl).toHaveBeenCalledOnce();
     expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://server.example/auth/agent/connect');
     expect(JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body))).toEqual({
-      pairing_code: 'BUZZ-1234ABCD-5678EF90',
+      pairing_code: '1234ABCD-5678EF90',
       harness: 'codex',
       model: 'gpt-5.4',
       soul: 'Brisk and kind.',
@@ -78,12 +78,25 @@ describe('connect wizard', () => {
     await expect(
       requestConnectGrant(
         'https://server.example',
-        'BUZZ-1234ABCD-5678EF90',
+        '1234ABCD-5678EF90',
         { name: 'Scout', harness: 'codex', model: 'gpt-5.4', soul: 'Brisk and kind.' },
         fetchImpl as unknown as typeof fetch,
       ),
     ).rejects.toThrow('pairing code has expired');
     expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it('rejects an invalid pairing code before making a connection request', async () => {
+    const fetchImpl = vi.fn();
+    expect(() =>
+      requestConnectGrant(
+        'https://server.example',
+        'not-a-pairing-code',
+        { name: 'Scout', harness: 'codex', model: 'gpt-5.4', soul: 'Brisk and kind.' },
+        fetchImpl as unknown as typeof fetch,
+      ),
+    ).toThrow('invalid pairing code');
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it('uses a harness-native provider without asking for credentials', async () => {

@@ -6,6 +6,10 @@
  * merge gate can query: role mistakes never turn that key into a human approver.
  */
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
+import {
+  createAgentPairingCode as createCanonicalAgentPairingCode,
+  normalizeAgentPairingCode,
+} from '@beeline/api-contract/phone';
 import { communityChannels, communityMembers, getCommunity, inviteTokenHash } from './community.js';
 import { publishEvent, queryEvents } from './http.js';
 import {
@@ -46,7 +50,6 @@ import {
 } from './channel.js';
 
 const DEFAULT_PAIRING_TTL_SECONDS = 10 * 60;
-const PAIRING_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const KIND_NOSTR_PROFILE = 0;
 let lastSoulTimestamp = 0;
 
@@ -66,9 +69,7 @@ function optionalHttpUrl(value: unknown): string | undefined {
 function randomPairingCode(): string {
   const bytes = new Uint8Array(8);
   globalThis.crypto.getRandomValues(bytes);
-  let value = '';
-  for (const byte of bytes) value += PAIRING_ALPHABET[byte! % PAIRING_ALPHABET.length];
-  return `BUZZ-${value.slice(0, 4)}-${value.slice(4)}`;
+  return createCanonicalAgentPairingCode(bytes);
 }
 
 function pairingExpiry(expiresInSeconds: number, createdAt: number): number {
@@ -381,8 +382,8 @@ export async function redeemAgentPairingCode(
   rawCode: string,
   options: Pick<CreateAgentOptions, 'displayName' | 'personality'> = {},
 ): Promise<RedeemAgentPairingResult> {
-  const code = rawCode.trim().toUpperCase();
-  if (!/^BUZZ-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/.test(code)) {
+  const code = normalizeAgentPairingCode(rawCode);
+  if (!code) {
     throw new Error('invalid agent pairing code');
   }
   const tokenHash = inviteTokenHash(code);

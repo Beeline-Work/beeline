@@ -21,36 +21,45 @@ test('landing page ships from the production web root with local assets', () => 
     ...html.matchAll(/src=["'](assets\/landing\/[^"']+)["']/g),
     ...html.matchAll(/url\(["'](assets\/landing\/[^"']+)["']\)/g),
   ].map(([, asset]) => asset);
-  assert.ok(localAssetPaths.length >= 9, 'expected self-hosted fonts and screenshots');
+  assert.ok(localAssetPaths.length >= 8, 'expected self-hosted fonts and screenshots');
   for (const asset of localAssetPaths) {
     assert.ok(fs.existsSync(path.join(WEB, asset)), `missing landing asset: ${asset}`);
   }
 });
 
 test('landing page keeps store destinations at one replacement seam', () => {
-  assert.match(html, /const STORE_URLS = \{/);
-  assert.match(html, /appStore: ["']#ios-coming-soon["']/);
-  assert.match(html, /googlePlay: ["']#android-coming-soon["']/);
-  assert.equal((html.match(/const STORE_URLS/g) ?? []).length, 1);
-  assert.equal((html.match(/data-store="appStore"/g) ?? []).length, 2);
-  assert.equal((html.match(/data-store="googlePlay"/g) ?? []).length, 2);
+  assert.match(html, /const APP_STORE_URL = ["']#ios-coming-soon["'];/);
+  assert.match(html, /const GOOGLE_PLAY_URL = ["']#android-coming-soon["'];/);
+  assert.equal((html.match(/const APP_STORE_URL/g) ?? []).length, 1);
+  assert.equal((html.match(/const GOOGLE_PLAY_URL/g) ?? []).length, 1);
+  assert.equal((html.match(/data-store="app-store"\s+href/g) ?? []).length, 1);
+  assert.equal((html.match(/data-store="google-play"\s+href/g) ?? []).length, 1);
 });
 
 test('landing page carries the approved product voice and developer hook', () => {
-  assert.match(html, /<h1 id="hero-title">workspace for all intelligence<\/h1>/);
-  assert.match(html, /--canvas: #14091a;/);
+  assert.match(html, /<span>workspace<\/span>/);
+  assert.match(html, /<span>for all<\/span>/);
+  assert.match(html, /<span>intelligence<\/span>/);
+  assert.match(html, /--aubergine: #14091a;/);
   assert.match(html, /--brass: #d7af5f;/);
-  assert.match(html, /Steer and review your AI coding agents from your phone\./);
+  assert.match(html, /Your people and your agents finally share the work\./);
+  assert.match(html, /The human \+ agent assembly line/);
+  assert.match(html, /Agents execute · humans accept/);
   assert.match(html, /npx usebeeline connect/);
   assert.match(html, /<main id="main">/);
   assert.match(html, /prefers-reduced-motion/);
   assert.doesNotMatch(html, /https:\/\/fonts\./);
 });
 
-test('phone typography avoids tracked glyphs clipping outside their text boxes', () => {
+test('phone typography and gutters keep headings inside a 384px viewport', () => {
   const mobileCss = html.match(
     /@media \(max-width: 620px\) \{([\s\S]+?)\n      \}\n      @media \(prefers-reduced-motion/,
   )?.[1];
   assert.ok(mobileCss, 'expected the phone-width CSS block');
-  assert.match(mobileCss, /\.nav-links a,\s+h1,\s+h2 \{\s+letter-spacing: 0;/);
+  assert.match(mobileCss, /--page: calc\(100vw - 32px\)/);
+  assert.match(mobileCss, /\.hero h1 \{[\s\S]*?font-size: clamp\(2\.6rem, 12\.6vw, 3\.55rem\);/);
+  assert.match(
+    mobileCss,
+    /\.thesis h2,[\s\S]*?\.connect h2 \{[\s\S]*?font-size: clamp\(2\.4rem, 11\.5vw, 3\.2rem\);/,
+  );
 });

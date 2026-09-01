@@ -32,10 +32,10 @@ describe('connect wizard', () => {
       async () =>
         new Response(
           JSON.stringify({
-            pairing_code: 'BUZZ-1234ABCD-5678EF90',
             agent_secret_key: '1'.repeat(64),
             agent_pubkey: '2'.repeat(64),
             body_secret_key: '3'.repeat(64),
+            daemon_exchange_token: `bde_${'5'.repeat(43)}`,
             agent_name: 'Scout',
             workspace_id: 'workspace-id',
             workspace_name: 'Builders',

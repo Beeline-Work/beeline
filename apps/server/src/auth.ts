@@ -136,10 +136,11 @@ export class TokenAuth {
 
   async createDaemonExchange(
     agentId: string,
+    database: Pick<SqlDatabase, 'query'> = this.database,
   ): Promise<{ exchangeToken: string; expiresAt: number }> {
     const exchangeToken = opaque('bde');
     const expiresAt = this.now().getTime() + DAEMON_EXCHANGE_LIFETIME_MS;
-    await this.database.query(
+    await database.query(
       `INSERT INTO daemon_token_exchanges(exchange_hash, agent_id, expires_at) VALUES ($1, $2, $3)`,
       [tokenHash(exchangeToken), agentId, new Date(expiresAt)],
     );

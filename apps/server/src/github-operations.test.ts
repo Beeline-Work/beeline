@@ -286,9 +286,24 @@ describe('GitHub phone operations', () => {
       false,
     );
 
-    await operations.refresh(HUMAN);
+    const sealedUserToken = (
+      await database.query<{ encrypted_token: string }>(
+        `DELETE FROM github_user_tokens WHERE subject='42' RETURNING encrypted_token`,
+      )
+    ).rows[0]?.encrypted_token;
+    const resolveSealedUserToken = vi.fn(async () => sealedUserToken);
+    const reconciler = new GitHubOperations(
+      database,
+      oauth,
+      app,
+      'secret',
+      resolveSealedUserToken,
+    );
+
+    await reconciler.refresh(HUMAN);
 
     expect(app.listInstallations).toHaveBeenCalledOnce();
+    expect(resolveSealedUserToken).toHaveBeenCalledWith('42');
     expect(app.listUserInstallationIds).toHaveBeenCalledWith('secret-user-token');
     expect(
       (

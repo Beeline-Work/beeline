@@ -91,6 +91,8 @@ export type UpdateWorkspaceInput = WorkspaceInput & {
 export type CreateRoomInput = WorkspaceInput & {
   readonly name: string;
   readonly visibility?: 'public' | 'invite-only';
+  /** Optional repository from listGitHubRepositories, bound atomically with Room creation. */
+  readonly repositoryId?: number;
 };
 export type UpdateRoomInput = RoomInput & {
   readonly name?: string;

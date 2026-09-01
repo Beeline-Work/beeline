@@ -125,6 +125,22 @@ export interface AuthServerOptions {
     tenant: AuthTenant,
     input: { agentPubkey: string; roomId: string; relayAuthorizations: readonly string[] },
   ) => Promise<GitHubRoomTokenAuthorityResult>;
+  /** Atomically reserves an app-minted pairing code for the generated agent. */
+  claimAgentPairingCode?: (input: {
+    code: string;
+    agentPubkey: string;
+    agentName: string;
+    model: string;
+    soul: string;
+  }) => Promise<
+    | {
+        status: 'claimed';
+        workspaceId: string;
+        workspaceName: string;
+        pairedBy: string;
+      }
+    | { status: 'not_found' | 'expired' | 'already_claimed' }
+  >;
 }
 
 class ProtocolError extends Error {

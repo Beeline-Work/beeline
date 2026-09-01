@@ -308,6 +308,26 @@ describe('separate response, cache, and outbox lifetimes', () => {
     expect(outbox.list()).toEqual([]);
   });
 
+  it('rejects an unsigned event when no transport-specific policy accepts it', async () => {
+    const identity = createIdentity('outbox-unsigned');
+    const signed = signEvent(
+      { pubkey: identity.publicKey, created_at: 10, kind: 9, tags: [['h', ROOM]], content: 'no' },
+      identity.secretKey,
+    );
+    const event = { ...signed, sig: '' };
+    const outbox = new SignedEventOutbox({
+      load: async () => [],
+      save: async () => {},
+    });
+
+    await expect(
+      outbox.enqueue(event, {
+        ...row(event.id, event.created_at),
+        author: { pubkey: identity.publicKey, kind: 'human', name: 'Ada' },
+      }),
+    ).rejects.toThrow('outbox requires one pre-signed event and its exact render id');
+  });
+
   it('keeps an unreconciled signed send actionable, while dropping legacy-shaped records', async () => {
     const identity = createIdentity('outbox-actionable');
     const event = signEvent(

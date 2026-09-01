@@ -536,7 +536,10 @@ describe('room owns the repo (Stage 1)', () => {
 
     expect(open).not.toHaveBeenCalled();
     expect(create).not.toHaveBeenCalled();
-    expect(published).toHaveLength(0);
+    expect(published).toHaveLength(1);
+    expect(published[0]?.content).toBe(
+      'This Room has no repository yet - bind one in Room settings.',
+    );
   });
 
   it('reaps a stray corner worktree while preserving a live one', async () => {

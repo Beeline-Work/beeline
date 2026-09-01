@@ -120,15 +120,26 @@ export type UpdatePersonProfileInput = {
 export type PersonProfileResult = UpdatePersonProfileInput & { readonly personId: string };
 export type SetRoomRepositoryInput = RoomInput & {
   readonly key: string;
+  readonly name: string;
   readonly remote: string;
   readonly targetBranch: string;
   readonly githubInstallationId?: number;
 };
 export type SetRoomTargetBranchInput = RoomInput & { readonly targetBranch: string };
 export type SetRoomGitHubEventsInput = RoomInput & { readonly enabled: boolean };
-export type RoomRepositoryResult = SetRoomRepositoryInput & {
+export type RoomRepositoryResult = {
+  readonly channelId: string;
+  readonly binding: {
+    readonly key: string;
+    readonly name: string;
+    readonly remote: string;
+    readonly localOnly: false;
+    readonly githubInstallationId?: number;
+  };
+  readonly targetBranch: string;
   readonly updatedAt: number;
   readonly githubEventsEnabled: boolean;
+  readonly source: 'config';
 };
 export type AuthCapabilitiesResult = { readonly github: boolean };
 export type BeginBrowserAuthInput = { readonly redirectUri: string; readonly state: string };
@@ -151,8 +162,20 @@ export type GitHubRepository = {
   readonly installationId: number;
   readonly defaultBranch: string;
 };
+export type GitHubInstallation = {
+  readonly installationId: number;
+  readonly accountId: string;
+  readonly accountLogin: string;
+  readonly accountType: 'User' | 'Organization';
+  readonly accountAvatarUrl?: string;
+  readonly repositorySelection: 'all' | 'selected';
+  readonly status: 'active' | 'revoked' | 'suspended';
+  readonly repositoryCount: number;
+  readonly manageUrl: string;
+};
 export type GitHubRepositoryListResult = {
   readonly installed: boolean;
+  readonly installations: readonly GitHubInstallation[];
   readonly repositories: readonly GitHubRepository[];
 };
 export type BeginGitHubInstallationInput = {

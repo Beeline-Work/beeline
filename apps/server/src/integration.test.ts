@@ -11,6 +11,7 @@ import { LiveHub } from './live.js';
 import { createBeelineServer } from './server.js';
 import { PushDeliveryLoop } from './background.js';
 import { isCommunityInviteToken } from '@beeline/api-contract/phone';
+import type { GitHubOperations } from './github-operations.js';
 
 const HUMAN = createHash('sha256').update('github:owner').digest('hex');
 const AGENT = 'b'.repeat(64);
@@ -25,6 +26,8 @@ describe('monolith integration', () => {
   let accessToken: string;
   let daemonToken: string;
   let sendPushTest: ReturnType<typeof vi.fn>;
+  let completeInstallation: ReturnType<typeof vi.fn>;
+  let processWebhook: ReturnType<typeof vi.fn>;
   beforeEach(async () => {
     database = new PgliteDatabase();
     await migrate(database);
@@ -47,10 +50,24 @@ describe('monolith integration', () => {
         ? { subject: 'recipient', login: 'recipient', name: 'Recipient' }
         : { subject: 'owner', login: 'owner', name: 'Owner' },
     );
+    const github = {
+      refresh: vi.fn(async () => undefined),
+      beginInstallation: vi.fn(async () => ({
+        url: 'https://github.com/apps/beeline-test/installations/new?state=server-state',
+      })),
+      createRepository: vi.fn(async (_viewerId, input: { installationId: number; name: string }) => ({
+        id: 102,
+        fullName: `owner/${input.name}`,
+        installationId: input.installationId,
+        defaultBranch: 'main',
+      })),
+    } as unknown as GitHubOperations;
     sendPushTest = vi.fn(async () => undefined);
-    const phone = new PhoneService(database, 'http://placeholder', undefined, sendPushTest);
+    const phone = new PhoneService(database, 'http://placeholder', github, sendPushTest);
     const live = new LiveHub();
     const daemon = new DaemonService(database, live);
+    completeInstallation = vi.fn(async () => 'beeline://buzz/github-installation?installed=1');
+    processWebhook = vi.fn(async () => undefined);
     server = createBeelineServer({
       database,
       auth,
@@ -61,6 +78,8 @@ describe('monolith integration', () => {
       github: {
         webhookSecret: 'webhook-secret',
         roomToken: async () => ({ token: 'github-room-token', expiresAt: Date.now() + 60_000 }),
+        completeInstallation,
+        onWebhook: processWebhook,
       },
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -529,6 +548,132 @@ describe('monolith integration', () => {
     const duplicate = await send();
     expect(duplicate.status).toBe(200);
     expect(((await duplicate.json()) as { duplicate: boolean }).duplicate).toBe(true);
+    expect(processWebhook).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the phone GitHub repository contract aligned through the real HTTP surface', async () => {
+    await database.query(
+      `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,account_avatar_url,repository_selection,status) VALUES(77,$1,'42','owner','User','https://avatars.test/owner','selected','active')`,
+      [HUMAN],
+    );
+    await database.query(
+      `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch) VALUES(101,77,'owner/widgets','trunk')`,
+    );
+
+    const listed = await request('/v1/phone/operations/listGitHubRepositories', 'POST', {});
+    expect(listed.status).toBe(200);
+    expect(await listed.json()).toEqual({
+      installed: true,
+      installations: [
+        {
+          installationId: 77,
+          accountId: '42',
+          accountLogin: 'owner',
+          accountType: 'User',
+          accountAvatarUrl: 'https://avatars.test/owner',
+          repositorySelection: 'selected',
+          status: 'active',
+          repositoryCount: 1,
+          manageUrl: 'https://github.com/settings/installations/77',
+        },
+      ],
+      repositories: [
+        { id: 101, fullName: 'owner/widgets', installationId: 77, defaultBranch: 'trunk' },
+      ],
+    });
+
+    const begun = await request('/v1/phone/operations/beginGitHubInstallation', 'POST', {
+      redirectUri: 'beeline://buzz/github-installation',
+    });
+    expect(begun.status).toBe(200);
+    expect(await begun.json()).toEqual({
+      url: 'https://github.com/apps/beeline-test/installations/new?state=server-state',
+    });
+
+    const created = await request('/v1/phone/operations/createGitHubRepository', 'POST', {
+      installationId: 77,
+      name: 'new-repo',
+      private: true,
+    });
+    expect(created.status).toBe(200);
+    expect(await created.json()).toEqual({
+      id: 102,
+      fullName: 'owner/new-repo',
+      installationId: 77,
+      defaultBranch: 'main',
+    });
+
+    const linked = await request('/v1/phone/operations/setRoomRepository', 'POST', {
+      roomId: ROOM,
+      key: 'github:101',
+      name: 'owner/widgets',
+      remote: 'git://github.com/owner/widgets',
+      targetBranch: 'trunk',
+      githubInstallationId: 77,
+    });
+    expect(linked.status).toBe(200);
+    expect(await linked.json()).toEqual(
+      expect.objectContaining({
+        channelId: ROOM,
+        binding: {
+          key: 'github:101',
+          name: 'owner/widgets',
+          remote: 'git://github.com/owner/widgets',
+          localOnly: false,
+          githubInstallationId: 77,
+        },
+        targetBranch: 'trunk',
+        githubEventsEnabled: true,
+        source: 'config',
+      }),
+    );
+
+    const targeted = await request('/v1/phone/operations/setRoomTargetBranch', 'POST', {
+      roomId: ROOM,
+      targetBranch: 'release',
+    });
+    expect(targeted.status).toBe(200);
+    expect((await targeted.json()).targetBranch).toBe('release');
+
+    const events = await request('/v1/phone/operations/setRoomGitHubEvents', 'POST', {
+      roomId: ROOM,
+      enabled: false,
+    });
+    expect(events.status).toBe(200);
+    expect((await events.json()).githubEventsEnabled).toBe(false);
+
+    const room = await request(`/v1/phone/rooms/${ROOM}`);
+    expect((await room.json()).repository).toEqual(
+      expect.objectContaining({
+        key: 'github:101',
+        name: 'owner/widgets',
+        targetBranch: 'release',
+        githubEventsEnabled: false,
+      }),
+    );
+
+    const invalid = await request('/v1/phone/operations/setRoomRepository', 'POST', {
+      roomId: ROOM,
+      key: 'github:999',
+      name: 'owner/not-installed',
+      remote: 'git://github.com/owner/not-installed',
+      targetBranch: 'main',
+      githubInstallationId: 77,
+    });
+    expect(invalid.status).toBe(403);
+    expect(await invalid.json()).toEqual({
+      error: 'GitHub repository access denied',
+    });
+  });
+
+  it('completes the GitHub App callback on the monolith route', async () => {
+    const response = await fetch(
+      `${origin}/v1/github/install/callback?state=server-state&installation_id=77`,
+      { redirect: 'manual' },
+    );
+    expect(response.status).toBe(302);
+    expect(response.headers.get('location')).toBe('beeline://buzz/github-installation?installed=1');
+    expect(completeInstallation).toHaveBeenCalledWith('server-state', 77);
   });
 });
 

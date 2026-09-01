@@ -16,6 +16,27 @@ import type {
 import type { PhoneOperationMap } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import type { GitHubOperations } from './github-operations.js';
+import { collapsePermissionCards } from '@beeline/push-gateway/projection';
+
+const DURABLE_KINDS = [0, 9, 9000, 9001, 9002, 9007, 9008, 30078, 39000, 39001, 39002];
+
+function roomFilters(
+  roomId: string,
+  workspaceId: string,
+  familyIds: readonly string[],
+  members: readonly RoomViewMember[],
+) {
+  const h = [...new Set([workspaceId, roomId, ...familyIds])];
+  const authors = [...new Set(members.map((member) => member.identity.pubkey))];
+  return [
+    { kinds: DURABLE_KINDS, '#h': h },
+    ...(authors.length ? [{ kinds: [0], authors }] : []),
+    {
+      kinds: [30078],
+      '#d': [`agent-draft:${roomId}`, `agent-thought:${roomId}`, `agent-presence:${roomId}`],
+    },
+  ];
+}
 
 type Input<Name extends keyof PhoneOperationMap> = PhoneOperationMap[Name]['input'];
 type Output<Name extends keyof PhoneOperationMap> = PhoneOperationMap[Name]['output'];
@@ -39,8 +60,11 @@ interface RoomRow {
   archived_at: Date | null;
   direct_participants: string[] | null;
   repository_key: string | null;
+  repository_name: string | null;
   repository_remote: string | null;
   repository_target_branch: string;
+  repository_updated_at: Date | null;
+  repository_resolution: 'repository' | 'none' | 'unverified';
   github_installation_id: string | null;
   github_events_enabled: boolean;
   created_at: Date;
@@ -377,17 +401,33 @@ export class PhoneService {
     );
     const room = roomResult.rows[0];
     if (!room) return null;
-    const messages = await this.messageRows(roomId, undefined, 30);
     const members = await this.members(room.workspace_id, roomId);
-    const viewerIdentity = await this.requireIdentity(viewerId);
     const turns = await this.database.query<{
       request_id: string;
       agent_id: string;
       status: 'working' | 'complete' | 'failed';
       created_at: Date;
       generation_id: string | null;
-    }>(`SELECT * FROM agent_turns WHERE room_id=$1 ORDER BY created_at DESC`, [roomId]);
-    const corners = await this.readCorners(roomId, viewerId);
+    }>(
+      `SELECT DISTINCT ON(agent_id) request_id,agent_id,status,created_at,generation_id
+       FROM agent_turns WHERE room_id=$1 ORDER BY agent_id,created_at DESC,request_id DESC`,
+      [roomId],
+    );
+    const latestAgentTurns = turns.rows
+      .map((turn) => ({
+        requestId: turn.request_id,
+        agentPubkey: turn.agent_id,
+        status: turn.status,
+        createdAt: unix(turn.created_at),
+        ...(turn.generation_id ? { generationId: turn.generation_id } : {}),
+      }))
+      .sort(
+        (left, right) =>
+          right.createdAt - left.createdAt || left.agentPubkey.localeCompare(right.agentPubkey),
+      );
+    const messages = await this.roomMessages(roomId, latestAgentTurns);
+    const familyRoomId = room.parent_id ?? roomId;
+    const corners = await this.readCorners(familyRoomId, viewerId, true);
     const parent = room.parent_id
       ? (await this.database.query<RoomRow>(`SELECT * FROM rooms WHERE id=$1`, [room.parent_id]))
           .rows[0]
@@ -401,41 +441,56 @@ export class PhoneService {
     const plan = facts?.plan;
     const paintedRoom = roomHeader(room, this.publicOrigin);
     const briefing = room.parent_id
-      ? (
-          await this.database.query<
-            MessageRow & {
-              author_kind: 'human' | 'agent';
-              author_name: string;
-              author_handle: string | null;
-              author_avatar: string | null;
-            }
-          >(
-            `SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,i.avatar author_avatar
+      ? collapsePermissionCards(
+          (
+            await this.database.query<
+              MessageRow & {
+                author_kind: 'human' | 'agent';
+                author_name: string;
+                author_handle: string | null;
+                author_avatar: string | null;
+              }
+            >(
+              `SELECT m.*,
+               COALESCE(m.legacy_event->>'authorKind',i.kind) author_kind,
+               COALESCE(m.legacy_event->>'authorName',i.name) author_name,
+               CASE WHEN m.legacy_event IS NOT NULL THEN m.legacy_event->>'authorHandle' ELSE i.handle END author_handle,
+               CASE WHEN m.legacy_event IS NOT NULL THEN m.legacy_event->>'authorAvatar' ELSE i.avatar END author_avatar
              FROM messages m JOIN identities i ON i.id=m.author_id
              WHERE m.room_id=$1 AND m.created_at<=$2
+               AND (
+                 NOT EXISTS(SELECT 1 FROM legacy_room_events all_legacy WHERE all_legacy.room_id=$1)
+                 OR m.id IN(
+                   SELECT page.id FROM legacy_room_events page
+                   WHERE page.room_id=$1 AND page.kind=9 AND page.raw_page_candidate=true
+                     AND page.created_at<=$2
+                   ORDER BY page.created_at DESC,page.id ASC LIMIT 40
+                 )
+               )
              ORDER BY m.created_at DESC,m.id ASC LIMIT 10`,
-            [room.parent_id, room.created_at],
-          )
-        ).rows
-          .reverse()
-          .map((row) => projectedMessage(row, this.publicOrigin))
+              [room.parent_id, room.created_at],
+            )
+          ).rows
+            .map((row) => projectedMessage(row, this.publicOrigin))
+            .sort(
+              (left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id),
+            ),
+        )
       : [];
     return {
       room:
         room.parent_id && !paintedRoom.about && facts?.objective
           ? { ...paintedRoom, about: facts.objective }
           : paintedRoom,
-      messages: messages.reverse().map((row) => projectedMessage(row, this.publicOrigin)),
+      messages,
       members,
-      latestAgentTurns: turns.rows.map((turn) => ({
-        requestId: turn.request_id,
-        agentPubkey: turn.agent_id,
-        status: turn.status,
-        createdAt: unix(turn.created_at),
-        ...(turn.generation_id ? { generationId: turn.generation_id } : {}),
-      })),
+      latestAgentTurns,
       viewer: {
-        identity: viewerIdentity,
+        identity: members.find((member) => member.identity.pubkey === viewerId)?.identity ?? {
+          pubkey: viewerId,
+          kind: 'human',
+          name: `Person ${viewerId.slice(0, 8)}`,
+        },
         role: room.viewer_role,
         permissions: { send: !room.archived_at, manage: room.viewer_role !== 'member' },
       },
@@ -445,25 +500,38 @@ export class PhoneService {
       ...(parent ? { parent: roomHeader(parent, this.publicOrigin) } : {}),
       briefing,
       ...(room.parent_id && plan ? { cornerPlan: plan } : {}),
-      ...(room.repository_key && room.repository_remote
+      ...((parent ?? room).repository_key && (parent ?? room).repository_remote
         ? {
             repository: {
-              key: room.repository_key,
-              name: room.repository_key.split('/').at(-1) ?? room.repository_key,
-              remote: room.repository_remote,
-              targetBranch: room.repository_target_branch,
-              updatedAt: unix(room.updated_at),
-              ...(room.github_installation_id
-                ? { githubInstallationId: Number(room.github_installation_id) }
+              key: (parent ?? room).repository_key!,
+              name:
+                (parent ?? room).repository_name ??
+                (parent ?? room).repository_key!.split('/').at(-1) ??
+                (parent ?? room).repository_key!,
+              remote: (parent ?? room).repository_remote!,
+              targetBranch: (parent ?? room).repository_target_branch,
+              updatedAt: unix(
+                (parent ?? room).repository_updated_at ?? (parent ?? room).updated_at,
+              ),
+              ...((parent ?? room).github_installation_id
+                ? { githubInstallationId: Number((parent ?? room).github_installation_id) }
                 : {}),
-              githubEventsEnabled: room.github_events_enabled,
+              githubEventsEnabled: (parent ?? room).github_events_enabled,
             },
           }
         : {}),
-      repositoryResolution: room.repository_key ? 'repository' : 'none',
+      repositoryResolution: (parent ?? room).repository_resolution,
       ...(room.parent_id ? { cornerLifecycle: await this.cornerLifecycle(room.id) } : {}),
       corners: corners?.corners.map(({ latestMessage: _latestMessage, ...corner }) => corner) ?? [],
-      watchFilters: [],
+      watchFilters: roomFilters(
+        roomId,
+        room.workspace_id,
+        [
+          ...(room.parent_id ? [room.parent_id] : []),
+          ...(corners?.corners.map((item) => item.corner.id) ?? []),
+        ],
+        members,
+      ),
     };
   }
 
@@ -485,7 +553,11 @@ export class PhoneService {
     };
   }
 
-  async readCorners(roomId: string, viewerId: string): Promise<CornerListView | null> {
+  async readCorners(
+    roomId: string,
+    viewerId: string,
+    roomViewFamilyOrder = false,
+  ): Promise<CornerListView | null> {
     const parent = await this.database.query<
       RoomRow & { viewer_role: 'owner' | 'admin' | 'member' }
     >(
@@ -521,8 +593,15 @@ export class PhoneService {
       LEFT JOIN LATERAL (SELECT * FROM messages WHERE room_id=c.id AND presentation='message' ORDER BY created_at DESC,id DESC LIMIT 1) lm ON true
       LEFT JOIN identities li ON li.id=lm.author_id
       LEFT JOIN LATERAL (
-        SELECT i.id identity_id,i.name,i.handle,i.avatar FROM identities i
-        WHERE i.id=c.created_by AND i.kind='agent' LIMIT 1
+        SELECT i.id identity_id,
+          COALESCE(member.identity_profile->>'name',i.name) name,
+          CASE WHEN member.identity_profile IS NOT NULL THEN member.identity_profile->>'handle' ELSE i.handle END handle,
+          CASE WHEN member.identity_profile IS NOT NULL THEN member.identity_profile->>'avatar' ELSE i.avatar END avatar
+        FROM identities i
+        LEFT JOIN memberships member ON member.room_id=c.id AND member.identity_id=i.id
+          AND member.removed_at IS NULL
+        WHERE i.id=c.created_by
+          AND COALESCE(member.identity_profile->>'kind',i.kind)='agent' LIMIT 1
       ) agent ON true
       LEFT JOIN LATERAL (
         SELECT status,created_at FROM agent_turns WHERE room_id=c.id
@@ -531,7 +610,7 @@ export class PhoneService {
       WHERE c.parent_id=$1 AND EXISTS(
         SELECT 1 FROM memberships viewer
         WHERE viewer.room_id=c.id AND viewer.identity_id=$2 AND viewer.removed_at IS NULL
-      ) ORDER BY c.created_at DESC,c.id DESC`,
+      ) ${roomViewFamilyOrder ? '' : 'ORDER BY c.created_at DESC,c.id DESC'}`,
       [roomId, viewerId],
     );
     const viewerIdentity = await this.requireIdentity(viewerId);
@@ -1324,7 +1403,16 @@ export class PhoneService {
         presence_updated_at: Date | null;
       }
     >(
-      `SELECT i.id,i.kind,i.name,i.handle,i.avatar,m.role,lo.body presence_body,lo.updated_at presence_updated_at FROM memberships m JOIN identities i ON i.id=m.identity_id LEFT JOIN LATERAL(SELECT body,updated_at FROM live_outputs WHERE agent_id=i.id AND kind='presence' ${roomId ? 'AND room_id=$2' : ''} ORDER BY updated_at DESC LIMIT 1)lo ON true WHERE m.workspace_id=$1 AND ${roomId ? 'm.room_id=$2' : 'm.room_id IS NULL'} AND m.removed_at IS NULL AND i.hidden_from_roster=false ORDER BY i.name,i.id`,
+      `SELECT i.id,
+         COALESCE(m.identity_profile->>'kind',i.kind) kind,
+         COALESCE(m.identity_profile->>'name',i.name) name,
+         CASE WHEN m.identity_profile IS NOT NULL THEN m.identity_profile->>'handle' ELSE i.handle END handle,
+         CASE WHEN m.identity_profile IS NOT NULL THEN m.identity_profile->>'avatar' ELSE i.avatar END avatar,
+         m.role,lo.body presence_body,lo.updated_at presence_updated_at
+       FROM memberships m JOIN identities i ON i.id=m.identity_id
+       LEFT JOIN LATERAL(SELECT body,updated_at FROM live_outputs WHERE agent_id=i.id AND kind='presence' ${roomId ? 'AND room_id=$2' : ''} ORDER BY updated_at DESC LIMIT 1)lo ON true
+       WHERE m.workspace_id=$1 AND ${roomId ? 'm.room_id=$2' : 'm.room_id IS NULL'}
+         AND m.removed_at IS NULL AND i.hidden_from_roster=false`,
       roomId ? [workspaceId, roomId] : [workspaceId],
     );
     return rows.rows.map((row) => ({
@@ -1348,10 +1436,80 @@ export class PhoneService {
   ) {
     return (
       await this.database.query<MessageRow>(
-        `SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,i.avatar author_avatar FROM messages m JOIN identities i ON i.id=m.author_id WHERE m.room_id=$1 ${before ? 'AND (m.created_at,m.id)<(to_timestamp($2),$3)' : ''} ORDER BY m.created_at DESC,m.id DESC LIMIT ${limit}`,
+        `SELECT m.*,
+           COALESCE(m.legacy_event->>'authorKind',i.kind) author_kind,
+           COALESCE(m.legacy_event->>'authorName',i.name) author_name,
+           CASE WHEN m.legacy_event IS NOT NULL THEN m.legacy_event->>'authorHandle' ELSE i.handle END author_handle,
+           CASE WHEN m.legacy_event IS NOT NULL THEN m.legacy_event->>'authorAvatar' ELSE i.avatar END author_avatar
+         FROM messages m JOIN identities i ON i.id=m.author_id
+         WHERE m.room_id=$1 AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
+         ${before ? 'AND (m.created_at,m.id)<(to_timestamp($2),$3)' : ''}
+         ORDER BY m.created_at DESC,m.id DESC LIMIT ${limit}`,
         before ? [roomId, before.createdAt, before.id] : [roomId],
       )
     ).rows;
+  }
+  private async roomMessages(
+    roomId: string,
+    latestAgentTurns: RoomView['latestAgentTurns'],
+  ): Promise<RoomViewMessage[]> {
+    const eligible = `m.id IN (
+      (SELECT raw.id FROM legacy_room_events raw WHERE raw.room_id=$1 AND raw.kind=9
+         AND raw.raw_page_candidate=true
+       ORDER BY raw.created_at DESC,raw.id ASC LIMIT 180)
+      UNION
+      (SELECT conversation.id FROM legacy_room_events conversation
+       WHERE conversation.room_id=$1 AND conversation.conversation_candidate=true
+       ORDER BY conversation.created_at DESC,conversation.id ASC LIMIT 30)
+      UNION
+      (SELECT plan.id FROM legacy_room_events plan WHERE plan.room_id=$1 AND plan.kind=30078)
+    )`;
+    const transcriptRows = await this.database.query<MessageRow>(
+      `SELECT m.*,
+         COALESCE(m.legacy_event->>'authorKind',i.kind) author_kind,
+         COALESCE(m.legacy_event->>'authorName',i.name) author_name,
+         CASE WHEN m.legacy_event IS NOT NULL THEN m.legacy_event->>'authorHandle' ELSE i.handle END author_handle,
+         CASE WHEN m.legacy_event IS NOT NULL THEN m.legacy_event->>'authorAvatar' ELSE i.avatar END author_avatar
+       FROM messages m JOIN identities i ON i.id=m.author_id
+       WHERE m.room_id=$1 AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
+         AND (NOT EXISTS(SELECT 1 FROM legacy_room_events any_legacy WHERE any_legacy.room_id=$1) OR ${eligible})
+       ORDER BY m.created_at DESC,m.id DESC LIMIT 30`,
+      [roomId],
+    );
+    const transcript = transcriptRows.rows.map((row) => projectedMessage(row, this.publicOrigin));
+    const workingByAgent = new Map(
+      latestAgentTurns
+        .filter((turn) => turn.status === 'working')
+        .map((turn) => [turn.agentPubkey, turn.createdAt]),
+    );
+    const liveRows = await this.database.query<MessageRow>(
+      `SELECT m.*,
+         COALESCE(m.legacy_event->>'authorKind',i.kind) author_kind,
+         COALESCE(m.legacy_event->>'authorName',i.name) author_name,
+         CASE WHEN m.legacy_event IS NOT NULL THEN m.legacy_event->>'authorHandle' ELSE i.handle END author_handle,
+         CASE WHEN m.legacy_event IS NOT NULL THEN m.legacy_event->>'authorAvatar' ELSE i.avatar END author_avatar
+       FROM messages m JOIN identities i ON i.id=m.author_id
+       WHERE m.room_id=$1 AND m.presentation='activity' AND m.durable_fact IS NULL
+         AND (NOT EXISTS(SELECT 1 FROM legacy_room_events any_legacy WHERE any_legacy.room_id=$1) OR ${eligible})
+       ORDER BY m.created_at DESC,m.id DESC`,
+      [roomId],
+    );
+    const liveActivity = liveRows.rows
+      .map((row) => projectedMessage(row, this.publicOrigin))
+      .filter(
+        (message) =>
+          message.createdAt >=
+          (workingByAgent.get(message.author.pubkey) ?? Number.POSITIVE_INFINITY),
+      )
+      .slice(0, 30);
+    const byId = new Map(
+      collapsePermissionCards([...transcript.reverse(), ...liveActivity.reverse()]).map(
+        (message) => [message.id, message],
+      ),
+    );
+    return [...byId.values()].sort(
+      (left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id),
+    );
   }
   private async cornerLifecycle(roomId: string) {
     return (

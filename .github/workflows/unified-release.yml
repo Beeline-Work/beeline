@@ -220,7 +220,25 @@ jobs:
         with:
           name: unified-release-built-${{ needs.initialize.outputs.release_sha }}
           path: ${{ runner.temp }}/release
-      - run: node scripts/unified-release.mjs confirm --state "$RUNNER_TEMP/release/unified-release.json" --component server --version "${{ needs.initialize.outputs.release_version }}" --sha "${{ needs.initialize.outputs.release_sha }}"
+      - name: Confirm monolith readiness and exact deployed image
+        env:
+          RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
+          RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
+        run: |
+          set -euo pipefail
+          curl -fsS --max-time 30 https://server.usebeeline.app/readyz -o "$RUNNER_TEMP/server-ready.json"
+          node -e 'const r=require(process.argv[1]);if(r.ok!==true)process.exit(1)' "$RUNNER_TEMP/server-ready.json"
+          curl -fsS --max-time 30 https://server.usebeeline.app/version -o "$RUNNER_TEMP/server-version.json"
+          node - "$RUNNER_TEMP/server-version.json" "$RELEASE_VERSION" "$RELEASE_SHA" <<'NODE'
+          const fs = require('node:fs');
+          const [path, version, sourceSha] = process.argv.slice(2);
+          const deployed = JSON.parse(fs.readFileSync(path, 'utf8'));
+          if (deployed.version !== version || deployed.sourceSha !== sourceSha) {
+            throw new Error(`deployed server is ${deployed.version}@${deployed.sourceSha}; expected ${version}@${sourceSha}`);
+          }
+          NODE
+          node scripts/unified-release.mjs confirm --state "$RUNNER_TEMP/release/unified-release.json" \
+            --component server --version "$RELEASE_VERSION" --sha "$RELEASE_SHA"
       - uses: actions/upload-artifact@v4
         with:
           name: unified-release-server-${{ needs.initialize.outputs.release_sha }}
@@ -318,10 +336,12 @@ jobs:
         run: |
           set -euo pipefail
           curl -fsS --max-time 30 https://usebeeline.app/push/health -o "$RUNNER_TEMP/health.json"
-          node - "$RUNNER_TEMP/health.json" "$RUNNER_TEMP/mobile/mobile-ota-ledger.json" "$RUNNER_TEMP/observed.json" <<'NODE'
+          curl -fsS --max-time 30 https://server.usebeeline.app/version -o "$RUNNER_TEMP/server-version.json"
+          node - "$RUNNER_TEMP/health.json" "$RUNNER_TEMP/server-version.json" "$RUNNER_TEMP/mobile/mobile-ota-ledger.json" "$RUNNER_TEMP/observed.json" <<'NODE'
           const fs = require('node:fs');
-          const [healthPath, mobilePath, outputPath] = process.argv.slice(2);
+          const [healthPath, serverPath, mobilePath, outputPath] = process.argv.slice(2);
           const health = JSON.parse(fs.readFileSync(healthPath, 'utf8'));
+          const server = JSON.parse(fs.readFileSync(serverPath, 'utf8'));
           const mobile = JSON.parse(fs.readFileSync(mobilePath, 'utf8'));
           const daemons = health.daemons ?? [];
           if (daemons.length === 0) throw new Error('No daemon release status records were reported.');
@@ -332,7 +352,7 @@ jobs:
             entry.sourceSha === daemon.sourceSha
           )) throw new Error('Mixed or unready daemon release status; delivery is refused.');
           fs.writeFileSync(outputPath, JSON.stringify({
-            server: { version: health.release?.version, sourceSha: health.release?.sourceSha },
+            server: { version: server.version, sourceSha: server.sourceSha },
             daemon: { version: daemon.releaseVersion, sourceSha: daemon.sourceSha },
             app: { version: mobile.releaseVersion, sourceSha: mobile.sourceSha },
           }));

@@ -55,6 +55,30 @@ The import calls `npm run import -w @beeline/server` with `DATABASE_URL` as the 
 scripts/cutover-monolith.sh --execute --target-origin https://server.usebeeline.app
 ```
 
+## Unified releases after cutover
+
+`.github/workflows/unified-release.yml` keeps the existing server artifact build in
+the release-wide build gate. After all three artifacts match one release SHA, the
+server promotion checks the self-hosted runner's Fly authentication and runs:
+
+```bash
+flyctl deploy . \
+  --config apps/server/fly.toml \
+  --dockerfile apps/server/Dockerfile \
+  --app beeline-server \
+  --build-arg "BEELINE_RELEASE_VERSION=$RELEASE_VERSION" \
+  --build-arg "BEELINE_RELEASE_SHA=$RELEASE_SHA" \
+  --yes
+```
+
+The job checks out `RELEASE_SHA` before invoking Fly. Promotion is confirmed only
+after `GET https://server.usebeeline.app/readyz` returns a healthy response and
+`GET https://server.usebeeline.app/version` reports the same release version and
+full source SHA baked into the image. Only then may the unchanged daemon bundle
+publish and mobile OTA promotion begin. The production runner already owns Fly
+credentials; if that changes, provision `FLY_API_TOKEN` as a repository Actions
+secret instead of putting credentials in the workflow.
+
 The ordered phases are fixed: preflight, drain, freeze, final repeatable-read snapshot/import, daemon token and OTA flip, production end-to-end verification, then reopen. Do not manually skip ahead. The script records only phase names under `.cutover-state/`; credentials and command output are never written there.
 
 After the exact OTA receipt lands on the owner device, tail the monolith Fly app logs while completing one real GitHub sign-in. The same attempt must show `GET /auth/github/callback` followed by `POST /v1/auth/github/exchange` on `server.usebeeline.app`; a callback only on `usebeeline.app`, or an exchange without the preceding monolith callback, fails verification.

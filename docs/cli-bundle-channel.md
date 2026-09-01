@@ -85,11 +85,9 @@ GET https://usebeeline.app/dl/<file named by the manifest>
 
 ## Deployment cutover
 
-`scripts/deploy-relay-host.sh` excludes `relay-front/web/dl/` from every
-checkout-to-webroot rsync, backup, and rollback. Before it stages or changes
-any live web file, it parses the host-local manifest and requires every named
-tarball and checksum sidecar to exist and agree. A missing bundle therefore
-fails loudly while the previously served `/dl/` remains untouched.
+The daemon bundle workflow publishes only into the host-local
+`relay-front/web/dl/` store. Server promotion no longer synchronizes a checkout
+over the relay webroot, so the daemon store is outside the server release leg.
 
 The first post-merge cutover is ordered as follows:
 

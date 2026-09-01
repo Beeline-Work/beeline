@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       phase:
-        description: Build exact server images or promote those already-built images
+        description: Build exact server artifacts or deploy the monolith to Fly.io
         type: string
         required: true
       release_sha:
@@ -19,11 +19,9 @@ permissions:
   contents: read
 
 concurrency:
-  # GitHub keeps one running and one pending run in a concurrency group; a
-  # newer pending merge replaces the previous pending merge.  Do not cancel an
-  # active host deploy mid-cutover: it is safe to finish that one, then deploy
-  # only the newest queued commit rather than churn every intermediate merge.
-  group: deploy-relay-host
+  # Do not cancel an active Fly rollout. Let it finish before deploying the
+  # newest queued release SHA.
+  group: deploy-beeline-server
   cancel-in-progress: false
 
 jobs:
@@ -96,14 +94,24 @@ jobs:
   promote:
     if: inputs.phase == 'promote'
     runs-on: [self-hosted, beeline-prod-host]
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.release_sha }}
-      - name: Promote exact prebuilt server images and verify public health
-        run: ./scripts/deploy-relay-host.sh
+      - name: Verify Fly.io deployment authority
+        run: flyctl auth whoami
+      - name: Deploy the exact release SHA to the monolith
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          flyctl deploy . \
+            --config apps/server/fly.toml \
+            --dockerfile apps/server/Dockerfile \
+            --app beeline-server \
+            --build-arg "BEELINE_RELEASE_VERSION=$RELEASE_VERSION" \
+            --build-arg "BEELINE_RELEASE_SHA=$RELEASE_SHA" \
+            --yes
         env:
-          BEELINE_PREBUILT_IMAGES: '1'
-          BEELINE_RELEASE_SHA: ${{ inputs.release_sha }}
-          BEELINE_RELEASE_VERSION: ${{ inputs.release_version }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          RELEASE_VERSION: ${{ inputs.release_version }}

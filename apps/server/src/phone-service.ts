@@ -105,6 +105,37 @@ function messageId(): string {
 function unix(date: Date): number {
   return Math.floor(date.getTime() / 1_000);
 }
+
+export async function ensurePersonalWorkspace(
+  database: SqlDatabase,
+  identityId: string,
+): Promise<string | null> {
+  return database.transaction(async (db) => {
+    const identity = await db.query<{ kind: 'human' | 'agent' }>(
+      `SELECT kind FROM identities WHERE id=$1 FOR UPDATE`,
+      [identityId],
+    );
+    if (!identity.rows[0]) throw new Error('identity not found');
+    if (identity.rows[0].kind !== 'human') return null;
+
+    const existing = await db.query<{ workspace_id: string }>(
+      `SELECT workspace_id FROM memberships
+       WHERE identity_id=$1 AND room_id IS NULL AND removed_at IS NULL
+       ORDER BY joined_at,id LIMIT 1`,
+      [identityId],
+    );
+    if (existing.rows[0]) return existing.rows[0].workspace_id;
+
+    const workspaceId = randomUUID();
+    await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Personal')`, [workspaceId]);
+    await db.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner')`,
+      [workspaceId, identityId],
+    );
+    return workspaceId;
+  });
+}
+
 function assetUrl(value: string, publicOrigin: string) {
   return value.startsWith('/') ? `${publicOrigin}${value}` : value;
 }
@@ -222,6 +253,7 @@ export class PhoneService {
   }
 
   async readWorkspaces(viewerId: string): Promise<WorkspaceListView> {
+    await ensurePersonalWorkspace(this.database, viewerId);
     const rows = await this.database.query<{
       id: string;
       name: string;

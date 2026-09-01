@@ -22,6 +22,18 @@ describe('Room deck bootstrap', () => {
     );
   });
 
+  it('renders a terminal create-Workspace state when the server returns zero Workspaces', () => {
+    const emptyState = source.slice(
+      source.indexOf('if (workspaceList?.workspaces.length === 0)'),
+      source.indexOf('if (!chatList && !error)'),
+    );
+    expect(emptyState).toContain('testID="workspace-list-empty"');
+    expect(emptyState).toContain('No workspaces yet');
+    expect(emptyState).toContain('label="CREATE WORKSPACE"');
+    expect(emptyState).toContain("router.push('/buzz/community' as Href)");
+    expect(emptyState).not.toContain('LOADING ROOMS');
+  });
+
   it('refetches an acknowledged Room write without leaving the refreshed deck', () => {
     const createPath = source.slice(
       source.indexOf('const createRoom = useCallback'),

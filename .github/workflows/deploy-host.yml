@@ -105,9 +105,10 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          # flyctl resolves --dockerfile relative to --config, so use the workspace path.
           flyctl deploy . \
             --config apps/server/fly.toml \
-            --dockerfile apps/server/Dockerfile \
+            --dockerfile "$GITHUB_WORKSPACE/apps/server/Dockerfile" \
             --app beeline-server \
             --build-arg "BEELINE_RELEASE_VERSION=$RELEASE_VERSION" \
             --build-arg "BEELINE_RELEASE_SHA=$RELEASE_SHA" \

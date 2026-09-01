@@ -3,6 +3,14 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const source = readFileSync(path.join(__dirname, 'channels.tsx'), 'utf8');
+const repoPickerSource = readFileSync(
+  path.join(__dirname, '../../../components/buzz/RepoPicker.tsx'),
+  'utf8',
+);
+const hullDialogSource = readFileSync(
+  path.join(__dirname, '../../../components/buzz/HullDialog.tsx'),
+  'utf8',
+);
 
 function blockFrom(text: string, marker: string, label: string): string {
   const start = text.indexOf(marker);
@@ -42,6 +50,24 @@ describe('Room creation — repository binding', () => {
     expect(panel).toContain('create-room-repo-row');
     expect(panel).toContain('<RepoPicker');
     expect(panel).toContain('currentKey={pendingRepo?.key ?? null}');
+    expect(panel).toContain('installations={repoInstallations}');
     expect(panel).toContain('disabled: !roomName.trim() || !pendingRepo || creatingRoom');
+  });
+
+  it('forwards the production installation groups that own repository candidates', () => {
+    const loader = blockFrom(
+      source,
+      'const loadRepoPicker = useCallback(',
+      'loadRepoPicker',
+    );
+    expect(loader).toContain('transport.workspaceGitHubAccess({ refresh })');
+    expect(loader).toContain('setRepoCandidates(access.candidates)');
+    expect(loader).toContain('setRepoInstallations(access.installations)');
+  });
+
+  it('keeps search copy and dialog actions visible at phone width and height', () => {
+    expect(repoPickerSource).toContain('placeholder="Search or paste owner/repo"');
+    expect(source).toContain('createRoomContent: { flexShrink: 1, maxHeight: 520 }');
+    expect(hullDialogSource).toContain('dialogCopy: { flexShrink: 1,');
   });
 });

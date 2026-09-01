@@ -12,6 +12,7 @@ import {
   type ChatListItem,
   type ChatListView,
   type CornerListItem,
+  type GitHubInstallationAccess,
   type Identity,
   type WorkspaceListView,
   type WorkspaceView,
@@ -105,6 +106,7 @@ export default function BuzzChannels() {
   const [showRepoPicker, setShowRepoPicker] = useState(false);
   const [pendingRepo, setPendingRepo] = useState<RepoCandidate | null>(null);
   const [repoCandidates, setRepoCandidates] = useState<RepoCandidate[]>([]);
+  const [repoInstallations, setRepoInstallations] = useState<GitHubInstallationAccess[]>([]);
   const [repoPickerError, setRepoPickerError] = useState<string | null>(null);
   const [retryGeneration, setRetryGeneration] = useState(0);
   const [expandedRoomId, setExpandedRoomId] = useState<string | null>(null);
@@ -383,6 +385,7 @@ export default function BuzzChannels() {
       if (!transport || !activeCommunityId) return;
       const access = await transport.workspaceGitHubAccess({ refresh });
       setRepoCandidates(access.candidates);
+      setRepoInstallations(access.installations);
     },
     [activeCommunityId, transport],
   );
@@ -581,6 +584,7 @@ export default function BuzzChannels() {
                 candidates={repoCandidates}
                 currentKey={pendingRepo?.key ?? null}
                 error={repoPickerError}
+                installations={repoInstallations}
                 onSelect={handleSelectRepoCandidate}
                 testIDPrefix="create-room-repo-picker"
               />
@@ -821,7 +825,7 @@ const styles = StyleSheet.create((theme) => {
       letterSpacing: 0.6,
     },
     createRoomDialog: { maxHeight: '88%' },
-    createRoomContent: { maxHeight: 520 },
+    createRoomContent: { flexShrink: 1, maxHeight: 520 },
     repoRow: {
       marginTop: 10,
       minHeight: 40,

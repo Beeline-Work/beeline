@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { isReasonableAgentName } from '@beeline/buzz-client';
 import { generateKeypair } from '@beeline/nostr';
 import type { AuthRouteContext } from './server-context.js';
 
@@ -19,10 +20,6 @@ function pairingCode(): string {
 
 function userCode(): string {
   return `BEE-${pairingPart()}-${pairingPart()}`;
-}
-
-function agentName(harness: string): string {
-  return `${harness === 'pi' ? 'Pi' : harness[0]!.toUpperCase() + harness.slice(1)} agent`;
 }
 
 function escapeHtml(value: string): string {
@@ -102,6 +99,8 @@ export function registerServerAgentConnectRoutes(context: AuthRouteContext): voi
     const provider = typeof body.provider === 'string' ? body.provider.trim().toLowerCase() : '';
     const model = typeof body.model === 'string' ? body.model.trim().slice(0, 200) : '';
     const soul = typeof body.soul === 'string' ? body.soul.trim().slice(0, 1_000) : '';
+    const agentName =
+      typeof body.agent_name === 'string' ? body.agent_name.trim().replace(/\s+/g, ' ') : '';
     const codeChallenge =
       typeof body.code_challenge === 'string' ? body.code_challenge.toLowerCase() : '';
     if (!SUPPORTED_HARNESSES.has(harness)) {
@@ -113,11 +112,17 @@ export function registerServerAgentConnectRoutes(context: AuthRouteContext): voi
     if (!PROVIDER_REQUIRED.has(harness) && provider) {
       throw new ProtocolError(400, 'invalid_provider', 'this harness supplies its own provider');
     }
-    if (!model || !soul || !/^[0-9a-f]{64}$/.test(codeChallenge)) {
+    if (
+      !model ||
+      !soul ||
+      !agentName ||
+      !isReasonableAgentName(agentName) ||
+      !/^[0-9a-f]{64}$/.test(codeChallenge)
+    ) {
       throw new ProtocolError(
         400,
         'invalid_request',
-        'model, soul, and PKCE challenge are required',
+        'agent name, model, soul, and PKCE challenge are required',
       );
     }
     const issuedAt = now();
@@ -132,7 +137,7 @@ export function registerServerAgentConnectRoutes(context: AuthRouteContext): voi
       ...(provider ? { provider } : {}),
       model,
       soul,
-      agentName: agentName(harness),
+      agentName,
       createdAt: issuedAt,
       expiresAt: new Date(issuedAt.getTime() + DEVICE_TTL_MS),
     });
@@ -171,22 +176,16 @@ export function registerServerAgentConnectRoutes(context: AuthRouteContext): voi
         );
     }
     if (device.approvedAt) {
-      return reply
-        .type('text/html; charset=utf-8')
-        .send(
-          connectPage({
-            heading: 'Agent connected',
-            detail: 'You can close this tab and say hi in the app.',
-          }),
-        );
+      return reply.type('text/html; charset=utf-8').send(
+        connectPage({
+          heading: 'Agent connected',
+          detail: 'You can close this tab and say hi in the app.',
+        }),
+      );
     }
-    return reply.type('text/html; charset=utf-8').send(
-      connectPage({
-        heading: `Connect ${device.agentName}`,
-        detail: 'Approve this agent for your current Beeline Workspace.',
-        userCode: readableCode,
-        button: true,
-      }),
+    return reply.redirect(
+      `/auth/github/start?device_user_code=${encodeURIComponent(readableCode)}`,
+      302,
     );
   });
 

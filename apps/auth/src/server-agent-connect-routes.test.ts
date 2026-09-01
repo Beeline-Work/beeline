@@ -78,6 +78,7 @@ describe('agent connect device exchange', () => {
         provider: 'openrouter',
         model: 'z-ai/glm-5.3-flash',
         soul: 'Warm, direct, and deeply practical.',
+        agent_name: 'Piper',
         code_challenge: createHash('sha256').update(verifier).digest('hex'),
       },
     });
@@ -104,12 +105,14 @@ describe('agent connect device exchange', () => {
       url: `/auth/device/connect?user_code=${device.user_code}`,
       headers: { host: alphaTenant.host },
     });
-    expect(approvalPage.statusCode).toBe(200);
-    expect(approvalPage.body).toContain('Connect this agent');
+    expect(approvalPage.statusCode).toBe(302);
+    expect(approvalPage.headers.location).toBe(
+      `/auth/github/start?device_user_code=${device.user_code}`,
+    );
 
     const approvalStart = await app.inject({
       method: 'GET',
-      url: `/auth/github/start?device_user_code=${device.user_code}`,
+      url: approvalPage.headers.location!,
       headers: { host: alphaTenant.host },
     });
     expect(approvalStart.statusCode).toBe(302);
@@ -136,7 +139,7 @@ describe('agent connect device exchange', () => {
       workspace_id: WORKSPACE,
       workspace_name: 'Brass Works',
       paired_by: human.publicKey,
-      agent_name: 'Pi agent',
+      agent_name: 'Piper',
       harness: 'pi',
       provider: 'openrouter',
       model: 'z-ai/glm-5.3-flash',

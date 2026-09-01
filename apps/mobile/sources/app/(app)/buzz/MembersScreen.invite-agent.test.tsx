@@ -220,15 +220,13 @@ describe('Members agent invitation flow', () => {
     );
   });
 
-  it('immediately shows one install-and-pair command, with no Room picker', async () => {
+  it('immediately shows the one-command connect flow, with no pairing-code request', async () => {
     const renderer = await render();
 
     expect(renderer.root.findByProps({ testID: 'invite-agent-flow' })).toBeDefined();
-    expect(client.createAgentPairingCode).toHaveBeenCalledWith(WORKSPACE);
+    expect(client.createAgentPairingCode).not.toHaveBeenCalled();
     const command = renderer.root.findByProps({ testID: 'pair-agent-command' }).props.children;
-    expect(command).toBe(
-      'curl -fsSL https://usebeeline.app/install | sh && beeline pair BZA_TEST_PAIRING',
-    );
+    expect(command).toBe('npx usebeeline connect');
   });
 
   it('honours the person-invite deep link without a second tap', async () => {

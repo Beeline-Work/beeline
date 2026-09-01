@@ -303,7 +303,9 @@ export function requestConnectGrant(
   );
 }
 
-async function installCurrentRelease(fetchImpl: typeof fetch): Promise<string> {
+async function installCurrentRelease(
+  fetchImpl: typeof fetch,
+): Promise<{ binary: string; version: string }> {
   const manifestUrl = resolveManifestUrl(process.env);
   const response = await fetchImpl(manifestUrl, { signal: AbortSignal.timeout(30_000) });
   if (!response.ok)
@@ -315,7 +317,10 @@ async function installCurrentRelease(fetchImpl: typeof fetch): Promise<string> {
     logger: () => {},
   });
   await activateRelease(layout, releaseId);
-  return resolve(layout.binDir, 'beeline');
+  return {
+    binary: resolve(layout.binDir, 'beeline'),
+    version: published.version ?? releaseId,
+  };
 }
 
 function providerEnvironment(
@@ -391,12 +396,16 @@ async function runInstalledFinish(binary: string, grantPath: string): Promise<vo
   });
 }
 
-async function brassSpinner<T>(message: string, action: () => Promise<T>): Promise<T> {
+export async function brassSpinner<T>(
+  message: string,
+  action: () => Promise<T>,
+  completion: (result: T) => string,
+): Promise<T> {
   const spinner = clack.spinner({ output: clackPromptOutput() });
   spinner.start(brass(message));
   try {
     const result = await action();
-    spinner.stop(brass('Done'));
+    spinner.stop(brass(completion(result)));
     return result;
   } catch (error) {
     spinner.stop('Failed');
@@ -425,11 +434,15 @@ export async function runConnectCommand(
     /\/$/,
     '',
   );
-  const grant = await brassSpinner('Connecting to your Beeline Workspace…', () =>
-    requestConnectGrant(baseUrl, pairingCode, selection, fetchImpl),
+  const grant = await brassSpinner(
+    'Connecting to your Beeline Workspace…',
+    () => requestConnectGrant(baseUrl, pairingCode, selection, fetchImpl),
+    (connectedGrant) => `Connected to ${connectedGrant.workspace_name}`,
   );
-  const installedBinary = await brassSpinner('Installing the Beeline daemon…', () =>
-    installCurrentRelease(fetchImpl),
+  const installedRelease = await brassSpinner(
+    'Installing the Beeline daemon…',
+    () => installCurrentRelease(fetchImpl),
+    (release) => `Installed Beeline helper ${release.version}`,
   );
   const llmEnvFile = await writeProviderEnv(selection, grant.agent_pubkey);
   const grantPath = resolve(
@@ -452,7 +465,11 @@ export async function runConnectCommand(
     daemonExchangeToken: grant.daemon_exchange_token,
     ...(llmEnvFile ? { llmEnvFile } : {}),
   } satisfies DevicePairingGrant);
-  await brassSpinner('Starting your agent…', () => runInstalledFinish(installedBinary, grantPath));
+  await brassSpinner(
+    'Starting your agent…',
+    () => runInstalledFinish(installedRelease.binary, grantPath),
+    () => `Started ${grant.agent_name}`,
+  );
   console.log('');
   console.log(`${brass('Agent')}      ${grant.agent_name}`);
   console.log(`${brass('Workspace')}  ${grant.workspace_name}`);

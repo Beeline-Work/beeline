@@ -2029,9 +2029,10 @@ export function cornerObjectiveFromConversation(
 /**
  * Whether a Room message is addressed to this agent.
  *
- * A direct @ mention always addresses this agent. In a two-party Room the
- * sole human can speak naturally because there is nobody else to address.
- * Current membership is resolved before this helper receives the Room roster.
+ * A direct @ mention or direct reply always addresses this agent. In a
+ * two-party Room the sole human can speak naturally because there is nobody
+ * else to address. Current membership is resolved before this helper receives
+ * the Room roster.
  */
 export function isChannelAddressedMessage(
   event: NostrEvent,
@@ -2047,11 +2048,20 @@ export function isChannelAddressedMessage(
     return false;
   if (event.tags.some((tag) => tag[0] === 'p' && tag[1] === agentPubkey)) return true;
 
-  // An explicit tag of ANY member routes only per tags. Continuation below is
-  // evaluated only for messages that tag no member at all, so a human
-  // switching conversations by tagging another agent can never be pulled into
-  // an earlier agent's continuation window (captured failure 2026-08-28: a
-  // human in continuation with agent A tagged @B and A still answered).
+  // Multi-party Rooms never infer an addressee from recency or from which
+  // agent answered this human previously. A NIP-10 direct-reply edge is the
+  // only tag-free proof that this new message selects an agent.
+  const replyParentId = event.tags.find(
+    (tag) => tag[0] === 'e' && tag[1] && tag[3] === 'reply',
+  )?.[1];
+  const replyParent = replyParentId
+    ? indexedMessages.find((message) => message.id === replyParentId)
+    : undefined;
+  if (replyParent?.author.kind === 'agent' && replyParent.author.pubkey === agentPubkey)
+    return true;
+
+  // An explicit tag of ANY member routes only per tags, so a human tagging
+  // another participant can never wake this agent too.
   if (event.tags.some((tag) => tag[0] === 'p' && tag[1] && roomParticipants.includes(tag[1]))) {
     return false;
   }
@@ -2059,35 +2069,7 @@ export function isChannelAddressedMessage(
   const participants = new Set(roomParticipants);
   participants.delete(agentPubkey);
   if (participants.size === 1 && participants.has(event.pubkey)) return true;
-
-  // In a multi-party Room, natural follow-up belongs only to the person the
-  // agent actually answered. The server-indexed presentation is the
-  // conversation boundary: cards, statuses, activity, and control records do
-  // not interrupt the pair. The reply edge is the recipient proof; adjacency
-  // to agent prose alone is deliberately insufficient.
-  const indexedCurrent = indexedMessages.find((message) => message.id === event.id);
-  if (indexedCurrent && indexedCurrent.presentation !== 'message') return false;
-  const conversation = indexedMessages.filter((message) => message.presentation === 'message');
-  const currentIndex = conversation.findIndex((message) => message.id === event.id);
-  const latestIndexed = conversation.at(-1);
-  const followsIndexedTail =
-    latestIndexed &&
-    (latestIndexed.createdAt < event.created_at ||
-      (latestIndexed.createdAt === event.created_at &&
-        latestIndexed.id.localeCompare(event.id) < 0));
-  const preceding =
-    currentIndex >= 0
-      ? conversation[currentIndex - 1]
-      : followsIndexedTail
-        ? latestIndexed
-        : undefined;
-  if (preceding?.author.kind !== 'agent' || preceding.author.pubkey !== agentPubkey) return false;
-  const repliedTo = preceding.reply?.eventId;
-  if (!repliedTo) return false;
-  const triggeringMessage = conversation.find((message) => message.id === repliedTo);
-  return (
-    triggeringMessage?.author.kind === 'human' && triggeringMessage.author.pubkey === event.pubkey
-  );
+  return false;
 }
 
 /**
@@ -6361,7 +6343,8 @@ export class Body {
           !addressed &&
           event.kind === 9 &&
           event.pubkey !== this.agentIdentity.publicKey &&
-          otherParticipants.size > 1
+          otherParticipants.size > 1 &&
+          event.tags.some((tag) => tag[0] === 'e' && tag[1] && tag[3] === 'reply')
         ) {
           if (!indexedMessagesLoaded) {
             indexedMessages = await this.indexedRoomMessages(tlcChannelId);

@@ -587,6 +587,24 @@
           justify-content: center;
         }
       }
+      @media (max-width: 430px) {
+        #hero-title {
+          font-size: clamp(2.5rem, 11.5vw, 3rem);
+          overflow-wrap: break-word;
+        }
+        #proof-title,
+        #connect-title {
+          font-size: clamp(1.8rem, 8.5vw, 2.1rem);
+          overflow-wrap: break-word;
+        }
+        #final-title {
+          font-size: clamp(2.4rem, 11vw, 2.9rem);
+          overflow-wrap: break-word;
+        }
+        .nav-links a {
+          letter-spacing: 0;
+        }
+      }
       @media (prefers-reduced-motion: reduce) {
         html {
           scroll-behavior: auto;

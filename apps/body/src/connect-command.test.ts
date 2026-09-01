@@ -3,7 +3,9 @@ import {
   brass,
   collectConnectWizard,
   defaultConnectModel,
+  presentDeviceApproval,
   runConnectFinishCommand,
+  shouldOpenConnectBrowser,
   type ConnectPrompts,
 } from './connect-command.js';
 
@@ -93,6 +95,49 @@ describe('connect wizard', () => {
     expect(brass('Beeline', { TERM: 'xterm-256color' }, terminal)).toContain('38;5;178');
     expect(brass('Beeline', { NO_COLOR: '1' }, terminal)).toBe('Beeline');
     expect(brass('Beeline', {}, { isTTY: false } as NodeJS.WriteStream)).toBe('Beeline');
+  });
+
+  it('prints the approval link and code even when the browser opens', async () => {
+    const messages: string[] = [];
+    const opened: string[] = [];
+
+    await presentDeviceApproval({
+      verificationUri: 'https://server.usebeeline.app/auth/device/connect?user_code=BUZZ-1234',
+      userCode: 'BUZZ-1234',
+      env: { DISPLAY: ':0' },
+      platform: 'linux',
+      log: (message) => messages.push(message),
+      open: async (url) => {
+        opened.push(url);
+      },
+    });
+
+    expect(messages).toEqual([
+      'Approve this agent at: https://server.usebeeline.app/auth/device/connect?user_code=BUZZ-1234',
+      'Code: BUZZ-1234',
+    ]);
+    expect(opened).toEqual([
+      'https://server.usebeeline.app/auth/device/connect?user_code=BUZZ-1234',
+    ]);
+  });
+
+  it('skips browser launch on a headless Linux or SSH session', async () => {
+    const open = async () => {
+      throw new Error('browser launch should not be attempted');
+    };
+
+    expect(shouldOpenConnectBrowser({}, 'linux')).toBe(false);
+    expect(shouldOpenConnectBrowser({ DISPLAY: ':0', SSH_TTY: '/dev/pts/0' }, 'linux')).toBe(false);
+    await expect(
+      presentDeviceApproval({
+        verificationUri: 'https://server.usebeeline.app/auth/device/connect?user_code=BUZZ-1234',
+        userCode: 'BUZZ-1234',
+        env: {},
+        platform: 'linux',
+        log: () => {},
+        open,
+      }),
+    ).resolves.toBeUndefined();
   });
 
   it('refuses to write supervision state from the npm/worktree launcher', async () => {

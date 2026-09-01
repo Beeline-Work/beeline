@@ -251,6 +251,7 @@ export async function collectConnectWizard(
 
 interface DeviceStart {
   device_code: string;
+  user_code: string;
   verification_uri_complete: string;
   expires_in: number;
   interval: number;
@@ -303,6 +304,29 @@ async function openBrowser(url: string): Promise<void> {
       resolveOpen();
     });
   });
+}
+
+export function shouldOpenConnectBrowser(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  if (platform !== 'linux') return true;
+  return Boolean(env.DISPLAY || env.WAYLAND_DISPLAY) && !env.SSH_TTY && !env.SSH_CONNECTION;
+}
+
+export async function presentDeviceApproval(input: {
+  verificationUri: string;
+  userCode: string;
+  env?: NodeJS.ProcessEnv;
+  platform?: NodeJS.Platform;
+  log?: (message: string) => void;
+  open?: (url: string) => Promise<void>;
+}): Promise<void> {
+  const log = input.log ?? console.log;
+  log(`Approve this agent at: ${input.verificationUri}`);
+  log(`Code: ${input.userCode}`);
+  if (!shouldOpenConnectBrowser(input.env, input.platform)) return;
+  await (input.open ?? openBrowser)(input.verificationUri).catch(() => {});
 }
 
 async function pollDeviceGrant(input: {
@@ -467,12 +491,11 @@ export async function runConnectCommand(options: { fetchImpl?: typeof fetch } = 
       fetchImpl,
     ),
   );
-  try {
-    await openBrowser(start.verification_uri_complete);
-  } catch {
-    console.log(`Open this link to connect: ${start.verification_uri_complete}`);
-  }
-  const grant = await brassSpinner('Connecting to your Beeline Workspace…', () =>
+  await presentDeviceApproval({
+    verificationUri: start.verification_uri_complete,
+    userCode: start.user_code,
+  });
+  const grant = await brassSpinner('Waiting for you to approve in the browser…', () =>
     pollDeviceGrant({ baseUrl, start, verifier, fetchImpl }),
   );
   const installedBinary = await brassSpinner('Installing the Beeline daemon…', () =>

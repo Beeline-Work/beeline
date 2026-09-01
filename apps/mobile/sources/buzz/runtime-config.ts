@@ -2,7 +2,7 @@ import { loadAppConfig } from '@/sync/appConfig';
 
 const DEFAULT_RELAY_URL = 'https://usebeeline.app';
 const DEFAULT_PUSH_GATEWAY_URL = 'https://usebeeline.app/push';
-const DEFAULT_MONOLITH_URL = 'https://beeline-server.fly.dev';
+const DEFAULT_MONOLITH_URL = 'https://server.usebeeline.app';
 
 export interface BuzzRuntimeConfig {
   relayUrl: string;

@@ -20,7 +20,7 @@ permissions:
 jobs:
   publish:
     if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
-    runs-on: [self-hosted, beeline-prod-host]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:

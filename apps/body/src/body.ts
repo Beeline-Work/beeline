@@ -49,8 +49,10 @@ import {
   relayRetryAfterMs,
   latestActivityPlanFromEvents,
   type ActivityProjectionController,
+  type ActivityBatch,
   type CompactActivityPlan,
 } from './activity.js';
+import type { DaemonApiClient } from './daemon-api-client.js';
 import {
   buildAgentMessage,
   buildControlMessage,
@@ -2342,6 +2344,8 @@ export class Body {
    * disposes its own sockets exactly as before.
    */
   private sharedSocket?: SharedRelaySocket;
+  /** Present only after the one-way monolith transport switch is activated. */
+  private readonly daemonApi?: DaemonApiClient;
   private disposed = false;
   /**
    * Set only after the managed update's absolute drain deadline expires.
@@ -2405,6 +2409,7 @@ export class Body {
       onRoomPresence?: (channelId: string, status: 'online' | 'offline') => void;
       runScheduleNow?: (scheduleId: string) => Promise<{ runId: string; eventId: string }>;
       relaySocket?: SharedRelaySocket;
+      daemonApi?: DaemonApiClient;
       publishPermissionReceipt?: (event: NostrEvent) => Promise<void>;
     } = {},
   ) {
@@ -2445,6 +2450,7 @@ export class Body {
     this.onRoomPresence = services.onRoomPresence;
     this.runScheduleNow = services.runScheduleNow;
     this.sharedSocket = services.relaySocket;
+    this.daemonApi = services.daemonApi;
     this.durableState = new DurableBodyState(
       services.statePath ?? resolve(config.workspaceRoot, '.beeline-body-state.json'),
     );
@@ -3483,6 +3489,9 @@ export class Body {
           // Transcript correlation follows the durable logical turn, not a
           // physical ACP process id that changes after suspension/restart.
           session.logicalSessionId ?? opened.sessionId,
+          this.daemonApi
+            ? (batch) => this.publishMonolithActivity(input.channelId, batch)
+            : undefined,
         );
         session.activityProjection = activityProjection;
         session.unsubscribeActivity = activityProjection;
@@ -3546,13 +3555,25 @@ export class Body {
     sessionNewRaw: unknown,
     session: AgentSession,
   ): Promise<void> {
-    let selection: Awaited<ReturnType<typeof getAgentModelConfig>> = null;
+    let selection: { model?: string; effort?: string } | null = null;
     try {
-      selection = await getAgentModelConfig(
-        this.agentClientContext(),
-        communityId,
-        this.agentIdentity.publicKey,
-      );
+      if (this.daemonApi) {
+        const configured = await this.daemonApi.execute('getAgentConfiguration', {
+          agentId: this.agentIdentity.publicKey,
+          roomId: session.channelId,
+        });
+        selection =
+          configured.model || configured.effort
+            ? { model: configured.model, effort: configured.effort }
+            : null;
+      } else {
+        const persisted = await getAgentModelConfig(
+          this.agentClientContext(),
+          communityId,
+          this.agentIdentity.publicKey,
+        );
+        selection = persisted ? { model: persisted.model, effort: persisted.effort } : null;
+      }
     } catch (error) {
       console.error('[body] failed to read persisted agent model config:', error);
     }
@@ -3582,12 +3603,31 @@ export class Body {
       // default existed only in the local runtime record and every reader
       // saw a dead `—` row.
       try {
-        await publishAgentModelCatalog(
-          this.agentClientContext(),
-          communityId,
-          withEffectiveCurrentValues(catalogOptions, applied),
-          applied ?? undefined,
-        );
+        if (this.daemonApi) {
+          await this.daemonApi.execute('postAgentModelCatalog', {
+            agentId: this.agentIdentity.publicKey,
+            workspaceId: communityId,
+            options: withEffectiveCurrentValues(catalogOptions, applied).flatMap((option) =>
+              ['model', 'thought_level', 'effort', 'reasoning_effort'].includes(option.category)
+                ? [
+                    {
+                      ...option,
+                      category: option.category as
+                        'model' | 'thought_level' | 'effort' | 'reasoning_effort',
+                    },
+                  ]
+                : [],
+            ),
+            ...(applied ? { selection: applied } : {}),
+          });
+        } else {
+          await publishAgentModelCatalog(
+            this.agentClientContext(),
+            communityId,
+            withEffectiveCurrentValues(catalogOptions, applied),
+            applied ?? undefined,
+          );
+        }
       } catch (error) {
         console.error('[body] failed to publish agent model catalog:', error);
       }
@@ -3622,7 +3662,15 @@ export class Body {
   ): () => void {
     const publisher = createAgentCommandPublisher({
       publish: async (commands) => {
-        await publishAgentCommands(this.agentClientContext(), communityId, commands);
+        if (this.daemonApi) {
+          await this.daemonApi.execute('postAgentCommands', {
+            agentId: this.agentIdentity.publicKey,
+            workspaceId: communityId,
+            commands,
+          });
+        } else {
+          await publishAgentCommands(this.agentClientContext(), communityId, commands);
+        }
       },
       publishedSignatures: PUBLISHED_COMMAND_SIGNATURES,
       dedupeKeyPrefix: communityId,
@@ -3863,6 +3911,71 @@ export class Body {
     });
   }
 
+  private async publishMonolithActivity(channelId: string, batch: ActivityBatch): Promise<void> {
+    if (!this.daemonApi) return;
+    const activity = batch.events.map((event) => {
+      const plan =
+        event.plan && typeof event.plan === 'object'
+          ? (event.plan as {
+              objective?: string;
+              items?: Array<{ step: string; status: 'pending' | 'in_progress' | 'completed' }>;
+            })
+          : undefined;
+      return {
+        kind: event.sessionUpdate === 'tool_activity' ? ('tool' as const) : ('summary' as const),
+        title:
+          typeof event.title === 'string'
+            ? event.title
+            : typeof event.text === 'string'
+              ? event.text
+              : 'Agent activity',
+        ...(typeof event.command === 'string' ? { operation: event.command } : {}),
+        ...(typeof event.status === 'string' ? { status: event.status } : {}),
+        ...(plan?.items
+          ? {
+              plan: {
+                ...(plan.objective ? { objective: plan.objective } : {}),
+                items: plan.items,
+              },
+            }
+          : {}),
+      };
+    });
+    await this.daemonApi.execute('postAgentActivity', {
+      agentId: this.agentIdentity.publicKey,
+      roomId: channelId,
+      requestId: batch.sessionId,
+      activity,
+    });
+  }
+
+  private postTurnStatus(
+    roomId: string,
+    requestId: string,
+    sessionId: string,
+    status: 'working' | 'complete' | 'failed',
+  ): Promise<void> {
+    if (!this.daemonApi) {
+      return postAgentTurnStatus(
+        roomId,
+        this.agentIdentity,
+        requestId,
+        sessionId,
+        status,
+        this.presenceGenerations.get(roomId),
+      );
+    }
+    return this.daemonApi
+      .execute('postAgentTurnReceipt', {
+        agentId: this.agentIdentity.publicKey,
+        roomId,
+        requestId,
+        status,
+        generationId: sessionId,
+      })
+      .then(() => undefined);
+  }
+
   /**
    * Prompt deadlines are process-health boundaries, not merely UI timeouts.
    * Retire a non-returning ACP generation so the next Room turn gets a fresh
@@ -3894,6 +4007,25 @@ export class Body {
           this.agentIdentity,
           session.logicalSessionId ?? session.sessionId,
           turn.requestId,
+          undefined,
+          this.daemonApi
+            ? (text) =>
+                this.daemonApi!.execute('postAgentDraft', {
+                  agentId: this.agentIdentity.publicKey,
+                  roomId: turn.channelId,
+                  turnId: session.logicalSessionId ?? session.sessionId,
+                  text,
+                }).then(() => undefined)
+            : undefined,
+          this.daemonApi
+            ? () =>
+                this.daemonApi!.execute('retractAgentLiveOutput', {
+                  agentId: this.agentIdentity.publicKey,
+                  roomId: turn.channelId,
+                  turnId: session.logicalSessionId ?? session.sessionId,
+                  kind: 'draft',
+                }).then(() => undefined)
+            : undefined,
         )
       : undefined;
     const thought = !turn.silent
@@ -3901,6 +4033,25 @@ export class Body {
           turn.channelId,
           this.agentIdentity,
           session.logicalSessionId ?? session.sessionId,
+          undefined,
+          this.daemonApi
+            ? (text) =>
+                this.daemonApi!.execute('postAgentThought', {
+                  agentId: this.agentIdentity.publicKey,
+                  roomId: turn.channelId,
+                  turnId: session.logicalSessionId ?? session.sessionId,
+                  text,
+                }).then(() => undefined)
+            : undefined,
+          this.daemonApi
+            ? () =>
+                this.daemonApi!.execute('retractAgentLiveOutput', {
+                  agentId: this.agentIdentity.publicKey,
+                  roomId: turn.channelId,
+                  turnId: session.logicalSessionId ?? session.sessionId,
+                  kind: 'thought',
+                }).then(() => undefined)
+            : undefined,
         )
       : undefined;
     const permissionTurn: ActivePermissionTurn = {
@@ -4248,7 +4399,9 @@ export class Body {
       captureEvent?: (event: NostrEvent) => void;
     } = {},
   ): Promise<string> {
-    const uploaded = await this.uploadAgentOutputs(session, result);
+    const uploaded = this.daemonApi
+      ? { attachments: [] as AttachmentReference[], failed: false }
+      : await this.uploadAgentOutputs(session, result);
     let reply = stripAttachmentDirectives(stripAgentReplyPreamble(result.agentText)).trim();
     // Defense in depth: harness retry/backoff narration is machine state, not
     // an answer. Final-text selection already refuses to pick a narration run
@@ -4272,6 +4425,19 @@ export class Body {
     const extraTags = options.prepareTags
       ? await options.prepareTags(reply)
       : (options.extraTags ?? []);
+
+    if (this.daemonApi) {
+      await this.daemonApi.execute('postRoomMessage', {
+        roomId: channelId,
+        ...(options.replyTo ? { requestId: options.replyTo } : {}),
+        text: reply,
+        presentation: 'message',
+        ...(extraTags.length
+          ? { tags: Object.fromEntries(extraTags.filter((tag) => tag[0] && tag[1])) }
+          : {}),
+      });
+      return reply;
+    }
 
     let event: NostrEvent;
     if (options.replyTo) {
@@ -4751,8 +4917,10 @@ export class Body {
     // Missing read-only tools must never create a no-tool or edit-tool session.
     const readonlyServerWithoutMemory = readOnlyMcpServer(this.config, readonlyCwd);
     const agentId = this.agentIdentity;
-    await this.ensureAgentInChannel(tlcChannelId, agentId);
-    await this.ensureAgentEntity(tlcChannelId);
+    if (!this.daemonApi) {
+      await this.ensureAgentInChannel(tlcChannelId, agentId);
+      await this.ensureAgentEntity(tlcChannelId);
+    }
     const communityId = await this.channelCommunityId(tlcChannelId);
     const workspaceId = communityId ?? tlcChannelId;
     const roomMemory = await this.sessionMemory(communityId);
@@ -4820,6 +4988,16 @@ export class Body {
     if (boundRepo) this.agentToolRoomRepositories.set(tlcChannelId, boundRepo);
 
     const mandateGeneration = Date.now();
+    if (this.daemonApi) {
+      this.agentTools.bindMandate(tlcChannelId, {
+        schema_version: BEELINE_AGENT_TOOL_SCHEMA_VERSION,
+        generation: { event_id: `monolith:${mandateGeneration}`, generation: mandateGeneration },
+        grants: [],
+        defaults: BEELINE_MANDATE_DEFAULTS.map((entry) => ({ ...entry })),
+        blockers: [],
+      });
+      return session;
+    }
     const started = buildControlMessage(
       'permission-status',
       tlcChannelId,
@@ -4919,7 +5097,13 @@ export class Body {
       },
     }).catch(async (error) => {
       if (attempt.cornerId && !this.subchannels.has(attempt.cornerId)) {
-        await archiveChannel(this.agentIdentity, attempt.cornerId).catch(() => undefined);
+        if (this.daemonApi) {
+          await this.daemonApi
+            .execute('archiveCorner', { cornerId: attempt.cornerId })
+            .catch(() => undefined);
+        } else {
+          await archiveChannel(this.agentIdentity, attempt.cornerId).catch(() => undefined);
+        }
         await this.postFailureFactOnce(
           tlcChannelId,
           `Corner for ${attempt.objective || 'the requested task'} could not start and was closed.`,
@@ -4985,7 +5169,7 @@ export class Body {
       ? await this.cornerBoundRepo(tlcChannelId, freshRoomRepo)
       : undefined;
     const agentId = this.agentIdentity;
-    await this.ensureAgentInChannel(tlcChannelId, agentId);
+    if (!this.daemonApi) await this.ensureAgentInChannel(tlcChannelId, agentId);
     const communityId = await this.channelCommunityId(tlcChannelId);
 
     // 1. The agent itself creates/signs the child channel. Prefer the model's
@@ -5005,35 +5189,48 @@ export class Body {
     const cornerName = cornerTitleFromTask(taskDescription);
     const taskSlug = slugifyCornerTask(cornerName);
     const openingHumanPubkey = request?.authorPubkey ?? this.bodyIdentity.publicKey;
-    const subchannelId = await createAgentSubchannel(
-      agentId,
-      tlcChannelId,
-      cornerName,
-      openingHumanPubkey,
-      communityId ?? undefined,
-      taskDescription || undefined,
-      [
-        ...(request
-          ? [
-              ['request', request.eventId],
-              ['requester', request.authorPubkey],
-            ]
-          : []),
-        ...(options?.mission
-          ? [
-              ['mission', options.mission.missionId],
-              ['grant', options.mission.grantEventId],
-              ['controller-agent', options.mission.controllerAgentPubkey],
-              ['principal', options.mission.principalPubkey],
-              ['target-agent', options.mission.targetAgentPubkey],
-              ['mission-workspace', options.mission.workspaceId],
-              ['mission-room', options.mission.roomId],
-              ['mission-repo', options.mission.repository.key],
-              ['mission-ref', options.mission.repository.targetBranch],
-            ]
-          : []),
-      ],
-    );
+    const subchannelId = this.daemonApi
+      ? (
+          await this.daemonApi.execute('createCorner', {
+            roomId: tlcChannelId,
+            requestId: request?.eventId ?? randomUUID().replaceAll('-', ''),
+            name: cornerName,
+            task: taskDescription,
+            ...(boundRepo ? { repository: this.repoId(boundRepo) } : {}),
+            ...(boundRepo?.targetBranch
+              ? { targetBranch: shortBranchName(boundRepo.targetBranch) }
+              : {}),
+          })
+        ).cornerId
+      : await createAgentSubchannel(
+          agentId,
+          tlcChannelId,
+          cornerName,
+          openingHumanPubkey,
+          communityId ?? undefined,
+          taskDescription || undefined,
+          [
+            ...(request
+              ? [
+                  ['request', request.eventId],
+                  ['requester', request.authorPubkey],
+                ]
+              : []),
+            ...(options?.mission
+              ? [
+                  ['mission', options.mission.missionId],
+                  ['grant', options.mission.grantEventId],
+                  ['controller-agent', options.mission.controllerAgentPubkey],
+                  ['principal', options.mission.principalPubkey],
+                  ['target-agent', options.mission.targetAgentPubkey],
+                  ['mission-workspace', options.mission.workspaceId],
+                  ['mission-room', options.mission.roomId],
+                  ['mission-repo', options.mission.repository.key],
+                  ['mission-ref', options.mission.repository.targetBranch],
+                ]
+              : []),
+          ],
+        );
     options?.onCreated?.(subchannelId, cornerName, taskDescription);
     if (request) {
       const requesterAttribution = request.delegation
@@ -5042,60 +5239,78 @@ export class Body {
           )
         : request.authorAttribution;
       const requester = requesterAttribution?.handle ?? fallbackPersonName(request.authorPubkey);
-      await postControlMessage(
-        'corner-created',
-        tlcChannelId,
-        agentId,
-        `Corner requested by @${requester.replace(/^@/, '')}: ${taskDescription || request.content.trim() || 'untitled task'}`,
-        [
+      const createdText =
+        `Corner requested by @${requester.replace(/^@/, '')}: ` +
+        `${taskDescription || request.content.trim() || 'untitled task'}`;
+      if (this.daemonApi) {
+        await this.daemonApi.execute('postRoomMessage', {
+          roomId: tlcChannelId,
+          requestId: request.eventId,
+          text: createdText,
+          presentation: 'card',
+          tags: { type: 'corner-created', subchannel: subchannelId, status: 'open' },
+        });
+      } else
+        await postControlMessage('corner-created', tlcChannelId, agentId, createdText, [
           ['subchannel', subchannelId],
           ['request', request.eventId],
           ['requester', request.authorPubkey],
           ['status', 'open'],
           ['display-status', 'starting'],
           ['task', taskDescription],
-        ],
-      );
+        ]);
       // The typed daemon-fact card is the one visible artifact of a corner
       // opening — a linked card with tap-through navigation, not raw prose.
       // Skipped when the approval-granted flows already published their own
       // "Corner approved by @X — view →" card for this exact open.
       if (!options?.suppressOpenCard) {
-        await postControlMessage(
-          'corner-open-fact',
-          tlcChannelId,
-          agentId,
-          `Corner opened: ${cornerName}`,
-          [
-            ['t', 'corner-open'],
-            ['subchannel', subchannelId],
-            ['objective', taskDescription || request.content.trim() || cornerName],
-            ['name', cornerName],
-          ],
-        );
+        if (this.daemonApi) {
+          await this.daemonApi.execute('postRoomMessage', {
+            roomId: tlcChannelId,
+            requestId: request.eventId,
+            text: `Corner opened: ${cornerName}`,
+            presentation: 'card',
+            tags: { type: 'corner-open', subchannel: subchannelId, objective: taskDescription },
+          });
+        } else
+          await postControlMessage(
+            'corner-open-fact',
+            tlcChannelId,
+            agentId,
+            `Corner opened: ${cornerName}`,
+            [
+              ['t', 'corner-open'],
+              ['subchannel', subchannelId],
+              ['objective', taskDescription || request.content.trim() || cornerName],
+              ['name', cornerName],
+            ],
+          );
       }
     }
     // A publish acknowledgement is not membership truth. Do not create the
     // worktree or launch the coding session until the relay projection proves
     // the opening human is actually in the corner.
-    try {
-      await waitUntilMember(this.agentClientContext(), subchannelId, openingHumanPubkey);
-    } catch (error) {
-      // The protocol cannot put another member into the immutable create
-      // event. If the required follow-up projection never materializes, make
-      // the corrupt child terminal instead of leaving an active agent-only
-      // corner discoverable in the Room.
-      await archiveChannel(agentId, subchannelId).catch((archiveError) =>
-        console.error(
-          `[body] failed to archive corner ${subchannelId} after its opening human was not projected:`,
-          archiveError,
-        ),
-      );
-      throw error;
-    }
+    if (!this.daemonApi)
+      try {
+        await waitUntilMember(this.agentClientContext(), subchannelId, openingHumanPubkey);
+      } catch (error) {
+        // The protocol cannot put another member into the immutable create
+        // event. If the required follow-up projection never materializes, make
+        // the corrupt child terminal instead of leaving an active agent-only
+        // corner discoverable in the Room.
+        await archiveChannel(agentId, subchannelId).catch((archiveError) =>
+          console.error(
+            `[body] failed to archive corner ${subchannelId} after its opening human was not projected:`,
+            archiveError,
+          ),
+        );
+        throw error;
+      }
 
     // 2. Mirror parent members: query members of TLC, add each as member of subchannel.
-    const mirroredParticipantPubkeys = await this.mirrorMembers(tlcChannelId, subchannelId);
+    const mirroredParticipantPubkeys = this.daemonApi
+      ? [agentId.publicKey, openingHumanPubkey]
+      : await this.mirrorMembers(tlcChannelId, subchannelId);
     const participantPubkeys = [...new Set([...mirroredParticipantPubkeys, openingHumanPubkey])];
 
     // 4. Create git worktree + feature branch. Named after the actual task
@@ -5150,7 +5365,7 @@ export class Body {
     if (cornerMemory) {
       mcpServers.push(readOnlyMcpServer(this.config, worktreePath, cornerMemory.dir));
     }
-    mcpServers.push(...(await this.authorizedExternalServers(subchannelId)));
+    if (!this.daemonApi) mcpServers.push(...(await this.authorizedExternalServers(subchannelId)));
     // Operator-authored tool servers (`operator-mcp.json`), same `creator`
     // authorization shape as the capability profiles above. pi ignores this
     // wire field entirely (it loads the operator's own global extensions), so
@@ -5275,14 +5490,19 @@ export class Body {
       : [];
 
     // 7. Post intro to subchannel with merge target metadata.
-    await postControlMessage(
-      'corner-session-live',
-      subchannelId,
-      agentId,
-      boundRepo
-        ? `🤖 Agent edit session started — members mirrored from parent TLC.\nWorktree: ${worktreePath}\nBranch: ${featureBranch}`
-        : `🤖 Agent repo-less corner started — members mirrored from parent TLC.\nWorkspace: ${worktreePath}\nDeliver artifacts from this corner; there is no branch to land.`,
-      [
+    const liveText = boundRepo
+      ? `🤖 Agent edit session started — members mirrored from parent TLC.\nWorktree: ${worktreePath}\nBranch: ${featureBranch}`
+      : `🤖 Agent repo-less corner started — members mirrored from parent TLC.\nWorkspace: ${worktreePath}\nDeliver artifacts from this corner; there is no branch to land.`;
+    if (this.daemonApi) {
+      await this.daemonApi.execute('postRoomMessage', {
+        roomId: subchannelId,
+        ...(request ? { requestId: request.eventId } : {}),
+        text: liveText,
+        presentation: 'system',
+        tags: { type: 'corner-session-live', parent: tlcChannelId, status: 'live' },
+      });
+    } else
+      await postControlMessage('corner-session-live', subchannelId, agentId, liveText, [
         ['session', session.logicalSessionId!],
         ['parent', tlcChannelId],
         ['mode', 'edit'],
@@ -5305,8 +5525,7 @@ export class Body {
             ]
           : []),
         ...requestTags,
-      ],
-    );
+      ]);
 
     return info;
   }
@@ -5401,6 +5620,43 @@ export class Body {
   }
 
   private async agentHistory(channelId: string): Promise<readonly AgentHistoryEntry[]> {
+    if (this.daemonApi) {
+      const history = await this.daemonApi.execute('getRoomConversation', {
+        roomId: channelId,
+        limit: 200,
+      });
+      return history.items
+        .filter((item) => item.type === 'message')
+        .map((item) => ({
+          type:
+            item.authorId === this.agentIdentity.publicKey
+              ? ('agent-message' as const)
+              : ('human-message' as const),
+          eventId: item.id,
+          channelId,
+          author: {
+            pubkey: item.authorId,
+            kind:
+              item.authorId === this.agentIdentity.publicKey
+                ? ('agent' as const)
+                : ('human' as const),
+            label:
+              item.authorId === this.agentIdentity.publicKey
+                ? this.agentIdentity.name
+                : fallbackPersonName(item.authorId),
+          },
+          body: item.body,
+          attachments: item.attachments.map((attachment) => ({
+            url: attachment.url,
+            name: attachment.name ?? 'attachment',
+            mimeType: attachment.mimeType ?? 'application/octet-stream',
+            size: attachment.size ?? 0,
+            ...(attachment.thumbnailUrl ? { thumbnailUrl: attachment.thumbnailUrl } : {}),
+          })),
+          createdAt: item.createdAt,
+          provenance: 'monolith-verified' as const,
+        }));
+    }
     return roomViewConversationHistory(channelId, await this.indexedRoomMessages(channelId));
   }
 
@@ -6994,17 +7250,21 @@ export class Body {
         `${this.agentIdentity.publicKey}:${tlcChannelId}`;
       // Keep the refusal machine-readable without publishing diagnostic prose.
       // The ordinary turn helper deliberately normalizes failures to complete.
-      await postControlMessage('turn-receipt', tlcChannelId, this.agentIdentity, '', [
-        ['t', 'agent-turn'],
-        ['request', request.eventId],
-        ['session', receiptSessionId],
-        ['agent', this.agentIdentity.publicKey],
-        ['mode', 'readonly'],
-        ['status', 'failed'],
-        ...(this.presenceGenerations.get(tlcChannelId)
-          ? [['generation', this.presenceGenerations.get(tlcChannelId)!]]
-          : []),
-      ]);
+      if (this.daemonApi) {
+        await this.postTurnStatus(tlcChannelId, request.eventId, receiptSessionId, 'failed');
+      } else {
+        await postControlMessage('turn-receipt', tlcChannelId, this.agentIdentity, '', [
+          ['t', 'agent-turn'],
+          ['request', request.eventId],
+          ['session', receiptSessionId],
+          ['agent', this.agentIdentity.publicKey],
+          ['mode', 'readonly'],
+          ['status', 'failed'],
+          ...(this.presenceGenerations.get(tlcChannelId)
+            ? [['generation', this.presenceGenerations.get(tlcChannelId)!]]
+            : []),
+        ]);
+      }
       return { status: 'handled', outcome: { openedCorner: false, producedReply: true } };
     }
     // Mark a slash-command-shaped message BEFORE anything else consumes it.
@@ -7012,10 +7272,12 @@ export class Body {
     // one input box; an unrecognized verb used to pass through silently and be
     // executed with the harness's meaning. The text still reaches the agent —
     // this notice only makes whose command it is impossible to miss.
-    if (!scheduled) await this.markSlashCommandVocabulary(tlcChannelId, request.content);
+    if (!scheduled && !this.daemonApi)
+      await this.markSlashCommandVocabulary(tlcChannelId, request.content);
     // Keep the original short-circuit value shape: `false` is distinct from
     // absence below and is part of the existing information-only decision.
     const releaseIntent =
+      !this.daemonApi &&
       boundRepo &&
       editPolicy === 'repository' &&
       !explicitCornerWork &&
@@ -7156,14 +7418,7 @@ export class Body {
     const receiptSessionId =
       this.sessions.get(tlcChannelId)?.logicalSessionId ??
       `${this.agentIdentity.publicKey}:${tlcChannelId}`;
-    await postAgentTurnStatus(
-      tlcChannelId,
-      this.agentIdentity,
-      request.eventId,
-      receiptSessionId,
-      'working',
-      this.presenceGenerations.get(tlcChannelId),
-    );
+    await this.postTurnStatus(tlcChannelId, request.eventId, receiptSessionId, 'working');
     try {
       const session =
         this.sessions.get(tlcChannelId) ??
@@ -7175,18 +7430,12 @@ export class Body {
       }
       return { status: 'ready', receiptSessionId, session };
     } catch (error) {
-      await postAgentTurnStatus(
-        tlcChannelId,
-        this.agentIdentity,
-        request.eventId,
-        receiptSessionId,
-        'failed',
-        this.presenceGenerations.get(tlcChannelId),
-      ).catch((statusError) =>
-        console.error(
-          '[body] failed to replace Room receipt after session start failure:',
-          statusError,
-        ),
+      await this.postTurnStatus(tlcChannelId, request.eventId, receiptSessionId, 'failed').catch(
+        (statusError) =>
+          console.error(
+            '[body] failed to replace Room receipt after session start failure:',
+            statusError,
+          ),
       );
       if (!(error instanceof ReadOnlyToolsUnavailableError)) throw error;
       console.error(`[body] read-only tools unavailable for Room ${tlcChannelId}:`, error);
@@ -7340,13 +7589,11 @@ export class Body {
             publishError,
           );
         }
-        await postAgentTurnStatus(
+        await this.postTurnStatus(
           tlcChannelId,
-          this.agentIdentity,
           request.eventId,
           session.logicalSessionId ?? session.sessionId,
           'complete',
-          this.presenceGenerations.get(tlcChannelId),
         );
         return { openedCorner: true, producedReply: true };
       }
@@ -7364,13 +7611,11 @@ export class Body {
             `[body] room ${tlcChannelId} request ${request.eventId}: target-branch proposal ` +
               'publication failed; leaving the request retryable',
           );
-          await postAgentTurnStatus(
+          await this.postTurnStatus(
             tlcChannelId,
-            this.agentIdentity,
             request.eventId,
             session.logicalSessionId ?? session.sessionId,
             'failed',
-            this.presenceGenerations.get(tlcChannelId),
           ).catch((statusError) =>
             console.error('[body] failed to publish Room turn failure status:', statusError),
           );
@@ -7417,13 +7662,11 @@ export class Body {
       // the model again. Lifecycle cosmetics cannot reopen the inbox item.
       this.processedRequestIds.add(request.eventId);
       await this.durableState.delivered(tlcChannelId, request.eventId);
-      await postAgentTurnStatus(
+      await this.postTurnStatus(
         tlcChannelId,
-        this.agentIdentity,
         request.eventId,
         session.logicalSessionId ?? session.sessionId,
         'complete',
-        this.presenceGenerations.get(tlcChannelId),
       ).catch((statusError) =>
         console.error('[body] failed to publish Room turn completion status:', statusError),
       );
@@ -7433,23 +7676,19 @@ export class Body {
         return { openedCorner: false, producedReply: false };
       }
       if (scheduled && error instanceof ScheduleActivationRefusedError) {
-        await postAgentTurnStatus(
+        await this.postTurnStatus(
           tlcChannelId,
-          this.agentIdentity,
           request.eventId,
           session.logicalSessionId ?? session.sessionId,
           'failed',
-          this.presenceGenerations.get(tlcChannelId),
         ).catch(() => undefined);
         throw error;
       }
-      await postAgentTurnStatus(
+      await this.postTurnStatus(
         tlcChannelId,
-        this.agentIdentity,
         request.eventId,
         session.logicalSessionId ?? session.sessionId,
         'failed',
-        this.presenceGenerations.get(tlcChannelId),
       ).catch((statusError) =>
         console.error('[body] failed to publish Room turn failure status:', statusError),
       );
@@ -7841,6 +8080,17 @@ export class Body {
     roomId: string,
     requesterPubkey: string,
   ): Promise<boolean> {
+    if (this.daemonApi) {
+      const authority = await this.daemonApi.execute('getRoomAuthority', {
+        roomId,
+        principalId: requesterPubkey,
+      });
+      return (
+        authority.member &&
+        authority.principalKind === 'human' &&
+        (authority.role === 'owner' || authority.role === 'admin')
+      );
+    }
     const member = (await listMembers(this.agentClientContext(), roomId)).find(
       (candidate) => candidate.pubkey === requesterPubkey,
     );
@@ -8900,7 +9150,7 @@ export class Body {
           info,
           result,
           '',
-          parentRoomId
+          parentRoomId && !this.daemonApi
             ? {
                 extraTagsForText: async (text) => {
                   preparedMention = await this.prepareCornerAgentMention({
@@ -8919,14 +9169,7 @@ export class Body {
             : {},
         );
         await this.completeCornerPlan(info.session);
-        await postAgentTurnStatus(
-          info.subchannelId,
-          this.agentIdentity,
-          requestId,
-          sessionId,
-          'complete',
-          this.presenceGenerations.get(info.subchannelId),
-        );
+        await this.postTurnStatus(info.subchannelId, requestId, sessionId, 'complete');
         if (preparedMention && publishedMentionEvent) {
           await this.finishCornerAgentMention(preparedMention, publishedMentionEvent);
         }
@@ -8935,14 +9178,9 @@ export class Body {
         // routinely surfaces here as a rejected prompt — that is the close
         // working as intended, not a failure to report.
         if (info.archived) return;
-        await postAgentTurnStatus(
-          info.subchannelId,
-          this.agentIdentity,
-          requestId,
-          sessionId,
-          'failed',
-          this.presenceGenerations.get(info.subchannelId),
-        ).catch(() => undefined);
+        await this.postTurnStatus(info.subchannelId, requestId, sessionId, 'failed').catch(
+          () => undefined,
+        );
       } finally {
         this.runningAgentTasks.delete(info.subchannelId);
         await this.observeOneCornerRemote(info).catch((error) =>
@@ -8965,6 +9203,15 @@ export class Body {
     if (this.publishingFailureFacts.has(coordinate)) return false;
     this.publishingFailureFacts.add(coordinate);
     try {
+      if (this.daemonApi) {
+        await this.daemonApi.execute('postRoomMessage', {
+          roomId: channelId,
+          text: content,
+          presentation: 'system',
+          tags: Object.fromEntries(tags.filter((tag) => tag[0] && tag[1])),
+        });
+        return true;
+      }
       const existing = await this.agentRelay
         .queryEvents([
           {
@@ -9520,6 +9767,93 @@ export class Body {
     }
   }
 
+  private async runMonolithRoomLoop(
+    channelId: string,
+    boundRepo: BoundRepo | undefined,
+    editPolicy: RoomEditPolicy,
+    opts: { pollMs?: number; signal?: AbortSignal },
+  ): Promise<void> {
+    const api = this.daemonApi!;
+    let cursor = await this.durableState.daemonInboxCursor(channelId);
+    await api.execute('postAgentPresence', {
+      agentId: this.agentIdentity.publicKey,
+      roomId: channelId,
+      status: this.config.modelUnavailable ? 'offline' : 'online',
+    });
+    if (!cursor) {
+      const activation = await api.execute('getRoomInbox', {
+        roomId: channelId,
+        startAtLatest: true,
+      });
+      if (activation.cursor) {
+        cursor = activation.cursor;
+        await this.durableState.setDaemonInboxCursor(channelId, cursor);
+      }
+    }
+    while (!opts.signal?.aborted && !this.disposed) {
+      try {
+        const inbox = await api.execute('getRoomInbox', {
+          roomId: channelId,
+          ...(cursor ? { after: cursor } : {}),
+          limit: 200,
+        });
+        for (const item of inbox.items) {
+          if (
+            item.authorId === this.agentIdentity.publicKey ||
+            item.type !== 'message' ||
+            (item.mentionIds.length > 0 &&
+              !item.mentionIds.includes(this.agentIdentity.publicKey)) ||
+            this.processedRequestIds.has(item.id)
+          )
+            continue;
+          const authority = await api.execute('getRoomAuthority', {
+            roomId: channelId,
+            principalId: item.authorId,
+          });
+          if (!authority.member || authority.principalKind !== 'human') continue;
+          if (!this.senderAccessAllowed(item.authorId)) continue;
+          const attachments: AttachmentReference[] = item.attachments.map((attachment) => ({
+            url: attachment.url,
+            name: attachment.name ?? 'attachment',
+            mimeType: attachment.mimeType ?? 'application/octet-stream',
+            size: attachment.size ?? 0,
+            ...(attachment.thumbnailUrl ? { thumbnailUrl: attachment.thumbnailUrl } : {}),
+          }));
+          const request: ChannelTaskRequest = {
+            eventId: item.id,
+            authorPubkey: item.authorId,
+            content: item.body.trim(),
+            attachments,
+            createdAt: item.createdAt,
+            ...(item.rootMessageId ? { replyRootId: item.rootMessageId } : {}),
+          };
+          const workIntent = !isReadOnlyInformationRequest(item.body);
+          const outcome = await this.replyInRoom(
+            channelId,
+            boundRepo,
+            request,
+            editPolicy === 'repository' && workIntent,
+            editPolicy,
+            undefined,
+            workIntent,
+          );
+          if (outcome.producedReply) this.processedRequestIds.add(item.id);
+        }
+        if (inbox.cursor) {
+          cursor = inbox.cursor;
+          await this.durableState.setDaemonInboxCursor(channelId, cursor);
+        }
+        this.onRoomPollSuccess?.(channelId);
+        await this.waitForPoll(opts.pollMs ?? 1_000, opts.signal);
+      } catch (error) {
+        if (opts.signal?.aborted || this.disposed) break;
+        this.onRoomPollFailure?.(channelId, 1_000);
+        console.error(`[body] monolith Room ${channelId} poll failed:`, error);
+        await this.waitForPoll(1_000, opts.signal);
+      }
+    }
+  }
+
   /** One long-running body loop owns request discovery, steering, and merge closure. */
   async runChannelLoop(
     tlcChannelId: string,
@@ -9572,6 +9906,10 @@ export class Body {
     editPolicy: Exclude<RoomEditPolicy, 'repository'>,
     opts: { pollMs?: number; signal?: AbortSignal } = {},
   ): Promise<void> {
+    if (this.daemonApi) {
+      await this.runMonolithRoomLoop(channelId, undefined, editPolicy, opts);
+      return;
+    }
     // Resolve and validate the effective Room selection before the first
     // heartbeat. A retired human override must never briefly look healthy
     // merely because the daemon-wide runtime default still validates.
@@ -9617,6 +9955,11 @@ export class Body {
     boundRepo: BoundRepo,
     opts: { pollMs?: number; signal?: AbortSignal } = {},
   ): Promise<void> {
+    if (this.daemonApi) {
+      await this.assertRepositorySafety(channelId, boundRepo);
+      await this.runMonolithRoomLoop(channelId, boundRepo, 'repository', opts);
+      return;
+    }
     if (!boundRepo.repositoryKey) throw new Error('paired Room is missing its repository key');
     // Validate a persisted Room override before presence announces this agent.
     // The runtime default may still be valid even when that effective value
@@ -10136,6 +10479,10 @@ export class Body {
     info: SubchannelInfo,
     githubEventId?: string,
   ): Promise<void> {
+    // GitHub lifecycle is represented by named monolith facts. Until the
+    // monolith lifecycle dispatcher supplies its observation, never fall back
+    // to signing relay facts from a cutover runtime.
+    if (this.daemonApi) return;
     if (
       info.archived ||
       !info.boundRepo ||
@@ -11208,6 +11555,14 @@ export class Body {
     const fallback = shortBranchName(boundRepo.targetBranch);
     const confirmed = this.confirmedRoomTargetBranches.get(channelId);
     try {
+      if (this.daemonApi) {
+        const config = await this.daemonApi.execute('getRoomTargetBranch', {
+          roomId: channelId,
+        });
+        const branch = shortBranchName(config.targetBranch);
+        this.confirmedRoomTargetBranches.set(channelId, branch);
+        return branch;
+      }
       const config = await getRoomRepository(this.agentClientContext(), channelId);
       if (!config?.targetBranch) return confirmed ?? fallback;
       if (
@@ -11260,21 +11615,30 @@ export class Body {
       void announceNoop;
       return false;
     }
-    await postControlMessage(
-      'target-branch-proposal',
-      tlcChannelId,
-      this.agentIdentity,
-      targetBranchProposalText(from, branch),
-      [
-        ['t', TARGET_BRANCH_PROPOSAL_TAG],
-        ['from', from],
-        ['to', branch],
-        ['repo', this.repoId(boundRepo)],
-        ['agent', this.agentIdentity.publicKey],
-        ['request', request.eventId],
-        ['requester', request.authorPubkey],
-      ],
-    );
+    if (this.daemonApi) {
+      await this.daemonApi.execute('postTargetBranchProposal', {
+        roomId: tlcChannelId,
+        requestId: request.eventId,
+        from,
+        to: branch,
+        repository: this.repoId(boundRepo),
+      });
+    } else
+      await postControlMessage(
+        'target-branch-proposal',
+        tlcChannelId,
+        this.agentIdentity,
+        targetBranchProposalText(from, branch),
+        [
+          ['t', TARGET_BRANCH_PROPOSAL_TAG],
+          ['from', from],
+          ['to', branch],
+          ['repo', this.repoId(boundRepo)],
+          ['agent', this.agentIdentity.publicKey],
+          ['request', request.eventId],
+          ['requester', request.authorPubkey],
+        ],
+      );
     return true;
   }
 
@@ -11291,6 +11655,13 @@ export class Body {
 
   /** Resolve the parent channel's optional community linkage. */
   private async channelCommunityId(channelId: string): Promise<string | null> {
+    if (this.daemonApi) {
+      const authority = await this.daemonApi.execute('getRoomAuthority', {
+        roomId: channelId,
+        principalId: this.agentIdentity.publicKey,
+      });
+      return authority.member ? authority.workspaceId : null;
+    }
     const creates = await this.agentRelay.queryEvents([
       { kinds: [9007], '#h': [channelId], limit: 5 },
     ]);

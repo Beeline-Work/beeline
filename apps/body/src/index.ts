@@ -19,6 +19,13 @@ export {
 } from './body.js';
 export { ThinDaemonCore } from './thin-core.js';
 export {
+  activateDaemonTransport,
+  DaemonApiClient,
+  DaemonApiError,
+  type ActivatedDaemonTransport,
+  type DaemonFetch,
+} from './daemon-api-client.js';
+export {
   NAMED_REPOSITORY_PERMISSION_COMMAND,
   namedRepositoryTargetFromPermission,
   parseNamedRepositoryTarget,

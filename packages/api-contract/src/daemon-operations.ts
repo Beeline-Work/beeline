@@ -51,7 +51,12 @@ export type AgentRoomInput = AgentInput & RoomInput;
 export type CornerInput = { readonly cornerId: string };
 export type IdentityInput = { readonly identityId: string };
 export type RequestInput = RoomInput & { readonly requestId: string };
-export type RoomCursorInput = RoomInput & { readonly after?: string; readonly limit?: number };
+export type RoomCursorInput = RoomInput & {
+  readonly after?: string;
+  readonly limit?: number;
+  /** Establish a high-water mark without replaying pre-activation history. */
+  readonly startAtLatest?: boolean;
+};
 export type RoomPrincipalInput = RoomInput & { readonly principalId: string };
 export type CornerCursorInput = CornerInput & { readonly after?: string };
 export type PermissionAuthorityInput = RoomPrincipalInput & {
@@ -82,8 +87,21 @@ export type RoomInboxResult = {
     readonly createdAt: number;
     readonly type: string;
     readonly body: string;
+    /** Server-validated addressing and reply metadata needed by Room intake. */
+    readonly mentionIds: readonly string[];
+    readonly replyToMessageId?: string;
+    readonly rootMessageId?: string;
+    readonly requestId?: string;
+    readonly attachments: readonly DaemonAttachment[];
   }[];
   readonly cursor?: string;
+};
+export type DaemonAttachment = {
+  readonly url: string;
+  readonly name?: string;
+  readonly mimeType?: string;
+  readonly size?: number;
+  readonly thumbnailUrl?: string;
 };
 export type RoomConversationResult = RoomInboxResult;
 export type RoomAuthorityResult = {

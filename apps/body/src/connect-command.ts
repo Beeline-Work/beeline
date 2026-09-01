@@ -4,8 +4,10 @@ import { chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { stdin, stdout } from 'node:process';
 import * as clack from '@clack/prompts';
-import { AUTO_DETECT_AGENT_KINDS, type AgentKind } from './agent-command.js';
+import { AGENT_NAME_MAX_LENGTH, isReasonableAgentName } from '@beeline/buzz-client';
+import { AUTO_DETECT_AGENT_KINDS, resolveAgentCommand, type AgentKind } from './agent-command.js';
 import { clackPromptOutput, unwrapPrompt } from './clack-support.js';
+import { fetchAgentModelCatalog } from './model-catalog.js';
 import { completeDevicePairing, type DevicePairingGrant } from './pair-command.js';
 import {
   activateRelease,
@@ -34,6 +36,7 @@ const DEFAULT_MODELS: Record<ConnectProvider | 'codex' | 'claude' | 'grok', stri
 };
 
 export interface ConnectWizardResult {
+  name: string;
   harness: (typeof CONNECT_HARNESSES)[number];
   provider?: ConnectProvider;
   apiKey?: string;
@@ -47,6 +50,13 @@ export interface ConnectPrompts {
     options: Array<{ value: T; label: string; hint?: string }>;
     initialValue?: T;
   }): Promise<T>;
+  autocomplete(input: {
+    message: string;
+    options: Array<{ value: string; label: string }>;
+    initialValue?: string;
+    placeholder?: string;
+    maxItems?: number;
+  }): Promise<string>;
   text(input: {
     message: string;
     initialValue?: string;
@@ -104,6 +114,19 @@ const clackPrompts: ConnectPrompts = {
       'Connection cancelled.',
     );
   },
+  async autocomplete(input: {
+    message: string;
+    options: Array<{ value: string; label: string }>;
+    initialValue?: string;
+    placeholder?: string;
+    maxItems?: number;
+  }) {
+    clackPromptOutput();
+    return unwrapPrompt(
+      await clack.autocomplete<string>({ ...input, output: clackPromptOutput() }),
+      'Connection cancelled.',
+    );
+  },
   async text(input) {
     clackPromptOutput();
     return unwrapPrompt(
@@ -126,8 +149,40 @@ const clackPrompts: ConnectPrompts = {
   },
 };
 
+type ConnectModelCatalog = {
+  currentValue?: string;
+  options: Array<{ id: string; name?: string }>;
+};
+
+async function loadConnectModelCatalog(input: {
+  harness: ConnectWizardResult['harness'];
+  provider?: ConnectProvider;
+  apiKey?: string;
+}): Promise<ConnectModelCatalog> {
+  const agent = resolveAgentCommand({ kind: input.harness });
+  const catalog = await fetchAgentModelCatalog(
+    agent,
+    providerEnvironment({
+      harness: input.harness,
+      ...(input.provider ? { provider: input.provider } : {}),
+      ...(input.apiKey ? { apiKey: input.apiKey } : {}),
+      model: defaultConnectModel(input.harness, input.provider),
+    }),
+  );
+  const modelAxis = catalog.catalog.find((axis) => axis.category === 'model');
+  if (!modelAxis?.options.length) {
+    throw new Error(`${input.harness} did not advertise any available models`);
+  }
+  return { currentValue: modelAxis.currentValue, options: modelAxis.options };
+}
+
 export async function collectConnectWizard(
   prompts: ConnectPrompts = clackPrompts,
+  loadModels: (input: {
+    harness: ConnectWizardResult['harness'];
+    provider?: ConnectProvider;
+    apiKey?: string;
+  }) => Promise<ConnectModelCatalog> = loadConnectModelCatalog,
 ): Promise<ConnectWizardResult> {
   const harness = await prompts.select<(typeof CONNECT_HARNESSES)[number]>({
     message: brass('Choose harness'),
@@ -153,16 +208,39 @@ export async function collectConnectWizard(
       validate: (value) => (value.trim() ? undefined : 'API key is required'),
     });
   }
-  const model = await prompts.text({
+  const catalog = await loadModels({
+    harness,
+    ...(provider ? { provider } : {}),
+    ...(apiKey ? { apiKey: apiKey.trim() } : {}),
+  });
+  const initialModel = catalog.currentValue ?? defaultConnectModel(harness, provider);
+  const model = await prompts.autocomplete({
     message: brass('Choose model'),
-    initialValue: defaultConnectModel(harness, provider),
-    validate: (value) => (value.trim() ? undefined : 'Model is required'),
+    options: catalog.options.map((choice) => ({
+      value: choice.id,
+      label: choice.name ? `${choice.name} (${choice.id})` : choice.id,
+    })),
+    ...(catalog.options.some((choice) => choice.id === initialModel)
+      ? { initialValue: initialModel }
+      : {}),
+    placeholder: 'Type to filter available models…',
+    maxItems: 12,
+  });
+  const name = await prompts.text({
+    message: brass('Agent name'),
+    validate: (value) => {
+      if (!value.trim()) return 'Agent name is required';
+      return isReasonableAgentName(value)
+        ? undefined
+        : `Use letters, spaces, hyphens, or apostrophes (${AGENT_NAME_MAX_LENGTH} characters max)`;
+    },
   });
   const soul = await prompts.text({
     message: brass('Input soul'),
     validate: (value) => (value.trim() ? undefined : 'Soul is required'),
   });
   return {
+    name: name.trim().replace(/\s+/g, ' '),
     harness,
     ...(provider ? { provider } : {}),
     ...(apiKey ? { apiKey: apiKey.trim() } : {}),
@@ -277,7 +355,9 @@ async function installCurrentRelease(fetchImpl: typeof fetch): Promise<string> {
   return resolve(layout.binDir, 'beeline');
 }
 
-function providerEnvironment(selection: ConnectWizardResult): Record<string, string> {
+function providerEnvironment(
+  selection: Pick<ConnectWizardResult, 'harness' | 'provider' | 'apiKey' | 'model'>,
+): Record<string, string> {
   if (!selection.provider || !selection.apiKey) return {};
   const keyNames: Record<ConnectProvider, string> = {
     openrouter: 'OPENROUTER_API_KEY',
@@ -368,9 +448,12 @@ export async function runConnectCommand(options: { fetchImpl?: typeof fetch } = 
   clack.intro(brass('Beeline connect'));
   const selection = await collectConnectWizard();
   const fetchImpl = options.fetchImpl ?? fetch;
-  const baseUrl = (process.env.BEELINE_AUTH_URL ?? 'https://usebeeline.app').replace(/\/$/, '');
+  const baseUrl = (process.env.BEELINE_AUTH_URL ?? 'https://server.usebeeline.app').replace(
+    /\/$/,
+    '',
+  );
   const verifier = randomBytes(32).toString('base64url');
-  const start = await brassSpinner('Preparing secure browser approval…', () =>
+  const start = await brassSpinner('Preparing secure sign-in…', () =>
     jsonRequest<DeviceStart>(
       `${baseUrl}/auth/device/connect`,
       {
@@ -378,6 +461,7 @@ export async function runConnectCommand(options: { fetchImpl?: typeof fetch } = 
         ...(selection.provider ? { provider: selection.provider } : {}),
         model: selection.model,
         soul: selection.soul,
+        agent_name: selection.name,
         code_challenge: sha256(verifier),
       },
       fetchImpl,
@@ -388,7 +472,7 @@ export async function runConnectCommand(options: { fetchImpl?: typeof fetch } = 
   } catch {
     console.log(`Open this link to connect: ${start.verification_uri_complete}`);
   }
-  const grant = await brassSpinner('Waiting for browser approval…', () =>
+  const grant = await brassSpinner('Connecting to your Beeline Workspace…', () =>
     pollDeviceGrant({ baseUrl, start, verifier, fetchImpl }),
   );
   const installedBinary = await brassSpinner('Installing the Beeline daemon…', () =>

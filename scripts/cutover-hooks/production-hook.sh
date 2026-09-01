@@ -7,22 +7,24 @@ mode="${1:-}"
 shift || true
 
 phone_auth_verify() {
-  require curl; require jq; require docker; require flyctl; require timeout
-  need CUTOVER_AUTH_COMPOSE_DIR; need CUTOVER_MONOLITH_APP; need CUTOVER_MONOLITH_ORIGIN
+  require curl; require jq; require node; require psql; require sha256sum; require flyctl; require timeout
+  need DATABASE_URL; need CUTOVER_MONOLITH_APP; need CUTOVER_MONOLITH_ORIGIN
   need CUTOVER_PHONE_SESSION_FILE; need CUTOVER_OWNER_GITHUB_SUBJECT; need CUTOVER_OWNER_GITHUB_LOGIN
   expect_https_origin CUTOVER_MONOLITH_ORIGIN "$CUTOVER_MONOLITH_ORIGIN"
-  local expected='https://usebeeline.app/auth/github/phone-exchange' configured ticket first replay tmp
+  local configured ticket first replay tmp
   configured="$(timeout 30s flyctl ssh console --app "$CUTOVER_MONOLITH_APP" --command 'printenv PHONE_GITHUB_EXCHANGE_ENDPOINT' 2>/dev/null | tr -d '\r\n')"
-  [[ "$configured" == "$expected" ]] || die "PHONE_GITHUB_EXCHANGE_ENDPOINT is not $expected"
-  # shellcheck disable=SC2016 # The single-quoted program is JavaScript; $1..$8 are SQL parameters.
-  ticket="$(timeout 30s docker compose --project-directory "$CUTOVER_AUTH_COMPOSE_DIR" exec -T \
-    -e CUTOVER_OWNER_GITHUB_SUBJECT -e CUTOVER_OWNER_GITHUB_LOGIN -e CUTOVER_OWNER_GITHUB_NAME auth node --input-type=module -e '
-    import {createHash,randomBytes} from "node:crypto"; import pg from "pg";
-    const ticket=randomBytes(32).toString("base64url"); const hash=createHash("sha256").update(ticket).digest("hex");
-    const db=new pg.Client({connectionString:process.env.DATABASE_URL}); await db.connect();
-    await db.query(`INSERT INTO beeline_bind_tickets(ticket_hash,challenge,community,issuer,audience,subject,created_at,expires_at,provider_login,provider_display_name) VALUES($1,$2,$3,$4,$5,$6,now(),now()+interval '\''2 minutes'\'',$7,$8)`,[hash,randomBytes(32).toString("base64url"),"relay.buzzrouter.com","https://github.com","github",process.env.CUTOVER_OWNER_GITHUB_SUBJECT,process.env.CUTOVER_OWNER_GITHUB_LOGIN,process.env.CUTOVER_OWNER_GITHUB_NAME||process.env.CUTOVER_OWNER_GITHUB_LOGIN]);
-    await db.end(); process.stdout.write(ticket);' | tr -d '\r\n')"
-  [[ "$ticket" =~ ^[A-Za-z0-9_-]{43}$ ]] || die 'auth container did not mint a bounded ticket'
+  [[ -z "$configured" ]] || die 'PHONE_GITHUB_EXCHANGE_ENDPOINT must be unset for in-process verification'
+  ticket="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("base64url"))')"
+  [[ "$ticket" =~ ^[A-Za-z0-9_-]{43}$ ]] || die 'monolith probe did not mint a bounded ticket'
+  local ticket_hash challenge community
+  ticket_hash="$(printf '%s' "$ticket" | sha256sum | cut -d' ' -f1)"
+  challenge="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("base64url"))')"
+  community="$(flyctl ssh console --app "$CUTOVER_MONOLITH_APP" --command 'printenv BUZZY_AUTH_TENANTS_JSON' 2>/dev/null | tr -d '\r' | jq -er --arg host "${CUTOVER_MONOLITH_ORIGIN#https://}" '.[] | select(.host == $host) | .community')"
+  PGOPTIONS='-c client_min_messages=warning' psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 \
+    -v ticket_hash="$ticket_hash" -v challenge="$challenge" -v community="$community" \
+    -v subject="$CUTOVER_OWNER_GITHUB_SUBJECT" -v login="$CUTOVER_OWNER_GITHUB_LOGIN" \
+    -v display_name="${CUTOVER_OWNER_GITHUB_NAME:-$CUTOVER_OWNER_GITHUB_LOGIN}" \
+    -c "INSERT INTO beeline_bind_tickets(ticket_hash,challenge,community,issuer,audience,subject,created_at,expires_at,provider_login,provider_display_name) VALUES(:'ticket_hash',:'challenge',:'community','https://github.com','github',:'subject',now(),now()+interval '2 minutes',:'login',:'display_name')" >/dev/null
   tmp="$(mktemp)"; trap 'rm -f "$tmp"' RETURN
   first="$(curl_code "$tmp" -H 'content-type: application/json' --data "$(jq -nc --arg t "$ticket" '{oidcToken:$t}')" "$CUTOVER_MONOLITH_ORIGIN/v1/auth/github/exchange")"
   [[ "$first" == 200 ]] || die "monolith phone exchange returned HTTP $first"

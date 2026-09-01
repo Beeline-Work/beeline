@@ -42,10 +42,35 @@ describe('opaque token ceremony', () => {
     const request = vi.fn(async (_url: string, init?: RequestInit) => {
       expect(init?.method).toBe('POST');
       expect(JSON.parse(String(init?.body))).toEqual({ ticket: 'ticket-proof' });
-      return new Response(JSON.stringify({ subject: '42', login: 'owner', name: 'Owner' }), { status: 200 });
+      return new Response(JSON.stringify({ subject: '42', login: 'owner', name: 'Owner' }), {
+        status: 200,
+      });
     });
     vi.stubGlobal('fetch', request);
-    await expect(verifierFromEnvironment()('ticket-proof')).resolves.toEqual({ subject: '42', login: 'owner', name: 'Owner' });
+    vi.stubEnv('PHONE_GITHUB_EXCHANGE_ENDPOINT', 'https://auth.example/phone-exchange');
+    await expect(verifierFromEnvironment(vi.fn())('ticket-proof')).resolves.toEqual({
+      subject: '42',
+      login: 'owner',
+      name: 'Owner',
+    });
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+  it('uses local identities in development and the mounted verifier by default', async () => {
+    const mounted = vi.fn(async () => ({ subject: '42', login: 'owner', name: 'Owner' }));
+    vi.stubEnv('NODE_ENV', 'test');
+    vi.stubEnv('PHONE_GITHUB_EXCHANGE_ENDPOINT', '');
+    await expect(verifierFromEnvironment(mounted)('local:octocat')).resolves.toEqual({
+      subject: 'local-octocat',
+      login: 'octocat',
+      name: 'octocat',
+    });
+    await expect(verifierFromEnvironment(mounted)('ticket-proof')).resolves.toEqual({
+      subject: '42',
+      login: 'owner',
+      name: 'Owner',
+    });
+    expect(mounted).toHaveBeenCalledOnce();
+    vi.unstubAllEnvs();
   });
 });

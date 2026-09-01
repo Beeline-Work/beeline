@@ -200,17 +200,16 @@ export function bearer(authorization: string | undefined): string | null {
   return token.length >= 20 ? token : null;
 }
 
-/** Redeem the auth service's one-use GitHub bind ticket; raw provider tokens never cross services. */
-export function verifierFromEnvironment(): VerifyGitHubOidc {
-  const endpoint =
-    process.env.PHONE_GITHUB_EXCHANGE_ENDPOINT ??
-    'https://usebeeline.app/auth/github/phone-exchange';
+/** Prefer the mounted auth store; an endpoint override remains available for tests and migrations. */
+export function verifierFromEnvironment(inProcess: VerifyGitHubOidc): VerifyGitHubOidc {
+  const endpoint = process.env.PHONE_GITHUB_EXCHANGE_ENDPOINT;
   return async (token) => {
     if (process.env.NODE_ENV !== 'production' && token.startsWith('local:')) {
       const login = token.slice('local:'.length);
       if (!/^[A-Za-z0-9-]{1,39}$/.test(login)) throw new Error('invalid local GitHub identity');
       return { subject: `local-${login}`, login, name: login };
     }
+    if (!endpoint) return inProcess(token);
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: { accept: 'application/json', 'content-type': 'application/json' },
@@ -218,10 +217,7 @@ export function verifierFromEnvironment(): VerifyGitHubOidc {
     });
     if (!response.ok) throw new Error('GitHub identity exchange failed');
     const body = (await response.json()) as Record<string, unknown>;
-    if (
-      typeof body.subject !== 'string' ||
-      typeof body.login !== 'string'
-    ) {
+    if (typeof body.subject !== 'string' || typeof body.login !== 'string') {
       throw new Error('GitHub identity response is invalid');
     }
     return {

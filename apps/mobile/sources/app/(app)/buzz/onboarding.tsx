@@ -398,7 +398,7 @@ export default function BuzzOnboarding() {
       if (getBuzzRuntimeConfig().monolithEnabled) {
         const state = randomState();
         const redirectUri = githubSignInRedirectUri();
-        const start = startGitHubBind(getBuzzRuntimeConfig().relayUrl, { redirectUri, state });
+        const start = startGitHubBind(getBuzzRuntimeConfig().monolithUrl, { redirectUri, state });
         await persistGitHubSignInState(state);
         const callbackUrl = await waitForAuthCallback({
           redirectUri: start.redirectUri,

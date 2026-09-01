@@ -8,6 +8,7 @@ import { createFirebasePushSender } from './firebase-push.js';
 import { createBeelineServer } from './server.js';
 import { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { GitHubOperations } from './github-operations.js';
+import { createMonolithAuth } from './monolith-auth.js';
 
 function required(name: string) {
   const value = process.env[name];
@@ -23,25 +24,35 @@ async function main() {
   const publicOrigin =
     process.env.PUBLIC_ORIGIN ?? `http://127.0.0.1:${process.env.PORT ?? '8080'}`;
   const live = new LiveHub();
-  const auth = new TokenAuth(database, verifierFromEnvironment());
   const githubConfigured =
     process.env.GITHUB_CLIENT_ID &&
     process.env.GITHUB_CLIENT_SECRET &&
     process.env.GITHUB_APP_ID &&
     process.env.GITHUB_APP_PRIVATE_KEY &&
     process.env.GITHUB_APP_SLUG;
-  const github = githubConfigured
-    ? new GitHubOperations(
-        database,
-        new GitHubOAuthClient({
+  const githubClients = githubConfigured
+    ? {
+        oauth: new GitHubOAuthClient({
           clientId: process.env.GITHUB_CLIENT_ID!,
           clientSecret: process.env.GITHUB_CLIENT_SECRET!,
         }),
-        new GitHubAppClient({
+        app: new GitHubAppClient({
           appId: process.env.GITHUB_APP_ID!,
           privateKey: process.env.GITHUB_APP_PRIVATE_KEY!,
           slug: process.env.GITHUB_APP_SLUG!,
         }),
+        ...(process.env.GITHUB_WEBHOOK_SECRET
+          ? { webhookSecret: process.env.GITHUB_WEBHOOK_SECRET }
+          : {}),
+      }
+    : undefined;
+  const mountedAuth = await createMonolithAuth(database, publicOrigin, githubClients);
+  const auth = new TokenAuth(database, verifierFromEnvironment(mountedAuth.verifyGitHubTicket));
+  const github = githubClients
+    ? new GitHubOperations(
+        database,
+        githubClients.oauth,
+        githubClients.app,
         process.env.GITHUB_CLIENT_SECRET!,
       )
     : undefined;
@@ -73,6 +84,7 @@ async function main() {
     daemon,
     live,
     mediaMaximumBytes: Number(process.env.MEDIA_MAX_BYTES ?? String(10 * 1024 * 1024)),
+    authHandler: mountedAuth.handle,
     github: {
       webhookSecret: process.env.GITHUB_WEBHOOK_SECRET,
       ...(github
@@ -107,6 +119,7 @@ async function main() {
   const stop = async () => {
     leader.stop();
     await new Promise<void>((resolve) => server.close(() => resolve()));
+    await mountedAuth.close();
     await database.close();
   };
   process.once('SIGINT', () => void stop());

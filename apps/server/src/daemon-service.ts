@@ -515,7 +515,12 @@ export class DaemonService {
   private async presence(input: Input<'getAgentPresence'>, agentId: string) {
     const row = (
       await this.database.query<{
-        body: { status: 'online' | 'offline'; observedAt: number };
+        body: {
+          status: 'online' | 'offline';
+          observedAt: number;
+          releaseVersion?: string;
+          sourceSha?: string;
+        };
         updated_at: Date;
       }>(
         `SELECT body,updated_at FROM live_outputs WHERE room_id=$1 AND agent_id=$2 AND kind='presence' ORDER BY updated_at DESC LIMIT 1`,
@@ -523,8 +528,63 @@ export class DaemonService {
       )
     ).rows[0];
     return row
-      ? { status: row.body.status, observedAt: row.body.observedAt }
+      ? {
+          status: row.body.status,
+          observedAt: row.body.observedAt,
+          ...(row.body.releaseVersion ? { releaseVersion: row.body.releaseVersion } : {}),
+          ...(row.body.sourceSha ? { sourceSha: row.body.sourceSha } : {}),
+        }
       : { status: 'dormant' as const };
+  }
+
+  /** Public, secret-free release gate over active agent registrations. */
+  async releaseReadiness() {
+    const result = await this.database.query<{
+      agent_id: string;
+      body: {
+        status?: string;
+        observedAt?: number;
+        releaseVersion?: string;
+        sourceSha?: string;
+      } | null;
+    }>(
+      `SELECT a.agent_id,lo.body
+       FROM agents a
+       LEFT JOIN LATERAL(
+         SELECT body FROM live_outputs
+         WHERE agent_id=a.agent_id AND kind='presence'
+         ORDER BY (
+           body->>'status'='online' AND updated_at >= now() - interval '90 seconds'
+         ) DESC,updated_at DESC LIMIT 1
+       )lo ON true
+       WHERE EXISTS(
+         SELECT 1 FROM memberships m
+         WHERE m.identity_id=a.agent_id AND m.room_id IS NULL AND m.removed_at IS NULL
+       )
+       ORDER BY a.agent_id`,
+    );
+    const now = Date.now();
+    return {
+      daemons: result.rows.map((row) => {
+        const observedAt = row.body?.observedAt;
+        const fresh =
+          typeof observedAt === 'number' && Math.abs(now - observedAt * 1_000) <= 90_000;
+        const state = !row.body
+          ? 'missing'
+          : row.body.status !== 'online'
+            ? 'offline'
+            : fresh
+              ? 'ready'
+              : 'stale';
+        return {
+          agentPubkey: row.agent_id,
+          state,
+          ...(typeof observedAt === 'number' ? { observedAt } : {}),
+          ...(row.body?.releaseVersion ? { releaseVersion: row.body.releaseVersion } : {}),
+          ...(row.body?.sourceSha ? { sourceSha: row.body.sourceSha } : {}),
+        };
+      }),
+    };
   }
   private async completion(input: Input<'getRequestCompletion'>, agentId: string) {
     await this.access(input.roomId, agentId);
@@ -760,7 +820,16 @@ export class DaemonService {
     const observedAt = Math.floor(Date.now() / 1000);
     await this.database.query(
       `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body) VALUES($1,$2,'presence','presence',$3::jsonb) ON CONFLICT(room_id,agent_id,turn_id,kind) DO UPDATE SET body=EXCLUDED.body,updated_at=now()`,
-      [input.roomId, agentId, JSON.stringify({ status: input.status, observedAt })],
+      [
+        input.roomId,
+        agentId,
+        JSON.stringify({
+          status: input.status,
+          observedAt,
+          ...(input.releaseVersion ? { releaseVersion: input.releaseVersion } : {}),
+          ...(input.sourceSha ? { sourceSha: input.sourceSha } : {}),
+        }),
+      ],
     );
     this.live.publish({
       type: 'presence',

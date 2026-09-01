@@ -3,6 +3,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import {
   assertAllArtifactsBuilt,
+  assertDaemonFleetReady,
   confirmPromotion,
   confirmDelivery,
   deliveryReport,
@@ -83,6 +84,44 @@ test('delivery refuses mixed versions and requires aligned ledger proof', () => 
   assert.equal(deliveryReport(state), `DELIVERED v0.0.1 (${SHA_1})`);
 });
 
+test('daemon fleet readiness identifies every agent that is not on the exact release', () => {
+  assert.equal(
+    assertDaemonFleetReady(
+      {
+        daemons: [
+          {
+            agentPubkey: 'a'.repeat(64),
+            state: 'ready',
+            releaseVersion: 'v0.0.1',
+            sourceSha: SHA_1,
+          },
+        ],
+      },
+      'v0.0.1',
+      SHA_1,
+    ).length,
+    1,
+  );
+  assert.throws(
+    () =>
+      assertDaemonFleetReady(
+        {
+          daemons: [
+            {
+              agentPubkey: 'b'.repeat(64),
+              state: 'stale',
+              releaseVersion: 'v0.0.0',
+              sourceSha: SHA_2,
+            },
+          ],
+        },
+        'v0.0.1',
+        SHA_1,
+      ),
+    new RegExp(`agent ${'b'.repeat(64)} reported stale v0.0.0@${SHA_2}`),
+  );
+});
+
 test('one workflow owns parallel builds, ordered promotion, retry, and the final report', () => {
   const workflow = readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8');
   const mobile = readFileSync(new URL('../.github/workflows/mobile-ota.yml', import.meta.url), 'utf8');
@@ -114,6 +153,11 @@ test('one workflow owns parallel builds, ordered promotion, retry, and the final
   assert.match(workflow, /https:\/\/server\.usebeeline\.app\/readyz/);
   assert.match(workflow, /https:\/\/server\.usebeeline\.app\/version/);
   assert.match(workflow, /deployed\.version !== version \|\| deployed\.sourceSha !== sourceSha/);
+  assert.match(daemon, /https:\/\/server\.usebeeline\.app\/v1\/releases\/daemon-readiness/);
+  assert.match(daemon, /unified-release\.mjs assert-daemons/);
+  assert.doesNotMatch(daemon, /usebeeline\.app\/push\/health/);
+  assert.match(workflow, /https:\/\/server\.usebeeline\.app\/v1\/releases\/daemon-readiness/);
+  assert.doesNotMatch(workflow, /usebeeline\.app\/push\/health/);
   assert.doesNotMatch(workflow, /post_promote_rehearsal|mobile-ota-post-promote|emulator|Maestro/);
   assert.match(workflow, /A newer main sha superseded this whole release/);
   assert.doesNotMatch(workflow, /push:\s*\n\s*branches:/);

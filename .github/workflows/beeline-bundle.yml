@@ -111,24 +111,24 @@ jobs:
           RELEASE_VERSION: ${{ inputs.release_version }}
         run: |
           set -euo pipefail
+          : > "$RUNNER_TEMP/release-readiness-error.txt"
           for _ in $(seq 1 120); do
-            if curl -fsS --max-time 15 https://usebeeline.app/push/health -o "$RUNNER_TEMP/release-health.json" \
-              && node - "$RUNNER_TEMP/release-health.json" "$RELEASE_VERSION" "$RELEASE_SHA" <<'NODE'
-          const fs = require('node:fs');
-          const [path, version, sha] = process.argv.slice(2);
-          const health = JSON.parse(fs.readFileSync(path, 'utf8'));
-          const daemons = Array.isArray(health.daemons) ? health.daemons : [];
-          const aligned = daemons.length > 0 && daemons.every((daemon) =>
-            daemon.state === 'ready' && daemon.releaseVersion === version && daemon.sourceSha === sha
-          );
-          process.exit(aligned ? 0 : 1);
-          NODE
+            if curl -fsS --max-time 15 \
+              https://server.usebeeline.app/v1/releases/daemon-readiness \
+              -o "$RUNNER_TEMP/release-readiness.json" \
+              2> "$RUNNER_TEMP/release-readiness-error.txt" \
+              && node scripts/unified-release.mjs assert-daemons \
+                --status "$RUNNER_TEMP/release-readiness.json" \
+                --version "$RELEASE_VERSION" \
+                --sha "$RELEASE_SHA" \
+                2> "$RUNNER_TEMP/release-readiness-error.txt"
             then
-              cat "$RUNNER_TEMP/release-health.json"
+              cat "$RUNNER_TEMP/release-readiness.json"
               exit 0
             fi
             sleep 5
           done
           echo "daemon fleet did not confirm $RELEASE_VERSION ($RELEASE_SHA) within 10 minutes" >&2
-          cat "$RUNNER_TEMP/release-health.json" >&2 || true
+          cat "$RUNNER_TEMP/release-readiness-error.txt" >&2 || true
+          cat "$RUNNER_TEMP/release-readiness.json" >&2 || true
           exit 1

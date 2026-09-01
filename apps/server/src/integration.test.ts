@@ -441,6 +441,37 @@ describe('monolith integration', () => {
     socket.close();
   });
 
+  it('reports daemon bundle readiness over public monolith HTTP', async () => {
+    const sourceSha = 'd03cff8f'.padEnd(40, '0');
+    const posted = await request(
+      '/v1/daemon/operations/postAgentPresence',
+      'POST',
+      {
+        agentId: AGENT,
+        roomId: ROOM,
+        status: 'online',
+        releaseVersion: 'v0.0.22',
+        sourceSha,
+      },
+      daemonToken,
+    );
+    expect(posted.status).toBe(200);
+
+    const response = await fetch(`${origin}/v1/releases/daemon-readiness`);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      daemons: [
+        expect.objectContaining({
+          agentPubkey: AGENT,
+          state: 'ready',
+          releaseVersion: 'v0.0.22',
+          sourceSha,
+        }),
+      ],
+    });
+  });
+
   it('treats concurrent retries of the same message write as one successful send', async () => {
     const payload = {
       roomId: ROOM,

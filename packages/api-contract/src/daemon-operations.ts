@@ -162,6 +162,8 @@ export type AgentConfigurationResult = {
 export type AgentPresenceResult = {
   readonly status: 'online' | 'offline' | 'dormant';
   readonly observedAt?: number;
+  readonly releaseVersion?: string;
+  readonly sourceSha?: string;
 };
 export type RequestCompletionResult = {
   readonly openedCornerId?: string;
@@ -218,7 +220,11 @@ export type PostAgentCommandsInput = AgentInput & {
   readonly workspaceId: string;
   readonly commands: readonly { readonly name: string; readonly description?: string }[];
 };
-export type PostAgentPresenceInput = AgentRoomInput & { readonly status: 'online' | 'offline' };
+export type PostAgentPresenceInput = AgentRoomInput & {
+  readonly status: 'online' | 'offline';
+  readonly releaseVersion?: string;
+  readonly sourceSha?: string;
+};
 export type PostAgentModelCatalogInput = AgentInput & {
   readonly workspaceId: string;
   readonly options: readonly DaemonModelConfigOption[];

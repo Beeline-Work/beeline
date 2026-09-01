@@ -60,6 +60,40 @@ class LegacyBuzzRigTransport {
     return this.getClient();
   }
 
+  async createRoom(
+    name: string,
+    options: {
+      communityId: string;
+      visibility?: 'public' | 'invite-only';
+      repository?: RepoCandidate;
+      onPublished?: () => void;
+    },
+  ): Promise<string> {
+    const repository = options.repository;
+    const repositoryRemote = repository?.remote;
+    if (repository && !repositoryRemote)
+      throw new Error('Installed repository has no remote');
+    const client = await this.getClient();
+    const roomId = await client.createChannel(name, {
+      communityId: options.communityId,
+      ...(options.visibility ? { visibility: options.visibility } : {}),
+    });
+    if (repository) {
+      await client.setRoomRepository(roomId, {
+        key: repository.key,
+        name: repository.name,
+        remote: repositoryRemote!,
+        ...(repository.githubInstallationId
+          ? { githubInstallationId: repository.githubInstallationId }
+          : {}),
+        ...(repository.defaultBranch ? { targetBranch: repository.defaultBranch } : {}),
+        communityId: options.communityId,
+      });
+    }
+    options.onPublished?.();
+    return roomId;
+  }
+
   private views(): RoomViewClient {
     return new RoomViewClient({ baseUrl: this.baseUrl, identity: this.identity });
   }
@@ -298,6 +332,7 @@ export class BuzzRigTransport {
       : new LegacyBuzzRigTransport(identity, baseUrl);
   }
   ensureClient() { return this.implementation.ensureClient(); }
+  createRoom(name: string, options: { communityId: string; visibility?: 'public' | 'invite-only'; repository?: RepoCandidate; onPublished?: () => void }) { return this.implementation.createRoom(name, options); }
   composeMessage(input: MessageSubmitInput, opts?: { mentionAgent?: string; mentionPubkeys?: string[] }) { return this.implementation.composeMessage(input, opts); }
   publishPreparedMessage(event: NostrEvent) { return this.implementation.publishPreparedMessage(event); }
   composeReplyMessage(text: string, parent: KnownMessageReference, mentionAgent?: string, attachments: AttachmentReference[] = [], mentionPubkeys: string[] = []) { return this.implementation.composeReplyMessage(text, parent, mentionAgent, attachments, mentionPubkeys); }

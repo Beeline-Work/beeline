@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, Text, TouchableOpacity, View } from 'react-native';
+import { FlatList, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
@@ -47,11 +47,13 @@ import { BuzzCommunityShell, CommunityDrawerTrigger } from '@/components/buzz/Co
 import { DirectMessagePickerSheet } from '@/components/buzz/DirectMessagePickerSheet';
 import { HullDialog, HullDialogInput } from '@/components/buzz/HullDialog';
 import { HullDeckMark, MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
+import { RepoPicker } from '@/components/buzz/RepoPicker';
 import {
   RoomDeckComposeMenu,
   type RoomDeckComposeAction,
 } from '@/components/buzz/RoomDeckComposeMenu';
 import { BuzzRigTransport } from '@/sync/transport';
+import type { RepoCandidate } from '@/buzz/room-repo-picker';
 import { Typography } from '@/constants/Typography';
 
 const AGE_TICK_MS = 60_000;
@@ -100,6 +102,10 @@ export default function BuzzChannels() {
   const [showCreateRoom, setShowCreateRoom] = useState(false);
   const [roomName, setRoomName] = useState('');
   const [creatingRoom, setCreatingRoom] = useState(false);
+  const [showRepoPicker, setShowRepoPicker] = useState(false);
+  const [pendingRepo, setPendingRepo] = useState<RepoCandidate | null>(null);
+  const [repoCandidates, setRepoCandidates] = useState<RepoCandidate[]>([]);
+  const [repoPickerError, setRepoPickerError] = useState<string | null>(null);
   const [retryGeneration, setRetryGeneration] = useState(0);
   const [expandedRoomId, setExpandedRoomId] = useState<string | null>(null);
   const [cornersByRoom, setCornersByRoom] = useState<Record<string, readonly CornerListItem[]>>({});
@@ -372,26 +378,55 @@ export default function BuzzChannels() {
     [activeCommunityId, messagingPubkey, openRoom, transport],
   );
 
+  const loadRepoPicker = useCallback(
+    async (refresh = false) => {
+      if (!transport || !activeCommunityId) return;
+      const access = await transport.workspaceGitHubAccess({ refresh });
+      setRepoCandidates(access.candidates);
+    },
+    [activeCommunityId, transport],
+  );
+
+  const handleToggleRepoPicker = useCallback(async () => {
+    setShowRepoPicker((value) => !value);
+    if (showRepoPicker || !transport || !activeCommunityId) return;
+    setRepoPickerError(null);
+    try {
+      await loadRepoPicker(true);
+    } catch (reason) {
+      setRepoPickerError(`Could not load repos: ${String(reason)}`);
+    }
+  }, [activeCommunityId, loadRepoPicker, showRepoPicker, transport]);
+
+  const handleSelectRepoCandidate = useCallback((candidate: RepoCandidate) => {
+    setPendingRepo(candidate);
+    setShowRepoPicker(false);
+    setRepoPickerError(null);
+  }, []);
+
   const createRoom = useCallback(async () => {
     const name = roomName.trim();
-    if (!name || !transport || !activeCommunityId || creatingRoom) return;
+    if (!name || !transport || !activeCommunityId || !pendingRepo || creatingRoom) return;
     setCreatingRoom(true);
     setError(null);
     let publishAcknowledged = false;
     try {
-      const client = await transport.ensureClient();
-      await client.createChannel(name, {
+      await transport.createRoom(name, {
         communityId: activeCommunityId,
-        mirrorCommunityMembers: true,
+        repository: pendingRepo,
         onPublished: () => {
           publishAcknowledged = true;
           setRoomName('');
+          setPendingRepo(null);
+          setShowRepoPicker(false);
           setShowCreateRoom(false);
           chatScheduler.current?.force();
         },
       });
       if (!publishAcknowledged) {
         setRoomName('');
+        setPendingRepo(null);
+        setShowRepoPicker(false);
         setShowCreateRoom(false);
       }
       chatScheduler.current?.force();
@@ -404,7 +439,7 @@ export default function BuzzChannels() {
     } finally {
       setCreatingRoom(false);
     }
-  }, [activeCommunityId, creatingRoom, roomName, transport]);
+  }, [activeCommunityId, creatingRoom, pendingRepo, roomName, transport]);
 
   const compose = useCallback(
     (action: RoomDeckComposeAction) => {
@@ -504,28 +539,53 @@ export default function BuzzChannels() {
             {
               label: creatingRoom ? 'Creating' : 'Create',
               onPress: () => void createRoom(),
-              disabled: !roomName.trim() || creatingRoom,
+              disabled: !roomName.trim() || !pendingRepo || creatingRoom,
               busy: creatingRoom,
               variant: 'primary',
               testID: 'create-room-submit',
             },
           ]}
-          body={`In ${activeCommunity?.name ?? WORKSPACE_LABEL}.`}
+          body={`In ${activeCommunity?.name ?? WORKSPACE_LABEL}. One Room, one repo.`}
           onRequestClose={() => setShowCreateRoom(false)}
+          surfaceStyle={styles.createRoomDialog}
           testID="new-room-dialog"
           title={`New ${ROOM_LABEL}`}
           visible={showCreateRoom}
         >
-          <HullDialogInput
-            accessibilityLabel={`${ROOM_LABEL} name`}
-            autoFocus
-            editable={!creatingRoom}
-            onChangeText={setRoomName}
-            onSubmitEditing={() => void createRoom()}
-            placeholder="#room-name"
-            testID="create-room-name"
-            value={roomName}
-          />
+          <ScrollView keyboardShouldPersistTaps="handled" style={styles.createRoomContent}>
+            <HullDialogInput
+              accessibilityLabel={`${ROOM_LABEL} name`}
+              autoFocus
+              editable={!creatingRoom}
+              onChangeText={setRoomName}
+              onSubmitEditing={() => void createRoom()}
+              placeholder="#room-name"
+              testID="create-room-name"
+              value={roomName}
+            />
+            <TouchableOpacity
+              accessibilityRole="button"
+              disabled={creatingRoom}
+              onPress={() => void handleToggleRepoPicker()}
+              style={styles.repoRow}
+              testID="create-room-repo-row"
+            >
+              <Text style={styles.repoRowLabel}>REPO</Text>
+              <Text numberOfLines={1} style={styles.repoRowValue}>
+                {pendingRepo ? `▢ ${pendingRepo.name}` : 'Choose a repository'}
+              </Text>
+              <Text style={styles.repoRowChevron}>{showRepoPicker ? '⌄' : '›'}</Text>
+            </TouchableOpacity>
+            {showRepoPicker && (
+              <RepoPicker
+                candidates={repoCandidates}
+                currentKey={pendingRepo?.key ?? null}
+                error={repoPickerError}
+                onSelect={handleSelectRepoCandidate}
+                testIDPrefix="create-room-repo-picker"
+              />
+            )}
+          </ScrollView>
         </HullDialog>
         {!!error && (
           <TouchableOpacity onPress={refreshNow} style={styles.errorBar}>
@@ -760,6 +820,25 @@ const styles = StyleSheet.create((theme) => {
       fontSize: 9,
       letterSpacing: 0.6,
     },
+    createRoomDialog: { maxHeight: '88%' },
+    createRoomContent: { maxHeight: 520 },
+    repoRow: {
+      marginTop: 10,
+      minHeight: 40,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    repoRowLabel: { ...Typography.mono(), color: hull.textMuted, fontSize: 11 },
+    repoRowValue: {
+      ...Typography.mono(),
+      flex: 1,
+      minWidth: 0,
+      textAlign: 'right',
+      color: hull.textSecondary,
+      fontSize: 12,
+    },
+    repoRowChevron: { ...Typography.default(), color: hull.chrome, fontSize: 18 },
     errorBar: {
       paddingHorizontal: 16,
       paddingVertical: 8,

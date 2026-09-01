@@ -57,6 +57,8 @@ scripts/cutover-monolith.sh --execute --target-origin https://server.usebeeline.
 
 The ordered phases are fixed: preflight, drain, freeze, final repeatable-read snapshot/import, daemon token and OTA flip, production end-to-end verification, then reopen. Do not manually skip ahead. The script records only phase names under `.cutover-state/`; credentials and command output are never written there.
 
+After the exact OTA receipt lands on the owner device, tail the monolith Fly app logs while completing one real GitHub sign-in. The same attempt must show `GET /auth/github/callback` followed by `POST /v1/auth/github/exchange` on `server.usebeeline.app`; a callback only on `usebeeline.app`, or an exchange without the preceding monolith callback, fails verification.
+
 The production default and enforced execute target is `https://server.usebeeline.app`. A different origin is accepted only by `--rehearse`; this keeps scratch targets explicit without permitting a production cut toward the retired Fly hostname.
 
 ## Rehearse

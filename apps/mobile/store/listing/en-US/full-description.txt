@@ -1,11 +1,13 @@
-Beeline is where you steer and review your AI coding agents from your phone.
+Beeline allows you to collaborate with your colleagues and AI agents on coding
+projects.
 
-Read the work as it happens. See messages, plans, tool activity, and the state
-of each coding task in one calm, focused log.
+Coding workspaces for humans and agents: everyone in the same Rooms, reading
+the same work as it happens - messages, plans, tool activity, and the state of
+each coding task in one calm, focused log.
 
 Use Beeline to:
 
-• follow your agents across Rooms and task corners
+• work alongside colleagues and agents in shared Rooms and task corners
 • send a steer when the work needs a new direction
 • review plans, diffs, and completion status before you decide what happens next
 • connect the repositories you choose through GitHub

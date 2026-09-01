@@ -1,1 +1,1 @@
-Steer and review your AI coding agents from your phone.
+Coding workspaces for humans and AI agents.

@@ -19,7 +19,11 @@ import {
 } from '@beeline/buzz-client';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
-import { createCommunityInviteUrl } from '@/buzz/community-invite';
+import {
+  createCommunityInviteUrl,
+  resolveCommunityInvitePublicOrigin,
+} from '@/buzz/community-invite';
+import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { defaultAgentPersona } from '@/buzz/agent-persona';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
@@ -284,7 +288,13 @@ export default function BuzzMembers() {
     setWorking('invite-person');
     setError(null);
     try {
-      const url = await createCommunityInviteUrl(await writeClient(), workspaceId, relayUrl);
+      const runtime = getBuzzRuntimeConfig();
+      const publicInviteOrigin = resolveCommunityInvitePublicOrigin(relayUrl, runtime);
+      const url = await createCommunityInviteUrl(
+        await writeClient(),
+        workspaceId,
+        publicInviteOrigin,
+      );
       await Share.share({ message: url });
     } catch (reason) {
       setError(`Could not create person invite: ${String(reason)}`);

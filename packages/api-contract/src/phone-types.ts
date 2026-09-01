@@ -342,6 +342,7 @@ export type AgentDetailView = {
 export type InviteView = {
   readonly name: string;
   readonly avatar?: string;
+  /** Absolute Unix timestamp in seconds. */
   readonly expiresAt: number;
 };
 

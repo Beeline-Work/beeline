@@ -99,7 +99,10 @@ export type UpdateRoomInput = RoomInput & {
 export type ResolveDirectMessageInput = WorkspaceInput & { readonly participantId: string };
 export type DirectMessageResult = IdResult & { readonly created: boolean };
 export type InviteTokenInput = { readonly token: string };
-export type InviteTokenResult = InviteTokenInput & { readonly expiresAt: number };
+export type InviteTokenResult = InviteTokenInput & {
+  /** Absolute Unix timestamp in seconds. */
+  readonly expiresAt: number;
+};
 export type PairingCodeInput = { readonly code: string };
 export type PairingCodeResult = PairingCodeInput & { readonly expiresAt: number };
 export type UpdateAgentSoulInput = WorkspaceAgentInput & {

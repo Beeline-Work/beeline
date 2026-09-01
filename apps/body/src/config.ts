@@ -41,6 +41,9 @@ export const WRITE_TOOL_NAMES = [
 ] as const;
 
 export interface BodyConfig {
+  /** Installed daemon bundle identity reported with monolith presence heartbeats. */
+  daemonReleaseVersion?: string;
+  daemonSourceSha?: string;
   /** Backward-compatible alias of agentCommand. */
   agentBinary: string;
   /** Selected ACP implementation and its exact spawn argv. */

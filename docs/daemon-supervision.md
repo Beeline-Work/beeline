@@ -41,6 +41,14 @@ handoff; `beeline daemon` now instantiates `ThinDaemonCore` directly.
   Room's copied startup block; a failed override reports that Room offline even
   when the daemon-wide default is valid. Sibling Rooms remain isolated from one
   another's result.
+- A monolith-backed daemon includes its installed bundle version and source SHA
+  in every authenticated Room presence heartbeat. The unified release runner
+  reads `GET https://server.usebeeline.app/v1/releases/daemon-readiness`, which
+  needs no phone bearer or runner secret and exposes only active agent ids,
+  presence freshness/state, and bundle identity. Promotion succeeds only when
+  every actively registered agent has fresh online presence on the exact
+  release. The retired `usebeeline.app/push/health` route is not a release
+  authority.
 - `WATCHDOG=1` and `STATUS=` are emitted together, only after a complete core
   tick. A relay outage produces a degraded status and continued watchdog
   progress. No independent heartbeat timer exists.

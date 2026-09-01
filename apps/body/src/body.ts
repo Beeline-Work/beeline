@@ -9913,6 +9913,10 @@ export class Body {
         agentId: this.agentIdentity.publicKey,
         roomId: channelId,
         status,
+        ...(this.config.daemonReleaseVersion
+          ? { releaseVersion: this.config.daemonReleaseVersion }
+          : {}),
+        ...(this.config.daemonSourceSha ? { sourceSha: this.config.daemonSourceSha } : {}),
       });
       this.onRoomPresence?.(channelId, status);
     };

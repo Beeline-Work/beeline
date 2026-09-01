@@ -222,6 +222,10 @@ async function route(
     });
     return;
   }
+  if (method === 'GET' && url.pathname === '/v1/releases/daemon-readiness') {
+    json(response, 200, await options.daemon.releaseReadiness());
+    return;
+  }
   if (method === 'POST' && url.pathname === '/v1/auth/github/exchange') {
     const input = await body(request);
     if (typeof input.oidcToken !== 'string') throw new Error('oidcToken is required');

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# shellcheck source=lib.sh
+# shellcheck disable=SC1091 # Dynamic sibling path; lib.sh is linted separately by lint:shell.
 source "$(dirname -- "$0")/lib.sh"
 
 mode="${1:-}"

@@ -19,7 +19,14 @@ export interface MonolithAuthMount {
 export async function createMonolithAuth(
   database: SqlDatabase,
   publicOrigin: string,
-  github: { oauth: GitHubOAuthClient; app: GitHubAppClient; webhookSecret?: string } | undefined,
+  github:
+    | {
+        oauth: GitHubOAuthClient;
+        app: GitHubAppClient;
+        webhookSecret?: string;
+        onWebhook?: (eventType: string, payload: unknown) => Promise<void>;
+      }
+    | undefined,
   options: {
     createDaemonExchange: TokenAuth['createDaemonExchange'];
     env?: NodeJS.ProcessEnv;

@@ -1,4 +1,4 @@
-import type { GitHubIdentity } from './github.js';
+import { GITHUB_IDENTITY_AUDIENCE, type GitHubIdentity } from './github.js';
 import type { AuthRouteContext } from './server-context.js';
 import { agentConnectApprovedPage } from './server-agent-connect-routes.js';
 import { verifyPhoneGitHubTicket } from './phone-github-ticket.js';
@@ -218,7 +218,7 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
     await options.store.createFlow(sha256(state), {
       community: tenant.community,
       issuer: 'https://github.com',
-      audience: options.github.oauth.config.clientId,
+      audience: GITHUB_IDENTITY_AUDIENCE,
       nonce: randomToken(),
       pkceVerifier: verifier,
       browserSessionHash: sha256(browserSession),
@@ -267,7 +267,7 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
     if (
       flow.community !== tenant.community ||
       flow.issuer !== 'https://github.com' ||
-      flow.audience !== options.github.oauth.config.clientId ||
+      flow.audience !== GITHUB_IDENTITY_AUDIENCE ||
       flow.redirectUri !== `${tenant.origin}/auth/github/callback`
     ) {
       throw new ProtocolError(400, 'invalid_oauth_flow', 'GitHub flow tenant or provider mismatch');

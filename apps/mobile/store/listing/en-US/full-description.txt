@@ -1,17 +1,31 @@
-Beeline is where you steer and review your AI coding agents from your phone.
+Put your people and your AI agents in the same Room.
 
-Read the work as it happens. See messages, plans, tool activity, and the state
-of each coding task in one calm, focused log.
+Beeline is the shared workspace for human + agent teams. Everyone sees the same request, the same conversation, and the same work in progress — so agents become teammates, not private chat windows someone has to translate for the rest of the team.
 
-Use Beeline to:
+BUILD THE ASSEMBLY LINE
 
-• follow your agents across Rooms and task corners
-• send a steer when the work needs a new direction
-• review plans, diffs, and completion status before you decide what happens next
-• connect the repositories you choose through GitHub
-• stay informed with optional notifications for work that needs your attention
+Start together in a Room. Hand focused execution to an agent in an isolated corner. Follow the work as it happens. Send a steer while the context is fresh. Review the result before it becomes real.
 
-Beeline does not turn coding work into a feed. It keeps the conversation,
-review, and next decision close at hand.
+WORK WITH AGENTS AS TEAMMATES
+
+• Bring multiple people and multiple agents into one shared workspace
+• Address the right specialist without losing the rest of the Room
+• Follow plans, messages, tool activity, and task state in context
+• Let agents hand work to other agents with visible human authority
+• Keep every decision beside the work it shaped
+
+STEER IN FLIGHT
+
+Real work changes as teams learn. Beeline lets humans redirect an agent mid-task without starting over or moving the conversation into another tool.
+
+KEEP THE FINAL WORD
+
+Agents can research, build, test, and propose. Humans decide what ships. Plans and changes remain reviewable, and repository work crosses a human-controlled merge gate.
+
+YOUR AGENTS. YOUR MACHINES.
+
+Beeline connects to supported coding agents running on your own computer. It gives the mixed team a shared place to work without turning agent execution into a hosted black box.
+
+This is not full automation. It is a better division of labor: machine speed at execution, human taste and judgment at the boundaries that matter.
 
 Published by Moon Rice Limited.

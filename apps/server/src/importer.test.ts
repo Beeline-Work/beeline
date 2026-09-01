@@ -79,6 +79,15 @@ function snapshot(): LegacySnapshot {
         name: 'General',
         visibility: 'invite-only',
         archived: false,
+        repository: {
+          key: 'acme/beeline',
+          remote: 'git://github.com/acme/beeline',
+          targetBranch: 'main',
+          githubInstallationId: 1,
+          githubEventsEnabled: true,
+          updatedAt: BASE + 12,
+        },
+        repositoryResolution: 'repository',
         createdAt: BASE - 90,
         updatedAt: BASE + 20,
       },
@@ -106,7 +115,14 @@ function snapshot(): LegacySnapshot {
       { workspaceId: WORKSPACE, identityId: OWNER, role: 'owner', removed: false },
       { workspaceId: WORKSPACE, identityId: AGENT, role: 'member', removed: false },
       { workspaceId: WORKSPACE, identityId: REMOVED, role: 'member', removed: true },
-      { workspaceId: WORKSPACE, roomId: ROOM, identityId: OWNER, role: 'owner', removed: false },
+      {
+        workspaceId: WORKSPACE,
+        roomId: ROOM,
+        identityId: OWNER,
+        role: 'owner',
+        removed: false,
+        identity: { kind: 'human', name: 'Workspace Owner', handle: 'owner@hive.test' },
+      },
       { workspaceId: WORKSPACE, roomId: ROOM, identityId: AGENT, role: 'member', removed: false },
       { workspaceId: WORKSPACE, roomId: ROOM, identityId: REMOVED, role: 'member', removed: true },
       { workspaceId: WORKSPACE, roomId: DM, identityId: OWNER, role: 'member', removed: false },
@@ -127,7 +143,7 @@ function snapshot(): LegacySnapshot {
         roomId: ROOM,
         authorId: OWNER,
         authorKind: 'human',
-        authorName: 'Owner',
+        authorName: 'Workspace Owner',
         kind: 9,
         tags: [['h', ROOM]],
         content: 'Start migration',
@@ -348,7 +364,9 @@ describe('direct snapshot importer and RoomView parity', () => {
   afterEach(() => db.close());
   it('covers the production-shaped fixture and matches old RoomView JSON after intentional URL normalization', async () => {
     const source = snapshot();
-    const report = await new SnapshotImporter(db).import(source);
+    const report = await new SnapshotImporter(db).import(source, undefined, undefined, {
+      includeMedia: true,
+    });
     expect(report.imported).toMatchObject({
       identity: 4,
       agent: 1,
@@ -399,7 +417,15 @@ describe('direct snapshot importer and RoomView parity', () => {
       });
     expect(normalize(actual!.messages)).toEqual(normalize(oldMessages));
     expect(actual!.room.archived).toBe(false);
-    expect(actual!.members.map((member) => member.identity.pubkey)).toEqual([AGENT, OWNER]);
+    expect(actual!.members.map((member) => member.identity.pubkey)).toEqual([OWNER, AGENT]);
+    expect(actual!.viewer.identity).toMatchObject({
+      pubkey: OWNER,
+      name: 'Workspace Owner',
+      handle: 'owner@hive.test',
+    });
+    expect(actual!.messages.find((message) => message.id === MESSAGE)?.author.name).toBe(
+      'Workspace Owner',
+    );
     expect(actual!.members.find((member) => member.identity.pubkey === AGENT)?.presence).toEqual({
       status: 'online',
       observedAt: BASE + 9,
@@ -421,6 +447,24 @@ describe('direct snapshot importer and RoomView parity', () => {
       objective: 'Build monolith',
       items: [{ step: 'Import', status: 'completed' }],
     });
+    const cornerView = await phone.readRoom(CORNER, AGENT);
+    expect(cornerView?.corners.map((corner) => corner.corner.id)).toEqual([CORNER]);
+    expect(cornerView?.repository).toMatchObject({
+      key: 'acme/beeline',
+      updatedAt: BASE + 12,
+    });
+    expect(cornerView?.repositoryResolution).toBe('repository');
+    expect(cornerView?.watchFilters).toEqual([
+      {
+        kinds: [0, 9, 9000, 9001, 9002, 9007, 9008, 30078, 39000, 39001, 39002],
+        '#h': [WORKSPACE, CORNER, ROOM],
+      },
+      { kinds: [0], authors: [AGENT, OWNER] },
+      {
+        kinds: [30078],
+        '#d': [`agent-draft:${CORNER}`, `agent-thought:${CORNER}`, `agent-presence:${CORNER}`],
+      },
+    ]);
     expect((await phone.readRoom(CORNER, AGENT))?.cornerLifecycle).toMatchObject({
       lifecycle: 'in-review',
       checks: 'passing',
@@ -461,6 +505,65 @@ describe('direct snapshot importer and RoomView parity', () => {
         )
       ).rowCount,
     ).toBe(2);
+  });
+  it('skips every legacy media object by default while retaining transcript references', async () => {
+    const source = snapshot();
+    const report = await new SnapshotImporter(db).import(source);
+    expect(report.imported.media).toBeUndefined();
+    expect(report.mediaBytes).toBe(0);
+    expect((await db.query(`SELECT 1 FROM media`)).rowCount).toBe(0);
+    const room = await new PhoneService(db, 'https://server.example').readRoom(ROOM, OWNER);
+    expect(room?.messages.flatMap((message) => message.attachments ?? []).length).toBeGreaterThan(
+      0,
+    );
+    expect(room?.messages.flatMap((message) => message.attachments ?? [])[0]?.url).toContain(
+      'alternate.invalid',
+    );
+  });
+  it('applies the production raw and conversation page budgets before projection', async () => {
+    const source = snapshot();
+    const visible = Array.from({ length: 29 }, (_, index) => ({
+      id: (1_000 + index).toString(16).padStart(64, '0'),
+      roomId: ROOM,
+      authorId: OWNER,
+      authorKind: 'human' as const,
+      authorName: 'Owner',
+      kind: 9,
+      tags: [['h', ROOM]],
+      content: `visible ${index}`,
+      createdAt: BASE + 100 + index,
+    }));
+    source.events.push(
+      ...visible,
+      {
+        id: (1_100).toString(16).padStart(64, '0'),
+        roomId: ROOM,
+        authorId: AGENT,
+        authorKind: 'agent',
+        authorName: 'Bee',
+        kind: 9,
+        tags: [['h', ROOM]],
+        content: 'I lost my connection to the relay — reconnecting.',
+        createdAt: BASE + 129,
+      },
+      ...Array.from({ length: 180 }, (_, index) => ({
+        id: (2_000 + index).toString(16).padStart(64, '0'),
+        roomId: ROOM,
+        authorId: AGENT,
+        authorKind: 'agent' as const,
+        authorName: 'Bee',
+        kind: 9,
+        tags: [
+          ['h', ROOM],
+          ['t', 'body-control'],
+        ],
+        content: '{}',
+        createdAt: BASE + 200 + index,
+      })),
+    );
+    await new SnapshotImporter(db).import(source);
+    const room = await new PhoneService(db, 'https://server.example').readRoom(ROOM, OWNER);
+    expect(room?.messages.map((message) => message.id)).toEqual(visible.map((event) => event.id));
   });
   it('resumes the same import after interruption without duplicates', async () => {
     const importer = new SnapshotImporter(db);

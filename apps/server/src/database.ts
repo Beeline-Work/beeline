@@ -170,14 +170,20 @@ CREATE TABLE IF NOT EXISTS rooms (
   archived_at timestamptz,
   direct_participants jsonb,
   repository_key text,
+  repository_name text,
   repository_remote text,
   repository_target_branch text NOT NULL DEFAULT 'main',
+  repository_updated_at timestamptz,
+  repository_resolution text NOT NULL DEFAULT 'none' CHECK (repository_resolution IN ('repository', 'none', 'unverified')),
   github_installation_id bigint,
   github_events_enabled boolean NOT NULL DEFAULT true,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS created_by text REFERENCES identities(id);
+ALTER TABLE rooms ADD COLUMN IF NOT EXISTS repository_updated_at timestamptz;
+ALTER TABLE rooms ADD COLUMN IF NOT EXISTS repository_name text;
+ALTER TABLE rooms ADD COLUMN IF NOT EXISTS repository_resolution text NOT NULL DEFAULT 'none';
 CREATE INDEX IF NOT EXISTS rooms_workspace_idx ON rooms(workspace_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS rooms_parent_idx ON rooms(parent_id, updated_at DESC);
 
@@ -188,9 +194,11 @@ CREATE TABLE IF NOT EXISTS memberships (
   identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
   role text NOT NULL CHECK (role IN ('owner', 'admin', 'member')),
   generation bigint NOT NULL DEFAULT 1,
+  identity_profile jsonb,
   joined_at timestamptz NOT NULL DEFAULT now(),
   removed_at timestamptz
 );
+ALTER TABLE memberships ADD COLUMN IF NOT EXISTS identity_profile jsonb;
 CREATE INDEX IF NOT EXISTS memberships_identity_idx ON memberships(identity_id, removed_at);
 CREATE UNIQUE INDEX IF NOT EXISTS memberships_workspace_unique
   ON memberships(workspace_id, identity_id) WHERE room_id IS NULL;
@@ -232,6 +240,19 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 CREATE INDEX IF NOT EXISTS messages_room_page_idx ON messages(room_id, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS messages_request_idx ON messages(room_id, request_id) WHERE request_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS legacy_room_events (
+  id text PRIMARY KEY,
+  room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  kind integer NOT NULL,
+  created_at timestamptz NOT NULL,
+  raw_page_candidate boolean NOT NULL DEFAULT true,
+  conversation_candidate boolean NOT NULL DEFAULT false
+);
+ALTER TABLE legacy_room_events ADD COLUMN IF NOT EXISTS raw_page_candidate boolean NOT NULL DEFAULT true;
+ALTER TABLE legacy_room_events ADD COLUMN IF NOT EXISTS conversation_candidate boolean NOT NULL DEFAULT false;
+CREATE INDEX IF NOT EXISTS legacy_room_events_page_idx
+  ON legacy_room_events(room_id, created_at DESC, id);
 
 CREATE TABLE IF NOT EXISTS agent_turns (
   room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,

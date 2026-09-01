@@ -1,5 +1,22 @@
 # Production import rehearsal — 2026-08-31
 
+## Phase C follow-up
+
+**GO — the RoomView projection blocker is cleared.** A fresh repeatable-read,
+read-only production snapshot was imported after the projection fixes, then
+compared with authenticated live RoomView reads for three top-level Rooms and
+four stable closed corners. All stable fields matched exactly across all seven
+responses. The only raw JSON differences were post-snapshot card/turn/presence
+movement, one briefing row at the 40-row boundary after a source row
+disappeared, and ordering of collections whose production SQL has no
+`ORDER BY`. No production data was changed.
+
+The owner also superseded the media recommendation below: the cut imports
+**zero legacy media objects**. The importer defaults to an empty media import;
+`--include-media` is an explicit rehearsal-only opt-in. Historical transcript
+image URLs may therefore stop resolving after cutover. New uploads are
+unaffected.
+
 ## Verdict
 
 The data fits Neon Free after the audit log is excluded. The importer completed a clean import of the production snapshot, the server started, and a local send-then-read flow passed. The measured cut path was 88.155 seconds; snapshot extraction plus that cut path was 428.784 seconds (7 minutes 8.784 seconds), below the proposed 10–20 minute window.
@@ -83,7 +100,7 @@ The 514-object MinIO inventory consists of 110 user-media objects / 87,334,236 b
 
 Nine orphan `.bin` objects have near-identical roughly 8.7 MB sizes (77,994,546 bytes total), making them likely canary/test uploads. That is a shape-based inference, not provenance proof. The explicit `probe/` objects are proven tests but are auxiliary objects rather than user media.
 
-Recommendation: import the 35 message/avatar-referenced objects (6,759,044 source bytes) and drop the 75 unreferenced objects. Preserve the full read-only inventory until the owner approves the cut policy so any disputed object can be reclassified. Do not delete anything from production as part of this recommendation.
+Historical rehearsal recommendation (superseded by the Phase C owner ruling): import the 35 message/avatar-referenced objects (6,759,044 source bytes) and drop the 75 unreferenced objects. The approved cut policy is now zero legacy media objects. Do not delete anything from production as part of this ruling.
 
 ## Neon storage
 

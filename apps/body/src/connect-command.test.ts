@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   brass,
   collectConnectWizard,
   defaultConnectModel,
+  requestConnectGrant,
   runConnectFinishCommand,
   type ConnectPrompts,
 } from './connect-command.js';
@@ -26,6 +27,65 @@ function promptFixture(answers: string[]) {
 }
 
 describe('connect wizard', () => {
+  it('exchanges the app pairing code in one request without a browser ceremony', async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            pairing_code: 'BUZZ-1234ABCD-5678EF90',
+            agent_secret_key: '1'.repeat(64),
+            agent_pubkey: '2'.repeat(64),
+            body_secret_key: '3'.repeat(64),
+            agent_name: 'Scout',
+            workspace_id: 'workspace-id',
+            workspace_name: 'Builders',
+            paired_by: '4'.repeat(64),
+            harness: 'codex',
+            model: 'gpt-5.4',
+            soul: 'Brisk and kind.',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+    );
+
+    await expect(
+      requestConnectGrant(
+        'https://server.example',
+        'buzz-1234abcd-5678ef90',
+        { name: 'Scout', harness: 'codex', model: 'gpt-5.4', soul: 'Brisk and kind.' },
+        fetchImpl as unknown as typeof fetch,
+      ),
+    ).resolves.toMatchObject({ workspace_name: 'Builders' });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://server.example/auth/agent/connect');
+    expect(JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body))).toEqual({
+      pairing_code: 'BUZZ-1234ABCD-5678EF90',
+      harness: 'codex',
+      model: 'gpt-5.4',
+      soul: 'Brisk and kind.',
+      agent_name: 'Scout',
+    });
+  });
+
+  it('surfaces a claimed or expired pairing code as one server message', async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ message: 'pairing code has expired' }), {
+          status: 410,
+          headers: { 'content-type': 'application/json' },
+        }),
+    );
+    await expect(
+      requestConnectGrant(
+        'https://server.example',
+        'BUZZ-1234ABCD-5678EF90',
+        { name: 'Scout', harness: 'codex', model: 'gpt-5.4', soul: 'Brisk and kind.' },
+        fetchImpl as unknown as typeof fetch,
+      ),
+    ).rejects.toThrow('pairing code has expired');
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
   it('uses a harness-native provider without asking for credentials', async () => {
     const fixture = promptFixture(['codex', 'gpt-5.4', 'Scout', 'Brisk, practical, and kind.']);
 

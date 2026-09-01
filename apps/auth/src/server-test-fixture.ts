@@ -281,6 +281,7 @@ export const state: {
         permissions?: Readonly<Record<string, string>>;
       }
     | undefined;
+  agentPairingClaim: NonNullable<Parameters<typeof buildAuthServer>[0]['claimAgentPairingCode']>;
   logLines: string[];
 } = {
   githubSubject: '123',
@@ -296,6 +297,7 @@ export const state: {
   githubRepositoryLookup: undefined,
   roomTokenAuthority: async () => ({ authorized: false, reason: 'agent_not_room_member' }),
   roomTokenMint: undefined,
+  agentPairingClaim: async () => ({ status: 'not_found' }),
   logLines: [],
 };
 
@@ -324,6 +326,7 @@ export function useAuthServerFixture(): void {
       reason: 'agent_not_room_member',
     });
     state.roomTokenMint = undefined;
+    state.agentPairingClaim = async () => ({ status: 'not_found' });
     state.logLines = [];
     app = buildAuthServer({
       store,
@@ -438,6 +441,7 @@ export function useAuthServerFixture(): void {
       },
       tenants: [alphaTenant, betaTenant],
       authorizeGitHubRoomToken: (tenant, input) => state.roomTokenAuthority(tenant, input),
+      claimAgentPairingCode: (input) => state.agentPairingClaim(input),
       logger: {
         level: 'warn',
         stream: { write: (line: string) => state.logLines.push(line) },

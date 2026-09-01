@@ -778,6 +778,79 @@ export class PhoneService {
     });
   }
 
+  async claimAgentConnectPairing(input: {
+    code: string;
+    agentPubkey: string;
+    agentName: string;
+    model: string;
+    soul: string;
+  }): Promise<
+    | { status: 'claimed'; workspaceId: string; workspaceName: string; pairedBy: string }
+    | { status: 'not_found' | 'expired' | 'already_claimed' }
+  > {
+    return this.database.transaction(async (database) => {
+      const result = await database.query<{
+        workspace_id: string;
+        workspace_name: string;
+        created_by: string;
+        claimed_by: string | null;
+        expires_at: Date;
+      }>(
+        `SELECT pairing.workspace_id,workspace.name AS workspace_name,pairing.created_by,
+                pairing.claimed_by,pairing.expires_at
+         FROM agent_pairing_codes pairing
+         JOIN workspaces workspace ON workspace.id=pairing.workspace_id
+         WHERE pairing.code_hash=$1
+         FOR UPDATE OF pairing`,
+        [hash(input.code)],
+      );
+      const pairing = result.rows[0];
+      if (!pairing) return { status: 'not_found' };
+      if (pairing.expires_at.getTime() <= Date.now()) return { status: 'expired' };
+      if (pairing.claimed_by) return { status: 'already_claimed' };
+
+      await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent',$2)`, [
+        input.agentPubkey,
+        input.agentName,
+      ]);
+      await database.query(
+        `INSERT INTO agents(agent_id,owner_id,soul,selected_model)
+         VALUES($1,$2,$3::jsonb,$4)`,
+        [
+          input.agentPubkey,
+          pairing.created_by,
+          JSON.stringify({ name: input.agentName, instructions: input.soul }),
+          input.model,
+        ],
+      );
+      await database.query(
+        `UPDATE agent_pairing_codes SET claimed_by=$2,claimed_at=now() WHERE code_hash=$1`,
+        [hash(input.code), input.agentPubkey],
+      );
+      await database.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+         VALUES ($1,NULL,$2,'member')`,
+        [pairing.workspace_id, input.agentPubkey],
+      );
+      await database.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+         SELECT membership.workspace_id,membership.room_id,$2,'member'
+         FROM memberships membership
+         JOIN rooms room ON room.id=membership.room_id
+         WHERE membership.workspace_id=$1 AND membership.identity_id=$3
+           AND membership.removed_at IS NULL AND room.parent_id IS NULL AND room.archived_at IS NULL
+         ON CONFLICT DO NOTHING`,
+        [pairing.workspace_id, input.agentPubkey, pairing.created_by],
+      );
+      return {
+        status: 'claimed',
+        workspaceId: pairing.workspace_id,
+        workspaceName: pairing.workspace_name,
+        pairedBy: pairing.created_by,
+      };
+    });
+  }
+
   async execute<Name extends keyof PhoneOperationMap>(
     name: Name,
     input: Input<Name>,

@@ -9,6 +9,7 @@ import { createBeelineServer } from './server.js';
 import { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { GitHubOperations } from './github-operations.js';
 import { createMonolithAuth } from './monolith-auth.js';
+import type { MonolithAuthMount } from './monolith-auth.js';
 
 function required(name: string) {
   const value = process.env[name];
@@ -46,8 +47,17 @@ async function main() {
           : {}),
       }
     : undefined;
-  const mountedAuth = await createMonolithAuth(database, publicOrigin, githubClients);
-  const auth = new TokenAuth(database, verifierFromEnvironment(mountedAuth.verifyGitHubTicket));
+  let mountedAuth!: MonolithAuthMount;
+  const auth = new TokenAuth(
+    database,
+    verifierFromEnvironment(async (ticket) => {
+      if (!mountedAuth) throw new Error('monolith auth is not ready');
+      return mountedAuth.verifyGitHubTicket(ticket);
+    }),
+  );
+  mountedAuth = await createMonolithAuth(database, publicOrigin, githubClients, {
+    createDaemonExchange: (agentId, transaction) => auth.createDaemonExchange(agentId, transaction),
+  });
   const github = githubClients
     ? new GitHubOperations(
         database,

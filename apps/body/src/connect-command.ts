@@ -249,10 +249,10 @@ export async function collectConnectWizard(
 }
 
 export interface DeviceGrantResponse {
-  pairing_code: string;
   agent_secret_key: string;
   agent_pubkey: string;
   body_secret_key: string;
+  daemon_exchange_token: string;
   agent_name: string;
   workspace_id: string;
   workspace_name: string;
@@ -435,7 +435,6 @@ export async function runConnectCommand(
     `grant-${process.pid}-${Date.now()}.json`,
   );
   await writePrivateJson(grantPath, {
-    pairingCode: grant.pairing_code,
     agentSecretKey: grant.agent_secret_key,
     bodySecretKey: grant.body_secret_key,
     agentName: grant.agent_name,
@@ -444,6 +443,9 @@ export async function runConnectCommand(
     soul: grant.soul,
     workspaceId: grant.workspace_id,
     workspaceName: grant.workspace_name,
+    pairedBy: grant.paired_by,
+    monolithBaseUrl: baseUrl,
+    daemonExchangeToken: grant.daemon_exchange_token,
     ...(llmEnvFile ? { llmEnvFile } : {}),
   } satisfies DevicePairingGrant);
   await brassSpinner('Starting your agent…', () => runInstalledFinish(installedBinary, grantPath));
@@ -456,8 +458,13 @@ export async function runConnectCommand(
 function isDevicePairingGrant(value: unknown): value is DevicePairingGrant {
   if (!value || typeof value !== 'object') return false;
   const grant = value as Partial<DevicePairingGrant>;
+  let monolithOrigin = '';
+  try {
+    monolithOrigin = new URL(grant.monolithBaseUrl ?? '').origin;
+  } catch {
+    return false;
+  }
   return (
-    typeof grant.pairingCode === 'string' &&
     typeof grant.agentSecretKey === 'string' &&
     /^[0-9a-f]{64}$/.test(grant.agentSecretKey) &&
     typeof grant.bodySecretKey === 'string' &&
@@ -467,7 +474,14 @@ function isDevicePairingGrant(value: unknown): value is DevicePairingGrant {
     typeof grant.model === 'string' &&
     typeof grant.soul === 'string' &&
     typeof grant.workspaceId === 'string' &&
-    typeof grant.workspaceName === 'string'
+    typeof grant.workspaceName === 'string' &&
+    typeof grant.pairedBy === 'string' &&
+    /^[0-9a-f]{64}$/.test(grant.pairedBy) &&
+    typeof grant.monolithBaseUrl === 'string' &&
+    grant.monolithBaseUrl === monolithOrigin &&
+    /^https?:$/.test(new URL(monolithOrigin).protocol) &&
+    typeof grant.daemonExchangeToken === 'string' &&
+    /^bde_[A-Za-z0-9_-]{43}$/.test(grant.daemonExchangeToken)
   );
 }
 

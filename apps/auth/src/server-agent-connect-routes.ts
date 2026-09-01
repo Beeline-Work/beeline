@@ -147,10 +147,10 @@ export function registerServerAgentConnectRoutes(context: AuthRouteContext): voi
 
     noStore(reply);
     return reply.send({
-      pairing_code: pairingCode,
       agent_secret_key: Buffer.from(agent.secretKey).toString('hex'),
       agent_pubkey: agent.publicKey,
       body_secret_key: Buffer.from(bodyIdentity.secretKey).toString('hex'),
+      daemon_exchange_token: claim.daemonExchangeToken,
       workspace_id: claim.workspaceId,
       workspace_name: claim.workspaceName,
       paired_by: claim.pairedBy,

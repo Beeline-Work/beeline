@@ -32,6 +32,14 @@ describe('mounted monolith auth', () => {
     vi.stubEnv('PHONE_GITHUB_EXCHANGE_ENDPOINT', '');
     database = new PgliteDatabase();
     await migrate(database);
+    let mountedForVerification: MonolithAuthMount | undefined;
+    const tokenAuth = new TokenAuth(
+      database,
+      verifierFromEnvironment(async (ticket) => {
+        if (!mountedForVerification) throw new Error('monolith auth is not ready');
+        return mountedForVerification.verifyGitHubTicket(ticket);
+      }),
+    );
     mount = await createMonolithAuth(
       database,
       tenant.origin,
@@ -52,21 +60,25 @@ describe('mounted monolith auth', () => {
         app: {} as GitHubAppClient,
       },
       {
-        NODE_ENV: 'test',
-        BUZZY_AUTH_TENANTS_JSON: JSON.stringify([tenant]),
-        BUZZY_AUTH_OIDC_ISSUER: 'https://accounts.example',
-        BUZZY_AUTH_OIDC_AUTHORIZATION_ENDPOINT: 'https://accounts.example/authorize',
-        BUZZY_AUTH_OIDC_TOKEN_ENDPOINT: 'https://accounts.example/token',
-        BUZZY_AUTH_OIDC_JWKS_URI: 'https://accounts.example/jwks',
-        BUZZY_AUTH_OIDC_CLIENT_ID: 'test-client',
+        createDaemonExchange: (agentId, transaction) =>
+          tokenAuth.createDaemonExchange(agentId, transaction),
+        env: {
+          NODE_ENV: 'test',
+          BUZZY_AUTH_TENANTS_JSON: JSON.stringify([tenant]),
+          BUZZY_AUTH_OIDC_ISSUER: 'https://accounts.example',
+          BUZZY_AUTH_OIDC_AUTHORIZATION_ENDPOINT: 'https://accounts.example/authorize',
+          BUZZY_AUTH_OIDC_TOKEN_ENDPOINT: 'https://accounts.example/token',
+          BUZZY_AUTH_OIDC_JWKS_URI: 'https://accounts.example/jwks',
+          BUZZY_AUTH_OIDC_CLIENT_ID: 'test-client',
+        },
       },
     );
+    mountedForVerification = mount;
     store = new AuthStore(database as unknown as TransactionalDatabase);
-    const auth = new TokenAuth(database, verifierFromEnvironment(mount.verifyGitHubTicket));
     const live = new LiveHub();
     server = createBeelineServer({
       database,
-      auth,
+      auth: tokenAuth,
       phone: new PhoneService(database, 'http://placeholder'),
       daemon: new DaemonService(database, live),
       live,

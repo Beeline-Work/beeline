@@ -84,6 +84,35 @@ describe('PhoneService agent connect pairing claim', () => {
     expect(memberships.rows).toEqual([{ room_id: null }, { room_id: ROOM }]);
   });
 
+  it('rolls the agent claim back when its daemon exchange cannot be minted', async () => {
+    await insertCode(new Date(Date.now() + 60_000));
+    await expect(
+      phone.claimAgentConnectPairing(
+        {
+          code: CODE,
+          agentPubkey: AGENT,
+          agentName: 'Scout',
+          model: 'gpt-5.4',
+          soul: 'Brisk and kind.',
+        },
+        async () => {
+          throw new Error('exchange unavailable');
+        },
+      ),
+    ).rejects.toThrow('exchange unavailable');
+    expect((await database.query(`SELECT 1 FROM identities WHERE id=$1`, [AGENT])).rowCount).toBe(
+      0,
+    );
+    expect(
+      (
+        await database.query<{ claimed_by: string | null }>(
+          `SELECT claimed_by FROM agent_pairing_codes WHERE code_hash=$1`,
+          [createHash('sha256').update(CODE).digest('hex')],
+        )
+      ).rows[0]?.claimed_by,
+    ).toBeNull();
+  });
+
   it.each([
     [new Date(Date.now() - 1_000), undefined, 'expired'],
     [new Date(Date.now() + 60_000), OWNER, 'already_claimed'],

@@ -63,10 +63,10 @@ describe('the corner line and the turn indicator are independent', () => {
   it('runs the same thinking indicator for an active turn inside a corner', () => {
     const turn = memoBody('composerAck');
     expect(turn).not.toContain('sessionState');
-    // The real receipt is resolved by the shared `selectComposerAckState` (it
-    // calls `selectTurnProgressAgentPubkey` internally) rather than by a
-    // second inline copy of the same check in the screen.
-    expect(turn).toContain('selectComposerAckState');
+    // The real receipt and its server-resolved identity are both presented by
+    // the shared selector (which calls `selectTurnProgressAgentPubkey`
+    // internally), rather than by a second inline copy in the screen.
+    expect(turn).toContain('selectComposerAckPresentation');
     expect(turn).toContain('activeTurnPubkey: activeAgentTurn.agentPubkey');
     expect(turn).not.toContain('if (isCorner || agentsOffline) return null');
   });
@@ -79,7 +79,7 @@ describe('the corner line and the turn indicator are independent', () => {
     for (const cornerState of CORNER_STATE) expect(turn).not.toContain(cornerState);
     expect(turn).toContain('pendingAckSentAt');
     expect(turn).toContain('composerAckNow');
-    expect(turn).toContain("label: 'waiting on agent…'");
+    expect(turn).toContain('selectComposerAckPresentation');
     expect(turn).not.toContain('no confirmation yet');
   });
 

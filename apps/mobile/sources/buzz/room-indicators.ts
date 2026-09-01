@@ -4,7 +4,8 @@ import {
   type CornerStatus,
   type CornerSummary,
 } from './corners';
-import type { RoomViewAgentTurn } from '@beeline/buzz-client';
+import { resolveAgentDisplayIdentity } from './agent-display';
+import type { Agent, RoomViewAgentTurn, RoomViewIdentity } from '@beeline/buzz-client';
 
 /**
  * The two things a Room reports above its composer are *different facts about
@@ -73,6 +74,32 @@ export type ComposerAckInput = TurnProgressInput & {
   now: number;
 };
 
+type AgentDisplaySource = Pick<Agent, 'pubkey' | 'displayName' | 'avatar' | 'soulProfile'>;
+
+export type ComposerAckPresentationInput = ComposerAckInput & {
+  /**
+   * The server view's newest known identity for each conversation speaker.
+   * This is also the source that refreshes transcript bylines, so a thinking
+   * line changes with the same authenticated identity update as its message.
+   */
+  conversationIdentities?: ReadonlyMap<string, RoomViewIdentity>;
+  /** Membership-derived detail supplies soul artwork/profile when available. */
+  agentsByPubkey?: ReadonlyMap<string, AgentDisplaySource>;
+};
+
+export type ComposerAckPresentation = { label: string; tone: 'live' | 'quiet' };
+
+function agentFromConversationIdentity(
+  identity: RoomViewIdentity | undefined,
+): AgentDisplaySource | undefined {
+  if (identity?.kind !== 'agent') return undefined;
+  return {
+    pubkey: identity.pubkey,
+    displayName: identity.name,
+    ...(identity.avatar ? { avatar: identity.avatar } : {}),
+  };
+}
+
 /**
  * A locally armed acknowledgement belongs to one signed user message. The
  * server-indexed lifecycle receipt carries that message id as `requestId`, so
@@ -106,6 +133,28 @@ export function selectComposerAckState(input: ComposerAckInput): ComposerAckStat
   const elapsed = input.now - input.pendingAckSentAt;
   if (elapsed < 0) return null;
   return elapsed < COMPOSER_ACK_BOUND_MS ? { kind: 'buzzing' } : { kind: 'delivery-unclear' };
+}
+
+/**
+ * Presentation for the one composer acknowledgement. The active-turn receipt
+ * provides only a pubkey, so resolve it through the current server identity
+ * map before falling back to membership detail. This keeps the thinking label
+ * in lockstep with Room/corner bylines without inventing a name on a miss.
+ */
+export function selectComposerAckPresentation(
+  input: ComposerAckPresentationInput,
+): ComposerAckPresentation | null {
+  const state = selectComposerAckState(input);
+  if (!state) return null;
+  if (state.kind === 'thinking') {
+    const agent =
+      agentFromConversationIdentity(input.conversationIdentities?.get(state.agentPubkey)) ??
+      input.agentsByPubkey?.get(state.agentPubkey);
+    const subject = resolveAgentDisplayIdentity(state.agentPubkey, agent).name;
+    return { label: `${subject} thinking…`, tone: 'live' };
+  }
+  if (state.kind === 'buzzing') return { label: 'buzzing…', tone: 'live' };
+  return { label: 'waiting on agent…', tone: 'quiet' };
 }
 
 /**

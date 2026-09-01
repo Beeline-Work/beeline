@@ -77,6 +77,9 @@ function signatureMatches(secret: string, payload: Buffer, header: string | unde
 export function createBeelineServer(options: ServerOptions): Server {
   const webSockets = new WebSocketServer({ noServer: true });
   const server = createServer((request, response) => {
+    const url = exactPath(request.url);
+    const method = request.method ?? 'GET';
+    console.log('[req]', method, url.pathname);
     void route(request, response, options).catch((error) => {
       const message = error instanceof Error ? error.message : 'request failed';
       const status =
@@ -90,6 +93,13 @@ export function createBeelineServer(options: ServerOptions): Server {
             : message.includes('not found')
               ? 404
               : 503;
+      console.error(
+        '[req-error]',
+        method,
+        url.pathname,
+        `status=${status}`,
+        error instanceof Error ? error.stack || error.message : String(error),
+      );
       json(response, status, { error: message });
     });
   });
@@ -381,12 +391,14 @@ async function route(
   match = url.pathname.match(/^\/v1\/phone\/operations\/([A-Za-z][A-Za-z0-9]+)$/);
   if (method === 'POST' && match) {
     const name = match[1]!;
+    console.log('[phone-op]', name, `identity=${identityId}`, 'start');
     if (!PHONE_OPERATION_NAMES.has(name as never)) {
       json(response, 404, { error: 'unknown_phone_operation' });
       return;
     }
     const input = await body(request);
     const result = await options.phone.execute(name as never, input as never, identityId!);
+    console.log('[phone-op]', name, `identity=${identityId}`, 'ok');
     if (typeof input.roomId === 'string')
       options.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'phone-write' });
     json(response, 200, result);

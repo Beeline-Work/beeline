@@ -1,6 +1,13 @@
 name: Publish usebeeline to npm
 
 on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to publish (defaults to packages/usebeeline/package.json)
+        required: false
+        default: ''
+        type: string
   workflow_run:
     workflows: [Unified production release]
     types: [completed]
@@ -12,13 +19,14 @@ permissions:
 
 jobs:
   publish:
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
     runs-on: [self-hosted, beeline-production-squire]
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || 'main' }}
       - uses: actions/download-artifact@v4
+        if: github.event_name == 'workflow_run'
         with:
           name: unified-release-index
           path: ${{ runner.temp }}/release
@@ -40,10 +48,25 @@ jobs:
           npm run build -w @beeline/gate
           npm run build -w @beeline/body
           npm run build -w usebeeline
-      - name: Apply unified release version
+      - name: Resolve publish version
         id: version
+        env:
+          DISPATCH_VERSION: ${{ inputs.version }}
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
-          release_version=$(node -e "const r=require(process.argv[1]);if(!/^v[0-9]+\\.[0-9]+\\.[0-9]+$/.test(r.version)||r.sourceSha!==process.argv[2])process.exit(1);process.stdout.write(r.version.slice(1))" "$RUNNER_TEMP/release/unified-release.json" "${{ github.event.workflow_run.head_sha }}")
+          if [ "$EVENT_NAME" = 'workflow_run' ]; then
+            release_version=$(node -e "const r=require(process.argv[1]);if(!/^v[0-9]+\\.[0-9]+\\.[0-9]+$/.test(r.version)||r.sourceSha!==process.argv[2])process.exit(1);process.stdout.write(r.version.slice(1))" "$RUNNER_TEMP/release/unified-release.json" "$RELEASE_HEAD_SHA")
+          else
+            release_version="$DISPATCH_VERSION"
+            if [ -z "$release_version" ]; then
+              release_version=$(node -p "require('./packages/usebeeline/package.json').version")
+            fi
+            if ! printf '%s' "$release_version" | grep -Eq '^[0-9]+\\.[0-9]+\\.[0-9]+$'; then
+              echo "Invalid usebeeline version: $release_version" >&2
+              exit 1
+            fi
+          fi
           npm version "$release_version" --no-git-tag-version --workspace usebeeline
           echo "value=$release_version" >> "$GITHUB_OUTPUT"
       - name: Publish with provenance

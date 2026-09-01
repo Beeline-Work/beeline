@@ -38,7 +38,7 @@ Committed home for project-intrinsic agent knowledge: rule + authoritative file 
 ## Gate / live relay tests
 
 - Gate `apps/gate/`; live `cd apps/gate && npm run test:live` after `npm run stack:up`. Relay defaults `relay-config.ts` → `usebeeline.app` (`relay.buzzrouter.com` permanent alias). Room tenancy is server-stamped `channels.community_id` (`AuthStore.relayCommunityIdForRoom`); the kind:9007 `community` tag is NOT the tenant boundary.
-- GitHub sign-in: `buzz-identity-storage.ts` seals the candidate key pre-browser; `github-auth-session.ts` persists the challenge; `/auth/oidc/bind` create-once, `/auth/oidc/recover` explicit replacement (`onboarding.github-callback.test.ts`).
+- GitHub sign-in: `github-auth-session.ts` keeps browser authorization and ticket exchange on one stack (`monolithUrl` when enabled, legacy `relayUrl` otherwise); identity is sealed pre-browser, `/auth/oidc/bind` is create-once, and `/auth/oidc/recover` is explicit replacement (`github-auth-session.test.ts`, `onboarding.github-callback.test.ts`).
 - Provisioning lives in `apps/gate/src/provisioning.ts`; factory-permission human custody/role verification lives in `human-authority.ts`.
 
 ## Body (@beeline/body)

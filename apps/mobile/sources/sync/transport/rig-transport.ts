@@ -196,7 +196,7 @@ export class RigTransportNotImplementedError extends Error {
     super(
       detail
         ? `RigTransport.${method} not implemented: ${detail}`
-        : `RigTransport.${method} not implemented (Buzz adapter pending — see BUZZ-SEAM.md)`,
+        : `RigTransport.${method} not implemented (Beeline adapter pending)`,
     );
     this.name = 'RigTransportNotImplementedError';
   }

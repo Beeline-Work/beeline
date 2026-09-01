@@ -26,11 +26,19 @@ vi.mock('@beeline/buzz-client', async (importOriginal) => {
 });
 
 vi.mock('expo-router', () => ({ router: navigation }));
-vi.mock('expo-linking', () => ({ createURL: (p: string) => `beeline://${p}`, addEventListener: vi.fn(() => ({ remove: vi.fn() })) }));
-vi.mock('expo-web-browser', () => ({ maybeCompleteAuthSession: vi.fn(), openAuthSessionAsync: vi.fn() }));
+vi.mock('expo-linking', () => ({
+  createURL: (p: string) => `beeline://${p}`,
+  addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+}));
+vi.mock('expo-web-browser', () => ({
+  maybeCompleteAuthSession: vi.fn(),
+  openAuthSessionAsync: vi.fn(),
+}));
 vi.mock('expo-crypto', () => ({ getRandomBytes: (n: number) => new Uint8Array(n) }));
 vi.mock('expo-clipboard', () => ({ setStringAsync: clipboard }));
-vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0 }) }));
+vi.mock('react-native-safe-area-context', () => ({
+  useSafeAreaInsets: () => ({ top: 0, bottom: 0 }),
+}));
 vi.mock('expo-secure-store', () => ({
   WHEN_UNLOCKED_THIS_DEVICE_ONLY: 'when-unlocked',
   setItemAsync: async (key: string, value: string) => {
@@ -85,7 +93,10 @@ vi.mock('react-native', async () => {
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
   return {
-    Platform: { OS: 'ios', select: (choices: Record<string, unknown>) => choices.ios ?? choices.default },
+    Platform: {
+      OS: 'ios',
+      select: (choices: Record<string, unknown>) => choices.ios ?? choices.default,
+    },
     StyleSheet: { create: (styles: Record<string, unknown>) => styles },
     Text: host('Text'),
     TextInput: host('TextInput'),
@@ -94,8 +105,9 @@ vi.mock('react-native', async () => {
   };
 });
 
-(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
-  true;
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
 
 const { default: BuzzOnboarding } = await import('./onboarding');
 
@@ -249,7 +261,9 @@ describe('onboarding — create a new key', () => {
         const authorization = String(
           init.headers && (init.headers as Record<string, string>).authorization,
         );
-        const event = JSON.parse(Buffer.from(authorization.slice('Nostr '.length), 'base64').toString());
+        const event = JSON.parse(
+          Buffer.from(authorization.slice('Nostr '.length), 'base64').toString(),
+        );
         return new Response(
           JSON.stringify({
             claimed: true,
@@ -287,7 +301,7 @@ describe('onboarding — create a new key', () => {
         nip05: 'ada-labs@usebeeline.app',
       }),
     );
-    expect(navigation.replace).toHaveBeenCalledWith('/buzz/channels');
+    expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels');
   });
 
   it('discards a draft without leaving anything behind', async () => {

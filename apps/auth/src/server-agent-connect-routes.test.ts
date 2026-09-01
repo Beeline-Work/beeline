@@ -149,7 +149,7 @@ describe('agent connect device exchange', () => {
     expect(credentials.agent_secret_key).toMatch(/^[0-9a-f]{64}$/);
     expect(credentials.body_secret_key).toMatch(/^[0-9a-f]{64}$/);
     expect(credentials.agent_pubkey).toMatch(/^[0-9a-f]{64}$/);
-    expect(credentials.pairing_code).toMatch(/^BUZZ-[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+    expect(credentials.pairing_code).toMatch(/^[0-9A-F]{8}-[0-9A-F]{8}$/);
 
     const grant = await database.query<{ agent_pubkey: string; minter_pubkey: string }>(
       `SELECT encode(agent_pubkey, 'hex') AS agent_pubkey,

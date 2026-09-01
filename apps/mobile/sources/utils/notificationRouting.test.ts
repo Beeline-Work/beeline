@@ -9,11 +9,11 @@ import {
 } from './notificationRouting';
 
 const buzzChatSource = readFileSync(
-  new URL('../app/(app)/buzz/chat/[channelId].tsx', import.meta.url),
+  new URL('../app/(app)/beeline/chat/[channelId].tsx', import.meta.url),
   'utf8',
 );
 const roomSurfaceSessionSource = readFileSync(
-  new URL('../app/(app)/buzz/chat/useRoomSurfaceSession.ts', import.meta.url),
+  new URL('../app/(app)/beeline/chat/useRoomSurfaceSession.ts', import.meta.url),
   'utf8',
 );
 const appLayoutSource = readFileSync(new URL('../app/_layout.tsx', import.meta.url), 'utf8');
@@ -95,7 +95,7 @@ describe('navigateToBuzzNotificationResponse', () => {
     expect(navigate).toHaveBeenCalledTimes(1);
     expect(navigate).toHaveBeenCalledWith(
       {
-        pathname: '/buzz/chat/[channelId]',
+        pathname: '/beeline/chat/[channelId]',
         params: {
           channelId: 'room-123',
           notificationMessageId: 'event-1',
@@ -135,7 +135,7 @@ describe('navigateToBuzzNotificationResponse', () => {
     expect(target).toMatchObject({ channelId: 'corner-123', messageId: 'event-456' });
     expect(navigate).toHaveBeenCalledWith(
       {
-        pathname: '/buzz/chat/[channelId]',
+        pathname: '/beeline/chat/[channelId]',
         params: {
           channelId: 'corner-123',
           parent: 'parent-room',
@@ -168,7 +168,7 @@ describe('navigateToBuzzNotificationResponse', () => {
 
     expect(navigate).toHaveBeenCalledWith(
       {
-        pathname: '/buzz/chat/[channelId]',
+        pathname: '/beeline/chat/[channelId]',
         params: {
           channelId: 'parent-room',
           notificationResponseId: 'response-789',
@@ -177,7 +177,6 @@ describe('navigateToBuzzNotificationResponse', () => {
       { dangerouslySingular: true },
     );
   });
-
 });
 
 describe('navigateToBuzzChannelFromNotification', () => {
@@ -188,7 +187,7 @@ describe('navigateToBuzzChannelFromNotification', () => {
 
     expect(navigate).toHaveBeenCalledWith(
       {
-        pathname: '/buzz/chat/[channelId]',
+        pathname: '/beeline/chat/[channelId]',
         params: {
           channelId: 'room-123',
           notificationResponseId: 'notification-456',
@@ -205,7 +204,7 @@ describe('navigateToBuzzChannelFromNotification', () => {
     // same channel. Assert that dependency, not the whole literal list —
     // the rest of the list is free to change with the effect's internals.
     const hydrationEffect = roomSurfaceSessionSource.slice(
-      roomSurfaceSessionSource.indexOf("useEffect(() => {\n    if (!channelId) return;"),
+      roomSurfaceSessionSource.indexOf('useEffect(() => {\n    if (!channelId) return;'),
       roomSurfaceSessionSource.indexOf('const outbox = useMemo'),
     );
     expect(
@@ -223,7 +222,7 @@ describe('navigateToBuzzChannelFromNotification', () => {
 
   it('anchors messages, then replaces a missing corner with its parent Room', () => {
     expect(buzzChatSource).toMatch(/scrollToIndex\(\{\s*index: visibleIndex/);
-    expect(buzzChatSource).toContain('canonicalCornerStatus === \'archived\'');
+    expect(buzzChatSource).toContain("canonicalCornerStatus === 'archived'");
     expect(buzzChatSource).toContain('roomSurface.parent === undefined');
     expect(buzzChatSource).toContain('params: { channelId: fallbackId, notificationResponseId }');
   });

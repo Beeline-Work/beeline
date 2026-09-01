@@ -1,4 +1,4 @@
-# @beeline/body — the Buzzy agent body
+# @beeline/body — the Beeline agent body
 
 The operator-run service that gives the coding agent its computer, enforces the
 **read-only → edit tool boundary**, and makes the session **multi-user-visible**
@@ -69,7 +69,7 @@ by projecting agent activity into the relay channel.
 
 ## Prerequisites
 
-1. **Buzz relay** — the local stack or a remote one.
+1. **Beeline relay** — the local stack or a remote one.
 
    ```bash
    cd <repo-root> && docker compose -f relay-stack/compose.yml up -d
@@ -180,73 +180,73 @@ The lower-level commands below remain available for development and recovery.
 # Installed agents with a missing ACP adapter remain in the numbered menu and
 # offer to install it when selected. Non-interactive runs print the exact manual
 # install command and never install packages automatically.
-beeline pair BUZZ-XXXX-XXXX
+beeline pair XXXXXXXX-XXXXXXXX
 
 # Explicit opt-in only: create or join the Room for this repository at pair time.
-beeline pair BUZZ-XXXX-XXXX --repo /path/to/repo
+beeline pair XXXXXXXX-XXXXXXXX --repo /path/to/repo
 
 # Piped/non-interactive sessions with several matches must choose explicitly.
-beeline pair BUZZ-XXXX-XXXX --agent codex
+beeline pair XXXXXXXX-XXXXXXXX --agent codex
 
 # New agents default to creator-only access. To delegate intake to an exact
 # set of identities, use npub or 64-character hex keys (up to 64 entries).
 # The creator is not added implicitly to an allowlist.
-beeline pair BUZZ-XXXX-XXXX --agent codex \
+beeline pair XXXXXXXX-XXXXXXXX --agent codex \
   --access allowlist --allow npub1...,0123...cdef
 
 # Use the operator's own funded Codex configuration through the official ACP
 # adapter. Install once with:
 #   npm install -g @openai/codex @agentclientprotocol/codex-acp
-beeline pair BUZZ-XXXX-XXXX --agent codex
+beeline pair XXXXXXXX-XXXXXXXX --agent codex
 
 # Claude Code requires its ACP adapter:
 #   npm install -g @agentclientprotocol/claude-agent-acp
-beeline pair BUZZ-XXXX-XXXX --agent claude
+beeline pair XXXXXXXX-XXXXXXXX --agent claude
 
 # Optional per-agent skill share. The named directory must live at
 # ~/.agents/skills/review-pr; no other personal skills are inherited.
-beeline pair BUZZ-XXXX-XXXX --agent codex --share-skill review-pr
+beeline pair XXXXXXXX-XXXXXXXX --agent codex --share-skill review-pr
 
 # Optional machine-local credentials. Each profile is a separate opt-in and
 # requires creator-only access. Pairing runs Trusty Squire's connect check while
 # you are present, opening Google/GitHub in your browser only when the local
 # vault or provider link is missing or stale. Codex and Claude are supported.
-beeline pair BUZZ-XXXX-XXXX --agent codex --access creator \
+beeline pair XXXXXXXX-XXXXXXXX --agent codex --access creator \
   --mcp squire-credential-use
-beeline pair BUZZ-XXXX-XXXX --agent claude --access creator \
+beeline pair XXXXXXXX-XXXXXXXX --agent claude --access creator \
   --mcp squire-app-access
 
 # Goose exposes ACP natively as `goose acp`.
-beeline pair BUZZ-XXXX-XXXX --agent goose
+beeline pair XXXXXXXX-XXXXXXXX --agent goose
 
 # Pi uses the registry-listed pi-acp adapter:
 #   npm install -g @mariozechner/pi-coding-agent pi-acp
-beeline pair BUZZ-XXXX-XXXX --agent pi
+beeline pair XXXXXXXX-XXXXXXXX --agent pi
 
 # Grok speaks ACP natively over `grok agent stdio`; no adapter binary needed.
 #   curl -fsSL https://x.ai/cli/install.sh | bash
-beeline pair BUZZ-XXXX-XXXX --agent grok
+beeline pair XXXXXXXX-XXXXXXXX --agent grok
 
 # Cursor has no native ACP mode. Install the Cursor CLI and the community
 # bridge, then drive it through the custom path:
 #   curl -fsSL https://cursor.com/install | sh && cursor-agent login
 #   npm install -g cursor-acp
-beeline pair BUZZ-XXXX-XXXX --agent custom --agent-command 'cursor-acp'
+beeline pair XXXXXXXX-XXXXXXXX --agent custom --agent-command 'cursor-acp'
 
 # The bundled reference agent is an explicit fallback for development and
 # requires an LLM key/configuration from the operator.
 BUZZY_BODY_LLM_FILE=/path/to/local-model.env \
-  beeline pair BUZZ-XXXX-XXXX --agent reference
+  beeline pair XXXXXXXX-XXXXXXXX --agent reference
 
 # Any ACP-over-stdio server can be selected explicitly. The command is parsed
 # into argv and spawned directly; no shell expansion is performed.
-beeline pair BUZZ-XXXX-XXXX --agent custom \
+beeline pair XXXXXXXX-XXXXXXXX --agent custom \
   --agent-command 'my-agent serve --acp'
 
 # Interactive pairing reads the selected harness's live model and effort
 # catalog and offers only those typed choices. In scripts, the same live
 # validation applies to explicit values before runtime.json is written.
-beeline pair BUZZ-XXXX-XXXX --agent codex \
+beeline pair XXXXXXXX-XXXXXXXX --agent codex \
   --model <catalog-model-id> --effort <catalog-effort-level>
 
 # Restart a previously-paired agent after a machine/process restart.

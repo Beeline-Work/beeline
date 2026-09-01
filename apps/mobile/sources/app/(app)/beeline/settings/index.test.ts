@@ -230,21 +230,21 @@ describe('Buzz global Settings', () => {
     // `settings/identity`, which is what stranded this screen — and the only
     // sign-out in the product with it.
     const railScreens = [
-      '../../../../app/(app)/buzz/channels.tsx',
-      '../../../../app/(app)/buzz/community.tsx',
-      '../../../../app/(app)/buzz/corners/[roomId].tsx',
-      '../../../../app/(app)/buzz/MembersScreen.tsx',
-      '../../../../app/(app)/buzz/chat/[channelId].tsx',
+      '../../../../app/(app)/beeline/channels.tsx',
+      '../../../../app/(app)/beeline/community.tsx',
+      '../../../../app/(app)/beeline/corners/[roomId].tsx',
+      '../../../../app/(app)/beeline/MembersScreen.tsx',
+      '../../../../app/(app)/beeline/chat/[channelId].tsx',
       '../../../../app/(app)/join/[token].tsx',
     ];
     for (const relativePath of railScreens) {
       const source = readFileSync(new URL(relativePath, import.meta.url), 'utf8');
       expect(source, `${relativePath} mounts the rail`).toContain('onSettings=');
       expect(source, `${relativePath} skips the settings hub`).not.toContain(
-        "onSettings={() => router.push('/buzz/settings/identity'",
+        "onSettings={() => router.push('/beeline/settings/identity'",
       );
       expect(source, `${relativePath} should open the hub`).toContain(
-        "onSettings={() => router.push('/buzz/settings' as Href)}",
+        "onSettings={() => router.push('/beeline/settings' as Href)}",
       );
     }
     // ...and the hub itself is the only thing that opens the identity screen.
@@ -279,7 +279,7 @@ describe('Buzz global Settings', () => {
     expect(text).not.toContain('Relay URL');
 
     act(() => renderer.root.findByProps({ testID: 'backup-key-setting' }).props.onPress());
-    expect(navigation.push).toHaveBeenCalledWith('/buzz/settings/identity');
+    expect(navigation.push).toHaveBeenCalledWith('/beeline/settings/identity');
 
     await act(async () => {
       await renderer.root.findByProps({ testID: 'sign-out-setting' }).props.onPress();
@@ -292,13 +292,13 @@ describe('Buzz global Settings', () => {
     expect(warning).toContain('permanently erases');
     expect(warning).toContain('cannot restore');
     act(() => renderer.root.findByProps({ testID: 'backup-before-sign-out' }).props.onPress());
-    expect(navigation.push).toHaveBeenCalledWith('/buzz/settings/identity');
+    expect(navigation.push).toHaveBeenCalledWith('/beeline/settings/identity');
     await act(async () => {
       await renderer.root.findByProps({ testID: 'sign-out-setting' }).props.onPress();
     });
     expect(identityStorage.clearBuzzIdentity).toHaveBeenCalledOnce();
     expect(authSession.clearPendingGitHubSignInState).toHaveBeenCalledOnce();
     expect(surfaceStorage.clearMobileSurfaceStorage).toHaveBeenCalledOnce();
-    expect(navigation.replace).toHaveBeenCalledWith('/buzz/onboarding');
+    expect(navigation.replace).toHaveBeenCalledWith('/beeline/onboarding');
   });
 });

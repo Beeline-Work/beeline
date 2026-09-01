@@ -11,7 +11,7 @@ describe('Room deck bootstrap', () => {
       source.indexOf('workspaceScheduler.current = workspaceRefresh'),
     );
     expect(workspaceApply).toContain('!value.workspaces.some');
-    expect(workspaceApply).toContain("pathname: '/buzz/channels'");
+    expect(workspaceApply).toContain("pathname: '/beeline/channels'");
     expect(workspaceApply).toContain('communityId: value.workspaces[0].id');
   });
 
@@ -49,7 +49,7 @@ describe('Room deck bootstrap', () => {
       source.indexOf('const createRoom = useCallback'),
       source.indexOf('const compose = useCallback'),
     );
-    expect(createPath).toContain("chatScheduler.current?.force()");
+    expect(createPath).toContain('chatScheduler.current?.force()');
     expect(createPath).not.toContain('openRoom(roomId)');
   });
 });

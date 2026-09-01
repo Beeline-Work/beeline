@@ -56,7 +56,7 @@ describe('pair agent auto-selection', () => {
     });
 
     expect(selected).toMatchObject({ kind: 'codex', command: resolve(directory, 'codex-acp') });
-    expect(log.text()).toBe('[buzz] using codex (auto-detected)\n');
+    expect(log.text()).toBe('[beeline] using codex (auto-detected)\n');
   });
 
   it('offers a picker over every detected agent and persists the selected command', async () => {
@@ -77,7 +77,7 @@ describe('pair agent auto-selection', () => {
       expect.objectContaining({ kind: 'codex', status: 'ready' }),
       expect.objectContaining({ kind: 'goose', status: 'ready' }),
     ]);
-    expect(log.text()).toContain('[buzz] using goose (selected)');
+    expect(log.text()).toContain('[beeline] using goose (selected)');
   });
 
   it('auto-selects a native-ACP grok install without any adapter step', async () => {
@@ -90,8 +90,12 @@ describe('pair agent auto-selection', () => {
       output: log.output,
     });
 
-    expect(selected).toEqual({ kind: 'grok', command: resolve(grok, 'grok'), args: ['agent', 'stdio'] });
-    expect(log.text()).toContain('[buzz] using grok (auto-detected)');
+    expect(selected).toEqual({
+      kind: 'grok',
+      command: resolve(grok, 'grok'),
+      args: ['agent', 'stdio'],
+    });
+    expect(log.text()).toContain('[beeline] using grok (auto-detected)');
   });
 
   it('refuses to guess among several detected agents without a TTY', async () => {
@@ -138,7 +142,7 @@ describe('pair agent auto-selection', () => {
       command: resolve(directory, 'claude-agent-acp'),
       args: [],
     });
-    expect(log.text()).toContain('[buzz] using claude (adapter installed)');
+    expect(log.text()).toContain('[beeline] using claude (adapter installed)');
   });
 
   it.each([
@@ -282,7 +286,7 @@ describe('pair agent auto-selection', () => {
     expect(log.text()).toContain(
       'install it with: npm install -g @agentclientprotocol/claude-agent-acp',
     );
-    expect(log.text()).toContain('[buzz] using goose (selected)');
+    expect(log.text()).toContain('[beeline] using goose (selected)');
   });
 
   it('lets an explicit preset bypass detection and prompting', async () => {
@@ -332,9 +336,8 @@ describe('pair agent selection — clack cancel handling', () => {
     }) as never);
 
     try {
-      const { selectPairAgentCommand: selectWithMockedClack } = await import(
-        './pair-agent-selection.js'
-      );
+      const { selectPairAgentCommand: selectWithMockedClack } =
+        await import('./pair-agent-selection.js');
       const codex = await executables('codex', 'codex-acp');
       const goose = await executables('goose');
 

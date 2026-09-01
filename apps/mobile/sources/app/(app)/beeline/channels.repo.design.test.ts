@@ -28,11 +28,7 @@ function blockFrom(text: string, marker: string, label: string): string {
 
 describe('Room creation — repository binding', () => {
   it('passes the selected installed repository through the create operation', () => {
-    const handler = blockFrom(
-      source,
-      'const createRoom = useCallback(async () => {',
-      'createRoom',
-    );
+    const handler = blockFrom(source, 'const createRoom = useCallback(async () => {', 'createRoom');
     const createIndex = handler.indexOf('transport.createRoom(');
     expect(createIndex, 'transport create must run for every Room').toBeGreaterThanOrEqual(0);
     const createCallArgs = handler.slice(createIndex, handler.indexOf(');', createIndex));
@@ -55,11 +51,7 @@ describe('Room creation — repository binding', () => {
   });
 
   it('forwards the production installation groups that own repository candidates', () => {
-    const loader = blockFrom(
-      source,
-      'const loadRepoPicker = useCallback(',
-      'loadRepoPicker',
-    );
+    const loader = blockFrom(source, 'const loadRepoPicker = useCallback(', 'loadRepoPicker');
     expect(loader).toContain('transport.workspaceGitHubAccess({ refresh })');
     expect(loader).toContain('setRepoCandidates(access.candidates)');
     expect(loader).toContain('setRepoInstallations(access.installations)');

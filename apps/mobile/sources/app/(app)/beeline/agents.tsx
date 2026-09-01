@@ -10,8 +10,8 @@ export default function BuzzAgentsRedirect() {
     useLocalSearchParams<{ communityId?: string | string[] }>().communityId,
   );
   const href = communityId
-    ? ({ pathname: '/buzz/members', params: { communityId } } as unknown as Href)
-    : ('/buzz/members' as Href);
+    ? ({ pathname: '/beeline/members', params: { communityId } } as unknown as Href)
+    : ('/beeline/members' as Href);
 
   return <Redirect href={href} />;
 }

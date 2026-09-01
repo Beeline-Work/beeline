@@ -143,7 +143,7 @@ export default function BuzzChannels() {
       setError(null);
       const nextIdentity = await loadBuzzIdentity();
       if (!nextIdentity) {
-        router.replace('/buzz/onboarding');
+        router.replace('/beeline/onboarding');
         return;
       }
       const nextRelayUrl = await getEffectiveRelayUrl();
@@ -191,7 +191,7 @@ export default function BuzzChannels() {
             (!selectedId || !value.workspaces.some((workspace) => workspace.id === selectedId))
           ) {
             router.replace({
-              pathname: '/buzz/channels',
+              pathname: '/beeline/channels',
               params: { communityId: value.workspaces[0].id },
             } as never);
           }
@@ -296,7 +296,7 @@ export default function BuzzChannels() {
   const openRoom = useCallback(
     (roomId: string) => {
       if (identity) void saveLastViewedChannel(identity.publicKey, activeCommunityId, roomId);
-      router.push(`/buzz/chat/${encodeURIComponent(roomId)}` as Href);
+      router.push(`/beeline/chat/${encodeURIComponent(roomId)}` as Href);
     },
     [activeCommunityId, identity],
   );
@@ -331,12 +331,9 @@ export default function BuzzChannels() {
     [identity, relayUrl],
   );
 
-  const toggleRoomCorners = useCallback(
-    (roomId: string) => {
-      setExpandedRoomId((current) => (current === roomId ? null : roomId));
-    },
-    [],
-  );
+  const toggleRoomCorners = useCallback((roomId: string) => {
+    setExpandedRoomId((current) => (current === roomId ? null : roomId));
+  }, []);
 
   useEffect(() => {
     const action = expandedCornerRefreshAction(expandedRoomId, chatList?.chats ?? []);
@@ -358,7 +355,7 @@ export default function BuzzChannels() {
     (workspaceId: string | null) => {
       if (!workspaceId) return;
       if (identity) void saveActiveCommunityId(identity.publicKey, workspaceId);
-      router.replace({ pathname: '/buzz/channels', params: { communityId: workspaceId } });
+      router.replace({ pathname: '/beeline/channels', params: { communityId: workspaceId } });
     },
     [identity],
   );
@@ -452,7 +449,7 @@ export default function BuzzChannels() {
         openRoomCreator: () => setShowCreateRoom(true),
         invitePerson: () =>
           router.push({
-            pathname: '/buzz/members',
+            pathname: '/beeline/members',
             params: {
               ...(activeCommunityId ? { communityId: activeCommunityId } : {}),
               action: 'invite',
@@ -466,15 +463,12 @@ export default function BuzzChannels() {
 
   if (workspaceList?.workspaces.length === 0) {
     return (
-      <View
-        style={[styles.center, { paddingTop: insets.top }]}
-        testID="workspace-list-empty"
-      >
+      <View style={[styles.center, { paddingTop: insets.top }]} testID="workspace-list-empty">
         <Text style={styles.emptyTitle}>No rooms yet</Text>
         <Text style={styles.emptyCopy}>Create a Workspace to start adding Rooms.</Text>
         <MonoButton
           label="CREATE WORKSPACE"
-          onPress={() => router.push('/buzz/community' as Href)}
+          onPress={() => router.push('/beeline/community' as Href)}
           testID="empty-create-workspace"
         />
       </View>
@@ -502,10 +496,10 @@ export default function BuzzChannels() {
       communities={communities}
       activeCommunityId={activeCommunityId}
       onSelect={selectWorkspace}
-      onAdd={() => router.push('/buzz/community' as Href)}
-      onSettings={() => router.push('/buzz/settings' as Href)}
+      onAdd={() => router.push('/beeline/community' as Href)}
+      onSettings={() => router.push('/beeline/settings' as Href)}
       onWorkspaceSettings={(communityId) =>
-        router.push({ pathname: '/buzz/settings/workspace', params: { communityId } } as never)
+        router.push({ pathname: '/beeline/settings/workspace', params: { communityId } } as never)
       }
       canManageActiveCommunity={canManageWorkspace}
       viewerPubkey={identity?.publicKey}
@@ -523,7 +517,7 @@ export default function BuzzChannels() {
               accessibilityRole="button"
               onPress={() =>
                 router.push({
-                  pathname: '/buzz/members',
+                  pathname: '/beeline/members',
                   params: { communityId: activeCommunityId },
                 } as never)
               }

@@ -26,6 +26,7 @@
     "verify:live": "tsx deploy/verify-live.ts"
   },
   "dependencies": {
+    "@beeline/api-contract": "*",
     "@beeline/body": "*",
     "@beeline/buzz-client": "*",
     "@beeline/nostr": "*",

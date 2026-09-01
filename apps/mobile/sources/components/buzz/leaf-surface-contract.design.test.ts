@@ -14,11 +14,11 @@ const sources = {
   ),
   'EmptyLedgerState.tsx': readFileSync(new URL('./EmptyLedgerState.tsx', import.meta.url), 'utf8'),
   'workspace.tsx': readFileSync(
-    new URL('../../app/(app)/buzz/settings/workspace.tsx', import.meta.url),
+    new URL('../../app/(app)/beeline/settings/workspace.tsx', import.meta.url),
     'utf8',
   ),
   '[channelId].tsx': readFileSync(
-    new URL('../../app/(app)/buzz/chat/[channelId].tsx', import.meta.url),
+    new URL('../../app/(app)/beeline/chat/[channelId].tsx', import.meta.url),
     'utf8',
   ),
 };

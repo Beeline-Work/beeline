@@ -62,9 +62,7 @@ export function selectTurnProgressAgentPubkey(input: TurnProgressInput): string 
 export const COMPOSER_ACK_BOUND_MS = 15_000;
 
 export type ComposerAckState =
-  | { kind: 'thinking'; agentPubkey: string }
-  | { kind: 'buzzing' }
-  | { kind: 'delivery-unclear' };
+  { kind: 'thinking'; agentPubkey: string } | { kind: 'buzzing' } | { kind: 'delivery-unclear' };
 
 export type ComposerAckInput = TurnProgressInput & {
   /** Set the instant a message addressed to an agent is sent; cleared once
@@ -153,7 +151,7 @@ export function selectComposerAckPresentation(
     const subject = resolveAgentDisplayIdentity(state.agentPubkey, agent).name;
     return { label: `${subject} thinking…`, tone: 'live' };
   }
-  if (state.kind === 'buzzing') return { label: 'buzzing…', tone: 'live' };
+  if (state.kind === 'buzzing') return { label: 'sending…', tone: 'live' };
   return { label: 'waiting on agent…', tone: 'quiet' };
 }
 

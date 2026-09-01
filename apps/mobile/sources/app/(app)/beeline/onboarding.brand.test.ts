@@ -24,7 +24,10 @@ vi.mock('expo-linking', () => ({
   createURL: (p: string) => `beeline://${p}`,
   addEventListener: vi.fn(() => ({ remove: vi.fn() })),
 }));
-vi.mock('expo-web-browser', () => ({ maybeCompleteAuthSession: vi.fn(), openAuthSessionAsync: vi.fn() }));
+vi.mock('expo-web-browser', () => ({
+  maybeCompleteAuthSession: vi.fn(),
+  openAuthSessionAsync: vi.fn(),
+}));
 vi.mock('expo-crypto', () => ({ getRandomBytes: (n: number) => new Uint8Array(n) }));
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn(async () => true) }));
 vi.mock('expo-secure-store', () => ({
@@ -33,14 +36,20 @@ vi.mock('expo-secure-store', () => ({
   getItemAsync: vi.fn(async () => null),
   deleteItemAsync: vi.fn(async () => undefined),
 }));
-vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0 }) }));
+vi.mock('react-native-safe-area-context', () => ({
+  useSafeAreaInsets: () => ({ top: 0, bottom: 0 }),
+}));
 vi.mock('@/buzz/person-name', () => ({
   clearPersonNameOnboardingPending: vi.fn(async () => undefined),
   isPersonNameOnboardingPending: vi.fn(async () => false),
   loadPreferredPersonName: vi.fn(async () => null),
   markPersonNameOnboardingPending: vi.fn(async () => undefined),
   publishPreferredPersonName: vi.fn(async () => undefined),
-  resolveOnboardingPersonName: vi.fn(async () => ({ needsPrompt: false, name: 'Ada', communityId: 'w1' })),
+  resolveOnboardingPersonName: vi.fn(async () => ({
+    needsPrompt: false,
+    name: 'Ada',
+    communityId: 'w1',
+  })),
   savePreferredPersonName: vi.fn(async () => undefined),
 }));
 vi.mock('@/buzz/runtime-config', () => ({
@@ -79,7 +88,10 @@ vi.mock('react-native', async () => {
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
   return {
-    Platform: { OS: 'ios', select: (choices: Record<string, unknown>) => choices.ios ?? choices.default },
+    Platform: {
+      OS: 'ios',
+      select: (choices: Record<string, unknown>) => choices.ios ?? choices.default,
+    },
     StyleSheet: { create: (styles: Record<string, unknown>) => styles },
     Text: host('Text'),
     TextInput: host('TextInput'),
@@ -88,8 +100,9 @@ vi.mock('react-native', async () => {
   };
 });
 
-(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
-  true;
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
 // The Node test environment never runs React Native's entrypoint, so Expo's
 // logger setup (pulled in through the onboarding import graph) needs __DEV__.
 (globalThis as typeof globalThis & { __DEV__?: boolean }).__DEV__ = true;
@@ -167,8 +180,12 @@ describe('onboarding — canonical brand source assertions', () => {
     expect(titleBlock).toContain('groknight.proseSemibold');
     expect(titleBlock).not.toContain('Typography.logo()');
     // The tagline and the auth notice body keep the canonical prose family.
-    expect(src).toMatch(/subtitle: \{\s*\.\.\.Typography\.default\(\), fontFamily: groknight\.proseRegular/);
-    expect(src).toMatch(/noticeText: \{\s*\.\.\.Typography\.default\(\), fontFamily: groknight\.proseRegular/);
+    expect(src).toMatch(
+      /subtitle: \{\s*\.\.\.Typography\.default\(\), fontFamily: groknight\.proseRegular/,
+    );
+    expect(src).toMatch(
+      /noticeText: \{\s*\.\.\.Typography\.default\(\), fontFamily: groknight\.proseRegular/,
+    );
   });
 
   it('passes the canonical family to every onboarding button label', () => {

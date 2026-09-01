@@ -13,7 +13,11 @@ import {
 import { RoomViewClient, RoomViewHttpError } from '@/sync/transport/room-view-client';
 
 import { loadBuzzIdentity, getEffectiveRelayUrl } from '@/auth/buzz-identity-storage';
-import { displayRoomMessages, reconcileRoomView, type ChatDisplayMessage } from '@/buzz/room-view-presentation';
+import {
+  displayRoomMessages,
+  reconcileRoomView,
+  type ChatDisplayMessage,
+} from '@/buzz/room-view-presentation';
 import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-storage';
 import { createRoomOutbox, mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { BuzzRigTransport } from '@/sync/transport';
@@ -235,7 +239,12 @@ export function useRoomSurfaceSession({
       }
     };
 
-    const applyView = (view: RoomView, identityPubkey: string, relayUrl: string, fresh: boolean) => {
+    const applyView = (
+      view: RoomView,
+      identityPubkey: string,
+      relayUrl: string,
+      fresh: boolean,
+    ) => {
       if (cancelled) return;
       const stableView = reconcileRoomView(reconciledViewRef.current, view);
       reconciledViewRef.current = stableView;
@@ -252,11 +261,16 @@ export function useRoomSurfaceSession({
       const presences = Object.fromEntries(
         stableView.members.flatMap((member) =>
           member.presence
-            ? [[member.identity.pubkey, {
-                agentPubkey: member.identity.pubkey,
-                status: member.presence.status,
-                observedAt: member.presence.observedAt * 1_000,
-              }]]
+            ? [
+                [
+                  member.identity.pubkey,
+                  {
+                    agentPubkey: member.identity.pubkey,
+                    status: member.presence.status,
+                    observedAt: member.presence.observedAt * 1_000,
+                  },
+                ],
+              ]
             : [],
         ),
       ) as Record<string, RoomAgentPresence>;
@@ -318,74 +332,117 @@ export function useRoomSurfaceSession({
       if (!currentTransport) return;
       const client = await currentTransport.ensureClient();
       let replaying = true;
-      const stop = await client.surfaceSubscribe(filters, (event: Parameters<LiveOverlayDecoder['decode']>[0] | MonolithSurfaceEvent) => {
-        if (cancelled || generation !== watchGeneration) return;
-        if ('monolithLive' in event) {
-          const live = (event as MonolithSurfaceEvent).monolithLive;
-          if (live.type === 'invalidate') {
-            scheduler?.signal();
-          } else if (live.type === 'presence') {
-            applyDecodedOverlay({ kind: 'presence', key: `presence:${live.agentId}:${live.roomId}`, agentPubkey: live.agentId, status: live.status, createdAt: live.observedAt });
-          } else if (live.type === 'draft') {
-            applyDecodedOverlay({ kind: 'draft', key: `draft:${live.agentId}:${live.turnId}`, stableId: `live-turn:${live.turnId}`, agentPubkey: live.agentId, requestId: live.turnId, text: live.text, closed: false, createdAt: Math.floor(Date.now() / 1000) });
-          } else if (live.type === 'thought') {
-            applyDecodedOverlay({ kind: 'thought', key: `thought:${live.agentId}:${live.turnId}`, agentPubkey: live.agentId, sessionId: live.turnId, text: live.text, closed: false, createdAt: Math.floor(Date.now() / 1000) });
-          } else if (live.type === 'retract') {
-            applyDecodedOverlay(live.kind === 'draft'
-              ? { kind: 'draft', key: `draft:${live.agentId}:${live.turnId}`, stableId: `live-turn:${live.turnId}`, agentPubkey: live.agentId, requestId: live.turnId, closed: true, createdAt: Math.floor(Date.now() / 1000) }
-              : { kind: 'thought', key: `thought:${live.agentId}:${live.turnId}`, agentPubkey: live.agentId, sessionId: live.turnId, closed: true, createdAt: Math.floor(Date.now() / 1000) });
+      const stop = await client.surfaceSubscribe(
+        filters,
+        (event: Parameters<LiveOverlayDecoder['decode']>[0] | MonolithSurfaceEvent) => {
+          if (cancelled || generation !== watchGeneration) return;
+          if ('monolithLive' in event) {
+            const live = (event as MonolithSurfaceEvent).monolithLive;
+            if (live.type === 'invalidate') {
+              scheduler?.signal();
+            } else if (live.type === 'presence') {
+              applyDecodedOverlay({
+                kind: 'presence',
+                key: `presence:${live.agentId}:${live.roomId}`,
+                agentPubkey: live.agentId,
+                status: live.status,
+                createdAt: live.observedAt,
+              });
+            } else if (live.type === 'draft') {
+              applyDecodedOverlay({
+                kind: 'draft',
+                key: `draft:${live.agentId}:${live.turnId}`,
+                stableId: `live-turn:${live.turnId}`,
+                agentPubkey: live.agentId,
+                requestId: live.turnId,
+                text: live.text,
+                closed: false,
+                createdAt: Math.floor(Date.now() / 1000),
+              });
+            } else if (live.type === 'thought') {
+              applyDecodedOverlay({
+                kind: 'thought',
+                key: `thought:${live.agentId}:${live.turnId}`,
+                agentPubkey: live.agentId,
+                sessionId: live.turnId,
+                text: live.text,
+                closed: false,
+                createdAt: Math.floor(Date.now() / 1000),
+              });
+            } else if (live.type === 'retract') {
+              applyDecodedOverlay(
+                live.kind === 'draft'
+                  ? {
+                      kind: 'draft',
+                      key: `draft:${live.agentId}:${live.turnId}`,
+                      stableId: `live-turn:${live.turnId}`,
+                      agentPubkey: live.agentId,
+                      requestId: live.turnId,
+                      closed: true,
+                      createdAt: Math.floor(Date.now() / 1000),
+                    }
+                  : {
+                      kind: 'thought',
+                      key: `thought:${live.agentId}:${live.turnId}`,
+                      agentPubkey: live.agentId,
+                      sessionId: live.turnId,
+                      closed: true,
+                      createdAt: Math.floor(Date.now() / 1000),
+                    },
+              );
+            }
+            return;
           }
-          return;
-        }
-        if (!decoder && event.kind === KIND_AGENT_DRAFT) {
-          pendingOverlayEvents = [...pendingOverlayEvents.slice(-63), event];
-          return;
-        }
-        const overlay = decoder?.decode(event);
-        if (overlay) {
-          applyDecodedOverlay(overlay);
-          return;
-        }
-        const markers = eventMarkers(event);
-        const requestId = eventTag(event, 'request');
-        const replayedFreshWorkingReceipt =
-          replaying &&
-          eventTag(event, 'status') === 'working' &&
-          Math.abs(Date.now() - event.created_at * 1_000) < AGENT_TURN_FRESHNESS_MS;
-        if (
-          event.kind === 9 &&
-          eventTag(event, 'h') === channelId &&
-          markers.includes('agent-turn') &&
-          requestId &&
-          (!replaying || replayedFreshWorkingReceipt)
-        ) {
-          scheduler?.signalUntil((view) =>
-            view.latestAgentTurns.some((turn) => turn.requestId === requestId),
-          );
-          return;
-        }
-        if (replaying) return;
-        const expectsPaintedMessage =
-          event.kind === 9 &&
-          eventTag(event, 'h') === channelId &&
-          (markers.length === 0 ||
-            markers.some((marker: string) =>
-              [
-                'agent-message',
-                'github-event',
-                'buzz-attachment',
-                'corner-branch-ended',
-                'corner-worktree-cleaned',
-              ].includes(marker),
-            ));
-        if (expectsPaintedMessage) {
-          scheduler?.signalUntil((view) =>
-            view.messages.some((message) => message.id === event.id),
-          );
-        } else {
-          scheduler?.signal();
-        }
-      });
+          if (!decoder && event.kind === KIND_AGENT_DRAFT) {
+            pendingOverlayEvents = [...pendingOverlayEvents.slice(-63), event];
+            return;
+          }
+          const overlay = decoder?.decode(event);
+          if (overlay) {
+            applyDecodedOverlay(overlay);
+            return;
+          }
+          const markers = eventMarkers(event);
+          const requestId = eventTag(event, 'request');
+          const replayedFreshWorkingReceipt =
+            replaying &&
+            eventTag(event, 'status') === 'working' &&
+            Math.abs(Date.now() - event.created_at * 1_000) < AGENT_TURN_FRESHNESS_MS;
+          if (
+            event.kind === 9 &&
+            eventTag(event, 'h') === channelId &&
+            markers.includes('agent-turn') &&
+            requestId &&
+            (!replaying || replayedFreshWorkingReceipt)
+          ) {
+            scheduler?.signalUntil((view) =>
+              view.latestAgentTurns.some((turn) => turn.requestId === requestId),
+            );
+            return;
+          }
+          if (replaying) return;
+          const expectsPaintedMessage =
+            event.kind === 9 &&
+            eventTag(event, 'h') === channelId &&
+            (markers.length === 0 ||
+              markers.some((marker: string) =>
+                [
+                  'agent-message',
+                  'github-event',
+                  'buzz-attachment',
+                  'corner-branch-ended',
+                  'corner-worktree-cleaned',
+                ].includes(marker),
+              ));
+          if (expectsPaintedMessage) {
+            scheduler?.signalUntil((view) =>
+              view.messages.some((message) => message.id === event.id),
+            );
+          } else {
+            scheduler?.signal();
+          }
+        },
+      );
       replaying = false;
       if (cancelled || generation !== watchGeneration) {
         stop();
@@ -400,7 +457,7 @@ export function useRoomSurfaceSession({
       try {
         const identity = await loadBuzzIdentity();
         if (!identity) {
-          router.replace('/buzz/onboarding');
+          router.replace('/beeline/onboarding');
           return;
         }
         if (cancelled) return;
@@ -430,7 +487,10 @@ export function useRoomSurfaceSession({
         if (restored.length) bindingsRef.current.restoreOutboxMessages(restored);
         setFailedIds(
           new Set(
-            outbox.list().filter((record) => record.status === 'failed').map((record) => record.event.id),
+            outbox
+              .list()
+              .filter((record) => record.status === 'failed')
+              .map((record) => record.event.id),
           ),
         );
         for (const record of outbox.list().filter((record) => record.status === 'pending')) {
@@ -459,7 +519,10 @@ export function useRoomSurfaceSession({
             if (cancelled) return;
             const terminal =
               error instanceof RoomViewHttpError &&
-              (error.status === 401 || error.status === 403 || error.status === 404 || error.status === 502);
+              (error.status === 401 ||
+                error.status === 403 ||
+                error.status === 404 ||
+                error.status === 502);
             if (terminal) {
               setRoomSurface(null);
               setLiveOverlays([]);
@@ -505,7 +568,15 @@ export function useRoomSurfaceSession({
       schedulerRef.current = null;
       reconciledViewRef.current = null;
     };
-  }, [applyAgentPresence, bindingsRef, channelId, hydrationAttempt, markFailed, notificationResponseId, scheduleConfirmation]);
+  }, [
+    applyAgentPresence,
+    bindingsRef,
+    channelId,
+    hydrationAttempt,
+    markFailed,
+    notificationResponseId,
+    scheduleConfirmation,
+  ]);
 
   const outbox = useMemo<RoomSurfaceOutboxHandle>(
     () => ({

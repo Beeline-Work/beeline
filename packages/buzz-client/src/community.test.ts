@@ -973,7 +973,7 @@ describe('community invites', () => {
 
     const invite = await createInvite(ctx(), communityId);
     const event = published[0]!;
-    expect(invite.token).toMatch(/^bzi_[0-9a-f]{64}$/);
+    expect(invite.token).toMatch(/^inv_[0-9a-f]{64}$/);
     expect(invite.tokenHash).toBe(inviteTokenHash(invite.token));
     expect(JSON.stringify(event)).not.toContain(invite.token);
     expect(event.kind).toBe(KIND_COMMUNITY_INVITE);

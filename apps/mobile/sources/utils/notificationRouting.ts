@@ -52,8 +52,8 @@ export function getBuzzNotificationTargetFromData(data: unknown): BuzzNotificati
     targetValue === 'message' || targetValue === 'corner'
       ? targetValue
       : type === 'agent-attention' || type === 'pull-request-opened'
-          ? 'corner'
-          : 'message';
+        ? 'corner'
+        : 'message';
   const channelId = cornerId && target !== 'message' ? cornerId : rawChannelId;
   const roomId =
     nonEmptyString(getObjectValue(normalizedData, 'roomId')) ??
@@ -87,7 +87,7 @@ export function navigateToBuzzChannelFromNotification(
 ): void {
   router.navigate(
     {
-      pathname: '/buzz/chat/[channelId]',
+      pathname: '/beeline/chat/[channelId]',
       params: { channelId, notificationResponseId },
     },
     { dangerouslySingular: true },
@@ -105,7 +105,7 @@ export function navigateToBuzzTargetFromNotification(
   const channelId = useFallback ? target.roomId : target.channelId;
   router.navigate(
     {
-      pathname: '/buzz/chat/[channelId]',
+      pathname: '/beeline/chat/[channelId]',
       params: {
         channelId,
         notificationResponseId,

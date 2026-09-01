@@ -54,8 +54,10 @@ const GITHUB_REPO_EVENT_MAX_WAIT_MS = 25_000;
 const GITHUB_ROOM_AUTHORITY_CACHE_TTL_MS = 5 * 60_000;
 const FLOW_COOKIE = '__Host-beeline_oidc_flow';
 // Exact native identities from apps/mobile/app.config.js. Never derive these from request input.
-const GITHUB_SIGN_IN_DEEP_LINK = 'beeline://buzz/github-callback';
-const GITHUB_INSTALLATION_DEEP_LINK = 'beeline://buzz/github-installation';
+const GITHUB_SIGN_IN_DEEP_LINK = 'beeline://beeline/github-callback';
+const GITHUB_INSTALLATION_DEEP_LINK = 'beeline://beeline/github-installation';
+const LEGACY_GITHUB_SIGN_IN_DEEP_LINK = 'beeline://buzz/github-callback';
+const LEGACY_GITHUB_INSTALLATION_DEEP_LINK = 'beeline://buzz/github-installation';
 
 function githubInstallationManageUrl(installation: {
   accountType: 'User' | 'Organization';
@@ -426,6 +428,8 @@ export function createAuthRouteContext(options: AuthServerOptions) {
   const nativeRedirectUris = new Set([
     GITHUB_SIGN_IN_DEEP_LINK,
     GITHUB_INSTALLATION_DEEP_LINK,
+    LEGACY_GITHUB_SIGN_IN_DEEP_LINK,
+    LEGACY_GITHUB_INSTALLATION_DEEP_LINK,
     ...(options.nativeRedirectUris ?? []),
   ]);
   const isAllowedAppRedirect = (value: string, associatedRedirect: string): boolean =>

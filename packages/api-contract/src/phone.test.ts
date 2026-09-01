@@ -46,8 +46,9 @@ describe('phone contract', () => {
 
   it('owns the canonical invite-token format while accepting pre-contract monolith tokens', () => {
     const token = createCommunityInviteToken(Uint8Array.from({ length: 32 }, (_, index) => index));
-    expect(token).toBe('bzi_000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f');
+    expect(token).toBe('inv_000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f');
     expect(isCommunityInviteToken(token)).toBe(true);
+    expect(isCommunityInviteToken(`bzi_${'a'.repeat(64)}`)).toBe(true);
     expect(isCommunityInviteToken(`bzi_${'A'.repeat(42)}_`)).toBe(true);
     expect(isCommunityInviteToken(`bzi_${'a'.repeat(63)}`)).toBe(false);
   });

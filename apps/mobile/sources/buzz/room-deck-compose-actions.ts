@@ -1,7 +1,7 @@
 import type { RoomDeckComposeAction } from '@/components/buzz/RoomDeckComposeMenu';
 
 export type RoomDeckComposeTarget = {
-  pathname: '/buzz/community' | '/buzz/members';
+  pathname: '/beeline/community' | '/beeline/members';
   params: Record<string, string>;
 };
 
@@ -30,7 +30,7 @@ export function runRoomDeckComposeAction(
       return;
     case 'agent':
       handlers.navigate({
-        pathname: '/buzz/members',
+        pathname: '/beeline/members',
         params: {
           ...(handlers.communityId ? { communityId: handlers.communityId } : {}),
           action: 'add-agent',
@@ -38,6 +38,6 @@ export function runRoomDeckComposeAction(
       });
       return;
     case 'join':
-      handlers.navigate({ pathname: '/buzz/community', params: { mode: 'join' } });
+      handlers.navigate({ pathname: '/beeline/community', params: { mode: 'join' } });
   }
 }

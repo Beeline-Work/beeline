@@ -270,7 +270,7 @@ type CommunityDrawerTriggerProps = {
 export function CommunityDrawerTrigger({ community }: CommunityDrawerTriggerProps) {
   const drawer = useContext(CommunityDrawerContext);
   if (!drawer) {
-    throw new Error('CommunityDrawerTrigger must be rendered inside BuzzCommunityShell.');
+    throw new Error('CommunityDrawerTrigger must be rendered inside the Workspace shell.');
   }
   return (
     <TouchableOpacity

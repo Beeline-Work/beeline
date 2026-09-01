@@ -138,7 +138,7 @@ to clear presentation metadata caches; the new daemon supplies fresh presence.
 ### One instruction block for the machine owner
 
 ```sh
-curl -fsSL https://usebeeline.app/install | sh && beeline pair BUZZ-XXXX-XXXX
+curl -fsSL https://usebeeline.app/install | sh && beeline pair XXXXXXXX-XXXXXXXX
 ```
 
 The owner should not export, paste, or reuse a Nostr secret — `beeline pair`

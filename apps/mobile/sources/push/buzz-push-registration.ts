@@ -114,7 +114,10 @@ async function withRegistrationTimeout<T>(operation: Promise<T>, description: st
     return await Promise.race([
       operation,
       new Promise<never>((_, reject) => {
-        timeout = setTimeout(() => reject(new RegistrationTimeoutError(description)), REGISTRATION_TIMEOUT_MS);
+        timeout = setTimeout(
+          () => reject(new RegistrationTimeoutError(description)),
+          REGISTRATION_TIMEOUT_MS,
+        );
       }),
     ]);
   } finally {
@@ -153,13 +156,13 @@ async function grantedAndroidNotificationPermission(
 ): Promise<boolean> {
   const current = await Notifications.getPermissionsAsync();
   console.log(
-    `[buzzy-push] permission granted=${current.granted} canAskAgain=${current.canAskAgain} status=${current.status}`,
+    `[beeline-push] permission granted=${current.granted} canAskAgain=${current.canAskAgain} status=${current.status}`,
   );
   if (current.granted) return true;
   if (!current.canAskAgain || !requestWhenPossible) return false;
   const requested = await Notifications.requestPermissionsAsync();
   console.log(
-    `[buzzy-push] permission request granted=${requested.granted} canAskAgain=${requested.canAskAgain}`,
+    `[beeline-push] permission request granted=${requested.granted} canAskAgain=${requested.canAskAgain}`,
   );
   return requested.granted;
 }
@@ -167,7 +170,7 @@ async function grantedAndroidNotificationPermission(
 /**
  * Obtain the native Android push token (FCM) and bind it to the Buzz pubkey.
  * Registration failures do not block login; every attempt is classified,
- * logged under `[buzzy-push]`, persisted for the settings UI, and retried with
+ * logged under `[beeline-push]`, persisted for the settings UI, and retried with
  * backoff on later launches / foregrounds when {@link retryable}.
  *
  * Never logs or returns the full FCM token — only a fingerprint and length.
@@ -205,7 +208,7 @@ export async function registerBuzzPushNotifications(
       };
   await saveRegistrationState(identity.publicKey, state).catch((error: unknown) => {
     console.warn(
-      '[buzzy-push] could not persist registration state:',
+      '[beeline-push] could not persist registration state:',
       error instanceof Error ? error.message : String(error),
     );
   });
@@ -232,13 +235,21 @@ async function attemptRegistration(
         error instanceof RegistrationTimeoutError || errorMessage(error).includes('timed out')
           ? { phase: 'token-timed-out' as const, retryable: true as const }
           : { phase: 'token-failed' as const, retryable: true as const };
-      console.warn(`[buzzy-push] token acquisition failed phase=${failure.phase}:`, errorMessage(error));
-      return { registered: false, retryable: true, phase: failure.phase, message: errorMessage(error) };
+      console.warn(
+        `[beeline-push] token acquisition failed phase=${failure.phase}:`,
+        errorMessage(error),
+      );
+      return {
+        registered: false,
+        retryable: true,
+        phase: failure.phase,
+        message: errorMessage(error),
+      };
     }
     // Expo identifies native tokens by platform; on Android the string is the
     // raw FCM registration token consumed by Firebase Admin.
     if (nativeToken.type !== 'android' || typeof nativeToken.data !== 'string') {
-      console.warn('[buzzy-push] Android did not return an FCM token');
+      console.warn('[beeline-push] Android did not return an FCM token');
       return {
         registered: false,
         retryable: true,
@@ -247,7 +258,7 @@ async function attemptRegistration(
       };
     }
     console.log(
-      `[buzzy-push] FCM token acquired fingerprint=${tokenFingerprint(nativeToken.data)} length=${nativeToken.data.length}`,
+      `[beeline-push] FCM token acquired fingerprint=${tokenFingerprint(nativeToken.data)} length=${nativeToken.data.length}`,
     );
 
     const controller = new AbortController();
@@ -255,31 +266,35 @@ async function attemptRegistration(
     try {
       const runtime = getBuzzRuntimeConfig();
       const registrationUrl = `${runtime.pushGatewayUrl}/registrations`;
-      const response = runtime.monolithEnabled ? null : await fetch(registrationUrl, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          authorization: nip98AuthHeader(
-            identity.secretKey,
-            identity.publicKey,
-            registrationUrl,
-            'POST',
-          ),
-        },
-        body: JSON.stringify({
-          pubkey: identity.publicKey,
+      const response = runtime.monolithEnabled
+        ? null
+        : await fetch(registrationUrl, {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              authorization: nip98AuthHeader(
+                identity.secretKey,
+                identity.publicKey,
+                registrationUrl,
+                'POST',
+              ),
+            },
+            body: JSON.stringify({
+              pubkey: identity.publicKey,
+              token: nativeToken.data,
+              platform: 'android',
+              environment: Device.isDevice ? 'physical' : 'emulator',
+            }),
+            signal: controller.signal,
+          });
+      if (runtime.monolithEnabled) {
+        await monolithPhoneOperation('registerPushDevice', {
           token: nativeToken.data,
           platform: 'android',
           environment: Device.isDevice ? 'physical' : 'emulator',
-        }),
-        signal: controller.signal,
-      });
-      if (runtime.monolithEnabled) {
-        await monolithPhoneOperation('registerPushDevice', {
-          token: nativeToken.data, platform: 'android', environment: Device.isDevice ? 'physical' : 'emulator',
         });
       }
-      console.log(`[buzzy-push] POST ${registrationUrl} -> HTTP ${response?.status ?? 200}`);
+      console.log(`[beeline-push] POST ${registrationUrl} -> HTTP ${response?.status ?? 200}`);
       if (!response) {
         await AsyncStorage.setItem(tokenKey(identity.publicKey), nativeToken.data);
         return { registered: true, retryable: false, phase: 'registered' };
@@ -288,7 +303,7 @@ async function attemptRegistration(
         throw new Error(`gateway returned HTTP ${response.status}`);
       }
       if (response.status === 202) {
-        console.log('[buzzy-push] non-production FCM device ignored');
+        console.log('[beeline-push] non-production FCM device ignored');
         return {
           registered: false,
           retryable: true,
@@ -299,18 +314,31 @@ async function attemptRegistration(
       await AsyncStorage.setItem(tokenKey(identity.publicKey), nativeToken.data);
     } catch (error) {
       const failure = classifyRegistrationFailure(error);
-      console.warn(`[buzzy-push] gateway POST failed phase=${failure.phase}:`, errorMessage(error));
-      return { registered: false, retryable: true, phase: failure.phase, message: errorMessage(error) };
+      console.warn(
+        `[beeline-push] gateway POST failed phase=${failure.phase}:`,
+        errorMessage(error),
+      );
+      return {
+        registered: false,
+        retryable: true,
+        phase: failure.phase,
+        message: errorMessage(error),
+      };
     } finally {
       clearTimeout(timeout);
     }
 
-    console.log('[buzzy-push] FCM device registered');
+    console.log('[beeline-push] FCM device registered');
     return { registered: true, retryable: false, phase: 'registered' };
   } catch (error) {
     const failure = classifyRegistrationFailure(error);
-    console.warn(`[buzzy-push] registration failed phase=${failure.phase}:`, errorMessage(error));
-    return { registered: false, retryable: true, phase: failure.phase, message: errorMessage(error) };
+    console.warn(`[beeline-push] registration failed phase=${failure.phase}:`, errorMessage(error));
+    return {
+      registered: false,
+      retryable: true,
+      phase: failure.phase,
+      message: errorMessage(error),
+    };
   }
 }
 
@@ -414,10 +442,16 @@ export async function setBuzzPushEnabled(
   const registrationUrl = `${getBuzzRuntimeConfig().pushGatewayUrl}/registrations`;
   if (getBuzzRuntimeConfig().monolithEnabled) {
     await monolithPhoneOperation('unregisterPushDevice', {
-      token, platform: 'android', environment: Device.isDevice ? 'physical' : 'emulator',
+      token,
+      platform: 'android',
+      environment: Device.isDevice ? 'physical' : 'emulator',
     });
     await AsyncStorage.removeItem(tokenKey(identity.publicKey));
-    await saveRegistrationState(identity.publicKey, { ...disabledResult, failedAttempts: 0, updatedAt: Date.now() });
+    await saveRegistrationState(identity.publicKey, {
+      ...disabledResult,
+      failedAttempts: 0,
+      updatedAt: Date.now(),
+    });
     return disabledResult;
   }
   const response = await fetch(registrationUrl, {

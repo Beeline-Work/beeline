@@ -2,11 +2,11 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const chatSource = readFileSync(
-  new URL('../../app/(app)/buzz/chat/[channelId].tsx', import.meta.url),
+  new URL('../../app/(app)/beeline/chat/[channelId].tsx', import.meta.url),
   'utf8',
 );
 const membersSource = readFileSync(
-  new URL('../../app/(app)/buzz/MembersScreen.tsx', import.meta.url),
+  new URL('../../app/(app)/beeline/MembersScreen.tsx', import.meta.url),
   'utf8',
 );
 const hullDialogSource = readFileSync(new URL('./HullDialog.tsx', import.meta.url), 'utf8');

@@ -20,7 +20,7 @@ describe('beeline pair help', () => {
       "grok       Operator's Grok through its native 'grok agent stdio' ACP server",
     );
     expect(result.stdout).toContain(
-      'reference  Bundled buzz-agent (explicit fallback; requires an LLM key)',
+      'reference  Bundled agent runtime (explicit fallback; requires an LLM key)',
     );
     // Cursor has no native ACP; the help must document the real custom path
     // rather than imply a preset exists.

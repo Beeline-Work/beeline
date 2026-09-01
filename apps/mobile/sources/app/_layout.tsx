@@ -244,7 +244,7 @@ export default function RootLayout() {
         pushIdentityRef.current = identity;
         void reportRunningUpdateReceipt(identity).catch((error: unknown) => {
           console.warn(
-            '[buzzy-ota] startup update receipt unavailable:',
+            '[beeline-ota] startup update receipt unavailable:',
             error instanceof Error ? error.message : String(error),
           );
         });
@@ -253,13 +253,13 @@ export default function RootLayout() {
       .then((result) => {
         if (result && !result.registered) {
           console.warn(
-            `[buzzy-push] startup registration not completed: phase=${result.phase}${result.message ? ` (${result.message})` : ''}`,
+            `[beeline-push] startup registration not completed: phase=${result.phase}${result.message ? ` (${result.message})` : ''}`,
           );
         }
       })
       .catch((error: unknown) => {
         console.warn(
-          '[buzzy-push] startup registration unavailable:',
+          '[beeline-push] startup registration unavailable:',
           error instanceof Error ? error.message : String(error),
         );
       });
@@ -273,7 +273,7 @@ export default function RootLayout() {
       if (!identity) return;
       void reportRunningUpdateReceipt(identity).catch((error: unknown) => {
         console.warn(
-          '[buzzy-ota] foreground update receipt unavailable:',
+          '[beeline-ota] foreground update receipt unavailable:',
           error instanceof Error ? error.message : String(error),
         );
       });
@@ -281,13 +281,13 @@ export default function RootLayout() {
         .then((result) => {
           if (result && !result.registered) {
             console.warn(
-              `[buzzy-push] foreground retry did not register: phase=${result.phase}${result.message ? ` (${result.message})` : ''}`,
+              `[beeline-push] foreground retry did not register: phase=${result.phase}${result.message ? ` (${result.message})` : ''}`,
             );
           }
         })
         .catch((error: unknown) => {
           console.warn(
-            '[buzzy-push] foreground retry unavailable:',
+            '[beeline-push] foreground retry unavailable:',
             error instanceof Error ? error.message : String(error),
           );
         });
@@ -376,13 +376,11 @@ export default function RootLayout() {
         const buzzTarget = navigateToBuzzNotificationResponse(router, response);
         if (buzzTarget) {
           console.log(
-            `[PUSH ROUTING] Navigating to Buzz ${buzzTarget.target}: ${buzzTarget.channelId}`,
+            `[PUSH ROUTING] Navigating to Beeline ${buzzTarget.target}: ${buzzTarget.channelId}`,
           );
           return;
         }
-        console.log(
-          '[PUSH ROUTING] No supported route found in notification.request.content.data',
-        );
+        console.log('[PUSH ROUTING] No supported route found in notification.request.content.data');
       } finally {
         try {
           await Notifications.clearLastNotificationResponseAsync();

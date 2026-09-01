@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import { stdin, stdout } from 'node:process';
 import * as clack from '@clack/prompts';
 import pc from 'picocolors';
+import { isAgentPairingCode } from '@beeline/api-contract/phone';
 import {
   createBuzzClient,
   decodeNpub,
@@ -46,9 +47,8 @@ import { installAgentService } from './systemd.js';
 import { connectTrustySquireForPair } from './trusty-squire-onboarding.js';
 import { trustySquireConfigRoot } from './trusty-squire-storage.js';
 
-const PAIRING_CODE_SHAPE = /^BUZZ-[A-Z0-9]{4}-[A-Z0-9]{4}$/i;
 const INSTALL_AND_PAIR_COMMAND =
-  'curl -fsSL https://usebeeline.app/install | sh && beeline pair BUZZ-XXXX-XXXX';
+  'curl -fsSL https://usebeeline.app/install | sh && beeline pair XXXXXXXX-XXXXXXXX';
 
 /**
  * Reject incomplete pairing invocations before even the terminal framing is
@@ -57,10 +57,10 @@ const INSTALL_AND_PAIR_COMMAND =
  */
 function pairingCodeUsage(): never {
   console.error(`
-${pc.bold('A pairing code matching BUZZ-XXXX-XXXX is required.')}
+${pc.bold('A pairing code matching XXXXXXXX-XXXXXXXX is required.')}
 
 ${pc.dim('Usage:')}
-  beeline pair <BUZZ-XXXX-XXXX> [options]
+  beeline pair <PAIRING-CODE> [options]
 
 ${pc.dim('Install and pair:')}
   ${INSTALL_AND_PAIR_COMMAND}
@@ -340,10 +340,7 @@ async function pairOneAgent(input: {
   if (input.externalMcpCapabilities?.length && access !== 'creator') {
     throw new Error('external MCP capabilities require --access creator');
   }
-  if (
-    input.externalMcpCapabilities?.length &&
-    /^BUZZ-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/i.test(code.trim())
-  ) {
+  if (input.externalMcpCapabilities?.length && code.trim().toUpperCase().startsWith('BUZZ-')) {
     console.log("[beeline] checking this machine's Trusty Squire vault/link…");
     const configRoot = trustySquireConfigRoot(defaultSupervisorRoot(process.env));
     const connected = await connectTrustySquireForPair({
@@ -512,39 +509,39 @@ export async function completeDevicePairing(
 }
 
 function printPairResult(result: PairRuntimeResult): void {
-  console.log(`[buzz] paired agent ${pc.bold(result.pairing.agent.displayName)}`);
-  console.log(`[buzz] workspace: ${result.pairing.communityId}`);
+  console.log(`[beeline] paired agent ${pc.bold(result.pairing.agent.displayName)}`);
+  console.log(`[beeline] workspace: ${result.pairing.communityId}`);
   const pairedRoom = result.runtime.rooms[0];
   if (result.room && pairedRoom) {
     console.log(
-      `[buzz] room: ${result.room.channelId} (${result.room.created ? 'created' : 'joined'})`,
+      `[beeline] room: ${result.room.channelId} (${result.room.created ? 'created' : 'joined'})`,
     );
-    console.log(`[buzz] repo: ${pairedRoom.repo.root}`);
+    console.log(`[beeline] repo: ${pairedRoom.repo.root}`);
   } else {
-    console.log('[buzz] repo: none — each Room supplies its own');
+    console.log('[beeline] repo: none — each Room supplies its own');
   }
   if (result.pairing.attachedRoomIds.length > 0) {
     console.log(
-      `[buzz] rooms: attached to ${result.pairing.attachedRoomIds.length} current inviter Room${
+      `[beeline] rooms: attached to ${result.pairing.attachedRoomIds.length} current inviter Room${
         result.pairing.attachedRoomIds.length === 1 ? '' : 's'
       }`,
     );
   } else {
-    console.log('[buzz] rooms: no current inviter Rooms; add this agent from a Room roster');
+    console.log('[beeline] rooms: no current inviter Rooms; add this agent from a Room roster');
   }
-  console.log(`[buzz] agent pubkey: ${result.pairing.agent.pubkey}`);
-  console.log(`[buzz] access policy: ${result.runtime.accessPolicy ?? DEFAULT_ACCESS_POLICY}`);
+  console.log(`[beeline] agent pubkey: ${result.pairing.agent.pubkey}`);
+  console.log(`[beeline] access policy: ${result.runtime.accessPolicy ?? DEFAULT_ACCESS_POLICY}`);
   if (result.runtime.externalMcpCapabilities?.length) {
-    console.log(`[buzz] external MCP: ${result.runtime.externalMcpCapabilities.join(', ')}`);
+    console.log(`[beeline] external MCP: ${result.runtime.externalMcpCapabilities.join(', ')}`);
   }
   if (result.runtime.modelSelection) {
     console.log(
-      `[buzz] model/effort default: ${pc.cyan(result.runtime.modelSelection.model ?? '(unset)')} / ${pc.cyan(
+      `[beeline] model/effort default: ${pc.cyan(result.runtime.modelSelection.model ?? '(unset)')} / ${pc.cyan(
         result.runtime.modelSelection.effort ?? '(unset)',
       )}`,
     );
   }
-  console.log(`[buzz] daemon started ${pc.green(`(pid ${result.pid})`)}`);
+  console.log(`[beeline] daemon started ${pc.green(`(pid ${result.pid})`)}`);
 }
 
 /**
@@ -566,7 +563,7 @@ export async function runPairCommand(
     const pairOptions = parsePairOptions(args);
     if (
       pairOptions.codes.length === 0 ||
-      pairOptions.codes.some((code) => !PAIRING_CODE_SHAPE.test(code.trim()))
+      pairOptions.codes.some((code) => !isAgentPairingCode(code.trim().toUpperCase()))
     ) {
       pairingCodeUsage();
     }

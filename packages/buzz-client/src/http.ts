@@ -342,7 +342,7 @@ function logPublishRetry(
   reason: string,
 ): void {
   console.warn(
-    `[buzz-client] publishEvent kind=${event.kind} id=${event.id.slice(0, 12)} ` +
+    `[beeline-client] publishEvent kind=${event.kind} id=${event.id.slice(0, 12)} ` +
       `attempt=${attempt}/${PUBLISH_MAX_ATTEMPTS} failed (${reason}); retrying in ${delayMs}ms`,
   );
 }

@@ -12,9 +12,11 @@ export const OIDC_BIND_MARKER = 'beeline-oidc-bind-v1' as const;
 export const MOBILE_APP_SCHEMES = ['beeline'] as const;
 
 const MOBILE_APP_PROTOCOLS = new Set<string>(MOBILE_APP_SCHEMES.map((scheme) => `${scheme}:`));
-const GITHUB_SIGN_IN_DEEP_LINKS = MOBILE_APP_SCHEMES.map(
-  (scheme) => `${scheme}://buzz/github-callback`,
-);
+const GITHUB_SIGN_IN_DEEP_LINKS = MOBILE_APP_SCHEMES.flatMap((scheme) => [
+  `${scheme}://beeline/github-callback`,
+  // Accept callbacks from browser sessions opened by an older app build.
+  `${scheme}://buzz/github-callback`,
+]);
 
 const TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
 const HEX_KEY_RE = /^[0-9a-f]{64}$/;
@@ -416,11 +418,9 @@ export async function lookupManagedIdentity(
 ): Promise<ManagedIdentity | null> {
   if (!HEX_KEY_RE.test(identity.publicKey))
     throw new OidcBindError('invalid_identity', 'invalid public key');
-  const { body, status } = await requestAuthJson(
-    baseUrl,
-    `/auth/identity/${identity.publicKey}`,
-    { identity },
-  );
+  const { body, status } = await requestAuthJson(baseUrl, `/auth/identity/${identity.publicKey}`, {
+    identity,
+  });
   if (body.identity === null) return null;
   const managed = parseManagedIdentity(body.identity);
   if (!managed) {

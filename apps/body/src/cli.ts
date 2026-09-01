@@ -97,7 +97,7 @@ ${pc.dim('Usage:')}
   beeline serve <channel-uuid> <owner> <repo>  Internal: serve one explicitly-wired Room
   beeline open <channel-uuid> <owner> <repo>  Open subchannel + edit session
   beeline archive <subchannel-uuid>         Archive subchannel
-  beeline pair <BUZZ-XXXX-XXXX> [options]   Pair an agent (optionally to this repo)
+  beeline pair <PAIRING-CODE> [options]     Pair an agent (optionally to this repo)
                                             and start its durable daemon
   beeline connect [XXXXXXXX-XXXXXXXX]       Install and connect an app-authorized agent
   beeline start [agent-pubkey]              Start — or RESTART when already running,
@@ -132,7 +132,7 @@ function pairUsage(): void {
 ${pc.bold('Pair this repository and start its durable Room agent(s).')}
 
 ${pc.dim('Usage:')}
-  beeline pair <BUZZ-XXXX-XXXX> [--agent <codex|claude|goose|pi|grok|reference|custom>]
+  beeline pair <PAIRING-CODE> [--agent <codex|claude|goose|pi|grok|reference|custom>]
                [--agent-command '<command> [args...]'] [--repo <path>]
                [--access <everyone|creator|allowlist>] [--allow <npub-or-hex,...>]
                [--auto-response '<text>']
@@ -153,7 +153,7 @@ Agent choices:
   goose      Operator's Goose through its native 'goose acp' server
   pi         Operator's Pi through the pi-acp adapter
   grok       Operator's Grok through its native 'grok agent stdio' ACP server
-  reference  Bundled buzz-agent (explicit fallback; requires an LLM key)
+  reference  Bundled agent runtime (explicit fallback; requires an LLM key)
   custom     Explicit ACP command supplied with --agent-command
 
 Cursor has no native ACP mode. To drive it, install the Cursor CLI
@@ -222,11 +222,11 @@ enter keeps everyone/the default auto-response. A non-terminal session never
 blocks on this; it proceeds with the everyone default, same as before.
 
 Examples:
-  beeline pair BUZZ-XXXX-XXXX --agent codex
-  beeline pair BUZZ-XXXX-XXXX --agent claude --access creator
-  beeline pair BUZZ-XXXX-XXXX --repo /path/to/repo --agent claude --model sonnet --effort high
-  beeline pair BUZZ-AAAA-AAAA BUZZ-BBBB-BBBB BUZZ-CCCC-CCCC --agents claude,codex,pi
-  beeline pair BUZZ-XXXX-XXXX --agent custom --agent-command 'my-agent serve --acp'
+  beeline pair XXXXXXXX-XXXXXXXX --agent codex
+  beeline pair XXXXXXXX-XXXXXXXX --agent claude --access creator
+  beeline pair XXXXXXXX-XXXXXXXX --repo /path/to/repo --agent claude --model sonnet --effort high
+  beeline pair AAAAAAAA-AAAAAAAA BBBBBBBB-BBBBBBBB CCCCCCCC-CCCCCCCC --agents claude,codex,pi
+  beeline pair XXXXXXXX-XXXXXXXX --agent custom --agent-command 'my-agent serve --acp'
 `);
 }
 
@@ -376,7 +376,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   }
 
   console.log(
-    `[buzz] thin daemon core ${runtime.communityId} starting with ${runtime.rooms.length} Room binding(s)`,
+    `[beeline] thin daemon core ${runtime.communityId} starting with ${runtime.rooms.length} Room binding(s)`,
   );
   console.log(`[body] agent binary: ${formatAgentCommand(agent)}`);
   console.log(`[body] ${sandbox.advisory}`);
@@ -463,7 +463,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
       }
       process.exitCode = DELIBERATE_REMOVAL_EXIT_STATUS;
       console.log(
-        `[buzz] agent ${runtime.agent.publicKey} removed; runtime archived at ${archivedRuntime}`,
+        `[beeline] agent ${runtime.agent.publicKey} removed; runtime archived at ${archivedRuntime}`,
       );
     }
   } catch (error) {
@@ -677,7 +677,7 @@ async function main(): Promise<void> {
     } else {
       await stopRuntimeDaemon(configPath, { timeoutMs: 30 * 60_000 });
     }
-    console.log(`[buzz] agent ${runtime.agent.publicKey} disabled; graceful stop requested`);
+    console.log(`[beeline] agent ${runtime.agent.publicKey} disabled; graceful stop requested`);
     return;
   }
 

@@ -128,7 +128,7 @@ const app = buildAuthServer({
       origin: 'http://127.0.0.1:8789',
     },
   ],
-  nativeRedirectUris: ['beeline://buzz/oidc-callback'],
+  nativeRedirectUris: ['beeline://beeline/oidc-callback'],
   logger: true,
   secureCookies: false,
 });

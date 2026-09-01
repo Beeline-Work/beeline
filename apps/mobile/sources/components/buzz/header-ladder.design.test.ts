@@ -11,7 +11,7 @@ import { describe, expect, it } from 'vitest';
  * DESIGN.md (repo root) is the authority they encode.
  */
 const chatSource = readFileSync(
-  path.join(__dirname, '../../app/(app)/buzz/chat/[channelId].tsx'),
+  path.join(__dirname, '../../app/(app)/beeline/chat/[channelId].tsx'),
   'utf8',
 );
 const ladderSource = readFileSync(path.join(__dirname, './HeaderLadder.tsx'), 'utf8');
@@ -47,7 +47,9 @@ describe('Chat header — one language for Room and Corner', () => {
     // "3 members" (singular "1 member") on every surface.
     expect(chatSource).not.toContain('IN THIS ROOM  ›');
     expect(chatSource).not.toContain("}' participants");
-    const meta = chatSource.match(/<HeaderMetaCaps testID="room-header-meta">[\s\S]*?<\/HeaderMetaCaps>/);
+    const meta = chatSource.match(
+      /<HeaderMetaCaps testID="room-header-meta">[\s\S]*?<\/HeaderMetaCaps>/,
+    );
     expect(meta, 'missing room-header-meta').toBeTruthy();
     expect(meta![0]).toContain('formatRoomParticipantTotal(roomParticipantTotal)');
   });

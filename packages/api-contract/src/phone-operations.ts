@@ -91,6 +91,8 @@ export type UpdateWorkspaceInput = WorkspaceInput & {
 export type CreateRoomInput = WorkspaceInput & {
   readonly name: string;
   readonly visibility?: 'public' | 'invite-only';
+  /** Optional repository from listGitHubRepositories, bound atomically with Room creation. */
+  readonly repositoryId?: number;
 };
 export type UpdateRoomInput = RoomInput & {
   readonly name?: string;
@@ -108,7 +110,8 @@ export type UpdateAgentSoulInput = WorkspaceAgentInput & {
   readonly avatarSeed: string;
   readonly avatar?: string;
 };
-export type UpdateAgentModelInput = WorkspaceAgentInput & AgentModelSelection;
+export type UpdateAgentModelInput = WorkspaceAgentInput &
+  Omit<AgentModelSelection, 'effort'> & { readonly effort?: string | null };
 export type UpdatePersonProfileInput = {
   readonly name: string;
   readonly handle?: string;

@@ -15,5 +15,6 @@ export async function monolithPhoneOperation<Name extends keyof PhoneOperationMa
     },
   );
   if (!response.ok) throw new Error(`Monolith ${String(name)} failed (${response.status})`);
+  if (response.status === 204) return undefined as PhoneOperationMap[Name]['output'];
   return (await response.json()) as PhoneOperationMap[Name]['output'];
 }

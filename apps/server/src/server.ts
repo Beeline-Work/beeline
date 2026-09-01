@@ -399,6 +399,11 @@ async function route(
     console.log('[phone-op]', name, `identity=${identityId}`, 'ok');
     if (typeof input.roomId === 'string')
       options.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'phone-write' });
+    if (result === undefined) {
+      response.writeHead(204, { 'cache-control': 'private, no-store' });
+      response.end();
+      return;
+    }
     json(response, 200, result);
     return;
   }

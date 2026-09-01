@@ -4,12 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
-import { TokenAuth } from './auth.js';
+import { TokenAuth, tokenHash } from './auth.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { createBeelineServer, DEFAULT_MEDIA_MAXIMUM_BYTES } from './server.js';
 import { PushDeliveryLoop } from './background.js';
+import { isCommunityInviteToken } from '@beeline/api-contract/phone';
 
 const HUMAN = createHash('sha256').update('github:owner').digest('hex');
 const AGENT = 'b'.repeat(64);
@@ -23,6 +24,7 @@ describe('monolith integration', () => {
   let server: ReturnType<typeof createBeelineServer>;
   let accessToken: string;
   let daemonToken: string;
+  let sendPushTest: ReturnType<typeof vi.fn>;
   beforeEach(async () => {
     database = new PgliteDatabase();
     await migrate(database);
@@ -40,12 +42,15 @@ describe('monolith integration', () => {
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,$4,$2,'owner'),($1,$4,$3,'member')`,
       [WORKSPACE, HUMAN, AGENT, ROOM],
     );
-    auth = new TokenAuth(database, async (proof) => ({
-      subject: proof === 'proof' ? 'owner' : proof,
-      login: proof === 'proof' ? 'owner' : proof,
-      name: proof === 'proof' ? 'Owner' : proof,
-    }));
-    const phone = new PhoneService(database, 'http://placeholder');
+    auth = new TokenAuth(database, async (proof) =>
+      proof === 'recipient-proof'
+        ? { subject: 'recipient', login: 'recipient', name: 'Recipient' }
+        : proof === 'proof'
+          ? { subject: 'owner', login: 'owner', name: 'Owner' }
+          : { subject: proof, login: proof, name: proof },
+    );
+    sendPushTest = vi.fn(async () => undefined);
+    const phone = new PhoneService(database, 'http://placeholder', undefined, sendPushTest);
     const live = new LiveHub();
     const daemon = new DaemonService(database, live);
     server = createBeelineServer({
@@ -379,6 +384,86 @@ describe('monolith integration', () => {
     expect(complete.messages.some((message) => message.activity)).toBe(false);
   });
 
+  it('mints, resolves, and redeems an invite through the phone HTTP surface', async () => {
+    const created = await request('/v1/phone/operations/createInvite', 'POST', {
+      workspaceId: WORKSPACE,
+    });
+    expect(created.status).toBe(200);
+    const invite = (await created.json()) as { token: string; expiresAt: number };
+    expect(isCommunityInviteToken(invite.token)).toBe(true);
+    expect(invite.token).toMatch(/^bzi_[0-9a-f]{64}$/);
+
+    const recipient = await auth.exchangeGitHubOidc('recipient-proof');
+    const resolved = await request(
+      '/v1/phone/operations/resolveInvite',
+      'POST',
+      { token: invite.token },
+      recipient.accessToken,
+    );
+    expect(resolved.status).toBe(200);
+    expect(await resolved.json()).toMatchObject({
+      name: 'Hive',
+      expiresAt: Math.floor(invite.expiresAt / 1_000),
+    });
+
+    const redeemed = await request(
+      '/v1/phone/operations/redeemInvite',
+      'POST',
+      { token: invite.token },
+      recipient.accessToken,
+    );
+    expect(redeemed.status).toBe(200);
+    expect(await redeemed.json()).toEqual({ joined: true, workspaceId: WORKSPACE });
+    const membership = await database.query<{ role: string }>(
+      `SELECT role FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`,
+      [WORKSPACE, recipient.identityId],
+    );
+    expect(membership.rows).toEqual([{ role: 'member' }]);
+  });
+
+  it('creates Rooms with or without an installed repository binding', async () => {
+    await database.query(
+      `INSERT INTO github_installations(installation_id,owner_id,account_login,account_type) VALUES(42,$1,'owner','User')`,
+      [HUMAN],
+    );
+    await database.query(
+      `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch) VALUES(77,42,'owner/worker','trunk')`,
+    );
+
+    const plain = await request('/v1/phone/operations/createRoom', 'POST', {
+      workspaceId: WORKSPACE,
+      name: 'Plain Room',
+    });
+    expect(plain.status).toBe(200);
+    const plainId = ((await plain.json()) as { id: string }).id;
+    expect(
+      (await new PhoneService(database, origin).readRoom(plainId, HUMAN))?.repository,
+    ).toBeUndefined();
+
+    const bound = await request('/v1/phone/operations/createRoom', 'POST', {
+      workspaceId: WORKSPACE,
+      name: 'Repository Room',
+      repositoryId: 77,
+    });
+    expect(bound.status).toBe(200);
+    const boundId = ((await bound.json()) as { id: string }).id;
+    expect((await new PhoneService(database, origin).readRoom(boundId, HUMAN))?.repository).toEqual(
+      expect.objectContaining({
+        key: 'github:77',
+        name: 'owner/worker',
+        remote: 'git://github.com/owner/worker',
+        targetBranch: 'trunk',
+        githubInstallationId: 42,
+      }),
+    );
+    const chats = (await (await request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
+      chats: Array<{ room: { id: string }; repositoryName?: string }>;
+    };
+    expect(chats.chats.find((item) => item.room.id === boundId)?.repositoryName).toBe(
+      'owner/worker',
+    );
+  });
+
   it('rotates refresh tokens and rejects stale phone and daemon credentials', async () => {
     const initial = await auth.exchangeGitHubOidc('proof');
     const refreshed = await request(
@@ -468,6 +553,181 @@ describe('monolith integration', () => {
     expect(await loop.runOnce()).toBe(1);
     expect(await loop.runOnce()).toBe(0);
     expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('round-trips push, update, and agent operations through the phone HTTP contract', async () => {
+    const pairing = await request('/v1/phone/operations/createAgentPairingCode', 'POST', {
+      workspaceId: WORKSPACE,
+    });
+    expect(pairing.status).toBe(200);
+    const pairingResult = (await pairing.json()) as { code: string; expiresAt: number };
+    expect(pairingResult.code).toMatch(/^BUZZ-[0-9A-F]{8}-[0-9A-F]{8}$/);
+
+    // The connect lane exchanges an app-minted code as the new agent. Exercise
+    // the same named operation with an agent-scoped bearer so this legacy API
+    // remains contract-valid until that cutover lands.
+    const agentAccessToken = 'bat_agent_http_contract';
+    await database.query(
+      `INSERT INTO phone_access_tokens(token_hash,identity_id,family_id,expires_at)
+       VALUES($1,$2,$3,now()+interval '15 minutes')`,
+      [tokenHash(agentAccessToken), AGENT, '33333333-3333-4333-8333-333333333333'],
+    );
+    const claimed = await request(
+      '/v1/phone/operations/claimAgentPairing',
+      'POST',
+      { code: pairingResult.code },
+      agentAccessToken,
+    );
+    expect(claimed.status).toBe(200);
+    expect(await claimed.json()).toEqual(
+      expect.objectContaining({ workspaceId: WORKSPACE, pairedBy: HUMAN, joined: true }),
+    );
+
+    const soul = await request('/v1/phone/operations/updateAgentSoul', 'POST', {
+      workspaceId: WORKSPACE,
+      agentId: AGENT,
+      name: 'Honeybee',
+      instructions: 'Be precise and practical.',
+      avatarSeed: 'honeybee-seed',
+    });
+    expect(soul.status).toBe(204);
+    expect(await soul.text()).toBe('');
+
+    const model = await request('/v1/phone/operations/updateAgentModelSelection', 'POST', {
+      workspaceId: WORKSPACE,
+      agentId: AGENT,
+      model: 'gpt-5.6',
+      effort: 'high',
+    });
+    expect(model.status).toBe(204);
+    expect(await model.text()).toBe('');
+
+    const effortOnly = await request('/v1/phone/operations/updateAgentModelSelection', 'POST', {
+      workspaceId: WORKSPACE,
+      agentId: AGENT,
+      effort: 'max',
+    });
+    expect(effortOnly.status).toBe(204);
+
+    const modelAndClearEffort = await request(
+      '/v1/phone/operations/updateAgentModelSelection',
+      'POST',
+      { workspaceId: WORKSPACE, agentId: AGENT, model: 'gpt-5.6-codex', effort: null },
+    );
+    expect(modelAndClearEffort.status).toBe(204);
+
+    const agent = await request(`/v1/phone/workspaces/${WORKSPACE}/agents/${AGENT}`);
+    expect(agent.status).toBe(200);
+    expect(await agent.json()).toEqual(
+      expect.objectContaining({
+        soul: expect.objectContaining({
+          name: 'Honeybee',
+          instructions: 'Be precise and practical.',
+          avatarSeed: 'honeybee-seed',
+        }),
+        selected: { model: 'gpt-5.6-codex' },
+      }),
+    );
+
+    const token = 'device-token-production-shaped-1234567890';
+    const registered = await request('/v1/phone/operations/registerPushDevice', 'POST', {
+      token,
+      platform: 'android',
+      environment: 'physical',
+    });
+    expect(registered.status).toBe(200);
+    expect(await registered.json()).toEqual({ accepted: true });
+
+    const tested = await request('/v1/phone/operations/sendPushTest', 'POST', {});
+    expect(tested.status).toBe(204);
+    expect(await tested.text()).toBe('');
+    expect(sendPushTest).toHaveBeenCalledWith(HUMAN);
+
+    const reported = await request('/v1/phone/operations/reportRunningUpdate', 'POST', {
+      deviceId: '44444444-4444-4444-8444-444444444444',
+      updateId: 'update-1',
+      channel: 'production',
+      group: 'group-1',
+      runtimeVersion: '21',
+      releaseVersion: '1.2.3',
+      sourceSha: 'a'.repeat(40),
+    });
+    expect(reported.status).toBe(204);
+    expect(await reported.text()).toBe('');
+
+    const unregistered = await request('/v1/phone/operations/unregisterPushDevice', 'POST', {
+      token,
+      platform: 'android',
+      environment: 'physical',
+    });
+    expect(unregistered.status).toBe(204);
+    expect(await unregistered.text()).toBe('');
+
+    const removed = await request('/v1/phone/operations/removeAgent', 'POST', {
+      workspaceId: WORKSPACE,
+      agentId: AGENT,
+    });
+    expect(removed.status).toBe(204);
+    expect(await removed.text()).toBe('');
+
+    expect(
+      (await database.query(`SELECT 1 FROM push_devices WHERE token=$1`, [token])).rowCount,
+    ).toBe(0);
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM device_update_receipts WHERE identity_id=$1 AND device_id=$2`,
+          [HUMAN, '44444444-4444-4444-8444-444444444444'],
+        )
+      ).rowCount,
+    ).toBe(1);
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM memberships WHERE workspace_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
+          [WORKSPACE, AGENT],
+        )
+      ).rowCount,
+    ).toBe(0);
+  });
+
+  it('does not let a workspace manager mutate or revoke another workspace agent', async () => {
+    const otherWorkspace = '55555555-5555-4555-8555-555555555555';
+    const otherAgent = 'e'.repeat(64);
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Other')`, [otherWorkspace]);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Other agent')`, [
+      otherAgent,
+    ]);
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [
+      otherAgent,
+      HUMAN,
+    ]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member')`,
+      [otherWorkspace, otherAgent],
+    );
+
+    for (const [name, input] of [
+      [
+        'updateAgentSoul',
+        {
+          workspaceId: WORKSPACE,
+          agentId: otherAgent,
+          name: 'Stolen',
+          instructions: 'Changed across tenants',
+          avatarSeed: 'seed',
+        },
+      ],
+      [
+        'updateAgentModelSelection',
+        { workspaceId: WORKSPACE, agentId: otherAgent, model: 'wrong-model' },
+      ],
+      ['removeAgent', { workspaceId: WORKSPACE, agentId: otherAgent }],
+    ] as const) {
+      const response = await request(`/v1/phone/operations/${name}`, 'POST', input);
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({ error: 'agent not found in workspace' });
+    }
   });
 
   it('serves bounded GitHub room tokens and deduplicates signed webhooks', async () => {

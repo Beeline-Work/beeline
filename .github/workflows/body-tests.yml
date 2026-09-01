@@ -83,7 +83,10 @@ jobs:
       - run: npm ci
       # apps/body imports these workspaces from their built dist, not
       # their TS source (package.json "main"/"exports" point at dist/).
-      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client && npm run build -w @beeline/gate
+      # The daemon API integration also imports the server harness, whose
+      # phone service reaches @beeline/push-gateway/projection. Build Body
+      # first because push-gateway's production entry imports Body subpaths.
+      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client && npm run build -w @beeline/gate && npm run build -w @beeline/body && npm run build -w @beeline/push-gateway
       - name: Run the hermetic Body suite
         working-directory: apps/body
         run: npx vitest run

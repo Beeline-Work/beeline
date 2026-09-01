@@ -1,4 +1,4 @@
-import { randomBytes, createHash } from 'node:crypto';
+import { randomBytes, createHash, createHmac } from 'node:crypto';
 import { request } from 'node:http';
 import type { IncomingHttpHeaders } from 'node:http';
 import { AddressInfo } from 'node:net';
@@ -13,6 +13,7 @@ import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { createBeelineServer } from './server.js';
 import { createMonolithAuth, type MonolithAuthMount } from './monolith-auth.js';
+import { GitHubOperations } from './github-operations.js';
 
 const tenant = {
   host: 'server.usebeeline.app',
@@ -27,29 +28,45 @@ describe('mounted monolith auth', () => {
   let mount: MonolithAuthMount;
   let server: ReturnType<typeof createBeelineServer>;
   let origin: string;
+  let githubOperations: GitHubOperations;
+  let processWebhook: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
     vi.stubEnv('PHONE_GITHUB_EXCHANGE_ENDPOINT', '');
     database = new PgliteDatabase();
     await migrate(database);
+    const githubOauth = {
+      config: { clientId: 'github-client', clientSecret: 'github-secret' },
+      authorizationUrl: ({ state, redirectUri }: { state: string; redirectUri: string }) =>
+        `https://github.test/authorize?state=${state}&redirect_uri=${encodeURIComponent(redirectUri)}`,
+      exchangeCode: async () => ({
+        issuer: 'https://github.com' as const,
+        audience: 'github-client',
+        subject: '42',
+        login: 'octocat',
+        displayName: 'The Octocat',
+        accessToken: 'github-user-token',
+      }),
+    } as unknown as GitHubOAuthClient;
+    const githubApp = {
+      installationAccount: async () => ({
+        id: '42',
+        login: 'owner',
+        type: 'User' as const,
+        repositorySelection: 'selected' as const,
+      }),
+      listRepositories: async () => [
+        { id: 101, installationId: 77, fullName: 'owner/widgets', defaultBranch: 'trunk' },
+      ],
+    } as unknown as GitHubAppClient;
     mount = await createMonolithAuth(
       database,
       tenant.origin,
       {
-        oauth: {
-          config: { clientId: 'github-client', clientSecret: 'github-secret' },
-          authorizationUrl: ({ state, redirectUri }) =>
-            `https://github.test/authorize?state=${state}&redirect_uri=${encodeURIComponent(redirectUri)}`,
-          exchangeCode: async () => ({
-            issuer: 'https://github.com' as const,
-            audience: 'github-client',
-            subject: '42',
-            login: 'octocat',
-            displayName: 'The Octocat',
-            accessToken: 'github-user-token',
-          }),
-        } as unknown as GitHubOAuthClient,
-        app: {} as GitHubAppClient,
+        oauth: githubOauth,
+        app: githubApp,
+        webhookSecret: 'webhook-secret',
+        onWebhook: async (event, payload) => processWebhook(event, payload),
       },
       {
         NODE_ENV: 'test',
@@ -60,6 +77,16 @@ describe('mounted monolith auth', () => {
         BUZZY_AUTH_OIDC_JWKS_URI: 'https://accounts.example/jwks',
         BUZZY_AUTH_OIDC_CLIENT_ID: 'test-client',
       },
+    );
+    githubOperations = new GitHubOperations(
+      database,
+      githubOauth,
+      githubApp,
+      'github-secret',
+      mount.sealedGitHubUserToken,
+    );
+    processWebhook = vi.fn(async (event: string, payload: unknown) =>
+      githubOperations.processWebhook(event, payload),
     );
     store = new AuthStore(database as unknown as TransactionalDatabase);
     const auth = new TokenAuth(database, verifierFromEnvironment(mount.verifyGitHubTicket));
@@ -224,6 +251,65 @@ describe('mounted monolith auth', () => {
     await expect(exchange.json()).resolves.toMatchObject({
       accessToken: expect.stringMatching(/^bat_/),
       identityId: expect.any(String),
+    });
+  });
+
+  it('reconciles the monolith GitHub catalog from a signed mounted auth webhook', async () => {
+    const owner = 'a'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner')`, [owner]);
+    await database.query(
+      `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status) VALUES(77,$1,'42','owner','User','selected','active')`,
+      [owner],
+    );
+    const payload = JSON.stringify({
+      action: 'added',
+      installation: { id: 77 },
+      repositories_added: [
+        {
+          id: 101,
+          name: 'widgets',
+          full_name: 'owner/widgets',
+          clone_url: 'https://github.com/owner/widgets.git',
+          default_branch: 'trunk',
+        },
+      ],
+      repositories_removed: [],
+    });
+    const response = await new Promise<{ status: number }>((resolve, reject) => {
+      const outgoing = request(new URL('/auth/github/webhook', origin), {
+        method: 'POST',
+        headers: {
+          host: tenant.host,
+          'content-type': 'application/json',
+          'content-length': Buffer.byteLength(payload),
+          'x-github-delivery': 'mounted-delivery-1',
+          'x-github-event': 'installation_repositories',
+          'x-hub-signature-256': `sha256=${createHmac('sha256', 'webhook-secret').update(payload).digest('hex')}`,
+        },
+      }, (incoming) => {
+        incoming.resume();
+        incoming.on('end', () => resolve({ status: incoming.statusCode ?? 0 }));
+      });
+      outgoing.on('error', reject);
+      outgoing.end(payload);
+    });
+
+    expect(response.status).toBe(202);
+    expect(processWebhook).toHaveBeenCalledWith(
+      'installation_repositories',
+      expect.objectContaining({ installation: { id: 77 } }),
+    );
+    await expect(
+      database.query<{ installation_id: number; status: string }>(
+        `SELECT installation_id,status FROM github_installations WHERE installation_id=77`,
+      ),
+    ).resolves.toMatchObject({ rows: [{ installation_id: 77, status: 'active' }] });
+    await expect(
+      database.query<{ repository_id: number; full_name: string; active: boolean }>(
+        `SELECT repository_id,full_name,active FROM github_repositories WHERE installation_id=77`,
+      ),
+    ).resolves.toMatchObject({
+      rows: [{ repository_id: 101, full_name: 'owner/widgets', active: true }],
     });
   });
 });

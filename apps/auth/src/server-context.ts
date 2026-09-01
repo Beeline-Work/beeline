@@ -99,7 +99,16 @@ export interface AuthServerOptions {
   store: AuthStore;
   oidc: OidcClient;
   /** GitHub is the shipped sign-in and repository-access provider. */
-  github?: { oauth: GitHubOAuthClient; app: GitHubAppClient; webhookSecret?: string };
+  github?: {
+    oauth: GitHubOAuthClient;
+    app: GitHubAppClient;
+    webhookSecret?: string;
+    /**
+     * Optional consumer for the monolith's repository catalog. This runs
+     * only after the auth store has verified and claimed a GitHub delivery.
+     */
+    onWebhook?: (eventType: string, payload: unknown) => Promise<void>;
+  };
   tenants: AuthTenant[];
   now?: () => Date;
   flowTtlMs?: number;

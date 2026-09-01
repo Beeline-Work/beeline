@@ -84,10 +84,12 @@ CREATE TABLE IF NOT EXISTS identities (
   name text NOT NULL,
   handle text,
   avatar text,
+  hidden_from_roster boolean NOT NULL DEFAULT false,
   github_subject text UNIQUE,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE identities ADD COLUMN IF NOT EXISTS hidden_from_roster boolean NOT NULL DEFAULT false;
 
 CREATE TABLE IF NOT EXISTS identity_external_links (
   provider text NOT NULL,
@@ -160,6 +162,7 @@ CREATE TABLE IF NOT EXISTS rooms (
   id uuid PRIMARY KEY,
   workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   parent_id uuid REFERENCES rooms(id) ON DELETE CASCADE,
+  created_by text REFERENCES identities(id),
   name text NOT NULL,
   about text,
   avatar text,
@@ -174,6 +177,7 @@ CREATE TABLE IF NOT EXISTS rooms (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE rooms ADD COLUMN IF NOT EXISTS created_by text REFERENCES identities(id);
 CREATE INDEX IF NOT EXISTS rooms_workspace_idx ON rooms(workspace_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS rooms_parent_idx ON rooms(parent_id, updated_at DESC);
 
@@ -495,9 +499,10 @@ export async function measureDatabaseBreakdown(database: SqlDatabase): Promise<{
     SELECT type,count(*)::text rows,sum(bytes)::text logical_bytes FROM (SELECT * FROM message_types UNION ALL SELECT * FROM operational) typed GROUP BY type ORDER BY sum(bytes) DESC,type`);
   const media = await database.query<{ type: string; objects: string; bytes: string }>(`
     WITH refs AS (
-      SELECT DISTINCT (regexp_match(a->>'url','/v1/media/([0-9a-f-]+)$'))[1] id
+      SELECT DISTINCT (regexp_match(candidate.url,'/v1/media/([0-9a-f-]+)$'))[1] id
       FROM messages m CROSS JOIN LATERAL jsonb_array_elements(m.attachments) a
-      WHERE a->>'url' ~ '/v1/media/[0-9a-f-]+$'
+      CROSS JOIN LATERAL (VALUES(a->>'url'),(a->>'thumbnailUrl')) candidate(url)
+      WHERE candidate.url ~ '/v1/media/[0-9a-f-]+$'
     ), classified AS (
       SELECT octet_length(m.bytes)::bigint bytes,
         CASE WHEN refs.id IS NOT NULL THEN 'referenced-by-kept-message'

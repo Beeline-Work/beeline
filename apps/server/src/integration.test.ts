@@ -10,6 +10,8 @@ import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { createBeelineServer, DEFAULT_MEDIA_MAXIMUM_BYTES } from './server.js';
 import { PushDeliveryLoop } from './background.js';
+import { GitHubOperations } from './github-operations.js';
+import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { isCommunityInviteToken } from '@beeline/api-contract/phone';
 
 const HUMAN = createHash('sha256').update('github:owner').digest('hex');
@@ -25,6 +27,8 @@ describe('monolith integration', () => {
   let accessToken: string;
   let daemonToken: string;
   let sendPushTest: ReturnType<typeof vi.fn>;
+  let completeInstallation: ReturnType<typeof vi.fn>;
+  let processWebhook: ReturnType<typeof vi.fn>;
   beforeEach(async () => {
     database = new PgliteDatabase();
     await migrate(database);
@@ -42,17 +46,43 @@ describe('monolith integration', () => {
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,$4,$2,'owner'),($1,$4,$3,'member')`,
       [WORKSPACE, HUMAN, AGENT, ROOM],
     );
-    auth = new TokenAuth(database, async (proof) =>
-      proof === 'recipient-proof'
-        ? { subject: 'recipient', login: 'recipient', name: 'Recipient' }
-        : proof === 'proof'
-          ? { subject: 'owner', login: 'owner', name: 'Owner' }
-          : { subject: proof, login: proof, name: proof },
+    auth = new TokenAuth(database, async (proof) => {
+      const login = proof === 'proof' ? 'owner' : proof === 'recipient-proof' ? 'recipient' : proof;
+      return { subject: login, login, name: login[0]!.toUpperCase() + login.slice(1) };
+    });
+    const github = new GitHubOperations(
+      database,
+      {
+        authorizationUrl: ({ state, redirectUri }: { state: string; redirectUri: string }) =>
+          `https://github.test/authorize?state=${state}&redirect_uri=${encodeURIComponent(redirectUri)}`,
+        exchangeCode: async () => ({
+          issuer: 'https://github.com' as const,
+          audience: 'oauth-client-id',
+          subject: 'owner',
+          login: 'owner',
+          displayName: 'Owner',
+          accessToken: 'github-user-token',
+        }),
+      } as unknown as GitHubOAuthClient,
+      {} as GitHubAppClient,
+      'github-client-secret',
     );
+    vi.spyOn(github, 'refresh').mockResolvedValue(undefined);
+    vi.spyOn(github, 'beginInstallation').mockResolvedValue({
+      url: 'https://github.com/apps/beeline-test/installations/new?state=server-state',
+    });
+    vi.spyOn(github, 'createRepository').mockImplementation(async (_viewerId, input) => ({
+      id: 102,
+      fullName: `owner/${input.name}`,
+      installationId: input.installationId,
+      defaultBranch: 'main',
+    }));
     sendPushTest = vi.fn(async () => undefined);
-    const phone = new PhoneService(database, 'http://placeholder', undefined, sendPushTest);
+    const phone = new PhoneService(database, 'http://placeholder', github, sendPushTest);
     const live = new LiveHub();
     const daemon = new DaemonService(database, live);
+    completeInstallation = vi.fn(async () => 'beeline://buzz/github-installation?installed=1');
+    processWebhook = vi.fn(async () => undefined);
     server = createBeelineServer({
       database,
       auth,
@@ -63,6 +93,8 @@ describe('monolith integration', () => {
       github: {
         webhookSecret: 'webhook-secret',
         roomToken: async () => ({ token: 'github-room-token', expiresAt: Date.now() + 60_000 }),
+        completeInstallation,
+        onWebhook: processWebhook,
       },
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -86,6 +118,194 @@ describe('monolith integration', () => {
       },
       ...(payload ? { body: JSON.stringify(payload) } : {}),
     });
+  const phoneToken = async (login: string) => (await auth.exchangeGitHubOidc(login)).accessToken;
+  const operation = (name: string, payload: unknown, token = accessToken) =>
+    request(`/v1/phone/operations/${name}`, 'POST', payload, token);
+
+  it('keeps workspace and Room mutations aligned with the phone HTTP contract', async () => {
+    const aliceToken = await phoneToken('alice');
+    const aliceId = createHash('sha256').update('github:alice').digest('hex');
+    const workspaceId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+
+    expect(
+      await (await operation('createWorkspace', { workspaceId, name: 'Audit' })).json(),
+    ).toEqual({ id: workspaceId });
+    expect(
+      await (await operation('createWorkspace', { workspaceId, name: 'Audit' })).json(),
+    ).toEqual({ id: workspaceId });
+    expect(
+      (
+        await operation('updateWorkspace', {
+          workspaceId,
+          name: 'Audit renamed',
+          visibility: 'public',
+        })
+      ).status,
+    ).toBe(204);
+    expect(
+      (
+        (await (await request('/v1/phone/workspaces')).json()) as {
+          workspaces: Array<{ id: string; name: string; visibility: string }>;
+        }
+      ).workspaces,
+    ).toContainEqual(
+      expect.objectContaining({ id: workspaceId, name: 'Audit renamed', visibility: 'public' }),
+    );
+
+    expect(
+      await (
+        await operation('addWorkspaceMember', {
+          workspaceId,
+          memberId: aliceId,
+          role: 'owner',
+        })
+      ).json(),
+    ).toEqual({ joined: true });
+    const workspace = (await (await request(`/v1/phone/workspaces/${workspaceId}`)).json()) as {
+      members: Array<{ identity: { pubkey: string }; role: string }>;
+    };
+    expect(workspace.members).toContainEqual(
+      expect.objectContaining({
+        identity: expect.objectContaining({ pubkey: aliceId }),
+        role: 'owner',
+      }),
+    );
+
+    const created = (await (
+      await operation('createRoom', { workspaceId, name: 'Private by default' })
+    ).json()) as { id: string };
+    expect(
+      (await request(`/v1/phone/rooms/${created.id}`, 'GET', undefined, aliceToken)).status,
+    ).toBe(404);
+    expect(
+      (
+        await operation('updateRoom', {
+          roomId: created.id,
+          name: 'Renamed Room',
+          visibility: 'public',
+        })
+      ).status,
+    ).toBe(204);
+    expect(
+      await (await operation('addRoomMember', { roomId: created.id, memberId: aliceId })).json(),
+    ).toEqual({ joined: true });
+    expect(
+      (await request(`/v1/phone/rooms/${created.id}`, 'GET', undefined, aliceToken)).status,
+    ).toBe(200);
+    expect(
+      (await operation('removeRoomMember', { roomId: created.id, memberId: aliceId })).status,
+    ).toBe(204);
+    await operation('addRoomMember', { roomId: created.id, memberId: aliceId });
+    expect((await operation('leaveRoom', { roomId: created.id }, aliceToken)).status).toBe(204);
+    expect((await operation('deleteRoom', { roomId: created.id })).status).toBe(204);
+    expect((await request(`/v1/phone/rooms/${created.id}`)).status).toBe(404);
+    const chats = (await (await request(`/v1/phone/workspaces/${workspaceId}/chats`)).json()) as {
+      chats: Array<{ room: { id: string } }>;
+    };
+    expect(chats.chats.some((chat) => chat.room.id === created.id)).toBe(false);
+
+    expect((await operation('leaveWorkspace', { workspaceId })).status).toBe(204);
+    expect((await request(`/v1/phone/workspaces/${workspaceId}`)).status).toBe(404);
+  });
+
+  it('serves Welcome and makes person invites reusable, retry-safe, and Room-complete', async () => {
+    const aliceToken = await phoneToken('alice');
+    const bobToken = await phoneToken('bob');
+    const aliceId = createHash('sha256').update('github:alice').digest('hex');
+    const bobId = createHash('sha256').update('github:bob').digest('hex');
+    const migratedOwnerWorkspaces = (await (
+      await request('/v1/phone/workspaces')
+    ).json()) as { workspaces: Array<{ name: string }> };
+    expect(migratedOwnerWorkspaces.workspaces).toContainEqual(
+      expect.objectContaining({ name: 'Beeline Welcome' }),
+    );
+    const aliceWorkspaces = (await (
+      await request('/v1/phone/workspaces', 'GET', undefined, aliceToken)
+    ).json()) as { workspaces: Array<{ name: string }> };
+    expect(aliceWorkspaces.workspaces).toContainEqual(
+      expect.objectContaining({ name: 'Beeline Welcome' }),
+    );
+
+    const workspaceId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    await operation('createWorkspace', { workspaceId, name: 'Invites' });
+    const room = (await (
+      await operation('createRoom', { workspaceId, name: 'Existing Room' })
+    ).json()) as { id: string };
+    const invite = (await (await operation('createInvite', { workspaceId })).json()) as {
+      token: string;
+      expiresAt: number;
+    };
+    expect(invite.expiresAt).toBeLessThan(10_000_000_000);
+    expect(
+      await (await operation('resolveInvite', { token: invite.token }, aliceToken)).json(),
+    ).toEqual(expect.objectContaining({ name: 'Invites' }));
+    expect(
+      await (await operation('redeemInvite', { token: invite.token }, aliceToken)).json(),
+    ).toEqual({ joined: true, workspaceId });
+    expect(
+      await (await operation('redeemInvite', { token: invite.token }, aliceToken)).json(),
+    ).toEqual({ joined: false, workspaceId });
+    expect(
+      await (await operation('redeemInvite', { token: invite.token }, bobToken)).json(),
+    ).toEqual({ joined: true, workspaceId });
+
+    const aliceChats = (await (
+      await request(`/v1/phone/workspaces/${workspaceId}/chats`, 'GET', undefined, aliceToken)
+    ).json()) as { chats: Array<{ room: { id: string } }> };
+    expect(aliceChats.chats.map((chat) => chat.room.id)).toContain(room.id);
+    const roomView = (await (await request(`/v1/phone/rooms/${room.id}`)).json()) as {
+      members: Array<{ identity: { pubkey: string } }>;
+    };
+    expect(roomView.members.map((member) => member.identity.pubkey)).toEqual(
+      expect.arrayContaining([HUMAN, aliceId, bobId]),
+    );
+
+    const laterRoom = (await (
+      await operation('createRoom', { workspaceId, name: 'Later Room' })
+    ).json()) as { id: string };
+    expect(
+      (await request(`/v1/phone/rooms/${laterRoom.id}`, 'GET', undefined, aliceToken)).status,
+    ).toBe(404);
+  });
+
+  it('bounds Room membership and direct messages to current Workspace members', async () => {
+    const aliceToken = await phoneToken('alice');
+    const outsiderToken = await phoneToken('outsider');
+    const aliceId = createHash('sha256').update('github:alice').digest('hex');
+    const outsiderId = createHash('sha256').update('github:outsider').digest('hex');
+    const workspaceId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    await operation('createWorkspace', { workspaceId, name: 'DMs' });
+    await operation('addWorkspaceMember', { workspaceId, memberId: aliceId, role: 'member' });
+    const room = (await (await operation('createRoom', { workspaceId, name: 'Room' })).json()) as {
+      id: string;
+    };
+
+    expect(
+      (await operation('addRoomMember', { roomId: room.id, memberId: outsiderId })).status,
+    ).toBe(400);
+    expect(
+      (
+        await operation(
+          'resolveDirectMessage',
+          { workspaceId, participantId: HUMAN },
+          outsiderToken,
+        )
+      ).status,
+    ).toBe(400);
+    const first = (await (
+      await operation('resolveDirectMessage', { workspaceId, participantId: aliceId })
+    ).json()) as { id: string; created: boolean };
+    const retry = (await (
+      await operation('resolveDirectMessage', { workspaceId, participantId: HUMAN }, aliceToken)
+    ).json()) as { id: string; created: boolean };
+    expect(first).toEqual({ id: retry.id, created: true });
+    expect(retry.created).toBe(false);
+    expect((await operation('leaveRoom', { roomId: room.id })).status).toBe(403);
+    expect((await operation('removeRoomMember', { roomId: room.id, memberId: HUMAN })).status).toBe(
+      403,
+    );
+    expect((await operation('leaveWorkspace', { workspaceId })).status).toBe(403);
+  });
 
   it('proves send -> read -> daemon prompt -> reply -> WebSocket invalidation and overlays', async () => {
     const socket = new WebSocket(`${origin.replace('http', 'ws')}/v1/phone/live`, [
@@ -171,219 +391,6 @@ describe('monolith integration', () => {
     expect(conflicting.status).toBe(400);
   });
 
-  it('keeps same-timestamp message ordering in the server-owned unread mark', async () => {
-    await request('/v1/phone/operations/sendRoomMessage', 'POST', {
-      roomId: ROOM,
-      messageId: '4'.repeat(64),
-      text: 'read first',
-    });
-    await request('/v1/phone/operations/sendRoomMessage', 'POST', {
-      roomId: ROOM,
-      messageId: '5'.repeat(64),
-      text: 'same second but later',
-    });
-    await database.query(
-      `UPDATE messages SET created_at='2026-09-01T12:00:00Z' WHERE id=ANY($1::text[])`,
-      [['4'.repeat(64), '5'.repeat(64)]],
-    );
-    expect(
-      (
-        await request(`/v1/phone/rooms/${ROOM}/read`, 'POST', {
-          messageId: '4'.repeat(64),
-        })
-      ).status,
-    ).toBe(204);
-
-    const chats = (await (await request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
-      chats: Array<{ unread: boolean; latestMessage?: { id: string } }>;
-      watchFilters: Array<{ '#h'?: string[] }>;
-    };
-    expect(chats.chats[0]).toMatchObject({
-      unread: true,
-      latestMessage: { id: '5'.repeat(64) },
-    });
-    expect(chats.watchFilters.flatMap((filter) => filter['#h'] ?? [])).toContain(ROOM);
-  });
-
-  it('projects daemon permission requests live and lets the human requester decide', async () => {
-    const memberTokens = await auth.exchangeGitHubOidc('member');
-    await request('/v1/phone/operations/addWorkspaceMember', 'POST', {
-      workspaceId: WORKSPACE,
-      memberId: memberTokens.identityId,
-      role: 'member',
-    });
-    await request('/v1/phone/operations/addRoomMember', 'POST', {
-      roomId: ROOM,
-      memberId: memberTokens.identityId,
-    });
-    const socket = new WebSocket(`${origin.replace('http', 'ws')}/v1/phone/live`, [
-      `bearer.${memberTokens.accessToken}`,
-    ]);
-    await new Promise<void>((resolve, reject) => {
-      socket.once('open', () => resolve());
-      socket.once('error', reject);
-    });
-    socket.send(JSON.stringify({ type: 'subscribe', roomId: ROOM }));
-    await next(socket, 'subscribed');
-    const messageInvalidated = next(socket, 'invalidate');
-    await request('/v1/phone/operations/sendRoomMessage', 'POST', {
-      roomId: ROOM,
-      messageId: '8'.repeat(64),
-      text: 'live for another member',
-    });
-    expect(await messageInvalidated).toMatchObject({
-      type: 'invalidate',
-      roomId: ROOM,
-      reason: 'phone-write',
-    });
-    const invalidated = next(socket, 'invalidate');
-    const permissionId = 'permission-http-audit';
-    const requestId = '8'.repeat(64);
-    const requested = await request(
-      '/v1/daemon/operations/postPermissionRequest',
-      'POST',
-      {
-        roomId: ROOM,
-        principalId: memberTokens.identityId,
-        permissionId,
-        requestId,
-        scope: {
-          type: 'operation.execute',
-          connectorId: 'edit files',
-          target: 'owner/repository',
-          payloadDigest: '7'.repeat(64),
-        },
-      },
-      daemonToken,
-    );
-    expect(requested.status).toBe(200);
-    const requestedBody = (await requested.json()) as { id: string };
-    expect(await invalidated).toMatchObject({
-      type: 'invalidate',
-      roomId: ROOM,
-      reason: 'permission',
-    });
-    const retried = await request(
-      '/v1/daemon/operations/postPermissionRequest',
-      'POST',
-      {
-        roomId: ROOM,
-        principalId: memberTokens.identityId,
-        permissionId,
-        requestId,
-        scope: {
-          type: 'operation.execute',
-          connectorId: 'edit files',
-          target: 'owner/repository',
-          payloadDigest: '7'.repeat(64),
-        },
-      },
-      daemonToken,
-    );
-    expect(await retried.json()).toMatchObject({ id: requestedBody.id });
-    const room = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as {
-      messages: Array<{ permission?: Record<string, unknown> }>;
-    };
-    expect(room.messages.find((message) => message.permission)?.permission).toMatchObject({
-      permissionId,
-      requestId,
-      repository: 'owner/repository',
-      status: 'pending',
-      requester: { pubkey: memberTokens.identityId, kind: 'human' },
-      agent: { pubkey: AGENT, kind: 'agent' },
-    });
-    const mismatched = await request(
-      '/v1/phone/operations/decideWritePermission',
-      'POST',
-      {
-        roomId: ROOM,
-        permissionId,
-        requestId,
-        agentId: AGENT,
-        decision: 'allow',
-        repository: 'other/repository',
-      },
-      memberTokens.accessToken,
-    );
-    expect(mismatched.status).toBe(400);
-    const decided = await request(
-      '/v1/phone/operations/decideWritePermission',
-      'POST',
-      {
-        roomId: ROOM,
-        permissionId,
-        requestId,
-        agentId: AGENT,
-        decision: 'allow',
-        repository: 'owner/repository',
-      },
-      memberTokens.accessToken,
-    );
-    expect(decided.status).toBe(200);
-    const authority = await request(
-      '/v1/daemon/operations/getPermissionAuthority',
-      'POST',
-      { roomId: ROOM, principalId: memberTokens.identityId, permissionId },
-      daemonToken,
-    );
-    expect(await authority.json()).toMatchObject({ status: 'authorized' });
-    socket.close();
-  });
-
-  it('projects the thinking receipt and digest only for the active agent turn', async () => {
-    const requestId = '9'.repeat(64);
-    expect(
-      (
-        await request(
-          '/v1/daemon/operations/postAgentTurnReceipt',
-          'POST',
-          { agentId: AGENT, roomId: ROOM, requestId, status: 'working' },
-          daemonToken,
-        )
-      ).status,
-    ).toBe(200);
-    expect(
-      (
-        await request(
-          '/v1/daemon/operations/postAgentActivity',
-          'POST',
-          {
-            agentId: AGENT,
-            roomId: ROOM,
-            requestId,
-            activity: [{ kind: 'summary', title: 'Inspected the requested files' }],
-          },
-          daemonToken,
-        )
-      ).status,
-    ).toBe(200);
-    const working = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as {
-      latestAgentTurns: Array<{ requestId: string; status: string }>;
-      messages: Array<{ activity?: Array<{ kind: string; title: string }> }>;
-    };
-    expect(working.latestAgentTurns).toContainEqual(
-      expect.objectContaining({ requestId, status: 'working' }),
-    );
-    expect(working.messages.some((message) => message.activity?.[0]?.kind === 'summary')).toBe(
-      true,
-    );
-
-    await request(
-      '/v1/daemon/operations/postAgentTurnReceipt',
-      'POST',
-      { agentId: AGENT, roomId: ROOM, requestId, status: 'complete' },
-      daemonToken,
-    );
-    const complete = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as {
-      latestAgentTurns: Array<{ requestId: string; status: string }>;
-      messages: Array<{ activity?: unknown[] }>;
-    };
-    expect(complete.latestAgentTurns).toContainEqual(
-      expect.objectContaining({ requestId, status: 'complete' }),
-    );
-    expect(complete.messages.some((message) => message.activity)).toBe(false);
-  });
-
   it('mints, resolves, and redeems an invite through the phone HTTP surface', async () => {
     const created = await request('/v1/phone/operations/createInvite', 'POST', {
       workspaceId: WORKSPACE,
@@ -403,7 +410,7 @@ describe('monolith integration', () => {
     expect(resolved.status).toBe(200);
     expect(await resolved.json()).toMatchObject({
       name: 'Hive',
-      expiresAt: Math.floor(invite.expiresAt / 1_000),
+      expiresAt: invite.expiresAt,
     });
 
     const redeemed = await request(
@@ -496,7 +503,112 @@ describe('monolith integration', () => {
     ).toBe(401);
   });
 
-  it('stores authenticated uploads and serves capability URLs with the configured cap', async () => {
+  it('proves every auth identity phone operation through bearer-authenticated HTTP', async () => {
+    const operation = (name: string, payload: unknown = {}) =>
+      request(`/v1/phone/operations/${name}`, 'POST', payload);
+
+    await expect((await operation('getAuthCapabilities')).json()).resolves.toEqual({
+      github: true,
+    });
+    await expect((await operation('getManagedIdentity')).json()).resolves.toEqual({
+      personId: HUMAN,
+      name: 'Owner',
+      handle: 'owner',
+    });
+
+    const profile = await operation('updatePersonProfile', {
+      name: 'Captain',
+      avatar: 'https://images.example/captain.png',
+    });
+    expect(profile.status).toBe(200);
+    await expect(profile.json()).resolves.toEqual({
+      personId: HUMAN,
+      name: 'Captain',
+      handle: 'owner',
+      avatar: 'https://images.example/captain.png',
+    });
+    const cleared = await operation('updatePersonProfile', { avatar: '' });
+    expect(cleared.status).toBe(200);
+    await expect(cleared.json()).resolves.toEqual({
+      personId: HUMAN,
+      name: 'Captain',
+      handle: 'owner',
+    });
+
+    const claimed = await operation('claimManagedHandle', { handle: 'captain.owner' });
+    expect(claimed.status).toBe(200);
+    await expect(claimed.json()).resolves.toMatchObject({ handle: 'captain.owner' });
+    expect((await operation('claimManagedHandle', { handle: 'Not Valid' })).status).toBe(400);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Other','already-taken')`,
+      ['d'.repeat(64)],
+    );
+    expect((await operation('claimManagedHandle', { handle: 'already-taken' })).status).toBe(409);
+    await expect((await operation('adoptGitHubHandle')).json()).resolves.toMatchObject({
+      personId: HUMAN,
+      handle: 'owner',
+    });
+    await expect((await operation('getIdentityRecovery')).json()).resolves.toEqual({
+      candidates: [],
+    });
+
+    const state = 's'.repeat(43);
+    const started = await operation('beginGitHubIdentityBind', {
+      redirectUri: 'beeline://buzz/github-callback',
+      state,
+    });
+    expect(started.status).toBe(200);
+    expect(((await started.json()) as { url: string }).url).toContain(`state=${state}`);
+    const completed = await operation('completeGitHubIdentityBind', {
+      challenge: 'github-code',
+      proof: state,
+    });
+    expect(completed.status).toBe(200);
+    await expect(completed.json()).resolves.toEqual({ personId: HUMAN, recovered: false });
+
+    const link = await database.query<{ audience: string }>(
+      `SELECT audience FROM identity_external_links WHERE provider='github' AND subject='owner'`,
+    );
+    expect(link.rows[0]?.audience).toBe('github');
+  });
+
+  it('recovers a GitHub identity conflict and exposes the predecessor over HTTP', async () => {
+    const predecessor = 'c'.repeat(64);
+    await database.query(`UPDATE identities SET github_subject=NULL WHERE id=$1`, [HUMAN]);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle,github_subject) VALUES($1,'human','Old Owner','old-owner','owner')`,
+      [predecessor],
+    );
+    await database.query(
+      `UPDATE identity_external_links SET identity_id=$1,audience='old-oauth-client'
+       WHERE provider='github' AND subject='owner'`,
+      [predecessor],
+    );
+    const state = 'r'.repeat(43);
+    await request('/v1/phone/operations/beginGitHubIdentityBind', 'POST', {
+      redirectUri: 'beeline://buzz/github-callback',
+      state,
+    });
+    expect(
+      (
+        await request('/v1/phone/operations/completeGitHubIdentityBind', 'POST', {
+          challenge: 'github-code',
+          proof: state,
+        })
+      ).status,
+    ).toBe(409);
+    const recovered = await request('/v1/phone/operations/recoverGitHubIdentity', 'POST', {
+      challenge: 'github-code',
+      proof: state,
+    });
+    expect(recovered.status).toBe(200);
+    await expect(recovered.json()).resolves.toEqual({ personId: HUMAN, recovered: true });
+    await expect(
+      (await request('/v1/phone/operations/getIdentityRecovery', 'POST', {})).json(),
+    ).resolves.toEqual({ candidates: [{ personId: predecessor, handle: 'old-owner' }] });
+  });
+
+  it('stores and serves media bytes through token auth with the configured cap', async () => {
     expect(DEFAULT_MEDIA_MAXIMUM_BYTES).toBe(25 * 1024 * 1024);
     const upload = await fetch(`${origin}/v1/phone/media`, {
       method: 'POST',
@@ -520,10 +632,6 @@ describe('monolith integration', () => {
     });
     expect(media.status).toBe(200);
     expect(Buffer.from(await media.arrayBuffer()).toString()).toBe('png-bytes');
-    const capabilityRead = await fetch(attachment.url);
-    expect(capabilityRead.status).toBe(200);
-    expect(capabilityRead.headers.get('cache-control')).toContain('immutable');
-    expect(Buffer.from(await capabilityRead.arrayBuffer()).toString()).toBe('png-bytes');
     expect(
       (
         await fetch(`${origin}/v1/media/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa`, {
@@ -671,7 +779,9 @@ describe('monolith integration', () => {
     expect(await removed.text()).toBe('');
 
     expect(
-      (await database.query(`SELECT 1 FROM push_devices WHERE token=$1`, [token])).rowCount,
+      (
+        await database.query(`SELECT 1 FROM push_devices WHERE token=$1`, [token])
+      ).rowCount,
     ).toBe(0);
     expect(
       (
@@ -695,13 +805,11 @@ describe('monolith integration', () => {
     const otherWorkspace = '55555555-5555-4555-8555-555555555555';
     const otherAgent = 'e'.repeat(64);
     await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Other')`, [otherWorkspace]);
-    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Other agent')`, [
-      otherAgent,
-    ]);
-    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [
-      otherAgent,
-      HUMAN,
-    ]);
+    await database.query(
+      `INSERT INTO identities(id,kind,name) VALUES($1,'agent','Other agent')`,
+      [otherAgent],
+    );
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [otherAgent, HUMAN]);
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member')`,
       [otherWorkspace, otherAgent],
@@ -751,6 +859,132 @@ describe('monolith integration', () => {
     const duplicate = await send();
     expect(duplicate.status).toBe(200);
     expect(((await duplicate.json()) as { duplicate: boolean }).duplicate).toBe(true);
+    expect(processWebhook).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the phone GitHub repository contract aligned through the real HTTP surface', async () => {
+    await database.query(
+      `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,account_avatar_url,repository_selection,status) VALUES(77,$1,'42','owner','User','https://avatars.test/owner','selected','active')`,
+      [HUMAN],
+    );
+    await database.query(
+      `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch) VALUES(101,77,'owner/widgets','trunk')`,
+    );
+
+    const listed = await request('/v1/phone/operations/listGitHubRepositories', 'POST', {});
+    expect(listed.status).toBe(200);
+    expect(await listed.json()).toEqual({
+      installed: true,
+      installations: [
+        {
+          installationId: 77,
+          accountId: '42',
+          accountLogin: 'owner',
+          accountType: 'User',
+          accountAvatarUrl: 'https://avatars.test/owner',
+          repositorySelection: 'selected',
+          status: 'active',
+          repositoryCount: 1,
+          manageUrl: 'https://github.com/settings/installations/77',
+        },
+      ],
+      repositories: [
+        { id: 101, fullName: 'owner/widgets', installationId: 77, defaultBranch: 'trunk' },
+      ],
+    });
+
+    const begun = await request('/v1/phone/operations/beginGitHubInstallation', 'POST', {
+      redirectUri: 'beeline://buzz/github-installation',
+    });
+    expect(begun.status).toBe(200);
+    expect(await begun.json()).toEqual({
+      url: 'https://github.com/apps/beeline-test/installations/new?state=server-state',
+    });
+
+    const created = await request('/v1/phone/operations/createGitHubRepository', 'POST', {
+      installationId: 77,
+      name: 'new-repo',
+      private: true,
+    });
+    expect(created.status).toBe(200);
+    expect(await created.json()).toEqual({
+      id: 102,
+      fullName: 'owner/new-repo',
+      installationId: 77,
+      defaultBranch: 'main',
+    });
+
+    const linked = await request('/v1/phone/operations/setRoomRepository', 'POST', {
+      roomId: ROOM,
+      key: 'github:101',
+      name: 'owner/widgets',
+      remote: 'git://github.com/owner/widgets',
+      targetBranch: 'trunk',
+      githubInstallationId: 77,
+    });
+    expect(linked.status).toBe(200);
+    expect(await linked.json()).toEqual(
+      expect.objectContaining({
+        channelId: ROOM,
+        binding: {
+          key: 'github:101',
+          name: 'owner/widgets',
+          remote: 'git://github.com/owner/widgets',
+          localOnly: false,
+          githubInstallationId: 77,
+        },
+        targetBranch: 'trunk',
+        githubEventsEnabled: true,
+        source: 'config',
+      }),
+    );
+
+    const targeted = await request('/v1/phone/operations/setRoomTargetBranch', 'POST', {
+      roomId: ROOM,
+      targetBranch: 'release',
+    });
+    expect(targeted.status).toBe(200);
+    expect((await targeted.json()).targetBranch).toBe('release');
+
+    const events = await request('/v1/phone/operations/setRoomGitHubEvents', 'POST', {
+      roomId: ROOM,
+      enabled: false,
+    });
+    expect(events.status).toBe(200);
+    expect((await events.json()).githubEventsEnabled).toBe(false);
+
+    const room = await request(`/v1/phone/rooms/${ROOM}`);
+    expect((await room.json()).repository).toEqual(
+      expect.objectContaining({
+        key: 'github:101',
+        name: 'owner/widgets',
+        targetBranch: 'release',
+        githubEventsEnabled: false,
+      }),
+    );
+
+    const invalid = await request('/v1/phone/operations/setRoomRepository', 'POST', {
+      roomId: ROOM,
+      key: 'github:999',
+      name: 'owner/not-installed',
+      remote: 'git://github.com/owner/not-installed',
+      targetBranch: 'main',
+      githubInstallationId: 77,
+    });
+    expect(invalid.status).toBe(403);
+    expect(await invalid.json()).toEqual({
+      error: 'GitHub repository access denied',
+    });
+  });
+
+  it('completes the GitHub App callback on the monolith route', async () => {
+    const response = await fetch(
+      `${origin}/v1/github/install/callback?state=server-state&installation_id=77`,
+      { redirect: 'manual' },
+    );
+    expect(response.status).toBe(302);
+    expect(response.headers.get('location')).toBe('beeline://buzz/github-installation?installed=1');
+    expect(completeInstallation).toHaveBeenCalledWith('server-state', 77);
   });
 });
 

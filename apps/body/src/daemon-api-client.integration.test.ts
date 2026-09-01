@@ -1,5 +1,9 @@
 import { createHash } from 'node:crypto';
+import { mkdtemp, rm } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
+import { request } from 'node:http';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { migrate } from '../../server/src/database.js';
 import { PgliteDatabase } from '../../server/src/test-support.js';
@@ -8,7 +12,10 @@ import { PhoneService } from '../../server/src/phone-service.js';
 import { DaemonService } from '../../server/src/daemon-service.js';
 import { LiveHub } from '../../server/src/live.js';
 import { createBeelineServer } from '../../server/src/server.js';
+import { createMonolithAuth, type MonolithAuthMount } from '../../server/src/monolith-auth.js';
 import { DaemonApiClient } from './daemon-api-client.js';
+import { completeDevicePairing } from './pair-command.js';
+import { readRuntimeRecord } from './runtime.js';
 
 const HUMAN = createHash('sha256').update('github:daemon-client-owner').digest('hex');
 const AGENT = 'b'.repeat(64);
@@ -18,8 +25,11 @@ const ROOM = '22222222-2222-4222-8222-222222222222';
 describe('daemon API client against the local monolith', () => {
   let database: PgliteDatabase;
   let auth: TokenAuth;
+  let phone: PhoneService;
+  let mountedAuth: MonolithAuthMount;
   let server: ReturnType<typeof createBeelineServer>;
   let origin: string;
+  let supervisorRoot: string;
 
   beforeEach(async () => {
     database = new PgliteDatabase();
@@ -53,23 +63,148 @@ describe('daemon API client against the local monolith', () => {
       login: 'owner',
       name: 'Owner',
     }));
+    phone = new PhoneService(database, 'http://placeholder');
+    mountedAuth = await createMonolithAuth(database, 'https://server.usebeeline.app', undefined, {
+      createDaemonExchange: (agentId, transaction) =>
+        auth.createDaemonExchange(agentId, transaction),
+      env: {
+        NODE_ENV: 'test',
+        BUZZY_AUTH_TENANTS_JSON: JSON.stringify([
+          {
+            host: 'server.usebeeline.app',
+            community: 'stable-identity-namespace',
+            roomCommunityIds: ['relay-community-id'],
+            origin: 'https://server.usebeeline.app',
+          },
+        ]),
+        BUZZY_AUTH_OIDC_ISSUER: 'https://accounts.example',
+        BUZZY_AUTH_OIDC_AUTHORIZATION_ENDPOINT: 'https://accounts.example/authorize',
+        BUZZY_AUTH_OIDC_TOKEN_ENDPOINT: 'https://accounts.example/token',
+        BUZZY_AUTH_OIDC_JWKS_URI: 'https://accounts.example/jwks',
+        BUZZY_AUTH_OIDC_CLIENT_ID: 'test-client',
+      },
+    });
     const live = new LiveHub();
     server = createBeelineServer({
       database,
       auth,
-      phone: new PhoneService(database, 'http://placeholder'),
+      phone,
       daemon: new DaemonService(database, live),
       live,
       mediaMaximumBytes: 1024,
+      authHandler: mountedAuth.handle,
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    supervisorRoot = await mkdtemp(join(tmpdir(), 'beeline-connect-monolith-'));
   });
 
   afterEach(async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
+    await mountedAuth.close();
     await database.close();
-  });
+    await rm(supervisorRoot, { recursive: true, force: true });
+  }, 30_000);
+
+  it('takes an app grant through finish, durable daemon auth, and a visible first heartbeat', async () => {
+    const code = 'BUZZ-1234ABCD-5678EF90';
+    await database.query(
+      `INSERT INTO agent_pairing_codes(code_hash,workspace_id,created_by,expires_at)
+       VALUES($1,$2,$3,$4)`,
+      [
+        createHash('sha256').update(code).digest('hex'),
+        WORKSPACE,
+        HUMAN,
+        new Date(Date.now() + 60_000),
+      ],
+    );
+    const payload = JSON.stringify({
+      pairing_code: code,
+      harness: 'codex',
+      model: 'gpt-5.4',
+      soul: 'Brisk and kind.',
+      agent_name: 'Scout',
+    });
+    const connected = await new Promise<{ status: number; body: Record<string, string> }>(
+      (resolveResponse, rejectResponse) => {
+        const outgoing = request(`${origin}/auth/agent/connect`, {
+          method: 'POST',
+          headers: {
+            host: 'server.usebeeline.app',
+            'content-type': 'application/json',
+            'content-length': Buffer.byteLength(payload),
+          },
+        });
+        outgoing.once('error', rejectResponse);
+        outgoing.once('response', (incoming) => {
+          const chunks: Buffer[] = [];
+          incoming.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+          incoming.on('end', () =>
+            resolveResponse({
+              status: incoming.statusCode ?? 0,
+              body: JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, string>,
+            }),
+          );
+        });
+        outgoing.end(payload);
+      },
+    );
+    expect(connected.status).toBe(200);
+    const grant = connected.body;
+    expect(grant.daemon_exchange_token).toMatch(/^bde_/);
+    expect(grant).not.toHaveProperty('pairing_code');
+
+    const launched: string[] = [];
+    const result = await completeDevicePairing(
+      {
+        agentSecretKey: grant.agent_secret_key!,
+        bodySecretKey: grant.body_secret_key!,
+        agentName: grant.agent_name!,
+        harness: 'codex',
+        model: grant.model!,
+        soul: grant.soul!,
+        workspaceId: grant.workspace_id!,
+        workspaceName: grant.workspace_name!,
+        pairedBy: grant.paired_by!,
+        monolithBaseUrl: origin,
+        daemonExchangeToken: grant.daemon_exchange_token!,
+      },
+      {
+        supervisorRoot,
+        selectedAgent: { kind: 'codex', command: 'codex-acp', args: [] },
+        localConfig: { agentBinary: 'codex-acp', mcpBinary: 'buzz-dev-mcp', agentEnv: {} },
+        validateSelection: async () => undefined,
+        launch: async (configPath) => {
+          launched.push(configPath);
+          const launchedRuntime = await readRuntimeRecord(configPath);
+          const transport = launchedRuntime.transport;
+          if (!transport || !('daemonToken' in transport)) {
+            throw new Error('launch received an unactivated runtime');
+          }
+          const client = new DaemonApiClient(
+            transport.baseUrl,
+            transport.daemonToken,
+            launchedRuntime.agent.publicKey,
+          );
+          await client.execute('postAgentPresence', {
+            agentId: launchedRuntime.agent.publicKey,
+            roomId: ROOM,
+            status: 'online',
+          });
+          return 4242;
+        },
+      },
+    );
+    expect(launched).toEqual([result.configPath]);
+    expect(result.runtime.transport).toMatchObject({ kind: 'monolith', baseUrl: origin });
+    expect(result.runtime.transport).toHaveProperty('daemonToken');
+    expect(result.runtime.transport).not.toHaveProperty('exchangeToken');
+
+    const room = await phone.readRoom(ROOM, HUMAN);
+    expect(
+      room?.members.find((member) => member.identity.pubkey === result.runtime.agent.publicKey),
+    ).toMatchObject({ presence: { status: 'online', roomId: ROOM } });
+  }, 30_000);
 
   it('exchanges a token and round-trips inbox, receipts, authority, settings, presence, and corners', async () => {
     const exchange = await auth.createDaemonExchange(AGENT);
@@ -159,6 +294,64 @@ describe('daemon API client against the local monolith', () => {
       status: 'working',
       objective: 'Verify the monolith cut',
     });
+    await client.execute('postCornerRemoteState', {
+      cornerId: corner.cornerId,
+      branch: 'fm/verify-monolith-cut',
+      state: 'in-review',
+      checks: 'passing',
+      pullRequest: {
+        number: 812,
+        url: 'https://github.com/lunchboxfortwo/beeline/pull/812',
+        title: 'Verify the monolith cut',
+        targetBranch: 'main',
+        headSha: '1'.repeat(40),
+        mergeability: 'clean',
+      },
+    });
+    expect(
+      (
+        await database.query<{ lifecycle: Record<string, unknown> }>(
+          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+          [corner.cornerId],
+        )
+      ).rows[0]?.lifecycle,
+    ).toEqual(
+      expect.objectContaining({
+        lifecycle: 'in-review',
+        checks: 'passing',
+        pr: expect.objectContaining({ number: 812, targetBranch: 'main' }),
+      }),
+    );
+
+    await client.execute('postRoomMessage', {
+      roomId: ROOM,
+      text: 'Merged pull request #812 into main.',
+      presentation: 'card',
+      tags: { cornerId: corner.cornerId, outcome: 'landed' },
+    });
+    await client.execute('postCornerRemoteState', {
+      cornerId: corner.cornerId,
+      branch: 'fm/verify-monolith-cut',
+      state: 'gone',
+      checks: 'passing',
+    });
+    await client.execute('archiveCorner', { cornerId: corner.cornerId });
+    expect(
+      (
+        await database.query<{ archived: boolean }>(
+          `SELECT archived_at IS NOT NULL archived FROM rooms WHERE id=$1`,
+          [corner.cornerId],
+        )
+      ).rows[0]?.archived,
+    ).toBe(true);
+    expect(
+      (
+        await database.query<{ text: string }>(
+          `SELECT text FROM messages WHERE room_id=$1 AND presentation='card' ORDER BY created_at DESC LIMIT 1`,
+          [ROOM],
+        )
+      ).rows[0]?.text,
+    ).toBe('Merged pull request #812 into main.');
     await expect(client.execute('listRoomCorners', { roomId: ROOM })).resolves.toEqual(
       expect.objectContaining({
         corners: [expect.objectContaining({ cornerId: corner.cornerId, parentRoomId: ROOM })],

@@ -42,6 +42,7 @@ vi.mock('react-native-mmkv', () => ({
 }));
 
 import { MonolithRigTransport } from './monolith-rig-transport';
+import { MonolithPhoneOperationError } from './monolith-operation';
 import { clearMobileSurfaceStorage, createRoomOutbox } from '@/buzz/surface-storage';
 
 const ROOM = 'bb91a1c7-7cad-4fde-aafc-94fccb651ac8';
@@ -171,6 +172,47 @@ describe('monolith Room send path', () => {
     );
   });
 
+  it('reads the managed token identity instead of attempting a Nostr profile query', async () => {
+    controls.fetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          personId: identity.publicKey,
+          name: 'Monolith Person',
+          handle: 'monolith-person',
+          avatar: 'https://images.example/person.png',
+        }),
+        { status: 200 },
+      ),
+    );
+    const client = await new MonolithRigTransport(identity).ensureClient();
+    await expect(client.getGlobalPersonProfile()).resolves.toMatchObject({
+      pubkey: identity.publicKey,
+      name: 'Monolith Person',
+      handle: 'monolith-person',
+      avatar: 'https://images.example/person.png',
+    });
+    expect(controls.fetch).toHaveBeenCalledWith(
+      'https://server.example/v1/phone/operations/getManagedIdentity',
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
+  it('preserves the server error code on a rejected phone operation', async () => {
+    controls.fetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: 'GitHub identity is already linked' }), {
+        status: 409,
+      }),
+    );
+    const transport = new MonolithRigTransport(identity);
+    await expect(transport.operation('completeGitHubIdentityBind', {})).rejects.toEqual(
+      expect.objectContaining<Partial<MonolithPhoneOperationError>>({
+        name: 'MonolithPhoneOperationError',
+        status: 409,
+        code: 'GitHub identity is already linked',
+      }),
+    );
+  });
+
   it('translates the legacy BuzzClient soul field and accepts monolith no-content writes', async () => {
     controls.fetch.mockResolvedValue(new Response(null, { status: 204 }));
     const client = await new MonolithRigTransport(identity).ensureClient();
@@ -225,5 +267,76 @@ describe('monolith Room send path', () => {
         }),
       }),
     );
+  });
+
+  it('preserves the shared repository and installation shapes used by the repo picker', async () => {
+    controls.fetch.mockImplementation(async (url: string, init: RequestInit) => {
+      if (url.endsWith('/listGitHubRepositories')) {
+        return Response.json({
+          installed: true,
+          installations: [
+            {
+              installationId: 77,
+              accountId: '42',
+              accountLogin: 'owner',
+              accountType: 'User',
+              repositorySelection: 'selected',
+              status: 'active',
+              repositoryCount: 1,
+              manageUrl: 'https://github.com/settings/installations/77',
+            },
+          ],
+          repositories: [
+            { id: 101, fullName: 'owner/widgets', installationId: 77, defaultBranch: 'trunk' },
+          ],
+        });
+      }
+      const input = JSON.parse(String(init.body));
+      return Response.json({
+        channelId: ROOM,
+        binding: {
+          key: input.key,
+          name: input.name,
+          remote: input.remote,
+          localOnly: false,
+          githubInstallationId: input.githubInstallationId,
+        },
+        targetBranch: input.targetBranch,
+        githubEventsEnabled: true,
+        source: 'config',
+        updatedAt: 123,
+      });
+    });
+    const transport = new MonolithRigTransport(identity);
+
+    await expect(transport.workspaceGitHubAccess()).resolves.toEqual({
+      installed: true,
+      installations: [expect.objectContaining({ installationId: 77, accountLogin: 'owner' })],
+      candidates: [
+        {
+          key: 'github:101',
+          name: 'owner/widgets',
+          remote: 'git://github.com/owner/widgets',
+          githubInstallationId: 77,
+          defaultBranch: 'trunk',
+        },
+      ],
+    });
+    const linked = await transport.roomRepositorySet(ROOM, {
+      key: 'github:101',
+      name: 'owner/widgets',
+      remote: 'git://github.com/owner/widgets',
+      targetBranch: 'trunk',
+      githubInstallationId: 77,
+    });
+    expect(linked.binding.name).toBe('owner/widgets');
+    expect(JSON.parse(String(controls.fetch.mock.calls.at(-1)?.[1]?.body))).toEqual({
+      roomId: ROOM,
+      key: 'github:101',
+      name: 'owner/widgets',
+      remote: 'git://github.com/owner/widgets',
+      targetBranch: 'trunk',
+      githubInstallationId: 77,
+    });
   });
 });

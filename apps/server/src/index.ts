@@ -9,6 +9,7 @@ import { createBeelineServer, DEFAULT_MEDIA_MAXIMUM_BYTES } from './server.js';
 import { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { GitHubOperations } from './github-operations.js';
 import { createMonolithAuth } from './monolith-auth.js';
+import type { MonolithAuthMount } from './monolith-auth.js';
 
 function required(name: string) {
   const value = process.env[name];
@@ -46,9 +47,29 @@ async function main() {
           : {}),
       }
     : undefined;
-  const mountedAuth = await createMonolithAuth(database, publicOrigin, githubClients);
-  const auth = new TokenAuth(database, verifierFromEnvironment(mountedAuth.verifyGitHubTicket));
-  const github = githubClients
+  let mountedAuth!: MonolithAuthMount;
+  let github: GitHubOperations | undefined;
+  const auth = new TokenAuth(
+    database,
+    verifierFromEnvironment(async (ticket) => {
+      if (!mountedAuth) throw new Error('monolith auth is not ready');
+      return mountedAuth.verifyGitHubTicket(ticket);
+    }),
+  );
+  const processGitHubWebhook = async (event: string, payload: unknown) => {
+    if (!github) throw new Error('GitHub webhook processor is unavailable');
+    await github.processWebhook(event, payload);
+  };
+  mountedAuth = await createMonolithAuth(
+    database,
+    publicOrigin,
+    githubClients ? { ...githubClients, onWebhook: processGitHubWebhook } : undefined,
+    {
+      createDaemonExchange: (agentId, transaction) =>
+        auth.createDaemonExchange(agentId, transaction),
+    },
+  );
+  github = githubClients
     ? new GitHubOperations(
         database,
         githubClients.oauth,
@@ -91,7 +112,7 @@ async function main() {
       ...(github
         ? {
             roomToken: async (_identityId: string, roomId: string) => github.roomToken(roomId),
-            onWebhook: (event: string, payload: unknown) => github.processWebhook(event, payload),
+            onWebhook: processGitHubWebhook,
             completeInstallation: (state: string, installationId: number) =>
               github.completeInstallation(state, installationId),
           }

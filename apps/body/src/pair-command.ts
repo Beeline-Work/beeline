@@ -28,6 +28,7 @@ import {
 } from './external-mcp-capabilities.js';
 import { validateAgentModelSelection } from './model-catalog.js';
 import { selectPairAgentCommand } from './pair-agent-selection.js';
+import { activateDaemonTransport, type DaemonFetch } from './daemon-api-client.js';
 import {
   assertAgentIdentityUnpaired,
   defaultSupervisorRoot,
@@ -36,6 +37,7 @@ import {
   mintAgentIdentityForPairing,
   pairRepositoryAgent,
   readRuntimeRecord,
+  stageMonolithAgentRuntime,
   tryInspectLocalRepository,
   type LocalRepositoryBinding,
   type PairRuntimeResult,
@@ -415,7 +417,6 @@ async function pairOneAgent(input: {
 }
 
 export interface DevicePairingGrant {
-  pairingCode: string;
   agentSecretKey: string;
   bodySecretKey: string;
   agentName: string;
@@ -424,37 +425,90 @@ export interface DevicePairingGrant {
   soul: string;
   workspaceId: string;
   workspaceName: string;
+  pairedBy: string;
+  monolithBaseUrl: string;
+  daemonExchangeToken: string;
   llmEnvFile?: string;
 }
 
+export interface DeviceConnectionResult {
+  runtime: Awaited<ReturnType<typeof stageMonolithAgentRuntime>>['runtime'];
+  configPath: string;
+  pid: number;
+}
+
 /** Finish device onboarding only from the newly installed canonical launcher. */
-export async function completeDevicePairing(grant: DevicePairingGrant): Promise<PairRuntimeResult> {
-  const selectedAgent = await selectPairAgentCommand({
-    explicitKind: grant.harness,
-    env: process.env,
-    cwd: process.cwd(),
-    interactive: true,
-    confirmInstall: async () => true,
+export async function completeDevicePairing(
+  grant: DevicePairingGrant,
+  options: {
+    fetchImpl?: DaemonFetch;
+    supervisorRoot?: string;
+    selectedAgent?: AgentCommand;
+    localConfig?: { agentBinary: string; mcpBinary: string; agentEnv: Record<string, string> };
+    validateSelection?: (
+      agent: AgentCommand,
+      env: Record<string, string>,
+      selection: { model?: string; effort?: string },
+    ) => Promise<void>;
+    launch?: (configPath: string, agentPubkey: string) => Promise<number>;
+  } = {},
+): Promise<DeviceConnectionResult> {
+  const selectedAgent =
+    options.selectedAgent ??
+    (await selectPairAgentCommand({
+      explicitKind: grant.harness,
+      env: process.env,
+      cwd: process.cwd(),
+      interactive: true,
+      confirmInstall: async () => true,
+    }));
+  const localConfig =
+    options.localConfig ??
+    loadBodyConfig({
+      workspaceRoot: process.cwd(),
+      ...(grant.llmEnvFile ? { llmEnvFile: grant.llmEnvFile } : {}),
+      agent: selectedAgent,
+    });
+  await (options.validateSelection ?? validateModelSelection)(selectedAgent, localConfig.agentEnv, {
+    model: grant.model,
   });
-  const result = await pairOneAgent({
-    code: grant.pairingCode,
-    selectedAgent,
-    agentIdentity: identityFromKey(grant.agentSecretKey, grant.agentName),
-    bodyIdentity: identityFromKey(grant.bodySecretKey, DEFAULT_BODY_IDENTITY_NAME),
-    cwd: process.cwd(),
-    repo: null,
-    progressLabel: 'Connecting agent…',
-    progressDone: (pid) => `Connected (pid ${pid}).`,
+  const agentIdentity = identityFromKey(grant.agentSecretKey, grant.agentName);
+  const staged = await stageMonolithAgentRuntime({
+    workspaceId: grant.workspaceId,
+    pairedBy: grant.pairedBy,
+    monolithBaseUrl: grant.monolithBaseUrl,
+    daemonExchangeToken: grant.daemonExchangeToken,
     ...(grant.llmEnvFile ? { llmEnvFile: grant.llmEnvFile } : {}),
-    access: 'creator',
+    agentBinary: localConfig.agentBinary,
+    agentKind: selectedAgent.kind,
+    agentCommand: selectedAgent.command,
+    agentArgs: selectedAgent.args,
     modelSelection: { model: grant.model },
-    agentProfile: { displayName: grant.agentName, personality: grant.soul },
-    interactiveUi: false,
+    mcpBinary: localConfig.mcpBinary,
+    agentIdentity,
+    bodyIdentity: identityFromKey(grant.bodySecretKey, DEFAULT_BODY_IDENTITY_NAME),
+    ...(options.supervisorRoot ? { supervisorRoot: options.supervisorRoot } : {}),
   });
-  if (result.pairing.communityId !== grant.workspaceId) {
-    throw new Error('approved Workspace did not match the pairing grant');
+  const activated = await activateDaemonTransport(staged.configPath, options.fetchImpl);
+  if (!activated) throw new Error('monolith daemon transport activation failed');
+  let pid: number;
+  try {
+    pid = await (
+      options.launch ??
+      (async (configPath, publicKey) =>
+        process.platform === 'linux' && process.env.BEELINE_SYSTEMD_USER !== '0'
+          ? installAgentService(publicKey)
+          : launchRuntimeDaemon(configPath))
+    )(staged.configPath, agentIdentity.publicKey);
+  } catch (error) {
+    throw new Error(
+      `agent ${agentIdentity.publicKey} is connected, but its daemon did not start: ${
+        error instanceof Error ? error.message : String(error)
+      }. Run \`beeline start --agent ${agentIdentity.publicKey}\`.`,
+      { cause: error },
+    );
   }
-  return result;
+  return { runtime: activated.runtime, configPath: staged.configPath, pid };
 }
 
 function printPairResult(result: PairRuntimeResult): void {

@@ -54,6 +54,7 @@ import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { Typography } from '@/constants/Typography';
 import { HullSurface, MonoButton, PixelGateReveal } from '@/components/buzz/MonoHull';
 import { BuzzRigTransport } from '@/sync/transport';
+import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import {
   getBuzzPushEnabled,
   getBuzzPushRegistrationState,
@@ -162,6 +163,7 @@ export default function BuzzIdentitySettings() {
   const [managedIdentity, setManagedIdentity] = useState<ManagedIdentity | null>(null);
   const [githubWorking, setGitHubWorking] = useState(false);
   const [githubNotice, setGitHubNotice] = useState<string | null>(null);
+  const monolithEnabled = getBuzzRuntimeConfig().monolithEnabled;
 
   useEffect(() => {
     let cancelled = false;
@@ -206,6 +208,25 @@ export default function BuzzIdentitySettings() {
           setPushPermission(permission);
         }
         try {
+          if (monolithEnabled) {
+            const hosted = await monolithPhoneOperation('getManagedIdentity', {});
+            if (!cancelled) {
+              setManagedIdentity(
+                hosted.handle
+                  ? {
+                      handle: hosted.handle,
+                      displayName: hosted.name,
+                      nip05: `${hosted.handle}@usebeeline.app`,
+                      source: 'github',
+                      githubLogin: hosted.handle,
+                      githubRenameAvailable: false,
+                    }
+                  : null,
+              );
+              setLinkedAccount('connected');
+            }
+            return;
+          }
           const [links, hostedIdentity] = await Promise.all([
             lookupRecovery(getBuzzRuntimeConfig().relayUrl, identity),
             lookupManagedIdentity(getBuzzRuntimeConfig().relayUrl, identity),
@@ -231,7 +252,7 @@ export default function BuzzIdentitySettings() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [monolithEnabled]);
 
   const changeAvatar = useCallback(async () => {
     if (!profileClient) return;
@@ -571,7 +592,8 @@ export default function BuzzIdentitySettings() {
           ? 'GitHub link unavailable while offline'
           : 'Checking linked account';
   const managedHandle = managedIdentity?.handle ?? profileHandle;
-  const managedNip05 = managedIdentity?.nip05 ?? (managedHandle ? `${managedHandle}@usebeeline.app` : '');
+  const managedNip05 =
+    managedIdentity?.nip05 ?? (managedHandle ? `${managedHandle}@usebeeline.app` : '');
 
   return (
     <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
@@ -759,102 +781,109 @@ export default function BuzzIdentitySettings() {
           {githubNotice ? <Text style={styles.githubNotice}>{githubNotice}</Text> : null}
         </View>
 
-        <View style={styles.intro}>
-          <Text style={styles.sectionLabel}>KEY BACKUP</Text>
-          <Text style={styles.heading}>Export your key</Text>
-          <Text style={styles.body}>Save a copy so you can recover your Beeline identity.</Text>
-        </View>
-
-        <View style={styles.warning}>
-          <Text style={styles.warningGlyph}>!</Text>
-          <Text style={styles.warningText}>
-            Anyone with this key controls your identity. Export it only to a trusted app.
-          </Text>
-        </View>
-
-        {!secret ? (
-          <View style={styles.confirmSection}>
-            <Text style={styles.sectionLabel}>Confirm it&apos;s you</Text>
-            {confirmationMethod === 'typed' && (
-              <>
-                <Text style={styles.confirmHint}>
-                  Type {TYPED_CONFIRMATION} to unlock the key on this device.
-                </Text>
-                <TextInput
-                  accessibilityLabel={`Type ${TYPED_CONFIRMATION} to confirm`}
-                  autoCapitalize="characters"
-                  autoCorrect={false}
-                  editable={!working}
-                  onChangeText={setTypedConfirmation}
-                  onFocus={() => setInputFocused(true)}
-                  onBlur={() => setInputFocused(false)}
-                  onSubmitEditing={() => void handleConfirm()}
-                  placeholder={TYPED_CONFIRMATION}
-                  placeholderTextColor={theme.buzz.dim}
-                  style={[styles.confirmInput, inputFocused && styles.confirmInputFocused]}
-                  value={typedConfirmation}
-                />
-              </>
-            )}
-            <MonoButton
-              label={
-                confirmationMethod === 'checking'
-                  ? 'Checking device security'
-                  : working
-                    ? 'Confirming'
-                    : confirmationMethod === 'biometric'
-                      ? `Confirm with ${biometricLabel}`
-                      : 'Confirm export'
-              }
-              loading={working || confirmationMethod === 'checking'}
-              disabled={confirmationMethod === 'checking' || working}
-              onPress={() => void handleConfirm()}
-              style={styles.primaryButton}
-            />
-          </View>
-        ) : (
-          <View style={styles.exportSection}>
-            <View style={styles.exportHeadingRow}>
-              <Text style={styles.sectionLabel}>Nostr secret key</Text>
-              <Text style={styles.unlockedLabel}>Unlocked</Text>
+        {!monolithEnabled ? (
+          <>
+            <View style={styles.intro}>
+              <Text style={styles.sectionLabel}>KEY BACKUP</Text>
+              <Text style={styles.heading}>Export your key</Text>
+              <Text style={styles.body}>Save a copy so you can recover your Beeline identity.</Text>
             </View>
-            <HullSurface strength="code" style={styles.secretBox}>
-              <Text selectable={revealed} style={styles.secretText}>
-                {revealed ? secret : maskedSecret}
+
+            <View style={styles.warning}>
+              <Text style={styles.warningGlyph}>!</Text>
+              <Text style={styles.warningText}>
+                Anyone with this key controls your identity. Export it only to a trusted app.
               </Text>
-            </HullSurface>
-            <View style={styles.actions}>
-              <TouchableOpacity
-                accessibilityLabel={revealed ? 'Hide secret key' : 'Reveal secret key'}
-                onPress={() => setRevealed((value) => !value)}
-                style={styles.secondaryButton}
-              >
-                <Text style={styles.secondaryButtonText}>{revealed ? 'Hide' : 'Reveal'}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => void handleCopy()} style={styles.secondaryButton}>
-                <Text style={styles.secondaryButtonText}>{copied ? '✓ COPIED' : 'Copy'}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                accessibilityState={{ expanded: showQr }}
-                onPress={() => setShowQr((value) => !value)}
-                style={styles.secondaryButton}
-              >
-                <Text style={styles.secondaryButtonText}>{showQr ? 'Hide QR' : 'Show QR'}</Text>
-              </TouchableOpacity>
             </View>
 
-            {showQr && (
-              <PixelGateReveal style={styles.qrSection}>
-                <QrCode value={secret} />
-                <Text style={styles.qrHint}>Scan only with a Nostr signer you trust.</Text>
-              </PixelGateReveal>
-            )}
+            {!secret ? (
+              <View style={styles.confirmSection}>
+                <Text style={styles.sectionLabel}>Confirm it&apos;s you</Text>
+                {confirmationMethod === 'typed' && (
+                  <>
+                    <Text style={styles.confirmHint}>
+                      Type {TYPED_CONFIRMATION} to unlock the key on this device.
+                    </Text>
+                    <TextInput
+                      accessibilityLabel={`Type ${TYPED_CONFIRMATION} to confirm`}
+                      autoCapitalize="characters"
+                      autoCorrect={false}
+                      editable={!working}
+                      onChangeText={setTypedConfirmation}
+                      onFocus={() => setInputFocused(true)}
+                      onBlur={() => setInputFocused(false)}
+                      onSubmitEditing={() => void handleConfirm()}
+                      placeholder={TYPED_CONFIRMATION}
+                      placeholderTextColor={theme.buzz.dim}
+                      style={[styles.confirmInput, inputFocused && styles.confirmInputFocused]}
+                      value={typedConfirmation}
+                    />
+                  </>
+                )}
+                <MonoButton
+                  label={
+                    confirmationMethod === 'checking'
+                      ? 'Checking device security'
+                      : working
+                        ? 'Confirming'
+                        : confirmationMethod === 'biometric'
+                          ? `Confirm with ${biometricLabel}`
+                          : 'Confirm export'
+                  }
+                  loading={working || confirmationMethod === 'checking'}
+                  disabled={confirmationMethod === 'checking' || working}
+                  onPress={() => void handleConfirm()}
+                  style={styles.primaryButton}
+                />
+              </View>
+            ) : (
+              <View style={styles.exportSection}>
+                <View style={styles.exportHeadingRow}>
+                  <Text style={styles.sectionLabel}>Nostr secret key</Text>
+                  <Text style={styles.unlockedLabel}>Unlocked</Text>
+                </View>
+                <HullSurface strength="code" style={styles.secretBox}>
+                  <Text selectable={revealed} style={styles.secretText}>
+                    {revealed ? secret : maskedSecret}
+                  </Text>
+                </HullSurface>
+                <View style={styles.actions}>
+                  <TouchableOpacity
+                    accessibilityLabel={revealed ? 'Hide secret key' : 'Reveal secret key'}
+                    onPress={() => setRevealed((value) => !value)}
+                    style={styles.secondaryButton}
+                  >
+                    <Text style={styles.secondaryButtonText}>{revealed ? 'Hide' : 'Reveal'}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => void handleCopy()}
+                    style={styles.secondaryButton}
+                  >
+                    <Text style={styles.secondaryButtonText}>{copied ? '✓ COPIED' : 'Copy'}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    accessibilityState={{ expanded: showQr }}
+                    onPress={() => setShowQr((value) => !value)}
+                    style={styles.secondaryButton}
+                  >
+                    <Text style={styles.secondaryButtonText}>{showQr ? 'Hide QR' : 'Show QR'}</Text>
+                  </TouchableOpacity>
+                </View>
 
-            <TouchableOpacity onPress={lockExport} style={styles.lockButton}>
-              <Text style={styles.lockButtonText}>Lock this screen</Text>
-            </TouchableOpacity>
-          </View>
-        )}
+                {showQr && (
+                  <PixelGateReveal style={styles.qrSection}>
+                    <QrCode value={secret} />
+                    <Text style={styles.qrHint}>Scan only with a Nostr signer you trust.</Text>
+                  </PixelGateReveal>
+                )}
+
+                <TouchableOpacity onPress={lockExport} style={styles.lockButton}>
+                  <Text style={styles.lockButtonText}>Lock this screen</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </>
+        ) : null}
 
         {error && (
           <View accessibilityRole="alert" style={styles.errorPanel}>
@@ -863,7 +892,9 @@ export default function BuzzIdentitySettings() {
           </View>
         )}
 
-        <Text style={styles.footer}>Copy and QR stay on this device.</Text>
+        {!monolithEnabled ? (
+          <Text style={styles.footer}>Copy and QR stay on this device.</Text>
+        ) : null}
       </ScrollView>
     </View>
   );

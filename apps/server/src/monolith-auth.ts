@@ -7,6 +7,7 @@ import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
 import type { VerifyGitHubOidc } from './auth.js';
 import type { SqlDatabase } from './database.js';
 import { PhoneService } from './phone-service.js';
+import type { TokenAuth } from './auth.js';
 
 export interface MonolithAuthMount {
   handle(request: IncomingMessage, response: ServerResponse): void;
@@ -18,9 +19,20 @@ export interface MonolithAuthMount {
 export async function createMonolithAuth(
   database: SqlDatabase,
   publicOrigin: string,
-  github: { oauth: GitHubOAuthClient; app: GitHubAppClient; webhookSecret?: string } | undefined,
-  env: NodeJS.ProcessEnv = process.env,
+  github:
+    | {
+        oauth: GitHubOAuthClient;
+        app: GitHubAppClient;
+        webhookSecret?: string;
+        onWebhook?: (eventType: string, payload: unknown) => Promise<void>;
+      }
+    | undefined,
+  options: {
+    createDaemonExchange: TokenAuth['createDaemonExchange'];
+    env?: NodeJS.ProcessEnv;
+  },
 ): Promise<MonolithAuthMount> {
+  const env = options.env ?? process.env;
   const tenants = authTenantsFromEnvironment(env);
   const publicHost = new URL(publicOrigin).host.toLowerCase();
   const tenant = tenants.find((candidate) => candidate.host.toLowerCase() === publicHost);
@@ -41,7 +53,11 @@ export async function createMonolithAuth(
     secureCookies: env.NODE_ENV === 'production',
     githubSetupToken: env.BUZZY_AUTH_SETUP_TOKEN,
     logger: false,
-    claimAgentPairingCode: (input) => pairing.claimAgentConnectPairing(input),
+    claimAgentPairingCode: async (input) => {
+      return pairing.claimAgentConnectPairing(input, (agentId, transaction) =>
+        options.createDaemonExchange(agentId, transaction),
+      );
+    },
   });
   await app.ready();
 

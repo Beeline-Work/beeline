@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
-import { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
+import { GITHUB_IDENTITY_AUDIENCE, GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import type { PhoneOperationMap } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 
@@ -94,8 +94,14 @@ export class GitHubOperations {
         );
       }
       await database.query(
-        `INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience) VALUES('github',$1,$2,$3,$4) ON CONFLICT(provider,subject) DO UPDATE SET identity_id=EXCLUDED.identity_id,issuer=EXCLUDED.issuer,audience=EXCLUDED.audience`,
-        [github!.subject, viewerId, github!.issuer, github!.audience],
+        `INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience,provider_login)
+         VALUES('github',$1,$2,$3,$4,$5)
+         ON CONFLICT(provider,subject) DO UPDATE SET
+           identity_id=EXCLUDED.identity_id,
+           issuer=EXCLUDED.issuer,
+           audience=EXCLUDED.audience,
+           provider_login=EXCLUDED.provider_login`,
+        [github!.subject, viewerId, github!.issuer, GITHUB_IDENTITY_AUDIENCE, github!.login],
       );
       await database.query(
         `UPDATE identities SET name=COALESCE(NULLIF($2,''),name),handle=$3,github_subject=$4,updated_at=now() WHERE id=$1`,
@@ -206,7 +212,7 @@ export class GitHubOperations {
   async roomToken(roomId: string) {
     const row = (
       await this.database.query<{ github_installation_id: string; repository_id: string }>(
-        `SELECT r.github_installation_id,g.repository_id FROM rooms r JOIN github_repositories g ON lower(g.full_name)=lower(regexp_replace(r.repository_remote,'^(git://|https://)github.com/','','i')) WHERE r.id=$1 AND r.github_installation_id IS NOT NULL AND g.active`,
+        `SELECT r.github_installation_id,g.repository_id FROM rooms r JOIN github_repositories g ON lower(g.full_name)=lower(regexp_replace(r.repository_remote,'^(git://|https://)github.com/','','i')) JOIN github_installations i ON i.installation_id=g.installation_id WHERE r.id=$1 AND r.github_installation_id=i.installation_id AND g.active AND i.status='active'`,
         [roomId],
       )
     ).rows[0];
@@ -227,6 +233,17 @@ export class GitHubOperations {
     if (event === 'installation' && body.action === 'deleted') {
       await this.database.query(
         `UPDATE github_installations SET status='revoked',updated_at=now() WHERE installation_id=$1`,
+        [install.id],
+      );
+      await this.database.query(
+        `UPDATE github_repositories SET active=false,updated_at=now() WHERE installation_id=$1`,
+        [install.id],
+      );
+      return;
+    }
+    if (event === 'installation' && body.action === 'suspend') {
+      await this.database.query(
+        `UPDATE github_installations SET status='suspended',updated_at=now() WHERE installation_id=$1`,
         [install.id],
       );
       return;
@@ -253,7 +270,22 @@ export class GitHubOperations {
           )
         ).rows[0]?.identity_id;
     }
-    if (owner) await this.syncInstallation(owner, install.id);
+    if (!owner) return;
+    if (event === 'installation_repositories') {
+      const removed = Array.isArray(body.repositories_removed) ? body.repositories_removed : [];
+      const removedIds = removed.flatMap((entry) => {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
+        const id = (entry as Record<string, unknown>).id;
+        return typeof id === 'number' && Number.isSafeInteger(id) ? [id] : [];
+      });
+      if (removedIds.length) {
+        await this.database.query(
+          `UPDATE github_repositories SET active=false,updated_at=now() WHERE installation_id=$1 AND repository_id=ANY($2::bigint[])`,
+          [install.id, removedIds],
+        );
+      }
+    }
+    await this.syncInstallation(owner, install.id);
   }
 
   private async syncInstallation(
@@ -263,10 +295,20 @@ export class GitHubOperations {
   ) {
     const account = await this.app.installationAccount(installationId);
     await database.query(
-      `INSERT INTO github_installations(installation_id,owner_id,account_login,account_type,status) VALUES($1,$2,$3,$4,'active') ON CONFLICT(installation_id) DO UPDATE SET owner_id=EXCLUDED.owner_id,account_login=EXCLUDED.account_login,account_type=EXCLUDED.account_type,status='active',updated_at=now()`,
-      [installationId, viewerId, account.login, account.type],
+      `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,account_avatar_url,repository_selection,status) VALUES($1,$2,$3,$4,$5,$6,$7,'active') ON CONFLICT(installation_id) DO UPDATE SET owner_id=EXCLUDED.owner_id,account_id=EXCLUDED.account_id,account_login=EXCLUDED.account_login,account_type=EXCLUDED.account_type,account_avatar_url=EXCLUDED.account_avatar_url,repository_selection=EXCLUDED.repository_selection,status='active',updated_at=now()`,
+      [
+        installationId,
+        viewerId,
+        account.id,
+        account.login,
+        account.type,
+        account.avatarUrl ?? null,
+        account.repositorySelection,
+      ],
     );
-    for (const repository of await this.app.listRepositories(installationId))
+    const repositories = await this.app.listRepositories(installationId);
+    await database.query(`UPDATE github_repositories SET active=false,updated_at=now() WHERE installation_id=$1`, [installationId]);
+    for (const repository of repositories)
       await this.storeRepository(repository, database);
   }
   private async assertInstallationAccess(

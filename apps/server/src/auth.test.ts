@@ -26,7 +26,7 @@ describe('opaque token ceremony', () => {
     const afterRestart = new TokenAuth(db, verify);
     await expect(afterRestart.authenticateDaemon(first!.daemonToken)).resolves.toBe('b'.repeat(64));
   });
-  it('preserves an imported legacy identity when GitHub signs in after cutover', async () => {
+  it('preserves an imported legacy identity and adds Welcome on first monolith sign-in', async () => {
     const legacy = 'a'.repeat(64);
     await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Legacy')`, [legacy]);
     await db.query(
@@ -37,13 +37,14 @@ describe('opaque token ceremony', () => {
     const tokens = await auth.exchangeGitHubOidc('proof');
     expect(tokens.identityId).toBe(legacy);
     expect(await auth.authenticatePhone(tokens.accessToken)).toBe(legacy);
-    const memberships = await db.query(
-      `SELECT 1 FROM memberships WHERE identity_id=$1 AND room_id IS NULL AND removed_at IS NULL`,
+    const memberships = await db.query<{ name: string; role: string }>(
+      `SELECT w.name,m.role FROM memberships m JOIN workspaces w ON w.id=m.workspace_id
+       WHERE m.identity_id=$1 AND m.room_id IS NULL AND m.removed_at IS NULL`,
       [legacy],
     );
-    expect(memberships.rowCount).toBe(0);
+    expect(memberships.rows).toEqual([{ name: 'Beeline Welcome', role: 'member' }]);
   });
-  it('preserves an existing Workspace membership when its owner signs in', async () => {
+  it('preserves existing Workspace ownership while adding the shared Welcome membership', async () => {
     const captain = 'c'.repeat(64);
     const tubingCrew = '11111111-1111-4111-8111-111111111111';
     await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Captain')`, [captain]);
@@ -69,18 +70,26 @@ describe('opaque token ceremony', () => {
     const workspaces = await db.query<{ id: string; name: string }>(
       `SELECT id,name FROM workspaces ORDER BY id`,
     );
-    expect(workspaces.rows).toEqual([{ id: tubingCrew, name: 'Tubing Crew' }]);
+    expect(workspaces.rows).toEqual([
+      { id: tubingCrew, name: 'Tubing Crew' },
+      { id: 'bee11e00-0000-4000-8000-000000000001', name: 'Beeline Welcome' },
+    ]);
     const memberships = await db.query<{
       workspace_id: string;
       identity_id: string;
       role: string;
     }>(
       `SELECT workspace_id,identity_id,role FROM memberships
-       WHERE identity_id=$1 AND room_id IS NULL AND removed_at IS NULL`,
+       WHERE identity_id=$1 AND room_id IS NULL AND removed_at IS NULL ORDER BY workspace_id`,
       [captain],
     );
     expect(memberships.rows).toEqual([
       { workspace_id: tubingCrew, identity_id: captain, role: 'owner' },
+      {
+        workspace_id: 'bee11e00-0000-4000-8000-000000000001',
+        identity_id: captain,
+        role: 'member',
+      },
     ]);
   });
   it('adds each newly created identity to the one shared Beeline Welcome workspace', async () => {

@@ -25,7 +25,7 @@ describe('GitHub-only account and repository access', () => {
       client.exchangeCode('code', 'https://relay.example/auth/github/callback'),
     ).resolves.toEqual({
       issuer: 'https://github.com',
-      audience: 'client-id',
+      audience: 'github',
       subject: '1234',
       login: 'octocat',
       displayName: 'The Octocat',

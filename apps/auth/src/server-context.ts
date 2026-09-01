@@ -14,7 +14,12 @@ import {
 } from 'node:crypto';
 import { AuthStore, type ManagedIdentity } from './store.js';
 import { OidcClient } from './oidc.js';
-import { GitHubAppClient, GitHubOAuthClient, type GitHubIdentity } from './github.js';
+import {
+  GITHUB_IDENTITY_AUDIENCE,
+  GitHubAppClient,
+  GitHubOAuthClient,
+  type GitHubIdentity,
+} from './github.js';
 import {
   appSetupEnvBlock,
   buildAppManifest,
@@ -99,7 +104,16 @@ export interface AuthServerOptions {
   store: AuthStore;
   oidc: OidcClient;
   /** GitHub is the shipped sign-in and repository-access provider. */
-  github?: { oauth: GitHubOAuthClient; app: GitHubAppClient; webhookSecret?: string };
+  github?: {
+    oauth: GitHubOAuthClient;
+    app: GitHubAppClient;
+    webhookSecret?: string;
+    /**
+     * Optional consumer for the monolith's repository catalog. This runs
+     * only after the auth store has verified and claimed a GitHub delivery.
+     */
+    onWebhook?: (eventType: string, payload: unknown) => Promise<void>;
+  };
   tenants: AuthTenant[];
   now?: () => Date;
   flowTtlMs?: number;
@@ -133,6 +147,8 @@ export interface AuthServerOptions {
         workspaceId: string;
         workspaceName: string;
         pairedBy: string;
+        /** One-use credential promoted by the installed daemon on first activation. */
+        daemonExchangeToken: string;
       }
     | { status: 'not_found' | 'expired' | 'already_claimed' }
   >;
@@ -730,6 +746,8 @@ export function createAuthRouteContext(options: AuthServerOptions) {
     },
     reply: FastifyReply,
   ) => {
+    const audience =
+      identity.issuer === 'https://github.com' ? GITHUB_IDENTITY_AUDIENCE : identity.audience;
     const ticket = randomToken();
     const challenge = randomToken();
     const issuedAt = now();
@@ -738,7 +756,7 @@ export function createAuthRouteContext(options: AuthServerOptions) {
       challenge,
       community: tenant.community,
       issuer: identity.issuer,
-      audience: identity.audience,
+      audience,
       subject: identity.subject,
       createdAt: issuedAt,
       expiresAt,
@@ -756,7 +774,7 @@ export function createAuthRouteContext(options: AuthServerOptions) {
       ticket,
       challenge,
       provider: identity.issuer,
-      audience: identity.audience,
+      audience,
       subject: identity.subject,
       community: tenant.community,
       issued_at: Math.floor(issuedAt.getTime() / 1_000),

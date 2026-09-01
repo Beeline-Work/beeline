@@ -109,8 +109,14 @@ export class PostgresDatabase implements ClosableDatabase {
     }
   }
 
-  connectDedicated(): Promise<PoolClient> {
-    return this.#retryTransientConnection(() => this.#pool.connect());
+  async connectDedicated(): Promise<PoolClient> {
+    return this.#retryTransientConnection(async () => {
+      const client = await this.#pool.connect();
+      client.on('error', (error) => {
+        console.error('dedicated postgres client error', error);
+      });
+      return client;
+    });
   }
 
   close(): Promise<void> {

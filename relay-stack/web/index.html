@@ -5,11 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="Steer and review your AI coding agents from your phone with Beeline."
+      content="Beeline is the workspace for all intelligence. Steer and review your AI coding agents from your phone."
     />
     <meta name="theme-color" content="#14091a" />
     <meta name="robots" content="index,follow" />
-    <title>Beeline — Your coding agents, within reach</title>
+    <title>Beeline — workspace for all intelligence</title>
     <style>
       @font-face {
         font-family: 'IBM Plex Sans';
@@ -53,7 +53,7 @@
         --ghost: #6c6c76;
         --line: #332a37;
         --line-strong: #514857;
-        --brass: #b08a4a;
+        --brass: #d7af5f;
         --radius: 3px;
         --page: min(1180px, calc(100vw - 48px));
       }
@@ -167,6 +167,7 @@
 
       .hero {
         min-height: 860px;
+        min-height: 100svh;
         display: grid;
         place-items: center;
         padding: 150px 0 92px;
@@ -186,7 +187,7 @@
         text-wrap: balance;
       }
       .hero-lede {
-        max-width: 640px;
+        max-width: 680px;
         margin: 32px auto 0;
         color: var(--quiet);
         font-size: clamp(1.08rem, 2vw, 1.35rem);
@@ -198,7 +199,7 @@
         flex-wrap: wrap;
         justify-content: center;
         gap: 12px;
-        margin-top: 42px;
+        margin-top: 50px;
       }
       .store-badge {
         min-width: 186px;
@@ -257,14 +258,14 @@
       .proof {
         overflow: hidden;
         border-block: 1px solid var(--line);
-        background: #0b090c;
+        background: var(--canvas);
       }
       .proof-heading {
         display: grid;
         grid-template-columns: 1fr 1fr;
         gap: 48px;
         align-items: end;
-        padding: 100px 0 64px;
+        padding: 132px 0 72px;
       }
       h2 {
         margin: 0;
@@ -328,7 +329,7 @@
       }
 
       .capabilities {
-        padding: 128px 0;
+        padding: 160px 0;
       }
       .capability {
         display: grid;
@@ -358,7 +359,7 @@
       }
 
       .connect {
-        padding: 0 0 128px;
+        padding: 0 0 160px;
       }
       .connect-panel {
         position: relative;
@@ -399,7 +400,7 @@
         padding: 18px 18px 18px 22px;
         border: 1px solid var(--line-strong);
         border-radius: var(--radius);
-        background: #0b090c;
+        background: #100b12;
       }
       .command code {
         overflow-x: auto;
@@ -441,7 +442,7 @@
       }
 
       .final-cta {
-        padding: 128px 0;
+        padding: 160px 0;
         border-top: 1px solid var(--line);
         text-align: center;
       }
@@ -514,6 +515,11 @@
         }
         .nav-links a:first-child {
           display: none;
+        }
+        .nav-links a,
+        h1,
+        h2 {
+          letter-spacing: 0;
         }
         .hero {
           min-height: 760px;
@@ -608,11 +614,11 @@
     <main id="main">
       <section class="hero" aria-labelledby="hero-title">
         <div class="hero-inner wrap">
-          <p class="eyebrow mono">Your coding agents, within reach</p>
-          <h1 id="hero-title">Steer and review your AI coding agents from your phone.</h1>
+          <p class="eyebrow mono">AI work, under human direction</p>
+          <h1 id="hero-title">workspace for all intelligence</h1>
           <p class="hero-lede">
-            Read the work as it happens. Send a steer. Review the change. Make the call from
-            wherever you are.
+            Steer and review your AI coding agents from your phone. Follow every agent, send a new
+            direction, and approve the work from one place.
           </p>
           <div class="download-links" aria-label="Download Beeline">
             <a

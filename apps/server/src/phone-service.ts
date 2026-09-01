@@ -22,6 +22,7 @@ import {
 import type { SqlDatabase } from './database.js';
 import type { GitHubOperations } from './github-operations.js';
 import { collapsePermissionCards } from '@beeline/push-gateway/projection';
+import { joinRooms } from './membership-join.js';
 
 const DURABLE_KINDS = [0, 9, 9000, 9001, 9002, 9007, 9008, 30078, 39000, 39001, 39002];
 
@@ -357,7 +358,7 @@ export class PhoneService {
         EXISTS(SELECT 1 FROM permission_authority p WHERE (p.room_id=r.id OR p.room_id IN (SELECT id FROM rooms WHERE parent_id=r.id)) AND p.status='pending') needs_you
       FROM rooms r
       JOIN memberships member ON member.room_id=r.id AND member.identity_id=$2 AND member.removed_at IS NULL
-      LEFT JOIN LATERAL (SELECT * FROM messages WHERE room_id=r.id AND presentation='message' ORDER BY created_at DESC,id DESC LIMIT 1) lm ON true
+      LEFT JOIN LATERAL (SELECT * FROM messages WHERE room_id=r.id AND presentation IN ('message','system') ORDER BY created_at DESC,id DESC LIMIT 1) lm ON true
       LEFT JOIN identities li ON li.id=lm.author_id
       LEFT JOIN room_read_marks mark ON mark.room_id=r.id AND mark.identity_id=$2
       WHERE r.workspace_id=$1 AND r.parent_id IS NULL AND r.archived_at IS NULL
@@ -615,7 +616,7 @@ export class PhoneService {
         agent.name agent_name,agent.handle agent_handle,agent.avatar agent_avatar,
         turn.status latest_turn_status,turn.created_at latest_turn_created_at
       FROM rooms c LEFT JOIN corner_facts f ON f.corner_id=c.id
-      LEFT JOIN LATERAL (SELECT * FROM messages WHERE room_id=c.id AND presentation='message' ORDER BY created_at DESC,id DESC LIMIT 1) lm ON true
+      LEFT JOIN LATERAL (SELECT * FROM messages WHERE room_id=c.id AND presentation IN ('message','system') ORDER BY created_at DESC,id DESC LIMIT 1) lm ON true
       LEFT JOIN identities li ON li.id=lm.author_id
       LEFT JOIN LATERAL (
         SELECT i.id identity_id,
@@ -788,22 +789,21 @@ export class PhoneService {
           `UPDATE agent_pairing_codes SET claimed_by=$2,claimed_at=now() WHERE code_hash=$1`,
           [hash(code), agentId],
         );
-      await database.query(
+      const workspaceMembership = await database.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES ($1,NULL,$2,'member') ON CONFLICT DO NOTHING`,
         [pairing.workspace_id, agentId],
       );
-      const rooms = await database.query<{ room_id: string }>(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-        SELECT m.workspace_id,m.room_id,$2,'member' FROM memberships m JOIN rooms r ON r.id=m.room_id
-        WHERE m.workspace_id=$1 AND m.identity_id=$3 AND m.removed_at IS NULL AND r.parent_id IS NULL AND r.archived_at IS NULL
-        ON CONFLICT DO NOTHING RETURNING room_id`,
-        [pairing.workspace_id, agentId, pairing.created_by],
-      );
+      const rooms = await joinRooms(database, {
+        workspaceId: pairing.workspace_id,
+        identityId: agentId,
+        rooms: { type: 'inherited-live-top-level', identityId: pairing.created_by },
+        workspaceJoined: workspaceMembership.rowCount > 0,
+      });
       return {
         workspaceId: pairing.workspace_id,
         pairedBy: pairing.created_by,
         joined,
-        attachedRoomIds: rooms.rows.map((row) => row.room_id),
+        attachedRoomIds: rooms.roomIds,
       };
     });
   }
@@ -901,21 +901,17 @@ export class PhoneService {
         `UPDATE agent_pairing_codes SET claimed_by=$2,claimed_at=now() WHERE code_hash=$1`,
         [hash(input.code), input.agentPubkey],
       );
-      await database.query(
+      const workspaceMembership = await database.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
          VALUES ($1,NULL,$2,'member')`,
         [pairing.workspace_id, input.agentPubkey],
       );
-      await database.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-         SELECT membership.workspace_id,membership.room_id,$2,'member'
-         FROM memberships membership
-         JOIN rooms room ON room.id=membership.room_id
-         WHERE membership.workspace_id=$1 AND membership.identity_id=$3
-           AND membership.removed_at IS NULL AND room.parent_id IS NULL AND room.archived_at IS NULL
-         ON CONFLICT DO NOTHING`,
-        [pairing.workspace_id, input.agentPubkey, pairing.created_by],
-      );
+      await joinRooms(database, {
+        workspaceId: pairing.workspace_id,
+        identityId: input.agentPubkey,
+        rooms: { type: 'inherited-live-top-level', identityId: pairing.created_by },
+        workspaceJoined: workspaceMembership.rowCount > 0,
+      });
       const exchange = createDaemonExchange
         ? await createDaemonExchange(input.agentPubkey, database)
         : undefined;
@@ -1441,13 +1437,12 @@ export class PhoneService {
       [room.workspace_id, input.memberId],
     );
     if (!workspaceMember.rowCount) throw new Error('workspace membership required');
-    const result = await this.database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')
-       ON CONFLICT (room_id,identity_id) WHERE room_id IS NOT NULL
-       DO UPDATE SET role='member',removed_at=NULL WHERE memberships.removed_at IS NOT NULL`,
-      [room.workspace_id, input.roomId, input.memberId],
-    );
-    return { joined: result.rowCount > 0 };
+    const result = await joinRooms(this.database, {
+      workspaceId: room.workspace_id,
+      identityId: input.memberId,
+      rooms: { type: 'rooms', roomIds: [input.roomId] },
+    });
+    return { joined: result.roomIds.length > 0 };
   }
   private async removeRoomMember(input: Input<'removeRoomMember'>, viewerId: string) {
     await this.requireTopLevelRoom(input.roomId);
@@ -1504,6 +1499,13 @@ export class PhoneService {
            WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`,
           [input.workspaceId, input.memberId, input.role],
         );
+        if (target.removed_at)
+          await joinRooms(database, {
+            workspaceId: input.workspaceId,
+            identityId: input.memberId,
+            rooms: { type: 'none' },
+            workspaceJoined: true,
+          });
         return { joined: target.removed_at !== null };
       }
       const inserted = await database.query(
@@ -1511,6 +1513,13 @@ export class PhoneService {
          VALUES($1,NULL,$2,$3) ON CONFLICT DO NOTHING`,
         [input.workspaceId, input.memberId, input.role],
       );
+      if (inserted.rowCount)
+        await joinRooms(database, {
+          workspaceId: input.workspaceId,
+          identityId: input.memberId,
+          rooms: { type: 'none' },
+          workspaceJoined: true,
+        });
       return { joined: inserted.rowCount > 0 };
     });
   }
@@ -1575,14 +1584,12 @@ export class PhoneService {
          DO UPDATE SET role='member',removed_at=NULL WHERE memberships.removed_at IS NOT NULL`,
         [row.workspace_id, viewerId],
       );
-      await database.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-         SELECT r.workspace_id,r.id,$2,'member' FROM rooms r
-         WHERE r.workspace_id=$1 AND r.parent_id IS NULL AND r.direct_participants IS NULL AND r.archived_at IS NULL
-         ON CONFLICT (room_id,identity_id) WHERE room_id IS NOT NULL
-         DO UPDATE SET role='member',removed_at=NULL WHERE memberships.removed_at IS NOT NULL`,
-        [row.workspace_id, viewerId],
-      );
+      await joinRooms(database, {
+        workspaceId: row.workspace_id,
+        identityId: viewerId,
+        rooms: { type: 'all-live-top-level' },
+        workspaceJoined: joined.rowCount > 0,
+      });
       return { joined: joined.rowCount > 0, workspaceId: row.workspace_id };
     });
   }

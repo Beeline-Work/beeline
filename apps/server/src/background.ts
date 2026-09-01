@@ -19,13 +19,25 @@ export class PushDeliveryLoop {
       text: string;
       token: string;
     }>(`
-      SELECT m.id message_id,m.room_id,m.text,d.token
-      FROM messages m
-      JOIN memberships member ON member.room_id=m.room_id AND member.removed_at IS NULL AND member.identity_id<>m.author_id
-      JOIN push_devices d ON d.identity_id=member.identity_id
-      LEFT JOIN push_delivery_claims claim ON claim.message_id=m.id AND claim.device_token=d.token
+      WITH candidates AS (
+        SELECT m.id message_id,m.room_id::text room_id,m.text,d.token,m.created_at
+        FROM messages m
+        JOIN memberships member ON member.room_id=m.room_id AND member.removed_at IS NULL AND member.identity_id<>m.author_id
+        JOIN push_devices d ON d.identity_id=member.identity_id
+        WHERE m.card_type IS DISTINCT FROM 'member-joined'
+        UNION ALL
+        SELECT notification.id message_id,
+          COALESCE(notification.room_id::text,notification.workspace_id::text) room_id,
+          notification.text,device.device_token token,notification.created_at
+        FROM workspace_join_notifications notification
+        JOIN workspace_join_notification_devices device ON device.notification_id=notification.id
+      )
+      SELECT candidate.message_id,candidate.room_id,candidate.text,candidate.token
+      FROM candidates candidate
+      LEFT JOIN push_delivery_claims claim
+        ON claim.message_id=candidate.message_id AND claim.device_token=candidate.token
       WHERE claim.message_id IS NULL
-      ORDER BY m.created_at,m.id LIMIT 100
+      ORDER BY candidate.created_at,candidate.message_id LIMIT 100
     `);
     let delivered = 0;
     for (const candidate of candidates.rows) {

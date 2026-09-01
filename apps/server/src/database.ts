@@ -525,6 +525,21 @@ CREATE TABLE IF NOT EXISTS push_devices (
 );
 CREATE INDEX IF NOT EXISTS push_devices_identity_idx ON push_devices(identity_id);
 
+CREATE TABLE IF NOT EXISTS workspace_join_notifications (
+  id text PRIMARY KEY,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  room_id uuid REFERENCES rooms(id) ON DELETE SET NULL,
+  joining_identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  text text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS workspace_join_notification_devices (
+  notification_id text NOT NULL REFERENCES workspace_join_notifications(id) ON DELETE CASCADE,
+  device_token text NOT NULL REFERENCES push_devices(token) ON DELETE CASCADE,
+  PRIMARY KEY (notification_id, device_token)
+);
+
 CREATE TABLE IF NOT EXISTS push_delivery_claims (
   message_id text NOT NULL,
   device_token text NOT NULL REFERENCES push_devices(token) ON DELETE CASCADE,

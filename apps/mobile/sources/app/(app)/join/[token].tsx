@@ -4,7 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useURL } from 'expo-linking';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { createBuzzClient, type Community, type Identity } from '@beeline/buzz-client';
+import { createBuzzClient, type Identity } from '@beeline/buzz-client';
 import {
   generateBuzzIdentity,
   getEffectiveRelayUrl,
@@ -30,6 +30,7 @@ import { PixelLoader } from '@/components/buzz/MonoHull';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
+import { workspaceRailItem } from '@/buzz/room-view-presentation';
 
 export default function CommunityInviteJoin() {
   const { theme } = useUnistyles();
@@ -40,7 +41,9 @@ export default function CommunityInviteJoin() {
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [relayUrl, setRelayUrl] = useState<string | null>(null);
   const [preview, setPreview] = useState<CommunityInvitePreview | { name: string } | null>(null);
-  const [communities, setCommunities] = useState<Community[]>([]);
+  const [communities, setCommunities] = useState<
+    { communityId: string; name: string; avatar?: string }[]
+  >([]);
   const [displayName, setDisplayName] = useState('');
   const [loading, setLoading] = useState(true);
   const [joining, setJoining] = useState(false);
@@ -67,10 +70,15 @@ export default function CommunityInviteJoin() {
         const nextPreview = getBuzzRuntimeConfig().monolithEnabled
           ? await new RoomViewClient({ baseUrl: url, identity: currentIdentity! }).invite(token).then((value) => ({ name: value.name }))
           : await loadCommunityInvitePreview(url, token, currentIdentity ?? undefined);
-        let available: Community[] = [];
+        let available: { communityId: string; name: string; avatar?: string }[] = [];
         if (currentIdentity) {
-          const client = createBuzzClient({ baseUrl: url, identity: currentIdentity });
-          available = await client.listCommunities();
+          if (getBuzzRuntimeConfig().monolithEnabled) {
+            const view = await new RoomViewClient({ baseUrl: url, identity: currentIdentity }).workspaces();
+            available = view.workspaces.map(workspaceRailItem);
+          } else {
+            const client = createBuzzClient({ baseUrl: url, identity: currentIdentity });
+            available = await client.listCommunities();
+          }
         }
         if (!cancelled) {
           setIdentity(currentIdentity);

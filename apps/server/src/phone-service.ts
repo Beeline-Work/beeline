@@ -213,6 +213,17 @@ function projectedMessage(row: MessageRow, publicOrigin: string): RoomViewMessag
   }
 }
 
+function directMessageRoomId(workspaceId: string, participants: readonly [string, string]): string {
+  const bytes = createHash('sha256')
+    .update(`buzz-dm:v1:${workspaceId}:${participants.join(':')}`)
+    .digest()
+    .subarray(0, 16);
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = bytes.toString('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 export class PhoneService {
   constructor(
     private readonly database: SqlDatabase,
@@ -344,7 +355,7 @@ export class PhoneService {
       LEFT JOIN LATERAL (SELECT * FROM messages WHERE room_id=r.id AND presentation='message' ORDER BY created_at DESC,id DESC LIMIT 1) lm ON true
       LEFT JOIN identities li ON li.id=lm.author_id
       LEFT JOIN room_read_marks mark ON mark.room_id=r.id AND mark.identity_id=$2
-      WHERE r.workspace_id=$1 AND r.parent_id IS NULL
+      WHERE r.workspace_id=$1 AND r.parent_id IS NULL AND r.archived_at IS NULL
       ORDER BY COALESCE(lm.created_at,r.updated_at) DESC,r.id LIMIT 201`,
       [workspaceId, viewerId],
     );
@@ -737,7 +748,11 @@ export class PhoneService {
       avatar: string | null;
       expires_at: Date;
     }>(
-      `SELECT w.name,w.avatar,i.expires_at FROM invites i JOIN workspaces w ON w.id=i.workspace_id WHERE i.token_hash=$1 AND i.expires_at>now()`,
+      `SELECT w.name,w.avatar,i.expires_at FROM invites i
+       JOIN workspaces w ON w.id=i.workspace_id
+       JOIN memberships creator ON creator.workspace_id=i.workspace_id AND creator.room_id IS NULL
+         AND creator.identity_id=i.created_by AND creator.removed_at IS NULL
+       WHERE i.token_hash=$1 AND i.expires_at>now()`,
       [hash(rawToken)],
     );
     const row = result.rows[0];
@@ -949,7 +964,7 @@ export class PhoneService {
         await this.updateRoom(input as Input<'updateRoom'>, viewerId);
         return undefined as Output<Name>;
       case 'deleteRoom':
-        await this.archiveRoom((input as Input<'deleteRoom'>).roomId, viewerId);
+        await this.deleteRoom((input as Input<'deleteRoom'>).roomId, viewerId);
         return undefined as Output<Name>;
       case 'leaveRoom':
         await this.leaveRoom((input as Input<'leaveRoom'>).roomId, viewerId);
@@ -1238,7 +1253,19 @@ export class PhoneService {
   private async createWorkspace(input: Input<'createWorkspace'>, viewerId: string) {
     const id = input.workspaceId ?? randomUUID();
     await this.database.transaction(async (db) => {
-      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,$2)`, [id, input.name]);
+      const inserted = await db.query(
+        `INSERT INTO workspaces(id,name) VALUES($1,$2) ON CONFLICT DO NOTHING`,
+        [id, input.name],
+      );
+      if (!inserted.rowCount) {
+        const owned = await db.query(
+          `SELECT 1 FROM workspaces w JOIN memberships m ON m.workspace_id=w.id AND m.room_id IS NULL
+           WHERE w.id=$1 AND m.identity_id=$2 AND m.role='owner' AND m.removed_at IS NULL`,
+          [id, viewerId],
+        );
+        if (!owned.rowCount) throw new Error('workspaceId is invalid');
+        return;
+      }
       await db.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner')`,
         [id, viewerId],
@@ -1254,10 +1281,29 @@ export class PhoneService {
     );
   }
   private async leaveWorkspace(input: Input<'leaveWorkspace'>, viewerId: string) {
-    await this.database.query(
-      `UPDATE memberships SET removed_at=now() WHERE workspace_id=$1 AND identity_id=$2`,
-      [input.workspaceId, viewerId],
-    );
+    await this.database.transaction(async (database) => {
+      await database.query(`SELECT 1 FROM workspaces WHERE id=$1 FOR UPDATE`, [input.workspaceId]);
+      const current = (
+        await database.query<{ role: 'owner' | 'admin' | 'member' }>(
+          `SELECT role FROM memberships
+           WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND removed_at IS NULL FOR UPDATE`,
+          [input.workspaceId, viewerId],
+        )
+      ).rows[0];
+      if (!current) return;
+      if (current.role === 'owner') {
+        const otherOwner = await database.query(
+          `SELECT 1 FROM memberships
+           WHERE workspace_id=$1 AND room_id IS NULL AND identity_id<>$2 AND role='owner' AND removed_at IS NULL`,
+          [input.workspaceId, viewerId],
+        );
+        if (!otherOwner.rowCount) throw new Error('workspace manager cannot leave as sole owner');
+      }
+      await database.query(
+        `UPDATE memberships SET removed_at=now() WHERE workspace_id=$1 AND identity_id=$2`,
+        [input.workspaceId, viewerId],
+      );
+    });
   }
   private async createRoom(input: Input<'createRoom'>, viewerId: string) {
     await this.requireWorkspaceManager(input.workspaceId, viewerId);
@@ -1304,47 +1350,84 @@ export class PhoneService {
         ],
       );
       await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) SELECT workspace_id,$1,identity_id,role FROM memberships WHERE workspace_id=$2 AND room_id IS NULL AND removed_at IS NULL`,
-        [id, input.workspaceId],
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`,
+        [input.workspaceId, id, viewerId],
       );
     });
     return { id };
   }
   private async updateRoom(input: Input<'updateRoom'>, viewerId: string) {
+    await this.requireTopLevelRoom(input.roomId);
     await this.requireManager(input.roomId, viewerId);
     await this.database.query(
       `UPDATE rooms SET name=COALESCE($2,name),visibility=COALESCE($3,visibility),updated_at=now() WHERE id=$1`,
       [input.roomId, input.name ?? null, input.visibility ?? null],
     );
   }
-  private async archiveRoom(roomId: string, viewerId: string) {
-    await this.requireManager(roomId, viewerId);
-    await this.database.query(`UPDATE rooms SET archived_at=now(),updated_at=now() WHERE id=$1`, [
-      roomId,
-    ]);
+  private async deleteRoom(roomId: string, viewerId: string) {
+    await this.requireTopLevelRoom(roomId);
+    const membership = await this.database.query(
+      `SELECT 1 FROM memberships
+       WHERE room_id=$1 AND identity_id=$2 AND role='owner' AND removed_at IS NULL`,
+      [roomId, viewerId],
+    );
+    if (!membership.rowCount) throw new Error('room owner required');
+    await this.database.query(`DELETE FROM rooms WHERE id=$1`, [roomId]);
   }
   private async leaveRoom(roomId: string, viewerId: string) {
+    await this.requireTopLevelRoom(roomId);
+    const membership = await this.database.query<{ role: 'owner' | 'admin' | 'member' }>(
+      `SELECT role FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
+      [roomId, viewerId],
+    );
+    const role = membership.rows[0]?.role;
+    if (role !== 'member') {
+      throw new Error(
+        role === 'owner' || role === 'admin'
+          ? 'room managers cannot leave'
+          : 'room membership required',
+      );
+    }
     await this.database.query(
       `UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,
       [roomId, viewerId],
     );
   }
   private async addRoomMember(input: Input<'addRoomMember'>, viewerId: string) {
+    const room = await this.requireTopLevelRoom(input.roomId);
     await this.requireManager(input.roomId, viewerId);
-    const room = (
-      await this.database.query<{ workspace_id: string }>(
-        `SELECT workspace_id FROM rooms WHERE id=$1`,
-        [input.roomId],
-      )
-    ).rows[0]!;
+    const workspaceMember = await this.database.query(
+      `SELECT 1 FROM memberships
+       WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND removed_at IS NULL`,
+      [room.workspace_id, input.memberId],
+    );
+    if (!workspaceMember.rowCount) throw new Error('workspace membership required');
     const result = await this.database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member') ON CONFLICT DO NOTHING`,
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')
+       ON CONFLICT (room_id,identity_id) WHERE room_id IS NOT NULL
+       DO UPDATE SET role='member',removed_at=NULL WHERE memberships.removed_at IS NOT NULL`,
       [room.workspace_id, input.roomId, input.memberId],
     );
     return { joined: result.rowCount > 0 };
   }
   private async removeRoomMember(input: Input<'removeRoomMember'>, viewerId: string) {
+    await this.requireTopLevelRoom(input.roomId);
     await this.requireManager(input.roomId, viewerId);
+    const roles = await this.database.query<{
+      identity_id: string;
+      role: 'owner' | 'admin' | 'member';
+    }>(
+      `SELECT identity_id,role FROM memberships
+       WHERE room_id=$1 AND identity_id IN ($2,$3) AND removed_at IS NULL`,
+      [input.roomId, viewerId, input.memberId],
+    );
+    const actor = roles.rows.find((row) => row.identity_id === viewerId);
+    const target = roles.rows.find((row) => row.identity_id === input.memberId);
+    if (!target) throw new Error('room membership required');
+    if (input.memberId === viewerId) throw new Error('room managers cannot remove themselves');
+    if (target.role === 'owner' || (actor?.role === 'admin' && target.role === 'admin')) {
+      throw new Error('room manager cannot remove a member with equal or greater authority');
+    }
     await this.database.query(
       `UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,
       [input.roomId, input.memberId],
@@ -1352,13 +1435,38 @@ export class PhoneService {
   }
   private async addWorkspaceMember(input: Input<'addWorkspaceMember'>, viewerId: string) {
     await this.requireWorkspaceManager(input.workspaceId, viewerId);
+    if (input.memberId === viewerId) throw new Error('workspace managers cannot change themselves');
+    await this.requireIdentity(input.memberId);
     return this.database.transaction(async (database) => {
-      const updated = await database.query(
-        `UPDATE memberships SET role=$3,removed_at=NULL
-         WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`,
-        [input.workspaceId, input.memberId, input.role],
+      await database.query(`SELECT 1 FROM workspaces WHERE id=$1 FOR UPDATE`, [input.workspaceId]);
+      const roles = await database.query<{
+        identity_id: string;
+        role: 'owner' | 'admin' | 'member';
+        removed_at: Date | null;
+      }>(
+        `SELECT identity_id,role,removed_at FROM memberships
+         WHERE workspace_id=$1 AND room_id IS NULL AND identity_id IN ($2,$3) FOR UPDATE`,
+        [input.workspaceId, viewerId, input.memberId],
       );
-      if (updated.rowCount) return { joined: false };
+      const actor = roles.rows.find((row) => row.identity_id === viewerId);
+      const target = roles.rows.find((row) => row.identity_id === input.memberId);
+      if (!actor || actor.removed_at || (actor.role !== 'owner' && actor.role !== 'admin')) {
+        throw new Error('workspace manager required');
+      }
+      if (
+        actor.role === 'admin' &&
+        (input.role === 'owner' || target?.role === 'owner' || target?.role === 'admin')
+      ) {
+        throw new Error('workspace manager cannot change a member with equal or greater authority');
+      }
+      if (target) {
+        await database.query(
+          `UPDATE memberships SET role=$3,removed_at=NULL
+           WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`,
+          [input.workspaceId, input.memberId, input.role],
+        );
+        return { joined: target.removed_at !== null };
+      }
       const inserted = await database.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
          VALUES($1,NULL,$2,$3) ON CONFLICT DO NOTHING`,
@@ -1369,24 +1477,36 @@ export class PhoneService {
   }
   private async resolveDirectMessage(input: Input<'resolveDirectMessage'>, viewerId: string) {
     const participants = [viewerId, input.participantId].sort();
+    if (participants[0] === participants[1]) throw new Error('direct message requires two members');
+    const members = await this.database.query<{ identity_id: string }>(
+      `SELECT identity_id FROM memberships
+       WHERE workspace_id=$1 AND room_id IS NULL AND identity_id IN ($2,$3) AND removed_at IS NULL`,
+      [input.workspaceId, participants[0], participants[1]],
+    );
+    if (new Set(members.rows.map((row) => row.identity_id)).size !== 2) {
+      throw new Error('workspace membership required for direct messages');
+    }
     const found = await this.database.query<{ id: string }>(
       `SELECT id FROM rooms WHERE workspace_id=$1 AND direct_participants=$2::jsonb`,
       [input.workspaceId, JSON.stringify(participants)],
     );
     if (found.rows[0]) return { id: found.rows[0].id, created: false };
-    const id = randomUUID();
-    await this.database.transaction(async (db) => {
-      await db.query(
-        `INSERT INTO rooms(id,workspace_id,created_by,name,direct_participants) VALUES($1,$2,$3,'Direct message',$4::jsonb)`,
+    const id = directMessageRoomId(input.workspaceId, participants as [string, string]);
+    const created = await this.database.transaction(async (db) => {
+      const inserted = await db.query(
+        `INSERT INTO rooms(id,workspace_id,created_by,name,direct_participants)
+         VALUES($1,$2,$3,'Direct message',$4::jsonb) ON CONFLICT DO NOTHING`,
         [id, input.workspaceId, viewerId, JSON.stringify(participants)],
       );
+      if (!inserted.rowCount) return false;
       for (const member of participants)
         await db.query(
           `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
           [input.workspaceId, id, member],
         );
+      return true;
     });
-    return { id, created: true };
+    return { id, created };
   }
   private async createInvite(input: Input<'createInvite'>, viewerId: string) {
     await this.requireWorkspaceManager(input.workspaceId, viewerId);
@@ -1396,21 +1516,36 @@ export class PhoneService {
       `INSERT INTO invites(token_hash,workspace_id,created_by,expires_at) VALUES($1,$2,$3,$4)`,
       [hash(value), input.workspaceId, viewerId, new Date(expiresAt)],
     );
-    return { token: value, expiresAt };
+    return { token: value, expiresAt: Math.floor(expiresAt / 1000) };
   }
   private async redeemInvite(input: Input<'redeemInvite'>, viewerId: string) {
     if (!isCommunityInviteToken(input.token)) throw new Error('invalid invite token');
     const result = await this.database.query<{ workspace_id: string }>(
-      `UPDATE invites SET consumed_at=now() WHERE token_hash=$1 AND expires_at>now() AND consumed_at IS NULL RETURNING workspace_id`,
+      `SELECT i.workspace_id FROM invites i
+       JOIN memberships creator ON creator.workspace_id=i.workspace_id AND creator.room_id IS NULL
+         AND creator.identity_id=i.created_by AND creator.removed_at IS NULL
+       WHERE i.token_hash=$1 AND i.expires_at>now()`,
       [hash(input.token)],
     );
     const row = result.rows[0];
     if (!row) throw new Error('invite not found');
-    const joined = await this.database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member') ON CONFLICT DO NOTHING`,
-      [row.workspace_id, viewerId],
-    );
-    return { joined: joined.rowCount > 0, workspaceId: row.workspace_id };
+    return this.database.transaction(async (database) => {
+      const joined = await database.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member')
+         ON CONFLICT (workspace_id,identity_id) WHERE room_id IS NULL
+         DO UPDATE SET role='member',removed_at=NULL WHERE memberships.removed_at IS NOT NULL`,
+        [row.workspace_id, viewerId],
+      );
+      await database.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+         SELECT r.workspace_id,r.id,$2,'member' FROM rooms r
+         WHERE r.workspace_id=$1 AND r.parent_id IS NULL AND r.direct_participants IS NULL AND r.archived_at IS NULL
+         ON CONFLICT (room_id,identity_id) WHERE room_id IS NOT NULL
+         DO UPDATE SET role='member',removed_at=NULL WHERE memberships.removed_at IS NOT NULL`,
+        [row.workspace_id, viewerId],
+      );
+      return { joined: joined.rowCount > 0, workspaceId: row.workspace_id };
+    });
   }
   private async createPairing(input: Input<'createAgentPairingCode'>, viewerId: string) {
     await this.requireWorkspaceManager(input.workspaceId, viewerId);
@@ -1715,6 +1850,23 @@ export class PhoneService {
       [roomId, identityId],
     );
     if (!row.rowCount) throw new Error('room manager required');
+  }
+  private async requireTopLevelRoom(roomId: string) {
+    const room = (
+      await this.database.query<{
+        workspace_id: string;
+        parent_id: string | null;
+        direct_participants: string[] | null;
+        archived_at: Date | null;
+      }>(`SELECT workspace_id,parent_id,direct_participants,archived_at FROM rooms WHERE id=$1`, [
+        roomId,
+      ])
+    ).rows[0];
+    if (!room) throw new Error('room not found');
+    if (room.parent_id) throw new Error('room lifecycle cannot target a corner');
+    if (room.direct_participants) throw new Error('direct-message membership is immutable');
+    if (room.archived_at) throw new Error('room is archived');
+    return room;
   }
   private async requireWorkspaceManager(workspaceId: string, identityId: string) {
     const row = await this.database.query(

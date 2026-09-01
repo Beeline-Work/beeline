@@ -60,11 +60,10 @@ export class TokenAuth {
     );
     const id = linked.rows[0]?.identity_id ?? identityId(github.subject);
     await this.database.transaction(async (database) => {
-      const created = await database.query<{ id: string }>(
+      await database.query(
         `INSERT INTO identities(id, kind, name, handle, avatar, github_subject, updated_at)
        VALUES ($1, 'human', $2, $3, $4, $5, $6)
-       ON CONFLICT (id) DO NOTHING
-       RETURNING id`,
+       ON CONFLICT (id) DO NOTHING`,
         [id, github.name, github.login, github.avatar ?? null, github.subject, this.now()],
       );
       await database.query(
@@ -82,17 +81,15 @@ export class TokenAuth {
            provider_login=EXCLUDED.provider_login`,
         [github.subject, id, GITHUB_IDENTITY_AUDIENCE, github.login],
       );
-      if (created.rows[0]) {
-        await database.query(
-          `INSERT INTO workspaces(id,name) VALUES($1,$2) ON CONFLICT(id) DO NOTHING`,
-          [WELCOME_WORKSPACE_ID, WELCOME_WORKSPACE_NAME],
-        );
-        await database.query(
-          `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-           VALUES($1,NULL,$2,'member')`,
-          [WELCOME_WORKSPACE_ID, id],
-        );
-      }
+      await database.query(
+        `INSERT INTO workspaces(id,name) VALUES($1,$2) ON CONFLICT(id) DO NOTHING`,
+        [WELCOME_WORKSPACE_ID, WELCOME_WORKSPACE_NAME],
+      );
+      await database.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+         VALUES($1,NULL,$2,'member') ON CONFLICT DO NOTHING`,
+        [WELCOME_WORKSPACE_ID, id],
+      );
     });
     return this.issuePhoneTokens(id, randomUUID());
   }

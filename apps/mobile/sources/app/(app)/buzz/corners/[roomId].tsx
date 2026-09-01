@@ -4,12 +4,12 @@ import { StyleSheet } from 'react-native-unistyles';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
-  RoomViewClient,
   SurfaceRefreshScheduler,
   isCornerListView,
   type CornerListView,
   type Identity,
 } from '@beeline/buzz-client';
+import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { cornerHref } from '@/buzz/corner-navigation';

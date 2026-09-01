@@ -5,7 +5,6 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { router, useFocusEffect, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
-  RoomViewClient,
   SurfaceRefreshScheduler,
   isChatListView,
   isWorkspaceView,
@@ -13,6 +12,7 @@ import {
   type ChatListView,
   type WorkspaceView,
 } from '@beeline/buzz-client';
+import { RoomViewClient } from '@/sync/transport/room-view-client';
 
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { pickAndUploadAvatar } from '@/buzz/avatar-upload';

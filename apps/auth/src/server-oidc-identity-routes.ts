@@ -45,6 +45,27 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
     return reply.send({ github: Boolean(options.github), oidc: true });
   });
 
+  /** One-use bridge from the existing native GitHub ceremony to monolith sessions. */
+  app.post('/auth/github/phone-exchange', async (request, reply) => {
+    const tenant = tenantFor(request);
+    const body = request.body as Record<string, unknown>;
+    if (typeof body.ticket !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(body.ticket)) {
+      throw new ProtocolError(400, 'invalid_ticket', 'GitHub exchange ticket is invalid');
+    }
+    const result = await options.store.consumeTicketForPhone(sha256(body.ticket), tenant.community, now());
+    noStore(reply);
+    if (result.status !== 'exchanged') {
+      return reply.code(401).send({ error: `github_ticket_${result.status}` });
+    }
+    const login = result.ticket.providerLogin?.trim();
+    if (!login) throw new ProtocolError(500, 'invalid_ticket_identity', 'GitHub ticket has no login');
+    return reply.send({
+      subject: result.ticket.subject,
+      login,
+      name: result.ticket.providerDisplayName?.trim() || login,
+    });
+  });
+
   app.get('/auth/github/mobile-callback', async (request, reply) => {
     const tenant = tenantFor(request);
     const callback = new URL(publicUrl(tenant, request));

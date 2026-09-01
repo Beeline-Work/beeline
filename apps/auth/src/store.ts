@@ -542,6 +542,10 @@ export type BindResult =
   | { status: 'conflict'; existingPubkey: string }
   | { status: 'missing' | 'used' | 'expired' };
 
+export type PhoneTicketExchangeResult =
+  | { status: 'exchanged'; ticket: BindTicket }
+  | { status: 'missing' | 'used' | 'expired' | 'wrong_provider' };
+
 export type RecoverBindResult =
   | { status: 'replaced' | 'idempotent'; link: IdentityLink; previousPubkey: string }
   | { status: 'missing' | 'unused' | 'not_eligible' | 'wrong_key' | 'expired' };
@@ -906,6 +910,36 @@ export class AuthStore {
       [ticketHash, now],
     );
     return result.rows[0]?.attempt_count ?? null;
+  }
+
+  /** Atomically consume the same short-lived GitHub proof used by the legacy key bind. */
+  async consumeTicketForPhone(
+    ticketHash: string,
+    community: string,
+    now: Date,
+  ): Promise<PhoneTicketExchangeResult> {
+    return this.database.transaction(async (transaction) => {
+      const selected = await transaction.query<TicketRow>(
+        `SELECT challenge, community, issuer, audience, subject, created_at, expires_at,
+                attempt_count, consumed_at, bound_pubkey, recovery_eligible,
+                provider_login, provider_display_name
+         FROM beeline_bind_tickets WHERE ticket_hash = $1 FOR UPDATE`,
+        [ticketHash],
+      );
+      const row = selected.rows[0];
+      if (!row) return { status: 'missing' };
+      const ticket = ticketFromRow(row);
+      if (ticket.consumedAt) return { status: 'used' };
+      if (ticket.expiresAt.getTime() < now.getTime()) return { status: 'expired' };
+      if (ticket.community !== community || ticket.issuer !== 'https://github.com') {
+        return { status: 'wrong_provider' };
+      }
+      await transaction.query(
+        `UPDATE beeline_bind_tickets SET consumed_at = $2 WHERE ticket_hash = $1`,
+        [ticketHash, now],
+      );
+      return { status: 'exchanged', ticket };
+    });
   }
 
   async consumeTicketAndLink(ticketHash: string, pubkey: string, now: Date): Promise<BindResult> {

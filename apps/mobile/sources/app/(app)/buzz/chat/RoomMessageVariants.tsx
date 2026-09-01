@@ -1,4 +1,4 @@
-import React, { useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Image, Linking, Platform, Pressable, Text, View } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { StyleSheet } from 'react-native-unistyles';
@@ -21,6 +21,8 @@ import { ROOM_LABEL, CORNER_LABEL } from '@/buzz/vocabulary';
 import { groknight } from '@/buzz/groknight';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
+import { monolithSession } from '@/auth/monolith-session';
+import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { ActivityTimeline } from '@/components/buzz/ActivityTimeline';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import {
@@ -305,6 +307,15 @@ export const DaemonFactCard = React.memo(function DaemonFactCard({
 
 function AttachmentCard({ attachment }: { attachment: AttachmentReference }) {
   const image = attachment.mimeType.startsWith('image/') && attachment.thumbnailUrl;
+  const [mediaAuthorization, setMediaAuthorization] = useState<string>();
+  useEffect(() => {
+    if (!image || !getBuzzRuntimeConfig().monolithEnabled) return;
+    let live = true;
+    void monolithSession.authorization().then((token) => {
+      if (live) setMediaAuthorization(`Bearer ${token}`);
+    }).catch(() => undefined);
+    return () => { live = false; };
+  }, [image]);
   const open = () => {
     void Linking.openURL(attachmentOpenUrl(attachment)).catch(() => {
       Modal.alert('Could not open attachment', 'The file link could not be opened on this device.');
@@ -313,7 +324,7 @@ function AttachmentCard({ attachment }: { attachment: AttachmentReference }) {
   return (
     <Pressable accessibilityLabel={`Open attachment ${attachment.name}`} accessibilityRole="link" onPress={open} style={styles.attachmentCard} testID={`chat-attachment-${attachment.name}`}>
       {image ? (
-        <Image accessibilityIgnoresInvertColors resizeMode="cover" source={{ uri: attachment.thumbnailUrl }} style={styles.attachmentThumbnail} />
+        <Image accessibilityIgnoresInvertColors resizeMode="cover" source={{ uri: attachment.thumbnailUrl, ...(mediaAuthorization ? { headers: { authorization: mediaAuthorization } } : {}) }} style={styles.attachmentThumbnail} />
       ) : (
         <View style={styles.attachmentFileGlyph}><Text style={styles.attachmentFileGlyphText}>▧</Text></View>
       )}

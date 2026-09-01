@@ -50,6 +50,28 @@ describe('durable transactional identity-link store', () => {
       rmSync(directory, { recursive: true, force: true });
   });
 
+  it('consumes a GitHub bind ticket exactly once for phone exchange', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'beeline-auth-phone-ticket-'));
+    directories.push(directory);
+    const database = new DurablePgliteDatabase(directory);
+    await database.client.waitReady;
+    const store = new AuthStore(database);
+    await store.migrate();
+    const now = new Date();
+    await store.createTicket('f'.repeat(64), {
+      challenge: 'challenge', community: 'community', issuer: 'https://github.com',
+      audience: 'github-client', subject: '42', createdAt: now,
+      expiresAt: new Date(now.getTime() + 60_000), attemptCount: 0,
+      consumedAt: null, boundPubkey: null, providerLogin: 'octocat',
+      providerDisplayName: 'The Octocat',
+    });
+    await expect(store.consumeTicketForPhone('f'.repeat(64), 'community', now)).resolves.toMatchObject({
+      status: 'exchanged', ticket: { subject: '42', providerLogin: 'octocat' },
+    });
+    await expect(store.consumeTicketForPhone('f'.repeat(64), 'community', now)).resolves.toEqual({ status: 'used' });
+    await database.close();
+  }, 30_000);
+
   it('survives a database close/reopen and namespaces the same subject by audience', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'beeline-auth-store-'));
     directories.push(directory);

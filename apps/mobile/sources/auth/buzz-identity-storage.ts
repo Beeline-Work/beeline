@@ -17,6 +17,7 @@ import {
 } from '@beeline/buzz-client';
 import * as SecureStore from 'expo-secure-store';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
+import { monolithSession } from '@/auth/monolith-session';
 
 // SecureStore on Android requires keys matching [A-Za-z0-9._-]+
 const BUZZ_NSEC_KEY = 'buzzy.identity.nsec';
@@ -95,6 +96,16 @@ async function secretRemove(): Promise<void> {
 
 /** Load the stored Buzz identity (null if never set). */
 export async function loadBuzzIdentity(): Promise<Identity | null> {
+  if (getBuzzRuntimeConfig().monolithEnabled) {
+    const identityId = await monolithSession.identityId();
+    if (!identityId) return null;
+    try {
+      await monolithSession.authorization();
+      return { publicKey: identityId, secretKey: new Uint8Array() };
+    } catch {
+      return null;
+    }
+  }
   const nsec = await secretGet();
   if (!nsec) return null;
   return loadIdentityFromNsec(nsec);
@@ -105,11 +116,13 @@ export async function loadBuzzIdentity(): Promise<Identity | null> {
  * Callers must gate this behind user authentication before invoking it.
  */
 export async function loadBuzzIdentityNsecForExport(): Promise<string | null> {
+  if (getBuzzRuntimeConfig().monolithEnabled) return null;
   return secretGet();
 }
 
 /** Persist an identity for next launch. */
 export async function saveBuzzIdentity(identity: Identity): Promise<void> {
+  if (getBuzzRuntimeConfig().monolithEnabled) return;
   const nsec = identityNsec(identity);
   await secretSet(nsec);
 }
@@ -175,6 +188,8 @@ export async function clearRelayUrl(): Promise<void> {
  * explicit stack endpoint across every Room and Workspace surface.
  */
 export async function getEffectiveRelayUrl(): Promise<string> {
+  const runtime = getBuzzRuntimeConfig();
+  if (runtime.monolithEnabled) return runtime.monolithUrl;
   const stored = await loadRelayUrl();
   return stored ?? getBuzzRuntimeConfig().relayUrl;
 }

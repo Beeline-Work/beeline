@@ -31,5 +31,7 @@ describe('phone contract', () => {
       isWorkspaceListView({ workspaces: [], viewer: identity, truncated: false, watchFilters: [] }),
     ).toBe(true);
     expectTypeOf<PhoneOperationMap['uploadMedia']['output']>().toHaveProperty('url');
+    expectTypeOf<PhoneOperationMap['sendRoomMessage']['input']>().toHaveProperty('messageId');
+    expectTypeOf<PhoneOperationMap['addWorkspaceMember']['input']>().toHaveProperty('role');
   });
 });

@@ -34,7 +34,7 @@ import { Modal } from '@/modal/ModalManager';
 
 const INDEX_CONFIRM_ATTEMPTS = 60;
 const INDEX_CONFIRM_DELAY_MS = 250;
-const INSTALL_AND_PAIR_PREFIX = 'curl -fsSL https://usebeeline.app/install | sh && beeline pair';
+const CONNECT_AGENT_COMMAND = 'npx usebeeline connect';
 
 async function copyText(value: string): Promise<void> {
   await (await import('expo-clipboard')).setStringAsync(value);
@@ -137,7 +137,6 @@ export default function BuzzMembers() {
   const [retryGeneration, setRetryGeneration] = useState(0);
   const [agentInviteOpen, setAgentInviteOpen] = useState(false);
   const [pairCommand, setPairCommand] = useState<string | null>(null);
-  const [pairExpiresAt, setPairExpiresAt] = useState<number | null>(null);
   const schedulerRef = useRef<SurfaceRefreshScheduler<WorkspaceView> | null>(null);
   const agentRequestGenerationRef = useRef(0);
   const requestedActionHandledRef = useRef(false);
@@ -294,28 +293,13 @@ export default function BuzzMembers() {
     }
   };
 
-  /**
-   * The new agent gets attached to every top-level Room the inviting user
-   * belongs to as a side effect of pairing redemption (see
-   * `attachAgentToInviterRooms` in `@beeline/buzz-client`), so this sheet
-   * only ever needs to show the one pairing command — never a Room picker.
-   */
-  const openAgentInvite = async () => {
+  /** The public connect wizard binds the agent to the signed-in user's Workspace. */
+  const openAgentInvite = () => {
     if (!surface?.viewer.permissions.manage || !workspaceId) return;
     setAgentInviteOpen(true);
     setSelectedAgent(null);
-    setPairCommand(null);
-    setWorking('pair-agent');
+    setPairCommand(CONNECT_AGENT_COMMAND);
     setError(null);
-    try {
-      const pairing = await (await writeClient()).createAgentPairingCode(workspaceId);
-      setPairCommand(`${INSTALL_AND_PAIR_PREFIX} ${pairing.code}`);
-      setPairExpiresAt(pairing.expiresAt);
-    } catch (reason) {
-      setError(`Could not create agent pairing code: ${String(reason)}`);
-    } finally {
-      setWorking(null);
-    }
   };
 
   useEffect(() => {
@@ -325,7 +309,7 @@ export default function BuzzMembers() {
       void invitePerson();
     } else if (requestedAction === 'add-agent') {
       requestedActionHandledRef.current = true;
-      void openAgentInvite();
+      openAgentInvite();
     }
     // The route intent is consume-once. The handlers intentionally read the
     // current authenticated surface at that moment rather than reopening on
@@ -569,10 +553,9 @@ export default function BuzzMembers() {
                 testID="invite-person"
               />
               <MonoButton
-                label={working === 'pair-agent' ? 'CREATING CODE' : 'INVITE AGENT'}
-                loading={working === 'pair-agent'}
+                label="INVITE AGENT"
                 disabled={busy}
-                onPress={() => void openAgentInvite()}
+                onPress={openAgentInvite}
                 variant="secondary"
                 labelStyle={styles.actionLabel}
                 testID="invite-agent"
@@ -601,7 +584,7 @@ export default function BuzzMembers() {
               {pairCommand ? (
                 <View style={styles.commandList}>
                   <TouchableOpacity
-                    accessibilityLabel="Copy install and pair command"
+                    accessibilityLabel="Copy connect command"
                     onPress={() => void copyText(pairCommand)}
                     style={styles.commandRow}
                   >
@@ -610,10 +593,6 @@ export default function BuzzMembers() {
                     </Text>
                     <Text style={styles.copy}>COPY</Text>
                   </TouchableOpacity>
-                  <Text style={styles.expiry}>
-                    EXPIRES{' '}
-                    {pairExpiresAt ? new Date(pairExpiresAt * 1000).toLocaleTimeString() : 'SOON'}
-                  </Text>
                 </View>
               ) : (
                 working === 'pair-agent' && <PixelLoader />

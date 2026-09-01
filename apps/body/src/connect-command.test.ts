@@ -18,6 +18,7 @@ function promptFixture(answers: string[]) {
   };
   const prompts: ConnectPrompts = {
     select: async (input) => next('select', input.message, input.initialValue) as never,
+    autocomplete: async (input) => next('autocomplete', input.message, input.initialValue) as never,
     text: async (input) => next('text', input.message, input.initialValue),
     password: async (input) => next('password', input.message),
   };
@@ -26,14 +27,28 @@ function promptFixture(answers: string[]) {
 
 describe('connect wizard', () => {
   it('uses a harness-native provider without asking for credentials', async () => {
-    const fixture = promptFixture(['codex', 'gpt-5.4', 'Brisk, practical, and kind.']);
+    const fixture = promptFixture(['codex', 'gpt-5.4', 'Scout', 'Brisk, practical, and kind.']);
 
-    await expect(collectConnectWizard(fixture.prompts)).resolves.toEqual({
+    await expect(
+      collectConnectWizard(fixture.prompts, async () => ({
+        currentValue: 'gpt-5.4',
+        options: [
+          { id: 'gpt-5.4', name: 'GPT-5.4' },
+          { id: 'gpt-5.6-sol', name: 'GPT-5.6-Sol' },
+        ],
+      })),
+    ).resolves.toEqual({
+      name: 'Scout',
       harness: 'codex',
       model: 'gpt-5.4',
       soul: 'Brisk, practical, and kind.',
     });
-    expect(fixture.calls.map((call) => call.split(':', 1)[0])).toEqual(['select', 'text', 'text']);
+    expect(fixture.calls.map((call) => call.split(':', 1)[0])).toEqual([
+      'select',
+      'autocomplete',
+      'text',
+      'text',
+    ]);
   });
 
   it('asks provider and API key for Pi with OpenRouter and GLM defaults', async () => {
@@ -42,10 +57,17 @@ describe('connect wizard', () => {
       'openrouter',
       'secret-key',
       'z-ai/glm-5.3-flash',
+      'Piper',
       'Warm and incisive.',
     ]);
 
-    await expect(collectConnectWizard(fixture.prompts)).resolves.toEqual({
+    await expect(
+      collectConnectWizard(fixture.prompts, async () => ({
+        currentValue: 'z-ai/glm-5.3-flash',
+        options: [{ id: 'z-ai/glm-5.3-flash', name: 'GLM 5.3 Flash' }],
+      })),
+    ).resolves.toEqual({
+      name: 'Piper',
       harness: 'pi',
       provider: 'openrouter',
       apiKey: 'secret-key',
@@ -56,6 +78,7 @@ describe('connect wizard', () => {
       'select',
       'select',
       'password',
+      'autocomplete',
       'text',
       'text',
     ]);

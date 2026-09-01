@@ -1,8 +1,10 @@
 import { randomBytes, createHash } from 'node:crypto';
 import { request } from 'node:http';
+import type { IncomingHttpHeaders } from 'node:http';
 import { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
+import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { TokenAuth, verifierFromEnvironment } from './auth.js';
@@ -30,15 +32,35 @@ describe('mounted monolith auth', () => {
     vi.stubEnv('PHONE_GITHUB_EXCHANGE_ENDPOINT', '');
     database = new PgliteDatabase();
     await migrate(database);
-    mount = await createMonolithAuth(database, tenant.origin, undefined, {
-      NODE_ENV: 'test',
-      BUZZY_AUTH_TENANTS_JSON: JSON.stringify([tenant]),
-      BUZZY_AUTH_OIDC_ISSUER: 'https://accounts.example',
-      BUZZY_AUTH_OIDC_AUTHORIZATION_ENDPOINT: 'https://accounts.example/authorize',
-      BUZZY_AUTH_OIDC_TOKEN_ENDPOINT: 'https://accounts.example/token',
-      BUZZY_AUTH_OIDC_JWKS_URI: 'https://accounts.example/jwks',
-      BUZZY_AUTH_OIDC_CLIENT_ID: 'test-client',
-    });
+    mount = await createMonolithAuth(
+      database,
+      tenant.origin,
+      {
+        oauth: {
+          config: { clientId: 'github-client', clientSecret: 'github-secret' },
+          authorizationUrl: ({ state, redirectUri }) =>
+            `https://github.test/authorize?state=${state}&redirect_uri=${encodeURIComponent(redirectUri)}`,
+          exchangeCode: async () => ({
+            issuer: 'https://github.com' as const,
+            audience: 'github-client',
+            subject: '42',
+            login: 'octocat',
+            displayName: 'The Octocat',
+            accessToken: 'github-user-token',
+          }),
+        } as unknown as GitHubOAuthClient,
+        app: {} as GitHubAppClient,
+      },
+      {
+        NODE_ENV: 'test',
+        BUZZY_AUTH_TENANTS_JSON: JSON.stringify([tenant]),
+        BUZZY_AUTH_OIDC_ISSUER: 'https://accounts.example',
+        BUZZY_AUTH_OIDC_AUTHORIZATION_ENDPOINT: 'https://accounts.example/authorize',
+        BUZZY_AUTH_OIDC_TOKEN_ENDPOINT: 'https://accounts.example/token',
+        BUZZY_AUTH_OIDC_JWKS_URI: 'https://accounts.example/jwks',
+        BUZZY_AUTH_OIDC_CLIENT_ID: 'test-client',
+      },
+    );
     store = new AuthStore(database as unknown as TransactionalDatabase);
     const auth = new TokenAuth(database, verifierFromEnvironment(mount.verifyGitHubTicket));
     const live = new LiveHub();
@@ -111,6 +133,31 @@ describe('mounted monolith auth', () => {
     });
   }
 
+  async function mountedRequest(
+    path: string,
+    headers: Record<string, string> = {},
+  ): Promise<{ status: number; headers: IncomingHttpHeaders; body: string }> {
+    return new Promise((resolve, reject) => {
+      const outgoing = request(
+        new URL(path, origin),
+        { headers: { host: tenant.host, ...headers } },
+        (incoming) => {
+          const chunks: Buffer[] = [];
+          incoming.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+          incoming.on('end', () =>
+            resolve({
+              status: incoming.statusCode ?? 0,
+              headers: incoming.headers,
+              body: Buffer.concat(chunks).toString('utf8'),
+            }),
+          );
+        },
+      );
+      outgoing.on('error', reject);
+      outgoing.end();
+    });
+  }
+
   it('serves the auth verifier route and rejects malformed tickets', async () => {
     const bad = await authRequest('bad');
     expect(bad.status).toBe(400);
@@ -142,6 +189,41 @@ describe('mounted monolith auth', () => {
       github_subject: '42',
       handle: 'octocat',
       name: 'The Octocat',
+    });
+  });
+
+  it('returns GitHub OAuth straight to the app and exchanges its ticket for a session', async () => {
+    const appState = 's'.repeat(43);
+    const start = await mountedRequest(
+      `/auth/github/start?app_redirect=${encodeURIComponent('beeline://buzz/github-callback')}&app_state=${appState}`,
+    );
+    expect(start.status).toBe(302);
+    const authorization = new URL(String(start.headers.location));
+    expect(authorization.origin).toBe('https://github.test');
+    expect(authorization.searchParams.get('redirect_uri')).toBe(
+      `${tenant.origin}/auth/github/callback`,
+    );
+
+    const callback = await mountedRequest(
+      `/auth/github/callback?code=github-code&state=${authorization.searchParams.get('state')}`,
+      { cookie: String(start.headers['set-cookie']).split(';', 1)[0]! },
+    );
+    expect(callback.status, callback.body).toBe(302);
+    const completion = new URL(String(callback.headers.location));
+    expect(`${completion.protocol}//${completion.host}${completion.pathname}`).toBe(
+      'beeline://buzz/github-callback',
+    );
+    expect(completion.searchParams.get('state')).toBe(appState);
+
+    const exchange = await fetch(`${origin}/v1/auth/github/exchange`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ oidcToken: completion.searchParams.get('ticket') }),
+    });
+    expect(exchange.status).toBe(200);
+    await expect(exchange.json()).resolves.toMatchObject({
+      accessToken: expect.stringMatching(/^bat_/),
+      identityId: expect.any(String),
     });
   });
 });

@@ -1110,7 +1110,7 @@ describe('GitHub installation, repositories, and token routes', () => {
     expect(state.logLines.join('\n')).not.toMatch(/Bearer ey|PRIVATE KEY|github-user-token/);
   });
 
-  it('completes GitHub sign-in through a visible immediate app handoff', async () => {
+  it('completes GitHub sign-in with a direct redirect to the installed app', async () => {
     const appState = 'g'.repeat(43);
     const redirectUri = 'beeline://buzz/github-callback';
     const start = await app.inject({
@@ -1125,13 +1125,9 @@ describe('GitHub installation, repositories, and token routes', () => {
       url: `/auth/github/callback?code=github-code&state=${githubState}`,
       headers: { host: alphaTenant.host, cookie: startCookie(start.headers['set-cookie']) },
     });
-    expect(callback.statusCode).toBe(200);
-    expect(callback.headers['content-type']).toContain('text/html');
-    expect(callback.body).toContain('Beeline sign-in complete');
-    expect(callback.body).toContain('http-equiv="refresh" content="0;url=beeline://');
-    const completionHref = callback.body.match(/<a href="([^"]+)">Return to Beeline<\/a>/)?.[1];
-    expect(completionHref).toBeDefined();
-    const completion = new URL(completionHref!.replaceAll('&amp;', '&'));
+    expect(callback.statusCode).toBe(302);
+    expect(callback.headers['cache-control']).toBe('no-store');
+    const completion = new URL(String(callback.headers.location));
     expect(`${completion.protocol}//${completion.host}${completion.pathname}`).toBe(redirectUri);
     expect(completion.searchParams.get('state')).toBe(appState);
     expect(completion.searchParams.get('ticket')).toMatch(/^[A-Za-z0-9_-]{43}$/);

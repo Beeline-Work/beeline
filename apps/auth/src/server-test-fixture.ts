@@ -491,10 +491,9 @@ export async function bindGitHubIdentity(
     url: `/auth/github/callback?code=github-code&state=${githubState}`,
     headers: { host: alphaTenant.host, cookie: startCookie(start.headers['set-cookie']) },
   });
-  expect(callback.statusCode).toBe(200);
-  const completionHref = callback.body.match(/<a href="([^"]+)">Return to Beeline<\/a>/)?.[1];
-  expect(completionHref).toBeDefined();
-  const completion = new URL(completionHref!.replaceAll('&amp;', '&'));
+  expect(callback.statusCode).toBe(302);
+  expect(callback.headers.location).toBeDefined();
+  const completion = new URL(String(callback.headers.location));
   const challenge = Object.fromEntries(completion.searchParams) as unknown as BindChallenge;
   for (const key of ['protocol', 'kind', 'issued_at', 'expires_at'] as const) {
     (challenge as unknown as Record<string, unknown>)[key] = Number(

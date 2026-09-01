@@ -13,6 +13,7 @@ import type { MessageSubmitInput } from './rig-transport';
 import { monolithSession } from '@/auth/monolith-session';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import type { RepoCandidate } from '@/buzz/room-repo-picker';
+import { MonolithPhoneOperationError } from './monolith-operation';
 
 type LiveWireEvent =
   | { type: 'invalidate'; roomId: string; reason: string }
@@ -117,13 +118,26 @@ class MonolithClientAdapter {
   removeAgent(workspaceId: string, agentId: string) {
     return this.transport.operation('removeAgent', { workspaceId, agentId });
   }
-  getGlobalPersonProfile() {
-    return Promise.resolve(null);
+  async getGlobalPersonProfile() {
+    const profile = (await this.transport.operation('getManagedIdentity', {})) as {
+      personId: string;
+      name: string;
+      handle?: string;
+      avatar?: string;
+    };
+    return {
+      pubkey: profile.personId,
+      name: profile.name,
+      ...(profile.handle ? { handle: profile.handle } : {}),
+      ...(profile.avatar ? { avatar: profile.avatar } : {}),
+      updatedAt: 0,
+      raw: null,
+    };
   }
   getPersonProfile() {
-    return Promise.resolve(null);
+    return this.getGlobalPersonProfile();
   }
-  setGlobalPersonProfile(profile: { name: string; handle?: string; avatar?: string }) {
+  setGlobalPersonProfile(profile: { name?: string; handle?: string; avatar?: string }) {
     return this.transport.operation('updatePersonProfile', profile);
   }
   listCommunities() {
@@ -153,7 +167,18 @@ export class MonolithRigTransport {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(input),
     });
-    if (!response.ok) throw new Error(`Monolith ${name} failed (${response.status})`);
+    if (!response.ok) {
+      let code = 'request_failed';
+      try {
+        const body = (await response.json()) as { error?: unknown };
+        if (typeof body.error === 'string' && body.error) code = body.error;
+      } catch {}
+      throw new MonolithPhoneOperationError(
+        name as keyof import('@beeline/api-contract/phone').PhoneOperationMap,
+        response.status,
+        code,
+      );
+    }
     if (response.status === 204) return undefined;
     return response.json();
   }

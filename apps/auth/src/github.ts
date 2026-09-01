@@ -1,6 +1,8 @@
 import { importPKCS8, SignJWT } from 'jose';
 
 const GITHUB_ISSUER = 'https://github.com';
+/** Stable logical audience shared by browser OAuth and monolith phone sign-in. */
+export const GITHUB_IDENTITY_AUDIENCE = 'github';
 const DEFAULT_API = 'https://api.github.com';
 
 function githubHeaders(token?: string): Record<string, string> {
@@ -26,10 +28,7 @@ async function jsonObject(response: Response, label: string): Promise<Record<str
 }
 
 /** Some App endpoints (e.g. GET /app/installations) answer a bare JSON array, not an envelope. */
-async function jsonArray(
-  response: Response,
-  label: string,
-): Promise<Record<string, unknown>[]> {
+async function jsonArray(response: Response, label: string): Promise<Record<string, unknown>[]> {
   let body: unknown;
   try {
     body = await response.json();
@@ -126,7 +125,7 @@ export class GitHubOAuthClient {
       throw new Error('GitHub user response is invalid');
     return {
       issuer: GITHUB_ISSUER,
-      audience: this.config.clientId,
+      audience: GITHUB_IDENTITY_AUDIENCE,
       subject: String(id),
       login,
       ...(displayName ? { displayName } : {}),

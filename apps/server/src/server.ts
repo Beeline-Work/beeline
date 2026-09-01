@@ -88,11 +88,13 @@ export function createBeelineServer(options: ServerOptions): Server {
         message.includes('too large') ||
         message.includes('size is outside')
           ? 400
-          : message.includes('access denied') || message.includes('manager')
-            ? 403
-            : message.includes('not found')
-              ? 404
-              : 503;
+          : message.includes('already linked') || message.includes('conflict')
+            ? 409
+            : message.includes('access denied') || message.includes('manager')
+              ? 403
+              : message.includes('not found')
+                ? 404
+                : 503;
       console.error(
         '[req-error]',
         method,

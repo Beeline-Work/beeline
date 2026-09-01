@@ -16,8 +16,7 @@ export function isTransientDatabaseConnectionError(error: unknown): boolean {
 
 type Pause = (milliseconds: number) => Promise<void>;
 
-const pause: Pause = (milliseconds) =>
-  new Promise((resolve) => setTimeout(resolve, milliseconds));
+const pause: Pause = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 export interface PostgresDatabaseOptions {
   pool?: Pool;
@@ -173,6 +172,8 @@ CREATE TABLE IF NOT EXISTS identity_external_links (
   PRIMARY KEY (provider, subject)
 );
 CREATE INDEX IF NOT EXISTS identity_external_links_identity_idx ON identity_external_links(identity_id);
+UPDATE identity_external_links SET audience='github'
+WHERE provider='github' AND audience<>'github';
 
 CREATE TABLE IF NOT EXISTS identity_successions (
   old_identity_id text PRIMARY KEY REFERENCES identities(id),

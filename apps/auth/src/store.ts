@@ -97,6 +97,16 @@ const MIGRATIONS = [
     PRIMARY KEY (community, issuer, audience, subject),
     CHECK (pubkey ~ '^[0-9a-f]{64}$')
   )`,
+  `DELETE FROM beeline_identity_links AS legacy
+   USING beeline_identity_links AS canonical
+   WHERE legacy.community=canonical.community
+     AND legacy.issuer='https://github.com'
+     AND canonical.issuer=legacy.issuer
+     AND legacy.subject=canonical.subject
+     AND legacy.audience<>'github'
+     AND canonical.audience='github'`,
+  `UPDATE beeline_identity_links SET audience='github'
+   WHERE issuer='https://github.com' AND audience<>'github'`,
   `CREATE INDEX IF NOT EXISTS beeline_identity_links_pubkey_idx
     ON beeline_identity_links (community, pubkey)`,
   `CREATE TABLE IF NOT EXISTS beeline_key_successions (
@@ -111,6 +121,17 @@ const MIGRATIONS = [
     CHECK (old_pubkey ~ '^[0-9a-f]{64}$'),
     CHECK (new_pubkey ~ '^[0-9a-f]{64}$')
   )`,
+  `DELETE FROM beeline_key_successions AS legacy
+   USING beeline_key_successions AS canonical
+   WHERE legacy.community=canonical.community
+     AND legacy.issuer='https://github.com'
+     AND canonical.issuer=legacy.issuer
+     AND legacy.subject=canonical.subject
+     AND legacy.old_pubkey=canonical.old_pubkey
+     AND legacy.audience<>'github'
+     AND canonical.audience='github'`,
+  `UPDATE beeline_key_successions SET audience='github'
+   WHERE issuer='https://github.com' AND audience<>'github'`,
   `CREATE INDEX IF NOT EXISTS beeline_key_successions_new_idx
     ON beeline_key_successions (community, new_pubkey)`,
   `CREATE TABLE IF NOT EXISTS beeline_nip98_replays (

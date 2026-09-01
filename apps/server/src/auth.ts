@@ -1,4 +1,5 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { GITHUB_IDENTITY_AUDIENCE } from '@beeline/auth/github';
 import type { SqlDatabase } from './database.js';
 
 const ACCESS_LIFETIME_MS = 15 * 60_000;
@@ -73,9 +74,9 @@ export class TokenAuth {
       );
       await database.query(
         `INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience)
-         VALUES('github',$1,$2,'https://github.com','github')
+         VALUES('github',$1,$2,'https://github.com',$3)
          ON CONFLICT(provider,subject) DO UPDATE SET identity_id=EXCLUDED.identity_id`,
-        [github.subject, id],
+        [github.subject, id, GITHUB_IDENTITY_AUDIENCE],
       );
       if (created.rows[0]) {
         await database.query(

@@ -42,6 +42,7 @@ vi.mock('react-native-mmkv', () => ({
 }));
 
 import { MonolithRigTransport } from './monolith-rig-transport';
+import { MonolithPhoneOperationError } from './monolith-operation';
 import { clearMobileSurfaceStorage, createRoomOutbox } from '@/buzz/surface-storage';
 
 const ROOM = 'bb91a1c7-7cad-4fde-aafc-94fccb651ac8';
@@ -136,5 +137,46 @@ describe('monolith Room send path', () => {
       'outbox requires one pre-signed event and its exact render id',
     );
     expect(outbox.list()).toEqual([]);
+  });
+
+  it('reads the managed token identity instead of attempting a Nostr profile query', async () => {
+    controls.fetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          personId: identity.publicKey,
+          name: 'Monolith Person',
+          handle: 'monolith-person',
+          avatar: 'https://images.example/person.png',
+        }),
+        { status: 200 },
+      ),
+    );
+    const client = await new MonolithRigTransport(identity).ensureClient();
+    await expect(client.getGlobalPersonProfile()).resolves.toMatchObject({
+      pubkey: identity.publicKey,
+      name: 'Monolith Person',
+      handle: 'monolith-person',
+      avatar: 'https://images.example/person.png',
+    });
+    expect(controls.fetch).toHaveBeenCalledWith(
+      'https://server.example/v1/phone/operations/getManagedIdentity',
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
+  it('preserves the server error code on a rejected phone operation', async () => {
+    controls.fetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: 'GitHub identity is already linked' }), {
+        status: 409,
+      }),
+    );
+    const transport = new MonolithRigTransport(identity);
+    await expect(transport.operation('completeGitHubIdentityBind', {})).rejects.toEqual(
+      expect.objectContaining<Partial<MonolithPhoneOperationError>>({
+        name: 'MonolithPhoneOperationError',
+        status: 409,
+        code: 'GitHub identity is already linked',
+      }),
+    );
   });
 });

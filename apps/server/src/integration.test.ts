@@ -10,6 +10,8 @@ import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { createBeelineServer } from './server.js';
 import { PushDeliveryLoop } from './background.js';
+import { GitHubOperations } from './github-operations.js';
+import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 
 const HUMAN = createHash('sha256').update('github:owner').digest('hex');
 const AGENT = 'b'.repeat(64);
@@ -45,7 +47,24 @@ describe('monolith integration', () => {
       login: 'owner',
       name: 'Owner',
     }));
-    const phone = new PhoneService(database, 'http://placeholder');
+    const github = new GitHubOperations(
+      database,
+      {
+        authorizationUrl: ({ state, redirectUri }: { state: string; redirectUri: string }) =>
+          `https://github.test/authorize?state=${state}&redirect_uri=${encodeURIComponent(redirectUri)}`,
+        exchangeCode: async () => ({
+          issuer: 'https://github.com' as const,
+          audience: 'oauth-client-id',
+          subject: 'owner',
+          login: 'owner',
+          displayName: 'Owner',
+          accessToken: 'github-user-token',
+        }),
+      } as unknown as GitHubOAuthClient,
+      {} as GitHubAppClient,
+      'github-client-secret',
+    );
+    const phone = new PhoneService(database, 'http://placeholder', github);
     const live = new LiveHub();
     const daemon = new DaemonService(database, live);
     server = createBeelineServer({
@@ -196,6 +215,106 @@ describe('monolith integration', () => {
         )
       ).status,
     ).toBe(401);
+  });
+
+  it('proves every auth identity phone operation through bearer-authenticated HTTP', async () => {
+    const operation = (name: string, payload: unknown = {}) =>
+      request(`/v1/phone/operations/${name}`, 'POST', payload);
+
+    await expect((await operation('getAuthCapabilities')).json()).resolves.toEqual({
+      github: true,
+    });
+    await expect((await operation('getManagedIdentity')).json()).resolves.toEqual({
+      personId: HUMAN,
+      name: 'Owner',
+      handle: 'owner',
+    });
+
+    const profile = await operation('updatePersonProfile', {
+      name: 'Captain',
+      avatar: 'https://images.example/captain.png',
+    });
+    expect(profile.status).toBe(200);
+    await expect(profile.json()).resolves.toEqual({
+      personId: HUMAN,
+      name: 'Captain',
+      handle: 'owner',
+      avatar: 'https://images.example/captain.png',
+    });
+    const cleared = await operation('updatePersonProfile', { avatar: '' });
+    expect(cleared.status).toBe(200);
+    await expect(cleared.json()).resolves.toEqual({
+      personId: HUMAN,
+      name: 'Captain',
+      handle: 'owner',
+    });
+
+    const claimed = await operation('claimManagedHandle', { handle: 'captain.owner' });
+    expect(claimed.status).toBe(200);
+    await expect(claimed.json()).resolves.toMatchObject({ handle: 'captain.owner' });
+    expect((await operation('claimManagedHandle', { handle: 'Not Valid' })).status).toBe(400);
+    await expect((await operation('adoptGitHubHandle')).json()).resolves.toMatchObject({
+      personId: HUMAN,
+      handle: 'captain.owner',
+    });
+    await expect((await operation('getIdentityRecovery')).json()).resolves.toEqual({
+      candidates: [],
+    });
+
+    const state = 's'.repeat(43);
+    const started = await operation('beginGitHubIdentityBind', {
+      redirectUri: 'beeline://buzz/github-callback',
+      state,
+    });
+    expect(started.status).toBe(200);
+    expect(((await started.json()) as { url: string }).url).toContain(`state=${state}`);
+    const completed = await operation('completeGitHubIdentityBind', {
+      challenge: 'github-code',
+      proof: state,
+    });
+    expect(completed.status).toBe(200);
+    await expect(completed.json()).resolves.toEqual({ personId: HUMAN, recovered: false });
+
+    const link = await database.query<{ audience: string }>(
+      `SELECT audience FROM identity_external_links WHERE provider='github' AND subject='owner'`,
+    );
+    expect(link.rows[0]?.audience).toBe('github');
+  });
+
+  it('recovers a GitHub identity conflict and exposes the predecessor over HTTP', async () => {
+    const predecessor = 'c'.repeat(64);
+    await database.query(`UPDATE identities SET github_subject=NULL WHERE id=$1`, [HUMAN]);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle,github_subject) VALUES($1,'human','Old Owner','old-owner','owner')`,
+      [predecessor],
+    );
+    await database.query(
+      `UPDATE identity_external_links SET identity_id=$1,audience='old-oauth-client'
+       WHERE provider='github' AND subject='owner'`,
+      [predecessor],
+    );
+    const state = 'r'.repeat(43);
+    await request('/v1/phone/operations/beginGitHubIdentityBind', 'POST', {
+      redirectUri: 'beeline://buzz/github-callback',
+      state,
+    });
+    expect(
+      (
+        await request('/v1/phone/operations/completeGitHubIdentityBind', 'POST', {
+          challenge: 'github-code',
+          proof: state,
+        })
+      ).status,
+    ).toBe(409);
+    const recovered = await request('/v1/phone/operations/recoverGitHubIdentity', 'POST', {
+      challenge: 'github-code',
+      proof: state,
+    });
+    expect(recovered.status).toBe(200);
+    await expect(recovered.json()).resolves.toEqual({ personId: HUMAN, recovered: true });
+    await expect(
+      (await request('/v1/phone/operations/getIdentityRecovery', 'POST', {})).json(),
+    ).resolves.toEqual({ candidates: [{ personId: predecessor, handle: 'old-owner' }] });
   });
 
   it('stores and serves media bytes through token auth with the configured cap', async () => {

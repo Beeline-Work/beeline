@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="Beeline is the workspace for all intelligence. Steer and review your AI coding agents from your phone."
+      content="Beeline is the shared workspace where humans and agents think, build, steer, and ship together."
     />
     <meta name="theme-color" content="#14091a" />
     <meta name="robots" content="index,follow" />
@@ -41,23 +41,21 @@
         font-weight: 700;
         font-display: swap;
       }
-
       :root {
         color-scheme: dark;
-        --canvas: #14091a;
-        --surface: #1c1520;
-        --surface-raised: #241c28;
+        --aubergine: #14091a;
+        --plum: #1c1022;
+        --ink: #0d0710;
         --paper: #f0f0f3;
         --quiet: #c9c9d1;
         --chrome: #83838d;
         --ghost: #6c6c76;
-        --line: #332a37;
-        --line-strong: #514857;
+        --line: #392b3e;
+        --line-strong: #59475f;
         --brass: #d7af5f;
         --radius: 3px;
-        --page: min(1180px, calc(100vw - 48px));
+        --page: min(1240px, calc(100vw - 64px));
       }
-
       * {
         box-sizing: border-box;
       }
@@ -67,7 +65,7 @@
       body {
         margin: 0;
         overflow-x: hidden;
-        background: var(--canvas);
+        background: var(--aubergine);
         color: var(--paper);
         font-family: 'IBM Plex Sans', system-ui, sans-serif;
         font-size: 17px;
@@ -89,39 +87,38 @@
         outline: 2px solid var(--brass);
         outline-offset: 4px;
       }
-      .skip-link {
-        position: fixed;
-        top: 12px;
-        left: 12px;
-        z-index: 50;
-        transform: translateY(-150%);
-        padding: 10px 14px;
-        border-radius: var(--radius);
-        background: var(--paper);
-        color: var(--canvas);
-        font:
-          600 13px/1 'IBM Plex Mono',
-          monospace;
-      }
-      .skip-link:focus {
-        transform: translateY(0);
-      }
       .wrap {
         width: var(--page);
         margin-inline: auto;
       }
       .mono {
         font-family: 'IBM Plex Mono', monospace;
-        font-size: 0.75rem;
-        letter-spacing: 0.12em;
+        font-size: 0.72rem;
+        font-weight: 600;
+        letter-spacing: 0.14em;
         text-transform: uppercase;
       }
-      .eyebrow {
-        margin: 0 0 22px;
+      .kicker {
+        margin: 0;
         color: var(--brass);
-        font-weight: 600;
       }
-
+      .skip-link {
+        position: fixed;
+        top: 12px;
+        left: 12px;
+        z-index: 50;
+        transform: translateY(-160%);
+        padding: 10px 14px;
+        border-radius: var(--radius);
+        background: var(--paper);
+        color: var(--aubergine);
+        font:
+          600 12px/1 'IBM Plex Mono',
+          monospace;
+      }
+      .skip-link:focus {
+        transform: none;
+      }
       .site-header {
         position: absolute;
         inset: 0 0 auto;
@@ -129,18 +126,17 @@
         border-bottom: 1px solid var(--line);
       }
       .nav {
-        min-height: 76px;
+        min-height: 78px;
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 24px;
       }
       .wordmark {
-        color: var(--paper);
         font-family: 'Bricolage Grotesque', 'IBM Plex Sans', sans-serif;
-        font-size: 24px;
+        font-size: 25px;
         font-weight: 700;
-        letter-spacing: -0.04em;
+        letter-spacing: -0.045em;
         line-height: 1;
         text-decoration: none;
       }
@@ -150,68 +146,398 @@
       .nav-links {
         display: flex;
         align-items: center;
-        gap: 28px;
+        gap: 30px;
       }
       .nav-links a {
         color: var(--quiet);
         font:
-          600 12px/1 'IBM Plex Mono',
+          600 11px/1 'IBM Plex Mono',
           monospace;
-        letter-spacing: 0.08em;
+        letter-spacing: 0.1em;
         text-decoration: none;
         text-transform: uppercase;
       }
       .nav-links a:hover {
         color: var(--paper);
       }
-
       .hero {
-        min-height: 860px;
+        min-height: 920px;
         min-height: 100svh;
+        display: flex;
+        align-items: flex-end;
+        padding: 170px 0 76px;
+      }
+      .hero-grid {
         display: grid;
-        place-items: center;
-        padding: 150px 0 92px;
-        text-align: center;
+        grid-template-columns: minmax(0, 1fr) 290px;
+        gap: clamp(56px, 9vw, 140px);
+        align-items: end;
       }
-      .hero-inner {
-        max-width: 980px;
-        margin-inline: auto;
-      }
-      h1 {
-        max-width: 920px;
-        margin: 0 auto;
-        font-size: clamp(3.15rem, 7.4vw, 7.1rem);
+      .hero h1 {
+        margin: 28px 0 0;
+        font-size: clamp(4.8rem, 9.4vw, 8.9rem);
         font-weight: 600;
-        letter-spacing: -0.058em;
-        line-height: 0.95;
-        text-wrap: balance;
+        letter-spacing: -0.065em;
+        line-height: 0.82;
+      }
+      .hero h1 span {
+        display: block;
+      }
+      .hero h1 span:nth-child(2) {
+        margin-left: 12%;
+        color: var(--quiet);
+      }
+      .hero h1 span:nth-child(3)::after {
+        content: '.';
+        color: var(--brass);
+      }
+      .hero-aside {
+        padding-bottom: 8px;
       }
       .hero-lede {
-        max-width: 680px;
-        margin: 32px auto 0;
+        margin: 0;
         color: var(--quiet);
-        font-size: clamp(1.08rem, 2vw, 1.35rem);
-        line-height: 1.5;
+        font-size: 1.18rem;
+        line-height: 1.55;
+      }
+      .hero-lede strong {
+        color: var(--paper);
+        font-weight: 600;
+      }
+      .assembly-count {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 18px;
+        margin-top: 42px;
+        padding-top: 20px;
+        border-top: 1px solid var(--line-strong);
+      }
+      .assembly-count strong {
+        display: block;
+        color: var(--paper);
+        font-size: 2rem;
+        font-weight: 400;
+        letter-spacing: -0.04em;
+      }
+      .assembly-count span {
+        color: var(--chrome);
+      }
+      .thesis {
+        border-block: 1px solid var(--line);
+      }
+      .thesis-inner {
+        display: grid;
+        grid-template-columns: 0.78fr 1.22fr;
+        gap: clamp(60px, 11vw, 160px);
+        padding: 148px 0 156px;
+      }
+      .thesis h2,
+      .product-copy h2,
+      .gate-copy h2,
+      .connect h2 {
+        margin: 0;
+        font-size: clamp(2.8rem, 5.5vw, 5.3rem);
+        font-weight: 600;
+        letter-spacing: -0.055em;
+        line-height: 0.98;
         text-wrap: balance;
+      }
+      .thesis h2 {
+        margin-top: 26px;
+      }
+      .thesis-copy {
+        max-width: 650px;
+        margin: 0;
+        color: var(--quiet);
+        font-size: clamp(1.35rem, 2.5vw, 2.05rem);
+        letter-spacing: -0.025em;
+        line-height: 1.35;
+      }
+      .thesis-copy strong {
+        color: var(--paper);
+        font-weight: 600;
+      }
+      .line-section {
+        padding: 138px 0 0;
+      }
+      .line-heading {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 40px;
+        margin-bottom: 52px;
+      }
+      .line-heading p:last-child {
+        max-width: 480px;
+        margin: 0;
+        color: var(--quiet);
+      }
+      .stages {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        border-block: 1px solid var(--line-strong);
+      }
+      .stage {
+        min-height: 280px;
+        padding: 28px 28px 34px 0;
+        border-right: 1px solid var(--line);
+      }
+      .stage + .stage {
+        padding-left: 28px;
+      }
+      .stage:last-child {
+        padding-right: 0;
+        border-right: 0;
+      }
+      .stage-index {
+        display: flex;
+        justify-content: space-between;
+        color: var(--ghost);
+      }
+      .stage h3 {
+        margin: 78px 0 12px;
+        font-size: 1.45rem;
+        font-weight: 600;
+        letter-spacing: -0.025em;
+      }
+      .stage p {
+        margin: 0;
+        color: var(--chrome);
+        font-size: 0.96rem;
+      }
+      .stage:last-child .stage-index,
+      .stage:last-child h3 {
+        color: var(--brass);
+      }
+      .product {
+        display: grid;
+        grid-template-columns: minmax(280px, 0.72fr) minmax(0, 1.28fr);
+        gap: clamp(50px, 9vw, 130px);
+        align-items: center;
+        padding: 184px 0;
+      }
+      .product-copy {
+        position: sticky;
+        top: 56px;
+      }
+      .product-copy h2,
+      .gate-copy h2,
+      .connect h2 {
+        margin-top: 26px;
+      }
+      .product-copy > p:last-child,
+      .gate-copy > p:last-of-type,
+      .connect-copy {
+        margin: 30px 0 0;
+        color: var(--quiet);
+        font-size: 1.08rem;
+      }
+      .room-visual {
+        position: relative;
+        min-height: 870px;
+      }
+      .screen {
+        overflow: hidden;
+        margin: 0;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius);
+        background: var(--ink);
+      }
+      .screen img {
+        width: 100%;
+        height: auto;
+      }
+      .screen-main {
+        width: min(430px, 72%);
+        margin-left: auto;
+      }
+      .screen-secondary {
+        position: absolute;
+        left: 0;
+        bottom: 0;
+        width: min(330px, 55%);
+      }
+      .screen-caption {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 12px 0;
+        color: var(--chrome);
+        font:
+          600 10px/1.3 'IBM Plex Mono',
+          monospace;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+      .screen-caption span:last-child {
+        color: var(--brass);
+      }
+      .capability-list {
+        border-top: 1px solid var(--line-strong);
+      }
+      .capability {
+        display: grid;
+        grid-template-columns: 0.55fr 1.45fr;
+        gap: 50px;
+        padding: 42px 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .capability h3 {
+        margin: 0;
+        color: var(--paper);
+        font:
+          600 12px/1.4 'IBM Plex Mono',
+          monospace;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+      .capability p {
+        max-width: 680px;
+        margin: 0;
+        color: var(--quiet);
+        font-size: clamp(1.18rem, 2.3vw, 1.72rem);
+        letter-spacing: -0.02em;
+        line-height: 1.4;
+      }
+      .gate {
+        display: grid;
+        grid-template-columns: minmax(0, 1.1fr) minmax(300px, 0.9fr);
+        gap: clamp(56px, 9vw, 128px);
+        align-items: center;
+        padding: 180px 0;
+      }
+      .gate-visual {
+        position: relative;
+        padding: 0 0 38px 38px;
+      }
+      .gate-visual::before {
+        content: '';
+        position: absolute;
+        inset: 38px auto 0 0;
+        width: 1px;
+        background: var(--brass);
+      }
+      .gate-visual::after {
+        content: 'HUMAN GATE';
+        position: absolute;
+        left: -2px;
+        bottom: 0;
+        color: var(--brass);
+        font:
+          600 10px/1 'IBM Plex Mono',
+          monospace;
+        letter-spacing: 0.14em;
+        writing-mode: vertical-rl;
+        transform: rotate(180deg);
+      }
+      .gate-proof {
+        margin-top: 42px !important;
+        padding-top: 20px;
+        border-top: 1px solid var(--line-strong);
+        color: var(--brass) !important;
+        font-size: 0.72rem !important;
+      }
+      .connect {
+        padding: 160px 0;
+        border-block: 1px solid var(--line);
+      }
+      .connect-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 0.92fr) minmax(340px, 1.08fr);
+        gap: clamp(60px, 10vw, 150px);
+        align-items: end;
+      }
+      .terminal-label {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 13px;
+        color: var(--ghost);
+      }
+      .command {
+        min-height: 84px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        padding: 18px 18px 18px 22px;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius);
+        background: var(--ink);
+      }
+      .command code {
+        min-width: 0;
+        overflow-x: auto;
+        color: var(--paper);
+        font:
+          400 clamp(0.82rem, 1.6vw, 1.05rem)/1.5 'IBM Plex Mono',
+          monospace;
+        white-space: nowrap;
+      }
+      .prompt {
+        margin-right: 10px;
+        color: var(--brass);
+      }
+      .copy-button {
+        min-width: 76px;
+        min-height: 46px;
+        flex: 0 0 auto;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius);
+        background: var(--plum);
+        color: var(--quiet);
+        cursor: pointer;
+        font:
+          600 10px/1 'IBM Plex Mono',
+          monospace;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+      .copy-button:hover {
+        border-color: var(--brass);
+        color: var(--paper);
+      }
+      .terminal-note {
+        min-height: 1.5em;
+        margin: 12px 0 0;
+        color: var(--ghost);
+        font:
+          400 11px/1.5 'IBM Plex Mono',
+          monospace;
+      }
+      .download {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: clamp(60px, 10vw, 150px);
+        align-items: end;
+        padding: 150px 0;
+      }
+      .download h2 {
+        max-width: 680px;
+        margin: 24px 0 0;
+        font-size: clamp(3rem, 6.4vw, 6.6rem);
+        font-weight: 600;
+        letter-spacing: -0.06em;
+        line-height: 0.93;
+      }
+      .download h2::after {
+        content: '.';
+        color: var(--brass);
       }
       .download-links {
         display: flex;
         flex-wrap: wrap;
-        justify-content: center;
         gap: 12px;
-        margin-top: 50px;
       }
       .store-badge {
-        min-width: 186px;
-        min-height: 56px;
+        min-width: 190px;
+        min-height: 58px;
         display: inline-flex;
         align-items: center;
-        gap: 11px;
+        gap: 12px;
         padding: 9px 17px;
         border: 1px solid var(--line-strong);
         border-radius: var(--radius);
-        background: var(--surface);
-        color: var(--paper);
+        background: var(--plum);
         text-align: left;
         text-decoration: none;
         transition:
@@ -220,7 +546,7 @@
       }
       .store-badge:hover {
         border-color: var(--brass);
-        background: var(--surface-raised);
+        background: #241729;
       }
       .store-badge svg {
         width: 25px;
@@ -237,7 +563,7 @@
         font:
           400 9px/1.2 'IBM Plex Mono',
           monospace;
-        letter-spacing: 0.07em;
+        letter-spacing: 0.06em;
         text-transform: uppercase;
       }
       .store-badge strong {
@@ -246,264 +572,79 @@
         line-height: 1;
       }
       .availability {
-        margin: 18px 0 0;
+        margin: 16px 0 0;
         color: var(--ghost);
         font:
-          400 11px/1.4 'IBM Plex Mono',
+          400 10px/1.5 'IBM Plex Mono',
           monospace;
-        letter-spacing: 0.06em;
+        letter-spacing: 0.07em;
         text-transform: uppercase;
-      }
-
-      .proof {
-        overflow: hidden;
-        border-block: 1px solid var(--line);
-        background: var(--canvas);
-      }
-      .proof-heading {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 48px;
-        align-items: end;
-        padding: 132px 0 72px;
-      }
-      h2 {
-        margin: 0;
-        font-size: clamp(2.15rem, 5.2vw, 4.8rem);
-        font-weight: 600;
-        letter-spacing: -0.045em;
-        line-height: 1;
-        text-wrap: balance;
-      }
-      .section-copy {
-        max-width: 520px;
-        margin: 0 0 5px;
-        color: var(--quiet);
-        font-size: 1.1rem;
-      }
-      .phone-stage {
-        width: min(1440px, calc(100vw - 24px));
-        min-height: 675px;
-        display: grid;
-        grid-template-columns: repeat(4, minmax(230px, 1fr));
-        gap: 24px;
-        align-items: end;
-        margin: 0 auto;
-      }
-      .phone {
-        position: relative;
-        overflow: hidden;
-        margin: 0;
-        border: 1px solid var(--line-strong);
-        border-bottom: 0;
-        border-radius: 3px 3px 0 0;
-        background: #070707;
-      }
-      .phone:nth-child(1),
-      .phone:nth-child(4) {
-        transform: translateY(86px);
-      }
-      .phone:nth-child(2) {
-        transform: translateY(22px);
-      }
-      .phone img {
-        width: 100%;
-        height: auto;
-      }
-      .phone-label {
-        position: absolute;
-        top: 16px;
-        left: 16px;
-        z-index: 2;
-        margin: 0;
-        padding: 7px 9px;
-        border: 1px solid var(--line-strong);
-        border-radius: var(--radius);
-        background: rgba(11, 9, 12, 0.9);
-        color: var(--quiet);
-        font:
-          600 10px/1 'IBM Plex Mono',
-          monospace;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-      }
-
-      .capabilities {
-        padding: 160px 0;
-      }
-      .capability {
-        display: grid;
-        grid-template-columns: 80px minmax(260px, 0.9fr) 1.1fr;
-        gap: 32px;
-        align-items: start;
-        padding: 48px 0;
-        border-top: 1px solid var(--line);
-      }
-      .capability:last-child {
-        border-bottom: 1px solid var(--line);
-      }
-      .capability-num {
-        color: var(--brass);
-      }
-      .capability h3 {
-        margin: -5px 0 0;
-        font-size: clamp(1.55rem, 3vw, 2.4rem);
-        font-weight: 600;
-        letter-spacing: -0.035em;
-        line-height: 1.12;
-      }
-      .capability p {
-        max-width: 540px;
-        margin: 0;
-        color: var(--quiet);
-      }
-
-      .connect {
-        padding: 0 0 160px;
-      }
-      .connect-panel {
-        position: relative;
-        overflow: hidden;
-        padding: clamp(32px, 7vw, 82px);
-        border: 1px solid var(--line-strong);
-        border-radius: var(--radius);
-        background: var(--surface);
-      }
-      .connect-grid {
-        display: grid;
-        grid-template-columns: 0.9fr 1.1fr;
-        gap: 72px;
-        align-items: center;
-      }
-      .connect h2 {
-        font-size: clamp(2.3rem, 5vw, 4.6rem);
-      }
-      .connect-copy {
-        margin: 24px 0 0;
-        color: var(--quiet);
-      }
-      .terminal {
-        min-width: 0;
-      }
-      .terminal-label {
-        display: flex;
-        justify-content: space-between;
-        margin-bottom: 12px;
-        color: var(--ghost);
-      }
-      .command {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 16px;
-        min-height: 78px;
-        padding: 18px 18px 18px 22px;
-        border: 1px solid var(--line-strong);
-        border-radius: var(--radius);
-        background: #100b12;
-      }
-      .command code {
-        overflow-x: auto;
-        color: var(--paper);
-        font:
-          400 clamp(0.83rem, 2vw, 1.12rem)/1.4 'IBM Plex Mono',
-          monospace;
-        white-space: nowrap;
-      }
-      .prompt {
-        margin-right: 10px;
-        color: var(--brass);
-      }
-      .copy-button {
-        flex: 0 0 auto;
-        min-width: 68px;
-        min-height: 42px;
-        border: 1px solid var(--line-strong);
-        border-radius: var(--radius);
-        background: var(--surface);
-        color: var(--quiet);
-        cursor: pointer;
-        font:
-          600 10px/1 'IBM Plex Mono',
-          monospace;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-      }
-      .copy-button:hover {
-        border-color: var(--brass);
-        color: var(--paper);
-      }
-      .terminal-note {
-        margin: 13px 0 0;
-        color: var(--ghost);
-        font:
-          400 12px/1.5 'IBM Plex Mono',
-          monospace;
-      }
-
-      .final-cta {
-        padding: 160px 0;
-        border-top: 1px solid var(--line);
-        text-align: center;
-      }
-      .final-cta h2 {
-        max-width: 760px;
-        margin-inline: auto;
       }
       .site-footer {
         border-top: 1px solid var(--line);
       }
       .footer-inner {
-        min-height: 110px;
+        min-height: 112px;
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 24px;
         color: var(--ghost);
         font:
-          400 11px/1.5 'IBM Plex Mono',
+          400 10px/1.5 'IBM Plex Mono',
           monospace;
-        letter-spacing: 0.04em;
+        letter-spacing: 0.07em;
         text-transform: uppercase;
       }
       .footer-links {
         display: flex;
-        gap: 24px;
+        gap: 26px;
       }
       .footer-links a {
         color: var(--quiet);
         text-underline-offset: 4px;
       }
-
-      @media (max-width: 900px) {
-        .proof-heading,
-        .connect-grid {
+      @media (max-width: 960px) {
+        .hero-grid,
+        .thesis-inner,
+        .product,
+        .gate,
+        .connect-grid,
+        .download {
           grid-template-columns: 1fr;
         }
-        .proof-heading {
-          gap: 28px;
+        .hero {
+          min-height: 880px;
         }
-        .phone-stage {
-          width: 100%;
-          max-width: 100%;
-          grid-template-columns: repeat(4, 40vw);
-          overflow-x: auto;
-          overscroll-behavior-inline: contain;
-          padding-inline: 24px;
-          scroll-snap-type: x proximity;
-          scrollbar-color: var(--line-strong) transparent;
+        .hero-aside {
+          max-width: 620px;
         }
-        .phone {
-          scroll-snap-align: center;
+        .stages {
+          grid-template-columns: 1fr 1fr;
         }
-        .capability {
-          grid-template-columns: 52px 1fr;
+        .stage:nth-child(2) {
+          border-right: 0;
         }
-        .capability p {
-          grid-column: 2;
+        .stage:nth-child(-n + 2) {
+          border-bottom: 1px solid var(--line);
         }
-        .connect-grid {
-          gap: 46px;
+        .product-copy {
+          position: static;
+          max-width: 680px;
+        }
+        .room-visual {
+          min-height: 790px;
+        }
+        .gate-visual {
+          max-width: 620px;
+        }
+        .connect-grid,
+        .download {
+          align-items: start;
+        }
+        .terminal,
+        .download-side {
+          width: min(100%, 650px);
         }
       }
       @media (max-width: 620px) {
@@ -511,25 +652,121 @@
           --page: calc(100vw - 32px);
         }
         .nav {
-          min-height: 66px;
+          min-height: 68px;
+        }
+        .nav-links {
+          gap: 0;
         }
         .nav-links a:first-child {
           display: none;
         }
-        .nav-links a,
-        h1,
-        h2 {
-          letter-spacing: 0;
-        }
         .hero {
           min-height: 760px;
-          padding-top: 125px;
+          padding: 128px 0 54px;
         }
-        h1 {
-          font-size: clamp(3.1rem, 15vw, 5.25rem);
+        .hero-grid {
+          gap: 54px;
+        }
+        .hero h1 {
+          font-size: clamp(2.6rem, 12.6vw, 3.55rem);
+          letter-spacing: -0.045em;
+          line-height: 0.9;
+        }
+        .hero h1 span:nth-child(2) {
+          margin-left: 7%;
         }
         .hero-lede {
-          margin-top: 26px;
+          font-size: 1.05rem;
+        }
+        .thesis-inner {
+          gap: 40px;
+          padding: 92px 0 98px;
+        }
+        .thesis h2,
+        .product-copy h2,
+        .gate-copy h2,
+        .connect h2 {
+          font-size: clamp(2.4rem, 11.5vw, 3.2rem);
+          letter-spacing: -0.045em;
+        }
+        .thesis-copy {
+          font-size: 1.25rem;
+        }
+        .line-section {
+          padding-top: 90px;
+        }
+        .line-heading {
+          display: block;
+          margin-bottom: 36px;
+        }
+        .line-heading p:last-child {
+          margin-top: 18px;
+        }
+        .stages {
+          grid-template-columns: 1fr;
+        }
+        .stage,
+        .stage + .stage {
+          min-height: 0;
+          padding: 27px 0 30px;
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+        }
+        .stage:last-child {
+          border-bottom: 0;
+        }
+        .stage h3 {
+          margin-top: 40px;
+        }
+        .product {
+          gap: 54px;
+          padding: 112px 0;
+        }
+        .room-visual {
+          min-height: 610px;
+        }
+        .screen-main {
+          width: 78%;
+        }
+        .screen-secondary {
+          width: 60%;
+        }
+        .capability {
+          grid-template-columns: 1fr;
+          gap: 18px;
+          padding: 34px 0;
+        }
+        .capability p {
+          font-size: 1.18rem;
+        }
+        .gate {
+          gap: 64px;
+          padding: 112px 0;
+        }
+        .gate-visual {
+          padding: 0 0 30px 22px;
+        }
+        .connect {
+          padding: 104px 0;
+        }
+        .connect-grid {
+          gap: 54px;
+        }
+        .command {
+          min-height: 0;
+          align-items: stretch;
+          flex-direction: column;
+        }
+        .copy-button {
+          align-self: flex-end;
+        }
+        .download {
+          gap: 50px;
+          padding: 104px 0;
+        }
+        .download h2 {
+          font-size: clamp(2.8rem, 13.5vw, 4rem);
+          letter-spacing: -0.045em;
         }
         .download-links {
           display: grid;
@@ -539,70 +776,11 @@
           width: 100%;
           justify-content: center;
         }
-        .proof-heading {
-          padding: 74px 0 48px;
-        }
-        .phone-stage {
-          width: 100%;
-          grid-template-columns: repeat(4, 72vw);
-          gap: 12px;
-          padding-inline: 16px;
-        }
-        .phone:nth-child(n) {
-          transform: translateY(48px);
-        }
-        .phone:nth-child(2) {
-          transform: none;
-        }
-        .capabilities {
-          padding: 96px 0;
-        }
-        .capability {
-          grid-template-columns: 1fr;
-          gap: 14px;
-          padding: 38px 0;
-        }
-        .capability p {
-          grid-column: auto;
-        }
-        .connect {
-          padding-bottom: 96px;
-        }
-        .connect-panel {
-          padding: 30px 22px;
-        }
-        .command {
-          align-items: stretch;
-          flex-direction: column;
-        }
-        .copy-button {
-          align-self: flex-end;
-        }
-        .final-cta {
-          padding: 96px 0;
-        }
         .footer-inner {
+          min-height: 130px;
           align-items: flex-start;
           flex-direction: column;
           justify-content: center;
-        }
-      }
-      @media (max-width: 430px) {
-        #hero-title {
-          font-size: clamp(2.5rem, 11.5vw, 3rem);
-          overflow-wrap: break-word;
-        }
-        #proof-title,
-        #connect-title {
-          font-size: clamp(1.8rem, 8.5vw, 2.1rem);
-          overflow-wrap: break-word;
-        }
-        #final-title {
-          font-size: clamp(2.4rem, 11vw, 2.9rem);
-          overflow-wrap: break-word;
-        }
-        .nav-links a {
-          letter-spacing: 0;
         }
       }
       @media (prefers-reduced-motion: reduce) {
@@ -623,204 +801,218 @@
       <nav class="nav wrap" aria-label="Primary navigation">
         <a class="wordmark" href="/" aria-label="Beeline home">beeline<span>.</span></a>
         <div class="nav-links">
-          <a href="#what-it-is">What it is</a>
-          <a href="#connect">Connect an agent</a>
+          <a href="#how-it-works">How it works</a><a href="#connect">Connect an agent</a>
         </div>
       </nav>
     </header>
-
     <main id="main">
       <section class="hero" aria-labelledby="hero-title">
-        <div class="hero-inner wrap">
-          <p class="eyebrow mono">AI work, under human direction</p>
-          <h1 id="hero-title">workspace for all intelligence</h1>
-          <p class="hero-lede">
-            Steer and review your AI coding agents from your phone. Follow every agent, send a new
-            direction, and approve the work from one place.
+        <div class="hero-grid wrap">
+          <div>
+            <p class="kicker mono">Humans + agents, one room</p>
+            <h1 id="hero-title">
+              <span>workspace</span><span>for all</span><span>intelligence</span>
+            </h1>
+          </div>
+          <aside class="hero-aside" aria-label="Beeline summary">
+            <p class="hero-lede">
+              <strong>Your people and your agents finally share the work.</strong> Think together.
+              Hand off execution. Steer in flight. Keep the final word.
+            </p>
+            <div class="assembly-count mono" aria-label="Many humans and many agents">
+              <span><strong>N</strong>humans</span><span><strong>M</strong>agents</span>
+            </div>
+          </aside>
+        </div>
+      </section>
+      <section class="thesis" aria-labelledby="thesis-title">
+        <div class="thesis-inner wrap">
+          <div>
+            <p class="kicker mono">The shared workspace</p>
+            <h2 id="thesis-title">Not another agent chat.</h2>
+          </div>
+          <p class="thesis-copy">
+            Stop stitching private AI sessions together with status updates and screen shares.
+            Beeline puts <strong>the team, the agents, the task, and every hand-off</strong> in the
+            same Room.
           </p>
+        </div>
+      </section>
+      <section class="line-section wrap" id="how-it-works" aria-labelledby="line-title">
+        <div class="line-heading">
+          <p class="kicker mono" id="line-title">The human + agent assembly line</p>
+          <p>Work moves fast because the boundaries are clear, visible, and built in.</p>
+        </div>
+        <div class="stages">
+          <article class="stage">
+            <div class="stage-index mono"><span>01</span><span>Room</span></div>
+            <h3>Think in shared context.</h3>
+            <p>People and agents see the same request, conversation, decisions, and state.</p>
+          </article>
+          <article class="stage">
+            <div class="stage-index mono"><span>02</span><span>Corner</span></div>
+            <h3>Hand off real work.</h3>
+            <p>
+              An agent moves into an isolated corner with a visible mandate and the right tools.
+            </p>
+          </article>
+          <article class="stage">
+            <div class="stage-index mono"><span>03</span><span>Steer</span></div>
+            <h3>Change course in flight.</h3>
+            <p>
+              Anyone in the Room can follow along. Humans can steer before effort turns into drift.
+            </p>
+          </article>
+          <article class="stage">
+            <div class="stage-index mono"><span>04</span><span>Merge</span></div>
+            <h3>The human decides.</h3>
+            <p>The agent can propose, test, and revise. Acceptance remains a human act.</p>
+          </article>
+        </div>
+      </section>
+      <section class="product wrap" aria-labelledby="product-title">
+        <div class="product-copy">
+          <p class="kicker mono">One room, many minds</p>
+          <h2 id="product-title">Agents become teammates when the work is shared.</h2>
+          <p>
+            Give every contributor a visible identity. Address the right agent. Watch hand-offs
+            happen in the open. Keep decisions beside the work they shaped.
+          </p>
+        </div>
+        <div class="room-visual" aria-label="Beeline Room and Workspace screens">
+          <figure class="screen screen-main">
+            <img
+              src="assets/landing/screens/02-live-room.png"
+              alt="A Beeline Room where a human and agent collaborate on live work"
+              width="1080"
+              height="2400"
+              loading="lazy"
+            />
+            <figcaption class="screen-caption">
+              <span>Shared Room</span><span>Live</span>
+            </figcaption>
+          </figure>
+          <figure class="screen screen-secondary">
+            <img
+              src="assets/landing/screens/01-workspace-home.png"
+              alt="Beeline Workspace showing Rooms and agent activity"
+              width="1080"
+              height="2400"
+              loading="lazy"
+            />
+            <figcaption class="screen-caption"><span>Workspace</span><span>N + M</span></figcaption>
+          </figure>
+        </div>
+      </section>
+      <section class="capability-list wrap" aria-label="Agent teammate capabilities">
+        <article class="capability">
+          <h3>Research</h3>
+          <p>Bring specialists into the Room to investigate, compare, and report to everyone.</p>
+        </article>
+        <article class="capability">
+          <h3>Build</h3>
+          <p>
+            Send coding agents into focused corners with repository context and a clear mandate.
+          </p>
+        </article>
+        <article class="capability">
+          <h3>Coordinate</h3>
+          <p>
+            Let agents hand work to other agents without hiding the human request that authorized
+            it.
+          </p>
+        </article>
+        <article class="capability">
+          <h3>Review</h3>
+          <p>Inspect the plan, the change, and the evidence before deciding what becomes real.</p>
+        </article>
+      </section>
+      <section class="gate wrap" aria-labelledby="gate-title">
+        <div class="gate-visual">
+          <figure class="screen">
+            <img
+              src="assets/landing/screens/03-change-review.png"
+              alt="A Beeline change review waiting for human approval"
+              width="1080"
+              height="2400"
+              loading="lazy"
+            />
+          </figure>
+        </div>
+        <div class="gate-copy">
+          <p class="kicker mono">Approval is a feature</p>
+          <h2 id="gate-title">Move at machine speed. Keep human judgment.</h2>
+          <p>
+            Agents can carry the work to the line. Only a human takes it across. Beeline makes the
+            merge gate visible, attributable, and impossible to hand-wave away.
+          </p>
+          <p class="gate-proof mono">Agents execute · humans accept</p>
+        </div>
+      </section>
+      <section class="connect" id="connect" aria-labelledby="connect-title">
+        <div class="connect-grid wrap">
+          <div>
+            <p class="kicker mono">Bring your own agent</p>
+            <h2 id="connect-title">One command. Your machine. Your models.</h2>
+            <p class="connect-copy">
+              Beeline is the workspace, not the body. Connect the coding agents already running on
+              your computer, then invite them into the Rooms where your team works.
+            </p>
+          </div>
+          <div class="terminal">
+            <div class="terminal-label mono"><span>Terminal</span><span>Node 20+</span></div>
+            <div class="command">
+              <code
+                ><span class="prompt" aria-hidden="true">›</span
+                ><span>npx usebeeline connect</span></code
+              ><button
+                class="copy-button"
+                type="button"
+                data-copy-command
+                aria-describedby="copy-status"
+              >
+                Copy
+              </button>
+            </div>
+            <p class="terminal-note" id="copy-status" aria-live="polite">
+              No global install required.
+            </p>
+          </div>
+        </div>
+      </section>
+      <section class="download wrap" aria-labelledby="download-title">
+        <div>
+          <p class="kicker mono">Your team is already moving</p>
+          <h2 id="download-title">Join the room</h2>
+        </div>
+        <div class="download-side">
           <div class="download-links" aria-label="Download Beeline">
             <a
               class="store-badge"
-              data-store="appStore"
+              data-store="app-store"
               href="#ios-coming-soon"
               aria-label="Download Beeline on the App Store"
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
+              ><svg viewBox="0 0 24 24" aria-hidden="true">
                 <path
                   d="M17.1 12.54c.02 2.24 1.96 2.98 1.98 2.99-.01.05-.31 1.08-1.02 2.14-.62.92-1.27 1.84-2.28 1.86-.99.02-1.31-.59-2.45-.59-1.13 0-1.49.57-2.43.61-.97.04-1.71-.98-2.34-1.89-1.28-1.85-2.26-5.22-.95-7.5a3.65 3.65 0 0 1 3.1-1.88c.97-.02 1.88.65 2.45.65.57 0 1.64-.81 2.76-.69.47.02 1.79.19 2.63 1.43-.07.04-1.57.92-1.55 2.87ZM15.19 7.06c.52-.63.87-1.5.78-2.36-.75.03-1.65.5-2.18 1.13-.48.55-.9 1.43-.79 2.27.83.06 1.68-.42 2.19-1.04Z"
-                />
-              </svg>
-              <span><small>Download on the</small><strong>App Store</strong></span>
-            </a>
-            <a
+                /></svg
+              ><span><small>Download on the</small><strong>App Store</strong></span></a
+            ><a
               class="store-badge"
-              data-store="googlePlay"
+              data-store="google-play"
               href="#android-coming-soon"
               aria-label="Get Beeline on Google Play"
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
+              ><svg viewBox="0 0 24 24" aria-hidden="true">
                 <path
-                  d="M4.2 3.25a1.8 1.8 0 0 0-.2.84v15.82c0 .3.07.58.2.84l9.05-8.75L4.2 3.25Zm10.1 9.77-2.28 2.2-7.04 6.8c.28.06.58.01.87-.15l11.18-6.3-2.73-2.55Zm3.83-2.08-2.81-1.59-2.27 2.2 2.29 2.2 2.8-1.58c.88-.5.88-1.73-.01-2.23ZM5.85 2.13a1.45 1.45 0 0 0-.87-.15l7.04 6.8 2.26 2.18 2.72-2.54L5.85 2.13Z"
-                />
-              </svg>
-              <span><small>Get it on</small><strong>Google Play</strong></span>
-            </a>
+                  d="M4.2 3.25a1.8 1.8 0 0 0-.2.84v15.82c0 .3.07.58.2.84l9.05-8.75L4.2 3.25Zm10.1 9.77-2.28 2.2-7.04 6.8c.28.06.58.01.87-.15l11.18-6.3-2.73-2.55Zm3.83-2.08-2.81-1.59-2.27 2.2 2.29 2.2 2.8-1.58c.88-.5.88-1.73-.01-2.23ZM5.85 2.13a1.45 1.45 0 0 0-.87-.15l7.04 6.8 2.26 2.18 2.72-2.54L17 8.42 5.85 2.13Z"
+                /></svg
+              ><span><small>Get it on</small><strong>Google Play</strong></span></a
+            >
           </div>
           <p class="availability">iOS and Android listings coming soon</p>
         </div>
       </section>
-
-      <section class="proof" id="what-it-is" aria-labelledby="proof-title">
-        <div class="proof-heading wrap">
-          <div>
-            <p class="eyebrow mono">The work, in your hand</p>
-            <h2 id="proof-title">One calm log for the whole job.</h2>
-          </div>
-          <p class="section-copy">
-            Messages, plans, tool activity, live task state, and the change itself. Beeline keeps
-            the conversation and the next decision close at hand.
-          </p>
-        </div>
-        <div class="phone-stage" aria-label="Beeline app screenshots">
-          <figure class="phone">
-            <figcaption class="phone-label">Workspace</figcaption>
-            <img
-              src="assets/landing/screens/01-workspace-home.png"
-              alt="Beeline workspace showing Rooms and agent connection controls"
-              width="1080"
-              height="2400"
-              loading="lazy"
-            />
-          </figure>
-          <figure class="phone">
-            <figcaption class="phone-label">Live room</figcaption>
-            <img
-              src="assets/landing/screens/02-live-room.png"
-              alt="A live Beeline Room showing an agent working on a change"
-              width="1080"
-              height="2400"
-              loading="lazy"
-            />
-          </figure>
-          <figure class="phone">
-            <figcaption class="phone-label">Review</figcaption>
-            <img
-              src="assets/landing/screens/03-change-review.png"
-              alt="Beeline change review with a diff and human approval control"
-              width="1080"
-              height="2400"
-              loading="lazy"
-            />
-          </figure>
-          <figure class="phone">
-            <figcaption class="phone-label">Settings</figcaption>
-            <img
-              src="assets/landing/screens/04-settings.png"
-              alt="Beeline settings for workspace and agent controls"
-              width="1080"
-              height="2400"
-              loading="lazy"
-            />
-          </figure>
-        </div>
-      </section>
-
-      <section class="capabilities wrap" aria-label="What Beeline helps you do">
-        <article class="capability">
-          <span class="capability-num mono">01</span>
-          <h3>Follow the work, not the terminal.</h3>
-          <p>
-            See your agents across Rooms and focused task corners. Read plans, messages, and tool
-            activity in the same durable record.
-          </p>
-        </article>
-        <article class="capability">
-          <span class="capability-num mono">02</span>
-          <h3>Steer before the work drifts.</h3>
-          <p>
-            Send a new direction from your phone while the context is fresh. Your agent keeps the
-            conversation and the task together.
-          </p>
-        </article>
-        <article class="capability">
-          <span class="capability-num mono">03</span>
-          <h3>Keep the human decision human.</h3>
-          <p>
-            Review plans, diffs, and completion state before deciding what happens next. Agent work
-            stays visible; approval stays yours.
-          </p>
-        </article>
-      </section>
-
-      <section class="connect wrap" id="connect" aria-labelledby="connect-title">
-        <div class="connect-panel">
-          <div class="connect-grid">
-            <div>
-              <p class="eyebrow mono">Developer hook</p>
-              <h2 id="connect-title">Connect in one command.</h2>
-              <p class="connect-copy">
-                Run the launcher in your terminal, follow the brass setup flow, then steer the agent
-                from Beeline.
-              </p>
-            </div>
-            <div class="terminal">
-              <div class="terminal-label mono"><span>Terminal</span><span>Node 20+</span></div>
-              <div class="command">
-                <code
-                  ><span class="prompt" aria-hidden="true">›</span
-                  ><span id="connect-command">npx usebeeline connect</span></code
-                >
-                <button
-                  class="copy-button"
-                  type="button"
-                  data-copy-command
-                  aria-describedby="copy-status"
-                >
-                  Copy
-                </button>
-              </div>
-              <p class="terminal-note" id="copy-status" aria-live="polite">
-                No global install required.
-              </p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section class="final-cta wrap" aria-labelledby="final-title">
-        <p class="eyebrow mono">Stay close to the work</p>
-        <h2 id="final-title">Your agents can be at the desk. You don’t have to be.</h2>
-        <div class="download-links" aria-label="Download Beeline">
-          <a
-            class="store-badge"
-            data-store="appStore"
-            href="#ios-coming-soon"
-            aria-label="Download Beeline on the App Store"
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path
-                d="M17.1 12.54c.02 2.24 1.96 2.98 1.98 2.99-.01.05-.31 1.08-1.02 2.14-.62.92-1.27 1.84-2.28 1.86-.99.02-1.31-.59-2.45-.59-1.13 0-1.49.57-2.43.61-.97.04-1.71-.98-2.34-1.89-1.28-1.85-2.26-5.22-.95-7.5a3.65 3.65 0 0 1 3.1-1.88c.97-.02 1.88.65 2.45.65.57 0 1.64-.81 2.76-.69.47.02 1.79.19 2.63 1.43-.07.04-1.57.92-1.55 2.87ZM15.19 7.06c.52-.63.87-1.5.78-2.36-.75.03-1.65.5-2.18 1.13-.48.55-.9 1.43-.79 2.27.83.06 1.68-.42 2.19-1.04Z"
-              />
-            </svg>
-            <span><small>Download on the</small><strong>App Store</strong></span>
-          </a>
-          <a
-            class="store-badge"
-            data-store="googlePlay"
-            href="#android-coming-soon"
-            aria-label="Get Beeline on Google Play"
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path
-                d="M4.2 3.25a1.8 1.8 0 0 0-.2.84v15.82c0 .3.07.58.2.84l9.05-8.75L4.2 3.25Zm10.1 9.77-2.28 2.2-7.04 6.8c.28.06.58.01.87-.15l11.18-6.3-2.73-2.55Zm3.83-2.08-2.81-1.59-2.27 2.2 2.29 2.2 2.8-1.58c.88-.5.88-1.73-.01-2.23ZM5.85 2.13a1.45 1.45 0 0 0-.87-.15l7.04 6.8 2.26 2.18 2.72-2.54L17 8.42 5.85 2.13Z"
-              />
-            </svg>
-            <span><small>Get it on</small><strong>Google Play</strong></span>
-          </a>
-        </div>
-      </section>
     </main>
-
     <footer class="site-footer">
       <div class="footer-inner wrap">
         <span>© 2026 Moon Rice Limited</span>
@@ -829,13 +1021,11 @@
         </div>
       </div>
     </footer>
-
     <script>
-      // Replace either value here when its store listing is published.
-      const STORE_URLS = { appStore: '#ios-coming-soon', googlePlay: '#android-coming-soon' };
-      for (const link of document.querySelectorAll('[data-store]'))
-        link.href = STORE_URLS[link.dataset.store];
-
+      const APP_STORE_URL = '#ios-coming-soon';
+      const GOOGLE_PLAY_URL = '#android-coming-soon';
+      document.querySelector('[data-store="app-store"]').href = APP_STORE_URL;
+      document.querySelector('[data-store="google-play"]').href = GOOGLE_PLAY_URL;
       const copyButton = document.querySelector('[data-copy-command]');
       const copyStatus = document.querySelector('#copy-status');
       copyButton.addEventListener('click', async () => {

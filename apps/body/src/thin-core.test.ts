@@ -14,6 +14,7 @@ vi.mock('@beeline/buzz-client', async (importOriginal) => ({
 
 import { mapWithConcurrency, ThinDaemonCore } from './thin-core.js';
 import { RoomRuntimeCoordinator } from './room-runtime.js';
+import { DaemonApiClient } from './daemon-api-client.js';
 
 function stored(name: string) {
   const identity = newIdentity(name);
@@ -41,6 +42,47 @@ function runtime(): AgentRuntimeRecord {
 }
 
 describe('ThinDaemonCore', () => {
+  it('uses the monolith control plane without constructing a relay socket', async () => {
+    mocks.createBuzzClient.mockClear();
+    const controller = new AbortController();
+    const monolithRuntime: AgentRuntimeRecord = {
+      ...runtime(),
+      transport: {
+        kind: 'monolith',
+        baseUrl: 'http://127.0.0.1:43123',
+        daemonToken: `bdt_${'x'.repeat(43)}`,
+      },
+    };
+    const request = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(Response.json({ workspaceIds: [monolithRuntime.communityId], rooms: [] }));
+    const daemonApi = new DaemonApiClient(
+      monolithRuntime.transport.baseUrl,
+      monolithRuntime.transport.daemonToken,
+      monolithRuntime.agent.publicKey,
+      request,
+    );
+    const core = new ThinDaemonCore(
+      monolithRuntime,
+      '/tmp/beeline-thin-core-test/runtime.json',
+      {} as BodyConfig,
+      { daemonApi, reconcileHeartbeatMs: 10 },
+    );
+
+    expect(Reflect.get(core, 'relaySocket')).toBeUndefined();
+    await core.run({
+      signal: controller.signal,
+      pollMs: 1,
+      onProgress: () => controller.abort(),
+    });
+
+    expect(request).toHaveBeenCalledWith(
+      'http://127.0.0.1:43123/v1/daemon/operations/getDaemonBootstrap',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(mocks.createBuzzClient).not.toHaveBeenCalled();
+  });
+
   it('lets other Rooms progress while one bounded-concurrency slot is stalled', async () => {
     let release!: () => void;
     const stalled = new Promise<void>((resolve) => {

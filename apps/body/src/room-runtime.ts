@@ -37,6 +37,7 @@ import {
   SessionScheduler,
 } from './session-scheduler.js';
 import { RoomQuarantineStateMachine } from './room-quarantine.js';
+import type { DaemonApiClient } from './daemon-api-client.js';
 
 interface RunningRoom {
   body: Body;
@@ -275,7 +276,8 @@ export class RoomRuntimeCoordinator {
    * every Room presence cache and the control plane below multiplex their own
    * NIP-01 subId onto it, instead of opening ~N+1 sockets on one agent pubkey.
    */
-  private readonly relaySocket: SharedRelaySocket;
+  private readonly relaySocket?: SharedRelaySocket;
+  private readonly daemonApi?: DaemonApiClient;
   private readonly repositoryTruth: RepositoryTruthResolver;
   private readonly githubApp: GitHubAppRuntime | undefined;
   private readonly namedRepositoryResolutions = new Map<string, Promise<BoundRepo>>();
@@ -319,6 +321,7 @@ export class RoomRuntimeCoordinator {
       reconcileHeartbeatMs?: number;
       drainDeadlineMs?: number;
       relaySocket?: SharedRelaySocket;
+      daemonApi?: DaemonApiClient;
     } = {},
   ) {
     this.runtime = runtime;
@@ -339,15 +342,18 @@ export class RoomRuntimeCoordinator {
       idleMs: Number(process.env.BUZZY_BODY_SESSION_IDLE_MS ?? String(5 * 60_000)),
       reserveInteractiveSlot: true,
     });
-    this.relaySocket =
-      options.relaySocket ??
-      new SharedRelaySocket({
-        baseUrl: runtime.relayBaseUrl,
-        ...(runtime.relayHost ? { host: runtime.relayHost } : {}),
-        ...(baseConfig.relayWsUrl ? { wsUrl: baseConfig.relayWsUrl } : {}),
-        identity: this.agent,
-        WebSocketImpl: WebSocket,
-      });
+    this.daemonApi = options.daemonApi;
+    if (!this.daemonApi) {
+      this.relaySocket =
+        options.relaySocket ??
+        new SharedRelaySocket({
+          baseUrl: runtime.relayBaseUrl,
+          ...(runtime.relayHost ? { host: runtime.relayHost } : {}),
+          ...(baseConfig.relayWsUrl ? { wsUrl: baseConfig.relayWsUrl } : {}),
+          identity: this.agent,
+          WebSocketImpl: WebSocket,
+        });
+    }
     this.githubApp = GitHubAppRuntime.fromEnvironment(process.env, {
       baseUrl: runtime.relayBaseUrl,
       identity: this.agent,
@@ -572,6 +578,7 @@ export class RoomRuntimeCoordinator {
   }
 
   async reconcile(): Promise<WorkspaceMembershipStatus> {
+    if (this.daemonApi) return this.reconcileMonolith();
     const client = createBuzzClient({
       baseUrl: this.runtime.relayBaseUrl,
       ...(this.runtime.relayHost ? { host: this.runtime.relayHost } : {}),
@@ -839,6 +846,43 @@ export class RoomRuntimeCoordinator {
     }
   }
 
+  private async reconcileMonolith(): Promise<WorkspaceMembershipStatus> {
+    const bootstrap = await this.daemonApi!.execute('getDaemonBootstrap', {
+      agentId: this.agent.publicKey,
+    });
+    if (!bootstrap.workspaceIds.includes(this.runtime.communityId)) {
+      this.workspaceRemovalConfirmations += 1;
+      if (this.workspaceRemovalConfirmations < REMOVAL_CONFIRMATION_READS) {
+        this.confirmationPending = true;
+        return 'unknown';
+      }
+      return 'not-member';
+    }
+    this.workspaceRemovalConfirmations = 0;
+    const desired = new Map(
+      bootstrap.rooms.filter((room) => !room.archived).map((room) => [room.roomId, room] as const),
+    );
+    for (const channelId of desired.keys()) this.roomRemovalConfirmations.delete(channelId);
+    for (const [channelId, running] of [...this.running]) {
+      if (desired.has(channelId)) continue;
+      const confirmations = (this.roomRemovalConfirmations.get(channelId) ?? 0) + 1;
+      this.roomRemovalConfirmations.set(channelId, confirmations);
+      if (confirmations < REMOVAL_CONFIRMATION_READS) {
+        this.confirmationPending = true;
+        continue;
+      }
+      running.controller.abort();
+      await running.promise.catch(() => undefined);
+    }
+    await mapWithConcurrency([...desired.keys()], ROOM_JOIN_CONCURRENCY, async (channelId) => {
+      if (this.running.has(channelId)) return;
+      const known = this.runtime.rooms.find((room) => room.channelId === channelId);
+      if (known) await this.startRepositoryRoom(known, channelId);
+      else this.startConversationRoom(channelId, 'named-repository');
+    });
+    return 'member';
+  }
+
   /**
    * Record the relay's terminal `channel is archived` verdict for one Room:
    * logged once, then the Room is held inert — dropped from serving for the
@@ -969,27 +1013,23 @@ export class RoomRuntimeCoordinator {
       presence: (_roomId: string, status: 'online' | 'offline') =>
         this.notePresence(channelId, status),
     };
-    const body = new Body(
-      config,
-      runtimeIdentity(this.runtime.body),
-      this.agent,
-      {
-        scheduler: this.scheduler,
-        relaySocket: this.relaySocket,
-        statePath: resolve(workspaceRoot, 'body-state.json'),
-        resolveNamedRepository: (target) => this.resolveNamedRepository(channelId, target),
-        refreshRepositoryTruth: (repo, checkpoint) => this.refreshBoundRepo(repo, checkpoint),
-        runRepositoryGit: (repo, cwd, args) => this.runRepositoryGit(repo, cwd, args),
-        repositoryAccessToken: (repo) => this.repositoryAccessToken(repo),
-        onRoomPollSuccess: health.poll,
-        onRoomPollFailure: health.failure,
-        onRoomPresence: health.presence,
-        runScheduleNow: (scheduleId) => {
-          if (!this.runScheduleNow) throw new Error('schedule calendar is unavailable');
-          return this.runScheduleNow(scheduleId);
-        },
+    const body = new Body(config, runtimeIdentity(this.runtime.body), this.agent, {
+      scheduler: this.scheduler,
+      ...(this.relaySocket ? { relaySocket: this.relaySocket } : {}),
+      ...(this.daemonApi ? { daemonApi: this.daemonApi } : {}),
+      statePath: resolve(workspaceRoot, 'body-state.json'),
+      resolveNamedRepository: (target) => this.resolveNamedRepository(channelId, target),
+      refreshRepositoryTruth: (repo, checkpoint) => this.refreshBoundRepo(repo, checkpoint),
+      runRepositoryGit: (repo, cwd, args) => this.runRepositoryGit(repo, cwd, args),
+      repositoryAccessToken: (repo) => this.repositoryAccessToken(repo),
+      onRoomPollSuccess: health.poll,
+      onRoomPollFailure: health.failure,
+      onRoomPresence: health.presence,
+      runScheduleNow: (scheduleId) => {
+        if (!this.runScheduleNow) throw new Error('schedule calendar is unavailable');
+        return this.runScheduleNow(scheduleId);
       },
-    );
+    });
     const promise = body
       .runRepositoryRoomLoop(this.runtime.communityId, channelId, boundRepo, {
         signal: controller.signal,
@@ -1026,7 +1066,8 @@ export class RoomRuntimeCoordinator {
     const startedAt = this.now();
     const body = new Body(config, runtimeIdentity(this.runtime.body), this.agent, {
       scheduler: this.scheduler,
-      relaySocket: this.relaySocket,
+      ...(this.relaySocket ? { relaySocket: this.relaySocket } : {}),
+      ...(this.daemonApi ? { daemonApi: this.daemonApi } : {}),
       statePath: resolve(workspaceRoot, 'body-state.json'),
       resolveNamedRepository: (target) => this.resolveNamedRepository(channelId, target),
       onRoomPollSuccess: () => this.notePoll(channelId),

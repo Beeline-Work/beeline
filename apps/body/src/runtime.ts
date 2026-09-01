@@ -15,6 +15,9 @@ import type {
 import { DEFAULT_AGENT_IDENTITY_NAME, DEFAULT_BODY_IDENTITY_NAME } from '@beeline/buzz-client';
 import { AGENT_KINDS, type AgentCommand, type AgentKind } from './agent-command.js';
 
+/** Canonical production origin for newly staged monolith daemon transports. */
+export const DEFAULT_DAEMON_MONOLITH_BASE_URL = 'https://server.usebeeline.app';
+
 const execFileAsync = promisify(execFile);
 import {
   DEFAULT_ACCESS_POLICY,
@@ -57,6 +60,27 @@ export interface AgentRuntimeRecord {
   supervisorRoot: string;
   relayBaseUrl: string;
   relayHost?: string;
+  /**
+   * The single daemon transport cutover switch. Absent means the legacy relay
+   * transport. Once present, the daemon talks only to the monolith API and
+   * must not create a relay client or sign an event.
+   *
+   * Operators stage a short-lived one-use exchange credential. The first
+   * monolith activation atomically replaces it with the opaque daemon token.
+   */
+  transport?:
+    | {
+        kind: 'monolith';
+        baseUrl: string;
+        exchangeToken: string;
+        daemonToken?: never;
+      }
+    | {
+        kind: 'monolith';
+        baseUrl: string;
+        daemonToken: string;
+        exchangeToken?: never;
+      };
   llmEnvFile?: string;
   /**
    * Who may drive this agent, set by the inviter at pairing time. Absent on
@@ -145,6 +169,38 @@ interface LegacyAgentRuntimeRecord {
   agentBinary: string;
   mcpBinary: string;
   createdAt: string;
+}
+
+function isMonolithTransport(
+  value: unknown,
+): value is NonNullable<AgentRuntimeRecord['transport']> {
+  if (typeof value !== 'object' || value === null) return false;
+  const candidate = value as Record<string, unknown>;
+  if (candidate.kind !== 'monolith' || typeof candidate.baseUrl !== 'string') return false;
+  let origin: URL;
+  try {
+    origin = new URL(candidate.baseUrl);
+  } catch {
+    return false;
+  }
+  if (
+    (origin.protocol !== 'https:' && origin.protocol !== 'http:') ||
+    origin.username ||
+    origin.password ||
+    (origin.pathname && origin.pathname !== '/') ||
+    origin.search ||
+    origin.hash ||
+    origin.origin !== candidate.baseUrl
+  )
+    return false;
+  const exchange = candidate.exchangeToken;
+  const daemon = candidate.daemonToken;
+  return (
+    (typeof exchange === 'string' &&
+      /^bde_[A-Za-z0-9_-]{43}$/.test(exchange) &&
+      daemon === undefined) ||
+    (typeof daemon === 'string' && /^bdt_[A-Za-z0-9_-]{43}$/.test(daemon) && exchange === undefined)
+  );
 }
 
 export interface PairRuntimeResult {
@@ -684,6 +740,7 @@ export async function readRuntimeRecord(path: string): Promise<AgentRuntimeRecor
           typeof parsed.modelSelection.model !== 'string') ||
         (parsed.modelSelection.effort !== undefined &&
           typeof parsed.modelSelection.effort !== 'string'))) ||
+    (parsed.transport !== undefined && !isMonolithTransport(parsed.transport)) ||
     (parsed.agentCommand !== undefined && !parsed.agentCommand) ||
     (parsed.agentArgs !== undefined &&
       (!Array.isArray(parsed.agentArgs) ||
@@ -874,9 +931,7 @@ export async function selectRuntimeConfigPaths(options: {
   multipleRuntimeMessage: string;
 }): Promise<{ paths: string[]; hostScope: boolean }> {
   const hostScope =
-    options.all ||
-    Boolean(options.requestedPubkey) ||
-    !tryInspectLocalRepository(options.cwd);
+    options.all || Boolean(options.requestedPubkey) || !tryInspectLocalRepository(options.cwd);
   const configs = hostScope
     ? await options.findHostRuntimes(options.cwd)
     : await options.findRepositoryRuntimes(options.cwd);

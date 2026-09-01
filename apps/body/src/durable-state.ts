@@ -42,6 +42,8 @@ interface DurableBodyData {
   sessionReprimes?: SessionReprimeRecord[];
   /** Per-Room GitHub repository-event feed cursors (auth-service event ids). */
   githubEventCursors?: Record<string, number>;
+  /** Opaque monolith inbox cursors, isolated from legacy relay event cursors. */
+  daemonInboxCursors?: Record<string, string>;
   /** Versioned P1 trust-spine reservations. Keys are immutable signed ids. */
   factory?: {
     version: 1;
@@ -76,6 +78,7 @@ function migrateDurableBodyData(candidate: unknown, path: string): DurableBodyDa
         modelTurns: legacy.modelTurns,
         sessionReprimes: legacy.sessionReprimes,
         githubEventCursors: legacy.githubEventCursors,
+        daemonInboxCursors: legacy.daemonInboxCursors,
         factory: legacy.factory,
       };
     }
@@ -130,6 +133,7 @@ export class DurableBodyState {
       this.data.modelTurns ??= [];
       this.data.sessionReprimes ??= [];
       this.data.githubEventCursors ??= {};
+      this.data.daemonInboxCursors ??= {};
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
@@ -206,6 +210,19 @@ export class DurableBodyState {
   async cursor(channelId: string): Promise<EventCursor> {
     await this.load();
     return { ...this.inbox(channelId).cursor };
+  }
+
+  async daemonInboxCursor(channelId: string): Promise<string | undefined> {
+    await this.load();
+    return this.data.daemonInboxCursors?.[channelId];
+  }
+
+  async setDaemonInboxCursor(channelId: string, cursor: string): Promise<void> {
+    await this.load();
+    const cursors = (this.data.daemonInboxCursors ??= {});
+    if (cursors[channelId] === cursor) return;
+    cursors[channelId] = cursor;
+    await this.save();
   }
 
   /** Persist one inspectable model invocation, including the human event that authorized it. */

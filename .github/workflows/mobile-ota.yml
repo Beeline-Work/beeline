@@ -204,6 +204,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+      # EAS loads app.config.js and its local Expo plugins before it can issue
+      # update:republish, so a promotion checkout needs the mobile dependency graph.
+      - name: Install mobile dependencies for EAS project context
+        working-directory: apps/mobile
+        run: npm ci
       - name: Promote the exact beta group to production
         id: promotion
         working-directory: apps/mobile

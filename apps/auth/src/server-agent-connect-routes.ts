@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { isReasonableAgentName } from '@beeline/buzz-client';
 import { generateKeypair } from '@beeline/nostr';
+import { GITHUB_IDENTITY_AUDIENCE } from './github.js';
 import type { AuthRouteContext } from './server-context.js';
 
 const DEVICE_TTL_MS = 10 * 60_000;
@@ -147,10 +148,10 @@ export function registerServerAgentConnectRoutes(context: AuthRouteContext): voi
 
     noStore(reply);
     return reply.send({
-      pairing_code: pairingCode,
       agent_secret_key: Buffer.from(agent.secretKey).toString('hex'),
       agent_pubkey: agent.publicKey,
       body_secret_key: Buffer.from(bodyIdentity.secretKey).toString('hex'),
+      daemon_exchange_token: claim.daemonExchangeToken,
       workspace_id: claim.workspaceId,
       workspace_name: claim.workspaceName,
       paired_by: claim.pairedBy,
@@ -318,10 +319,12 @@ export function registerServerAgentConnectRoutes(context: AuthRouteContext): voi
   // flow proves the human account. This helper is called from that callback.
   context.setAgentConnectApproval(async (tenant, flow, identity) => {
     if (!flow.deviceCodeHash) return false;
+    const audience =
+      identity.issuer === 'https://github.com' ? GITHUB_IDENTITY_AUDIENCE : identity.audience;
     const link = await options.store.identityLinkForSubject(
       tenant.community,
       identity.issuer,
-      identity.audience,
+      audience,
       identity.subject,
     );
     if (!link) {

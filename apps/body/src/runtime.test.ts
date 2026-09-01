@@ -21,8 +21,10 @@ import {
   removeAgentRuntime,
   resolveRuntimeConfigPath,
   runtimeAgentCommand,
+  stageMonolithAgentRuntime,
   stopRuntimeDaemon,
   updateRuntimeRelay,
+  writeRuntimeRecord,
 } from './runtime.js';
 
 const cleanup: string[] = [];
@@ -52,6 +54,65 @@ async function stateRoot(): Promise<string> {
 
 afterEach(async () => {
   await Promise.all(cleanup.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+});
+
+describe('monolith connect runtime staging', () => {
+  async function stageInput() {
+    const supervisorRoot = await stateRoot();
+    return {
+      workspaceId: '11111111-1111-4111-8111-111111111111',
+      pairedBy: 'a'.repeat(64),
+      monolithBaseUrl: 'https://server.usebeeline.app',
+      daemonExchangeToken: `bde_${'b'.repeat(43)}`,
+      agentBinary: '/usr/bin/codex-acp',
+      agentKind: 'codex' as const,
+      agentCommand: 'codex-acp',
+      agentArgs: [],
+      modelSelection: { model: 'gpt-5.4' },
+      mcpBinary: '/usr/bin/buzz-dev-mcp',
+      agentIdentity: newIdentity('agent'),
+      bodyIdentity: newIdentity('body'),
+      supervisorRoot,
+    };
+  }
+
+  it('re-enters the exact staged runtime before or after daemon-token promotion', async () => {
+    const input = await stageInput();
+    const first = await stageMonolithAgentRuntime(input);
+    await expect(stageMonolithAgentRuntime(input)).resolves.toEqual(first);
+
+    const promoted = {
+      ...first.runtime,
+      transport: {
+        kind: 'monolith' as const,
+        baseUrl: input.monolithBaseUrl,
+        daemonToken: `bdt_${'c'.repeat(43)}`,
+      },
+    };
+    await writeRuntimeRecord(promoted);
+    await expect(stageMonolithAgentRuntime(input)).resolves.toEqual({
+      runtime: promoted,
+      configPath: first.configPath,
+    });
+  });
+
+  it('rejects a connect grant that conflicts with durable state for the same identity', async () => {
+    const input = await stageInput();
+    await stageMonolithAgentRuntime(input);
+    await expect(
+      stageMonolithAgentRuntime({ ...input, workspaceId: 'another-workspace' }),
+    ).rejects.toThrow(/already has another runtime/);
+  });
+
+  it('rejects non-origin server URLs and malformed exchange tokens before writing state', async () => {
+    const input = await stageInput();
+    await expect(
+      stageMonolithAgentRuntime({ ...input, monolithBaseUrl: 'https://server.usebeeline.app/v1' }),
+    ).rejects.toThrow(/HTTP or HTTPS origin/);
+    await expect(
+      stageMonolithAgentRuntime({ ...input, daemonExchangeToken: 'not-an-exchange-token' }),
+    ).rejects.toThrow(/exchange token is invalid/);
+  });
 });
 
 describe('repository binding', () => {

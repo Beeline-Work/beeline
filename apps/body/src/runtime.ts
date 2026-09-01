@@ -216,6 +216,11 @@ export interface PairRuntimeResult {
   pid: number;
 }
 
+export interface MonolithRuntimeResult {
+  runtime: AgentRuntimeRecord;
+  configPath: string;
+}
+
 export function runtimeAgentCommand(
   runtime: Pick<AgentRuntimeRecord, 'agentKind' | 'agentCommand' | 'agentArgs' | 'agentBinary'>,
 ): AgentCommand {
@@ -623,6 +628,100 @@ export async function assertRuntimeStorageWritable(
   } finally {
     await rm(probe, { force: true }).catch(() => undefined);
   }
+}
+
+/**
+ * Persist the host half of an agent already created by the monolith connect
+ * boundary. Unlike `pairRepositoryAgent`, this performs no remote pairing or
+ * repository resolution: Workspace membership and the initial Room set are
+ * server-owned facts, discovered through `getDaemonBootstrap` after startup.
+ *
+ * Re-entry is intentionally supported. A successful token promotion followed
+ * by a service-manager failure leaves a complete durable runtime behind; the
+ * retained connect grant can safely finish starting that exact runtime.
+ */
+export async function stageMonolithAgentRuntime(input: {
+  workspaceId: string;
+  pairedBy: string;
+  monolithBaseUrl: string;
+  daemonExchangeToken: string;
+  llmEnvFile?: string;
+  agentBinary: string;
+  agentKind: AgentKind;
+  agentCommand: string;
+  agentArgs?: string[];
+  modelSelection?: { model?: string; effort?: string };
+  mcpBinary: string;
+  agentIdentity: Identity;
+  bodyIdentity: Identity;
+  supervisorRoot?: string;
+  env?: NodeJS.ProcessEnv;
+}): Promise<MonolithRuntimeResult> {
+  const supervisorRoot = input.supervisorRoot
+    ? resolve(input.supervisorRoot)
+    : defaultSupervisorRoot(input.env);
+  const baseUrl = new URL(input.monolithBaseUrl).origin;
+  if (baseUrl !== input.monolithBaseUrl || !/^https?:$/.test(new URL(baseUrl).protocol)) {
+    throw new Error('monolith base URL must be an HTTP or HTTPS origin');
+  }
+  if (!/^bde_[A-Za-z0-9_-]{43}$/.test(input.daemonExchangeToken)) {
+    throw new Error('daemon exchange token is invalid');
+  }
+  const configPath = resolve(
+    runtimeDirectory(supervisorRoot, input.agentIdentity.publicKey),
+    'runtime.json',
+  );
+  if (await agentRuntimeExists(supervisorRoot, input.agentIdentity.publicKey)) {
+    const existing = await readRuntimeRecord(configPath);
+    const transport = existing.transport;
+    const sameRuntime =
+      existing.communityId === input.workspaceId &&
+      existing.pairedBy === input.pairedBy &&
+      existing.agent.publicKey === input.agentIdentity.publicKey &&
+      existing.agent.secretKeyHex === Buffer.from(input.agentIdentity.secretKey).toString('hex') &&
+      existing.body.publicKey === input.bodyIdentity.publicKey &&
+      transport?.kind === 'monolith' &&
+      transport.baseUrl === baseUrl &&
+      ('daemonToken' in transport || transport.exchangeToken === input.daemonExchangeToken);
+    if (!sameRuntime) {
+      throw new Error(
+        `agent identity ${input.agentIdentity.publicKey} already has another runtime`,
+      );
+    }
+    return { runtime: existing, configPath };
+  }
+
+  await assertRuntimeStorageWritable(supervisorRoot, input.agentIdentity.publicKey);
+  const runtime: AgentRuntimeRecord = {
+    version: 2,
+    communityId: input.workspaceId,
+    pairedBy: input.pairedBy,
+    agent: storeIdentity(input.agentIdentity, DEFAULT_AGENT_IDENTITY_NAME),
+    body: storeIdentity(input.bodyIdentity, DEFAULT_BODY_IDENTITY_NAME),
+    rooms: [],
+    supervisorRoot,
+    // Required only by legacy records. Monolith runtimes never construct a
+    // relay client, so retaining the server origin here cannot route traffic.
+    relayBaseUrl: baseUrl,
+    transport: {
+      kind: 'monolith',
+      baseUrl,
+      exchangeToken: input.daemonExchangeToken,
+    },
+    ...(input.llmEnvFile ? { llmEnvFile: input.llmEnvFile } : {}),
+    accessPolicy: DEFAULT_ACCESS_POLICY,
+    ...(input.modelSelection?.model || input.modelSelection?.effort
+      ? { modelSelection: input.modelSelection }
+      : {}),
+    agentKind: input.agentKind,
+    agentCommand: input.agentCommand,
+    agentArgs: [...(input.agentArgs ?? [])],
+    agentBinary: input.agentBinary,
+    mcpBinary: input.mcpBinary,
+    createdAt: new Date().toISOString(),
+  };
+  const writtenPath = await writeRuntimeRecord(runtime);
+  return { runtime, configPath: writtenPath };
 }
 
 /**

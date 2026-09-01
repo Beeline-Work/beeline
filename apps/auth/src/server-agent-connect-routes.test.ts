@@ -192,6 +192,7 @@ describe('app-authorized agent connect', () => {
         workspaceId: WORKSPACE,
         workspaceName: 'Brass Works',
         pairedBy: 'a'.repeat(64),
+        daemonExchangeToken: `bde_${'d'.repeat(43)}`,
       };
     };
 
@@ -204,7 +205,6 @@ describe('app-authorized agent connect', () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json<Record<string, string>>()).toMatchObject({
-      pairing_code: payload.pairing_code,
       workspace_id: WORKSPACE,
       workspace_name: 'Brass Works',
       paired_by: 'a'.repeat(64),
@@ -212,6 +212,7 @@ describe('app-authorized agent connect', () => {
       harness: 'codex',
       model: 'gpt-5.4',
       soul: payload.soul,
+      daemon_exchange_token: `bde_${'d'.repeat(43)}`,
     });
     expect(response.json<Record<string, string>>().agent_secret_key).toMatch(/^[0-9a-f]{64}$/);
     expect(response.json<Record<string, string>>().body_secret_key).toMatch(/^[0-9a-f]{64}$/);

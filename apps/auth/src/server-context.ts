@@ -147,6 +147,8 @@ export interface AuthServerOptions {
         workspaceId: string;
         workspaceName: string;
         pairedBy: string;
+        /** One-use credential promoted by the installed daemon on first activation. */
+        daemonExchangeToken: string;
       }
     | { status: 'not_found' | 'expired' | 'already_claimed' }
   >;

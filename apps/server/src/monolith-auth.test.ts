@@ -35,6 +35,14 @@ describe('mounted monolith auth', () => {
     vi.stubEnv('PHONE_GITHUB_EXCHANGE_ENDPOINT', '');
     database = new PgliteDatabase();
     await migrate(database);
+    let mountedForVerification: MonolithAuthMount | undefined;
+    const tokenAuth = new TokenAuth(
+      database,
+      verifierFromEnvironment(async (ticket) => {
+        if (!mountedForVerification) throw new Error('monolith auth is not ready');
+        return mountedForVerification.verifyGitHubTicket(ticket);
+      }),
+    );
     const githubOauth = {
       config: { clientId: 'github-client', clientSecret: 'github-secret' },
       authorizationUrl: ({ state, redirectUri }: { state: string; redirectUri: string }) =>
@@ -69,15 +77,20 @@ describe('mounted monolith auth', () => {
         onWebhook: async (event, payload) => processWebhook(event, payload),
       },
       {
-        NODE_ENV: 'test',
-        BUZZY_AUTH_TENANTS_JSON: JSON.stringify([tenant]),
-        BUZZY_AUTH_OIDC_ISSUER: 'https://accounts.example',
-        BUZZY_AUTH_OIDC_AUTHORIZATION_ENDPOINT: 'https://accounts.example/authorize',
-        BUZZY_AUTH_OIDC_TOKEN_ENDPOINT: 'https://accounts.example/token',
-        BUZZY_AUTH_OIDC_JWKS_URI: 'https://accounts.example/jwks',
-        BUZZY_AUTH_OIDC_CLIENT_ID: 'test-client',
+        createDaemonExchange: (agentId, transaction) =>
+          tokenAuth.createDaemonExchange(agentId, transaction),
+        env: {
+          NODE_ENV: 'test',
+          BUZZY_AUTH_TENANTS_JSON: JSON.stringify([tenant]),
+          BUZZY_AUTH_OIDC_ISSUER: 'https://accounts.example',
+          BUZZY_AUTH_OIDC_AUTHORIZATION_ENDPOINT: 'https://accounts.example/authorize',
+          BUZZY_AUTH_OIDC_TOKEN_ENDPOINT: 'https://accounts.example/token',
+          BUZZY_AUTH_OIDC_JWKS_URI: 'https://accounts.example/jwks',
+          BUZZY_AUTH_OIDC_CLIENT_ID: 'test-client',
+        },
       },
     );
+    mountedForVerification = mount;
     githubOperations = new GitHubOperations(
       database,
       githubOauth,
@@ -89,11 +102,10 @@ describe('mounted monolith auth', () => {
       githubOperations.processWebhook(event, payload),
     );
     store = new AuthStore(database as unknown as TransactionalDatabase);
-    const auth = new TokenAuth(database, verifierFromEnvironment(mount.verifyGitHubTicket));
     const live = new LiveHub();
     server = createBeelineServer({
       database,
-      auth,
+      auth: tokenAuth,
       phone: new PhoneService(database, 'http://placeholder'),
       daemon: new DaemonService(database, live),
       live,
@@ -260,7 +272,9 @@ describe('mounted monolith auth', () => {
 
   it('reconciles the monolith GitHub catalog from a signed mounted auth webhook', async () => {
     const owner = 'a'.repeat(64);
-    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner')`, [owner]);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner')`, [
+      owner,
+    ]);
     await database.query(
       `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status) VALUES(77,$1,'42','owner','User','selected','active')`,
       [owner],
@@ -280,20 +294,24 @@ describe('mounted monolith auth', () => {
       repositories_removed: [],
     });
     const response = await new Promise<{ status: number }>((resolve, reject) => {
-      const outgoing = request(new URL('/auth/github/webhook', origin), {
-        method: 'POST',
-        headers: {
-          host: tenant.host,
-          'content-type': 'application/json',
-          'content-length': Buffer.byteLength(payload),
-          'x-github-delivery': 'mounted-delivery-1',
-          'x-github-event': 'installation_repositories',
-          'x-hub-signature-256': `sha256=${createHmac('sha256', 'webhook-secret').update(payload).digest('hex')}`,
+      const outgoing = request(
+        new URL('/auth/github/webhook', origin),
+        {
+          method: 'POST',
+          headers: {
+            host: tenant.host,
+            'content-type': 'application/json',
+            'content-length': Buffer.byteLength(payload),
+            'x-github-delivery': 'mounted-delivery-1',
+            'x-github-event': 'installation_repositories',
+            'x-hub-signature-256': `sha256=${createHmac('sha256', 'webhook-secret').update(payload).digest('hex')}`,
+          },
         },
-      }, (incoming) => {
-        incoming.resume();
-        incoming.on('end', () => resolve({ status: incoming.statusCode ?? 0 }));
-      });
+        (incoming) => {
+          incoming.resume();
+          incoming.on('end', () => resolve({ status: incoming.statusCode ?? 0 }));
+        },
+      );
       outgoing.on('error', reject);
       outgoing.end(payload);
     });

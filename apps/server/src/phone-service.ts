@@ -812,6 +812,50 @@ export class PhoneService {
   }): Promise<
     | { status: 'claimed'; workspaceId: string; workspaceName: string; pairedBy: string }
     | { status: 'not_found' | 'expired' | 'already_claimed' }
+  >;
+  async claimAgentConnectPairing(
+    input: {
+      code: string;
+      agentPubkey: string;
+      agentName: string;
+      model: string;
+      soul: string;
+    },
+    createDaemonExchange: (
+      agentId: string,
+      database: SqlDatabase,
+    ) => Promise<{ exchangeToken: string }>,
+  ): Promise<
+    | {
+        status: 'claimed';
+        workspaceId: string;
+        workspaceName: string;
+        pairedBy: string;
+        daemonExchangeToken: string;
+      }
+    | { status: 'not_found' | 'expired' | 'already_claimed' }
+  >;
+  async claimAgentConnectPairing(
+    input: {
+      code: string;
+      agentPubkey: string;
+      agentName: string;
+      model: string;
+      soul: string;
+    },
+    createDaemonExchange?: (
+      agentId: string,
+      database: SqlDatabase,
+    ) => Promise<{ exchangeToken: string }>,
+  ): Promise<
+    | {
+        status: 'claimed';
+        workspaceId: string;
+        workspaceName: string;
+        pairedBy: string;
+        daemonExchangeToken?: string;
+      }
+    | { status: 'not_found' | 'expired' | 'already_claimed' }
   > {
     return this.database.transaction(async (database) => {
       const result = await database.query<{
@@ -867,11 +911,15 @@ export class PhoneService {
          ON CONFLICT DO NOTHING`,
         [pairing.workspace_id, input.agentPubkey, pairing.created_by],
       );
+      const exchange = createDaemonExchange
+        ? await createDaemonExchange(input.agentPubkey, database)
+        : undefined;
       return {
         status: 'claimed',
         workspaceId: pairing.workspace_id,
         workspaceName: pairing.workspace_name,
         pairedBy: pairing.created_by,
+        ...(exchange ? { daemonExchangeToken: exchange.exchangeToken } : {}),
       };
     });
   }

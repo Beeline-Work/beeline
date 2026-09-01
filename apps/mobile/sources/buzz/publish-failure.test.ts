@@ -20,15 +20,23 @@ describe('publish failure dialog copy', () => {
     });
   });
 
-  it('never renders a legacy raw relay body', () => {
+  it('keeps classified recovery copy while exposing the underlying error', () => {
     const presentation = publishFailurePresentation(
       new Error(
         'publishEvent kind=9 failed: HTTP 400 {"error":"invalid: root tag does not match thread ancestry"}',
       ),
     );
     expect(presentation.message).toBe(
-      'This reply no longer matches its conversation thread.\n\nRefresh the Room and choose Reply again.',
+      'This reply no longer matches its conversation thread.\n\nRefresh the Room and choose Reply again.\n\nTechnical detail: publishEvent kind=9 failed: HTTP 400 {"error":"invalid: root tag does not match thread ancestry"}',
     );
-    expect(presentation.message).not.toContain('{"error"');
+  });
+
+  it('shows an unknown error and its cause without repeating generic copy', () => {
+    const presentation = publishFailurePresentation(
+      new Error('outbox write failed', { cause: new Error('storage is unavailable') }),
+    );
+    expect(presentation.message).toBe(
+      'The message could not be sent.\n\nTry again after refreshing the Room.\n\nTechnical detail: outbox write failed\nCaused by: storage is unavailable',
+    );
   });
 });

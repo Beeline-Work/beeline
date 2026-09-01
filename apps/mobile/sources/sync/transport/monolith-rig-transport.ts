@@ -1,5 +1,5 @@
 import { getRandomBytes } from 'expo-crypto';
-import type { NostrEvent } from '@beeline/nostr';
+import { signEvent, type NostrEvent } from '@beeline/nostr';
 import type {
   AttachmentReference,
   BuzzClient,
@@ -162,24 +162,33 @@ export class MonolithRigTransport {
     input: MessageSubmitInput,
     opts?: { mentionAgent?: string; mentionPubkeys?: string[] },
   ): Promise<NostrEvent> {
-    const id = eventId();
+    return Promise.resolve(this.composeSignedMessage(input, opts));
+  }
+
+  private composeSignedMessage(
+    input: MessageSubmitInput,
+    opts?: { mentionAgent?: string; mentionPubkeys?: string[] },
+    extraTags: string[][] = [],
+  ): NostrEvent {
     const mentions = [
       ...(opts?.mentionPubkeys ?? []),
       ...(opts?.mentionAgent ? [opts.mentionAgent] : []),
     ];
-    return Promise.resolve({
-      id,
-      pubkey: this.identity.publicKey,
-      created_at: Math.floor(Date.now() / 1000),
-      kind: 9,
-      tags: [
-        ['h', input.sessionId],
-        ['monolith-attachments', JSON.stringify(input.attachments ?? [])],
-        ['monolith-mentions', JSON.stringify(mentions)],
-      ],
-      content: input.text,
-      sig: '',
-    });
+    return signEvent(
+      {
+        pubkey: this.identity.publicKey,
+        created_at: Math.floor(Date.now() / 1000),
+        kind: 9,
+        tags: [
+          ['h', input.sessionId],
+          ['monolith-attachments', JSON.stringify(input.attachments ?? [])],
+          ['monolith-mentions', JSON.stringify(mentions)],
+          ...extraTags,
+        ],
+        content: input.text,
+      },
+      this.identity.secretKey,
+    );
   }
 
   composeReplyMessage(
@@ -189,10 +198,13 @@ export class MonolithRigTransport {
     attachments: AttachmentReference[] = [],
     mentionPubkeys: string[] = [],
   ): Promise<NostrEvent> {
-    return this.composeMessage(
-      { sessionId: parent.channelId, text, attachments },
-      { mentionAgent, mentionPubkeys },
-    ).then((event) => ({ ...event, tags: [...event.tags, ['monolith-parent', parent.eventId]] }));
+    return Promise.resolve(
+      this.composeSignedMessage(
+        { sessionId: parent.channelId, text, attachments },
+        { mentionAgent, mentionPubkeys },
+        [['monolith-parent', parent.eventId]],
+      ),
+    );
   }
 
   async publishPreparedMessage(event: NostrEvent): Promise<string> {

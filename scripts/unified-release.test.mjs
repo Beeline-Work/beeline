@@ -108,6 +108,13 @@ test('one workflow owns parallel builds, ordered promotion, retry, and the final
   assert.match(workflow, /A newer main sha superseded this whole release/);
   assert.doesNotMatch(workflow, /push:\s*\n\s*branches:/);
   assert.match(workflow, /^on:\s*\n\s*workflow_dispatch:/m);
+  const promoteJob = mobile.slice(mobile.indexOf('\n  promote:'));
+  assert.match(promoteJob, /cache-dependency-path: apps\/mobile\/package-lock\.json/);
+  assert.match(promoteJob, /Install mobile dependencies for EAS project context[\s\S]*working-directory: apps\/mobile[\s\S]*run: npm ci/);
+  assert.ok(
+    promoteJob.indexOf('Install mobile dependencies for EAS project context') <
+      promoteJob.indexOf('Promote the exact beta group to production'),
+  );
   for (const componentWorkflow of [mobile, daemon, server]) {
     assert.match(componentWorkflow, /workflow_call:/);
     assert.doesNotMatch(componentWorkflow, /push:\s*\n\s*branches:/);

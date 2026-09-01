@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { signEvent } from '@beeline/nostr';
 import { createCommunityInviteToken } from '@beeline/api-contract/phone';
 import {
@@ -40,6 +41,19 @@ beforeEach(() => {
 });
 
 describe('community invite links', () => {
+  it('loads the signed-in monolith Workspace rail from the phone read surface', () => {
+    const source = readFileSync(new URL('../app/(app)/join/[token].tsx', import.meta.url), 'utf8');
+    const monolithBranch = source.slice(
+      source.indexOf('if (getBuzzRuntimeConfig().monolithEnabled) {'),
+      source.indexOf('if (!cancelled) {'),
+    );
+    expect(monolithBranch).toContain('.workspaces()');
+    expect(monolithBranch).toContain('view.workspaces.map(workspaceRailItem)');
+    expect(monolithBranch.indexOf('.workspaces()')).toBeLessThan(
+      monolithBranch.indexOf('createBuzzClient'),
+    );
+  });
+
   it('builds the public join URL from the configured relay origin', () => {
     expect(buildCommunityInviteUrl(token, 'https://usebeeline.app')).toBe(
       `https://usebeeline.app/join/${token}`,

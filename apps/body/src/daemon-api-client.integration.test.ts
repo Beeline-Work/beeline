@@ -5,6 +5,7 @@ import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { getPublicKey } from '@beeline/nostr';
 import { migrate } from '../../server/src/database.js';
 import { PgliteDatabase } from '../../server/src/test-support.js';
 import { TokenAuth } from '../../server/src/auth.js';
@@ -16,11 +17,14 @@ import { createMonolithAuth, type MonolithAuthMount } from '../../server/src/mon
 import { DaemonApiClient } from './daemon-api-client.js';
 import { AcpClient } from './acp.js';
 import { Body } from './body.js';
+import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
 import { completeDevicePairing } from './pair-command.js';
-import { readRuntimeRecord } from './runtime.js';
+import { readRuntimeRecord, type AgentRuntimeRecord } from './runtime.js';
+import { SessionScheduler } from './session-scheduler.js';
 
 const HUMAN = createHash('sha256').update('github:daemon-client-owner').digest('hex');
-const AGENT = 'b'.repeat(64);
+const AGENT_SECRET = new Uint8Array(32).fill(11);
+const AGENT = getPublicKey(AGENT_SECRET);
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
 
@@ -209,6 +213,10 @@ describe('daemon API client against the local monolith', () => {
   }, 30_000);
 
   it('answers a mention in a repo-less Room and keeps monolith presence current', async () => {
+    await database.query(
+      `UPDATE agents SET selected_model=NULL,selected_effort=NULL WHERE agent_id=$1`,
+      [AGENT],
+    );
     const exchange = await auth.createDaemonExchange(AGENT);
     const exchanged = await fetch(`${origin}/v1/auth/daemon/exchange`, {
       method: 'POST',
@@ -218,41 +226,70 @@ describe('daemon API client against the local monolith', () => {
     const token = (await exchanged.json()) as { daemonToken: string };
     const client = new DaemonApiClient(origin, token.daemonToken, AGENT);
     const polled = vi.fn();
-    const body = new Body(
-      {
-        agentBinary: '/nonexistent',
-        mcpBinary: '/nonexistent',
-        agentEnv: {},
-        workspaceRoot: join(supervisorRoot, 'repo-less-room'),
-        relayBaseUrl: origin,
-        relayHost: '127.0.0.1',
-        relayScheme: 'http',
-        relayWsUrl: origin.replace(/^http/, 'ws'),
-        autoApprovePermissions: true,
-        accessPolicy: 'everyone',
+    const config = {
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      readonlyMcpCommand: '/nonexistent-readonly-mcp',
+      agentEnv: {},
+      workspaceRoot: join(supervisorRoot, 'repo-less-room'),
+      relayBaseUrl: origin,
+      relayHost: '127.0.0.1',
+      relayScheme: 'http',
+      relayWsUrl: origin.replace(/^http/, 'ws'),
+      autoApprovePermissions: true,
+      accessPolicy: 'everyone',
+    } as const;
+    const runtime: AgentRuntimeRecord = {
+      version: 2,
+      communityId: WORKSPACE,
+      pairedBy: HUMAN,
+      agent: {
+        name: 'Bee',
+        publicKey: AGENT,
+        secretKeyHex: Buffer.from(AGENT_SECRET).toString('hex'),
       },
-      undefined,
-      { publicKey: AGENT, secretKey: 'unused-by-monolith' } as never,
-      { daemonApi: client, onRoomPollSuccess: polled },
-    );
+      body: {
+        name: 'Body',
+        publicKey: getPublicKey(new Uint8Array(32).fill(22)),
+        secretKeyHex: Buffer.from(new Uint8Array(32).fill(22)).toString('hex'),
+      },
+      rooms: [],
+      supervisorRoot,
+      relayBaseUrl: origin,
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      createdAt: new Date().toISOString(),
+      accessPolicy: 'everyone',
+      transport: { kind: 'monolith', baseUrl: origin, daemonToken: token.daemonToken },
+    };
     const acp = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
+    vi.spyOn(acp, 'start').mockResolvedValue(undefined);
+    vi.spyOn(acp, 'sessionNew').mockResolvedValue({
+      sessionId: 'repo-less-session',
+      raw: {},
+    });
     vi.spyOn(acp, 'sessionPrompt').mockResolvedValue({
       stopReason: 'end_turn',
       updates: [],
       agentText: 'I am Bee, and I am ready to help.',
       toolCalls: [],
     });
-    body.registerSession({
-      channelId: ROOM,
-      sessionId: 'repo-less-session',
-      client: acp,
-      mode: 'readonly',
-    });
+    const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
     const abort = new AbortController();
-    const loop = body.runConversationRoomLoop(ROOM, 'named-repository', {
-      pollMs: 10,
+    const turnLoop = new MonolithRoomTurnLoop({
+      roomId: ROOM,
+      workspaceId: WORKSPACE,
+      cwd: config.workspaceRoot,
+      runtime,
+      config: config as never,
+      api: client,
+      scheduler,
+      health: { poll: polled, failure: vi.fn(), presence: vi.fn() },
       signal: abort.signal,
+      pollMs: 10,
+      createAcpClient: () => acp,
     });
+    const loop = turnLoop.run();
     try {
       await vi.waitFor(() => expect(polled).toHaveBeenCalled(), { timeout: 2_000 });
       const visibleOnline = await phone.readRoom(ROOM, HUMAN);
@@ -286,7 +323,7 @@ describe('daemon API client against the local monolith', () => {
     } finally {
       abort.abort();
       await loop;
-      await body.dispose();
+      await scheduler.dispose();
     }
 
     const visibleOffline = await phone.readRoom(ROOM, HUMAN);
@@ -315,6 +352,21 @@ describe('daemon API client against the local monolith', () => {
       client.execute('getAgentConfiguration', { agentId: AGENT, roomId: ROOM }),
     ).resolves.toEqual(
       expect.objectContaining({ soul: { name: 'Bee', instructions: 'Help carefully.' } }),
+    );
+    await expect(
+      client.execute('getWorkspaceRoster', { agentId: AGENT, workspaceId: WORKSPACE }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        members: expect.arrayContaining([
+          expect.objectContaining({ identityId: HUMAN, kind: 'human', name: 'Owner' }),
+          expect.objectContaining({
+            identityId: AGENT,
+            kind: 'agent',
+            name: 'Bee',
+            soul: expect.objectContaining({ instructions: 'Help carefully.' }),
+          }),
+        ]),
+      }),
     );
 
     const message = await client.execute('postRoomMessage', {

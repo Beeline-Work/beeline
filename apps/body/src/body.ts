@@ -2412,6 +2412,11 @@ export class Body {
       publishPermissionReceipt?: (event: NostrEvent) => Promise<void>;
     } = {},
   ) {
+    if (services.daemonApi) {
+      throw new Error(
+        'monolith Room reached the retired relay-backed Body turn path; use MonolithRoomTurnLoop',
+      );
+    }
     this.config = config;
     this.maxAgentDelegationHops = agentDelegationMaxHops(
       config.agentDelegationMaxHops === undefined

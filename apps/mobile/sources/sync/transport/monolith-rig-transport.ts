@@ -97,9 +97,16 @@ class MonolithClientAdapter {
   setAgentSoul(
     workspaceId: string,
     agentId: string,
-    soul: { name: string; instructions: string; avatarSeed: string; avatar?: string },
+    soul: { name: string; soul: string; avatarSeed: string; avatar?: string },
   ) {
-    return this.transport.operation('updateAgentSoul', { workspaceId, agentId, ...soul });
+    return this.transport.operation('updateAgentSoul', {
+      workspaceId,
+      agentId,
+      name: soul.name,
+      instructions: soul.soul,
+      avatarSeed: soul.avatarSeed,
+      ...(soul.avatar ? { avatar: soul.avatar } : {}),
+    });
   }
   setAgentModelConfig(workspaceId: string, agentId: string, selection: Record<string, unknown>) {
     return this.transport.operation('updateAgentModelSelection', {

@@ -30,6 +30,7 @@ import { readOperatorMcpServers } from './operator-mcp.js';
 import { Body } from './body.js';
 import { runCornerGitCredentialCommand } from './corner-git-credential.js';
 import { ThinDaemonCore } from './thin-core.js';
+import { activateDaemonTransport, type DaemonApiClient } from './daemon-api-client.js';
 import {
   findAgentRuntimeConfigPaths,
   identityFromKey,
@@ -76,10 +77,7 @@ import {
   runManagedUpdateWorker,
 } from './managed-update.js';
 import { runUpdateFunctionalProbe } from './update-functional-probe.js';
-import {
-  reportUpdateRollback,
-  queueUpdateRollbackAlert,
-} from './update-rollback-alert.js';
+import { reportUpdateRollback, queueUpdateRollbackAlert } from './update-rollback-alert.js';
 import {
   dailyAgentSpend,
   dailyRestartReprimes,
@@ -255,9 +253,16 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   // so flipping DEFAULT_ACCESS_POLICY to owner-only never re-gates an
   // already-paired agent. A record with any explicit policy is untouched.
   const accessMigration = await migrateRuntimeRecordAccessPolicy(configPath);
-  const { runtime } = await migrateLegacyRepositoryPaths(accessMigration.runtime, {
+  let { runtime } = await migrateLegacyRepositoryPaths(accessMigration.runtime, {
     log: console.log,
   });
+  let daemonApi: DaemonApiClient | undefined;
+  if (runtime.transport) {
+    const activated = await activateDaemonTransport(configPath);
+    if (!activated) throw new Error('monolith daemon transport activation failed');
+    runtime = activated.runtime;
+    daemonApi = activated.client;
+  }
   const agent = runtimeAgentCommand(runtime);
   await writeFile(resolve(dirname(configPath), 'daemon.pid'), `${process.pid}\n`, { mode: 0o600 });
   const env: NodeJS.ProcessEnv = {
@@ -356,7 +361,10 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
         `[body] self-update ROLLED BACK: bundle ${describeIdentity(settle.record.to)} never confirmed healthy; ` +
           `restored ${settle.record.previousReleaseId ?? 'previous release'}`,
       );
-      throw new DaemonExitError('stale unconfirmed release rolled back; supervisor must restart', 75);
+      throw new DaemonExitError(
+        'stale unconfirmed release rolled back; supervisor must restart',
+        75,
+      );
     } else if (settle.kind === 'pending') {
       pendingSuccessor = true;
     }
@@ -376,7 +384,9 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   let ready = false;
   let stoppingStatus = 'daemon stopped';
   try {
-    const core = new ThinDaemonCore(runtime, configPath, config);
+    const core = new ThinDaemonCore(runtime, configPath, config, {
+      ...(daemonApi ? { daemonApi } : {}),
+    });
     const result = await core.run({
       signal: controller.signal,
       onEstablished: async () => {
@@ -432,7 +442,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
           async ({ desiredRelease, drainDeadlineAt }) => {
             await notifier.progress(
               `loaded_release=${loadedRelease ?? 'unknown'}; update ready; ` +
-              `active agent work is still running; handoff deferred; ` +
+                `active agent work is still running; handoff deferred; ` +
                 `desired_release=${desiredRelease}; exit_deadline=${new Date(drainDeadlineAt).toISOString()}`,
             );
           },

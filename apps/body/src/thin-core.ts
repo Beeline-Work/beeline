@@ -6,6 +6,7 @@ import { runtimeIdentity, type AgentRuntimeRecord } from './runtime.js';
 import { RoomRuntimeCoordinator, reconcileRetryMs } from './room-runtime.js';
 import { createDaemonWorkCalendar } from './daemon-work-calendar.js';
 import type { WorkCalendar } from './work-calendar.js';
+import type { DaemonApiClient } from './daemon-api-client.js';
 
 type WorkCalendarLifecycle = Pick<WorkCalendar, 'start' | 'dispose' | 'refreshNow'> &
   Partial<Pick<WorkCalendar, 'runNow'>>;
@@ -56,7 +57,8 @@ async function waitForNextTick(ms: number, signal?: AbortSignal): Promise<void> 
  */
 export class ThinDaemonCore {
   private readonly agent: ReturnType<typeof runtimeIdentity>;
-  private readonly relaySocket: SharedRelaySocket;
+  private readonly relaySocket?: SharedRelaySocket;
+  private readonly daemonApi?: DaemonApiClient;
   private readonly roomRuntime: RoomRuntimeCoordinator;
   private readonly workCalendar: WorkCalendarLifecycle;
   private readonly now: () => number;
@@ -72,29 +74,43 @@ export class ThinDaemonCore {
       drainDeadlineMs?: number;
       /** Test seam; production owns exactly one daemon-level WorkCalendar. */
       workCalendar?: WorkCalendarLifecycle;
+      daemonApi?: DaemonApiClient;
     } = {},
   ) {
     this.agent = runtimeIdentity(runtime.agent);
     this.now = options.now ?? Date.now;
-    this.relaySocket = new SharedRelaySocket({
-      baseUrl: runtime.relayBaseUrl,
-      ...(runtime.relayHost ? { host: runtime.relayHost } : {}),
-      ...(baseConfig.relayWsUrl ? { wsUrl: baseConfig.relayWsUrl } : {}),
-      identity: this.agent,
-      WebSocketImpl: WebSocket,
-    });
+    this.daemonApi = options.daemonApi;
+    if (runtime.transport && !this.daemonApi) {
+      throw new Error('monolith runtime requires an activated daemon API client');
+    }
+    if (!runtime.transport) {
+      this.relaySocket = new SharedRelaySocket({
+        baseUrl: runtime.relayBaseUrl,
+        ...(runtime.relayHost ? { host: runtime.relayHost } : {}),
+        ...(baseConfig.relayWsUrl ? { wsUrl: baseConfig.relayWsUrl } : {}),
+        identity: this.agent,
+        WebSocketImpl: WebSocket,
+      });
+    }
     this.roomRuntime = new RoomRuntimeCoordinator(runtime, configPath, baseConfig, {
       ...options,
-      relaySocket: this.relaySocket,
+      ...(this.relaySocket ? { relaySocket: this.relaySocket } : {}),
+      ...(this.daemonApi ? { daemonApi: this.daemonApi } : {}),
     });
     this.workCalendar =
       options.workCalendar ??
-      createDaemonWorkCalendar({
-        runtime,
-        configPath,
-        roomRuntime: this.roomRuntime,
-        nowMs: this.now,
-      });
+      (this.daemonApi
+        ? {
+            start: async () => undefined,
+            dispose: async () => undefined,
+            refreshNow: async () => undefined,
+          }
+        : createDaemonWorkCalendar({
+            runtime,
+            configPath,
+            roomRuntime: this.roomRuntime,
+            nowMs: this.now,
+          }));
     if (this.workCalendar.runNow) {
       this.roomRuntime.setScheduleRunNow((scheduleId) => this.workCalendar.runNow!(scheduleId));
     }
@@ -145,22 +161,26 @@ export class ThinDaemonCore {
 
     await opts.onEstablished?.();
     try {
-      const client = await this.relaySocket.connected();
-      const socket = client.socket;
-      if (!socket) throw new Error('control-plane WS connected but exposed no socket');
-      unsubscribeControl = socket.subscribe(
-        [
-          {
-            kinds: [KIND_PUT_USER, KIND_REMOVE_USER],
-            '#p': [this.agent.publicKey],
-            since: Math.floor(this.now() / 1_000),
+      if (!this.relaySocket) {
+        degraded = '';
+      } else {
+        const client = await this.relaySocket.connected();
+        const socket = client.socket;
+        if (!socket) throw new Error('control-plane WS connected but exposed no socket');
+        unsubscribeControl = socket.subscribe(
+          [
+            {
+              kinds: [KIND_PUT_USER, KIND_REMOVE_USER],
+              '#p': [this.agent.publicKey],
+              since: Math.floor(this.now() / 1_000),
+            },
+          ],
+          () => {
+            wake = true;
           },
-        ],
-        () => {
-          wake = true;
-        },
-      );
-      degraded = '';
+        );
+        degraded = '';
+      }
     } catch (error) {
       degraded = `relay control socket degraded: ${error instanceof Error ? error.message : String(error)}`;
       console.error(
@@ -222,7 +242,7 @@ export class ThinDaemonCore {
       unsubscribeControl?.();
       await this.workCalendar.dispose();
       await this.roomRuntime.shutdown();
-      this.relaySocket.disconnect();
+      this.relaySocket?.disconnect();
     }
   }
 }

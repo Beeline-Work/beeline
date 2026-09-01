@@ -778,6 +778,7 @@ export function projectActivity(
   channelId: string,
   channelOwner: Identity,
   sessionId: string,
+  publishActivity?: (batch: ActivityBatch) => Promise<void>,
 ): ActivityProjectionController {
   let pending: Record<string, unknown>[] = [];
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -804,7 +805,9 @@ export function projectActivity(
   let publishTail: Promise<void> = Promise.resolve();
   const publishBatch = (events: Record<string, unknown>[]): Promise<void> => {
     const publish = () =>
-      emitActivityEvent(channelId, channelOwner, { sessionId, channelId, events });
+      publishActivity
+        ? publishActivity({ sessionId, channelId, events })
+        : emitActivityEvent(channelId, channelOwner, { sessionId, channelId, events });
     // Keep plan snapshots and telemetry batches in the order Body produced
     // them even when the relay is slow. A rejected publish must not poison all
     // later progress updates.
@@ -950,11 +953,11 @@ export function projectActivity(
           items: compactAuthoredPlan.items,
         }
       : currentPlan?.items.length
-        // A later turn (a follow-up, a nudge, a completion-ladder check) that
-        // brings no fresh plan of its own must not blank a checklist an
-        // earlier turn already published — that is the finished corner
-        // losing its sub-goals, not an honest "no plan yet" state.
-        ? { ...currentPlan, ...(pinnedObjective ? { objective: pinnedObjective } : {}) }
+        ? // A later turn (a follow-up, a nudge, a completion-ladder check) that
+          // brings no fresh plan of its own must not blank a checklist an
+          // earlier turn already published — that is the finished corner
+          // losing its sub-goals, not an honest "no plan yet" state.
+          { ...currentPlan, ...(pinnedObjective ? { objective: pinnedObjective } : {}) }
         : fallbackPlan(pinnedObjective ?? objective);
     await publishPlan(currentPlan);
   };
@@ -1139,6 +1142,8 @@ export function createDraftStreamer(
   sessionId: string,
   requestId: string,
   flushMs = AGENT_DRAFT_FLUSH_MS,
+  publishLive?: (text: string) => Promise<void>,
+  retractLive?: () => Promise<void>,
 ): DraftStreamer {
   let latest = '';
   let published = '';
@@ -1168,7 +1173,11 @@ export function createDraftStreamer(
     const snapshot = stripped;
     const createdAt = nextMonotonicSecond(lastCreatedAt);
     inflight = inflight
-      .then(() => postAgentDraft(channelId, owner, sessionId, requestId, snapshot, createdAt))
+      .then(() =>
+        publishLive
+          ? publishLive(snapshot)
+          : postAgentDraft(channelId, owner, sessionId, requestId, snapshot, createdAt),
+      )
       .catch((error) => console.error('[body] agent draft publish failed:', error));
   };
   return {
@@ -1188,7 +1197,9 @@ export function createDraftStreamer(
       if (publishedSnapshots.size > 0) {
         const createdAt = nextMonotonicSecond(lastCreatedAt);
         inflight = inflight
-          .then(() => retractAgentDraft(channelId, channelId, owner, createdAt))
+          .then(() =>
+            retractLive ? retractLive() : retractAgentDraft(channelId, channelId, owner, createdAt),
+          )
           .catch((error) => console.error('[body] agent draft retract failed:', error));
       }
       await inflight;
@@ -1202,6 +1213,8 @@ export function createThoughtStreamer(
   owner: Identity,
   sessionId: string,
   flushMs = AGENT_DRAFT_FLUSH_MS,
+  publishLive?: (text: string) => Promise<void>,
+  retractLive?: () => Promise<void>,
 ): DraftStreamer {
   let latest = '';
   let published = '';
@@ -1217,7 +1230,11 @@ export function createThoughtStreamer(
     const snapshot = text;
     const createdAt = nextMonotonicSecond(lastCreatedAt);
     inflight = inflight
-      .then(() => postAgentThought(channelId, owner, sessionId, snapshot, createdAt))
+      .then(() =>
+        publishLive
+          ? publishLive(snapshot)
+          : postAgentThought(channelId, owner, sessionId, snapshot, createdAt),
+      )
       .catch((error) => console.error('[body] agent thought publish failed:', error));
   };
   return {
@@ -1234,7 +1251,11 @@ export function createThoughtStreamer(
       if (published) {
         const createdAt = nextMonotonicSecond(lastCreatedAt);
         inflight = inflight
-          .then(() => retractAgentThought(channelId, channelId, owner, sessionId, createdAt))
+          .then(() =>
+            retractLive
+              ? retractLive()
+              : retractAgentThought(channelId, channelId, owner, sessionId, createdAt),
+          )
           .catch((error) => console.error('[body] agent thought retract failed:', error));
       }
       await inflight;

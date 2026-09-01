@@ -254,7 +254,7 @@ export type AgentHistoryEntry = {
   readonly body: string;
   readonly attachments: readonly AttachmentReference[];
   readonly createdAt: number;
-  readonly provenance: 'relay-verified';
+  readonly provenance: 'relay-verified' | 'monolith-verified';
 };
 
 export type ChatListItem = {

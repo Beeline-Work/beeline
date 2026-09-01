@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
+import type { DaemonAttachment, DaemonOperationMap } from '@beeline/api-contract/daemon';
 import type { SqlDatabase } from './database.js';
 import type { LiveHub } from './live.js';
 
@@ -230,7 +230,9 @@ export class DaemonService {
       [agentId],
     );
     const rooms = await this.database.query<{ room_id: string; archived: boolean }>(
-      `SELECT m.room_id, r.archived_at IS NOT NULL archived FROM memberships m JOIN rooms r ON r.id=m.room_id WHERE m.identity_id=$1 AND m.removed_at IS NULL`,
+      `SELECT m.room_id, r.archived_at IS NOT NULL archived FROM memberships m
+       JOIN rooms r ON r.id=m.room_id
+       WHERE m.identity_id=$1 AND m.removed_at IS NULL AND r.parent_id IS NULL`,
       [agentId],
     );
     return {
@@ -244,16 +246,45 @@ export class DaemonService {
         ? (input as unknown as { cornerId: string }).cornerId
         : input.roomId;
     await this.access(roomId, agentId);
+    if (input.startAtLatest) {
+      if (input.after) throw new Error('startAtLatest cannot be combined with after');
+      const latest = await this.database.query<{
+        id: string;
+        created_at: Date;
+        cursor_ms: string;
+      }>(
+        `SELECT id,created_at,floor(extract(epoch FROM created_at)*1000)::bigint cursor_ms
+         FROM messages WHERE room_id=$1 ORDER BY cursor_ms DESC,id DESC LIMIT 1`,
+        [roomId],
+      );
+      const highWater = latest.rows[0];
+      return {
+        items: [],
+        ...(highWater ? { cursor: `${highWater.cursor_ms},${highWater.id}` } : {}),
+      };
+    }
     const limit = Math.max(1, Math.min(input.limit ?? 100, 200));
+    const after = input.after?.match(/^(\d+),([0-9a-f]{64})$/);
+    if (input.after && !after) throw new Error('invalid inbox cursor');
     const rows = await this.database.query<{
       id: string;
       author_id: string;
       created_at: Date;
       presentation: string;
       text: string;
+      mention_ids: string[];
+      reply_to_message_id: string | null;
+      root_message_id: string | null;
+      request_id: string | null;
+      attachments: DaemonAttachment[];
+      cursor_ms: string;
     }>(
-      `SELECT id,author_id,created_at,presentation,text FROM messages WHERE room_id=$1 ${input.after ? 'AND id>$2' : ''} ORDER BY created_at,id LIMIT ${limit + 1}`,
-      input.after ? [roomId, input.after] : [roomId],
+      `SELECT id,author_id,created_at,presentation,text,mention_ids,reply_to_message_id,
+        root_message_id,request_id,attachments,
+        floor(extract(epoch FROM created_at)*1000)::bigint cursor_ms
+        FROM messages WHERE room_id=$1 ${after ? 'AND (floor(extract(epoch FROM created_at)*1000)::bigint,id)>($2::bigint,$3)' : ''}
+        ORDER BY cursor_ms,id LIMIT ${limit + 1}`,
+      after ? [roomId, after[1], after[2]] : [roomId],
     );
     const page = rows.rows.slice(0, limit);
     return {
@@ -263,8 +294,13 @@ export class DaemonService {
         createdAt: seconds(row.created_at),
         type: row.presentation,
         body: row.text,
+        mentionIds: row.mention_ids ?? [],
+        ...(row.reply_to_message_id ? { replyToMessageId: row.reply_to_message_id } : {}),
+        ...(row.root_message_id ? { rootMessageId: row.root_message_id } : {}),
+        ...(row.request_id ? { requestId: row.request_id } : {}),
+        attachments: row.attachments ?? [],
       })),
-      ...(rows.rows.length > limit && page.at(-1) ? { cursor: page.at(-1)!.id } : {}),
+      ...(page.at(-1) ? { cursor: `${page.at(-1)!.cursor_ms},${page.at(-1)!.id}` } : {}),
     };
   }
   private async roomAuthority(input: Input<'getRoomAuthority'>) {
@@ -750,7 +786,15 @@ export class DaemonService {
         ],
       );
       await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`,
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+         SELECT workspace_id,$2,identity_id,role FROM memberships
+         WHERE room_id=$1 AND removed_at IS NULL ON CONFLICT DO NOTHING`,
+        [input.roomId, cornerId],
+      );
+      await db.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')
+         ON CONFLICT(room_id,identity_id) WHERE room_id IS NOT NULL
+         DO UPDATE SET role='owner',removed_at=NULL`,
         [parent.workspace_id, cornerId, agentId],
       );
       await db.query(

@@ -1,6 +1,6 @@
 # Daemon API operation design
 
-Phase A replaces raw event access on paper only. `DaemonOperationMap` in `src/daemon-operations.ts` is the typed list the future server must implement. It intentionally contains no `queryEvents`, `rawEvents`, `publishEvent`, or generic publish operation.
+`DaemonOperationMap` in `src/daemon-operations.ts` is the typed list the monolith server and daemon client implement. It intentionally contains no `queryEvents`, `rawEvents`, `publishEvent`, or generic publish operation.
 
 The inventory below covers all 53 production raw-query call sites and all 37 production publish call sites observed in `apps/body/src` on 2026-08-31.
 
@@ -48,4 +48,5 @@ Repeated reads in an authority check are preserved as retry semantics inside the
 - Authority operations return a verified decision or `unavailable`; callers never receive signed rows to reinterpret.
 - Writes accept stable domain IDs and validated payloads, and return the durable server ID/time used for receipts and deduplication.
 - Inbox and conversation reads own pagination and ordering. The caller cannot supply arbitrary kinds, authors, or tags.
+- Inbox cursors are opaque `created_at,id` positions. A daemon with no durable cursor first requests `startAtLatest` to establish its activation high-water mark without replaying imported history. Intake items include only server-validated addressing, reply, request, and attachment metadata; daemons never recover those facts from raw tags.
 - Live draft/thought operations are explicitly replace/retract operations, not generic event publication.

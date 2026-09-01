@@ -54,6 +54,7 @@ async function main() {
         githubClients.oauth,
         githubClients.app,
         process.env.GITHUB_CLIENT_SECRET!,
+        mountedAuth.sealedGitHubUserToken,
       )
     : undefined;
   const pushSender =

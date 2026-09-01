@@ -10,6 +10,7 @@ import type { SqlDatabase } from './database.js';
 export interface MonolithAuthMount {
   handle(request: IncomingMessage, response: ServerResponse): void;
   verifyGitHubTicket: VerifyGitHubOidc;
+  sealedGitHubUserToken(subject: string): Promise<string | undefined>;
   close(): Promise<void>;
 }
 
@@ -47,6 +48,10 @@ export async function createMonolithAuth(
       const result = await verifyPhoneGitHubTicket(store, tenant.community, ticket);
       if (result.status !== 'verified') throw new Error('GitHub identity exchange failed');
       return result.identity;
+    },
+    sealedGitHubUserToken: async (subject) => {
+      if (await store.githubUserTokenStaleAt(tenant.community, subject)) return undefined;
+      return (await store.githubUserToken(tenant.community, subject)) ?? undefined;
     },
     close: () => app.close(),
   };

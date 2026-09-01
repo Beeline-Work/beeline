@@ -19,6 +19,7 @@ export class GitHubOperations {
     private readonly oauth: GitHubOAuthClient,
     private readonly app: GitHubAppClient,
     clientSecret: string,
+    private readonly resolveSealedUserToken?: (subject: string) => Promise<string | undefined>,
   ) {
     this.#key = createHash('sha256').update(clientSecret).digest();
   }
@@ -153,16 +154,11 @@ export class GitHubOperations {
       [viewerId],
     );
     const installationIds = new Set(rows.rows.map((row) => Number(row.installation_id)));
-    const credential = (
-      await this.database.query<{ subject: string; encrypted_token: string | null }>(
-        `SELECT l.subject,t.encrypted_token FROM identity_external_links l LEFT JOIN github_user_tokens t ON t.subject=l.subject AND t.stale_at IS NULL WHERE l.provider='github' AND l.identity_id=$1`,
-        [viewerId],
-      )
-    ).rows[0];
+    const credential = await this.userCredential(viewerId, this.database);
     if (credential) {
       const installations = await this.app.listInstallations();
-      const administered = credential.encrypted_token
-        ? new Set(await this.app.listUserInstallationIds(this.open(credential.encrypted_token)))
+      const administered = credential.token
+        ? new Set(await this.app.listUserInstallationIds(credential.token))
         : new Set<number>();
       for (const installation of installations) {
         if (
@@ -187,20 +183,7 @@ export class GitHubOperations {
       )
     ).rows[0];
     if (!installation) throw new Error('GitHub installation not found');
-    const subject = (
-      await this.database.query<{ subject: string }>(
-        `SELECT subject FROM identity_external_links WHERE provider='github' AND identity_id=$1`,
-        [viewerId],
-      )
-    ).rows[0]?.subject;
-    const sealed = subject
-      ? (
-          await this.database.query<{ encrypted_token: string }>(
-            `SELECT encrypted_token FROM github_user_tokens WHERE subject=$1 AND stale_at IS NULL`,
-            [subject],
-          )
-        ).rows[0]?.encrypted_token
-      : undefined;
+    const token = (await this.userCredential(viewerId, this.database))?.token;
     const repository = await this.app.createRepository(
       input.installationId,
       { login: installation.account_login, type: installation.account_type },
@@ -209,7 +192,7 @@ export class GitHubOperations {
         ...(input.description ? { description: input.description } : {}),
         ...(input.private !== undefined ? { private: input.private } : {}),
       },
-      sealed ? this.open(sealed) : undefined,
+      token,
     );
     await this.storeRepository(repository, this.database);
     return {
@@ -291,22 +274,24 @@ export class GitHubOperations {
     installationId: number,
     database: SqlDatabase = this.database,
   ) {
-    const subject = (
-      await database.query<{ subject: string }>(
-        `SELECT subject FROM identity_external_links WHERE provider='github' AND identity_id=$1`,
+    const token = (await this.userCredential(viewerId, database))?.token;
+    if (!token || !(await this.app.userCanAccessInstallation(token, installationId)))
+      throw new Error('GitHub installation access denied');
+  }
+  private async userCredential(viewerId: string, database: SqlDatabase) {
+    const credential = (
+      await database.query<{ subject: string; encrypted_token: string | null }>(
+        `SELECT l.subject,t.encrypted_token FROM identity_external_links l LEFT JOIN github_user_tokens t ON t.subject=l.subject AND t.stale_at IS NULL WHERE l.provider='github' AND l.identity_id=$1`,
         [viewerId],
       )
-    ).rows[0]?.subject;
-    const sealed = subject
-      ? (
-          await database.query<{ encrypted_token: string }>(
-            `SELECT encrypted_token FROM github_user_tokens WHERE subject=$1 AND stale_at IS NULL`,
-            [subject],
-          )
-        ).rows[0]?.encrypted_token
-      : undefined;
-    if (!sealed || !(await this.app.userCanAccessInstallation(this.open(sealed), installationId)))
-      throw new Error('GitHub installation access denied');
+    ).rows[0];
+    if (!credential) return undefined;
+    const sealed =
+      credential.encrypted_token ?? (await this.resolveSealedUserToken?.(credential.subject));
+    return {
+      subject: credential.subject,
+      ...(sealed ? { token: this.open(sealed) } : {}),
+    };
   }
   private async storeRepository(
     repository: { id: number; installationId: number; fullName: string; defaultBranch: string },

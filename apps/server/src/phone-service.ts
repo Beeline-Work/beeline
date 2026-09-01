@@ -378,7 +378,12 @@ export class PhoneService {
         unread: Boolean(
           row.latest_created_at && (!row.read_at || row.latest_created_at > row.read_at),
         ),
-        ...(row.repository_key ? { repositoryName: row.repository_key.split('/').at(-1) } : {}),
+        ...(row.repository_key
+          ? {
+              repositoryName:
+                row.repository_name ?? row.repository_key.split('/').at(-1) ?? row.repository_key,
+            }
+          : {}),
         ...(row.needs_you
           ? { agentState: 'needs-you' as const }
           : row.working
@@ -1202,9 +1207,45 @@ export class PhoneService {
     await this.requireWorkspaceManager(input.workspaceId, viewerId);
     const id = randomUUID();
     await this.database.transaction(async (db) => {
+      const repository =
+        input.repositoryId === undefined
+          ? undefined
+          : (
+              await db.query<{
+                repository_id: string;
+                installation_id: string;
+                full_name: string;
+                default_branch: string;
+              }>(
+                `SELECT r.repository_id,r.installation_id,r.full_name,r.default_branch
+                 FROM github_repositories r
+                 JOIN github_installations i USING(installation_id)
+                 WHERE r.repository_id=$1 AND r.active AND i.owner_id=$2 AND i.status='active'`,
+                [input.repositoryId, viewerId],
+              )
+            ).rows[0];
+      if (input.repositoryId !== undefined && !repository)
+        throw new Error('installed repository not found');
       await db.query(
-        `INSERT INTO rooms(id,workspace_id,created_by,name,visibility) VALUES($1,$2,$3,$4,$5)`,
-        [id, input.workspaceId, viewerId, input.name, input.visibility ?? 'invite-only'],
+        `INSERT INTO rooms(
+           id,workspace_id,created_by,name,visibility,
+           repository_key,repository_name,repository_remote,repository_target_branch,
+           repository_updated_at,repository_resolution,github_installation_id
+         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        [
+          id,
+          input.workspaceId,
+          viewerId,
+          input.name,
+          input.visibility ?? 'invite-only',
+          repository ? `github:${repository.repository_id}` : null,
+          repository?.full_name ?? null,
+          repository ? `git://github.com/${repository.full_name}` : null,
+          repository?.default_branch ?? 'main',
+          repository ? new Date() : null,
+          repository ? 'repository' : 'none',
+          repository?.installation_id ?? null,
+        ],
       );
       await db.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role) SELECT workspace_id,$1,identity_id,role FROM memberships WHERE workspace_id=$2 AND room_id IS NULL AND removed_at IS NULL`,

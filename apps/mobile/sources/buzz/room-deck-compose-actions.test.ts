@@ -25,11 +25,11 @@ describe('Room deck compose flow wiring', () => {
     expect(openRoomCreator).toHaveBeenCalledOnce();
     expect(invitePerson).toHaveBeenCalledOnce();
     expect(navigate).toHaveBeenNthCalledWith(1, {
-      pathname: '/buzz/members',
+      pathname: '/beeline/members',
       params: { communityId: 'workspace-1', action: 'add-agent' },
     });
     expect(navigate).toHaveBeenNthCalledWith(2, {
-      pathname: '/buzz/community',
+      pathname: '/beeline/community',
       params: { mode: 'join' },
     });
   });

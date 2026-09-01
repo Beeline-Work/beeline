@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { normalizeAgentPairingCode } from '@beeline/api-contract/phone';
+import { createAgentPairingCode, normalizeAgentPairingCode } from '@beeline/api-contract/phone';
 import { isReasonableAgentName } from '@beeline/buzz-client';
 import { generateKeypair } from '@beeline/nostr';
 import { GITHUB_IDENTITY_AUDIENCE } from './github.js';
@@ -17,7 +17,7 @@ function pairingPart(): string {
 }
 
 function pairingCode(): string {
-  return `BUZZ-${pairingPart()}-${pairingPart()}`;
+  return createAgentPairingCode(randomBytes(8));
 }
 
 function userCode(): string {

@@ -131,10 +131,7 @@ beforeEach(() => {
   avatarUpload.pickAndUploadAvatar.mockResolvedValue(null);
 });
 
-function workspaceView(
-  role: 'owner' | 'admin' | 'member' = 'owner',
-  avatar?: string,
-) {
+function workspaceView(role: 'owner' | 'admin' | 'member' = 'owner', avatar?: string) {
   return {
     workspace: {
       id: 'workspace-1',
@@ -278,7 +275,7 @@ describe('Workspace Settings authority', () => {
     });
 
     expect(navigation.push).toHaveBeenCalledWith({
-      pathname: '/buzz/members',
+      pathname: '/beeline/members',
       params: { communityId: 'workspace-1' },
     });
   });
@@ -310,10 +307,7 @@ describe('Workspace Settings authority', () => {
 
   it('qualifies same-name Rooms with human dates and discloses the full ID on demand', async () => {
     roomViews.chats.mockResolvedValue(
-      chatListView([
-        room('11111111-room', 'beeline', 1),
-        room('22222222-room', 'beeline', 2),
-      ]),
+      chatListView([room('11111111-room', 'beeline', 1), room('22222222-room', 'beeline', 2)]),
     );
 
     const renderer = await render();

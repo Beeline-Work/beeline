@@ -6,9 +6,10 @@ import {
   inviteTokenHash,
   queryEvents,
 } from '@beeline/buzz-client';
+import { isCommunityInviteToken } from '@beeline/api-contract/phone';
 import { verifyEvent } from '@beeline/nostr';
 
-const TOKEN_PATTERN = /^\/join\/(bzi_[0-9a-f]{64})\/?$/;
+const TOKEN_PATH_PATTERN = /^\/join\/([^/]+)\/?$/;
 export const APK_DOWNLOAD_URL = '/dl/beeline-android.apk';
 export const RESOLVE_TIMEOUT_MS = 8_000;
 export const APP_OPEN_TIMEOUT_MS = 1_800;
@@ -74,13 +75,13 @@ export function startInviteLanding({
   resolveTimeoutMs = RESOLVE_TIMEOUT_MS,
   appOpenTimeoutMs = APP_OPEN_TIMEOUT_MS,
 } = {}) {
-  const match = window.location.pathname.match(TOKEN_PATTERN);
+  const match = window.location.pathname.match(TOKEN_PATH_PATTERN);
   const join = document.querySelector('#join-workspace');
   const heading = document.querySelector('#invite-heading');
   const details = document.querySelector('#invite-details');
   const status = document.querySelector('#status');
 
-  if (!match || !join || !heading || !details || !status) {
+  if (!match || !isCommunityInviteToken(match[1]) || !join || !heading || !details || !status) {
     if (status) status.textContent = 'This invite link is malformed.';
     return;
   }

@@ -39,7 +39,7 @@ export default function BuzzCorners() {
     void (async () => {
       const identity = (await loadBuzzIdentity()) as Identity | null;
       if (!identity) {
-        router.replace('/buzz/onboarding');
+        router.replace('/beeline/onboarding');
         return;
       }
       const relayUrl = await getEffectiveRelayUrl();
@@ -113,12 +113,12 @@ export default function BuzzCorners() {
       activeCommunityId={surface.room.workspaceId}
       onSelect={(communityId) =>
         communityId &&
-        router.replace({ pathname: '/buzz/channels', params: { communityId } } as never)
+        router.replace({ pathname: '/beeline/channels', params: { communityId } } as never)
       }
-      onAdd={() => router.push('/buzz/community' as Href)}
-      onSettings={() => router.push('/buzz/settings' as Href)}
+      onAdd={() => router.push('/beeline/community' as Href)}
+      onSettings={() => router.push('/beeline/settings' as Href)}
       onWorkspaceSettings={(communityId) =>
-        router.push({ pathname: '/buzz/settings/workspace', params: { communityId } } as never)
+        router.push({ pathname: '/beeline/settings/workspace', params: { communityId } } as never)
       }
       canManageActiveCommunity={surface.viewer.permissions.manage}
       viewerPubkey={surface.viewer.identity.pubkey}

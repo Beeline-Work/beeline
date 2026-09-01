@@ -69,20 +69,22 @@ export async function startStoredRuntime(
   const report = opts.report ?? deps.log;
   const existingPid = await deps.readPid(configPath);
   if (existingPid) {
-    report(`[buzz] agent daemon is running (pid ${existingPid}); restarting it`);
+    report(`[beeline] agent daemon is running (pid ${existingPid}); restarting it`);
     let lastWaitReportAt = Date.now();
     const stoppedPid = await deps.stop(configPath, {
       timeoutMs: opts.drainTimeoutMs ?? DEFAULT_RESTART_DRAIN_TIMEOUT_MS,
       onWait: (pid) => {
         if (Date.now() - lastWaitReportAt < RESTART_WAIT_REPORT_INTERVAL_MS) return;
         lastWaitReportAt = Date.now();
-        report(`[buzz] waiting for agent ${pid} to finish its in-flight work before stopping it…`);
+        report(
+          `[beeline] waiting for agent ${pid} to finish its in-flight work before stopping it…`,
+        );
       },
     });
-    if (stoppedPid) report(`[buzz] stopped previous daemon (pid ${stoppedPid})`);
+    if (stoppedPid) report(`[beeline] stopped previous daemon (pid ${stoppedPid})`);
   }
   const pid = await deps.launch(configPath);
-  report(`[buzz] agent daemon ${existingPid ? 'restarted' : 'started'} (pid ${pid})`);
+  report(`[beeline] agent daemon ${existingPid ? 'restarted' : 'started'} (pid ${pid})`);
   return pid;
 }
 
@@ -98,11 +100,13 @@ async function startRuntime(
   if (process.platform === 'linux' && process.env.BEELINE_SYSTEMD_USER !== '0') {
     const existingPid = await runtimeDaemonPid(configPath);
     if (existingPid) {
-      report(`[buzz] agent daemon is running (pid ${existingPid}); draining it before supervision`);
+      report(
+        `[beeline] agent daemon is running (pid ${existingPid}); draining it before supervision`,
+      );
       await stopRuntimeDaemon(configPath, { timeoutMs: 30 * 60_000 });
     }
     const pid = await installAgentService(runtime.agent.publicKey);
-    report(`[buzz] agent daemon supervised by systemd (pid ${pid})`);
+    report(`[beeline] agent daemon supervised by systemd (pid ${pid})`);
     return;
   }
   await startStoredRuntime(configPath, { report });

@@ -1,8 +1,8 @@
-import { describe, expect, it, afterEach } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const bodyDirectory = fileURLToPath(new URL('..', import.meta.url));
@@ -11,12 +11,48 @@ const pairCommandPath = resolve(bodyDirectory, 'src/pair-command.ts');
 // An absolute path so tsx's ESM loader hook resolves regardless of the
 // spawned process's cwd (which these tests deliberately point elsewhere).
 const tsxLoaderPath = resolve(bodyDirectory, '../../node_modules/tsx/dist/loader.mjs');
-// This has the public BUZZ-XXXX-XXXX shape, so it reaches the individual
-// pre-redemption checks. The pairing library then rejects its unsupported
-// digits synchronously, keeping these tests off the network.
-const TEST_INVALID_CODE = 'BUZZ-1111-1111';
+// This has the current public XXXXXXXX-XXXXXXXX shape, so it reaches the
+// individual pre-redemption checks. The pairing library then rejects the
+// unissued code synchronously, keeping these tests off the network.
+const TEST_PAIRING_CODE = '00000000-00000000';
+
+let relayStub: ChildProcessWithoutNullStreams;
+let relayStubPort = 0;
+
+function relayStubEnv(): NodeJS.ProcessEnv {
+  return {
+    BUZZY_RELAY_HOST: `127.0.0.1:${relayStubPort}`,
+    BUZZY_RELAY_SCHEME: 'http',
+    BUZZY_RELAY_URL: `http://127.0.0.1:${relayStubPort}`,
+    BUZZ_RELAY_URL: `ws://127.0.0.1:${relayStubPort}`,
+  };
+}
 
 const cleanup: string[] = [];
+
+beforeAll(async () => {
+  relayStub = spawn(
+    process.execPath,
+    [
+      '-e',
+      `const http = require('node:http');
+const server = http.createServer((_request, response) => {
+  response.writeHead(200, { 'content-type': 'application/json' });
+  response.end('[]');
+});
+server.on('upgrade', (_request, socket) => socket.destroy());
+server.listen(0, '127.0.0.1', () => process.stdout.write(String(server.address().port) + '\\n'));
+process.on('SIGTERM', () => server.close());`,
+    ],
+    { stdio: ['pipe', 'pipe', 'pipe'] },
+  );
+  relayStubPort = await new Promise<number>((resolvePort, rejectPort) => {
+    relayStub.once('error', rejectPort);
+    relayStub.stdout.once('data', (chunk: Buffer) => resolvePort(Number(String(chunk).trim())));
+  });
+});
+
+afterAll(() => relayStub?.kill('SIGTERM'));
 
 afterEach(async () => {
   await Promise.all(cleanup.splice(0).map((path) => rm(path, { recursive: true, force: true })));
@@ -103,7 +139,7 @@ function runPair(
     {
       cwd: opts.cwd,
       encoding: 'utf8',
-      env: { ...process.env, ...opts.env },
+      env: { ...process.env, ...relayStubEnv(), ...opts.env },
       timeout: 30_000,
     },
   );
@@ -123,7 +159,7 @@ async function runPairInZeroSizedTty(
     .join(' ');
   const child = spawn('script', ['-qefc', command, '/dev/null'], {
     cwd: opts.cwd,
-    env: { ...process.env, ...opts.env },
+    env: { ...process.env, ...relayStubEnv(), ...opts.env },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   let output = '';
@@ -173,9 +209,9 @@ describe('beeline pair — pairing code admission', () => {
 
     expect(status).toBe(1);
     expect(stderr).toContain('Usage:');
-    expect(stderr).toContain('beeline pair <BUZZ-XXXX-XXXX> [options]');
+    expect(stderr).toContain('beeline pair <PAIRING-CODE> [options]');
     expect(stderr).toContain(
-      'curl -fsSL https://usebeeline.app/install | sh && beeline pair BUZZ-XXXX-XXXX',
+      'curl -fsSL https://usebeeline.app/install | sh && beeline pair XXXXXXXX-XXXXXXXX',
     );
     expect(stdout).toBe('');
 
@@ -199,10 +235,10 @@ describe('beeline pair — pairing code admission', () => {
     );
 
     expect(status).toBe(1);
-    expect(stderr).toContain('A pairing code matching BUZZ-XXXX-XXXX is required.');
+    expect(stderr).toContain('A pairing code matching XXXXXXXX-XXXXXXXX is required.');
     expect(stderr).toContain('Usage:');
     expect(stderr).toContain(
-      'curl -fsSL https://usebeeline.app/install | sh && beeline pair BUZZ-XXXX-XXXX',
+      'curl -fsSL https://usebeeline.app/install | sh && beeline pair XXXXXXXX-XXXXXXXX',
     );
     expect(stderr).not.toContain('--repo path does not exist');
     expect(stdout).toBe('');
@@ -257,12 +293,12 @@ describe('beeline pair — repository resolution', () => {
     // custom pins the agent so the host's own installed-agent auto-detection
     // (this sandbox has several real coding CLIs on PATH) can't interfere.
     const { status, stderr } = runPair(
-      [TEST_INVALID_CODE, '--agent', 'custom', '--agent-command', agent],
+      [TEST_PAIRING_CODE, '--agent', 'custom', '--agent-command', agent],
       { cwd: nonRepo, env: { XDG_STATE_HOME: stateHome } },
     );
 
     expect(status).toBe(1);
-    expect(stderr).toContain('invalid agent pairing code');
+    expect(stderr).toContain('[beeline] pair failed');
     expect(stderr).not.toContain('git repository');
     // No raw stack trace: a thrown Error's frames all start with a
     // whitespace-indented "at " line, which the clean handler never emits.
@@ -289,13 +325,13 @@ describe('beeline pair — repository resolution', () => {
     const humanKey = '11'.repeat(32);
 
     const { status, stderr } = runPair(
-      [TEST_INVALID_CODE, '--agent', 'custom', '--agent-command', agent],
+      [TEST_PAIRING_CODE, '--agent', 'custom', '--agent-command', agent],
       { cwd: nonRepo, env: { XDG_STATE_HOME: stateHome, BUZZ_PRIVATE_KEY: humanKey } },
     );
 
     expect(status).toBe(1);
     expect(stderr).toContain('ignores BUZZ_AGENT_KEY/BUZZ_PRIVATE_KEY');
-    expect(stderr).toContain('invalid agent pairing code');
+    expect(stderr).toContain('[beeline] pair failed');
     expect(stderr).not.toContain('already paired on this host');
     expect(stderr).not.toMatch(/\n\s+at /);
   });
@@ -306,7 +342,7 @@ describe('beeline pair — repository resolution', () => {
     const agent = await fakeModelAgent();
 
     const { status, stderr } = runPair(
-      [TEST_INVALID_CODE, '--agent', 'custom', '--agent-command', agent, '--use-env-key'],
+      [TEST_PAIRING_CODE, '--agent', 'custom', '--agent-command', agent, '--use-env-key'],
       { cwd: nonRepo, env: { XDG_STATE_HOME: stateHome } },
     );
 
@@ -322,14 +358,14 @@ describe('beeline pair — repository resolution', () => {
     const humanKey = '11'.repeat(32);
 
     const { status, stderr } = runPair(
-      [TEST_INVALID_CODE, '--agent', 'custom', '--agent-command', agent, '--use-env-key'],
+      [TEST_PAIRING_CODE, '--agent', 'custom', '--agent-command', agent, '--use-env-key'],
       { cwd: nonRepo, env: { XDG_STATE_HOME: stateHome, BUZZ_PRIVATE_KEY: humanKey } },
     );
 
     expect(status).toBe(1);
     expect(stderr).toContain('reusing the ambient BUZZ_AGENT_KEY/BUZZ_PRIVATE_KEY');
     expect(stderr).not.toContain('ignores BUZZ_AGENT_KEY/BUZZ_PRIVATE_KEY');
-    expect(stderr).toContain('invalid agent pairing code');
+    expect(stderr).toContain('[beeline] pair failed');
   });
 
   it('rejects --use-env-key combined with --agents before any relay work', async () => {
@@ -354,15 +390,15 @@ describe('beeline pair — repository resolution', () => {
     const agent = await fakeModelAgent();
     // A malformed pairing code fails synchronously, before any network call —
     // so if --repo worked, the failure reason changes from "not a git
-    // repository" to "invalid agent pairing code", with no relay involved.
+    // repository" to pairing redemption, against an intentionally offline relay.
     const { status, stderr } = runPair(
-      [TEST_INVALID_CODE, '--repo', gitRepo, '--agent', 'custom', '--agent-command', agent],
+      [TEST_PAIRING_CODE, '--repo', gitRepo, '--agent', 'custom', '--agent-command', agent],
       { cwd: nonRepo, env: { XDG_STATE_HOME: stateHome } },
     );
 
     expect(status).toBe(1);
     expect(stderr).not.toContain('git repository');
-    expect(stderr).toContain('invalid agent pairing code');
+    expect(stderr).toContain('[beeline] pair failed');
   });
 
   it('rejects a --repo path that does not exist with a clear error', async () => {
@@ -418,14 +454,14 @@ describe('beeline pair — one live spinner at a time', () => {
     const agent = await fakeModelAgent();
 
     const { status, output } = await runPairInZeroSizedTty(
-      [TEST_INVALID_CODE, '--agent', 'custom', '--agent-command', agent],
+      [TEST_PAIRING_CODE, '--agent', 'custom', '--agent-command', agent],
       { cwd: nonRepo, env: { XDG_STATE_HOME: stateHome } },
     );
 
     expect(output).toContain('Catalog loaded.');
     expect(output).toContain('Model for this custom agent?');
     expect(output).toContain('Effort/thinking level for this custom agent?');
-    expect(output).toContain('invalid agent pairing code');
+    expect(output).toContain('Pairing failed.');
     expect(status).toBe(1);
   }, 15_000);
 });
@@ -439,7 +475,7 @@ describe('beeline pair — --model/--effort validation', () => {
 
     const { status, stderr } = runPair(
       [
-        TEST_INVALID_CODE,
+        TEST_PAIRING_CODE,
         '--repo',
         gitRepo,
         '--agent',
@@ -465,7 +501,7 @@ describe('beeline pair — --model/--effort validation', () => {
 
     const { status, stderr } = runPair(
       [
-        TEST_INVALID_CODE,
+        TEST_PAIRING_CODE,
         '--repo',
         gitRepo,
         '--agent',
@@ -539,7 +575,7 @@ lines.on('line', (line) => {
 
     const { status, stderr } = runPair(
       [
-        TEST_INVALID_CODE,
+        TEST_PAIRING_CODE,
         '--repo',
         gitRepo,
         '--agent',
@@ -556,7 +592,7 @@ lines.on('line', (line) => {
 
     expect(status).toBe(1);
     expect(stderr).not.toContain('--model/--effort check failed');
-    expect(stderr).toContain('invalid agent pairing code');
+    expect(stderr).toContain('[beeline] pair failed');
   });
 
   it('accepts an advertised model/effort pair and proceeds past validation to redemption', async () => {
@@ -571,7 +607,7 @@ lines.on('line', (line) => {
     // model/effort check.
     const { status, stderr } = runPair(
       [
-        TEST_INVALID_CODE,
+        TEST_PAIRING_CODE,
         '--repo',
         gitRepo,
         '--agent',
@@ -588,7 +624,7 @@ lines.on('line', (line) => {
 
     expect(status).toBe(1);
     expect(stderr).not.toContain('--model/--effort check failed');
-    expect(stderr).toContain('invalid agent pairing code');
+    expect(stderr).toContain('[beeline] pair failed');
   });
 });
 
@@ -601,7 +637,7 @@ describe('beeline pair — --access/--auto-response (non-interactive)', () => {
 
     const { status, stderr } = runPair(
       [
-        TEST_INVALID_CODE,
+        TEST_PAIRING_CODE,
         '--repo',
         gitRepo,
         '--agent',
@@ -633,7 +669,7 @@ describe('beeline pair — --access/--auto-response (non-interactive)', () => {
     // fails later on the deliberately invalid pairing code instead.
     const { status, stderr } = runPair(
       [
-        TEST_INVALID_CODE,
+        TEST_PAIRING_CODE,
         '--repo',
         gitRepo,
         '--agent',
@@ -647,7 +683,7 @@ describe('beeline pair — --access/--auto-response (non-interactive)', () => {
     );
 
     expect(status).toBe(1);
-    expect(stderr).toContain('invalid agent pairing code');
+    expect(stderr).toContain('[beeline] pair failed');
     expect(stderr).not.toContain('external MCP capabilities require --access creator');
   });
 
@@ -674,7 +710,7 @@ describe('beeline pair — --access/--auto-response (non-interactive)', () => {
     const atlas = 'A'.repeat(64);
     const { status, stderr } = runPair(
       [
-        TEST_INVALID_CODE,
+        TEST_PAIRING_CODE,
         '--repo',
         gitRepo,
         '--agent',
@@ -689,7 +725,7 @@ describe('beeline pair — --access/--auto-response (non-interactive)', () => {
       { cwd: gitRepo, env: { XDG_STATE_HOME: stateHome } },
     );
     expect(status).toBe(1);
-    expect(stderr).toContain('invalid agent pairing code');
+    expect(stderr).toContain('[beeline] pair failed');
     expect(stderr).not.toContain('--access allowlist requires');
   });
 
@@ -728,7 +764,7 @@ describe('beeline pair — --access/--auto-response (non-interactive)', () => {
     // pairing-code format check.
     const { status, stderr } = runPair(
       [
-        TEST_INVALID_CODE,
+        TEST_PAIRING_CODE,
         '--repo',
         gitRepo,
         '--agent',
@@ -742,7 +778,7 @@ describe('beeline pair — --access/--auto-response (non-interactive)', () => {
     );
 
     expect(status).toBe(1);
-    expect(stderr).toContain('invalid agent pairing code');
+    expect(stderr).toContain('[beeline] pair failed');
   });
 
   it('never prompts non-interactively with neither flag given: falls back to the owner-only default', async () => {
@@ -752,11 +788,11 @@ describe('beeline pair — --access/--auto-response (non-interactive)', () => {
     const agent = await fakeModelAgent();
 
     const { status, stderr } = runPair(
-      [TEST_INVALID_CODE, '--repo', gitRepo, '--agent', 'custom', '--agent-command', agent],
+      [TEST_PAIRING_CODE, '--repo', gitRepo, '--agent', 'custom', '--agent-command', agent],
       { cwd: gitRepo, env: { XDG_STATE_HOME: stateHome } },
     );
 
     expect(status).toBe(1);
-    expect(stderr).toContain('invalid agent pairing code');
+    expect(stderr).toContain('[beeline] pair failed');
   });
 });

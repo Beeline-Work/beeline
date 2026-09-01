@@ -189,7 +189,7 @@ export default function BuzzMembers() {
     void (async () => {
       const nextIdentity = await loadBuzzIdentity();
       if (!nextIdentity) {
-        router.replace('/buzz/onboarding');
+        router.replace('/beeline/onboarding');
         return;
       }
       const nextRelayUrl = await getEffectiveRelayUrl();
@@ -479,8 +479,7 @@ export default function BuzzMembers() {
     const advertisedModel = selectedAgent?.catalog.find(
       (axis) => axis.category === 'model',
     )?.currentValue;
-    const selectedModel =
-      selectedAgent?.selected?.model ?? selectedAgent?.runtimeSelection?.model;
+    const selectedModel = selectedAgent?.selected?.model ?? selectedAgent?.runtimeSelection?.model;
     const awaitingSelectedModelCatalog =
       Boolean(advertisedModel) && Boolean(selectedModel) && advertisedModel !== selectedModel;
     return (
@@ -523,12 +522,12 @@ export default function BuzzMembers() {
       activeCommunityId={surface.workspace.id}
       onSelect={(communityId) =>
         communityId &&
-        router.replace({ pathname: '/buzz/channels', params: { communityId } } as never)
+        router.replace({ pathname: '/beeline/channels', params: { communityId } } as never)
       }
-      onAdd={() => router.push('/buzz/community' as Href)}
-      onSettings={() => router.push('/buzz/settings' as Href)}
+      onAdd={() => router.push('/beeline/community' as Href)}
+      onSettings={() => router.push('/beeline/settings' as Href)}
       onWorkspaceSettings={(communityId) =>
-        router.push({ pathname: '/buzz/settings/workspace', params: { communityId } } as never)
+        router.push({ pathname: '/beeline/settings/workspace', params: { communityId } } as never)
       }
       canManageActiveCommunity={canManage}
       viewerPubkey={surface.viewer.identity.pubkey}

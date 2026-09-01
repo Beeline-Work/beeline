@@ -89,7 +89,10 @@ vi.mock('@/buzz/person-name', () => ({
   savePreferredPersonName: vi.fn(async () => undefined),
 }));
 vi.mock('@/buzz/runtime-config', () => ({
-  getBuzzRuntimeConfig: () => ({ relayUrl: 'https://relay.test', pushGatewayUrl: 'https://push.test' }),
+  getBuzzRuntimeConfig: () => ({
+    relayUrl: 'https://relay.test',
+    pushGatewayUrl: 'https://push.test',
+  }),
 }));
 vi.mock('@/text', () => ({ t: (key: string) => key }));
 vi.mock('@/constants/Typography', () => ({
@@ -148,13 +151,13 @@ import IdentitySettingsScreen from './identity';
 const originalConsoleError = console.error;
 
 beforeAll(() => {
-  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
-    true;
+  (
+    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  ).IS_REACT_ACT_ENVIRONMENT = true;
   vi.spyOn(console, 'error').mockImplementation((message?: unknown, ...args: unknown[]) => {
     if (
       typeof message === 'string' &&
-      (message.startsWith('react-test-renderer is deprecated') ||
-        message.includes('act('))
+      (message.startsWith('react-test-renderer is deprecated') || message.includes('act('))
     ) {
       return;
     }
@@ -164,7 +167,14 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 
 function registrationState(overrides: Record<string, unknown>) {
-  return { registered: false, retryable: true, phase: 'registered', failedAttempts: 1, updatedAt: Date.now(), ...overrides };
+  return {
+    registered: false,
+    retryable: true,
+    phase: 'registered',
+    failedAttempts: 1,
+    updatedAt: Date.now(),
+    ...overrides,
+  };
 }
 
 async function renderScreen(): Promise<ReactTestRenderer> {
@@ -227,27 +237,35 @@ describe('identity settings push row honesty', () => {
 
   it('shows the switch on only when the stored state says registered', async () => {
     pushModule.getBuzzPushRegistrationState.mockResolvedValue(
-      registrationState({ registered: true, retryable: false, phase: 'registered', failedAttempts: 0 }),
+      registrationState({
+        registered: true,
+        retryable: false,
+        phase: 'registered',
+        failedAttempts: 0,
+      }),
     );
     const renderer = await renderScreen();
 
     expect(toggle(renderer).value).toBe(true);
     expect(subtitleText(renderer)).toContain('OS permission: allowed');
     expect(renderer.root.findAllByProps({ testID: 'push-retry-registration' })).toHaveLength(0);
-    expect(
-      renderer.root.findAllByProps({ testID: 'push-send-test-notification' }),
-    ).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'push-send-test-notification' })).toHaveLength(0);
   });
 
   it('never renders a push test action on any registration state', async () => {
     // Registered (previously showed "Send test notification")…
     pushModule.getBuzzPushRegistrationState.mockResolvedValue(
-      registrationState({ registered: true, retryable: false, phase: 'registered', failedAttempts: 0 }),
+      registrationState({
+        registered: true,
+        retryable: false,
+        phase: 'registered',
+        failedAttempts: 0,
+      }),
     );
     const registered = await renderScreen();
-    expect(
-      registered.root.findAllByProps({ testID: 'push-send-test-notification' }),
-    ).toHaveLength(0);
+    expect(registered.root.findAllByProps({ testID: 'push-send-test-notification' })).toHaveLength(
+      0,
+    );
 
     // …and unregistered / failed states.
     const failed = await renderScreen();
@@ -257,9 +275,7 @@ describe('identity settings push row honesty', () => {
   it('toggling on reflects the registration result, not just the request', async () => {
     // Push starts off. The user flips the switch on, but the gateway rejects.
     pushModule.getBuzzPushRegistrationState.mockResolvedValue(null);
-    pushModule.getBuzzPushEnabled
-      .mockResolvedValueOnce(false)
-      .mockResolvedValue(true);
+    pushModule.getBuzzPushEnabled.mockResolvedValueOnce(false).mockResolvedValue(true);
     pushModule.setBuzzPushEnabled.mockResolvedValue(
       registrationState({ phase: 'gateway-rejected' }),
     );

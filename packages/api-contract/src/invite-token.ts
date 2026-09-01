@@ -1,14 +1,17 @@
-export const COMMUNITY_INVITE_TOKEN_PREFIX = 'bzi_';
+export const COMMUNITY_INVITE_TOKEN_PREFIX = 'inv_';
 export const COMMUNITY_INVITE_TOKEN_ENTROPY_BYTES = 32;
 
-const CANONICAL_INVITE_TOKEN = /^bzi_[0-9a-f]{64}$/;
+const CANONICAL_INVITE_TOKEN = /^inv_[0-9a-f]{64}$/;
+const LEGACY_HEX_INVITE_TOKEN = /^bzi_[0-9a-f]{64}$/;
 // Monolith releases before the shared contract encoded the same 32 bytes as base64url.
 const LEGACY_BASE64URL_INVITE_TOKEN = /^bzi_[A-Za-z0-9_-]{43}$/;
 
 export function isCommunityInviteToken(value: unknown): value is string {
   return (
     typeof value === 'string' &&
-    (CANONICAL_INVITE_TOKEN.test(value) || LEGACY_BASE64URL_INVITE_TOKEN.test(value))
+    (CANONICAL_INVITE_TOKEN.test(value) ||
+      LEGACY_HEX_INVITE_TOKEN.test(value) ||
+      LEGACY_BASE64URL_INVITE_TOKEN.test(value))
   );
 }
 

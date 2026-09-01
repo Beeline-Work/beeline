@@ -146,7 +146,7 @@ describe('Beeline display branding', () => {
   const appConfig = readFileSync(new URL('../../app.config.js', import.meta.url), 'utf8');
   const easConfig = readFileSync(new URL('../../eas.json', import.meta.url), 'utf8');
   const channelsScreen = readFileSync(
-    new URL('../app/(app)/buzz/channels.tsx', import.meta.url),
+    new URL('../app/(app)/beeline/channels.tsx', import.meta.url),
     'utf8',
   );
   const inviteScreen = readFileSync(

@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const chatSource = readFileSync(
-  new URL('../app/(app)/buzz/chat/[channelId].tsx', import.meta.url),
+  new URL('../app/(app)/beeline/chat/[channelId].tsx', import.meta.url),
   'utf8',
 );
 
@@ -12,9 +12,7 @@ describe('Room row identity', () => {
       "import { useRoomMessageRenderItem } from '@/buzz/room-message-cell';",
     );
     expect(chatSource).toContain('continuedIds: continuedAttributionIds');
-    expect(chatSource).toContain(
-      'precedingMessageById: immediatelyPrecedingVisibleMessageById',
-    );
+    expect(chatSource).toContain('precedingMessageById: immediatelyPrecedingVisibleMessageById');
     expect(chatSource).toContain('messageById: visibleMessageById');
 
     const renderMessage = chatSource.slice(

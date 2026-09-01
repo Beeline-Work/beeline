@@ -230,7 +230,7 @@ describe('paint-view GET server', () => {
             authorization: authorization(identity, '/invite/resolve', 'POST'),
             'content-type': 'application/json',
           },
-          body: JSON.stringify({ token: `bzi_${'a'.repeat(64)}` }),
+          body: JSON.stringify({ token: `inv_${'a'.repeat(64)}` }),
         },
       },
       {
@@ -241,7 +241,7 @@ describe('paint-view GET server', () => {
             authorization: authorization(identity, '/agent-pairing/claim', 'POST'),
             'content-type': 'application/json',
           },
-          body: JSON.stringify({ code: 'BUZZ-4S4P-ZPJP' }),
+          body: JSON.stringify({ code: '1234ABCD-5678EF90' }),
         },
       },
     ];
@@ -261,7 +261,7 @@ describe('paint-view GET server', () => {
 
   it('requires signed identity but not membership for a redacted invite preview', async () => {
     const identity = createIdentity('invite-reader');
-    const token = `bzi_${'a'.repeat(64)}`;
+    const token = `inv_${'a'.repeat(64)}`;
     const readInvite = vi.fn(async () => ({
       name: 'Join us',
       expiresAt: 2_000_000_000,
@@ -291,7 +291,7 @@ describe('paint-view GET server', () => {
       expiresAt: 2_000_000_000,
     });
     expect(readInvite).toHaveBeenCalledWith(
-      '57834dc6caa89ae52702530a203648e640345fb0d6c4e8b4a587c7bceaac14f1',
+      createHash('sha256').update(token).digest('hex'),
       identity.publicKey,
     );
     expect(log.mock.calls.flat().join('\n')).not.toContain(token);
@@ -320,9 +320,9 @@ describe('paint-view GET server', () => {
     expect(readInvite).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps a legacy pairing claim Workspace-only when it does not advertise Room rollback', async () => {
+  it('keeps a legacy pairing client Workspace-only when it does not advertise Room rollback', async () => {
     const identity = createIdentity('pairing-agent');
-    const code = 'BUZZ-4S4P-ZPJP';
+    const code = '1234ABCD-5678EF90';
     const claimAgentPairing = vi.fn(async () => ({
       workspaceId: WORKSPACE,
       pairedBy: 'd'.repeat(64),
@@ -356,7 +356,7 @@ describe('paint-view GET server', () => {
 
   it('permits inherited Rooms only when a pairing client advertises Room rollback', async () => {
     const identity = createIdentity('rollback-aware-pairing-agent');
-    const code = 'BUZZ-4S4P-ZPJP';
+    const code = '1234ABCD-5678EF90';
     const claimAgentPairing = vi.fn(async () => ({
       workspaceId: WORKSPACE,
       pairedBy: 'd'.repeat(64),
@@ -384,7 +384,7 @@ describe('paint-view GET server', () => {
 
   it('abandons only the authenticated agent’s exact pairing claim', async () => {
     const identity = createIdentity('pairing-abandon-agent');
-    const code = 'BUZZ-4S4P-ZPJP';
+    const code = '1234ABCD-5678EF90';
     const abandonAgentPairing = vi.fn(async () => true);
     const base = await listen({ indexer: indexer({ abandonAgentPairing }) });
     const path = '/agent-pairing/abandon';

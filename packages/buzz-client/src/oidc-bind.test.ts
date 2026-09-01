@@ -109,7 +109,7 @@ const challenge: OidcBindChallenge = {
 };
 
 function callbackUrl(overrides: Record<string, string> = {}): string {
-  const url = new URL('beeline://buzz/oidc-callback');
+  const url = new URL('beeline://beeline/oidc-callback');
   const values: Record<string, string> = {
     state: 's'.repeat(43),
     protocol: String(challenge.protocol),
@@ -139,7 +139,7 @@ describe('OIDC device-key bind protocol', () => {
     {
       provider: 'GitHub',
       start: startGitHubBind,
-      redirectUri: 'beeline://buzz/github-callback',
+      redirectUri: 'beeline://beeline/github-callback',
       startPath: '/auth/github/start',
     },
     {
@@ -151,8 +151,8 @@ describe('OIDC device-key bind protocol', () => {
   ])(
     'starts the full $provider flow under React Native URL semantics',
     ({ start, redirectUri, startPath }) => {
-      const reactNativeDeepLink = new ReactNativeURLFixture('beeline://buzz/github-callback');
-      expect(reactNativeDeepLink.toString()).toBe('beeline://buzz/github-callback/');
+      const reactNativeDeepLink = new ReactNativeURLFixture('beeline://beeline/github-callback');
+      expect(reactNativeDeepLink.toString()).toBe('beeline://beeline/github-callback/');
       expect(reactNativeDeepLink).toMatchObject({ origin: '', host: '', pathname: '/' });
       expect(
         new ReactNativeURLFixture('https://relay.example/auth/oidc/mobile-callback').pathname,
@@ -185,21 +185,21 @@ describe('OIDC device-key bind protocol', () => {
     expect(url.searchParams.get('app_state')).toBe('s'.repeat(43));
     expect(() =>
       startOidcBind('https://relay.example', {
-        redirectUri: 'beeline://buzz/oidc-callback',
+        redirectUri: 'beeline://beeline/oidc-callback',
         state: 's'.repeat(43),
       }),
     ).toThrow('allowed associated link or app deep link');
     expect(
       startOidcBind('http://127.0.0.1:8789', {
-        redirectUri: 'beeline://buzz/oidc-callback',
+        redirectUri: 'beeline://beeline/oidc-callback',
         state: 's'.repeat(43),
       }).redirectUri,
-    ).toBe('beeline://buzz/oidc-callback');
+    ).toBe('beeline://beeline/oidc-callback');
   });
 
   it('allows one trailing slash without widening the redirect allowlist', () => {
     for (const [start, redirectUri] of [
-      [startGitHubBind, 'beeline://buzz/github-callback/'],
+      [startGitHubBind, 'beeline://beeline/github-callback/'],
       [startOidcBind, 'https://relay.example/auth/oidc/mobile-callback/'],
     ] as const) {
       const result = start('https://relay.example', {
@@ -213,11 +213,11 @@ describe('OIDC device-key bind protocol', () => {
     }
 
     for (const [start, redirectUri] of [
-      [startGitHubBind, 'beeline://buzz/github-callback//'],
+      [startGitHubBind, 'beeline://beeline/github-callback//'],
       [startGitHubBind, 'beeline://buzz/other'],
       [startGitHubBind, 'beeline://other/github-callback'],
-      [startGitHubBind, 'beeline://buzz/github-callback?next=evil'],
-      [startGitHubBind, 'beeline://buzz/github-callback#evil'],
+      [startGitHubBind, 'beeline://beeline/github-callback?next=evil'],
+      [startGitHubBind, 'beeline://beeline/github-callback#evil'],
       [startOidcBind, 'https://relay.example/auth/oidc/mobile-callback//'],
       [startOidcBind, 'https://other.example/auth/oidc/mobile-callback'],
       [startOidcBind, 'https://relay.example/auth/oidc/other'],
@@ -239,7 +239,7 @@ describe('OIDC device-key bind protocol', () => {
 
   it('accepts only the Beeline callback scheme', () => {
     for (const scheme of MOBILE_APP_SCHEMES) {
-      const redirectUri = `${scheme}://buzz/github-callback`;
+      const redirectUri = `${scheme}://beeline/github-callback`;
       expect(
         startGitHubBind('https://relay.example', {
           redirectUri,
@@ -249,10 +249,10 @@ describe('OIDC device-key bind protocol', () => {
 
       expect(
         startOidcBind('http://127.0.0.1:8789', {
-          redirectUri: `${scheme}://buzz/oidc-callback`,
+          redirectUri: `${scheme}://beeline/oidc-callback`,
           state: 's'.repeat(43),
         }).redirectUri,
-      ).toBe(`${scheme}://buzz/oidc-callback`);
+      ).toBe(`${scheme}://beeline/oidc-callback`);
     }
 
     for (const scheme of ['buzzy', 'buzzy-dev', 'buzzy-preview', 'buzzy-nightly', 'other']) {
@@ -271,6 +271,15 @@ describe('OIDC device-key bind protocol', () => {
     }
   });
 
+  it('accepts the previous GitHub callback path during the app transition', () => {
+    expect(
+      startGitHubBind('https://relay.example', {
+        redirectUri: 'beeline://buzz/github-callback',
+        state: 's'.repeat(43),
+      }).redirectUri,
+    ).toBe('beeline://buzz/github-callback');
+  });
+
   it('strictly parses the callback and refuses missing, duplicate, or foreign state fields', () => {
     expect(parseOidcBindCallback(callbackUrl(), 's'.repeat(43))).toEqual(challenge);
     const duplicate = `${callbackUrl()}&ticket=${challenge.ticket}`;
@@ -284,7 +293,7 @@ describe('OIDC device-key bind protocol', () => {
   });
 
   it('surfaces callback cancellation/proof errors without constructing a challenge', () => {
-    const url = new URL('beeline://buzz/oidc-callback');
+    const url = new URL('beeline://beeline/oidc-callback');
     url.searchParams.set('state', 's'.repeat(43));
     url.searchParams.set('error', 'invalid_oidc_proof');
     expect(() => parseOidcBindCallback(url.toString(), 's'.repeat(43))).toThrowError(
@@ -459,9 +468,7 @@ describe('OIDC device-key bind protocol', () => {
 
     const [lookupUrl, lookupInit] = fetchMock.mock.calls[0] as [string, RequestInit];
     const [renameUrl, renameInit] = fetchMock.mock.calls[1] as [string, RequestInit];
-    expect(lookupUrl).toBe(
-      `https://relay.example/auth/identity/${identity.publicKey}`,
-    );
+    expect(lookupUrl).toBe(`https://relay.example/auth/identity/${identity.publicKey}`);
     expect(renameUrl).toBe(
       `https://relay.example/auth/identity/${identity.publicKey}/github-handle`,
     );

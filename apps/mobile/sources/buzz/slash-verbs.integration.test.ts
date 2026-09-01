@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const chatSource = fs.readFileSync(
-  new URL('../app/(app)/buzz/chat/[channelId].tsx', import.meta.url),
+  new URL('../app/(app)/beeline/chat/[channelId].tsx', import.meta.url),
   'utf8',
 );
 const pickerSource = fs.readFileSync(
@@ -48,7 +48,7 @@ describe('Buzz composer slash picker integration', () => {
     expect(chatSource.slice(dismissStart, dismissEnd)).not.toContain('messageSubmit');
   });
 
-  it('opens the palette after an @agent mention and renders THAT agent\'s published commands', () => {
+  it("opens the palette after an @agent mention and renders THAT agent's published commands", () => {
     // The mention-scoped query detects `@agent /query` at the composer tail.
     expect(chatSource).toContain('agentMentionSlashQuery(inputText)');
     // The addressed agent's commands are read from the relay record — the only
@@ -66,7 +66,7 @@ describe('Buzz composer slash picker integration', () => {
     const insertEnd = chatSource.indexOf('\n  );', insertStart);
     const insertBlock = chatSource.slice(insertStart, insertEnd);
     // The typed /token is replaced in place; the @mention prefix survives.
-    expect(insertBlock).toContain("inputText.replace(/\\/[a-z0-9-]*$/i");
+    expect(insertBlock).toContain('inputText.replace(/\\/[a-z0-9-]*$/i');
     expect(insertBlock).not.toContain('clearSlashComposer()');
   });
 

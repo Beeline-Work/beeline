@@ -132,7 +132,8 @@ services:
       - buzz-net
 
   # Fronts the relay for relay.buzzrouter.com: serves the Beeline invite landing
-  # (/join/bzi_*) and the app-association files (/.well-known/*), and proxies all
+  # (/join/inv_* plus temporary legacy /join/bzi_*) and the app-association files
+  # (/.well-known/*), and proxies all
   # other HTTP + WebSocket traffic to the relay. Takes over the buzzrouter-tunnel
   # alias the tunnel targets, so relay.buzzrouter.com now reaches this front.
   relay-front:

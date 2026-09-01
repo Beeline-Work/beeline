@@ -28,7 +28,7 @@ describe('startStoredRuntime (beeline start restart semantics)', () => {
     const pid = await startStoredRuntime('/tmp/x/runtime.json', {}, f.deps);
     expect(pid).toBe(1001);
     expect(f.deps.stop).not.toHaveBeenCalled();
-    expect(f.calls.join('\n')).toContain('[buzz] agent daemon started (pid 1001)');
+    expect(f.calls.join('\n')).toContain('[beeline] agent daemon started (pid 1001)');
     // The old silent no-op line must never come back.
     expect(f.calls.join('\n')).not.toContain('already running');
   });
@@ -44,8 +44,8 @@ describe('startStoredRuntime (beeline start restart semantics)', () => {
     expect(pid).toBe(1001);
     const transcript = f.calls.join('\n');
     expect(transcript).toContain('agent daemon is running (pid 4242); restarting it');
-    expect(transcript).toContain('[buzz] stopped previous daemon (pid 4242)');
-    expect(transcript).toContain('[buzz] agent daemon restarted (pid 1001)');
+    expect(transcript).toContain('[beeline] stopped previous daemon (pid 4242)');
+    expect(transcript).toContain('[beeline] agent daemon restarted (pid 1001)');
   });
 
   it('gives a draining daemon a generous budget and reports the wait', async () => {

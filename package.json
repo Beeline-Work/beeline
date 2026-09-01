@@ -15,7 +15,7 @@
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",
-    "build:invite-web": "esbuild relay-stack/web/join/invite-source.js --bundle --format=iife --minify --platform=browser --target=es2022 --alias:@beeline/buzz-client=./packages/buzz-client/src/index.ts --alias:@beeline/nostr=./packages/nostr/src/index.ts --outfile=relay-stack/web/join/invite.js",
+    "build:invite-web": "esbuild relay-stack/web/join/invite-source.js --bundle --format=iife --minify --platform=browser --target=es2022 --alias:@beeline/api-contract/phone=./packages/api-contract/src/phone.ts --alias:@beeline/buzz-client=./packages/buzz-client/src/index.ts --alias:@beeline/nostr=./packages/nostr/src/index.ts --outfile=relay-stack/web/join/invite.js",
     "lint": "npm run lint:typecheck && npm run lint:shell && npm run lint:workflows",
     "lint:typecheck": "npm run typecheck",
     "lint:shell": "git ls-files -z -- '*.sh' | xargs -0 shellcheck",

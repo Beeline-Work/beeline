@@ -2,7 +2,7 @@
 
 Beeline's Postgres-adjacent relay service. One process hosts push delivery,
 repository-event ingestion, and the direct Room indexer. It accepts an
-Android FCM device registration, tails kind-9 channel events from Buzz's
+Android FCM device registration, tails kind-9 channel events from the relay's
 authoritative database, and sends Firebase notifications to registered members
 other than the event author. The same process polls GitHub repository activity
 and serves bounded, membership-gated paint DTOs directly from authoritative
@@ -35,20 +35,20 @@ BUZZY_PUSH_DATABASE_URL=postgres://buzz:password@127.0.0.1:5433/buzz \
 
 The service account file stays outside the repository. Do not log or commit it.
 
-| Variable                           | Default                                | Purpose                                                                            |
-| ---------------------------------- | -------------------------------------- | ---------------------------------------------------------------------------------- |
-| `BUZZY_PUSH_SA_FILE`               | —                                      | Firebase service-account path; used when `GOOGLE_APPLICATION_CREDENTIALS` is unset |
-| `GOOGLE_APPLICATION_CREDENTIALS`   | —                                      | Standard Google credential path                                                    |
-| `BUZZY_PUSH_DATABASE_URL`          | `DATABASE_URL`                         | Buzz Postgres connection; startup fails if neither variable is set                 |
-| `BUZZY_PUSH_HOST`                  | `127.0.0.1`                            | Registration HTTP bind host                                                        |
-| `PORT`                             | `8788`                                 | Registration HTTP port (Compose-internal in production)                            |
-| `BUZZY_PUSH_REGISTRY_FILE`         | `.data/registrations.json`             | Local token registry path                                                          |
-| `BUZZY_PUSH_POLL_INTERVAL_MS`      | `1500`                                 | Member-scoped database poll interval                                               |
-| `BUZZY_PUSH_FEED_HEARTBEAT_MS`     | `60000`                                | Feed heartbeat interval; production logs normalize its event count to events/min   |
-| `BUZZY_INDEXER_PUBLIC_ORIGIN`      | gateway bind origin                    | Exact public origin used to verify surface NIP-98 proofs                           |
-| `BEELINE_GITHUB_APP_ID`            | —                                      | GitHub App id for the hosted repository-events consumer                            |
-| `BEELINE_GITHUB_APP_PRIVATE_KEY`   | —                                      | GitHub App private key; mandatory for the hosted consumer                          |
-| `BEELINE_EVENTS_STATE_DIR`         | XDG state + `beeline/events`           | Repository-events signing identity                                                  |
+| Variable                         | Default                      | Purpose                                                                            |
+| -------------------------------- | ---------------------------- | ---------------------------------------------------------------------------------- |
+| `BUZZY_PUSH_SA_FILE`             | —                            | Firebase service-account path; used when `GOOGLE_APPLICATION_CREDENTIALS` is unset |
+| `GOOGLE_APPLICATION_CREDENTIALS` | —                            | Standard Google credential path                                                    |
+| `BUZZY_PUSH_DATABASE_URL`        | `DATABASE_URL`               | Relay Postgres connection; startup fails if neither variable is set                |
+| `BUZZY_PUSH_HOST`                | `127.0.0.1`                  | Registration HTTP bind host                                                        |
+| `PORT`                           | `8788`                       | Registration HTTP port (Compose-internal in production)                            |
+| `BUZZY_PUSH_REGISTRY_FILE`       | `.data/registrations.json`   | Local token registry path                                                          |
+| `BUZZY_PUSH_POLL_INTERVAL_MS`    | `1500`                       | Member-scoped database poll interval                                               |
+| `BUZZY_PUSH_FEED_HEARTBEAT_MS`   | `60000`                      | Feed heartbeat interval; production logs normalize its event count to events/min   |
+| `BUZZY_INDEXER_PUBLIC_ORIGIN`    | gateway bind origin          | Exact public origin used to verify surface NIP-98 proofs                           |
+| `BEELINE_GITHUB_APP_ID`          | —                            | GitHub App id for the hosted repository-events consumer                            |
+| `BEELINE_GITHUB_APP_PRIVATE_KEY` | —                            | GitHub App private key; mandatory for the hosted consumer                          |
+| `BEELINE_EVENTS_STATE_DIR`       | XDG state + `beeline/events` | Repository-events signing identity                                                 |
 
 For the isolated `relay-stack/compose.yml` gate stack, Compose sets
 `BUZZY_MATERIALIZER_DISABLE_PUSH_DELIVERY=true` and
@@ -69,7 +69,7 @@ registered device and returns aggregate counts plus one success/failure record
 per opaque device id. Responses and logs never expose FCM tokens. The v1 registry is a local
 JSON file written mode 0600; it survives normal restarts, but is local to one
 gateway host and is lost if that file is removed. Re-importing or generating a
-Buzz identity registers the device, and each mobile cold start refreshes the
+Beeline identity registers the device, and each mobile cold start refreshes the
 binding in case Firebase rotated the device token.
 
 The process stores the push reservation document in Postgres. It reserves each event-id/recipient

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { isAgentPairingCode, isCommunityInviteToken } from '@beeline/api-contract/phone';
 import { NIP98_KIND, verifyEvent, verifyNip98Header, type NostrEvent } from '@beeline/nostr';
 import type {
   AgentPairingAbandonView,
@@ -116,8 +117,6 @@ export interface RegistrationServerHooks {
 }
 
 const CHANNEL_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const INVITE_TOKEN = /^bzi_[0-9a-f]{64}$/;
-const AGENT_PAIRING_CODE = /^BUZZ-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/;
 const AGENT_PAIRING_ROOM_ROLLBACK_CAPABILITY = 'pairing-room-rollback';
 const PUBKEY = /^[0-9a-f]{64}$/;
 const PRIVATE_HEADERS = {
@@ -331,7 +330,7 @@ export function createRegistrationServer(
             body && typeof body === 'object' && 'token' in body
               ? (body as { token?: unknown }).token
               : undefined;
-          if (typeof token !== 'string' || !INVITE_TOKEN.test(token)) {
+          if (!isCommunityInviteToken(token)) {
             status = 404;
             json(response, status, { error: 'not_found' }, PRIVATE_HEADERS);
             return;
@@ -388,7 +387,7 @@ export function createRegistrationServer(
               ? (body as { capabilities?: unknown }).capabilities
               : undefined;
           const code = typeof rawCode === 'string' ? rawCode.trim().toUpperCase() : '';
-          if (!AGENT_PAIRING_CODE.test(code)) {
+          if (!isAgentPairingCode(code)) {
             status = 404;
             json(response, status, { error: 'not_found' }, PRIVATE_HEADERS);
             return;
@@ -449,7 +448,7 @@ export function createRegistrationServer(
               ? (body as { code?: unknown }).code
               : undefined;
           const code = typeof rawCode === 'string' ? rawCode.trim().toUpperCase() : '';
-          if (!AGENT_PAIRING_CODE.test(code)) {
+          if (!isAgentPairingCode(code)) {
             status = 404;
             json(response, status, { error: 'not_found' }, PRIVATE_HEADERS);
             return;

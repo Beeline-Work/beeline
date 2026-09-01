@@ -508,7 +508,7 @@ describe('monolith integration', () => {
     expect(created.status).toBe(200);
     const invite = (await created.json()) as { token: string; expiresAt: number };
     expect(isCommunityInviteToken(invite.token)).toBe(true);
-    expect(invite.token).toMatch(/^bzi_[0-9a-f]{64}$/);
+    expect(invite.token).toMatch(/^inv_[0-9a-f]{64}$/);
 
     const recipient = await auth.exchangeGitHubOidc('recipient-proof');
     const resolved = await request(

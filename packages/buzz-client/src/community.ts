@@ -12,6 +12,7 @@
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
+import { createCommunityInviteToken } from '@beeline/api-contract/phone';
 import { publishEvent, queryEvents, type HttpBridgeOptions } from './http.js';
 import { isArchivedChannelError } from './archived-channel.js';
 import { getDirectMessage } from './direct-message.js';
@@ -75,7 +76,7 @@ function nextCommunityTimestamp(): number {
 function randomToken(): string {
   const bytes = new Uint8Array(32);
   globalThis.crypto.getRandomValues(bytes);
-  return `bzi_${bytesToHex(bytes)}`;
+  return createCommunityInviteToken(bytes);
 }
 
 function sign(
@@ -715,7 +716,7 @@ function handleUnprojectableSelfJoin(channelId: string, pubkey: string, error: u
   if (!isMembershipProjectionTimeout(error)) return false;
   markRoomUnmigratable(channelId, pubkey);
   console.warn(
-    `[buzz-client] room ${channelId} is not migratable for ${pubkey.slice(0, 12)}…: relay stored the self-join but its kind:39002 projection never updated (room has no living admin); skipping`,
+    `[beeline-client] room ${channelId} is not migratable for ${pubkey.slice(0, 12)}…: relay stored the self-join but its kind:39002 projection never updated (room has no living admin); skipping`,
   );
   return true;
 }

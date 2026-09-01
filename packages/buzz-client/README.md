@@ -1,6 +1,6 @@
 # `@beeline/buzz-client`
 
-Channel-scoped **client transport** for real Buzz. The mobile app’s `RigTransport`
+Channel-scoped **client transport** for Beeline. The mobile app’s `RigTransport`
 adapter sits on this package. UI-agnostic — no React, no mock relay.
 
 Authority: the repository's [surface boundary](../../AGENTS.md) and the exported

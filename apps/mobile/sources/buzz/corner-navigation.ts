@@ -54,7 +54,7 @@ export function cornerOpenAction(
 
 /** Open a top-level Room transcript. */
 export function roomHref(channelId: string): Href {
-  return { pathname: '/buzz/chat/[channelId]', params: { channelId } } as unknown as Href;
+  return { pathname: '/beeline/chat/[channelId]', params: { channelId } } as unknown as Href;
 }
 
 /**
@@ -70,7 +70,7 @@ export function cornerHref(
   returnTo?: CornerReturnTarget,
 ): Href {
   return {
-    pathname: '/buzz/chat/[channelId]',
+    pathname: '/beeline/chat/[channelId]',
     params: {
       channelId,
       parent: parentChannelId,
@@ -134,7 +134,7 @@ export function chatBackAction(
   if (returnTo === 'room-list') {
     const top = routes.length - 1;
     for (let index = top - 1; index >= 0; index -= 1) {
-      if (routes[index]?.name === 'buzz/channels') return { type: 'pop', count: top - index };
+      if (routes[index]?.name === 'beeline/channels') return { type: 'pop', count: top - index };
     }
     return { type: 'room-list' };
   }

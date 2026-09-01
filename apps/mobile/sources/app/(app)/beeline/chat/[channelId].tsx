@@ -120,11 +120,7 @@ import {
   ownerGrantShareMessage,
   type OwnerGrantNeeded,
 } from '@/components/buzz/OwnerGrantNeededCard';
-import {
-  isPinnedCornerLive,
-  pinnedCornerVerb,
-  selectPinnedCorner,
-} from '@/buzz/room-indicators';
+import { isPinnedCornerLive, pinnedCornerVerb, selectPinnedCorner } from '@/buzz/room-indicators';
 import { displayCornerTitle } from '@/buzz/room-list-row';
 import {
   loadActiveCommunityId,
@@ -165,10 +161,7 @@ import {
 import { mentionKeyboardAction } from '@/buzz/composer-keyboard';
 import { copyEntireTurn } from '@/buzz/message-copy';
 import { useRoomMessageRenderItem } from '@/buzz/room-message-cell';
-import {
-  useRoomSurfaceSession,
-  type RoomSurfaceSessionBindings,
-} from './useRoomSurfaceSession';
+import { useRoomSurfaceSession, type RoomSurfaceSessionBindings } from './useRoomSurfaceSession';
 import {
   GitHubEventCard,
   DaemonFactCard,
@@ -204,19 +197,12 @@ import { AttachmentPickerSheet } from '@/components/buzz/AttachmentPickerSheet';
 import { HullFloatingSurface, HullModal } from '@/components/buzz/HullDialog';
 import { EmptyLedgerState, type EmptyLedgerVariant } from '@/components/buzz/EmptyLedgerState';
 import { HeaderIdentitySlot, HeaderMetaCaps, HeaderMetaRow } from '@/components/buzz/HeaderLadder';
-import {
-  LEDGER_MARGINALIA_WIDTH,
-  LedgerRoomUpdate,
-} from '@/components/buzz/Ledger';
+import { LEDGER_MARGINALIA_WIDTH, LedgerRoomUpdate } from '@/components/buzz/Ledger';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { RoomRosterSheet, type RoomRosterParticipant } from '@/components/buzz/RoomRosterSheet';
 import { RepoPicker } from '@/components/buzz/RepoPicker';
 import { SlashVerbPicker } from '@/components/buzz/SlashVerbPicker';
-import {
-  CornerGlyph,
-  MonoButton,
-  PixelLoader,
-} from '@/components/buzz/MonoHull';
+import { CornerGlyph, MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
 
 type RoomMemberOption = RoomRosterParticipant;
 
@@ -686,7 +672,10 @@ export default function BuzzChat() {
 
   const loadOlderTranscriptMessages = useCallback(() => {
     if (loadingOlderMessages) return;
-    const visibleRowCount = visibleTranscriptWindow(combinedMessages, Number.MAX_SAFE_INTEGER).length;
+    const visibleRowCount = visibleTranscriptWindow(
+      combinedMessages,
+      Number.MAX_SAFE_INTEGER,
+    ).length;
     if (visibleMessageCount < visibleRowCount) {
       setVisibleMessageCount((count) =>
         Math.min(visibleRowCount, count + OLDER_MESSAGES_PAGE_SIZE),
@@ -1233,7 +1222,7 @@ export default function BuzzChat() {
     if (!targetMissing && !targetFinished) return;
     handledNotificationFallbackRef.current = notificationResponseId;
     router.replace({
-      pathname: '/buzz/chat/[channelId]',
+      pathname: '/beeline/chat/[channelId]',
       params: { channelId: fallbackId, notificationResponseId },
     });
   }, [
@@ -1455,7 +1444,7 @@ export default function BuzzChat() {
   }, [agentTurnMarkers, pendingAck]);
 
   // A single deadline-scheduled timer (never a ticking interval — see the
-  // presence clock above) so the composer flips from "buzzing…" to the
+  // presence clock above) so the composer flips from "sending…" to the
   // honest "waiting on agent" the instant the bound elapses, not on
   // whatever unrelated re-render happens to follow.
   useEffect(() => {
@@ -1479,7 +1468,7 @@ export default function BuzzChat() {
    *
    * Before that receipt exists, `pendingAck` (armed the instant a
    * message addressed to an agent is sent — see `handleSend`) fills the dead
-   * air with an immediate local "buzzing…"; past `COMPOSER_ACK_BOUND_MS` with
+   * air with an immediate local "sending…"; past `COMPOSER_ACK_BOUND_MS` with
    * still no receipt it becomes an honest "waiting on agent" rather than
    * silently disappearing or lying about a turn that hasn't started.
    */
@@ -1526,8 +1515,7 @@ export default function BuzzChat() {
     (message: ChatDisplayMessage): MessageReplyDisplayTarget => {
       const knownAgent = message.pubkey ? agentByPubkey.get(message.pubkey) : undefined;
       const isAgent = Boolean(
-        message.pubkey &&
-        (message.isAgentAuthor || message.isAgentActivity || knownAgent),
+        message.pubkey && (message.isAgentAuthor || message.isAgentActivity || knownAgent),
       );
       const agentDisplay = isAgent
         ? resolveAgentDisplayIdentity(message.pubkey ?? 'unknown-agent', knownAgent)
@@ -1988,7 +1976,7 @@ export default function BuzzChat() {
     setRosterVisible(false);
     setRoomActionsVisible(false);
     router.replace({
-      pathname: '/buzz/channels',
+      pathname: '/beeline/channels',
       ...(activeCommunityId ? { params: { communityId: activeCommunityId } } : {}),
     });
   }, [activeCommunityId]);
@@ -2098,7 +2086,7 @@ export default function BuzzChat() {
     setRoomRepoNotice(null);
     try {
       await runGitHubInstallationSession({
-        returnPath: `/buzz/chat/${encodeURIComponent(decodedId)}`,
+        returnPath: `/beeline/chat/${encodeURIComponent(decodedId)}`,
         startInstallation: () => transport.githubInstallationStart(githubInstallationRedirectUri()),
         openAuthSession: (installationUrl, redirectUri) =>
           WebBrowser.openAuthSessionAsync(
@@ -2123,7 +2111,7 @@ export default function BuzzChat() {
       setRoomRepoNotice(null);
       try {
         await runGitHubInstallationSession({
-          returnPath: `/buzz/chat/${encodeURIComponent(decodedId)}`,
+          returnPath: `/beeline/chat/${encodeURIComponent(decodedId)}`,
           startInstallation: () =>
             transport.githubInstallationStart(
               githubInstallationRedirectUri(),
@@ -2347,7 +2335,7 @@ export default function BuzzChat() {
           option.pubkey,
         );
         setParticipantPickerVisible(false);
-        router.push(`/buzz/chat/${encodeURIComponent(dmChannelId)}` as Href);
+        router.push(`/beeline/chat/${encodeURIComponent(dmChannelId)}` as Href);
       } catch (err) {
         setMembershipError(`Could not message @${option.name}: ${String(err)}`);
       } finally {
@@ -2373,7 +2361,7 @@ export default function BuzzChat() {
     // than popping into whatever happens to be underneath.
     else if (action.type === 'open-room') router.replace(roomHref(action.channelId));
     else if (action.type === 'back') router.back();
-    else router.replace('/buzz/channels');
+    else router.replace('/beeline/channels');
   }, [cornerReturnTarget, navigation, parentChannelId]);
 
   const handleCloseCorner = useCallback(async () => {
@@ -2406,7 +2394,7 @@ export default function BuzzChat() {
   const handleCommunitySelect = useCallback((communityId: string | null) => {
     if (!communityId) return;
     router.replace({
-      pathname: '/buzz/channels',
+      pathname: '/beeline/channels',
       params: { communityId },
     });
   }, []);
@@ -2735,11 +2723,11 @@ export default function BuzzChat() {
       communities={communities}
       activeCommunityId={activeCommunityId}
       onSelect={handleCommunitySelect}
-      onAdd={() => router.push('/buzz/community' as Href)}
-      onSettings={() => router.push('/buzz/settings' as Href)}
+      onAdd={() => router.push('/beeline/community' as Href)}
+      onSettings={() => router.push('/beeline/settings' as Href)}
       onWorkspaceSettings={(communityId) =>
         router.push({
-          pathname: '/buzz/settings/workspace',
+          pathname: '/beeline/settings/workspace',
           params: { communityId },
         } as unknown as Href)
       }

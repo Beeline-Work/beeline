@@ -1,4 +1,11 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -50,7 +57,7 @@ describe('mobile OTA release governor', () => {
   it('pins the final-cut OTA transport to the monolith in source', () => {
     expect(appConfig).toContain('const buzzyMonolithEnabled = true;');
     expect(appConfig).not.toContain(
-      "const buzzyMonolithEnabled = process.env.EXPO_PUBLIC_BUZZY_MONOLITH_ENABLED",
+      'const buzzyMonolithEnabled = process.env.EXPO_PUBLIC_BUZZY_MONOLITH_ENABLED',
     );
   });
 
@@ -220,31 +227,36 @@ esac
         { id: 'prod-ios', platform: 'ios' },
       ],
     };
-    writeFileSync(ledgerPath, JSON.stringify({
-      status: 'production',
-      sourceSha: sha,
-      candidateGroupId: 'candidate-group',
-      production,
-    }));
-    writeFileSync(indexPath, JSON.stringify({
-      schemaVersion: 1,
-      merges: [{ sha, state: 'published', published: { groupId: 'production-group' } }],
-    }));
+    writeFileSync(
+      ledgerPath,
+      JSON.stringify({
+        status: 'production',
+        sourceSha: sha,
+        candidateGroupId: 'candidate-group',
+        production,
+      }),
+    );
+    writeFileSync(
+      indexPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        merges: [{ sha, state: 'published', published: { groupId: 'production-group' } }],
+      }),
+    );
 
-    const proved = runRelease([
-      'assert-promotion', '--ledger', ledgerPath, '--index', indexPath,
-    ]);
+    const proved = runRelease(['assert-promotion', '--ledger', ledgerPath, '--index', indexPath]);
     expect(proved.status).toBe(0);
     expect(proved.stdout).toContain('production_group_id=production-group');
     expect(proved.stdout).toContain(`source_sha=${sha}`);
 
-    writeFileSync(indexPath, JSON.stringify({
-      schemaVersion: 1,
-      merges: [{ sha, state: 'built' }],
-    }));
-    const missing = runRelease([
-      'assert-promotion', '--ledger', ledgerPath, '--index', indexPath,
-    ]);
+    writeFileSync(
+      indexPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        merges: [{ sha, state: 'built' }],
+      }),
+    );
+    const missing = runRelease(['assert-promotion', '--ledger', ledgerPath, '--index', indexPath]);
     expect(missing.status).toBe(1);
     expect(missing.stderr).toContain('does not prove that the current main head was published');
   });
@@ -267,10 +279,18 @@ esac
     );
     chmodSync(fakeEas, 0o755);
 
-    const result = runRelease([
-      'rollback', '--group', 'known-good', '--expected-current-group', 'failed-production',
-      '--ledger', ledgerPath,
-    ], { EAS_CLI_PATH: fakeEas });
+    const result = runRelease(
+      [
+        'rollback',
+        '--group',
+        'known-good',
+        '--expected-current-group',
+        'failed-production',
+        '--ledger',
+        ledgerPath,
+      ],
+      { EAS_CLI_PATH: fakeEas },
+    );
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('Rollback skipped');
@@ -298,10 +318,18 @@ esac
     );
     chmodSync(fakeEas, 0o755);
 
-    const result = runRelease([
-      'rollback', '--group', 'known-good', '--expected-current-group', 'failed-production',
-      '--ledger', ledgerPath,
-    ], { EAS_CLI_PATH: fakeEas });
+    const result = runRelease(
+      [
+        'rollback',
+        '--group',
+        'known-good',
+        '--expected-current-group',
+        'failed-production',
+        '--ledger',
+        ledgerPath,
+      ],
+      { EAS_CLI_PATH: fakeEas },
+    );
 
     expect(result.status).toBe(0);
     expect(JSON.parse(readFileSync(ledgerPath, 'utf8'))).toMatchObject({
@@ -329,10 +357,18 @@ esac
     );
     chmodSync(fakeEas, 0o755);
 
-    const result = runRelease([
-      'rollback', '--group', 'known-good', '--expected-current-group', 'failed-production',
-      '--ledger', ledgerPath,
-    ], { EAS_CLI_PATH: fakeEas });
+    const result = runRelease(
+      [
+        'rollback',
+        '--group',
+        'known-good',
+        '--expected-current-group',
+        'failed-production',
+        '--ledger',
+        ledgerPath,
+      ],
+      { EAS_CLI_PATH: fakeEas },
+    );
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('EAS command failed');
@@ -366,36 +402,101 @@ esac
     chmodSync(fakeEas, 0o755);
     const env = { EAS_CLI_PATH: fakeEas };
 
-    expect(runRelease([
-      'init-delivery', '--sha', headSha, '--ref', 'main', '--run-id', 'run-1',
-      '--attempt', '1', '--commits', commitsPath, '--ledger', ledgerPath, '--index', indexPath,
-    ], env).status).toBe(0);
-    expect(JSON.parse(readFileSync(indexPath, 'utf8')).merges.map((merge: { state: string }) => merge.state))
-      .toEqual(['pending', 'pending']);
+    expect(
+      runRelease(
+        [
+          'init-delivery',
+          '--sha',
+          headSha,
+          '--ref',
+          'main',
+          '--run-id',
+          'run-1',
+          '--attempt',
+          '1',
+          '--commits',
+          commitsPath,
+          '--ledger',
+          ledgerPath,
+          '--index',
+          indexPath,
+        ],
+        env,
+      ).status,
+    ).toBe(0);
+    expect(
+      JSON.parse(readFileSync(indexPath, 'utf8')).merges.map(
+        (merge: { state: string }) => merge.state,
+      ),
+    ).toEqual(['pending', 'pending']);
 
-    expect(runRelease([
-      'publish', '--sha', headSha, '--ref', 'main', '--ledger', ledgerPath, '--index', indexPath,
-    ], env).status).toBe(0);
+    expect(
+      runRelease(
+        [
+          'publish',
+          '--sha',
+          headSha,
+          '--ref',
+          'main',
+          '--ledger',
+          ledgerPath,
+          '--index',
+          indexPath,
+        ],
+        env,
+      ).status,
+    ).toBe(0);
     expect(JSON.parse(readFileSync(indexPath, 'utf8')).merges.at(-1).state).toBe('built');
-    expect(runRelease(['mark-canary', '--ledger', ledgerPath, '--status', 'passed'], env).status).toBe(0);
-    expect(runRelease(['promote', '--ledger', ledgerPath, '--index', indexPath], env).status).toBe(0);
-    expect(JSON.parse(readFileSync(indexPath, 'utf8')).merges.map((merge: { state: string }) => merge.state))
-      .toEqual(['published', 'published']);
+    expect(
+      runRelease(['mark-canary', '--ledger', ledgerPath, '--status', 'passed'], env).status,
+    ).toBe(0);
+    expect(runRelease(['promote', '--ledger', ledgerPath, '--index', indexPath], env).status).toBe(
+      0,
+    );
+    expect(
+      JSON.parse(readFileSync(indexPath, 'utf8')).merges.map(
+        (merge: { state: string }) => merge.state,
+      ),
+    ).toEqual(['published', 'published']);
 
-    writeFileSync(receiptPath, JSON.stringify({ devices: [{
-      deviceId: 'owner-device',
-      updateId: 'prod-android',
-      channel: 'production',
-      group: null,
-      environment: 'physical',
-      reportedAt: '2026-08-29T20:05:00.000Z',
-    }] }));
-    expect(runRelease([
-      'confirm', '--ledger', ledgerPath, '--index', indexPath, '--receipt', receiptPath,
-      '--group', 'production-group', '--update-ids', 'prod-android,prod-ios',
-    ], env).status).toBe(0);
-    expect(JSON.parse(readFileSync(indexPath, 'utf8')).merges.map((merge: { state: string }) => merge.state))
-      .toEqual(['confirmed', 'confirmed']);
+    writeFileSync(
+      receiptPath,
+      JSON.stringify({
+        devices: [
+          {
+            deviceId: 'owner-device',
+            updateId: 'prod-android',
+            channel: 'production',
+            group: null,
+            environment: 'physical',
+            reportedAt: '2026-08-29T20:05:00.000Z',
+          },
+        ],
+      }),
+    );
+    expect(
+      runRelease(
+        [
+          'confirm',
+          '--ledger',
+          ledgerPath,
+          '--index',
+          indexPath,
+          '--receipt',
+          receiptPath,
+          '--group',
+          'production-group',
+          '--update-ids',
+          'prod-android,prod-ios',
+        ],
+        env,
+      ).status,
+    ).toBe(0);
+    expect(
+      JSON.parse(readFileSync(indexPath, 'utf8')).merges.map(
+        (merge: { state: string }) => merge.state,
+      ),
+    ).toEqual(['confirmed', 'confirmed']);
     expect(JSON.parse(readFileSync(ledgerPath, 'utf8')).delivery.state).toBe('confirmed');
   }, 60_000);
 
@@ -412,25 +513,53 @@ esac
     ];
     failures.forEach(([exitCode, reason], offset) => {
       const attempt = String(offset + 1);
-      expect(runRelease([
-        'init-delivery', '--sha', sha, '--ref', 'main', '--run-id', `run-${attempt}`,
-        '--attempt', attempt, '--ledger', ledgerPath, '--index', indexPath,
-      ]).status).toBe(0);
-      expect(runRelease([
-        'record-failure', '--sha', sha, '--run-id', `run-${attempt}`, '--attempt', attempt,
-        '--exit-code', exitCode, '--reason', reason, '--ledger', ledgerPath, '--index', indexPath,
-      ]).status).toBe(0);
+      expect(
+        runRelease([
+          'init-delivery',
+          '--sha',
+          sha,
+          '--ref',
+          'main',
+          '--run-id',
+          `run-${attempt}`,
+          '--attempt',
+          attempt,
+          '--ledger',
+          ledgerPath,
+          '--index',
+          indexPath,
+        ]).status,
+      ).toBe(0);
+      expect(
+        runRelease([
+          'record-failure',
+          '--sha',
+          sha,
+          '--run-id',
+          `run-${attempt}`,
+          '--attempt',
+          attempt,
+          '--exit-code',
+          exitCode,
+          '--reason',
+          reason,
+          '--ledger',
+          ledgerPath,
+          '--index',
+          indexPath,
+        ]).status,
+      ).toBe(0);
     });
-    expect(runRelease([
-      'list-undelivered', '--index', indexPath, '--output', undeliveredPath,
-    ]).status).toBe(0);
+    expect(
+      runRelease(['list-undelivered', '--index', indexPath, '--output', undeliveredPath]).status,
+    ).toBe(0);
     const [merge] = JSON.parse(readFileSync(undeliveredPath, 'utf8')).undelivered;
     expect(merge.state).toBe('pending');
     expect(merge.failures.map((failure: { class: string }) => failure.class)).toEqual(
       failures.map((failure) => failure[2]),
     );
     expect(unifiedWorkflow).toContain('createWorkflowDispatch');
-    expect(unifiedWorkflow).toContain("if (main.data.sha !== process.env.RELEASE_SHA)");
+    expect(unifiedWorkflow).toContain('if (main.data.sha !== process.env.RELEASE_SHA)');
     expect(unifiedWorkflow).toContain('A newer main sha superseded this whole release');
     expect(unifiedWorkflow).not.toContain('maxFailures < 3');
     expect(deliveryIndexScript).toContain("['merge-base', '--is-ancestor', lastTracked, head]");
@@ -452,15 +581,31 @@ esac
     const expected = spawnSync('git', ['rev-list', '--reverse', `${before}..${head}`], {
       cwd: mobileRoot,
       encoding: 'utf8',
-    }).stdout.trim().split(/\s+/);
+    })
+      .stdout.trim()
+      .split(/\s+/);
 
-    expect(runRelease([
-      'init-delivery', '--sha', head, '--ref', 'main', '--run-id', 'range-run',
-      '--before', before, '--ledger', ledgerPath, '--index', indexPath,
-    ]).status).toBe(0);
+    expect(
+      runRelease([
+        'init-delivery',
+        '--sha',
+        head,
+        '--ref',
+        'main',
+        '--run-id',
+        'range-run',
+        '--before',
+        before,
+        '--ledger',
+        ledgerPath,
+        '--index',
+        indexPath,
+      ]).status,
+    ).toBe(0);
 
-    expect(JSON.parse(readFileSync(indexPath, 'utf8')).merges.map((merge: { sha: string }) => merge.sha))
-      .toEqual(expected);
+    expect(
+      JSON.parse(readFileSync(indexPath, 'utf8')).merges.map((merge: { sha: string }) => merge.sha),
+    ).toEqual(expected);
     expect(workflow).toContain('--before "${PUSH_BEFORE:-}"');
     expect(workflow).not.toContain("require('node:child_process')");
   });
@@ -477,7 +622,9 @@ esac
     const expected = spawnSync('git', ['rev-list', '--reverse', `${before}..${head}`], {
       cwd: mobileRoot,
       encoding: 'utf8',
-    }).stdout.trim().split(/\s+/);
+    })
+      .stdout.trim()
+      .split(/\s+/);
 
     for (const [name, beforeArgs] of [
       ['push', ['--before', before]],
@@ -490,14 +637,26 @@ esac
       writeFileSync(indexPath, JSON.stringify({ schemaVersion: 1, merges: [{ sha: before }] }));
 
       const result = runRelease([
-        'init-delivery', '--sha', head, '--ref', 'main', '--run-id', `${name}-run`,
-        ...beforeArgs, '--ledger', ledgerPath, '--index', indexPath,
+        'init-delivery',
+        '--sha',
+        head,
+        '--ref',
+        'main',
+        '--run-id',
+        `${name}-run`,
+        ...beforeArgs,
+        '--ledger',
+        ledgerPath,
+        '--index',
+        indexPath,
       ]);
 
       expect(result.status).toBe(0);
-      expect(JSON.parse(readFileSync(indexPath, 'utf8')).merges.slice(1).map(
-        (merge: { sha: string }) => merge.sha,
-      )).toEqual(expected);
+      expect(
+        JSON.parse(readFileSync(indexPath, 'utf8'))
+          .merges.slice(1)
+          .map((merge: { sha: string }) => merge.sha),
+      ).toEqual(expected);
     }
   });
 
@@ -507,7 +666,11 @@ esac
     const index = {
       schemaVersion: 1,
       merges: [
-        { sha: '1'.repeat(40), state: 'confirmed', published: { groupId: 'old', updateIds: ['old-id'] } },
+        {
+          sha: '1'.repeat(40),
+          state: 'confirmed',
+          published: { groupId: 'old', updateIds: ['old-id'] },
+        },
         {
           sha: '2'.repeat(40),
           releaseVersion: 'v0.0.2',
@@ -530,7 +693,9 @@ esac
     expect(result.stdout).toBe(
       `group_id=current\nupdate_ids=android,ios\nrelease_version=v0.0.2\nsource_sha=${'2'.repeat(40)}\n`,
     );
-    expect(`${workflow}\n${reconcileWorkflow}`.match(/ota-release\.mjs delivery-target/g)).toHaveLength(2);
+    expect(
+      `${workflow}\n${reconcileWorkflow}`.match(/ota-release\.mjs delivery-target/g),
+    ).toHaveLength(2);
 
     index.merges[1].state = 'confirmed';
     writeFileSync(indexPath, JSON.stringify(index));
@@ -548,33 +713,45 @@ esac
     const staleSha = '5'.repeat(40);
     const matchingSha = '6'.repeat(40);
     const newSha = '7'.repeat(40);
-    writeFileSync(basePath, JSON.stringify({
-      schemaVersion: 1,
-      merges: [
-        { sha: staleSha, state: 'published', published: { groupId: 'new-group' } },
-        { sha: matchingSha, state: 'published', published: { groupId: 'same-group' } },
-        { sha: newSha, state: 'published', published: { groupId: 'new-group' } },
-      ],
-    }));
-    writeFileSync(overlayPath, JSON.stringify({
-      schemaVersion: 1,
-      merges: [
-        { sha: overlayOnlySha, state: 'confirmed', confirmed: { groupId: 'old-group' } },
-        {
-          sha: staleSha,
-          state: 'confirmed',
-          confirmed: { groupId: 'old-group', deviceId: 'owner-device' },
-        },
-        {
-          sha: matchingSha,
-          state: 'confirmed',
-          confirmed: { groupId: 'same-group', deviceId: 'owner-device' },
-        },
-      ],
-    }));
+    writeFileSync(
+      basePath,
+      JSON.stringify({
+        schemaVersion: 1,
+        merges: [
+          { sha: staleSha, state: 'published', published: { groupId: 'new-group' } },
+          { sha: matchingSha, state: 'published', published: { groupId: 'same-group' } },
+          { sha: newSha, state: 'published', published: { groupId: 'new-group' } },
+        ],
+      }),
+    );
+    writeFileSync(
+      overlayPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        merges: [
+          { sha: overlayOnlySha, state: 'confirmed', confirmed: { groupId: 'old-group' } },
+          {
+            sha: staleSha,
+            state: 'confirmed',
+            confirmed: { groupId: 'old-group', deviceId: 'owner-device' },
+          },
+          {
+            sha: matchingSha,
+            state: 'confirmed',
+            confirmed: { groupId: 'same-group', deviceId: 'owner-device' },
+          },
+        ],
+      }),
+    );
 
     const result = runRelease([
-      'merge-reconciliation', '--base', basePath, '--overlay', overlayPath, '--output', outputPath,
+      'merge-reconciliation',
+      '--base',
+      basePath,
+      '--overlay',
+      overlayPath,
+      '--output',
+      outputPath,
     ]);
 
     expect(result.status).toBe(0);
@@ -582,34 +759,57 @@ esac
     expect(merged.merges).toHaveLength(4);
     expect(merged.merges[0].sha).toBe(overlayOnlySha);
     expect(merged.merges.at(-1).sha).toBe(newSha);
-    expect(merged.merges.find((merge: { sha: string }) => merge.sha === staleSha).state).toBe('published');
-    expect(merged.merges.find((merge: { sha: string }) => merge.sha === matchingSha)).toMatchObject({
-      state: 'confirmed',
-      confirmed: { groupId: 'same-group' },
-    });
-    expect(merged.merges.find((merge: { sha: string }) => merge.sha === newSha).state).toBe('published');
+    expect(merged.merges.find((merge: { sha: string }) => merge.sha === staleSha).state).toBe(
+      'published',
+    );
+    expect(merged.merges.find((merge: { sha: string }) => merge.sha === matchingSha)).toMatchObject(
+      {
+        state: 'confirmed',
+        confirmed: { groupId: 'same-group' },
+      },
+    );
+    expect(merged.merges.find((merge: { sha: string }) => merge.sha === newSha).state).toBe(
+      'published',
+    );
   });
 
   it('does not confirm delivery from a non-physical or unrelated receipt', () => {
     const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-receipt-proof-'));
     const indexPath = join(directory, 'index.json');
     const receiptPath = join(directory, 'receipt.json');
-    writeFileSync(indexPath, JSON.stringify({
-      schemaVersion: 1,
-      merges: [{
-        sha: '4'.repeat(40),
-        state: 'published',
-        published: { groupId: 'production-group', updateIds: ['production-update'] },
-      }],
-    }));
-    writeFileSync(receiptPath, JSON.stringify({ devices: [
-      { environment: 'emulator', group: 'production-group', updateId: 'production-update' },
-      { environment: 'physical', group: 'different-group', updateId: 'different-update' },
-    ] }));
+    writeFileSync(
+      indexPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        merges: [
+          {
+            sha: '4'.repeat(40),
+            state: 'published',
+            published: { groupId: 'production-group', updateIds: ['production-update'] },
+          },
+        ],
+      }),
+    );
+    writeFileSync(
+      receiptPath,
+      JSON.stringify({
+        devices: [
+          { environment: 'emulator', group: 'production-group', updateId: 'production-update' },
+          { environment: 'physical', group: 'different-group', updateId: 'different-update' },
+        ],
+      }),
+    );
 
     const result = runRelease([
-      'confirm', '--index', indexPath, '--receipt', receiptPath,
-      '--group', 'production-group', '--update-ids', 'production-update',
+      'confirm',
+      '--index',
+      indexPath,
+      '--receipt',
+      receiptPath,
+      '--group',
+      'production-group',
+      '--update-ids',
+      'production-update',
     ]);
 
     expect(result.status).toBe(0);
@@ -622,26 +822,48 @@ esac
     const indexPath = join(directory, 'index.json');
     const receiptPath = join(directory, 'receipt.json');
     const sha = '4'.repeat(40);
-    writeFileSync(indexPath, JSON.stringify({
-      schemaVersion: 1,
-      merges: [{
-        sha,
-        state: 'published',
-        published: { groupId: 'production-group', updateIds: ['production-update'] },
-      }],
-    }));
-    writeFileSync(receiptPath, JSON.stringify({ devices: [{
-      environment: 'physical',
-      group: 'production-group',
-      updateId: 'production-update',
-      releaseVersion: 'v0.0.2',
-      sourceSha: '5'.repeat(40),
-    }] }));
+    writeFileSync(
+      indexPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        merges: [
+          {
+            sha,
+            state: 'published',
+            published: { groupId: 'production-group', updateIds: ['production-update'] },
+          },
+        ],
+      }),
+    );
+    writeFileSync(
+      receiptPath,
+      JSON.stringify({
+        devices: [
+          {
+            environment: 'physical',
+            group: 'production-group',
+            updateId: 'production-update',
+            releaseVersion: 'v0.0.2',
+            sourceSha: '5'.repeat(40),
+          },
+        ],
+      }),
+    );
 
     const result = runRelease([
-      'confirm', '--index', indexPath, '--receipt', receiptPath,
-      '--group', 'production-group', '--update-ids', 'production-update',
-      '--release-version', 'v0.0.1', '--sha', sha,
+      'confirm',
+      '--index',
+      indexPath,
+      '--receipt',
+      receiptPath,
+      '--group',
+      'production-group',
+      '--update-ids',
+      'production-update',
+      '--release-version',
+      'v0.0.1',
+      '--sha',
+      sha,
     ]);
 
     expect(result.status).toBe(0);
@@ -666,8 +888,12 @@ esac
     expect(unifiedWorkflow).toContain('getWorkflowRun');
     expect(unifiedWorkflow).toContain("core.setOutput('trigger_epoch'");
     expect(unifiedWorkflow).toContain('promotion_epoch=$(date +%s)');
-    expect(unifiedWorkflow).toContain('promotion_elapsed="$(( now - ${{ needs.artifact_gate.outputs.promotion_epoch }} ))"');
-    expect(unifiedWorkflow).toContain('fix_to_phone_elapsed="$(( now - ${{ needs.initialize.outputs.trigger_epoch }} ))"');
+    expect(unifiedWorkflow).toContain(
+      'promotion_elapsed="$(( now - ${{ needs.artifact_gate.outputs.promotion_epoch }} ))"',
+    );
+    expect(unifiedWorkflow).toContain(
+      'fix_to_phone_elapsed="$(( now - ${{ needs.initialize.outputs.trigger_epoch }} ))"',
+    );
     expect(unifiedWorkflow).toContain('test "$promotion_elapsed" -lt 600');
     expect(unifiedWorkflow).toContain('test "$fix_to_phone_elapsed" -lt 1200');
     expect(workflow).toContain('assert-promotion --ledger "$RUN_LEDGER" --index "$DELIVERY_INDEX"');
@@ -682,7 +908,9 @@ esac
     expect(workflow).toContain('parallel_candidate_wall');
     expect(unifiedWorkflow).toMatch(/group: unified-production-release\s+cancel-in-progress: true/);
     expect(workflow).toContain('--before "${PUSH_BEFORE:-}"');
-    expect(unifiedWorkflow).toMatch(/app_artifact:[\s\S]*?daemon_artifact:[\s\S]*?server_artifact:/);
+    expect(unifiedWorkflow).toMatch(
+      /app_artifact:[\s\S]*?daemon_artifact:[\s\S]*?server_artifact:/,
+    );
     expect(deliveryIndexScript).toContain("['merge-base', '--is-ancestor', lastTracked, head]");
   });
 
@@ -699,10 +927,14 @@ esac
       unifiedWorkflow.indexOf('promote_app:'),
     );
     expect(unifiedWorkflow).toContain('unified-release.mjs confirm-delivery');
-    expect(unifiedWorkflow).not.toMatch(/mobile-ota-post-promote|post_promote_rehearsal|emulator|Maestro/);
+    expect(unifiedWorkflow).not.toMatch(
+      /mobile-ota-post-promote|post_promote_rehearsal|emulator|Maestro/,
+    );
     expect(rollbackWorkflow).toContain("artifact.name.startsWith('mobile-ota-ledger-')");
     expect(rollbackWorkflow).toContain('dry_run:');
-    expect(rollbackWorkflow).toContain('update:list --branch production --limit 1 --json --non-interactive');
+    expect(rollbackWorkflow).toContain(
+      'update:list --branch production --limit 1 --json --non-interactive',
+    );
     expect(rollbackWorkflow).toContain('args+=(--dry-run)');
     expect(rollbackWorkflow).toContain('Record rollback dry-run proof');
     expect(rollbackWorkflow).toContain('Install mobile dependencies for EAS project context');
@@ -750,7 +982,7 @@ esac
     const restoreCompetitor = maestroScript.indexOf('pm enable --user 0 "$package"');
 
     expect(enumerateHandlers).toBeGreaterThan(-1);
-    expect(maestroScript).toContain("-d 'beeline://buzz/channels'");
+    expect(maestroScript).toContain("-d 'beeline://beeline/channels'");
     expect(maestroScript).toContain('target_handler_seen=1');
     expect(maestroScript).toContain('$APP_ID is not registered for beeline://');
     expect(disableCompetitor).toBeGreaterThan(enumerateHandlers);
@@ -772,37 +1004,29 @@ esac
     writeFileSync(defaultMaestro, '#!/bin/sh\nexit 0\n');
     chmodSync(defaultMaestro, 0o755);
 
-    function runCanary(
-      args: string[] = [],
-      env: Record<string, string | undefined> = {},
-    ) {
-      return spawnSync(
-        '/bin/bash',
-        [join(mobileRoot, 'scripts/ota-canary.sh'), ...args],
-        {
-          cwd: mobileRoot,
-          encoding: 'utf8',
-          // Empty strings make the script's ${VAR:-} defaults treat these as
-          // unset even when this developer shell exported a real SDK.
-          env: {
-            ...process.env,
-            ANDROID_HOME: '',
-            ANDROID_SDK_ROOT: '',
-            // Most environment tests exercise later gates. Pin a known
-            // executable so they do not depend on the developer/CI account's
-            // optional ~/.maestro installation.
-            MAESTRO_BIN: defaultMaestro,
-            // The script accepts the governor's Node.js executable explicitly
-            // because its intentionally narrow runner PATH may not contain it.
-            NODE_BIN: process.execPath,
-            PATH: env.PATH ??
-              (env.ANDROID_HOME
-                ? `${env.ANDROID_HOME}/platform-tools:${barePath}`
-                : noAdbPath),
-            ...env,
-          },
+    function runCanary(args: string[] = [], env: Record<string, string | undefined> = {}) {
+      return spawnSync('/bin/bash', [join(mobileRoot, 'scripts/ota-canary.sh'), ...args], {
+        cwd: mobileRoot,
+        encoding: 'utf8',
+        // Empty strings make the script's ${VAR:-} defaults treat these as
+        // unset even when this developer shell exported a real SDK.
+        env: {
+          ...process.env,
+          ANDROID_HOME: '',
+          ANDROID_SDK_ROOT: '',
+          // Most environment tests exercise later gates. Pin a known
+          // executable so they do not depend on the developer/CI account's
+          // optional ~/.maestro installation.
+          MAESTRO_BIN: defaultMaestro,
+          // The script accepts the governor's Node.js executable explicitly
+          // because its intentionally narrow runner PATH may not contain it.
+          NODE_BIN: process.execPath,
+          PATH:
+            env.PATH ??
+            (env.ANDROID_HOME ? `${env.ANDROID_HOME}/platform-tools:${barePath}` : noAdbPath),
+          ...env,
         },
-      );
+      });
     }
 
     function writeBetaLedger(directory: string): string {
@@ -882,10 +1106,7 @@ esac
 
     it('parks with an actionable reason when Node.js is absent from the runner environment', () => {
       const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-no-node-'));
-      const sdkRoot = stubAdbSdk(
-        directory,
-        'List of devices attached\nemulator-5554\tdevice',
-      );
+      const sdkRoot = stubAdbSdk(directory, 'List of devices attached\nemulator-5554\tdevice');
       const ledger = writeBetaLedger(directory);
 
       const result = runCanary(['--ledger', ledger], {
@@ -900,10 +1121,7 @@ esac
 
     it('resolves adb from ANDROID_HOME when PATH lacks it and proceeds past the device gate', () => {
       const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-adb-ok-'));
-      const sdkRoot = stubAdbSdk(
-        directory,
-        'List of devices attached\\nemulator-5554\\tdevice',
-      );
+      const sdkRoot = stubAdbSdk(directory, 'List of devices attached\\nemulator-5554\\tdevice');
       const ledger = writeBetaLedger(directory);
 
       // A missing APK proves the run got past adb resolution AND the device
@@ -924,10 +1142,7 @@ esac
 
     it('selects the production APK and promoted Android identity for post-promotion rehearsal', () => {
       const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-promoted-apk-'));
-      const sdkRoot = stubAdbSdk(
-        directory,
-        'List of devices attached\nemulator-5554\tdevice',
-      );
+      const sdkRoot = stubAdbSdk(directory, 'List of devices attached\nemulator-5554\tdevice');
       const ledger = writeProductionLedger(directory);
 
       const result = runCanary(['--ledger', ledger, '--promoted'], {
@@ -963,10 +1178,7 @@ esac
 
     it('parks with an actionable persisted reason when Maestro is absent', () => {
       const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-maestro-missing-'));
-      const sdkRoot = stubAdbSdk(
-        directory,
-        'List of devices attached\\nemulator-5554\\tdevice',
-      );
+      const sdkRoot = stubAdbSdk(directory, 'List of devices attached\\nemulator-5554\\tdevice');
       const reasonFile = join(directory, 'reason.txt');
 
       const result = runCanary([], {
@@ -1041,10 +1253,7 @@ esac
 
     it('parks with the existing not-ready message class when an offline emulator outlives the readiness window', () => {
       const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-adb-offline-'));
-      const sdkRoot = stubAdbSdk(
-        directory,
-        'List of devices attached\\nemulator-5554\\toffline',
-      );
+      const sdkRoot = stubAdbSdk(directory, 'List of devices attached\\nemulator-5554\\toffline');
 
       const result = runCanary([], {
         ANDROID_HOME: sdkRoot,
@@ -1059,10 +1268,7 @@ esac
 
     it('validates the bounded device-readiness timeout before touching adb', () => {
       const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-ready-timeout-'));
-      const sdkRoot = stubAdbSdk(
-        directory,
-        'List of devices attached\\nemulator-5554\\tdevice',
-      );
+      const sdkRoot = stubAdbSdk(directory, 'List of devices attached\\nemulator-5554\\tdevice');
 
       const result = runCanary([], {
         ANDROID_HOME: sdkRoot,
@@ -1125,10 +1331,7 @@ esac
 
     it('parks with a self-describing reason when EAS has no finished beta-apk build for the runtime', () => {
       const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-no-beta-build-'));
-      const sdkRoot = stubAdbSdk(
-        directory,
-        'List of devices attached\nemulator-5554\tdevice',
-      );
+      const sdkRoot = stubAdbSdk(directory, 'List of devices attached\nemulator-5554\tdevice');
       const stubBin = stubReleaseTools(directory, { buildListStdout: '[]' });
       const ledger = writeBetaLedger(directory);
       const reasonFile = join(directory, 'reason.txt');
@@ -1218,10 +1421,7 @@ esac
       return { sdkRoot, stateDir, callLog };
     }
 
-    function runMaestroGate(
-      sdkRoot: string,
-      env: Record<string, string | undefined> = {},
-    ) {
+    function runMaestroGate(sdkRoot: string, env: Record<string, string | undefined> = {}) {
       return spawnSync('bash', [join(mobileRoot, 'scripts/maestro-e2e.sh')], {
         cwd: mobileRoot,
         encoding: 'utf8',
@@ -1356,9 +1556,9 @@ esac
 
       const calls = readFileSync(callLog, 'utf8').split('\n').filter(Boolean);
       expect(calls.filter((call) => call.includes('install -r'))).toHaveLength(2);
-      expect(
-        calls.filter((call) => call.includes('uninstall app.usebeeline.mobile')),
-      ).toHaveLength(1);
+      expect(calls.filter((call) => call.includes('uninstall app.usebeeline.mobile'))).toHaveLength(
+        1,
+      );
       expect(readFileSync(join(stateDir, 'uninstall_call'), 'utf8')).toBe(
         '-s emulator-5554 uninstall app.usebeeline.mobile\n',
       );
@@ -1418,10 +1618,7 @@ esac
 
     it('parks when the EAS build listing itself fails', () => {
       const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-eas-fail-'));
-      const sdkRoot = stubAdbSdk(
-        directory,
-        'List of devices attached\nemulator-5554\tdevice',
-      );
+      const sdkRoot = stubAdbSdk(directory, 'List of devices attached\nemulator-5554\tdevice');
       const stubBin = stubReleaseTools(directory, { buildListExit: 7 });
       const ledger = writeBetaLedger(directory);
 
@@ -1438,10 +1635,7 @@ esac
 
     it('parks when the ledger is unreadable by the canary process', () => {
       const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-ledger-eacces-'));
-      const sdkRoot = stubAdbSdk(
-        directory,
-        'List of devices attached\nemulator-5554\tdevice',
-      );
+      const sdkRoot = stubAdbSdk(directory, 'List of devices attached\nemulator-5554\tdevice');
       const ledger = writeBetaLedger(directory);
       chmodSync(ledger, 0o000);
 
@@ -1455,10 +1649,7 @@ esac
 
     it('parks when the beta APK download fails after a successful build lookup', () => {
       const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-download-fail-'));
-      const sdkRoot = stubAdbSdk(
-        directory,
-        'List of devices attached\nemulator-5554\tdevice',
-      );
+      const sdkRoot = stubAdbSdk(directory, 'List of devices attached\nemulator-5554\tdevice');
       const stubBin = stubReleaseTools(directory, {
         buildListStdout:
           '[{"id":"b1","artifacts":{"buildUrl":"https://example.invalid/beeline-beta.apk"}}]',
@@ -1489,13 +1680,7 @@ esac
       }),
     );
 
-    const missingReason = runRelease([
-      'mark-canary',
-      '--ledger',
-      ledger,
-      '--status',
-      'blocked',
-    ]);
+    const missingReason = runRelease(['mark-canary', '--ledger', ledger, '--status', 'blocked']);
     expect(missingReason.status).toBe(1);
     expect(missingReason.stderr).toContain('--reason');
 
@@ -1524,7 +1709,9 @@ esac
   it('the delivery report relies on the ledger and server/daemon health, not Actions device work', () => {
     expect(workflow).toContain('Store release ledger, timings, and promotion proof');
     expect(unifiedWorkflow).toContain('unified-release.mjs confirm-delivery');
-    expect(unifiedWorkflow).not.toMatch(/mobile-ota-post-promote|post_promote_rehearsal|emulator|Maestro/);
+    expect(unifiedWorkflow).not.toMatch(
+      /mobile-ota-post-promote|post_promote_rehearsal|emulator|Maestro/,
+    );
     expect(daemonWorkflow).toContain('Confirm every daemon restarted READY on the exact release');
     expect(serverWorkflow).toContain('Deploy the exact release SHA to the monolith');
     expect(serverWorkflow).toContain('test "$(git rev-parse HEAD)" = "$RELEASE_SHA"');
@@ -1545,17 +1732,19 @@ esac
     expect(parkCalls).toBeGreaterThanOrEqual(14);
     // The empty channel-matched APK parking names the exact remediation.
     expect(canaryScript).toContain('no finished ${BUILD_PROFILE} Android build');
-    expect(canaryScript).toContain('build --profile ${BUILD_PROFILE} --platform android --non-interactive');
+    expect(canaryScript).toContain(
+      'build --profile ${BUILD_PROFILE} --platform android --non-interactive',
+    );
   });
 
   it('a provisioning-bootstrap death parks self-describingly instead of exiting as a generic smoke failure', () => {
     // The smoke stage is captured to a log...
     expect(canaryScript).toMatch(/maestro-e2e\.sh" 2>&1 \| tee "\$smoke_log"/);
     // ...its failure is classified against bootstrap signatures...
-    expect(canaryScript).toMatch(/grep -m1 -E 'Cannot find module\|MODULE_NOT_FOUND' "\$smoke_log"/);
-    expect(canaryScript).toContain(
-      'its provisioning bootstrap failed before Maestro ran',
+    expect(canaryScript).toMatch(
+      /grep -m1 -E 'Cannot find module\|MODULE_NOT_FOUND' "\$smoke_log"/,
     );
+    expect(canaryScript).toContain('its provisioning bootstrap failed before Maestro ran');
     // ...and only a bootstrap match parks (exit 2); everything else re-exits
     // with the genuine smoke status.
     expect(canaryScript).toContain('if [[ -n "$bootstrap_line" ]]; then');
@@ -1670,9 +1859,7 @@ esac
     );
     expect(cornerPhaseCheckpoint).toBeGreaterThan(-1);
     expect(cornerSteerWait).toBeGreaterThan(cornerPhaseCheckpoint);
-    expect(smoke).toMatch(
-      /SMOKE CORNER PHASE READY[\s\S]*?id: corner-status-working/,
-    );
+    expect(smoke).toMatch(/SMOKE CORNER PHASE READY[\s\S]*?id: corner-status-working/);
     expect(smoke).toMatch(
       /id: corner-status-working[\s\S]*?waitToSettleTimeoutMs: 1000[\s\S]*?id: corner-session-header/,
     );
@@ -1682,8 +1869,13 @@ esac
   });
 
   it('types a unique valid handle before claiming in every Maestro onboarding flow', () => {
-    const provisionScript = readFileSync(resolve(mobileRoot, '../../scripts/provision-smoke.ts'), 'utf8');
-    expect(provisionScript).toContain('MAESTRO_SMOKE_HANDLE=smoke-${identity.publicKey.slice(0, 12)}');
+    const provisionScript = readFileSync(
+      resolve(mobileRoot, '../../scripts/provision-smoke.ts'),
+      'utf8',
+    );
+    expect(provisionScript).toContain(
+      'MAESTRO_SMOKE_HANDLE=smoke-${identity.publicKey.slice(0, 12)}',
+    );
     expect(maestroScript).toContain('read_seed_value MAESTRO_SMOKE_HANDLE');
     expect(maestroScript).toContain('--env "SMOKE_HANDLE=$SMOKE_HANDLE"');
 
@@ -1700,7 +1892,9 @@ esac
       const claim = flow.indexOf('id: onboarding-claim-handle', dismissIme);
 
       expect(ceremony, `${flowName} waits for the current handle ceremony`).toBeGreaterThan(-1);
-      expect(typeHandle, `${flowName} fills the captured empty handle input`).toBeGreaterThan(ceremony);
+      expect(typeHandle, `${flowName} fills the captured empty handle input`).toBeGreaterThan(
+        ceremony,
+      );
       expect(dismissIme, `${flowName} dismisses the auto-focused IME`).toBeGreaterThan(typeHandle);
       expect(claim, `${flowName} claims the generated handle`).toBeGreaterThan(dismissIme);
       expect(flow).not.toContain('onboarding-person-name-step');
@@ -1769,9 +1963,10 @@ esac
 
       expect(roomTap, `${flowName} opens the selected Room`).toBeGreaterThan(-1);
       expect(transcriptReady, `${flowName} waits for the Room transcript`).toBeGreaterThan(roomTap);
-      expect(composerInteraction, `${flowName} reaches the composer after the transcript`).toBeGreaterThan(
-        transcriptReady,
-      );
+      expect(
+        composerInteraction,
+        `${flowName} reaches the composer after the transcript`,
+      ).toBeGreaterThan(transcriptReady);
     }
 
     const smoke = readFileSync(join(mobileRoot, 'e2e', 'smoke.yaml'), 'utf8');

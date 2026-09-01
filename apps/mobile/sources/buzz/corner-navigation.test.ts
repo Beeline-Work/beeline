@@ -10,7 +10,7 @@ import {
 } from './corner-navigation';
 
 const chatRoute = (channelId: string): ChatStackRoute => ({
-  name: 'buzz/chat/[channelId]',
+  name: 'beeline/chat/[channelId]',
   params: { channelId },
 });
 
@@ -28,7 +28,7 @@ describe('opening a corner', () => {
 
 describe('leaving a corner', () => {
   it('pops to the parent Room when it sits directly beneath the corner', () => {
-    const routes = [{ name: 'buzz/channels' }, chatRoute('room-1'), chatRoute('corner-1')];
+    const routes = [{ name: 'beeline/channels' }, chatRoute('room-1'), chatRoute('corner-1')];
     expect(chatBackAction(routes, 'room-1')).toEqual({ type: 'pop', count: 1 });
   });
 
@@ -38,7 +38,7 @@ describe('leaving a corner', () => {
     // it. That leaves a corner sitting *below* its own Room, so a later drill-in
     // makes plain "go back one" walk straight into a corner again.
     const routes = [
-      { name: 'buzz/channels' },
+      { name: 'beeline/channels' },
       chatRoute('corner-1'),
       chatRoute('room-1'),
       chatRoute('corner-1'),
@@ -59,10 +59,12 @@ describe('leaving a corner', () => {
   it('opens the parent Room when it was never on the stack', () => {
     // The Room-list corner dropdown pushes a corner without its Room, and a
     // notification cold start can make the corner the only route at all.
-    expect(chatBackAction([{ name: 'buzz/channels' }, chatRoute('corner-1')], 'room-1')).toEqual({
-      type: 'open-room',
-      channelId: 'room-1',
-    });
+    expect(chatBackAction([{ name: 'beeline/channels' }, chatRoute('corner-1')], 'room-1')).toEqual(
+      {
+        type: 'open-room',
+        channelId: 'room-1',
+      },
+    );
     expect(chatBackAction([chatRoute('corner-1')], 'room-1')).toEqual({
       type: 'open-room',
       channelId: 'room-1',
@@ -71,7 +73,7 @@ describe('leaving a corner', () => {
 
   it('returns to the Room list when the Corner was opened there', () => {
     expect(
-      chatBackAction([{ name: 'buzz/channels' }, chatRoute('corner-1')], 'room-1', 'room-list'),
+      chatBackAction([{ name: 'beeline/channels' }, chatRoute('corner-1')], 'room-1', 'room-list'),
     ).toEqual({ type: 'pop', count: 1 });
     expect(chatBackAction([chatRoute('corner-1')], 'room-1', 'room-list')).toEqual({
       type: 'room-list',
@@ -95,7 +97,7 @@ describe('leaving a corner', () => {
 
 describe('leaving a Room', () => {
   it('goes back normally when there is something to go back to', () => {
-    expect(chatBackAction([{ name: 'buzz/channels' }, chatRoute('room-1')], undefined)).toEqual({
+    expect(chatBackAction([{ name: 'beeline/channels' }, chatRoute('room-1')], undefined)).toEqual({
       type: 'back',
     });
   });
@@ -109,21 +111,21 @@ describe('leaving a Room', () => {
 describe('corner hrefs', () => {
   it('carries the parent and known title so the corner header is right on frame one', () => {
     expect(cornerHref('corner-1', 'room-1', 'fix-oauth-callback')).toEqual({
-      pathname: '/buzz/chat/[channelId]',
+      pathname: '/beeline/chat/[channelId]',
       params: { channelId: 'corner-1', parent: 'room-1', title: 'fix-oauth-callback' },
     });
   });
 
   it('omits an unknown title rather than passing an empty one', () => {
     expect(cornerHref('corner-1', 'room-1')).toEqual({
-      pathname: '/buzz/chat/[channelId]',
+      pathname: '/beeline/chat/[channelId]',
       params: { channelId: 'corner-1', parent: 'room-1' },
     });
   });
 
   it('carries an explicit Room-list return target when opened from that list', () => {
     expect(cornerHref('corner-1', 'room-1', 'fix-oauth-callback', 'room-list')).toEqual({
-      pathname: '/buzz/chat/[channelId]',
+      pathname: '/beeline/chat/[channelId]',
       params: {
         channelId: 'corner-1',
         parent: 'room-1',
@@ -135,7 +137,7 @@ describe('corner hrefs', () => {
 
   it('opens a Room with no corner hints attached', () => {
     expect(roomHref('room-1')).toEqual({
-      pathname: '/buzz/chat/[channelId]',
+      pathname: '/beeline/chat/[channelId]',
       params: { channelId: 'room-1' },
     });
   });

@@ -1,11 +1,11 @@
-# Buzzy
+# Beeline
 
 The merge you hold from your phone. See [`spec.md`](./spec.md) for the full
 design.
 
 This is a Turborepo monorepo with npm workspaces, mirroring the
 [speakeasy](../proj-speakeasy/speakeasy) stack (Turborepo, npm workspaces,
-bare React Native, Fastify + ws) — with one deliberate difference: **Buzzy's
+bare React Native, Fastify + ws) — with one deliberate difference: **Beeline's
 signing layer is Nostr, not Signal.** `packages/crypto`'s Signal protocol has
 no equivalent here; `packages/nostr` (schnorr-signed events, npub/nsec
 identity) is the product's differentiator, not a borrowed primitive.

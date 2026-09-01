@@ -92,7 +92,8 @@ describe('Buzz push preference', () => {
   it('registers, persists the truthful state, and never logs the full token', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
-    const allLogs = () => [...logSpy.mock.calls, ...warnSpy.mock.calls].map((parts) => parts.join(' '));
+    const allLogs = () =>
+      [...logSpy.mock.calls, ...warnSpy.mock.calls].map((parts) => parts.join(' '));
 
     const result = await registerBuzzPushNotifications(identity);
 
@@ -110,7 +111,7 @@ describe('Buzz push preference', () => {
     );
     // Diagnostics name the broken hop without ever exposing the token itself.
     const logged = allLogs().join('\n');
-    expect(logged).toContain('[buzzy-push] FCM token acquired fingerprint=');
+    expect(logged).toContain('[beeline-push] FCM token acquired fingerprint=');
     expect(logged).toContain(`length=${FCM_TOKEN.length}`);
     expect(logged).toContain('POST https://push.example/registrations -> HTTP 200');
     expect(logged).not.toContain(FCM_TOKEN);
@@ -176,7 +177,9 @@ describe('Buzz push preference', () => {
       REGISTRATION_STATE_KEY,
       expect.stringContaining('"failedAttempts":1'),
     );
-    expect(warnSpy.mock.calls.some((parts) => parts.join(' ').includes('phase=token-timed-out'))).toBe(true);
+    expect(
+      warnSpy.mock.calls.some((parts) => parts.join(' ').includes('phase=token-timed-out')),
+    ).toBe(true);
   });
 
   it('classifies a generic FCM token failure before contacting the gateway', async () => {
@@ -224,7 +227,9 @@ describe('Buzz push preference', () => {
 
     expect(result).toMatchObject({ registered: false, phase: 'permission-denied' });
     expect(notifications.requestPermissionsAsync).not.toHaveBeenCalled();
-    expect(logSpy.mock.calls.some((parts) => parts.join(' ').includes('permission granted=false'))).toBe(true);
+    expect(
+      logSpy.mock.calls.some((parts) => parts.join(' ').includes('permission granted=false')),
+    ).toBe(true);
     expect(storage.setItem).toHaveBeenCalledWith(
       REGISTRATION_STATE_KEY,
       expect.stringContaining('"phase":"permission-denied"'),
@@ -233,7 +238,9 @@ describe('Buzz push preference', () => {
 
   it('does not count a permission gap against the retry backoff', async () => {
     storage.getItem.mockImplementation(async (key: string) =>
-      key === REGISTRATION_STATE_KEY ? storedRegistrationState({ phase: 'permission-denied', failedAttempts: 3 }) : null,
+      key === REGISTRATION_STATE_KEY
+        ? storedRegistrationState({ phase: 'permission-denied', failedAttempts: 3 })
+        : null,
     );
     notifications.getPermissionsAsync.mockResolvedValue({
       granted: false,
@@ -258,7 +265,12 @@ describe('Buzz push preference', () => {
     it('is a no-op when the last attempt registered', async () => {
       storage.getItem.mockImplementation(async (key: string) =>
         key === REGISTRATION_STATE_KEY
-          ? storedRegistrationState({ registered: true, retryable: false, phase: 'registered', failedAttempts: 0 })
+          ? storedRegistrationState({
+              registered: true,
+              retryable: false,
+              phase: 'registered',
+              failedAttempts: 0,
+            })
           : null,
       );
 

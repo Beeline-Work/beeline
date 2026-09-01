@@ -38,9 +38,7 @@ const sdk = vi.hoisted(() => ({
   getCapabilities: vi.fn(async () => ({ github: true, oidc: true })),
   startInstallation: vi.fn(async () => 'https://github.test/apps/beeline/installations/new'),
   listRepositories: vi.fn(async () => ({ installed: true, installations: [], repositories: [] })),
-  lookupRecovery: vi.fn(
-    async () => [] as { provider: string; subject: string; pubkey: string }[],
-  ),
+  lookupRecovery: vi.fn(async () => [] as { provider: string; subject: string; pubkey: string }[]),
   lookupManagedIdentity: vi.fn(async () => null),
 }));
 const profileClient = vi.hoisted(() => ({
@@ -168,8 +166,9 @@ const { OidcBindError } = await import('@beeline/buzz-client');
 const { clearOnboardingNotice } = await import('@/auth/onboarding-state');
 const { default: BuzzOnboarding } = await import('./onboarding');
 
-(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
-  true;
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
 
 const STATE = 's'.repeat(43);
 
@@ -188,7 +187,7 @@ function callbackUrl(state = STATE, issuedAt = Math.floor(Date.now() / 1_000)): 
     issued_at: String(issuedAt),
     expires_at: String(issuedAt + 120),
   });
-  return `beeline://buzz/github-callback?${params}`;
+  return `beeline://beeline/github-callback?${params}`;
 }
 
 async function render(): Promise<ReactTestRenderer> {
@@ -224,7 +223,11 @@ describe('GitHub callback delivery into onboarding', () => {
     sdk.finish.mockResolvedValue({ linked: true });
     sdk.recover.mockResolvedValue({ linked: true, replaced: true });
     sdk.getCapabilities.mockResolvedValue({ github: true, oidc: true });
-    sdk.listRepositories.mockResolvedValue({ installed: true, installations: [], repositories: [] });
+    sdk.listRepositories.mockResolvedValue({
+      installed: true,
+      installations: [],
+      repositories: [],
+    });
     sdk.lookupRecovery.mockResolvedValue([]);
     sdk.lookupManagedIdentity.mockResolvedValue(null);
     profileClient.getGlobalPersonProfile.mockResolvedValue(null);
@@ -253,7 +256,7 @@ describe('GitHub callback delivery into onboarding', () => {
     expect(browser.open).toHaveBeenCalledTimes(1);
     expect(monolith.exchangeGitHubTicket).toHaveBeenCalledWith('t'.repeat(43));
     expect(sdk.finish).not.toHaveBeenCalled();
-    expect(navigation.replace).toHaveBeenCalledWith('/buzz/channels');
+    expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels');
   });
 
   it('renders GitHub on the first frame without waiting for auth capabilities', () => {
@@ -303,7 +306,7 @@ describe('GitHub callback delivery into onboarding', () => {
 
     await render();
 
-    expect(navigation.replace).toHaveBeenCalledWith('/buzz/channels');
+    expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels');
     expect(sdk.listRepositories).not.toHaveBeenCalled();
     expect(browser.open).not.toHaveBeenCalled();
   });
@@ -326,7 +329,7 @@ describe('GitHub callback delivery into onboarding', () => {
 
     await render();
 
-    expect(navigation.replace).toHaveBeenCalledWith('/buzz/channels');
+    expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels');
     expect(sdk.listRepositories).not.toHaveBeenCalled();
     expect(browser.open).not.toHaveBeenCalled();
   });
@@ -352,9 +355,7 @@ describe('GitHub callback delivery into onboarding', () => {
     const tree = await render();
 
     expect(sdk.lookupManagedIdentity).toHaveBeenCalledWith('https://relay.test', identity);
-    await vi.waitFor(() =>
-      expect(navigation.replace).toHaveBeenCalledWith('/buzz/channels'),
-    );
+    await vi.waitFor(() => expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels'));
     expect(identityStorage.save).toHaveBeenCalledWith(identity);
     expect(identityStorage.clearPending).toHaveBeenCalledTimes(1);
     expect(browser.open).not.toHaveBeenCalled();
@@ -372,7 +373,7 @@ describe('GitHub callback delivery into onboarding', () => {
     expect(identityStorage.save).toHaveBeenCalledTimes(1);
     expect(sdk.listRepositories).not.toHaveBeenCalled();
     expect(sdk.startInstallation).not.toHaveBeenCalled();
-    expect(navigation.replace).toHaveBeenCalledWith('/buzz/channels');
+    expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels');
   });
 
   it('lands a GitHub login with its auto-provisioned handle and NIP-05 without asking', async () => {
@@ -403,7 +404,7 @@ describe('GitHub callback delivery into onboarding', () => {
     expect(
       tree.root.findAll((node: any) => node.props?.testID === 'onboarding-handle-ceremony'),
     ).toHaveLength(0);
-    expect(navigation.replace).toHaveBeenCalledWith('/buzz/channels');
+    expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels');
   });
 
   it('rejects a cold state mismatch without binding or saving a key', async () => {
@@ -449,7 +450,7 @@ describe('GitHub callback delivery into onboarding', () => {
     });
 
     expect(sdk.finish).toHaveBeenCalledTimes(1);
-    expect(navigation.replace).toHaveBeenCalledWith('/buzz/channels');
+    expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels');
   });
 
   it('reuses the durable pending key when the callback remounts onboarding before a 201 is saved', async () => {
@@ -501,7 +502,7 @@ describe('GitHub callback delivery into onboarding', () => {
     expect(sdk.finish).toHaveBeenCalledTimes(2);
     expect(sdk.finish.mock.calls[1]?.[2]).toMatchObject({ pubkey: firstIdentity.publicKey });
     expect(noticeText(remountedTree)).not.toContain('IDENTITY_CONFLICT');
-    expect(navigation.replace).toHaveBeenCalledWith('/buzz/channels');
+    expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels');
 
     releaseFirstSave();
     await act(async () => firstAttempt);
@@ -509,7 +510,11 @@ describe('GitHub callback delivery into onboarding', () => {
 
   it('offers an explicit device-key replacement after OAuth proves the linked GitHub account', async () => {
     sdk.finish.mockRejectedValueOnce(
-      new OidcBindError('identity_conflict', 'identity is already bound to another public key', 409),
+      new OidcBindError(
+        'identity_conflict',
+        'identity is already bound to another public key',
+        409,
+      ),
     );
     browser.open.mockImplementation(async (authorizationUrl: string) => {
       const state = new URL(authorizationUrl).searchParams.get('app_state')!;
@@ -535,7 +540,7 @@ describe('GitHub callback delivery into onboarding', () => {
 
     expect(sdk.recover).toHaveBeenCalledTimes(1);
     expect(identityStorage.save).toHaveBeenCalledTimes(1);
-    expect(navigation.replace).toHaveBeenCalledWith('/buzz/channels');
+    expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels');
     expect(noticeText(tree)).not.toContain('IDENTITY_CONFLICT');
   });
 
@@ -590,7 +595,7 @@ describe('GitHub callback delivery into onboarding', () => {
     });
 
     expect(sdk.recover).toHaveBeenCalledTimes(1);
-    expect(navigation.replace).toHaveBeenCalledWith('/buzz/channels');
+    expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels');
     expect(noticeText(remountedTree)).not.toContain('IDENTITY_CONFLICT');
   });
 
@@ -621,7 +626,7 @@ describe('GitHub callback delivery into onboarding', () => {
     expect(identityStorage.save).toHaveBeenCalledTimes(1);
     expect(sdk.listRepositories).not.toHaveBeenCalled();
     expect(sdk.startInstallation).not.toHaveBeenCalled();
-    expect(navigation.replace).toHaveBeenCalledWith('/buzz/channels');
+    expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels');
   });
 
   it('keeps a completed bind signed in when deferred GitHub installation would fail', async () => {
@@ -652,7 +657,7 @@ describe('GitHub callback delivery into onboarding', () => {
     expect(browser.open).toHaveBeenCalledTimes(1);
     expect(sdk.listRepositories).not.toHaveBeenCalled();
     expect(sdk.startInstallation).not.toHaveBeenCalled();
-    expect(navigation.replace).toHaveBeenCalledWith('/buzz/channels');
+    expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels');
     expect(noticeText(tree)).not.toContain('SIGN-IN CANCELED');
   });
 

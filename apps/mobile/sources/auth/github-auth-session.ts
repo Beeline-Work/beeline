@@ -107,7 +107,7 @@ function createRepositoryReturnMonitor(
 }
 
 export function githubSignInRedirectUri(): string {
-  return Linking.createURL('buzz/github-callback');
+  return Linking.createURL('beeline/github-callback');
 }
 
 /** Keep the browser authorize origin on the same stack that will consume its one-use ticket. */
@@ -123,7 +123,7 @@ export function startGitHubSignInWebFlow(
 }
 
 export function githubInstallationRedirectUri(): string {
-  return Linking.createURL('buzz/github-installation');
+  return Linking.createURL('beeline/github-installation');
 }
 
 function isCallbackFor(url: string, redirectUri: string): boolean {
@@ -138,7 +138,7 @@ function validInstallationReturnPath(value: unknown): value is string {
   return (
     typeof value === 'string' &&
     value.length <= 1_024 &&
-    /^\/buzz\/(?:onboarding|channels|chat\/[^/?#]+)$/.test(value)
+    /^\/(?:beeline|buzz)\/(?:onboarding|channels|chat\/[^/?#]+)$/.test(value)
   );
 }
 

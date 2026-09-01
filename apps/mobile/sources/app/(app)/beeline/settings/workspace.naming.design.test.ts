@@ -13,7 +13,9 @@ describe('Workspace naming', () => {
     expect(source).toContain('<Text style={styles.title}>{WORKSPACE_LABEL}</Text>');
     expect(source).not.toContain('{WORKSPACE_LABEL} Settings');
     expect(railSource).toContain('label="WORKSPACE"');
-    expect(railSource).toContain('accessibilityLabel={`${activeCommunity.name} ${WORKSPACE_LABEL}`}');
+    expect(railSource).toContain(
+      'accessibilityLabel={`${activeCommunity.name} ${WORKSPACE_LABEL}`}',
+    );
     expect(railSource).not.toContain('${WORKSPACE_LABEL} settings');
   });
 });

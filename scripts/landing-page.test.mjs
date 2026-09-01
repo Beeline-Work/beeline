@@ -37,9 +37,20 @@ test('landing page keeps store destinations at one replacement seam', () => {
 });
 
 test('landing page carries the approved product voice and developer hook', () => {
+  assert.match(html, /<h1 id="hero-title">workspace for all intelligence<\/h1>/);
+  assert.match(html, /--canvas: #14091a;/);
+  assert.match(html, /--brass: #d7af5f;/);
   assert.match(html, /Steer and review your AI coding agents from your phone\./);
   assert.match(html, /npx usebeeline connect/);
   assert.match(html, /<main id="main">/);
   assert.match(html, /prefers-reduced-motion/);
   assert.doesNotMatch(html, /https:\/\/fonts\./);
+});
+
+test('phone typography avoids tracked glyphs clipping outside their text boxes', () => {
+  const mobileCss = html.match(
+    /@media \(max-width: 620px\) \{([\s\S]+?)\n      \}\n      @media \(prefers-reduced-motion/,
+  )?.[1];
+  assert.ok(mobileCss, 'expected the phone-width CSS block');
+  assert.match(mobileCss, /\.nav-links a,\s+h1,\s+h2 \{\s+letter-spacing: 0;/);
 });

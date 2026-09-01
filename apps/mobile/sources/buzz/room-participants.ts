@@ -28,6 +28,15 @@ function normalizeMentionSearch(value: string): string {
   return value.normalize('NFKC').toLocaleLowerCase();
 }
 
+/** Match the handle derivation used by visible human and agent identities. */
+function mentionHandleFromName(value: string): string {
+  return value
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLocaleLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+}
+
 /** Find the mention fragment ending at a collapsed composer cursor. */
 export function activeMentionAtCursor(text: string, cursor: number): ActiveMention | null {
   if (!Number.isInteger(cursor) || cursor < 0 || cursor > text.length) return null;
@@ -169,10 +178,16 @@ export function resolveComposerMentions(
   );
   const participantsByHandle = new Map<string, Set<string>>();
   for (const participant of participants) {
-    const handle = normalizeMentionSearch(participant.handle);
-    const pubkeys = participantsByHandle.get(handle) ?? new Set<string>();
-    pubkeys.add(participant.pubkey);
-    participantsByHandle.set(handle, pubkeys);
+    const aliases = new Set([
+      normalizeMentionSearch(participant.handle.replace(/^@/, '')),
+      mentionHandleFromName(participant.name),
+    ]);
+    for (const alias of aliases) {
+      if (!alias) continue;
+      const pubkeys = participantsByHandle.get(alias) ?? new Set<string>();
+      pubkeys.add(participant.pubkey);
+      participantsByHandle.set(alias, pubkeys);
+    }
   }
 
   const normalized = text.normalize('NFKC').toLocaleLowerCase();

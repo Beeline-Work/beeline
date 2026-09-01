@@ -319,7 +319,7 @@ describe('Room conversation and permission-gated work intent', () => {
     ).toBe(false);
   });
 
-  it('routes the multi-party addressing table from indexed reply facts', () => {
+  it('never infers a multi-agent address from the agent that replied last', () => {
     const colleague = newIdentity('continuation-colleague');
     const otherAgent = newIdentity('continuation-other-agent');
     const participants = [
@@ -379,7 +379,7 @@ describe('Room conversation and permission-gated work intent', () => {
         replyToHuman,
         current,
       ]),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       isChannelAddressedMessage(followup, agent.publicKey, participants, [
         message(colleagueRequest.id, colleague, 'human', 1),
@@ -394,7 +394,7 @@ describe('Room conversation and permission-gated work intent', () => {
         noise,
         current,
       ]),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it('a message tagging ANY member suppresses continuation for every other agent (captured 2026-08-28 failure)', () => {
@@ -447,7 +447,7 @@ describe('Room conversation and permission-gated work intent', () => {
     // Agent B is tagged directly and must respond.
     expect(isChannelAddressedMessage(taggedSwitch, otherAgent.publicKey, participants)).toBe(true);
 
-    // The same continuation still works when the message tags nobody.
+    // With no explicit address, neither agent may infer a continuation.
     const untaggedFollowup = requestEvent([], human, 'What about the second part?');
     untaggedFollowup.created_at = 4;
     expect(
@@ -456,7 +456,7 @@ describe('Room conversation and permission-gated work intent', () => {
         agentReply,
         message(untaggedFollowup.id, human, 'human', 4),
       ]),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it('does not infer a continuation from adjacent unthreaded agent prose', () => {
@@ -485,7 +485,7 @@ describe('Room conversation and permission-gated work intent', () => {
     );
   });
 
-  it('drives only the recorded recipient continuation through Room event processing', async () => {
+  it('drives an explicit reply but no unaddressed follow-up through multi-agent event processing', async () => {
     const workspaceRoot = mkdtempSync(join(tmpdir(), 'buzzy-room-continuation-routing-'));
     try {
       const colleague = newIdentity('processed-continuation-colleague');
@@ -506,7 +506,11 @@ describe('Room conversation and permission-gated work intent', () => {
         human,
         '@Joy give me the first answer.',
       );
-      const humanFollowup = requestEvent([], human, 'Now answer the follow-up.');
+      const humanFollowup = requestEvent(
+        [['e', 'threaded-agent-reply', '', 'reply']],
+        human,
+        'Now answer the follow-up.',
+      );
       const colleagueFollowup = requestEvent([], colleague, 'This is a separate conversation.');
       const indexed = vi.fn(async (): Promise<RoomViewMessage[]> => [
         {
@@ -617,7 +621,7 @@ describe('Room conversation and permission-gated work intent', () => {
         participants,
       );
       expect(replyInRoom).not.toHaveBeenCalled();
-      expect(indexed).toHaveBeenCalledTimes(2);
+      expect(indexed).toHaveBeenCalledOnce();
     } finally {
       rmSync(workspaceRoot, { recursive: true, force: true });
     }

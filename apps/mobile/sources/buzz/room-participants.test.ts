@@ -92,6 +92,26 @@ describe('Room participant presentation', () => {
     });
   });
 
+  it('resolves the owner typed @codex message against the visible name in a two-agent roster', () => {
+    const participants = [
+      { pubkey: 'agent-ox', name: 'Ox', handle: 'ox' },
+      // The server identity can retain a distinct canonical handle while the
+      // current roster presentation resolves the agent's visible name.
+      { pubkey: 'agent-codex', name: 'Codex', handle: 'codex-7f3a' },
+    ];
+
+    expect(
+      resolveComposerMentions(
+        '@codex if any of the corners are working, see if they need anything',
+        participants,
+        new Map(),
+      ),
+    ).toEqual({
+      pubkeys: ['agent-codex'],
+      handles: ['codex'],
+    });
+  });
+
   it('keeps unknown or ambiguous tokens ordinary instead of presenting a false mention', () => {
     const participants = [
       { pubkey: 'first-alan', name: 'Alan One', handle: 'alan' },

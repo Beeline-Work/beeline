@@ -1604,20 +1604,22 @@ export default function BuzzChat() {
       roomParticipants,
       selectedMentionsRef.current,
     ).pubkeys;
-    // Instant, local, and deliberately duplicated from the mentioned-agent
-    // resolution below rather than shared with it: that resolution can sit
-    // behind an attachment upload or a cold transport construction, and the
-    // whole point of the ack is that it cannot wait on either. A corner (one
-    // agent, always addressed) or a two-party Room (the sole other
-    // participant "may speak naturally", per the addressing rule) counts too.
+    const selectedMentionedAgent = selectedMentionAgentPubkey(
+      text,
+      selectedAgentMentionsRef.current,
+    );
+    const mentionedAgent = replyTarget?.isAgent
+      ? replyTarget.authorPubkey
+      : (selectedMentionedAgent ??
+        mentionedPubkeys.find((pubkey) => roomAgents.some((agent) => agent.pubkey === pubkey)) ??
+        mentionedAgentPubkey(text, roomAgents));
+    // Resolve before attachment upload or cold transport creation so the ack
+    // cannot wait on either. A corner (one agent, always addressed) or a
+    // two-party Room (the sole other participant may speak naturally, per the
+    // addressing rule) counts too.
     const addressesAgent =
       isCorner ||
-      Boolean(
-        replyTarget?.isAgent
-          ? replyTarget.authorPubkey
-          : (selectedMentionAgentPubkey(text, selectedAgentMentionsRef.current) ??
-              mentionedAgentPubkey(text, mentionableAgents)),
-      ) ||
+      Boolean(mentionedAgent) ||
       (roomAgents.length === 1 && roomParticipants.length <= 2);
     setPendingAck(addressesAgent ? { sentAt: Date.now() } : null);
 
@@ -1641,13 +1643,6 @@ export default function BuzzChat() {
       const attachments = pendingAttachment
         ? [await uploadChatAttachment(await sendTransport.ensureClient(), pendingAttachment)]
         : [];
-      const selectedMentionedAgent = selectedMentionAgentPubkey(
-        text,
-        selectedAgentMentionsRef.current,
-      );
-      const mentionedAgent = replyTarget?.isAgent
-        ? replyTarget.authorPubkey
-        : (selectedMentionedAgent ?? mentionedAgentPubkey(text, mentionableAgents));
       // Sign before append. The authoritative event id is the optimistic row
       // identity and the durable outbox key from its first frame onward.
       preparedEvent = replyTarget
@@ -1751,7 +1746,6 @@ export default function BuzzChat() {
     isCorner,
     userPubkey,
     parentChannelId,
-    mentionableAgents,
     roomParticipants,
     roomAgents,
     cacheViewerPubkey,

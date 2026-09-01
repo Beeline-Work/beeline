@@ -194,6 +194,11 @@ async function route(
     json(response, 200, { ok: true });
     return;
   }
+  if (method === 'GET' && url.pathname === '/readyz') {
+    await options.database.query('SELECT 1');
+    json(response, 200, { ok: true });
+    return;
+  }
   if (method === 'POST' && url.pathname === '/v1/auth/github/exchange') {
     const input = await body(request);
     if (typeof input.oidcToken !== 'string') throw new Error('oidcToken is required');

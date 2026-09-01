@@ -137,6 +137,35 @@ describe('monolith integration', () => {
     socket.close();
   });
 
+  it('treats concurrent retries of the same message write as one successful send', async () => {
+    const payload = {
+      roomId: ROOM,
+      messageId: 'd'.repeat(64),
+      text: 'Send this once',
+      mentions: [AGENT],
+    };
+
+    const [foreground, outbox] = await Promise.all([
+      request('/v1/phone/operations/sendRoomMessage', 'POST', payload),
+      request('/v1/phone/operations/sendRoomMessage', 'POST', payload),
+    ]);
+
+    expect([foreground.status, outbox.status]).toEqual([200, 200]);
+    expect(await foreground.json()).toEqual({ messageId: payload.messageId });
+    expect(await outbox.json()).toEqual({ messageId: payload.messageId });
+    const stored = await database.query<{ count: string }>(
+      `SELECT count(*)::text FROM messages WHERE id=$1`,
+      [payload.messageId],
+    );
+    expect(stored.rows[0]?.count).toBe('1');
+
+    const conflicting = await request('/v1/phone/operations/sendRoomMessage', 'POST', {
+      ...payload,
+      text: 'Different payload',
+    });
+    expect(conflicting.status).toBe(400);
+  });
+
   it('rotates refresh tokens and rejects stale phone and daemon credentials', async () => {
     const initial = await auth.exchangeGitHubOidc('proof');
     const refreshed = await request(

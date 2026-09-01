@@ -129,4 +129,180 @@ describe('GitHub phone operations', () => {
       ).rows[0]?.identity_id,
     ).toBe(HUMAN);
   });
+
+  it('returns the mobile completion shape after persisting an installation and its repositories', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request) =>
+        String(input) === 'https://github.test/token'
+          ? new Response(JSON.stringify({ access_token: 'secret-user-token' }), { status: 200 })
+          : new Response(JSON.stringify({ id: 42, login: 'owner', name: 'Owner' }), {
+              status: 200,
+            }),
+      ),
+    );
+    const oauth = new GitHubOAuthClient({
+      clientId: 'client',
+      clientSecret: 'secret',
+      authorizationEndpoint: 'https://github.test/authorize',
+      tokenEndpoint: 'https://github.test/token',
+      apiBaseUrl: 'https://api.github.test',
+    });
+    const app = {
+      installationUrl: vi.fn(
+        (state: string) => `https://github.test/install?state=${encodeURIComponent(state)}`,
+      ),
+      userCanAccessInstallation: vi.fn(async () => true),
+      installationAccount: vi.fn(async () => ({
+        id: '42',
+        login: 'owner',
+        type: 'User' as const,
+        repositorySelection: 'all' as const,
+      })),
+      listRepositories: vi.fn(async () => [
+        {
+          id: 9,
+          installationId: 77,
+          name: 'beeline',
+          fullName: 'owner/beeline',
+          remote: 'https://github.com/owner/beeline.git',
+          defaultBranch: 'main',
+        },
+      ]),
+    } as unknown as GitHubAppClient;
+    const operations = new GitHubOperations(database, oauth, app, 'secret');
+    await operations.beginIdentity(HUMAN, {
+      redirectUri: 'beeline://github-callback',
+      state: 'callback-state',
+    });
+    await operations.completeIdentity(
+      HUMAN,
+      { challenge: 'oauth-code', proof: 'callback-state' },
+      false,
+    );
+    const started = await operations.beginInstallation(HUMAN, {
+      redirectUri: 'beeline://github-installation',
+    });
+    const state = new URL(started.url).searchParams.get('state');
+
+    await expect(operations.completeInstallation(state!, 77)).resolves.toBe(
+      'beeline://github-installation?installed=1',
+    );
+    expect(
+      (
+        await database.query<{ full_name: string }>(
+          `SELECT full_name FROM github_repositories WHERE installation_id=77 AND active`,
+        )
+      ).rows,
+    ).toEqual([{ full_name: 'owner/beeline' }]);
+  });
+
+  it('reconciles installations missing from the monolith database via the App JWT listing', async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url === 'https://github.test/token') {
+        return new Response(JSON.stringify({ access_token: 'secret-user-token' }), { status: 200 });
+      }
+      if (url === 'https://api.github.test/user') {
+        return new Response(JSON.stringify({ id: 42, login: 'owner', name: 'Owner' }), {
+          status: 200,
+        });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const oauth = new GitHubOAuthClient({
+      clientId: 'client',
+      clientSecret: 'secret',
+      authorizationEndpoint: 'https://github.test/authorize',
+      tokenEndpoint: 'https://github.test/token',
+      apiBaseUrl: 'https://api.github.test',
+    });
+    const app = {
+      listUserInstallationIds: vi.fn(async () => [78]),
+      listInstallations: vi.fn(async () => [
+        {
+          installationId: 77,
+          account: {
+            id: '42',
+            login: 'owner',
+            type: 'User' as const,
+            repositorySelection: 'all' as const,
+          },
+        },
+        {
+          installationId: 78,
+          account: {
+            id: '84',
+            login: 'Beeline-Work',
+            type: 'Organization' as const,
+            repositorySelection: 'selected' as const,
+          },
+        },
+        {
+          installationId: 79,
+          account: {
+            id: '126',
+            login: 'someone-else',
+            type: 'Organization' as const,
+            repositorySelection: 'all' as const,
+          },
+        },
+      ]),
+      installationAccount: vi.fn(async (installationId: number) =>
+        installationId === 77
+          ? {
+              id: '42',
+              login: 'owner',
+              type: 'User' as const,
+              repositorySelection: 'all' as const,
+            }
+          : {
+              id: '84',
+              login: 'Beeline-Work',
+              type: 'Organization' as const,
+              repositorySelection: 'selected' as const,
+            },
+      ),
+      listRepositories: vi.fn(async (installationId: number) => [
+        {
+          id: installationId + 100,
+          installationId,
+          name: `repo-${installationId}`,
+          fullName: `${installationId === 77 ? 'owner' : 'Beeline-Work'}/repo-${installationId}`,
+          remote: `https://github.com/example/repo-${installationId}.git`,
+          defaultBranch: 'main',
+        },
+      ]),
+    } as unknown as GitHubAppClient;
+    const operations = new GitHubOperations(database, oauth, app, 'secret');
+    await operations.beginIdentity(HUMAN, {
+      redirectUri: 'beeline://github-callback',
+      state: 'reconcile-state',
+    });
+    await operations.completeIdentity(
+      HUMAN,
+      { challenge: 'oauth-code', proof: 'reconcile-state' },
+      false,
+    );
+
+    await operations.refresh(HUMAN);
+
+    expect(app.listInstallations).toHaveBeenCalledOnce();
+    expect(app.listUserInstallationIds).toHaveBeenCalledWith('secret-user-token');
+    expect(
+      (
+        await database.query<{ installation_id: string }>(
+          `SELECT installation_id FROM github_installations ORDER BY installation_id`,
+        )
+      ).rows.map((row) => Number(row.installation_id)),
+    ).toEqual([77, 78]);
+    expect(
+      (
+        await database.query<{ full_name: string }>(
+          `SELECT full_name FROM github_repositories ORDER BY full_name`,
+        )
+      ).rows.map((row) => row.full_name),
+    ).toEqual(['Beeline-Work/repo-78', 'owner/repo-77']);
+  });
 });

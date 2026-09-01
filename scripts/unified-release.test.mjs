@@ -112,4 +112,18 @@ test('one workflow owns parallel builds, ordered promotion, retry, and the final
     assert.match(componentWorkflow, /workflow_call:/);
     assert.doesNotMatch(componentWorkflow, /push:\s*\n\s*branches:/);
   }
+  for (const [componentWorkflow, artifact] of [
+    [server, 'server-artifact'],
+    [daemon, 'daemon-artifact'],
+    [mobile, 'mobile-ota-candidate'],
+  ]) {
+    assert.match(componentWorkflow, /Find a downloadable .* (artifact|candidate).*exact release SHA/);
+    assert.match(componentWorkflow, new RegExp(`name = \`${artifact}-\\$\\{\\{ inputs\\.release_sha \\}\\}`));
+    assert.match(componentWorkflow, /github\.rest\.actions\.listArtifactsForRepo/);
+    assert.match(componentWorkflow, /github\.rest\.actions\.downloadArtifact/);
+    assert.match(componentWorkflow, /actions\/download-artifact@v4/);
+    assert.match(componentWorkflow, /run-id: \$\{\{ steps\.reuse\.outputs\.run_id \}\}/);
+  }
+  assert.match(mobile, /Reuse the exact mobile candidate, including its delivery sidecars/);
+  assert.match(mobile, /path: \$\{\{ runner\.temp \}\}/);
 });

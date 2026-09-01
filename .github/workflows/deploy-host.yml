@@ -15,6 +15,7 @@ on:
         required: true
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -31,15 +32,49 @@ jobs:
     runs-on: [self-hosted, beeline-prod-host]
     timeout-minutes: 15
     steps:
+      - name: Find a downloadable server artifact for this exact release SHA
+        id: reuse
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const name = `server-artifact-${{ inputs.release_sha }}`;
+            const artifacts = await github.paginate(github.rest.actions.listArtifactsForRepo, {
+              owner: context.repo.owner, repo: context.repo.repo, name, per_page: 100,
+            });
+            const artifact = artifacts
+              .filter((candidate) => candidate.name === name && !candidate.expired && candidate.workflow_run?.id)
+              .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+            if (artifact) {
+              try {
+                await github.rest.actions.downloadArtifact({
+                  owner: context.repo.owner, repo: context.repo.repo,
+                  artifact_id: artifact.id, archive_format: 'zip',
+                });
+                core.setOutput('run_id', String(artifact.workflow_run.id));
+              } catch (error) {
+                core.info(`Artifact ${artifact.id} is no longer downloadable: ${error.message}`);
+              }
+            }
+      - name: Reuse the exact server artifact
+        if: steps.reuse.outputs.run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: server-artifact-${{ inputs.release_sha }}
+          path: ${{ runner.temp }}/server-release
+          run-id: ${{ steps.reuse.outputs.run_id }}
+          github-token: ${{ github.token }}
       - uses: actions/checkout@v4
+        if: steps.reuse.outputs.run_id == ''
         with:
           ref: ${{ inputs.release_sha }}
       - name: Build SHA-pinned server images without changing production
+        if: steps.reuse.outputs.run_id == ''
         run: ./scripts/build-release-server-images.sh
         env:
           BEELINE_RELEASE_SHA: ${{ inputs.release_sha }}
           BEELINE_RELEASE_VERSION: ${{ inputs.release_version }}
       - name: Record the verified server artifact identity
+        if: steps.reuse.outputs.run_id == ''
         env:
           RELEASE_SHA: ${{ inputs.release_sha }}
           RELEASE_VERSION: ${{ inputs.release_version }}

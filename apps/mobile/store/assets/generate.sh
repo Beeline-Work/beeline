@@ -5,7 +5,7 @@ cd "$(dirname "$0")/../.."
 
 readonly source_icon="sources/assets/images/icon.svg"
 readonly output_dir="store/assets"
-readonly cyan="#52D7E8"
+readonly brass="#d7af5f"
 readonly ink="#14091A"
 readonly paper="#F0F0F3"
 readonly font="sources/assets/fonts/BricolageGrotesque-Bold.ttf"
@@ -17,7 +17,7 @@ mkdir -p "$output_dir"
 render_icon() {
   local size="$1" output="$2"
   rsvg-convert -w "$size" -h "$size" "$source_icon" |
-    convert png:- -alpha off -fill "$cyan" -opaque '#E5A645' \
+    convert png:- -alpha off -fill "$brass" -opaque '#E5A645' \
       -depth 8 -type TrueColor -define png:exclude-chunk=date,time "PNG24:$output"
 }
 
@@ -27,10 +27,9 @@ render_icon 1024 "$output_dir/ios-app-icon-1024.png"
 convert -size 1024x500 "xc:$ink" \
   \( "$output_dir/store-icon-512.png" -resize 394x394 \) -geometry +72+53 -composite \
   -font "$font" -fill "$paper" -pointsize 74 -gravity northwest -annotate +500+148 'Beeline' \
-  -font "$font" -fill "$paper" -pointsize 32 -gravity northwest \
-  -annotate +504+246 'Steer and review' \
-  -annotate +504+290 'AI coding agents' \
-  -annotate +504+334 'from your phone.' \
+  -font "$font" -fill "$paper" -pointsize 30 -gravity northwest \
+  -annotate +504+256 'Coding workspaces for' \
+  -annotate +504+298 'humans and AI agents.' \
   -alpha off -depth 8 -type TrueColor -define png:exclude-chunk=date,time \
   "PNG24:$output_dir/feature-graphic-1024x500.png"
 

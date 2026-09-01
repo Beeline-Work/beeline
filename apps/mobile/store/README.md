@@ -13,7 +13,7 @@ It makes no store API calls. The current app identity is `app.usebeeline.mobile`
 - `screenshots/` — four 1080 × 2400 Android captures, each from the Beeline app.
 
 The store derivatives retain the canonical continuous-loop geometry from
-`apps/mobile/sources/assets/images/icon.svg`. Their cyan loop is the
+`apps/mobile/sources/assets/images/icon.svg`. Their brass loop is the
 owner-approved store treatment; it is deliberately scoped to this package and
 does not change the app's existing brass-on-aubergine icon sources.
 
@@ -22,7 +22,7 @@ does not change the app's existing brass-on-aubergine icon sources.
 Run `bash store/assets/generate.sh` from `apps/mobile`. The script reads only
 the tracked mobile icon and bundled font, then emits deterministic PNGs (no
 dates or metadata). It preserves the canonical mobile icon geometry and applies
-the owner-approved cyan color only to its store-only raster derivative.
+the owner-approved brass color only to its store-only raster derivative.
 
 ## Screenshot provenance
 

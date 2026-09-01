@@ -4,6 +4,8 @@ import type { SqlDatabase } from './database.js';
 const ACCESS_LIFETIME_MS = 15 * 60_000;
 const REFRESH_LIFETIME_MS = 30 * 24 * 60 * 60_000;
 const DAEMON_EXCHANGE_LIFETIME_MS = 15 * 60_000;
+const WELCOME_WORKSPACE_ID = 'bee11e00-0000-4000-8000-000000000001';
+const WELCOME_WORKSPACE_NAME = 'Beeline Welcome';
 
 export interface GitHubIdentityProof {
   subject: string;
@@ -57,11 +59,16 @@ export class TokenAuth {
     );
     const id = linked.rows[0]?.identity_id ?? identityId(github.subject);
     await this.database.transaction(async (database) => {
-      await database.query(
+      const created = await database.query<{ id: string }>(
         `INSERT INTO identities(id, kind, name, handle, avatar, github_subject, updated_at)
        VALUES ($1, 'human', $2, $3, $4, $5, $6)
-       ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, handle = EXCLUDED.handle,
-         avatar = EXCLUDED.avatar, github_subject = EXCLUDED.github_subject, updated_at = EXCLUDED.updated_at`,
+       ON CONFLICT (id) DO NOTHING
+       RETURNING id`,
+        [id, github.name, github.login, github.avatar ?? null, github.subject, this.now()],
+      );
+      await database.query(
+        `UPDATE identities SET name=$2,handle=$3,avatar=$4,github_subject=$5,updated_at=$6
+         WHERE id=$1`,
         [id, github.name, github.login, github.avatar ?? null, github.subject, this.now()],
       );
       await database.query(
@@ -70,6 +77,17 @@ export class TokenAuth {
          ON CONFLICT(provider,subject) DO UPDATE SET identity_id=EXCLUDED.identity_id`,
         [github.subject, id],
       );
+      if (created.rows[0]) {
+        await database.query(
+          `INSERT INTO workspaces(id,name) VALUES($1,$2) ON CONFLICT(id) DO NOTHING`,
+          [WELCOME_WORKSPACE_ID, WELCOME_WORKSPACE_NAME],
+        );
+        await database.query(
+          `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+           VALUES($1,NULL,$2,'member')`,
+          [WELCOME_WORKSPACE_ID, id],
+        );
+      }
     });
     return this.issuePhoneTokens(id, randomUUID());
   }

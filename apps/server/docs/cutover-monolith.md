@@ -16,7 +16,9 @@ export DAEMON_EXCHANGE_MANIFEST='/secure/daemon-exchanges.json'
 export CUTOVER_ACK='FORWARD_ONLY_AFTER_REOPEN'
 ```
 
-The deployed monolith must set `PHONE_GITHUB_EXCHANGE_ENDPOINT` to the deployed auth service's `POST /auth/github/phone-exchange` route. That route consumes the existing one-use GitHub ticket; the phone and monolith must never exchange a raw GitHub token.
+The deployed monolith must leave `PHONE_GITHUB_EXCHANGE_ENDPOINT` unset. It mounts the existing `@beeline/auth` routes and consumes the one-use GitHub ticket directly from its own PostgreSQL-backed auth store. The variable remains only as an explicit remote-verifier override for tests and migrations.
+
+Set `PUBLIC_ORIGIN=https://server.usebeeline.app` and include this exact tenant in `BUZZY_AUTH_TENANTS_JSON`: `{"host":"server.usebeeline.app","community":"<stable identity namespace>","roomCommunityIds":["<server-stamped relay community UUID>"],"origin":"https://server.usebeeline.app"}`. Set the six `BUZZY_AUTH_OIDC_*` values used by `@beeline/auth`, plus `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_PRIVATE_KEY`, and `GITHUB_WEBHOOK_SECRET`. On the GitHub App dashboard, set the callback URL to `https://server.usebeeline.app/auth/github/callback`, the webhook URL to `https://server.usebeeline.app/auth/github/webhook`, and keep user authorization during installation enabled. These dashboard changes are operator actions outside this repository.
 
 The daemon manifest is an array of `{ "agentId", "runtimePath", "exchangeToken" }`. Each exchange is generated before maintenance with `TokenAuth.createDaemonExchange(agentId)`. The staging phase verifies the runtime's stored public key, writes the single `transport.kind = "monolith"` switch atomically, and never logs a token. On restart, Body exchanges `bde_` once and atomically persists `bdt_` in that same runtime record.
 
@@ -24,7 +26,7 @@ Set these site-specific commands. Each verify command must exit nonzero until th
 
 | Variable                            | Exact responsibility                                                                                                                                                                                                                                 |
 | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `CUTOVER_PHONE_AUTH_VERIFY_COMMAND` | Mint a bounded test ticket at the deployed auth service, exchange it through monolith `POST /v1/auth/github/exchange`, and prove ticket reuse fails. Also verify the deployment's `PHONE_GITHUB_EXCHANGE_ENDPOINT` names the production auth origin. |
+| `CUTOVER_PHONE_AUTH_VERIFY_COMMAND` | Mint a bounded test ticket in the monolith database, exchange it through monolith `POST /v1/auth/github/exchange`, prove ticket reuse fails, and verify `PHONE_GITHUB_EXCHANGE_ENDPOINT` is unset. |
 | `CUTOVER_DRAIN_COMMAND`             | Stop admission of new old-stack turns and gracefully drain daemons.                                                                                                                                                                                  |
 | `CUTOVER_DRAIN_VERIFY_COMMAND`      | Query old supervision and exit zero only when active turns are zero.                                                                                                                                                                                 |
 | `CUTOVER_FREEZE_COMMAND`            | Put the old write API in maintenance/read-only mode.                                                                                                                                                                                                 |

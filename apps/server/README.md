@@ -22,9 +22,11 @@ DATABASE_URL='postgresql://USER@localhost/beeline_server_local?host=%2Fvar%2Frun
   NODE_ENV=development npm run dev -w @beeline/server
 ```
 
-`local:<github-login>` is accepted as the exchange token only outside production. Production uses the configured GitHub identity endpoint.
+`local:<github-login>` is accepted as the exchange token only outside production. Production mounts `@beeline/auth` on the same listener and consumes GitHub tickets in-process. `PHONE_GITHUB_EXCHANGE_ENDPOINT` is an override for tests and migrations, not a production requirement.
 
 GitHub account/install/repository operations are enabled when `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, and `GITHUB_APP_SLUG` are all present. `GITHUB_WEBHOOK_SECRET` enables signed webhook intake. Push sending is opt-in with `PUSH_DELIVERY_ENABLED=true` and Application Default Credentials; without it, devices remain registered but no delivery claims are created.
+
+The mounted auth routes also require `PUBLIC_ORIGIN`, `BUZZY_AUTH_TENANTS_JSON`, and the six `BUZZY_AUTH_OIDC_*` values documented in `apps/auth/README.md`. The tenants JSON must contain an entry whose host and origin match `PUBLIC_ORIGIN`; production uses `server.usebeeline.app`.
 
 ```sh
 npm run typecheck -w @beeline/server

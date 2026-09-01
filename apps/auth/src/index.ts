@@ -1,10 +1,10 @@
-import { buildAuthServer, type AuthTenant } from './server.js';
+import { buildAuthServer } from './server.js';
 import { createGitHubRoomTokenAuthority } from './github-room-authority.js';
-import { OidcClient } from './oidc.js';
 import { AuthStore, PostgresDatabase } from './store.js';
 import { GitHubAppClient, GitHubOAuthClient } from './github.js';
 import { checkGitHubAppDriftBestEffort } from './github-manifest.js';
 import { githubEnvironmentConfig } from './github-config.js';
+import { authTenantsFromEnvironment, oidcClientFromEnvironment } from './environment.js';
 
 function required(name: string): string {
   const value = process.env[name];
@@ -12,55 +12,11 @@ function required(name: string): string {
   return value;
 }
 
-function tenantsFromEnvironment(): AuthTenant[] {
-  const raw = required('BUZZY_AUTH_TENANTS_JSON');
-  const parsed = JSON.parse(raw) as unknown;
-  if (!Array.isArray(parsed)) throw new Error('BUZZY_AUTH_TENANTS_JSON must be an array');
-  return parsed.map((entry) => {
-    if (!entry || typeof entry !== 'object') throw new Error('invalid auth tenant');
-    const candidate = entry as Record<string, unknown>;
-    if (
-      typeof candidate.host !== 'string' ||
-      typeof candidate.community !== 'string' ||
-      !Array.isArray(candidate.roomCommunityIds) ||
-      candidate.roomCommunityIds.length === 0 ||
-      candidate.roomCommunityIds.some((value) => typeof value !== 'string') ||
-      typeof candidate.origin !== 'string'
-    ) {
-      throw new Error(
-        'each auth tenant needs host, community, non-empty roomCommunityIds, and origin',
-      );
-    }
-    if (process.env.NODE_ENV === 'production' && new URL(candidate.origin).protocol !== 'https:') {
-      throw new Error('production auth tenant origins must use https');
-    }
-    return {
-      host: candidate.host,
-      community: candidate.community,
-      roomCommunityIds: candidate.roomCommunityIds as string[],
-      origin: candidate.origin,
-    };
-  });
-}
-
 async function main(): Promise<void> {
   const database = new PostgresDatabase(required('DATABASE_URL'));
   const store = new AuthStore(database);
   await store.migrate();
-  const allowInsecure =
-    process.env.NODE_ENV !== 'production' && process.env.BUZZY_AUTH_ALLOW_INSECURE_OIDC === 'true';
-  const oidc = new OidcClient({
-    issuer: required('BUZZY_AUTH_OIDC_ISSUER'),
-    authorizationEndpoint: required('BUZZY_AUTH_OIDC_AUTHORIZATION_ENDPOINT'),
-    tokenEndpoint: required('BUZZY_AUTH_OIDC_TOKEN_ENDPOINT'),
-    jwksUri: required('BUZZY_AUTH_OIDC_JWKS_URI'),
-    clientId: required('BUZZY_AUTH_OIDC_CLIENT_ID'),
-    clientSecret: process.env.BUZZY_AUTH_OIDC_CLIENT_SECRET,
-    allowInsecure,
-  });
-  if (process.env.NODE_ENV === 'production' && !oidc.config.clientSecret) {
-    throw new Error('BUZZY_AUTH_OIDC_CLIENT_SECRET is required in production');
-  }
+  const oidc = oidcClientFromEnvironment(process.env);
 
   const githubConfig = githubEnvironmentConfig(process.env);
   const github = githubConfig
@@ -86,7 +42,7 @@ async function main(): Promise<void> {
     // Operator-only shared secret for the GitHub App manifest setup page and
     // the on-demand drift endpoint; unset disables both surfaces.
     githubSetupToken: process.env.BUZZY_AUTH_SETUP_TOKEN,
-    tenants: tenantsFromEnvironment(),
+    tenants: authTenantsFromEnvironment(process.env),
     authorizeGitHubRoomToken: createGitHubRoomTokenAuthority(store),
     logger: true,
   });

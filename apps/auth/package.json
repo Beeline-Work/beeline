@@ -11,10 +11,35 @@
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
+    "./environment": {
+      "types": "./dist/environment.d.ts",
+      "import": "./dist/environment.js",
+      "default": "./dist/environment.js"
+    },
     "./github": {
       "types": "./dist/github.d.ts",
       "import": "./dist/github.js",
       "default": "./dist/github.js"
+    },
+    "./oidc": {
+      "types": "./dist/oidc.d.ts",
+      "import": "./dist/oidc.js",
+      "default": "./dist/oidc.js"
+    },
+    "./phone-github-ticket": {
+      "types": "./dist/phone-github-ticket.d.ts",
+      "import": "./dist/phone-github-ticket.js",
+      "default": "./dist/phone-github-ticket.js"
+    },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "import": "./dist/server.js",
+      "default": "./dist/server.js"
+    },
+    "./store": {
+      "types": "./dist/store.d.ts",
+      "import": "./dist/store.js",
+      "default": "./dist/store.js"
     }
   },
   "scripts": {

@@ -63,7 +63,7 @@ server promotion checks the self-hosted runner's Fly authentication and runs:
 
 ```bash
 flyctl deploy . \
-  --config apps/server/fly.toml \
+  --config fly.beeline-server.toml \
   --dockerfile apps/server/Dockerfile \
   --app beeline-server \
   --build-arg "BEELINE_RELEASE_VERSION=$RELEASE_VERSION" \

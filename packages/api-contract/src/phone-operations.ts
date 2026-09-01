@@ -110,7 +110,8 @@ export type UpdateAgentSoulInput = WorkspaceAgentInput & {
   readonly avatarSeed: string;
   readonly avatar?: string;
 };
-export type UpdateAgentModelInput = WorkspaceAgentInput & AgentModelSelection;
+export type UpdateAgentModelInput = WorkspaceAgentInput &
+  Omit<AgentModelSelection, 'effort'> & { readonly effort?: string | null };
 export type UpdatePersonProfileInput = {
   readonly name?: string;
   readonly handle?: string;

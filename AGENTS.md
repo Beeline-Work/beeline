@@ -149,7 +149,7 @@ Committed home for project-intrinsic agent knowledge: rule + authoritative file 
 
 ## Android push notifications
 
-- Registration `buzz-push-registration.ts`; `https://usebeeline.app/push` → `materializer:8788`. **Attention-only defaults** (explicit `p` mentions, DMs, waiting-on-human transitions). **The toggle reflects REGISTRATION truth** (`buzz-push-status.ts`; token fingerprints only in logs). Foreground policy `foreground-policy.ts` (suppress when active/open Room; never unconditional `shouldShowAlert: true`). At-most-once delivery `delivery-state.ts` (attention keys cleared by idle/concluded/closed, not `working`). `database.ts` reads event rows with active `channel_members`; no global subscription/replica feed. Ops `apps/push-gateway/README.md`.
+- Production mobile registration/test/unregister and OTA receipts use typed monolith phone operations at `server.usebeeline.app`; legacy `https://usebeeline.app/push` is only the non-monolith fallback. Successful void operations are HTTP 204 and clients must not JSON-decode them (`server.ts`, `monolith-operation.ts`; coverage: `integration.test.ts`, `monolith-operation.test.ts`). **Attention-only defaults** (explicit `p` mentions, DMs, waiting-on-human transitions). **The toggle reflects REGISTRATION truth** (`buzz-push-status.ts`; token fingerprints only in logs). Foreground policy `foreground-policy.ts` (suppress when active/open Room; never unconditional `shouldShowAlert: true`). At-most-once delivery `delivery-state.ts` (attention keys cleared by idle/concluded/closed, not `working`). Legacy gateway ops: `apps/push-gateway/README.md`.
 
 ## Community model
 

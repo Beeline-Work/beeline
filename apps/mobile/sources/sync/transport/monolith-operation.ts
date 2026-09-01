@@ -33,5 +33,6 @@ export async function monolithPhoneOperation<Name extends keyof PhoneOperationMa
     } catch {}
     throw new MonolithPhoneOperationError(name, response.status, code);
   }
+  if (response.status === 204) return undefined as PhoneOperationMap[Name]['output'];
   return (await response.json()) as PhoneOperationMap[Name]['output'];
 }

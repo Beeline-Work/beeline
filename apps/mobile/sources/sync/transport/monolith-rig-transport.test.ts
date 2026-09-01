@@ -180,6 +180,33 @@ describe('monolith Room send path', () => {
     );
   });
 
+  it('translates the legacy BuzzClient soul field and accepts monolith no-content writes', async () => {
+    controls.fetch.mockResolvedValue(new Response(null, { status: 204 }));
+    const client = await new MonolithRigTransport(identity).ensureClient();
+
+    await expect(
+      client.setAgentSoul('workspace-id', 'agent-id', {
+        name: 'Honeybee',
+        soul: 'Be precise and practical.',
+        avatarSeed: 'honeybee-seed',
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(controls.fetch).toHaveBeenCalledWith(
+      'https://server.example/v1/phone/operations/updateAgentSoul',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          workspaceId: 'workspace-id',
+          agentId: 'agent-id',
+          name: 'Honeybee',
+          instructions: 'Be precise and practical.',
+          avatarSeed: 'honeybee-seed',
+        }),
+      }),
+    );
+  });
+
   it('passes the selected installed repository id through Room creation', async () => {
     controls.fetch.mockResolvedValueOnce(
       new Response(JSON.stringify({ id: ROOM }), { status: 200 }),

@@ -1375,7 +1375,7 @@ export class PhoneService {
     return { code, expiresAt };
   }
   private async updateAgentSoul(input: Input<'updateAgentSoul'>, viewerId: string) {
-    await this.requireWorkspaceManager(input.workspaceId, viewerId);
+    await this.requireWorkspaceAgent(input.workspaceId, input.agentId, viewerId);
     await this.database.query(
       `UPDATE agents SET soul=$2::jsonb,updated_at=now() WHERE agent_id=$1`,
       [
@@ -1394,14 +1394,20 @@ export class PhoneService {
     );
   }
   private async updateAgentModel(input: Input<'updateAgentModelSelection'>, viewerId: string) {
-    await this.requireWorkspaceManager(input.workspaceId, viewerId);
+    await this.requireWorkspaceAgent(input.workspaceId, input.agentId, viewerId);
+    const hasModel = Object.prototype.hasOwnProperty.call(input, 'model');
+    const hasEffort = Object.prototype.hasOwnProperty.call(input, 'effort');
     await this.database.query(
-      `UPDATE agents SET selected_model=$2,selected_effort=$3,updated_at=now() WHERE agent_id=$1`,
-      [input.agentId, input.model ?? null, input.effort ?? null],
+      `UPDATE agents
+       SET selected_model=CASE WHEN $2 THEN $3 ELSE selected_model END,
+           selected_effort=CASE WHEN $4 THEN $5 ELSE selected_effort END,
+           updated_at=now()
+       WHERE agent_id=$1`,
+      [input.agentId, hasModel, input.model ?? null, hasEffort, input.effort ?? null],
     );
   }
   private async removeAgent(input: Input<'removeAgent'>, viewerId: string) {
-    await this.requireWorkspaceManager(input.workspaceId, viewerId);
+    await this.requireWorkspaceAgent(input.workspaceId, input.agentId, viewerId);
     await this.database.query(
       `UPDATE memberships SET removed_at=now() WHERE workspace_id=$1 AND identity_id=$2`,
       [input.workspaceId, input.agentId],
@@ -1584,6 +1590,17 @@ export class PhoneService {
     ).rows[0];
     if (!row) throw new Error('identity not found');
     return identity(row, this.publicOrigin);
+  }
+  private async requireWorkspaceAgent(workspaceId: string, agentId: string, viewerId: string) {
+    await this.requireWorkspaceManager(workspaceId, viewerId);
+    const result = await this.database.query(
+      `SELECT 1
+       FROM agents a
+       JOIN memberships m ON m.identity_id=a.agent_id
+       WHERE a.agent_id=$1 AND m.workspace_id=$2 AND m.room_id IS NULL AND m.removed_at IS NULL`,
+      [agentId, workspaceId],
+    );
+    if (!result.rowCount) throw new Error('agent not found in workspace');
   }
   private async hasRoomAccess(roomId: string, identityId: string) {
     return (

@@ -738,11 +738,12 @@ export class DaemonService {
     const cornerId = randomUUID();
     await this.database.transaction(async (db) => {
       await db.query(
-        `INSERT INTO rooms(id,workspace_id,parent_id,name,repository_key,repository_target_branch) VALUES($1,$2,$3,$4,$5,$6)`,
+        `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name,repository_key,repository_target_branch) VALUES($1,$2,$3,$4,$5,$6,$7)`,
         [
           cornerId,
           parent.workspace_id,
           input.roomId,
+          agentId,
           input.name,
           input.repository ?? null,
           input.targetBranch ?? 'main',

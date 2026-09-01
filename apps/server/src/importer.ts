@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { projectEvent } from '@beeline/push-gateway/projection';
+import { cornerLifecycle, projectEvent } from '@beeline/push-gateway/projection';
 import type { RoomViewMessage } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 
@@ -15,6 +15,7 @@ export interface LegacyIdentity {
   model?: string;
   effort?: string;
   catalog?: unknown[];
+  hiddenFromRoster?: boolean;
 }
 export interface LegacyWorkspace {
   id: string;
@@ -28,12 +29,15 @@ export interface LegacyWorkspace {
 export interface LegacyRoom {
   id: string;
   workspaceId: string;
+  createdBy?: string;
   parentId?: string;
   name: string;
   about?: string;
   avatar?: string;
   visibility: 'public' | 'invite-only';
   archived: boolean;
+  objective?: string;
+  remoteStateContent?: string;
   directParticipants?: string[];
   repository?: {
     key: string;
@@ -71,6 +75,12 @@ export interface LegacyReadMark {
   roomId: string;
   identityId: string;
   messageId: string;
+  createdAt: number;
+}
+export interface LegacyPresence {
+  roomId: string;
+  agentId: string;
+  status: 'online' | 'offline';
   createdAt: number;
 }
 export interface LegacySchedule {
@@ -122,6 +132,7 @@ export interface LegacySnapshot {
   memberships: LegacyMembership[];
   events: LegacyEvent[];
   readMarks: LegacyReadMark[];
+  presences?: LegacyPresence[];
   schedules: LegacySchedule[];
   github: LegacyGitHub;
   registry: LegacyRegistry;
@@ -164,6 +175,16 @@ function card(message: RoomViewMessage): { type: string | null; value: unknown }
   return { type: null, value: null };
 }
 
+function mediaPath(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  try {
+    const path = new URL(value).pathname;
+    return path.startsWith('/media/') ? path : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export class SnapshotImporter {
   constructor(private readonly target: SqlDatabase) {}
 
@@ -188,6 +209,32 @@ export class SnapshotImporter {
     const skipped: Record<string, number> = {};
     let processed = 0;
     let mediaBytes = 0;
+    const identitiesById = new Map(snapshot.identities.map((identity) => [identity.id, identity]));
+    const requireIdentity = (id: string | undefined) => {
+      if (!id || identitiesById.has(id)) return;
+      identitiesById.set(id, {
+        id,
+        kind: 'human',
+        name: `Person ${id.slice(0, 8)}`,
+      });
+    };
+    for (const identity of snapshot.identities) requireIdentity(identity.ownerId);
+    for (const membership of snapshot.memberships) requireIdentity(membership.identityId);
+    for (const event of snapshot.events) requireIdentity(event.authorId);
+    for (const mark of snapshot.readMarks) requireIdentity(mark.identityId);
+    for (const presence of snapshot.presences ?? []) requireIdentity(presence.agentId);
+    for (const media of snapshot.media) requireIdentity(media.ownerId);
+    for (const link of snapshot.github.identityLinks) requireIdentity(link.identityId);
+    for (const succession of snapshot.github.identitySuccessions) {
+      requireIdentity(succession.oldIdentityId);
+      requireIdentity(succession.newIdentityId);
+    }
+    for (const installation of snapshot.github.installations) requireIdentity(installation.ownerId);
+    for (const registration of snapshot.registry.registrations)
+      requireIdentity(registration.pubkey);
+    for (const receipt of snapshot.registry.updateReceipts ?? []) requireIdentity(receipt.pubkey);
+    const identities = [...identitiesById.values()];
+    const retainedRoomIds = new Set(snapshot.rooms.map((room) => room.id));
     const one = async (
       type: string,
       sourceId: string,
@@ -208,24 +255,36 @@ export class SnapshotImporter {
         throw new Error('injected importer interruption');
     };
     try {
-      for (const row of snapshot.identities)
+      for (const row of identities)
         await one('identity', row.id, async (db) => {
           await db.query(
-            `INSERT INTO identities(id,kind,name,handle,avatar) VALUES($1,$2,$3,$4,$5) ON CONFLICT(id) DO UPDATE SET kind=EXCLUDED.kind,name=EXCLUDED.name,handle=EXCLUDED.handle,avatar=EXCLUDED.avatar,updated_at=now()`,
-            [row.id, row.kind, row.name, row.handle ?? null, row.avatar ?? null],
+            `INSERT INTO identities(id,kind,name,handle,avatar,hidden_from_roster) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(id) DO UPDATE SET kind=EXCLUDED.kind,name=EXCLUDED.name,handle=EXCLUDED.handle,avatar=EXCLUDED.avatar,hidden_from_roster=EXCLUDED.hidden_from_roster,updated_at=now()`,
+            [
+              row.id,
+              row.kind,
+              row.name,
+              row.handle ?? null,
+              row.avatar ?? null,
+              row.hiddenFromRoster === true,
+            ],
           );
-          if (row.kind === 'agent')
-            await db.query(
-              `INSERT INTO agents(agent_id,owner_id,soul,selected_model,selected_effort,model_catalog) VALUES($1,$2,$3::jsonb,$4,$5,$6::jsonb) ON CONFLICT(agent_id) DO UPDATE SET soul=EXCLUDED.soul,selected_model=EXCLUDED.selected_model,selected_effort=EXCLUDED.selected_effort,model_catalog=EXCLUDED.model_catalog,updated_at=now()`,
-              [
-                row.id,
-                row.ownerId ?? row.id,
-                JSON.stringify(row.soul ?? null),
-                row.model ?? null,
-                row.effort ?? null,
-                JSON.stringify(row.catalog ?? []),
-              ],
-            );
+        });
+      // Agent owners are identities too, but source discovery has no stable
+      // author-first ordering. Insert the complete identity set before any
+      // agent row can exercise the owner foreign key.
+      for (const row of identities.filter((identity) => identity.kind === 'agent'))
+        await one('agent', row.id, async (db) => {
+          await db.query(
+            `INSERT INTO agents(agent_id,owner_id,soul,selected_model,selected_effort,model_catalog) VALUES($1,$2,$3::jsonb,$4,$5,$6::jsonb) ON CONFLICT(agent_id) DO UPDATE SET owner_id=EXCLUDED.owner_id,soul=EXCLUDED.soul,selected_model=EXCLUDED.selected_model,selected_effort=EXCLUDED.selected_effort,model_catalog=EXCLUDED.model_catalog,updated_at=now()`,
+            [
+              row.id,
+              row.ownerId ?? row.id,
+              JSON.stringify(row.soul ?? null),
+              row.model ?? null,
+              row.effort ?? null,
+              JSON.stringify(row.catalog ?? []),
+            ],
+          );
         });
       for (const row of snapshot.workspaces)
         await one('workspace', row.id, async (db) => {
@@ -245,11 +304,12 @@ export class SnapshotImporter {
       for (const row of snapshot.rooms)
         await one('room', row.id, async (db) => {
           await db.query(
-            `INSERT INTO rooms(id,workspace_id,parent_id,name,about,avatar,visibility,archived_at,direct_participants,repository_key,repository_remote,repository_target_branch,github_installation_id,github_events_enabled,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14,$15,$16) ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name,about=EXCLUDED.about,avatar=EXCLUDED.avatar,visibility=EXCLUDED.visibility,archived_at=EXCLUDED.archived_at,repository_key=EXCLUDED.repository_key,repository_remote=EXCLUDED.repository_remote,repository_target_branch=EXCLUDED.repository_target_branch,updated_at=EXCLUDED.updated_at`,
+            `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name,about,avatar,visibility,archived_at,direct_participants,repository_key,repository_remote,repository_target_branch,github_installation_id,github_events_enabled,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$14,$15,$16,$17) ON CONFLICT(id) DO UPDATE SET created_by=EXCLUDED.created_by,name=EXCLUDED.name,about=EXCLUDED.about,avatar=EXCLUDED.avatar,visibility=EXCLUDED.visibility,archived_at=EXCLUDED.archived_at,repository_key=EXCLUDED.repository_key,repository_remote=EXCLUDED.repository_remote,repository_target_branch=EXCLUDED.repository_target_branch,updated_at=EXCLUDED.updated_at`,
             [
               row.id,
               row.workspaceId,
-              row.parentId ?? null,
+              null,
+              row.createdBy ?? null,
               row.name,
               row.about ?? null,
               row.avatar ?? null,
@@ -263,6 +323,43 @@ export class SnapshotImporter {
               row.repository?.githubEventsEnabled !== false,
               date(row.createdAt),
               date(row.updatedAt),
+            ],
+          );
+        });
+      // Source order is not relational order: a corner may precede its parent.
+      // Restore self-references only after every room identity exists. Keeping
+      // this outside the claimed item also repairs links on an interrupted
+      // import whose room inserts were already committed.
+      for (const row of snapshot.rooms.filter((room) => room.parentId))
+        await this.target.query(`UPDATE rooms SET parent_id=$2 WHERE id=$1`, [
+          row.id,
+          row.parentId,
+        ]);
+      for (const row of snapshot.rooms.filter((room) => room.parentId))
+        await this.target.query(
+          `INSERT INTO corner_facts(corner_id,objective,lifecycle) VALUES($1,$2,$3::jsonb) ON CONFLICT(corner_id) DO UPDATE SET objective=EXCLUDED.objective,lifecycle=EXCLUDED.lifecycle`,
+          [
+            row.id,
+            row.objective ?? '',
+            JSON.stringify(
+              cornerLifecycle({
+                archived: row.archived,
+                ...(row.remoteStateContent ? { remoteStateContent: row.remoteStateContent } : {}),
+              }),
+            ),
+          ],
+        );
+      for (const row of (snapshot.presences ?? []).filter((presence) =>
+        retainedRoomIds.has(presence.roomId),
+      ))
+        await one('presence', `${row.roomId}:${row.agentId}`, async (db) => {
+          await db.query(
+            `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body,updated_at) VALUES($1,$2,'legacy','presence',$3::jsonb,$4) ON CONFLICT(room_id,agent_id,turn_id,kind) DO UPDATE SET body=EXCLUDED.body,updated_at=EXCLUDED.updated_at`,
+            [
+              row.roomId,
+              row.agentId,
+              JSON.stringify({ status: row.status, observedAt: row.createdAt }),
+              date(row.createdAt),
             ],
           );
         });
@@ -302,20 +399,52 @@ export class SnapshotImporter {
           );
         });
       await this.target.query(
-        `UPDATE identities i SET avatar='/v1/media/'||l.media_id::text FROM legacy_media_urls l WHERE i.avatar=l.legacy_url`,
+        `UPDATE identities i SET avatar='/v1/media/'||l.media_id::text FROM legacy_media_urls l WHERE i.avatar=l.legacy_url OR regexp_replace(i.avatar,'^https?://[^/]+','')=regexp_replace(l.legacy_url,'^https?://[^/]+','')`,
       );
       await this.target.query(
-        `UPDATE workspaces w SET avatar='/v1/media/'||l.media_id::text FROM legacy_media_urls l WHERE w.avatar=l.legacy_url`,
+        `UPDATE workspaces w SET avatar='/v1/media/'||l.media_id::text FROM legacy_media_urls l WHERE w.avatar=l.legacy_url OR regexp_replace(w.avatar,'^https?://[^/]+','')=regexp_replace(l.legacy_url,'^https?://[^/]+','')`,
       );
       await this.target.query(
-        `UPDATE rooms r SET avatar='/v1/media/'||l.media_id::text FROM legacy_media_urls l WHERE r.avatar=l.legacy_url`,
+        `UPDATE rooms r SET avatar='/v1/media/'||l.media_id::text FROM legacy_media_urls l WHERE r.avatar=l.legacy_url OR regexp_replace(r.avatar,'^https?://[^/]+','')=regexp_replace(l.legacy_url,'^https?://[^/]+','')`,
       );
       const mediaMappings = await this.target.query<{ legacy_url: string; media_id: string }>(
         `SELECT legacy_url,media_id FROM legacy_media_urls`,
       );
-      const mediaByUrl = new Map(mediaMappings.rows.map((row) => [row.legacy_url, row.media_id]));
+      const mediaByUrl = new Map<string, string>();
+      for (const row of mediaMappings.rows) {
+        mediaByUrl.set(row.legacy_url, row.media_id);
+        const path = mediaPath(row.legacy_url);
+        if (path) mediaByUrl.set(path, row.media_id);
+      }
+      const importedMediaUrl = (value: string | undefined) => {
+        if (!value) return undefined;
+        const mediaId = mediaByUrl.get(value) ?? mediaByUrl.get(mediaPath(value) ?? '');
+        return mediaId ? `/v1/media/${mediaId}` : undefined;
+      };
       for (const row of snapshot.events)
         await one('event', row.id, async (db) => {
+          if (row.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-turn')) {
+            const requestId = tagValue(row.tags, 'request');
+            const agentId = tagValue(row.tags, 'agent');
+            const status = tagValue(row.tags, 'status');
+            if (
+              requestId &&
+              /^[0-9a-f]{64}$/.test(requestId) &&
+              agentId === row.authorId &&
+              (status === 'working' || status === 'complete' || status === 'failed')
+            )
+              await db.query(
+                `INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id,created_at) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(room_id,request_id,agent_id) DO UPDATE SET status=EXCLUDED.status,generation_id=EXCLUDED.generation_id,created_at=EXCLUDED.created_at`,
+                [
+                  row.roomId,
+                  requestId,
+                  row.authorId,
+                  status,
+                  tagValue(row.tags, 'generation') ?? null,
+                  date(row.createdAt),
+                ],
+              );
+          }
           const original = projectEvent(
             {
               id: row.id,
@@ -338,10 +467,13 @@ export class SnapshotImporter {
                 ...(original.attachments
                   ? {
                       attachments: original.attachments.map((attachment) => {
-                        const mediaId = mediaByUrl.get(attachment.url);
-                        return mediaId
-                          ? { ...attachment, url: `/v1/media/${mediaId}` }
-                          : attachment;
+                        const url = importedMediaUrl(attachment.url);
+                        const thumbnailUrl = importedMediaUrl(attachment.thumbnailUrl);
+                        return {
+                          ...attachment,
+                          ...(url ? { url } : {}),
+                          ...(thumbnailUrl ? { thumbnailUrl } : {}),
+                        };
                       }),
                     }
                   : {}),
@@ -380,14 +512,16 @@ export class SnapshotImporter {
               [row.roomId, JSON.stringify(plan)],
             );
         });
-      for (const row of snapshot.readMarks)
+      for (const row of snapshot.readMarks.filter((mark) => retainedRoomIds.has(mark.roomId)))
         await one('read-mark', `${row.roomId}:${row.identityId}`, async (db) => {
           await db.query(
             `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id) VALUES($1,$2,$3,$4) ON CONFLICT(room_id,identity_id) DO UPDATE SET message_created_at=EXCLUDED.message_created_at,message_id=EXCLUDED.message_id`,
             [row.roomId, row.identityId, date(row.createdAt), row.messageId],
           );
         });
-      for (const row of snapshot.schedules)
+      for (const row of snapshot.schedules.filter((schedule) =>
+        retainedRoomIds.has(schedule.roomId),
+      ))
         await one('schedule', `${row.scheduleId}:${row.revision}`, async (db) => {
           await db.query(
             `INSERT INTO work_schedules(schedule_id,agent_id,room_id,revision,schedule) VALUES($1,$2,$3,$4,$5::jsonb) ON CONFLICT DO NOTHING`,
@@ -493,10 +627,22 @@ export async function readOldPostgresSnapshot(
         ? { avatar: (tagValue(row.tags, 'avatar') ?? tagValue(row.tags, 'picture'))! }
         : {}),
       visibility: visibility(row.visibility),
-      createdAt: Math.floor(row.created_at.getTime() / 1000),
-      updatedAt: Math.floor(row.updated_at.getTime() / 1000),
+      createdAt: Math.round(row.created_at.getTime() / 1000),
+      updatedAt: Math.round(row.updated_at.getTime() / 1000),
     }));
     const roomRows = channelRows.rows.filter((row) => workspaceIdFor(row) !== row.id);
+    const cornerStateRows = await database.query<{ channel_id: string; content: string }>(`
+      SELECT DISTINCT ON(c.id) c.id::text channel_id,e.content
+      FROM channels c JOIN events e ON e.community_id=c.community_id
+      JOIN channel_members author ON author.community_id=e.community_id AND author.channel_id=c.id
+        AND author.pubkey=e.pubkey AND author.removed_at IS NULL
+      WHERE c.deleted_at IS NULL AND e.deleted_at IS NULL AND e.kind=30078
+        AND e.tags @> jsonb_build_array(jsonb_build_array('h',c.id::text))
+        AND e.tags @> '[["t","buzz-corner-remote-state"]]'::jsonb
+      ORDER BY c.id,e.created_at DESC,e.id DESC`);
+    const cornerStateByRoom = new Map(
+      cornerStateRows.rows.map((row) => [row.channel_id, row.content]),
+    );
     const repositoryEvents = await database.query<{ channel_id: string; content: string }>(
       `SELECT channel_id::text,content FROM events WHERE deleted_at IS NULL AND kind=30078 AND channel_id IS NOT NULL AND EXISTS(SELECT 1 FROM jsonb_array_elements(tags)t WHERE t->>0='t' AND t->>1='buzz-room-repository') ORDER BY created_at,id`,
     );
@@ -521,6 +667,7 @@ export async function readOldPostgresSnapshot(
       return {
         id: row.id,
         workspaceId: workspaceIdFor(row),
+        createdBy: row.created_by,
         ...(tagValue(row.tags, 'parent') ? { parentId: tagValue(row.tags, 'parent') } : {}),
         name: row.name,
         ...(row.description ? { about: row.description } : {}),
@@ -529,10 +676,14 @@ export async function readOldPostgresSnapshot(
           : {}),
         visibility: visibility(row.visibility),
         archived: row.archived,
+        ...(tagValue(row.tags, 'task') ? { objective: tagValue(row.tags, 'task') } : {}),
+        ...(cornerStateByRoom.get(row.id)
+          ? { remoteStateContent: cornerStateByRoom.get(row.id) }
+          : {}),
         ...(participants.length === 2 ? { directParticipants: participants.sort() } : {}),
         ...(repositoryByRoom.get(row.id) ? { repository: repositoryByRoom.get(row.id) } : {}),
-        createdAt: Math.floor(row.created_at.getTime() / 1000),
-        updatedAt: Math.floor(row.updated_at.getTime() / 1000),
+        createdAt: Math.round(row.created_at.getTime() / 1000),
+        updatedAt: Math.round(row.updated_at.getTime() / 1000),
       };
     });
     const identityRows = await database.query<{
@@ -541,23 +692,56 @@ export async function readOldPostgresSnapshot(
       handle: string | null;
       avatar: string | null;
       agent: boolean;
+      agent_content: string | null;
+      hidden_from_roster: boolean;
     }>(`
       WITH keys AS (
-        SELECT community_id,pubkey FROM channel_members
-        UNION SELECT community_id,pubkey FROM events WHERE deleted_at IS NULL
-        UNION SELECT community::uuid,pubkey FROM beeline_identity_links
-        UNION SELECT community::uuid,old_pubkey FROM beeline_key_successions
-        UNION SELECT community::uuid,new_pubkey FROM beeline_key_successions
-        UNION SELECT community::uuid,pubkey FROM beeline_github_installations
-      ), declarations AS (SELECT DISTINCT community_id,pubkey FROM events WHERE deleted_at IS NULL AND kind=9 AND tags @> '[["t","buzz-agent"]]'::jsonb)
-      SELECT encode(k.pubkey,'hex') id,NULLIF(u.display_name,'') name,u.nip05_handle handle,u.avatar_url avatar,d.pubkey IS NOT NULL agent FROM keys k LEFT JOIN users u ON u.community_id=k.community_id AND u.pubkey=k.pubkey AND u.deactivated_at IS NULL LEFT JOIN declarations d ON d.community_id=k.community_id AND d.pubkey=k.pubkey`);
-    const identities: LegacyIdentity[] = identityRows.rows.map((row) => ({
-      id: row.id,
-      kind: row.agent ? 'agent' : 'human',
-      name: row.name ?? `${row.agent ? 'Agent' : 'Person'} ${row.id.slice(0, 8)}`,
-      ...(row.handle ? { handle: row.handle } : {}),
-      ...(row.avatar ? { avatar: row.avatar } : {}),
-    }));
+        SELECT encode(pubkey,'hex') id FROM channel_members
+        UNION SELECT encode(pubkey,'hex') id FROM events WHERE deleted_at IS NULL
+        UNION SELECT pubkey::text id FROM beeline_identity_links
+        UNION SELECT old_pubkey::text id FROM beeline_key_successions
+        UNION SELECT new_pubkey::text id FROM beeline_key_successions
+        UNION SELECT pubkey::text id FROM beeline_github_installations
+      ), declarations AS (
+        SELECT DISTINCT ON(encode(pubkey,'hex')) encode(pubkey,'hex') id,content
+        FROM events WHERE deleted_at IS NULL AND kind=9 AND tags @> '[["t","buzz-agent"]]'::jsonb
+        ORDER BY encode(pubkey,'hex'),created_at DESC,id DESC
+      ), service_identities AS (
+        SELECT DISTINCT encode(pubkey,'hex') id FROM events
+        WHERE deleted_at IS NULL AND kind=9 AND tags @> '[["service","beeline-events"]]'::jsonb
+      )
+      SELECT k.id,NULLIF(u.display_name,'') name,u.nip05_handle handle,u.avatar_url avatar,
+        d.id IS NOT NULL agent,d.content agent_content,s.id IS NOT NULL hidden_from_roster
+      FROM keys k
+      LEFT JOIN LATERAL (
+        SELECT display_name,nip05_handle,avatar_url FROM users
+        WHERE encode(pubkey,'hex')=k.id AND deactivated_at IS NULL
+        ORDER BY updated_at DESC,community_id DESC LIMIT 1
+      ) u ON true
+      LEFT JOIN declarations d ON d.id=k.id
+      LEFT JOIN service_identities s ON s.id=k.id`);
+    const identities: LegacyIdentity[] = identityRows.rows.map((row) => {
+      const declaration = parseObject(row.agent_content);
+      const declarationName =
+        typeof declaration.displayName === 'string' && declaration.displayName.trim()
+          ? declaration.displayName
+          : undefined;
+      const declarationAvatar =
+        typeof declaration.avatar === 'string' && declaration.avatar.trim()
+          ? declaration.avatar
+          : undefined;
+      return {
+        id: row.id,
+        kind: row.agent ? 'agent' : 'human',
+        name:
+          declarationName ?? row.name ?? `${row.agent ? 'Agent' : 'Person'} ${row.id.slice(0, 8)}`,
+        ...(row.handle ? { handle: row.handle } : {}),
+        ...((declarationAvatar ?? row.avatar)
+          ? { avatar: (declarationAvatar ?? row.avatar)! }
+          : {}),
+        ...(row.hidden_from_roster ? { hiddenFromRoster: true } : {}),
+      };
+    });
     const identityById = new Map(identities.map((row) => [row.id, row]));
     const ownerByWorkspace = new Map(workspaceRows.map((row) => [row.id, row.created_by]));
     const overlayRows = await database.query<{ pubkey: string; tags: string[][]; content: string }>(
@@ -646,24 +830,40 @@ export async function readOldPostgresSnapshot(
         kind: row.kind,
         tags: row.tags,
         content: row.content,
-        createdAt: Math.floor(row.created_at.getTime() / 1000),
+        createdAt: Math.round(row.created_at.getTime() / 1000),
         rootId: explicitRoot ?? reply ?? row.id,
       };
     });
     const readMarks = await database.query<LegacyReadMark>(
-      `SELECT room_id::text "roomId",encode(viewer_pubkey,'hex') "identityId",encode(message_id,'hex') "messageId",extract(epoch from message_created_at)::int "createdAt" FROM beeline_room_read_marks`,
+      `SELECT m.room_id::text "roomId",encode(m.viewer_pubkey,'hex') "identityId",encode(m.message_id,'hex') "messageId",extract(epoch from m.message_created_at)::int "createdAt" FROM beeline_room_read_marks m JOIN channels c ON c.id=m.room_id WHERE c.deleted_at IS NULL`,
     );
+    const presences = await database.query<LegacyPresence>(`
+      WITH candidates AS (
+        SELECT (SELECT t->>1 FROM jsonb_array_elements(e.tags)t WHERE t->>0='h' LIMIT 1) "roomId",
+          encode(e.pubkey,'hex') "agentId",
+          (SELECT t->>1 FROM jsonb_array_elements(e.tags)t WHERE t->>0='status' AND t->>1 IN('online','offline') LIMIT 1) status,
+          extract(epoch FROM e.created_at)::bigint "createdAt",e.created_at,e.id,e.community_id,e.pubkey
+        FROM events e WHERE e.deleted_at IS NULL AND e.kind=30078
+          AND e.tags @> '[["t","agent-presence"]]'::jsonb
+          AND EXISTS(SELECT 1 FROM jsonb_array_elements(e.tags)t WHERE t->>0='h' AND t->>1 ~* '^[0-9a-f-]{36}$')
+      )
+      SELECT DISTINCT ON(p."roomId",p."agentId") p."roomId",p."agentId",p.status,p."createdAt"
+      FROM candidates p JOIN channels c ON c.community_id=p.community_id AND c.id=p."roomId"::uuid
+      JOIN channel_members member ON member.community_id=p.community_id AND member.channel_id=c.id
+        AND member.pubkey=p.pubkey AND member.removed_at IS NULL
+      WHERE c.deleted_at IS NULL AND p.status IS NOT NULL
+      ORDER BY p."roomId",p."agentId",p.created_at DESC,p.id DESC`);
     const identityLinks = await database.query<LegacyGitHub['identityLinks'][number]>(
-      `SELECT subject,encode(pubkey,'hex') "identityId",issuer,audience FROM beeline_identity_links WHERE issuer='https://github.com'`,
+      `SELECT subject,pubkey::text "identityId",issuer,audience FROM beeline_identity_links WHERE issuer='https://github.com'`,
     );
     const identitySuccessions = await database.query<LegacyGitHub['identitySuccessions'][number]>(
-      `SELECT subject,encode(old_pubkey,'hex') "oldIdentityId",encode(new_pubkey,'hex') "newIdentityId" FROM beeline_key_successions WHERE issuer='https://github.com'`,
+      `SELECT subject,old_pubkey::text "oldIdentityId",new_pubkey::text "newIdentityId" FROM beeline_key_successions WHERE issuer='https://github.com'`,
     );
     const userTokens = await database.query<LegacyGitHub['userTokens'][number]>(
       `SELECT subject,encrypted_token "encryptedToken",stale_at::text "staleAt" FROM beeline_github_user_tokens`,
     );
     const installations = await database.query<LegacyGitHub['installations'][number]>(
-      `SELECT installation_id::int "installationId",pubkey "ownerId",account_login "accountLogin",account_type "accountType" FROM beeline_github_installations`,
+      `SELECT installation_id::int "installationId",pubkey::text "ownerId",account_login "accountLogin",account_type "accountType" FROM beeline_github_installations`,
     );
     const repositories = await database.query<LegacyGitHub['repositories'][number]>(
       `SELECT repository_id::int "repositoryId",installation_id::int "installationId",full_name "fullName",default_branch "defaultBranch" FROM beeline_github_repositories`,
@@ -675,6 +875,7 @@ export async function readOldPostgresSnapshot(
       memberships,
       events,
       readMarks: readMarks.rows,
+      presences: presences.rows,
       schedules,
       github: {
         identityLinks: identityLinks.rows,

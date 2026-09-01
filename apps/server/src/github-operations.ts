@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
-import { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
+import { GITHUB_IDENTITY_AUDIENCE, GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import type { PhoneOperationMap } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 
@@ -94,8 +94,14 @@ export class GitHubOperations {
         );
       }
       await database.query(
-        `INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience) VALUES('github',$1,$2,$3,$4) ON CONFLICT(provider,subject) DO UPDATE SET identity_id=EXCLUDED.identity_id,issuer=EXCLUDED.issuer,audience=EXCLUDED.audience`,
-        [github!.subject, viewerId, github!.issuer, github!.audience],
+        `INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience,provider_login)
+         VALUES('github',$1,$2,$3,$4,$5)
+         ON CONFLICT(provider,subject) DO UPDATE SET
+           identity_id=EXCLUDED.identity_id,
+           issuer=EXCLUDED.issuer,
+           audience=EXCLUDED.audience,
+           provider_login=EXCLUDED.provider_login`,
+        [github!.subject, viewerId, github!.issuer, GITHUB_IDENTITY_AUDIENCE, github!.login],
       );
       await database.query(
         `UPDATE identities SET name=COALESCE(NULLIF($2,''),name),handle=$3,github_subject=$4,updated_at=now() WHERE id=$1`,

@@ -1,5 +1,29 @@
 import { Pool, type PoolClient, type QueryResultRow } from 'pg';
 
+const TRANSIENT_CONNECTION_CODES = new Set(['57P01', '08006', '08003', '08000']);
+const TRANSIENT_CONNECTION_MESSAGE =
+  /Connection terminated|ECONNRESET|server closed the connection|terminating connection/i;
+const RETRY_DELAYS_MS = [100, 300, 700];
+
+export function isTransientDatabaseConnectionError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const candidate = error as { code?: unknown; message?: unknown };
+  return (
+    (typeof candidate.code === 'string' && TRANSIENT_CONNECTION_CODES.has(candidate.code)) ||
+    (typeof candidate.message === 'string' && TRANSIENT_CONNECTION_MESSAGE.test(candidate.message))
+  );
+}
+
+type Pause = (milliseconds: number) => Promise<void>;
+
+const pause: Pause = (milliseconds) =>
+  new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+export interface PostgresDatabaseOptions {
+  pool?: Pool;
+  pause?: Pause;
+}
+
 export interface QueryResult<Row> {
   rows: Row[];
   rowCount: number;
@@ -20,26 +44,35 @@ export interface ClosableDatabase extends SqlDatabase {
 
 export class PostgresDatabase implements ClosableDatabase {
   readonly #pool: Pool;
+  readonly #pause: Pause;
 
-  constructor(connectionString: string, maximumConnections = 5) {
-    this.#pool = new Pool({ connectionString, max: maximumConnections });
+  constructor(
+    connectionString: string,
+    maximumConnections = 5,
+    options: PostgresDatabaseOptions = {},
+  ) {
+    this.#pool = options.pool ?? new Pool({ connectionString, max: maximumConnections });
+    this.#pause = options.pause ?? pause;
+    this.#pool.on('error', (error) => {
+      console.error('postgres idle client error', error);
+    });
   }
 
   async query<Row extends QueryResultRow = QueryResultRow>(
     sql: string,
     values: unknown[] = [],
   ): Promise<QueryResult<Row>> {
-    const raw = values.length
-      ? await this.#pool.query<Row>(sql, values)
-      : await this.#pool.query<Row>(sql);
+    const raw = await this.#retryTransientConnection(() =>
+      values.length ? this.#pool.query<Row>(sql, values) : this.#pool.query<Row>(sql),
+    );
     const result = Array.isArray(raw) ? raw.at(-1) : raw;
     return { rows: result?.rows ?? [], rowCount: result?.rowCount ?? result?.rows.length ?? 0 };
   }
 
   async transaction<T>(work: (database: SqlDatabase) => Promise<T>): Promise<T> {
-    const client = await this.#pool.connect();
+    const client = await this.#beginTransaction();
+    let releaseError: Error | undefined;
     try {
-      await client.query('BEGIN');
       const database: SqlDatabase = {
         query: async <Row extends QueryResultRow = QueryResultRow>(
           sql: string,
@@ -61,19 +94,52 @@ export class PostgresDatabase implements ClosableDatabase {
       await client.query('COMMIT');
       return result;
     } catch (error) {
-      await client.query('ROLLBACK');
+      if (isTransientDatabaseConnectionError(error))
+        releaseError = error instanceof Error ? error : new Error('transaction connection failed');
+      try {
+        await client.query('ROLLBACK');
+      } catch (rollbackError) {
+        // The original error is more useful than a rollback failure on a dead connection.
+        releaseError =
+          rollbackError instanceof Error ? rollbackError : new Error('transaction rollback failed');
+      }
       throw error;
     } finally {
-      client.release();
+      client.release(releaseError);
     }
   }
 
   connectDedicated(): Promise<PoolClient> {
-    return this.#pool.connect();
+    return this.#retryTransientConnection(() => this.#pool.connect());
   }
 
   close(): Promise<void> {
     return this.#pool.end();
+  }
+
+  async #beginTransaction(): Promise<PoolClient> {
+    return this.#retryTransientConnection(async () => {
+      const client = await this.#pool.connect();
+      try {
+        await client.query('BEGIN');
+        return client;
+      } catch (error) {
+        client.release(error instanceof Error ? error : new Error('transaction begin failed'));
+        throw error;
+      }
+    });
+  }
+
+  async #retryTransientConnection<T>(work: () => Promise<T>): Promise<T> {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await work();
+      } catch (error) {
+        if (!isTransientDatabaseConnectionError(error) || attempt >= RETRY_DELAYS_MS.length)
+          throw error;
+        await this.#pause(RETRY_DELAYS_MS[attempt]!);
+      }
+    }
   }
 }
 

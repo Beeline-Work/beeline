@@ -335,22 +335,22 @@ jobs:
           RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
         run: |
           set -euo pipefail
-          curl -fsS --max-time 30 https://usebeeline.app/push/health -o "$RUNNER_TEMP/health.json"
+          curl -fsS --max-time 30 \
+            https://server.usebeeline.app/v1/releases/daemon-readiness \
+            -o "$RUNNER_TEMP/daemon-readiness.json"
           curl -fsS --max-time 30 https://server.usebeeline.app/version -o "$RUNNER_TEMP/server-version.json"
-          node - "$RUNNER_TEMP/health.json" "$RUNNER_TEMP/server-version.json" "$RUNNER_TEMP/mobile/mobile-ota-ledger.json" "$RUNNER_TEMP/observed.json" <<'NODE'
+          node scripts/unified-release.mjs assert-daemons \
+            --status "$RUNNER_TEMP/daemon-readiness.json" \
+            --version "$RELEASE_VERSION" \
+            --sha "$RELEASE_SHA"
+          node - "$RUNNER_TEMP/daemon-readiness.json" "$RUNNER_TEMP/server-version.json" "$RUNNER_TEMP/mobile/mobile-ota-ledger.json" "$RUNNER_TEMP/observed.json" <<'NODE'
           const fs = require('node:fs');
-          const [healthPath, serverPath, mobilePath, outputPath] = process.argv.slice(2);
-          const health = JSON.parse(fs.readFileSync(healthPath, 'utf8'));
+          const [readinessPath, serverPath, mobilePath, outputPath] = process.argv.slice(2);
+          const readiness = JSON.parse(fs.readFileSync(readinessPath, 'utf8'));
           const server = JSON.parse(fs.readFileSync(serverPath, 'utf8'));
           const mobile = JSON.parse(fs.readFileSync(mobilePath, 'utf8'));
-          const daemons = health.daemons ?? [];
-          if (daemons.length === 0) throw new Error('No daemon release status records were reported.');
+          const daemons = readiness.daemons;
           const daemon = daemons[0];
-          if (!daemons.every((entry) =>
-            entry.state === 'ready' &&
-            entry.releaseVersion === daemon.releaseVersion &&
-            entry.sourceSha === daemon.sourceSha
-          )) throw new Error('Mixed or unready daemon release status; delivery is refused.');
           fs.writeFileSync(outputPath, JSON.stringify({
             server: { version: server.version, sourceSha: server.sourceSha },
             daemon: { version: daemon.releaseVersion, sourceSha: daemon.sourceSha },

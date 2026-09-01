@@ -197,6 +197,32 @@ export function deliveryReport(state, observed = undefined) {
   return `DELIVERED ${state.version} (${state.sourceSha})`;
 }
 
+export function assertDaemonFleetReady(status, version, sourceSha) {
+  validateReleaseIdentity(version, sourceSha);
+  const daemons = Array.isArray(status?.daemons) ? status.daemons : [];
+  if (daemons.length === 0) fail('daemon readiness reported no registered agents');
+  const failures = daemons.filter(
+    (daemon) =>
+      daemon?.state !== 'ready' ||
+      daemon?.releaseVersion !== version ||
+      daemon?.sourceSha !== sourceSha,
+  );
+  if (failures.length > 0) {
+    fail(
+      failures
+        .map(
+          (daemon) =>
+            `agent ${daemon?.agentPubkey ?? '<unknown>'} reported ` +
+            `${daemon?.state ?? '<missing-state>'} ` +
+            `${daemon?.releaseVersion ?? '<missing-version>'}@${daemon?.sourceSha ?? '<missing-sha>'}; ` +
+            `expected ready ${version}@${sourceSha}`,
+        )
+        .join('\n'),
+    );
+  }
+  return daemons;
+}
+
 function options(argv) {
   const parsed = { _: [] };
   for (let index = 0; index < argv.length; index += 1) {
@@ -227,6 +253,11 @@ function main(argv) {
     writeJson(args.state, initializeRelease({ ...identityFromOptions(args), previous }));
     return;
   }
+  if (command === 'assert-daemons') {
+    assertDaemonFleetReady(readJson(args.status), args.version, args.sha);
+    console.log(`daemon fleet READY on ${args.version}@${args.sha}`);
+    return;
+  }
   const state = readJson(args.state);
   switch (command) {
     case 'mark-built':
@@ -249,7 +280,7 @@ function main(argv) {
       return;
     default:
       fail(
-        'Usage: unified-release.mjs <next-version|init|mark-built|assert-built|confirm|confirm-delivery|supersede|report>',
+        'Usage: unified-release.mjs <next-version|init|mark-built|assert-built|assert-daemons|confirm|confirm-delivery|supersede|report>',
       );
   }
   writeJson(args.state, state);

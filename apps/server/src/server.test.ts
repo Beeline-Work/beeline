@@ -63,4 +63,31 @@ describe('server readiness', () => {
       sourceSha: '0123456789abcdef0123456789abcdef01234567',
     });
   });
+
+  it('serves daemon release readiness without a phone bearer', async () => {
+    const releaseReadiness = vi.fn().mockResolvedValue({
+      daemons: [{ agentPubkey: 'a'.repeat(64), state: 'ready' }],
+    });
+    const server = createBeelineServer({
+      database: { query: vi.fn(), transaction: vi.fn() },
+      auth: {} as TokenAuth,
+      phone: {} as PhoneService,
+      daemon: { releaseReadiness } as unknown as DaemonService,
+      live: {} as LiveHub,
+      mediaMaximumBytes: 1,
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+
+    const response = await fetch(
+      `http://127.0.0.1:${port}/v1/releases/daemon-readiness`,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      daemons: [{ agentPubkey: 'a'.repeat(64), state: 'ready' }],
+    });
+    expect(releaseReadiness).toHaveBeenCalledOnce();
+  });
 });

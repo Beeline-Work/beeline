@@ -13,7 +13,11 @@ import type {
   WorkspaceListView,
   WorkspaceView,
 } from '@beeline/api-contract/phone';
-import type { PhoneOperationMap } from '@beeline/api-contract/phone';
+import {
+  createCommunityInviteToken,
+  isCommunityInviteToken,
+  type PhoneOperationMap,
+} from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import type { GitHubOperations } from './github-operations.js';
 import { collapsePermissionCards } from '@beeline/push-gateway/projection';
@@ -389,7 +393,12 @@ export class PhoneService {
         unread: Boolean(
           row.latest_created_at && (!row.read_at || row.latest_created_at > row.read_at),
         ),
-        ...(row.repository_key ? { repositoryName: row.repository_key.split('/').at(-1) } : {}),
+        ...(row.repository_key
+          ? {
+              repositoryName:
+                row.repository_name ?? row.repository_key.split('/').at(-1) ?? row.repository_key,
+            }
+          : {}),
         ...(row.needs_you
           ? { agentState: 'needs-you' as const }
           : row.working
@@ -733,6 +742,7 @@ export class PhoneService {
 
   async readInvite(rawToken: string, viewerId: string): Promise<InviteView | null> {
     void viewerId;
+    if (!isCommunityInviteToken(rawToken)) return null;
     const result = await this.database.query<{
       name: string;
       avatar: string | null;
@@ -789,6 +799,79 @@ export class PhoneService {
         pairedBy: pairing.created_by,
         joined,
         attachedRoomIds: rooms.rows.map((row) => row.room_id),
+      };
+    });
+  }
+
+  async claimAgentConnectPairing(input: {
+    code: string;
+    agentPubkey: string;
+    agentName: string;
+    model: string;
+    soul: string;
+  }): Promise<
+    | { status: 'claimed'; workspaceId: string; workspaceName: string; pairedBy: string }
+    | { status: 'not_found' | 'expired' | 'already_claimed' }
+  > {
+    return this.database.transaction(async (database) => {
+      const result = await database.query<{
+        workspace_id: string;
+        workspace_name: string;
+        created_by: string;
+        claimed_by: string | null;
+        expires_at: Date;
+      }>(
+        `SELECT pairing.workspace_id,workspace.name AS workspace_name,pairing.created_by,
+                pairing.claimed_by,pairing.expires_at
+         FROM agent_pairing_codes pairing
+         JOIN workspaces workspace ON workspace.id=pairing.workspace_id
+         WHERE pairing.code_hash=$1
+         FOR UPDATE OF pairing`,
+        [hash(input.code)],
+      );
+      const pairing = result.rows[0];
+      if (!pairing) return { status: 'not_found' };
+      if (pairing.expires_at.getTime() <= Date.now()) return { status: 'expired' };
+      if (pairing.claimed_by) return { status: 'already_claimed' };
+
+      await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent',$2)`, [
+        input.agentPubkey,
+        input.agentName,
+      ]);
+      await database.query(
+        `INSERT INTO agents(agent_id,owner_id,soul,selected_model)
+         VALUES($1,$2,$3::jsonb,$4)`,
+        [
+          input.agentPubkey,
+          pairing.created_by,
+          JSON.stringify({ name: input.agentName, instructions: input.soul }),
+          input.model,
+        ],
+      );
+      await database.query(
+        `UPDATE agent_pairing_codes SET claimed_by=$2,claimed_at=now() WHERE code_hash=$1`,
+        [hash(input.code), input.agentPubkey],
+      );
+      await database.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+         VALUES ($1,NULL,$2,'member')`,
+        [pairing.workspace_id, input.agentPubkey],
+      );
+      await database.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+         SELECT membership.workspace_id,membership.room_id,$2,'member'
+         FROM memberships membership
+         JOIN rooms room ON room.id=membership.room_id
+         WHERE membership.workspace_id=$1 AND membership.identity_id=$3
+           AND membership.removed_at IS NULL AND room.parent_id IS NULL AND room.archived_at IS NULL
+         ON CONFLICT DO NOTHING`,
+        [pairing.workspace_id, input.agentPubkey, pairing.created_by],
+      );
+      return {
+        status: 'claimed',
+        workspaceId: pairing.workspace_id,
+        workspaceName: pairing.workspace_name,
+        pairedBy: pairing.created_by,
       };
     });
   }
@@ -1175,9 +1258,45 @@ export class PhoneService {
     await this.requireWorkspaceManager(input.workspaceId, viewerId);
     const id = randomUUID();
     await this.database.transaction(async (db) => {
+      const repository =
+        input.repositoryId === undefined
+          ? undefined
+          : (
+              await db.query<{
+                repository_id: string;
+                installation_id: string;
+                full_name: string;
+                default_branch: string;
+              }>(
+                `SELECT r.repository_id,r.installation_id,r.full_name,r.default_branch
+                 FROM github_repositories r
+                 JOIN github_installations i USING(installation_id)
+                 WHERE r.repository_id=$1 AND r.active AND i.owner_id=$2 AND i.status='active'`,
+                [input.repositoryId, viewerId],
+              )
+            ).rows[0];
+      if (input.repositoryId !== undefined && !repository)
+        throw new Error('installed repository not found');
       await db.query(
-        `INSERT INTO rooms(id,workspace_id,created_by,name,visibility) VALUES($1,$2,$3,$4,$5)`,
-        [id, input.workspaceId, viewerId, input.name, input.visibility ?? 'invite-only'],
+        `INSERT INTO rooms(
+           id,workspace_id,created_by,name,visibility,
+           repository_key,repository_name,repository_remote,repository_target_branch,
+           repository_updated_at,repository_resolution,github_installation_id
+         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        [
+          id,
+          input.workspaceId,
+          viewerId,
+          input.name,
+          input.visibility ?? 'invite-only',
+          repository ? `github:${repository.repository_id}` : null,
+          repository?.full_name ?? null,
+          repository ? `git://github.com/${repository.full_name}` : null,
+          repository?.default_branch ?? 'main',
+          repository ? new Date() : null,
+          repository ? 'repository' : 'none',
+          repository?.installation_id ?? null,
+        ],
       );
       await db.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`,
@@ -1340,7 +1459,7 @@ export class PhoneService {
   }
   private async createInvite(input: Input<'createInvite'>, viewerId: string) {
     await this.requireWorkspaceManager(input.workspaceId, viewerId);
-    const value = token('bzi');
+    const value = createCommunityInviteToken(randomBytes(32));
     const expiresAt = Date.now() + 7 * 86400_000;
     await this.database.query(
       `INSERT INTO invites(token_hash,workspace_id,created_by,expires_at) VALUES($1,$2,$3,$4)`,
@@ -1349,6 +1468,7 @@ export class PhoneService {
     return { token: value, expiresAt: Math.floor(expiresAt / 1000) };
   }
   private async redeemInvite(input: Input<'redeemInvite'>, viewerId: string) {
+    if (!isCommunityInviteToken(input.token)) throw new Error('invalid invite token');
     const result = await this.database.query<{ workspace_id: string }>(
       `SELECT i.workspace_id FROM invites i
        JOIN memberships creator ON creator.workspace_id=i.workspace_id AND creator.room_id IS NULL
@@ -1387,7 +1507,7 @@ export class PhoneService {
     return { code, expiresAt };
   }
   private async updateAgentSoul(input: Input<'updateAgentSoul'>, viewerId: string) {
-    await this.requireWorkspaceManager(input.workspaceId, viewerId);
+    await this.requireWorkspaceAgent(input.workspaceId, input.agentId, viewerId);
     await this.database.query(
       `UPDATE agents SET soul=$2::jsonb,updated_at=now() WHERE agent_id=$1`,
       [
@@ -1406,14 +1526,20 @@ export class PhoneService {
     );
   }
   private async updateAgentModel(input: Input<'updateAgentModelSelection'>, viewerId: string) {
-    await this.requireWorkspaceManager(input.workspaceId, viewerId);
+    await this.requireWorkspaceAgent(input.workspaceId, input.agentId, viewerId);
+    const hasModel = Object.prototype.hasOwnProperty.call(input, 'model');
+    const hasEffort = Object.prototype.hasOwnProperty.call(input, 'effort');
     await this.database.query(
-      `UPDATE agents SET selected_model=$2,selected_effort=$3,updated_at=now() WHERE agent_id=$1`,
-      [input.agentId, input.model ?? null, input.effort ?? null],
+      `UPDATE agents
+       SET selected_model=CASE WHEN $2 THEN $3 ELSE selected_model END,
+           selected_effort=CASE WHEN $4 THEN $5 ELSE selected_effort END,
+           updated_at=now()
+       WHERE agent_id=$1`,
+      [input.agentId, hasModel, input.model ?? null, hasEffort, input.effort ?? null],
     );
   }
   private async removeAgent(input: Input<'removeAgent'>, viewerId: string) {
-    await this.requireWorkspaceManager(input.workspaceId, viewerId);
+    await this.requireWorkspaceAgent(input.workspaceId, input.agentId, viewerId);
     await this.database.query(
       `UPDATE memberships SET removed_at=now() WHERE workspace_id=$1 AND identity_id=$2`,
       [input.workspaceId, input.agentId],
@@ -1548,6 +1674,17 @@ export class PhoneService {
     ).rows[0];
     if (!row) throw new Error('identity not found');
     return identity(row, this.publicOrigin);
+  }
+  private async requireWorkspaceAgent(workspaceId: string, agentId: string, viewerId: string) {
+    await this.requireWorkspaceManager(workspaceId, viewerId);
+    const result = await this.database.query(
+      `SELECT 1
+       FROM agents a
+       JOIN memberships m ON m.identity_id=a.agent_id
+       WHERE a.agent_id=$1 AND m.workspace_id=$2 AND m.room_id IS NULL AND m.removed_at IS NULL`,
+      [agentId, workspaceId],
+    );
+    if (!result.rowCount) throw new Error('agent not found in workspace');
   }
   private async hasRoomAccess(roomId: string, identityId: string) {
     return (

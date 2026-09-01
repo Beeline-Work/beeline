@@ -1,5 +1,4 @@
 import { spawn } from 'node:child_process';
-import { createHash, randomBytes } from 'node:crypto';
 import { chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { stdin, stdout } from 'node:process';
@@ -249,14 +248,7 @@ export async function collectConnectWizard(
   };
 }
 
-interface DeviceStart {
-  device_code: string;
-  verification_uri_complete: string;
-  expires_in: number;
-  interval: number;
-}
-
-interface DeviceGrantResponse {
+export interface DeviceGrantResponse {
   pairing_code: string;
   agent_secret_key: string;
   agent_pubkey: string;
@@ -264,14 +256,11 @@ interface DeviceGrantResponse {
   agent_name: string;
   workspace_id: string;
   workspace_name: string;
+  paired_by: string;
   harness: ConnectWizardResult['harness'];
   provider?: ConnectProvider;
   model: string;
   soul: string;
-}
-
-function sha256(value: string): string {
-  return createHash('sha256').update(value).digest('hex');
 }
 
 async function jsonRequest<T>(url: string, body: unknown, fetchImpl: typeof fetch): Promise<T> {
@@ -291,53 +280,24 @@ async function jsonRequest<T>(url: string, body: unknown, fetchImpl: typeof fetc
   return response.json() as Promise<T>;
 }
 
-async function openBrowser(url: string): Promise<void> {
-  const command =
-    process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'cmd' : 'xdg-open';
-  const args = process.platform === 'win32' ? ['/c', 'start', '', url] : [url];
-  await new Promise<void>((resolveOpen, rejectOpen) => {
-    const child = spawn(command, args, { detached: true, stdio: 'ignore' });
-    child.once('error', rejectOpen);
-    child.once('spawn', () => {
-      child.unref();
-      resolveOpen();
-    });
-  });
-}
-
-async function pollDeviceGrant(input: {
-  baseUrl: string;
-  start: DeviceStart;
-  verifier: string;
-  fetchImpl: typeof fetch;
-}): Promise<DeviceGrantResponse> {
-  const deadline = Date.now() + input.start.expires_in * 1_000;
-  while (Date.now() < deadline) {
-    const response = await input.fetchImpl(`${input.baseUrl}/auth/device/token`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        device_code: input.start.device_code,
-        code_verifier: input.verifier,
-      }),
-      signal: AbortSignal.timeout(30_000),
-    });
-    if (response.status === 428) {
-      await new Promise((resolveWait) => setTimeout(resolveWait, input.start.interval * 1_000));
-      continue;
-    }
-    if (!response.ok) {
-      const detail = (await response.json().catch(() => ({}))) as {
-        error?: string;
-        message?: string;
-      };
-      throw new Error(
-        detail.message ?? detail.error ?? `authorization failed (HTTP ${response.status})`,
-      );
-    }
-    return response.json() as Promise<DeviceGrantResponse>;
-  }
-  throw new Error('browser authorization expired; run `npx usebeeline connect` again');
+export function requestConnectGrant(
+  baseUrl: string,
+  pairingCode: string,
+  selection: ConnectWizardResult,
+  fetchImpl: typeof fetch,
+): Promise<DeviceGrantResponse> {
+  return jsonRequest<DeviceGrantResponse>(
+    `${baseUrl}/auth/agent/connect`,
+    {
+      pairing_code: pairingCode.trim().toUpperCase(),
+      harness: selection.harness,
+      ...(selection.provider ? { provider: selection.provider } : {}),
+      model: selection.model,
+      soul: selection.soul,
+      agent_name: selection.name,
+    },
+    fetchImpl,
+  );
 }
 
 async function installCurrentRelease(fetchImpl: typeof fetch): Promise<string> {
@@ -441,39 +401,28 @@ async function brassSpinner<T>(message: string, action: () => Promise<T>): Promi
   }
 }
 
-export async function runConnectCommand(options: { fetchImpl?: typeof fetch } = {}): Promise<void> {
+export async function runConnectCommand(
+  code: string | undefined,
+  options: { fetchImpl?: typeof fetch } = {},
+): Promise<void> {
   if (!stdin.isTTY || !stdout.isTTY) {
     throw new Error('`usebeeline connect` needs an interactive terminal');
   }
   clack.intro(brass('Beeline connect'));
+  const pairingCode =
+    code?.trim() ||
+    (await clackPrompts.text({
+      message: brass('Pairing code from the app'),
+      validate: (value) => (value.trim() ? undefined : 'Pairing code is required'),
+    }));
   const selection = await collectConnectWizard();
   const fetchImpl = options.fetchImpl ?? fetch;
   const baseUrl = (process.env.BEELINE_AUTH_URL ?? 'https://server.usebeeline.app').replace(
     /\/$/,
     '',
   );
-  const verifier = randomBytes(32).toString('base64url');
-  const start = await brassSpinner('Preparing secure sign-in…', () =>
-    jsonRequest<DeviceStart>(
-      `${baseUrl}/auth/device/connect`,
-      {
-        harness: selection.harness,
-        ...(selection.provider ? { provider: selection.provider } : {}),
-        model: selection.model,
-        soul: selection.soul,
-        agent_name: selection.name,
-        code_challenge: sha256(verifier),
-      },
-      fetchImpl,
-    ),
-  );
-  try {
-    await openBrowser(start.verification_uri_complete);
-  } catch {
-    console.log(`Open this link to connect: ${start.verification_uri_complete}`);
-  }
   const grant = await brassSpinner('Connecting to your Beeline Workspace…', () =>
-    pollDeviceGrant({ baseUrl, start, verifier, fetchImpl }),
+    requestConnectGrant(baseUrl, pairingCode, selection, fetchImpl),
   );
   const installedBinary = await brassSpinner('Installing the Beeline daemon…', () =>
     installCurrentRelease(fetchImpl),

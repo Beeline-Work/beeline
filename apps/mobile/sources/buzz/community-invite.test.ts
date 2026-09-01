@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { signEvent } from '@beeline/nostr';
+import { createCommunityInviteToken } from '@beeline/api-contract/phone';
 import {
   KIND_STREAM_MESSAGE,
   TAG_COMMUNITY_INVITE,
@@ -13,6 +14,7 @@ import {
   loadCommunityInvitePreview,
   parseCommunityInviteToken,
   resolveCommunityInviteRelayUrl,
+  resolveCommunityInvitePublicOrigin,
 } from './community-invite';
 
 const buzzClientMocks = vi.hoisted(() => ({
@@ -29,7 +31,9 @@ vi.mock('@beeline/buzz-client', async (importOriginal) => {
   };
 });
 
-const token = `bzi_${'ab'.repeat(32)}`;
+// This is the exact shape minted by PhoneService through the shared contract.
+const token = createCommunityInviteToken(Uint8Array.from({ length: 32 }, (_, index) => index));
+const legacyMonolithToken = `bzi_${'A'.repeat(42)}_`;
 
 beforeEach(() => {
   buzzClientMocks.createBuzzClient.mockReset();
@@ -59,6 +63,21 @@ describe('community invite links', () => {
     );
   });
 
+  it('uses the app-link origin instead of the monolith API origin', () => {
+    expect(
+      resolveCommunityInvitePublicOrigin('https://server.usebeeline.app', {
+        monolithEnabled: true,
+        relayUrl: 'https://usebeeline.app',
+      }),
+    ).toBe('https://usebeeline.app');
+    expect(
+      resolveCommunityInvitePublicOrigin('https://relay.example', {
+        monolithEnabled: false,
+        relayUrl: 'https://usebeeline.app',
+      }),
+    ).toBe('https://relay.example');
+  });
+
   it('reuses the client invite flow and returns its shareable URL', async () => {
     const createInvite = vi.fn().mockResolvedValue({ token });
 
@@ -78,6 +97,7 @@ describe('community invite links', () => {
     expect(parseCommunityInviteToken(`https://relay.buzzrouter.com/join/${token}`)).toBe(token);
     expect(parseCommunityInviteToken(`http://127.0.0.1:3010/join/${token}`)).toBe(token);
     expect(parseCommunityInviteToken(`beeline://join/${token}`)).toBe(token);
+    expect(parseCommunityInviteToken(legacyMonolithToken)).toBe(legacyMonolithToken);
   });
 
   it('rejects unrelated routes and malformed tokens', () => {

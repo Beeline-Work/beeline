@@ -65,13 +65,7 @@ class MonolithClientAdapter {
       onPublished?: () => void;
     },
   ) {
-    const result = (await this.transport.operation('createRoom', {
-      workspaceId: options.communityId,
-      name,
-      ...(options.visibility ? { visibility: options.visibility } : {}),
-    })) as { id: string };
-    options.onPublished?.();
-    return result.id;
+    return this.transport.createRoom(name, options);
   }
   renameChannel(roomId: string, name: string) {
     return this.transport.operation('updateRoom', { roomId, name });
@@ -103,9 +97,16 @@ class MonolithClientAdapter {
   setAgentSoul(
     workspaceId: string,
     agentId: string,
-    soul: { name: string; instructions: string; avatarSeed: string; avatar?: string },
+    soul: { name: string; soul: string; avatarSeed: string; avatar?: string },
   ) {
-    return this.transport.operation('updateAgentSoul', { workspaceId, agentId, ...soul });
+    return this.transport.operation('updateAgentSoul', {
+      workspaceId,
+      agentId,
+      name: soul.name,
+      instructions: soul.soul,
+      avatarSeed: soul.avatarSeed,
+      ...(soul.avatar ? { avatar: soul.avatar } : {}),
+    });
   }
   setAgentModelConfig(workspaceId: string, agentId: string, selection: Record<string, unknown>) {
     return this.transport.operation('updateAgentModelSelection', {
@@ -145,6 +146,30 @@ export class MonolithRigTransport {
 
   ensureClient(): Promise<BuzzClient> {
     return Promise.resolve(this.adapter as unknown as BuzzClient);
+  }
+
+  async createRoom(
+    name: string,
+    options: {
+      communityId: string;
+      visibility?: 'public' | 'invite-only';
+      repository?: RepoCandidate;
+      onPublished?: () => void;
+    },
+  ): Promise<string> {
+    const repositoryId = options.repository
+      ? Number(/^github:(\d+)$/.exec(options.repository.key)?.[1])
+      : undefined;
+    if (options.repository && !Number.isSafeInteger(repositoryId))
+      throw new Error('Installed repository has an invalid key');
+    const result = (await this.operation('createRoom', {
+      workspaceId: options.communityId,
+      name,
+      ...(options.visibility ? { visibility: options.visibility } : {}),
+      ...(repositoryId !== undefined ? { repositoryId } : {}),
+    })) as { id: string };
+    options.onPublished?.();
+    return result.id;
   }
 
   async operation(name: string, input: unknown): Promise<unknown> {

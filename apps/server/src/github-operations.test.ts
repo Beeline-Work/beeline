@@ -320,4 +320,64 @@ describe('GitHub phone operations', () => {
       ).rows.map((row) => row.full_name),
     ).toEqual(['Beeline-Work/repo-78', 'owner/repo-77']);
   });
+
+  it('applies installation repository removal and revocation webhooks to the monolith catalog', async () => {
+    await database.query(
+      `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status) VALUES(77,$1,'42','owner','User','selected','active')`,
+      [HUMAN],
+    );
+    await database.query(
+      `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch) VALUES(101,77,'owner/removed','main')`,
+    );
+    const app = {
+      installationAccount: vi.fn(async () => ({
+        id: '42',
+        login: 'owner',
+        type: 'User' as const,
+        repositorySelection: 'selected' as const,
+      })),
+      listRepositories: vi.fn(async () => []),
+    } as unknown as GitHubAppClient;
+    const operations = new GitHubOperations(
+      database,
+      {} as GitHubOAuthClient,
+      app,
+      'secret',
+    );
+
+    await operations.processWebhook('installation_repositories', {
+      action: 'removed',
+      installation: { id: 77 },
+      repositories_removed: [{ id: 101, full_name: 'owner/removed' }],
+    });
+    expect(
+      (
+        await database.query<{ active: boolean }>(
+          `SELECT active FROM github_repositories WHERE repository_id=101`,
+        )
+      ).rows[0]?.active,
+    ).toBe(false);
+
+    await database.query(
+      `UPDATE github_repositories SET active=true WHERE repository_id=101`,
+    );
+    await operations.processWebhook('installation', {
+      action: 'deleted',
+      installation: { id: 77 },
+    });
+    expect(
+      (
+        await database.query<{ status: string }>(
+          `SELECT status FROM github_installations WHERE installation_id=77`,
+        )
+      ).rows[0]?.status,
+    ).toBe('revoked');
+    expect(
+      (
+        await database.query<{ active: boolean }>(
+          `SELECT active FROM github_repositories WHERE repository_id=101`,
+        )
+      ).rows[0]?.active,
+    ).toBe(false);
+  });
 });

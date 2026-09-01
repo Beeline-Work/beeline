@@ -193,4 +193,75 @@ describe('monolith Room send path', () => {
       }),
     );
   });
+
+  it('preserves the shared repository and installation shapes used by the repo picker', async () => {
+    controls.fetch.mockImplementation(async (url: string, init: RequestInit) => {
+      if (url.endsWith('/listGitHubRepositories')) {
+        return Response.json({
+          installed: true,
+          installations: [
+            {
+              installationId: 77,
+              accountId: '42',
+              accountLogin: 'owner',
+              accountType: 'User',
+              repositorySelection: 'selected',
+              status: 'active',
+              repositoryCount: 1,
+              manageUrl: 'https://github.com/settings/installations/77',
+            },
+          ],
+          repositories: [
+            { id: 101, fullName: 'owner/widgets', installationId: 77, defaultBranch: 'trunk' },
+          ],
+        });
+      }
+      const input = JSON.parse(String(init.body));
+      return Response.json({
+        channelId: ROOM,
+        binding: {
+          key: input.key,
+          name: input.name,
+          remote: input.remote,
+          localOnly: false,
+          githubInstallationId: input.githubInstallationId,
+        },
+        targetBranch: input.targetBranch,
+        githubEventsEnabled: true,
+        source: 'config',
+        updatedAt: 123,
+      });
+    });
+    const transport = new MonolithRigTransport(identity);
+
+    await expect(transport.workspaceGitHubAccess()).resolves.toEqual({
+      installed: true,
+      installations: [expect.objectContaining({ installationId: 77, accountLogin: 'owner' })],
+      candidates: [
+        {
+          key: 'github:101',
+          name: 'owner/widgets',
+          remote: 'git://github.com/owner/widgets',
+          githubInstallationId: 77,
+          defaultBranch: 'trunk',
+        },
+      ],
+    });
+    const linked = await transport.roomRepositorySet(ROOM, {
+      key: 'github:101',
+      name: 'owner/widgets',
+      remote: 'git://github.com/owner/widgets',
+      targetBranch: 'trunk',
+      githubInstallationId: 77,
+    });
+    expect(linked.binding.name).toBe('owner/widgets');
+    expect(JSON.parse(String(controls.fetch.mock.calls.at(-1)?.[1]?.body))).toEqual({
+      roomId: ROOM,
+      key: 'github:101',
+      name: 'owner/widgets',
+      remote: 'git://github.com/owner/widgets',
+      targetBranch: 'trunk',
+      githubInstallationId: 77,
+    });
+  });
 });

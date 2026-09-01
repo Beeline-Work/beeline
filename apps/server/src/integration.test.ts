@@ -8,7 +8,7 @@ import { TokenAuth, tokenHash } from './auth.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
-import { createBeelineServer } from './server.js';
+import { createBeelineServer, DEFAULT_MEDIA_MAXIMUM_BYTES } from './server.js';
 import { PushDeliveryLoop } from './background.js';
 import { GitHubOperations } from './github-operations.js';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
@@ -609,6 +609,7 @@ describe('monolith integration', () => {
   });
 
   it('stores and serves media bytes through token auth with the configured cap', async () => {
+    expect(DEFAULT_MEDIA_MAXIMUM_BYTES).toBe(25 * 1024 * 1024);
     const upload = await fetch(`${origin}/v1/phone/media`, {
       method: 'POST',
       headers: {

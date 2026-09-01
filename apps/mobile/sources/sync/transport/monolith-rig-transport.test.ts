@@ -139,6 +139,39 @@ describe('monolith Room send path', () => {
     expect(outbox.list()).toEqual([]);
   });
 
+  it('uploads raw media to the phone endpoint and adapts the shared attachment descriptor', async () => {
+    controls.fetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          url: 'https://server.example/v1/media/media-id',
+          name: 'upload',
+          mimeType: 'image/png',
+          size: 3,
+          sha256: 'a'.repeat(64),
+          thumbnailUrl: 'https://server.example/v1/media/thumb-id',
+        }),
+        { status: 201 },
+      ),
+    );
+    const transport = new MonolithRigTransport(identity);
+
+    await expect(transport.uploadMedia(new Uint8Array([1, 2, 3]), 'image/png')).resolves.toEqual({
+      url: 'https://server.example/v1/media/media-id',
+      type: 'image/png',
+      size: 3,
+      sha256: 'a'.repeat(64),
+      thumb: 'https://server.example/v1/media/thumb-id',
+    });
+    expect(controls.fetch).toHaveBeenCalledWith(
+      'https://server.example/v1/phone/media',
+      expect.objectContaining({
+        method: 'POST',
+        headers: { 'content-type': 'image/png' },
+        body: expect.any(Uint8Array),
+      }),
+    );
+  });
+
   it('reads the managed token identity instead of attempting a Nostr profile query', async () => {
     controls.fetch.mockResolvedValueOnce(
       new Response(

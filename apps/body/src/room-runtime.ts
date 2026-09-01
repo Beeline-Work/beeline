@@ -38,9 +38,20 @@ import {
 } from './session-scheduler.js';
 import { RoomQuarantineStateMachine } from './room-quarantine.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
+import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
+
+type RoomRuntimeLeaf = Pick<
+  Body,
+  | 'currentPrincipalCanDrive'
+  | 'dispatchScheduledTurn'
+  | 'isBusy'
+  | 'prepareForForcedUpdateRestart'
+  | 'refreshPersonaForSoulUpdate'
+  | 'forceRecoverRoom'
+>;
 
 interface RunningRoom {
-  body: Body;
+  body: RoomRuntimeLeaf;
   boundRepo?: BoundRepo;
   editPolicy: RoomEditPolicy;
   controller: AbortController;
@@ -1003,6 +1014,10 @@ export class RoomRuntimeCoordinator {
     // read clean origin state and never touch the operator's tree.
     let boundRepo: BoundRepo;
     boundRepo = await this.resolveServingRepo(room);
+    if (this.daemonApi) {
+      this.startMonolithRoom(channelId, boundRepo, 'repository');
+      return;
+    }
     const controller = new AbortController();
     const workspaceRoot = this.roomRoot(channelId, room);
     const config: BodyConfig = this.roomBodyConfig(workspaceRoot);
@@ -1016,7 +1031,6 @@ export class RoomRuntimeCoordinator {
     const body = new Body(config, runtimeIdentity(this.runtime.body), this.agent, {
       scheduler: this.scheduler,
       ...(this.relaySocket ? { relaySocket: this.relaySocket } : {}),
-      ...(this.daemonApi ? { daemonApi: this.daemonApi } : {}),
       statePath: resolve(workspaceRoot, 'body-state.json'),
       resolveNamedRepository: (target) => this.resolveNamedRepository(channelId, target),
       refreshRepositoryTruth: (repo, checkpoint) => this.refreshBoundRepo(repo, checkpoint),
@@ -1060,6 +1074,10 @@ export class RoomRuntimeCoordinator {
     channelId: string,
     kind: 'named-repository' | 'direct-message',
   ): void {
+    if (this.daemonApi) {
+      this.startMonolithRoom(channelId, undefined, kind);
+      return;
+    }
     const controller = new AbortController();
     const workspaceRoot = this.roomRoot(channelId);
     const config: BodyConfig = this.roomBodyConfig(workspaceRoot);
@@ -1067,7 +1085,6 @@ export class RoomRuntimeCoordinator {
     const body = new Body(config, runtimeIdentity(this.runtime.body), this.agent, {
       scheduler: this.scheduler,
       ...(this.relaySocket ? { relaySocket: this.relaySocket } : {}),
-      ...(this.daemonApi ? { daemonApi: this.daemonApi } : {}),
       statePath: resolve(workspaceRoot, 'body-state.json'),
       resolveNamedRepository: (target) => this.resolveNamedRepository(channelId, target),
       onRoomPollSuccess: () => this.notePoll(channelId),
@@ -1101,6 +1118,59 @@ export class RoomRuntimeCoordinator {
     console.log(
       `[thin-core] serving ${kind === 'direct-message' ? 'read-only DM' : 'repo-less Room'} ${channelId}`,
     );
+  }
+
+  private startMonolithRoom(
+    channelId: string,
+    boundRepo: BoundRepo | undefined,
+    editPolicy: RoomEditPolicy,
+  ): void {
+    if (!this.daemonApi) {
+      throw new Error('monolith Room turn loop requires an activated daemon API client');
+    }
+    if (this.relaySocket) {
+      throw new Error('monolith Room turn loop refuses a legacy relay socket');
+    }
+    const controller = new AbortController();
+    const workspaceRoot = this.roomRoot(channelId);
+    const config = this.roomBodyConfig(workspaceRoot);
+    const startedAt = this.now();
+    const turnLoop = new MonolithRoomTurnLoop({
+      roomId: channelId,
+      workspaceId: this.runtime.communityId,
+      cwd: boundRepo?.localPath ?? workspaceRoot,
+      runtime: this.runtime,
+      config,
+      api: this.daemonApi,
+      scheduler: this.scheduler,
+      signal: controller.signal,
+      health: {
+        poll: () => this.notePoll(channelId),
+        failure: (retryInMs) => this.notePollFailure(channelId, retryInMs),
+        presence: (status) => this.notePresence(channelId, status),
+      },
+    });
+    const promise = turnLoop
+      .run()
+      .catch((error) => {
+        if (!controller.signal.aborted) this.handleQuarantinedRoom(channelId, error);
+      })
+      .finally(() => {
+        if (this.running.get(channelId)?.body === turnLoop) this.running.delete(channelId);
+      });
+    this.running.set(channelId, {
+      body: turnLoop,
+      ...(boundRepo ? { boundRepo } : {}),
+      editPolicy,
+      controller,
+      promise,
+      lastPollAt: startedAt,
+      lastPresenceAt: startedAt,
+      presence: 'offline',
+      backoffUntil: 0,
+      recovering: false,
+    });
+    console.log(`[thin-core] serving monolith Room ${channelId} without legacy relay transport`);
   }
 
   private resolveNamedRepository(

@@ -1,5 +1,6 @@
 export type DaemonOperationMap = {
   getDaemonBootstrap: Operation<DaemonBootstrapInput, DaemonBootstrapResult>;
+  getWorkspaceRoster: Operation<WorkspaceRosterInput, WorkspaceRosterResult>;
   getRoomInbox: Operation<RoomCursorInput, RoomInboxResult>;
   getRoomConversation: Operation<RoomCursorInput, RoomConversationResult>;
   getRoomAuthority: Operation<RoomPrincipalInput, RoomAuthorityResult>;
@@ -76,9 +77,27 @@ export type TargetAgentAuthorityInput = AgentRoomInput & {
   readonly controllerAgentId: string;
 };
 export type DaemonBootstrapInput = AgentInput;
+export type WorkspaceRosterInput = AgentInput & { readonly workspaceId: string };
 export type DaemonBootstrapResult = {
   readonly workspaceIds: readonly string[];
   readonly rooms: readonly { readonly roomId: string; readonly archived: boolean }[];
+};
+export type WorkspaceRosterResult = {
+  readonly members: readonly {
+    readonly identityId: string;
+    readonly kind: 'human' | 'agent';
+    readonly name: string;
+    readonly handle?: string;
+    readonly role: 'owner' | 'admin' | 'member';
+    readonly soul?: {
+      readonly name: string;
+      readonly instructions: string;
+      readonly avatarSeed: string;
+      readonly avatar?: string;
+      readonly authoredBy: string;
+      readonly updatedAt: number;
+    };
+  }[];
 };
 export type RoomInboxResult = {
   readonly items: readonly {

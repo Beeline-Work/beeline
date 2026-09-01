@@ -33,6 +33,11 @@ export class DaemonService {
     switch (name) {
       case 'getDaemonBootstrap':
         return (await this.bootstrap(authenticatedAgentId)) as Output<Name>;
+      case 'getWorkspaceRoster':
+        return (await this.workspaceRoster(
+          input as Input<'getWorkspaceRoster'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
       case 'getRoomInbox':
       case 'getRoomConversation':
       case 'getCornerCloseRequests':
@@ -238,6 +243,67 @@ export class DaemonService {
     return {
       workspaceIds: workspaces.rows.map((row) => row.workspace_id),
       rooms: rooms.rows.map((row) => ({ roomId: row.room_id, archived: row.archived })),
+    };
+  }
+  private async workspaceRoster(input: Input<'getWorkspaceRoster'>, agentId: string) {
+    const access = await this.database.query(
+      `SELECT 1 FROM memberships
+       WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND removed_at IS NULL`,
+      [input.workspaceId, agentId],
+    );
+    if (!access.rowCount) throw new Error('workspace membership required');
+    const rows = await this.database.query<{
+      identity_id: string;
+      kind: 'human' | 'agent';
+      name: string;
+      handle: string | null;
+      role: 'owner' | 'admin' | 'member';
+      owner_id: string | null;
+      soul: {
+        name?: string;
+        instructions?: string;
+        avatarSeed?: string;
+        avatar?: string;
+      } | null;
+      agent_updated_at: Date | null;
+    }>(
+      `SELECT m.identity_id,
+         COALESCE(m.identity_profile->>'kind',i.kind) kind,
+         COALESCE(m.identity_profile->>'name',i.name) name,
+         CASE WHEN m.identity_profile IS NOT NULL THEN m.identity_profile->>'handle' ELSE i.handle END handle,
+         m.role,a.owner_id,a.soul,a.updated_at agent_updated_at
+       FROM memberships m
+       JOIN identities i ON i.id=m.identity_id
+       LEFT JOIN agents a ON a.agent_id=i.id
+       WHERE m.workspace_id=$1 AND m.room_id IS NULL AND m.removed_at IS NULL
+         AND i.hidden_from_roster=false
+       ORDER BY i.kind,i.name,i.id`,
+      [input.workspaceId],
+    );
+    return {
+      members: rows.rows.map((row) => ({
+        identityId: row.identity_id,
+        kind: row.kind,
+        name: row.name,
+        ...(row.handle ? { handle: row.handle } : {}),
+        role: row.role,
+        ...(row.kind === 'agent' &&
+        row.soul?.name &&
+        typeof row.soul.instructions === 'string' &&
+        row.owner_id &&
+        row.agent_updated_at
+          ? {
+              soul: {
+                name: row.soul.name,
+                instructions: row.soul.instructions,
+                avatarSeed: row.soul.avatarSeed ?? row.identity_id,
+                ...(row.soul.avatar ? { avatar: row.soul.avatar } : {}),
+                authoredBy: row.owner_id,
+                updatedAt: seconds(row.agent_updated_at),
+              },
+            }
+          : {}),
+      })),
     };
   }
   private async inbox(name: string, input: Input<'getRoomInbox'>, agentId: string) {
@@ -938,6 +1004,7 @@ export class DaemonService {
 
 export const DAEMON_OPERATION_NAMES = new Set<keyof DaemonOperationMap>([
   'getDaemonBootstrap',
+  'getWorkspaceRoster',
   'getRoomInbox',
   'getRoomConversation',
   'getRoomAuthority',

@@ -3,7 +3,11 @@ import { readFileSync } from 'node:fs';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ChatDisplayMessage } from '@/buzz/room-view-presentation';
+import {
+  conversationIdentityByPubkey,
+  type ChatDisplayMessage,
+} from '@/buzz/room-view-presentation';
+import { selectComposerAckPresentation } from '@/buzz/room-indicators';
 
 const ledgerEntryRender = vi.hoisted(() => vi.fn());
 const conversationSource = readFileSync(new URL('./[channelId].tsx', import.meta.url), 'utf8');
@@ -250,9 +254,17 @@ describe('Room message variant components', () => {
 
   it('uses the current server author label and shared mention renderer over stale roster data', () => {
     const agentPubkey = 'agent';
+    const currentIdentityMessage = message({
+      id: 'current-identity',
+      text: '@codex has the latest result',
+      pubkey: agentPubkey,
+      isAgentAuthor: true,
+      authorIdentity: { pubkey: agentPubkey, kind: 'agent', name: 'CODEX', handle: 'codex' },
+      mentionPubkeys: [agentPubkey],
+    });
     render(
       <OrdinaryLedgerMessage
-        message={message({ id: 'current-identity', text: '@codex has the latest result', pubkey: agentPubkey, isAgentAuthor: true, authorIdentity: { pubkey: agentPubkey, kind: 'agent', name: 'Codex', handle: 'codex' }, mentionPubkeys: [agentPubkey] })}
+        message={currentIdentityMessage}
         agent={{ pubkey: agentPubkey, displayName: 'Arlo' }}
         participantsHydrated
         viewerPubkey="viewer"
@@ -269,6 +281,15 @@ describe('Room message variant components', () => {
       />,
     );
 
-    expect(ledgerEntryRender.mock.lastCall?.[0]).toMatchObject({ byline: { name: 'Codex' }, mentionHandles: ['codex'] });
+    expect(ledgerEntryRender.mock.lastCall?.[0]).toMatchObject({ byline: { name: 'CODEX' }, mentionHandles: ['codex'] });
+    expect(
+      selectComposerAckPresentation({
+        isCorner: true,
+        agentsOffline: false,
+        activeTurnPubkey: agentPubkey,
+        now: 1,
+        conversationIdentities: conversationIdentityByPubkey([], [currentIdentityMessage]),
+      }),
+    ).toEqual({ label: 'CODEX thinking…', tone: 'live' });
   });
 });

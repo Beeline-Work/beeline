@@ -9,6 +9,7 @@ import {
   humanBranchName,
   pinnedCornerVerb,
   selectComposerAckState,
+  selectComposerAckPresentation,
   selectPinnedCorner,
   selectTurnProgressAgentPubkey,
 } from './room-indicators';
@@ -240,6 +241,20 @@ describe('composer ack presentation', () => {
         now: NOW + COMPOSER_ACK_BOUND_MS + 5_000,
       }),
     ).toEqual({ kind: 'thinking', agentPubkey: 'agent-1' });
+  });
+
+  it('keeps the visibly synthetic name when the active agent has no server identity', () => {
+    const pubkey = '54f4d261'.padEnd(64, '0');
+
+    expect(
+      selectComposerAckPresentation({
+        isCorner: true,
+        agentsOffline: false,
+        activeTurnPubkey: pubkey,
+        now: NOW,
+        conversationIdentities: new Map(),
+      }),
+    ).toEqual({ label: 'Agent 54f4d261 thinking…', tone: 'live' });
   });
 
   it('recognizes a terminal receipt for the sent message after the agent has replied', () => {

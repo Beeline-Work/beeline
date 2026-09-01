@@ -1,6 +1,6 @@
 # @beeline/server
 
-Phase B's off-path Beeline monolith. It is one framework-free TypeScript process backed by one PostgreSQL database. Nothing in this package is wired into the production phone, daemon, relay, auth service, or push gateway.
+Beeline's production monolith is one framework-free TypeScript process backed by one PostgreSQL database. It serves the token-authenticated phone and daemon contracts, mounts the GitHub identity routes, and owns monolith GitHub App callbacks and webhooks.
 
 ## Surfaces
 
@@ -9,6 +9,7 @@ Phase B's off-path Beeline monolith. It is one framework-free TypeScript process
 - `/v1/phone/*`: the complete indexed phone read surface, named writes from `@beeline/api-contract/phone`, read marks, media, GitHub room tokens, push registration, and OTA receipts.
 - `/v1/phone/live`: authenticated WebSocket invalidation plus draft, thought, and presence overlays.
 - `/v1/daemon/operations/:name`: only names in `DaemonOperationMap`. There is no event filter, event query, or generic publish endpoint.
+- `/v1/github/install/callback`: one-use GitHub App installation completion.
 - `/v1/github/webhook`: signature-checked, delivery-ID-deduplicated GitHub events.
 - `/healthz`: process health.
 

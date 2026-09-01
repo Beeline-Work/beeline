@@ -1422,17 +1422,29 @@ export class PhoneService {
   }
   private async setRepository(input: Input<'setRoomRepository'>, viewerId: string) {
     await this.requireManager(input.roomId, viewerId);
+    if (input.githubInstallationId !== undefined) {
+      const repositoryId = input.key.match(/^github:(\d+)$/)?.[1];
+      const fullName = input.remote.match(/^git:\/\/github\.com\/([^/\s]+\/[^/\s]+)$/i)?.[1];
+      if (!repositoryId || !fullName || input.name.toLowerCase() !== fullName.toLowerCase())
+        throw new Error('GitHub repository binding is invalid');
+      const access = await this.database.query(
+        `SELECT 1 FROM github_repositories r JOIN github_installations i USING(installation_id) WHERE r.repository_id=$1 AND r.installation_id=$2 AND lower(r.full_name)=lower($3) AND r.active AND i.owner_id=$4 AND i.status='active'`,
+        [repositoryId, input.githubInstallationId, fullName, viewerId],
+      );
+      if (!access.rowCount) throw new Error('GitHub repository access denied');
+    }
     await this.database.query(
-      `UPDATE rooms SET repository_key=$2,repository_remote=$3,repository_target_branch=$4,github_installation_id=$5,updated_at=now() WHERE id=$1`,
+      `UPDATE rooms SET repository_key=$2,repository_name=$3,repository_remote=$4,repository_target_branch=$5,github_installation_id=$6,repository_updated_at=now(),repository_resolution='repository',updated_at=now() WHERE id=$1`,
       [
         input.roomId,
         input.key,
+        input.name,
         input.remote,
         input.targetBranch,
         input.githubInstallationId ?? null,
       ],
     );
-    return { ...input, updatedAt: Math.floor(Date.now() / 1000), githubEventsEnabled: true };
+    return this.roomRepository(input.roomId);
   }
   private async roomRepository(roomId: string) {
     const row = (await this.database.query<RoomRow>(`SELECT * FROM rooms WHERE id=$1`, [roomId]))
@@ -1440,31 +1452,38 @@ export class PhoneService {
     if (!row?.repository_key || !row.repository_remote)
       throw new Error('room repository not configured');
     return {
-      roomId,
-      key: row.repository_key,
-      remote: row.repository_remote,
+      channelId: roomId,
+      binding: {
+        key: row.repository_key,
+        name: row.repository_name ?? row.repository_key,
+        remote: row.repository_remote,
+        localOnly: false as const,
+        ...(row.github_installation_id
+          ? { githubInstallationId: Number(row.github_installation_id) }
+          : {}),
+      },
       targetBranch: row.repository_target_branch,
-      ...(row.github_installation_id
-        ? { githubInstallationId: Number(row.github_installation_id) }
-        : {}),
-      updatedAt: unix(row.updated_at),
+      updatedAt: unix(row.repository_updated_at ?? row.updated_at),
       githubEventsEnabled: row.github_events_enabled,
+      source: 'config' as const,
     };
   }
   private async setTargetBranch(input: Input<'setRoomTargetBranch'>, viewerId: string) {
     await this.requireManager(input.roomId, viewerId);
-    await this.database.query(
-      `UPDATE rooms SET repository_target_branch=$2,updated_at=now() WHERE id=$1`,
+    const updated = await this.database.query(
+      `UPDATE rooms SET repository_target_branch=$2,repository_updated_at=now(),updated_at=now() WHERE id=$1 AND repository_key IS NOT NULL AND repository_remote IS NOT NULL`,
       [input.roomId, input.targetBranch],
     );
+    if (!updated.rowCount) throw new Error('room repository not configured');
     return this.roomRepository(input.roomId);
   }
   private async setGitHubEvents(input: Input<'setRoomGitHubEvents'>, viewerId: string) {
     await this.requireManager(input.roomId, viewerId);
-    await this.database.query(
-      `UPDATE rooms SET github_events_enabled=$2,updated_at=now() WHERE id=$1`,
+    const updated = await this.database.query(
+      `UPDATE rooms SET github_events_enabled=$2,repository_updated_at=now(),updated_at=now() WHERE id=$1 AND repository_key IS NOT NULL AND repository_remote IS NOT NULL`,
       [input.roomId, input.enabled],
     );
+    if (!updated.rowCount) throw new Error('room repository not configured');
     return this.roomRepository(input.roomId);
   }
   private async managedIdentity(viewerId: string) {
@@ -1484,17 +1503,47 @@ export class PhoneService {
     };
   }
   private async listRepositories(viewerId: string) {
+    const installations = await this.database.query<{
+      installation_id: string;
+      account_id: string | null;
+      account_login: string;
+      account_type: 'User' | 'Organization';
+      account_avatar_url: string | null;
+      repository_selection: 'all' | 'selected';
+      status: 'active' | 'revoked' | 'suspended';
+      repository_count: string;
+    }>(
+      `SELECT i.*,count(r.repository_id) FILTER (WHERE r.active)::text repository_count FROM github_installations i LEFT JOIN github_repositories r USING(installation_id) WHERE i.owner_id=$1 GROUP BY i.installation_id ORDER BY lower(i.account_login),i.installation_id`,
+      [viewerId],
+    );
     const rows = await this.database.query<{
       repository_id: string;
       full_name: string;
       installation_id: string;
       default_branch: string;
     }>(
-      `SELECT r.* FROM github_repositories r JOIN github_installations i USING(installation_id) WHERE i.owner_id=$1 AND r.active`,
+      `SELECT r.* FROM github_repositories r JOIN github_installations i USING(installation_id) WHERE i.owner_id=$1 AND i.status='active' AND r.active`,
       [viewerId],
     );
     return {
-      installed: rows.rows.length > 0,
+      installed: installations.rows.some((row) => row.status === 'active'),
+      installations: installations.rows.map((row) => ({
+        installationId: Number(row.installation_id),
+        // Pre-cutover imports did not retain GitHub's numeric account id. The
+        // login is still a stable, non-empty display grouping until the next
+        // refresh backfills the authoritative id from GitHub.
+        accountId: row.account_id ?? row.account_login,
+        accountLogin: row.account_login,
+        accountType: row.account_type,
+        ...(row.account_avatar_url ? { accountAvatarUrl: row.account_avatar_url } : {}),
+        repositorySelection: row.repository_selection,
+        status: row.status,
+        repositoryCount: Number(row.repository_count),
+        manageUrl:
+          row.account_type === 'Organization'
+            ? `https://github.com/organizations/${encodeURIComponent(row.account_login)}/settings/installations/${row.installation_id}`
+            : `https://github.com/settings/installations/${row.installation_id}`,
+      })),
       repositories: rows.rows.map((row) => ({
         id: Number(row.repository_id),
         fullName: row.full_name,

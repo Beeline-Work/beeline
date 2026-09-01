@@ -236,7 +236,7 @@ describe('agent pairing and soul overlays', () => {
     );
 
     const pairing = await createAgentPairingCode(ctx(), communityId, 600);
-    expect(pairing.code).toMatch(/^BUZZ-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/);
+    expect(pairing.code).toMatch(/^[0-9A-F]{8}-[0-9A-F]{8}$/);
     expect(JSON.stringify(pairing.event)).not.toContain(pairing.code);
     expect(pairing.event.kind).toBe(KIND_COMMUNITY_INVITE);
     expect(pairing.event.tags).toContainEqual(['t', TAG_AGENT_PAIRING]);

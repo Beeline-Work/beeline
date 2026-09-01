@@ -1,4 +1,5 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createAgentPairingCode } from '@beeline/api-contract/phone';
 import type {
   AgentDetailView,
   AgentPairingClaimView,
@@ -1587,7 +1588,7 @@ export class PhoneService {
   }
   private async createPairing(input: Input<'createAgentPairingCode'>, viewerId: string) {
     await this.requireWorkspaceManager(input.workspaceId, viewerId);
-    const code = `BUZZ-${randomBytes(4).toString('hex').toUpperCase()}-${randomBytes(4).toString('hex').toUpperCase()}`;
+    const code = createAgentPairingCode(randomBytes(8));
     const expiresAt = Date.now() + 15 * 60_000;
     await this.database.query(
       `INSERT INTO agent_pairing_codes(code_hash,workspace_id,created_by,expires_at) VALUES($1,$2,$3,$4)`,

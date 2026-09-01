@@ -19,7 +19,7 @@ const client = vi.hoisted(() => ({
   surfaceSubscribe: vi.fn(async () => vi.fn()),
   createInvite: vi.fn(async () => ({ token: `bzi_${'e'.repeat(64)}` })),
   createAgentPairingCode: vi.fn(async () => ({
-    code: 'BZA_TEST_PAIRING',
+    code: '1234ABCD-5678EF90',
     expiresAt: 2_000_000_000,
   })),
 }));
@@ -226,7 +226,7 @@ describe('Members agent invitation flow', () => {
     expect(renderer.root.findByProps({ testID: 'invite-agent-flow' })).toBeDefined();
     expect(client.createAgentPairingCode).toHaveBeenCalledWith(WORKSPACE);
     const command = renderer.root.findByProps({ testID: 'pair-agent-command' }).props.children;
-    expect(command).toBe('npx usebeeline connect BZA_TEST_PAIRING');
+    expect(command).toBe('npx usebeeline connect 1234ABCD-5678EF90');
   });
 
   it('honours the person-invite deep link without a second tap', async () => {

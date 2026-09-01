@@ -1,6 +1,7 @@
 import type { GitHubIdentity } from './github.js';
 import type { AuthRouteContext } from './server-context.js';
 import { agentConnectApprovedPage } from './server-agent-connect-routes.js';
+import { verifyPhoneGitHubTicket } from './phone-github-ticket.js';
 export function registerServerOidcIdentityRoutes(context: AuthRouteContext): void {
   const {
     app,
@@ -49,21 +50,23 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
   app.post('/auth/github/phone-exchange', async (request, reply) => {
     const tenant = tenantFor(request);
     const body = request.body as Record<string, unknown>;
-    if (typeof body.ticket !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(body.ticket)) {
+    if (typeof body.ticket !== 'string') {
       throw new ProtocolError(400, 'invalid_ticket', 'GitHub exchange ticket is invalid');
     }
-    const result = await options.store.consumeTicketForPhone(sha256(body.ticket), tenant.community, now());
+    const result = await verifyPhoneGitHubTicket(
+      options.store,
+      tenant.community,
+      body.ticket,
+      now(),
+    );
     noStore(reply);
-    if (result.status !== 'exchanged') {
+    if (result.status === 'invalid') {
+      throw new ProtocolError(400, 'invalid_ticket', 'GitHub exchange ticket is invalid');
+    }
+    if (result.status !== 'verified') {
       return reply.code(401).send({ error: `github_ticket_${result.status}` });
     }
-    const login = result.ticket.providerLogin?.trim();
-    if (!login) throw new ProtocolError(500, 'invalid_ticket_identity', 'GitHub ticket has no login');
-    return reply.send({
-      subject: result.ticket.subject,
-      login,
-      name: result.ticket.providerDisplayName?.trim() || login,
-    });
+    return reply.send(result.identity);
   });
 
   app.get('/auth/github/mobile-callback', async (request, reply) => {

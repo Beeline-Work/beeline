@@ -5,6 +5,12 @@ const source = (relativePath: string): string =>
   readFileSync(new URL(`../${relativePath}`, import.meta.url), 'utf8');
 
 describe('GitHub-only mobile sign-in surface', () => {
+  it('starts monolith sign-in on the monolith auth host', () => {
+    expect(source('app/(app)/buzz/onboarding.tsx')).toContain(
+      'startGitHubBind(getBuzzRuntimeConfig().monolithUrl',
+    );
+  });
+
   it('has no legacy callback routes or provider-selection module', () => {
     expect(existsSync(new URL('../app/(app)/buzz/oidc-callback.tsx', import.meta.url))).toBe(false);
     expect(

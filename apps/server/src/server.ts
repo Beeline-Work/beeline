@@ -24,6 +24,7 @@ export interface ServerOptions {
   live: LiveHub;
   mediaMaximumBytes: number;
   github?: GitHubServerHooks;
+  authHandler?: (request: IncomingMessage, response: ServerResponse) => void;
 }
 
 function json(response: ServerResponse, status: number, body: unknown): void {
@@ -180,6 +181,15 @@ async function route(
 ): Promise<void> {
   const url = exactPath(request.url);
   const method = request.method ?? 'GET';
+  if (
+    options.authHandler &&
+    (url.pathname.startsWith('/auth/') ||
+      url.pathname.startsWith('/nip05/') ||
+      url.pathname === '/.well-known/nostr.json')
+  ) {
+    options.authHandler(request, response);
+    return;
+  }
   if (method === 'GET' && url.pathname === '/healthz') {
     json(response, 200, { ok: true });
     return;

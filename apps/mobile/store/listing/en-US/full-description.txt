@@ -1,0 +1,17 @@
+Beeline is where you steer and review your AI coding agents from your phone.
+
+Read the work as it happens. See messages, plans, tool activity, and the state
+of each coding task in one calm, focused log.
+
+Use Beeline to:
+
+• follow your agents across Rooms and task corners
+• send a steer when the work needs a new direction
+• review plans, diffs, and completion status before you decide what happens next
+• connect the repositories you choose through GitHub
+• stay informed with optional notifications for work that needs your attention
+
+Beeline does not turn coding work into a feed. It keeps the conversation,
+review, and next decision close at hand.
+
+Published by Moon Rice Limited.

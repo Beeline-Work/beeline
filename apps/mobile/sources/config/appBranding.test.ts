@@ -292,6 +292,25 @@ describe('Beeline display branding', () => {
     );
   });
 
+  it('keeps review-only store submission profiles explicit for both tracks', () => {
+    const submissionProfiles = JSON.parse(easConfig).submit as Record<string, unknown>;
+    expect(submissionProfiles.production).toMatchObject({
+      android: {
+        serviceAccountKeyPath: '$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON',
+        track: 'internal',
+        releaseStatus: 'draft',
+      },
+    });
+    expect(submissionProfiles.beta).toMatchObject({
+      extends: 'production',
+      android: {
+        serviceAccountKeyPath: '$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON',
+        track: 'beta',
+        releaseStatus: 'draft',
+      },
+    });
+  });
+
   it('ships the registered Beeline Firebase client for every build path', () => {
     const mobileRoot = fileURLToPath(new URL('../..', import.meta.url));
     const configuredPaths = [undefined, 'development', 'preview', 'production'].map(

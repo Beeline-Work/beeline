@@ -23,6 +23,12 @@ const actions = [
     description: "Run production store builds and auto-submit",
     scripts: ["release:build:appstore"],
   },
+  {
+    id: "stores-beta",
+    label: "Store beta build",
+    description: "Build both store binaries and upload review drafts to Play beta and TestFlight",
+    scripts: ["release:build:stores:beta"],
+  },
 ];
 
 const actionAliases = {
@@ -33,6 +39,9 @@ const actionAliases = {
   appstore: "appstore-build",
   store: "appstore-build",
   "appstore-build": "appstore-build",
+  "stores-beta": "stores-beta",
+  "store-beta": "stores-beta",
+  "beta": "stores-beta",
 };
 
 function findAction(input) {

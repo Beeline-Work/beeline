@@ -75,4 +75,4 @@ jobs:
             echo "usebeeline@${{ steps.version.outputs.value }} is already published"
             exit 0
           fi
-          npm publish --workspace usebeeline
+          npm publish --no-provenance --workspace usebeeline

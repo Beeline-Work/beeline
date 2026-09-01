@@ -57,7 +57,9 @@ describe('phone contract', () => {
     expect(code).toBe('00010203-04050607');
     expect(isAgentPairingCode(code)).toBe(true);
     expect(isAgentPairingCode('BUZZ-1234ABCD-5678EF90')).toBe(true);
+    expect(isAgentPairingCode('BUZZ-4S4P-ZPJP')).toBe(true);
     expect(isAgentPairingCode('BEE-1234ABCD-5678EF90')).toBe(false);
+    expect(isAgentPairingCode('BUZZ-1111-1111')).toBe(false);
     expect(isAgentPairingCode('1234ABCD-5678EF9')).toBe(false);
     expect(normalizeAgentPairingCode('  1234abcd-5678ef90  ')).toBe('1234ABCD-5678EF90');
   });

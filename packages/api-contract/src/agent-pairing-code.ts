@@ -6,7 +6,8 @@
 export const AGENT_PAIRING_CODE_ENTROPY_BYTES = 8;
 
 const CURRENT_AGENT_PAIRING_CODE = /^[0-9A-F]{8}-[0-9A-F]{8}$/;
-const LEGACY_AGENT_PAIRING_CODE = /^BUZZ-[A-Z0-9]{4,8}-[A-Z0-9]{4,8}$/;
+const LEGACY_AGENT_PAIRING_CODE =
+  /^BUZZ-(?:[0-9A-F]{8}-[0-9A-F]{8}|[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4})$/;
 
 export function normalizeAgentPairingCode(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;

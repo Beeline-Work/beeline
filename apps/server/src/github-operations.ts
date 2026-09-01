@@ -142,8 +142,7 @@ export class GitHubOperations {
         hash(state),
       ]);
       const redirect = new URL(flow.redirect_uri);
-      redirect.searchParams.set('installation_id', String(installationId));
-      redirect.searchParams.set('setup_action', 'install');
+      redirect.searchParams.set('installed', '1');
       return redirect.toString();
     });
   }
@@ -153,7 +152,31 @@ export class GitHubOperations {
       `SELECT installation_id FROM github_installations WHERE owner_id=$1 AND status='active'`,
       [viewerId],
     );
-    for (const row of rows.rows) await this.syncInstallation(viewerId, Number(row.installation_id));
+    const installationIds = new Set(rows.rows.map((row) => Number(row.installation_id)));
+    const credential = (
+      await this.database.query<{ subject: string; encrypted_token: string | null }>(
+        `SELECT l.subject,t.encrypted_token FROM identity_external_links l LEFT JOIN github_user_tokens t ON t.subject=l.subject AND t.stale_at IS NULL WHERE l.provider='github' AND l.identity_id=$1`,
+        [viewerId],
+      )
+    ).rows[0];
+    if (credential) {
+      const installations = await this.app.listInstallations();
+      const administered = credential.encrypted_token
+        ? new Set(await this.app.listUserInstallationIds(this.open(credential.encrypted_token)))
+        : new Set<number>();
+      for (const installation of installations) {
+        if (
+          installation.account.type === 'User'
+            ? installation.account.id === credential.subject
+            : administered.has(installation.installationId)
+        ) {
+          installationIds.add(installation.installationId);
+        }
+      }
+    }
+    for (const installationId of installationIds) {
+      await this.syncInstallation(viewerId, installationId);
+    }
   }
 
   async createRepository(viewerId: string, input: Input<'createGitHubRepository'>) {

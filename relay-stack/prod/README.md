@@ -1,20 +1,21 @@
 # Production relay stack (tracked)
 
-This directory is the **production** stack config, deployed by
-`scripts/deploy-relay-host.sh` on every merge to `main`. It is NOT the same
-stack as `relay-stack/compose.yml` + `relay-stack/nginx.conf` one level up:
+This directory preserves the **retired production relay** stack config. Unified
+releases no longer deploy it; the monolith server is deployed to Fly.io. It is
+NOT the same stack as `relay-stack/compose.yml` + `relay-stack/nginx.conf` one
+level up:
 
 |                 | `relay-stack/` (gate)             | `relay-stack/prod/` (this dir)        |
 | --------------- | --------------------------------- | ------------------------------------- |
 | compose project | `buzzy-gate`                      | `buzz-router-prod`                    |
-| purpose         | isolated Phase-0 merge-gate proof | the live relay behind usebeeline.app  |
-| deploy path     | `npm run stack:up` (manual/local) | CI via `scripts/deploy-relay-host.sh` |
+| purpose         | isolated Phase-0 merge-gate proof | retired production relay reference    |
+| deploy path     | `npm run stack:up` (manual/local) | retired; no unified-release deploy    |
 
 Keep them separate on purpose: the gate stack serves the merge-gate proof and
 must stay untouched by production deploys; this directory reproduces the
-production host's `/home/lunchbox/buzz-router-relay-prod/{compose.yml,
-relay-front/nginx.conf}` so infra changes actually reach production through
-the pipeline instead of being hand-applied (or silently landing nowhere).
+production host's former
+`/home/lunchbox/buzz-router-relay-prod/{compose.yml,relay-front/nginx.conf}`
+layout for historical and emergency-reference purposes.
 
 ## Secrets
 
@@ -25,11 +26,9 @@ paths and defaults only.
 
 ## Privileged steps
 
-The runner user cannot read/write the lunchbox-owned host config files, so the
-deploy goes through fixed-argument passwordless sudo rules. The exact lines
-required are documented in the header of `scripts/deploy-relay-host.sh`; if a
-rule is missing the deploy fails loudly at that step rather than working
-around it.
+The retired host promotion and its fixed-argument sudo rules have been removed
+from the unified release. Do not restore those permissions for the Fly.io
+monolith deployment.
 
 ## Materializer topology
 
@@ -42,12 +41,9 @@ Compose health proves the indexer rejects an unsigned `/workspaces` read with
 `401`; public deployment verification checks that gate plus the independent
 `/push/health` FCM surface. Index reads do not depend on Firebase readiness.
 
-The deploy script disables the superseded `beeline-events.service`, stops and
-verifies every legacy or current tail container, then performs a one-way
-Compose convergence. A failed cutover never reactivates legacy reservation
-owners; it stops and prints exact commands for continuing the materializer
-forward. Its fixed sudo command shapes are documented at the top of
-`scripts/deploy-relay-host.sh`.
+The former deploy script performed the one-way Compose convergence. That path
+is retired; current server releases must not reactivate legacy reservation
+owners or promote this stack.
 
 ## Preview-origin operator provisioning
 

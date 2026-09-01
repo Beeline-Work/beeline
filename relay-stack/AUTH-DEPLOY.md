@@ -46,12 +46,12 @@ docker compose --env-file .env up -d --no-deps auth
 docker compose --env-file .env ps auth
 ```
 
-Production nginx configuration is tracked in `relay-stack/prod/nginx.conf` and
-normally reaches the host through `scripts/deploy-relay-host.sh`. The
+Production nginx configuration for the retired relay stack remains tracked in
+`relay-stack/prod/nginx.conf`, but unified releases no longer deploy it. The
 production relay-front deliberately loads that file through the enclosing
 read-only `relay-front/` directory bind. Do not change it back to a single-file
-bind: an atomic host-side replacement would leave the running container pinned
-to the old inode, so a successful nginx reload would still read stale bytes.
+bind during manual maintenance: an atomic host-side replacement would leave
+the running container pinned to the old inode.
 
 For an emergency manual change, back up the live file, validate the candidate
 on `buzz-net`, place it under the directory bind, then HUP **only** relay-front.

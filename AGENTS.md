@@ -117,8 +117,8 @@ Committed home for project-intrinsic agent knowledge: rule + authoritative file 
 
 ## Production host deploy
 
-- `deploy-host.yml` is a reusable build/promote leg of the unified release and runs `scripts/deploy-relay-host.sh` on a self-hosted runner ON the host (`beeline-runner`, label `beeline-prod-host`; sudoers rules enumerated in the script header — never widen in script). Swaps `relay-stack/web/` in place (inode kept; rsync `-a -O --no-p --no-o --no-g`); verifies PUBLIC URL against the CHECKOUT; auto-rollback from `web-backups/`.
-- Two stacks: `relay-stack/` = isolated gate stack; `relay-stack/prod/` = production (its `README.md`); nginx stays under the `./relay-front:/etc/beeline-front` directory bind. **One `materializer` process owns push delivery + repo-event ingestion** (`apps/push-gateway/src/index.ts`); the retired `beeline-events.service`/standalone gateway must not return. Coverage: `npm run test:deploy`.
+- `deploy-host.yml` keeps the reusable server artifact build but promotes the monolith with `flyctl deploy` to Fly app `beeline-server`; `unified-release.yml` confirms `server.usebeeline.app/readyz` plus the exact image identity from `/version` before daemon or OTA promotion. The retired relay-host deployment script has been removed.
+- Two retained stack definitions: `relay-stack/` = isolated gate stack; `relay-stack/prod/` = retired production reference (its `README.md`). **One `materializer` process owns push delivery + repo-event ingestion** (`apps/push-gateway/src/index.ts`); the retired `beeline-events.service`/standalone gateway must not return. Coverage: `npm run test:deploy`.
 
 ## Mobile OTA release
 

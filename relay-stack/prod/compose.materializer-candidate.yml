@@ -1,7 +1,6 @@
-# Temporary, side-effect-free RoomView backend used by the production deploy.
-#
-# deploy-relay-host.sh copies this alongside the staged compose.yml and starts
-# it under the separate `buzz-router-prod-cutover` project.  It joins the live
+# Historical temporary, side-effect-free RoomView backend from the retired
+# relay-host production deploy. It ran under the separate
+# `buzz-router-prod-cutover` project and joined the live
 # network under the stable `materializer-next` name, so nginx can move only the
 # RoomView traffic after its healthcheck passes.  The real materializer remains
 # the sole push-delivery and repository-events owner; this candidate serves

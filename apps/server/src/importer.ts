@@ -41,11 +41,14 @@ export interface LegacyRoom {
   directParticipants?: string[];
   repository?: {
     key: string;
+    name?: string;
     remote: string;
     targetBranch: string;
     githubInstallationId?: number;
     githubEventsEnabled?: boolean;
+    updatedAt?: number;
   };
+  repositoryResolution?: 'repository' | 'none' | 'unverified';
   createdAt: number;
   updatedAt: number;
 }
@@ -56,6 +59,7 @@ export interface LegacyMembership {
   role: 'owner' | 'admin' | 'member';
   removed: boolean;
   generation?: number;
+  identity?: Pick<LegacyIdentity, 'kind' | 'name' | 'handle' | 'avatar'>;
 }
 export interface LegacyEvent {
   id: string;
@@ -146,6 +150,11 @@ export interface ImportReport {
   mediaBytes: number;
 }
 
+export interface SnapshotImportOptions {
+  /** Legacy media is deliberately excluded from production cutovers by default. */
+  includeMedia?: boolean;
+}
+
 function fingerprint(snapshot: LegacySnapshot): string {
   const digest = createHash('sha256');
   digest.update(JSON.stringify({ ...snapshot, media: undefined }));
@@ -175,6 +184,29 @@ function card(message: RoomViewMessage): { type: string | null; value: unknown }
   return { type: null, value: null };
 }
 
+const CONVERSATION_MARKERS = new Set([
+  'agent-message',
+  'buzz-agent-exchange',
+  'buzz-agent-delegation',
+  'buzz-agent-request',
+  'buzz-attachment',
+]);
+
+function isConversationPageCandidate(
+  event: LegacyEvent,
+  projected: RoomViewMessage | undefined,
+): boolean {
+  if (event.kind !== 9) return false;
+  const markers = event.tags
+    .filter((tag) => tag[0] === 't' && Boolean(tag[1]))
+    .map((tag) => tag[1]!);
+  if (markers.includes('buzz-agent-model-unavailable')) return false;
+  const ordinary =
+    markers.every((marker) => CONVERSATION_MARKERS.has(marker)) &&
+    (event.content.trim().length > 0 || markers.includes('buzz-attachment'));
+  return ordinary || projected?.presentation === 'message';
+}
+
 function mediaPath(value: string | undefined): string | undefined {
   if (!value) return undefined;
   try {
@@ -192,6 +224,7 @@ export class SnapshotImporter {
     snapshot: LegacySnapshot,
     requestedImportId?: string,
     failAfter?: number,
+    options: SnapshotImportOptions = {},
   ): Promise<ImportReport> {
     const sourceFingerprint = fingerprint(snapshot);
     const importId = requestedImportId ?? sourceFingerprint.slice(0, 24);
@@ -304,7 +337,7 @@ export class SnapshotImporter {
       for (const row of snapshot.rooms)
         await one('room', row.id, async (db) => {
           await db.query(
-            `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name,about,avatar,visibility,archived_at,direct_participants,repository_key,repository_remote,repository_target_branch,github_installation_id,github_events_enabled,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$14,$15,$16,$17) ON CONFLICT(id) DO UPDATE SET created_by=EXCLUDED.created_by,name=EXCLUDED.name,about=EXCLUDED.about,avatar=EXCLUDED.avatar,visibility=EXCLUDED.visibility,archived_at=EXCLUDED.archived_at,repository_key=EXCLUDED.repository_key,repository_remote=EXCLUDED.repository_remote,repository_target_branch=EXCLUDED.repository_target_branch,updated_at=EXCLUDED.updated_at`,
+            `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name,about,avatar,visibility,archived_at,direct_participants,repository_key,repository_name,repository_remote,repository_target_branch,repository_updated_at,repository_resolution,github_installation_id,github_events_enabled,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) ON CONFLICT(id) DO UPDATE SET created_by=EXCLUDED.created_by,name=EXCLUDED.name,about=EXCLUDED.about,avatar=EXCLUDED.avatar,visibility=EXCLUDED.visibility,archived_at=EXCLUDED.archived_at,repository_key=EXCLUDED.repository_key,repository_name=EXCLUDED.repository_name,repository_remote=EXCLUDED.repository_remote,repository_target_branch=EXCLUDED.repository_target_branch,repository_updated_at=EXCLUDED.repository_updated_at,repository_resolution=EXCLUDED.repository_resolution,updated_at=EXCLUDED.updated_at`,
             [
               row.id,
               row.workspaceId,
@@ -317,8 +350,11 @@ export class SnapshotImporter {
               row.archived ? date(row.updatedAt) : null,
               JSON.stringify(row.directParticipants ?? null),
               row.repository?.key ?? null,
+              row.repository?.name ?? null,
               row.repository?.remote ?? null,
               row.repository?.targetBranch ?? 'main',
+              row.repository?.updatedAt ? date(row.repository.updatedAt) : null,
+              row.repositoryResolution ?? (row.repository ? 'repository' : 'none'),
               row.repository?.githubInstallationId ?? null,
               row.repository?.githubEventsEnabled !== false,
               date(row.createdAt),
@@ -369,19 +405,20 @@ export class SnapshotImporter {
           `${row.workspaceId}:${row.roomId ?? 'workspace'}:${row.identityId}`,
           async (db) => {
             await db.query(
-              `INSERT INTO memberships(workspace_id,room_id,identity_id,role,generation,removed_at) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`,
+              `INSERT INTO memberships(workspace_id,room_id,identity_id,role,generation,identity_profile,removed_at) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7) ON CONFLICT DO NOTHING`,
               [
                 row.workspaceId,
                 row.roomId ?? null,
                 row.identityId,
                 row.role,
                 row.generation ?? 1,
+                JSON.stringify(row.identity ?? null),
                 row.removed ? new Date() : null,
               ],
             );
           },
         );
-      for (const media of snapshot.media)
+      for (const media of options.includeMedia ? snapshot.media : [])
         await one('media', media.legacyUrl, async (db) => {
           const bytes = media.bytesBase64
             ? Buffer.from(media.bytesBase64, 'base64')
@@ -421,8 +458,48 @@ export class SnapshotImporter {
         const mediaId = mediaByUrl.get(value) ?? mediaByUrl.get(mediaPath(value) ?? '');
         return mediaId ? `/v1/media/${mediaId}` : undefined;
       };
+      const latestPlanEventByRoom = new Map<string, LegacyEvent>();
+      for (const event of snapshot.events) {
+        if (event.kind !== 30078) continue;
+        const projected = projectEvent(
+          {
+            id: event.id,
+            pubkey: event.authorId,
+            agent: event.authorKind === 'agent',
+            name: event.authorName,
+            handle: event.authorHandle,
+            avatar: event.authorAvatar,
+            kind: event.kind,
+            tags: event.tags,
+            content: event.content,
+            createdAt: event.createdAt,
+            rootId: event.rootId ?? event.id,
+          },
+          event.roomId,
+        );
+        if (!projected?.activity?.some((activity) => activity.plan)) continue;
+        const previous = latestPlanEventByRoom.get(event.roomId);
+        if (
+          !previous ||
+          event.createdAt > previous.createdAt ||
+          (event.createdAt === previous.createdAt && event.id > previous.id)
+        )
+          latestPlanEventByRoom.set(event.roomId, event);
+      }
       for (const row of snapshot.events)
         await one('event', row.id, async (db) => {
+          if (!retainedRoomIds.has(row.roomId)) return;
+          await db.query(
+            `INSERT INTO legacy_room_events(id,room_id,kind,created_at,raw_page_candidate) VALUES($1,$2,$3,$4,$5)
+             ON CONFLICT(id) DO NOTHING`,
+            [
+              row.id,
+              row.roomId,
+              row.kind,
+              date(row.createdAt),
+              !row.tags.some((tag) => tag[0] === 't' && tag[1] === 'buzz-agent-model-unavailable'),
+            ],
+          );
           if (row.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-turn')) {
             const requestId = tagValue(row.tags, 'request');
             const agentId = tagValue(row.tags, 'agent');
@@ -461,6 +538,10 @@ export class SnapshotImporter {
             },
             row.roomId,
           );
+          await db.query(`UPDATE legacy_room_events SET conversation_candidate=$2 WHERE id=$1`, [
+            row.id,
+            isConversationPageCandidate(row, original),
+          ]);
           const projected = original
             ? {
                 ...original,
@@ -480,6 +561,7 @@ export class SnapshotImporter {
               }
             : undefined;
           if (!projected) return;
+          if (row.kind !== 9 && latestPlanEventByRoom.get(row.roomId)?.id !== row.id) return;
           const typed = card(projected);
           await db.query(
             `INSERT INTO messages(id,room_id,author_id,text,presentation,attachments,mention_ids,reply_to_message_id,root_message_id,request_id,turn_id,activity,durable_fact,card_type,card,legacy_event,created_at) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,$9,$10,$11,$12::jsonb,$13,$14,$15::jsonb,$16::jsonb,$17) ON CONFLICT(id) DO NOTHING`,
@@ -643,8 +725,28 @@ export async function readOldPostgresSnapshot(
     const cornerStateByRoom = new Map(
       cornerStateRows.rows.map((row) => [row.channel_id, row.content]),
     );
-    const repositoryEvents = await database.query<{ channel_id: string; content: string }>(
-      `SELECT channel_id::text,content FROM events WHERE deleted_at IS NULL AND kind=30078 AND channel_id IS NOT NULL AND EXISTS(SELECT 1 FROM jsonb_array_elements(tags)t WHERE t->>0='t' AND t->>1='buzz-room-repository') ORDER BY created_at,id`,
+    const repositoryCandidates = await database.query<{ channel_id: string }>(
+      `SELECT DISTINCT replace(d_tag,'buzz-room-repository:','') channel_id FROM events
+       WHERE deleted_at IS NULL AND kind=30078
+         AND d_tag LIKE 'buzz-room-repository:%'
+         AND EXISTS(SELECT 1 FROM jsonb_array_elements(tags)t WHERE t->>0='t' AND t->>1='buzz-room-repository')`,
+    );
+    const repositoryEvents = await database.query<{
+      channel_id: string;
+      content: string;
+      created_at: Date;
+    }>(
+      `SELECT target.id::text channel_id,e.content,e.created_at FROM events e
+       JOIN channels target ON target.community_id=e.community_id
+         AND target.id=CASE WHEN replace(e.d_tag,'buzz-room-repository:','')
+           ~* '^[0-9a-f-]{36}$' THEN replace(e.d_tag,'buzz-room-repository:','')::uuid END
+      JOIN channel_members author ON author.community_id=e.community_id
+         AND author.channel_id=target.id AND author.pubkey=e.pubkey
+         AND author.removed_at IS NULL AND author.role IN('owner','admin')
+       WHERE e.deleted_at IS NULL AND e.kind=30078
+         AND e.d_tag LIKE 'buzz-room-repository:%'
+         AND EXISTS(SELECT 1 FROM jsonb_array_elements(e.tags)t WHERE t->>0='t' AND t->>1='buzz-room-repository')
+       ORDER BY e.created_at,e.id`,
     );
     const repositoryByRoom = new Map<string, LegacyRoom['repository']>();
     for (const event of repositoryEvents.rows) {
@@ -652,14 +754,19 @@ export async function readOldPostgresSnapshot(
       if (typeof parsed.key === 'string' && typeof parsed.remote === 'string')
         repositoryByRoom.set(event.channel_id, {
           key: parsed.key,
+          ...(typeof parsed.name === 'string' ? { name: parsed.name } : {}),
           remote: parsed.remote,
           targetBranch: typeof parsed.targetBranch === 'string' ? parsed.targetBranch : 'main',
+          updatedAt: Math.round(event.created_at.getTime() / 1000),
           ...(typeof parsed.githubInstallationId === 'number'
             ? { githubInstallationId: parsed.githubInstallationId }
             : {}),
           githubEventsEnabled: parsed.githubEventsEnabled !== false,
         });
     }
+    const repositoryCandidateRooms = new Set(
+      repositoryCandidates.rows.map((row) => row.channel_id),
+    );
     const rooms: LegacyRoom[] = roomRows.map((row) => {
       const participants = row.tags
         .filter((item) => item[0] === 'p' && /^[0-9a-f]{64}$/.test(item[1] ?? ''))
@@ -682,6 +789,11 @@ export async function readOldPostgresSnapshot(
           : {}),
         ...(participants.length === 2 ? { directParticipants: participants.sort() } : {}),
         ...(repositoryByRoom.get(row.id) ? { repository: repositoryByRoom.get(row.id) } : {}),
+        repositoryResolution: repositoryByRoom.has(row.id)
+          ? 'repository'
+          : repositoryCandidateRooms.has(row.id)
+            ? 'unverified'
+            : 'none',
         createdAt: Math.round(row.created_at.getTime() / 1000),
         updatedAt: Math.round(row.updated_at.getTime() / 1000),
       };
@@ -778,13 +890,49 @@ export async function readOldPostgresSnapshot(
       role: 'owner' | 'admin' | 'member';
       removed: boolean;
       joined_at: Date;
+      identity_name: string | null;
+      identity_handle: string | null;
+      identity_avatar: string | null;
+      agent_content: string | null;
     }>(
-      `SELECT channel_id::text,encode(pubkey,'hex') identity_id,role::text,removed_at IS NOT NULL removed,joined_at FROM channel_members`,
+      `SELECT member.channel_id::text,encode(member.pubkey,'hex') identity_id,
+         member.role::text,member.removed_at IS NOT NULL removed,member.joined_at,
+         NULLIF(u.display_name,'') identity_name,u.nip05_handle identity_handle,
+         COALESCE(declaration.content::jsonb->>'avatar',u.avatar_url) identity_avatar,
+         declaration.content agent_content
+       FROM channel_members member
+       JOIN channels c ON c.community_id=member.community_id AND c.id=member.channel_id
+       JOIN LATERAL(
+         SELECT COALESCE(
+           (SELECT tag->>1 FROM jsonb_array_elements(e.tags) tag
+             WHERE tag->>0='community' LIMIT 1),
+           c.id::text
+         ) workspace_id
+         FROM events e WHERE e.community_id=c.community_id AND e.channel_id=c.id
+           AND e.kind=9007 AND e.deleted_at IS NULL
+         ORDER BY e.created_at,e.id LIMIT 1
+       ) generation ON true
+       LEFT JOIN users u ON u.community_id=member.community_id AND u.pubkey=member.pubkey
+         AND u.deactivated_at IS NULL
+       LEFT JOIN LATERAL(
+         SELECT e.content FROM events e
+         WHERE e.community_id=member.community_id AND e.pubkey=member.pubkey
+           AND e.kind=9 AND e.deleted_at IS NULL
+           AND e.tags @> '[["t","buzz-agent"]]'::jsonb
+           AND e.tags @> jsonb_build_array(jsonb_build_array('h',generation.workspace_id))
+         ORDER BY e.created_at DESC,e.id DESC LIMIT 1
+       ) declaration ON true`,
     );
     const memberships: LegacyMembership[] = memberRows.rows.flatMap((row) => {
       const channel = channelById.get(row.channel_id);
       if (!channel) return [];
       const workspaceId = workspaceIdFor(channel);
+      const declaration = parseObject(row.agent_content);
+      const agentName =
+        typeof declaration.displayName === 'string' && declaration.displayName.trim()
+          ? declaration.displayName
+          : undefined;
+      const globalIdentity = identityById.get(row.identity_id);
       return [
         {
           workspaceId,
@@ -793,6 +941,15 @@ export async function readOldPostgresSnapshot(
           role: row.role,
           removed: row.removed,
           generation: Math.floor(row.joined_at.getTime() / 1000),
+          identity: {
+            kind: row.agent_content ? 'agent' : (globalIdentity?.kind ?? 'human'),
+            name:
+              agentName ??
+              row.identity_name ??
+              `${row.agent_content ? 'Agent' : 'Person'} ${row.identity_id.slice(0, 8)}`,
+            ...(row.identity_handle ? { handle: row.identity_handle } : {}),
+            ...(row.identity_avatar ? { avatar: row.identity_avatar } : {}),
+          },
         },
       ];
     });
@@ -812,21 +969,72 @@ export async function readOldPostgresSnapshot(
       tags: string[][];
       content: string;
       created_at: Date;
+      identity_name: string | null;
+      identity_handle: string | null;
+      identity_avatar: string | null;
+      agent_content: string | null;
     }>(
-      `SELECT encode(e.id,'hex') id,e.channel_id::text room_id,encode(e.pubkey,'hex') author_id,e.kind,e.tags,e.content,e.created_at FROM events e JOIN channels c ON c.community_id=e.community_id AND c.id=e.channel_id WHERE e.deleted_at IS NULL AND c.deleted_at IS NULL AND e.kind IN(9,30078) ORDER BY e.created_at,e.id`,
+      `SELECT encode(e.id,'hex') id,c.id::text room_id,encode(e.pubkey,'hex') author_id,
+         e.kind,e.tags,e.content,e.created_at,NULLIF(u.display_name,'') identity_name,
+         u.nip05_handle identity_handle,
+         COALESCE(declaration.content::jsonb->>'avatar',u.avatar_url) identity_avatar,
+         declaration.content agent_content
+       FROM events e
+       LEFT JOIN LATERAL(
+         SELECT tag->>1 room_id FROM jsonb_array_elements(e.tags) tag
+         WHERE tag->>0='h' AND tag->>1 ~* '^[0-9a-f-]{36}$' LIMIT 1
+       ) scope ON true
+       JOIN channels c ON c.community_id=e.community_id
+         AND c.id=COALESCE(
+           CASE WHEN substring(e.d_tag from '^buzz-agent-activity:([0-9a-f-]{36}):')
+             ~* '^[0-9a-f-]{36}$'
+             THEN substring(e.d_tag from '^buzz-agent-activity:([0-9a-f-]{36}):')::uuid END,
+           e.channel_id,
+           scope.room_id::uuid
+         )
+       JOIN LATERAL(
+         SELECT COALESCE(
+           (SELECT tag->>1 FROM jsonb_array_elements(g.tags) tag
+             WHERE tag->>0='community' LIMIT 1),
+           c.id::text
+         ) workspace_id
+         FROM events g WHERE g.community_id=c.community_id AND g.channel_id=c.id
+           AND g.kind=9007 AND g.deleted_at IS NULL
+         ORDER BY g.created_at,g.id LIMIT 1
+       ) generation ON true
+       LEFT JOIN users u ON u.community_id=e.community_id AND u.pubkey=e.pubkey
+         AND u.deactivated_at IS NULL
+       LEFT JOIN LATERAL(
+         SELECT agent.content FROM events agent
+         WHERE agent.community_id=e.community_id AND agent.pubkey=e.pubkey
+           AND agent.kind=9 AND agent.deleted_at IS NULL
+           AND agent.tags @> '[["t","buzz-agent"]]'::jsonb
+           AND agent.tags @> jsonb_build_array(jsonb_build_array('h',generation.workspace_id))
+         ORDER BY agent.created_at DESC,agent.id DESC LIMIT 1
+       ) declaration ON true
+       WHERE e.deleted_at IS NULL AND c.deleted_at IS NULL AND e.kind IN(9,30078)
+       ORDER BY e.created_at,e.id`,
     );
     const events: LegacyEvent[] = rawEvents.rows.map((row) => {
       const author = identityById.get(row.author_id);
+      const declaration = parseObject(row.agent_content);
+      const agentName =
+        typeof declaration.displayName === 'string' && declaration.displayName.trim()
+          ? declaration.displayName
+          : undefined;
       const reply = row.tags.find((item) => item[0] === 'e' && item[3] === 'reply')?.[1];
       const explicitRoot = row.tags.find((item) => item[0] === 'e' && item[3] === 'root')?.[1];
       return {
         id: row.id,
         roomId: row.room_id,
         authorId: row.author_id,
-        authorKind: author?.kind ?? 'human',
-        authorName: author?.name ?? `Person ${row.author_id.slice(0, 8)}`,
-        ...(author?.handle ? { authorHandle: author.handle } : {}),
-        ...(author?.avatar ? { authorAvatar: author.avatar } : {}),
+        authorKind: row.agent_content ? 'agent' : (author?.kind ?? 'human'),
+        authorName:
+          agentName ??
+          row.identity_name ??
+          `${row.agent_content ? 'Agent' : 'Person'} ${row.author_id.slice(0, 8)}`,
+        ...(row.identity_handle ? { authorHandle: row.identity_handle } : {}),
+        ...(row.identity_avatar ? { authorAvatar: row.identity_avatar } : {}),
         kind: row.kind,
         tags: row.tags,
         content: row.content,

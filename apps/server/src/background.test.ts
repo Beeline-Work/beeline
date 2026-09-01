@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { BackgroundLeader, PushDeliveryLoop, type LeaderConnection } from './background.js';
+import {
+  BackgroundLeader,
+  PushDeliveryLoop,
+  runMaintenance,
+  type LeaderConnection,
+} from './background.js';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 
@@ -77,6 +82,37 @@ describe('background advisory-lock ownership', () => {
           )
         ).rows[0],
       ).toEqual({ status: 'failed', error: 'FCM unavailable' });
+    } finally {
+      await db.close();
+    }
+  });
+  it('retains imported historical presence while expiring ordinary live output', async () => {
+    const db = new PgliteDatabase();
+    try {
+      await migrate(db);
+      const human = 'a'.repeat(64),
+        agent = 'b'.repeat(64),
+        workspace = '11111111-1111-4111-8111-111111111111',
+        room = '22222222-2222-4222-8222-222222222222';
+      await db.query(
+        `INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner'),($2,'agent','Bee')`,
+        [human, agent],
+      );
+      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+      await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
+        room,
+        workspace,
+      ]);
+      await db.query(
+        `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body,updated_at)
+         VALUES($1,$2,'legacy','presence','{"status":"online","observedAt":1}',to_timestamp(1)),
+               ($1,$2,'expired-turn','draft','{}',to_timestamp(1))`,
+        [room, agent],
+      );
+      await runMaintenance(db);
+      expect(
+        (await db.query<{ turn_id: string }>(`SELECT turn_id FROM live_outputs`)).rows,
+      ).toEqual([{ turn_id: 'legacy' }]);
     } finally {
       await db.close();
     }

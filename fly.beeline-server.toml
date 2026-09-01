@@ -28,5 +28,3 @@ primary_region = "iad"
   cpu_kind = "shared"
   cpus = 1
   memory = "512mb"
-
-# Phase B configuration only. Provisioning and `fly deploy` are Phase C owner actions.

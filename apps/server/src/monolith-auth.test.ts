@@ -225,5 +225,9 @@ describe('mounted monolith auth', () => {
       accessToken: expect.stringMatching(/^bat_/),
       identityId: expect.any(String),
     });
+    const audiences = await database.query<{ audience: string }>(
+      `SELECT audience FROM identity_external_links WHERE provider='github' AND subject='42'`,
+    );
+    expect(audiences.rows).toEqual([{ audience: 'github' }]);
   });
 });

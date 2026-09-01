@@ -116,11 +116,16 @@ export type UpdateAgentSoulInput = WorkspaceAgentInput & {
 export type UpdateAgentModelInput = WorkspaceAgentInput &
   Omit<AgentModelSelection, 'effort'> & { readonly effort?: string | null };
 export type UpdatePersonProfileInput = {
+  readonly name?: string;
+  readonly handle?: string;
+  readonly avatar?: string;
+};
+export type PersonProfileResult = {
+  readonly personId: string;
   readonly name: string;
   readonly handle?: string;
   readonly avatar?: string;
 };
-export type PersonProfileResult = UpdatePersonProfileInput & { readonly personId: string };
 export type SetRoomRepositoryInput = RoomInput & {
   readonly key: string;
   readonly name: string;
@@ -156,6 +161,7 @@ export type ManagedIdentityResult = {
   readonly personId: string;
   readonly name: string;
   readonly handle?: string;
+  readonly avatar?: string;
 };
 export type ClaimManagedHandleInput = { readonly handle: string };
 export type RefreshInput = { readonly refresh?: boolean };

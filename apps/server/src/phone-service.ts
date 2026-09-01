@@ -992,12 +992,15 @@ export class PhoneService {
       case 'getManagedIdentity':
         return (await this.managedIdentity(viewerId)) as Output<Name>;
       case 'adoptGitHubHandle':
-        return (await this.managedIdentity(viewerId)) as Output<Name>;
+        return (await this.adoptGitHubHandle(viewerId)) as Output<Name>;
       case 'claimManagedHandle':
-        await this.database.query(`UPDATE identities SET handle=$2,updated_at=now() WHERE id=$1`, [
-          viewerId,
-          (input as Input<'claimManagedHandle'>).handle,
-        ]);
+        if (
+          !/^[a-z0-9](?:[a-z0-9._-]{0,28}[a-z0-9])?$/.test(
+            (input as Input<'claimManagedHandle'>).handle,
+          )
+        )
+          throw new Error('invalid managed handle');
+        await this.claimManagedHandle(viewerId, (input as Input<'claimManagedHandle'>).handle);
         return (await this.managedIdentity(viewerId)) as Output<Name>;
       case 'listGitHubRepositories':
         if ((input as Input<'listGitHubRepositories'>).refresh)
@@ -1549,11 +1552,31 @@ export class PhoneService {
     ]);
   }
   private async updateProfile(input: Input<'updatePersonProfile'>, viewerId: string) {
-    await this.database.query(
-      `UPDATE identities SET name=$2,handle=COALESCE($3,handle),avatar=COALESCE($4,avatar),updated_at=now() WHERE id=$1`,
-      [viewerId, input.name, input.handle ?? null, input.avatar ?? null],
+    if (input.name !== undefined && (!input.name.trim() || input.name.trim().length > 60))
+      throw new Error('invalid person name');
+    if (
+      input.handle !== undefined &&
+      !/^[a-z0-9](?:[a-z0-9._-]{0,28}[a-z0-9])?$/.test(input.handle)
+    )
+      throw new Error('invalid person handle');
+    const updated = await this.database.query<IdentityRow>(
+      `UPDATE identities
+       SET name=CASE WHEN $2::text IS NULL THEN name ELSE $2 END,
+           handle=CASE WHEN $3::text IS NULL THEN handle ELSE $3 END,
+           avatar=CASE WHEN $4::text IS NULL THEN avatar ELSE NULLIF($4,'') END,
+           updated_at=now()
+       WHERE id=$1
+       RETURNING id,kind,name,handle,avatar`,
+      [viewerId, input.name ?? null, input.handle ?? null, input.avatar ?? null],
     );
-    return { personId: viewerId, ...input };
+    const profile = updated.rows[0];
+    if (!profile) throw new Error('identity not found');
+    return {
+      personId: profile.id,
+      name: profile.name,
+      ...(profile.handle ? { handle: profile.handle } : {}),
+      ...(profile.avatar ? { avatar: profile.avatar } : {}),
+    };
   }
   private async setRepository(input: Input<'setRoomRepository'>, viewerId: string) {
     await this.requireManager(input.roomId, viewerId);
@@ -1623,7 +1646,35 @@ export class PhoneService {
   }
   private async managedIdentity(viewerId: string) {
     const id = await this.requireIdentity(viewerId);
-    return { personId: id.pubkey, name: id.name, ...(id.handle ? { handle: id.handle } : {}) };
+    return {
+      personId: id.pubkey,
+      name: id.name,
+      ...(id.handle ? { handle: id.handle } : {}),
+      ...(id.avatar ? { avatar: id.avatar } : {}),
+    };
+  }
+  private async claimManagedHandle(viewerId: string, handle: string) {
+    const claimed = await this.database.query(
+      `UPDATE identities AS identity SET handle=$2,updated_at=now()
+       WHERE identity.id=$1 AND NOT EXISTS(
+         SELECT 1 FROM identities AS other
+         WHERE other.id<>$1 AND lower(other.handle)=lower($2)
+       )`,
+      [viewerId, handle],
+    );
+    if (claimed.rowCount === 0) throw new Error('managed handle is already claimed');
+  }
+  private async adoptGitHubHandle(viewerId: string) {
+    const link = (
+      await this.database.query<{ provider_login: string | null }>(
+        `SELECT provider_login FROM identity_external_links
+         WHERE provider='github' AND identity_id=$1`,
+        [viewerId],
+      )
+    ).rows[0];
+    if (!link?.provider_login) throw new Error('GitHub handle is not available');
+    await this.claimManagedHandle(viewerId, link.provider_login.toLowerCase());
+    return this.managedIdentity(viewerId);
   }
   private async identityRecovery(viewerId: string) {
     const rows = await this.database.query<{ id: string; handle: string | null }>(

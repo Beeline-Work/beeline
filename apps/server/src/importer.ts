@@ -101,8 +101,12 @@ export interface LegacyGitHub {
   installations: Array<{
     installationId: number;
     ownerId: string;
+    accountId?: string;
     accountLogin: string;
     accountType: string;
+    accountAvatarUrl?: string;
+    repositorySelection?: 'all' | 'selected';
+    status?: 'active' | 'revoked' | 'suspended';
   }>;
   repositories: Array<{
     repositoryId: number;
@@ -634,8 +638,17 @@ export class SnapshotImporter {
       for (const row of snapshot.github.installations)
         await one('github-installation', String(row.installationId), async (db) => {
           await db.query(
-            `INSERT INTO github_installations(installation_id,owner_id,account_login,account_type) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`,
-            [row.installationId, row.ownerId, row.accountLogin, row.accountType],
+            `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,account_avatar_url,repository_selection,status) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING`,
+            [
+              row.installationId,
+              row.ownerId,
+              row.accountId ?? null,
+              row.accountLogin,
+              row.accountType,
+              row.accountAvatarUrl ?? null,
+              row.repositorySelection ?? 'selected',
+              row.status ?? 'active',
+            ],
           );
         });
       for (const row of snapshot.github.repositories)
@@ -1071,7 +1084,7 @@ export async function readOldPostgresSnapshot(
       `SELECT subject,encrypted_token "encryptedToken",stale_at::text "staleAt" FROM beeline_github_user_tokens`,
     );
     const installations = await database.query<LegacyGitHub['installations'][number]>(
-      `SELECT installation_id::int "installationId",pubkey::text "ownerId",account_login "accountLogin",account_type "accountType" FROM beeline_github_installations`,
+      `SELECT installation_id::int "installationId",pubkey::text "ownerId",account_id::text "accountId",account_login "accountLogin",account_type "accountType",account_avatar_url "accountAvatarUrl",repository_selection "repositorySelection",status FROM beeline_github_installations`,
     );
     const repositories = await database.query<LegacyGitHub['repositories'][number]>(
       `SELECT repository_id::int "repositoryId",installation_id::int "installationId",full_name "fullName",default_branch "defaultBranch" FROM beeline_github_repositories`,

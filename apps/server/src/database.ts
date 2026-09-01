@@ -464,12 +464,18 @@ CREATE TABLE IF NOT EXISTS legacy_media_urls (
 CREATE TABLE IF NOT EXISTS github_installations (
   installation_id bigint PRIMARY KEY,
   owner_id text NOT NULL REFERENCES identities(id),
+  account_id text,
   account_login text NOT NULL,
   account_type text NOT NULL,
+  account_avatar_url text,
+  repository_selection text NOT NULL DEFAULT 'selected',
   encrypted_token text,
   status text NOT NULL DEFAULT 'active',
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE github_installations ADD COLUMN IF NOT EXISTS account_id text;
+ALTER TABLE github_installations ADD COLUMN IF NOT EXISTS account_avatar_url text;
+ALTER TABLE github_installations ADD COLUMN IF NOT EXISTS repository_selection text NOT NULL DEFAULT 'selected';
 
 CREATE TABLE IF NOT EXISTS github_repositories (
   repository_id bigint PRIMARY KEY,

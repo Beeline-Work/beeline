@@ -377,6 +377,7 @@ export class MonolithRigTransport {
     return this.operation('setRoomRepository', {
       roomId,
       key: input.key,
+      name: input.name,
       remote: input.remote,
       targetBranch: input.targetBranch ?? 'main',
       githubInstallationId: input.githubInstallationId,
@@ -394,6 +395,17 @@ export class MonolithRigTransport {
   async workspaceGitHubAccess(options: { refresh?: boolean } = {}) {
     const value = (await this.operation('listGitHubRepositories', options)) as {
       installed: boolean;
+      installations: {
+        installationId: number;
+        accountId: string;
+        accountLogin: string;
+        accountType: 'User' | 'Organization';
+        accountAvatarUrl?: string;
+        repositorySelection: 'all' | 'selected';
+        status: 'active' | 'revoked' | 'suspended';
+        repositoryCount: number;
+        manageUrl: string;
+      }[];
       repositories: {
         id: number;
         fullName: string;
@@ -403,7 +415,7 @@ export class MonolithRigTransport {
     };
     return {
       installed: value.installed,
-      installations: [],
+      installations: value.installations,
       candidates: value.repositories.map((repo) => ({
         key: `github:${repo.id}`,
         name: repo.fullName,

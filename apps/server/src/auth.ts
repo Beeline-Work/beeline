@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { GITHUB_IDENTITY_AUDIENCE } from '@beeline/auth/github';
 import type { SqlDatabase } from './database.js';
+import { joinRooms } from './membership-join.js';
 
 const ACCESS_LIFETIME_MS = 15 * 60_000;
 const REFRESH_LIFETIME_MS = 30 * 24 * 60 * 60_000;
@@ -85,11 +86,17 @@ export class TokenAuth {
         `INSERT INTO workspaces(id,name) VALUES($1,$2) ON CONFLICT(id) DO NOTHING`,
         [WELCOME_WORKSPACE_ID, WELCOME_WORKSPACE_NAME],
       );
-      await database.query(
+      const membership = await database.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
          VALUES($1,NULL,$2,'member') ON CONFLICT DO NOTHING`,
         [WELCOME_WORKSPACE_ID, id],
       );
+      await joinRooms(database, {
+        workspaceId: WELCOME_WORKSPACE_ID,
+        identityId: id,
+        rooms: { type: 'all-live-top-level' },
+        workspaceJoined: membership.rowCount > 0,
+      });
     });
     return this.issuePhoneTokens(id, randomUUID());
   }

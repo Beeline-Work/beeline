@@ -33,6 +33,7 @@ import {
 import { authSessionOptions } from '@/auth/auth-session';
 import { Modal } from '@/modal';
 import { BuzzRigTransport } from '@/sync/transport';
+import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import {
   type ChannelRole,
   type RoomRepository,
@@ -62,7 +63,7 @@ import {
 } from '@/buzz/channel-reference';
 import { pushOpenBuzzChannelId, releaseOpenBuzzChannelId } from '@/buzz/open-room-tracker';
 import { afterInteractions } from '@/buzz/defer-interaction';
-import { buildTurnActivity, latestCornerPlan } from '@/buzz/activity-timeline';
+import { buildTurnActivity } from '@/buzz/activity-timeline';
 import { cornerObjectiveLine } from '@/buzz/corner-context';
 import { continuedSpeakerIds, ledgerSpeakerKey } from '@/buzz/ledger-attribution';
 import { publishFailurePresentation } from '@/buzz/publish-failure';
@@ -193,6 +194,7 @@ import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { Typography } from '@/constants/Typography';
 import { CornerLiveBar } from '@/components/buzz/CornerLiveBar';
 import { CornerPlanPin } from '@/components/buzz/CornerPlanPin';
+import { CornerLifecyclePanel } from '@/components/buzz/CornerLifecyclePanel';
 import { TurnProgressLine } from '@/components/buzz/TurnProgressLine';
 import { AttachmentPickerSheet } from '@/components/buzz/AttachmentPickerSheet';
 import { HullFloatingSurface, HullModal } from '@/components/buzz/HullDialog';
@@ -418,6 +420,8 @@ export default function BuzzChat() {
   const [membershipError, setMembershipError] = useState<string | null>(null);
   const [membershipActionPubkey, setMembershipActionPubkey] = useState<string | null>(null);
   const [roomLifecycleBusy, setRoomLifecycleBusy] = useState(false);
+  const [cornerMergeApprovalBusy, setCornerMergeApprovalBusy] = useState(false);
+  const [cornerMergeApprovalResult, setCornerMergeApprovalResult] = useState<string>();
   const directMessage = roomSurface?.directMessage ?? null;
   const [composerFocused, setComposerFocused] = useState(false);
   const [permissionActionId, setPermissionActionId] = useState<string | null>(null);
@@ -650,25 +654,15 @@ export default function BuzzChat() {
     if (!isCorner) return;
     setVisibleMessageCount((count) => Math.max(count, INITIAL_CORNER_MESSAGE_WINDOW));
   }, [isCorner]);
-  // The most recent plan the agent has published, for the pinned checklist —
-  // a plan update replaces the whole checklist, so only the latest matters.
-  // Scoped to `combinedMessages` (everything currently loaded), not the
-  // windowed `messages`, so paging the visible window never drops a plan
-  // that was established earlier in a long corner.
-  const cornerPlan = useMemo(
-    () => roomSurface?.cornerPlan ?? latestCornerPlan(combinedMessages),
-    [combinedMessages, roomSurface?.cornerPlan],
-  );
-  // The immutable task tag wins. Plan objective is a compatibility fallback
-  // for older corners; the task-slugged name is the final fallback.
+  // The immutable summary stored on the corner Room is the objective for its
+  // entire lifecycle. Mutable plans never rewrite this panel.
   const cornerObjective = useMemo(
     () =>
       cornerObjectiveLine({
         ...(cornerTask ? { task: cornerTask } : {}),
-        ...(cornerPlan?.objective ? { planObjective: cornerPlan.objective } : {}),
         ...(resolvedChannelName ? { cornerName: resolvedChannelName } : {}),
       }),
-    [cornerPlan?.objective, cornerTask, resolvedChannelName],
+    [cornerTask, resolvedChannelName],
   );
 
   const loadOlderTranscriptMessages = useCallback(() => {
@@ -1913,6 +1907,56 @@ export default function BuzzChat() {
     [decodedId, targetBranchActionId, transport, viewerChannelRole, viewerIsAgent],
   );
 
+  const handleApproveCornerMerge = useCallback(
+    async (force = false) => {
+      if (
+        !isCorner ||
+        isArchived ||
+        viewerIsAgent ||
+        !canManageWorkspace ||
+        !roomSurface?.cornerLifecycle?.pr ||
+        cornerMergeApprovalBusy
+      )
+        return;
+      setCornerMergeApprovalBusy(true);
+      setCornerMergeApprovalResult(undefined);
+      try {
+        // The server remains the authority: this records a human merge approval;
+        // GitHub webhook facts drive the subsequent merge/archive UI state.
+        const result = await monolithPhoneOperation('approveCornerMerge', {
+          cornerId: decodedId,
+          ...(force ? { force: true } : {}),
+        });
+        setCornerMergeApprovalResult(
+          result.status === 'already-merged'
+            ? 'This pull request is already merged.'
+            : result.status === 'already-requested'
+              ? 'Merge was already approved. Waiting for the GitHub merge fact.'
+              : 'Merge approved. Waiting for the GitHub merge fact.',
+        );
+        refreshSignal.force();
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } catch (error) {
+        setCornerMergeApprovalResult(
+          error instanceof Error ? error.message : 'Could not approve this merge.',
+        );
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      } finally {
+        setCornerMergeApprovalBusy(false);
+      }
+    },
+    [
+      canManageWorkspace,
+      cornerMergeApprovalBusy,
+      decodedId,
+      isArchived,
+      isCorner,
+      refreshSignal,
+      roomSurface?.cornerLifecycle?.pr,
+      viewerIsAgent,
+    ],
+  );
+
   const handleAddRoomMember = useCallback(
     async (option: RoomMemberOption) => {
       if (
@@ -2583,7 +2627,13 @@ export default function BuzzChat() {
       }
 
       if (item.daemonFact) {
-        return <DaemonFactCard message={item} onOpenCorner={openCorner} />;
+        return (
+          <DaemonFactCard
+            message={item}
+            onOpenCorner={openCorner}
+            onOpenUrl={handleOpenGitHubEvent}
+          />
+        );
       }
 
       // ── Archived notice ──────────────────────────────────────────
@@ -2598,9 +2648,12 @@ export default function BuzzChat() {
       // ── Offline notice (client-rendered only, never published) ────
       if (item.isSystemNotice) {
         return (
-          <View style={styles.systemNoticeBubble} testID={`system-notice-${item.id}`}>
-            <Text style={styles.systemNoticeText}>{item.text}</Text>
-          </View>
+          <LedgerRoomUpdate
+            id={item.id}
+            line={item.text}
+            stamp={ledgerStamp(item.timestamp)}
+            tone={/failed|red|error/i.test(item.text) ? 'brass' : 'quiet'}
+          />
         );
       }
 
@@ -2901,15 +2954,27 @@ export default function BuzzChat() {
           )}
         </View>
 
-        {/* Pinned to the top, under the header: the plan changes far less
-            often than the composer-adjacent live status below, so it earns
-            the stable position where it never fights the composer for
-            space. Hidden entirely when the agent has published no plan. */}
+        {/* The fixed open_corner summary stays pinned above the transcript.
+            Mutable plans never rewrite it or add sub-goal cross-offs. */}
         {isCorner && (
           <CornerPlanPin
             {...(cornerObjective ? { objective: cornerObjective } : {})}
-            {...(cornerPlan ? { plan: cornerPlan } : {})}
             testID="corner-plan-pin"
+          />
+        )}
+        {isCorner && (
+          <CornerLifecyclePanel
+            lifecycle={roomSurface?.cornerLifecycle}
+            archived={isArchived}
+            canApprove={!viewerIsAgent && canManageWorkspace}
+            approving={cornerMergeApprovalBusy}
+            {...(cornerMergeApprovalResult ? { approvalResult: cornerMergeApprovalResult } : {})}
+            onOpenPullRequest={(url) => {
+              void Linking.openURL(url).catch(() => {
+                Modal.alert('Could not open pull request', 'Open the PR from GitHub instead.');
+              });
+            }}
+            onApprove={(force) => void handleApproveCornerMerge(force)}
           />
         )}
 
@@ -4340,18 +4405,6 @@ const styles = StyleSheet.create((theme) => {
     },
 
     // ── Offline notice (client-rendered only) ─────────────────────────
-    systemNoticeBubble: {
-      paddingVertical: 8,
-      marginBottom: 20,
-      alignSelf: 'center',
-      maxWidth: '90%',
-    },
-    systemNoticeText: {
-      ...Typography.ledger(),
-      color: groknight.ledgerQuiet,
-      textAlign: 'center',
-    },
-
     // ── Composer ────────────────────────────────────────────────────
     emptyState: {
       flexGrow: 1,

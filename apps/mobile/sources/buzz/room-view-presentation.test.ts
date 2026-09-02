@@ -146,6 +146,29 @@ describe('Room view presentation', () => {
     expect(displayRoomMessage(message, 'a'.repeat(64))).not.toHaveProperty('isAgentAuthor');
   });
 
+  it('retains the indexed agent on a landed-corner summary card', () => {
+    const message: RoomViewMessage = {
+      id: 'landed-card',
+      text: '',
+      createdAt: 12,
+      author: { pubkey: 'd'.repeat(64), kind: 'agent', name: 'Beebee' },
+      presentation: 'card',
+      daemonFact: {
+        type: 'corner-complete',
+        cornerId: '80a5a6f1-fb5a-493b-93eb-f3db33f696e6',
+        objective: 'Fix the corner lifecycle',
+        outcome: 'landed',
+        pullRequest: { number: 42, url: 'https://github.com/acme/widget/pull/42' },
+      },
+    };
+
+    expect(displayRoomMessage(message, 'a'.repeat(64))).toMatchObject({
+      daemonFact: message.daemonFact,
+      authorIdentity: message.author,
+      pubkey: message.author.pubkey,
+    });
+  });
+
   it('orders response, paged history, signed outbox, and live-overlay partitions by time', () => {
     const message = (id: string, timestamp: number): ChatDisplayMessage => ({
       id,

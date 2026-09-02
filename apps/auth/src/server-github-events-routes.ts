@@ -1,5 +1,17 @@
 import type { FastifyRequest } from 'fastify';
 import type { AuthRouteContext } from './server-context.js';
+
+// These are lifecycle inputs for the server's corner processor. Keep this
+// separate from GITHUB_REPO_EVENT_TYPES: the latter is deliberately limited
+// to events that should appear in a Room's repository-activity feed.
+const GITHUB_CORNER_WEBHOOK_EVENT_TYPES = new Set([
+  'push',
+  'pull_request',
+  'check_run',
+  'check_suite',
+  'status',
+]);
+
 export function registerServerGithubEventsRoutes(context: AuthRouteContext): void {
   const {
     app,
@@ -236,7 +248,9 @@ export function registerServerGithubEventsRoutes(context: AuthRouteContext): voi
     }
     const body = request.body as Record<string, unknown>;
     const isRepoActivityEvent = GITHUB_REPO_EVENT_TYPES.has(event);
-    if (event !== 'installation' && event !== 'installation_repositories' && !isRepoActivityEvent) {
+    const isCornerWebhookEvent = GITHUB_CORNER_WEBHOOK_EVENT_TYPES.has(event);
+    const isInstallationEvent = event === 'installation' || event === 'installation_repositories';
+    if (!isInstallationEvent && !isRepoActivityEvent && !isCornerWebhookEvent) {
       return reply.code(202).send({ accepted: true, ignored: true });
     }
     if (!(await options.store.claimGitHubWebhookDelivery(deliveryId, now()))) {
@@ -289,7 +303,9 @@ export function registerServerGithubEventsRoutes(context: AuthRouteContext): voi
           );
         }
       }
-      await options.github.onWebhook?.(event, body);
+      if (isInstallationEvent || isCornerWebhookEvent) {
+        await options.github.onWebhook?.(event, body);
+      }
     } catch (error) {
       await options.store.releaseGitHubWebhookDelivery(deliveryId);
       throw error;

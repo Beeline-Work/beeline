@@ -62,4 +62,12 @@ describe('Room creation — repository binding', () => {
     expect(source).toContain('createRoomContent: { flexShrink: 1, maxHeight: 520 }');
     expect(hullDialogSource).toContain('dialogCopy: { flexShrink: 1,');
   });
+
+  it('gives the repo row a fixed full height so it never collapses before first tap', () => {
+    const row = blockFrom(source, 'repoRow: {', 'repoRow style');
+    expect(row).toContain('height: 44');
+    expect(row).not.toContain('minHeight');
+    expect(row).toContain("flexDirection: 'row'");
+    expect(row).toContain("alignItems: 'center'");
+  });
 });

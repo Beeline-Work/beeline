@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   beelineCapabilityContextForHarness,
+  beelinePrimer,
   usingBeelineSkillMarkdown,
 } from './beeline-skill.js';
 
@@ -18,6 +19,19 @@ describe('using-beeline Room guidance', () => {
     expect(markdown).toContain('open_corner');
     expect(markdown).not.toContain('close_corner');
     expect(markdown).not.toContain('no action or corner tools');
+  });
+
+  it('names the bound repository and branch when the Room has one', () => {
+    const primer = beelinePrimer({ name: 'Beeline-Work/beeline', branch: 'main' });
+    expect(primer).toContain(
+      'This Room is bound to Beeline-Work/beeline (branch main); you have a read-only checkout at the session root.',
+    );
+    const context = beelineCapabilityContextForHarness('codex-acp', {
+      name: 'acme/widgets',
+      branch: 'trunk',
+    });
+    expect(context.sessionPrompt).toContain('bound to acme/widgets (branch trunk)');
+    expect(context.compatibilityTurnPrefix).toBe(context.sessionPrompt);
   });
 
   it('delivers the same Room capabilities through compatibility-only harnesses', () => {

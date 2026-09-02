@@ -7,7 +7,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AcpClient } from './acp.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
-import { cornerToolActivity, MonolithCornerTurnLoop } from './monolith-corner-turn.js';
+import {
+  cornerClosePollMs,
+  cornerToolActivity,
+  MonolithCornerTurnLoop,
+} from './monolith-corner-turn.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 import { SessionScheduler } from './session-scheduler.js';
 
@@ -25,6 +29,131 @@ function stored(hex: string, name: string) {
     secretKeyHex: Buffer.from(identity.secretKey).toString('hex'),
   };
 }
+
+describe('corner close-request polling cadence', () => {
+  it('polls on a 10-15 second interval with jitter, not once per second', () => {
+    expect(cornerClosePollMs(() => 0)).toBeGreaterThanOrEqual(10_000);
+    expect(cornerClosePollMs(() => 0)).toBeLessThanOrEqual(12_000);
+    expect(cornerClosePollMs(() => 0.999)).toBeGreaterThanOrEqual(12_000);
+    expect(cornerClosePollMs(() => 0.999)).toBeLessThanOrEqual(15_000);
+    expect(cornerClosePollMs(() => 0.5)).not.toBe(cornerClosePollMs(() => 0.75));
+  });
+
+  it('re-checks close requests immediately after a turn completes', async () => {
+    // pollMs is far beyond the test timeout: the flow turns once, then the
+    // next close-request read must happen without any idle wait — a
+    // regression that waits the full interval after a turn would hang.
+    const root = await mkdtemp(join(tmpdir(), 'beeline-corner-immediate-'));
+    roots.push(root);
+    await execFileAsync('git', ['init', root]);
+    const worktree = root;
+    const gitCommonDir = join(root, '.git');
+    const runtime = {
+      agentId: '11'.repeat(32),
+      agent: stored('11'.repeat(32), 'Bee'),
+      rooms: [],
+      supervisorRoot: root,
+      transport: {
+        kind: 'monolith',
+        baseUrl: 'https://server.example',
+        daemonToken: 'daemon-token',
+      },
+      agentBinary: '/fake-agent',
+      agentKind: 'codex',
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+    } as unknown as AgentRuntimeRecord;
+    const config: BodyConfig = {
+      agentBinary: '/fake-agent',
+      agentKind: 'codex',
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+      readonlyMcpCommand: '/fake-beeline-mcp',
+      agentEnv: {},
+      workspaceRoot: root,
+      autoApprovePermissions: true,
+    };
+    const abort = new AbortController();
+    let closeReads = 0;
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getAgentConfiguration') return { commands: [] };
+      if (name === 'getWorkspaceRoster') {
+        return {
+          members: [{ identityId: '11'.repeat(32), kind: 'agent', name: 'Bee', role: 'member' }],
+        };
+      }
+      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getCornerCloseRequests') {
+        closeReads += 1;
+        if (closeReads === 1) {
+          return {
+            items: [
+              {
+                id: 'human-msg',
+                authorId: '22'.repeat(32),
+                createdAt: 1,
+                type: 'message',
+                body: 'Please continue',
+                mentionIds: [],
+                attachments: [],
+              },
+            ],
+            cursor: 'human-msg',
+          };
+        }
+        return { items: [], cursor: 'latest', closeRequested: true };
+      }
+      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
+      return { id: 'write-id', createdAt: 1 };
+    });
+    const api = {
+      execute,
+      connection: () => ({
+        baseUrl: 'https://server.example',
+        daemonToken: 'daemon-token',
+        agentId: runtime.agent.publicKey,
+      }),
+    } as unknown as DaemonApiClient;
+    const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
+    vi.spyOn(acp, 'start').mockResolvedValue(undefined);
+    vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: 'corner-session', raw: {} });
+    const sessionPrompt = vi.spyOn(acp, 'sessionPrompt').mockResolvedValue({
+      stopReason: 'end_turn',
+      updates: [],
+      agentText: 'Done.',
+      toolCalls: [],
+    });
+    const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
+    const onCloseRequested = vi.fn(async () => undefined);
+    await new MonolithCornerTurnLoop({
+      cornerId: 'corner-id',
+      parentRoomId: 'room-id',
+      workspaceId: 'workspace',
+      objective: 'Implement the widget',
+      featureBranch: 'feature/widget',
+      targetBranch: 'main',
+      worktreePath: worktree,
+      gitCommonDir,
+      githubToken: 'token',
+      runtime,
+      config,
+      api,
+      scheduler,
+      signal: abort.signal,
+      pollMs: 60_000,
+      onPoll: vi.fn(),
+      onFailure: vi.fn(),
+      onCloseRequested,
+      createAcpClient: () => acp,
+    }).run();
+    await scheduler.dispose();
+    expect(sessionPrompt).toHaveBeenCalledTimes(2);
+    expect(onCloseRequested).toHaveBeenCalledOnce();
+  });
+});
 
 describe('thin monolith corner turn', () => {
   it('summarizes a commit with its file count and subject', async () => {
@@ -276,6 +405,7 @@ describe('thin monolith corner turn', () => {
       api,
       scheduler,
       signal: abort.signal,
+      pollMs: 1,
       onPoll: vi.fn(),
       onFailure: vi.fn(),
       onCloseRequested,

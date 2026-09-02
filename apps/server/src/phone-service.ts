@@ -1166,7 +1166,9 @@ export class PhoneService {
     const id = input.messageId ?? messageId();
     if (!/^[0-9a-f]{64}$/.test(id)) throw new Error('messageId is invalid');
     const attachments = JSON.stringify(input.attachments ?? []);
-    const mentions = JSON.stringify(input.mentions ?? []);
+    const mentions = JSON.stringify(
+      await this.resolveMessageMentions(input.roomId, author, input.mentions ?? []),
+    );
     const values = [id, input.roomId, author, input.text, attachments, mentions];
     const inserted = await this.database.query(
       `INSERT INTO messages(id,room_id,author_id,text,attachments,mention_ids)
@@ -1186,8 +1188,14 @@ export class PhoneService {
     return { messageId: id };
   }
   private async sendReply(input: Input<'sendRoomReply'>, author: string) {
-    const parent = await this.database.query<{ root_message_id: string | null }>(
-      `SELECT root_message_id FROM messages WHERE id=$1 AND room_id=$2`,
+    const parent = await this.database.query<{
+      root_message_id: string | null;
+      author_id: string;
+      author_kind: 'human' | 'agent';
+    }>(
+      `SELECT message.root_message_id,message.author_id,identity.kind author_kind
+       FROM messages message JOIN identities identity ON identity.id=message.author_id
+       WHERE message.id=$1 AND message.room_id=$2`,
       [input.parentMessageId, input.roomId],
     );
     if (!parent.rows[0] || !(await this.hasRoomAccess(input.roomId, author)))
@@ -1200,7 +1208,14 @@ export class PhoneService {
       author,
       input.text,
       JSON.stringify(input.attachments ?? []),
-      JSON.stringify(input.mentions ?? []),
+      JSON.stringify(
+        await this.resolveMessageMentions(
+          input.roomId,
+          author,
+          input.mentions ?? [],
+          parent.rows[0].author_kind === 'agent' ? parent.rows[0].author_id : undefined,
+        ),
+      ),
       input.parentMessageId,
       parent.rows[0].root_message_id ?? input.parentMessageId,
     ];
@@ -1220,6 +1235,44 @@ export class PhoneService {
       if (!retry.rowCount) throw new Error('messageId is invalid');
     }
     return { messageId: id };
+  }
+  private async resolveMessageMentions(
+    roomId: string,
+    author: string,
+    explicitMentions: readonly string[],
+    replyAgentId?: string,
+  ): Promise<readonly string[]> {
+    if (explicitMentions.length) return explicitMentions;
+    const authorKind = (
+      await this.database.query<{ kind: 'human' | 'agent' }>(
+        `SELECT kind FROM identities WHERE id=$1`,
+        [author],
+      )
+    ).rows[0]?.kind;
+    if (authorKind !== 'human') return [];
+    if (replyAgentId) return [replyAgentId];
+
+    const previousAgent = (
+      await this.database.query<{ author_id: string }>(
+        `SELECT latest.author_id FROM (
+           SELECT message.author_id,identity.kind author_kind
+           FROM messages message JOIN identities identity ON identity.id=message.author_id
+           WHERE message.room_id=$1 AND message.presentation='message'
+           ORDER BY message.created_at DESC,message.id DESC LIMIT 1
+         ) latest WHERE latest.author_kind='agent'`,
+        [roomId],
+      )
+    ).rows[0]?.author_id;
+    if (previousAgent) return [previousAgent];
+
+    const agents = await this.database.query<{ identity_id: string }>(
+      `SELECT membership.identity_id FROM memberships membership
+       JOIN identities identity ON identity.id=membership.identity_id AND identity.kind='agent'
+       WHERE membership.room_id=$1 AND membership.removed_at IS NULL
+       ORDER BY membership.identity_id LIMIT 2`,
+      [roomId],
+    );
+    return agents.rows.length === 1 ? [agents.rows[0]!.identity_id] : [];
   }
   private async decidePermission(input: Input<'decideWritePermission'>, viewerId: string) {
     const pending = (

@@ -5,6 +5,7 @@ import {
   type CornerSummary,
 } from './corners';
 import { resolveAgentDisplayIdentity } from './agent-display';
+import { pickTurnVerb, type TurnVerb } from './turn-clock';
 import type { Agent, RoomViewAgentTurn, RoomViewIdentity } from '@beeline/buzz-client';
 
 /**
@@ -42,6 +43,10 @@ export type TurnProgressInput = {
   isCorner: boolean;
   agentsOffline: boolean;
   activeTurnPubkey?: string;
+  /** Server receipt time (unix seconds) the elapsed counter ticks from. */
+  activeTurnStartedAt?: number;
+  /** Stable per-turn identity; seeds the one-verb-per-turn pick. */
+  activeTurnRequestId?: string;
 };
 
 /**
@@ -84,7 +89,13 @@ export type ComposerAckPresentationInput = ComposerAckInput & {
   agentsByPubkey?: ReadonlyMap<string, AgentDisplaySource>;
 };
 
-export type ComposerAckPresentation = { label: string };
+export type ComposerAckPresentation = {
+  label: string;
+  /** Present only when a real server receipt drives the line. */
+  startedAt?: number;
+  turnKey?: string;
+  verb?: TurnVerb;
+};
 
 function agentFromConversationIdentity(
   identity: RoomViewIdentity | undefined,
@@ -148,6 +159,19 @@ export function selectComposerAckPresentation(
       agentFromConversationIdentity(input.conversationIdentities?.get(state.agentPubkey)) ??
       input.agentsByPubkey?.get(state.agentPubkey);
     const subject = resolveAgentDisplayIdentity(state.agentPubkey, agent).name;
+    // A real receipt carries its own identity: one verb per turn (seeded by
+    // the turn key, never re-picked per tick) and the receipt's server time
+    // for the elapsed counter. The local "sending…" bridge has neither.
+    if (input.activeTurnRequestId) {
+      const turnKey = `${state.agentPubkey}:${input.activeTurnRequestId}`;
+      const verb = pickTurnVerb(turnKey);
+      return {
+        label: `${subject} ${verb.gerund}…`,
+        turnKey,
+        verb,
+        ...(input.activeTurnStartedAt != null ? { startedAt: input.activeTurnStartedAt } : {}),
+      };
+    }
     return { label: `${subject} thinking…` };
   }
   return { label: 'sending…' };

@@ -808,6 +808,7 @@ async function prChecksStatus(): Promise<string> {
   );
   let checks: 'passed' | 'failed' | 'pending' = 'pending';
   let held = false;
+  let approvalPending = false;
   let pullRequest: string | undefined;
   const items = Array.isArray(conversation.items) ? conversation.items : [];
   for (const item of items) {
@@ -818,14 +819,22 @@ async function prChecksStatus(): Promise<string> {
     if (/\bchecks?\s+(?:have\s+)?failed\b/i.test(body)) checks = 'failed';
     const url = body.match(/https:\/\/github\.com\/[^\s/]+\/[^\s/]+\/pull\/\d+/)?.[0];
     if (url) pullRequest = url;
+    if (/\bapproval pending\b|\bmerge (?:approval )?requested\b/i.test(body)) {
+      approvalPending = true;
+    }
+    if (/\bapproval (?:completed|failed|cancelled)\b|\bpull request merged\b/i.test(body)) {
+      approvalPending = false;
+    }
     if (typeof message.authorId === 'string' && humans.has(message.authorId)) {
       if (/\bhold\b|\bdo not merge\b|\bdon't merge\b/i.test(body)) held = true;
       if (/\bresume\b|\bproceed\b|\bgo ahead\b|\bmerge now\b/i.test(body)) held = false;
+      if (/\bapprove(?:d)?\b|\bmerge (?:it|this|now)\b/i.test(body)) approvalPending = true;
     }
   }
   return JSON.stringify({
     checks,
     held,
+    approvalPending,
     archived: authority.archived === true,
     ...(pullRequest ? { pullRequest } : {}),
     ...(!pullRequest
@@ -833,7 +842,7 @@ async function prChecksStatus(): Promise<string> {
           next: 'The PR URL is not yet durable in the corner. Print its full URL as your final response and end this turn now; do not call pr_checks_status again in this turn.',
         }
       : {}),
-    rule: 'Merge only when checks is passed and held is false. A local or gh checks result is not authorization.',
+    rule: 'Merge only when checks is passed, held is false, and approvalPending is false. A local or gh checks result is not authorization; a pending server approval must finish without an agent race.',
   });
 }
 

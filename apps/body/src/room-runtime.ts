@@ -60,7 +60,14 @@ interface RunningRoom {
   lastPollAt: number;
   backoffUntil: number;
   recovering: boolean;
-  worktree?: { path: string; gitCommonDir: string };
+  worktree?: CornerWorktree;
+}
+
+interface CornerWorktree {
+  path: string;
+  gitCommonDir: string;
+  cornerId: string;
+  branch: string;
 }
 
 interface DesiredCorner {
@@ -230,7 +237,7 @@ export class RoomRuntimeCoordinator {
       }
       running.controller.abort();
       await running.promise.catch(() => undefined);
-      if (running.worktree) await this.removeCornerWorktree(running.worktree);
+      if (running.worktree) await this.reapCornerWorktree(running.worktree);
     }
     await mapWithConcurrency(desiredTopRooms, ROOM_JOIN_CONCURRENCY, async (roomId) => {
       if (!this.running.has(roomId)) this.startRoom(roomId);
@@ -380,6 +387,12 @@ export class RoomRuntimeCoordinator {
         signal: controller.signal,
         onPoll: () => this.notePoll(corner.cornerId),
         onFailure: (retryInMs) => this.noteFailure(corner.cornerId, retryInMs),
+        onCloseRequested: () =>
+          this.reapCornerWorktree({
+            ...worktree,
+            cornerId: corner.cornerId,
+            branch: featureBranch,
+          }),
       });
       const promise = loop
         .run()
@@ -400,7 +413,11 @@ export class RoomRuntimeCoordinator {
         lastPollAt: startedAt,
         backoffUntil: 0,
         recovering: false,
-        worktree,
+        worktree: {
+          ...worktree,
+          cornerId: corner.cornerId,
+          branch: featureBranch,
+        },
       });
       console.log(
         `[thin-core] serving corner ${corner.cornerId} on ${featureBranch} at ${worktree.path}`,
@@ -497,19 +514,22 @@ export class RoomRuntimeCoordinator {
     return { path, gitCommonDir };
   }
 
-  private async removeCornerWorktree(worktree: {
-    path: string;
-    gitCommonDir: string;
-  }): Promise<void> {
-    await execFileAsync('git', [
-      `--git-dir=${worktree.gitCommonDir}`,
-      'worktree',
-      'remove',
-      '--force',
-      worktree.path,
-    ]).catch((error) =>
-      console.error(`[thin-core] failed to reap corner worktree ${worktree.path}:`, error),
-    );
+  private async reapCornerWorktree(worktree: CornerWorktree): Promise<void> {
+    if (existsSync(worktree.path)) {
+      await execFileAsync('git', [
+        `--git-dir=${worktree.gitCommonDir}`,
+        'worktree',
+        'remove',
+        '--force',
+        worktree.path,
+      ]);
+    }
+    await this.options.daemonApi.execute('postCornerRemoteState', {
+      cornerId: worktree.cornerId,
+      branch: worktree.branch,
+      state: 'gone',
+      checks: 'unknown',
+    });
   }
 
   private notePoll(roomId: string): void {

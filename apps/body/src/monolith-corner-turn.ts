@@ -1,7 +1,9 @@
+import { execFile } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
+import { promisify } from 'node:util';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
-import { AcpClient, type McpServerWire } from './acp.js';
+import { AcpClient, type McpServerWire, type ToolCallEntry } from './acp.js';
 import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
 import { stripAgentReplyPreamble } from './reply-sanitizer.js';
 import { beelineAgentMcpServer } from './room-session.js';
@@ -19,6 +21,71 @@ import { runtimeIdentity } from './runtime.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
 
 type WorkspaceRoster = DaemonOperationMap['getWorkspaceRoster']['output'];
+type DaemonActivity = DaemonOperationMap['postAgentActivity']['input']['activity'][number];
+
+const execFileAsync = promisify(execFile);
+const PULL_REQUEST_URL = /https:\/\/github\.com\/[^\s/]+\/[^\s/]+\/pull\/\d+/;
+
+function oneLine(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
+function serialized(value: unknown): string {
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return '';
+  }
+}
+
+function toolCallKey(call: ToolCallEntry, index: number): string {
+  return call.id ?? `tool-${index}`;
+}
+
+function toolCallSettled(call: ToolCallEntry): boolean {
+  return /^(?:completed|complete|failed|error|succeeded|success|passed|done)$/i.test(
+    call.status ?? '',
+  );
+}
+
+function isSuccessfulCommit(call: ToolCallEntry): boolean {
+  if (/failed|error|denied/i.test(call.status ?? '')) return false;
+  return /\bgit\s+commit\b|\bcommit(?:ted)?\s+(?:changes|files?)\b/i.test(
+    `${call.title ?? ''} ${serialized(call.rawInput)}`,
+  );
+}
+
+/** Turn one physical ACP tool call into the terse server-indexed ledger row. */
+export async function cornerToolActivity(
+  call: ToolCallEntry,
+  worktreePath: string,
+): Promise<DaemonActivity> {
+  const operation = oneLine(call.kind ?? '') || 'tool';
+  let title = oneLine(call.title ?? '') || `${operation} tool`;
+  if (isSuccessfulCommit(call)) {
+    try {
+      const shown = await execFileAsync(
+        'git',
+        ['-C', worktreePath, 'show', '--format=%s', '--name-only', '--no-renames', 'HEAD'],
+        { maxBuffer: 1024 * 1024 },
+      );
+      const lines = shown.stdout.split(/\r?\n/);
+      const subject = oneLine(lines.shift() ?? 'commit');
+      const files = new Set(lines.map(oneLine).filter(Boolean));
+      title = `committed ${files.size} files: ${subject}`;
+    } catch {
+      // The harness title remains a useful summary if the commit disappeared
+      // between the ACP update and this read.
+    }
+  }
+  return {
+    kind: 'tool',
+    title: title.slice(0, 240),
+    operation: operation.slice(0, 80),
+    status: call.status ?? 'completed',
+  };
+}
 
 export interface MonolithCornerTurnOptions {
   cornerId: string;
@@ -38,6 +105,7 @@ export interface MonolithCornerTurnOptions {
   pollMs?: number;
   onPoll(): void;
   onFailure(retryInMs: number): void;
+  onCloseRequested(): Promise<void>;
   createAcpClient?: (options: ConstructorParameters<typeof AcpClient>[0]) => AcpClient;
 }
 
@@ -49,6 +117,7 @@ export class MonolithCornerTurnLoop {
   private busy = false;
   private forcedStop = false;
   private draftTail = Promise.resolve();
+  private activityTail = Promise.resolve();
 
   constructor(private readonly options: MonolithCornerTurnOptions) {
     this.agent = runtimeIdentity(options.runtime.agent);
@@ -174,10 +243,10 @@ export class MonolithCornerTurnLoop {
           : '',
         `You are in an isolated git worktree on ${this.options.featureBranch}, targeting ${this.options.targetBranch}.`,
         'Work normally with the full coding tools. Commit and push only this feature branch. Use gh to open its pull request.',
-        'PR-opening turn rule: as soon as a pull request exists, print its full GitHub URL as your final response and end the turn immediately. Do not call pr_checks_status in that same turn and do not wait for checks inside it. Humans need the durable review window before any merge turn.',
-        'Never merge because local tests pass or because gh reports passing checks. Merge only after a server-posted checks-passed note appears in this corner AND beeline-agent pr_checks_status returns checks="passed" and held=false.',
+        'PR-opening turn rule: as soon as a pull request exists, print its full GitHub URL as your final response and end the turn immediately. Do not call pr_checks_status in that same turn and do not wait for checks inside it. Then stay idle until a later corner fact or human message starts another turn.',
+        'Never merge because local tests pass or because gh reports passing checks. On a later turn triggered by a server-posted checks-passed note, call beeline-agent pr_checks_status. Merge only when it returns checks="passed", held=false, and approvalPending=false.',
         'If any human in this corner says hold or do not merge, do not merge until a later human explicitly resumes it.',
-        'After the checks-passed fact and no hold, merge the pull request yourself with gh. Do not wait for a separate human merge command.',
+        'A human approval in the app asks the server to merge. When approval is pending, wait for the server close request instead of racing it with gh. If checks passed, no hold exists, and no approval is pending, merge the pull request yourself with gh.',
         'Never push directly to the target branch. Never merge a different pull request.',
       ]
         .filter(Boolean)
@@ -243,6 +312,30 @@ export class MonolithCornerTurnLoop {
             .join('\n\n');
           const sessionId = this.sessionId!;
           const turnId = `${this.agent.publicKey}:${cornerId}`;
+          const publishedToolCalls = new Set<string>();
+          const publishToolCalls = (calls: readonly ToolCallEntry[], settledOnly: boolean) => {
+            calls.forEach((call, index) => {
+              const key = toolCallKey(call, index);
+              if (publishedToolCalls.has(key) || (settledOnly && !toolCallSettled(call))) return;
+              publishedToolCalls.add(key);
+              this.activityTail = this.activityTail
+                .catch(() => undefined)
+                .then(async () => {
+                  const activity = await cornerToolActivity(call, this.options.worktreePath);
+                  await api.execute('postAgentActivity', {
+                    agentId: this.agent.publicKey,
+                    roomId: cornerId,
+                    requestId,
+                    activity: [activity],
+                  });
+                })
+                .then(() => undefined)
+                .catch((error) => {
+                  publishedToolCalls.delete(key);
+                  console.error(`[thin-core] corner ${cornerId} tool activity failed:`, error);
+                });
+            });
+          };
           const result = await this.client!.sessionPrompt(
             sessionId,
             prompt,
@@ -263,7 +356,12 @@ export class MonolithCornerTurnLoop {
                   console.error(`[thin-core] corner ${cornerId} draft publish failed:`, error),
                 );
             },
+            undefined,
+            (calls) => publishToolCalls(calls, true),
           );
+          await this.activityTail;
+          publishToolCalls(result.toolCalls, false);
+          await this.activityTail;
           await this.draftTail;
           const reply = stripAgentReplyPreamble(result.agentText).trim();
           if (!reply) throw new Error('ACP corner turn produced no durable reply');
@@ -273,6 +371,18 @@ export class MonolithCornerTurnLoop {
             text: reply,
             presentation: 'message',
           });
+          const pullRequest = reply.match(PULL_REQUEST_URL)?.[0];
+          const alreadyReady = conversation.items.some((item) =>
+            /\bPR ready for review\b/i.test(item.body),
+          );
+          if (pullRequest && !alreadyReady) {
+            await api.execute('postRoomMessage', {
+              roomId: cornerId,
+              requestId,
+              text: `PR ready for review\n${pullRequest}`,
+              presentation: 'system',
+            });
+          }
           await api.execute('retractAgentLiveOutput', {
             agentId: this.agent.publicKey,
             roomId: cornerId,
@@ -323,11 +433,14 @@ export class MonolithCornerTurnLoop {
     try {
       while (!signal?.aborted) {
         try {
-          const inbox = await api.execute('getRoomInbox', {
-            roomId: cornerId,
+          const inbox = await api.execute('getCornerCloseRequests', {
+            cornerId,
             ...(cursor ? { after: cursor } : {}),
-            limit: 200,
           });
+          if (inbox.closeRequested) {
+            await this.options.onCloseRequested();
+            return;
+          }
           for (const item of inbox.items) {
             if (item.type === 'message') {
               if (item.authorId === this.agent.publicKey) continue;

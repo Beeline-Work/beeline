@@ -8,6 +8,7 @@ import {
   agentStreamSnapshot,
   isPureRetryNarration,
   openAcpConversation,
+  toolCallEntries,
   type SessionUpdate,
 } from './acp.js';
 import { harnessSupportsNativeSessionResume } from './harness-capabilities.js';
@@ -19,6 +20,31 @@ describe('ACP streaming lane classifier', () => {
   const update = (sessionUpdate: string, fields: Record<string, unknown> = {}): SessionUpdate => ({
     sessionId: 'session-1',
     update: { sessionUpdate, ...fields },
+  });
+
+  it('merges start, update, and result notifications into one tool call', () => {
+    expect(
+      toolCallEntries([
+        update('tool_call', {
+          toolCallId: 'tool-1',
+          kind: 'execute',
+          title: 'Run tests',
+          rawInput: { command: 'npm test' },
+          status: 'in_progress',
+        }),
+        update('tool_call_update', { toolCallId: 'tool-1', status: 'completed' }),
+        update('tool_result', { toolCallId: 'tool-1', content: '12 passed' }),
+      ]),
+    ).toEqual([
+      {
+        id: 'tool-1',
+        kind: 'execute',
+        title: 'Run tests',
+        rawInput: { command: 'npm test' },
+        status: 'completed',
+        content: '12 passed',
+      },
+    ]);
   });
 
   it('maps standard message, thought, and tool shapes without folding thought into the answer', () => {
@@ -1153,16 +1179,7 @@ describe('AcpClient live steering', () => {
   });
 
   it('streams and finalizes pi newline-framed token chunks as continuous prose', async () => {
-    const tokens = [
-      'No\n',
-      ' be\n',
-      'eline\n',
-      ' skill\n',
-      ' in\n',
-      ' pi\n',
-      ' docs\n',
-      '.\n',
-    ];
+    const tokens = ['No\n', ' be\n', 'eline\n', ' skill\n', ' in\n', ' pi\n', ' docs\n', '.\n'];
     const client = new AcpClient({
       agentBinary: await fakeStreamingAgent(tokens),
       agentLabel: 'pi-acp',

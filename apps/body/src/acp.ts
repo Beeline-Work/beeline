@@ -74,6 +74,9 @@ export interface ToolCallEntry {
   title?: string;
   kind?: string;
   status?: string;
+  rawInput?: unknown;
+  content?: unknown;
+  locations?: unknown;
 }
 
 export interface PromptResult {
@@ -372,6 +375,42 @@ export function agentStreamSnapshot(
       ? { thoughtText: thoughtText || completedMessages.at(-1)! }
       : {}),
   };
+}
+
+/** Collapse ACP's start/update/result notifications into one physical tool call. */
+export function toolCallEntries(updates: readonly SessionUpdate[]): ToolCallEntry[] {
+  const calls = new Map<string, ToolCallEntry>();
+  let anonymous = 0;
+  let activeAnonymous: string | undefined;
+  for (const { update } of updates) {
+    const sessionUpdate = update.sessionUpdate as string | undefined;
+    if (
+      sessionUpdate !== 'tool_call' &&
+      sessionUpdate !== 'tool_call_update' &&
+      sessionUpdate !== 'tool_result'
+    ) {
+      continue;
+    }
+    const id = typeof update.toolCallId === 'string' ? update.toolCallId : undefined;
+    if (id) activeAnonymous = undefined;
+    if (!id && (sessionUpdate === 'tool_call' || !activeAnonymous)) {
+      activeAnonymous = `anonymous-${anonymous++}`;
+    }
+    const key = id ?? activeAnonymous!;
+    const previous = calls.get(key);
+    calls.set(key, {
+      ...previous,
+      id: key,
+      ...(typeof update.title === 'string' ? { title: update.title } : {}),
+      ...(typeof update.kind === 'string' ? { kind: update.kind } : {}),
+      ...(typeof update.status === 'string' ? { status: update.status } : {}),
+      ...('rawInput' in update ? { rawInput: update.rawInput } : {}),
+      ...('content' in update ? { content: update.content } : {}),
+      ...('locations' in update ? { locations: update.locations } : {}),
+    });
+    if (!id && sessionUpdate === 'tool_result') activeAnonymous = undefined;
+  }
+  return [...calls.values()];
 }
 
 /**
@@ -730,6 +769,7 @@ export class AcpClient extends EventEmitter {
     timeoutMs = 120_000,
     onChunk?: AcpTextChunkHandler,
     onActivity?: AcpStreamHandler,
+    onToolCalls?: (calls: readonly ToolCallEntry[]) => void,
   ): Promise<PromptResult> {
     const updates: SessionUpdate[] = [];
     let promptRunId: string | undefined;
@@ -740,6 +780,7 @@ export class AcpClient extends EventEmitter {
       promptRunId ??= this.activeRunIdFromUpdate(u.update);
       if (requestId !== undefined) this.resetPendingIdleTimeout(requestId);
       onActivity?.(agentStreamSnapshot(updates, this.agentLabel));
+      onToolCalls?.(toolCallEntries(updates));
       if (onChunk) {
         const delta = agentMessageChunkText(u.update);
         if (delta) onChunk(delta, joinAgentMessageChunks(updates, this.agentLabel));
@@ -763,17 +804,7 @@ export class AcpClient extends EventEmitter {
 
       const agentText = finalAgentMessageText(updates, this.agentLabel);
 
-      const toolCalls: ToolCallEntry[] = updates
-        .filter((u) => {
-          const s = u.update.sessionUpdate as string | undefined;
-          return s === 'tool_call' || s === 'tool_call_update' || s === 'tool_result';
-        })
-        .map((u) => ({
-          id: u.update.toolCallId as string | undefined,
-          title: u.update.title as string | undefined,
-          kind: u.update.kind as string | undefined,
-          status: u.update.status as string | undefined,
-        }));
+      const toolCalls = toolCallEntries(updates);
 
       return {
         stopReason: result?.stopReason ?? 'end_turn',

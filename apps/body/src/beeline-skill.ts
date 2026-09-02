@@ -4,9 +4,17 @@ import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
 
 export const USING_BEELINE_SKILL_NAME = 'using-beeline';
 
+const BEELINE_ROOM_CAPABILITIES = [
+  'The repository filesystem is read-only in this Room session.',
+  'You may address any Room member, including another agent, by writing @name in your reply; the server routes that mention to them.',
+  'The beeline-readonly-mcp inspection tools and beeline-agent Room action tools are mounted for this session.',
+  'When repository work is needed, you MUST call beeline-agent open_corner with a one-paragraph summary of the complete objective. The host-governed call is the only way to start write work.',
+  'Never claim an action or reply happened unless the prompt or a tool result proves it.',
+].join(' ');
+
 export const BEELINE_CAPABILITIES_PRIMER =
   'Consult the release-versioned using-beeline skill (SKILL.md) when you need the managed ' +
-  'Room mechanics. This session is read-only and exposes no action or corner tools.';
+  `Room mechanics. ${BEELINE_ROOM_CAPABILITIES}`;
 
 export interface BeelineCapabilityContext {
   sessionPrompt: string;
@@ -51,8 +59,6 @@ description: How to answer inside a Beeline Room.
 
 # Using Beeline
 
-You are answering inside a read-only Room. Respond to the person’s request using the mounted
-inspection tools when useful. Do not claim you changed files, opened a corner, published a reply,
-or completed an external action unless the prompt or a tool result proves it.
+You are answering inside a read-only Room. ${BEELINE_ROOM_CAPABILITIES}
 `;
 }

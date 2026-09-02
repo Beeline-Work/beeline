@@ -1,6 +1,15 @@
 import { execFile } from 'node:child_process';
 import { createHash, createHmac } from 'node:crypto';
-import { access, chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  access,
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -20,7 +29,11 @@ import { AgentScheduleLoop } from '../../server/src/agent-schedules.js';
 import { GitHubOperations } from '../../server/src/github-operations.js';
 import { DaemonApiClient } from './daemon-api-client.js';
 import { AcpClient } from './acp.js';
-import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
+import {
+  agentReplyMentionIds,
+  MonolithRoomTurnLoop,
+  roomPrincipalMayAddressAgent,
+} from './monolith-room-turn.js';
 import { completeDevicePairing } from './device-pairing.js';
 import { coordinateManagedUpdateHandoff, ManagedUpdateHandoff } from './managed-update.js';
 import {
@@ -39,6 +52,8 @@ const execFileAsync = promisify(execFile);
 const HUMAN = createHash('sha256').update('github:daemon-client-owner').digest('hex');
 const AGENT_SECRET = new Uint8Array(32).fill(11);
 const AGENT = getPublicKey(AGENT_SECRET);
+const PEER_AGENT_SECRET = new Uint8Array(32).fill(12);
+const PEER_AGENT = getPublicKey(PEER_AGENT_SECRET);
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
 
@@ -51,6 +66,273 @@ describe('daemon API client against the local monolith', () => {
   let origin: string;
   let supervisorRoot: string;
   let launchedDaemonConfig: string | undefined;
+
+  it('routes model-written peer names through validated agent mention ids', () => {
+    const peer = 'peer-agent';
+    const roster = {
+      members: [
+        { identityId: AGENT, kind: 'agent' as const, name: 'Bee', role: 'member' as const },
+        {
+          identityId: peer,
+          kind: 'agent' as const,
+          name: 'Codex',
+          handle: 'codex-helper',
+          role: 'member' as const,
+          soul: {
+            name: 'Clockwork',
+            instructions: '',
+            avatarSeed: peer,
+            authoredBy: HUMAN,
+            updatedAt: 1,
+          },
+        },
+        { identityId: HUMAN, kind: 'human' as const, name: 'Owner', role: 'owner' as const },
+      ],
+    };
+
+    expect(agentReplyMentionIds('@codex what time is it?', roster, AGENT)).toEqual([peer]);
+    expect(agentReplyMentionIds('Please ask @Clockwork.', roster, AGENT)).toEqual([peer]);
+    expect(agentReplyMentionIds('Mail codex@example.com', roster, AGENT)).toEqual([]);
+    expect(agentReplyMentionIds('@Owner please review', roster, AGENT)).toEqual([]);
+    expect(
+      roomPrincipalMayAddressAgent(
+        { workspaceId: WORKSPACE, member: true, principalKind: 'agent' },
+        false,
+      ),
+    ).toBe(true);
+    expect(
+      roomPrincipalMayAddressAgent(
+        { workspaceId: WORKSPACE, member: true, principalKind: 'human' },
+        false,
+      ),
+    ).toBe(false);
+  });
+
+  it.skipIf(process.env.BEELINE_REAL_ROOM_CAPABILITY_PROOF !== '1')(
+    'proves two real codex Room agents can address a peer and open a corner',
+    async () => {
+      const agentCommand = process.env.BEELINE_REAL_AGENT_COMMAND;
+      const readonlyMcpCommand = process.env.BEELINE_REAL_READONLY_MCP_COMMAND;
+      if (!agentCommand || !readonlyMcpCommand) {
+        throw new Error('real Room capability proof requires agent and read-only MCP commands');
+      }
+      await database.query(
+        `INSERT INTO identities(id,kind,name) VALUES($1,'agent','Codex')`,
+        [PEER_AGENT],
+      );
+      await database.query(
+        `INSERT INTO agents(agent_id,owner_id,soul,selected_model,selected_effort,model_catalog)
+         VALUES($1,$2,$3::jsonb,NULL,NULL,'[]'::jsonb)`,
+        [
+          PEER_AGENT,
+          HUMAN,
+          JSON.stringify({ name: 'Codex', instructions: 'Answer directly and briefly.' }),
+        ],
+      );
+      await database.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+         VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
+        [WORKSPACE, PEER_AGENT, ROOM],
+      );
+      await database.query(
+        `UPDATE agents SET selected_model=NULL,selected_effort=NULL,
+           soul=$2::jsonb WHERE agent_id=$1`,
+        [
+          AGENT,
+          JSON.stringify({
+            name: 'Terra',
+            instructions:
+              'Follow requests literally. To ask Codex something, address @codex with the question. For repository work, call open_corner.',
+          }),
+        ],
+      );
+      await database.query(
+        `UPDATE rooms SET repository_key='local/beeline',repository_name='local/beeline',
+           repository_remote=$2,repository_resolution='repository',repository_target_branch='main'
+         WHERE id=$1`,
+        [ROOM, `file://${process.cwd()}`],
+      );
+
+      const makeCore = async (
+        agentId: string,
+        secret: Uint8Array,
+        name: string,
+        root: string,
+      ) => {
+        await mkdir(root, { recursive: true });
+        const exchange = await auth.createDaemonExchange(agentId);
+        const exchanged = await fetch(`${origin}/v1/auth/daemon/exchange`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ exchangeToken: exchange.exchangeToken }),
+        });
+        const token = (await exchanged.json()) as { daemonToken: string };
+        const runtime: AgentRuntimeRecord = {
+          version: 2,
+          communityId: WORKSPACE,
+          pairedBy: HUMAN,
+          agent: {
+            name,
+            publicKey: agentId,
+            secretKeyHex: Buffer.from(secret).toString('hex'),
+          },
+          body: {
+            name: `${name} Body`,
+            publicKey: getPublicKey(new Uint8Array(32).fill(name === 'Terra' ? 21 : 22)),
+            secretKeyHex: Buffer.from(new Uint8Array(32).fill(name === 'Terra' ? 21 : 22)).toString(
+              'hex',
+            ),
+          },
+          rooms: [
+            {
+              channelId: ROOM,
+              root: join(root, 'room'),
+              repo: { root: process.cwd(), targetBranch: 'main' },
+            },
+          ],
+          supervisorRoot: root,
+          agentKind: 'codex',
+          agentCommand,
+          agentArgs: [],
+          agentBinary: agentCommand,
+          mcpBinary: readonlyMcpCommand,
+          accessPolicy: 'everyone',
+          transport: { kind: 'monolith', baseUrl: origin, daemonToken: token.daemonToken },
+        };
+        const config = {
+          agentKind: 'codex',
+          agentCommand,
+          agentArgs: [],
+          agentBinary: agentCommand,
+          mcpBinary: readonlyMcpCommand,
+          readonlyMcpCommand,
+          agentEnv: {
+            ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
+            ...(process.env.LANG ? { LANG: process.env.LANG } : {}),
+          },
+          operatorHome: process.env.HOME,
+          workspaceRoot: process.cwd(),
+          autoApprovePermissions: false,
+          accessPolicy: 'everyone',
+        } as const;
+        const configPath = join(root, 'runtime.json');
+        await writeFile(configPath, `${JSON.stringify(runtime)}\n`, { mode: 0o600 });
+        const client = new DaemonApiClient(origin, token.daemonToken, agentId);
+        return {
+          core: new ThinDaemonCore(runtime, configPath, config as never, {
+            daemonApi: client,
+            reconcileHeartbeatMs: 60_000,
+          }),
+          client,
+        };
+      };
+
+      const terra = await makeCore(AGENT, AGENT_SECRET, 'Terra', join(supervisorRoot, 'terra'));
+      const codex = await makeCore(
+        PEER_AGENT,
+        PEER_AGENT_SECRET,
+        'Codex',
+        join(supervisorRoot, 'codex'),
+      );
+      const terraAbort = new AbortController();
+      const codexAbort = new AbortController();
+      const terraRun = terra.core.run({ pollMs: 50, signal: terraAbort.signal });
+      const codexRun = codex.core.run({ pollMs: 50, signal: codexAbort.signal });
+      try {
+        await vi.waitFor(
+          () => {
+            expect(terra.core.activeRoomIds()).toContain(ROOM);
+            expect(codex.core.activeRoomIds()).toContain(ROOM);
+          },
+          { timeout: 10_000, interval: 100 },
+        );
+        // activeRoomIds is populated before the Room leaf finishes its
+        // start-at-latest inbox read. Let both leaves install their cursors so
+        // the first proof message cannot be mistaken for startup history.
+        await new Promise((resolveWait) => setTimeout(resolveWait, 1_000));
+        await phone.execute(
+          'sendRoomMessage',
+          {
+            roomId: ROOM,
+            messageId: createHash('sha256').update('real-agent-addressing-proof').digest('hex'),
+            mentions: [AGENT],
+            text: '@terra ask codex what time it is',
+          },
+          HUMAN,
+        );
+        await vi.waitFor(
+          async () => {
+            const conversation = await terra.client.execute('getRoomConversation', {
+              roomId: ROOM,
+              limit: 200,
+            });
+            const terraMessage = conversation.items.find(
+              (item) => item.authorId === AGENT && /@codex\b/i.test(item.body),
+            );
+            expect(terraMessage?.mentionIds).toContain(PEER_AGENT);
+            expect(
+              conversation.items.some(
+                (item) =>
+                  item.authorId === PEER_AGENT &&
+                  item.requestId === terraMessage!.id &&
+                  item.type === 'message' &&
+                  item.body.trim().length > 0,
+              ),
+            ).toBe(true);
+          },
+          { timeout: 240_000, interval: 500 },
+        );
+
+        await phone.execute(
+          'sendRoomMessage',
+          {
+            roomId: ROOM,
+            messageId: createHash('sha256').update('real-open-corner-proof').digest('hex'),
+            mentions: [AGENT],
+            text: '@terra open a corner to add a README line',
+          },
+          HUMAN,
+        );
+        let cornerId = '';
+        await vi.waitFor(
+          async () => {
+            const corners = await terra.client.execute('listRoomCorners', { roomId: ROOM });
+            cornerId = corners.corners[0]?.cornerId ?? '';
+            expect(cornerId).toBeTruthy();
+          },
+          { timeout: 240_000, interval: 500 },
+        );
+        const conversation = await terra.client.execute('getRoomConversation', {
+          roomId: ROOM,
+          limit: 200,
+        });
+        const terraMessage = conversation.items.find(
+          (item) => item.authorId === AGENT && /@codex\b/i.test(item.body),
+        );
+        const codexMessage = conversation.items.find(
+          (item) =>
+            item.authorId === PEER_AGENT &&
+            item.requestId === terraMessage?.id &&
+            item.type === 'message' &&
+            item.body.trim().length > 0,
+        );
+        console.log(
+          [
+            '[real-room-capability-proof]',
+            `Terra: ${terraMessage?.body}`,
+            `Terra mention ids: ${terraMessage?.mentionIds.join(',')}`,
+            `Codex: ${codexMessage?.body}`,
+            `Corner: ${cornerId}`,
+          ].join('\n'),
+        );
+      } finally {
+        terraAbort.abort();
+        codexAbort.abort();
+        await Promise.all([terraRun, codexRun]);
+      }
+    },
+    540_000,
+  );
 
   beforeEach(async () => {
     database = new PgliteDatabase();
@@ -469,9 +751,17 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       );
       expect(systemPrompt).toContain('Soul instructions: Vishnu, destroyer of worlds.');
       expect(systemPrompt).toContain('using-beeline skill (SKILL.md)');
+      expect(systemPrompt).toContain('including another agent');
+      expect(systemPrompt).toContain('beeline-agent open_corner');
+      expect(sessionNew.mock.calls[0]![0].mcpServers?.map((server) => server.name)).toEqual([
+        'beeline-readonly-mcp',
+        'beeline-agent',
+      ]);
       const wirePrompt = sessionPrompt.mock.calls[0]![1];
       expect(wirePrompt).toContain('This is who you are in this Workspace.');
       expect(wirePrompt).toContain('using-beeline skill (SKILL.md)');
+      expect(wirePrompt).toContain('including another agent');
+      expect(wirePrompt).toContain('beeline-agent open_corner');
       expect(wirePrompt).toContain('Who are you?');
       expect(wirePrompt).toContain('most recent unanswered human message');
       expect(wirePrompt).toContain('image: world.png (image/png, 9 bytes)');

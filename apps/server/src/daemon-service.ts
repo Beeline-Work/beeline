@@ -747,6 +747,7 @@ export class DaemonService {
           )
         ).rows[0];
     if (input.triggerMessageId && !trigger) throw new Error('turn trigger is invalid for agent');
+    let humanIds = new Set<string>();
     if (mentions.length) {
       const members = await this.database.query<{ identity_id: string; kind: 'human' | 'agent' }>(
         `SELECT membership.identity_id,identity.kind FROM memberships membership
@@ -759,10 +760,35 @@ export class DaemonService {
       agentMentionIds = new Set(
         members.rows.filter((row) => row.kind === 'agent').map((row) => row.identity_id),
       );
+      humanIds = new Set(
+        members.rows.filter((row) => row.kind === 'human').map((row) => row.identity_id),
+      );
     }
     // Mentions are server-validated against the Room roster: a member mention
     // (human or agent) becomes a real mention; an unknown name stays plain text.
     const validatedMentions = mentions.filter((value) => memberIds.has(value));
+    // At most ONE human mention per agent turn is delivered; further human tags
+    // in the same message stay as plain text.
+    let deliveredMentions = validatedMentions;
+    const firstHumanMention = validatedMentions.find((value) => humanIds.has(value));
+    if (firstHumanMention) {
+      deliveredMentions = validatedMentions.filter(
+        (value) => !humanIds.has(value) || value === firstHumanMention,
+      );
+      // A corner agent must not tag the user on completion: the merge summary
+      // card and its push already cover that. Turn-settling corner posts
+      // deliver no human mentions at all.
+      const corner = (
+        await this.database.query<{ corner: boolean }>(
+          `SELECT EXISTS(SELECT 1 FROM corner_facts WHERE corner_id=rooms.id) corner
+           FROM rooms WHERE rooms.id=$1`,
+          [input.roomId],
+        )
+      ).rows[0];
+      if (corner?.corner && input.requestId) {
+        deliveredMentions = deliveredMentions.filter((value) => !humanIds.has(value));
+      }
+    }
     const rootMessageId = input.replyToMessageId
       ? (parent!.root_message_id ?? input.replyToMessageId)
       : null;
@@ -787,8 +813,8 @@ export class DaemonService {
           JSON.stringify(input.tags ?? {}),
           JSON.stringify(
             capped
-              ? validatedMentions.filter((value) => !agentMentionIds.has(value))
-              : validatedMentions,
+              ? deliveredMentions.filter((value) => !agentMentionIds.has(value))
+              : deliveredMentions,
           ),
           input.replyToMessageId ?? null,
           rootMessageId,

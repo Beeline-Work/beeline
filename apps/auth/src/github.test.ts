@@ -118,6 +118,38 @@ describe('GitHub-only account and repository access', () => {
     expect(sentBody).not.toHaveProperty('permissions');
   });
 
+  it('deletes a merged branch with an exact-repository contents grant', async () => {
+    const { privateKey } = await generateKeyPair('RS256');
+    const privateKeyPem = await exportPKCS8(privateKey);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ token: 'branch-token', expires_at: '2030-01-01T00:00:00Z' }),
+          { status: 201 },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const app = new GitHubAppClient({ appId: '42', privateKey: privateKeyPem, slug: 'beeline' });
+
+    await expect(app.deleteBranch(77, 9, 'acme/beeline', 'fm/corner')).resolves.toBeUndefined();
+    expect(fetchMock.mock.calls[0]![1]).toMatchObject({
+      method: 'POST',
+      body: JSON.stringify({
+        repository_ids: [9],
+        permissions: { contents: 'write' },
+      }),
+    });
+    expect(fetchMock.mock.calls[1]).toEqual([
+      'https://api.github.com/repos/acme/beeline/git/refs/heads/fm/corner',
+      expect.objectContaining({
+        method: 'DELETE',
+        headers: expect.objectContaining({ authorization: 'Bearer branch-token' }),
+      }),
+    ]);
+  });
+
   it('lists the installations visible to a GitHub user token', async () => {
     const { privateKey } = await generateKeyPair('RS256');
     const privateKeyPem = await exportPKCS8(privateKey);

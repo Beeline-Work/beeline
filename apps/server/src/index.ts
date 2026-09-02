@@ -4,6 +4,7 @@ import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { BackgroundLeader, PushDeliveryLoop, runMaintenance } from './background.js';
+import { AgentScheduleLoop } from './agent-schedules.js';
 import { createFirebasePushSender } from './firebase-push.js';
 import { createBeelineServer, DEFAULT_MEDIA_MAXIMUM_BYTES } from './server.js';
 import { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
@@ -76,6 +77,7 @@ async function main() {
         githubClients.app,
         process.env.GITHUB_CLIENT_SECRET!,
         mountedAuth.sealedGitHubUserToken,
+        (roomId) => live.publish({ type: 'invalidate', roomId, reason: 'github' }),
       )
     : undefined;
   const pushSender =
@@ -83,6 +85,9 @@ async function main() {
       ? createFirebasePushSender(process.env.GOOGLE_CLOUD_PROJECT)
       : undefined;
   const push = pushSender ? new PushDeliveryLoop(database, pushSender) : undefined;
+  const schedules = new AgentScheduleLoop(database, (roomId) =>
+    live.publish({ type: 'invalidate', roomId, reason: 'schedule' }),
+  );
   const sendPushTest = pushSender
     ? async (identityId: string) => {
         const devices = await database.query<{ token: string }>(
@@ -123,6 +128,7 @@ async function main() {
     database,
     async () => {
       if (push) await push.runOnce();
+      await schedules.runOnce();
       await runMaintenance(database);
     },
     Number(process.env.BACKGROUND_INTERVAL_MS ?? '1000'),

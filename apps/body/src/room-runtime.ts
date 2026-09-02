@@ -195,11 +195,12 @@ export class RoomRuntimeCoordinator {
     return this.roomRecord(roomId)?.root ?? resolve(dirname(this.configPath), 'rooms', roomId);
   }
 
-  private roomAgentHomeRoot(workspaceRoot: string): string | undefined {
+  private roomAgentHomeRoot(workspaceRoot: string, required = false): string | undefined {
     const flag = process.env.BUZZY_BODY_ROOM_HOME;
-    if (flag === '0') return undefined;
+    if (!required && flag === '0') return undefined;
     const home = resolve(workspaceRoot, 'agent-home');
-    if (flag !== '1' && !existsSync(home) && existsSync(workspaceRoot)) return undefined;
+    if (!required && flag !== '1' && !existsSync(home) && existsSync(workspaceRoot))
+      return undefined;
     try {
       mkdirSync(home, { recursive: true, mode: 0o700 });
       return home;
@@ -211,7 +212,7 @@ export class RoomRuntimeCoordinator {
 
   private roomConfig(roomId: string): BodyConfig {
     const workspaceRoot = this.roomRoot(roomId);
-    const agentHomeRoot = this.roomAgentHomeRoot(workspaceRoot);
+    const agentHomeRoot = this.roomAgentHomeRoot(workspaceRoot, true);
     return {
       ...this.baseConfig,
       workspaceRoot,

@@ -204,8 +204,8 @@ export function assertDaemonFleetReady(status, version, sourceSha) {
   const failures = daemons.filter(
     (daemon) =>
       daemon?.state !== 'ready' ||
-      daemon?.releaseVersion !== version ||
-      daemon?.sourceSha !== sourceSha,
+      daemon?.version !== version ||
+      daemon?.sha !== sourceSha,
   );
   if (failures.length > 0) {
     fail(
@@ -214,7 +214,7 @@ export function assertDaemonFleetReady(status, version, sourceSha) {
           (daemon) =>
             `agent ${daemon?.agentPubkey ?? '<unknown>'} reported ` +
             `${daemon?.state ?? '<missing-state>'} ` +
-            `${daemon?.releaseVersion ?? '<missing-version>'}@${daemon?.sourceSha ?? '<missing-sha>'}; ` +
+            `${daemon?.version ?? '<missing-version>'}@${daemon?.sha ?? '<missing-sha>'}; ` +
             `expected ready ${version}@${sourceSha}`,
         )
         .join('\n'),

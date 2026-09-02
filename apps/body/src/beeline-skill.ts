@@ -1,7 +1,28 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
 
 export const USING_BEELINE_SKILL_NAME = 'using-beeline';
+
+export const BEELINE_CAPABILITIES_PRIMER =
+  'Consult the release-versioned using-beeline skill (SKILL.md) when you need the managed ' +
+  'Room mechanics. This session is read-only and exposes no action or corner tools.';
+
+export interface BeelineCapabilityContext {
+  sessionPrompt: string;
+  compatibilityTurnPrefix?: string;
+}
+
+export function beelineCapabilityContextForHarness(
+  agentCommand: string | undefined,
+): BeelineCapabilityContext {
+  return {
+    sessionPrompt: BEELINE_CAPABILITIES_PRIMER,
+    ...(harnessHonorsSessionSystemPrompt(agentCommand)
+      ? {}
+      : { compatibilityTurnPrefix: BEELINE_CAPABILITIES_PRIMER }),
+  };
+}
 
 export function runningBeelineReleaseId(
   env: NodeJS.ProcessEnv = process.env,

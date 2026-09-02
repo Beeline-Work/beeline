@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -14,10 +14,12 @@ import { DaemonService } from '../../server/src/daemon-service.js';
 import { LiveHub } from '../../server/src/live.js';
 import { createBeelineServer } from '../../server/src/server.js';
 import { createMonolithAuth, type MonolithAuthMount } from '../../server/src/monolith-auth.js';
+import { AgentScheduleLoop } from '../../server/src/agent-schedules.js';
 import { DaemonApiClient } from './daemon-api-client.js';
 import { AcpClient } from './acp.js';
 import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
 import { completeDevicePairing } from './device-pairing.js';
+import { coordinateManagedUpdateHandoff, ManagedUpdateHandoff } from './managed-update.js';
 import {
   launchRuntimeDaemon,
   readRuntimeRecord,
@@ -25,7 +27,9 @@ import {
   writeRuntimeRecord,
   type AgentRuntimeRecord,
 } from './runtime.js';
+import { activeReleaseId, writeUpdateState } from './self-update.js';
 import { SessionScheduler } from './session-scheduler.js';
+import { ThinDaemonCore } from './thin-core.js';
 
 const HUMAN = createHash('sha256').update('github:daemon-client-owner').digest('hex');
 const AGENT_SECRET = new Uint8Array(32).fill(11);
@@ -51,12 +55,17 @@ describe('daemon API client against the local monolith', () => {
       [HUMAN, AGENT],
     );
     await database.query(
+      `INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience)
+       VALUES('github','owner',$1,'https://github.com','test-client')`,
+      [HUMAN],
+    );
+    await database.query(
       `INSERT INTO agents(agent_id,owner_id,soul,selected_model,selected_effort,model_catalog)
        VALUES($1,$2,$3::jsonb,'gpt-5','high',$4::jsonb)`,
       [
         AGENT,
         HUMAN,
-        JSON.stringify({ name: 'Bee', instructions: 'Help carefully.' }),
+        JSON.stringify({ name: 'Terra', instructions: 'Vishnu, destroyer of worlds.' }),
         JSON.stringify([{ id: 'gpt-5', category: 'model', options: [] }]),
       ],
     );
@@ -268,7 +277,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     }, { timeout: 10_000 });
   }, 30_000);
 
-  it('answers a mention in a repo-less Room and keeps monolith presence current', async () => {
+  it('answers persisted implicit targets in a repo-less Room and keeps monolith presence current', async () => {
     await database.query(
       `UPDATE agents SET selected_model=NULL,selected_effort=NULL WHERE agent_id=$1`,
       [AGENT],
@@ -282,14 +291,19 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     const token = (await exchanged.json()) as { daemonToken: string };
     const client = new DaemonApiClient(origin, token.daemonToken, AGENT);
     const polled = vi.fn();
+    const sourceSha = 'd03cff8f'.padEnd(40, '0');
     const config = {
-      agentBinary: '/nonexistent',
+      agentBinary: '/nonexistent/codex-acp',
+      agentCommand: '/nonexistent/codex-acp',
       mcpBinary: '/nonexistent',
       readonlyMcpCommand: '/nonexistent-readonly-mcp',
       agentEnv: {},
       workspaceRoot: join(supervisorRoot, 'repo-less-room'),
       autoApprovePermissions: true,
       accessPolicy: 'everyone',
+      agentHomeRoot: join(supervisorRoot, 'agent-home'),
+      daemonReleaseVersion: 'v0.0.22',
+      daemonSourceSha: sourceSha,
     } as const;
     const runtime: AgentRuntimeRecord = {
       version: 2,
@@ -315,16 +329,36 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     };
     const acp = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
     vi.spyOn(acp, 'start').mockResolvedValue(undefined);
-    vi.spyOn(acp, 'sessionNew').mockResolvedValue({
+    const sessionNew = vi.spyOn(acp, 'sessionNew').mockResolvedValue({
       sessionId: 'repo-less-session',
       raw: {},
     });
-    vi.spyOn(acp, 'sessionPrompt').mockResolvedValue({
-      stopReason: 'end_turn',
-      updates: [],
-      agentText: 'I am Bee, and I am ready to help.',
-      toolCalls: [],
+    let finishHarnessTurn!: () => void;
+    const harnessTurn = new Promise<void>((resolveTurn) => {
+      finishHarnessTurn = resolveTurn;
     });
+    const sessionPrompt = vi
+      .spyOn(acp, 'sessionPrompt')
+      .mockImplementation(async (_sessionId, _prompt, _timeout, onText) => {
+        await harnessTurn;
+        onText?.('', '');
+        onText?.(
+          "Terra, respond to the user's latest message.",
+          "Terra, respond to the user's latest message.",
+        );
+        onText?.(
+          'I am Terra, Vishnu, destroyer of worlds; I see the image you entrusted to me.',
+          'I am Terra, Vishnu, destroyer of worlds; I see the image you entrusted to me.',
+        );
+        return {
+          stopReason: 'end_turn',
+          updates: [],
+          agentText:
+            'I am Terra, Vishnu, destroyer of worlds; I see the image you entrusted to me.',
+          toolCalls: [],
+        };
+      });
+    const daemonOperations = vi.spyOn(client, 'execute');
     const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
     const abort = new AbortController();
     const turnLoop = new MonolithRoomTurnLoop({
@@ -340,6 +374,16 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       pollMs: 10,
       createAcpClient: () => acp,
     });
+    await phone.execute(
+      'sendRoomMessage',
+      {
+        roomId: ROOM,
+        messageId: 'f'.repeat(64),
+        text: 'Who are you?',
+        mentions: [],
+      },
+      HUMAN,
+    );
     const loop = turnLoop.run();
     try {
       await vi.waitFor(() => expect(polled).toHaveBeenCalled(), { timeout: 2_000 });
@@ -347,17 +391,61 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       expect(
         visibleOnline?.members.find((member) => member.identity.pubkey === AGENT),
       ).toMatchObject({ presence: { status: 'online', roomId: ROOM } });
+      await expect(
+        fetch(`${origin}/v1/releases/daemon-readiness`).then((response) => response.json()),
+      ).resolves.toEqual({
+        daemons: [
+          expect.objectContaining({
+            agentPubkey: AGENT,
+            state: 'ready',
+            version: 'v0.0.22',
+            sha: sourceSha,
+            observedAt: expect.any(Number),
+          }),
+        ],
+      });
 
       const sent = await phone.execute(
         'sendRoomMessage',
         {
           roomId: ROOM,
           messageId: 'e'.repeat(64),
-          text: '@bee introduce yourself',
-          mentions: [AGENT],
+          text: 'Introduce yourself',
+          attachments: [
+            {
+              url: `${origin}/v1/media/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa`,
+              name: 'world.png',
+              mimeType: 'image/png',
+              size: 9,
+            },
+          ],
         },
         HUMAN,
       );
+      await vi.waitFor(() => expect(sessionPrompt).toHaveBeenCalled(), { timeout: 3_000 });
+      const systemPrompt = sessionNew.mock.calls[0]![0].systemPrompt ?? '';
+      expect(systemPrompt).toContain(
+        'Your human-authored identity and soul in this Workspace is Terra.',
+      );
+      expect(systemPrompt).toContain('Soul instructions: Vishnu, destroyer of worlds.');
+      expect(systemPrompt).toContain('using-beeline skill (SKILL.md)');
+      const wirePrompt = sessionPrompt.mock.calls[0]![1];
+      expect(wirePrompt).toContain('This is who you are in this Workspace.');
+      expect(wirePrompt).toContain('using-beeline skill (SKILL.md)');
+      expect(wirePrompt).toContain('Who are you?');
+      expect(wirePrompt).toContain('most recent unanswered human message');
+      expect(wirePrompt).toContain('image: world.png (image/png, 9 bytes)');
+      expect(wirePrompt).toContain('/v1/media/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+      expect(turnLoop.isBusy()).toBe(true);
+      await turnLoop.prepareForForcedUpdateRestart();
+      expect(turnLoop.isBusy()).toBe(true);
+      await expect(
+        readFile(
+          join(supervisorRoot, 'agent-home', 'codex', 'skills', 'using-beeline', 'SKILL.md'),
+          'utf8',
+        ),
+      ).resolves.toContain('name: using-beeline');
+      finishHarnessTurn();
       await vi.waitFor(
         async () => {
           const room = await phone.readRoom(ROOM, HUMAN);
@@ -365,13 +453,94 @@ createInterface({ input: process.stdin }).on('line', (line) => {
             expect.objectContaining({
               author: expect.objectContaining({ pubkey: AGENT }),
               requestId: sent.messageId,
-              text: 'I am Bee, and I am ready to help.',
+              text: 'I am Terra, Vishnu, destroyer of worlds; I see the image you entrusted to me.',
             }),
           );
         },
         { timeout: 3_000 },
       );
+      await vi.waitFor(async () => {
+        expect(turnLoop.isBusy()).toBe(false);
+        expect(
+          (
+            await database.query<{ status: string }>(
+              `SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
+              [ROOM, sent.messageId, AGENT],
+            )
+          ).rows[0]?.status,
+        ).toBe('complete');
+      });
+      const followup = await phone.execute(
+        'sendRoomMessage',
+        {
+          roomId: ROOM,
+          messageId: '8'.repeat(64),
+          text: 'Who are you?',
+        },
+        HUMAN,
+      );
+      await vi.waitFor(() => expect(sessionPrompt).toHaveBeenCalledTimes(2), { timeout: 3_000 });
+      await vi.waitFor(async () => {
+        const room = await phone.readRoom(ROOM, HUMAN);
+        expect(room?.messages).toContainEqual(
+          expect.objectContaining({
+            author: expect.objectContaining({ pubkey: AGENT }),
+            requestId: followup.messageId,
+          }),
+        );
+      });
+
+      const agentParent = (await phone.readRoom(ROOM, HUMAN))?.messages.find(
+        (message) => message.requestId === followup.messageId,
+      );
+      expect(agentParent).toBeDefined();
+      const threaded = await phone.execute(
+        'sendRoomReply',
+        {
+          roomId: ROOM,
+          messageId: '9'.repeat(64),
+          parentMessageId: agentParent!.id,
+          text: 'Answer in this thread too.',
+        },
+        HUMAN,
+      );
+      await vi.waitFor(() => expect(sessionPrompt).toHaveBeenCalledTimes(3), { timeout: 3_000 });
+      await vi.waitFor(async () => {
+        const room = await phone.readRoom(ROOM, HUMAN);
+        expect(room?.messages).toContainEqual(
+          expect.objectContaining({
+            author: expect.objectContaining({ pubkey: AGENT }),
+            requestId: threaded.messageId,
+          }),
+        );
+      });
+      const draftWrites = daemonOperations.mock.calls
+        .filter(([operation]) => operation === 'postAgentDraft')
+        .map(([, input]) => input);
+      expect(draftWrites).toEqual([
+        expect.objectContaining({
+          turnId: sent.messageId,
+          text: 'I am Terra, Vishnu, destroyer of worlds; I see the image you entrusted to me.',
+        }),
+        expect.objectContaining({
+          turnId: followup.messageId,
+          text: 'I am Terra, Vishnu, destroyer of worlds; I see the image you entrusted to me.',
+        }),
+        expect.objectContaining({
+          turnId: threaded.messageId,
+          text: 'I am Terra, Vishnu, destroyer of worlds; I see the image you entrusted to me.',
+        }),
+      ]);
+      for (const requestId of [sent.messageId, followup.messageId, threaded.messageId]) {
+        await vi.waitFor(() =>
+          expect(daemonOperations).toHaveBeenCalledWith(
+            'retractAgentLiveOutput',
+            expect.objectContaining({ turnId: requestId, kind: 'draft' }),
+          ),
+        );
+      }
     } finally {
+      finishHarnessTurn();
       abort.abort();
       await loop;
       await scheduler.dispose();
@@ -383,7 +552,396 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     ).toMatchObject({ presence: { status: 'offline', roomId: ROOM } });
   }, 15_000);
 
-  it('exchanges a token and round-trips the thin daemon operations', async () => {
+  it.skipIf(process.env.BEELINE_REAL_THIN_PROOF !== '1')(
+    'proves soul, image, skill, and clean update drain through a real thin daemon and harness',
+    async () => {
+      const agentCommand = process.env.BEELINE_REAL_AGENT_COMMAND;
+      const readonlyMcpCommand = process.env.BEELINE_REAL_READONLY_MCP_COMMAND;
+      if (!agentCommand || !readonlyMcpCommand) {
+        throw new Error('real thin proof requires absolute agent and read-only MCP command paths');
+      }
+      await database.query(
+        `UPDATE agents SET selected_model=NULL,selected_effort=NULL WHERE agent_id=$1`,
+        [AGENT],
+      );
+      const exchange = await auth.createDaemonExchange(AGENT);
+      const exchanged = await fetch(`${origin}/v1/auth/daemon/exchange`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ exchangeToken: exchange.exchangeToken }),
+      });
+      const token = (await exchanged.json()) as { daemonToken: string };
+      const client = new DaemonApiClient(origin, token.daemonToken, AGENT);
+      const configPath = join(supervisorRoot, 'runtime.json');
+      const runtime: AgentRuntimeRecord = {
+        version: 2,
+        communityId: WORKSPACE,
+        pairedBy: HUMAN,
+        agent: {
+          name: 'Bee',
+          publicKey: AGENT,
+          secretKeyHex: Buffer.from(AGENT_SECRET).toString('hex'),
+        },
+        body: {
+          name: 'Body',
+          publicKey: getPublicKey(new Uint8Array(32).fill(22)),
+          secretKeyHex: Buffer.from(new Uint8Array(32).fill(22)).toString('hex'),
+        },
+        rooms: [],
+        supervisorRoot,
+        relayBaseUrl: origin,
+        agentKind: 'codex',
+        agentCommand,
+        agentArgs: [],
+        agentBinary: agentCommand,
+        mcpBinary: readonlyMcpCommand,
+        createdAt: new Date().toISOString(),
+        accessPolicy: 'everyone',
+        transport: { kind: 'monolith', baseUrl: origin, daemonToken: token.daemonToken },
+      };
+      await writeFile(configPath, `${JSON.stringify(runtime)}\n`, { mode: 0o600 });
+      const config = {
+        agentKind: 'codex',
+        agentCommand,
+        agentArgs: [],
+        agentBinary: agentCommand,
+        mcpBinary: readonlyMcpCommand,
+        readonlyMcpCommand,
+        agentEnv: {
+          ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
+          ...(process.env.LANG ? { LANG: process.env.LANG } : {}),
+        },
+        workspaceRoot: join(supervisorRoot, 'workspace'),
+        relayBaseUrl: origin,
+        relayHost: '127.0.0.1',
+        relayScheme: 'http',
+        relayWsUrl: origin.replace(/^http/, 'ws'),
+        autoApprovePermissions: false,
+        accessPolicy: 'everyone',
+      } as const;
+      const core = new ThinDaemonCore(runtime, configPath, config as never, {
+        daemonApi: client,
+      });
+      const abort = new AbortController();
+      await phone.execute(
+        'sendRoomMessage',
+        {
+          roomId: ROOM,
+          messageId: 'a'.repeat(64),
+          text: 'What is your soul? Please identify yourself and acknowledge world.png.',
+          mentions: [],
+        },
+        HUMAN,
+      );
+      const daemon = core.run({ pollMs: 50, signal: abort.signal });
+      try {
+        await vi.waitFor(() => expect(core.activeRoomIds()).toContain(ROOM), { timeout: 5_000 });
+        const uploaded = await phone.uploadMedia(
+          HUMAN,
+          new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0]),
+          'image/png',
+          'world.png',
+          1_024,
+        );
+        const phoneAccessToken = (await auth.exchangeGitHubOidc('proof')).accessToken;
+        const threadedResponse = await fetch(`${origin}/v1/phone/operations/sendRoomReply`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${phoneAccessToken}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            roomId: ROOM,
+            messageId: 'b'.repeat(64),
+            parentMessageId: 'a'.repeat(64),
+            text: '@bee respond',
+            mentions: [AGENT],
+            attachments: [uploaded],
+          }),
+        });
+        expect(threadedResponse.status).toBe(200);
+        const sent = (await threadedResponse.json()) as { messageId: string };
+        await vi.waitFor(
+          async () => {
+            expect(
+              (
+                await database.query<{ status: string }>(
+                  `SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
+                  [ROOM, sent.messageId, AGENT],
+                )
+              ).rows[0]?.status,
+            ).toBe('working');
+          },
+          { timeout: 10_000 },
+        );
+
+        const updateRoot = join(supervisorRoot, 'update-proof');
+        const layout = {
+          binDir: join(updateRoot, 'bin'),
+          libDir: join(updateRoot, 'lib', 'beeline'),
+          releasesRoot: join(updateRoot, 'lib', 'beeline-releases'),
+        };
+        for (const release of ['old', 'new']) {
+          const bundle = join(layout.releasesRoot, release, 'lib', 'beeline');
+          await mkdir(bundle, { recursive: true });
+          await writeFile(join(bundle, 'beeline-cli.mjs'), '#!/usr/bin/env node\n');
+          await writeFile(join(bundle, 'bundle.json'), JSON.stringify({ version: release }));
+        }
+        await mkdir(join(updateRoot, 'lib'), { recursive: true });
+        await symlink('beeline-releases/old', layout.libDir);
+        const update = await ManagedUpdateHandoff.create(layout, supervisorRoot);
+        await writeUpdateState(layout, { stagedReleaseId: 'new' });
+        let restarted = false;
+        expect(
+          await coordinateManagedUpdateHandoff(
+            update,
+            () => core.quiesceForUpdateIfIdle(),
+            async () => {
+              restarted = true;
+            },
+          ),
+        ).toBe('waiting-for-idle');
+        expect(restarted).toBe(false);
+        expect(await activeReleaseId(layout)).toBe('old');
+
+        let reply = '';
+        await vi.waitFor(
+          async () => {
+            const room = await phone.readRoom(ROOM, HUMAN);
+            reply =
+              room?.messages.find((message) => message.requestId === sent.messageId)?.text ?? '';
+            expect(reply).toMatch(/Terra|Vishnu|destroyer/i);
+            expect(reply).toMatch(/world\.png|image/i);
+          },
+          { timeout: 180_000, interval: 500 },
+        );
+        expect(
+          (
+            await database.query<{ status: string }>(
+              `SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
+              [ROOM, sent.messageId, AGENT],
+            )
+          ).rows[0]?.status,
+        ).toBe('complete');
+        const durableAgentRows = (
+          await database.query<{ text: string }>(
+            `SELECT text FROM messages WHERE room_id=$1 AND author_id=$2 AND request_id=$3 AND presentation='message' ORDER BY created_at,id`,
+            [ROOM, AGENT, sent.messageId],
+          )
+        ).rows;
+        expect(durableAgentRows).toHaveLength(1);
+        expect(durableAgentRows[0]!.text.trim()).not.toBe('');
+        expect(durableAgentRows[0]!.text).not.toMatch(/respond to the user's latest message/i);
+        const visibleAgentRows =
+          (await phone.readRoom(ROOM, HUMAN))?.messages.filter(
+            (message) =>
+              message.author.pubkey === AGENT &&
+              message.requestId === sent.messageId &&
+              message.presentation === 'message',
+          ) ?? [];
+        expect(visibleAgentRows).toHaveLength(1);
+        expect(
+          (
+            await database.query<{ count: string }>(
+              `SELECT count(*)::text count FROM live_outputs WHERE room_id=$1 AND agent_id=$2 AND turn_id=$3 AND kind='draft'`,
+              [ROOM, AGENT, sent.messageId],
+            )
+          ).rows[0]?.count,
+        ).toBe('0');
+        await vi.waitFor(() => expect(core.quiesceForUpdateIfIdle()).toBe(true), {
+          timeout: 5_000,
+        });
+        expect(
+          await coordinateManagedUpdateHandoff(
+            update,
+            () => core.quiesceForUpdateIfIdle(),
+            async () => {
+              restarted = true;
+            },
+          ),
+        ).toBe('restarting');
+        expect(restarted).toBe(true);
+        expect(await activeReleaseId(layout)).toBe('new');
+        expect(
+          (
+            await database.query<{ count: string }>(
+              `SELECT count(*)::text count FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND status='failed'`,
+              [ROOM, sent.messageId],
+            )
+          ).rows[0]?.count,
+        ).toBe('0');
+        console.log(
+          `[real-thin-proof] request=${sent.messageId} reply=${JSON.stringify(reply)} durable_messages=1 live_drafts=0 update=old->new receipt=complete`,
+        );
+      } finally {
+        abort.abort();
+        await daemon;
+      }
+    },
+    240_000,
+  );
+
+  it.skipIf(process.env.BEELINE_REAL_SCHEDULE_PROOF !== '1')(
+    'posts a one-minute phone schedule and receives a real thin-daemon harness reply',
+    async () => {
+      const agentCommand = process.env.BEELINE_REAL_SCHEDULE_AGENT_COMMAND;
+      const apiKey = process.env.OPENAI_API_KEY;
+      if (!agentCommand || !apiKey) {
+        throw new Error(
+          'real schedule proof requires an absolute Agent command and OPENAI_API_KEY',
+        );
+      }
+      await database.query(
+        `UPDATE agents SET selected_model=NULL,selected_effort=NULL WHERE agent_id=$1`,
+        [AGENT],
+      );
+      const exchange = await auth.createDaemonExchange(AGENT);
+      const daemonGrant = await fetch(`${origin}/v1/auth/daemon/exchange`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ exchangeToken: exchange.exchangeToken }),
+      });
+      const daemonToken = (await daemonGrant.json()) as { daemonToken: string };
+      const api = new DaemonApiClient(origin, daemonToken.daemonToken, AGENT);
+      const phoneToken = await auth.exchangeGitHubOidc('schedule-proof');
+      const configPath = join(supervisorRoot, 'schedule-runtime.json');
+      const runtime: AgentRuntimeRecord = {
+        version: 2,
+        communityId: WORKSPACE,
+        pairedBy: HUMAN,
+        agent: {
+          name: 'Bee',
+          publicKey: AGENT,
+          secretKeyHex: Buffer.from(AGENT_SECRET).toString('hex'),
+        },
+        body: {
+          name: 'Body',
+          publicKey: getPublicKey(new Uint8Array(32).fill(22)),
+          secretKeyHex: Buffer.from(new Uint8Array(32).fill(22)).toString('hex'),
+        },
+        rooms: [],
+        supervisorRoot,
+        relayBaseUrl: origin,
+        agentKind: 'reference',
+        agentCommand,
+        agentArgs: [],
+        agentBinary: agentCommand,
+        mcpBinary: process.execPath,
+        createdAt: new Date().toISOString(),
+        accessPolicy: 'everyone',
+        transport: { kind: 'monolith', baseUrl: origin, daemonToken: daemonToken.daemonToken },
+      };
+      await writeFile(configPath, `${JSON.stringify(runtime)}\n`, { mode: 0o600 });
+      const config = {
+        agentKind: 'reference',
+        agentCommand,
+        agentArgs: [],
+        agentBinary: agentCommand,
+        mcpBinary: process.execPath,
+        readonlyMcpCommand: process.execPath,
+        readonlyMcpArgs: [new URL('../dist/read-only-mcp.js', import.meta.url).pathname],
+        agentEnv: {
+          PATH: process.env.PATH ?? '',
+          HOME: join(supervisorRoot, 'harness-home'),
+          TMPDIR: join(supervisorRoot, 'harness-tmp'),
+          RUST_LOG: 'warn',
+          BUZZ_AGENT_PROVIDER: 'openai',
+          OPENAI_COMPAT_API_KEY: apiKey,
+          OPENAI_COMPAT_BASE_URL: 'https://api.openai.com/v1',
+          OPENAI_COMPAT_MODEL: process.env.BEELINE_REAL_SCHEDULE_MODEL ?? 'gpt-5.4-mini',
+          OPENAI_COMPAT_API: 'responses',
+        },
+        workspaceRoot: join(supervisorRoot, 'schedule-workspace'),
+        relayBaseUrl: origin,
+        relayHost: '127.0.0.1',
+        relayScheme: 'http',
+        relayWsUrl: origin.replace(/^http/, 'ws'),
+        autoApprovePermissions: false,
+        accessPolicy: 'everyone',
+      } as const;
+      const core = new ThinDaemonCore(runtime, configPath, config as never, { daemonApi: api });
+      const abort = new AbortController();
+      const daemon = core.run({ pollMs: 100, signal: abort.signal });
+      const scheduleLoop = new AgentScheduleLoop(database);
+      let tick = Promise.resolve();
+      let tickError: unknown;
+      const timer = setInterval(() => {
+        tick = tick
+          .then(() => scheduleLoop.runOnce())
+          .then(() => undefined)
+          .catch((error) => {
+            tickError = error;
+          });
+      }, 100);
+      try {
+        await vi.waitFor(() => expect(core.activeRoomIds()).toContain(ROOM), { timeout: 5_000 });
+        const startsAt = Math.floor(Date.now() / 1_000) + 60;
+        const response = await fetch(`${origin}/v1/phone/operations/createRoomSchedule`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${phoneToken.accessToken}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            workspaceId: WORKSPACE,
+            roomId: ROOM,
+            agentId: AGENT,
+            cadence: { kind: 'interval', everyMinutes: 60, startsAt },
+            message: 'Reply with exactly: SCHEDULE PROOF COMPLETE',
+          }),
+        });
+        expect(response.status).toBe(200);
+        const schedule = (await response.json()) as { id: string; nextRunAt: number };
+        expect(schedule.nextRunAt).toBe(startsAt);
+
+        let requestId = '';
+        let reply = '';
+        await vi.waitFor(
+          async () => {
+            if (tickError) throw tickError;
+            const scheduled = (
+              await database.query<{ id: string; author_id: string; mention_ids: string[] }>(
+                `SELECT id,author_id,mention_ids FROM messages
+                 WHERE text='Reply with exactly: SCHEDULE PROOF COMPLETE'`,
+              )
+            ).rows[0];
+            expect(scheduled).toMatchObject({ author_id: HUMAN, mention_ids: [AGENT] });
+            requestId = scheduled!.id;
+            reply =
+              (
+                await database.query<{ text: string }>(
+                  `SELECT text FROM messages WHERE author_id=$1 AND request_id=$2
+                   ORDER BY created_at DESC LIMIT 1`,
+                  [AGENT, requestId],
+                )
+              ).rows[0]?.text ?? '';
+            expect(reply).toMatch(/SCHEDULE PROOF COMPLETE/i);
+          },
+          { timeout: 240_000, interval: 500 },
+        );
+        expect(
+          (
+            await database.query<{ count: string }>(
+              `SELECT count(*)::text count FROM agent_schedule_occurrences WHERE schedule_id=$1`,
+              [schedule.id],
+            )
+          ).rows[0]?.count,
+        ).toBe('1');
+        console.log(
+          `[real-schedule-proof] schedule=${schedule.id} request=${requestId} ` +
+            `author=${HUMAN} mention=${AGENT} reply=${JSON.stringify(reply)}`,
+        );
+      } finally {
+        clearInterval(timer);
+        await tick;
+        abort.abort();
+        await daemon;
+      }
+    },
+    300_000,
+  );
+
+  it('exchanges a token and round-trips inbox, receipts, authority, settings, presence, and corners', async () => {
     const exchange = await auth.createDaemonExchange(AGENT);
     const exchanged = await fetch(`${origin}/v1/auth/daemon/exchange`, {
       method: 'POST',
@@ -402,7 +960,9 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     await expect(
       client.execute('getAgentConfiguration', { agentId: AGENT, roomId: ROOM }),
     ).resolves.toEqual(
-      expect.objectContaining({ soul: { name: 'Bee', instructions: 'Help carefully.' } }),
+      expect.objectContaining({
+        soul: { name: 'Terra', instructions: 'Vishnu, destroyer of worlds.' },
+      }),
     );
     await expect(
       client.execute('getWorkspaceRoster', { agentId: AGENT, workspaceId: WORKSPACE }),
@@ -414,7 +974,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
             identityId: AGENT,
             kind: 'agent',
             name: 'Bee',
-            soul: expect.objectContaining({ instructions: 'Help carefully.' }),
+            soul: expect.objectContaining({ instructions: 'Vishnu, destroyer of worlds.' }),
           }),
         ]),
       }),
@@ -436,7 +996,9 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       text: 'after activation',
     });
     await expect(
-      client.execute('getRoomInbox', { roomId: ROOM, after: activation.cursor }),
+      // Inbox intake deliberately suppresses the daemon's own messages. The
+      // conversation operation is the round-trip surface for its writes.
+      client.execute('getRoomConversation', { roomId: ROOM, after: activation.cursor }),
     ).resolves.toEqual(
       expect.objectContaining({
         items: [

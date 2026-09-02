@@ -208,6 +208,8 @@ async function readBundleJson(bundleDir: string): Promise<InstalledBundleIdentit
 export interface UpdateStateFile {
   lastCheckAt?: number;
   lastCheckResult?: string;
+  /** Verified release staged by the disposable worker, not yet activated. */
+  stagedReleaseId?: string;
 }
 
 /**
@@ -857,6 +859,8 @@ export interface SelfUpdateManagerOptions {
   requiredProbeIds?: string[];
   fetchImpl?: typeof fetch;
   logger?: (line: string) => void;
+  /** Download, verify, and smoke-test only. The serving daemon activates after it proves idle. */
+  stageOnly?: boolean;
 }
 
 export function describeIdentity(identity: InstalledBundleIdentity | undefined): string {
@@ -878,6 +882,7 @@ export class SelfUpdateManager {
   private readonly requiredProbeIds: string[];
   private readonly fetchImpl: typeof fetch;
   private readonly log: (line: string) => void;
+  private readonly stageOnly: boolean;
 
   private timer: NodeJS.Timeout | undefined;
   private nextCheckAllowedAt = 0;
@@ -911,6 +916,7 @@ export class SelfUpdateManager {
     this.requiredProbeIds = [...new Set(options.requiredProbeIds ?? [])].sort();
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.log = options.logger ?? ((line: string) => console.log(line));
+    this.stageOnly = options.stageOnly ?? false;
   }
 
   start(): void {
@@ -1046,6 +1052,20 @@ export class SelfUpdateManager {
       logger: (line) => this.log(line.replace(/^\[body\] self-update: /, '[body] self-update: ')),
     });
 
+    if (this.stageOnly) {
+      await writeUpdateState(this.options.layout, {
+        ...state,
+        lastCheckAt: now,
+        lastCheckResult: 'staged; waiting for serving daemon idle gate',
+        stagedReleaseId: releaseId,
+      });
+      this.log(
+        `[body] self-update: Beeline bundle ${describeIdentity(targetIdentity)} staged; ` +
+          'activation waits for the serving daemon to quiesce intake',
+      );
+      return;
+    }
+
     // Busy gate: never interrupt a turn, a corner, or intake mid-flight.
     if (this.busy()) {
       if (!this.deferredBusyNotice) {
@@ -1078,8 +1098,9 @@ export class SelfUpdateManager {
         ? { requiredProbeIds: this.requiredProbeIds, confirmedProbeIds: [] }
         : {}),
     });
+    const { stagedReleaseId: _stagedReleaseId, ...stateWithoutStagedRelease } = state;
     await writeUpdateState(this.options.layout, {
-      ...state,
+      ...stateWithoutStagedRelease,
       lastCheckAt: now,
       lastCheckResult: 'applied',
     });

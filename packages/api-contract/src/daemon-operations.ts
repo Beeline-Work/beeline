@@ -114,6 +114,8 @@ export type RoomInboxResult = {
     readonly attachments: readonly DaemonAttachment[];
   }[];
   readonly cursor?: string;
+  /** Present on getCornerCloseRequests so helpers can reap an archived worktree. */
+  readonly closeRequested?: boolean;
 };
 export type DaemonAttachment = {
   readonly url: string;
@@ -194,6 +196,9 @@ export type PostRoomMessageInput = RoomInput & {
   readonly text: string;
   readonly presentation?: 'message' | 'system' | 'card';
   readonly tags?: Readonly<Record<string, string>>;
+  /** Validated peer addressing for monolith agent-to-agent turns. */
+  readonly mentionIds?: readonly string[];
+  readonly replyToMessageId?: string;
 };
 export type PostLiveOutputInput = AgentRoomInput & {
   readonly turnId: string;

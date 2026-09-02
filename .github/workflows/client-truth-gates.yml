@@ -30,6 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
+      mobileSuite: ${{ steps.filter.outputs.mobileSuite }}
       mobileExportReachability: ${{ steps.filter.outputs.mobileExportReachability }}
       productionCorpusReplay: ${{ steps.filter.outputs.productionCorpusReplay }}
       frameBudget: ${{ steps.filter.outputs.frameBudget }}
@@ -43,6 +44,16 @@ jobs:
           # composed from YAML anchors, so the diff-membership logic never
           # depends on how dorny/paths-filter treats a nested-list merge.
           filters: |
+            mobileSuite:
+              - 'packages/nostr/**'
+              - 'packages/api-contract/**'
+              - 'packages/buzz-client/**'
+              - 'apps/mobile/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'tsconfig.base.json'
+              - 'turbo.json'
+              - '.github/workflows/client-truth-gates.yml'
             mobileExportReachability:
               - 'packages/nostr/**'
               - 'packages/buzz-client/**'
@@ -103,6 +114,30 @@ jobs:
               - 'tsconfig.base.json'
               - 'turbo.json'
               - '.github/workflows/client-truth-gates.yml'
+
+  mobile-suite:
+    name: MOBILE SUITE
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.mobileSuite == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Mobile vitest resolves @beeline/* from built dist (same as Metro).
+      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client
+      # The isolated mobile app resolves its file-linked @beeline/* deps only
+      # from its own node_modules — a root-only npm ci never provides it.
+      - run: npm run mobile:install
+      - name: Run the mobile vitest suite
+        working-directory: apps/mobile
+        run: npx vitest run
+      - name: Typecheck the mobile app
+        run: npm run mobile:typecheck
 
   mobile-export-reachability:
     name: MOBILE-EXPORT REACHABILITY

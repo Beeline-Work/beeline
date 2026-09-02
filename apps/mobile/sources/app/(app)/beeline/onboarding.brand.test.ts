@@ -181,10 +181,10 @@ describe('onboarding — canonical brand source assertions', () => {
     expect(titleBlock).not.toContain('Typography.logo()');
     // The tagline and the auth notice body keep the canonical prose family.
     expect(src).toMatch(
-      /subtitle: \{\s*\.\.\.Typography\.default\(\), fontFamily: groknight\.proseRegular/,
+      /subtitle: \{\s*\.\.\.Typography\.default\(\),\s*fontFamily: groknight\.proseRegular/,
     );
     expect(src).toMatch(
-      /noticeText: \{\s*\.\.\.Typography\.default\(\), fontFamily: groknight\.proseRegular/,
+      /noticeText: \{\s*\.\.\.Typography\.default\(\),\s*fontFamily: groknight\.proseRegular/,
     );
   });
 

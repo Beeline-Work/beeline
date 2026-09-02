@@ -13,9 +13,22 @@ const BEELINE_ROOM_CAPABILITIES = [
   'Never claim an action or reply happened unless the prompt or a tool result proves it.',
 ].join(' ');
 
-export const BEELINE_CAPABILITIES_PRIMER =
-  'Consult the release-versioned using-beeline skill (SKILL.md) when you need the managed ' +
-  `Room mechanics. ${BEELINE_ROOM_CAPABILITIES}`;
+export interface RepositoryPrimerInfo {
+  name: string;
+  branch: string;
+}
+
+export function beelinePrimer(repository?: RepositoryPrimerInfo): string {
+  const repositoryLine = repository
+    ? ` This Room is bound to ${repository.name} (branch ${repository.branch}); you have a read-only checkout at the session root.`
+    : '';
+  return (
+    'Consult the release-versioned using-beeline skill (SKILL.md) when you need the managed ' +
+    `Room mechanics. ${BEELINE_ROOM_CAPABILITIES}${repositoryLine}`
+  );
+}
+
+export const BEELINE_CAPABILITIES_PRIMER = beelinePrimer();
 
 export interface BeelineCapabilityContext {
   sessionPrompt: string;
@@ -24,12 +37,12 @@ export interface BeelineCapabilityContext {
 
 export function beelineCapabilityContextForHarness(
   agentCommand: string | undefined,
+  repository?: RepositoryPrimerInfo,
 ): BeelineCapabilityContext {
+  const primer = beelinePrimer(repository);
   return {
-    sessionPrompt: BEELINE_CAPABILITIES_PRIMER,
-    ...(harnessHonorsSessionSystemPrompt(agentCommand)
-      ? {}
-      : { compatibilityTurnPrefix: BEELINE_CAPABILITIES_PRIMER }),
+    sessionPrompt: primer,
+    ...(harnessHonorsSessionSystemPrompt(agentCommand) ? {} : { compatibilityTurnPrefix: primer }),
   };
 }
 

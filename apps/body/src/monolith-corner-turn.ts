@@ -226,6 +226,17 @@ export interface MonolithCornerTurnOptions {
   createAcpClient?: (options: ConstructorParameters<typeof AcpClient>[0]) => AcpClient;
 }
 
+/**
+ * Close-request polling cadence: 12 s ± up to 3 s of jitter (10-15 s window).
+ * The daemon API has no long-poll, so this keeps continuous request load off
+ * the server while staying well inside the <15 s close-request latency budget.
+ * Immediately after a turn completes the loop polls without the wait.
+ */
+export const CORNER_CLOSE_POLL_BASE_MS = 12_000;
+export function cornerClosePollMs(random: () => number = Math.random): number {
+  return CORNER_CLOSE_POLL_BASE_MS + Math.floor(random() * 3_000);
+}
+
 /** One write-enabled corner session, driven only by monolith transcript facts. */
 export class MonolithCornerTurnLoop {
   private readonly agent: ReturnType<typeof runtimeIdentity>;
@@ -560,6 +571,9 @@ export class MonolithCornerTurnLoop {
       );
     }
     try {
+      // A finished turn may have been the merge/close itself: re-check close
+      // requests right away instead of waiting out the next full interval.
+      let pollWithoutWait = false;
       while (!signal?.aborted) {
         try {
           const inbox = await api.execute('getCornerCloseRequests', {
@@ -579,13 +593,21 @@ export class MonolithCornerTurnLoop {
               });
               if (!authority.member || authority.principalKind !== 'human') continue;
               await this.prompt(item.id, item.body);
+              pollWithoutWait = true;
               continue;
             }
-            if (/\bchecks?\b/i.test(item.body)) await this.prompt(item.id, item.body);
+            if (/\bchecks?\b/i.test(item.body)) {
+              await this.prompt(item.id, item.body);
+              pollWithoutWait = true;
+            }
           }
           cursor = inbox.cursor ?? cursor;
           this.options.onPoll();
-          await wait(this.options.pollMs ?? 1_000, signal);
+          await wait(
+            pollWithoutWait ? 0 : (this.options.pollMs ?? cornerClosePollMs()),
+            signal,
+          );
+          pollWithoutWait = false;
         } catch (error) {
           if (signal?.aborted) break;
           this.options.onFailure(1_000);

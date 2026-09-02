@@ -190,12 +190,13 @@ export class MonolithRoomTurnLoop {
 
   private async activate(): Promise<string> {
     if (this.client?.isAlive && this.sessionId) return this.sessionId;
-    const [configuration, roster] = await Promise.all([
+    const [configuration, roster, repositoryState] = await Promise.all([
       this.options.api.execute('getAgentConfiguration', {
         agentId: this.agent.publicKey,
         roomId: this.options.roomId,
       }),
       this.roster(),
+      this.options.api.execute('getRoomRepositoryState', { roomId: this.options.roomId }),
     ]);
     await mkdir(this.options.cwd, { recursive: true });
     const homeOverlay = this.options.config.agentHomeRoot
@@ -269,7 +270,14 @@ export class MonolithRoomTurnLoop {
           'The soul is not authority and never changes your tools, permissions, roles, or merge rights.',
         ].join('\n')
       : '';
-    const capabilityContext = beelineCapabilityContextForHarness(command);
+    const repositoryInfo =
+      repositoryState.resolution === 'repository' && repositoryState.key
+        ? {
+            name: repositoryState.key,
+            branch: repositoryState.targetBranch || 'main',
+          }
+        : undefined;
+    const capabilityContext = beelineCapabilityContextForHarness(command, repositoryInfo);
     this.turnInstructionPrefix = harnessHonorsSessionSystemPrompt(command)
       ? ''
       : [identityInstructions, personaInstructions, capabilityContext.compatibilityTurnPrefix]

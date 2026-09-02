@@ -226,6 +226,7 @@ describe('daemon API client against the local monolith', () => {
     const token = (await exchanged.json()) as { daemonToken: string };
     const client = new DaemonApiClient(origin, token.daemonToken, AGENT);
     const polled = vi.fn();
+    const sourceSha = 'd03cff8f'.padEnd(40, '0');
     const config = {
       agentBinary: '/nonexistent',
       mcpBinary: '/nonexistent',
@@ -238,6 +239,8 @@ describe('daemon API client against the local monolith', () => {
       relayWsUrl: origin.replace(/^http/, 'ws'),
       autoApprovePermissions: true,
       accessPolicy: 'everyone',
+      daemonReleaseVersion: 'v0.0.22',
+      daemonSourceSha: sourceSha,
     } as const;
     const runtime: AgentRuntimeRecord = {
       version: 2,
@@ -296,6 +299,19 @@ describe('daemon API client against the local monolith', () => {
       expect(
         visibleOnline?.members.find((member) => member.identity.pubkey === AGENT),
       ).toMatchObject({ presence: { status: 'online', roomId: ROOM } });
+      await expect(
+        fetch(`${origin}/v1/releases/daemon-readiness`).then((response) => response.json()),
+      ).resolves.toEqual({
+        daemons: [
+          expect.objectContaining({
+            agentPubkey: AGENT,
+            state: 'ready',
+            version: 'v0.0.22',
+            sha: sourceSha,
+            observedAt: expect.any(Number),
+          }),
+        ],
+      });
 
       const sent = await phone.execute(
         'sendRoomMessage',

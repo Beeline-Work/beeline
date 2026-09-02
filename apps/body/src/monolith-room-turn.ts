@@ -332,6 +332,12 @@ export class MonolithRoomTurnLoop {
         agentId: this.agent.publicKey,
         roomId,
         status: presence,
+        ...(this.options.config.daemonReleaseVersion
+          ? { releaseVersion: this.options.config.daemonReleaseVersion }
+          : {}),
+        ...(this.options.config.daemonSourceSha
+          ? { sourceSha: this.options.config.daemonSourceSha }
+          : {}),
       });
       this.options.health.presence(presence);
     };

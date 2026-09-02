@@ -71,22 +71,18 @@ const TOOLS = [
 describe('live streaming turn', () => {
   it('keeps settled tool rows collapsed and expandable after the turn completes (#804)', () => {
     const renderer = render(<ActivityTimeline active={false} items={TOOLS} />);
-    // Collapsed by default: rows render, no detail sheet is open.
-    expect(
-      new Set(
-        renderer.root
-          .findAll((node: { props: { testID?: string } }) =>
-            /^corner-tool-row-(read|failure)$/.test(node.props.testID ?? ''),
-          )
-          .map((node: { props: { testID?: string } }) => node.props.testID),
-      ),
-    ).toEqual(new Set(['corner-tool-row-read', 'corner-tool-row-failure']));
+    // Collapsed by default: one compact activity row, no individual calls.
+    expect(renderer.root.findByProps({ testID: 'corner-tool-summary' }).props.children[0].props.children).toBe(
+      '2 TOOL CALLS · 1 FAILED',
+    );
+    expect(renderer.root.findAllByProps({ testID: 'corner-tool-row-read' })).toHaveLength(0);
     expect(
       renderer.root.findAll((node: { props: { testID?: string } }) =>
         node.props.testID?.startsWith('corner-tool-row-detail-'),
       ),
     ).toHaveLength(0);
-    // Expandable as when live.
+    act(() => renderer.root.findByProps({ testID: 'corner-tool-summary' }).props.onPress());
+    expect(renderer.root.findByProps({ testID: 'corner-tool-row-read' })).toBeTruthy();
     const row = renderer.root.findByProps({ testID: 'corner-tool-row-read' });
     act(() => row.props.onPress());
     expect(
@@ -120,16 +116,12 @@ describe('live streaming turn', () => {
     expect(renderer.root.findByProps({ testID: 'activity-message-draft' }).props.markdown).toBe(
       'The answer is arriving.',
     );
-    expect(
-      new Set(
-        renderer.root
-          .findAll((node: { props: { testID?: string } }) =>
-            /^corner-tool-row-(read|failure)$/.test(node.props.testID ?? ''),
-          )
-          .map((node: { props: { testID?: string } }) => node.props.testID),
-      ),
-    ).toEqual(new Set(['corner-tool-row-read', 'corner-tool-row-failure']));
-    expect(renderer.root.findAllByType('Pressable')).toHaveLength(2);
+    expect(renderer.root.findByProps({ testID: 'corner-tool-summary' }).props.accessibilityState).toEqual({
+      busy: true,
+      expanded: false,
+    });
+    expect(renderer.root.findAllByProps({ testID: 'corner-tool-row-read' })).toHaveLength(0);
+    expect(renderer.root.findAllByType('Pressable')).toHaveLength(1);
     expect(
       renderer.root.findAll((node: { props: { testID?: string } }) =>
         node.props.testID?.startsWith('corner-tool-row-detail-'),
@@ -145,6 +137,7 @@ describe('live streaming turn', () => {
       />,
     );
 
+    act(() => renderer.root.findByProps({ testID: 'corner-tool-summary' }).props.onPress());
     expect(JSON.stringify(renderer.toJSON())).toContain('Used tool');
     expect(renderer.root.findByProps({ testID: 'corner-tool-row-old' }).props.onPress).toBeUndefined();
     expect(
@@ -227,6 +220,7 @@ describe('live streaming turn', () => {
       />,
     );
 
+    act(() => renderer.root.findByProps({ testID: 'corner-tool-summary' }).props.onPress());
     act(() => renderer.root.findByProps({ testID: 'corner-tool-row-edit' }).props.onPress());
     const rendered = JSON.stringify(renderer.toJSON());
     expect(rendered).toContain('Conversational answer');
@@ -244,6 +238,7 @@ describe('live streaming turn', () => {
 
   it('keeps the terse failure verdict in the one-line mechanism row', () => {
     const renderer = render(<ActivityTimeline active items={TOOLS} />);
+    act(() => renderer.root.findByProps({ testID: 'corner-tool-summary' }).props.onPress());
     const verdict = renderer.root.findByProps({ testID: 'activity-verdict-failure' });
     expect(verdict.props.children).toBe('×');
     expect(verdict.props.style).toContainEqual(

@@ -48,7 +48,7 @@ describe('CornerPlanPin', () => {
     const renderer = render(<CornerPlanPin objective="Add color to code blocks" />);
     expect(
       renderer.root.findAllByType('Text').map((node: ReactTestInstance) => node.props.children),
-    ).toEqual(['OBJECTIVE', 'Add color to code blocks']);
+    ).toContain('Add color to code blocks');
     expect(renderer.root.findAllByType('ScrollView')).toHaveLength(0);
   });
 
@@ -58,12 +58,21 @@ describe('CornerPlanPin', () => {
     const toggle = renderer.root.findByProps({ testID: 'objective-objective-toggle' });
     const text = () => renderer.root.findByProps({ testID: 'objective-objective' });
 
-    expect(text().props.numberOfLines).toBe(2);
+    expect(text().findByType('Text').props.numberOfLines).toBe(2);
     expect(toggle.props.accessibilityState).toEqual({ expanded: false });
     act(() => toggle.props.onPress());
-    expect(text().props.numberOfLines).toBeUndefined();
+    expect(text().findByType('Text').props.numberOfLines).toBeUndefined();
     expect(toggle.props.accessibilityState).toEqual({ expanded: true });
     act(() => toggle.props.onPress());
-    expect(text().props.numberOfLines).toBe(2);
+    expect(text().findByType('Text').props.numberOfLines).toBe(2);
+  });
+
+  it('renders separate objective items as readable bullets', () => {
+    const renderer = render(
+      <CornerPlanPin objectiveItems={['Trace the Room renderer', 'Add focused tests']} testID="objective" />,
+    );
+    expect(renderer.root.findAllByType('Text').map((node: ReactTestInstance) => node.props.children)).toContain('•');
+    expect(JSON.stringify(renderer.toJSON())).toContain('Trace the Room renderer');
+    expect(JSON.stringify(renderer.toJSON())).toContain('Add focused tests');
   });
 });

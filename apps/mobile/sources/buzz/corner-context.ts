@@ -57,6 +57,16 @@ export function cornerObjectiveLine(input: {
   task?: string;
   cornerName?: string;
 }): string | undefined {
+  return cornerObjectiveItems(input).join('\n') || undefined;
+}
+
+/** Turns a fixed objective into independently readable items without treating
+ * commas, code, or abbreviations as list boundaries. */
+export function cornerObjectiveItems(input: {
+  planObjective?: string;
+  task?: string;
+  cornerName?: string;
+}): string[] {
   const candidates = [
     input.task,
     input.planObjective,
@@ -64,11 +74,24 @@ export function cornerObjectiveLine(input: {
   ];
   for (const candidate of candidates) {
     if (!candidate) continue;
-    // Keep the complete readable objective. The pinned panel owns visual
-    // collapsing, so shortening here would make expansion unable to recover
-    // the text the person asked to see.
-    const line = roomPreviewText(candidate, Number.POSITIVE_INFINITY);
-    if (line) return line;
+    const lines = candidate.split('\n');
+    const explicitList = lines.some((line) => /^\s*(?:[-*+]|\d+[.)])\s+/.test(line));
+    const rawItems = explicitList
+      ? lines.map((line) => line.trim().replace(/^(?:[-*+] |\d+[.)] )/, '')).filter(Boolean)
+      : splitPlainObjective(candidate);
+    const items = rawItems
+      .map((item) => roomPreviewText(item, Number.POSITIVE_INFINITY))
+      .filter(Boolean);
+    if (items.length) return items;
   }
-  return undefined;
+  return [];
+}
+
+function splitPlainObjective(value: string): string[] {
+  const flattened = value.replace(/\s*\n+\s*/g, ' ').trim();
+  const parts = flattened
+    .split(/\s*;\s*(?:and\s+)?|(?<=[!?])\s+(?=[A-Z])|(?<=[a-z0-9])\.\s+(?=[A-Z])/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return parts.length > 1 ? parts : [flattened];
 }

@@ -704,6 +704,8 @@ export class DaemonService {
     await this.access(input.roomId, agentId);
     const messageId = id();
     const mentions = [...new Set(input.mentionIds ?? [])].filter((value) => value !== agentId);
+    let agentMentionIds = new Set<string>();
+    let memberIds = new Set<string>();
     const parent = input.replyToMessageId
       ? (
           await this.database.query<{
@@ -746,16 +748,21 @@ export class DaemonService {
         ).rows[0];
     if (input.triggerMessageId && !trigger) throw new Error('turn trigger is invalid for agent');
     if (mentions.length) {
-      const members = await this.database.query<{ identity_id: string }>(
-        `SELECT membership.identity_id FROM memberships membership
-         JOIN identities identity ON identity.id=membership.identity_id AND identity.kind='agent'
+      const members = await this.database.query<{ identity_id: string; kind: 'human' | 'agent' }>(
+        `SELECT membership.identity_id,identity.kind FROM memberships membership
+         JOIN identities identity ON identity.id=membership.identity_id
          WHERE membership.room_id=$1 AND membership.removed_at IS NULL
            AND membership.identity_id=ANY($2::text[])`,
         [input.roomId, mentions],
       );
-      if (members.rows.length !== mentions.length)
-        throw new Error('mentioned agent is not in room');
+      memberIds = new Set(members.rows.map((row) => row.identity_id));
+      agentMentionIds = new Set(
+        members.rows.filter((row) => row.kind === 'agent').map((row) => row.identity_id),
+      );
     }
+    // Mentions are server-validated against the Room roster: a member mention
+    // (human or agent) becomes a real mention; an unknown name stays plain text.
+    const validatedMentions = mentions.filter((value) => memberIds.has(value));
     const rootMessageId = input.replyToMessageId
       ? (parent!.root_message_id ?? input.replyToMessageId)
       : null;
@@ -763,7 +770,7 @@ export class DaemonService {
     // agent, not the optional presentation reply parent; a human item starts a
     // fresh chain at zero.
     const hopCount = trigger?.author_kind === 'agent' ? trigger.agent_hop_count + 1 : 0;
-    const capped = mentions.length > 0 && hopCount >= AGENT_TO_AGENT_HOP_CAP;
+    const capped = agentMentionIds.size > 0 && hopCount >= AGENT_TO_AGENT_HOP_CAP;
     await this.database.transaction(async (database) => {
       await database.query(
         `INSERT INTO messages(
@@ -778,7 +785,11 @@ export class DaemonService {
           input.presentation ?? 'message',
           input.requestId ?? null,
           JSON.stringify(input.tags ?? {}),
-          JSON.stringify(capped ? [] : mentions),
+          JSON.stringify(
+            capped
+              ? validatedMentions.filter((value) => !agentMentionIds.has(value))
+              : validatedMentions,
+          ),
           input.replyToMessageId ?? null,
           rootMessageId,
           hopCount,
@@ -1151,6 +1162,23 @@ export class DaemonService {
       await db.query(
         `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,request_id,lifecycle) VALUES($1,$2,$3,$4,'{"lifecycle":"working","checks":"unknown"}')`,
         [cornerId, agentId, input.summary, input.requestId],
+      );
+      // One durable open marker in the parent Room; the phone renders this as
+      // a daemon-fact card and the push rule fires on it.
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
+         VALUES($1,$2,$3,'','card','daemon-fact',$4::jsonb)`,
+        [
+          id(),
+          input.roomId,
+          agentId,
+          JSON.stringify({
+            type: 'corner-open',
+            cornerId,
+            name: input.name,
+            objective: input.summary.trim() || input.name,
+          }),
+        ],
       );
     });
     this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'corner' });

@@ -67,7 +67,7 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/** Resolve model-written @names into the validated peer ids the server routes. */
+/** Resolve model-written @names into validated member ids (agents and humans) the server routes. */
 export function agentReplyMentionIds(
   text: string,
   roster: WorkspaceRoster,
@@ -75,7 +75,7 @@ export function agentReplyMentionIds(
 ): string[] {
   const aliases = new Map<string, { display: string; ids: Set<string> }>();
   for (const member of roster.members) {
-    if (member.kind !== 'agent' || member.identityId === authorId) continue;
+    if (member.identityId === authorId) continue;
     for (const raw of [member.name, member.handle, member.soul?.name]) {
       const display = raw?.trim().replace(/^@/, '');
       if (!display) continue;

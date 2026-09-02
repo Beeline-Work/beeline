@@ -462,12 +462,13 @@ describe('monolith integration', () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       daemons: [
-        expect.objectContaining({
+        {
           agentPubkey: AGENT,
           state: 'ready',
-          releaseVersion: 'v0.0.22',
-          sourceSha,
-        }),
+          version: 'v0.0.22',
+          sha: sourceSha,
+          observedAt: expect.any(Number),
+        },
       ],
     });
   });

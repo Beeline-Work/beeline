@@ -92,8 +92,8 @@ test('daemon fleet readiness identifies every agent that is not on the exact rel
           {
             agentPubkey: 'a'.repeat(64),
             state: 'ready',
-            releaseVersion: 'v0.0.1',
-            sourceSha: SHA_1,
+            version: 'v0.0.1',
+            sha: SHA_1,
           },
         ],
       },
@@ -110,15 +110,30 @@ test('daemon fleet readiness identifies every agent that is not on the exact rel
             {
               agentPubkey: 'b'.repeat(64),
               state: 'stale',
-              releaseVersion: 'v0.0.0',
-              sourceSha: SHA_2,
+              version: 'v0.0.0',
+              sha: SHA_2,
+            },
+            {
+              agentPubkey: 'c'.repeat(64),
+              state: 'ready',
             },
           ],
         },
         'v0.0.1',
         SHA_1,
       ),
-    new RegExp(`agent ${'b'.repeat(64)} reported stale v0.0.0@${SHA_2}`),
+    (error) => {
+      assert.match(
+        error.message,
+        new RegExp(`agent ${'b'.repeat(64)} reported stale v0.0.0@${SHA_2}`),
+      );
+      assert.match(
+        error.message,
+        new RegExp(`agent ${'c'.repeat(64)} reported ready <missing-version>@<missing-sha>`),
+      );
+      assert.match(error.message, new RegExp(`expected ready v0.0.1@${SHA_1}`));
+      return true;
+    },
   );
 });
 
@@ -155,6 +170,9 @@ test('one workflow owns parallel builds, ordered promotion, retry, and the final
   assert.match(workflow, /deployed\.version !== version \|\| deployed\.sourceSha !== sourceSha/);
   assert.match(daemon, /https:\/\/server\.usebeeline\.app\/v1\/releases\/daemon-readiness/);
   assert.match(daemon, /unified-release\.mjs assert-daemons/);
+  assert.match(daemon, /for _ in \$\(seq 1 120\)/);
+  assert.match(daemon, /cat "\$RUNNER_TEMP\/release-readiness-error\.txt" >&2/);
+  assert.match(daemon, /cat "\$RUNNER_TEMP\/release-readiness\.json" >&2/);
   assert.doesNotMatch(daemon, /usebeeline\.app\/push\/health/);
   assert.match(workflow, /https:\/\/server\.usebeeline\.app\/v1\/releases\/daemon-readiness/);
   assert.doesNotMatch(workflow, /usebeeline\.app\/push\/health/);
@@ -179,7 +197,10 @@ test('one workflow owns parallel builds, ordered promotion, retry, and the final
     [mobile, 'mobile-ota-candidate'],
   ]) {
     assert.match(componentWorkflow, /Find a downloadable .* (artifact|candidate).*exact release SHA/);
-    assert.match(componentWorkflow, new RegExp(`name = \`${artifact}-\\$\\{\\{ inputs\\.release_sha \\}\\}`));
+    assert.match(
+      componentWorkflow,
+      new RegExp(`name = \`${artifact}-\\$\\{\\{ inputs\\.release_sha \\}\\}`),
+    );
     assert.match(componentWorkflow, /github\.rest\.actions\.listArtifactsForRepo/);
     assert.match(componentWorkflow, /github\.rest\.actions\.downloadArtifact/);
     assert.match(componentWorkflow, /actions\/download-artifact@v4/);

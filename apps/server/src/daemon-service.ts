@@ -646,8 +646,8 @@ export class DaemonService {
           agentPubkey: row.agent_id,
           state,
           ...(typeof observedAt === 'number' ? { observedAt } : {}),
-          ...(row.body?.releaseVersion ? { releaseVersion: row.body.releaseVersion } : {}),
-          ...(row.body?.sourceSha ? { sourceSha: row.body.sourceSha } : {}),
+          ...(row.body?.releaseVersion ? { version: row.body.releaseVersion } : {}),
+          ...(row.body?.sourceSha ? { sha: row.body.sourceSha } : {}),
         };
       }),
     };

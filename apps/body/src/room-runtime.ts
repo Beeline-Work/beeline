@@ -240,7 +240,7 @@ export class RoomRuntimeCoordinator {
       if (running.worktree) await this.reapCornerWorktree(running.worktree);
     }
     await mapWithConcurrency(desiredTopRooms, ROOM_JOIN_CONCURRENCY, async (roomId) => {
-      if (!this.running.has(roomId)) this.startRoom(roomId);
+      if (!this.running.has(roomId)) await this.startRoom(roomId);
     });
     await mapWithConcurrency(
       [...desiredCorners.values()],
@@ -287,10 +287,9 @@ export class RoomRuntimeCoordinator {
     };
   }
 
-  private startRoom(roomId: string): void {
+  private async startRoom(roomId: string): Promise<void> {
     const controller = new AbortController();
-    const record = this.roomRecord(roomId);
-    const cwd = record?.repo.root ?? this.roomRoot(roomId);
+    const cwd = await this.materializeRoomCheckout(roomId);
     const startedAt = this.now();
     const loop = new MonolithRoomTurnLoop({
       roomId,
@@ -327,6 +326,55 @@ export class RoomRuntimeCoordinator {
       recovering: false,
     });
     console.log(`[thin-core] serving monolith Room ${roomId}`);
+  }
+
+  /**
+   * A Room is a repository inspection surface, so its session cwd must be the
+   * current server-bound repository rather than a legacy runtime path (or the
+   * otherwise-empty per-Room state directory). The daemon consumes the
+   * short-lived GitHub token itself; it is never included in the Room MCP or
+   * harness environment.
+   */
+  private async materializeRoomCheckout(roomId: string): Promise<string> {
+    const repository = await this.options.daemonApi.execute('getRoomRepositoryState', { roomId });
+    if (repository.resolution !== 'repository' || !repository.remote) return this.roomRoot(roomId);
+
+    const remote = roomCheckoutRemote(repository.remote);
+    const targetBranch = repository.targetBranch || 'main';
+    const checkoutId = createHash('sha256')
+      .update(`${remote}\0${targetBranch}`)
+      .digest('hex')
+      .slice(0, 24);
+    const path = resolve(this.runtime.supervisorRoot, 'beeline', 'room-checkouts', checkoutId);
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+
+    const token = remote.startsWith('https://github.com/')
+      ? await this.options.daemonApi.execute('getRoomGitHubToken', { roomId })
+      : undefined;
+    const env = token ? githubGitEnv(token.token) : process.env;
+    if (!existsSync(resolve(path, '.git'))) {
+      await execFileAsync('git', ['clone', '--no-checkout', remote, path], {
+        env,
+        maxBuffer: 4 * 1024 * 1024,
+      });
+    }
+    await execFileAsync(
+      'git',
+      [
+        '-C',
+        path,
+        'fetch',
+        '--prune',
+        'origin',
+        `+refs/heads/${targetBranch}:refs/remotes/origin/${targetBranch}`,
+      ],
+      { env, maxBuffer: 4 * 1024 * 1024 },
+    );
+    await execFileAsync('git', ['-C', path, 'checkout', '--detach', '--force', `origin/${targetBranch}`], {
+      env,
+      maxBuffer: 4 * 1024 * 1024,
+    });
+    return path;
   }
 
   private async startCorner(corner: DesiredCorner): Promise<void> {
@@ -598,6 +646,12 @@ function githubHttpsRemote(remote: string): string {
       .replace(/\/$/, '')
       .replace(/\.git$/i, '') + '.git'
   );
+}
+
+/** Repository remotes are server-stamped; local file remotes support isolated proofs. */
+function roomCheckoutRemote(remote: string): string {
+  if (remote.startsWith('file://')) return remote;
+  return githubHttpsRemote(remote);
 }
 
 function githubGitEnv(token: string): NodeJS.ProcessEnv {

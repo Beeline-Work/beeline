@@ -5,6 +5,7 @@ import {
   ROOM_VIEW_BRIEFING_LIMIT,
   ROOM_VIEW_MEMBER_LIMIT,
   ROOM_VIEW_MESSAGE_LIMIT,
+  ROOM_VIEW_TOOL_ROW_LIMIT,
 } from '@beeline/api-contract/phone';
 import type {
   AgentDetailView,
@@ -38,8 +39,6 @@ const DURABLE_KINDS = [0, 9, 9000, 9001, 9002, 9007, 9008, 30078, 39000, 39001, 
  * completes (#804). Own cap: they must never crowd out the 30-message
  * conversation window, and top-level Rooms never surface them.
  */
-const CORNER_TOOL_ACTIVITY_LIMIT = 60;
-
 function roomFilters(
   roomId: string,
   workspaceId: string,
@@ -492,7 +491,11 @@ export class PhoneService {
           right.createdAt - left.createdAt || left.agentPubkey.localeCompare(right.agentPubkey),
       )
       .slice(0, ROOM_VIEW_AGENT_LIMIT);
-    const messages = await this.roomMessages(roomId, latestAgentTurns, Boolean(room.parent_id));
+    const { messages, toolRows } = await this.roomMessages(
+      roomId,
+      latestAgentTurns,
+      Boolean(room.parent_id),
+    );
     const familyRoomId = room.parent_id ?? roomId;
     const corners = await this.readCorners(familyRoomId, viewerId, true);
     const parent = room.parent_id
@@ -550,6 +553,7 @@ export class PhoneService {
           ? { ...paintedRoom, about: facts.objective }
           : paintedRoom,
       messages,
+      ...(toolRows.length ? { toolRows } : {}),
       members,
       latestAgentTurns,
       viewer: {
@@ -2148,7 +2152,7 @@ export class PhoneService {
     roomId: string,
     latestAgentTurns: RoomView['latestAgentTurns'],
     isCorner = false,
-  ): Promise<RoomViewMessage[]> {
+  ): Promise<{ messages: RoomViewMessage[]; toolRows: RoomViewMessage[] }> {
     const eligible = `m.id IN (
       (SELECT raw.id FROM legacy_room_events raw WHERE raw.room_id=$1 AND raw.kind=9
          AND raw.raw_page_candidate=true
@@ -2212,7 +2216,7 @@ export class PhoneService {
              FROM messages m JOIN identities i ON i.id=m.author_id
              WHERE m.room_id=$1 AND m.presentation='activity' AND m.durable_fact IS NULL
                AND EXISTS(SELECT 1 FROM jsonb_array_elements(m.activity) item WHERE item->>'kind'='tool')
-             ORDER BY m.created_at DESC,m.id DESC LIMIT ${CORNER_TOOL_ACTIVITY_LIMIT}`,
+             ORDER BY m.created_at DESC,m.id DESC LIMIT ${ROOM_VIEW_TOOL_ROW_LIMIT}`,
             [roomId],
           )
         ).rows.map((row) => projectedMessage(row, this.publicOrigin))
@@ -2221,25 +2225,24 @@ export class PhoneService {
       collapsePermissionCards([
         ...transcript.reverse(),
         ...liveActivity.reverse(),
-        ...cornerToolMessages.reverse(),
       ]).map((message) => [message.id, message]),
     );
     const merged = [...byId.values()].sort(
       (left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id),
     );
-    if (!isCorner) return merged.slice(-ROOM_VIEW_MESSAGE_LIMIT);
-    // The 30-message cap counts conversation rows only; corner tool rows are
-    // attached under their turns and carry their own cap.
+    if (!isCorner) return { messages: merged.slice(-ROOM_VIEW_MESSAGE_LIMIT), toolRows: [] };
+    // Every Room response stays inside the shared phone message cap. Settled
+    // corner tool rows are additive and independently bounded.
     const liveIds = new Set(liveActivity.map((message) => message.id));
-    const toolIds = new Set(cornerToolMessages.map((row) => row.id));
-    return merged
-      .filter(
-        (message) =>
-          message.presentation !== 'activity' || message.durableFact || liveIds.has(message.id),
-      )
-      .slice(-ROOM_VIEW_MESSAGE_LIMIT)
-      .concat(merged.filter((message) => toolIds.has(message.id)))
-      .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id));
+    return {
+      messages: merged
+        .filter(
+          (message) =>
+            message.presentation !== 'activity' || message.durableFact || liveIds.has(message.id),
+        )
+        .slice(-ROOM_VIEW_MESSAGE_LIMIT),
+      toolRows: cornerToolMessages,
+    };
   }
   private async cornerLifecycle(roomId: string) {
     return (

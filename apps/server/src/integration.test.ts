@@ -16,6 +16,7 @@ import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import {
   isCommunityInviteToken,
   isRoomView,
+  isRoomViewMessage,
   ROOM_VIEW_MESSAGE_LIMIT,
   type RoomView,
 } from '@beeline/api-contract/phone';
@@ -606,6 +607,12 @@ describe('monolith integration', () => {
     });
     expect(created.status).toBe(200);
     const { cornerId } = (await created.json()) as { cornerId: string };
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       SELECT lpad(to_hex(item),64,'0'),$1,$2,'Stored ' || item,to_timestamp(1700000000 + item)
+       FROM generate_series(1,$3) AS stored(item)`,
+      [cornerId, HUMAN, ROOM_VIEW_MESSAGE_LIMIT + 1],
+    );
     expect(
       (
         await daemonOperation('postAgentTurnReceipt', {
@@ -616,24 +623,26 @@ describe('monolith integration', () => {
         })
       ).status,
     ).toBe(200);
-    expect(
-      (
-        await daemonOperation('postAgentActivity', {
-          agentId: AGENT,
-          roomId: cornerId,
-          requestId: 'corner-turn-1',
-          activity: [
-            {
-              kind: 'tool',
-              title: 'Bash',
-              operation: 'execute',
-              command: 'npm test -- ActivityTimeline',
-              status: 'exit 0',
-            },
-          ],
-        })
-      ).status,
-    ).toBe(200);
+    for (let tool = 1; tool <= 15; tool++) {
+      expect(
+        (
+          await daemonOperation('postAgentActivity', {
+            agentId: AGENT,
+            roomId: cornerId,
+            requestId: 'corner-turn-1',
+            activity: [
+              {
+                kind: 'tool',
+                title: 'Bash',
+                operation: 'execute',
+                command: `npm test -- ActivityTimeline ${tool}`,
+                status: 'exit 0',
+              },
+            ],
+          })
+        ).status,
+      ).toBe(200);
+    }
     expect(
       (
         await daemonOperation('postAgentActivity', {
@@ -665,14 +674,17 @@ describe('monolith integration', () => {
     ).toBe(200);
 
     const corner = (await (await request(`/v1/phone/rooms/${cornerId}`)).json()) as RoomView;
-    expect(corner.messages).toContainEqual(
+    expect(isRoomView(corner)).toBe(true);
+    expect(corner.messages).toHaveLength(ROOM_VIEW_MESSAGE_LIMIT);
+    expect(corner.toolRows).toHaveLength(15);
+    expect(corner.toolRows).toContainEqual(
       expect.objectContaining({
         presentation: 'activity',
         activity: [
           expect.objectContaining({
             kind: 'tool',
             title: 'Bash',
-            command: 'npm test -- ActivityTimeline',
+            command: 'npm test -- ActivityTimeline 1',
           }),
         ],
       }),
@@ -1294,6 +1306,7 @@ describe('monolith integration', () => {
     expect(isRoomView(roomView)).toBe(true);
     const withFile = roomView.messages.filter((message) => message.attachments?.length);
     expect(withFile).toHaveLength(1);
+    expect(isRoomViewMessage(withFile[0])).toBe(true);
     expect(withFile[0]).toMatchObject({
       id: replyId,
       text: 'Here is the file.',
@@ -1304,6 +1317,7 @@ describe('monolith integration', () => {
       mimeType: 'text/plain',
       size: 16,
     });
+    expect(typeof withFile[0]!.attachments![0].size).toBe('number');
     const media = await fetch(withFile[0]!.attachments![0].url, {
       headers: { authorization: `Bearer ${accessToken}` },
     });

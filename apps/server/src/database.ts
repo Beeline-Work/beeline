@@ -622,9 +622,10 @@ CREATE TABLE IF NOT EXISTS agent_pending_attachments (
   url text NOT NULL,
   name text NOT NULL,
   mime_type text NOT NULL,
-  size bigint NOT NULL,
+  size integer NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE agent_pending_attachments ALTER COLUMN size TYPE integer USING size::integer;
 
 CREATE TABLE IF NOT EXISTS import_runs (
   import_id text PRIMARY KEY,

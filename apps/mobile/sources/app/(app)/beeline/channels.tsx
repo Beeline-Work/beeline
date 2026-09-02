@@ -822,7 +822,8 @@ const styles = StyleSheet.create((theme) => {
     createRoomContent: { flexShrink: 1, maxHeight: 520 },
     repoRow: {
       marginTop: 10,
-      minHeight: 40,
+      // A fixed height: on some devices a minimum height collapses until first tap.
+      height: 44,
       flexDirection: 'row',
       alignItems: 'center',
       gap: 8,

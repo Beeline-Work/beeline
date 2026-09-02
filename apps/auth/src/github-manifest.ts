@@ -32,8 +32,16 @@ import { createHash, timingSafeEqual } from 'node:crypto';
  * it changes the approval request for every installed account.
  */
 
-/** Repository-activity event types the product consumes (mirrors GITHUB_REPO_EVENT_TYPES). */
-export const REQUIRED_GITHUB_APP_EVENTS = ['star', 'issues', 'pull_request'] as const;
+/** Repository activity and corner lifecycle event types consumed by the product. */
+export const REQUIRED_GITHUB_APP_EVENTS = [
+  'star',
+  'issues',
+  'pull_request',
+  'push',
+  'check_run',
+  'check_suite',
+  'status',
+] as const;
 
 export const REQUIRED_GITHUB_APP_PERMISSIONS: Readonly<Record<string, string>> = Object.freeze({
   contents: 'write',

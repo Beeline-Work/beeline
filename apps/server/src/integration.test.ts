@@ -32,6 +32,10 @@ describe('monolith integration', () => {
   let mountedAuth: MonolithAuthMount;
   let completeInstallation: ReturnType<typeof vi.fn>;
   let processWebhook: ReturnType<typeof vi.fn>;
+  let githubOperations: GitHubOperations;
+  let githubApp: {
+    deleteBranch: ReturnType<typeof vi.fn>;
+  };
   beforeEach(async () => {
     database = new PgliteDatabase();
     await migrate(database);
@@ -53,7 +57,10 @@ describe('monolith integration', () => {
       const login = proof === 'proof' ? 'owner' : proof === 'recipient-proof' ? 'recipient' : proof;
       return { subject: login, login, name: login[0]!.toUpperCase() + login.slice(1) };
     });
-    const github = new GitHubOperations(
+    githubApp = {
+      deleteBranch: vi.fn(async () => undefined),
+    };
+    githubOperations = new GitHubOperations(
       database,
       {
         authorizationUrl: ({ state, redirectUri }: { state: string; redirectUri: string }) =>
@@ -67,21 +74,21 @@ describe('monolith integration', () => {
           accessToken: 'github-user-token',
         }),
       } as unknown as GitHubOAuthClient,
-      {} as GitHubAppClient,
+      githubApp as unknown as GitHubAppClient,
       'github-client-secret',
     );
-    vi.spyOn(github, 'refresh').mockResolvedValue(undefined);
-    vi.spyOn(github, 'beginInstallation').mockResolvedValue({
+    vi.spyOn(githubOperations, 'refresh').mockResolvedValue(undefined);
+    vi.spyOn(githubOperations, 'beginInstallation').mockResolvedValue({
       url: 'https://github.com/apps/beeline-test/installations/new?state=server-state',
     });
-    vi.spyOn(github, 'createRepository').mockImplementation(async (_viewerId, input) => ({
+    vi.spyOn(githubOperations, 'createRepository').mockImplementation(async (_viewerId, input) => ({
       id: 102,
       fullName: `owner/${input.name}`,
       installationId: input.installationId,
       defaultBranch: 'main',
     }));
     sendPushTest = vi.fn(async () => undefined);
-    const phone = new PhoneService(database, 'http://placeholder', github, sendPushTest);
+    const phone = new PhoneService(database, 'http://placeholder', githubOperations, sendPushTest);
     const live = new LiveHub();
     const daemon = new DaemonService(database, live);
     mountedAuth = await createMonolithAuth(database, 'https://server.test', undefined, {
@@ -146,6 +153,22 @@ describe('monolith integration', () => {
   const phoneToken = async (login: string) => (await auth.exchangeGitHubOidc(login)).accessToken;
   const operation = (name: string, payload: unknown, token = accessToken) =>
     request(`/v1/phone/operations/${name}`, 'POST', payload, token);
+  const daemonOperation = (name: string, payload: unknown, token = daemonToken) =>
+    request(`/v1/daemon/operations/${name}`, 'POST', payload, token);
+  const webhook = async (event: string, delivery: string, payload: unknown) => {
+    const bytes = Buffer.from(JSON.stringify(payload));
+    const signature = `sha256=${createHmac('sha256', 'webhook-secret').update(bytes).digest('hex')}`;
+    return fetch(`${origin}/v1/github/webhook`, {
+      method: 'POST',
+      headers: {
+        'x-hub-signature-256': signature,
+        'x-github-delivery': delivery,
+        'x-github-event': event,
+        'content-type': 'application/json',
+      },
+      body: bytes,
+    });
+  };
 
   it('keeps workspace and Room mutations aligned with the phone HTTP contract', async () => {
     const aliceToken = await phoneToken('alice');
@@ -1090,6 +1113,219 @@ describe('monolith integration', () => {
     expect(duplicate.status).toBe(200);
     expect(((await duplicate.json()) as { duplicate: boolean }).duplicate).toBe(true);
     expect(processWebhook).toHaveBeenCalledOnce();
+  });
+
+  it('turns signed GitHub branch events into corner notes and closes a merged corner', async () => {
+    processWebhook.mockImplementation((event, payload) =>
+      githubOperations.processWebhook(event, payload),
+    );
+    await database.query(
+      `INSERT INTO github_installations(
+         installation_id,owner_id,account_id,account_login,account_type,repository_selection,status
+       ) VALUES(77,$1,'42','owner','User','selected','active')`,
+      [HUMAN],
+    );
+    await database.query(
+      `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch)
+       VALUES(101,77,'owner/widgets','main')`,
+    );
+    await database.query(
+      `UPDATE rooms SET repository_key='owner/widgets',
+         repository_remote='https://github.com/owner/widgets.git',
+         repository_resolution='repository',github_installation_id=77 WHERE id=$1`,
+      [ROOM],
+    );
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'corner-request',
+      name: 'Ship widget',
+      task: 'Ship widget',
+      repository: 'owner/widgets',
+      targetBranch: 'main',
+    });
+    expect(created.status).toBe(200);
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    expect(
+      (
+        await daemonOperation('postCornerRemoteState', {
+          cornerId,
+          branch: 'fm/widget',
+          state: 'working',
+          checks: 'unknown',
+        })
+      ).status,
+    ).toBe(200);
+
+    const base = {
+      installation: { id: 77 },
+      repository: { id: 101, full_name: 'owner/widgets' },
+    };
+    expect(
+      (
+        await webhook('pull_request', 'corner-pr-open', {
+          ...base,
+          action: 'opened',
+          pull_request: {
+            number: 42,
+            title: 'Ship the widget',
+            html_url: 'https://github.com/owner/widgets/pull/42',
+            head: { ref: 'fm/widget' },
+            merged: false,
+          },
+        })
+      ).status,
+    ).toBe(202);
+    await webhook('push', 'corner-push', {
+      ...base,
+      ref: 'refs/heads/fm/widget',
+      after: '1'.repeat(40),
+      compare: 'https://github.com/owner/widgets/compare/a...b',
+      commits: [{ id: '1' }, { id: '2' }],
+    });
+    await webhook('check_suite', 'corner-checks-failed', {
+      ...base,
+      action: 'completed',
+      check_suite: {
+        id: 7,
+        status: 'completed',
+        conclusion: 'failure',
+        head_branch: 'fm/widget',
+        url: 'https://github.com/owner/widgets/actions/runs/7',
+      },
+    });
+    await webhook('status', 'corner-checks-passed', {
+      ...base,
+      state: 'success',
+      sha: '1'.repeat(40),
+      target_url: 'https://github.com/owner/widgets/actions/runs/8',
+      branches: [{ name: 'fm/widget' }],
+    });
+    const cornerBeforeMerge = (await (await request(`/v1/phone/rooms/${cornerId}`)).json()) as {
+      messages: Array<{ text: string; presentation: string }>;
+    };
+    expect(cornerBeforeMerge.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          presentation: 'system',
+          text: expect.stringContaining('Pull request opened: Ship the widget'),
+        }),
+        expect.objectContaining({ text: expect.stringContaining('Branch updated with 2 commits') }),
+        expect.objectContaining({ text: expect.stringContaining('Checks failed') }),
+        expect.objectContaining({ text: expect.stringContaining('Checks passed') }),
+      ]),
+    );
+
+    expect(
+      (
+        await webhook('pull_request', 'corner-pr-merged', {
+          ...base,
+          action: 'closed',
+          pull_request: {
+            number: 42,
+            title: 'Ship the widget',
+            html_url: 'https://github.com/owner/widgets/pull/42',
+            head: { ref: 'fm/widget' },
+            merged: true,
+            commits: 3,
+            changed_files: 5,
+          },
+        })
+      ).status,
+    ).toBe(202);
+    const close = await daemonOperation('getCornerCloseRequests', { cornerId });
+    expect(close.status).toBe(200);
+    expect(await close.json()).toEqual(
+      expect.objectContaining({
+        closeRequested: true,
+        items: expect.arrayContaining([
+          expect.objectContaining({ body: expect.stringContaining('Pull request merged') }),
+        ]),
+      }),
+    );
+    const parent = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as {
+      messages: Array<{ text: string; presentation: string }>;
+    };
+    expect(parent.messages).toContainEqual(
+      expect.objectContaining({
+        presentation: 'system',
+        text: expect.stringContaining('(3 commits, 5 files changed)'),
+      }),
+    );
+    expect(
+      (
+        await database.query<{ archived: boolean }>(
+          `SELECT archived_at IS NOT NULL archived FROM rooms WHERE id=$1`,
+          [cornerId],
+        )
+      ).rows[0]?.archived,
+    ).toBe(true);
+    expect(githubApp.deleteBranch).toHaveBeenCalledWith(77, 101, 'owner/widgets', 'fm/widget');
+  });
+
+  it('allows peer-agent addressing, suppresses self delivery, and caps agent-only hops', async () => {
+    const peer = 'e'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Peer')`, [peer]);
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [peer, HUMAN]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
+      [WORKSPACE, peer, ROOM],
+    );
+    const peerExchange = await auth.createDaemonExchange(peer);
+    const peerToken = (await auth.exchangeDaemonToken(peerExchange.exchangeToken))!.daemonToken;
+    const humanMessage = '9'.repeat(64);
+    await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: humanMessage,
+      text: 'Agents, work this through.',
+      mentions: [AGENT],
+    });
+    let previous = humanMessage;
+    let speaker = AGENT;
+    let speakerToken = daemonToken;
+    let target = peer;
+    let targetToken = peerToken;
+    for (let turn = 1; turn <= 8; turn++) {
+      const response = await daemonOperation(
+        'postRoomMessage',
+        {
+          roomId: ROOM,
+          requestId: humanMessage,
+          text: `Agent turn ${turn}`,
+          mentionIds: [target],
+          replyToMessageId: previous,
+        },
+        speakerToken,
+      );
+      expect(response.status).toBe(200);
+      previous = ((await response.json()) as { id: string }).id;
+      const ownInbox = await daemonOperation('getRoomInbox', { roomId: ROOM }, speakerToken);
+      expect(
+        ((await ownInbox.json()) as { items: Array<{ id: string }> }).items.some(
+          (item) => item.id === previous,
+        ),
+      ).toBe(false);
+      if (turn === 1) {
+        const peerInbox = await daemonOperation('getRoomInbox', { roomId: ROOM }, targetToken);
+        expect(
+          ((await peerInbox.json()) as { items: Array<{ id: string; mentionIds: string[] }> })
+            .items,
+        ).toContainEqual(expect.objectContaining({ id: previous, mentionIds: [target] }));
+      }
+      [speaker, target] = [target, speaker];
+      [speakerToken, targetToken] = [targetToken, speakerToken];
+    }
+    const stored = await database.query<{
+      mention_ids: string[];
+      note_count: string;
+    }>(
+      `SELECT message.mention_ids,
+         (SELECT count(*)::text FROM messages note
+          WHERE note.room_id=message.room_id AND note.card_type='agent-hop-cap') note_count
+       FROM messages message WHERE message.id=$1`,
+      [previous],
+    );
+    expect(stored.rows[0]).toEqual({ mention_ids: [], note_count: '1' });
   });
 
   it('keeps the phone GitHub repository contract aligned through the real HTTP surface', async () => {

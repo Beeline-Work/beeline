@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { DaemonAttachment, DaemonOperationMap } from '@beeline/api-contract/daemon';
 import type { SqlDatabase } from './database.js';
 import type { LiveHub } from './live.js';
@@ -7,6 +7,7 @@ type Input<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['in
 type Output<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['output'];
 const id = () => randomBytes(32).toString('hex');
 const seconds = (date: Date) => Math.floor(date.getTime() / 1_000);
+const AGENT_TO_AGENT_HOP_CAP = 8;
 
 export class DaemonService {
   constructor(
@@ -312,6 +313,17 @@ export class DaemonService {
         ? (input as unknown as { cornerId: string }).cornerId
         : input.roomId;
     await this.access(roomId, agentId);
+    const closeRequested =
+      name === 'getCornerCloseRequests'
+        ? Boolean(
+            (
+              await this.database.query<{ close_requested: boolean }>(
+                `SELECT close_requested FROM corner_facts WHERE corner_id=$1`,
+                [roomId],
+              )
+            ).rows[0]?.close_requested,
+          )
+        : undefined;
     if (input.startAtLatest) {
       if (input.after) throw new Error('startAtLatest cannot be combined with after');
       const latest = await this.database.query<{
@@ -327,6 +339,7 @@ export class DaemonService {
       return {
         items: [],
         ...(highWater ? { cursor: `${highWater.cursor_ms},${highWater.id}` } : {}),
+        ...(closeRequested !== undefined ? { closeRequested } : {}),
       };
     }
     const limit = Math.max(1, Math.min(input.limit ?? 100, 200));
@@ -348,13 +361,16 @@ export class DaemonService {
       `SELECT id,author_id,created_at,presentation,text,mention_ids,reply_to_message_id,
         root_message_id,request_id,attachments,
         floor(extract(epoch FROM created_at)*1000)::bigint cursor_ms
-        FROM messages WHERE room_id=$1 ${after ? 'AND (floor(extract(epoch FROM created_at)*1000)::bigint,id)>($2::bigint,$3)' : ''}
+        FROM messages WHERE room_id=$1
+          ${after ? 'AND (floor(extract(epoch FROM created_at)*1000)::bigint,id)>($2::bigint,$3)' : ''}
         ORDER BY cursor_ms,id LIMIT ${limit + 1}`,
       after ? [roomId, after[1], after[2]] : [roomId],
     );
     const page = rows.rows.slice(0, limit);
+    const visiblePage =
+      name === 'getRoomInbox' ? page.filter((row) => row.author_id !== agentId) : page;
     return {
-      items: page.map((row) => ({
+      items: visiblePage.map((row) => ({
         id: row.id,
         authorId: row.author_id,
         createdAt: seconds(row.created_at),
@@ -367,6 +383,7 @@ export class DaemonService {
         attachments: row.attachments ?? [],
       })),
       ...(page.at(-1) ? { cursor: `${page.at(-1)!.cursor_ms},${page.at(-1)!.id}` } : {}),
+      ...(closeRequested !== undefined ? { closeRequested } : {}),
     };
   }
   private async roomAuthority(input: Input<'getRoomAuthority'>) {
@@ -665,18 +682,78 @@ export class DaemonService {
   private async postRoomMessage(input: Input<'postRoomMessage'>, agentId: string) {
     await this.access(input.roomId, agentId);
     const messageId = id();
-    await this.database.query(
-      `INSERT INTO messages(id,room_id,author_id,text,presentation,request_id,legacy_event) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb)`,
-      [
-        messageId,
-        input.roomId,
-        agentId,
-        input.text,
-        input.presentation ?? 'message',
-        input.requestId ?? null,
-        JSON.stringify(input.tags ?? {}),
-      ],
-    );
+    const mentions = [...new Set(input.mentionIds ?? [])].filter((value) => value !== agentId);
+    const parent = input.replyToMessageId
+      ? (
+          await this.database.query<{
+            root_message_id: string | null;
+            agent_hop_count: number;
+            author_kind: 'human' | 'agent';
+          }>(
+            `SELECT message.root_message_id,message.agent_hop_count,identity.kind author_kind
+             FROM messages message JOIN identities identity ON identity.id=message.author_id
+             WHERE message.id=$1 AND message.room_id=$2`,
+            [input.replyToMessageId, input.roomId],
+          )
+        ).rows[0]
+      : undefined;
+    if (input.replyToMessageId && !parent) throw new Error('reply parent is not in this room');
+    if (mentions.length) {
+      const members = await this.database.query<{ identity_id: string }>(
+        `SELECT membership.identity_id FROM memberships membership
+         JOIN identities identity ON identity.id=membership.identity_id AND identity.kind='agent'
+         WHERE membership.room_id=$1 AND membership.removed_at IS NULL
+           AND membership.identity_id=ANY($2::text[])`,
+        [input.roomId, mentions],
+      );
+      if (members.rows.length !== mentions.length)
+        throw new Error('mentioned agent is not in room');
+    }
+    const rootMessageId = input.replyToMessageId
+      ? (parent!.root_message_id ?? input.replyToMessageId)
+      : null;
+    const hopCount = parent?.author_kind === 'agent' ? parent.agent_hop_count + 1 : 1;
+    const capped = mentions.length > 0 && hopCount >= AGENT_TO_AGENT_HOP_CAP;
+    await this.database.transaction(async (database) => {
+      await database.query(
+        `INSERT INTO messages(
+           id,room_id,author_id,text,presentation,request_id,legacy_event,mention_ids,
+           reply_to_message_id,root_message_id,agent_hop_count
+         ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10,$11)`,
+        [
+          messageId,
+          input.roomId,
+          agentId,
+          input.text,
+          input.presentation ?? 'message',
+          input.requestId ?? null,
+          JSON.stringify(input.tags ?? {}),
+          JSON.stringify(capped ? [] : mentions),
+          input.replyToMessageId ?? null,
+          rootMessageId,
+          hopCount,
+        ],
+      );
+      if (capped) {
+        const capId = createHash('sha256')
+          .update(`beeline:agent-hop-cap:${input.roomId}:${rootMessageId ?? messageId}`)
+          .digest('hex');
+        await database.query(
+          `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
+           VALUES($1,$2,$3,$4,'system','agent-hop-cap',$5::jsonb) ON CONFLICT(id) DO NOTHING`,
+          [
+            capId,
+            input.roomId,
+            agentId,
+            `Agent conversation paused after ${AGENT_TO_AGENT_HOP_CAP} consecutive turns.`,
+            JSON.stringify({
+              rootMessageId: rootMessageId ?? messageId,
+              cap: AGENT_TO_AGENT_HOP_CAP,
+            }),
+          ],
+        );
+      }
+    });
     this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'message' });
     return { id: messageId, createdAt: Math.floor(Date.now() / 1000) };
   }

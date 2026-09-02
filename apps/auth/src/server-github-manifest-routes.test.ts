@@ -120,7 +120,15 @@ describe('GitHub App manifest setup + drift endpoints', () => {
       url: 'https://alpha.example/auth/github/webhook',
       active: true,
     });
-    expect(manifest.default_events).toEqual(['star', 'issues', 'pull_request']);
+    expect(manifest.default_events).toEqual([
+      'star',
+      'issues',
+      'pull_request',
+      'push',
+      'check_run',
+      'check_suite',
+      'status',
+    ]);
     expect(manifest.default_permissions.contents).toBe('write');
     expect(manifest.redirect_url).toBe(
       `https://alpha.example/auth/github/app-setup?token=${encodeURIComponent(SETUP_TOKEN)}`,
@@ -194,7 +202,15 @@ describe('GitHub App manifest setup + drift endpoints', () => {
     expect(result.statusCode).toBe(200);
     const body = result.json<{ drift: { ok: boolean; missingEvents: string[] } | null }>();
     expect(body.drift?.ok).toBe(false);
-    expect(body.drift?.missingEvents).toEqual(['star', 'issues', 'pull_request']);
+    expect(body.drift?.missingEvents).toEqual([
+      'star',
+      'issues',
+      'pull_request',
+      'push',
+      'check_run',
+      'check_suite',
+      'status',
+    ]);
     expect(logLines.filter((line) => line.includes('/permissions'))).toHaveLength(1);
   });
 });

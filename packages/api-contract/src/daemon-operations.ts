@@ -1,3 +1,5 @@
+import type { CornerLifecycleView } from './phone-types.js';
+
 export type DaemonOperationMap = {
   getDaemonBootstrap: Operation<DaemonBootstrapInput, DaemonBootstrapResult>;
   getWorkspaceRoster: Operation<WorkspaceRosterInput, WorkspaceRosterResult>;
@@ -163,6 +165,8 @@ export type CornerRestoreResult = {
   readonly featureBranch?: string;
   readonly requestId?: string;
   readonly closeRequested: boolean;
+  /** Server-indexed GitHub facts retained across a helper restart. */
+  readonly lifecycle?: CornerLifecycleView;
 };
 export type RoomRepositoryStateResult = {
   readonly key?: string;

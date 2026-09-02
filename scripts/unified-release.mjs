@@ -276,6 +276,10 @@ function main(argv) {
       supersedeRelease(state, identityFromOptions(args));
       break;
     case 'report':
+      validateReleaseIdentity(args.version, args.sha);
+      if (args.version !== state.version || args.sha !== state.sourceSha) {
+        fail('mixed-version delivery report refused');
+      }
       console.log(deliveryReport(state, args.observed ? readJson(args.observed) : undefined));
       return;
     default:

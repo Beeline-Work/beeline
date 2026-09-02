@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import {
   assertAllArtifactsBuilt,
   assertDaemonFleetReady,
@@ -84,6 +88,61 @@ test('delivery refuses mixed versions and requires aligned ledger proof', () => 
   assert.equal(deliveryReport(state), `DELIVERED v0.0.1 (${SHA_1})`);
 });
 
+test('report subcommand requires and accepts the exact release identity', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'unified-release-report-'));
+  const commandPath = fileURLToPath(new URL('./unified-release.mjs', import.meta.url));
+  try {
+    const state = builtRelease();
+    for (const component of ['server', 'daemon', 'app']) {
+      confirmPromotion(state, component, { version: 'v0.0.1', sourceSha: SHA_1 });
+    }
+    confirmDelivery(state, { version: 'v0.0.1', sourceSha: SHA_1 });
+    const statePath = join(directory, 'state.json');
+    const observedPath = join(directory, 'observed.json');
+    writeFileSync(statePath, JSON.stringify(state));
+    writeFileSync(
+      observedPath,
+      JSON.stringify(
+        Object.fromEntries(
+          ['server', 'daemon', 'app'].map((component) => [
+            component,
+            { version: 'v0.0.1', sourceSha: SHA_1 },
+          ]),
+        ),
+      ),
+    );
+
+    const report = spawnSync(
+      process.execPath,
+      [
+        commandPath,
+        'report',
+        '--state',
+        statePath,
+        '--observed',
+        observedPath,
+        '--version',
+        'v0.0.1',
+        '--sha',
+        SHA_1,
+      ],
+      { encoding: 'utf8' },
+    );
+    assert.equal(report.status, 0, report.stderr);
+    assert.equal(report.stdout.trim(), `DELIVERED v0.0.1 (${SHA_1})`);
+
+    const missingIdentity = spawnSync(
+      process.execPath,
+      [commandPath, 'report', '--state', statePath],
+      { encoding: 'utf8' },
+    );
+    assert.equal(missingIdentity.status, 1);
+    assert.match(missingIdentity.stderr, /invalid release version: <missing>/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('daemon fleet readiness identifies every agent that is not on the exact release', () => {
   assert.equal(
     assertDaemonFleetReady(
@@ -156,8 +215,24 @@ test('one workflow owns parallel builds, ordered promotion, retry, and the final
   assert.ok(workflow.indexOf('promote_server:') < workflow.indexOf('promote_daemon:'));
   assert.ok(workflow.indexOf('promote_daemon:') < workflow.indexOf('promote_app:'));
   assert.ok(workflow.indexOf('promote_app:') < workflow.indexOf('delivery_report:'));
-  assert.match(workflow, /unified-release\.mjs report --state/);
+  assert.match(
+    workflow,
+    /unified-release\.mjs report --state[\s\S]*?--version "\$RELEASE_VERSION"[\s\S]*?--sha "\$RELEASE_SHA"/,
+  );
   assert.match(workflow, /unified-release\.mjs confirm-delivery --state/);
+  assert.match(workflow, /daemon: \{ version: daemon\.version, sourceSha: daemon\.sha \}/);
+  const retryJob = workflow.slice(workflow.indexOf('\n  retry:'));
+  for (const job of [
+    'promote_server',
+    'confirm_server',
+    'promote_daemon',
+    'confirm_daemon',
+    'promote_app',
+    'confirm_app',
+  ]) {
+    assert.match(retryJob, new RegExp(`needs\\.${job}\\.result == 'success'`));
+  }
+  assert.doesNotMatch(retryJob, /needs\.delivery_report\.result\s*!=\s*'success'/);
   assert.match(server, /flyctl auth whoami/);
   assert.match(server, /name: Deploy the exact release SHA to the monolith/);
   assert.match(server, /test "\$\(git rev-parse HEAD\)" = "\$RELEASE_SHA"/);

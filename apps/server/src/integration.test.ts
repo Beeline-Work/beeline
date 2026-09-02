@@ -1535,6 +1535,61 @@ describe('monolith integration', () => {
         ]),
       },
     });
+    expect(
+      (
+        await daemonOperation('postCornerRemoteState', {
+          cornerId,
+          branch: 'fm/widget',
+          state: 'working',
+          checks: 'unknown',
+        })
+      ).status,
+    ).toBe(200);
+    const cornerAfterDaemonRestart = (await (await request(`/v1/phone/rooms/${cornerId}`)).json()) as {
+      cornerLifecycle: {
+        lifecycle: string;
+        checks: string;
+        pr?: { url: string; mergeability?: string };
+        checksSummary?: { status: string; checks: Array<{ name: string; status: string }> };
+      };
+    };
+    expect(cornerAfterDaemonRestart.cornerLifecycle).toMatchObject({
+      lifecycle: 'in-review',
+      checks: 'passing',
+      pr: { url: 'https://github.com/owner/widgets/pull/42', mergeability: 'clean' },
+      checksSummary: {
+        status: 'passing',
+        checks: expect.arrayContaining([
+          expect.objectContaining({ name: 'Beeline CI check suite', status: 'passed' }),
+        ]),
+      },
+    });
+    // Corners hit by the pre-fix restart have already lost their PR payload. The next
+    // pull-request webhook must recover them by their durable feature branch.
+    await database.query(
+      `UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
+      [cornerId, JSON.stringify({ branch: 'fm/widget', checks: 'unknown', lifecycle: 'working' })],
+    );
+    await webhook('pull_request', 'corner-pr-recovery', {
+      ...base,
+      action: 'synchronize',
+      pull_request: {
+        number: 42,
+        title: 'Ship the widget',
+        html_url: 'https://github.com/owner/widgets/pull/42',
+        head: { ref: 'fm/widget', sha: '1'.repeat(40) },
+        base: { ref: 'main' },
+        mergeable_state: 'clean',
+        merged: false,
+      },
+    });
+    const cornerAfterWebhookRecovery = (await (await request(`/v1/phone/rooms/${cornerId}`)).json()) as {
+      cornerLifecycle: { lifecycle: string; pr?: { url: string; mergeability?: string } };
+    };
+    expect(cornerAfterWebhookRecovery.cornerLifecycle).toMatchObject({
+      lifecycle: 'in-review',
+      pr: { url: 'https://github.com/owner/widgets/pull/42', mergeability: 'clean' },
+    });
     const cornerAgentInbox = await daemonOperation('getRoomInbox', {
       roomId: cornerId,
       limit: 200,

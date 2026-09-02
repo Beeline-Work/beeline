@@ -6,6 +6,7 @@ import { dirname, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
+import type { CornerRestoreResult } from '@beeline/api-contract/daemon';
 import { MonolithCornerTurnLoop } from './monolith-corner-turn.js';
 import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
 import type { AgentRuntimeRecord, RoomRuntimeRecord } from './runtime.js';
@@ -22,6 +23,11 @@ export const ROOM_JOIN_CONCURRENCY = 4;
 export const DEFAULT_ROOM_WATCHDOG_STALE_MS = 90_000;
 export const DEFAULT_RECONCILE_HEARTBEAT_MS = 60_000;
 export const DEFAULT_DRAIN_DEADLINE_MS = 30 * 60_000;
+
+/** A restarted helper must not overwrite the server's GitHub-owned corner facts. */
+export function shouldPostInitialCornerWorkingState(restore: CornerRestoreResult): boolean {
+  return !restore.featureBranch && !restore.lifecycle?.branch && !restore.lifecycle?.pr;
+}
 
 export function reconcileRetryMs(error: unknown, pollMs: number): number {
   const match = String(error).match(/retry in\s+(\d+)s/i);
@@ -410,12 +416,14 @@ export class RoomRuntimeCoordinator {
         featureBranch,
         token: granted.token,
       });
-      await this.options.daemonApi.execute('postCornerRemoteState', {
-        cornerId: corner.cornerId,
-        branch: featureBranch,
-        state: 'working',
-        checks: 'unknown',
-      });
+      if (shouldPostInitialCornerWorkingState(restore)) {
+        await this.options.daemonApi.execute('postCornerRemoteState', {
+          cornerId: corner.cornerId,
+          branch: featureBranch,
+          state: 'working',
+          checks: 'unknown',
+        });
+      }
       const controller = new AbortController();
       const startedAt = this.now();
       const loop = new MonolithCornerTurnLoop({

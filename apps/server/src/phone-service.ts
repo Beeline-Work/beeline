@@ -660,7 +660,7 @@ export class PhoneService {
         FROM identities i
         LEFT JOIN memberships member ON member.room_id=c.id AND member.identity_id=i.id
           AND member.removed_at IS NULL
-        WHERE i.id=c.created_by
+        WHERE i.id=f.owner_agent_id
           AND COALESCE(member.identity_profile->>'kind',i.kind)='agent' LIMIT 1
       ) agent ON true
       LEFT JOIN LATERAL (

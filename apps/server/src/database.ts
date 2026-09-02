@@ -443,6 +443,7 @@ CREATE TABLE IF NOT EXISTS agent_mandates (
 
 CREATE TABLE IF NOT EXISTS corner_facts (
   corner_id uuid PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
+  owner_agent_id text REFERENCES identities(id),
   objective text NOT NULL DEFAULT '',
   lifecycle jsonb NOT NULL DEFAULT '{"lifecycle":"unknown","checks":"unknown"}'::jsonb,
   plan jsonb,
@@ -451,6 +452,8 @@ CREATE TABLE IF NOT EXISTS corner_facts (
   close_requested boolean NOT NULL DEFAULT false,
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS owner_agent_id text REFERENCES identities(id);
+CREATE INDEX IF NOT EXISTS corner_facts_owner_agent_idx ON corner_facts(owner_agent_id);
 
 CREATE TABLE IF NOT EXISTS corner_check_facts (
   corner_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
@@ -631,6 +634,29 @@ CREATE TABLE IF NOT EXISTS import_items (
 
 export async function migrate(database: SqlDatabase): Promise<void> {
   await database.query(SCHEMA);
+  await backfillCornerOwners(database);
+}
+
+/**
+ * Older corners predate an explicit owner fact. The creating agent is authoritative
+ * when present; imported/legacy corners fall back to their first agent-authored post.
+ */
+export async function backfillCornerOwners(database: SqlDatabase): Promise<void> {
+  await database.query(`
+    UPDATE corner_facts fact
+    SET owner_agent_id=COALESCE(
+      (
+        SELECT room.created_by FROM rooms room JOIN identities agent ON agent.id=room.created_by
+        WHERE room.id=fact.corner_id AND agent.kind='agent'
+      ),
+      (
+        SELECT message.author_id FROM messages message JOIN identities agent ON agent.id=message.author_id
+        WHERE message.room_id=fact.corner_id AND agent.kind='agent'
+        ORDER BY message.created_at,message.id LIMIT 1
+      )
+    )
+    WHERE fact.owner_agent_id IS NULL
+  `);
 }
 
 export async function measureDatabase(database: SqlDatabase): Promise<{

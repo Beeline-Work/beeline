@@ -34,6 +34,8 @@ export class DaemonService {
           : undefined;
     if (scopedRoom && name !== 'ensureAgentMembership')
       await this.access(scopedRoom, authenticatedAgentId);
+    if (scopedRoom && this.isCornerWrite(name))
+      await this.assertCornerOwner(scopedRoom, authenticatedAgentId);
     switch (name) {
       case 'getDaemonBootstrap':
         return (await this.bootstrap(authenticatedAgentId)) as Output<Name>;
@@ -515,8 +517,10 @@ export class DaemonService {
       created_by: string | null;
       archived: boolean;
     }>(
-      `SELECT r.id,r.parent_id,(SELECT identity_id FROM memberships WHERE room_id=r.id AND role='owner' LIMIT 1)created_by,r.archived_at IS NOT NULL archived FROM rooms r WHERE parent_id=$1`,
-      [roomId],
+      `SELECT r.id,r.parent_id,f.owner_agent_id created_by,r.archived_at IS NOT NULL archived
+       FROM rooms r JOIN corner_facts f ON f.corner_id=r.id
+       WHERE r.parent_id=$1 AND f.owner_agent_id=$2`,
+      [roomId, agentId],
     );
     return {
       corners: rows.rows.map((row) => ({
@@ -1145,8 +1149,8 @@ export class DaemonService {
         [parent.workspace_id, cornerId, agentId],
       );
       await db.query(
-        `INSERT INTO corner_facts(corner_id,objective,request_id,lifecycle) VALUES($1,$2,$3,'{"lifecycle":"working","checks":"unknown"}')`,
-        [cornerId, input.summary, input.requestId],
+        `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,request_id,lifecycle) VALUES($1,$2,$3,$4,'{"lifecycle":"working","checks":"unknown"}')`,
+        [cornerId, agentId, input.summary, input.requestId],
       );
     });
     this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'corner' });
@@ -1196,6 +1200,37 @@ export class DaemonService {
       [roomId, agentId],
     );
     if (!result.rowCount) throw new Error('daemon room access denied');
+  }
+  private isCornerWrite(name: keyof DaemonOperationMap): boolean {
+    return new Set<keyof DaemonOperationMap>([
+      'postRoomMessage',
+      'postAgentDraft',
+      'postAgentThought',
+      'retractAgentLiveOutput',
+      'postAgentTurnReceipt',
+      'postAgentActivity',
+      'postPermissionRequest',
+      'postPermissionExecution',
+      'postWorkSchedule',
+      'postWorkScheduleReceipt',
+      'postAgentToolMandate',
+      'postAgentPresence',
+      'postCornerLifecycle',
+      'postCornerRemoteState',
+      'postCornerPlan',
+      'postTargetBranchProposal',
+      'archiveCorner',
+    ]).has(name);
+  }
+  private async assertCornerOwner(roomId: string, agentId: string) {
+    const corner = await this.database.query<{ owner_agent_id: string | null }>(
+      `SELECT fact.owner_agent_id
+       FROM rooms room JOIN corner_facts fact ON fact.corner_id=room.id
+       WHERE room.id=$1 AND room.parent_id IS NOT NULL`,
+      [roomId],
+    );
+    const owner = corner.rows[0]?.owner_agent_id;
+    if (corner.rowCount && owner !== agentId) throw new Error('daemon corner access denied');
   }
   private writeResult() {
     return { id: id(), createdAt: Math.floor(Date.now() / 1000) };

@@ -1705,6 +1705,98 @@ describe('monolith integration', () => {
     expect(githubApp.deleteBranch).toHaveBeenCalledWith(77, 101, 'owner/widgets', 'fm/widget');
   });
 
+  it('serves a corner only to its opening agent and rejects another member’s corner writes', async () => {
+    const peer = 'c'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Peer')`, [peer]);
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [peer, HUMAN]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
+      [WORKSPACE, peer, ROOM],
+    );
+    const exchange = await auth.createDaemonExchange(peer);
+    const peerToken = (await auth.exchangeDaemonToken(exchange.exchangeToken))!.daemonToken;
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'single-owner-corner',
+      name: 'Only Bee serves this',
+      summary: 'Only Bee serves this',
+    });
+    expect(created.status).toBe(200);
+    const { cornerId } = (await created.json()) as { cornerId: string };
+
+    const ownerCorners = await daemonOperation('listRoomCorners', { roomId: ROOM });
+    expect(await ownerCorners.json()).toEqual({
+      corners: [
+        expect.objectContaining({
+          cornerId,
+          parentRoomId: ROOM,
+          createdBy: AGENT,
+          archived: false,
+        }),
+      ],
+    });
+    const peerCorners = await daemonOperation('listRoomCorners', { roomId: ROOM }, peerToken);
+    expect(await peerCorners.json()).toEqual({ corners: [] });
+
+    const rejectedState = await daemonOperation(
+      'postCornerRemoteState',
+      { cornerId, branch: 'feature/peer', state: 'working', checks: 'unknown' },
+      peerToken,
+    );
+    expect(rejectedState.status).toBe(403);
+    const rejectedTurn = await daemonOperation(
+      'postAgentTurnReceipt',
+      { roomId: cornerId, agentId: peer, requestId: 'peer-turn', status: 'working' },
+      peerToken,
+    );
+    expect(rejectedTurn.status).toBe(403);
+
+    const phoneCorners = await request(`/v1/phone/rooms/${ROOM}/corners`);
+    expect(await phoneCorners.json()).toEqual(
+      expect.objectContaining({
+        corners: [expect.objectContaining({ agent: expect.objectContaining({ pubkey: AGENT }) })],
+      }),
+    );
+  });
+
+  it('derives an owner for a legacy corner from its first agent-authored message', async () => {
+    const legacyCornerId = '33333333-3333-4333-8333-333333333333';
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Legacy corner')`,
+      [legacyCornerId, WORKSPACE, ROOM, HUMAN],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,$2,$3,'member'),($1,$2,$4,'member')`,
+      [WORKSPACE, legacyCornerId, HUMAN, AGENT],
+    );
+    await database.query(
+      `INSERT INTO corner_facts(corner_id,objective) VALUES($1,'Legacy objective')`,
+      [legacyCornerId],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation) VALUES($1,$2,$3,'Legacy objective','message')`,
+      ['f'.repeat(64), legacyCornerId, AGENT],
+    );
+    await migrate(database);
+
+    const corners = await daemonOperation('listRoomCorners', { roomId: ROOM });
+    expect(await corners.json()).toEqual({
+      corners: [
+        expect.objectContaining({ cornerId: legacyCornerId, createdBy: AGENT, archived: false }),
+      ],
+    });
+    expect(
+      (
+        await database.query<{ owner_agent_id: string }>(
+          `SELECT owner_agent_id FROM corner_facts WHERE corner_id=$1`,
+          [legacyCornerId],
+        )
+      ).rows[0],
+    ).toEqual({ owner_agent_id: AGENT });
+  });
+
   it('caps unthreaded agent-to-agent wake-ups and lets a new human message reset the chain', async () => {
     const peer = 'e'.repeat(64);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Peer')`, [peer]);

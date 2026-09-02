@@ -532,6 +532,12 @@ describe('daemon API client against the local monolith', () => {
           }),
         );
       });
+      await vi.waitFor(() =>
+        expect(daemonOperations).toHaveBeenCalledWith(
+          'postAgentDraft',
+          expect.objectContaining({ turnId: threaded.messageId }),
+        ),
+      );
       const draftWrites = daemonOperations.mock.calls
         .filter(([operation]) => operation === 'postAgentDraft')
         .map(([, input]) => input);

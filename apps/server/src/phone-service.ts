@@ -659,7 +659,7 @@ export class PhoneService {
         SELECT status,created_at FROM agent_turns WHERE room_id=c.id
         ORDER BY created_at DESC LIMIT 1
       ) turn ON true
-      WHERE c.parent_id=$1 AND EXISTS(
+      WHERE c.parent_id=$1 AND c.archived_at IS NULL AND EXISTS(
         SELECT 1 FROM memberships viewer
         WHERE viewer.room_id=c.id AND viewer.identity_id=$2 AND viewer.removed_at IS NULL
       ) ${roomViewFamilyOrder ? '' : 'ORDER BY c.created_at DESC,c.id DESC'}`,
@@ -1072,6 +1072,11 @@ export class PhoneService {
         return (await this.setGitHubEvents(
           input as Input<'setRoomGitHubEvents'>,
           viewerId,
+        )) as Output<Name>;
+      case 'approveCornerMerge':
+        return (await this.requireGitHub().approveCornerMerge(
+          viewerId,
+          input as Input<'approveCornerMerge'>,
         )) as Output<Name>;
       case 'getAuthCapabilities':
         return { github: Boolean(this.github) } as Output<Name>;
@@ -2228,6 +2233,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'setRoomRepository',
   'setRoomTargetBranch',
   'setRoomGitHubEvents',
+  'approveCornerMerge',
   'getAuthCapabilities',
   'beginGitHubIdentityBind',
   'completeGitHubIdentityBind',

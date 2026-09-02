@@ -150,6 +150,37 @@ describe('GitHub-only account and repository access', () => {
     ]);
   });
 
+  it('squash-merges a pull request with an exact-repository installation grant', async () => {
+    const { privateKey } = await generateKeyPair('RS256');
+    const privateKeyPem = await exportPKCS8(privateKey);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ token: 'merge-token', expires_at: '2030-01-01T00:00:00Z' }), {
+          status: 201,
+        }),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ merged: true }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const app = new GitHubAppClient({ appId: '42', privateKey: privateKeyPem, slug: 'beeline' });
+
+    await expect(app.mergePullRequest(77, 9, 'acme/beeline', 42)).resolves.toBeUndefined();
+    expect(fetchMock.mock.calls[0]![1]).toMatchObject({
+      body: JSON.stringify({
+        repository_ids: [9],
+        permissions: { contents: 'write', pull_requests: 'write' },
+      }),
+    });
+    expect(fetchMock.mock.calls[1]).toEqual([
+      'https://api.github.com/repos/acme/beeline/pulls/42/merge',
+      expect.objectContaining({
+        method: 'PUT',
+        headers: expect.objectContaining({ authorization: 'Bearer merge-token' }),
+        body: JSON.stringify({ merge_method: 'squash' }),
+      }),
+    ]);
+  });
+
   it('lists the installations visible to a GitHub user token', async () => {
     const { privateKey } = await generateKeyPair('RS256');
     const privateKeyPem = await exportPKCS8(privateKey);

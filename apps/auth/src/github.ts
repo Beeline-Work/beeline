@@ -292,6 +292,39 @@ export class GitHubAppClient {
     }
   }
 
+  /** Squash-merge one PR using an exact-repository installation grant. */
+  async mergePullRequest(
+    installationId: number,
+    repositoryId: number,
+    fullName: string,
+    pullRequestNumber: number,
+  ): Promise<void> {
+    const token = await this.installationToken(installationId, {
+      repositoryIds: [repositoryId],
+      permissions: { contents: 'write', pull_requests: 'write' },
+    });
+    const repositoryPath = fullName
+      .split('/')
+      .map((part) => encodeURIComponent(part))
+      .join('/');
+    const response = await fetch(
+      `${this.#config.apiBaseUrl}/repos/${repositoryPath}/pulls/${pullRequestNumber}/merge`,
+      {
+        method: 'PUT',
+        headers: { ...githubHeaders(token.token), 'content-type': 'application/json' },
+        body: JSON.stringify({ merge_method: 'squash' }),
+      },
+    );
+    if (!response.ok) {
+      let reason = '';
+      try {
+        const body = (await response.json()) as { message?: unknown };
+        if (typeof body.message === 'string') reason = `: ${body.message}`;
+      } catch {}
+      throw new Error(`GitHub pull request merge failed: HTTP ${response.status}${reason}`);
+    }
+  }
+
   #installationAccountFrom(body: Record<string, unknown>): GitHubInstallationAccount {
     const account = body.account;
     const accountRecord =

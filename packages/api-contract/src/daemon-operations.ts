@@ -298,6 +298,11 @@ export type DaemonActivityItem = {
   readonly title: string;
   readonly operation?: string;
   readonly status?: string;
+  /** Bounded, redacted tool argument summaries for the corner ledger. */
+  readonly command?: string;
+  readonly input?: string;
+  /** Bounded first/last-line excerpt of a completed tool result. */
+  readonly output?: string;
   readonly files?: readonly { readonly path: string; readonly status?: string }[];
   readonly plan?: {
     readonly objective?: string;

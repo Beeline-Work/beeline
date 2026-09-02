@@ -10,6 +10,7 @@ vi.mock('react-native', async () => {
   return {
     Platform: { OS: 'android', select: (choices: Record<string, unknown>) => choices.default },
     Pressable: host('Pressable'),
+    ScrollView: host('ScrollView'),
     StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
     Text: host('Text'),
     View: host('View'),
@@ -89,15 +90,32 @@ describe('live streaming turn', () => {
       new Set(
         renderer.root
           .findAll((node: { props: { testID?: string } }) =>
-            /^activity-step-(read|failure)$/.test(node.props.testID ?? ''),
+            /^corner-tool-row-(read|failure)$/.test(node.props.testID ?? ''),
           )
           .map((node: { props: { testID?: string } }) => node.props.testID),
       ),
-    ).toEqual(new Set(['activity-step-read', 'activity-step-failure']));
+    ).toEqual(new Set(['corner-tool-row-read', 'corner-tool-row-failure']));
     expect(renderer.root.findAllByType('Pressable')).toHaveLength(2);
     expect(
       renderer.root.findAll((node: { props: { testID?: string } }) =>
-        node.props.testID?.startsWith('activity-details-'),
+        node.props.testID?.startsWith('corner-tool-row-detail-'),
+      ),
+    ).toHaveLength(0);
+  });
+
+  it('keeps old detail-free activity rows collapsed and non-interactive', () => {
+    const renderer = render(
+      <ActivityTimeline
+        active
+        items={[{ kind: 'tool', id: 'old', title: 'Ran project task', toolKind: 'execute' }]}
+      />,
+    );
+
+    expect(JSON.stringify(renderer.toJSON())).toContain('Used tool');
+    expect(renderer.root.findByProps({ testID: 'corner-tool-row-old' }).props.onPress).toBeUndefined();
+    expect(
+      renderer.root.findAll((node: { props: { testID?: string } }) =>
+        node.props.testID?.startsWith('corner-tool-row-detail-'),
       ),
     ).toHaveLength(0);
   });
@@ -137,7 +155,7 @@ describe('live streaming turn', () => {
     ).toEqual([{ markdown: '**The reply is ready**', testID: 'activity-message-draft' }]);
   });
 
-  it('expands safe file summaries without rendering raw results, commands, diffs, or thought text', () => {
+  it('labels a tool row and reveals the bounded command, result, and files on press', () => {
     const renderer = render(
       <ActivityTimeline
         active
@@ -153,16 +171,17 @@ describe('live streaming turn', () => {
             title: 'Edit files',
             toolKind: 'edit',
             status: 'completed',
-            output: 'RAW TOOL RESULT SENTINEL',
-            files: [{ path: 'apps/mobile/Ledger.tsx', diff: 'INLINE DIFF SENTINEL' }],
+            output: 'first result line\nlast result line',
+            files: [{ path: 'apps/mobile/Ledger.tsx' }],
           },
           {
             kind: 'tool',
             id: 'execute',
             title: 'Tool',
             toolKind: 'execute',
-            command: 'RAW COMMAND SENTINEL --print-everything',
-            status: 'completed',
+            command: 'npm test -- ActivityTimeline',
+            output: 'tests passed',
+            status: 'exit 0',
           },
           {
             kind: 'summary',
@@ -174,22 +193,18 @@ describe('live streaming turn', () => {
       />,
     );
 
-    act(() => renderer.root.findByProps({ testID: 'activity-step-edit' }).props.onPress());
+    act(() => renderer.root.findByProps({ testID: 'corner-tool-row-edit' }).props.onPress());
     const rendered = JSON.stringify(renderer.toJSON());
     expect(rendered).toContain('Conversational answer');
+    expect(rendered).toContain('Used tool');
     expect(rendered).toContain('apps/mobile/Ledger.tsx');
+    expect(rendered).toContain('first result line');
+    expect(rendered).toContain('last result line');
     expect(rendered).not.toContain('PRIVATE THOUGHT SENTINEL');
-    expect(rendered).not.toContain('RAW TOOL RESULT SENTINEL');
-    expect(rendered).not.toContain('RAW COMMAND SENTINEL');
-    expect(rendered).not.toContain('INLINE DIFF SENTINEL');
     expect(rendered).not.toContain('OBSERVED RESULT SENTINEL');
+    expect(renderer.root.findByProps({ testID: 'corner-tool-row-detail-edit' })).toBeTruthy();
     expect(
-      renderer.root.findAll((node: { props: { testID?: string } }) =>
-        node.props.testID?.startsWith('activity-result-'),
-      ),
-    ).toHaveLength(0);
-    expect(
-      renderer.root.findByProps({ testID: 'activity-step-edit' }).props.accessibilityState,
+      renderer.root.findByProps({ testID: 'corner-tool-row-edit' }).props.accessibilityState,
     ).toEqual({ busy: false, expanded: true });
   });
 

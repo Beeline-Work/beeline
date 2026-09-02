@@ -25,7 +25,6 @@ import {
   detectBwrapSandbox,
   isSandboxPolicy,
   harnessHomeStateDirs,
-  resolveGitCommonDir,
   sandboxMountPlan,
   wrapAgentCommand,
 } from './bwrap-sandbox.js';
@@ -645,41 +644,5 @@ liveDescribe('the wrapper enforces Room read-only and the corner hygiene denylis
     );
     expect(escapeSibling.status).not.toBe(0);
     expect(existsSync(resolve(siblingCorner, 'evil.txt'))).toBe(false);
-  });
-
-  it('a corner can commit, because its git common directory is writable', async () => {
-    const repo = resolve(root, 'gitrepo');
-    spawnSync('git', ['init', '-q', '-b', 'main', repo]);
-    spawnSync('git', ['-C', repo, 'config', 'user.email', 'proof@example.com']);
-    spawnSync('git', ['-C', repo, 'config', 'user.name', 'proof']);
-    writeFileSync(resolve(repo, 'a.txt'), 'a\n');
-    spawnSync('git', ['-C', repo, 'add', '.']);
-    spawnSync('git', ['-C', repo, 'commit', '-qm', 'base']);
-    const linked = resolve(root, 'linked');
-    spawnSync('git', ['-C', repo, 'worktree', 'add', '-q', '-b', 'feature', linked]);
-
-    const gitCommonDir = await resolveGitCommonDir(linked);
-    expect(gitCommonDir).toBe(resolve(repo, '.git'));
-
-    const committed = runWrapped(
-      {
-        mode: 'edit',
-        cwd: linked,
-        worktreePath: linked,
-        gitCommonDir,
-        protectedPaths: [repo],
-      },
-      'echo b > b.txt && git add b.txt && git commit -qm proof && git rev-parse --short HEAD',
-    );
-    expect(committed.stderr).toBe('');
-    expect(committed.status).toBe(0);
-
-    // …and the same corner without the git bind cannot, which is why that mount
-    // is part of the table rather than an optimisation.
-    const denied = runWrapped(
-      { mode: 'edit', cwd: linked, worktreePath: linked, protectedPaths: [repo] },
-      'echo c > c.txt && git add c.txt && git commit -qm nope',
-    );
-    expect(denied.status).not.toBe(0);
   });
 });

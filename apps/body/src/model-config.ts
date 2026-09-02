@@ -8,9 +8,8 @@
  * read-only/edit boundary is `session/set_mode` picking `read-only` vs
  * `edit` (`acp.ts`'s `applySessionMode`). If the picker ever surfaced or set
  * `mode`/`fast-mode`/`collaboration_mode`, a user could flip an agent to
- * bypass the corner authority boundary. `isAllowedAgentModelConfigCategory`
- * (from `@beeline/buzz-client`, shared with the mobile client so both ends of
- * the picker enforce the same allow-list) is the one gate, and
+ * bypass the session authority boundary. `isAllowedAgentModelConfigCategory`
+ * from the local daemon model contract is the one gate, and
  * `assertModelConfigOptionAllowed` re-checks it independently against the
  * RAW advertised catalog every time something is about to be set — so even a
  * caller that forgot to filter first still cannot reach `mode`.
@@ -18,7 +17,7 @@
 import {
   isAllowedAgentModelConfigCategory,
   type AgentModelConfigOption,
-} from '@beeline/buzz-client';
+} from './model-types.js';
 import { lstatSync, readFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 

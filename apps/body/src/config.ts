@@ -8,8 +8,6 @@
  */
 import { accessSync, constants, existsSync, readFileSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
-import { HOST, SCHEME, BASE_URL } from '@beeline/gate';
-import { DEFAULT_RELAY_HOST, DEFAULT_RELAY_SCHEME } from '@beeline/buzz-client';
 import {
   executableOnPath,
   resolveAgentCommand,
@@ -104,14 +102,8 @@ export interface BodyConfig {
    * Absent for standalone/test Bodies: those simply never wire the helper.
    */
   runtimeConfigPath?: string;
-  /** Relay HTTP base (defaults to @beeline/gate config). */
-  relayBaseUrl: string;
   /** Host-enforced Room delegation hop limit (always clamped to 1..8 by Body). */
   agentDelegationMaxHops?: number;
-  relayHost: string;
-  relayScheme: string;
-  /** WebSocket relay URL for documentation / optional buzz-acp. */
-  relayWsUrl: string;
   /**
    * When true, edit-mode sessions auto-approve session/request_permission.
    * Room sessions always route the first mutating request through the signed
@@ -560,14 +552,6 @@ export function loadBodyConfig(opts: {
   const mcpBinary = resolveMcpBinary(env);
   const readonlyMcp = resolveReadonlyMcpCommand(env);
   const agentEnv = buildAgentEnv(env, opts.llmEnvFile);
-  const host = env.BUZZY_RELAY_HOST ?? DEFAULT_RELAY_HOST;
-  const scheme = env.BUZZY_RELAY_SCHEME ?? DEFAULT_RELAY_SCHEME;
-  const base = env.BUZZY_RELAY_URL
-    ? env.BUZZY_RELAY_URL.replace(/^ws/, 'http').replace(/\/$/, '')
-    : `${scheme}://${host}`;
-  const ws =
-    env.BUZZ_RELAY_URL ?? env.BUZZY_RELAY_WS ?? `${scheme === 'https' ? 'wss' : 'ws'}://${host}`;
-
   return {
     agentBinary: agent.command,
     agentKind: agent.kind,
@@ -579,10 +563,6 @@ export function loadBodyConfig(opts: {
     codegraphCommand: resolveCodegraphCommand(env),
     agentEnv,
     workspaceRoot: resolve(opts.workspaceRoot),
-    relayBaseUrl: base,
-    relayHost: host,
-    relayScheme: scheme,
-    relayWsUrl: ws,
     ...(env.BUZZY_BODY_AGENT_DELEGATION_MAX_HOPS
       ? { agentDelegationMaxHops: Number(env.BUZZY_BODY_AGENT_DELEGATION_MAX_HOPS) }
       : {}),
@@ -606,5 +586,3 @@ export function parseSandboxMaskEnv(env: NodeJS.ProcessEnv): string[] | undefine
     .filter(Boolean);
   return entries.length ? entries : undefined;
 }
-
-export { HOST, SCHEME, BASE_URL };

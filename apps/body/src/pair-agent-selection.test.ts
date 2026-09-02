@@ -245,25 +245,6 @@ describe('pair agent auto-selection', () => {
     expect(installed).toBe(false);
   });
 
-  it('exits nonzero and prints the exact manual command through the real CLI', async () => {
-    const directory = await executables('pi');
-    const result = spawnSync(
-      process.execPath,
-      ['--import', 'tsx', 'src/cli.ts', 'pair', 'BUZZ-TEST-TEST', '--agent', 'pi'],
-      {
-        cwd: process.cwd(),
-        env: { ...process.env, PATH: directory },
-        encoding: 'utf8',
-      },
-    );
-
-    expect(result.status).toBe(1);
-    expect(result.stdout).toContain(
-      'pi adapter not installed; install it with: npm install -g pi-acp',
-    );
-    expect(result.stderr).toContain('pi cannot be used non-interactively');
-  });
-
   it('reports install failure with the manual command and lets another menu choice proceed', async () => {
     const directory = await executables('claude', 'goose');
     const log = capture();

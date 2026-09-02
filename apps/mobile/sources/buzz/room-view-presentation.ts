@@ -240,7 +240,10 @@ export function displayRoomMessage(
     text: message.text,
     timestamp: message.createdAt,
     ...(githubEvent || daemonFact
-      ? { isUser: false }
+      ? {
+          isUser: false,
+          ...(daemonFact ? { authorIdentity: message.author, pubkey: message.author.pubkey } : {}),
+        }
       : {
           isUser: message.author.pubkey === viewerPubkey,
           authorIdentity: message.author,
@@ -367,13 +370,13 @@ export function cornerSummaries(view: Pick<RoomView, 'corners'>): CornerSummary[
           ? item.lifecycle.outcome === 'landed'
             ? 'merged'
             : 'archived'
-            : machineState === 'waiting'
-              ? item.reason === 'failure'
-                ? 'failed'
-                : item.reason === 'question'
-                  ? 'needs-attention'
-                  : 'open'
-              : null;
+          : machineState === 'waiting'
+            ? item.reason === 'failure'
+              ? 'failed'
+              : item.reason === 'question'
+                ? 'needs-attention'
+                : 'open'
+            : null;
     return {
       id: item.corner.id,
       name: item.corner.name,

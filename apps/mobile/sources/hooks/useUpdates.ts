@@ -37,7 +37,7 @@ const UpdateContext = createContext<UpdateContextValue | null>(null);
 export function isUpdateBusyPath(pathname: string): boolean {
     return [
         /^\/session(?:\/|$)/,
-        /^\/buzz\/(?:chat|corners)(?:\/|$)/,
+        /^\/(?:buzz|beeline)\/(?:chat|corners)(?:\/|$)/,
         /^\/new(?:\/|$)/,
         /^\/text-selection(?:\/|$)/,
     ].some((pattern) => pattern.test(pathname));

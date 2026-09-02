@@ -420,6 +420,6 @@ describe('Room message variant components', () => {
         now: 1,
         conversationIdentities: conversationIdentityByPubkey([], [currentIdentityMessage]),
       }),
-    ).toEqual({ label: 'CODEX thinking…', tone: 'live' });
+    ).toEqual({ label: 'CODEX thinking…' });
   });
 });

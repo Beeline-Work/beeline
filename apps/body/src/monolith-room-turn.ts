@@ -477,6 +477,7 @@ export class MonolithRoomTurnLoop {
           await api.execute('postRoomMessage', {
             roomId: this.options.roomId,
             requestId: item.id,
+            triggerMessageId: item.id,
             text: reply,
             presentation: 'message',
             mentionIds: agentReplyMentionIds(reply, roster, this.agent.publicKey),

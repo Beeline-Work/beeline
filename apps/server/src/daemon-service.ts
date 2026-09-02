@@ -13,6 +13,9 @@ export class DaemonService {
   constructor(
     private readonly database: SqlDatabase,
     private readonly live: LiveHub,
+    private readonly roomGitHubToken?: (
+      roomId: string,
+    ) => Promise<{ token: string; expiresAt: number }>,
   ) {}
 
   async execute<Name extends keyof DaemonOperationMap>(
@@ -92,6 +95,12 @@ export class DaemonService {
           (input as Input<'getRoomRepositoryState'>).roomId,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'getRoomGitHubToken': {
+        if (!this.roomGitHubToken) throw new Error('GitHub room token service unavailable');
+        return (await this.roomGitHubToken(
+          (input as Input<'getRoomGitHubToken'>).roomId,
+        )) as Output<Name>;
+      }
       case 'getRoomTargetBranch':
         return (await this.targetBranch(
           (input as Input<'getRoomTargetBranch'>).roomId,
@@ -1166,6 +1175,7 @@ export const DAEMON_OPERATION_NAMES = new Set<keyof DaemonOperationMap>([
   'getCornerCloseRequests',
   'listUntrackedCorners',
   'getRoomRepositoryState',
+  'getRoomGitHubToken',
   'getRoomTargetBranch',
   'getIdentitySuccession',
   'getAgentConfiguration',

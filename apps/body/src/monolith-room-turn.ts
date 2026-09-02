@@ -53,6 +53,7 @@ export interface MonolithRoomTurnOptions {
   signal?: AbortSignal;
   pollMs?: number;
   createAcpClient?: (options: ConstructorParameters<typeof AcpClient>[0]) => AcpClient;
+  onCornerOpened?: () => void;
 }
 
 /**
@@ -413,6 +414,11 @@ export class MonolithRoomTurnLoop {
             ].join('\n\n');
           }
           active.phase = 'finishing';
+          if (
+            result?.toolCalls.some((call) => /(?:^|[._:/-])open_corner$/i.test(call.title ?? ''))
+          ) {
+            this.options.onCornerOpened?.();
+          }
           await this.draftTail;
           const reply = sanitizeAgentReply(result!.agentText);
           if (!reply) throw new Error('ACP turn produced no durable Room reply');

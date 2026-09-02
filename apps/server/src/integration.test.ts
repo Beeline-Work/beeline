@@ -90,7 +90,10 @@ describe('monolith integration', () => {
     sendPushTest = vi.fn(async () => undefined);
     const phone = new PhoneService(database, 'http://placeholder', githubOperations, sendPushTest);
     const live = new LiveHub();
-    const daemon = new DaemonService(database, live);
+    const daemon = new DaemonService(database, live, async () => ({
+      token: 'github-room-token',
+      expiresAt: Date.now() + 60_000,
+    }));
     mountedAuth = await createMonolithAuth(database, 'https://server.test', undefined, {
       createDaemonExchange: (agentId, transaction) =>
         auth.createDaemonExchange(agentId, transaction),
@@ -1258,6 +1261,9 @@ describe('monolith integration', () => {
          repository_resolution='repository',github_installation_id=77 WHERE id=$1`,
       [ROOM],
     );
+    const daemonRoomToken = await daemonOperation('getRoomGitHubToken', { roomId: ROOM });
+    expect(daemonRoomToken.status).toBe(200);
+    expect(await daemonRoomToken.json()).toMatchObject({ token: 'github-room-token' });
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'corner-request',

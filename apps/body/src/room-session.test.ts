@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { readOnlyMcpServer, ReadOnlyToolsUnavailableError } from './room-session.js';
+import { DaemonApiClient } from './daemon-api-client.js';
+import {
+  beelineAgentMcpServer,
+  readOnlyMcpServer,
+  ReadOnlyToolsUnavailableError,
+} from './room-session.js';
 
 describe('monolith Room inspection mount', () => {
   it('mounts only the bounded read-only MCP at the Room root', () => {
@@ -26,5 +31,30 @@ describe('monolith Room inspection mount', () => {
         '/room',
       ),
     ).toThrow(ReadOnlyToolsUnavailableError);
+  });
+
+  it('mounts daemon-scoped corner controls separately from repository reads', () => {
+    const api = new DaemonApiClient('https://server.example', 'daemon-secret', 'agent-id');
+    const server = beelineAgentMcpServer(
+      {
+        agentBinary: 'agent',
+        mcpBinary: 'unused',
+        readonlyMcpCommand: '/bin/beeline-mcp',
+        agentEnv: {},
+        workspaceRoot: '/room',
+        autoApprovePermissions: false,
+      },
+      api,
+      { roomId: 'room-id', workspaceId: 'workspace-id', cornerId: 'corner-id' },
+    );
+    expect(server).toMatchObject({ name: 'beeline-agent', command: '/bin/beeline-mcp' });
+    expect(server.env).toEqual(
+      expect.arrayContaining([
+        { name: 'BEELINE_MCP_SURFACE', value: 'agent' },
+        { name: 'BEELINE_DAEMON_ROOM_ID', value: 'room-id' },
+        { name: 'BEELINE_DAEMON_CORNER_ID', value: 'corner-id' },
+        { name: 'BEELINE_DAEMON_TOKEN', value: 'daemon-secret' },
+      ]),
+    );
   });
 });

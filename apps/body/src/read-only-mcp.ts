@@ -873,7 +873,10 @@ async function handleLine(line: string): Promise<void> {
         protocolVersion:
           typeof params.protocolVersion === 'string' ? params.protocolVersion : '2024-11-05',
         capabilities: { tools: {} },
-        serverInfo: { name: 'beeline-readonly-mcp', version: '1.0.0' },
+        serverInfo: {
+          name: agentSurface ? 'beeline-agent' : 'beeline-readonly-mcp',
+          version: '1.0.0',
+        },
       });
       return;
     }

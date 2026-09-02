@@ -293,6 +293,9 @@ export class RoomRuntimeCoordinator {
         failure: (retryInMs) => this.noteFailure(roomId, retryInMs),
         presence: () => undefined,
       },
+      onCornerOpened: () => {
+        this.confirmationPending = true;
+      },
     });
     const promise = loop
       .run()
@@ -430,19 +433,18 @@ export class RoomRuntimeCoordinator {
         env: authEnv,
         maxBuffer: 4 * 1024 * 1024,
       });
-    } else {
-      await execFileAsync(
-        'git',
-        [
-          `--git-dir=${gitCommonDir}`,
-          'fetch',
-          '--prune',
-          'origin',
-          `+refs/heads/${input.targetBranch}:refs/remotes/origin/${input.targetBranch}`,
-        ],
-        { env: authEnv, maxBuffer: 4 * 1024 * 1024 },
-      );
     }
+    await execFileAsync(
+      'git',
+      [
+        `--git-dir=${gitCommonDir}`,
+        'fetch',
+        '--prune',
+        'origin',
+        `+refs/heads/${input.targetBranch}:refs/remotes/origin/${input.targetBranch}`,
+      ],
+      { env: authEnv, maxBuffer: 4 * 1024 * 1024 },
+    );
     if (!existsSync(resolve(path, '.git'))) {
       await rm(path, { recursive: true, force: true });
       await execFileAsync(

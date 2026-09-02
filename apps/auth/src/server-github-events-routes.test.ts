@@ -23,6 +23,7 @@ describe('GitHub repository events in Rooms', () => {
   let database: PgliteDatabase;
   let store: AuthStore;
   let app: FastifyInstance;
+  let onWebhook: ReturnType<typeof vi.fn>;
   let roomTokenAuthority: NonNullable<
     Parameters<typeof buildAuthServer>[0]['authorizeGitHubRoomToken']
   >;
@@ -122,6 +123,7 @@ describe('GitHub repository events in Rooms', () => {
     database = new PgliteDatabase(pglite);
     store = new AuthStore(database);
     await store.migrate();
+    onWebhook = vi.fn(async () => undefined);
     roomTokenAuthority = async () => ({ authorized: false, reason: 'agent_not_room_member' });
     app = buildAuthServer({
       store,
@@ -154,6 +156,7 @@ describe('GitHub repository events in Rooms', () => {
           }),
         } as unknown as GitHubAppClient,
         webhookSecret: 'webhook-secret',
+        onWebhook,
       },
       authorizeGitHubRoomToken: (tenant, input) => roomTokenAuthority(tenant, input),
       tenants: [alphaTenant, betaTenant],
@@ -244,6 +247,77 @@ describe('GitHub repository events in Rooms', () => {
     });
     const feed = await fetchRoomEvents(agent, { since: 0 });
     expect(feed.json().events).toHaveLength(1);
+  });
+
+  it('forwards signed corner lifecycle webhooks without adding them to the repository feed', async () => {
+    const installation = { id: 77 };
+    const repository = { id: 42, full_name: REPO };
+    const headSha = 'a'.repeat(40);
+    expect(
+      (
+        await webhook('check_suite', 'corner-check-suite', {
+          action: 'completed',
+          installation,
+          repository,
+          check_suite: {
+            id: 9,
+            status: 'completed',
+            conclusion: 'success',
+            head_branch: 'fm/widget',
+            head_sha: headSha,
+          },
+        })
+      ).statusCode,
+    ).toBe(202);
+    expect(
+      (
+        await webhook('check_run', 'corner-check-run', {
+          action: 'completed',
+          installation,
+          repository,
+          check_run: {
+            id: 10,
+            name: 'CI',
+            status: 'completed',
+            conclusion: 'success',
+            check_suite: { head_branch: 'fm/widget', head_sha: headSha },
+          },
+        })
+      ).statusCode,
+    ).toBe(202);
+    expect(
+      (
+        await webhook('push', 'corner-push', {
+          installation,
+          repository,
+          ref: 'refs/heads/fm/widget',
+          after: headSha,
+        })
+      ).statusCode,
+    ).toBe(202);
+    expect(
+      (
+        await webhook('star', 'feed-star', {
+          action: 'created',
+          starred_at: '2026-01-01T00:00:00Z',
+          repository,
+          sender: { login: 'lena' },
+        })
+      ).statusCode,
+    ).toBe(202);
+
+    expect(onWebhook).toHaveBeenCalledTimes(3);
+    expect(onWebhook).toHaveBeenNthCalledWith(1, 'check_suite', expect.any(Object));
+    expect(onWebhook).toHaveBeenNthCalledWith(2, 'check_run', expect.any(Object));
+    expect(onWebhook).toHaveBeenNthCalledWith(3, 'push', expect.any(Object));
+
+    roomTokenAuthority = async () => ({
+      authorized: true,
+      authorizedBy: agent.publicKey,
+      fullName: REPO,
+    });
+    const feed = await fetchRoomEvents(agent, { since: 0 });
+    expect(feed.json().events).toEqual([expect.objectContaining({ type: 'star' })]);
   });
 
   it('stays silent on unreported actions and unrelated event types', async () => {

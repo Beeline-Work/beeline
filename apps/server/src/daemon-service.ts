@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import type { DaemonAttachment, DaemonOperationMap } from '@beeline/api-contract/daemon';
 import type { SqlDatabase } from './database.js';
 import type { LiveHub } from './live.js';
@@ -7,7 +7,7 @@ type Input<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['in
 type Output<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['output'];
 const id = () => randomBytes(32).toString('hex');
 const seconds = (date: Date) => Math.floor(date.getTime() / 1_000);
-const AGENT_TO_AGENT_HOP_CAP = 8;
+const AGENT_TO_AGENT_HOP_CAP = 3;
 
 export class DaemonService {
   constructor(
@@ -709,6 +709,32 @@ export class DaemonService {
         ).rows[0]
       : undefined;
     if (input.replyToMessageId && !parent) throw new Error('reply parent is not in this room');
+    const trigger = input.triggerMessageId
+      ? (
+          await this.database.query<{
+            agent_hop_count: number;
+            author_kind: 'human' | 'agent';
+          }>(
+            `SELECT message.agent_hop_count,identity.kind author_kind
+             FROM messages message JOIN identities identity ON identity.id=message.author_id
+             WHERE message.id=$1 AND message.room_id=$2`,
+            [input.triggerMessageId, input.roomId],
+          )
+        ).rows[0]
+      : (
+          await this.database.query<{
+            agent_hop_count: number;
+            author_kind: 'agent';
+          }>(
+            `SELECT message.agent_hop_count,identity.kind author_kind
+             FROM messages message JOIN identities identity ON identity.id=message.author_id
+             WHERE message.room_id=$1 AND identity.kind='agent' AND message.author_id<>$2
+               AND message.mention_ids @> $3::jsonb
+             ORDER BY message.created_at DESC,message.id DESC LIMIT 1`,
+            [input.roomId, agentId, JSON.stringify([agentId])],
+          )
+        ).rows[0];
+    if (input.triggerMessageId && !trigger) throw new Error('turn trigger is not in this room');
     if (mentions.length) {
       const members = await this.database.query<{ identity_id: string }>(
         `SELECT membership.identity_id FROM memberships membership
@@ -723,7 +749,10 @@ export class DaemonService {
     const rootMessageId = input.replyToMessageId
       ? (parent!.root_message_id ?? input.replyToMessageId)
       : null;
-    const hopCount = parent?.author_kind === 'agent' ? parent.agent_hop_count + 1 : 1;
+    // Turns are unthreaded by design. Count from the inbox item that woke this
+    // agent, not the optional presentation reply parent; a human item starts a
+    // fresh chain at zero.
+    const hopCount = trigger?.author_kind === 'agent' ? trigger.agent_hop_count + 1 : 0;
     const capped = mentions.length > 0 && hopCount >= AGENT_TO_AGENT_HOP_CAP;
     await this.database.transaction(async (database) => {
       await database.query(
@@ -745,22 +774,19 @@ export class DaemonService {
           hopCount,
         ],
       );
-      if (capped) {
-        const capId = createHash('sha256')
-          .update(`beeline:agent-hop-cap:${input.roomId}:${rootMessageId ?? messageId}`)
-          .digest('hex');
+      // A durable final Room reply is also the turn's terminal proof. This
+      // makes the Room view settle even if the daemon is interrupted before
+      // its redundant explicit complete receipt reaches the server.
+      if (input.requestId) {
         await database.query(
-          `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
-           VALUES($1,$2,$3,$4,'system','agent-hop-cap',$5::jsonb) ON CONFLICT(id) DO NOTHING`,
+          `INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id)
+           VALUES($1,$2,$3,'complete',NULL)
+           ON CONFLICT(room_id,request_id,agent_id) DO UPDATE SET
+             status='complete',created_at=now()`,
           [
-            capId,
             input.roomId,
+            input.requestId,
             agentId,
-            `Agent conversation paused after ${AGENT_TO_AGENT_HOP_CAP} consecutive turns.`,
-            JSON.stringify({
-              rootMessageId: rootMessageId ?? messageId,
-              cap: AGENT_TO_AGENT_HOP_CAP,
-            }),
           ],
         );
       }

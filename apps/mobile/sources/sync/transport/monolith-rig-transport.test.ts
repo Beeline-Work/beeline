@@ -9,7 +9,11 @@ vi.mock('expo-crypto', () => ({
   getRandomBytes: (length: number) => new Uint8Array(length).fill(7),
 }));
 vi.mock('@/buzz/runtime-config', () => ({
-  getBuzzRuntimeConfig: () => ({ monolithUrl: 'https://server.example' }),
+  getBuzzRuntimeConfig: () => ({
+    monolithEnabled: true,
+    monolithUrl: 'https://server.example',
+    relayUrl: 'wss://legacy.example',
+  }),
 }));
 vi.mock('@/auth/monolith-session', () => ({
   monolithSession: { fetch: controls.fetch },
@@ -42,6 +46,7 @@ vi.mock('react-native-mmkv', () => ({
 }));
 
 import { MonolithRigTransport } from './monolith-rig-transport';
+import { BuzzRigTransport } from './buzz-rig-transport';
 import { MonolithPhoneOperationError } from './monolith-operation';
 import { clearMobileSurfaceStorage, createRoomOutbox } from '@/buzz/surface-storage';
 
@@ -59,7 +64,7 @@ function optimisticRow(event: NostrEvent, text: string): RoomViewMessage {
 }
 
 async function driveHandleSendPath(
-  transport: MonolithRigTransport,
+  transport: Pick<MonolithRigTransport, 'publishPreparedMessage'>,
   compose: () => Promise<NostrEvent>,
 ): Promise<NostrEvent> {
   const outbox = createRoomOutbox(identity, ROOM);
@@ -119,6 +124,54 @@ describe('monolith Room send path', () => {
       'https://server.example/v1/phone/operations/sendRoomReply',
       expect.objectContaining({ method: 'POST' }),
     );
+    expect(JSON.parse(String(controls.fetch.mock.calls[0]![1]?.body))).toEqual({
+      roomId: ROOM,
+      messageId: event.id,
+      text: 'Reply from the Room',
+      mentions: [],
+      attachments: [],
+      parentMessageId: 'parent-message-id',
+    });
+  });
+
+  it('dispatches the composer reply path through the shared monolith cutover wrapper', async () => {
+    const transport = new BuzzRigTransport(identity, 'wss://legacy.example');
+    const event = await driveHandleSendPath(transport, () =>
+      transport.composeReplyMessage(
+        '@Terra What is your soul?',
+        {
+          channelId: ROOM,
+          eventId: 'terra-message-id',
+          rootId: 'terra-message-id',
+        },
+        'terra-agent-id',
+        [
+          {
+            url: 'https://server.example/v1/media/image-id',
+            name: 'soul.png',
+            mimeType: 'image/png',
+            size: 42,
+          },
+        ],
+        ['terra-agent-id'],
+      ),
+    );
+
+    expect(JSON.parse(String(controls.fetch.mock.calls[0]![1]?.body))).toEqual({
+      roomId: ROOM,
+      messageId: event.id,
+      text: '@Terra What is your soul?',
+      mentions: ['terra-agent-id'],
+      attachments: [
+        {
+          url: 'https://server.example/v1/media/image-id',
+          name: 'soul.png',
+          mimeType: 'image/png',
+          size: 42,
+        },
+      ],
+      parentMessageId: 'terra-message-id',
+    });
   });
 
   it('still rejects an unsigned legacy Room event', async () => {

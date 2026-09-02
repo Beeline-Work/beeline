@@ -2072,6 +2072,80 @@ describe('monolith integration', () => {
     expect(response.headers.get('location')).toBe('beeline://buzz/github-installation?installed=1');
     expect(completeInstallation).toHaveBeenCalledWith('server-state', 77);
   });
+  it('stores a model-written human mention as a real mention and pushes it', async () => {
+    const send = vi.fn(async () => undefined);
+    const loop = new PushDeliveryLoop(database, { send });
+    await loop.runOnce(); // establish the durable floor before the new events
+    await database.query(
+      `INSERT INTO push_devices(token,identity_id,platform,environment)
+       VALUES('owner-device-token-12345678901234567890',$1,'ios','physical')`,
+      [HUMAN],
+    );
+    const sent = await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: '5'.repeat(64),
+      text: 'Proofbot, list the root files.',
+      mentions: [AGENT],
+    });
+    expect(sent.status).toBe(200);
+    const unknown = 'f'.repeat(64);
+    const reply = await daemonOperation('postRoomMessage', {
+      roomId: ROOM,
+      requestId: 'human-mention-turn',
+      triggerMessageId: '5'.repeat(64),
+      text: '@Owner Repository root files: README.md',
+      mentionIds: [HUMAN, unknown],
+    });
+    expect(reply.status).toBe(200);
+    const stored = await database.query<{ mention_ids: string[] }>(
+      `SELECT mention_ids FROM messages WHERE room_id=$1 AND author_id=$2 AND text LIKE '@Owner%'`,
+      [ROOM, AGENT],
+    );
+    expect(stored.rows).toHaveLength(1);
+    // The human member is a real mention; an unknown name stays plain text.
+    expect(stored.rows[0]!.mention_ids).toEqual([HUMAN]);
+    expect(await loop.runOnce()).toBe(1);
+    expect(send).toHaveBeenCalledWith(
+      'owner-device-token-12345678901234567890',
+      expect.objectContaining({ roomId: ROOM, text: 'Bee: @Owner Repository root files: README.md' }),
+    );
+  });
+
+  it('posts one corner-open daemon-fact card and pushes it to human members', async () => {
+    const send = vi.fn(async () => undefined);
+    const loop = new PushDeliveryLoop(database, { send });
+    await loop.runOnce(); // establish the durable floor before the new events
+    await database.query(
+      `INSERT INTO push_devices(token,identity_id,platform,environment)
+       VALUES('owner-device-token-12345678901234567890',$1,'ios','physical')`,
+      [HUMAN],
+    );
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'corner-open-card',
+      name: 'Ship widget',
+      summary: 'Ship the widget end to end',
+    });
+    expect(created.status).toBe(200);
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    const cards = await database.query<{ author_id: string; card: Record<string, unknown> }>(
+      `SELECT author_id,card FROM messages WHERE room_id=$1 AND card_type='daemon-fact'`,
+      [ROOM],
+    );
+    expect(cards.rows).toHaveLength(1);
+    expect(cards.rows[0]!.author_id).toBe(AGENT);
+    expect(cards.rows[0]!.card).toEqual({
+      type: 'corner-open',
+      cornerId,
+      name: 'Ship widget',
+      objective: 'Ship the widget end to end',
+    });
+    expect(await loop.runOnce()).toBe(1);
+    expect(send).toHaveBeenCalledWith(
+      'owner-device-token-12345678901234567890',
+      expect.objectContaining({ text: 'Bee opened a corner: Ship the widget end to end' }),
+    );
+  });
 });
 
 function next(socket: WebSocket, type: string): Promise<Record<string, unknown>> {

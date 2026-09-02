@@ -208,6 +208,16 @@ async function main() {
     `--outfile=${resolve(staging, 'lib', 'beeline', 'pi-mcp-adapter.mjs')}`,
   ]);
 
+  // Compatibility-only entrypoints for helpers installed before 6c3cca0c:
+  // their updater verifies these paths while staging a release. Remove after
+  // no installed helper predates that release.
+  for (const legacyEntrypoint of ['squire-mcp-proxy.mjs', 'agent-tool-mcp-proxy.mjs']) {
+    await writeFile(
+      resolve(staging, 'lib', 'beeline', legacyEntrypoint),
+      '// Legacy updater compatibility stub.\nprocess.exit(0);\n',
+    );
+  }
+
   await copyFile(binaries.agent, resolve(staging, 'bin', 'buzz-agent'));
   await copyFile(binaries.mcp, resolve(staging, 'bin', 'buzz-dev-mcp'));
   await chmod(resolve(staging, 'bin', 'buzz-agent'), 0o755);

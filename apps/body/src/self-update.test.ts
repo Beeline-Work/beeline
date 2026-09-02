@@ -23,6 +23,7 @@ import {
   hostPlatformKey,
   readInstalledBundleIdentity,
   readUpdateAttempt,
+  readUpdateState,
   rollbackToPreviousRelease,
   settleUpdateAttemptOnStart,
   stageRelease,
@@ -353,6 +354,28 @@ describe('self-update end to end against a local fixture manifest', () => {
     expect((await readUpdateAttempt(layout))?.status).toBe('confirmed');
   }, 60_000);
 
+  it('lets the managed worker stage and smoke-test without swapping the live anchor', async () => {
+    const v2 = await buildFixtureBundle('c2staged', '1.1.1');
+    const manifestUrl = serveManifest(v2);
+    const { layout } = await makeLegacyInstall('c1alpha', '1.0.0');
+    const manager = new SelfUpdateManager({
+      layout,
+      env: { BEELINE_UPDATE_MANIFEST_URL: manifestUrl },
+      stageOnly: true,
+      logger: () => undefined,
+    });
+
+    await manager.checkAndApply();
+
+    expect(existsSync(join(layout.releasesRoot, v2.commit, '.stage-ok'))).toBe(true);
+    expect(await activeReleaseId(layout)).toBe('legacy');
+    expect(await readUpdateAttempt(layout)).toBeUndefined();
+    expect(await readUpdateState(layout)).toMatchObject({
+      stagedReleaseId: v2.commit,
+      lastCheckResult: 'staged; waiting for serving daemon idle gate',
+    });
+  }, 60_000);
+
   it('aborts loudly on a checksum mismatch without touching the installed bundle', async () => {
     const v2 = await buildFixtureBundle('c3good', '1.2.0');
     const tampered = { ...v2, sha256: 'f'.repeat(64) };
@@ -402,7 +425,7 @@ describe('self-update end to end against a local fixture manifest', () => {
     const settle = await settleUpdateAttemptOnStart(layout);
     expect(settle.kind).toBe('rolled-back');
     expect(await activeReleaseId(layout)).toBe(previousReleaseId!);
-    expect((await readUpdateAttempt(layout))).toMatchObject({
+    expect(await readUpdateAttempt(layout)).toMatchObject({
       releaseId: releaseB,
       previousReleaseId,
       status: 'reverted',
@@ -458,8 +481,13 @@ describe('self-update end to end against a local fixture manifest', () => {
       kind: 'pending',
     });
 
-    await writeUpdateAttempt(layout, { ...(await readUpdateAttempt(layout))!, status: 'confirmed' });
-    expect(await settleUpdateAttemptOnStart(layout, { now: () => 3_000 })).toEqual({ kind: 'none' });
+    await writeUpdateAttempt(layout, {
+      ...(await readUpdateAttempt(layout))!,
+      status: 'confirmed',
+    });
+    expect(await settleUpdateAttemptOnStart(layout, { now: () => 3_000 })).toEqual({
+      kind: 'none',
+    });
 
     await writeUpdateAttemptFixture(layout, { ...base, appliedAt: 4_000, confirmBy: 5_000 });
     expect(await settleUpdateAttemptOnStart(layout, { now: () => 5_001 })).toMatchObject({

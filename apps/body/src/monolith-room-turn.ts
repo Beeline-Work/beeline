@@ -287,6 +287,10 @@ export class MonolithRoomTurnLoop {
             .filter(Boolean)
             .join('\n\n');
           const sessionId = this.sessionId!;
+          // The mobile live-overlay handoff suppresses a draft as soon as its durable
+          // reply with the same request id arrives. Keep this id stable through both
+          // sides of that handoff so a delayed retract cannot render two bubbles.
+          const turnId = item.id;
           let latestDraft = '';
           const result = await this.client!.sessionPrompt(
             sessionId,
@@ -301,7 +305,7 @@ export class MonolithRoomTurnLoop {
                   api.execute('postAgentDraft', {
                     agentId: this.agent.publicKey,
                     roomId: this.options.roomId,
-                    turnId: `${this.agent.publicKey}:${this.options.roomId}`,
+                    turnId,
                     text: latestDraft,
                   }),
                 )
@@ -326,7 +330,7 @@ export class MonolithRoomTurnLoop {
           await api.execute('retractAgentLiveOutput', {
             agentId: this.agent.publicKey,
             roomId: this.options.roomId,
-            turnId: `${this.agent.publicKey}:${this.options.roomId}`,
+            turnId,
             kind: 'draft',
           });
         },

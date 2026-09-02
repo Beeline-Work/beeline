@@ -421,10 +421,17 @@ describe('daemon API client against the local monolith', () => {
       });
       const draftWrites = daemonOperations.mock.calls
         .filter(([operation]) => operation === 'postAgentDraft')
-        .map(([, input]) => (input as { text: string }).text);
+        .map(([, input]) => input);
       expect(draftWrites).toEqual([
-        'I am Terra, Vishnu, destroyer of worlds; I see the image you entrusted to me.',
+        expect.objectContaining({
+          turnId: sent.messageId,
+          text: 'I am Terra, Vishnu, destroyer of worlds; I see the image you entrusted to me.',
+        }),
       ]);
+      expect(daemonOperations).toHaveBeenCalledWith(
+        'retractAgentLiveOutput',
+        expect.objectContaining({ turnId: sent.messageId, kind: 'draft' }),
+      );
     } finally {
       finishHarnessTurn();
       abort.abort();
@@ -618,6 +625,22 @@ describe('daemon API client against the local monolith', () => {
         expect(durableAgentRows).toHaveLength(1);
         expect(durableAgentRows[0]!.text.trim()).not.toBe('');
         expect(durableAgentRows[0]!.text).not.toMatch(/respond to the user's latest message/i);
+        const visibleAgentRows =
+          (await phone.readRoom(ROOM, HUMAN))?.messages.filter(
+            (message) =>
+              message.author.pubkey === AGENT &&
+              message.requestId === sent.messageId &&
+              message.presentation === 'message',
+          ) ?? [];
+        expect(visibleAgentRows).toHaveLength(1);
+        expect(
+          (
+            await database.query<{ count: string }>(
+              `SELECT count(*)::text count FROM live_outputs WHERE room_id=$1 AND agent_id=$2 AND turn_id=$3 AND kind='draft'`,
+              [ROOM, AGENT, sent.messageId],
+            )
+          ).rows[0]?.count,
+        ).toBe('0');
         await vi.waitFor(() => expect(core.quiesceForUpdateIfIdle()).toBe(true), {
           timeout: 5_000,
         });
@@ -641,7 +664,7 @@ describe('daemon API client against the local monolith', () => {
           ).rows[0]?.count,
         ).toBe('0');
         console.log(
-          `[real-thin-proof] request=${sent.messageId} reply=${JSON.stringify(reply)} update=old->new receipt=complete`,
+          `[real-thin-proof] request=${sent.messageId} reply=${JSON.stringify(reply)} durable_messages=1 live_drafts=0 update=old->new receipt=complete`,
         );
       } finally {
         abort.abort();

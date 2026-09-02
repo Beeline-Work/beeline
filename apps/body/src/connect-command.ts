@@ -4,11 +4,10 @@ import { dirname, resolve } from 'node:path';
 import { stdin, stdout } from 'node:process';
 import * as clack from '@clack/prompts';
 import { normalizeAgentPairingCode } from '@beeline/api-contract/phone';
-import { AGENT_NAME_MAX_LENGTH, isReasonableAgentName } from '@beeline/buzz-client';
 import { AUTO_DETECT_AGENT_KINDS, resolveAgentCommand, type AgentKind } from './agent-command.js';
 import { clackPromptOutput, unwrapPrompt } from './clack-support.js';
 import { fetchAgentModelCatalog } from './model-catalog.js';
-import { completeDevicePairing, type DevicePairingGrant } from './pair-command.js';
+import { completeDevicePairing, type DevicePairingGrant } from './device-pairing.js';
 import {
   activateRelease,
   defaultBeelineInstallLayout,
@@ -20,6 +19,16 @@ import { parseUpdateManifest, resolveManifestUrl } from './self-update-manifest.
 import { defaultSupervisorRoot } from './runtime.js';
 
 export const CONNECT_HARNESSES = AUTO_DETECT_AGENT_KINDS;
+export const AGENT_NAME_MAX_LENGTH = 32;
+
+function isReasonableAgentName(value: string): boolean {
+  const normalized = value.trim().replace(/\s+/g, ' ');
+  return (
+    normalized.length > 0 &&
+    normalized.length <= AGENT_NAME_MAX_LENGTH &&
+    /^\p{L}[\p{L}\p{M}'’ -]*$/u.test(normalized)
+  );
+}
 export const CONNECT_PROVIDER_HARNESSES = new Set<AgentKind>(['goose', 'pi']);
 export const CONNECT_PROVIDERS = ['openrouter', 'openai', 'anthropic', 'google', 'xai'] as const;
 export type ConnectProvider = (typeof CONNECT_PROVIDERS)[number];

@@ -14,7 +14,7 @@ import {
   prepareRoomAgentHome,
   roomAgentHomeEnv,
 } from './agent-home.js';
-import { AGENT_PRIVATE_STATE_ENV } from './agent-private-state.js';
+const AGENT_PRIVATE_STATE_ENV = 'BUZZY_AGENT_PRIVATE_DIR';
 import { KNOWN_CREDENTIAL_MASK_PATHS } from './bwrap-sandbox.js';
 import { filterModelOptionsByCredentials } from './model-config.js';
 import { tomlChildTableNames } from './toml-section.js';

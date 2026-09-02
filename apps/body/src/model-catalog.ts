@@ -10,7 +10,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import type { AgentModelConfigOption } from '@beeline/buzz-client';
+import type { AgentModelConfigOption } from './model-types.js';
 import { AcpClient } from './acp.js';
 import type { AgentCommand } from './agent-command.js';
 import {

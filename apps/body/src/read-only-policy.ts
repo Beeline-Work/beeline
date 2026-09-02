@@ -1,5 +1,4 @@
 import type { AcpPermissionRequest } from './acp.js';
-import { BEELINE_AGENT_TOOL_NAMES, BEELINE_AGENT_TOOL_SERVER_NAME } from './agent-tool-contract.js';
 
 export const READ_ONLY_MCP_SERVER_NAME = 'beeline-readonly-mcp';
 const READ_ONLY_MCP_TOOL_SERVER_NAME = READ_ONLY_MCP_SERVER_NAME.replaceAll('-', '_');
@@ -24,7 +23,6 @@ const READ_ONLY_PERMISSION_TITLES = new Set(
   ]),
 );
 const READ_ONLY_TOOL_SET = new Set<string>(READ_ONLY_TOOL_NAMES);
-const BEELINE_AGENT_TOOL_SET = new Set<string>(BEELINE_AGENT_TOOL_NAMES);
 
 /**
  * Separators an adapter puts between the server name and the tool name.
@@ -117,42 +115,4 @@ export function isReadOnlyMcpPermissionRequest(request: AcpPermissionRequest): b
     }
   }
   return false;
-}
-
-/**
- * Identify calls to Body's own action-tool server at the ACP permission
- * boundary. This is not action authorization: it only lets the MCP call reach
- * `AuthorizeOrRequestKernel`, whose signed mandate result is the sole verdict
- * returned to the model. Native shell text that happens to contain these
- * names must remain behind the Room read-only denial.
- */
-export function isBeelineAgentToolPermissionRequest(request: AcpPermissionRequest): boolean {
-  const toolCall = request.toolCall;
-  const rawInput = toolCall?.rawInput;
-  const mcpCall =
-    rawInput && typeof rawInput === 'object' && !Array.isArray(rawInput)
-      ? (rawInput as Record<string, unknown>)
-      : undefined;
-  if (
-    mcpCall?.server === BEELINE_AGENT_TOOL_SERVER_NAME &&
-    typeof mcpCall.tool === 'string' &&
-    BEELINE_AGENT_TOOL_SET.has(mcpCall.tool)
-  ) {
-    return true;
-  }
-  if (shellPayload(toolCall)) return false;
-  const title = toolCall?.title?.trim() ?? '';
-  const prefixes = [
-    `mcp__${BEELINE_AGENT_TOOL_SERVER_NAME}__`,
-    `mcp.${BEELINE_AGENT_TOOL_SERVER_NAME}.`,
-    `${BEELINE_AGENT_TOOL_SERVER_NAME}/`,
-    `${BEELINE_AGENT_TOOL_SERVER_NAME}:`,
-    `${BEELINE_AGENT_TOOL_SERVER_NAME} `,
-  ];
-  if (!prefixes.some((prefix) => title.startsWith(prefix))) return false;
-  return BEELINE_AGENT_TOOL_NAMES.some(
-    (tool) =>
-      title.endsWith(`(${tool})`) ||
-      TOOL_NAME_SEPARATORS.some((separator) => title.endsWith(`${separator}${tool}`)),
-  );
 }

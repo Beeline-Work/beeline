@@ -15,43 +15,29 @@
  * Env-driven config; see BodyConfig for all env overrides.
  */
 import { dirname, resolve } from 'node:path';
-import { existsSync } from 'node:fs';
-import { readdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { readFile, unlink, writeFile } from 'node:fs/promises';
 import { stdin, stdout } from 'node:process';
 import * as clack from '@clack/prompts';
 import pc from 'picocolors';
 import { loadBodyConfig } from './config.js';
 import { formatAgentCommand } from './agent-command.js';
 import { LEGACY_ACCESS_POLICY } from './access-policy.js';
-import { DEFAULT_AGENT_IDENTITY_NAME, DEFAULT_BODY_IDENTITY_NAME } from '@beeline/buzz-client';
 import { applyRuntimeModelPreflight } from './runtime-model-validation.js';
-import { withSpinner } from './clack-support.js';
-import { readOperatorMcpServers } from './operator-mcp.js';
-import { Body } from './body.js';
-import { runCornerGitCredentialCommand } from './corner-git-credential.js';
 import { ThinDaemonCore } from './thin-core.js';
-import { activateDaemonTransport, type DaemonApiClient } from './daemon-api-client.js';
+import { activateDaemonTransport } from './daemon-api-client.js';
 import {
   findAgentRuntimeConfigPaths,
-  identityFromKey,
   migrateRuntimeRecordAccessPolicy,
   readRuntimeRecord,
   removeAgentRuntime,
   resolveRuntimeConfigPath,
   runtimeAgentCommand,
   stopRuntimeDaemon,
-  type AgentRuntimeRecord,
 } from './runtime.js';
-import { runRelayCommand } from './relay-command.js';
 import { runStartCommand } from './start-command.js';
-import { runPairCommand } from './pair-command.js';
 import { runConnectCommand, runConnectFinishCommand } from './connect-command.js';
-import { runMissionScaffoldCommand } from './mission-scaffold-command.js';
 import { runUpdateCommand } from './self-update-cli.js';
-import { migrateLegacyRepositoryPaths } from './repository-truth.js';
 import { detectBwrapSandbox } from './bwrap-sandbox.js';
-import { trustySquireConfigRootForRuntimeConfig } from './trusty-squire-storage.js';
-import { DurableBodyState } from './durable-state.js';
 import {
   activeReleaseId,
   beelineInstallLayout,
@@ -78,27 +64,13 @@ import {
 } from './managed-update.js';
 import { runUpdateFunctionalProbe } from './update-functional-probe.js';
 import { reportUpdateRollback, queueUpdateRollbackAlert } from './update-rollback-alert.js';
-import {
-  dailyAgentSpend,
-  dailyRestartReprimes,
-  formatAgentSpendReport,
-  formatReprimeReport,
-  type ModelTurnSpend,
-  type SessionReprimeRecord,
-} from './model-spend.js';
 import { writeDaemonReleaseStatus } from './release-status.js';
 
 function usage(exitCode = 1): void {
   console.error(`
-${pc.bold('Beeline Body — agent session manager.')}
+${pc.bold('Beeline — thin Room agent.')}
 
 ${pc.dim('Usage:')}
-  beeline provision <channel-uuid>          Attach read-only agent to a TLC
-  beeline serve <channel-uuid> <owner> <repo>  Internal: serve one explicitly-wired Room
-  beeline open <channel-uuid> <owner> <repo>  Open subchannel + edit session
-  beeline archive <subchannel-uuid>         Archive subchannel
-  beeline pair <PAIRING-CODE> [options]     Pair an agent (optionally to this repo)
-                                            and start its durable daemon
   beeline connect [XXXXXXXX-XXXXXXXX]       Install and connect an app-authorized agent
   beeline start [agent-pubkey]              Start — or RESTART when already running,
                                             stopping cleanly after in-flight work —
@@ -106,128 +78,16 @@ ${pc.dim('Usage:')}
                                             host's) durable agent
   beeline start --agent <agent-pubkey>      Same, from anywhere (no repo needed)
   beeline stop --agent <agent-pubkey>       Stop and disable the supervised agent
-  beeline relay set <url> [--agent <pubkey>|--all]
-                                            Repoint stored runtime(s) and restart cleanly
   beeline update [--check|--status|--rollback|--force]
                                             Self-update the installed bundle
-  beeline spend [--day YYYY-MM-DD] [--agent <pubkey>] [--json]
-                                            Calls/tokens, causal turns, and restart re-primes
-  beeline corner-git-credential (internal)  Git credential helper: read-only repo token for corners
-  beeline mission-scaffold <dir> [options]  Write the three-file mission convention into an
-                                            existing dir; never overwrites existing files
-                                            (--name --objective --principal --chief)
 
 ${pc.dim('Options:')}
   --workspace-root <path>   Agent workspace (default: ./body-workspace)
   --llm-env-file <path>     Path to LLM credentials env file
-  --agent-key <nsec>        Agent Nostr secret (hex or nsec)
 
 All other config via env vars (see config.ts).
 `);
   process.exit(exitCode);
-}
-
-function pairUsage(): void {
-  console.log(`
-${pc.bold('Pair this repository and start its durable Room agent(s).')}
-
-${pc.dim('Usage:')}
-  beeline pair <PAIRING-CODE> [--agent <codex|claude|goose|pi|grok|reference|custom>]
-               [--agent-command '<command> [args...]'] [--repo <path>]
-               [--access <everyone|creator|allowlist>] [--allow <npub-or-hex,...>]
-               [--auto-response '<text>']
-               [--mcp <capability[,capability...]>]
-               [--share-skill <name[,name...]>]
-               [--model <model>] [--effort <level>] [--use-env-key]
-
-  beeline pair <CODE1> <CODE2> ... --agents <kind1,kind2,...> [--repo <path>]
-               [--access <everyone|creator|allowlist>] [--allow <npub-or-hex,...>]
-               [--auto-response '<text>']
-               [--mcp <capability[,capability...]>]
-               [--share-skill <name[,name...]>]
-               [--model <model>] [--effort <level>]
-
-Agent choices:
-  codex      Operator's Codex through the codex-acp adapter
-  claude     Operator's Claude Code through a Claude ACP adapter
-  goose      Operator's Goose through its native 'goose acp' server
-  pi         Operator's Pi through the pi-acp adapter
-  grok       Operator's Grok through its native 'grok agent stdio' ACP server
-  reference  Bundled agent runtime (explicit fallback; requires an LLM key)
-  custom     Explicit ACP command supplied with --agent-command
-
-Cursor has no native ACP mode. To drive it, install the Cursor CLI
-(curl -fsSL https://cursor.com/install | sh), log in with \`cursor-agent login\`,
-install the community bridge (npm install -g cursor-acp), and pair with
-\`--agent custom --agent-command 'cursor-acp'\`.
-
-With no --agent flag, beeline detects supported installed coding agents. Missing
-ACP adapters stay visible and can be installed when selected on a terminal. In a
-non-interactive session, beeline prints the manual adapter install command and
-never installs packages automatically. Several ready matches require --agent.
-
-Multiple runtimes in one Workspace: pass one single-use pairing code per agent
-plus a matching --agents list. Each agent gets its own fresh keypair/identity
-and its own daemon — three distinct agents live in one Room, each addressed by
-its own @-mention. Pairing ignores BUZZ_AGENT_KEY/BUZZ_PRIVATE_KEY and always
-mints a fresh agent identity by default.
-
---use-env-key (single-agent pairing only): the rare deliberate exception —
-reuse the ambient BUZZ_AGENT_KEY/BUZZ_PRIVATE_KEY as this agent's identity
-instead of minting a fresh one. Requires one of those env vars to be set;
-cannot be combined with --agents.
-
-Repository (optional): a repository belongs to a ROOM, not to an agent.
-Pairing never infers one from the current directory. Without --repo, the agent
-is paired with no repository and materializes each Room's existing binding on
-demand. --repo <path> is the explicit opt-in for creating or joining that
-repository's Room during pairing; it works from any cwd and must name a git
-repository.
-There is no way to infer an existing Room's bound repository from the pairing
-code alone (pairing codes are Workspace-scoped, not Room-scoped) — pass --repo
-to create/join that repository's Room at pair time from any directory.
-
-Model / effort: sets this agent's default before any human picks one in the
-app (#223's in-app picker always overrides once set). Checked against the
-agent's own live advertised catalog at pair time — an unknown model or effort
-is refused with a clear error, not silently launched. In the --agents form,
---model/--effort apply identically to every agent being paired, matching
---access/--auto-response's existing convention (each agent still gets its own
-catalog check, so a value invalid for one harness fails that harness only if
-paired alone; the whole command aborts on the first invalid pairing).
-
-Interactive: with neither flag and a real terminal on both ends, beeline asks
-you to pick a model and effort/thinking level from that agent's own live
-catalog (current default pre-selected — press enter to keep it) instead of
-requiring the flags. A non-terminal session (script, CI) never blocks on this;
-it just proceeds with no default, same as before this existed.
-
-Access policy (per agent, set here at invite time):
-  everyone  any Room member may address the agent
-  creator   only the inviting owner may; anyone else gets the auto-response
-  allowlist only identities named by --allow may address it; creator is not implicit
-
-External MCP capabilities: --mcp squire-credential-use and --mcp squire-app-access are independent.
-Account capabilities require --access creator and are mounted from a built-in
-profile; pass a comma-separated list to opt into both. Beeline never imports
-the operator's other personal MCP servers.
-
-Skills: every agent receives only using-beeline and mission-brief by default.
---share-skill adds exact names from the operator-owned ~/.agents/skills directory
-to this agent's runtime record. It never imports the rest of that directory.
-
-Interactive: on a real TTY, --access/--auto-response missing their flags are
-also offered as clack pickers (in that order, right after model/effort) —
-enter keeps everyone/the default auto-response. A non-terminal session never
-blocks on this; it proceeds with the everyone default, same as before.
-
-Examples:
-  beeline pair XXXXXXXX-XXXXXXXX --agent codex
-  beeline pair XXXXXXXX-XXXXXXXX --agent claude --access creator
-  beeline pair XXXXXXXX-XXXXXXXX --repo /path/to/repo --agent claude --model sonnet --effort high
-  beeline pair AAAAAAAA-AAAAAAAA BBBBBBBB-BBBBBBBB CCCCCCCC-CCCCCCCC --agents claude,codex,pi
-  beeline pair XXXXXXXX-XXXXXXXX --agent custom --agent-command 'my-agent serve --acp'
-`);
 }
 
 let daemonFailureRuntimeDir: string | undefined;
@@ -253,24 +113,20 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   // so flipping DEFAULT_ACCESS_POLICY to owner-only never re-gates an
   // already-paired agent. A record with any explicit policy is untouched.
   const accessMigration = await migrateRuntimeRecordAccessPolicy(configPath);
-  let { runtime } = await migrateLegacyRepositoryPaths(accessMigration.runtime, {
-    log: console.log,
-  });
-  let daemonApi: DaemonApiClient | undefined;
-  if (runtime.transport) {
-    const activated = await activateDaemonTransport(configPath);
-    if (!activated) throw new Error('monolith daemon transport activation failed');
-    runtime = activated.runtime;
-    daemonApi = activated.client;
+  let runtime = accessMigration.runtime;
+  if (!runtime.transport) {
+    throw new Error('legacy relay runtime is unsupported; reconnect this agent from the app');
   }
+  const activated = await activateDaemonTransport(configPath);
+  if (!activated) throw new Error('monolith daemon transport activation failed');
+  runtime = activated.runtime;
+  const daemonApi = activated.client;
   const agent = runtimeAgentCommand(runtime);
   await writeFile(resolve(dirname(configPath), 'daemon.pid'), `${process.pid}\n`, { mode: 0o600 });
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     BUZZ_AGENT_BIN: agent.command,
     BUZZ_DEV_MCP_BIN: runtime.mcpBinary,
-    BUZZY_RELAY_URL: runtime.relayBaseUrl,
-    ...(runtime.relayHost ? { BUZZY_RELAY_HOST: runtime.relayHost } : {}),
   };
   const config = loadBodyConfig({
     workspaceRoot: resolve(dirname(configPath), 'workspace'),
@@ -292,11 +148,6 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
     config.externalMcpCapabilities = [...runtime.externalMcpCapabilities];
   }
   if (runtime.sharedSkills) config.sharedSkills = [...runtime.sharedSkills];
-  // Operator-authored MCP tool servers for corners (`operator-mcp.json` in the
-  // runtime directory — the same directory `runtimeDir` below derives). Read
-  // at daemon start so editing the file takes effect on the next daemon
-  // restart, like the rest of the runtime record.
-  config.operatorMcpServers = readOperatorMcpServers(dirname(configPath));
   if (runtime.modelSelection) {
     await applyRuntimeModelPreflight(config, agent, runtime.modelSelection);
     if (!config.modelUnavailable) {
@@ -309,7 +160,6 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   // can exec this bundle's CLI against the exact runtime record — no state-home
   // discovery inside the sandbox, where XDG dirs are deliberately relocated.
   config.runtimeConfigPath = configPath;
-  config.squireConfigRoot = trustySquireConfigRootForRuntimeConfig(configPath);
   // OS sandbox for every ACP child (`bwrap-sandbox.ts`). Detected exactly once
   // here, at daemon start, so an unusable bwrap costs one advisory line rather
   // than a failed spawn per session — and so the operator learns the state of
@@ -386,9 +236,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   let ready = false;
   let stoppingStatus = 'daemon stopped';
   try {
-    const core = new ThinDaemonCore(runtime, configPath, config, {
-      ...(daemonApi ? { daemonApi } : {}),
-    });
+    const core = new ThinDaemonCore(runtime, configPath, config, { daemonApi });
     const result = await core.run({
       signal: controller.signal,
       onEstablished: async () => {
@@ -415,7 +263,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
           pendingSuccessor = false;
           console.log(
             `[thin-core] successor functional probe passed on exact release ${loadedRelease}: ` +
-              `${functionalProof?.harness ?? 'unknown'} session/new + turn + read_mandate`,
+              `${functionalProof?.harness ?? 'unknown'} session/new + turn`,
           );
         }
         await clearDaemonStartFailures(runtimeDir);
@@ -453,11 +301,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
     });
     if (result === 'agent-removed') {
       controller.abort();
-      const archivedRuntime = await removeAgentRuntime(
-        configPath,
-        runtime.agent.publicKey,
-        runtime.rooms.map((room) => room.repo.gitCommonDir),
-      );
+      const archivedRuntime = await removeAgentRuntime(runtime);
       if (process.env.BEELINE_MANAGED_BY_SYSTEMD === '1') {
         await disableAgentService(runtime.agent.publicKey, { stop: false }).catch((error) =>
           console.error('[thin-core] could not disable deliberately removed unit:', error),
@@ -487,63 +331,6 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
     if (recorded === process.pid) {
       await unlink(pidPath).catch(() => undefined);
     }
-  }
-}
-
-async function runtimeSpendStatePaths(
-  configPath: string,
-  runtime: AgentRuntimeRecord,
-): Promise<string[]> {
-  const paths = new Set<string>();
-  const runtimeRoot = dirname(configPath);
-  for (const room of runtime.rooms) {
-    paths.add(
-      resolve(room.root ?? resolve(runtimeRoot, 'rooms', room.channelId), 'body-state.json'),
-    );
-  }
-  const roomsRoot = resolve(runtimeRoot, 'rooms');
-  const entries = await readdir(roomsRoot, { withFileTypes: true }).catch(() => []);
-  for (const entry of entries) {
-    if (entry.isDirectory()) paths.add(resolve(roomsRoot, entry.name, 'body-state.json'));
-  }
-  return [...paths];
-}
-
-async function runSpendCommand(args: string[]): Promise<void> {
-  const dayFlag = args.indexOf('--day');
-  const agentFlag = args.indexOf('--agent');
-  const day = dayFlag >= 0 ? args[dayFlag + 1] : new Date().toISOString().slice(0, 10);
-  const agent = agentFlag >= 0 ? args[agentFlag + 1] : undefined;
-  if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) {
-    throw new Error('spend --day requires YYYY-MM-DD');
-  }
-  if (agentFlag >= 0 && !agent) throw new Error('spend --agent requires an agent pubkey');
-  const allowed = new Set(['spend', '--json', '--day', '--agent', day, ...(agent ? [agent] : [])]);
-  const unknown = args.find((value) => !allowed.has(value));
-  if (unknown) throw new Error(`unknown spend option: ${unknown}`);
-
-  const configs = [...new Set(await findAgentRuntimeConfigPaths(process.env, process.cwd()))];
-  const turns: ModelTurnSpend[] = [];
-  const reprimes: SessionReprimeRecord[] = [];
-  const visitedStates = new Set<string>();
-  for (const configPath of configs) {
-    const runtime = await readRuntimeRecord(configPath);
-    if (agent && runtime.agent.publicKey !== agent) continue;
-    const statePaths = await runtimeSpendStatePaths(configPath, runtime);
-    for (const statePath of statePaths) {
-      if (!existsSync(statePath) || visitedStates.has(statePath)) continue;
-      visitedStates.add(statePath);
-      const state = new DurableBodyState(statePath);
-      turns.push(...(await state.modelTurns()));
-      reprimes.push(...(await state.sessionReprimes()));
-    }
-  }
-  const spendReport = dailyAgentSpend(turns, day);
-  const reprimeReport = dailyRestartReprimes(reprimes, day);
-  if (args.includes('--json')) {
-    console.log(JSON.stringify({ spend: spendReport, reprimes: reprimeReport }, null, 2));
-  } else {
-    console.log(`${formatAgentSpendReport(spendReport)}\n${formatReprimeReport(reprimeReport)}`);
   }
 }
 
@@ -591,7 +378,6 @@ async function main(): Promise<void> {
   // Parse optional flags.
   const llmEnvFile = process.env.BUZZY_BODY_LLM_FILE;
   const workspaceRoot = process.env.BUZZY_BODY_WORKSPACE ?? './body-workspace';
-  const agentPrivateKey = process.env.BUZZ_AGENT_KEY ?? process.env.BUZZ_PRIVATE_KEY;
 
   if (command === '--version' || command === 'version') {
     const config = loadBodyConfig({ workspaceRoot, llmEnvFile });
@@ -635,32 +421,6 @@ async function main(): Promise<void> {
     return;
   }
 
-  if (command === 'spend') {
-    await runSpendCommand(args);
-    return;
-  }
-
-  // Git credential-helper backend wired into corner sessions for private-repo
-  // reads and writes (`corner-read-token.ts`). Non-interactive by construction:
-  // git is never a human at a keyboard. Mints are pinned to the Room's exact
-  // GitHub App repository grant; branch protection remains GitHub's boundary.
-  if (command === 'corner-git-credential') {
-    process.exitCode = await runCornerGitCredentialCommand(args.slice(1));
-    return;
-  }
-
-  if (command === 'relay') {
-    await runRelayCommand(args);
-    return;
-  }
-
-  // Mission Charter v2 M1: deterministic three-file mission scaffold. Pure
-  // local file generation — no provisioning, binding, relay access, or landing.
-  if (command === 'mission-scaffold') {
-    process.exitCode = await runMissionScaffoldCommand(args.slice(1));
-    return;
-  }
-
   if (command === 'start') {
     await runStartCommand(args, interactiveUi);
     return;
@@ -683,123 +443,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  if (command === 'pair') {
-    if (args.length === 2 && (args[1] === '--help' || args[1] === '-h')) {
-      pairUsage();
-      return;
-    }
-    await runPairCommand(args, llmEnvFile, agentPrivateKey);
-    return;
-  }
-
-  // Load body config.
-  const config = loadBodyConfig({
-    workspaceRoot,
-    llmEnvFile,
-  });
-
-  // Create body identity (operator key or fresh).
-  const bodyKey = process.env.BUZZ_BODY_KEY;
-  const bodyIdentity = identityFromKey(bodyKey, DEFAULT_BODY_IDENTITY_NAME);
-  const agentIdentity = identityFromKey(agentPrivateKey, DEFAULT_AGENT_IDENTITY_NAME);
-
-  const body = new Body(config, bodyIdentity, agentIdentity);
-
-  console.log(`[body] identity pubkey: ${body.identity.publicKey}`);
-  console.log(`[body] agent pubkey: ${body.agent.publicKey}`);
-  console.log(`[body] workspace root: ${config.workspaceRoot}`);
-  console.log(
-    `[body] agent binary: ${formatAgentCommand({
-      kind: config.agentKind ?? 'reference',
-      command: config.agentCommand ?? config.agentBinary,
-      args: config.agentArgs ?? [],
-    })}`,
-  );
-  console.log(`[body] mcp binary: ${config.mcpBinary}`);
-  console.log(`[body] read-only mcp: ${config.readonlyMcpCommand}`);
-  console.log(`[body] relay: ${config.relayWsUrl}`);
-
-  try {
-    switch (command) {
-      case 'provision': {
-        const channelId = args[1]!;
-        if (!channelId) {
-          usage();
-          return;
-        }
-        const session = await withSpinner(
-          interactiveUi,
-          `Provisioning ${channelId}…`,
-          'Provisioned.',
-          () => body.provision(channelId),
-        );
-        console.log(`[body] provisioned: session=${session.sessionId} mode=${session.mode}`);
-        break;
-      }
-
-      case 'open': {
-        const channelId = args[1]!;
-        const ownerHex = args[2]!;
-        const repo = args[3]!;
-        if (!channelId || !ownerHex || !repo) {
-          usage();
-          return;
-        }
-        const info = await withSpinner(
-          interactiveUi,
-          `Opening a corner on ${repo}…`,
-          'Corner opened.',
-          () => body.openSubchannel(channelId, { ownerHex, repo }),
-        );
-        console.log(`[body] subchannel opened: id=${info.subchannelId}`);
-        console.log(`[body]   worktree: ${info.worktreePath}`);
-        console.log(`[body]   branch: ${info.featureBranch}`);
-        console.log(`[body]   session: ${info.session.sessionId}`);
-        break;
-      }
-
-      case 'serve': {
-        const channelId = args[1]!;
-        const ownerHex = args[2]!;
-        const repo = args[3]!;
-        if (!channelId || !ownerHex || !repo) {
-          usage();
-          return;
-        }
-        const controller = new AbortController();
-        const stop = () => controller.abort();
-        process.once('SIGINT', stop);
-        process.once('SIGTERM', stop);
-        console.log(
-          `${pc.dim('[body] watching channel requests addressed to agent')} ${body.agent.publicKey}`,
-        );
-        await body.runChannelLoop(
-          channelId,
-          { ownerHex, repo, targetBranch: 'refs/heads/main' },
-          { signal: controller.signal },
-        );
-        break;
-      }
-
-      case 'archive': {
-        const subchannelId = args[1]!;
-        if (!subchannelId) {
-          usage();
-          return;
-        }
-        await withSpinner(interactiveUi, `Archiving ${subchannelId}…`, 'Archived.', () =>
-          body.archiveSubchannel(subchannelId),
-        );
-        console.log(`[body] archived: subchannel=${subchannelId}`);
-        break;
-      }
-
-      default:
-        usage();
-    }
-  } finally {
-    await body.dispose();
-  }
+  usage();
 }
 
 main().catch(async (err) => {

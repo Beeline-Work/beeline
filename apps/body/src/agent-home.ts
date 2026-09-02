@@ -57,11 +57,11 @@ import {
   USING_BEELINE_SKILL_NAME,
   usingBeelineSkillMarkdown,
 } from './beeline-skill.js';
-import { MISSION_BRIEF_SKILL_NAME, missionBriefSkillMarkdown } from './mission-skill.js';
-import { AGENT_PRIVATE_STATE_ENV } from './agent-private-state.js';
 import { isTrustySquireMcpLaunch } from './external-mcp-capabilities.js';
 import { extractTomlSections, tomlChildTableNames } from './toml-section.js';
 import { trustySquireLegacyStorePaths } from './trusty-squire-storage.js';
+
+const AGENT_PRIVATE_STATE_ENV = 'BUZZY_AGENT_PRIVATE_DIR';
 
 /**
  * Credential files shared back into an isolated harness state directory,
@@ -92,7 +92,6 @@ const SHARED_CREDENTIALS: Array<{
  */
 export const BEELINE_DEFAULT_SKILL_NAMES = [
   USING_BEELINE_SKILL_NAME,
-  MISSION_BRIEF_SKILL_NAME,
 ] as const;
 
 /** Owned operator locations from which one named skill may be explicitly shared. */
@@ -251,9 +250,6 @@ async function provisionAgentSkillsAndMcp(
 ): Promise<void> {
   const managedSkills = [
     { name: USING_BEELINE_SKILL_NAME, content: usingBeelineSkillMarkdown(skillReleaseId) },
-    // Mission Charter v2 M1: the chief-of-staff skill ships through the same
-    // release-owned, regenerate-on-activation channel as using-beeline.
-    { name: MISSION_BRIEF_SKILL_NAME, content: missionBriefSkillMarkdown(skillReleaseId) },
   ];
   const shared = await resolveExplicitSkillSources(operatorHome, sharedSkills);
   for (const dir of AGENT_SKILL_DIRS) {

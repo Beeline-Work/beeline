@@ -1,7 +1,7 @@
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
@@ -43,7 +43,8 @@ vi.mock('react-native-reanimated', async () => {
 });
 
 import { groknight } from '@/buzz/groknight';
-import { TurnProgressLine } from './TurnProgressLine';
+import { SPINNER_FRAMES, SPINNER_STEP_MS } from '@/buzz/turn-clock';
+import { TurnProgressLine, TurnSettledLine } from './TurnProgressLine';
 
 const originalConsoleError = console.error;
 
@@ -69,14 +70,16 @@ function render(element: React.ReactElement): ReactTestRenderer {
 }
 
 describe('the per-turn progress indicator', () => {
+  afterEach(() => vi.useRealTimers());
+
   it('says the agent is thinking, and nothing about any corner', () => {
     const renderer = render(
       React.createElement(TurnProgressLine, { label: 'beebee thinking\u2026' }),
     );
-    const label = renderer.root.findAllByType('Text')[0];
+    const label = renderer.root.findAllByType('Text')[1];
     expect(label.props.children).toBe('beebee thinking\u2026');
     // No `view \u2192`: there is nowhere for a turn in progress to go.
-    expect(renderer.root.findAllByType('Text')).toHaveLength(1);
+    expect(renderer.root.findAllByType('Pressable')).toHaveLength(0);
   });
 
   it('cannot be pressed', () => {
@@ -103,5 +106,63 @@ describe('the per-turn progress indicator', () => {
     expect(bar.props.style).not.toHaveProperty('borderWidth');
     expect(bar.props.style).not.toHaveProperty('borderRadius');
     expect(bar.props.style).not.toHaveProperty('backgroundColor');
+  });
+
+  it('ticks the elapsed counter once per second from the receipt time', () => {
+    vi.useFakeTimers();
+    const startedAt = 10; // unix seconds
+    vi.setSystemTime(12_500);
+    const renderer = render(
+      React.createElement(TurnProgressLine, {
+        label: 'beebee Thinking\u2026',
+        startedAt,
+        testID: 'turn-progress-line',
+      }),
+    );
+    const counter = () =>
+      renderer.root.findByProps({ testID: 'turn-progress-line-elapsed' }).props.children;
+    expect(counter()).toBe('2s \u00b7 thinking');
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    expect(counter()).toBe('3s \u00b7 thinking');
+    act(() => {
+      vi.advanceTimersByTime(9_000);
+    });
+    expect(counter()).toBe('12s \u00b7 thinking');
+  });
+
+  it('cycles the spinner glyph forward and back while counting', () => {
+    vi.useFakeTimers();
+    const startedAt = 1_000;
+    vi.setSystemTime(startedAt * 1_000);
+    const renderer = render(
+      React.createElement(TurnProgressLine, { label: 'beebee Thinking\u2026', startedAt }),
+    );
+    const glyph = () => renderer.root.findAllByType('Text')[0].props.children;
+    expect(glyph()).toBe(SPINNER_FRAMES[0]);
+    for (let step = 1; step <= 5; step += 1) {
+      act(() => {
+        vi.advanceTimersByTime(SPINNER_STEP_MS);
+      });
+      expect(glyph()).toBe(SPINNER_FRAMES[step]);
+    }
+    // Turnaround: the next step bounces back, never jumps.
+    act(() => {
+      vi.advanceTimersByTime(SPINNER_STEP_MS);
+    });
+    expect(glyph()).toBe(SPINNER_FRAMES[4]);
+  });
+
+  it('settles to a static past-tense summary, with no counter', () => {
+    const renderer = render(
+      React.createElement(TurnSettledLine, { line: 'Brewed for 14s \u00b7 done 7:10 PM' }),
+    );
+    const texts = renderer.root.findAllByType('Text');
+    expect(texts.map((text) => text.props.children)).toEqual([
+      SPINNER_FRAMES[SPINNER_FRAMES.length - 1],
+      'Brewed for 14s \u00b7 done 7:10 PM',
+    ]);
+    expect(renderer.root.findAllByType('AnimatedView')).toHaveLength(0);
   });
 });

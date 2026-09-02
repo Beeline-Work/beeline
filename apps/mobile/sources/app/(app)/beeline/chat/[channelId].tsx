@@ -74,7 +74,10 @@ import {
   COMPOSER_ACK_BOUND_MS,
   hasComposerAckReceipt,
   selectComposerAckPresentation,
+  type ComposerAckPresentation,
 } from '@/buzz/room-indicators';
+import { formatSettledLine, type TurnVerb } from '@/buzz/turn-clock';
+import { TurnSettledLine } from '@/components/buzz/TurnProgressLine';
 import { useRoomSendFrame } from '@/buzz/room-send-frame';
 import { projectActiveTurnStream } from '@/buzz/live-turn-stream';
 import {
@@ -1467,17 +1470,67 @@ export default function BuzzChat() {
    * still no receipt it expires; only a genuine server-indexed WORKING receipt
    * may show that an agent is thinking.
    */
-  const composerAck = useMemo((): { label: string } | null => {
+  const composerAck = useMemo((): ComposerAckPresentation | null => {
     return selectComposerAckPresentation({
       isCorner,
       agentsOffline,
       ...(activeAgentTurn?.agentPubkey ? { activeTurnPubkey: activeAgentTurn.agentPubkey } : {}),
+      ...(activeAgentTurn
+        ? {
+            activeTurnStartedAt: activeAgentTurn.createdAt,
+            activeTurnRequestId: activeAgentTurn.requestId,
+          }
+        : {}),
       ...(pendingAck ? { pendingAckSentAt: pendingAck.sentAt } : {}),
       now: pendingAck?.sentAt ?? Date.now(),
       conversationIdentities,
       agentsByPubkey: agentByPubkey,
     });
   }, [activeAgentTurn, agentByPubkey, agentsOffline, conversationIdentities, isCorner, pendingAck]);
+
+  /** The settled "<Past> for Ns · done h:MM" line a finished turn leaves briefly. */
+  const [settledTurn, setSettledTurn] = useState<{
+    line: string;
+  } | null>(null);
+  const lastActiveTurnRef = useRef<{
+    requestId: string;
+    agentPubkey: string;
+    startedAt: number;
+    verb: TurnVerb;
+  } | null>(null);
+  useEffect(() => {
+    if (activeAgentTurn) {
+      const verb = composerAck?.verb;
+      if (verb) {
+        lastActiveTurnRef.current = {
+          requestId: activeAgentTurn.requestId,
+          agentPubkey: activeAgentTurn.agentPubkey,
+          startedAt: activeAgentTurn.createdAt * 1_000,
+          verb,
+        };
+      }
+      setSettledTurn(null);
+      return;
+    }
+    const last = lastActiveTurnRef.current;
+    if (!last) return;
+    const terminal = agentTurnMarkers.find(
+      (turn) =>
+        turn.requestId === last.requestId &&
+        turn.agentPubkey === last.agentPubkey &&
+        turn.status !== 'working',
+    );
+    if (!terminal) return;
+    lastActiveTurnRef.current = null;
+    setSettledTurn({
+      line: formatSettledLine(last.verb, last.startedAt, terminal.createdAt * 1_000),
+    });
+  }, [activeAgentTurn, agentTurnMarkers, composerAck]);
+  useEffect(() => {
+    if (!settledTurn) return;
+    const timer = setTimeout(() => setSettledTurn(null), 6_000);
+    return () => clearTimeout(timer);
+  }, [settledTurn]);
 
   useEffect(() => {
     // Presence only changes at a lease/dormancy deadline. A five-second clock here
@@ -3263,7 +3316,14 @@ export default function BuzzChat() {
                 growing multiline field then takes room from the transcript,
                 never from the only live progress signal. */}
             {!isArchived && composerAck && (
-              <TurnProgressLine label={composerAck.label} testID="turn-progress-line" />
+              <TurnProgressLine
+                label={composerAck.label}
+                startedAt={composerAck.startedAt}
+                testID="turn-progress-line"
+              />
+            )}
+            {!isArchived && !composerAck && settledTurn && (
+              <TurnSettledLine line={settledTurn.line} testID="turn-settled-line" />
             )}
             <View style={[styles.composer, composerFocused && styles.composerFocused]}>
               <TouchableOpacity

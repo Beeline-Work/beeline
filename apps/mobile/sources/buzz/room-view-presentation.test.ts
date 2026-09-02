@@ -218,4 +218,45 @@ describe('Room view presentation', () => {
       activity: [{ kind: 'tool', toolKind: 'execute', command: 'npm test' }],
     });
   });
+
+  it('interleaves durable corner narration lines with tool rows by creation time', () => {
+    const agent = 'b'.repeat(64);
+    const author = { pubkey: agent, kind: 'agent' as const, name: 'Bee' };
+    const narration = (id: string, createdAt: number): RoomViewMessage => ({
+      id,
+      text: `Step ${id}: updating only the ledger.`,
+      createdAt,
+      author,
+      presentation: 'message',
+    });
+    const toolRow = (id: string, createdAt: number): RoomViewMessage => ({
+      id,
+      text: '',
+      createdAt,
+      author,
+      presentation: 'activity',
+      activity: [{ kind: 'tool', title: 'Bash', operation: 'execute', command: `npm test ${id}` }],
+    });
+    const transcript = roomViewTranscriptMessages({
+      messages: [narration('narration-1', 1), narration('narration-2', 3), narration('final', 5)],
+      toolRows: [toolRow('tool-1', 2), toolRow('tool-2', 4)],
+    });
+
+    // Narration segments land between the collapsed tool-call groups in
+    // creation order, never before or after the whole activity block.
+    expect(transcript.map((message) => message.id)).toEqual([
+      'narration-1',
+      'tool-1',
+      'narration-2',
+      'tool-2',
+      'final',
+    ]);
+    // Narration rows render as ordinary agent lines, not activity rows.
+    const displayed = displayRoomMessages(transcript, 'a'.repeat(64));
+    const narrationRow = displayed.find((row) => row.id === 'narration-1');
+    expect(narrationRow).toMatchObject({
+      text: 'Step narration-1: updating only the ledger.',
+    });
+    expect(narrationRow).not.toHaveProperty('isAgentActivity');
+  });
 });

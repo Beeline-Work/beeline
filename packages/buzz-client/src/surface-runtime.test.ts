@@ -2,6 +2,7 @@ import { signEvent } from '@beeline/nostr';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createIdentity } from './identity.js';
 import { LiveOverlayDecoder, applyLiveOverlay, visibleLiveOverlays } from './live-overlay.js';
+import type { LiveOverlay } from './live-overlay.js';
 import { composeRoomRows, addRoomPage, replaceRoomTail } from './room-response-partitions.js';
 import { SignedEventOutbox } from './signed-event-outbox.js';
 import { SurfaceResponseCache, surfaceCacheKey } from './surface-cache.js';
@@ -266,7 +267,52 @@ describe('narrow live seam', () => {
       },
       agent.secretKey,
     );
-    expect(applyLiveOverlay([overlay], decoder.decode(close)!)).toEqual([]);
+    // The close settles the streamed text in place instead of blanking the
+    // row; the durable final (already present above) removes it from view via
+    // `visibleLiveOverlays`, so no duplicate bubble ever shows.
+    const settled = applyLiveOverlay([overlay], decoder.decode(close)!);
+    expect(settled).toHaveLength(1);
+    expect(settled[0]).toMatchObject({ kind: 'draft', closed: true, text: 'Done' });
+    expect(visibleLiveOverlays(settled, [
+      {
+        ...row('1'.repeat(64), 11, 'request'),
+        author: { pubkey: agent.publicKey, kind: 'agent', name: 'Milo' },
+      },
+    ])).toEqual([]);
+  });
+
+  it('keeps streamed draft text through a retract until the durable final lands', () => {
+    const overlay: LiveOverlay = {
+      kind: 'draft',
+      key: 'draft:agent:request',
+      stableId: 'live-turn:request',
+      agentPubkey: 'agent',
+      requestId: 'request',
+      text: 'Updating only the ledger, then committing.',
+      closed: false,
+      createdAt: 10,
+    };
+    const retracted = applyLiveOverlay([overlay], {
+      ...overlay,
+      text: undefined,
+      closed: true,
+      createdAt: 12,
+    });
+    // Chunks must never blink out of the transcript between the retract and
+    // the final's arrival.
+    expect(retracted).toHaveLength(1);
+    expect(retracted[0]).toMatchObject({ closed: true, text: overlay.text });
+    // Once the durable final with the matching requestId lands, the settled
+    // row yields to it.
+    expect(
+      visibleLiveOverlays(retracted, [
+        { ...row('2'.repeat(64), 13, 'request'), author: { pubkey: 'agent', kind: 'agent', name: 'Bee' } },
+      ]),
+    ).toEqual([]);
+    // Without a durable final, the settled text stays rather than blanking.
+    expect(visibleLiveOverlays(retracted, [])).toEqual(retracted);
+    // A close with no streamed text behind it drops cleanly.
+    expect(applyLiveOverlay([], { ...overlay, text: undefined, closed: true })).toEqual([]);
   });
 });
 

@@ -459,6 +459,44 @@ export class MonolithCornerTurnLoop {
           // the final message when the retract event is missed.
           const turnId = requestId;
           const publishedToolCalls = new Set<string>();
+          // Colloquial corner ledger: each COMPLETED narration segment of the
+          // turn is kept as a durable Room line (server-indexed like any
+          // message), interleaved with the settled tool rows, instead of the
+          // corner staying silent until the finish. Segments carry no request
+          // id so they never settle the turn's receipt; the un-posted tail
+          // becomes the durable final. Offsets index the RAW stream text;
+          // a failed segment post reverts its offset so the text still lands
+          // in the final.
+          const NARRATION_MAX_SEGMENTS = 20;
+          let narrationPostedChars = 0;
+          let narrationSegments = 0;
+          const postNarrationSegments = (full: string) => {
+            if (narrationSegments >= NARRATION_MAX_SEGMENTS) return;
+            const unposted = full.slice(narrationPostedChars);
+            const boundaries = [...unposted.matchAll(/\n\n|[.!?](?=\s)/g)];
+            if (!boundaries.length) return;
+            const boundary = boundaries[boundaries.length - 1]!;
+            const segmentEnd = narrationPostedChars + boundary.index! + boundary[0].length;
+            const segment = stripAgentReplyPreamble(full.slice(narrationPostedChars, segmentEnd));
+            const start = narrationPostedChars;
+            narrationPostedChars = segmentEnd;
+            narrationSegments += 1;
+            const trimmed = segment.trim();
+            if (!trimmed) return;
+            this.activityTail = this.activityTail
+              .catch(() => undefined)
+              .then(async () => {
+                await api.execute('postRoomMessage', {
+                  roomId: cornerId,
+                  text: trimmed,
+                  presentation: 'message',
+                });
+              })
+              .catch(() => {
+                narrationPostedChars = start;
+                narrationSegments -= 1;
+              });
+          };
           const publishToolCalls = (calls: readonly ToolCallEntry[], settledOnly: boolean) => {
             calls.forEach((call, index) => {
               const key = toolCallKey(call, index);
@@ -487,6 +525,7 @@ export class MonolithCornerTurnLoop {
             prompt,
             120_000,
             (_delta, full) => {
+              postNarrationSegments(full);
               this.draftTail = this.draftTail
                 .catch(() => undefined)
                 .then(() =>
@@ -509,14 +548,24 @@ export class MonolithCornerTurnLoop {
           publishToolCalls(result.toolCalls, false);
           await this.activityTail;
           await this.draftTail;
+          await this.activityTail;
           const reply = stripAgentReplyPreamble(result.agentText).trim();
           if (!reply) throw new Error('ACP corner turn produced no durable reply');
-          await api.execute('postRoomMessage', {
-            roomId: cornerId,
-            requestId,
-            text: reply,
-            presentation: 'message',
-          });
+          // The durable final carries only the tail the narration segments did
+          // not already keep; when narration covered the whole reply the turn
+          // settles through its explicit receipt instead.
+          const durableTail =
+            narrationPostedChars > 0
+              ? stripAgentReplyPreamble(result.agentText.slice(narrationPostedChars)).trim()
+              : reply;
+          if (durableTail) {
+            await api.execute('postRoomMessage', {
+              roomId: cornerId,
+              requestId,
+              text: durableTail,
+              presentation: 'message',
+            });
+          }
           const pullRequest = reply.match(PULL_REQUEST_URL)?.[0];
           const alreadyReady = conversation.items.some((item) =>
             /\bPR ready for review\b/i.test(item.body),

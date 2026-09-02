@@ -595,7 +595,9 @@ export default function BuzzChat() {
           pubkey: overlay.agentPubkey,
           isAgentAuthor: true,
           isAgentActivity: true,
-          isAgentLiveTurn: true,
+          // A settled draft (retracted, final not yet arrived) keeps its text
+          // but stops pulsing as the live turn.
+          isAgentLiveTurn: !overlay.closed,
           isAgentDraft: true,
           agentMessageDraft: overlay.text ?? '',
         },

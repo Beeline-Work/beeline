@@ -86,7 +86,21 @@ export function applyLiveOverlay(
   if (update.kind === 'draft') {
     const withoutAgentDraft = current.filter((item) =>
       item.kind !== 'draft' || item.agentPubkey !== update.agentPubkey);
-    return update.closed ? withoutAgentDraft : [...withoutAgentDraft, update];
+    if (!update.closed) return [...withoutAgentDraft, update];
+    // A retract settles the streamed draft IN PLACE: the last streamed text
+    // stays visible (marked closed) until the durable final with the matching
+    // requestId removes it through `visibleLiveOverlays`. Blanking the row on
+    // retract showed deleted text whenever the final landed a beat later.
+    const previous = current.find(
+      (item): item is Extract<LiveOverlay, { kind: 'draft' }> =>
+        item.kind === 'draft' && item.agentPubkey === update.agentPubkey,
+    );
+    const text = update.text ?? previous?.text;
+    if (!text) return withoutAgentDraft;
+    return [
+      ...withoutAgentDraft,
+      previous ? { ...previous, text, closed: true } : { ...update, text, closed: true },
+    ];
   }
   const withoutKey = current.filter((item) => item.key !== update.key);
   if ((update.kind === 'thought' && update.closed)) return withoutKey;

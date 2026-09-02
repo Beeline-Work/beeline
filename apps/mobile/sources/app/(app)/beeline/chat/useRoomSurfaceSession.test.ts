@@ -3,6 +3,7 @@ import * as React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NostrEvent, RoomView } from '@beeline/buzz-client';
+import { visibleLiveOverlays } from '@beeline/buzz-client';
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 
 type TestSurfaceEvent = NostrEvent | MonolithSurfaceEvent;
@@ -367,6 +368,60 @@ describe('useRoomSurfaceSession', () => {
     });
 
     expect(current.liveOverlays).toEqual([]);
+    await act(async () => renderer.unmount());
+  });
+
+  it('settles a retracted corner draft in place instead of blanking streamed chunks', async () => {
+    controls.cached = roomView('room-a');
+    let current!: UseRoomSurfaceSessionResult;
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, {
+          channelId: 'room-a',
+          capture: (result: UseRoomSurfaceSessionResult) => (current = result),
+        }),
+      );
+    });
+    await flushEffects();
+
+    const emit = (live: Record<string, unknown>) =>
+      controls.subscriptions[0]!.emit({ monolithLive: { roomId: 'room-a', ...live } });
+    await act(async () => {
+      emit({ type: 'draft', agentId: 'agent-a', turnId: 'turn-1', text: 'I' });
+      emit({ type: 'draft', agentId: 'agent-a', turnId: 'turn-1', text: 'I will update only X,' });
+      emit({ type: 'draft', agentId: 'agent-a', turnId: 'turn-1', text: 'I will update only X, then commit.' });
+      // The final is about to land: the helper retracts the live lane first.
+      emit({ type: 'retract', kind: 'draft', agentId: 'agent-a', turnId: 'turn-1' });
+    });
+
+    // The retract must NOT blank the streamed text — the settled draft row
+    // stays visible while the server read catches up.
+    expect(current.liveOverlays).toHaveLength(1);
+    expect(current.liveOverlays[0]).toMatchObject({
+      kind: 'draft',
+      requestId: 'turn-1',
+      closed: true,
+      text: 'I will update only X, then commit.',
+    });
+
+    // The durable final lands with the same request id and takes over the
+    // row's slot: no gap, no duplicate bubble.
+    const finalMessage = {
+      id: 'b'.repeat(64),
+      text: 'I will update only X, then commit. Done.',
+      createdAt: 11,
+      author: { pubkey: 'agent-a', kind: 'agent' as const, name: 'Agent' },
+      presentation: 'message' as const,
+      requestId: 'turn-1',
+    };
+    await act(async () => {
+      controls.schedulers[0]!.apply({ ...roomView('room-a'), messages: [finalMessage] });
+      await Promise.resolve();
+    });
+    expect(
+      visibleLiveOverlays(current.liveOverlays, current.roomSurface!.messages),
+    ).toEqual([]);
     await act(async () => renderer.unmount());
   });
 

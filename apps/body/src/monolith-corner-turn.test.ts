@@ -153,6 +153,169 @@ describe('corner close-request polling cadence', () => {
     expect(sessionPrompt).toHaveBeenCalledTimes(2);
     expect(onCloseRequested).toHaveBeenCalledOnce();
   });
+
+  it('keeps completed narration segments as durable corner ledger lines, not only the final', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-corner-narration-'));
+    roots.push(root);
+    await execFileAsync('git', ['init', root]);
+    const runtime = {
+      agentId: '11'.repeat(32),
+      agent: stored('11'.repeat(32), 'Bee'),
+      rooms: [],
+      supervisorRoot: root,
+      transport: {
+        kind: 'monolith',
+        baseUrl: 'https://server.example',
+        daemonToken: 'daemon-token',
+      },
+      agentBinary: '/fake-agent',
+      agentKind: 'codex',
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+    } as unknown as AgentRuntimeRecord;
+    const config: BodyConfig = {
+      agentBinary: '/fake-agent',
+      agentKind: 'codex',
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+      readonlyMcpCommand: '/fake-beeline-mcp',
+      agentEnv: {},
+      workspaceRoot: root,
+      autoApprovePermissions: true,
+    };
+    const abort = new AbortController();
+    let inboxReads = 0;
+    const writes: Array<{ name: string; input: Record<string, unknown> }> = [];
+    const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
+      if (name === 'getAgentConfiguration') return { commands: [] };
+      if (name === 'getWorkspaceRoster') {
+        return {
+          members: [{ identityId: '11'.repeat(32), kind: 'agent', name: 'Bee', role: 'member' }],
+        };
+      }
+      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getCornerCloseRequests') {
+        inboxReads += 1;
+        if (inboxReads === 1) {
+          return {
+            items: [
+              {
+                id: 'human-msg',
+                authorId: '22'.repeat(32),
+                createdAt: 1,
+                type: 'message',
+                body: 'Please continue',
+                mentionIds: [],
+                attachments: [],
+              },
+            ],
+            cursor: 'human-msg',
+          };
+        }
+        return { items: [], cursor: 'latest', closeRequested: true };
+      }
+      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
+      writes.push({ name, input });
+      return { id: 'write-id', createdAt: 1 };
+    });
+    const api = {
+      execute,
+      connection: () => ({
+        baseUrl: 'https://server.example',
+        daemonToken: 'daemon-token',
+        agentId: runtime.agent.publicKey,
+      }),
+    } as unknown as DaemonApiClient;
+    const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
+    vi.spyOn(acp, 'start').mockResolvedValue(undefined);
+    vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: 'corner-session', raw: {} });
+    let promptCalls = 0;
+    vi.spyOn(acp, 'sessionPrompt').mockImplementation(
+      async (_id, _prompt, _timeout, draft, _activity, _toolActivity) => {
+        promptCalls += 1;
+        if (promptCalls > 1) {
+          return { stopReason: 'end_turn', updates: [], agentText: 'All done.', toolCalls: [] };
+        }
+        draft?.('I will', 'I will');
+        draft?.(
+          'I will update only the ledger.',
+          'I will update only the ledger.',
+        );
+        draft?.(
+          'I will update only the ledger. Then commit.',
+          'I will update only the ledger. Then commit.',
+        );
+        return {
+          stopReason: 'end_turn',
+          updates: [],
+          agentText: 'I will update only the ledger. Then commit.',
+          toolCalls: [],
+        };
+      },
+    );
+    const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
+    await new MonolithCornerTurnLoop({
+      cornerId: 'corner-id',
+      parentRoomId: 'room-id',
+      workspaceId: 'workspace',
+      objective: 'Implement the widget',
+      featureBranch: 'feature/widget',
+      targetBranch: 'main',
+      worktreePath: root,
+      gitCommonDir: join(root, '.git'),
+      githubToken: 'token',
+      runtime,
+      config,
+      api,
+      scheduler,
+      signal: abort.signal,
+      pollMs: 60_000,
+      onPoll: vi.fn(),
+      onFailure: vi.fn(),
+      onCloseRequested: vi.fn(async () => undefined),
+      createAcpClient: () => acp,
+    }).run();
+    await scheduler.dispose();
+
+    // The completed narration segment lands as a durable colloquial line
+    // with NO request id: it must never settle the turn's receipt.
+    const narrationPosts = writes.filter(
+      (write) =>
+        write.name === 'postRoomMessage' &&
+        write.input.presentation === 'message' &&
+        write.input.requestId === undefined,
+    );
+    expect(narrationPosts).toEqual([
+      expect.objectContaining({
+        input: expect.objectContaining({
+          roomId: 'corner-id',
+          text: 'I will update only the ledger.',
+        }),
+      }),
+    ]);
+    // The durable final carries only the un-posted tail, under the turn's
+    // request id so it settles the receipt.
+    expect(writes).toContainEqual(
+      expect.objectContaining({
+        name: 'postRoomMessage',
+        input: expect.objectContaining({
+          roomId: 'corner-id',
+          requestId: 'cornerid',
+          text: 'Then commit.',
+          presentation: 'message',
+        }),
+      }),
+    );
+    expect(
+      writes.filter(
+        (write) =>
+          write.name === 'postRoomMessage' && write.input.text === 'I will update only the ledger. Then commit.',
+      ),
+    ).toEqual([]);
+  });
 });
 
 describe('thin monolith corner turn', () => {

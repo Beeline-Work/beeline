@@ -340,6 +340,10 @@ export function useRoomSurfaceSession({
             const live = (event as MonolithSurfaceEvent).monolithLive;
             if (live.type === 'invalidate') {
               scheduler?.signal();
+            } else if (live.roomId !== channelId) {
+              // Parent Room watches include corners for lifecycle invalidation,
+              // but an ephemeral lane belongs exclusively to its emitting Room.
+              return;
             } else if (live.type === 'presence') {
               applyDecodedOverlay({
                 kind: 'presence',

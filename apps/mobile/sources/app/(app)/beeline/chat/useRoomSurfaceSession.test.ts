@@ -3,6 +3,9 @@ import * as React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NostrEvent, RoomView } from '@beeline/buzz-client';
+import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
+
+type TestSurfaceEvent = NostrEvent | MonolithSurfaceEvent;
 
 const controls = vi.hoisted(() => ({
   cached: null as RoomView | null,
@@ -15,7 +18,7 @@ const controls = vi.hoisted(() => ({
   subscriptions: [] as Array<{
     filters: unknown;
     stop: ReturnType<typeof vi.fn>;
-    emit(event: NostrEvent): void;
+    emit(event: TestSurfaceEvent): void;
   }>,
   replayEvents: [] as NostrEvent[],
   transportCount: 0,
@@ -95,7 +98,7 @@ vi.mock('@/sync/transport', () => ({
     }
     async ensureClient() {
       return {
-        surfaceSubscribe: async (filters: unknown, emit: (event: NostrEvent) => void) => {
+        surfaceSubscribe: async (filters: unknown, emit: (event: TestSurfaceEvent) => void) => {
           const stop = vi.fn();
           controls.subscriptions.push({ filters, stop, emit });
           for (const event of controls.replayEvents) emit(event);
@@ -306,6 +309,64 @@ describe('useRoomSurfaceSession', () => {
     expect(
       renderer.root.findAllByProps({ testID: 'corner-status-working' }).length,
     ).toBeGreaterThan(0);
+    await act(async () => renderer.unmount());
+  });
+
+  it('keeps a child corner’s monolith draft and thought lanes out of its parent Room', async () => {
+    const parent = roomView('room-a', [{ '#h': ['room-a', 'corner-a'] }]);
+    controls.cached = {
+      ...parent,
+      members: [{ identity: { pubkey: 'agent-a', kind: 'agent', name: 'Agent' }, role: 'member' }],
+      corners: [
+        {
+          corner: {
+            ...parent.room,
+            id: 'corner-a',
+            parentId: 'room-a',
+            name: 'Write corner',
+          },
+          lifecycle: { lifecycle: 'working' },
+          status: 'working',
+          statusAt: 10,
+          reason: 'working',
+          agent: { pubkey: 'agent-a', kind: 'agent', name: 'Agent' },
+        },
+      ],
+    };
+    let current!: UseRoomSurfaceSessionResult;
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, {
+          channelId: 'room-a',
+          capture: (result: UseRoomSurfaceSessionResult) => (current = result),
+        }),
+      );
+    });
+    await flushEffects();
+
+    await act(async () => {
+      controls.subscriptions[0]!.emit({
+        monolithLive: {
+          type: 'draft',
+          roomId: 'corner-a',
+          agentId: 'agent-a',
+          turnId: 'corner-turn',
+          text: 'This narration belongs only in the corner.',
+        },
+      });
+      controls.subscriptions[0]!.emit({
+        monolithLive: {
+          type: 'thought',
+          roomId: 'corner-a',
+          agentId: 'agent-a',
+          turnId: 'corner-turn',
+          text: 'The parent must not render this thought.',
+        },
+      });
+    });
+
+    expect(current.liveOverlays).toEqual([]);
     await act(async () => renderer.unmount());
   });
 

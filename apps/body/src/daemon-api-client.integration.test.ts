@@ -648,8 +648,8 @@ describe('daemon API client against the local monolith', () => {
             expect(
               (
                 await database.query<{ text: string }>(
-                  `SELECT body->>'text' text FROM live_outputs WHERE room_id=$1 AND agent_id=$2 AND kind='draft'`,
-                  [ROOM, AGENT],
+                  `SELECT body->>'text' text FROM live_outputs WHERE room_id=$1 AND agent_id=$2 AND turn_id=$3 AND kind='draft'`,
+                  [ROOM, AGENT, sent.messageId],
                 )
               ).rows[0]?.text,
             ).toBeTruthy();
@@ -730,8 +730,8 @@ describe('daemon API client against the local monolith', () => {
             expect(
               (
                 await database.query<{ text: string }>(
-                  `SELECT body->>'text' text FROM live_outputs WHERE room_id=$1 AND agent_id=$2 AND kind='draft'`,
-                  [corner.cornerId, AGENT],
+                  `SELECT body->>'text' text FROM live_outputs WHERE room_id=$1 AND agent_id=$2 AND turn_id=$3 AND kind='draft'`,
+                  [corner.cornerId, AGENT, cornerRequest.messageId],
                 )
               ).rows[0]?.text,
             ).toBeTruthy();

@@ -613,6 +613,19 @@ CREATE TABLE IF NOT EXISTS device_update_receipts (
   PRIMARY KEY (identity_id, device_id)
 );
 
+-- Attachments queued by an agent's beeline-agent attach_file tool, drained onto
+-- the agent's next final Room reply (see DaemonService.postRoomMessage).
+CREATE TABLE IF NOT EXISTS agent_pending_attachments (
+  id bigserial PRIMARY KEY,
+  room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  agent_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  url text NOT NULL,
+  name text NOT NULL,
+  mime_type text NOT NULL,
+  size bigint NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS import_runs (
   import_id text PRIMARY KEY,
   source_fingerprint text NOT NULL,

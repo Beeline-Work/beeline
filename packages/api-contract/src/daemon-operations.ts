@@ -25,6 +25,7 @@ export type DaemonOperationMap = {
   getAgentPresence: Operation<AgentRoomInput, AgentPresenceResult>;
   getRequestCompletion: Operation<RequestInput, RequestCompletionResult>;
   postRoomMessage: Operation<PostRoomMessageInput, WriteResult>;
+  postAgentAttachment: Operation<PostAgentAttachmentInput, WriteResult>;
   postAgentDraft: Operation<PostLiveOutputInput, WriteResult>;
   postAgentThought: Operation<PostLiveOutputInput, WriteResult>;
   retractAgentLiveOutput: Operation<RetractLiveOutputInput, WriteResult>;
@@ -210,6 +211,10 @@ export type PostRoomMessageInput = RoomInput & {
   readonly replyToMessageId?: string;
   /** Inbox message that started this turn; independent of optional reply threading. */
   readonly triggerMessageId?: string;
+};
+export type PostAgentAttachmentInput = RoomInput & {
+  /** A daemon media upload result; the server verifies the media row is owned by the agent. */
+  readonly attachment: DaemonAttachment;
 };
 export type PostLiveOutputInput = AgentRoomInput & {
   readonly turnId: string;

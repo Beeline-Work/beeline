@@ -12,7 +12,7 @@ export class ReadOnlyToolsUnavailableError extends Error {
 export function beelineAgentMcpServer(
   config: BodyConfig,
   api: DaemonApiClient,
-  context: { roomId: string; workspaceId: string; cornerId?: string },
+  context: { roomId: string; workspaceId: string; cornerId?: string; attachRoot?: string },
 ): McpServerWire {
   if (!config.readonlyMcpCommand) {
     throw new ReadOnlyToolsUnavailableError(
@@ -32,6 +32,7 @@ export function beelineAgentMcpServer(
       { name: 'BEELINE_DAEMON_ROOM_ID', value: context.roomId },
       { name: 'BEELINE_DAEMON_WORKSPACE_ID', value: context.workspaceId },
       ...(context.cornerId ? [{ name: 'BEELINE_DAEMON_CORNER_ID', value: context.cornerId }] : []),
+      ...(context.attachRoot ? [{ name: 'BEELINE_ATTACH_ROOT', value: context.attachRoot }] : []),
     ],
   };
 }

@@ -130,9 +130,17 @@ function LedgerStepRow({
   );
 }
 
+function activitySummary(steps: readonly TurnActivityAction[], active: boolean): string {
+  const count = steps.length;
+  const failures = steps.filter((step) => step.outcome === 'failure').length;
+  const head = `${count} TOOL ${count === 1 ? 'CALL' : 'CALLS'}`;
+  if (failures) return `${head} · ${failures} FAILED`;
+  return active ? `${head} · WORKING` : head;
+}
+
 /**
- * The live conversational turn. Tool activity starts as terse mechanism rows
- * and expands on demand to the helper's bounded, redacted command/result
+ * The live conversational turn. One compact mechanism row sits between prose
+ * outputs; it expands on demand into the helper's bounded, redacted per-call
  * record. The selector removes it when the signed turn ends.
  */
 export const ActivityTimeline = React.memo(function ActivityTimeline({
@@ -145,6 +153,7 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
 }: ActivityTimelineProps) {
   const turn = useMemo(() => buildTurnActivity(items), [items]);
   const steps = turn.steps.filter((step) => step.kind === 'tool');
+  const [expanded, setExpanded] = useState(false);
   // Settled turns keep their collapsed tool rows (#804); only an empty live
   // lane (no steps, no draft) renders nothing.
   if (!steps.length && !(active && messageDraft)) return null;
@@ -158,9 +167,27 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
           {stamp ? <Text style={styles.liveStamp}>{stamp}</Text> : null}
         </View>
       ) : null}
-      {steps.map((step, index) => (
-        <LedgerStepRow active={active} isLast={index === steps.length - 1} key={step.id} step={step} />
-      ))}
+      {steps.length ? (
+        <>
+          <Pressable
+            accessibilityHint={expanded ? 'Hides individual tool calls' : 'Shows individual tool calls'}
+            accessibilityLabel={activitySummary(steps, active)}
+            accessibilityRole="button"
+            accessibilityState={{ busy: active, expanded }}
+            onPress={() => setExpanded((value) => !value)}
+            style={styles.summaryDisclosure}
+            testID="corner-tool-summary"
+          >
+            <Text style={styles.summaryLabel}>{activitySummary(steps, active)}</Text>
+            <Text accessibilityElementsHidden style={styles.disclosureGlyph}>{expanded ? '⌃' : '⌄'}</Text>
+          </Pressable>
+          {expanded
+            ? steps.map((step, index) => (
+                <LedgerStepRow active={active} isLast={index === steps.length - 1} key={step.id} step={step} />
+              ))
+            : null}
+        </>
+      ) : null}
       {messageDraft ? (
         <MonoMarkdown
           markdown={messageDraft}
@@ -201,6 +228,22 @@ const styles = StyleSheet.create((theme) => {
       minWidth: 0,
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: groknight.borderQuiet,
+    },
+    summaryDisclosure: {
+      minHeight: 32,
+      paddingHorizontal: 4,
+      flexDirection: 'row',
+      alignItems: 'center',
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: groknight.borderQuiet,
+    },
+    summaryLabel: {
+      ...Typography.mono('semiBold'),
+      flex: 1,
+      minWidth: 0,
+      color: groknight.ledgerQuiet,
+      fontSize: 11,
+      lineHeight: 18,
     },
     stepRow: {
       minHeight: 36,

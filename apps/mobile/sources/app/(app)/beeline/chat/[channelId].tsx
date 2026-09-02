@@ -2360,7 +2360,7 @@ export default function BuzzChat() {
     [applyRoomRepository, cornerLifecycle, roomRepository],
   );
 
-  /** Toggle ambient GitHub repository activity (stars/issues/PRs) for this Room. */
+  /** Toggle ambient GitHub repository notifications (stars/issues/PRs) for this Room. */
   const handleToggleGitHubEvents = useCallback(async () => {
     if (!transport || !roomRepository || roomRepoBusy) return;
     const nextEnabled = roomRepository.githubEventsEnabled === false; // off → on
@@ -2370,7 +2370,7 @@ export default function BuzzChat() {
       await transport.roomGitHubEventsSet(decodedId, nextEnabled);
       refreshSignal.force();
     } catch {
-      setRoomRepoError('Could not change repository activity settings.');
+      setRoomRepoError('Could not change repository notification settings.');
     } finally {
       setRoomRepoBusy(false);
     }
@@ -3616,8 +3616,8 @@ export default function BuzzChat() {
                 <TouchableOpacity
                   accessibilityLabel={
                     roomRepository.githubEventsEnabled === false
-                      ? 'Turn repository activity notices on'
-                      : 'Turn repository activity notices off'
+                      ? 'Turn repository notifications on'
+                      : 'Turn repository notifications off'
                   }
                   accessibilityRole="button"
                   disabled={roomRepoBusy}
@@ -3627,7 +3627,7 @@ export default function BuzzChat() {
                 >
                   <View style={styles.roomLifecycleCopy}>
                     <Text style={styles.roomLifecycleTitle}>
-                      REPO ACTIVITY{'\u00b7'}
+                      REPO NOTIFICATIONS{'\u00b7'}
                       {roomRepository.githubEventsEnabled === false ? ' OFF' : ' ON'}
                     </Text>
                     <Text style={styles.roomLifecycleHint}>
@@ -3651,7 +3651,7 @@ export default function BuzzChat() {
           )}
           {canRenameRoom(viewerChannelRole) && getBuzzRuntimeConfig().monolithEnabled && (
             <TouchableOpacity
-              accessibilityLabel={`Manage ${ROOM_LABEL} schedules`}
+              accessibilityLabel={`View ${ROOM_LABEL} scheduled work`}
               accessibilityRole="button"
               onPress={() => {
                 setRoomActionsVisible(false);
@@ -3664,9 +3664,9 @@ export default function BuzzChat() {
               testID="room-schedules-action"
             >
               <View style={styles.roomLifecycleCopy}>
-                <Text style={styles.roomLifecycleTitle}>SCHEDULES</Text>
+                <Text style={styles.roomLifecycleTitle}>SCHEDULED WORK</Text>
                 <Text style={styles.roomLifecycleHint}>
-                  Mention an Agent automatically on a cron or interval.
+                  View or stop Agent-managed recurring work.
                 </Text>
               </View>
               <Text style={styles.roomLifecycleGlyph}>◷</Text>

@@ -597,6 +597,106 @@ describe('monolith integration', () => {
     expect(roomView.messages.map((message) => message.id)).not.toContain('0'.repeat(63) + '1');
   });
 
+  it('keeps settled corner tool rows in the corner read but never in the parent Room', async () => {
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'tool-corner',
+      name: 'Tool ledger',
+      summary: 'Tool ledger',
+    });
+    expect(created.status).toBe(200);
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    expect(
+      (
+        await daemonOperation('postAgentTurnReceipt', {
+          roomId: cornerId,
+          agentId: AGENT,
+          requestId: 'corner-turn-1',
+          status: 'working',
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await daemonOperation('postAgentActivity', {
+          agentId: AGENT,
+          roomId: cornerId,
+          requestId: 'corner-turn-1',
+          activity: [
+            {
+              kind: 'tool',
+              title: 'Bash',
+              operation: 'execute',
+              command: 'npm test -- ActivityTimeline',
+              status: 'exit 0',
+            },
+          ],
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await daemonOperation('postAgentActivity', {
+          agentId: AGENT,
+          roomId: cornerId,
+          requestId: 'corner-turn-1',
+          activity: [{ kind: 'thinking', title: 'Working', status: 'in_progress' }],
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await daemonOperation('postRoomMessage', {
+          roomId: cornerId,
+          requestId: 'corner-turn-1',
+          text: 'Corner done.',
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await daemonOperation('postAgentTurnReceipt', {
+          roomId: cornerId,
+          agentId: AGENT,
+          requestId: 'corner-turn-1',
+          status: 'complete',
+        })
+      ).status,
+    ).toBe(200);
+
+    const corner = (await (await request(`/v1/phone/rooms/${cornerId}`)).json()) as RoomView;
+    expect(corner.messages).toContainEqual(
+      expect.objectContaining({
+        presentation: 'activity',
+        activity: [
+          expect.objectContaining({
+            kind: 'tool',
+            title: 'Bash',
+            command: 'npm test -- ActivityTimeline',
+          }),
+        ],
+      }),
+    );
+    // Live-only lanes (thinking) settle away with the turn; the tool row is the
+    // only activity row that survives.
+    expect(
+      corner.messages.filter(
+        (message) =>
+          message.presentation === 'activity' && message.activity?.[0]?.kind !== 'tool',
+      ),
+    ).toEqual([]);
+    expect(corner.messages).toContainEqual(
+      expect.objectContaining({ text: 'Corner done.', presentation: 'message' }),
+    );
+
+    const parent = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as RoomView;
+    expect(
+      parent.messages.filter(
+        (message) => message.presentation === 'activity' && !message.durableFact,
+      ),
+    ).toEqual([]);
+  });
+
   it('implicitly addresses an untagged human follow-up to the agent that just replied', async () => {
     const peer = 'e'.repeat(64);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Peer')`, [peer]);

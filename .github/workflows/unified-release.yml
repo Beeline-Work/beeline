@@ -353,13 +353,16 @@ jobs:
           const daemon = daemons[0];
           fs.writeFileSync(outputPath, JSON.stringify({
             server: { version: server.version, sourceSha: server.sourceSha },
-            daemon: { version: daemon.releaseVersion, sourceSha: daemon.sourceSha },
+            daemon: { version: daemon.version, sourceSha: daemon.sha },
             app: { version: mobile.releaseVersion, sourceSha: mobile.sourceSha },
           }));
           NODE
           state="$RUNNER_TEMP/release/unified-release.json"
           node scripts/unified-release.mjs confirm-delivery --state "$state" --version "$RELEASE_VERSION" --sha "$RELEASE_SHA"
-          node scripts/unified-release.mjs report --state "$state" --observed "$RUNNER_TEMP/observed.json" | tee "$RUNNER_TEMP/delivery-report.txt"
+          node scripts/unified-release.mjs report --state "$state" \
+            --observed "$RUNNER_TEMP/observed.json" \
+            --version "$RELEASE_VERSION" \
+            --sha "$RELEASE_SHA" | tee "$RUNNER_TEMP/delivery-report.txt"
       - name: Publish the one version delivery record
         uses: actions/upload-artifact@v4
         with:
@@ -392,7 +395,17 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   retry:
-    if: failure() && (inputs.retry_attempt || 1) < 3
+    if: >-
+      failure() &&
+      (inputs.retry_attempt || 1) < 3 &&
+      !(
+        needs.promote_server.result == 'success' &&
+        needs.confirm_server.result == 'success' &&
+        needs.promote_daemon.result == 'success' &&
+        needs.confirm_daemon.result == 'success' &&
+        needs.promote_app.result == 'success' &&
+        needs.confirm_app.result == 'success'
+      )
     needs:
       - initialize
       - app_artifact
@@ -400,8 +413,11 @@ jobs:
       - server_artifact
       - artifact_gate
       - promote_server
+      - confirm_server
       - promote_daemon
+      - confirm_daemon
       - promote_app
+      - confirm_app
       - delivery_report
     runs-on: [self-hosted, beeline-prod-host]
     steps:

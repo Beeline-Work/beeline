@@ -222,7 +222,8 @@ type RepositoryFactCardProps = {
   actionLabel: string;
   onPress(): void;
   testID: string;
-  subgoals?: readonly { step: string; status: 'pending' | 'in_progress' | 'completed' }[];
+  secondaryActionLabel?: string;
+  onSecondaryPress?(): void;
 };
 
 /** Shared visual shell for verified GitHub events and daemon lifecycle facts. */
@@ -232,31 +233,36 @@ const RepositoryFactCard = React.memo(function RepositoryFactCard({
   actionLabel,
   onPress,
   testID,
-  subgoals,
+  secondaryActionLabel,
+  onSecondaryPress,
 }: RepositoryFactCardProps) {
   return (
-    <Pressable
-      accessibilityRole="link"
-      accessibilityLabel={title}
-      onPress={onPress}
-      style={styles.githubPressable}
-      testID={testID}
-    >
+    <View style={styles.githubPressable} testID={testID}>
       <HullSurface strength="raised" style={styles.githubCard}>
         <Text style={styles.githubTitle}>{title}</Text>
-        {subgoals?.length ? (
-          <View style={styles.githubSubgoals}>
-            {subgoals.map((subgoal, index) => (
-              <Text key={`${subgoal.step}:${index}`} style={styles.githubBody}>
-                {`${subgoal.status === 'completed' ? '✓' : '○'} ${subgoal.step}`}
-              </Text>
-            ))}
-          </View>
-        ) : null}
         {body ? <Text style={styles.githubBody}>{body}</Text> : null}
-        <Text style={styles.githubLink}>{actionLabel}</Text>
+        <View style={styles.githubActions}>
+          <Pressable
+            accessibilityRole="link"
+            accessibilityLabel={actionLabel}
+            onPress={onPress}
+            testID={`${testID}-primary-action`}
+          >
+            <Text style={styles.githubLink}>{actionLabel}</Text>
+          </Pressable>
+          {secondaryActionLabel && onSecondaryPress ? (
+            <Pressable
+              accessibilityRole="link"
+              accessibilityLabel={secondaryActionLabel}
+              onPress={onSecondaryPress}
+              testID={`${testID}-secondary-action`}
+            >
+              <Text style={styles.githubLink}>{secondaryActionLabel}</Text>
+            </Pressable>
+          ) : null}
+        </View>
       </HullSurface>
-    </Pressable>
+    </View>
   );
 });
 
@@ -288,17 +294,20 @@ export const GitHubEventCard = React.memo(function GitHubEventCard({
 export interface DaemonFactCardProps {
   message: ChatDisplayMessage;
   onOpenCorner(cornerId: string): void;
+  onOpenUrl(url: string): void;
 }
 
 export const DaemonFactCard = React.memo(function DaemonFactCard({
   message,
   onOpenCorner,
+  onOpenUrl,
 }: DaemonFactCardProps) {
   const fact = message.daemonFact!;
+  const agent = message.authorIdentity?.kind === 'agent' ? message.authorIdentity.name : undefined;
   const body =
     fact.type === 'corner-complete'
       ? fact.outcome === 'landed'
-        ? `LANDED${fact.pullRequest ? ` · PR #${fact.pullRequest.number ?? ''} ${fact.pullRequest.url}` : ''}`
+        ? `LANDED${agent ? ` · ${agent}` : ''}${fact.pullRequest ? ` · PR #${fact.pullRequest.number ?? ''} ${fact.pullRequest.url}` : ''}`
         : 'ABANDONED · Remote branch deleted'
       : fact.type === 'checks-failing'
         ? `CHECKS FAILING${fact.pullRequest ? ` · PR #${fact.pullRequest.number ?? ''}` : ''}`
@@ -309,9 +318,20 @@ export const DaemonFactCard = React.memo(function DaemonFactCard({
     <RepositoryFactCard
       title={fact.type === 'corner-open' ? fact.name! : fact.objective}
       body={body}
-      subgoals={fact.subgoals}
-      actionLabel={fact.type === 'corner-complete' ? 'OPEN ARCHIVED CORNER →' : 'OPEN CORNER →'}
-      onPress={() => onOpenCorner(fact.cornerId)}
+      actionLabel={
+        fact.type === 'corner-complete' && fact.pullRequest ? 'VIEW PR ↗' : 'OPEN CORNER →'
+      }
+      onPress={() =>
+        fact.type === 'corner-complete' && fact.pullRequest
+          ? onOpenUrl(fact.pullRequest.url)
+          : onOpenCorner(fact.cornerId)
+      }
+      {...(fact.type === 'corner-complete' && fact.pullRequest
+        ? {
+            secondaryActionLabel: 'OPEN ARCHIVED CORNER →',
+            onSecondaryPress: () => onOpenCorner(fact.cornerId),
+          }
+        : {})}
       testID={`daemon-fact-card-${fact.type}`}
     />
   );
@@ -727,7 +747,6 @@ const styles = StyleSheet.create(() => ({
     fontSize: 12,
     lineHeight: 17,
   },
-  githubSubgoals: { gap: 2 },
   githubLink: {
     ...Typography.mono('semiBold'),
     color: groknight.textSecondary,
@@ -735,6 +754,7 @@ const styles = StyleSheet.create(() => ({
     lineHeight: 14,
     letterSpacing: 0.45,
   },
+  githubActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 14 },
   activityGroup: { width: '100%', minWidth: 0, marginBottom: 20 },
   replyReference: { minWidth: 0, marginBottom: 5 },
   replyReferenceText: {

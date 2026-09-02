@@ -9,6 +9,7 @@ vi.mock('react-native', async () => {
     ReactModule.createElement(name, props, props.children);
   return {
     Platform: { OS: 'android', select: (choices: Record<string, unknown>) => choices.default },
+    Pressable: host('Pressable'),
     StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
     Text: host('Text'),
     View: host('View'),
@@ -71,7 +72,7 @@ describe('live streaming turn', () => {
     expect(render(<ActivityTimeline active={false} items={TOOLS} />).toJSON()).toBeNull();
   });
 
-  it('renders one non-interactive row per tool and the accumulating conversational draft', () => {
+  it('renders one collapsed row per tool and the accumulating conversational draft', () => {
     const renderer = render(
       <ActivityTimeline
         active
@@ -93,7 +94,12 @@ describe('live streaming turn', () => {
           .map((node: { props: { testID?: string } }) => node.props.testID),
       ),
     ).toEqual(new Set(['activity-step-read', 'activity-step-failure']));
-    expect(renderer.root.findAllByType('Pressable')).toHaveLength(0);
+    expect(renderer.root.findAllByType('Pressable')).toHaveLength(2);
+    expect(
+      renderer.root.findAll((node: { props: { testID?: string } }) =>
+        node.props.testID?.startsWith('activity-details-'),
+      ),
+    ).toHaveLength(0);
   });
 
   it('keeps prose tight to the tool line it follows', () => {
@@ -131,7 +137,7 @@ describe('live streaming turn', () => {
     ).toEqual([{ markdown: '**The reply is ready**', testID: 'activity-message-draft' }]);
   });
 
-  it('never renders tool results, diffs, or thought text in the transcript', () => {
+  it('expands safe file summaries without rendering raw results, commands, diffs, or thought text', () => {
     const renderer = render(
       <ActivityTimeline
         active
@@ -168,8 +174,10 @@ describe('live streaming turn', () => {
       />,
     );
 
+    act(() => renderer.root.findByProps({ testID: 'activity-step-edit' }).props.onPress());
     const rendered = JSON.stringify(renderer.toJSON());
     expect(rendered).toContain('Conversational answer');
+    expect(rendered).toContain('apps/mobile/Ledger.tsx');
     expect(rendered).not.toContain('PRIVATE THOUGHT SENTINEL');
     expect(rendered).not.toContain('RAW TOOL RESULT SENTINEL');
     expect(rendered).not.toContain('RAW COMMAND SENTINEL');
@@ -180,7 +188,9 @@ describe('live streaming turn', () => {
         node.props.testID?.startsWith('activity-result-'),
       ),
     ).toHaveLength(0);
-    expect(renderer.root.findAllByType('Pressable')).toHaveLength(0);
+    expect(
+      renderer.root.findByProps({ testID: 'activity-step-edit' }).props.accessibilityState,
+    ).toEqual({ busy: false, expanded: true });
   });
 
   it('keeps the terse failure verdict in the one-line mechanism row', () => {

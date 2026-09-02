@@ -1,5 +1,5 @@
-import React, { useMemo } from 'react';
-import { Text, View } from 'react-native';
+import React, { useMemo, useState } from 'react';
+import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { AgentActivityItem } from '@/sync/transport/rig-transport';
 import { buildTurnActivity, type TurnActivityAction } from '@/buzz/activity-timeline';
@@ -57,6 +57,7 @@ function LedgerStepRow({
   isLast: boolean;
   step: TurnActivityAction;
 }) {
+  const [expanded, setExpanded] = useState(false);
   const outcome = resolvedOutcome(step, active, isLast);
   const label = presentedStepLabel(step);
   const accessibilityLabel = [
@@ -66,46 +67,64 @@ function LedgerStepRow({
   ]
     .filter(Boolean)
     .join(', ');
+  const details = [
+    `${step.toolKind ?? 'tool'} · ${step.status ?? outcome}`,
+    ...(step.files ?? []).map((file) => `${file.status ? `${file.status} ` : ''}${file.path}`),
+    ...(step.reason ? [step.reason] : []),
+    ...(step.title.toLowerCase() !== label.toLowerCase() ? [step.title] : []),
+  ];
   return (
-    <View
+    <Pressable
+      accessibilityHint={expanded ? 'Collapses activity details' : 'Shows activity details'}
       accessibilityLabel={accessibilityLabel}
-      accessibilityState={{ busy: outcome === 'running' }}
-      style={styles.stepRow}
+      accessibilityRole="button"
+      accessibilityState={{ busy: outcome === 'running', expanded }}
+      onPress={() => setExpanded((value) => !value)}
+      style={styles.stepDisclosure}
       testID={`activity-step-${step.id}`}
     >
-      <Text accessibilityElementsHidden style={styles.stepGlyph}>
-        {stepGlyph(step)}
-      </Text>
-      <Text numberOfLines={1} style={styles.stepLabel}>
-        {label}
-      </Text>
-      {outcome === 'running' ? (
-        <View style={styles.runningMark} testID={`activity-verdict-${step.id}`}>
-          <PixelLoader compact />
+      <View style={styles.stepRow}>
+        <Text accessibilityElementsHidden style={styles.stepGlyph}>
+          {stepGlyph(step)}
+        </Text>
+        <Text numberOfLines={1} style={styles.stepLabel}>
+          {label}
+        </Text>
+        {outcome === 'running' ? (
+          <View style={styles.runningMark} testID={`activity-verdict-${step.id}`}>
+            <PixelLoader compact />
+          </View>
+        ) : (
+          <Text
+            accessibilityElementsHidden
+            style={[styles.verdict, outcome === 'failure' && styles.verdictFailed]}
+            testID={`activity-verdict-${step.id}`}
+          >
+            {outcome === 'failure' ? '×' : '✓'}
+          </Text>
+        )}
+        <Text accessibilityElementsHidden style={styles.disclosureGlyph}>
+          {expanded ? '⌃' : '⌄'}
+        </Text>
+      </View>
+      {expanded && details.length ? (
+        <View style={styles.stepDetails} testID={`activity-details-${step.id}`}>
+          {details.map((detail, index) => (
+            <Text key={`${step.id}:${index}`} style={styles.stepDetail}>
+              {detail}
+            </Text>
+          ))}
         </View>
-      ) : (
-        <Text
-          accessibilityElementsHidden
-          style={[styles.verdict, outcome === 'failure' && styles.verdictFailed]}
-          testID={`activity-verdict-${step.id}`}
-        >
-          {outcome === 'failure' ? '×' : '✓'}
-        </Text>
-      )}
-      {step.reason ? (
-        <Text numberOfLines={1} style={styles.stepReason} testID={`activity-reason-${step.id}`}>
-          {step.reason}
-        </Text>
       ) : null}
-    </View>
+    </Pressable>
   );
 }
 
 /**
- * The live conversational turn. Tool activity stays in terse, non-interactive
- * mechanism rows while the answer accumulates beneath it. Tool results and
- * private reasoning never enter this component. The selector removes this
- * whole component the instant the signed turn ends.
+ * The live conversational turn. Tool activity starts as terse mechanism rows
+ * and expands on demand to safe summaries (file names and failure reasons).
+ * Raw tool output, commands, diffs, and private reasoning never enter this
+ * component. The selector removes it when the signed turn ends.
  */
 export const ActivityTimeline = React.memo(function ActivityTimeline({
   active = false,
@@ -167,6 +186,11 @@ const styles = StyleSheet.create((theme) => {
       lineHeight: 25,
       marginTop: 2,
     },
+    stepDisclosure: {
+      minWidth: 0,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: groknight.borderQuiet,
+    },
     stepRow: {
       minHeight: 36,
       minWidth: 0,
@@ -174,8 +198,6 @@ const styles = StyleSheet.create((theme) => {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 8,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: groknight.borderQuiet,
     },
     stepGlyph: {
       ...Typography.mono(),
@@ -201,14 +223,20 @@ const styles = StyleSheet.create((theme) => {
       lineHeight: 18,
     },
     verdictFailed: { color: groknight.accent },
-    runningMark: { flexShrink: 0, minWidth: 16, alignItems: 'center' },
-    stepReason: {
+    disclosureGlyph: {
       ...Typography.mono(),
-      flexShrink: 1,
-      minWidth: 0,
-      color: groknight.ledgerQuiet,
+      flexShrink: 0,
+      color: groknight.ledgerGhost,
       fontSize: 10,
       lineHeight: 18,
+    },
+    runningMark: { flexShrink: 0, minWidth: 16, alignItems: 'center' },
+    stepDetails: { gap: 2, paddingHorizontal: 30, paddingBottom: 9 },
+    stepDetail: {
+      ...Typography.mono(),
+      color: groknight.ledgerQuiet,
+      fontSize: 10,
+      lineHeight: 15,
     },
   };
 });

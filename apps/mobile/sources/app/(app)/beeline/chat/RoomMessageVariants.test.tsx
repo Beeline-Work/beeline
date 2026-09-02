@@ -274,9 +274,15 @@ describe('Room message variant components', () => {
 
   it('uses the GitHub-card shell for daemon facts and opens the archived corner', () => {
     const onOpenCorner = vi.fn();
+    const onOpenUrl = vi.fn();
     const renderer = render(
       <DaemonFactCard
         message={message({
+          authorIdentity: {
+            pubkey: 'agent',
+            kind: 'agent',
+            name: 'Beebee',
+          },
           daemonFact: {
             type: 'corner-complete',
             cornerId: '80a5a6f1-fb5a-493b-93eb-f3db33f696e6',
@@ -287,13 +293,24 @@ describe('Room message variant components', () => {
           },
         })}
         onOpenCorner={onOpenCorner}
+        onOpenUrl={onOpenUrl}
       />,
     );
     act(() =>
-      renderer.root.findByProps({ testID: 'daemon-fact-card-corner-complete' }).props.onPress(),
+      renderer.root
+        .findByProps({ testID: 'daemon-fact-card-corner-complete-primary-action' })
+        .props.onPress(),
+    );
+    expect(onOpenUrl).toHaveBeenCalledWith('https://github.com/acme/beeline/pull/42');
+    act(() =>
+      renderer.root
+        .findByProps({ testID: 'daemon-fact-card-corner-complete-secondary-action' })
+        .props.onPress(),
     );
     expect(onOpenCorner).toHaveBeenCalledWith('80a5a6f1-fb5a-493b-93eb-f3db33f696e6');
     expect(renderer.root.findAllByType('HullSurface')).toHaveLength(1);
+    expect(JSON.stringify(renderer.toJSON())).toContain('LANDED · Beebee · PR #42');
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('Open the archived transcript');
   });
 
   it('renders the corner-open daemon fact as a linked card with the human name and objective', () => {
@@ -309,9 +326,12 @@ describe('Room message variant components', () => {
           },
         })}
         onOpenCorner={onOpenCorner}
+        onOpenUrl={() => undefined}
       />,
     );
-    const card = renderer.root.findByProps({ testID: 'daemon-fact-card-corner-open' });
+    const card = renderer.root.findByProps({
+      testID: 'daemon-fact-card-corner-open-primary-action',
+    });
     const texts = renderer.root
       .findAllByType('Text')
       .map((node: ReactTestInstance) => node.props.children);

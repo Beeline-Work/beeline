@@ -272,7 +272,7 @@ describe('Room message variant components', () => {
     }
   });
 
-  it('uses the GitHub-card shell for daemon facts and opens the archived corner', () => {
+  it('renders a landed corner as a summary card with its full objective and tappable PR', () => {
     const onOpenCorner = vi.fn();
     const onOpenUrl = vi.fn();
     const renderer = render(
@@ -286,9 +286,15 @@ describe('Room message variant components', () => {
           daemonFact: {
             type: 'corner-complete',
             cornerId: '80a5a6f1-fb5a-493b-93eb-f3db33f696e6',
-            objective: 'Ship fact cards with archived transcript access',
+            name: 'Ship the archived transcript card',
+            objective:
+              'Ship fact cards with archived transcript access and preserve the entire objective instead of truncating it into a ledger line',
             outcome: 'landed',
-            pullRequest: { number: 42, url: 'https://github.com/acme/beeline/pull/42' },
+            pullRequest: {
+              number: 42,
+              title: 'Ship the archived transcript card',
+              url: 'https://github.com/acme/beeline/pull/42',
+            },
             subgoals: [{ step: 'Open the archived transcript', status: 'completed' }],
           },
         })}
@@ -298,18 +304,24 @@ describe('Room message variant components', () => {
     );
     act(() =>
       renderer.root
-        .findByProps({ testID: 'daemon-fact-card-corner-complete-primary-action' })
+        .findByProps({ testID: 'corner-summary-card-primary-action' })
         .props.onPress(),
     );
     expect(onOpenUrl).toHaveBeenCalledWith('https://github.com/acme/beeline/pull/42');
     act(() =>
       renderer.root
-        .findByProps({ testID: 'daemon-fact-card-corner-complete-secondary-action' })
+        .findByProps({ testID: 'corner-summary-card-secondary-action' })
         .props.onPress(),
     );
     expect(onOpenCorner).toHaveBeenCalledWith('80a5a6f1-fb5a-493b-93eb-f3db33f696e6');
     expect(renderer.root.findAllByType('HullSurface')).toHaveLength(1);
-    expect(JSON.stringify(renderer.toJSON())).toContain('LANDED · Beebee · PR #42');
+    expect(renderer.root.findByProps({ testID: 'corner-summary-card' })).toBeDefined();
+    expect(JSON.stringify(renderer.toJSON())).toContain('MERGED · Ship the archived transcript card');
+    expect(JSON.stringify(renderer.toJSON())).toContain('MERGED · Beebee');
+    expect(JSON.stringify(renderer.toJSON())).toContain(
+      'Ship fact cards with archived transcript access and preserve the entire objective instead of truncating it into a ledger line',
+    );
+    expect(JSON.stringify(renderer.toJSON())).toContain('VIEW PR: Ship the archived transcript card ↗');
     expect(JSON.stringify(renderer.toJSON())).not.toContain('Open the archived transcript');
   });
 

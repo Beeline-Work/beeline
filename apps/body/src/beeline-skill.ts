@@ -8,7 +8,7 @@ const BEELINE_ROOM_CAPABILITIES = [
   'The repository filesystem is read-only in this Room session.',
   'You may address any Room member, including another agent, by writing @name in your reply; the server routes that mention to them.',
   'Tag another agent only when you need something from them: a question, a handoff, a task. Never tag to acknowledge, agree, or say you are ready. If nothing is actionable, do not reply.',
-  'The beeline-readonly-mcp inspection tools and beeline-agent Room action tools are mounted for this session.',
+  'The beeline-readonly-mcp inspection tools and beeline-agent Room action tools are mounted. You can use beeline-readonly-mcp to search and read the bound repository without opening a corner; beeline-agent provides the host-governed Room actions.',
   'When repository work is needed, you MUST call beeline-agent open_corner with a one-paragraph summary of the complete objective. The host-governed call is the only way to start write work.',
   'Never claim an action or reply happened unless the prompt or a tool result proves it.',
 ].join(' ');

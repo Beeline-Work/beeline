@@ -1070,6 +1070,24 @@ describe('AcpClient live steering', () => {
     }
   });
 
+  it('applies a restricted-session permission allowlist before selecting an approval', async () => {
+    const client = new AcpClient({
+      agentBinary: await fakePermissionAgent(),
+      agentEnv: {},
+      autoApprovePermissions: false,
+      permissionAllowlist: (request) => request.toolCall?.title === 'str_replace README.md',
+    });
+    await client.start();
+    try {
+      const { sessionId } = await client.sessionNew({ cwd: tmpdir() });
+      await expect(client.sessionPrompt(sessionId, 'Use the mounted tool', 5_000)).resolves.toMatchObject({
+        agentText: 'allow',
+      });
+    } finally {
+      await client.stop();
+    }
+  });
+
   it('spawns an ACP command with its configured arguments', async () => {
     const client = new AcpClient({
       agentCommand: await fakeArgumentAgent(),

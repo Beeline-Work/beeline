@@ -154,6 +154,8 @@ export type AcpPermissionDecision = 'allow' | 'reject';
 export type AcpPermissionHandler = (
   request: AcpPermissionRequest,
 ) => Promise<AcpPermissionDecision>;
+/** A fail-closed list of host-owned permission requests for restricted sessions. */
+export type AcpPermissionAllowlist = (request: AcpPermissionRequest) => boolean;
 
 /** Invoked once per incremental `agent_message_chunk` delta during a live prompt. */
 export type AcpTextChunkHandler = (delta: string, fullTextSoFar: string) => void;
@@ -467,6 +469,7 @@ export class AcpClient extends EventEmitter {
   private inheritProcessEnv: boolean;
   private autoApprove: boolean;
   private permissionHandler?: AcpPermissionHandler;
+  private permissionAllowlist?: AcpPermissionAllowlist;
 
   constructor(opts: {
     /** Legacy bare-binary option. Prefer agentCommand + agentArgs. */
@@ -496,6 +499,8 @@ export class AcpClient extends EventEmitter {
     inheritProcessEnv?: boolean;
     autoApprovePermissions?: boolean;
     permissionHandler?: AcpPermissionHandler;
+    /** Host-owned requests allowed while all other permissions are rejected. */
+    permissionAllowlist?: AcpPermissionAllowlist;
   }) {
     super();
     const command = opts.agentCommand ?? opts.agentBinary;
@@ -509,6 +514,7 @@ export class AcpClient extends EventEmitter {
       opts.inheritProcessEnv ?? process.env.BUZZY_BODY_AGENT_ENV_INHERIT === '1';
     this.autoApprove = opts.autoApprovePermissions ?? true;
     this.permissionHandler = opts.permissionHandler;
+    this.permissionAllowlist = opts.permissionAllowlist;
   }
 
   async start(timeoutMs = 60_000): Promise<void> {
@@ -1061,7 +1067,14 @@ export class AcpClient extends EventEmitter {
     const tracked = metadataKey ? this.toolCallMetadata.get(metadataKey) : undefined;
     if (tracked) p.toolCall = { ...tracked, ...p.toolCall };
     let decision: AcpPermissionDecision = this.autoApprove ? 'allow' : 'reject';
-    if (this.permissionHandler) {
+    if (!this.autoApprove && this.permissionAllowlist) {
+      try {
+        decision = this.permissionAllowlist(p) ? 'allow' : 'reject';
+      } catch (error) {
+        this.emit('permission/error', error);
+        decision = 'reject';
+      }
+    } else if (this.permissionHandler) {
       try {
         decision = await this.permissionHandler(p);
       } catch (error) {

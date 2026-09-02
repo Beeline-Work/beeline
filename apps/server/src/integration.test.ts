@@ -35,6 +35,7 @@ describe('monolith integration', () => {
   let githubOperations: GitHubOperations;
   let githubApp: {
     deleteBranch: ReturnType<typeof vi.fn>;
+    mergePullRequest: ReturnType<typeof vi.fn>;
   };
   beforeEach(async () => {
     database = new PgliteDatabase();
@@ -59,6 +60,7 @@ describe('monolith integration', () => {
     });
     githubApp = {
       deleteBranch: vi.fn(async () => undefined),
+      mergePullRequest: vi.fn(async () => undefined),
     };
     githubOperations = new GitHubOperations(
       database,
@@ -1316,7 +1318,9 @@ describe('monolith integration', () => {
             number: 42,
             title: 'Ship the widget',
             html_url: 'https://github.com/owner/widgets/pull/42',
-            head: { ref: 'fm/widget' },
+            head: { ref: 'fm/widget', sha: '0'.repeat(40) },
+            base: { ref: 'main' },
+            mergeable_state: 'clean',
             merged: false,
           },
         })
@@ -1329,6 +1333,17 @@ describe('monolith integration', () => {
       compare: 'https://github.com/owner/widgets/compare/a...b',
       commits: [{ id: '1' }, { id: '2' }],
     });
+    await webhook('check_run', 'corner-check-started', {
+      ...base,
+      action: 'in_progress',
+      check_run: {
+        id: 6,
+        name: 'typecheck',
+        status: 'in_progress',
+        html_url: 'https://github.com/owner/widgets/actions/runs/6',
+        check_suite: { head_branch: 'fm/widget', head_sha: '1'.repeat(40) },
+      },
+    });
     await webhook('check_suite', 'corner-checks-failed', {
       ...base,
       action: 'completed',
@@ -1337,7 +1352,49 @@ describe('monolith integration', () => {
         status: 'completed',
         conclusion: 'failure',
         head_branch: 'fm/widget',
+        head_sha: '1'.repeat(40),
+        app: { name: 'Beeline CI' },
         url: 'https://github.com/owner/widgets/actions/runs/7',
+      },
+    });
+    const redApproval = await request('/v1/phone/operations/approveCornerMerge', 'POST', {
+      cornerId,
+    });
+    expect(redApproval.status).toBe(409);
+    expect(await redApproval.json()).toEqual({
+      error: 'corner checks are failing: Beeline CI check suite; retry with force=true',
+    });
+    const forcedApproval = await request('/v1/phone/operations/approveCornerMerge', 'POST', {
+      cornerId,
+      force: true,
+    });
+    expect(await forcedApproval.json()).toEqual({
+      status: 'merge-requested',
+      pullRequestUrl: 'https://github.com/owner/widgets/pull/42',
+    });
+    await webhook('check_suite', 'corner-checks-passed', {
+      ...base,
+      action: 'completed',
+      check_suite: {
+        id: 7,
+        status: 'completed',
+        conclusion: 'success',
+        head_branch: 'fm/widget',
+        head_sha: '1'.repeat(40),
+        app: { name: 'Beeline CI' },
+        url: 'https://github.com/owner/widgets/actions/runs/8',
+      },
+    });
+    await webhook('check_run', 'corner-check-passed', {
+      ...base,
+      action: 'completed',
+      check_run: {
+        id: 6,
+        name: 'typecheck',
+        status: 'completed',
+        conclusion: 'success',
+        html_url: 'https://github.com/owner/widgets/actions/runs/6',
+        check_suite: { head_branch: 'fm/widget', head_sha: '1'.repeat(40) },
       },
     });
     await webhook('status', 'corner-checks-passed', {
@@ -1349,6 +1406,11 @@ describe('monolith integration', () => {
     });
     const cornerBeforeMerge = (await (await request(`/v1/phone/rooms/${cornerId}`)).json()) as {
       messages: Array<{ text: string; presentation: string }>;
+      cornerLifecycle: {
+        checks: string;
+        pr: { url: string; mergeability: string };
+        checksSummary: { failing: string[]; checks: Array<{ name: string; status: string }> };
+      };
     };
     expect(cornerBeforeMerge.messages).toEqual(
       expect.arrayContaining([
@@ -1357,10 +1419,21 @@ describe('monolith integration', () => {
           text: expect.stringContaining('Pull request opened: Ship the widget'),
         }),
         expect.objectContaining({ text: expect.stringContaining('Branch updated with 2 commits') }),
-        expect.objectContaining({ text: expect.stringContaining('Checks failed') }),
-        expect.objectContaining({ text: expect.stringContaining('Checks passed') }),
+        expect.objectContaining({ text: expect.stringContaining('Checks started: typecheck') }),
+        expect.objectContaining({ text: expect.stringContaining('Checks failed: Beeline CI') }),
+        expect.objectContaining({ text: expect.stringContaining('Checks passed: Beeline CI') }),
       ]),
     );
+    expect(cornerBeforeMerge.cornerLifecycle).toMatchObject({
+      checks: 'passing',
+      pr: { url: 'https://github.com/owner/widgets/pull/42', mergeability: 'clean' },
+      checksSummary: {
+        failing: [],
+        checks: expect.arrayContaining([
+          expect.objectContaining({ name: 'Beeline CI check suite', status: 'passed' }),
+        ]),
+      },
+    });
     const cornerAgentInbox = await daemonOperation('getRoomInbox', {
       roomId: cornerId,
       limit: 200,
@@ -1376,6 +1449,15 @@ describe('monolith integration', () => {
       }),
     );
 
+    const duplicateApproval = await request('/v1/phone/operations/approveCornerMerge', 'POST', {
+      cornerId,
+    });
+    expect(await duplicateApproval.json()).toEqual({
+      status: 'already-requested',
+      pullRequestUrl: 'https://github.com/owner/widgets/pull/42',
+    });
+    expect(githubApp.mergePullRequest).toHaveBeenCalledOnce();
+
     expect(
       (
         await webhook('pull_request', 'corner-pr-merged', {
@@ -1385,8 +1467,11 @@ describe('monolith integration', () => {
             number: 42,
             title: 'Ship the widget',
             html_url: 'https://github.com/owner/widgets/pull/42',
-            head: { ref: 'fm/widget' },
+            head: { ref: 'fm/widget', sha: '1'.repeat(40) },
+            base: { ref: 'main' },
             merged: true,
+            merged_at: '2026-09-02T14:00:00Z',
+            merged_by: { login: 'owner' },
             commits: 3,
             changed_files: 5,
           },
@@ -1405,6 +1490,7 @@ describe('monolith integration', () => {
     );
     const parent = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as {
       messages: Array<{ text: string; presentation: string }>;
+      corners: Array<{ corner: { id: string } }>;
     };
     expect(parent.messages).toContainEqual(
       expect.objectContaining({
@@ -1412,6 +1498,7 @@ describe('monolith integration', () => {
         text: 'Ship widget\nhttps://github.com/owner/widgets/pull/42',
       }),
     );
+    expect(parent.corners.map((item) => item.corner.id)).not.toContain(cornerId);
     expect(
       (
         await database.query<{ archived: boolean }>(
@@ -1420,6 +1507,21 @@ describe('monolith integration', () => {
         )
       ).rows[0]?.archived,
     ).toBe(true);
+    expect(
+      (
+        await database.query<{ approved_by: string; force: boolean }>(
+          `SELECT approved_by,force FROM corner_merge_approvals WHERE corner_id=$1`,
+          [cornerId],
+        )
+      ).rows[0],
+    ).toEqual({ approved_by: HUMAN, force: true });
+    const approvalAfterMerge = await request('/v1/phone/operations/approveCornerMerge', 'POST', {
+      cornerId,
+    });
+    expect(await approvalAfterMerge.json()).toEqual({
+      status: 'already-merged',
+      pullRequestUrl: 'https://github.com/owner/widgets/pull/42',
+    });
     expect(githubApp.deleteBranch).toHaveBeenCalledWith(77, 101, 'owner/widgets', 'fm/widget');
   });
 

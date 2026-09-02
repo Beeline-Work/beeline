@@ -92,7 +92,8 @@ export function createBeelineServer(options: ServerOptions): Server {
           ? 400
           : message.includes('already linked') ||
               message.includes('already claimed') ||
-              message.includes('conflict')
+              message.includes('conflict') ||
+              message.includes('checks are failing')
             ? 409
             : message.includes('access denied') || message.includes('manager')
               ? 403

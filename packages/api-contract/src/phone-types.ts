@@ -43,6 +43,19 @@ export type CornerLifecycleView = {
     readonly mergedAt?: string;
     readonly mergedBy?: string;
   };
+  /** GitHub-webhook-owned check state for the PR head. */
+  readonly checksSummary?: {
+    readonly status: 'pending' | 'passing' | 'failing' | 'unknown';
+    readonly total: number;
+    readonly failing: readonly string[];
+    readonly checks: readonly {
+      readonly name: string;
+      readonly status: 'pending' | 'passed' | 'failed';
+      readonly conclusion?: string;
+      readonly url?: string;
+    }[];
+    readonly updatedAt: number;
+  };
   readonly outcome?: 'landed' | 'abandoned';
   readonly reason?: string;
 };

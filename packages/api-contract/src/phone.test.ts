@@ -43,6 +43,7 @@ describe('phone contract', () => {
     expectTypeOf<PhoneOperationMap['sendRoomMessage']['input']>().toHaveProperty('messageId');
     expectTypeOf<PhoneOperationMap['addWorkspaceMember']['input']>().toHaveProperty('role');
     expectTypeOf<PhoneOperationMap['createRoomSchedule']['input']>().toHaveProperty('cadence');
+    expectTypeOf<PhoneOperationMap['approveCornerMerge']['input']>().toHaveProperty('cornerId');
     expectTypeOf<PhoneOperationMap['listRoomSchedules']['output']>().toHaveProperty('schedules');
   });
 

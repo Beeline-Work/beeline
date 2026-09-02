@@ -433,6 +433,30 @@ describe('monolith integration', () => {
     expect(room.messages).toContainEqual(
       expect.objectContaining({ id: messageId, text: 'Please inspect this' }),
     );
+    const threaded = await request('/v1/phone/operations/sendRoomReply', 'POST', {
+      roomId: ROOM,
+      messageId: 'd'.repeat(64),
+      parentMessageId: messageId,
+      text: 'What is your soul?',
+      mentions: [AGENT],
+    });
+    expect(threaded.status).toBe(200);
+    const { messageId: threadedMessageId } = (await threaded.json()) as { messageId: string };
+    expect(threadedMessageId).toBe('d'.repeat(64));
+    const threadedRoom = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as {
+      messages: Array<{
+        id: string;
+        text: string;
+        reply?: { channelId: string; eventId: string; rootId: string };
+      }>;
+    };
+    expect(threadedRoom.messages).toContainEqual(
+      expect.objectContaining({
+        id: threadedMessageId,
+        text: 'What is your soul?',
+        reply: { channelId: ROOM, eventId: messageId, rootId: messageId },
+      }),
+    );
     const conversation = await request(
       '/v1/daemon/operations/getRoomConversation',
       'POST',
@@ -441,17 +465,23 @@ describe('monolith integration', () => {
     );
     expect(
       ((await conversation.json()) as { items: Array<{ body: string }> }).items.at(-1)?.body,
-    ).toBe('Please inspect this');
+    ).toBe('What is your soul?');
     const invalidated = next(socket, 'invalidate');
     const reply = await request(
       '/v1/daemon/operations/postRoomMessage',
       'POST',
-      { roomId: ROOM, requestId: messageId, text: 'Done' },
+      { roomId: ROOM, requestId: threadedMessageId, text: 'I am Terra.' },
       daemonToken,
     );
     expect(reply.status).toBe(200);
     expect(await invalidated).toEqual(
       expect.objectContaining({ type: 'invalidate', roomId: ROOM, reason: 'message' }),
+    );
+    const answeredRoom = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as {
+      messages: Array<{ requestId?: string; text: string }>;
+    };
+    expect(answeredRoom.messages).toContainEqual(
+      expect.objectContaining({ requestId: threadedMessageId, text: 'I am Terra.' }),
     );
     const drafted = next(socket, 'draft');
     await request(

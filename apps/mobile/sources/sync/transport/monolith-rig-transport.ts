@@ -212,12 +212,22 @@ export class MonolithRigTransport {
     input: MessageSubmitInput,
     opts?: { mentionAgent?: string; mentionPubkeys?: string[] },
   ): Promise<NostrEvent> {
+    return Promise.resolve(this.prepareMessage(input, opts));
+  }
+
+  private prepareMessage(
+    input: MessageSubmitInput,
+    opts?: { mentionAgent?: string; mentionPubkeys?: string[] },
+    extraTags: string[][] = [],
+  ): NostrEvent {
     const id = eventId();
     const mentions = [
-      ...(opts?.mentionPubkeys ?? []),
-      ...(opts?.mentionAgent ? [opts.mentionAgent] : []),
+      ...new Set([
+        ...(opts?.mentionPubkeys ?? []),
+        ...(opts?.mentionAgent ? [opts.mentionAgent] : []),
+      ]),
     ];
-    return Promise.resolve({
+    return {
       id,
       pubkey: this.identity.publicKey,
       created_at: Math.floor(Date.now() / 1000),
@@ -226,10 +236,11 @@ export class MonolithRigTransport {
         ['h', input.sessionId],
         ['monolith-attachments', JSON.stringify(input.attachments ?? [])],
         ['monolith-mentions', JSON.stringify(mentions)],
+        ...extraTags,
       ],
       content: input.text,
       sig: '',
-    });
+    };
   }
 
   composeReplyMessage(
@@ -239,10 +250,13 @@ export class MonolithRigTransport {
     attachments: AttachmentReference[] = [],
     mentionPubkeys: string[] = [],
   ): Promise<NostrEvent> {
-    return this.composeMessage(
-      { sessionId: parent.channelId, text, attachments },
-      { mentionAgent, mentionPubkeys },
-    ).then((event) => ({ ...event, tags: [...event.tags, ['monolith-parent', parent.eventId]] }));
+    return Promise.resolve(
+      this.prepareMessage(
+        { sessionId: parent.channelId, text, attachments },
+        { mentionAgent, mentionPubkeys },
+        [['monolith-parent', parent.eventId]],
+      ),
+    );
   }
 
   async publishPreparedMessage(event: NostrEvent): Promise<string> {

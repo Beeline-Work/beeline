@@ -61,8 +61,7 @@ export function selectTurnProgressAgentPubkey(input: TurnProgressInput): string 
  * before it must stop implying the daemon is still on its way. */
 export const COMPOSER_ACK_BOUND_MS = 15_000;
 
-export type ComposerAckState =
-  { kind: 'thinking'; agentPubkey: string } | { kind: 'buzzing' } | { kind: 'delivery-unclear' };
+export type ComposerAckState = { kind: 'thinking'; agentPubkey: string } | { kind: 'buzzing' };
 
 export type ComposerAckInput = TurnProgressInput & {
   /** Set the instant a message addressed to an agent is sent; cleared once
@@ -85,7 +84,7 @@ export type ComposerAckPresentationInput = ComposerAckInput & {
   agentsByPubkey?: ReadonlyMap<string, AgentDisplaySource>;
 };
 
-export type ComposerAckPresentation = { label: string; tone: 'live' | 'quiet' };
+export type ComposerAckPresentation = { label: string };
 
 function agentFromConversationIdentity(
   identity: RoomViewIdentity | undefined,
@@ -120,9 +119,9 @@ export function hasComposerAckReceipt(
  * a message this client believes addresses an agent) and is *replaced* by the
  * real receipt the moment one exists, never raced against it: `thinking`
  * always wins once `selectTurnProgressAgentPubkey` has an answer. Past
- * `COMPOSER_ACK_BOUND_MS` with still no receipt, the honest answer is that
- * delivery cannot be confirmed yet — never silently keep claiming "buzzing"
- * forever, and never fall back to dead air either.
+ * `COMPOSER_ACK_BOUND_MS` with still no receipt, the local acknowledgement
+ * expires. Silence cannot prove an agent is waiting or working; only the
+ * server-indexed receipt may restore this line as `thinking`.
  */
 export function selectComposerAckState(input: ComposerAckInput): ComposerAckState | null {
   const activePubkey = selectTurnProgressAgentPubkey(input);
@@ -130,7 +129,7 @@ export function selectComposerAckState(input: ComposerAckInput): ComposerAckStat
   if (input.pendingAckSentAt == null) return null;
   const elapsed = input.now - input.pendingAckSentAt;
   if (elapsed < 0) return null;
-  return elapsed < COMPOSER_ACK_BOUND_MS ? { kind: 'buzzing' } : { kind: 'delivery-unclear' };
+  return elapsed < COMPOSER_ACK_BOUND_MS ? { kind: 'buzzing' } : null;
 }
 
 /**
@@ -149,10 +148,9 @@ export function selectComposerAckPresentation(
       agentFromConversationIdentity(input.conversationIdentities?.get(state.agentPubkey)) ??
       input.agentsByPubkey?.get(state.agentPubkey);
     const subject = resolveAgentDisplayIdentity(state.agentPubkey, agent).name;
-    return { label: `${subject} thinking…`, tone: 'live' };
+    return { label: `${subject} thinking…` };
   }
-  if (state.kind === 'buzzing') return { label: 'sending…', tone: 'live' };
-  return { label: 'waiting on agent…', tone: 'quiet' };
+  return { label: 'sending…' };
 }
 
 /**

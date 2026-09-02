@@ -78,9 +78,11 @@ describe('the corner line and the turn indicator are independent', () => {
     const turn = memoBody('composerAck');
     for (const cornerState of CORNER_STATE) expect(turn).not.toContain(cornerState);
     expect(turn).toContain('pendingAckSentAt');
-    expect(turn).toContain('composerAckNow');
+    expect(turn).toContain('now: pendingAck?.sentAt ?? Date.now()');
     expect(turn).toContain('selectComposerAckPresentation');
     expect(turn).not.toContain('no confirmation yet');
+    expect(chatSource).toContain('setTimeout(() => setPendingAck(null), delay)');
+    expect(chatSource).not.toContain('waiting on agent');
   });
 
   it('keeps the Corner-only transcript policy out of Room rendering', () => {

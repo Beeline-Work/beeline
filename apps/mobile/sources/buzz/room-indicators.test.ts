@@ -220,7 +220,7 @@ describe('composer ack presentation', () => {
     ).toEqual({ kind: 'buzzing' });
   });
 
-  it('reports delivery-unclear once the bound elapses with no receipt', () => {
+  it('expires once the bound elapses with no receipt', () => {
     expect(
       selectComposerAckState({
         isCorner: false,
@@ -228,7 +228,7 @@ describe('composer ack presentation', () => {
         pendingAckSentAt: NOW,
         now: NOW + COMPOSER_ACK_BOUND_MS,
       }),
-    ).toEqual({ kind: 'delivery-unclear' });
+    ).toBeNull();
   });
 
   it('the real receipt always replaces a pending local ack, never races it', () => {
@@ -254,7 +254,7 @@ describe('composer ack presentation', () => {
         now: NOW,
         conversationIdentities: new Map(),
       }),
-    ).toEqual({ label: 'Agent 54f4d261 thinking…', tone: 'live' });
+    ).toEqual({ label: 'Agent 54f4d261 thinking…' });
   });
 
   it('recognizes a terminal receipt for the sent message after the agent has replied', () => {

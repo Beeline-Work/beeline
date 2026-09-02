@@ -1697,7 +1697,10 @@ describe('monolith integration', () => {
         expect(peerItems.items).toContainEqual(
           expect.objectContaining({ id: previous, mentionIds: [target] }),
         );
-      else expect(peerItems.items).not.toContainEqual(expect.objectContaining({ id: previous }));
+      else {
+        expect(peerItems.items).not.toContainEqual(expect.objectContaining({ id: previous }));
+        expect(peerItems.items.map((item) => item.id)).not.toContain(previous);
+      }
       [speaker, target] = [target, speaker];
       [speakerToken, targetToken] = [targetToken, speakerToken];
     }
@@ -1713,6 +1716,26 @@ describe('monolith integration', () => {
       [previous],
     );
     expect(stored.rows[0]).toEqual({ mention_ids: [], agent_hop_count: 3, note_count: '0' });
+
+    const withheldTrigger = await daemonOperation(
+      'postRoomMessage',
+      {
+        roomId: ROOM,
+        triggerMessageId: previous,
+        text: 'This was not delivered to me.',
+        mentionIds: [peer],
+      },
+      daemonToken,
+    );
+    expect(withheldTrigger.status).toBe(400);
+    await expect(withheldTrigger.json()).resolves.toEqual({ error: 'turn trigger is invalid for agent' });
+    expect(
+      (
+        await database.query<{ count: string }>(
+          `SELECT count(*)::text FROM messages WHERE text='This was not delivered to me.'`,
+        )
+      ).rows[0],
+    ).toEqual({ count: '0' });
 
     const resetMessage = '8'.repeat(64);
     await operation('sendRoomMessage', {

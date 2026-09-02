@@ -975,11 +975,12 @@ export class RoomRuntimeCoordinator {
    * from the start. The marker directory is created here (not lazily on first
    * activation) so the decision is stable across daemon restarts.
    */
-  private roomAgentHomeRoot(workspaceRoot: string): string | undefined {
+  private roomAgentHomeRoot(workspaceRoot: string, required = false): string | undefined {
     const flag = process.env.BUZZY_BODY_ROOM_HOME;
-    if (flag === '0') return undefined;
+    if (!required && flag === '0') return undefined;
     const home = resolve(workspaceRoot, 'agent-home');
-    if (flag !== '1' && !existsSync(home) && existsSync(workspaceRoot)) return undefined;
+    if (!required && flag !== '1' && !existsSync(home) && existsSync(workspaceRoot))
+      return undefined;
     try {
       mkdirSync(home, { recursive: true, mode: 0o700 });
     } catch (error) {
@@ -989,8 +990,8 @@ export class RoomRuntimeCoordinator {
     return home;
   }
 
-  private roomBodyConfig(workspaceRoot: string): BodyConfig {
-    const agentHomeRoot = this.roomAgentHomeRoot(workspaceRoot);
+  private roomBodyConfig(workspaceRoot: string, requiredAgentHome = false): BodyConfig {
+    const agentHomeRoot = this.roomAgentHomeRoot(workspaceRoot, requiredAgentHome);
     return {
       ...this.baseConfig,
       workspaceRoot,
@@ -1133,7 +1134,9 @@ export class RoomRuntimeCoordinator {
     }
     const controller = new AbortController();
     const workspaceRoot = this.roomRoot(channelId);
-    const config = this.roomBodyConfig(workspaceRoot);
+    // The thin harness path relies on this isolated home for its managed
+    // using-beeline reference and any explicitly shared skills.
+    const config = this.roomBodyConfig(workspaceRoot, true);
     const startedAt = this.now();
     const turnLoop = new MonolithRoomTurnLoop({
       roomId: channelId,

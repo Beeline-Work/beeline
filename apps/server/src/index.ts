@@ -82,7 +82,7 @@ async function main() {
     : undefined;
   const pushSender =
     process.env.PUSH_DELIVERY_ENABLED === 'true'
-      ? createFirebasePushSender(process.env.GOOGLE_CLOUD_PROJECT)
+      ? await createFirebasePushSender(process.env)
       : undefined;
   const push = pushSender ? new PushDeliveryLoop(database, pushSender) : undefined;
   const schedules = new AgentScheduleLoop(database, (roomId) =>

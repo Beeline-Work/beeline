@@ -23,6 +23,7 @@ import { KeyboardAvoidingView, useKeyboardState } from 'react-native-keyboard-co
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useNavigation, router, type Href } from 'expo-router';
 import { loadBuzzIdentity, getEffectiveRelayUrl } from '@/auth/buzz-identity-storage';
+import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import {
   githubInstallationRedirectUri,
   githubRepositoryRefreshFeedback,
@@ -3534,6 +3535,29 @@ export default function BuzzChat() {
                 </Text>
               </View>
             </View>
+          )}
+          {canRenameRoom(viewerChannelRole) && getBuzzRuntimeConfig().monolithEnabled && (
+            <TouchableOpacity
+              accessibilityLabel={`Manage ${ROOM_LABEL} schedules`}
+              accessibilityRole="button"
+              onPress={() => {
+                setRoomActionsVisible(false);
+                router.push({
+                  pathname: '/beeline/settings/schedules',
+                  params: { roomId: decodedId, workspaceId: activeCommunityId },
+                } as unknown as Href);
+              }}
+              style={styles.roomRenameAction}
+              testID="room-schedules-action"
+            >
+              <View style={styles.roomLifecycleCopy}>
+                <Text style={styles.roomLifecycleTitle}>SCHEDULES</Text>
+                <Text style={styles.roomLifecycleHint}>
+                  Mention an Agent automatically on a cron or interval.
+                </Text>
+              </View>
+              <Text style={styles.roomLifecycleGlyph}>◷</Text>
+            </TouchableOpacity>
           )}
           {lifecycleAction === 'delete' ? (
             <TouchableOpacity

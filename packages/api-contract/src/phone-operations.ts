@@ -8,6 +8,9 @@ import type {
 export type PhoneOperationMap = {
   sendRoomMessage: { input: SendRoomMessageInput; output: MessageWriteResult };
   sendRoomReply: { input: SendRoomReplyInput; output: MessageWriteResult };
+  createRoomSchedule: { input: CreateRoomScheduleInput; output: RoomScheduleView };
+  listRoomSchedules: { input: RoomInput; output: RoomScheduleListResult };
+  deleteRoomSchedule: { input: DeleteRoomScheduleInput; output: void };
   decideWritePermission: { input: DecideWritePermissionInput; output: MessageWriteResult };
   createWorkspace: { input: NamedWorkspaceInput; output: IdResult };
   updateWorkspace: { input: UpdateWorkspaceInput; output: void };
@@ -68,6 +71,28 @@ export type IdResult = { readonly id: string };
 export type MembershipResult = { readonly joined: boolean };
 export type InviteMembershipResult = MembershipResult & { readonly workspaceId: string };
 export type MessageWriteResult = { readonly messageId: string };
+export type RoomScheduleCadence =
+  | { readonly kind: 'cron'; readonly expression: string; readonly timeZone?: string }
+  | { readonly kind: 'interval'; readonly everyMinutes: number; readonly startsAt?: number };
+export type RoomScheduleView = {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly roomId: string;
+  readonly agentId: string;
+  readonly creatorId: string;
+  readonly cadence: RoomScheduleCadence;
+  readonly message: string;
+  readonly nextRunAt: number;
+  readonly createdAt: number;
+};
+export type CreateRoomScheduleInput = RoomInput & {
+  readonly workspaceId: string;
+  readonly agentId: string;
+  readonly cadence: RoomScheduleCadence;
+  readonly message: string;
+};
+export type RoomScheduleListResult = { readonly schedules: readonly RoomScheduleView[] };
+export type DeleteRoomScheduleInput = RoomInput & { readonly scheduleId: string };
 export type SendRoomMessageInput = RoomInput & {
   /** Client-generated retry/optimistic identity. Random 32-byte hex. */
   readonly messageId?: string;

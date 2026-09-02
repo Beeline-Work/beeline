@@ -409,6 +409,29 @@ CREATE TABLE IF NOT EXISTS schedule_receipts (
   PRIMARY KEY (schedule_id, occurrence_id)
 );
 
+CREATE TABLE IF NOT EXISTS agent_schedules (
+  id uuid PRIMARY KEY,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  agent_id text NOT NULL REFERENCES identities(id),
+  creator_id text NOT NULL REFERENCES identities(id),
+  cadence jsonb NOT NULL,
+  message text NOT NULL CHECK (length(trim(message)) > 0),
+  next_run_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS agent_schedules_due_idx ON agent_schedules(next_run_at, id);
+CREATE INDEX IF NOT EXISTS agent_schedules_room_idx ON agent_schedules(room_id, created_at, id);
+
+CREATE TABLE IF NOT EXISTS agent_schedule_occurrences (
+  schedule_id uuid NOT NULL REFERENCES agent_schedules(id) ON DELETE CASCADE,
+  scheduled_for timestamptz NOT NULL,
+  message_id text NOT NULL UNIQUE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (schedule_id, scheduled_for)
+);
+
 CREATE TABLE IF NOT EXISTS agent_mandates (
   agent_id text NOT NULL REFERENCES identities(id),
   room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,

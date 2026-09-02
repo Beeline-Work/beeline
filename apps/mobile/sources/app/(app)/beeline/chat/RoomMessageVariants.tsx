@@ -304,10 +304,11 @@ export const DaemonFactCard = React.memo(function DaemonFactCard({
 }: DaemonFactCardProps) {
   const fact = message.daemonFact!;
   const agent = message.authorIdentity?.kind === 'agent' ? message.authorIdentity.name : undefined;
+  const landedCorner = fact.type === 'corner-complete' && fact.outcome === 'landed';
   const body =
     fact.type === 'corner-complete'
-      ? fact.outcome === 'landed'
-        ? `LANDED${agent ? ` · ${agent}` : ''}${fact.pullRequest ? ` · PR #${fact.pullRequest.number ?? ''} ${fact.pullRequest.url}` : ''}`
+      ? landedCorner
+        ? `MERGED${agent ? ` · ${agent}` : ''}\n${fact.objective}`
         : 'ABANDONED · Remote branch deleted'
       : fact.type === 'checks-failing'
         ? `CHECKS FAILING${fact.pullRequest ? ` · PR #${fact.pullRequest.number ?? ''}` : ''}`
@@ -316,10 +317,18 @@ export const DaemonFactCard = React.memo(function DaemonFactCard({
           : 'WORKTREE CLEANED';
   return (
     <RepositoryFactCard
-      title={fact.type === 'corner-open' ? fact.name! : fact.objective}
+      title={
+        landedCorner
+          ? `MERGED · ${fact.name ?? 'CORNER'}`
+          : fact.type === 'corner-open'
+            ? fact.name!
+            : fact.objective
+      }
       body={body}
       actionLabel={
-        fact.type === 'corner-complete' && fact.pullRequest ? 'VIEW PR ↗' : 'OPEN CORNER →'
+        fact.type === 'corner-complete' && fact.pullRequest
+          ? `VIEW PR: ${fact.pullRequest.title ?? 'PULL REQUEST'} ↗`
+          : 'OPEN CORNER →'
       }
       onPress={() =>
         fact.type === 'corner-complete' && fact.pullRequest
@@ -332,7 +341,7 @@ export const DaemonFactCard = React.memo(function DaemonFactCard({
             onSecondaryPress: () => onOpenCorner(fact.cornerId),
           }
         : {})}
-      testID={`daemon-fact-card-${fact.type}`}
+      testID={landedCorner ? 'corner-summary-card' : `daemon-fact-card-${fact.type}`}
     />
   );
 });

@@ -289,6 +289,8 @@ export class RoomRuntimeCoordinator {
    */
   private readonly relaySocket?: SharedRelaySocket;
   private readonly daemonApi?: DaemonApiClient;
+  /** Parent ownership retained so a failed corner listing never authorizes removal. */
+  private readonly monolithCornerParents = new Map<string, string>();
   private readonly repositoryTruth: RepositoryTruthResolver;
   private readonly githubApp: GitHubAppRuntime | undefined;
   private readonly namedRepositoryResolutions = new Map<string, Promise<BoundRepo>>();
@@ -870,9 +872,37 @@ export class RoomRuntimeCoordinator {
       return 'not-member';
     }
     this.workspaceRemovalConfirmations = 0;
-    const desired = new Map(
-      bootstrap.rooms.filter((room) => !room.archived).map((room) => [room.roomId, room] as const),
-    );
+    const topLevelRooms = bootstrap.rooms.filter((room) => !room.archived);
+    const desired = new Map(topLevelRooms.map((room) => [room.roomId, room] as const));
+    await mapWithConcurrency(topLevelRooms, ROOM_JOIN_CONCURRENCY, async (room) => {
+      try {
+        const result = await this.daemonApi!.execute('listRoomCorners', {
+          roomId: room.roomId,
+        });
+        for (const corner of result.corners) {
+          this.monolithCornerParents.set(corner.cornerId, room.roomId);
+          if (!corner.archived) {
+            desired.set(corner.cornerId, {
+              roomId: corner.cornerId,
+              archived: false,
+            });
+          }
+        }
+      } catch (error) {
+        // A failed corner read is uncertainty, never evidence that every
+        // running corner vanished. Keep the last successful parent mapping
+        // and retry on the next reconciliation heartbeat.
+        for (const [cornerId, parentRoomId] of this.monolithCornerParents) {
+          if (parentRoomId === room.roomId && this.running.has(cornerId)) {
+            desired.set(cornerId, { roomId: cornerId, archived: false });
+          }
+        }
+        console.error(
+          `[thin-core] monolith Room ${room.roomId} corner listing failed; keeping known corners:`,
+          error,
+        );
+      }
+    });
     for (const channelId of desired.keys()) this.roomRemovalConfirmations.delete(channelId);
     for (const [channelId, running] of [...this.running]) {
       if (desired.has(channelId)) continue;

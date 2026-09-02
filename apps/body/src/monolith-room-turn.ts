@@ -25,6 +25,16 @@ import type { BoundRepo, RoomEditPolicy } from './body.js';
 
 type WorkspaceRoster = DaemonOperationMap['getWorkspaceRoster']['output'];
 type RoomMessage = DaemonOperationMap['getRoomInbox']['output']['items'][number];
+type HumanMessage = Pick<RoomMessage, 'id' | 'authorId' | 'body' | 'createdAt' | 'attachments'>;
+
+interface ActiveTurn {
+  item: HumanMessage;
+  steers: HumanMessage[];
+  steerTail: Promise<void>;
+  resumeRequested: boolean;
+  phase: 'prompting' | 'finishing';
+  promise: Promise<void>;
+}
 
 export interface MonolithRoomTurnHealth {
   poll(): void;
@@ -60,6 +70,8 @@ export class MonolithRoomTurnLoop {
   private busy = false;
   private turnInstructionPrefix = '';
   private draftTail = Promise.resolve();
+  private activeTurn?: ActiveTurn;
+  private readonly queuedTurns: HumanMessage[] = [];
 
   constructor(private readonly options: MonolithRoomTurnOptions) {
     this.agent = runtimeIdentity(options.runtime.agent);
@@ -228,13 +240,57 @@ export class MonolithRoomTurnLoop {
     };
   }
 
-  private async prompt(item: {
-    id: string;
-    authorId: string;
-    body: string;
-    createdAt: number;
-    attachments: RoomMessage['attachments'];
-  }): Promise<void> {
+  private startPrompt(item: HumanMessage): void {
+    const active: ActiveTurn = {
+      item,
+      steers: [],
+      steerTail: Promise.resolve(),
+      resumeRequested: false,
+      phase: 'prompting',
+      promise: Promise.resolve(),
+    };
+    this.activeTurn = active;
+    active.promise = this.prompt(active)
+      .catch((error) => {
+        this.options.health.failure(1_000);
+        console.error(`[thin-core] monolith Room ${this.options.roomId} turn failed:`, error);
+      })
+      .finally(() => {
+        if (this.activeTurn === active) this.activeTurn = undefined;
+      });
+  }
+
+  private steer(active: ActiveTurn, item: HumanMessage): void {
+    active.steers.push(item);
+    active.steerTail = active.steerTail
+      .catch(() => undefined)
+      .then(async () => {
+        try {
+          const roster = await this.roster();
+          const author =
+            roster.members.find((member) => member.identityId === item.authorId)?.name ??
+            item.authorId.slice(0, 12);
+          await this.client!.sessionSteer(
+            this.sessionId!,
+            [
+              `Human steer received while the current turn is running from ${author}:`,
+              roomMessagePrompt('', item.body, item.attachments),
+              'Adjust the current work now. Keep the original request and earlier messages as context.',
+            ].join('\n\n'),
+          );
+        } catch (error) {
+          active.resumeRequested = true;
+          this.client?.sessionCancel(this.sessionId!);
+          console.warn(
+            `[thin-core] monolith Room ${this.options.roomId} live steer unavailable; cancelling and resuming:`,
+            error,
+          );
+        }
+      });
+  }
+
+  private async prompt(active: ActiveTurn): Promise<void> {
+    const { item } = active;
     const api = this.options.api;
     // Admission is busy before the first awaited receipt write. The updater
     // cannot observe an accepted/queued turn as idle in this window.
@@ -263,7 +319,12 @@ export class MonolithRoomTurnLoop {
           ]);
           const names = new Map(roster.members.map((member) => [member.identityId, member.name]));
           const transcript = conversation.items
-            .filter((message) => message.type === 'message' && message.id !== item.id)
+            .filter(
+              (message) =>
+                message.type === 'message' &&
+                message.id !== item.id &&
+                !active.steers.some((steerItem) => steerItem.id === message.id),
+            )
             .slice(-80)
             .map((message) =>
               roomMessagePrompt(
@@ -283,34 +344,65 @@ export class MonolithRoomTurnLoop {
             .filter(Boolean)
             .join('\n\n');
           const sessionId = this.sessionId!;
-          let latestDraft = '';
-          const result = await this.client!.sessionPrompt(
-            sessionId,
-            prompt,
-            120_000,
-            (_delta, full) => {
-              latestDraft = full;
-              this.draftTail = this.draftTail
-                .catch(() => undefined)
-                .then(() =>
-                  api.execute('postAgentDraft', {
-                    agentId: this.agent.publicKey,
-                    roomId: this.options.roomId,
-                    turnId: `${this.agent.publicKey}:${this.options.roomId}`,
-                    text: latestDraft,
-                  }),
-                )
-                .then(() => undefined)
-                .catch((error) =>
-                  console.error(
-                    `[thin-core] monolith Room ${this.options.roomId} draft publish failed:`,
-                    error,
-                  ),
-                );
-            },
-          );
+          let nextPrompt = prompt;
+          let result: Awaited<ReturnType<AcpClient['sessionPrompt']>> | undefined;
+          for (;;) {
+            let promptError: unknown;
+            try {
+              let latestDraft = '';
+              result = await this.client!.sessionPrompt(
+                sessionId,
+                nextPrompt,
+                120_000,
+                (_delta, full) => {
+                  latestDraft = full;
+                  this.draftTail = this.draftTail
+                    .catch(() => undefined)
+                    .then(() =>
+                      api.execute('postAgentDraft', {
+                        agentId: this.agent.publicKey,
+                        roomId: this.options.roomId,
+                        turnId: `${this.agent.publicKey}:${this.options.roomId}`,
+                        text: latestDraft,
+                      }),
+                    )
+                    .then(() => undefined)
+                    .catch((error) =>
+                      console.error(
+                        `[thin-core] monolith Room ${this.options.roomId} draft publish failed:`,
+                        error,
+                      ),
+                    );
+                },
+              );
+            } catch (error) {
+              promptError = error;
+            }
+            const settledSteerTail = active.steerTail;
+            await settledSteerTail;
+            if (settledSteerTail !== active.steerTail) continue;
+            if (!active.resumeRequested) {
+              if (promptError) throw promptError;
+              break;
+            }
+            active.resumeRequested = false;
+            nextPrompt = [
+              'The previous run was cancelled because its harness could not accept every live steer.',
+              'Resume the same turn. Keep the original request and everything that happened before it was cancelled.',
+              'Human messages that arrived after the original request, in transcript order:',
+              ...active.steers.map((steerItem) =>
+                roomMessagePrompt(
+                  steerItem.authorId.slice(0, 12),
+                  steerItem.body,
+                  steerItem.attachments,
+                ),
+              ),
+              'Continue now and answer the updated request without erasing the earlier context.',
+            ].join('\n\n');
+          }
+          active.phase = 'finishing';
           await this.draftTail;
-          const reply = stripAgentReplyPreamble(result.agentText).trim();
+          const reply = stripAgentReplyPreamble(result!.agentText).trim();
           if (!reply) throw new Error('ACP turn produced no durable Room reply');
           await api.execute('postRoomMessage', {
             roomId: this.options.roomId,
@@ -379,6 +471,9 @@ export class MonolithRoomTurnLoop {
       cursor = (await api.execute('getRoomInbox', { roomId, startAtLatest: true })).cursor;
       while (!signal?.aborted) {
         try {
+          if (!this.activeTurn && this.queuedTurns.length) {
+            this.startPrompt(this.queuedTurns.shift()!);
+          }
           const inbox = await api.execute('getRoomInbox', {
             roomId,
             ...(cursor ? { after: cursor } : {}),
@@ -400,7 +495,10 @@ export class MonolithRoomTurnLoop {
             if (!(await this.currentPrincipalCanDrive(this.options.workspaceId, item.authorId))) {
               continue;
             }
-            await this.prompt(item);
+            const active = this.activeTurn;
+            if (!active) this.startPrompt(item);
+            else if (active.phase === 'prompting') this.steer(active, item);
+            else this.queuedTurns.push(item);
           }
           cursor = inbox.cursor ?? cursor;
           this.options.health.poll();
@@ -414,6 +512,10 @@ export class MonolithRoomTurnLoop {
       }
     } finally {
       clearInterval(heartbeat);
+      if (this.activeTurn?.phase === 'prompting' && this.client && this.sessionId) {
+        this.client.sessionCancel(this.sessionId);
+      }
+      await this.activeTurn?.promise;
       await postPresence('offline').catch((error) =>
         console.error(`[thin-core] monolith Room ${roomId} offline presence failed:`, error),
       );

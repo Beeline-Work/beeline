@@ -280,14 +280,28 @@ describe('daemon API client against the local monolith', () => {
     const harnessTurn = new Promise<void>((resolveTurn) => {
       finishHarnessTurn = resolveTurn;
     });
+    let promptCount = 0;
     const sessionPrompt = vi.spyOn(acp, 'sessionPrompt').mockImplementation(async () => {
-      await harnessTurn;
+      promptCount += 1;
+      if (promptCount === 1) await harnessTurn;
       return {
         stopReason: 'end_turn',
         updates: [],
-        agentText: 'I am Terra, Vishnu, destroyer of worlds; I see the image you entrusted to me.',
+        agentText:
+          promptCount === 1
+            ? 'This cancelled answer must not be published.'
+            : 'Course changed: I will focus only on the latest human steer.',
         toolCalls: [],
       };
+    });
+    const sessionSteer = vi.spyOn(acp, 'sessionSteer').mockImplementation(async () => {
+      if (sessionSteer.mock.calls.length === 1) {
+        return { runId: 'run-original', messageId: 'steer-1' };
+      }
+      throw new Error('harness cannot accept another live steer');
+    });
+    const sessionCancel = vi.spyOn(acp, 'sessionCancel').mockImplementation(() => {
+      finishHarnessTurn();
     });
     const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
     const abort = new AbortController();
@@ -329,7 +343,7 @@ describe('daemon API client against the local monolith', () => {
         'sendRoomMessage',
         {
           roomId: ROOM,
-          messageId: 'e'.repeat(64),
+          messageId: '1'.repeat(64),
           text: '@bee introduce yourself',
           mentions: [AGENT],
           attachments: [
@@ -358,6 +372,41 @@ describe('daemon API client against the local monolith', () => {
       expect(turnLoop.isBusy()).toBe(true);
       await turnLoop.prepareForForcedUpdateRestart();
       expect(turnLoop.isBusy()).toBe(true);
+      const steer = await phone.execute(
+        'sendRoomMessage',
+        {
+          roomId: ROOM,
+          messageId: '2'.repeat(64),
+          text: 'Change course and focus only on this steer.',
+          mentions: [],
+        },
+        HUMAN,
+      );
+      await vi.waitFor(() => expect(sessionSteer).toHaveBeenCalledTimes(1), { timeout: 3_000 });
+      expect(sessionSteer.mock.calls[0]?.[1]).toContain(
+        'Change course and focus only on this steer.',
+      );
+      const fallbackSteer = await phone.execute(
+        'sendRoomMessage',
+        {
+          roomId: ROOM,
+          messageId: '3'.repeat(64),
+          text: 'Ignore the introduction and report only the steering result.',
+          mentions: [],
+        },
+        HUMAN,
+      );
+      await vi.waitFor(() => expect(sessionSteer).toHaveBeenCalledTimes(2), { timeout: 3_000 });
+      await vi.waitFor(() => expect(sessionPrompt).toHaveBeenCalledTimes(2), { timeout: 3_000 });
+      expect(sessionCancel).toHaveBeenCalledTimes(1);
+      const resumePrompt = sessionPrompt.mock.calls[1]?.[1] ?? '';
+      expect(resumePrompt).toContain('Change course and focus only on this steer.');
+      expect(resumePrompt).toContain(
+        'Ignore the introduction and report only the steering result.',
+      );
+      expect(resumePrompt.indexOf('Change course')).toBeLessThan(
+        resumePrompt.indexOf('Ignore the introduction'),
+      );
       await expect(
         readFile(
           join(supervisorRoot, 'agent-home', 'codex', 'skills', 'using-beeline', 'SKILL.md'),
@@ -372,12 +421,30 @@ describe('daemon API client against the local monolith', () => {
             expect.objectContaining({
               author: expect.objectContaining({ pubkey: AGENT }),
               requestId: sent.messageId,
-              text: 'I am Terra, Vishnu, destroyer of worlds; I see the image you entrusted to me.',
+              text: 'Course changed: I will focus only on the latest human steer.',
             }),
           );
         },
         { timeout: 3_000 },
       );
+      const visible = await phone.readRoom(ROOM, HUMAN);
+      expect(
+        visible?.messages
+          .filter(
+            (message) =>
+              message.id === sent.messageId ||
+              message.id === steer.messageId ||
+              message.id === fallbackSteer.messageId,
+          )
+          .map((message) => ({ id: message.id, text: message.text })),
+      ).toEqual([
+        { id: sent.messageId, text: '@bee introduce yourself' },
+        { id: steer.messageId, text: 'Change course and focus only on this steer.' },
+        {
+          id: fallbackSteer.messageId,
+          text: 'Ignore the introduction and report only the steering result.',
+        },
+      ]);
       await vi.waitFor(async () => {
         expect(turnLoop.isBusy()).toBe(false);
         expect(
@@ -403,7 +470,7 @@ describe('daemon API client against the local monolith', () => {
   }, 15_000);
 
   it.skipIf(process.env.BEELINE_REAL_THIN_PROOF !== '1')(
-    'proves soul, image, skill, and clean update drain through a real thin daemon and harness',
+    'proves live steering and clean update drain through a real thin daemon and harness',
     async () => {
       const agentCommand = process.env.BEELINE_REAL_AGENT_COMMAND;
       const readonlyMcpCommand = process.env.BEELINE_REAL_READONLY_MCP_COMMAND;
@@ -422,6 +489,12 @@ describe('daemon API client against the local monolith', () => {
       });
       const token = (await exchanged.json()) as { daemonToken: string };
       const client = new DaemonApiClient(origin, token.daemonToken, AGENT);
+      const corner = await client.execute('createCorner', {
+        roomId: ROOM,
+        requestId: 'a'.repeat(64),
+        name: 'Live steering proof',
+        task: 'Prove live steering reaches a running corner harness session.',
+      });
       const configPath = join(supervisorRoot, 'runtime.json');
       const runtime: AgentRuntimeRecord = {
         version: 2,
@@ -475,7 +548,11 @@ describe('daemon API client against the local monolith', () => {
       const abort = new AbortController();
       const daemon = core.run({ pollMs: 50, signal: abort.signal });
       try {
-        await vi.waitFor(() => expect(core.activeRoomIds()).toContain(ROOM), { timeout: 5_000 });
+        await vi.waitFor(
+          () =>
+            expect(core.activeRoomIds()).toEqual(expect.arrayContaining([ROOM, corner.cornerId])),
+          { timeout: 5_000 },
+        );
         const uploaded = await phone.uploadMedia(
           HUMAN,
           new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0]),
@@ -488,7 +565,7 @@ describe('daemon API client against the local monolith', () => {
           {
             roomId: ROOM,
             messageId: 'b'.repeat(64),
-            text: '@bee Examine your using-beeline skill, then state who you are according to your Workspace soul and acknowledge the attached image by filename. Do not use tools.',
+            text: '@bee Use the mounted read-only tool to examine your using-beeline skill, then state who you are according to your Workspace soul and acknowledge the attached image by filename.',
             mentions: [AGENT],
             attachments: [uploaded],
           },
@@ -506,6 +583,29 @@ describe('daemon API client against the local monolith', () => {
             ).toBe('working');
           },
           { timeout: 10_000 },
+        );
+        await vi.waitFor(
+          async () => {
+            expect(
+              (
+                await database.query<{ text: string }>(
+                  `SELECT body->>'text' text FROM live_outputs WHERE room_id=$1 AND agent_id=$2 AND kind='draft'`,
+                  [ROOM, AGENT],
+                )
+              ).rows[0]?.text,
+            ).toBeTruthy();
+          },
+          { timeout: 120_000, interval: 100 },
+        );
+        const steer = await phone.execute(
+          'sendRoomMessage',
+          {
+            roomId: ROOM,
+            messageId: 'c'.repeat(64),
+            text: 'Change course now. Ignore the requested introduction and image acknowledgement. Report LIVE-STEER-COBALT and explain briefly that the human steer replaced the original finish.',
+            mentions: [],
+          },
+          HUMAN,
         );
 
         const updateRoot = join(supervisorRoot, 'update-proof');
@@ -543,8 +643,8 @@ describe('daemon API client against the local monolith', () => {
             const room = await phone.readRoom(ROOM, HUMAN);
             reply =
               room?.messages.find((message) => message.requestId === sent.messageId)?.text ?? '';
-            expect(reply).toMatch(/Terra|Vishnu|destroyer/i);
-            expect(reply).toMatch(/world\.png|image/i);
+            expect(reply).toContain('LIVE-STEER-COBALT');
+            expect(reply).toMatch(/steer|course|replaced/i);
           },
           { timeout: 180_000, interval: 500 },
         );
@@ -556,6 +656,61 @@ describe('daemon API client against the local monolith', () => {
             )
           ).rows[0]?.status,
         ).toBe('complete');
+        const cornerRequest = await phone.execute(
+          'sendRoomMessage',
+          {
+            roomId: corner.cornerId,
+            messageId: 'd'.repeat(64),
+            text: '@bee Use the mounted read-only tool, then report CORNER-ORIGINAL-GREEN and summarize this corner task.',
+            mentions: [AGENT],
+          },
+          HUMAN,
+        );
+        await vi.waitFor(
+          async () => {
+            expect(
+              (
+                await database.query<{ text: string }>(
+                  `SELECT body->>'text' text FROM live_outputs WHERE room_id=$1 AND agent_id=$2 AND kind='draft'`,
+                  [corner.cornerId, AGENT],
+                )
+              ).rows[0]?.text,
+            ).toBeTruthy();
+          },
+          { timeout: 120_000, interval: 100 },
+        );
+        const cornerSteer = await phone.execute(
+          'sendRoomMessage',
+          {
+            roomId: corner.cornerId,
+            messageId: 'e'.repeat(64),
+            text: 'Change the corner work now. Do not report the green marker. Report CORNER-STEER-AMBER and say the corner steer replaced it.',
+            mentions: [],
+          },
+          HUMAN,
+        );
+        let cornerReply = '';
+        await vi.waitFor(
+          async () => {
+            const room = await phone.readRoom(corner.cornerId, HUMAN);
+            cornerReply =
+              room?.messages.find((message) => message.requestId === cornerRequest.messageId)
+                ?.text ?? '';
+            expect(cornerReply).toContain('CORNER-STEER-AMBER');
+            expect(cornerReply).not.toContain('CORNER-ORIGINAL-GREEN');
+          },
+          { timeout: 180_000, interval: 500 },
+        );
+        const cornerTranscript = (await phone.readRoom(corner.cornerId, HUMAN))?.messages
+          .filter(
+            (message) =>
+              message.id === cornerRequest.messageId || message.id === cornerSteer.messageId,
+          )
+          .map((message) => message.text);
+        expect(cornerTranscript).toEqual([
+          '@bee Use the mounted read-only tool, then report CORNER-ORIGINAL-GREEN and summarize this corner task.',
+          'Change the corner work now. Do not report the green marker. Report CORNER-STEER-AMBER and say the corner steer replaced it.',
+        ]);
         expect(
           await coordinateManagedUpdateHandoff(
             update,
@@ -575,8 +730,15 @@ describe('daemon API client against the local monolith', () => {
             )
           ).rows[0]?.count,
         ).toBe('0');
+        const transcript = (await phone.readRoom(ROOM, HUMAN))?.messages
+          .filter((message) => message.id === sent.messageId || message.id === steer.messageId)
+          .map((message) => message.text);
+        expect(transcript).toEqual([
+          '@bee Use the mounted read-only tool to examine your using-beeline skill, then state who you are according to your Workspace soul and acknowledge the attached image by filename.',
+          'Change course now. Ignore the requested introduction and image acknowledgement. Report LIVE-STEER-COBALT and explain briefly that the human steer replaced the original finish.',
+        ]);
         console.log(
-          `[real-thin-proof] request=${sent.messageId} reply=${JSON.stringify(reply)} update=old->new receipt=complete`,
+          `[real-thin-steering-proof] roomTranscript=${JSON.stringify(transcript)} roomReply=${JSON.stringify(reply)} cornerTranscript=${JSON.stringify(cornerTranscript)} cornerReply=${JSON.stringify(cornerReply)} update=old->new receipts=complete`,
         );
       } finally {
         abort.abort();

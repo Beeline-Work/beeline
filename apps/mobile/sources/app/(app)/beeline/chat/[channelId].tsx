@@ -437,7 +437,6 @@ export default function BuzzChat() {
   // receipt (relay round trip + pickup + publish + refetch). See
   // `selectComposerAckState`.
   const [pendingAck, setPendingAck] = useState<{ sentAt: number; requestId?: string } | null>(null);
-  const [composerAckNow, setComposerAckNow] = useState(() => Date.now());
   const cacheViewerPubkey = userPubkey;
   const isArchived = roomSurface?.room.archived ?? false;
   const parentChannelId = roomSurface?.parent?.id ?? routeParentChannelId;
@@ -1440,14 +1439,14 @@ export default function BuzzChat() {
   }, [agentTurnMarkers, pendingAck]);
 
   // A single deadline-scheduled timer (never a ticking interval — see the
-  // presence clock above) so the composer flips from "sending…" to the
-  // honest "waiting on agent" the instant the bound elapses, not on
-  // whatever unrelated re-render happens to follow.
+  // presence clock above) clears the purely local acknowledgement. If no
+  // receipt arrives, silence is not evidence that an agent is waiting; a
+  // later server-indexed WORKING receipt can independently light `thinking`.
   useEffect(() => {
     if (!pendingAck) return;
     const deadline = pendingAck.sentAt + COMPOSER_ACK_BOUND_MS;
     const delay = Math.max(1, deadline - Date.now() + 1);
-    const timer = setTimeout(() => setComposerAckNow(Date.now()), delay);
+    const timer = setTimeout(() => setPendingAck(null), delay);
     return () => clearTimeout(timer);
   }, [pendingAck]);
 
@@ -1464,29 +1463,21 @@ export default function BuzzChat() {
    *
    * Before that receipt exists, `pendingAck` (armed the instant a
    * message addressed to an agent is sent — see `handleSend`) fills the dead
-   * air with an immediate local "sending…"; past `COMPOSER_ACK_BOUND_MS` with
-   * still no receipt it becomes an honest "waiting on agent" rather than
-   * silently disappearing or lying about a turn that hasn't started.
+   * air with an immediate local "sending…". Past `COMPOSER_ACK_BOUND_MS` with
+   * still no receipt it expires; only a genuine server-indexed WORKING receipt
+   * may show that an agent is thinking.
    */
-  const composerAck = useMemo((): { label: string; tone: 'live' | 'quiet' } | null => {
+  const composerAck = useMemo((): { label: string } | null => {
     return selectComposerAckPresentation({
       isCorner,
       agentsOffline,
       ...(activeAgentTurn?.agentPubkey ? { activeTurnPubkey: activeAgentTurn.agentPubkey } : {}),
       ...(pendingAck ? { pendingAckSentAt: pendingAck.sentAt } : {}),
-      now: composerAckNow,
+      now: pendingAck?.sentAt ?? Date.now(),
       conversationIdentities,
       agentsByPubkey: agentByPubkey,
     });
-  }, [
-    activeAgentTurn,
-    agentByPubkey,
-    agentsOffline,
-    composerAckNow,
-    conversationIdentities,
-    isCorner,
-    pendingAck,
-  ]);
+  }, [activeAgentTurn, agentByPubkey, agentsOffline, conversationIdentities, isCorner, pendingAck]);
 
   useEffect(() => {
     // Presence only changes at a lease/dormancy deadline. A five-second clock here
@@ -3272,11 +3263,7 @@ export default function BuzzChat() {
                 growing multiline field then takes room from the transcript,
                 never from the only live progress signal. */}
             {!isArchived && composerAck && (
-              <TurnProgressLine
-                label={composerAck.label}
-                testID="turn-progress-line"
-                tone={composerAck.tone}
-              />
+              <TurnProgressLine label={composerAck.label} testID="turn-progress-line" />
             )}
             <View style={[styles.composer, composerFocused && styles.composerFocused]}>
               <TouchableOpacity

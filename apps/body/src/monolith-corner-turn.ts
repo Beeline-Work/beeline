@@ -174,7 +174,7 @@ export class MonolithCornerTurnLoop {
           : '',
         `You are in an isolated git worktree on ${this.options.featureBranch}, targeting ${this.options.targetBranch}.`,
         'Work normally with the full coding tools. Commit and push only this feature branch. Use gh to open its pull request.',
-        'As soon as a pull request exists, print its full GitHub URL in the corner and stop. Humans need that review window.',
+        'PR-opening turn rule: as soon as a pull request exists, print its full GitHub URL as your final response and end the turn immediately. Do not call pr_checks_status in that same turn and do not wait for checks inside it. Humans need the durable review window before any merge turn.',
         'Never merge because local tests pass or because gh reports passing checks. Merge only after a server-posted checks-passed note appears in this corner AND beeline-agent pr_checks_status returns checks="passed" and held=false.',
         'If any human in this corner says hold or do not merge, do not merge until a later human explicitly resumes it.',
         'After the checks-passed fact and no hold, merge the pull request yourself with gh. Do not wait for a separate human merge command.',
@@ -329,8 +329,8 @@ export class MonolithCornerTurnLoop {
             limit: 200,
           });
           for (const item of inbox.items) {
-            if (item.authorId === this.agent.publicKey) continue;
             if (item.type === 'message') {
+              if (item.authorId === this.agent.publicKey) continue;
               const authority = await api.execute('getRoomAuthority', {
                 roomId: cornerId,
                 principalId: item.authorId,

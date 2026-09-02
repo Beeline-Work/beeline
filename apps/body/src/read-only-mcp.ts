@@ -211,16 +211,17 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'open_corner',
     description:
-      'Open one write-enabled repository corner for a concrete task. The host creates the branch, isolated worktree, scoped GitHub credentials, and corner session.',
+      'Open one write-enabled repository corner with a fixed task summary. The host creates the branch, isolated worktree, scoped GitHub credentials, and corner session.',
     inputSchema: {
       type: 'object',
-      required: ['task'],
+      required: ['summary'],
       properties: {
-        task: {
+        summary: {
           type: 'string',
           minLength: 1,
           maxLength: 2000,
-          description: 'The complete objective the corner agent should carry out.',
+          description:
+            'One paragraph stating the complete, fixed objective the corner agent should carry out.',
         },
       },
       additionalProperties: false,
@@ -736,21 +737,19 @@ async function daemonExecute(name: string, input: JsonObject): Promise<JsonObjec
   return (await response.json()) as JsonObject;
 }
 
-function taskName(task: string): string {
-  return task
-    .split(/\r?\n/, 1)[0]!
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 80) || 'Repository task';
+function taskName(summary: string): string {
+  return (
+    summary.split(/\r?\n/, 1)[0]!.replace(/\s+/g, ' ').trim().slice(0, 80) || 'Repository task'
+  );
 }
 
 async function openCorner(args: JsonObject): Promise<string> {
   if (process.env.BEELINE_DAEMON_CORNER_ID) {
     throw new Error('open_corner is available only in a top-level Room');
   }
-  const task = stringArg(args, 'task')?.trim();
-  if (!task) throw new Error('task must be a non-empty string');
-  if (task.length > 2000) throw new Error('task exceeds 2000 characters');
+  const summary = stringArg(args, 'summary')?.replace(/\s+/g, ' ').trim();
+  if (!summary) throw new Error('summary must be a non-empty string');
+  if (summary.length > 2000) throw new Error('summary exceeds 2000 characters');
   const roomId = requiredEnv('BEELINE_DAEMON_ROOM_ID');
   const repository = await daemonExecute('getRoomRepositoryState', { roomId });
   if (
@@ -764,8 +763,8 @@ async function openCorner(args: JsonObject): Promise<string> {
   const created = await daemonExecute('createCorner', {
     roomId,
     requestId,
-    name: taskName(task),
-    task,
+    name: taskName(summary),
+    summary,
     repository: repository.key,
     ...(typeof repository.targetBranch === 'string'
       ? { targetBranch: repository.targetBranch }
@@ -777,12 +776,12 @@ async function openCorner(args: JsonObject): Promise<string> {
   await daemonExecute('postRoomMessage', {
     roomId: created.cornerId,
     requestId,
-    text: task,
+    text: summary,
     presentation: 'message',
   });
   return JSON.stringify({
     cornerId: created.cornerId,
-    objective: task,
+    objective: summary,
     status: 'starting',
   });
 }
@@ -829,8 +828,12 @@ async function prChecksStatus(): Promise<string> {
     held,
     archived: authority.archived === true,
     ...(pullRequest ? { pullRequest } : {}),
-    rule:
-      'Merge only when checks is passed and held is false. A local or gh checks result is not authorization.',
+    ...(!pullRequest
+      ? {
+          next: 'The PR URL is not yet durable in the corner. Print its full URL as your final response and end this turn now; do not call pr_checks_status again in this turn.',
+        }
+      : {}),
+    rule: 'Merge only when checks is passed and held is false. A local or gh checks result is not authorization.',
   });
 }
 

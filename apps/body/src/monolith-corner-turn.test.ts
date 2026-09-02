@@ -63,6 +63,7 @@ describe('thin monolith corner turn', () => {
     const abort = new AbortController();
     const writes: Array<{ name: string; input: Record<string, unknown> }> = [];
     let conversationReads = 0;
+    let inboxReads = 0;
     const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
       if (name === 'getAgentConfiguration') return { commands: [] };
       if (name === 'getWorkspaceRoster') {
@@ -77,7 +78,25 @@ describe('thin monolith corner turn', () => {
           ],
         };
       }
-      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomInbox') {
+        inboxReads += 1;
+        return inboxReads === 2
+          ? {
+              items: [
+                {
+                  id: 'checks-event',
+                  authorId: runtime.agent.publicKey,
+                  createdAt: 2,
+                  type: 'system',
+                  body: 'Checks passed — https://github.com/acme/widgets/pull/7.',
+                  mentionIds: [],
+                  attachments: [],
+                },
+              ],
+              cursor: 'checks-event',
+            }
+          : { items: [], cursor: 'latest' };
+      }
       if (name === 'getRoomConversation') {
         conversationReads += 1;
         return {
@@ -113,16 +132,21 @@ describe('thin monolith corner turn', () => {
       sessionId: 'corner-session',
       raw: {},
     });
-    vi.spyOn(acp, 'sessionPrompt').mockImplementation(async (_id, _prompt, _timeout, draft) => {
-      draft?.('Opening PR', 'Opening PR');
-      abort.abort();
-      return {
-        stopReason: 'end_turn',
-        updates: [],
-        agentText: 'PR: https://github.com/acme/widgets/pull/7',
-        toolCalls: [],
-      };
-    });
+    const sessionPrompt = vi
+      .spyOn(acp, 'sessionPrompt')
+      .mockImplementation(async (_id, prompt, _timeout, draft) => {
+        draft?.('Opening PR', 'Opening PR');
+        const checksTurn = prompt.includes('Checks passed');
+        if (checksTurn) abort.abort();
+        return {
+          stopReason: 'end_turn',
+          updates: [],
+          agentText: checksTurn
+            ? 'Merged https://github.com/acme/widgets/pull/7'
+            : 'PR: https://github.com/acme/widgets/pull/7',
+          toolCalls: [],
+        };
+      });
     const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
     const loop = new MonolithCornerTurnLoop({
       cornerId: 'corner-id',
@@ -147,6 +171,8 @@ describe('thin monolith corner turn', () => {
     await scheduler.dispose();
 
     expect(conversationReads).toBeGreaterThanOrEqual(2);
+    expect(sessionPrompt).toHaveBeenCalledTimes(2);
+    expect(sessionPrompt.mock.calls[1]?.[1]).toContain('Checks passed');
     expect(sessionNew).toHaveBeenCalledWith(
       expect.objectContaining({
         cwd: worktree,

@@ -27,7 +27,13 @@ describe('monolith Room inspection mount', () => {
   it('fails closed when the helper is absent', () => {
     expect(() =>
       readOnlyMcpServer(
-        { agentBinary: 'agent', mcpBinary: 'unused', agentEnv: {}, workspaceRoot: '/room', autoApprovePermissions: false },
+        {
+          agentBinary: 'agent',
+          mcpBinary: 'unused',
+          agentEnv: {},
+          workspaceRoot: '/room',
+          autoApprovePermissions: false,
+        },
         '/room',
       ),
     ).toThrow(ReadOnlyToolsUnavailableError);

@@ -286,7 +286,8 @@ export type PostTargetBranchProposalInput = RoomInput & {
 export type CreateCornerInput = RoomInput & {
   readonly requestId: string;
   readonly name: string;
-  readonly task: string;
+  /** Immutable one-paragraph statement of what this corner is meant to accomplish. */
+  readonly summary: string;
   readonly repository?: string;
   readonly targetBranch?: string;
 };

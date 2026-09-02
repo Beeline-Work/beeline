@@ -163,7 +163,9 @@ export class RoomRuntimeCoordinator {
   async prepareForForcedUpdateRestart(): Promise<void> {
     const rooms = [...this.running.values()];
     await Promise.allSettled(
-      rooms.filter((room) => room.body.isBusy()).map((room) => room.body.prepareForForcedUpdateRestart()),
+      rooms
+        .filter((room) => room.body.isBusy())
+        .map((room) => room.body.prepareForForcedUpdateRestart()),
     );
     for (const room of rooms) room.controller.abort();
   }
@@ -233,9 +235,13 @@ export class RoomRuntimeCoordinator {
     await mapWithConcurrency(desiredTopRooms, ROOM_JOIN_CONCURRENCY, async (roomId) => {
       if (!this.running.has(roomId)) this.startRoom(roomId);
     });
-    await mapWithConcurrency([...desiredCorners.values()], ROOM_JOIN_CONCURRENCY, async (corner) => {
-      if (!this.running.has(corner.cornerId)) await this.startCorner(corner);
-    });
+    await mapWithConcurrency(
+      [...desiredCorners.values()],
+      ROOM_JOIN_CONCURRENCY,
+      async (corner) => {
+        if (!this.running.has(corner.cornerId)) await this.startCorner(corner);
+      },
+    );
     return 'member';
   }
 
@@ -333,18 +339,15 @@ export class RoomRuntimeCoordinator {
           roomId: corner.parentRoomId,
         }),
       ]);
-      if (
-        repository.resolution !== 'repository' ||
-        !repository.remote ||
-        !repository.key
-      ) {
+      if (repository.resolution !== 'repository' || !repository.remote || !repository.key) {
         throw new Error('corner parent Room has no verified repository binding');
       }
       const objective = conversation.items.find((item) => item.type === 'message')?.body.trim();
       if (!objective) throw new Error('corner has no durable objective post');
       const targetBranch = repository.targetBranch || 'main';
       const featureBranch =
-        restore.featureBranch ?? `feature/corner-${corner.cornerId.replaceAll('-', '').slice(0, 12)}`;
+        restore.featureBranch ??
+        `feature/corner-${corner.cornerId.replaceAll('-', '').slice(0, 12)}`;
       const worktree = await this.materializeCornerWorktree({
         cornerId: corner.cornerId,
         remote: repository.remote,
@@ -467,6 +470,9 @@ export class RoomRuntimeCoordinator {
       'extensions.worktreeConfig',
       'true',
     ]);
+    // A linked worktree created from a bare canonical clone otherwise inherits
+    // core.bare=true and rejects ordinary `git -C <worktree>` commands.
+    await execFileAsync('git', ['-C', path, 'config', '--worktree', 'core.bare', 'false']);
     await execFileAsync('git', [
       '-C',
       path,
@@ -521,7 +527,8 @@ export class RoomRuntimeCoordinator {
   async watchdogTick(): Promise<void> {
     for (const [roomId, room] of [...this.running]) {
       if (room.recovering || room.body.isBusy()) continue;
-      if (this.now() <= Math.max(room.lastPollAt + this.watchdogStaleMs, room.backoffUntil)) continue;
+      if (this.now() <= Math.max(room.lastPollAt + this.watchdogStaleMs, room.backoffUntil))
+        continue;
       room.recovering = true;
       room.controller.abort();
       await room.promise.catch(() => undefined);
@@ -565,7 +572,12 @@ function githubHttpsRemote(remote: string): string {
   }
   url.username = '';
   url.password = '';
-  return url.toString().replace(/\/$/, '').replace(/\.git$/i, '') + '.git';
+  return (
+    url
+      .toString()
+      .replace(/\/$/, '')
+      .replace(/\.git$/i, '') + '.git'
+  );
 }
 
 function githubGitEnv(token: string): NodeJS.ProcessEnv {

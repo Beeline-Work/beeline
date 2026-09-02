@@ -216,7 +216,7 @@ export class MonolithRoomTurnLoop {
         personaInstructions,
         capabilityContext.sessionPrompt,
         'You are answering inside a read-only Room. Use only the mounted read-only tools.',
-        'When repository work is needed, call beeline-agent open_corner with the complete objective. That host-governed call is the only way to start write work.',
+        'When repository work is needed, call beeline-agent open_corner with a required one-paragraph summary of the complete objective. That summary is fixed for the corner lifetime and reused in the parent close note. The host-governed call is the only way to start write work.',
         'Never claim an action or reply happened unless the prompt or a tool result proves it.',
       ]
         .filter(Boolean)

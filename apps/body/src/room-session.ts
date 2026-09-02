@@ -2,10 +2,7 @@ import { resolve } from 'node:path';
 import type { McpServerWire } from './acp.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
-import {
-  BEELINE_AGENT_MCP_SERVER_NAME,
-  READ_ONLY_MCP_SERVER_NAME,
-} from './read-only-policy.js';
+import { BEELINE_AGENT_MCP_SERVER_NAME, READ_ONLY_MCP_SERVER_NAME } from './read-only-policy.js';
 
 export class ReadOnlyToolsUnavailableError extends Error {
   override readonly name = 'ReadOnlyToolsUnavailableError';
@@ -34,9 +31,7 @@ export function beelineAgentMcpServer(
       { name: 'BEELINE_DAEMON_AGENT_ID', value: connection.agentId },
       { name: 'BEELINE_DAEMON_ROOM_ID', value: context.roomId },
       { name: 'BEELINE_DAEMON_WORKSPACE_ID', value: context.workspaceId },
-      ...(context.cornerId
-        ? [{ name: 'BEELINE_DAEMON_CORNER_ID', value: context.cornerId }]
-        : []),
+      ...(context.cornerId ? [{ name: 'BEELINE_DAEMON_CORNER_ID', value: context.cornerId }] : []),
     ],
   };
 }
@@ -66,7 +61,12 @@ export function readOnlyMcpServer(
     env: [
       { name: 'BEELINE_READONLY_ROOT', value: resolve(cwd) },
       ...(config.agentHomeRoot
-        ? [{ name: 'BEELINE_READONLY_AGENT_SKILLS_ROOT', value: resolve(config.agentHomeRoot, skillDir, 'skills') }]
+        ? [
+            {
+              name: 'BEELINE_READONLY_AGENT_SKILLS_ROOT',
+              value: resolve(config.agentHomeRoot, skillDir, 'skills'),
+            },
+          ]
         : []),
       ...(agentMemoryDir
         ? [{ name: 'BEELINE_READONLY_AGENT_MEMORY_ROOT', value: resolve(agentMemoryDir) }]

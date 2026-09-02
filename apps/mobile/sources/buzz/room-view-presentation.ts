@@ -211,6 +211,9 @@ function activityItems(message: RoomViewMessage): AgentActivityItem[] | undefine
     ...(activity.observed ? { observed: activity.observed.map((item) => ({ ...item })) } : {}),
     ...(activity.thoughtMs ? { thoughtMs: activity.thoughtMs } : {}),
     ...(activity.status ? { status: activity.status } : {}),
+    ...(activity.command ? { command: activity.command } : {}),
+    ...(activity.input ? { input: activity.input } : {}),
+    ...(activity.output ? { output: activity.output } : {}),
     ...(activity.files ? { files: activity.files.map((file) => ({ ...file })) } : {}),
     ...(activity.plan
       ? { plan: { ...activity.plan, items: activity.plan.items.map((item) => ({ ...item })) } }

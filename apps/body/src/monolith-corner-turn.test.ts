@@ -54,6 +54,60 @@ describe('thin monolith corner turn', () => {
     ).resolves.toEqual(expect.objectContaining({ title: 'committed 2 files: Fix the widget' }));
   });
 
+  it('emits bounded, redacted command, file, status, and output detail for a settled tool', async () => {
+    const activity = await cornerToolActivity(
+      {
+        id: 'tool-1',
+        kind: 'execute',
+        title: 'Bash',
+        rawInput: { command: 'GH_TOKEN=super-secret npm test -- --runInBand' },
+        content: [
+          'first line',
+          'second line',
+          'third line',
+          'fourth line',
+          'middle line that is omitted',
+          'another omitted line',
+          'seventh line',
+          'eighth line',
+          'ninth line',
+          'last line: github_pat_abcdefghijklmnopqrstuvwxyz',
+        ].join('\n'),
+        status: 'failed',
+      },
+      '/worktree',
+    );
+    expect(activity).toMatchObject({
+      kind: 'tool',
+      operation: 'execute',
+      command: 'GH_TOKEN=[REDACTED] npm test -- --runInBand',
+      status: 'error',
+      output: expect.stringContaining('first line'),
+    });
+    expect(activity.output).toContain('last line: [REDACTED]');
+    expect(activity.output).not.toContain('middle line that is omitted');
+    expect(JSON.stringify(activity)).not.toContain('super-secret');
+
+    await expect(
+      cornerToolActivity(
+        {
+          id: 'edit-1',
+          kind: 'edit',
+          title: 'Write',
+          rawInput: { file_path: '/worktree/apps/mobile/ToolRow.tsx' },
+          content: { ok: true },
+          status: 'completed',
+        },
+        '/worktree',
+      ),
+    ).resolves.toMatchObject({
+      operation: 'edit',
+      input: '{"file_path":"/worktree/apps/mobile/ToolRow.tsx"}',
+      files: [{ path: 'apps/mobile/ToolRow.tsx' }],
+      status: 'ok',
+    });
+  });
+
   it('starts in edit mode, streams to the corner, and carries the server-check merge gate', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-thin-corner-'));
     roots.push(root);

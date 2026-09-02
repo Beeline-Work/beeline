@@ -62,6 +62,7 @@ interface CornerWebhookTarget {
   corner_id: string;
   parent_id: string;
   author_id: string;
+  summary: string;
   repository_id: string;
   installation_id: string;
 }
@@ -367,6 +368,7 @@ export class GitHubOperations {
     const targets = await this.database.query<CornerWebhookTarget>(
       `SELECT corner.id corner_id,parent.id parent_id,
          COALESCE(owner.identity_id,corner.created_by,parent.created_by) author_id,
+         fact.objective summary,
          github.repository_id,github.installation_id
        FROM rooms corner
        JOIN rooms parent ON parent.id=corner.parent_id
@@ -487,8 +489,7 @@ export class GitHubOperations {
           JSON.stringify({ source: 'github', dedupe: mergeKey }),
         ],
       );
-      const commitLabel = `${pullRequest.commits} commit${pullRequest.commits === 1 ? '' : 's'}`;
-      const fileLabel = `${pullRequest.files} file${pullRequest.files === 1 ? '' : 's'} changed`;
+      const summary = target.summary.trim() || pullRequest.title;
       await database.query(
         `INSERT INTO messages(id,room_id,author_id,text,presentation,durable_fact,card_type,card)
          VALUES($1,$2,$3,$4,'system','merge','github-corner-note',$5::jsonb) ON CONFLICT(id) DO NOTHING`,
@@ -496,7 +497,7 @@ export class GitHubOperations {
           hash(`beeline:${target.parent_id}:${mergeKey}`),
           target.parent_id,
           target.author_id,
-          `Merged ${pullRequest.title} — ${pullRequest.url} (${commitLabel}, ${fileLabel}).`,
+          `${summary}\n${pullRequest.url}`,
           JSON.stringify({ source: 'github', dedupe: mergeKey, cornerId: target.corner_id }),
         ],
       );

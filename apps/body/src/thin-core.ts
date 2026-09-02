@@ -79,6 +79,7 @@ export class ThinDaemonCore {
     try {
       while (!opts.signal?.aborted) {
         let waitMs = watchdogTickMs;
+        if (this.roomRuntime.needsFastReconcile()) nextReconcileAt = 0;
         if (this.now() >= nextReconcileAt) {
           try {
             const membership = await this.roomRuntime.reconcile();

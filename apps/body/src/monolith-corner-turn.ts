@@ -25,6 +25,9 @@ type DaemonActivity = DaemonOperationMap['postAgentActivity']['input']['activity
 
 const execFileAsync = promisify(execFile);
 const PULL_REQUEST_URL = /https:\/\/github\.com\/[^\s/]+\/[^\s/]+\/pull\/\d+/;
+const TOOL_ARGUMENT_MAX_BYTES = 1_200;
+const TOOL_OUTPUT_MAX_BYTES = 3_200;
+const TOOL_PATH_LIMIT = 12;
 
 function oneLine(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
@@ -33,10 +36,118 @@ function oneLine(value: string): string {
 function serialized(value: unknown): string {
   if (typeof value === 'string') return value;
   try {
-    return JSON.stringify(value);
+    return JSON.stringify(value) ?? '';
   } catch {
     return '';
   }
+}
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+/** Keep wire-visible tool detail useful without ever carrying credentials. */
+function redactToolDetail(value: string): string {
+  return value
+    .replace(
+      /\b(["']?)(api[_-]?key|token|secret|password|passwd|authorization|credential|cookie|private[_-]?key)\1\s*[:=]\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,}\]]+)/gi,
+      '"$2": "[REDACTED]"',
+    )
+    .replace(
+      /\b(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*=(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\S+)/g,
+      (assignment) => `${assignment.slice(0, assignment.indexOf('='))}=[REDACTED]`,
+    )
+    .replace(/\b(?:gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,})\b/gi, '[REDACTED]')
+    .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, '[REDACTED]')
+    .replace(/\b(Bearer\s+)[^\s,]+/gi, '$1[REDACTED]')
+    .replace(
+      /(--?(?:api[_-]?key|token|secret|password|authorization|credential|cookie)\s+)(?:"[^"]*"|'[^']*'|\S+)/gi,
+      '$1[REDACTED]',
+    );
+}
+
+function clampBytes(value: string, maxBytes: number): string {
+  const clean = value.trim();
+  if (Buffer.byteLength(clean) <= maxBytes) return clean;
+  const suffix = '\n…[truncated]';
+  const allowed = maxBytes - Buffer.byteLength(suffix);
+  return `${Buffer.from(clean).subarray(0, Math.max(0, allowed)).toString('utf8')}${suffix}`;
+}
+
+function outputExcerpt(value: unknown): string | undefined {
+  const redacted = redactToolDetail(serialized(value));
+  if (!redacted.trim()) return undefined;
+  if (/\b(?:git[- ]credential|credential[- ]helper)\b/i.test(redacted)) {
+    return 'Credential-helper output omitted.';
+  }
+  const lines = redacted.split(/\r?\n/).map((line) => line.trimEnd());
+  if (lines.length <= 8) return clampBytes(lines.join('\n'), TOOL_OUTPUT_MAX_BYTES);
+  return clampBytes(
+    [...lines.slice(0, 4), '…[output omitted]…', ...lines.slice(-4)].join('\n'),
+    TOOL_OUTPUT_MAX_BYTES,
+  );
+}
+
+function filePaths(value: unknown, worktreePath: string): string[] {
+  const paths = new Set<string>();
+  const visit = (candidate: unknown, key?: string) => {
+    if (paths.size >= TOOL_PATH_LIMIT || candidate === null || candidate === undefined) return;
+    if (typeof candidate === 'string') {
+      if (key && /(?:^|_)(?:path|file|filename|target)$/i.test(key)) {
+        const path = candidate.startsWith(`${worktreePath}/`)
+          ? candidate.slice(worktreePath.length + 1)
+          : candidate;
+        if (path && path.length <= 512) paths.add(redactToolDetail(path));
+      }
+      return;
+    }
+    if (Array.isArray(candidate)) {
+      candidate.forEach((entry) => visit(entry));
+      return;
+    }
+    const object = record(candidate);
+    if (object) Object.entries(object).forEach(([entryKey, entry]) => visit(entry, entryKey));
+  };
+  visit(value);
+  return [...paths];
+}
+
+function resultStatus(call: ToolCallEntry): string {
+  const content =
+    record(call.content) ??
+    (typeof call.content === 'string'
+      ? (() => {
+          try {
+            return record(JSON.parse(call.content));
+          } catch {
+            return undefined;
+          }
+        })()
+      : undefined);
+  const exitCode = content?.exitCode ?? content?.exit_code ?? content?.code;
+  if (typeof exitCode === 'number' && Number.isFinite(exitCode)) return `exit ${exitCode}`;
+  if (content?.ok === true || content?.success === true) return 'ok';
+  if (content?.ok === false || content?.success === false) return 'error';
+  return /(?:failed|error|denied)/i.test(call.status ?? '') ? 'error' : 'ok';
+}
+
+function toolArguments(call: ToolCallEntry): { command?: string; input?: string } {
+  const raw = record(call.rawInput);
+  const command =
+    typeof call.rawInput === 'string'
+      ? call.rawInput
+      : typeof raw?.command === 'string'
+        ? raw.command
+        : typeof raw?.cmd === 'string'
+          ? raw.cmd
+          : undefined;
+  if (command) return { command: clampBytes(redactToolDetail(command), TOOL_ARGUMENT_MAX_BYTES) };
+  const input = serialized(call.rawInput);
+  return input
+    ? { input: clampBytes(redactToolDetail(input), TOOL_ARGUMENT_MAX_BYTES) }
+    : {};
 }
 
 function toolCallKey(call: ToolCallEntry, index: number): string {
@@ -56,13 +167,13 @@ function isSuccessfulCommit(call: ToolCallEntry): boolean {
   );
 }
 
-/** Turn one physical ACP tool call into the terse server-indexed ledger row. */
+/** Turn one physical ACP tool call into a bounded, redacted indexed ledger row. */
 export async function cornerToolActivity(
   call: ToolCallEntry,
   worktreePath: string,
 ): Promise<DaemonActivity> {
   const operation = oneLine(call.kind ?? '') || 'tool';
-  let title = oneLine(call.title ?? '') || `${operation} tool`;
+  let title = oneLine(redactToolDetail(call.title ?? '')) || `${operation} tool`;
   if (isSuccessfulCommit(call)) {
     try {
       const shown = await execFileAsync(
@@ -79,11 +190,17 @@ export async function cornerToolActivity(
       // between the ACP update and this read.
     }
   }
+  const paths = filePaths([call.rawInput, call.content, call.locations], worktreePath);
+  const argumentsSummary = toolArguments(call);
+  const output = outputExcerpt(call.content);
   return {
     kind: 'tool',
     title: title.slice(0, 240),
     operation: operation.slice(0, 80),
-    status: call.status ?? 'completed',
+    status: resultStatus(call),
+    ...argumentsSummary,
+    ...(output ? { output } : {}),
+    ...(paths.length ? { files: paths.map((path) => ({ path })) } : {}),
   };
 }
 

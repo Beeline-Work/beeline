@@ -72,8 +72,10 @@ export type AgentActivityItem = {
   thoughtMs?: number;
   text?: string;
   status?: string;
+  /** Bounded, redacted corner-tool argument summary. */
   command?: string;
   input?: string;
+  /** Bounded first/last-line excerpt from the completed tool result. */
   output?: string;
   files?: Array<{
     path: string;

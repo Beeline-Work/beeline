@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { AgentActivityItem } from '@/sync/transport/rig-transport';
 import { buildTurnActivity, type TurnActivityAction } from '@/buzz/activity-timeline';
@@ -38,14 +38,8 @@ function resolvedOutcome(
 }
 
 function presentedStepLabel(step: TurnActivityAction): string {
-  const kind = step.toolKind?.toLowerCase();
-  const commandLike = step.weight === 'command' || kind === 'execute' || kind === 'ran';
-  if (!commandLike) return step.label;
-  return ['type checks', 'tests', 'lint', 'build', 'review changes', 'commit changes'].includes(
-    step.label,
-  )
-    ? step.label
-    : 'ran project task';
+  const hint = step.command ?? step.input ?? step.files?.[0]?.path ?? step.toolKind;
+  return hint ? `Used tool · ${hint}` : 'Used tool';
 }
 
 function LedgerStepRow({
@@ -60,6 +54,7 @@ function LedgerStepRow({
   const [expanded, setExpanded] = useState(false);
   const outcome = resolvedOutcome(step, active, isLast);
   const label = presentedStepLabel(step);
+  const hasDetail = Boolean(step.command || step.input || step.output || step.files?.length);
   const accessibilityLabel = [
     label,
     outcome === 'failure' ? 'failed' : outcome === 'running' ? 'running' : 'succeeded',
@@ -68,21 +63,16 @@ function LedgerStepRow({
     .filter(Boolean)
     .join(', ');
   const details = [
-    `${step.toolKind ?? 'tool'} · ${step.status ?? outcome}`,
+    `Tool: ${step.title}`,
+    `Result: ${step.status ?? outcome}`,
+    ...(step.command ? [`Command:\n${step.command}`] : []),
+    ...(step.input ? [`Arguments:\n${step.input}`] : []),
     ...(step.files ?? []).map((file) => `${file.status ? `${file.status} ` : ''}${file.path}`),
+    ...(step.output ? [`Output:\n${step.output}`] : []),
     ...(step.reason ? [step.reason] : []),
-    ...(step.title.toLowerCase() !== label.toLowerCase() ? [step.title] : []),
   ];
-  return (
-    <Pressable
-      accessibilityHint={expanded ? 'Collapses activity details' : 'Shows activity details'}
-      accessibilityLabel={accessibilityLabel}
-      accessibilityRole="button"
-      accessibilityState={{ busy: outcome === 'running', expanded }}
-      onPress={() => setExpanded((value) => !value)}
-      style={styles.stepDisclosure}
-      testID={`activity-step-${step.id}`}
-    >
+  const row = (
+    <>
       <View style={styles.stepRow}>
         <Text accessibilityElementsHidden style={styles.stepGlyph}>
           {stepGlyph(step)}
@@ -103,28 +93,47 @@ function LedgerStepRow({
             {outcome === 'failure' ? '×' : '✓'}
           </Text>
         )}
-        <Text accessibilityElementsHidden style={styles.disclosureGlyph}>
-          {expanded ? '⌃' : '⌄'}
-        </Text>
+        {hasDetail ? (
+          <Text accessibilityElementsHidden style={styles.disclosureGlyph}>
+            {expanded ? '⌃' : '⌄'}
+          </Text>
+        ) : null}
       </View>
-      {expanded && details.length ? (
-        <View style={styles.stepDetails} testID={`activity-details-${step.id}`}>
+      {expanded && hasDetail ? (
+        <ScrollView
+          nestedScrollEnabled
+          style={styles.stepDetails}
+          testID={`corner-tool-row-detail-${step.id}`}
+        >
           {details.map((detail, index) => (
             <Text key={`${step.id}:${index}`} style={styles.stepDetail}>
               {detail}
             </Text>
           ))}
-        </View>
+        </ScrollView>
       ) : null}
+    </>
+  );
+  if (!hasDetail) return <View testID={`corner-tool-row-${step.id}`}>{row}</View>;
+  return (
+    <Pressable
+      accessibilityHint={expanded ? 'Collapses activity details' : 'Shows activity details'}
+      accessibilityLabel={accessibilityLabel}
+      accessibilityRole="button"
+      accessibilityState={{ busy: outcome === 'running', expanded }}
+      onPress={() => setExpanded((value) => !value)}
+      style={styles.stepDisclosure}
+      testID={`corner-tool-row-${step.id}`}
+    >
+      {row}
     </Pressable>
   );
 }
 
 /**
  * The live conversational turn. Tool activity starts as terse mechanism rows
- * and expands on demand to safe summaries (file names and failure reasons).
- * Raw tool output, commands, diffs, and private reasoning never enter this
- * component. The selector removes it when the signed turn ends.
+ * and expands on demand to the helper's bounded, redacted command/result
+ * record. The selector removes it when the signed turn ends.
  */
 export const ActivityTimeline = React.memo(function ActivityTimeline({
   active = false,
@@ -231,12 +240,13 @@ const styles = StyleSheet.create((theme) => {
       lineHeight: 18,
     },
     runningMark: { flexShrink: 0, minWidth: 16, alignItems: 'center' },
-    stepDetails: { gap: 2, paddingHorizontal: 30, paddingBottom: 9 },
+    stepDetails: { maxHeight: 168, paddingHorizontal: 30, paddingBottom: 9 },
     stepDetail: {
       ...Typography.mono(),
       color: groknight.ledgerQuiet,
       fontSize: 10,
       lineHeight: 15,
+      marginBottom: 2,
     },
   };
 });

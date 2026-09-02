@@ -496,6 +496,56 @@ describe('monolith integration', () => {
       daemonToken,
     );
     expect(await drafted).toEqual(expect.objectContaining({ type: 'draft', text: 'Working' }));
+    const toolRequestId = 'tool-request';
+    expect(
+      (
+        await daemonOperation('postAgentTurnReceipt', {
+          agentId: AGENT,
+          roomId: ROOM,
+          requestId: toolRequestId,
+          status: 'working',
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await daemonOperation('postAgentActivity', {
+          agentId: AGENT,
+          roomId: ROOM,
+          requestId: toolRequestId,
+          activity: [
+            {
+              kind: 'tool',
+              title: 'Bash',
+              operation: 'execute',
+              command: 'npm test -- ActivityTimeline',
+              status: 'exit 0',
+              output: 'first result line\nlast result line',
+              files: [{ path: 'apps/mobile/sources/components/buzz/ActivityTimeline.tsx' }],
+            },
+          ],
+        })
+      ).status,
+    ).toBe(200);
+    const activityRoom = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as {
+      messages: Array<{ presentation: string; activity?: unknown }>;
+    };
+    expect(activityRoom.messages).toContainEqual(
+      expect.objectContaining({
+        presentation: 'activity',
+        activity: [
+          {
+            kind: 'tool',
+            title: 'Bash',
+            operation: 'execute',
+            command: 'npm test -- ActivityTimeline',
+            status: 'exit 0',
+            output: 'first result line\nlast result line',
+            files: [{ path: 'apps/mobile/sources/components/buzz/ActivityTimeline.tsx' }],
+          },
+        ],
+      }),
+    );
     socket.close();
   });
 

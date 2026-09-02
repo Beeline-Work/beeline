@@ -88,6 +88,9 @@ function activity(value: unknown): boolean {
     typeof item.title === 'string' &&
     optionalString(item.operation) &&
     optionalString(item.status) &&
+    optionalString(item.command) &&
+    optionalString(item.input) &&
+    optionalString(item.output) &&
     (item.thoughtMs === undefined || integer(item.thoughtMs)) &&
     (rollup === undefined || (rollup !== null && Object.values(rollup).every(integer))) &&
     (item.observed === undefined ||

@@ -49,6 +49,7 @@ describe('monolith-only thin daemon', () => {
     });
     const execute = vi.fn(async (name: string) => {
       if (name === 'getDaemonBootstrap') return { workspaceIds: ['workspace'], rooms: [{ roomId: 'room', archived: false }] };
+      if (name === 'listRoomCorners') return { corners: [] };
       if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
       return { id: 'write', createdAt: 1 };
     });

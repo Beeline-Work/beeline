@@ -63,6 +63,8 @@ export class RoomRuntimeCoordinator {
   private readonly running = new Map<string, RunningRoom>();
   private readonly scheduler: SessionScheduler;
   private readonly agent: ReturnType<typeof runtimeIdentity>;
+  /** Parent ownership retained so a failed corner listing never authorizes removal. */
+  private readonly monolithCornerParents = new Map<string, string>();
   private readonly now: () => number;
   private readonly watchdogStaleMs: number;
   private readonly reconcileHeartbeatMs: number;
@@ -166,14 +168,42 @@ export class RoomRuntimeCoordinator {
       return 'not-member';
     }
     this.workspaceRemovalConfirmations = 0;
-    const desired = new Set(
-      bootstrap.rooms.filter((room) => !room.archived).map((room) => room.roomId),
-    );
-    for (const roomId of desired) this.roomRemovalConfirmations.delete(roomId);
-    for (const [roomId, running] of [...this.running]) {
-      if (desired.has(roomId)) continue;
-      const confirmations = (this.roomRemovalConfirmations.get(roomId) ?? 0) + 1;
-      this.roomRemovalConfirmations.set(roomId, confirmations);
+    const topLevelRooms = bootstrap.rooms.filter((room) => !room.archived);
+    const desired = new Map(topLevelRooms.map((room) => [room.roomId, room] as const));
+    await mapWithConcurrency(topLevelRooms, ROOM_JOIN_CONCURRENCY, async (room) => {
+      try {
+        const result = await this.options.daemonApi.execute('listRoomCorners', {
+          roomId: room.roomId,
+        });
+        for (const corner of result.corners) {
+          this.monolithCornerParents.set(corner.cornerId, room.roomId);
+          if (!corner.archived) {
+            desired.set(corner.cornerId, {
+              roomId: corner.cornerId,
+              archived: false,
+            });
+          }
+        }
+      } catch (error) {
+        // A failed corner read is uncertainty, never evidence that every
+        // running corner vanished. Keep the last successful parent mapping
+        // and retry on the next reconciliation heartbeat.
+        for (const [cornerId, parentRoomId] of this.monolithCornerParents) {
+          if (parentRoomId === room.roomId && this.running.has(cornerId)) {
+            desired.set(cornerId, { roomId: cornerId, archived: false });
+          }
+        }
+        console.error(
+          `[thin-core] monolith Room ${room.roomId} corner listing failed; keeping known corners:`,
+          error,
+        );
+      }
+    });
+    for (const channelId of desired.keys()) this.roomRemovalConfirmations.delete(channelId);
+    for (const [channelId, running] of [...this.running]) {
+      if (desired.has(channelId)) continue;
+      const confirmations = (this.roomRemovalConfirmations.get(channelId) ?? 0) + 1;
+      this.roomRemovalConfirmations.set(channelId, confirmations);
       if (confirmations < REMOVAL_CONFIRMATION_READS) {
         this.confirmationPending = true;
         continue;
@@ -181,7 +211,7 @@ export class RoomRuntimeCoordinator {
       running.controller.abort();
       await running.promise.catch(() => undefined);
     }
-    await mapWithConcurrency([...desired], ROOM_JOIN_CONCURRENCY, async (roomId) => {
+    await mapWithConcurrency([...desired.keys()], ROOM_JOIN_CONCURRENCY, async (roomId) => {
       if (!this.running.has(roomId)) this.startRoom(roomId);
     });
     return 'member';

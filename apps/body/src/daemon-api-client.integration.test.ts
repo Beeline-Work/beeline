@@ -48,6 +48,11 @@ describe('daemon API client against the local monolith', () => {
       [HUMAN, AGENT],
     );
     await database.query(
+      `INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience)
+       VALUES('github','owner',$1,'https://github.com','test-client')`,
+      [HUMAN],
+    );
+    await database.query(
       `INSERT INTO agents(agent_id,owner_id,soul,selected_model,selected_effort,model_catalog)
        VALUES($1,$2,$3::jsonb,'gpt-5','high',$4::jsonb)`,
       [
@@ -280,15 +285,28 @@ describe('daemon API client against the local monolith', () => {
     const harnessTurn = new Promise<void>((resolveTurn) => {
       finishHarnessTurn = resolveTurn;
     });
-    const sessionPrompt = vi.spyOn(acp, 'sessionPrompt').mockImplementation(async () => {
-      await harnessTurn;
-      return {
-        stopReason: 'end_turn',
-        updates: [],
-        agentText: 'I am Terra, Vishnu, destroyer of worlds; I see the image you entrusted to me.',
-        toolCalls: [],
-      };
-    });
+    const sessionPrompt = vi
+      .spyOn(acp, 'sessionPrompt')
+      .mockImplementation(async (_sessionId, _prompt, _timeout, onText) => {
+        await harnessTurn;
+        onText?.('', '');
+        onText?.(
+          "Terra, respond to the user's latest message.",
+          "Terra, respond to the user's latest message.",
+        );
+        onText?.(
+          'I am Terra, Vishnu, destroyer of worlds; I see the image you entrusted to me.',
+          'I am Terra, Vishnu, destroyer of worlds; I see the image you entrusted to me.',
+        );
+        return {
+          stopReason: 'end_turn',
+          updates: [],
+          agentText:
+            'I am Terra, Vishnu, destroyer of worlds; I see the image you entrusted to me.',
+          toolCalls: [],
+        };
+      });
+    const daemonOperations = vi.spyOn(client, 'execute');
     const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
     const abort = new AbortController();
     const turnLoop = new MonolithRoomTurnLoop({
@@ -304,6 +322,16 @@ describe('daemon API client against the local monolith', () => {
       pollMs: 10,
       createAcpClient: () => acp,
     });
+    await phone.execute(
+      'sendRoomMessage',
+      {
+        roomId: ROOM,
+        messageId: 'f'.repeat(64),
+        text: 'Who are you?',
+        mentions: [],
+      },
+      HUMAN,
+    );
     const loop = turnLoop.run();
     try {
       await vi.waitFor(() => expect(polled).toHaveBeenCalled(), { timeout: 2_000 });
@@ -330,7 +358,7 @@ describe('daemon API client against the local monolith', () => {
         {
           roomId: ROOM,
           messageId: 'e'.repeat(64),
-          text: '@bee introduce yourself',
+          text: '@bee respond',
           mentions: [AGENT],
           attachments: [
             {
@@ -353,6 +381,8 @@ describe('daemon API client against the local monolith', () => {
       const wirePrompt = sessionPrompt.mock.calls[0]![1];
       expect(wirePrompt).toContain('This is who you are in this Workspace.');
       expect(wirePrompt).toContain('using-beeline skill (SKILL.md)');
+      expect(wirePrompt).toContain('Who are you?');
+      expect(wirePrompt).toContain('most recent unanswered human message');
       expect(wirePrompt).toContain('image: world.png (image/png, 9 bytes)');
       expect(wirePrompt).toContain('/v1/media/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
       expect(turnLoop.isBusy()).toBe(true);
@@ -389,6 +419,19 @@ describe('daemon API client against the local monolith', () => {
           ).rows[0]?.status,
         ).toBe('complete');
       });
+      const draftWrites = daemonOperations.mock.calls
+        .filter(([operation]) => operation === 'postAgentDraft')
+        .map(([, input]) => input);
+      expect(draftWrites).toEqual([
+        expect.objectContaining({
+          turnId: sent.messageId,
+          text: 'I am Terra, Vishnu, destroyer of worlds; I see the image you entrusted to me.',
+        }),
+      ]);
+      expect(daemonOperations).toHaveBeenCalledWith(
+        'retractAgentLiveOutput',
+        expect.objectContaining({ turnId: sent.messageId, kind: 'draft' }),
+      );
     } finally {
       finishHarnessTurn();
       abort.abort();
@@ -473,6 +516,16 @@ describe('daemon API client against the local monolith', () => {
         daemonApi: client,
       });
       const abort = new AbortController();
+      await phone.execute(
+        'sendRoomMessage',
+        {
+          roomId: ROOM,
+          messageId: 'a'.repeat(64),
+          text: 'What is your soul? Please identify yourself and acknowledge world.png.',
+          mentions: [],
+        },
+        HUMAN,
+      );
       const daemon = core.run({ pollMs: 50, signal: abort.signal });
       try {
         await vi.waitFor(() => expect(core.activeRoomIds()).toContain(ROOM), { timeout: 5_000 });
@@ -483,17 +536,24 @@ describe('daemon API client against the local monolith', () => {
           'world.png',
           1_024,
         );
-        const sent = await phone.execute(
-          'sendRoomMessage',
-          {
+        const phoneAccessToken = (await auth.exchangeGitHubOidc('proof')).accessToken;
+        const threadedResponse = await fetch(`${origin}/v1/phone/operations/sendRoomReply`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${phoneAccessToken}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
             roomId: ROOM,
             messageId: 'b'.repeat(64),
-            text: '@bee Examine your using-beeline skill, then state who you are according to your Workspace soul and acknowledge the attached image by filename. Do not use tools.',
+            parentMessageId: 'a'.repeat(64),
+            text: '@bee respond',
             mentions: [AGENT],
             attachments: [uploaded],
-          },
-          HUMAN,
-        );
+          }),
+        });
+        expect(threadedResponse.status).toBe(200);
+        const sent = (await threadedResponse.json()) as { messageId: string };
         await vi.waitFor(
           async () => {
             expect(
@@ -556,6 +616,34 @@ describe('daemon API client against the local monolith', () => {
             )
           ).rows[0]?.status,
         ).toBe('complete');
+        const durableAgentRows = (
+          await database.query<{ text: string }>(
+            `SELECT text FROM messages WHERE room_id=$1 AND author_id=$2 AND request_id=$3 AND presentation='message' ORDER BY created_at,id`,
+            [ROOM, AGENT, sent.messageId],
+          )
+        ).rows;
+        expect(durableAgentRows).toHaveLength(1);
+        expect(durableAgentRows[0]!.text.trim()).not.toBe('');
+        expect(durableAgentRows[0]!.text).not.toMatch(/respond to the user's latest message/i);
+        const visibleAgentRows =
+          (await phone.readRoom(ROOM, HUMAN))?.messages.filter(
+            (message) =>
+              message.author.pubkey === AGENT &&
+              message.requestId === sent.messageId &&
+              message.presentation === 'message',
+          ) ?? [];
+        expect(visibleAgentRows).toHaveLength(1);
+        expect(
+          (
+            await database.query<{ count: string }>(
+              `SELECT count(*)::text count FROM live_outputs WHERE room_id=$1 AND agent_id=$2 AND turn_id=$3 AND kind='draft'`,
+              [ROOM, AGENT, sent.messageId],
+            )
+          ).rows[0]?.count,
+        ).toBe('0');
+        await vi.waitFor(() => expect(core.quiesceForUpdateIfIdle()).toBe(true), {
+          timeout: 5_000,
+        });
         expect(
           await coordinateManagedUpdateHandoff(
             update,
@@ -576,7 +664,7 @@ describe('daemon API client against the local monolith', () => {
           ).rows[0]?.count,
         ).toBe('0');
         console.log(
-          `[real-thin-proof] request=${sent.messageId} reply=${JSON.stringify(reply)} update=old->new receipt=complete`,
+          `[real-thin-proof] request=${sent.messageId} reply=${JSON.stringify(reply)} durable_messages=1 live_drafts=0 update=old->new receipt=complete`,
         );
       } finally {
         abort.abort();

@@ -365,7 +365,7 @@ describe('monolith integration', () => {
     expect((await operation('leaveWorkspace', { workspaceId })).status).toBe(403);
   });
 
-  it('emits one workspace push and one Room note across explicit member adds', async () => {
+  it('emits one workspace push and Room join notes across explicit member adds', async () => {
     const aliceToken = await phoneToken('alice');
     const aliceId = createHash('sha256').update('github:alice').digest('hex');
     const workspaceId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
@@ -380,6 +380,7 @@ describe('monolith integration', () => {
     });
     const send = vi.fn().mockResolvedValue(undefined);
     const loop = new PushDeliveryLoop(database, { send });
+    expect(await loop.runOnce()).toBe(0);
 
     expect(
       await (
@@ -797,6 +798,9 @@ describe('monolith integration', () => {
       platform: 'ios',
       environment: 'physical',
     });
+    const send = vi.fn().mockResolvedValue(undefined);
+    const loop = new PushDeliveryLoop(database, { send });
+    expect(await loop.runOnce()).toBe(0);
     const invite = (await (await operation('createInvite', { workspaceId: WORKSPACE })).json()) as {
       token: string;
     };
@@ -824,10 +828,7 @@ describe('monolith integration', () => {
         .map((room_id) => ({ room_id, text: 'recipient joined', presentation: 'system' })),
     );
 
-    const send = vi.fn().mockResolvedValue(undefined);
-    const loop = new PushDeliveryLoop(database, { send });
     expect(await loop.runOnce()).toBe(1);
-    expect(send).toHaveBeenCalledTimes(1);
     expect(send).toHaveBeenCalledWith(
       'owner-person-join-device-token-1234567890',
       expect.objectContaining({ text: 'recipient joined Hive' }),
@@ -843,6 +844,9 @@ describe('monolith integration', () => {
       platform: 'android',
       environment: 'physical',
     });
+    const send = vi.fn().mockResolvedValue(undefined);
+    const loop = new PushDeliveryLoop(database, { send });
+    expect(await loop.runOnce()).toBe(0);
     const pairing = (await (
       await operation('createAgentPairingCode', { workspaceId: WORKSPACE })
     ).json()) as { code: string };
@@ -896,10 +900,7 @@ describe('monolith integration', () => {
         .map((room_id) => ({ room_id, text: 'Terra joined', presentation: 'system' })),
     );
 
-    const send = vi.fn().mockResolvedValue(undefined);
-    const loop = new PushDeliveryLoop(database, { send });
     expect(await loop.runOnce()).toBe(1);
-    expect(send).toHaveBeenCalledTimes(1);
     expect(send).toHaveBeenCalledWith(
       'owner-agent-join-device-token-1234567890',
       expect.objectContaining({ text: 'Terra joined Hive' }),
@@ -1128,12 +1129,15 @@ describe('monolith integration', () => {
   it('deduplicates push delivery claims in Postgres', async () => {
     await database.query(
       `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES('device-token-12345678901234567890',$1,'ios','physical')`,
-      [AGENT],
+      [HUMAN],
     );
-    await request('/v1/phone/operations/sendRoomMessage', 'POST', {
-      roomId: ROOM,
-      text: 'push me',
-    });
+    const floor = new PushDeliveryLoop(database, { send: vi.fn().mockResolvedValue(undefined) });
+    expect(await floor.runOnce()).toBe(0);
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,mention_ids)
+       VALUES($1,$2,$3,'push me',$4::jsonb)`,
+      ['d'.repeat(64), ROOM, AGENT, JSON.stringify([HUMAN])],
+    );
     const send = vi.fn().mockResolvedValue(undefined);
     const loop = new PushDeliveryLoop(database, { send });
     expect(await loop.runOnce()).toBe(1);

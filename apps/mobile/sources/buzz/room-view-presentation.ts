@@ -337,6 +337,20 @@ export function displayRoomMessages(
   return messages.map((message) => displayRoomMessage(message, viewerPubkey));
 }
 
+/**
+ * Tool rows are an additive corner payload so the wire `messages` field stays
+ * compatible with phones that enforce its 30-entry contract.
+ */
+export function roomViewTranscriptMessages(
+  view: Pick<RoomView, 'messages' | 'toolRows'>,
+): RoomViewMessage[] {
+  const byId = new Map<string, RoomViewMessage>();
+  for (const message of [...view.messages, ...(view.toolRows ?? [])]) byId.set(message.id, message);
+  return [...byId.values()].sort(
+    (left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id),
+  );
+}
+
 export function mergeDisplayPages(
   ...pages: readonly (readonly ChatDisplayMessage[])[]
 ): ChatDisplayMessage[] {

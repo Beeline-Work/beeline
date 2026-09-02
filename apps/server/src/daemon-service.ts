@@ -378,7 +378,11 @@ export class DaemonService {
     const page = rows.rows.slice(0, limit);
     const visiblePage =
       name === 'getRoomInbox'
-        ? page.filter((row) => row.author_id !== agentId || row.presentation === 'system')
+        ? page.filter(
+            (row) =>
+              row.presentation === 'system' ||
+              (row.author_id !== agentId && (row.mention_ids ?? []).includes(agentId)),
+          )
         : page;
     return {
       items: visiblePage.map((row) => ({
@@ -717,8 +721,8 @@ export class DaemonService {
           }>(
             `SELECT message.agent_hop_count,identity.kind author_kind
              FROM messages message JOIN identities identity ON identity.id=message.author_id
-             WHERE message.id=$1 AND message.room_id=$2`,
-            [input.triggerMessageId, input.roomId],
+             WHERE message.id=$1 AND message.room_id=$2 AND message.mention_ids @> $3::jsonb`,
+            [input.triggerMessageId, input.roomId, JSON.stringify([agentId])],
           )
         ).rows[0]
       : (
@@ -734,7 +738,7 @@ export class DaemonService {
             [input.roomId, agentId, JSON.stringify([agentId])],
           )
         ).rows[0];
-    if (input.triggerMessageId && !trigger) throw new Error('turn trigger is not in this room');
+    if (input.triggerMessageId && !trigger) throw new Error('turn trigger is invalid for agent');
     if (mentions.length) {
       const members = await this.database.query<{ identity_id: string }>(
         `SELECT membership.identity_id FROM memberships membership

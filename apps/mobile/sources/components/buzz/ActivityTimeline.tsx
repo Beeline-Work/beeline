@@ -145,7 +145,9 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
 }: ActivityTimelineProps) {
   const turn = useMemo(() => buildTurnActivity(items), [items]);
   const steps = turn.steps.filter((step) => step.kind === 'tool');
-  if (!active || (!messageDraft && !steps.length)) return null;
+  // Settled turns keep their collapsed tool rows (#804); only an empty live
+  // lane (no steps, no draft) renders nothing.
+  if (!steps.length && !(active && messageDraft)) return null;
 
   return (
     <View style={styles.timeline} testID={testID}>
@@ -157,7 +159,7 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
         </View>
       ) : null}
       {steps.map((step, index) => (
-        <LedgerStepRow active isLast={index === steps.length - 1} key={step.id} step={step} />
+        <LedgerStepRow active={active} isLast={index === steps.length - 1} key={step.id} step={step} />
       ))}
       {messageDraft ? (
         <MonoMarkdown

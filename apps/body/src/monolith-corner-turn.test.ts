@@ -342,5 +342,33 @@ describe('thin monolith corner turn', () => {
         (write) => write.name === 'postRoomMessage' && write.input.presentation === 'system',
       ),
     ).toHaveLength(1);
+    // The draft lane's turn id must equal its turn's durable final request id,
+    // so a missed retract event is healed by the settled message instead of
+    // leaving the final message rendered twice (#802 regression).
+    const turnRequestIds = new Set(
+      writes
+        .filter(
+          (write) =>
+            write.name === 'postRoomMessage' &&
+            (write.input.presentation ?? 'message') === 'message',
+        )
+        .map((write) => write.input.requestId),
+    );
+    expect(turnRequestIds.size).toBeGreaterThan(0);
+    const drafts = writes.filter((write) => write.name === 'postAgentDraft');
+    expect(drafts.length).toBeGreaterThan(0);
+    for (const draft of drafts) {
+      expect(draft.input).toMatchObject({ roomId: 'corner-id' });
+      expect(turnRequestIds.has(draft.input.turnId)).toBe(true);
+    }
+    const retracts = writes.filter((write) => write.name === 'retractAgentLiveOutput');
+    expect(retracts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ input: expect.objectContaining({ kind: 'draft' }) }),
+      ]),
+    );
+    for (const retract of retracts) {
+      expect(turnRequestIds.has(retract.input.turnId)).toBe(true);
+    }
   });
 });

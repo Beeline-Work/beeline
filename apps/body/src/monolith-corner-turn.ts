@@ -440,7 +440,11 @@ export class MonolithCornerTurnLoop {
             .filter(Boolean)
             .join('\n\n');
           const sessionId = this.sessionId!;
-          const turnId = `${this.agent.publicKey}:${cornerId}`;
+          // The draft lane's turn id must equal the turn's request id so the
+          // durable final reconciles (and settles) the live draft, exactly as
+          // in top-level Rooms; any other id leaves a ghost draft duplicating
+          // the final message when the retract event is missed.
+          const turnId = requestId;
           const publishedToolCalls = new Set<string>();
           const publishToolCalls = (calls: readonly ToolCallEntry[], settledOnly: boolean) => {
             calls.forEach((call, index) => {

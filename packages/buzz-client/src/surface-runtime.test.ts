@@ -189,6 +189,35 @@ describe('narrow live seam', () => {
     }
   });
 
+  it('settles a corner draft lane whose turn id is the request id (#802 corner duplicate)', () => {
+    // Corners build the draft overlay from the monolith live lane with
+    // `requestId = turnId`. When that equals the durable final's request id,
+    // a missed retract event is healed by the settled message instead of
+    // leaving the final rendered twice.
+    const agent = createIdentity('overlay-corner');
+    const overlay = {
+      kind: 'draft' as const,
+      key: `draft:${agent.publicKey}:corner-request`,
+      stableId: 'live-turn:corner-request',
+      agentPubkey: agent.publicKey,
+      requestId: 'corner-request',
+      text: 'Merging',
+      closed: false,
+      createdAt: 10,
+    };
+    expect(
+      visibleLiveOverlays(
+        [overlay],
+        [
+          {
+            ...row('2'.repeat(64), 11, 'corner-request'),
+            author: { pubkey: agent.publicKey, kind: 'agent', name: 'Bee' },
+          },
+        ],
+      ),
+    ).toEqual([]);
+  });
+
   it('suppresses a reordered final and close without duplicate bubbles', () => {
     const agent = createIdentity('overlay-final');
     const decoder = new LiveOverlayDecoder(ROOM, new Set([agent.publicKey]));

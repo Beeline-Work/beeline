@@ -464,6 +464,99 @@ describe('monolith integration', () => {
     socket.close();
   });
 
+  it('implicitly addresses an untagged human follow-up to the agent that just replied', async () => {
+    const peer = 'e'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Peer')`, [peer]);
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [peer, HUMAN]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
+      [WORKSPACE, peer, ROOM],
+    );
+    const reply = await daemonOperation('postRoomMessage', {
+      roomId: ROOM,
+      requestId: '1'.repeat(64),
+      text: 'I am Bee.',
+    });
+    expect(reply.status).toBe(200);
+
+    const sent = await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: '2'.repeat(64),
+      text: 'Who are you?',
+    });
+    expect(sent.status).toBe(200);
+    const inbox = await daemonOperation('getRoomInbox', { roomId: ROOM });
+    expect(
+      ((await inbox.json()) as { items: Array<{ id: string; mentionIds: string[] }> }).items,
+    ).toContainEqual(expect.objectContaining({ id: '2'.repeat(64), mentionIds: [AGENT] }));
+  });
+
+  it('implicitly addresses a threaded human reply to the parent agent regardless of position', async () => {
+    const parent = await daemonOperation('postRoomMessage', {
+      roomId: ROOM,
+      requestId: '3'.repeat(64),
+      text: 'Thread parent.',
+    });
+    const parentId = ((await parent.json()) as { id: string }).id;
+    await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: '4'.repeat(64),
+      text: 'An intervening human message.',
+      mentions: [AGENT],
+    });
+
+    const sent = await operation('sendRoomReply', {
+      roomId: ROOM,
+      messageId: '5'.repeat(64),
+      parentMessageId: parentId,
+      text: 'Answer this thread.',
+    });
+    expect(sent.status).toBe(200);
+    const stored = await database.query<{ mention_ids: string[]; reply_to_message_id: string }>(
+      `SELECT mention_ids,reply_to_message_id FROM messages WHERE id=$1`,
+      ['5'.repeat(64)],
+    );
+    expect(stored.rows[0]).toEqual({ mention_ids: [AGENT], reply_to_message_id: parentId });
+  });
+
+  it('implicitly addresses an untagged human message to the only agent in the Room', async () => {
+    const sent = await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: '6'.repeat(64),
+      text: 'Please take this.',
+    });
+    expect(sent.status).toBe(200);
+    const stored = await database.query<{ mention_ids: string[] }>(
+      `SELECT mention_ids FROM messages WHERE id=$1`,
+      ['6'.repeat(64)],
+    );
+    expect(stored.rows[0]?.mention_ids).toEqual([AGENT]);
+  });
+
+  it('leaves an untagged human message unaddressed with two agents and no prior agent message', async () => {
+    const peer = 'f'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Peer')`, [peer]);
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [peer, HUMAN]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
+      [WORKSPACE, peer, ROOM],
+    );
+
+    const sent = await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: '7'.repeat(64),
+      text: 'This is for nobody in particular.',
+    });
+    expect(sent.status).toBe(200);
+    const stored = await database.query<{ mention_ids: string[] }>(
+      `SELECT mention_ids FROM messages WHERE id=$1`,
+      ['7'.repeat(64)],
+    );
+    expect(stored.rows[0]?.mention_ids).toEqual([]);
+  });
+
   it('reports daemon bundle readiness over public monolith HTTP', async () => {
     const sourceSha = 'd03cff8f'.padEnd(40, '0');
     const posted = await request(

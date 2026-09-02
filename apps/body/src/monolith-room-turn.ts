@@ -386,11 +386,7 @@ export class MonolithRoomTurnLoop {
           });
           for (const item of inbox.items) {
             if (item.authorId === this.agent.publicKey || item.type !== 'message') continue;
-            const addressed =
-              item.mentionIds.includes(this.agent.publicKey) ||
-              (item.mentionIds.length === 0 &&
-                (await this.roster()).members.filter((member) => member.kind === 'agent').length ===
-                  1);
+            const addressed = item.mentionIds.includes(this.agent.publicKey);
             if (!addressed) continue;
             const authority = await api.execute('getRoomAuthority', {
               roomId,

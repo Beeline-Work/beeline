@@ -215,7 +215,7 @@ describe('daemon API client against the local monolith', () => {
     ).toMatchObject({ presence: { status: 'online', roomId: ROOM } });
   }, 30_000);
 
-  it('answers a mention in a repo-less Room and keeps monolith presence current', async () => {
+  it('answers persisted implicit targets in a repo-less Room and keeps monolith presence current', async () => {
     await database.query(
       `UPDATE agents SET selected_model=NULL,selected_effort=NULL WHERE agent_id=$1`,
       [AGENT],
@@ -330,8 +330,7 @@ describe('daemon API client against the local monolith', () => {
         {
           roomId: ROOM,
           messageId: 'e'.repeat(64),
-          text: '@bee introduce yourself',
-          mentions: [AGENT],
+          text: 'Introduce yourself',
           attachments: [
             {
               url: `${origin}/v1/media/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa`,
@@ -388,6 +387,51 @@ describe('daemon API client against the local monolith', () => {
             )
           ).rows[0]?.status,
         ).toBe('complete');
+      });
+
+      const followup = await phone.execute(
+        'sendRoomMessage',
+        {
+          roomId: ROOM,
+          messageId: 'f'.repeat(64),
+          text: 'Who are you?',
+        },
+        HUMAN,
+      );
+      await vi.waitFor(() => expect(sessionPrompt).toHaveBeenCalledTimes(2), { timeout: 3_000 });
+      await vi.waitFor(async () => {
+        const room = await phone.readRoom(ROOM, HUMAN);
+        expect(room?.messages).toContainEqual(
+          expect.objectContaining({
+            author: expect.objectContaining({ pubkey: AGENT }),
+            requestId: followup.messageId,
+          }),
+        );
+      });
+
+      const agentParent = (await phone.readRoom(ROOM, HUMAN))?.messages.find(
+        (message) => message.requestId === followup.messageId,
+      );
+      expect(agentParent).toBeDefined();
+      const threaded = await phone.execute(
+        'sendRoomReply',
+        {
+          roomId: ROOM,
+          messageId: '9'.repeat(64),
+          parentMessageId: agentParent!.id,
+          text: 'Answer in this thread too.',
+        },
+        HUMAN,
+      );
+      await vi.waitFor(() => expect(sessionPrompt).toHaveBeenCalledTimes(3), { timeout: 3_000 });
+      await vi.waitFor(async () => {
+        const room = await phone.readRoom(ROOM, HUMAN);
+        expect(room?.messages).toContainEqual(
+          expect.objectContaining({
+            author: expect.objectContaining({ pubkey: AGENT }),
+            requestId: threaded.messageId,
+          }),
+        );
       });
     } finally {
       finishHarnessTurn();

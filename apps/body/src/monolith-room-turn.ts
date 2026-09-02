@@ -25,6 +25,57 @@ import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js'
 type WorkspaceRoster = DaemonOperationMap['getWorkspaceRoster']['output'];
 type RoomMessage = DaemonOperationMap['getRoomInbox']['output']['items'][number];
 type HumanMessage = Pick<RoomMessage, 'id' | 'authorId' | 'body' | 'createdAt' | 'attachments'>;
+type RoomAuthority = DaemonOperationMap['getRoomAuthority']['output'];
+
+/** Agents are server-validated Room members; human turns additionally honor host access policy. */
+export function roomPrincipalMayAddressAgent(
+  authority: RoomAuthority,
+  humanPermitted: boolean,
+): boolean {
+  return (
+    authority.member &&
+    (authority.principalKind === 'agent' ||
+      (authority.principalKind === 'human' && humanPermitted))
+  );
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Resolve model-written @names into the validated peer ids the server routes. */
+export function agentReplyMentionIds(
+  text: string,
+  roster: WorkspaceRoster,
+  authorId: string,
+): string[] {
+  const aliases = new Map<string, { display: string; ids: Set<string> }>();
+  for (const member of roster.members) {
+    if (member.kind !== 'agent' || member.identityId === authorId) continue;
+    for (const raw of [member.name, member.handle, member.soul?.name]) {
+      const display = raw?.trim().replace(/^@/, '');
+      if (!display) continue;
+      const key = display.toLocaleLowerCase();
+      const entry = aliases.get(key) ?? { display, ids: new Set<string>() };
+      entry.ids.add(member.identityId);
+      aliases.set(key, entry);
+    }
+  }
+  const mentioned: string[] = [];
+  for (const { display, ids } of [...aliases.values()].sort(
+    (left, right) => right.display.length - left.display.length,
+  )) {
+    if (ids.size !== 1) continue;
+    const pattern = new RegExp(
+      `(^|[\\s([{])@${escapeRegExp(display)}(?=$|[\\s.,!?;:)\\]}])`,
+      'iu',
+    );
+    if (!pattern.test(text)) continue;
+    const identityId = [...ids][0]!;
+    if (!mentioned.includes(identityId)) mentioned.push(identityId);
+  }
+  return mentioned;
+}
 
 interface ActiveTurn {
   item: HumanMessage;
@@ -215,9 +266,6 @@ export class MonolithRoomTurnLoop {
         identityInstructions,
         personaInstructions,
         capabilityContext.sessionPrompt,
-        'You are answering inside a read-only Room. Use only the mounted read-only tools.',
-        'When repository work is needed, call beeline-agent open_corner with a required one-paragraph summary of the complete objective. That summary is fixed for the corner lifetime and reused in the parent close note. The host-governed call is the only way to start write work.',
-        'Never claim an action or reply happened unless the prompt or a tool result proves it.',
       ]
         .filter(Boolean)
         .join('\n\n'),
@@ -414,9 +462,13 @@ export class MonolithRoomTurnLoop {
             ].join('\n\n');
           }
           active.phase = 'finishing';
-          if (
-            result?.toolCalls.some((call) => /(?:^|[._:/-])open_corner$/i.test(call.title ?? ''))
-          ) {
+          const openCornerCall = result?.toolCalls.find((call) =>
+            /(?:^|[._:/-])open_corner$/i.test(call.title ?? ''),
+          );
+          if (openCornerCall) {
+            console.log(
+              `[thin-core] monolith Room ${this.options.roomId} tool call: ${openCornerCall.title}`,
+            );
             this.options.onCornerOpened?.();
           }
           await this.draftTail;
@@ -427,6 +479,7 @@ export class MonolithRoomTurnLoop {
             requestId: item.id,
             text: reply,
             presentation: 'message',
+            mentionIds: agentReplyMentionIds(reply, roster, this.agent.publicKey),
           });
           await api.execute('retractAgentLiveOutput', {
             agentId: this.agent.publicKey,
@@ -505,10 +558,11 @@ export class MonolithRoomTurnLoop {
               roomId,
               principalId: item.authorId,
             });
-            if (!authority.member || authority.principalKind !== 'human') continue;
-            if (!(await this.currentPrincipalCanDrive(this.options.workspaceId, item.authorId))) {
-              continue;
-            }
+            const humanPermitted =
+              authority.principalKind === 'human'
+                ? await this.currentPrincipalCanDrive(this.options.workspaceId, item.authorId)
+                : false;
+            if (!roomPrincipalMayAddressAgent(authority, humanPermitted)) continue;
             const active = this.activeTurn;
             if (!active) this.startPrompt(item);
             else if (active.phase === 'prompting') this.steer(active, item);

@@ -1489,13 +1489,37 @@ describe('monolith integration', () => {
       }),
     );
     const parent = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as {
-      messages: Array<{ text: string; presentation: string }>;
+      messages: Array<{
+        text: string;
+        presentation: string;
+        daemonFact?: {
+          type: string;
+          cornerId: string;
+          name?: string;
+          objective: string;
+          outcome?: string;
+          pullRequest?: { number?: number; title?: string; url: string; targetBranch?: string };
+        };
+      }>;
       corners: Array<{ corner: { id: string } }>;
     };
     expect(parent.messages).toContainEqual(
       expect.objectContaining({
-        presentation: 'system',
-        text: 'Ship widget\nhttps://github.com/owner/widgets/pull/42',
+        presentation: 'card',
+        text: '',
+        daemonFact: {
+          type: 'corner-complete',
+          cornerId,
+          name: 'Ship widget',
+          objective: 'Ship widget',
+          outcome: 'landed',
+          pullRequest: {
+            number: 42,
+            title: 'Ship the widget',
+            url: 'https://github.com/owner/widgets/pull/42',
+            targetBranch: 'main',
+          },
+        },
       }),
     );
     expect(parent.corners.map((item) => item.corner.id)).not.toContain(cornerId);

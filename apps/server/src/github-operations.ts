@@ -113,6 +113,7 @@ interface CornerWebhookTarget {
   corner_id: string;
   parent_id: string;
   author_id: string;
+  corner_name: string;
   summary: string;
   repository_id: string;
   installation_id: string;
@@ -487,7 +488,7 @@ export class GitHubOperations {
     const branch = branchForEvent(event, body);
     if (!repository || !branch) return;
     const targets = await this.database.query<CornerWebhookTarget>(
-      `SELECT corner.id corner_id,parent.id parent_id,
+      `SELECT corner.id corner_id,parent.id parent_id,corner.name corner_name,
          COALESCE(owner.identity_id,corner.created_by,parent.created_by) author_id,
          fact.objective summary,
          github.repository_id,github.installation_id
@@ -772,13 +773,24 @@ export class GitHubOperations {
       const summary = target.summary.trim() || pullRequest.title;
       await database.query(
         `INSERT INTO messages(id,room_id,author_id,text,presentation,durable_fact,card_type,card)
-         VALUES($1,$2,$3,$4,'system','merge','github-corner-note',$5::jsonb) ON CONFLICT(id) DO NOTHING`,
+         VALUES($1,$2,$3,'','card','merge','daemon-fact',$4::jsonb) ON CONFLICT(id) DO NOTHING`,
         [
           hash(`beeline:${target.parent_id}:${mergeKey}`),
           target.parent_id,
           target.author_id,
-          `${summary}\n${pullRequest.url}`,
-          JSON.stringify({ source: 'github', dedupe: mergeKey, cornerId: target.corner_id }),
+          JSON.stringify({
+            type: 'corner-complete',
+            cornerId: target.corner_id,
+            name: target.corner_name,
+            objective: summary,
+            outcome: 'landed',
+            pullRequest: {
+              ...(pullRequest.number ? { number: pullRequest.number } : {}),
+              title: pullRequest.title,
+              url: pullRequest.url,
+              ...(pullRequest.targetBranch ? { targetBranch: pullRequest.targetBranch } : {}),
+            },
+          }),
         ],
       );
     });

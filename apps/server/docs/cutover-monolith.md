@@ -79,6 +79,12 @@ publish and mobile OTA promotion begin. The production runner already owns Fly
 credentials; if that changes, provision `FLY_API_TOKEN` as a repository Actions
 secret instead of putting credentials in the workflow.
 
+The Fly app must also have `PUSH_DELIVERY_ENABLED=true` and the complete Firebase
+service-account document in the `GOOGLE_APPLICATION_CREDENTIALS_JSON` secret.
+`GOOGLE_CLOUD_PROJECT` may override the service account's project ID when needed.
+Do not add any of these secret values to the repository; release provisioning owns
+the Fly secret configuration.
+
 The ordered phases are fixed: preflight, drain, freeze, final repeatable-read snapshot/import, daemon token and OTA flip, production end-to-end verification, then reopen. Do not manually skip ahead. The script records only phase names under `.cutover-state/`; credentials and command output are never written there.
 
 After the exact OTA receipt lands on the owner device, tail the monolith Fly app logs while completing one real GitHub sign-in. The same attempt must show `GET /auth/github/callback` followed by `POST /v1/auth/github/exchange` on `server.usebeeline.app`; a callback only on `usebeeline.app`, or an exchange without the preceding monolith callback, fails verification.

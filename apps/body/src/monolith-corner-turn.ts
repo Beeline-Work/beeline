@@ -223,7 +223,19 @@ export class MonolithCornerTurnLoop {
     );
     await this.client.start();
     const servers: McpServerWire[] = [
-      { name: 'buzz-dev-mcp', command: this.options.config.mcpBinary, args: [], env: [] },
+      {
+        name: 'buzz-dev-mcp',
+        command: this.options.config.mcpBinary,
+        args: [],
+        // ACP hosts launch stdio MCP servers with an explicit, sanitized env.
+        // This token is minted for this exact corner and is also the credential
+        // helper's password source, so its shell commands need the same scope as
+        // the corner harness without inheriting any host credentials.
+        env: [
+          { name: 'GH_TOKEN', value: this.options.githubToken },
+          { name: 'GITHUB_TOKEN', value: this.options.githubToken },
+        ],
+      },
       beelineAgentMcpServer(this.options.config, this.options.api, {
         roomId: this.options.parentRoomId,
         workspaceId: this.options.workspaceId,

@@ -7,6 +7,24 @@ import {
 } from './room-session.js';
 
 describe('monolith Room inspection mount', () => {
+  it('does not expose GitHub credentials to a top-level Room session', () => {
+    const server = readOnlyMcpServer(
+      {
+        agentBinary: 'agent',
+        agentKind: 'codex',
+        mcpBinary: 'unused',
+        readonlyMcpCommand: '/bin/read-only',
+        agentEnv: { GH_TOKEN: 'ambient-token', GITHUB_TOKEN: 'ambient-token' },
+        workspaceRoot: '/room',
+        autoApprovePermissions: false,
+      },
+      '/room',
+    );
+
+    expect(server.env).not.toContainEqual(expect.objectContaining({ name: 'GH_TOKEN' }));
+    expect(server.env).not.toContainEqual(expect.objectContaining({ name: 'GITHUB_TOKEN' }));
+  });
+
   it('mounts only the bounded read-only MCP at the Room root', () => {
     const server = readOnlyMcpServer(
       {

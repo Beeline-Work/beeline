@@ -69,8 +69,42 @@ const TOOLS = [
 ];
 
 describe('live streaming turn', () => {
-  it('renders nothing after finalization, even when machine items remain in memory', () => {
-    expect(render(<ActivityTimeline active={false} items={TOOLS} />).toJSON()).toBeNull();
+  it('keeps settled tool rows collapsed and expandable after the turn completes (#804)', () => {
+    const renderer = render(<ActivityTimeline active={false} items={TOOLS} />);
+    // Collapsed by default: rows render, no detail sheet is open.
+    expect(
+      new Set(
+        renderer.root
+          .findAll((node: { props: { testID?: string } }) =>
+            /^corner-tool-row-(read|failure)$/.test(node.props.testID ?? ''),
+          )
+          .map((node: { props: { testID?: string } }) => node.props.testID),
+      ),
+    ).toEqual(new Set(['corner-tool-row-read', 'corner-tool-row-failure']));
+    expect(
+      renderer.root.findAll((node: { props: { testID?: string } }) =>
+        node.props.testID?.startsWith('corner-tool-row-detail-'),
+      ),
+    ).toHaveLength(0);
+    // Expandable as when live.
+    const row = renderer.root.findByProps({ testID: 'corner-tool-row-read' });
+    act(() => row.props.onPress());
+    expect(
+      new Set(
+        renderer.root
+          .findAll((node: { props: { testID?: string } }) =>
+            node.props.testID?.startsWith('corner-tool-row-detail-'),
+          )
+          .map((node: { props: { testID?: string } }) => node.props.testID),
+      ).size,
+    ).toBe(1);
+  });
+
+  it('renders nothing when the lane holds neither tool rows nor a draft', () => {
+    expect(
+      render(<ActivityTimeline active={false} items={[{ kind: 'output', title: 'Done', text: 'Done' }]} />)
+        .toJSON(),
+    ).toBeNull();
   });
 
   it('renders one collapsed row per tool and the accumulating conversational draft', () => {

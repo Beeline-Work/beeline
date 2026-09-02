@@ -8,6 +8,8 @@ type Output<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['o
 const id = () => randomBytes(32).toString('hex');
 const seconds = (date: Date) => Math.floor(date.getTime() / 1_000);
 const AGENT_TO_AGENT_HOP_CAP = 3;
+const MEDIA_URL_PATTERN = /\/v1\/media\/([0-9a-f-]{36})$/;
+const DEFAULT_MEDIA_MAXIMUM_BYTES = 25 * 1024 * 1024;
 
 export class DaemonService {
   constructor(
@@ -16,6 +18,7 @@ export class DaemonService {
     private readonly roomGitHubToken?: (
       roomId: string,
     ) => Promise<{ token: string; expiresAt: number }>,
+    private readonly mediaMaximumBytes: number = DEFAULT_MEDIA_MAXIMUM_BYTES,
   ) {}
 
   async execute<Name extends keyof DaemonOperationMap>(
@@ -127,6 +130,11 @@ export class DaemonService {
       case 'postRoomMessage':
         return (await this.postRoomMessage(
           input as Input<'postRoomMessage'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
+      case 'postAgentAttachment':
+        return (await this.postAgentAttachment(
+          input as Input<'postAgentAttachment'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'postAgentDraft':
@@ -765,11 +773,25 @@ export class DaemonService {
     const hopCount = trigger?.author_kind === 'agent' ? trigger.agent_hop_count + 1 : 0;
     const capped = mentions.length > 0 && hopCount >= AGENT_TO_AGENT_HOP_CAP;
     await this.database.transaction(async (database) => {
+      // Attachments queued this turn by beeline-agent attach_file ride on this
+      // final reply; they are drained exactly once, here.
+      const pending = (
+        await database.query<{
+          url: string;
+          name: string;
+          mime_type: string;
+          size: number;
+        }>(
+          `SELECT url,name,mime_type,size FROM agent_pending_attachments
+           WHERE room_id=$1 AND agent_id=$2 ORDER BY created_at,id`,
+          [input.roomId, agentId],
+        )
+      ).rows;
       await database.query(
         `INSERT INTO messages(
            id,room_id,author_id,text,presentation,request_id,legacy_event,mention_ids,
-           reply_to_message_id,root_message_id,agent_hop_count
-         ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10,$11)`,
+           reply_to_message_id,root_message_id,agent_hop_count,attachments
+         ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10,$11,$12::jsonb)`,
         [
           messageId,
           input.roomId,
@@ -782,8 +804,21 @@ export class DaemonService {
           input.replyToMessageId ?? null,
           rootMessageId,
           hopCount,
+          JSON.stringify(
+            pending.map((row) => ({
+              url: row.url,
+              name: row.name,
+              mimeType: row.mime_type,
+              size: row.size,
+            })),
+          ),
         ],
       );
+      if (pending.length)
+        await database.query(`DELETE FROM agent_pending_attachments WHERE room_id=$1 AND agent_id=$2`, [
+          input.roomId,
+          agentId,
+        ]);
       // A durable final Room reply is also the turn's terminal proof. This
       // makes the Room view settle even if the daemon is interrupted before
       // its redundant explicit complete receipt reaches the server.
@@ -803,6 +838,41 @@ export class DaemonService {
     });
     this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'message' });
     return { id: messageId, createdAt: Math.floor(Date.now() / 1000) };
+  }
+  /** An agent-claimed attachment queued by attach_file; stamped onto the agent's
+   *  next final Room reply. Only media this agent uploaded through the daemon
+   *  media endpoint may be queued. */
+  private async postAgentAttachment(input: Input<'postAgentAttachment'>, agentId: string) {
+    const attachment = input.attachment;
+    if (!attachment || typeof attachment !== 'object' || Array.isArray(attachment))
+      throw new Error('attachment is required');
+    if (typeof attachment.url !== 'string' || typeof attachment.name !== 'string')
+      throw new Error('attachment url and name are required');
+    if (typeof attachment.size !== 'number' || !Number.isSafeInteger(attachment.size) || attachment.size <= 0)
+      throw new Error('attachment size is invalid');
+    if (attachment.name.length > 512) throw new Error('attachment name is too long');
+    if (typeof attachment.mimeType !== 'string' || attachment.mimeType.length > 255)
+      throw new Error('attachment mimeType is invalid');
+    const mediaId = MEDIA_URL_PATTERN.exec(attachment.url)?.[1];
+    if (!mediaId) throw new Error('attachment url is not a server media reference');
+    const owned = await this.database.query(`SELECT 1 FROM media WHERE id=$1 AND owner_id=$2`, [
+      mediaId,
+      agentId,
+    ]);
+    if (!owned.rowCount) throw new Error('attachment media is not owned by this agent');
+    const queued = await this.database.query<{ total: string }>(
+      `SELECT COALESCE(SUM(size),0)::text total FROM agent_pending_attachments
+       WHERE room_id=$1 AND agent_id=$2`,
+      [input.roomId, agentId],
+    );
+    if (Number(queued.rows[0]!.total) + attachment.size > this.mediaMaximumBytes)
+      throw new Error('queued attachments exceed the size cap');
+    await this.database.query(
+      `INSERT INTO agent_pending_attachments(room_id,agent_id,url,name,mime_type,size)
+       VALUES($1,$2,$3,$4,$5,$6)`,
+      [input.roomId, agentId, attachment.url, attachment.name, attachment.mimeType, attachment.size],
+    );
+    return this.writeResult();
   }
   private async liveOutput(
     kind: 'draft' | 'thought',
@@ -1204,6 +1274,7 @@ export class DaemonService {
   private isCornerWrite(name: keyof DaemonOperationMap): boolean {
     return new Set<keyof DaemonOperationMap>([
       'postRoomMessage',
+      'postAgentAttachment',
       'postAgentDraft',
       'postAgentThought',
       'retractAgentLiveOutput',
@@ -1262,6 +1333,7 @@ export const DAEMON_OPERATION_NAMES = new Set<keyof DaemonOperationMap>([
   'getAgentPresence',
   'getRequestCompletion',
   'postRoomMessage',
+  'postAgentAttachment',
   'postAgentDraft',
   'postAgentThought',
   'retractAgentLiveOutput',

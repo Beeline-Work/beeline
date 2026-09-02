@@ -1126,6 +1126,90 @@ describe('monolith integration', () => {
     expect(tooLarge.status).toBe(400);
   });
 
+  it('delivers an agent attach_file attachment onto the final reply as a valid RoomView', async () => {
+    // 1. Daemon media upload, authenticated as the agent, same storage as phone uploads.
+    const upload = await fetch(`${origin}/v1/daemon/media`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${daemonToken}`,
+        'content-type': 'text/plain',
+        'x-file-name': 'notes.txt',
+      },
+      body: Buffer.from('agent-file-bytes'),
+    });
+    expect(upload.status).toBe(201);
+    const attachment = (await upload.json()) as {
+      url: string;
+      name: string;
+      mimeType: string;
+      size: number;
+    };
+    expect(attachment).toMatchObject({
+      name: 'notes.txt',
+      mimeType: 'text/plain',
+      size: 16,
+    });
+    expect(await (await fetch(`${origin}/v1/daemon/media`, { method: 'POST', body: 'x' })).status).toBe(
+      401,
+    );
+
+    // 2. Only media owned by the authenticated agent may be queued.
+    expect(
+      (
+        await daemonOperation('postAgentAttachment', {
+          roomId: ROOM,
+          attachment: { ...attachment, url: `${origin}/v1/media/22222222-2222-4222-8222-222222222222` },
+        })
+      ).status,
+    ).toBe(503);
+    expect(
+      (
+        await daemonOperation('postAgentAttachment', {
+          roomId: ROOM,
+          attachment: { ...attachment, url: 'https://elsewhere.example/file.txt' },
+        })
+      ).status,
+    ).toBe(503);
+
+    // 3. Queue then drain onto the agent's final reply.
+    expect(
+      (await daemonOperation('postAgentAttachment', { roomId: ROOM, attachment })).status,
+    ).toBe(200);
+    const reply = await daemonOperation('postRoomMessage', {
+      roomId: ROOM,
+      requestId: 'c'.repeat(64),
+      text: 'Here is the file.',
+    });
+    expect(reply.status).toBe(200);
+    const replyId = ((await reply.json()) as { id: string }).id;
+    // A second post must not repeat the drained attachment.
+    await daemonOperation('postRoomMessage', {
+      roomId: ROOM,
+      requestId: 'd'.repeat(64),
+      text: 'No file this time.',
+    });
+
+    // 4. A phone reads it back as a valid RoomView attachment.
+    const roomView = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as RoomView;
+    expect(isRoomView(roomView)).toBe(true);
+    const withFile = roomView.messages.filter((message) => message.attachments?.length);
+    expect(withFile).toHaveLength(1);
+    expect(withFile[0]).toMatchObject({
+      id: replyId,
+      text: 'Here is the file.',
+      author: expect.objectContaining({ pubkey: AGENT }),
+    });
+    expect(withFile[0]!.attachments![0]).toMatchObject({
+      name: 'notes.txt',
+      mimeType: 'text/plain',
+      size: 16,
+    });
+    const media = await fetch(withFile[0]!.attachments![0].url, {
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    expect(Buffer.from(await media.arrayBuffer()).toString()).toBe('agent-file-bytes');
+  });
+
   it('deduplicates push delivery claims in Postgres', async () => {
     await database.query(
       `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES('device-token-12345678901234567890',$1,'ios','physical')`,

@@ -233,10 +233,44 @@ const AGENT_TOOLS: ToolDefinition[] = [
       'Read the server-posted GitHub checks fact and current human hold state for this corner. Never infer passing checks from local git or gh output.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
+  {
+    name: 'attach_file',
+    description:
+      'Attach one file from your own checkout (Room read-only checkout or corner worktree) to your final reply in this Room or corner. Paths outside the checkout are refused. The file is uploaded now and delivered with your next reply; describe it in your reply text.',
+    inputSchema: {
+      type: 'object',
+      required: ['path'],
+      properties: {
+        path: {
+          type: 'string',
+          description: 'Path of the file inside your checkout or worktree.',
+          maxLength: 1024,
+        },
+      },
+      additionalProperties: false,
+    },
+  },
 ];
 
 const agentSurface = process.env.BEELINE_MCP_SURFACE === 'agent';
 const TOOLS = agentSurface ? AGENT_TOOLS : READ_ONLY_TOOLS;
+
+const MAX_ATTACH_BYTES = 25 * 1024 * 1024;
+const ATTACH_MIME_BY_EXTENSION: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml',
+  '.pdf': 'application/pdf',
+  '.txt': 'text/plain',
+  '.md': 'text/markdown',
+  '.json': 'application/json',
+  '.csv': 'text/csv',
+  '.log': 'text/plain',
+  '.zip': 'application/zip',
+};
 
 // Nothing else ties TOOLS' names to READ_ONLY_TOOL_NAMES (the auto-allow
 // permission check's canonical list) — assert they match so the two can't
@@ -846,12 +880,106 @@ async function prChecksStatus(): Promise<string> {
   });
 }
 
+export interface AttachFileDeps {
+  root: string;
+  baseUrl: string;
+  token: string;
+  roomId: string;
+  upload: (bytes: Buffer, mimeType: string, name: string) => Promise<JsonObject>;
+  queue: (attachment: JsonObject) => Promise<void>;
+}
+
+export function attachFileDepsFromEnv(): AttachFileDeps {
+  return {
+    root: requiredEnv('BEELINE_ATTACH_ROOT'),
+    baseUrl: requiredEnv('BEELINE_DAEMON_BASE_URL'),
+    token: requiredEnv('BEELINE_DAEMON_TOKEN'),
+    roomId:
+      process.env.BEELINE_DAEMON_CORNER_ID?.trim() || requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+    upload: (bytes, mimeType, name) => daemonUploadMedia(bytes, mimeType, name),
+    queue: async (attachment) => {
+      await daemonExecute('postAgentAttachment', {
+        roomId: process.env.BEELINE_DAEMON_CORNER_ID?.trim() || requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+        attachment,
+      });
+    },
+  };
+}
+
+/** Resolve an attach_file path inside the session checkout, never following a
+ *  symlink outside it. Returns the real path of an existing regular file. */
+export function resolveAttachPath(root: string, input: string): string {
+  if (!input || input.includes('\0')) throw new Error('path must be a non-empty file path');
+  const base = realpathSync(root);
+  const candidate = isAbsolute(input) ? input : resolve(base, input);
+  const resolved = realpathSync(candidate);
+  const rel = relative(base, resolved);
+  if (rel === '' || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+    throw new Error('path resolves outside the session checkout');
+  }
+  if (!statSync(resolved).isFile()) throw new Error('path is not a regular file');
+  return resolved;
+}
+
+export async function attachFile(
+  args: JsonObject,
+  deps: AttachFileDeps = attachFileDepsFromEnv(),
+): Promise<string> {
+  if (args.caption !== undefined && typeof args.caption !== 'string') {
+    throw new Error('caption must be a string');
+  }
+  const path = resolveAttachPath(deps.root, stringArg(args, 'path') ?? '');
+  const details = statSync(path);
+  if (details.size > MAX_ATTACH_BYTES) {
+    throw new Error(`file exceeds the ${MAX_ATTACH_BYTES}-byte attachment limit`);
+  }
+  const name = path.split(sep).pop() ?? 'attachment';
+  const mimeType =
+    ATTACH_MIME_BY_EXTENSION[name.slice(name.lastIndexOf('.')).toLowerCase()] ??
+    'application/octet-stream';
+  const uploaded = await deps.upload(readFileSync(path), mimeType, name);
+  const attachment = {
+    url: uploaded.url,
+    name: typeof uploaded.name === 'string' && uploaded.name ? uploaded.name : name,
+    mimeType: typeof uploaded.mimeType === 'string' ? uploaded.mimeType : mimeType,
+    size: typeof uploaded.size === 'number' ? uploaded.size : details.size,
+  };
+  await deps.queue(attachment);
+  return `Attached ${name} (${details.size} bytes); it will be delivered with your final reply.`;
+}
+
+async function daemonUploadMedia(bytes: Buffer, mimeType: string, name: string): Promise<JsonObject> {
+  const baseUrl = requiredEnv('BEELINE_DAEMON_BASE_URL');
+  const response = await fetch(new URL('/v1/daemon/media', `${baseUrl}/`), {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${requiredEnv('BEELINE_DAEMON_TOKEN')}`,
+      'content-type': mimeType,
+      'x-file-name': name,
+    },
+    body: bytes,
+  });
+  if (!response.ok) {
+    let code = 'request_failed';
+    try {
+      const body = (await response.json()) as { error?: unknown };
+      if (typeof body.error === 'string') code = body.error;
+    } catch {
+      // Never reflect a server body into the model-facing tool error.
+    }
+    throw new Error(`daemon media upload failed (${response.status}: ${code})`);
+  }
+  return (await response.json()) as JsonObject;
+}
+
 async function callAgentTool(name: string, args: JsonObject): Promise<string> {
   switch (name) {
     case 'open_corner':
       return openCorner(args);
     case 'pr_checks_status':
       return prChecksStatus();
+    case 'attach_file':
+      return attachFile(args);
     default:
       throw new Error(`tool is not available on the agent surface: ${name}`);
   }

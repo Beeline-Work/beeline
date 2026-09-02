@@ -61,6 +61,8 @@ export type CornerLifecycleView = {
 };
 
 export const ROOM_VIEW_MESSAGE_LIMIT = 30;
+/** Kept separate from the conversation window for settled corner tool activity. */
+export const ROOM_VIEW_TOOL_ROW_LIMIT = 60;
 export const ROOM_VIEW_BRIEFING_LIMIT = 10;
 export const ROOM_VIEW_WORKSPACE_LIMIT = 50;
 export const ROOM_VIEW_CHAT_LIMIT = 200;
@@ -237,6 +239,8 @@ export type RoomViewAgentTurn = {
 export type RoomView = {
   readonly room: RoomViewHeader;
   readonly messages: readonly RoomViewMessage[];
+  /** Settled corner tool activity, outside the bounded conversation window. */
+  readonly toolRows?: readonly RoomViewMessage[];
   readonly members: readonly RoomViewMember[];
   readonly latestAgentTurns: readonly RoomViewAgentTurn[];
   readonly viewer: RoomViewer;

@@ -4,6 +4,7 @@ import {
   ROOM_VIEW_CHAT_LIMIT,
   ROOM_VIEW_MEMBER_LIMIT,
   ROOM_VIEW_MESSAGE_LIMIT,
+  ROOM_VIEW_TOOL_ROW_LIMIT,
   ROOM_VIEW_WORKSPACE_LIMIT,
   type AgentDetailView,
   type AgentPairingAbandonView,
@@ -617,6 +618,10 @@ export function isRoomView(value: unknown): value is RoomView {
     Array.isArray(item.messages) &&
     item.messages.length <= ROOM_VIEW_MESSAGE_LIMIT &&
     item.messages.every((candidate) => scopedMessage(candidate, record(item.room)?.id)) &&
+    (item.toolRows === undefined ||
+      (Array.isArray(item.toolRows) &&
+        item.toolRows.length <= ROOM_VIEW_TOOL_ROW_LIMIT &&
+        item.toolRows.every((candidate) => scopedMessage(candidate, record(item.room)?.id)))) &&
     Array.isArray(item.latestAgentTurns) &&
     item.latestAgentTurns.length <= ROOM_VIEW_AGENT_LIMIT &&
     item.latestAgentTurns.every(agentTurn) &&

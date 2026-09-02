@@ -51,6 +51,7 @@ import {
   conversationIdentityByPubkey,
   displayRoomMessages,
   mergeDisplayPages,
+  roomViewTranscriptMessages,
   type ChatDisplayMessage,
   cornerSummaries,
   memberAgent,
@@ -511,9 +512,9 @@ export default function BuzzChat() {
   const cachedMessages = useMemo(
     () =>
       roomSurface && cacheViewerPubkey
-        ? roomMessageProjector.project(roomSurface.messages, cacheViewerPubkey)
+        ? roomMessageProjector.project(roomViewTranscriptMessages(roomSurface), cacheViewerPubkey)
         : [],
-    [cacheViewerPubkey, roomMessageProjector, roomSurface?.messages],
+    [cacheViewerPubkey, roomMessageProjector, roomSurface?.messages, roomSurface?.toolRows],
   );
   // Resolve references only within the Room family returned by this surface.
   const channelReferenceIndex = useMemo<ChannelReferenceIndex>(() => {

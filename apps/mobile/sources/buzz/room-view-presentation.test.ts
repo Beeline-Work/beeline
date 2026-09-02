@@ -5,7 +5,9 @@ import {
   cornerSummaries,
   createRoomMessageProjector,
   displayRoomMessage,
+  displayRoomMessages,
   mergeDisplayPages,
+  roomViewTranscriptMessages,
   type ChatDisplayMessage,
 } from './room-view-presentation';
 
@@ -185,5 +187,35 @@ describe('Room view presentation', () => {
         [message('live-overlay', 30)],
       ).map((item) => item.id),
     ).toEqual(['older-page', 'stale-outbox', 'live-overlay', 'server-tail']);
+  });
+
+  it('feeds additive corner toolRows to the collapsed activity renderer without expanding messages', () => {
+    const agent = 'b'.repeat(64);
+    const toolRow: RoomViewMessage = {
+      id: 'corner-tool-row',
+      text: '',
+      createdAt: 2,
+      author: { pubkey: agent, kind: 'agent', name: 'Bee' },
+      presentation: 'activity',
+      activity: [{ kind: 'tool', title: 'Bash', operation: 'execute', command: 'npm test' }],
+    };
+    const transcript = roomViewTranscriptMessages({
+      messages: [
+        {
+          id: 'corner-message',
+          text: 'Done.',
+          createdAt: 3,
+          author: { pubkey: agent, kind: 'agent', name: 'Bee' },
+          presentation: 'message',
+        },
+      ],
+      toolRows: [toolRow],
+    });
+
+    expect(transcript.map((message) => message.id)).toEqual(['corner-tool-row', 'corner-message']);
+    expect(displayRoomMessages(transcript, 'a'.repeat(64))[0]).toMatchObject({
+      isAgentActivity: true,
+      activity: [{ kind: 'tool', toolKind: 'execute', command: 'npm test' }],
+    });
   });
 });

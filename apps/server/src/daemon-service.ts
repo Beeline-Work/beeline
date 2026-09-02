@@ -815,7 +815,7 @@ export class DaemonService {
           mime_type: string;
           size: number;
         }>(
-          `SELECT url,name,mime_type,size FROM agent_pending_attachments
+          `SELECT url,name,mime_type,size::integer AS size FROM agent_pending_attachments
            WHERE room_id=$1 AND agent_id=$2 ORDER BY created_at,id`,
           [input.roomId, agentId],
         )

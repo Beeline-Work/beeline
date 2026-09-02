@@ -239,7 +239,13 @@ describe('thin monolith corner turn', () => {
         cwd: worktree,
         mode: 'edit',
         mcpServers: expect.arrayContaining([
-          expect.objectContaining({ name: 'buzz-dev-mcp' }),
+          expect.objectContaining({
+            name: 'buzz-dev-mcp',
+            env: [
+              { name: 'GH_TOKEN', value: 'room-installation-token' },
+              { name: 'GITHUB_TOKEN', value: 'room-installation-token' },
+            ],
+          }),
           expect.objectContaining({ name: 'beeline-agent' }),
         ]),
         systemPrompt: expect.stringContaining('server-posted checks-passed note'),

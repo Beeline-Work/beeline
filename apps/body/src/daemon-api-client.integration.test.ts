@@ -757,6 +757,11 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         'beeline-readonly-mcp',
         'beeline-agent',
       ]);
+      expect(
+        sessionNew.mock.calls[0]![0].mcpServers
+          ?.flatMap((server) => server.env ?? [])
+          .map((entry) => entry.name),
+      ).not.toEqual(expect.arrayContaining(['GH_TOKEN', 'GITHUB_TOKEN']));
       const wirePrompt = sessionPrompt.mock.calls[0]![1];
       expect(wirePrompt).toContain('This is who you are in this Workspace.');
       expect(wirePrompt).toContain('using-beeline skill (SKILL.md)');

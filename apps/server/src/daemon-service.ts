@@ -534,7 +534,8 @@ export class DaemonService {
         feature_branch: string | null;
         request_id: string | null;
         close_requested: boolean;
-      }>(`SELECT feature_branch,request_id,close_requested FROM corner_facts WHERE corner_id=$1`, [
+        lifecycle: import('@beeline/api-contract/phone').CornerLifecycleView;
+      }>(`SELECT feature_branch,request_id,close_requested,lifecycle FROM corner_facts WHERE corner_id=$1`, [
         cornerId,
       ])
     ).rows[0];
@@ -543,6 +544,7 @@ export class DaemonService {
       ...(row?.feature_branch ? { featureBranch: row.feature_branch } : {}),
       ...(row?.request_id ? { requestId: row.request_id } : {}),
       closeRequested: row?.close_requested ?? false,
+      ...(row?.lifecycle ? { lifecycle: row.lifecycle } : {}),
     };
   }
   private async repository(roomId: string, agentId: string) {
@@ -1061,7 +1063,18 @@ export class DaemonService {
       ...(input.pullRequest ? { pr: input.pullRequest } : {}),
     };
     await this.database.query(
-      `INSERT INTO corner_facts(corner_id,feature_branch,lifecycle) VALUES($1,$2,$3::jsonb) ON CONFLICT(corner_id) DO UPDATE SET feature_branch=EXCLUDED.feature_branch,lifecycle=EXCLUDED.lifecycle,updated_at=now()`,
+      `INSERT INTO corner_facts(corner_id,feature_branch,lifecycle) VALUES($1,$2,$3::jsonb)
+       ON CONFLICT(corner_id) DO UPDATE SET
+         feature_branch=EXCLUDED.feature_branch,
+         lifecycle=CASE
+           -- A helper's restart heartbeat is lower authority than GitHub's PR/check facts.
+           -- Keep the complete webhook-owned lifecycle so it cannot lose the PR, mergeability,
+           -- or check summary; the branch remains the daemon's current local fact.
+           WHEN EXCLUDED.lifecycle->>'lifecycle'='working' AND corner_facts.lifecycle ? 'pr'
+             THEN corner_facts.lifecycle || jsonb_build_object('branch', EXCLUDED.lifecycle->'branch')
+           ELSE corner_facts.lifecycle || EXCLUDED.lifecycle
+         END,
+         updated_at=now()`,
       [input.cornerId, input.branch, JSON.stringify(lifecycle)],
     );
     return this.writeResult();

@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ThinDaemonCore } from './thin-core.js';
-import { RoomRuntimeCoordinator } from './room-runtime.js';
+import { RoomRuntimeCoordinator, shouldPostInitialCornerWorkingState } from './room-runtime.js';
 import { identityFromKey, stageMonolithAgentRuntime } from './runtime.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
@@ -15,6 +15,29 @@ const execFileAsync = promisify(execFile);
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
 
 describe('monolith-only thin daemon', () => {
+  it('does not publish a fresh working state when restoring a corner with remote PR facts', () => {
+    expect(
+      shouldPostInitialCornerWorkingState({
+        cornerId: 'corner',
+        featureBranch: 'feature/corner',
+        closeRequested: false,
+        lifecycle: {
+          lifecycle: 'in-review',
+          branch: 'feature/corner',
+          checks: 'passing',
+          pr: {
+            number: 3,
+            url: 'https://github.com/example/repo/pull/3',
+            title: 'Keep the review facts',
+            targetBranch: 'main',
+            headSha: 'a'.repeat(40),
+            mergeability: 'clean',
+          },
+        },
+      }),
+    ).toBe(false);
+  });
+
   it('stages and reads only an authenticated monolith runtime', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'beeline-thin-runtime-'));
     roots.push(root);

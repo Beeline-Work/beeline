@@ -11,10 +11,7 @@ import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
 import { isSenderPermitted, LEGACY_ACCESS_POLICY } from './access-policy.js';
 import { beelineCapabilityContextForHarness } from './beeline-skill.js';
 import { beelineAgentMcpServer, readOnlyMcpServer } from './room-session.js';
-import {
-  isBeelineAgentMcpPermissionRequest,
-  isReadOnlyMcpPermissionRequest,
-} from './read-only-policy.js';
+import { isMountedMcpToolPermissionRequest, isSquireMcpPermissionRequest } from './read-only-policy.js';
 import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
@@ -36,14 +33,15 @@ type HumanMessage = Pick<RoomMessage, 'id' | 'authorId' | 'body' | 'createdAt' |
 type RoomAuthority = DaemonOperationMap['getRoomAuthority']['output'];
 
 /**
- * Rooms are fail-closed: only the MCP servers mounted by the host may cross
- * ACP's permission callback. `beeline-readonly-mcp` validates every path
- * against the daemon-pinned checkout; `beeline-agent` owns the one governed
- * Room action. Everything else, including native reads and shell commands,
- * remains unavailable to the Room harness.
+ * Rooms and corners share one rule: every MCP tool call from a server the
+ * host mounted into the session is approved, and nothing that is not an MCP
+ * tool call (shell, native reads/writes, unstructured requests) crosses. The
+ * read-only sandbox is the boundary, not the tool list; Trusty Squire stays
+ * broker-gated on the host and is never session-mounted.
  */
 export function isRoomMcpPermissionRequest(request: AcpPermissionRequest): boolean {
-  return isReadOnlyMcpPermissionRequest(request) || isBeelineAgentMcpPermissionRequest(request);
+  if (isSquireMcpPermissionRequest(request)) return false;
+  return isMountedMcpToolPermissionRequest(request);
 }
 
 /** The Room ACP client applies this host-owned MCP allowlist fail-closed. */

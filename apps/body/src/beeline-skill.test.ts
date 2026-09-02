@@ -8,7 +8,7 @@ import {
 describe('using-beeline Room guidance', () => {
   it('describes Room mentions and the mounted corner action', () => {
     const markdown = usingBeelineSkillMarkdown('test-release');
-    expect(markdown).toContain('read-only Room');
+    expect(markdown).toContain('filesystem is read-only');
     expect(markdown).toContain('beeline-release: test-release');
     expect(markdown).toContain('@name');
     expect(markdown).toContain('including another agent');
@@ -43,7 +43,8 @@ describe('using-beeline Room guidance', () => {
     expect(context.sessionPrompt).toContain('@name');
     expect(context.sessionPrompt).toContain('including another agent');
     expect(context.sessionPrompt).toContain('beeline-agent open_corner');
-    expect(context.sessionPrompt).toContain('tools are mounted');
+    expect(context.sessionPrompt).toContain('the read-only filesystem sandbox is the boundary');
+    expect(context.sessionPrompt).toContain('web search is enabled');
     expect(context.sessionPrompt).toContain(
       'Tag the user only when you need a decision or input, or when the task they asked for is finished.',
     );

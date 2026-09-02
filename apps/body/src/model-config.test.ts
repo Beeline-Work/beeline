@@ -13,7 +13,7 @@ import {
   GROK_LAUNCH_EFFORT_AXIS_ID,
   agentArgsWithModelSelection,
 } from './model-config.js';
-import type { AgentModelConfigOption } from '@beeline/buzz-client';
+import type { AgentModelConfigOption } from './model-types.js';
 import { CODEX_ACP_SESSION_NEW_CONFIG_OPTIONS } from './fixtures/codex-acp-config-options.js';
 
 /** A raw `session/new` result shaped like claude-agent-acp's advertised catalog (report §3.1). */

@@ -4,8 +4,8 @@ import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
 import { AcpClient, isMutatingPermissionRequest, type McpServerWire } from './acp.js';
 import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
 import { isSenderPermitted, LEGACY_ACCESS_POLICY } from './access-policy.js';
-import { stripAgentReplyPreamble } from './activity.js';
-import { readOnlyMcpServer } from './body.js';
+import { stripAgentReplyPreamble } from './reply-sanitizer.js';
+import { readOnlyMcpServer } from './room-session.js';
 import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
@@ -18,8 +18,6 @@ import {
 import type { AgentRuntimeRecord } from './runtime.js';
 import { runtimeIdentity } from './runtime.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
-import type { ScheduledTurnRequest } from './work-calendar.js';
-import type { BoundRepo, RoomEditPolicy } from './body.js';
 
 type WorkspaceRoster = DaemonOperationMap['getWorkspaceRoster']['output'];
 
@@ -88,15 +86,6 @@ export class MonolithRoomTurnLoop {
   async forceRecoverRoom(): Promise<void> {
     if (this.client && this.sessionId) this.client.sessionCancel(this.sessionId);
     await this.options.scheduler.forceSuspend(this.options.roomId);
-  }
-
-  async dispatchScheduledTurn(
-    _request: ScheduledTurnRequest,
-    _boundRepo: BoundRepo | undefined,
-    _editPolicy: RoomEditPolicy,
-    _beforeModelActivation: () => Promise<void>,
-  ): Promise<void> {
-    throw new Error('scheduled turns are not enabled on the monolith Room-turn transport');
   }
 
   private roster(): Promise<WorkspaceRoster> {

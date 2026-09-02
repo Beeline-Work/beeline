@@ -4,8 +4,8 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
-import { newIdentity } from '@beeline/gate';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { identityFromKey } from './runtime.js';
 import {
   activeReleaseId,
   readUpdateAttempt,
@@ -333,7 +333,7 @@ describe.runIf(process.env.BEELINE_SYSTEMD_ACCEPTANCE === '1')(
     it('forces continuous work at the absolute deadline and restarts READY on the new release', async () => {
       const { root, runtimeDir, layout } = await layoutFixture();
       const stored = (name: string) => {
-        const identity = newIdentity(name);
+        const identity = identityFromKey(undefined, name);
         return {
           name,
           secretKeyHex: Buffer.from(identity.secretKey).toString('hex'),
@@ -351,7 +351,6 @@ describe.runIf(process.env.BEELINE_SYSTEMD_ACCEPTANCE === '1')(
           body: stored('update-acceptance-body'),
           rooms: [],
           supervisorRoot: root,
-          relayBaseUrl: 'http://relay.invalid',
           agentBinary: '/bin/true',
           mcpBinary: '/bin/true',
           createdAt: new Date(0).toISOString(),

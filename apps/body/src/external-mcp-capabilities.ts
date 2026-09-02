@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import type { PermissionScope } from '@beeline/buzz-client';
 import type { AcpPermissionRequest, McpServerWire } from './acp.js';
 import type { AgentAccessPolicy } from './access-policy.js';
 
@@ -154,7 +153,14 @@ type JsonObject = Record<string, unknown>;
 export interface GovernedSquireCall {
   tool: SquireGovernedTool;
   arguments: JsonObject;
-  scope: Extract<PermissionScope, { type: 'operation.execute' }>;
+  scope: {
+    type: 'operation.execute';
+    connectorId: string;
+    tool: string;
+    argumentsDigest: string;
+    target: string;
+    risk: 'out-of-scope';
+  };
 }
 
 function object(value: unknown): JsonObject | undefined {

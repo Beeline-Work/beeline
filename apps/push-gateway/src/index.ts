@@ -1,7 +1,5 @@
 import { applicationDefault, getApps, initializeApp } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
-import { loadEventsServiceConfig, runRepositoryEventsService } from '@beeline/body/events-service';
-import { RepositoryEventsState, type EventsStateData } from '@beeline/body/events-state';
 import { loadPushGatewayConfig } from './config.js';
 import { PostgresMaterializerStore } from './database.js';
 import { DeliveryState, type DeliveryStateFile } from './delivery-state.js';
@@ -10,7 +8,6 @@ import { PushGateway, RegisteredEventPoller } from './gateway.js';
 import { TokenRegistry } from './registry.js';
 import { RoomIndexer } from './room-indexer.js';
 import { createRegistrationServer } from './server.js';
-import { startHostedRepositoryEvents } from './hosted-events.js';
 import { readDaemonReleaseFleetStatus } from '@beeline/body/release-status';
 
 async function main(): Promise<void> {
@@ -20,7 +17,6 @@ async function main(): Promise<void> {
   const shutdownController = new AbortController();
   let gateway: PushGateway | undefined;
   let feed: PushEventFeed | undefined;
-  let hostedEvents: Awaited<ReturnType<typeof startHostedRepositoryEvents>> | undefined;
   let server: ReturnType<typeof createRegistrationServer> | undefined;
   let drainPromise: Promise<void> | undefined;
   const drain = (): Promise<void> => {
@@ -29,7 +25,6 @@ async function main(): Promise<void> {
       shutdownController.abort();
       feed?.stop();
       if (server?.listening) server.close();
-      await hostedEvents?.completed.catch(() => undefined);
       await materializerStore.close();
     })();
     return drainPromise;
@@ -46,30 +41,6 @@ async function main(): Promise<void> {
     await materializerStore.migrateAgentPairingClaims();
     await materializerStore.deleteSnapshotContract();
     const indexer = new RoomIndexer(materializerStore);
-
-    if (!config.repositoryEventsEnabled) {
-      console.log('[events] repository ingestion disabled by configuration');
-    } else {
-      const eventsConfig = loadEventsServiceConfig();
-      const eventsState = new RepositoryEventsState(
-        materializerStore.reservation<EventsStateData>('repository-events'),
-      );
-      hostedEvents = await startHostedRepositoryEvents({
-        config: eventsConfig,
-        state: eventsState,
-        signal: shutdownController.signal,
-        run: runRepositoryEventsService,
-      });
-      void hostedEvents.completed.catch((error) => {
-        if (shutdownController.signal.aborted) return;
-        console.error(
-          '[events] hosted consumer failed:',
-          error instanceof Error ? error.message : String(error),
-        );
-        process.exitCode = 1;
-        void drain();
-      });
-    }
 
     server = createRegistrationServer(registry, {
       sendTest: async (pubkey) => {

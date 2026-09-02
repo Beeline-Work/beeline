@@ -3,7 +3,6 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { AcpClient } from './acp.js';
 import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
-import { AgentToolHostBroker } from './agent-tool-host-broker.js';
 import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
 import type { BodyConfig } from './config.js';
 import {
@@ -12,7 +11,6 @@ import {
   isGrokAgentCommand,
   parseAdvertisedConfigOptions,
 } from './model-config.js';
-import { piMcpDirectToolSelection, preparePiMcpSession } from './pi-mcp-session.js';
 
 // The systemd unit's start deadline is 90s. Initialize gets 10s, session/new
 // gets 20s, and the real turn gets 45s, preserving 15s for home/sandbox setup
@@ -27,8 +25,7 @@ export type UpdateFunctionalProbeFailure =
   | 'model-unavailable'
   | 'sandbox-unavailable'
   | 'session-start-failed'
-  | 'turn-failed'
-  | 'native-tool-missing';
+  | 'turn-failed';
 
 export class UpdateFunctionalProbeError extends Error {
   readonly code = 'BEELINE_UPDATE_FUNCTIONAL_PROBE_FAILED';
@@ -48,13 +45,13 @@ export interface UpdateFunctionalProbeResult {
   sandboxed: boolean;
   sessionStarted: true;
   turnCompleted: true;
-  nativeTools: readonly ['close_corner'];
+  nativeTools: readonly [];
 }
 
 /**
  * Exercise the exact production ACP boundary before a successor may announce
  * READY. The probe is local-only: it creates no Room event and publishes no
- * model prose. Its one mounted tool is backed by an in-process capability.
+ * model prose.
  */
 export async function runUpdateFunctionalProbe(input: {
   config: BodyConfig;
@@ -67,8 +64,6 @@ export async function runUpdateFunctionalProbe(input: {
   /** Test seam for the separate cold session/new budget. */
   sessionOpenTimeoutMs?: number;
   turnTimeoutMs?: number;
-  /** Test seam; production always resolves the proxy owned by the running bundle. */
-  proxyEntrypoint?: string;
 }): Promise<UpdateFunctionalProbeResult> {
   const command = input.config.agentCommand ?? input.config.agentBinary;
   const harness = input.config.agentKind ?? command;
@@ -88,24 +83,9 @@ export async function runUpdateFunctionalProbe(input: {
   await rm(root, { recursive: true, force: true });
   await mkdir(cwd, { recursive: true, mode: 0o700 });
 
-  const calls: string[] = [];
-  const broker = new AgentToolHostBroker(input.proxyEntrypoint);
   let client: AcpClient | undefined;
   try {
-    const server = await broker.mcpServer({
-      channelId: `update-probe:${input.releaseId}`,
-      invoke: async (tool) => {
-        calls.push(tool);
-        return {
-          schema_version: 2,
-          generation: { event_id: '0'.repeat(64), generation: 1 },
-          grants: [],
-          defaults: [],
-          blockers: [],
-        };
-      },
-    });
-    let agentEnv = {
+    const agentEnv = {
       ...input.config.agentEnv,
       ...(await prepareRoomAgentHome({
         root: homeRoot,
@@ -115,18 +95,6 @@ export async function runUpdateFunctionalProbe(input: {
         failClosed: true,
       })),
     };
-    if (input.config.agentKind === 'pi' && agentEnv.PI_CODING_AGENT_DIR) {
-      agentEnv = {
-        ...agentEnv,
-        PI_CODING_AGENT_DIR: await preparePiMcpSession({
-          baseDir: agentEnv.PI_CODING_AGENT_DIR,
-          channelId: `update-probe:${input.releaseId}`,
-          mcpServers: [server],
-        }),
-        MCP_DIRECT_TOOLS: piMcpDirectToolSelection([server]),
-      };
-    }
-
     const selectedAgent = {
       kind: input.config.agentKind,
       command,
@@ -171,9 +139,8 @@ export async function runUpdateFunctionalProbe(input: {
       await client.start(sessionTimeoutMs);
       const opened = await client.sessionNew({
         cwd,
-        mcpServers: [server],
-        systemPrompt:
-          'This is Beeline update validation. Call close_corner once with corner_id update-probe, then answer only READY.',
+        mcpServers: [],
+        systemPrompt: 'This is Beeline update validation. Answer only READY.',
         mode: 'readonly',
         timeoutMs: sessionOpenTimeoutMs,
       });
@@ -192,7 +159,7 @@ export async function runUpdateFunctionalProbe(input: {
       try {
         const served = await client.sessionPrompt(
           opened.sessionId,
-          'Call the mounted Beeline close_corner tool exactly once with corner_id update-probe, then reply READY.',
+          'Reply READY.',
           input.turnTimeoutMs ?? UPDATE_PROBE_TURN_TIMEOUT_MS,
         );
         if (!served.agentText.trim()) {
@@ -216,22 +183,15 @@ export async function runUpdateFunctionalProbe(input: {
         { cause: error },
       );
     }
-    if (calls.length !== 1 || calls[0] !== 'close_corner') {
-      throw new UpdateFunctionalProbeError(
-        'native-tool-missing',
-        `expected one close_corner call, observed ${calls.join(', ') || 'none'}`,
-      );
-    }
     return {
       harness,
       sandboxed: Boolean(input.config.bwrapPath),
       sessionStarted: true,
       turnCompleted: true,
-      nativeTools: ['close_corner'],
+      nativeTools: [],
     };
   } finally {
     await client?.stop().catch(() => undefined);
-    await broker.close();
     await rm(root, { recursive: true, force: true }).catch(() => undefined);
   }
 }

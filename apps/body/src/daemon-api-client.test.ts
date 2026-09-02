@@ -2,14 +2,18 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { newIdentity } from '@beeline/gate';
 import { activateDaemonTransport, DaemonApiClient, DaemonApiError } from './daemon-api-client.js';
-import { readRuntimeRecord, writeRuntimeRecord, type AgentRuntimeRecord } from './runtime.js';
+import {
+  identityFromKey,
+  readRuntimeRecord,
+  writeRuntimeRecord,
+  type AgentRuntimeRecord,
+} from './runtime.js';
 
 const roots: string[] = [];
 
 function stored(name: string) {
-  const identity = newIdentity(name);
+  const identity = identityFromKey(undefined, name);
   return {
     name,
     secretKeyHex: Buffer.from(identity.secretKey).toString('hex'),
@@ -28,7 +32,6 @@ async function stagedRuntime(origin = 'http://127.0.0.1:43123') {
     body: stored('body'),
     rooms: [],
     supervisorRoot,
-    relayBaseUrl: 'https://legacy.invalid',
     transport: { kind: 'monolith', baseUrl: origin, exchangeToken: `bde_${'x'.repeat(43)}` },
     agentBinary: 'buzz-agent',
     mcpBinary: 'buzz-dev-mcp',

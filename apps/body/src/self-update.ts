@@ -340,8 +340,6 @@ function run(
 }
 
 const BUNDLE_ENTRYPOINT = 'lib/beeline/beeline-cli.mjs';
-const SQUIRE_MCP_PROXY_ENTRYPOINT = 'lib/beeline/squire-mcp-proxy.mjs';
-const AGENT_TOOL_MCP_PROXY_ENTRYPOINT = 'lib/beeline/agent-tool-mcp-proxy.mjs';
 const PI_MCP_ADAPTER_ENTRYPOINT = 'lib/beeline/pi-mcp-adapter.mjs';
 
 /** Entrypoint candidates: release-shaped first, then the legacy-flat fallback. */
@@ -371,8 +369,6 @@ export async function resolveBundleEntrypoint(bundleDir: string): Promise<string
 function requiredBundlePaths(): string[] {
   return [
     BUNDLE_ENTRYPOINT,
-    SQUIRE_MCP_PROXY_ENTRYPOINT,
-    AGENT_TOOL_MCP_PROXY_ENTRYPOINT,
     PI_MCP_ADAPTER_ENTRYPOINT,
   ];
 }
@@ -595,8 +591,6 @@ export async function activateRelease(
 const LEGACY_FLAT_BUNDLE_FILES = [
   'beeline-cli.mjs',
   'beeline-readonly-mcp.mjs',
-  'squire-mcp-proxy.mjs',
-  'agent-tool-mcp-proxy.mjs',
   'pi-mcp-adapter.mjs',
   'bundle.json',
 ];

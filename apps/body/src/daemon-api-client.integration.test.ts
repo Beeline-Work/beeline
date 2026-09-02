@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getPublicKey } from '@beeline/nostr';
 import { migrate } from '../../server/src/database.js';
@@ -16,10 +16,15 @@ import { createBeelineServer } from '../../server/src/server.js';
 import { createMonolithAuth, type MonolithAuthMount } from '../../server/src/monolith-auth.js';
 import { DaemonApiClient } from './daemon-api-client.js';
 import { AcpClient } from './acp.js';
-import { Body } from './body.js';
 import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
-import { completeDevicePairing } from './pair-command.js';
-import { readRuntimeRecord, type AgentRuntimeRecord } from './runtime.js';
+import { completeDevicePairing } from './device-pairing.js';
+import {
+  launchRuntimeDaemon,
+  readRuntimeRecord,
+  stopRuntimeDaemon,
+  writeRuntimeRecord,
+  type AgentRuntimeRecord,
+} from './runtime.js';
 import { SessionScheduler } from './session-scheduler.js';
 
 const HUMAN = createHash('sha256').update('github:daemon-client-owner').digest('hex');
@@ -36,6 +41,7 @@ describe('daemon API client against the local monolith', () => {
   let server: ReturnType<typeof createBeelineServer>;
   let origin: string;
   let supervisorRoot: string;
+  let launchedDaemonConfig: string | undefined;
 
   beforeEach(async () => {
     database = new PgliteDatabase();
@@ -106,6 +112,10 @@ describe('daemon API client against the local monolith', () => {
   });
 
   afterEach(async () => {
+    if (launchedDaemonConfig) {
+      await stopRuntimeDaemon(launchedDaemonConfig).catch(() => undefined);
+      launchedDaemonConfig = undefined;
+    }
     await new Promise<void>((resolve) => server.close(() => resolve()));
     await mountedAuth.close();
     await database.close();
@@ -113,6 +123,32 @@ describe('daemon API client against the local monolith', () => {
   }, 30_000);
 
   it('takes an app grant through finish, durable daemon auth, and a visible first heartbeat', async () => {
+    const fakeAgent = join(supervisorRoot, 'deterministic-acp.mjs');
+    await writeFile(
+      fakeAgent,
+      `#!/usr/bin/env node
+import { createInterface } from 'node:readline';
+const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
+createInterface({ input: process.stdin }).on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') {
+    send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
+  } else if (message.method === 'session/new') {
+    send({ jsonrpc: '2.0', id: message.id, result: {
+      sessionId: 'live-thin-session',
+      configOptions: [{ id: 'model', category: 'model', currentValue: 'gpt-5.4', options: [{ value: 'gpt-5.4', name: 'GPT-5.4' }] }],
+    } });
+  } else if (message.method === 'session/set_config_option') {
+    send({ jsonrpc: '2.0', id: message.id, result: {} });
+  } else if (message.method === 'session/prompt') {
+    send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'live-thin-session', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Thin daemon live proof.' } } } });
+    send({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn' } });
+  }
+});
+`,
+      { mode: 0o700 },
+    );
+    await chmod(fakeAgent, 0o700);
     const code = 'BUZZ-1234ABCD-5678EF90';
     await database.query(
       `INSERT INTO agent_pairing_codes(code_hash,workspace_id,created_by,expires_at)
@@ -160,7 +196,6 @@ describe('daemon API client against the local monolith', () => {
     expect(grant.daemon_exchange_token).toMatch(/^bde_/);
     expect(grant).not.toHaveProperty('pairing_code');
 
-    const launched: string[] = [];
     const result = await completeDevicePairing(
       {
         agentSecretKey: grant.agent_secret_key!,
@@ -177,39 +212,60 @@ describe('daemon API client against the local monolith', () => {
       },
       {
         supervisorRoot,
-        selectedAgent: { kind: 'codex', command: 'codex-acp', args: [] },
-        localConfig: { agentBinary: 'codex-acp', mcpBinary: 'buzz-dev-mcp', agentEnv: {} },
+        selectedAgent: { kind: 'codex', command: fakeAgent, args: [] },
+        localConfig: { agentBinary: fakeAgent, mcpBinary: 'buzz-dev-mcp', agentEnv: {} },
         validateSelection: async () => undefined,
         launch: async (configPath) => {
-          launched.push(configPath);
-          const launchedRuntime = await readRuntimeRecord(configPath);
-          const transport = launchedRuntime.transport;
-          if (!transport || !('daemonToken' in transport)) {
-            throw new Error('launch received an unactivated runtime');
-          }
-          const client = new DaemonApiClient(
-            transport.baseUrl,
-            transport.daemonToken,
-            launchedRuntime.agent.publicKey,
-          );
-          await client.execute('postAgentPresence', {
-            agentId: launchedRuntime.agent.publicKey,
-            roomId: ROOM,
-            status: 'online',
+          launchedDaemonConfig = configPath;
+          const liveRuntime = await readRuntimeRecord(configPath);
+          liveRuntime.sandbox = 'off';
+          await writeRuntimeRecord(liveRuntime);
+          return launchRuntimeDaemon(configPath, {
+            entrypoint: resolve('dist/cli.js'),
+            env: {
+              ...process.env,
+              BEELINE_SYSTEMD_USER: '0',
+              BUZZ_DEV_MCP_BIN: '/home/lunchbox/.local/bin/buzz-dev-mcp',
+              XDG_STATE_HOME: supervisorRoot,
+            },
           });
-          return 4242;
         },
       },
     );
-    expect(launched).toEqual([result.configPath]);
     expect(result.runtime.transport).toMatchObject({ kind: 'monolith', baseUrl: origin });
     expect(result.runtime.transport).toHaveProperty('daemonToken');
     expect(result.runtime.transport).not.toHaveProperty('exchangeToken');
 
-    const room = await phone.readRoom(ROOM, HUMAN);
-    expect(
-      room?.members.find((member) => member.identity.pubkey === result.runtime.agent.publicKey),
-    ).toMatchObject({ presence: { status: 'online', roomId: ROOM } });
+    await vi.waitFor(async () => {
+      const room = await phone.readRoom(ROOM, HUMAN);
+      expect(
+        room?.members.find((member) => member.identity.pubkey === result.runtime.agent.publicKey),
+      ).toMatchObject({ presence: { status: 'online', roomId: ROOM } });
+    }, { timeout: 10_000 });
+    // The server cursor is second-granular; cross the pairing join-note second
+    // before creating the human request so this exercises a fresh inbox row.
+    await new Promise((resolveWait) => setTimeout(resolveWait, 1_100));
+
+    const sent = await phone.execute(
+      'sendRoomMessage',
+      {
+        roomId: ROOM,
+        messageId: 'd'.repeat(64),
+        text: '@scout prove the thin daemon path',
+        mentions: [result.runtime.agent.publicKey],
+      },
+      HUMAN,
+    );
+    await vi.waitFor(async () => {
+      const room = await phone.readRoom(ROOM, HUMAN);
+      expect(room?.messages).toContainEqual(
+        expect.objectContaining({
+          author: expect.objectContaining({ pubkey: result.runtime.agent.publicKey }),
+          requestId: sent.messageId,
+          text: 'Thin daemon live proof.',
+        }),
+      );
+    }, { timeout: 10_000 });
   }, 30_000);
 
   it('answers a mention in a repo-less Room and keeps monolith presence current', async () => {
@@ -232,10 +288,6 @@ describe('daemon API client against the local monolith', () => {
       readonlyMcpCommand: '/nonexistent-readonly-mcp',
       agentEnv: {},
       workspaceRoot: join(supervisorRoot, 'repo-less-room'),
-      relayBaseUrl: origin,
-      relayHost: '127.0.0.1',
-      relayScheme: 'http',
-      relayWsUrl: origin.replace(/^http/, 'ws'),
       autoApprovePermissions: true,
       accessPolicy: 'everyone',
     } as const;
@@ -255,7 +307,6 @@ describe('daemon API client against the local monolith', () => {
       },
       rooms: [],
       supervisorRoot,
-      relayBaseUrl: origin,
       agentBinary: '/nonexistent',
       mcpBinary: '/nonexistent',
       createdAt: new Date().toISOString(),
@@ -332,7 +383,7 @@ describe('daemon API client against the local monolith', () => {
     ).toMatchObject({ presence: { status: 'offline', roomId: ROOM } });
   }, 15_000);
 
-  it('exchanges a token and round-trips inbox, receipts, authority, settings, presence, and corners', async () => {
+  it('exchanges a token and round-trips the thin daemon operations', async () => {
     const exchange = await auth.createDaemonExchange(AGENT);
     const exchanged = await fetch(`${origin}/v1/auth/daemon/exchange`, {
       method: 'POST',
@@ -424,88 +475,6 @@ describe('daemon API client against the local monolith', () => {
       client.execute('getAgentPresence', { agentId: AGENT, roomId: ROOM }),
     ).resolves.toEqual(expect.objectContaining({ status: 'online' }));
 
-    const corner = await client.execute('createCorner', {
-      roomId: ROOM,
-      requestId: 'c'.repeat(64),
-      name: 'Cutover corner',
-      task: 'Verify the monolith cut',
-    });
-    await client.execute('postCornerLifecycle', {
-      cornerId: corner.cornerId,
-      status: 'working',
-      objective: 'Verify the monolith cut',
-    });
-    await client.execute('postCornerRemoteState', {
-      cornerId: corner.cornerId,
-      branch: 'fm/verify-monolith-cut',
-      state: 'in-review',
-      checks: 'passing',
-      pullRequest: {
-        number: 812,
-        url: 'https://github.com/lunchboxfortwo/beeline/pull/812',
-        title: 'Verify the monolith cut',
-        targetBranch: 'main',
-        headSha: '1'.repeat(40),
-        mergeability: 'clean',
-      },
-    });
-    expect(
-      (
-        await database.query<{ lifecycle: Record<string, unknown> }>(
-          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
-          [corner.cornerId],
-        )
-      ).rows[0]?.lifecycle,
-    ).toEqual(
-      expect.objectContaining({
-        lifecycle: 'in-review',
-        checks: 'passing',
-        pr: expect.objectContaining({ number: 812, targetBranch: 'main' }),
-      }),
-    );
-
-    await client.execute('postRoomMessage', {
-      roomId: ROOM,
-      text: 'Merged pull request #812 into main.',
-      presentation: 'card',
-      tags: { cornerId: corner.cornerId, outcome: 'landed' },
-    });
-    await client.execute('postCornerRemoteState', {
-      cornerId: corner.cornerId,
-      branch: 'fm/verify-monolith-cut',
-      state: 'gone',
-      checks: 'passing',
-    });
-    await client.execute('archiveCorner', { cornerId: corner.cornerId });
-    expect(
-      (
-        await database.query<{ archived: boolean }>(
-          `SELECT archived_at IS NOT NULL archived FROM rooms WHERE id=$1`,
-          [corner.cornerId],
-        )
-      ).rows[0]?.archived,
-    ).toBe(true);
-    expect(
-      (
-        await database.query<{ text: string }>(
-          `SELECT text FROM messages WHERE room_id=$1 AND presentation='card' ORDER BY created_at DESC LIMIT 1`,
-          [ROOM],
-        )
-      ).rows[0]?.text,
-    ).toBe('Merged pull request #812 into main.');
-    await expect(client.execute('listRoomCorners', { roomId: ROOM })).resolves.toEqual(
-      expect.objectContaining({
-        corners: [expect.objectContaining({ cornerId: corner.cornerId, parentRoomId: ROOM })],
-      }),
-    );
-    expect(
-      (
-        await database.query(
-          `SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
-          [corner.cornerId, HUMAN],
-        )
-      ).rowCount,
-    ).toBe(1);
     await expect(client.execute('getDaemonBootstrap', { agentId: AGENT })).resolves.toEqual(
       expect.objectContaining({
         rooms: [expect.objectContaining({ roomId: ROOM })],

@@ -123,6 +123,12 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The OTA delivery-index governor tests (mobileOtaRelease.test.ts)
+          # enumerate HEAD~2..HEAD through real git; a depth-1 checkout makes
+          # `git rev-parse HEAD~2` fail while still echoing the literal arg,
+          # which poisons the test's commit ranges.
+          fetch-depth: 3
       - uses: actions/setup-node@v4
         with:
           node-version: 22

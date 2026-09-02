@@ -1303,6 +1303,21 @@ createInterface({ input: process.stdin }).on('line', (line) => {
             pullRequestUrl =
               transcript.match(/https:\/\/github\.com\/[^\s]+\/pull\/\d+/)?.[0] ?? '';
             expect(pullRequestUrl).toMatch(/\/pull\/\d+$/);
+            expect(
+              conversation.items.some(
+                (item) =>
+                  item.type === 'system' && item.body === `PR ready for review\n${pullRequestUrl}`,
+              ),
+            ).toBe(true);
+            const activities = await database.query<{ activity: Array<{ kind?: string }> }>(
+              `SELECT activity FROM messages WHERE room_id=$1 AND presentation='activity'`,
+              [cornerId],
+            );
+            expect(
+              activities.rows.some((row) =>
+                row.activity.some((activity) => activity.kind === 'tool'),
+              ),
+            ).toBe(true);
           },
           { timeout: 300_000, interval: 1_000 },
         );
@@ -1367,6 +1382,14 @@ createInterface({ input: process.stdin }).on('line', (line) => {
             );
             expect(core.activeRoomIds()).not.toContain(cornerId);
             await expect(access(worktree)).rejects.toMatchObject({ code: 'ENOENT' });
+            expect(
+              (
+                await database.query<{ lifecycle: string }>(
+                  `SELECT lifecycle->>'lifecycle' lifecycle FROM corner_facts WHERE corner_id=$1`,
+                  [cornerId],
+                )
+              ).rows[0]?.lifecycle,
+            ).toBe('done');
           },
           { timeout: 30_000, interval: 250 },
         );

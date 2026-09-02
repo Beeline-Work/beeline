@@ -1,15 +1,18 @@
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AcpClient } from './acp.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
-import { MonolithCornerTurnLoop } from './monolith-corner-turn.js';
+import { cornerToolActivity, MonolithCornerTurnLoop } from './monolith-corner-turn.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 import { SessionScheduler } from './session-scheduler.js';
 
 const roots: string[] = [];
+const execFileAsync = promisify(execFile);
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
@@ -24,6 +27,33 @@ function stored(hex: string, name: string) {
 }
 
 describe('thin monolith corner turn', () => {
+  it('summarizes a commit with its file count and subject', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-corner-commit-'));
+    roots.push(root);
+    await execFileAsync('git', ['init', root]);
+    await execFileAsync('git', ['-C', root, 'config', 'user.name', 'Bee']);
+    await execFileAsync('git', ['-C', root, 'config', 'user.email', 'bee@example.test']);
+    await Promise.all([
+      writeFile(join(root, 'one.txt'), 'one\n'),
+      writeFile(join(root, 'two.txt'), 'two\n'),
+    ]);
+    await execFileAsync('git', ['-C', root, 'add', 'one.txt', 'two.txt']);
+    await execFileAsync('git', ['-C', root, 'commit', '-m', 'Fix the widget']);
+
+    await expect(
+      cornerToolActivity(
+        {
+          id: 'commit-1',
+          kind: 'execute',
+          title: 'Run shell command',
+          rawInput: { command: 'git commit -m "Fix the widget"' },
+          status: 'completed',
+        },
+        root,
+      ),
+    ).resolves.toEqual(expect.objectContaining({ title: 'committed 2 files: Fix the widget' }));
+  });
+
   it('starts in edit mode, streams to the corner, and carries the server-check merge gate', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-thin-corner-'));
     roots.push(root);
@@ -78,24 +108,28 @@ describe('thin monolith corner turn', () => {
           ],
         };
       }
-      if (name === 'getRoomInbox') {
+      if (name === 'getRoomInbox' || name === 'getCornerCloseRequests') {
         inboxReads += 1;
-        return inboxReads === 2
-          ? {
-              items: [
-                {
-                  id: 'checks-event',
-                  authorId: runtime.agent.publicKey,
-                  createdAt: 2,
-                  type: 'system',
-                  body: 'Checks passed — https://github.com/acme/widgets/pull/7.',
-                  mentionIds: [],
-                  attachments: [],
-                },
-              ],
-              cursor: 'checks-event',
-            }
-          : { items: [], cursor: 'latest' };
+        if (inboxReads === 2) {
+          return {
+            items: [
+              {
+                id: 'checks-event',
+                authorId: runtime.agent.publicKey,
+                createdAt: 2,
+                type: 'system',
+                body: 'Checks passed — https://github.com/acme/widgets/pull/7.',
+                mentionIds: [],
+                attachments: [],
+              },
+            ],
+            cursor: 'checks-event',
+          };
+        }
+        if (inboxReads === 3) {
+          return { items: [], cursor: 'close-event', closeRequested: true };
+        }
+        return { items: [], cursor: 'latest' };
       }
       if (name === 'getRoomConversation') {
         conversationReads += 1;
@@ -111,6 +145,19 @@ describe('thin monolith corner turn', () => {
               requestId: 'request-id',
               attachments: [],
             },
+            ...(conversationReads >= 3
+              ? [
+                  {
+                    id: 'ready-message',
+                    authorId: runtime.agent.publicKey,
+                    createdAt: 2,
+                    type: 'system',
+                    body: 'PR ready for review\nhttps://github.com/acme/widgets/pull/7',
+                    mentionIds: [],
+                    attachments: [],
+                  },
+                ]
+              : []),
           ],
           cursor: 'latest',
         };
@@ -134,20 +181,32 @@ describe('thin monolith corner turn', () => {
     });
     const sessionPrompt = vi
       .spyOn(acp, 'sessionPrompt')
-      .mockImplementation(async (_id, prompt, _timeout, draft) => {
+      .mockImplementation(async (_id, prompt, _timeout, draft, _activity, toolActivity) => {
         draft?.('Opening PR', 'Opening PR');
         const checksTurn = prompt.includes('Checks passed');
-        if (checksTurn) abort.abort();
+        const toolCalls = checksTurn
+          ? []
+          : [
+              {
+                id: 'read-1',
+                kind: 'read',
+                title: 'Read package.json',
+                status: 'completed',
+              },
+            ];
+        toolActivity?.(toolCalls);
+        toolActivity?.(toolCalls);
         return {
           stopReason: 'end_turn',
           updates: [],
           agentText: checksTurn
             ? 'Merged https://github.com/acme/widgets/pull/7'
             : 'PR: https://github.com/acme/widgets/pull/7',
-          toolCalls: [],
+          toolCalls,
         };
       });
     const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
+    const onCloseRequested = vi.fn(async () => undefined);
     const loop = new MonolithCornerTurnLoop({
       cornerId: 'corner-id',
       parentRoomId: 'room-id',
@@ -165,6 +224,7 @@ describe('thin monolith corner turn', () => {
       signal: abort.signal,
       onPoll: vi.fn(),
       onFailure: vi.fn(),
+      onCloseRequested,
       createAcpClient: () => acp,
     });
     await loop.run();
@@ -172,6 +232,7 @@ describe('thin monolith corner turn', () => {
 
     expect(conversationReads).toBeGreaterThanOrEqual(2);
     expect(sessionPrompt).toHaveBeenCalledTimes(2);
+    expect(onCloseRequested).toHaveBeenCalledOnce();
     expect(sessionPrompt.mock.calls[1]?.[1]).toContain('Checks passed');
     expect(sessionNew).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -193,5 +254,33 @@ describe('thin monolith corner turn', () => {
         }),
       }),
     );
+    expect(writes).toContainEqual(
+      expect.objectContaining({
+        name: 'postRoomMessage',
+        input: expect.objectContaining({
+          roomId: 'corner-id',
+          presentation: 'system',
+          text: 'PR ready for review\nhttps://github.com/acme/widgets/pull/7',
+        }),
+      }),
+    );
+    expect(writes.filter((write) => write.name === 'postAgentActivity')).toEqual([
+      expect.objectContaining({
+        input: expect.objectContaining({
+          activity: [
+            expect.objectContaining({
+              kind: 'tool',
+              operation: 'read',
+              title: 'Read package.json',
+            }),
+          ],
+        }),
+      }),
+    ]);
+    expect(
+      writes.filter(
+        (write) => write.name === 'postRoomMessage' && write.input.presentation === 'system',
+      ),
+    ).toHaveLength(1);
   });
 });

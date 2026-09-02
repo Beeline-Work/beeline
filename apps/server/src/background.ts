@@ -13,6 +13,11 @@ export class PushDeliveryLoop {
   ) {}
 
   async runOnce(): Promise<number> {
+    // A newly enabled worker must start from its own durable boundary rather than
+    // claiming the Room backlog that existed before delivery was enabled.
+    await this.database.query(
+      `INSERT INTO push_delivery_floors(id) VALUES('message-delivery') ON CONFLICT(id) DO NOTHING`,
+    );
     const candidates = await this.database.query<{
       message_id: string;
       room_id: string;
@@ -20,17 +25,35 @@ export class PushDeliveryLoop {
       token: string;
     }>(`
       WITH candidates AS (
-        SELECT m.id message_id,m.room_id::text room_id,m.text,d.token,m.created_at
+        SELECT m.id message_id,m.room_id::text room_id,
+          CASE
+            WHEN m.card_type='daemon-fact' AND m.card->>'type'='corner-open'
+              THEN concat_ws(' ',COALESCE(NULLIF(author.name,''),'An agent'),'opened a corner:',m.card->>'objective')
+            WHEN m.card_type='daemon-fact' AND m.card->>'type'='corner-complete'
+              THEN concat_ws(' ',COALESCE(NULLIF(author.name,''),'An agent'),
+                CASE WHEN m.card->>'outcome'='landed' THEN 'merged:' ELSE 'closed:' END,m.card->>'objective')
+            ELSE concat_ws(': ',COALESCE(NULLIF(author.name,''),'Someone'),btrim(m.text))
+          END text,
+          d.token,m.created_at
         FROM messages m
-        JOIN memberships member ON member.room_id=m.room_id AND member.removed_at IS NULL AND member.identity_id<>m.author_id
+        JOIN rooms room ON room.id=m.room_id
+        JOIN memberships member ON member.room_id=m.room_id AND member.removed_at IS NULL
+          AND member.identity_id<>m.author_id
         JOIN push_devices d ON d.identity_id=member.identity_id
-        WHERE m.card_type IS DISTINCT FROM 'member-joined'
-        UNION ALL
-        SELECT notification.id message_id,
-          COALESCE(notification.room_id::text,notification.workspace_id::text) room_id,
-          notification.text,device.device_token token,notification.created_at
-        FROM workspace_join_notifications notification
-        JOIN workspace_join_notification_devices device ON device.notification_id=notification.id
+        JOIN identities author ON author.id=m.author_id
+        JOIN identities recipient ON recipient.id=member.identity_id AND recipient.kind='human'
+        JOIN push_delivery_floors floor ON floor.id='message-delivery'
+        WHERE m.created_at>=d.registered_at AND m.created_at>=floor.started_at
+          AND m.presentation IS DISTINCT FROM 'activity'
+          AND (
+            m.mention_ids @> jsonb_build_array(member.identity_id)
+            OR room.direct_participants IS NOT NULL
+            OR (m.card_type='daemon-fact' AND m.card->>'type' IN ('corner-open','corner-complete'))
+          )
+          AND (
+            btrim(m.text)<>''
+            OR (m.card_type='daemon-fact' AND m.card->>'type' IN ('corner-open','corner-complete'))
+          )
       )
       SELECT candidate.message_id,candidate.room_id,candidate.text,candidate.token
       FROM candidates candidate

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   BackgroundLeader,
   PushDeliveryLoop,
@@ -97,18 +97,20 @@ describe('background advisory-lock ownership', () => {
       );
       await db.query(
         `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES('device-token-12345678901234567890',$1,'ios','physical')`,
-        [agent],
+        [human],
       );
-      await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'hello')`, [
-        '1'.repeat(64),
-        room,
-        human,
-      ]);
       const loop = new PushDeliveryLoop(db, {
         send: async () => {
           throw new Error('FCM unavailable');
         },
       });
+      await loop.runOnce();
+      await db.query(`INSERT INTO messages(id,room_id,author_id,text,mention_ids) VALUES($1,$2,$3,'hello',$4::jsonb)`, [
+        '1'.repeat(64),
+        room,
+        agent,
+        JSON.stringify([human]),
+      ]);
       expect(await loop.runOnce()).toBe(0);
       expect(
         (
@@ -117,6 +119,90 @@ describe('background advisory-lock ownership', () => {
           )
         ).rows[0],
       ).toEqual({ status: 'failed', error: 'FCM unavailable' });
+    } finally {
+      await db.close();
+    }
+  });
+  it('delivers only new attention events to the addressed human device', async () => {
+    const db = new PgliteDatabase();
+    try {
+      await migrate(db);
+      const human = 'a'.repeat(64),
+        otherHuman = 'b'.repeat(64),
+        agent = 'c'.repeat(64),
+        workspace = '11111111-1111-4111-8111-111111111111',
+        room = '22222222-2222-4222-8222-222222222222',
+        directRoom = '33333333-3333-4333-8333-333333333333';
+      await db.query(
+        `INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner'),($2,'human','Other'),($3,'agent','Bee')`,
+        [human, otherHuman, agent],
+      );
+      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+      await db.query(
+        `INSERT INTO rooms(id,workspace_id,name,direct_participants)
+         VALUES($1,$3,'Room',NULL),($2,$3,'Direct',$4::jsonb)`,
+        [room, directRoom, workspace, JSON.stringify([human, agent].sort())],
+      );
+      await db.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+         VALUES($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member'),
+               ($1,$6,$3,'owner'),($1,$6,$5,'member')`,
+        [workspace, room, human, otherHuman, agent, directRoom],
+      );
+      await db.query(
+        `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES
+         ('owner-device-token-12345678901234567890',$1,'ios','physical'),
+         ('other-device-token-12345678901234567890',$2,'ios','physical')`,
+        [human, otherHuman],
+      );
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text,mention_ids,created_at)
+         VALUES($1,$2,$3,'old mention',$4::jsonb,now()-interval '1 hour')`,
+        ['0'.repeat(64), room, agent, JSON.stringify([human])],
+      );
+      const send = vi.fn().mockResolvedValue(undefined);
+      const loop = new PushDeliveryLoop(db, { send });
+      expect(await loop.runOnce()).toBe(0);
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text,mention_ids,presentation,card_type,card) VALUES
+         ($1,$2,$3,'Please review',$4::jsonb,'message',NULL,NULL),
+         ($5,$2,$3,'Untargeted', '[]'::jsonb,'message',NULL,NULL),
+         ($6,$2,$7,'My own mention',$4::jsonb,'message',NULL,NULL),
+         ($8,$2,$3,'', $4::jsonb,'activity',NULL,NULL),
+         ($9,$2,$3,'', '[]'::jsonb,'card','daemon-fact',$10::jsonb),
+         ($11,$2,$3,'', '[]'::jsonb,'card','daemon-fact',$12::jsonb),
+         ($13,$14,$3,'A direct message','[]'::jsonb,'message',NULL,NULL)`,
+        [
+          '1'.repeat(64), room, agent, JSON.stringify([human]),
+          '2'.repeat(64), '3'.repeat(64), human, '4'.repeat(64), '5'.repeat(64),
+          JSON.stringify({ type: 'corner-open', cornerId: directRoom, objective: 'Ship push policy' }),
+          '6'.repeat(64),
+          JSON.stringify({ type: 'corner-complete', cornerId: directRoom, objective: 'Ship push policy', outcome: 'landed' }),
+          '7'.repeat(64), directRoom,
+        ],
+      );
+      expect(await loop.runOnce()).toBe(6);
+      expect(send).toHaveBeenCalledTimes(6);
+      expect(send).toHaveBeenCalledWith(
+        'owner-device-token-12345678901234567890',
+        expect.objectContaining({ text: 'Bee: Please review' }),
+      );
+      expect(send).toHaveBeenCalledWith(
+        'owner-device-token-12345678901234567890',
+        expect.objectContaining({ text: 'Bee opened a corner: Ship push policy' }),
+      );
+      expect(send).toHaveBeenCalledWith(
+        'owner-device-token-12345678901234567890',
+        expect.objectContaining({ text: 'Bee merged: Ship push policy' }),
+      );
+      expect(send).toHaveBeenCalledWith(
+        'owner-device-token-12345678901234567890',
+        expect.objectContaining({ text: 'Bee: A direct message' }),
+      );
+      expect(send).not.toHaveBeenCalledWith(
+        'other-device-token-12345678901234567890',
+        expect.objectContaining({ text: 'Untargeted' }),
+      );
     } finally {
       await db.close();
     }

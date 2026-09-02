@@ -9957,8 +9957,7 @@ export class Body {
             if (
               item.authorId === this.agentIdentity.publicKey ||
               item.type !== 'message' ||
-              (item.mentionIds.length > 0 &&
-                !item.mentionIds.includes(this.agentIdentity.publicKey)) ||
+              !item.mentionIds.includes(this.agentIdentity.publicKey) ||
               this.processedRequestIds.has(item.id)
             )
               continue;

@@ -90,7 +90,10 @@ describe('monolith integration', () => {
     sendPushTest = vi.fn(async () => undefined);
     const phone = new PhoneService(database, 'http://placeholder', githubOperations, sendPushTest);
     const live = new LiveHub();
-    const daemon = new DaemonService(database, live);
+    const daemon = new DaemonService(database, live, async () => ({
+      token: 'github-room-token',
+      expiresAt: Date.now() + 60_000,
+    }));
     mountedAuth = await createMonolithAuth(database, 'https://server.test', undefined, {
       createDaemonExchange: (agentId, transaction) =>
         auth.createDaemonExchange(agentId, transaction),
@@ -1258,16 +1261,37 @@ describe('monolith integration', () => {
          repository_resolution='repository',github_installation_id=77 WHERE id=$1`,
       [ROOM],
     );
+    const daemonRoomToken = await daemonOperation('getRoomGitHubToken', { roomId: ROOM });
+    expect(daemonRoomToken.status).toBe(200);
+    expect(await daemonRoomToken.json()).toMatchObject({ token: 'github-room-token' });
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'corner-request',
       name: 'Ship widget',
-      task: 'Ship widget',
+      summary: 'Ship widget',
       repository: 'owner/widgets',
       targetBranch: 'main',
     });
     expect(created.status).toBe(200);
     const { cornerId } = (await created.json()) as { cornerId: string };
+    expect(
+      (
+        await daemonOperation('postCornerLifecycle', {
+          cornerId,
+          status: 'working',
+          objective: 'A later lifecycle write must not replace the fixed summary',
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await daemonOperation('postCornerPlan', {
+          cornerId,
+          objective: 'A later plan write must not replace the fixed summary',
+          items: [],
+        })
+      ).status,
+    ).toBe(200);
     expect(
       (
         await daemonOperation('postCornerRemoteState', {
@@ -1337,6 +1361,20 @@ describe('monolith integration', () => {
         expect.objectContaining({ text: expect.stringContaining('Checks passed') }),
       ]),
     );
+    const cornerAgentInbox = await daemonOperation('getRoomInbox', {
+      roomId: cornerId,
+      limit: 200,
+    });
+    expect(await cornerAgentInbox.json()).toEqual(
+      expect.objectContaining({
+        items: expect.arrayContaining([
+          expect.objectContaining({
+            type: 'system',
+            body: expect.stringContaining('Checks passed'),
+          }),
+        ]),
+      }),
+    );
 
     expect(
       (
@@ -1371,7 +1409,7 @@ describe('monolith integration', () => {
     expect(parent.messages).toContainEqual(
       expect.objectContaining({
         presentation: 'system',
-        text: expect.stringContaining('(3 commits, 5 files changed)'),
+        text: 'Ship widget\nhttps://github.com/owner/widgets/pull/42',
       }),
     );
     expect(

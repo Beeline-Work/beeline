@@ -103,7 +103,11 @@ async function main() {
       }
     : undefined;
   const phone = new PhoneService(database, publicOrigin, github, sendPushTest);
-  const daemon = new DaemonService(database, live);
+  const daemon = new DaemonService(
+    database,
+    live,
+    github ? (roomId) => github!.roomToken(roomId) : undefined,
+  );
   const server = createBeelineServer({
     database,
     auth,

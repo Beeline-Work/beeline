@@ -13,6 +13,9 @@ export class DaemonService {
   constructor(
     private readonly database: SqlDatabase,
     private readonly live: LiveHub,
+    private readonly roomGitHubToken?: (
+      roomId: string,
+    ) => Promise<{ token: string; expiresAt: number }>,
   ) {}
 
   async execute<Name extends keyof DaemonOperationMap>(
@@ -92,6 +95,12 @@ export class DaemonService {
           (input as Input<'getRoomRepositoryState'>).roomId,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'getRoomGitHubToken': {
+        if (!this.roomGitHubToken) throw new Error('GitHub room token service unavailable');
+        return (await this.roomGitHubToken(
+          (input as Input<'getRoomGitHubToken'>).roomId,
+        )) as Output<Name>;
+      }
       case 'getRoomTargetBranch':
         return (await this.targetBranch(
           (input as Input<'getRoomTargetBranch'>).roomId,
@@ -368,7 +377,9 @@ export class DaemonService {
     );
     const page = rows.rows.slice(0, limit);
     const visiblePage =
-      name === 'getRoomInbox' ? page.filter((row) => row.author_id !== agentId) : page;
+      name === 'getRoomInbox'
+        ? page.filter((row) => row.author_id !== agentId || row.presentation === 'system')
+        : page;
     return {
       items: visiblePage.map((row) => ({
         id: row.id,
@@ -998,7 +1009,7 @@ export class DaemonService {
   private async cornerLifecycle(input: Input<'postCornerLifecycle'>, agentId: string) {
     await this.access(input.cornerId, agentId);
     await this.database.query(
-      `INSERT INTO corner_facts(corner_id,objective,lifecycle) VALUES($1,$2,$3::jsonb) ON CONFLICT(corner_id) DO UPDATE SET objective=EXCLUDED.objective,lifecycle=corner_facts.lifecycle||EXCLUDED.lifecycle,updated_at=now()`,
+      `INSERT INTO corner_facts(corner_id,objective,lifecycle) VALUES($1,$2,$3::jsonb) ON CONFLICT(corner_id) DO UPDATE SET objective=COALESCE(NULLIF(corner_facts.objective,''),EXCLUDED.objective),lifecycle=corner_facts.lifecycle||EXCLUDED.lifecycle,updated_at=now()`,
       [
         input.cornerId,
         input.objective,
@@ -1029,7 +1040,7 @@ export class DaemonService {
     await this.access(input.cornerId, agentId);
     const plan = { ...(input.objective ? { objective: input.objective } : {}), items: input.items };
     await this.database.query(
-      `INSERT INTO corner_facts(corner_id,objective,plan) VALUES($1,$2,$3::jsonb) ON CONFLICT(corner_id) DO UPDATE SET objective=COALESCE(NULLIF(EXCLUDED.objective,''),corner_facts.objective),plan=EXCLUDED.plan,updated_at=now()`,
+      `INSERT INTO corner_facts(corner_id,objective,plan) VALUES($1,$2,$3::jsonb) ON CONFLICT(corner_id) DO UPDATE SET objective=COALESCE(NULLIF(corner_facts.objective,''),NULLIF(EXCLUDED.objective,''),''),plan=EXCLUDED.plan,updated_at=now()`,
       [input.cornerId, input.objective ?? '', JSON.stringify(plan)],
     );
     return this.writeResult();
@@ -1092,7 +1103,7 @@ export class DaemonService {
       );
       await db.query(
         `INSERT INTO corner_facts(corner_id,objective,request_id,lifecycle) VALUES($1,$2,$3,'{"lifecycle":"working","checks":"unknown"}')`,
-        [cornerId, input.task, input.requestId],
+        [cornerId, input.summary, input.requestId],
       );
     });
     this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'corner' });
@@ -1166,6 +1177,7 @@ export const DAEMON_OPERATION_NAMES = new Set<keyof DaemonOperationMap>([
   'getCornerCloseRequests',
   'listUntrackedCorners',
   'getRoomRepositoryState',
+  'getRoomGitHubToken',
   'getRoomTargetBranch',
   'getIdentitySuccession',
   'getAgentConfiguration',

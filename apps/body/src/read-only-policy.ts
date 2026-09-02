@@ -1,6 +1,7 @@
 import type { AcpPermissionRequest } from './acp.js';
 
 export const READ_ONLY_MCP_SERVER_NAME = 'beeline-readonly-mcp';
+export const BEELINE_AGENT_MCP_SERVER_NAME = 'beeline-agent';
 const READ_ONLY_MCP_TOOL_SERVER_NAME = READ_ONLY_MCP_SERVER_NAME.replaceAll('-', '_');
 
 export const READ_ONLY_TOOL_NAMES = [
@@ -115,4 +116,30 @@ export function isReadOnlyMcpPermissionRequest(request: AcpPermissionRequest): b
     }
   }
   return false;
+}
+
+/** The only host-governed mutation available directly from a thin Room. */
+export function isBeelineAgentMcpPermissionRequest(request: AcpPermissionRequest): boolean {
+  const toolCall = request.toolCall;
+  const title = toolCall?.title?.trim() ?? '';
+  const rawInput = toolCall?.rawInput;
+  if (rawInput && typeof rawInput === 'object' && !Array.isArray(rawInput)) {
+    const call = rawInput as Record<string, unknown>;
+    if (
+      call.server === BEELINE_AGENT_MCP_SERVER_NAME &&
+      (call.tool === 'open_corner' || call.tool === 'pr_checks_status')
+    ) {
+      return true;
+    }
+  }
+  if (shellPayload(toolCall)) return false;
+  const normalized = BEELINE_AGENT_MCP_SERVER_NAME.replaceAll('-', '_');
+  return [
+    `mcp__${BEELINE_AGENT_MCP_SERVER_NAME}__open_corner`,
+    `mcp__${normalized}__open_corner`,
+    `mcp.${BEELINE_AGENT_MCP_SERVER_NAME}.open_corner`,
+    `mcp__${BEELINE_AGENT_MCP_SERVER_NAME}__pr_checks_status`,
+    `mcp__${normalized}__pr_checks_status`,
+    `mcp.${BEELINE_AGENT_MCP_SERVER_NAME}.pr_checks_status`,
+  ].includes(title);
 }

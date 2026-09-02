@@ -1,9 +1,11 @@
-import { createHash } from 'node:crypto';
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { createHash, createHmac } from 'node:crypto';
+import { access, chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getPublicKey } from '@beeline/nostr';
 import { migrate } from '../../server/src/database.js';
@@ -15,6 +17,7 @@ import { LiveHub } from '../../server/src/live.js';
 import { createBeelineServer } from '../../server/src/server.js';
 import { createMonolithAuth, type MonolithAuthMount } from '../../server/src/monolith-auth.js';
 import { AgentScheduleLoop } from '../../server/src/agent-schedules.js';
+import { GitHubOperations } from '../../server/src/github-operations.js';
 import { DaemonApiClient } from './daemon-api-client.js';
 import { AcpClient } from './acp.js';
 import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
@@ -30,6 +33,8 @@ import {
 import { activeReleaseId, writeUpdateState } from './self-update.js';
 import { SessionScheduler } from './session-scheduler.js';
 import { ThinDaemonCore } from './thin-core.js';
+
+const execFileAsync = promisify(execFile);
 
 const HUMAN = createHash('sha256').update('github:daemon-client-owner').digest('hex');
 const AGENT_SECRET = new Uint8Array(32).fill(11);
@@ -106,14 +111,27 @@ describe('daemon API client against the local monolith', () => {
       },
     });
     const live = new LiveHub();
+    const githubOperations = new GitHubOperations(
+      database,
+      {} as never,
+      { deleteBranch: async () => undefined } as never,
+      'local-proof-secret',
+    );
     server = createBeelineServer({
       database,
       auth,
       phone,
-      daemon: new DaemonService(database, live),
+      daemon: new DaemonService(database, live, async () => ({
+        token: process.env.BEELINE_REAL_GITHUB_TOKEN ?? 'github-room-token',
+        expiresAt: Date.now() + 60 * 60_000,
+      })),
       live,
       mediaMaximumBytes: 1024,
       authHandler: mountedAuth.handle,
+      github: {
+        webhookSecret: 'local-proof-secret',
+        onWebhook: (event, payload) => githubOperations.processWebhook(event, payload),
+      },
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -245,12 +263,15 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     expect(result.runtime.transport).toHaveProperty('daemonToken');
     expect(result.runtime.transport).not.toHaveProperty('exchangeToken');
 
-    await vi.waitFor(async () => {
-      const room = await phone.readRoom(ROOM, HUMAN);
-      expect(
-        room?.members.find((member) => member.identity.pubkey === result.runtime.agent.publicKey),
-      ).toMatchObject({ presence: { status: 'online', roomId: ROOM } });
-    }, { timeout: 10_000 });
+    await vi.waitFor(
+      async () => {
+        const room = await phone.readRoom(ROOM, HUMAN);
+        expect(
+          room?.members.find((member) => member.identity.pubkey === result.runtime.agent.publicKey),
+        ).toMatchObject({ presence: { status: 'online', roomId: ROOM } });
+      },
+      { timeout: 10_000 },
+    );
     // The server cursor is second-granular; cross the pairing join-note second
     // before creating the human request so this exercises a fresh inbox row.
     await new Promise((resolveWait) => setTimeout(resolveWait, 1_100));
@@ -265,16 +286,19 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       },
       HUMAN,
     );
-    await vi.waitFor(async () => {
-      const room = await phone.readRoom(ROOM, HUMAN);
-      expect(room?.messages).toContainEqual(
-        expect.objectContaining({
-          author: expect.objectContaining({ pubkey: result.runtime.agent.publicKey }),
-          requestId: sent.messageId,
-          text: 'Thin daemon live proof.',
-        }),
-      );
-    }, { timeout: 10_000 });
+    await vi.waitFor(
+      async () => {
+        const room = await phone.readRoom(ROOM, HUMAN);
+        expect(room?.messages).toContainEqual(
+          expect.objectContaining({
+            author: expect.objectContaining({ pubkey: result.runtime.agent.publicKey }),
+            requestId: sent.messageId,
+            text: 'Thin daemon live proof.',
+          }),
+        );
+      },
+      { timeout: 10_000 },
+    );
   }, 30_000);
 
   it('answers persisted implicit targets in a repo-less Room and keeps monolith presence current', async () => {
@@ -1109,6 +1133,260 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       }
     },
     300_000,
+  );
+
+  it.skipIf(process.env.BEELINE_REAL_CORNER_PROOF !== '1')(
+    'proves a real thin helper opens, lands, archives, and reaps a GitHub corner',
+    async () => {
+      const agentCommand = process.env.BEELINE_REAL_AGENT_COMMAND;
+      const readonlyMcpCommand = process.env.BEELINE_REAL_READONLY_MCP_COMMAND;
+      const githubToken = process.env.BEELINE_REAL_GITHUB_TOKEN;
+      const ghAxi = process.env.BEELINE_REAL_GH_AXI_COMMAND;
+      if (!agentCommand || !readonlyMcpCommand || !githubToken || !ghAxi) {
+        throw new Error(
+          'real corner proof requires agent, read-only MCP, GitHub token, and gh-axi command paths',
+        );
+      }
+      const repository = 'lunchboxfortwo/beeline-agent-land-proof-20260811-2159';
+      const installationId = 77;
+      await database.query(
+        `INSERT INTO github_installations(installation_id,owner_id,account_login,account_type,status)
+         VALUES($1,$2,'lunchboxfortwo','User','active')`,
+        [installationId, HUMAN],
+      );
+      await database.query(
+        `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch,active)
+         VALUES(101,$1,$2,'main',true)`,
+        [installationId, repository],
+      );
+      await database.query(
+        `UPDATE rooms SET repository_key=$2,repository_name=$2,
+           repository_remote=$3,repository_resolution='repository',repository_target_branch='main',
+           github_installation_id=$4,github_events_enabled=true WHERE id=$1`,
+        [ROOM, repository, `https://github.com/${repository}.git`, installationId],
+      );
+      await database.query(
+        `UPDATE agents SET selected_model=NULL,selected_effort=NULL WHERE agent_id=$1`,
+        [AGENT],
+      );
+      const exchange = await auth.createDaemonExchange(AGENT);
+      const exchanged = await fetch(`${origin}/v1/auth/daemon/exchange`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ exchangeToken: exchange.exchangeToken }),
+      });
+      const token = (await exchanged.json()) as { daemonToken: string };
+      const client = new DaemonApiClient(origin, token.daemonToken, AGENT);
+      const configPath = join(supervisorRoot, 'runtime.json');
+      const runtime: AgentRuntimeRecord = {
+        version: 2,
+        communityId: WORKSPACE,
+        pairedBy: HUMAN,
+        agent: {
+          name: 'Bee',
+          publicKey: AGENT,
+          secretKeyHex: Buffer.from(AGENT_SECRET).toString('hex'),
+        },
+        body: {
+          name: 'Body',
+          publicKey: getPublicKey(new Uint8Array(32).fill(22)),
+          secretKeyHex: Buffer.from(new Uint8Array(32).fill(22)).toString('hex'),
+        },
+        rooms: [],
+        supervisorRoot,
+        relayBaseUrl: origin,
+        agentKind: 'codex',
+        agentCommand,
+        agentArgs: [],
+        agentBinary: agentCommand,
+        mcpBinary: readonlyMcpCommand,
+        createdAt: new Date().toISOString(),
+        accessPolicy: 'everyone',
+        transport: { kind: 'monolith', baseUrl: origin, daemonToken: token.daemonToken },
+      };
+      await writeFile(configPath, `${JSON.stringify(runtime)}\n`, { mode: 0o600 });
+      const config = {
+        agentKind: 'codex',
+        agentCommand,
+        agentArgs: [],
+        agentBinary: agentCommand,
+        mcpBinary: readonlyMcpCommand,
+        readonlyMcpCommand,
+        agentEnv: {
+          ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
+          ...(process.env.LANG ? { LANG: process.env.LANG } : {}),
+        },
+        workspaceRoot: join(supervisorRoot, 'workspace'),
+        relayBaseUrl: origin,
+        relayHost: '127.0.0.1',
+        relayScheme: 'http',
+        relayWsUrl: origin.replace(/^http/, 'ws'),
+        autoApprovePermissions: false,
+        accessPolicy: 'everyone',
+      } as const;
+      const core = new ThinDaemonCore(runtime, configPath, config as never, {
+        daemonApi: client,
+        reconcileHeartbeatMs: 100,
+      });
+      const abort = new AbortController();
+      const daemon = core.run({ pollMs: 50, signal: abort.signal });
+      const webhook = async (event: string, delivery: string, payload: unknown) => {
+        const bytes = Buffer.from(JSON.stringify(payload));
+        const signature = `sha256=${createHmac('sha256', 'local-proof-secret')
+          .update(bytes)
+          .digest('hex')}`;
+        const response = await fetch(`${origin}/v1/github/webhook`, {
+          method: 'POST',
+          headers: {
+            'x-hub-signature-256': signature,
+            'x-github-delivery': delivery,
+            'x-github-event': event,
+            'content-type': 'application/json',
+          },
+          body: bytes,
+        });
+        expect(response.status).toBe(202);
+      };
+      try {
+        await vi.waitFor(() => expect(core.activeRoomIds()).toContain(ROOM), { timeout: 5_000 });
+        const proofStamp = new Date().toISOString().replace(/\D/g, '').slice(0, 14);
+        const requestId = createHash('sha256').update(`corner-proof:${proofStamp}`).digest('hex');
+        await phone.execute(
+          'sendRoomMessage',
+          {
+            roomId: ROOM,
+            messageId: requestId,
+            mentions: [AGENT],
+            text:
+              `@bee Use open_corner exactly once for this objective: in ${repository}, ` +
+              `create proof-${proofStamp}.txt containing "thin corner live proof ${proofStamp}". ` +
+              `Add .github/workflows/corner-proof.yml with a pull_request workflow and one Ubuntu job ` +
+              `that checks out the repository and verifies the proof file exists. Commit, push, open a ` +
+              `pull request to main titled "Thin corner live proof ${proofStamp}", and print its full URL. ` +
+              `End that PR-opening turn immediately after printing the URL. On the later checks event, ` +
+              `obey the corner checks gate and merge rules. Do not modify any other repository.`,
+          },
+          HUMAN,
+        );
+        let cornerId = '';
+        await vi.waitFor(
+          async () => {
+            const corners = await client.execute('listRoomCorners', { roomId: ROOM });
+            cornerId = corners.corners[0]?.cornerId ?? '';
+            expect(cornerId).toBeTruthy();
+          },
+          { timeout: 180_000, interval: 500 },
+        );
+        const worktree = join(supervisorRoot, 'beeline', 'corners', cornerId);
+        let branch = '';
+        await vi.waitFor(
+          async () => {
+            const restore = await client.execute('getCornerRestoreState', { cornerId });
+            branch = restore.featureBranch ?? '';
+            expect(branch).toBeTruthy();
+            await expect(access(worktree)).resolves.toBeUndefined();
+          },
+          { timeout: 60_000, interval: 250 },
+        );
+
+        let transcript = '';
+        let pullRequestUrl = '';
+        await vi.waitFor(
+          async () => {
+            const conversation = await client.execute('getRoomConversation', {
+              roomId: cornerId,
+              limit: 200,
+            });
+            transcript = conversation.items
+              .map((item) => `${item.authorId === AGENT ? 'agent' : 'human'}: ${item.body}`)
+              .join('\n');
+            pullRequestUrl =
+              transcript.match(/https:\/\/github\.com\/[^\s]+\/pull\/\d+/)?.[0] ?? '';
+            expect(pullRequestUrl).toMatch(/\/pull\/\d+$/);
+          },
+          { timeout: 300_000, interval: 1_000 },
+        );
+        const pullRequestNumber = pullRequestUrl.split('/').at(-1)!;
+        let checks = '';
+        await vi.waitFor(
+          async () => {
+            try {
+              checks = (
+                await execFileAsync(ghAxi, ['pr', 'checks', pullRequestNumber], {
+                  cwd: worktree,
+                  maxBuffer: 1024 * 1024,
+                })
+              ).stdout;
+            } catch (error) {
+              checks = String((error as { stdout?: string }).stdout ?? error);
+            }
+            expect(checks).toMatch(/summary: "[1-9]\d* passed, 0 failed/);
+          },
+          { timeout: 300_000, interval: 2_000 },
+        );
+        await webhook('status', `checks-${proofStamp}`, {
+          state: 'success',
+          target_url: pullRequestUrl,
+          branches: [{ name: branch }],
+          repository: { full_name: repository },
+          installation: { id: installationId },
+        });
+        let merged = '';
+        await vi.waitFor(
+          async () => {
+            merged = (
+              await execFileAsync(ghAxi, ['pr', 'view', pullRequestNumber], {
+                cwd: worktree,
+                maxBuffer: 1024 * 1024,
+              })
+            ).stdout;
+            expect(merged).toMatch(/state: merged|merged: "[^"]+"/);
+            expect(merged).not.toContain('merged: no');
+          },
+          { timeout: 300_000, interval: 2_000 },
+        );
+        await webhook('pull_request', `merged-${proofStamp}`, {
+          action: 'closed',
+          pull_request: {
+            number: Number(pullRequestNumber),
+            title: `Thin corner live proof ${proofStamp}`,
+            html_url: pullRequestUrl,
+            merged: true,
+            commits: 1,
+            changed_files: 2,
+            head: { ref: branch },
+          },
+          repository: { full_name: repository },
+          installation: { id: installationId },
+        });
+        await vi.waitFor(
+          async () => {
+            const corners = await client.execute('listRoomCorners', { roomId: ROOM });
+            expect(corners.corners.find((corner) => corner.cornerId === cornerId)?.archived).toBe(
+              true,
+            );
+            expect(core.activeRoomIds()).not.toContain(cornerId);
+            await expect(access(worktree)).rejects.toMatchObject({ code: 'ENOENT' });
+          },
+          { timeout: 30_000, interval: 250 },
+        );
+        const finalConversation = await client.execute('getRoomConversation', {
+          roomId: cornerId,
+          limit: 200,
+        });
+        transcript = finalConversation.items
+          .map((item) => `${item.authorId === AGENT ? 'agent' : 'human'}: ${item.body}`)
+          .join('\n');
+        console.log(
+          `[real-corner-proof]\nPR: ${pullRequestUrl}\nChecks: ${checks.trim()}\n` +
+            `Merged: ${merged.trim()}\nArchived: yes\nWorktree reaped: yes\nTranscript:\n${transcript}`,
+        );
+      } finally {
+        abort.abort();
+        await daemon;
+      }
+    },
+    720_000,
   );
 
   it('exchanges a token and round-trips inbox, receipts, authority, settings, presence, and corners', async () => {

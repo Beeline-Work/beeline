@@ -1,7 +1,12 @@
+import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
+import { mkdir, rm } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
+import { promisify } from 'node:util';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
+import { MonolithCornerTurnLoop } from './monolith-corner-turn.js';
 import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
 import type { AgentRuntimeRecord, RoomRuntimeRecord } from './runtime.js';
 import { runtimeIdentity } from './runtime.js';
@@ -40,7 +45,7 @@ export async function mapWithConcurrency<T>(
 }
 
 type RoomLeaf = Pick<
-  MonolithRoomTurnLoop,
+  MonolithRoomTurnLoop | MonolithCornerTurnLoop,
   | 'currentPrincipalCanDrive'
   | 'isBusy'
   | 'prepareForForcedUpdateRestart'
@@ -55,12 +60,21 @@ interface RunningRoom {
   lastPollAt: number;
   backoffUntil: number;
   recovering: boolean;
+  worktree?: { path: string; gitCommonDir: string };
 }
+
+interface DesiredCorner {
+  cornerId: string;
+  parentRoomId: string;
+}
+
+const execFileAsync = promisify(execFile);
 
 /** Monolith-only Room supervisor. Relay-backed discovery and turn serving are retired. */
 export class RoomRuntimeCoordinator {
   private readonly runtime: AgentRuntimeRecord;
   private readonly running = new Map<string, RunningRoom>();
+  private readonly startingCorners = new Set<string>();
   private readonly scheduler: SessionScheduler;
   private readonly agent: ReturnType<typeof runtimeIdentity>;
   /** Parent ownership retained so a failed corner listing never authorizes removal. */
@@ -149,7 +163,9 @@ export class RoomRuntimeCoordinator {
   async prepareForForcedUpdateRestart(): Promise<void> {
     const rooms = [...this.running.values()];
     await Promise.allSettled(
-      rooms.filter((room) => room.body.isBusy()).map((room) => room.body.prepareForForcedUpdateRestart()),
+      rooms
+        .filter((room) => room.body.isBusy())
+        .map((room) => room.body.prepareForForcedUpdateRestart()),
     );
     for (const room of rooms) room.controller.abort();
   }
@@ -169,7 +185,9 @@ export class RoomRuntimeCoordinator {
     }
     this.workspaceRemovalConfirmations = 0;
     const topLevelRooms = bootstrap.rooms.filter((room) => !room.archived);
-    const desired = new Map(topLevelRooms.map((room) => [room.roomId, room] as const));
+    const desiredTopRooms = topLevelRooms.map((room) => room.roomId);
+    const desired = new Set(desiredTopRooms);
+    const desiredCorners = new Map<string, DesiredCorner>();
     await mapWithConcurrency(topLevelRooms, ROOM_JOIN_CONCURRENCY, async (room) => {
       try {
         const result = await this.options.daemonApi.execute('listRoomCorners', {
@@ -178,9 +196,10 @@ export class RoomRuntimeCoordinator {
         for (const corner of result.corners) {
           this.monolithCornerParents.set(corner.cornerId, room.roomId);
           if (!corner.archived) {
-            desired.set(corner.cornerId, {
-              roomId: corner.cornerId,
-              archived: false,
+            desired.add(corner.cornerId);
+            desiredCorners.set(corner.cornerId, {
+              cornerId: corner.cornerId,
+              parentRoomId: room.roomId,
             });
           }
         }
@@ -190,7 +209,8 @@ export class RoomRuntimeCoordinator {
         // and retry on the next reconciliation heartbeat.
         for (const [cornerId, parentRoomId] of this.monolithCornerParents) {
           if (parentRoomId === room.roomId && this.running.has(cornerId)) {
-            desired.set(cornerId, { roomId: cornerId, archived: false });
+            desired.add(cornerId);
+            desiredCorners.set(cornerId, { cornerId, parentRoomId });
           }
         }
         console.error(
@@ -199,7 +219,7 @@ export class RoomRuntimeCoordinator {
         );
       }
     });
-    for (const channelId of desired.keys()) this.roomRemovalConfirmations.delete(channelId);
+    for (const channelId of desired) this.roomRemovalConfirmations.delete(channelId);
     for (const [channelId, running] of [...this.running]) {
       if (desired.has(channelId)) continue;
       const confirmations = (this.roomRemovalConfirmations.get(channelId) ?? 0) + 1;
@@ -210,10 +230,18 @@ export class RoomRuntimeCoordinator {
       }
       running.controller.abort();
       await running.promise.catch(() => undefined);
+      if (running.worktree) await this.removeCornerWorktree(running.worktree);
     }
-    await mapWithConcurrency([...desired.keys()], ROOM_JOIN_CONCURRENCY, async (roomId) => {
+    await mapWithConcurrency(desiredTopRooms, ROOM_JOIN_CONCURRENCY, async (roomId) => {
       if (!this.running.has(roomId)) this.startRoom(roomId);
     });
+    await mapWithConcurrency(
+      [...desiredCorners.values()],
+      ROOM_JOIN_CONCURRENCY,
+      async (corner) => {
+        if (!this.running.has(corner.cornerId)) await this.startCorner(corner);
+      },
+    );
     return 'member';
   }
 
@@ -271,6 +299,9 @@ export class RoomRuntimeCoordinator {
         failure: (retryInMs) => this.noteFailure(roomId, retryInMs),
         presence: () => undefined,
       },
+      onCornerOpened: () => {
+        this.confirmationPending = true;
+      },
     });
     const promise = loop
       .run()
@@ -291,6 +322,196 @@ export class RoomRuntimeCoordinator {
     console.log(`[thin-core] serving monolith Room ${roomId}`);
   }
 
+  private async startCorner(corner: DesiredCorner): Promise<void> {
+    if (this.running.has(corner.cornerId) || this.startingCorners.has(corner.cornerId)) return;
+    this.startingCorners.add(corner.cornerId);
+    try {
+      const [restore, repository, conversation, granted] = await Promise.all([
+        this.options.daemonApi.execute('getCornerRestoreState', { cornerId: corner.cornerId }),
+        this.options.daemonApi.execute('getRoomRepositoryState', {
+          roomId: corner.parentRoomId,
+        }),
+        this.options.daemonApi.execute('getRoomConversation', {
+          roomId: corner.cornerId,
+          limit: 200,
+        }),
+        this.options.daemonApi.execute('getRoomGitHubToken', {
+          roomId: corner.parentRoomId,
+        }),
+      ]);
+      if (repository.resolution !== 'repository' || !repository.remote || !repository.key) {
+        throw new Error('corner parent Room has no verified repository binding');
+      }
+      const objective = conversation.items.find((item) => item.type === 'message')?.body.trim();
+      if (!objective) throw new Error('corner has no durable objective post');
+      const targetBranch = repository.targetBranch || 'main';
+      const featureBranch =
+        restore.featureBranch ??
+        `feature/corner-${corner.cornerId.replaceAll('-', '').slice(0, 12)}`;
+      const worktree = await this.materializeCornerWorktree({
+        cornerId: corner.cornerId,
+        remote: repository.remote,
+        targetBranch,
+        featureBranch,
+        token: granted.token,
+      });
+      await this.options.daemonApi.execute('postCornerRemoteState', {
+        cornerId: corner.cornerId,
+        branch: featureBranch,
+        state: 'working',
+        checks: 'unknown',
+      });
+      const controller = new AbortController();
+      const startedAt = this.now();
+      const loop = new MonolithCornerTurnLoop({
+        cornerId: corner.cornerId,
+        parentRoomId: corner.parentRoomId,
+        workspaceId: this.runtime.communityId,
+        objective,
+        featureBranch,
+        targetBranch,
+        worktreePath: worktree.path,
+        gitCommonDir: worktree.gitCommonDir,
+        githubToken: granted.token,
+        runtime: this.runtime,
+        config: this.roomConfig(corner.cornerId),
+        api: this.options.daemonApi,
+        scheduler: this.scheduler,
+        signal: controller.signal,
+        onPoll: () => this.notePoll(corner.cornerId),
+        onFailure: (retryInMs) => this.noteFailure(corner.cornerId, retryInMs),
+      });
+      const promise = loop
+        .run()
+        .catch((error) => {
+          if (!controller.signal.aborted) {
+            console.error(`[thin-core] corner ${corner.cornerId} failed:`, error);
+          }
+        })
+        .finally(() => {
+          if (this.running.get(corner.cornerId)?.body === loop) {
+            this.running.delete(corner.cornerId);
+          }
+        });
+      this.running.set(corner.cornerId, {
+        body: loop,
+        controller,
+        promise,
+        lastPollAt: startedAt,
+        backoffUntil: 0,
+        recovering: false,
+        worktree,
+      });
+      console.log(
+        `[thin-core] serving corner ${corner.cornerId} on ${featureBranch} at ${worktree.path}`,
+      );
+    } catch (error) {
+      console.error(`[thin-core] failed to start corner ${corner.cornerId}:`, error);
+    } finally {
+      this.startingCorners.delete(corner.cornerId);
+    }
+  }
+
+  private async materializeCornerWorktree(input: {
+    cornerId: string;
+    remote: string;
+    targetBranch: string;
+    featureBranch: string;
+    token: string;
+  }): Promise<{ path: string; gitCommonDir: string }> {
+    const remote = githubHttpsRemote(input.remote);
+    const repositoryHash = createHash('sha256').update(remote).digest('hex').slice(0, 24);
+    const gitCommonDir = resolve(
+      this.runtime.supervisorRoot,
+      'beeline',
+      'repositories',
+      `${repositoryHash}.git`,
+    );
+    const path = resolve(this.runtime.supervisorRoot, 'beeline', 'corners', input.cornerId);
+    await mkdir(dirname(gitCommonDir), { recursive: true, mode: 0o700 });
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+    const authEnv = githubGitEnv(input.token);
+    if (!existsSync(resolve(gitCommonDir, 'HEAD'))) {
+      await execFileAsync('git', ['clone', '--bare', remote, gitCommonDir], {
+        env: authEnv,
+        maxBuffer: 4 * 1024 * 1024,
+      });
+    }
+    await execFileAsync(
+      'git',
+      [
+        `--git-dir=${gitCommonDir}`,
+        'fetch',
+        '--prune',
+        'origin',
+        `+refs/heads/${input.targetBranch}:refs/remotes/origin/${input.targetBranch}`,
+      ],
+      { env: authEnv, maxBuffer: 4 * 1024 * 1024 },
+    );
+    if (!existsSync(resolve(path, '.git'))) {
+      await rm(path, { recursive: true, force: true });
+      await execFileAsync(
+        'git',
+        [
+          `--git-dir=${gitCommonDir}`,
+          'worktree',
+          'add',
+          '-B',
+          input.featureBranch,
+          path,
+          `refs/remotes/origin/${input.targetBranch}`,
+        ],
+        { env: authEnv, maxBuffer: 4 * 1024 * 1024 },
+      );
+    }
+    await execFileAsync('git', [
+      `--git-dir=${gitCommonDir}`,
+      'config',
+      'extensions.worktreeConfig',
+      'true',
+    ]);
+    // A linked worktree created from a bare canonical clone otherwise inherits
+    // core.bare=true and rejects ordinary `git -C <worktree>` commands.
+    await execFileAsync('git', ['-C', path, 'config', '--worktree', 'core.bare', 'false']);
+    await execFileAsync('git', [
+      '-C',
+      path,
+      'config',
+      '--worktree',
+      'credential.https://github.com.helper',
+      '!f() { echo username=x-access-token; echo password=$GH_TOKEN; }; f',
+    ]);
+    await execFileAsync('git', ['-C', path, 'config', '--worktree', 'user.name', this.agent.name]);
+    await execFileAsync('git', [
+      '-C',
+      path,
+      'config',
+      '--worktree',
+      'user.email',
+      `${this.agent.publicKey.slice(0, 16)}@users.noreply.github.com`,
+    ]);
+    const top = await execFileAsync('git', ['-C', path, 'rev-parse', '--show-toplevel']);
+    if (resolve(top.stdout.trim()) !== resolve(path)) {
+      throw new Error(`corner worktree escaped its isolated root: ${top.stdout.trim()}`);
+    }
+    return { path, gitCommonDir };
+  }
+
+  private async removeCornerWorktree(worktree: {
+    path: string;
+    gitCommonDir: string;
+  }): Promise<void> {
+    await execFileAsync('git', [
+      `--git-dir=${worktree.gitCommonDir}`,
+      'worktree',
+      'remove',
+      '--force',
+      worktree.path,
+    ]).catch((error) =>
+      console.error(`[thin-core] failed to reap corner worktree ${worktree.path}:`, error),
+    );
+  }
+
   private notePoll(roomId: string): void {
     const room = this.running.get(roomId);
     if (!room) return;
@@ -306,11 +527,16 @@ export class RoomRuntimeCoordinator {
   async watchdogTick(): Promise<void> {
     for (const [roomId, room] of [...this.running]) {
       if (room.recovering || room.body.isBusy()) continue;
-      if (this.now() <= Math.max(room.lastPollAt + this.watchdogStaleMs, room.backoffUntil)) continue;
+      if (this.now() <= Math.max(room.lastPollAt + this.watchdogStaleMs, room.backoffUntil))
+        continue;
       room.recovering = true;
       room.controller.abort();
       await room.promise.catch(() => undefined);
-      if (!this.running.has(roomId)) this.startRoom(roomId);
+      if (room.worktree) {
+        this.confirmationPending = true;
+      } else if (!this.running.has(roomId)) {
+        this.startRoom(roomId);
+      }
     }
   }
 
@@ -334,4 +560,33 @@ export class RoomRuntimeCoordinator {
     }
     await this.scheduler.dispose();
   }
+}
+
+function githubHttpsRemote(remote: string): string {
+  const normalized = remote
+    .replace(/^git:\/\/github\.com\//i, 'https://github.com/')
+    .replace(/^git@github\.com:/i, 'https://github.com/');
+  const url = new URL(normalized);
+  if (url.protocol !== 'https:' || url.hostname.toLowerCase() !== 'github.com') {
+    throw new Error('corner repository must be a GitHub HTTPS identity');
+  }
+  url.username = '';
+  url.password = '';
+  return (
+    url
+      .toString()
+      .replace(/\/$/, '')
+      .replace(/\.git$/i, '') + '.git'
+  );
+}
+
+function githubGitEnv(token: string): NodeJS.ProcessEnv {
+  const authorization = Buffer.from(`x-access-token:${token}`).toString('base64');
+  return {
+    ...process.env,
+    GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: 'http.https://github.com/.extraheader',
+    GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${authorization}`,
+    GIT_TERMINAL_PROMPT: '0',
+  };
 }

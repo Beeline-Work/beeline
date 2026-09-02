@@ -16,6 +16,7 @@ export type DaemonOperationMap = {
   getCornerCloseRequests: Operation<CornerCursorInput, RoomInboxResult>;
   listUntrackedCorners: Operation<RoomInput, CornerListResult>;
   getRoomRepositoryState: Operation<RoomInput, RoomRepositoryStateResult>;
+  getRoomGitHubToken: Operation<RoomInput, RoomGitHubTokenResult>;
   getRoomTargetBranch: Operation<RoomInput, RoomTargetBranchResult>;
   getIdentitySuccession: Operation<IdentityInput, IdentitySuccessionResult>;
   getAgentConfiguration: Operation<AgentRoomInput, AgentConfigurationResult>;
@@ -169,6 +170,10 @@ export type RoomRepositoryStateResult = {
   readonly targetBranch?: string;
   readonly resolution: 'repository' | 'none' | 'unverified';
 };
+export type RoomGitHubTokenResult = {
+  readonly token: string;
+  readonly expiresAt: number;
+};
 export type RoomTargetBranchResult = { readonly targetBranch: string; readonly updatedAt: number };
 export type IdentitySuccessionResult = {
   readonly currentIdentityId: string;
@@ -281,7 +286,8 @@ export type PostTargetBranchProposalInput = RoomInput & {
 export type CreateCornerInput = RoomInput & {
   readonly requestId: string;
   readonly name: string;
-  readonly task: string;
+  /** Immutable one-paragraph statement of what this corner is meant to accomplish. */
+  readonly summary: string;
   readonly repository?: string;
   readonly targetBranch?: string;
 };

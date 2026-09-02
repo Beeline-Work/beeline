@@ -54,6 +54,17 @@ export class PushDeliveryLoop {
             btrim(m.text)<>''
             OR (m.card_type='daemon-fact' AND m.card->>'type' IN ('corner-open','corner-complete'))
           )
+        UNION ALL
+        SELECT notification.id message_id,
+          COALESCE(notification.room_id::text,notification.workspace_id::text) room_id,
+          btrim(notification.text) text,device.device_token token,notification.created_at
+        FROM workspace_join_notifications notification
+        JOIN workspace_join_notification_devices device ON device.notification_id=notification.id
+        JOIN push_devices push_device ON push_device.token=device.device_token
+        JOIN push_delivery_floors floor ON floor.id='message-delivery'
+        WHERE notification.created_at>=push_device.registered_at
+          AND notification.created_at>=floor.started_at
+          AND btrim(notification.text)<>''
       )
       SELECT candidate.message_id,candidate.room_id,candidate.text,candidate.token
       FROM candidates candidate

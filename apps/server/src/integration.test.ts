@@ -365,7 +365,7 @@ describe('monolith integration', () => {
     expect((await operation('leaveWorkspace', { workspaceId })).status).toBe(403);
   });
 
-  it('emits Room join notes without notifying members across explicit member adds', async () => {
+  it('emits one workspace push and Room join notes across explicit member adds', async () => {
     const aliceToken = await phoneToken('alice');
     const aliceId = createHash('sha256').update('github:alice').digest('hex');
     const workspaceId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
@@ -380,6 +380,7 @@ describe('monolith integration', () => {
     });
     const send = vi.fn().mockResolvedValue(undefined);
     const loop = new PushDeliveryLoop(database, { send });
+    expect(await loop.runOnce()).toBe(0);
 
     expect(
       await (
@@ -390,14 +391,17 @@ describe('monolith integration', () => {
         })
       ).json(),
     ).toEqual({ joined: true });
-    expect(await loop.runOnce()).toBe(0);
-    expect(send).not.toHaveBeenCalled();
+    expect(await loop.runOnce()).toBe(1);
+    expect(send).toHaveBeenLastCalledWith(
+      'owner-explicit-add-device-token-1234567890',
+      expect.objectContaining({ text: 'alice joined Tubing Crew' }),
+    );
 
     expect(
       await (await operation('addRoomMember', { roomId: room.id, memberId: aliceId })).json(),
     ).toEqual({ joined: true });
-    expect(await loop.runOnce()).toBe(0);
-    expect(send).not.toHaveBeenCalled();
+    expect(await loop.runOnce()).toBe(1);
+    expect(send).toHaveBeenCalledTimes(2);
     const roomView = (await (
       await request(`/v1/phone/rooms/${room.id}`, 'GET', undefined, aliceToken)
     ).json()) as { messages: Array<{ text: string; presentation: string }> };
@@ -784,7 +788,7 @@ describe('monolith integration', () => {
     expect(membership.rows).toEqual([{ role: 'member' }]);
   });
 
-  it('publishes one note per joined Room without a push when a person redeems an invite', async () => {
+  it('publishes one note per joined Room and one push when a person redeems an invite', async () => {
     const recipient = await auth.exchangeGitHubOidc('recipient-proof');
     const secondRoom = (await (
       await operation('createRoom', { workspaceId: WORKSPACE, name: 'Workshop' })
@@ -794,6 +798,9 @@ describe('monolith integration', () => {
       platform: 'ios',
       environment: 'physical',
     });
+    const send = vi.fn().mockResolvedValue(undefined);
+    const loop = new PushDeliveryLoop(database, { send });
+    expect(await loop.runOnce()).toBe(0);
     const invite = (await (await operation('createInvite', { workspaceId: WORKSPACE })).json()) as {
       token: string;
     };
@@ -821,13 +828,14 @@ describe('monolith integration', () => {
         .map((room_id) => ({ room_id, text: 'recipient joined', presentation: 'system' })),
     );
 
-    const send = vi.fn().mockResolvedValue(undefined);
-    const loop = new PushDeliveryLoop(database, { send });
-    expect(await loop.runOnce()).toBe(0);
-    expect(send).not.toHaveBeenCalled();
+    expect(await loop.runOnce()).toBe(1);
+    expect(send).toHaveBeenCalledWith(
+      'owner-person-join-device-token-1234567890',
+      expect.objectContaining({ text: 'recipient joined Hive' }),
+    );
   });
 
-  it('publishes one note per joined Room without a push through agent connect', async () => {
+  it('publishes one note per joined Room and one push through agent connect', async () => {
     const secondRoom = (await (
       await operation('createRoom', { workspaceId: WORKSPACE, name: 'Workshop' })
     ).json()) as { id: string };
@@ -836,6 +844,9 @@ describe('monolith integration', () => {
       platform: 'android',
       environment: 'physical',
     });
+    const send = vi.fn().mockResolvedValue(undefined);
+    const loop = new PushDeliveryLoop(database, { send });
+    expect(await loop.runOnce()).toBe(0);
     const pairing = (await (
       await operation('createAgentPairingCode', { workspaceId: WORKSPACE })
     ).json()) as { code: string };
@@ -889,10 +900,11 @@ describe('monolith integration', () => {
         .map((room_id) => ({ room_id, text: 'Terra joined', presentation: 'system' })),
     );
 
-    const send = vi.fn().mockResolvedValue(undefined);
-    const loop = new PushDeliveryLoop(database, { send });
-    expect(await loop.runOnce()).toBe(0);
-    expect(send).not.toHaveBeenCalled();
+    expect(await loop.runOnce()).toBe(1);
+    expect(send).toHaveBeenCalledWith(
+      'owner-agent-join-device-token-1234567890',
+      expect.objectContaining({ text: 'Terra joined Hive' }),
+    );
   });
 
   it('creates Rooms with or without an installed repository binding', async () => {

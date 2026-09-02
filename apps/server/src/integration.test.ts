@@ -1646,7 +1646,7 @@ describe('monolith integration', () => {
     expect(githubApp.deleteBranch).toHaveBeenCalledWith(77, 101, 'owner/widgets', 'fm/widget');
   });
 
-  it('allows peer-agent addressing, suppresses self delivery, and caps agent-only hops', async () => {
+  it('caps unthreaded agent-to-agent wake-ups and lets a new human message reset the chain', async () => {
     const peer = 'e'.repeat(64);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Peer')`, [peer]);
     await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [peer, HUMAN]);
@@ -1669,7 +1669,7 @@ describe('monolith integration', () => {
     let speakerToken = daemonToken;
     let target = peer;
     let targetToken = peerToken;
-    for (let turn = 1; turn <= 8; turn++) {
+    for (let turn = 1; turn <= 4; turn++) {
       const response = await daemonOperation(
         'postRoomMessage',
         {
@@ -1677,7 +1677,7 @@ describe('monolith integration', () => {
           requestId: humanMessage,
           text: `Agent turn ${turn}`,
           mentionIds: [target],
-          replyToMessageId: previous,
+          triggerMessageId: previous,
         },
         speakerToken,
       );
@@ -1689,27 +1689,89 @@ describe('monolith integration', () => {
           (item) => item.id === previous,
         ),
       ).toBe(false);
-      if (turn === 1) {
-        const peerInbox = await daemonOperation('getRoomInbox', { roomId: ROOM }, targetToken);
-        expect(
-          ((await peerInbox.json()) as { items: Array<{ id: string; mentionIds: string[] }> })
-            .items,
-        ).toContainEqual(expect.objectContaining({ id: previous, mentionIds: [target] }));
-      }
+      const peerInbox = await daemonOperation('getRoomInbox', { roomId: ROOM }, targetToken);
+      const peerItems = (await peerInbox.json()) as {
+        items: Array<{ id: string; mentionIds: string[] }>;
+      };
+      if (turn < 4)
+        expect(peerItems.items).toContainEqual(
+          expect.objectContaining({ id: previous, mentionIds: [target] }),
+        );
+      else expect(peerItems.items).not.toContainEqual(expect.objectContaining({ id: previous }));
       [speaker, target] = [target, speaker];
       [speakerToken, targetToken] = [targetToken, speakerToken];
     }
     const stored = await database.query<{
       mention_ids: string[];
+      agent_hop_count: number;
       note_count: string;
     }>(
-      `SELECT message.mention_ids,
+      `SELECT message.mention_ids,message.agent_hop_count,
          (SELECT count(*)::text FROM messages note
           WHERE note.room_id=message.room_id AND note.card_type='agent-hop-cap') note_count
        FROM messages message WHERE message.id=$1`,
       [previous],
     );
-    expect(stored.rows[0]).toEqual({ mention_ids: [], note_count: '1' });
+    expect(stored.rows[0]).toEqual({ mention_ids: [], agent_hop_count: 3, note_count: '0' });
+
+    const resetMessage = '8'.repeat(64);
+    await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: resetMessage,
+      text: 'New human direction.',
+      mentions: [AGENT],
+    });
+    const reset = await daemonOperation(
+      'postRoomMessage',
+      {
+        roomId: ROOM,
+        requestId: resetMessage,
+        triggerMessageId: resetMessage,
+        text: 'Fresh response.',
+        mentionIds: [peer],
+      },
+      daemonToken,
+    );
+    expect(reset.status).toBe(200);
+    const resetId = ((await reset.json()) as { id: string }).id;
+    const resetInbox = await daemonOperation('getRoomInbox', { roomId: ROOM }, peerToken);
+    expect(
+      ((await resetInbox.json()) as { items: Array<{ id: string; mentionIds: string[] }> }).items,
+    ).toContainEqual(expect.objectContaining({ id: resetId, mentionIds: [peer] }));
+    expect(
+      (
+        await database.query<{ agent_hop_count: number }>(
+          `SELECT agent_hop_count FROM messages WHERE id=$1`,
+          [resetId],
+        )
+      ).rows[0],
+    ).toEqual({ agent_hop_count: 0 });
+  });
+
+  it('settles a working turn when its final untagged agent reply is stored', async () => {
+    const requestId = '7'.repeat(64);
+    await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: requestId,
+      text: 'Please answer.',
+      mentions: [AGENT],
+    });
+    await daemonOperation('postAgentTurnReceipt', {
+      roomId: ROOM,
+      requestId,
+      status: 'working',
+    });
+    const finalReply = await daemonOperation('postRoomMessage', {
+      roomId: ROOM,
+      requestId,
+      triggerMessageId: requestId,
+      text: 'Done.',
+      mentionIds: [],
+    });
+    expect(finalReply.status).toBe(200);
+    expect((await new PhoneService(database, origin).readRoom(ROOM, HUMAN))?.latestAgentTurns).toContainEqual(
+      expect.objectContaining({ requestId, agentPubkey: AGENT, status: 'complete' }),
+    );
   });
 
   it('keeps the phone GitHub repository contract aligned through the real HTTP surface', async () => {

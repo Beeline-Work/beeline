@@ -11,6 +11,9 @@ describe('using-beeline Room guidance', () => {
     expect(markdown).toContain('beeline-release: test-release');
     expect(markdown).toContain('@name');
     expect(markdown).toContain('including another agent');
+    expect(markdown).toContain(
+      'Tag another agent only when you need something from them: a question, a handoff, a task. Never tag to acknowledge, agree, or say you are ready. If nothing is actionable, do not reply.',
+    );
     expect(markdown).toContain('beeline-agent');
     expect(markdown).toContain('open_corner');
     expect(markdown).not.toContain('close_corner');

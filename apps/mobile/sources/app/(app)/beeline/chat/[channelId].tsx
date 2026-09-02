@@ -65,7 +65,7 @@ import {
 import { pushOpenBuzzChannelId, releaseOpenBuzzChannelId } from '@/buzz/open-room-tracker';
 import { afterInteractions } from '@/buzz/defer-interaction';
 import { buildTurnActivity } from '@/buzz/activity-timeline';
-import { cornerObjectiveLine } from '@/buzz/corner-context';
+import { cornerObjectiveItems } from '@/buzz/corner-context';
 import { continuedSpeakerIds, ledgerSpeakerKey } from '@/buzz/ledger-attribution';
 import { publishFailurePresentation } from '@/buzz/publish-failure';
 import { ledgerStamp } from '@/buzz/relative-time';
@@ -658,7 +658,7 @@ export default function BuzzChat() {
   // entire lifecycle. Mutable plans never rewrite this panel.
   const cornerObjective = useMemo(
     () =>
-      cornerObjectiveLine({
+      cornerObjectiveItems({
         ...(cornerTask ? { task: cornerTask } : {}),
         ...(resolvedChannelName ? { cornerName: resolvedChannelName } : {}),
       }),
@@ -2950,7 +2950,7 @@ export default function BuzzChat() {
             Mutable plans never rewrite it or add sub-goal cross-offs. */}
         {isCorner && (
           <CornerPlanPin
-            {...(cornerObjective ? { objective: cornerObjective } : {})}
+            {...(cornerObjective.length ? { objectiveItems: cornerObjective } : {})}
             testID="corner-plan-pin"
           />
         )}
@@ -3021,7 +3021,7 @@ export default function BuzzChat() {
               <EmptyLedgerState
                 variant={emptyLedgerVariant}
                 name={isDirectMessage ? displayRoomName : undefined}
-                objective={isCorner ? cornerObjective : undefined}
+                objective={isCorner ? cornerObjective.join(' ') : undefined}
                 onPress={focusComposer}
               />
             </View>

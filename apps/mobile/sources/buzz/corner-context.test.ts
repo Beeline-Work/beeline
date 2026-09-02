@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cornerObjectiveLine } from './corner-context';
+import { cornerObjectiveItems, cornerObjectiveLine } from './corner-context';
 
 describe('cornerObjectiveLine', () => {
   it('pins the opening task ahead of later plan objectives, then falls back to the corner name', () => {
@@ -35,5 +35,15 @@ describe('cornerObjectiveLine', () => {
     expect(line).toBe('add color to code blocks');
     const long = cornerObjectiveLine({ task: 'x'.repeat(400) });
     expect(long).toBe('x'.repeat(400));
+  });
+
+  it('keeps explicit lists and safely separates semicolon-delimited objectives', () => {
+    expect(cornerObjectiveItems({ task: '- Trace the renderer\n- Add focused tests' })).toEqual([
+      'Trace the renderer',
+      'Add focused tests',
+    ]);
+    expect(
+      cornerObjectiveItems({ task: 'Update v1.2.3 parser; and verify src/foo.bar remains intact' }),
+    ).toEqual(['Update v1.2.3 parser', 'verify src/foo.bar remains intact']);
   });
 });

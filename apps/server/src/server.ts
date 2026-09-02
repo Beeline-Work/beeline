@@ -424,6 +424,28 @@ async function route(
     return;
   }
 
+  if (method === 'POST' && url.pathname === '/v1/daemon/media') {
+    const agentId = await daemonIdentity(request, options);
+    if (!agentId) {
+      json(response, 401, { error: 'daemon_token_required' });
+      return;
+    }
+    const raw = await bytes(request, options.mediaMaximumBytes + 1);
+    const mime =
+      typeof request.headers['content-type'] === 'string'
+        ? request.headers['content-type']
+        : 'application/octet-stream';
+    const name =
+      typeof request.headers['x-file-name'] === 'string'
+        ? request.headers['x-file-name']
+        : 'upload';
+    json(
+      response,
+      201,
+      await options.phone.uploadMedia(agentId, raw, mime, name, options.mediaMaximumBytes),
+    );
+    return;
+  }
   match = url.pathname.match(/^\/v1\/daemon\/operations\/([A-Za-z][A-Za-z0-9]+)$/);
   if (method === 'POST' && match) {
     const agentId = await daemonIdentity(request, options);

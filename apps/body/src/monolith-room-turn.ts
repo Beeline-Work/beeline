@@ -257,6 +257,7 @@ export class MonolithRoomTurnLoop {
       beelineAgentMcpServer(this.options.config, this.options.api, {
         roomId: this.options.roomId,
         workspaceId: this.options.workspaceId,
+        attachRoot: this.options.cwd,
       }),
     ];
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);

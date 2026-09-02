@@ -368,6 +368,7 @@ export class MonolithCornerTurnLoop {
         roomId: this.options.parentRoomId,
         workspaceId: this.options.workspaceId,
         cornerId: this.options.cornerId,
+        attachRoot: this.options.worktreePath,
       }),
     ];
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);

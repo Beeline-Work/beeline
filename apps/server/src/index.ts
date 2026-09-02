@@ -107,6 +107,7 @@ async function main() {
     database,
     live,
     github ? (roomId) => github!.roomToken(roomId) : undefined,
+    Number(process.env.MEDIA_MAX_BYTES ?? String(DEFAULT_MEDIA_MAXIMUM_BYTES)),
   );
   const server = createBeelineServer({
     database,

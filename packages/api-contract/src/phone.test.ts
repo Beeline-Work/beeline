@@ -42,6 +42,8 @@ describe('phone contract', () => {
     expectTypeOf<PhoneOperationMap['uploadMedia']['output']>().toHaveProperty('url');
     expectTypeOf<PhoneOperationMap['sendRoomMessage']['input']>().toHaveProperty('messageId');
     expectTypeOf<PhoneOperationMap['addWorkspaceMember']['input']>().toHaveProperty('role');
+    expectTypeOf<PhoneOperationMap['createRoomSchedule']['input']>().toHaveProperty('cadence');
+    expectTypeOf<PhoneOperationMap['listRoomSchedules']['output']>().toHaveProperty('schedules');
   });
 
   it('owns the canonical invite-token format while accepting pre-contract monolith tokens', () => {

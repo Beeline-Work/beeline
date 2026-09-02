@@ -14,6 +14,7 @@ import { DaemonService } from '../../server/src/daemon-service.js';
 import { LiveHub } from '../../server/src/live.js';
 import { createBeelineServer } from '../../server/src/server.js';
 import { createMonolithAuth, type MonolithAuthMount } from '../../server/src/monolith-auth.js';
+import { AgentScheduleLoop } from '../../server/src/agent-schedules.js';
 import { DaemonApiClient } from './daemon-api-client.js';
 import { AcpClient } from './acp.js';
 import { Body } from './body.js';
@@ -727,6 +728,166 @@ describe('daemon API client against the local monolith', () => {
       }
     },
     240_000,
+  );
+
+  it.skipIf(process.env.BEELINE_REAL_SCHEDULE_PROOF !== '1')(
+    'posts a one-minute phone schedule and receives a real thin-daemon harness reply',
+    async () => {
+      const agentCommand = process.env.BEELINE_REAL_SCHEDULE_AGENT_COMMAND;
+      const apiKey = process.env.OPENAI_API_KEY;
+      if (!agentCommand || !apiKey) {
+        throw new Error(
+          'real schedule proof requires an absolute Agent command and OPENAI_API_KEY',
+        );
+      }
+      await database.query(
+        `UPDATE agents SET selected_model=NULL,selected_effort=NULL WHERE agent_id=$1`,
+        [AGENT],
+      );
+      const exchange = await auth.createDaemonExchange(AGENT);
+      const daemonGrant = await fetch(`${origin}/v1/auth/daemon/exchange`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ exchangeToken: exchange.exchangeToken }),
+      });
+      const daemonToken = (await daemonGrant.json()) as { daemonToken: string };
+      const api = new DaemonApiClient(origin, daemonToken.daemonToken, AGENT);
+      const phoneToken = await auth.exchangeGitHubOidc('schedule-proof');
+      const configPath = join(supervisorRoot, 'schedule-runtime.json');
+      const runtime: AgentRuntimeRecord = {
+        version: 2,
+        communityId: WORKSPACE,
+        pairedBy: HUMAN,
+        agent: {
+          name: 'Bee',
+          publicKey: AGENT,
+          secretKeyHex: Buffer.from(AGENT_SECRET).toString('hex'),
+        },
+        body: {
+          name: 'Body',
+          publicKey: getPublicKey(new Uint8Array(32).fill(22)),
+          secretKeyHex: Buffer.from(new Uint8Array(32).fill(22)).toString('hex'),
+        },
+        rooms: [],
+        supervisorRoot,
+        relayBaseUrl: origin,
+        agentKind: 'reference',
+        agentCommand,
+        agentArgs: [],
+        agentBinary: agentCommand,
+        mcpBinary: process.execPath,
+        createdAt: new Date().toISOString(),
+        accessPolicy: 'everyone',
+        transport: { kind: 'monolith', baseUrl: origin, daemonToken: daemonToken.daemonToken },
+      };
+      await writeFile(configPath, `${JSON.stringify(runtime)}\n`, { mode: 0o600 });
+      const config = {
+        agentKind: 'reference',
+        agentCommand,
+        agentArgs: [],
+        agentBinary: agentCommand,
+        mcpBinary: process.execPath,
+        readonlyMcpCommand: process.execPath,
+        readonlyMcpArgs: [new URL('../dist/read-only-mcp.js', import.meta.url).pathname],
+        agentEnv: {
+          PATH: process.env.PATH ?? '',
+          HOME: join(supervisorRoot, 'harness-home'),
+          TMPDIR: join(supervisorRoot, 'harness-tmp'),
+          RUST_LOG: 'warn',
+          BUZZ_AGENT_PROVIDER: 'openai',
+          OPENAI_COMPAT_API_KEY: apiKey,
+          OPENAI_COMPAT_BASE_URL: 'https://api.openai.com/v1',
+          OPENAI_COMPAT_MODEL: process.env.BEELINE_REAL_SCHEDULE_MODEL ?? 'gpt-5.4-mini',
+          OPENAI_COMPAT_API: 'responses',
+        },
+        workspaceRoot: join(supervisorRoot, 'schedule-workspace'),
+        relayBaseUrl: origin,
+        relayHost: '127.0.0.1',
+        relayScheme: 'http',
+        relayWsUrl: origin.replace(/^http/, 'ws'),
+        autoApprovePermissions: false,
+        accessPolicy: 'everyone',
+      } as const;
+      const core = new ThinDaemonCore(runtime, configPath, config as never, { daemonApi: api });
+      const abort = new AbortController();
+      const daemon = core.run({ pollMs: 100, signal: abort.signal });
+      const scheduleLoop = new AgentScheduleLoop(database);
+      let tick = Promise.resolve();
+      let tickError: unknown;
+      const timer = setInterval(() => {
+        tick = tick
+          .then(() => scheduleLoop.runOnce())
+          .then(() => undefined)
+          .catch((error) => {
+            tickError = error;
+          });
+      }, 100);
+      try {
+        await vi.waitFor(() => expect(core.activeRoomIds()).toContain(ROOM), { timeout: 5_000 });
+        const startsAt = Math.floor(Date.now() / 1_000) + 60;
+        const response = await fetch(`${origin}/v1/phone/operations/createRoomSchedule`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${phoneToken.accessToken}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            workspaceId: WORKSPACE,
+            roomId: ROOM,
+            agentId: AGENT,
+            cadence: { kind: 'interval', everyMinutes: 60, startsAt },
+            message: 'Reply with exactly: SCHEDULE PROOF COMPLETE',
+          }),
+        });
+        expect(response.status).toBe(200);
+        const schedule = (await response.json()) as { id: string; nextRunAt: number };
+        expect(schedule.nextRunAt).toBe(startsAt);
+
+        let requestId = '';
+        let reply = '';
+        await vi.waitFor(
+          async () => {
+            if (tickError) throw tickError;
+            const scheduled = (
+              await database.query<{ id: string; author_id: string; mention_ids: string[] }>(
+                `SELECT id,author_id,mention_ids FROM messages
+                 WHERE text='Reply with exactly: SCHEDULE PROOF COMPLETE'`,
+              )
+            ).rows[0];
+            expect(scheduled).toMatchObject({ author_id: HUMAN, mention_ids: [AGENT] });
+            requestId = scheduled!.id;
+            reply =
+              (
+                await database.query<{ text: string }>(
+                  `SELECT text FROM messages WHERE author_id=$1 AND request_id=$2
+                   ORDER BY created_at DESC LIMIT 1`,
+                  [AGENT, requestId],
+                )
+              ).rows[0]?.text ?? '';
+            expect(reply).toMatch(/SCHEDULE PROOF COMPLETE/i);
+          },
+          { timeout: 240_000, interval: 500 },
+        );
+        expect(
+          (
+            await database.query<{ count: string }>(
+              `SELECT count(*)::text count FROM agent_schedule_occurrences WHERE schedule_id=$1`,
+              [schedule.id],
+            )
+          ).rows[0]?.count,
+        ).toBe('1');
+        console.log(
+          `[real-schedule-proof] schedule=${schedule.id} request=${requestId} ` +
+            `author=${HUMAN} mention=${AGENT} reply=${JSON.stringify(reply)}`,
+        );
+      } finally {
+        clearInterval(timer);
+        await tick;
+        abort.abort();
+        await daemon;
+      }
+    },
+    300_000,
   );
 
   it('exchanges a token and round-trips inbox, receipts, authority, settings, presence, and corners', async () => {

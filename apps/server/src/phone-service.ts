@@ -23,6 +23,7 @@ import type { SqlDatabase } from './database.js';
 import type { GitHubOperations } from './github-operations.js';
 import { collapsePermissionCards } from '@beeline/push-gateway/projection';
 import { joinRooms } from './membership-join.js';
+import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
 
 const DURABLE_KINDS = [0, 9, 9000, 9001, 9002, 9007, 9008, 30078, 39000, 39001, 39002];
 
@@ -97,6 +98,17 @@ interface MessageRow {
   author_name: string;
   author_handle: string | null;
   author_avatar: string | null;
+}
+interface RoomScheduleRow {
+  id: string;
+  workspace_id: string;
+  room_id: string;
+  agent_id: string;
+  creator_id: string;
+  cadence: Input<'createRoomSchedule'>['cadence'];
+  message: string;
+  next_run_at: Date;
+  created_at: Date;
 }
 
 function hash(value: string): string {
@@ -213,6 +225,20 @@ function projectedMessage(row: MessageRow, publicOrigin: string): RoomViewMessag
     default:
       return base;
   }
+}
+
+function roomSchedule(row: RoomScheduleRow): Output<'createRoomSchedule'> {
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    roomId: row.room_id,
+    agentId: row.agent_id,
+    creatorId: row.creator_id,
+    cadence: row.cadence,
+    message: row.message,
+    nextRunAt: unix(row.next_run_at),
+    createdAt: unix(row.created_at),
+  };
 }
 
 function directMessageRoomId(workspaceId: string, participants: readonly [string, string]): string {
@@ -938,6 +964,19 @@ export class PhoneService {
         )) as Output<Name>;
       case 'sendRoomReply':
         return (await this.sendReply(input as Input<'sendRoomReply'>, viewerId)) as Output<Name>;
+      case 'createRoomSchedule':
+        return (await this.createRoomSchedule(
+          input as Input<'createRoomSchedule'>,
+          viewerId,
+        )) as Output<Name>;
+      case 'listRoomSchedules':
+        return (await this.listRoomSchedules(
+          (input as Input<'listRoomSchedules'>).roomId,
+          viewerId,
+        )) as Output<Name>;
+      case 'deleteRoomSchedule':
+        await this.deleteRoomSchedule(input as Input<'deleteRoomSchedule'>, viewerId);
+        return undefined as Output<Name>;
       case 'decideWritePermission':
         return (await this.decidePermission(
           input as Input<'decideWritePermission'>,
@@ -1186,6 +1225,63 @@ export class PhoneService {
       if (!retry.rowCount) throw new Error('messageId is invalid');
     }
     return { messageId: id };
+  }
+  private async createRoomSchedule(input: Input<'createRoomSchedule'>, viewerId: string) {
+    const target = await this.requireTopLevelRoom(input.roomId);
+    if (target.workspace_id !== input.workspaceId) throw new Error('room is not in workspace');
+    await this.requireManager(input.roomId, viewerId);
+    if (typeof input.message !== 'string' || !input.message.trim())
+      throw new Error('schedule message is required');
+    if (!input.cadence || typeof input.cadence !== 'object')
+      throw new Error('schedule cadence is invalid');
+    validateScheduleCadence(input.cadence);
+    const agent = await this.database.query(
+      `SELECT 1 FROM identities identity
+       JOIN memberships membership ON membership.identity_id=identity.id
+       WHERE identity.id=$1 AND identity.kind='agent' AND membership.room_id=$2
+         AND membership.workspace_id=$3 AND membership.removed_at IS NULL`,
+      [input.agentId, input.roomId, input.workspaceId],
+    );
+    if (!agent.rowCount) throw new Error('agent not found in room');
+    const id = randomUUID();
+    const nextRunAt = nextScheduleOccurrence(input.cadence, new Date());
+    const inserted = await this.database.query<RoomScheduleRow>(
+      `INSERT INTO agent_schedules(
+         id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at
+       ) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$8)
+       RETURNING id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at,created_at`,
+      [
+        id,
+        input.workspaceId,
+        input.roomId,
+        input.agentId,
+        viewerId,
+        JSON.stringify(input.cadence),
+        input.message.trim(),
+        nextRunAt,
+      ],
+    );
+    return roomSchedule(inserted.rows[0]!);
+  }
+  private async listRoomSchedules(roomId: string, viewerId: string) {
+    await this.requireManager(roomId, viewerId);
+    const schedules = await this.database.query<RoomScheduleRow>(
+      `SELECT id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at,created_at
+       FROM agent_schedules WHERE room_id=$1 ORDER BY created_at,id`,
+      [roomId],
+    );
+    return { schedules: schedules.rows.map(roomSchedule) };
+  }
+  private async deleteRoomSchedule(
+    input: Input<'deleteRoomSchedule'>,
+    viewerId: string,
+  ): Promise<void> {
+    await this.requireManager(input.roomId, viewerId);
+    const deleted = await this.database.query(
+      `DELETE FROM agent_schedules WHERE id=$1 AND room_id=$2`,
+      [input.scheduleId, input.roomId],
+    );
+    if (!deleted.rowCount) throw new Error('schedule not found');
   }
   private async sendReply(input: Input<'sendRoomReply'>, author: string) {
     const parent = await this.database.query<{
@@ -2105,6 +2201,9 @@ export class PhoneService {
 export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'sendRoomMessage',
   'sendRoomReply',
+  'createRoomSchedule',
+  'listRoomSchedules',
+  'deleteRoomSchedule',
   'decideWritePermission',
   'createWorkspace',
   'updateWorkspace',

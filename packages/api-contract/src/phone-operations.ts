@@ -35,6 +35,7 @@ export type PhoneOperationMap = {
   setRoomRepository: { input: SetRoomRepositoryInput; output: RoomRepositoryResult };
   setRoomTargetBranch: { input: SetRoomTargetBranchInput; output: RoomRepositoryResult };
   setRoomGitHubEvents: { input: SetRoomGitHubEventsInput; output: RoomRepositoryResult };
+  approveCornerMerge: { input: ApproveCornerMergeInput; output: ApproveCornerMergeResult };
   getAuthCapabilities: { input: EmptyInput; output: AuthCapabilitiesResult };
   beginGitHubIdentityBind: { input: BeginBrowserAuthInput; output: BrowserAuthStartResult };
   completeGitHubIdentityBind: { input: CompleteBrowserAuthInput; output: IdentityBindResult };
@@ -160,6 +161,15 @@ export type SetRoomRepositoryInput = RoomInput & {
 };
 export type SetRoomTargetBranchInput = RoomInput & { readonly targetBranch: string };
 export type SetRoomGitHubEventsInput = RoomInput & { readonly enabled: boolean };
+export type ApproveCornerMergeInput = {
+  readonly cornerId: string;
+  /** Managers may explicitly override a known failing check result. */
+  readonly force?: boolean;
+};
+export type ApproveCornerMergeResult = {
+  readonly status: 'merge-requested' | 'already-requested' | 'already-merged';
+  readonly pullRequestUrl: string;
+};
 export type RoomRepositoryResult = {
   readonly channelId: string;
   readonly binding: {

@@ -452,6 +452,24 @@ CREATE TABLE IF NOT EXISTS corner_facts (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS corner_check_facts (
+  corner_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  name text NOT NULL,
+  status text NOT NULL CHECK(status IN ('pending','passed','failed')),
+  conclusion text,
+  url text,
+  head_sha text,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (corner_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS corner_merge_approvals (
+  corner_id uuid PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
+  approved_by text NOT NULL REFERENCES identities(id),
+  force boolean NOT NULL DEFAULT false,
+  approved_at timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS invites (
   token_hash text PRIMARY KEY,
   workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,

@@ -499,6 +499,7 @@ function corner(value: unknown): value is CornerListItem {
 function cornerLifecycle(value: unknown): boolean {
   const item = record(value);
   const pr = item?.pr === undefined ? undefined : record(item.pr);
+  const checksSummary = item?.checksSummary === undefined ? undefined : record(item.checksSummary);
   return Boolean(
     item &&
     (item.lifecycle === 'working' ||
@@ -512,6 +513,30 @@ function cornerLifecycle(value: unknown): boolean {
     optionalString(item.branch) &&
     (item.outcome === undefined || item.outcome === 'landed' || item.outcome === 'abandoned') &&
     optionalString(item.reason) &&
+    (checksSummary === undefined ||
+      (checksSummary !== null &&
+        (checksSummary.status === 'passing' ||
+          checksSummary.status === 'failing' ||
+          checksSummary.status === 'pending' ||
+          checksSummary.status === 'unknown') &&
+        integer(checksSummary.total) &&
+        stringArray(checksSummary.failing) &&
+        integer(checksSummary.updatedAt) &&
+        Array.isArray(checksSummary.checks) &&
+        checksSummary.checks.length <= 200 &&
+        checksSummary.checks.every((candidate) => {
+          const check = record(candidate);
+          return Boolean(
+            check &&
+            typeof check.name === 'string' &&
+            check.name.length > 0 &&
+            (check.status === 'pending' ||
+              check.status === 'passed' ||
+              check.status === 'failed') &&
+            optionalString(check.conclusion) &&
+            (check.url === undefined || httpUrl(check.url)),
+          );
+        }))) &&
     (pr === undefined ||
       (pr &&
         integer(pr.number) &&
@@ -523,6 +548,10 @@ function cornerLifecycle(value: unknown): boolean {
         pr.targetBranch.length > 0 &&
         typeof pr.headSha === 'string' &&
         /^[0-9a-f]{40}$/i.test(pr.headSha) &&
+        (pr.mergeability === undefined ||
+          pr.mergeability === 'clean' ||
+          pr.mergeability === 'dirty' ||
+          pr.mergeability === 'unknown') &&
         optionalString(pr.mergedAt) &&
         optionalString(pr.mergedBy))),
   );

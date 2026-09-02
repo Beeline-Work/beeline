@@ -642,6 +642,19 @@ describe('monolith integration', () => {
           })
         ).status,
       ).toBe(200);
+      // Colloquial narration segments land BETWEEN tool rows as durable
+      // messages with no request id, so they never settle the turn receipt.
+      if (tool === 5 || tool === 10) {
+        expect(
+          (
+            await daemonOperation('postRoomMessage', {
+              roomId: cornerId,
+              text: `Narration after tool ${tool}: updating only the ledger, then committing.`,
+              presentation: 'message',
+            })
+          ).status,
+        ).toBe(200);
+      }
     }
     expect(
       (
@@ -700,6 +713,18 @@ describe('monolith integration', () => {
     expect(corner.messages).toContainEqual(
       expect.objectContaining({ text: 'Corner done.', presentation: 'message' }),
     );
+    // Narration ledger lines survive the turn as ordinary indexed messages
+    // (no request id of their own), interleavable with the collapsed tool
+    // rows by creation time.
+    const narration = corner.messages.filter((message) =>
+      message.text.startsWith('Narration after tool'),
+    );
+    expect(narration).toHaveLength(2);
+    for (const line of narration) {
+      expect(line.presentation).toBe('message');
+      expect(line.requestId).toBeUndefined();
+    }
+    expect(corner.toolRows).toHaveLength(15);
 
     const parent = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as RoomView;
     expect(

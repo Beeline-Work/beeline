@@ -427,7 +427,7 @@ function agentTurn(value: unknown): value is RoomViewAgentTurn {
   return Boolean(
     item &&
     typeof item.requestId === 'string' &&
-    HEX.test(item.requestId) &&
+    item.requestId.length > 0 &&
     typeof item.agentPubkey === 'string' &&
     HEX.test(item.agentPubkey) &&
     (item.status === 'working' || item.status === 'complete' || item.status === 'failed') &&

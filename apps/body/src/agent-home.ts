@@ -27,7 +27,11 @@
  * MERGES session MCP servers into `$CODEX_HOME/config.toml`, so a symlink
  * there would let a session write into the operator's real config. Only MCP
  * declarations pass through: model/sandbox/approval settings stay out because
- * they fight the daemon's own agent-mode flags. This does NOT touch the #376
+ * they fight the daemon's own agent-mode flags. Codex's native web search is
+ * enabled explicitly (`[features] standalone_web_search`); Claude Code gets a
+ * generated `settings.json` allowing its native `WebSearch` tool. Pi ships no
+ * native web-search tool (web access there is extension-package territory,
+ * deliberately out of the isolated home). This does NOT touch the #376
  * credential armor: masked stores (`~/.ssh`, `~/.netrc`, `~/.config/gh`,
  * `~/.config/trusty-squire`, `~/.git-credentials`) are never linked. Squire is
  * omitted from ambient declarations and mounted only through its host broker.
@@ -94,8 +98,19 @@ export const BEELINE_DEFAULT_SKILL_NAMES = [
   USING_BEELINE_SKILL_NAME,
 ] as const;
 
-/** Owned operator locations from which one named skill may be explicitly shared. */
-const EXPLICIT_SKILL_SOURCE_DIRS = ['.agents/skills'] as const;
+/**
+ * Operator skill directories shared by default into an isolated harness
+ * home's Beeline-managed skills directory. Every entry that passes the same
+ * validation as an explicit share is provisioned; a runtime record may still
+ * narrow this per agent by listing explicit `sharedSkills` names. A missing
+ * source dir is skipped, not fatal - not every host has every harness.
+ */
+const OPERATOR_SKILL_SOURCE_DIRS = [
+  '.agents/skills',
+  '.claude/skills',
+  '.codex/skills',
+  '.pi/agent/skills',
+] as const;
 
 /** Every supported Room harness consumes the same exact materialized inventory. */
 export const AGENT_SKILL_DIRS = ['claude', 'codex', 'grok', 'pi'] as const;
@@ -151,6 +166,13 @@ const PI_CUSTOM_MODEL_CONFIG = {
  * ordinary turn tools or the explicitly copied MCP server configuration.
  */
 const CODEX_ROOM_AGENT_LOCKDOWN_TOML = '[agents]\nenabled = false\n';
+
+/**
+ * Codex's native web search. `standalone_web_search` is the current feature
+ * flag (`codex features list`); the older `tools.web_search` spelling is
+ * deprecated. Network access is governed by the bwrap sandbox, not this flag.
+ */
+const CODEX_ROOM_WEB_SEARCH_TOML = '[features]\nstandalone_web_search = true\n';
 
 /** Subdirectories created under a room-instance's agent home. */
 const HOME_SUBDIRS = ['user', 'claude', 'codex', 'grok', 'pi', 'state', 'cache', 'tmp'] as const;
@@ -251,10 +273,10 @@ async function provisionAgentSkillsAndMcp(
   const managedSkills = [
     { name: USING_BEELINE_SKILL_NAME, content: usingBeelineSkillMarkdown(skillReleaseId) },
   ];
-  const shared = await resolveExplicitSkillSources(operatorHome, sharedSkills);
+  const shared = await resolveSharedSkillSources(operatorHome, sharedSkills);
   for (const dir of AGENT_SKILL_DIRS) {
     const target = resolve(root, dir, 'skills');
-    await provisionManagedSkillsDir(target, managedSkills, shared);
+    await provisionManagedSkillsDir(target, managedSkills, shared, sharedSkills.length === 0);
   }
 
   for (const config of HARNESS_MCP_CONFIGS) {
@@ -268,7 +290,9 @@ async function provisionAgentSkillsAndMcp(
       // servers: Codex otherwise enables internal collaboration by default.
       const section =
         config.dir === 'codex'
-          ? [CODEX_ROOM_AGENT_LOCKDOWN_TOML, mcpSection].filter(Boolean).join('\n')
+          ? [CODEX_ROOM_AGENT_LOCKDOWN_TOML, CODEX_ROOM_WEB_SEARCH_TOML, mcpSection]
+              .filter(Boolean)
+              .join('\n')
           : mcpSection;
       // Regeneration is also deletion: if the operator removes the config or
       // its last MCP table, do not leave stale servers active in a Room. Codex
@@ -298,6 +322,20 @@ async function provisionAgentSkillsAndMcp(
   } catch (error) {
     if (failClosed) throw error;
     console.warn('[body] operator MCP passthrough failed for claude:', error);
+  }
+
+  // Native web search for Claude Code: the tool is permission-gated, so the
+  // generated isolated settings allow it explicitly. Regenerated on every
+  // activation like every other Beeline-owned file in the harness home.
+  try {
+    const settings = { permissions: { allow: ['WebSearch'] } };
+    await writeIsolatedHarnessFile(
+      resolve(root, 'claude', 'settings.json'),
+      `${JSON.stringify(settings, null, 2)}\n`,
+    );
+  } catch (error) {
+    if (failClosed) throw error;
+    console.warn('[body] claude web-search settings provisioning failed:', error);
   }
 
   await provisionPiCustomModelConfig(root, operatorHome, failClosed);
@@ -418,6 +456,7 @@ async function provisionManagedSkillsDir(
   target: string,
   managedSkills: Array<{ name: string; content: string }>,
   sharedSkills: Array<{ name: string; source: string }>,
+  optionalShares: boolean,
 ): Promise<void> {
   const parent = dirname(target);
   await assertRealContainedDirectory(parent, dirname(parent));
@@ -435,7 +474,14 @@ async function provisionManagedSkillsDir(
         throw new Error(`shared skill collides with Beeline-owned skill: ${shared.name}`);
       }
       names.add(shared.name);
-      await copySafeSkillTree(shared.source, resolve(staged, shared.name), shared.source);
+      try {
+        await copySafeSkillTree(shared.source, resolve(staged, shared.name), shared.source);
+      } catch (error) {
+        // Default (implicit) shares degrade to fewer skills rather than
+        // failing the Room; an explicitly named share still fails loudly.
+        if (!optionalShares) throw error;
+        console.warn(`[body] skipping shared skill ${shared.name}:`, error);
+      }
     }
     const existing = await lstat(target).catch(() => undefined);
     if (existing) await rm(target, { recursive: existing.isDirectory(), force: true });
@@ -443,6 +489,47 @@ async function provisionManagedSkillsDir(
   } finally {
     await rm(staged, { recursive: true, force: true });
   }
+}
+
+/**
+ * The skill shares for one activation. Non-empty explicit names narrow the
+ * share per agent (the previous behavior, validated fail-closed). Otherwise
+ * EVERY entry across the operator's skill directories is shared by default:
+ * each entry is validated with the same boundary as an explicit share, but an
+ * entry that cannot be validated safely is skipped with a warning, and a name
+ * present in several directories resolves first-dir-wins instead of failing.
+ */
+async function resolveSharedSkillSources(
+  operatorHome: string,
+  names: string[],
+): Promise<Array<{ name: string; source: string }>> {
+  if (names.length > 0) return resolveExplicitSkillSources(operatorHome, names);
+  const seen = new Set<string>();
+  const resolved: Array<{ name: string; source: string }> = [];
+  for (const relativeRoot of OPERATOR_SKILL_SOURCE_DIRS) {
+    const sourceRoot = resolve(operatorHome, relativeRoot);
+    const rootStats = await lstat(sourceRoot).catch(() => undefined);
+    if (!rootStats?.isDirectory() || rootStats.isSymbolicLink()) continue;
+    for (const entry of await readdir(sourceRoot)) {
+      if (!isSharedSkillName(entry) || seen.has(entry)) continue;
+      const candidate = resolve(sourceRoot, entry);
+      try {
+        const candidateStats = await lstat(candidate);
+        if (!candidateStats.isDirectory() || candidateStats.isSymbolicLink()) continue;
+        assertContained(sourceRoot, candidate);
+        const skillMd = resolve(candidate, 'SKILL.md');
+        const skillStats = await lstat(skillMd);
+        if (!skillStats.isFile() || skillStats.isSymbolicLink() || skillStats.nlink !== 1) {
+          throw new Error(`shared skill requires an ordinary SKILL.md: ${entry}`);
+        }
+        seen.add(entry);
+        resolved.push({ name: entry, source: candidate });
+      } catch (error) {
+        console.warn(`[body] skipping operator skill ${entry}:`, error);
+      }
+    }
+  }
+  return resolved;
 }
 
 async function resolveExplicitSkillSources(
@@ -456,7 +543,7 @@ async function resolveExplicitSkillSources(
   const resolved: Array<{ name: string; source: string }> = [];
   for (const name of unique) {
     const matches: string[] = [];
-    for (const relativeRoot of EXPLICIT_SKILL_SOURCE_DIRS) {
+    for (const relativeRoot of OPERATOR_SKILL_SOURCE_DIRS) {
       const sourceRoot = resolve(operatorHome, relativeRoot);
       const candidate = resolve(sourceRoot, name);
       const rootStats = await lstat(sourceRoot).catch(() => undefined);

@@ -299,7 +299,7 @@ describe('operator skills + MCP passthrough', () => {
     return home;
   }
 
-  it('provisions the exact Beeline-owned defaults and never inherits ambient operator skills', async () => {
+  it('shares operator skills by default alongside the Beeline-owned managed skill', async () => {
     const operatorHome = await operatorHomeWithHarnessConfigs();
     const roomRoot = resolve(await scratch('beeline-room-a-'), 'agent-home');
 
@@ -309,8 +309,9 @@ describe('operator skills + MCP passthrough', () => {
       const skillsDir = resolve(roomRoot, dir, 'skills');
       expect(lstatSync(skillsDir).isSymbolicLink()).toBe(false);
       expect(lstatSync(skillsDir).isDirectory()).toBe(true);
-      expect(readdirSync(skillsDir).sort()).toEqual([...BEELINE_DEFAULT_SKILL_NAMES].sort());
-      expect(existsSync(resolve(skillsDir, 'greet'))).toBe(false);
+      // Default share: every validated operator entry rides along.
+      expect(readdirSync(skillsDir).sort()).toEqual(['greet', ...BEELINE_DEFAULT_SKILL_NAMES].sort());
+      expect(readFileSync(resolve(skillsDir, 'greet', 'SKILL.md'), 'utf8')).toBe('say hi');
       const managedSkill = resolve(skillsDir, 'using-beeline', 'SKILL.md');
       expect(lstatSync(resolve(skillsDir, 'using-beeline')).isSymbolicLink()).toBe(false);
       expect(readFileSync(managedSkill, 'utf8')).toContain('name: using-beeline');
@@ -331,6 +332,13 @@ describe('operator skills + MCP passthrough', () => {
     // family while ordinary Beeline-provisioned MCP tools remain available.
     expect(isolatedText).toContain('[agents]\nenabled = false');
     expect(isolatedText).not.toContain('enabled = true');
+    // Native web search is enabled in the isolated codex home.
+    expect(isolatedText).toContain('[features]\nstandalone_web_search = true');
+    // Claude Code gets its native WebSearch allowed through generated settings.
+    const claudeSettings = JSON.parse(
+      readFileSync(resolve(roomRoot, 'claude', 'settings.json'), 'utf8'),
+    ) as { permissions: { allow: string[] } };
+    expect(claudeSettings.permissions.allow).toContain('WebSearch');
     expect(tomlChildTableNames(isolatedText, ['mcp_servers'])).toEqual(['project_tools']);
 
     // Writing through the session cannot reach the operator's real config.
@@ -361,8 +369,10 @@ describe('operator skills + MCP passthrough', () => {
       );
       expect(lstatSync(resolve(sharedAgent, dir, 'skills/review-pr')).isSymbolicLink()).toBe(false);
       expect(lstatSync(resolve(sharedAgent, dir, 'skills/review-pr/run.sh')).mode & 0o111).toBe(0);
-      expect(existsSync(resolve(cleanAgent, dir, 'skills/review-pr'))).toBe(false);
-      expect(existsSync(resolve(sharedAgent, dir, 'skills/greet'))).toBe(false);
+      // A default-share agent gets every operator entry, review-pr included.
+      expect(existsSync(resolve(cleanAgent, dir, 'skills/review-pr'))).toBe(true);
+      // Explicit narrowing excludes the operator's other skills.
+      expect(readdirSync(resolve(sharedAgent, dir, 'skills')).sort()).not.toContain('greet');
     }
   });
 
@@ -480,7 +490,7 @@ describe('operator skills + MCP passthrough', () => {
     await writeFile(resolve(operatorHome, '.claude.json'), JSON.stringify({ mcpServers: {} }));
     await prepareRoomAgentHome({ root: roomRoot, operatorHome });
     expect(readFileSync(resolve(roomRoot, 'codex', 'config.toml'), 'utf8')).toBe(
-      '[agents]\nenabled = false\n',
+      '[agents]\nenabled = false\n\n[features]\nstandalone_web_search = true\n',
     );
     expect(existsSync(resolve(roomRoot, 'claude', '.claude.json'))).toBe(false);
   });
@@ -518,8 +528,8 @@ describe('operator skills + MCP passthrough', () => {
     // intentionally present even without operator configuration. Other
     // harnesses still have no config to generate.
     expect(readFileSync(resolve(roomRoot, 'codex', 'config.toml'), 'utf8')).toBe(
-      '[agents]\nenabled = false\n',
-    );
+      '[agents]\nenabled = false\n\n[features]\nstandalone_web_search = true\n',
+  );
     expect(existsSync(resolve(roomRoot, 'claude', 'config.toml'))).toBe(false);
     expect(existsSync(resolve(roomRoot, 'grok', 'config.toml'))).toBe(false);
     expect(existsSync(resolve(roomRoot, 'claude', '.claude.json'))).toBe(false);
@@ -549,7 +559,8 @@ describe('operator skills + MCP passthrough', () => {
       }
     };
     walk(roomRoot);
-    expect(existsSync(resolve(roomRoot, 'codex/skills/audit'))).toBe(false);
+    // The default skill share crosses skills dirs but never a credential store.
+    expect(existsSync(resolve(roomRoot, 'codex/skills/audit'))).toBe(true);
     for (const link of links) {
       const target = realpathSync(link);
       for (const masked of KNOWN_CREDENTIAL_MASK_PATHS) {

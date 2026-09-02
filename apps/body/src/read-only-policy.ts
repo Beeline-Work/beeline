@@ -118,7 +118,46 @@ export function isReadOnlyMcpPermissionRequest(request: AcpPermissionRequest): b
   return false;
 }
 
+/**
+ * True when the request itself names an MCP tool call, whatever adapter
+ * spelling it arrived in: the explicit rawInput `{server, tool}` envelope
+ * codex-acp forwards, claude-agent-acp's `mcp__<server>__<tool>` title, or
+ * codex's `mcp.<server>.<tool>` title. A shell payload is never an MCP call
+ * (see `shellPayload`), and unstructured native tool requests (Read, Edit, …)
+ * fail the structural checks and stay rejected.
+ */
+export function isMountedMcpToolPermissionRequest(request: AcpPermissionRequest): boolean {
+  const toolCall = request.toolCall as
+    (NonNullable<AcpPermissionRequest['toolCall']> & { kind?: unknown }) | undefined;
+  const rawInput = toolCall?.rawInput;
+  if (rawInput && typeof rawInput === 'object' && !Array.isArray(rawInput)) {
+    const call = rawInput as Record<string, unknown>;
+    if (typeof call.server === 'string' && typeof call.tool === 'string') return true;
+  }
+  if (shellPayload(toolCall)) return false;
+  const title = toolCall?.title?.trim() ?? '';
+  if (/^mcp__[^_].*__[^_]/.test(title)) return true;
+  if (/^mcp\.[^.]+\.[^.]/.test(title)) return true;
+  // Older Beeline-only spellings that carried no `mcp.` prefix.
+  return isReadOnlyMcpPermissionRequest(request) || isBeelineAgentMcpPermissionRequest(request);
+}
+
 const AGENT_SURFACE_TOOL_NAMES = ['open_corner', 'pr_checks_status', 'attach_file'] as const;
+
+const SQUIRE_TITLE_PREFIXES = ['mcp__squire__', 'mcp.squire.', 'squire.', 'squire/'] as const;
+
+/**
+ * Trusty Squire stays host-broker-gated even where other MCP calls are
+ * approved: it is never session-mounted in a thin Room.
+ */
+export function isSquireMcpPermissionRequest(request: AcpPermissionRequest): boolean {
+  const rawInput = request.toolCall?.rawInput;
+  if (rawInput && typeof rawInput === 'object' && !Array.isArray(rawInput)) {
+    if ((rawInput as Record<string, unknown>).server === 'squire') return true;
+  }
+  const title = request.toolCall?.title?.trim() ?? '';
+  return SQUIRE_TITLE_PREFIXES.some((prefix) => title.startsWith(prefix));
+}
 
 /** The only host-governed mutations available directly from a thin Room. */
 export function isBeelineAgentMcpPermissionRequest(request: AcpPermissionRequest): boolean {

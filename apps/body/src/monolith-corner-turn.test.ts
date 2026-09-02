@@ -305,6 +305,13 @@ describe('thin monolith corner turn', () => {
         systemPrompt: expect.stringContaining('server-posted checks-passed note'),
       }),
     );
+    expect(sessionNew).toHaveBeenCalledWith(
+      expect.objectContaining({
+        systemPrompt: expect.stringContaining(
+          'Do not tag the user when a corner turn finishes: the server posts the merge summary card and its push already cover completion.',
+        ),
+      }),
+    );
     expect(writes).toContainEqual(
       expect.objectContaining({
         name: 'postRoomMessage',

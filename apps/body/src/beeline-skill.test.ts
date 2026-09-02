@@ -14,6 +14,9 @@ describe('using-beeline Room guidance', () => {
     expect(markdown).toContain(
       'Tag another agent only when you need something from them: a question, a handoff, a task. Never tag to acknowledge, agree, or say you are ready. If nothing is actionable, do not reply.',
     );
+    expect(markdown).toContain(
+      'Tag the user only when you need a decision or input, or when the task they asked for is finished. Never tag for progress, acknowledgement, or questions the transcript already answers.',
+    );
     expect(markdown).toContain('beeline-agent');
     expect(markdown).toContain('open_corner');
     expect(markdown).not.toContain('close_corner');
@@ -27,6 +30,9 @@ describe('using-beeline Room guidance', () => {
     expect(context.sessionPrompt).toContain('including another agent');
     expect(context.sessionPrompt).toContain('beeline-agent open_corner');
     expect(context.sessionPrompt).toContain('tools are mounted');
+    expect(context.sessionPrompt).toContain(
+      'Tag the user only when you need a decision or input, or when the task they asked for is finished.',
+    );
     expect(context.compatibilityTurnPrefix).toBe(context.sessionPrompt);
   });
 });

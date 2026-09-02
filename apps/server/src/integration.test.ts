@@ -2111,6 +2111,66 @@ describe('monolith integration', () => {
     );
   });
 
+  it('delivers at most one human mention per agent turn', async () => {
+    const human2 = createHash('sha256').update('github:peer').digest('hex');
+    await database.query(
+      `INSERT INTO identities(id,kind,name,github_subject) VALUES($1,'human','Peer','peer')`,
+      [human2],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
+      [WORKSPACE, ROOM, human2],
+    );
+    const sent = await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: '5'.repeat(64),
+      text: 'Bee, loop in whoever else decides.',
+      mentions: [AGENT],
+    });
+    expect(sent.status).toBe(200);
+    const reply = await daemonOperation('postRoomMessage', {
+      roomId: ROOM,
+      requestId: 'two-human-tags-turn',
+      triggerMessageId: '5'.repeat(64),
+      text: '@Owner @Peer both need a decision, ideally just one of you.',
+      mentionIds: [HUMAN, human2],
+    });
+    expect(reply.status).toBe(200);
+    const stored = await database.query<{ mention_ids: string[] }>(
+      `SELECT mention_ids FROM messages WHERE room_id=$1 AND author_id=$2`,
+      [ROOM, AGENT],
+    );
+    expect(stored.rows).toHaveLength(1);
+    // Only the first human tag is delivered; the second stays plain text.
+    expect(stored.rows[0]!.mention_ids).toEqual([HUMAN]);
+  });
+
+  it('delivers no human mention on a corner-complete post', async () => {
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'corner-complete-tag-turn',
+      name: 'Ship widget',
+      summary: 'Ship the widget end to end',
+    });
+    expect(created.status).toBe(200);
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    const reply = await daemonOperation('postRoomMessage', {
+      roomId: cornerId,
+      requestId: 'corner-complete-tag-done',
+      text: '@Owner all done, merging now.',
+      mentionIds: [HUMAN],
+    });
+    expect(reply.status).toBe(200);
+    const stored = await database.query<{ mention_ids: string[] }>(
+      `SELECT mention_ids FROM messages WHERE room_id=$1 AND author_id=$2`,
+      [cornerId, AGENT],
+    );
+    expect(stored.rows).toHaveLength(1);
+    // The merge summary card and its push cover corner completion; a human tag
+    // on the settling corner post stays plain text.
+    expect(stored.rows[0]!.mention_ids).toEqual([]);
+  });
+
   it('posts one corner-open daemon-fact card and pushes it to human members', async () => {
     const send = vi.fn(async () => undefined);
     const loop = new PushDeliveryLoop(database, { send });

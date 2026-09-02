@@ -1,5 +1,11 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { createAgentPairingCode } from '@beeline/api-contract/phone';
+import {
+  createAgentPairingCode,
+  ROOM_VIEW_AGENT_LIMIT,
+  ROOM_VIEW_BRIEFING_LIMIT,
+  ROOM_VIEW_MEMBER_LIMIT,
+  ROOM_VIEW_MESSAGE_LIMIT,
+} from '@beeline/api-contract/phone';
 import type {
   AgentDetailView,
   AgentPairingClaimView,
@@ -327,10 +333,10 @@ export class PhoneService {
         createdAt: unix(row.created_at),
       },
       managerSettings: { visibility: row.visibility },
-      members: humans.slice(0, 200),
-      agents: agents.slice(0, 200),
-      membersTruncated: humans.length > 200,
-      agentsTruncated: agents.length > 200,
+      members: humans.slice(0, ROOM_VIEW_MEMBER_LIMIT),
+      agents: agents.slice(0, ROOM_VIEW_AGENT_LIMIT),
+      membersTruncated: humans.length > ROOM_VIEW_MEMBER_LIMIT,
+      agentsTruncated: agents.length > ROOM_VIEW_AGENT_LIMIT,
       viewer: {
         identity: viewerIdentity,
         role: row.role,
@@ -453,7 +459,8 @@ export class PhoneService {
     );
     const room = roomResult.rows[0];
     if (!room) return null;
-    const members = await this.members(room.workspace_id, roomId);
+    const allMembers = await this.members(room.workspace_id, roomId);
+    const members = allMembers.slice(0, ROOM_VIEW_MEMBER_LIMIT);
     const turns = await this.database.query<{
       request_id: string;
       agent_id: string;
@@ -476,7 +483,8 @@ export class PhoneService {
       .sort(
         (left, right) =>
           right.createdAt - left.createdAt || left.agentPubkey.localeCompare(right.agentPubkey),
-      );
+      )
+      .slice(0, ROOM_VIEW_AGENT_LIMIT);
     const messages = await this.roomMessages(roomId, latestAgentTurns);
     const familyRoomId = room.parent_id ?? roomId;
     const corners = await this.readCorners(familyRoomId, viewerId, true);
@@ -519,7 +527,7 @@ export class PhoneService {
                    ORDER BY page.created_at DESC,page.id ASC LIMIT 40
                  )
                )
-             ORDER BY m.created_at DESC,m.id ASC LIMIT 10`,
+             ORDER BY m.created_at DESC,m.id ASC LIMIT ${ROOM_VIEW_BRIEFING_LIMIT}`,
               [room.parent_id, room.created_at],
             )
           ).rows
@@ -582,7 +590,7 @@ export class PhoneService {
           ...(room.parent_id ? [room.parent_id] : []),
           ...(corners?.corners.map((item) => item.corner.id) ?? []),
         ],
-        members,
+        allMembers,
       ),
     };
   }
@@ -2153,7 +2161,7 @@ export class PhoneService {
        FROM messages m JOIN identities i ON i.id=m.author_id
        WHERE m.room_id=$1 AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
          AND (NOT EXISTS(SELECT 1 FROM legacy_room_events any_legacy WHERE any_legacy.room_id=$1) OR ${eligible})
-       ORDER BY m.created_at DESC,m.id DESC LIMIT 30`,
+       ORDER BY m.created_at DESC,m.id DESC LIMIT ${ROOM_VIEW_MESSAGE_LIMIT}`,
       [roomId],
     );
     const transcript = transcriptRows.rows.map((row) => projectedMessage(row, this.publicOrigin));
@@ -2181,15 +2189,15 @@ export class PhoneService {
           message.createdAt >=
           (workingByAgent.get(message.author.pubkey) ?? Number.POSITIVE_INFINITY),
       )
-      .slice(0, 30);
+      .slice(0, ROOM_VIEW_MESSAGE_LIMIT);
     const byId = new Map(
       collapsePermissionCards([...transcript.reverse(), ...liveActivity.reverse()]).map(
         (message) => [message.id, message],
       ),
     );
-    return [...byId.values()].sort(
-      (left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id),
-    );
+    return [...byId.values()]
+      .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id))
+      .slice(-ROOM_VIEW_MESSAGE_LIMIT);
   }
   private async cornerLifecycle(roomId: string) {
     return (

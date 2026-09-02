@@ -13,7 +13,12 @@ import { createBeelineServer, DEFAULT_MEDIA_MAXIMUM_BYTES } from './server.js';
 import { PushDeliveryLoop } from './background.js';
 import { GitHubOperations } from './github-operations.js';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
-import { isCommunityInviteToken } from '@beeline/api-contract/phone';
+import {
+  isCommunityInviteToken,
+  isRoomView,
+  ROOM_VIEW_MESSAGE_LIMIT,
+  type RoomView,
+} from '@beeline/api-contract/phone';
 import { createMonolithAuth, type MonolithAuthMount } from './monolith-auth.js';
 
 const HUMAN = createHash('sha256').update('github:owner').digest('hex');
@@ -547,6 +552,48 @@ describe('monolith integration', () => {
       }),
     );
     socket.close();
+  });
+
+  it('keeps a Room view valid when live activity joins a full transcript', async () => {
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       SELECT lpad(to_hex(item),64,'0'),$1,$2,'Stored ' || item,to_timestamp(1700000000 + item)
+       FROM generate_series(1,$3) AS stored(item)`,
+      [ROOM, HUMAN, ROOM_VIEW_MESSAGE_LIMIT],
+    );
+    const requestId = 'e'.repeat(64);
+    expect(
+      (
+        await daemonOperation('postAgentTurnReceipt', {
+          agentId: AGENT,
+          roomId: ROOM,
+          requestId,
+          status: 'working',
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await daemonOperation('postAgentActivity', {
+          agentId: AGENT,
+          roomId: ROOM,
+          requestId,
+          activity: [{ kind: 'thinking', title: 'Working', status: 'in_progress' }],
+        })
+      ).status,
+    ).toBe(200);
+
+    const roomView = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as RoomView;
+    expect(isRoomView(roomView)).toBe(true);
+    expect(roomView.messages).toHaveLength(ROOM_VIEW_MESSAGE_LIMIT);
+    expect(roomView.messages).toContainEqual(
+      expect.objectContaining({
+        author: expect.objectContaining({ pubkey: AGENT }),
+        presentation: 'activity',
+        activity: [{ kind: 'thinking', title: 'Working', status: 'in_progress' }],
+      }),
+    );
+    expect(roomView.messages.map((message) => message.id)).not.toContain('0'.repeat(63) + '1');
   });
 
   it('implicitly addresses an untagged human follow-up to the agent that just replied', async () => {

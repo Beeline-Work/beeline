@@ -2006,7 +2006,7 @@ export class PhoneService {
   }
   private async registerPush(input: Input<'registerPushDevice'>, viewerId: string) {
     await this.database.query(
-      `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES($1,$2,$3,$4) ON CONFLICT(token) DO UPDATE SET identity_id=EXCLUDED.identity_id,platform=EXCLUDED.platform,environment=EXCLUDED.environment,updated_at=now()`,
+      `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES($1,$2,$3,$4) ON CONFLICT(token) DO UPDATE SET identity_id=EXCLUDED.identity_id,platform=EXCLUDED.platform,environment=EXCLUDED.environment,registered_at=now(),updated_at=now()`,
       [input.token, viewerId, input.platform, input.environment],
     );
     return { accepted: true };

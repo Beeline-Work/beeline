@@ -564,9 +564,18 @@ CREATE TABLE IF NOT EXISTS push_devices (
   identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
   platform text NOT NULL CHECK (platform IN ('android', 'ios')),
   environment text NOT NULL CHECK (environment IN ('physical', 'emulator')),
+  registered_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE push_devices ADD COLUMN IF NOT EXISTS registered_at timestamptz;
+UPDATE push_devices SET registered_at=updated_at WHERE registered_at IS NULL;
+ALTER TABLE push_devices ALTER COLUMN registered_at SET NOT NULL;
 CREATE INDEX IF NOT EXISTS push_devices_identity_idx ON push_devices(identity_id);
+
+CREATE TABLE IF NOT EXISTS push_delivery_floors (
+  id text PRIMARY KEY,
+  started_at timestamptz NOT NULL DEFAULT now()
+);
 
 CREATE TABLE IF NOT EXISTS workspace_join_notifications (
   id text PRIMARY KEY,

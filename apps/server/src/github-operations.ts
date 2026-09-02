@@ -5,6 +5,67 @@ import type { SqlDatabase } from './database.js';
 
 type Input<Name extends keyof PhoneOperationMap> = PhoneOperationMap[Name]['input'];
 
+type GitHubRecord = Record<string, unknown>;
+
+function record(value: unknown): GitHubRecord | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as GitHubRecord)
+    : undefined;
+}
+
+function text(value: unknown): string | undefined {
+  return typeof value === 'string' && value ? value : undefined;
+}
+
+function integer(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) ? value : undefined;
+}
+
+function repositoryName(body: GitHubRecord): string | undefined {
+  return text(record(body.repository)?.full_name);
+}
+
+function branchForEvent(event: string, body: GitHubRecord): string | undefined {
+  if (event === 'push') {
+    const ref = text(body.ref);
+    return ref?.startsWith('refs/heads/') ? ref.slice('refs/heads/'.length) : undefined;
+  }
+  if (event === 'pull_request') return text(record(record(body.pull_request)?.head)?.ref);
+  if (event === 'check_run') return text(record(record(body.check_run)?.check_suite)?.head_branch);
+  if (event === 'check_suite') return text(record(body.check_suite)?.head_branch);
+  if (event === 'status') {
+    const branches = Array.isArray(body.branches) ? body.branches : [];
+    return branches.map((value) => text(record(value)?.name)).find(Boolean);
+  }
+  return undefined;
+}
+
+function checksResult(event: string, body: GitHubRecord): 'passed' | 'failed' | undefined {
+  let value: string | undefined;
+  if (event === 'check_run') {
+    const run = record(body.check_run);
+    if (body.action !== 'completed' && run?.status !== 'completed') return undefined;
+    value = text(run?.conclusion);
+  } else if (event === 'check_suite') {
+    const suite = record(body.check_suite);
+    if (body.action !== 'completed' && suite?.status !== 'completed') return undefined;
+    value = text(suite?.conclusion);
+  } else if (event === 'status') {
+    value = text(body.state);
+  }
+  if (value === 'success' || value === 'neutral' || value === 'skipped') return 'passed';
+  if (value && value !== 'pending') return 'failed';
+  return undefined;
+}
+
+interface CornerWebhookTarget {
+  corner_id: string;
+  parent_id: string;
+  author_id: string;
+  repository_id: string;
+  installation_id: string;
+}
+
 function hash(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
@@ -20,6 +81,7 @@ export class GitHubOperations {
     private readonly app: GitHubAppClient,
     clientSecret: string,
     private readonly resolveSealedUserToken?: (subject: string) => Promise<string | undefined>,
+    private readonly onRoomChanged?: (roomId: string) => void,
   ) {
     this.#key = createHash('sha256').update(clientSecret).digest();
   }
@@ -230,6 +292,16 @@ export class GitHubOperations {
     if (!installation || typeof installation !== 'object' || Array.isArray(installation)) return;
     const install = installation as Record<string, unknown>;
     if (typeof install.id !== 'number') return;
+    if (
+      event === 'push' ||
+      event === 'pull_request' ||
+      event === 'check_run' ||
+      event === 'check_suite' ||
+      event === 'status'
+    ) {
+      await this.processCornerEvent(event, body, install.id);
+      return;
+    }
     if (event === 'installation' && body.action === 'deleted') {
       await this.database.query(
         `UPDATE github_installations SET status='revoked',updated_at=now() WHERE installation_id=$1`,
@@ -288,6 +360,165 @@ export class GitHubOperations {
     await this.syncInstallation(owner, install.id);
   }
 
+  private async processCornerEvent(event: string, body: GitHubRecord, installationId: number) {
+    const repository = repositoryName(body);
+    const branch = branchForEvent(event, body);
+    if (!repository || !branch) return;
+    const targets = await this.database.query<CornerWebhookTarget>(
+      `SELECT corner.id corner_id,parent.id parent_id,
+         COALESCE(owner.identity_id,corner.created_by,parent.created_by) author_id,
+         github.repository_id,github.installation_id
+       FROM rooms corner
+       JOIN rooms parent ON parent.id=corner.parent_id
+       JOIN corner_facts fact ON fact.corner_id=corner.id
+       JOIN github_repositories github ON github.installation_id=$1
+         AND lower(github.full_name)=lower($2) AND github.active
+       LEFT JOIN LATERAL(
+         SELECT membership.identity_id FROM memberships membership
+         JOIN identities identity ON identity.id=membership.identity_id AND identity.kind='agent'
+         WHERE membership.room_id=corner.id AND membership.removed_at IS NULL
+         ORDER BY (membership.role='owner') DESC,membership.joined_at LIMIT 1
+       )owner ON true
+       WHERE corner.archived_at IS NULL AND parent.archived_at IS NULL
+         AND parent.github_events_enabled AND fact.feature_branch=$3
+         AND parent.github_installation_id=$1
+         AND lower(regexp_replace(regexp_replace(
+           COALESCE(parent.repository_remote,parent.repository_key,''),
+           '^(git://|https://)github.com/','','i'), '\\.git$','','i'))=lower($2)`,
+      [installationId, repository, branch],
+    );
+    for (const target of targets.rows) {
+      if (!target.author_id) continue;
+      if (event === 'pull_request') {
+        const pullRequest = record(body.pull_request);
+        const title =
+          text(pullRequest?.title) ?? `Pull request #${integer(pullRequest?.number) ?? ''}`;
+        const url = text(pullRequest?.html_url);
+        const merged = body.action === 'closed' && pullRequest?.merged === true;
+        if (merged && url) {
+          await this.mergeCorner(target, {
+            repository,
+            branch,
+            title,
+            url,
+            commits: integer(pullRequest?.commits) ?? 0,
+            files: integer(pullRequest?.changed_files) ?? 0,
+          });
+        } else if (body.action === 'opened' && url) {
+          await this.systemNote(
+            target.corner_id,
+            target.author_id,
+            `Pull request opened: ${title} — ${url}`,
+            `github:pull-request:opened:${url}`,
+          );
+        }
+        continue;
+      }
+      if (event === 'push') {
+        const compare = text(body.compare);
+        const commits = Array.isArray(body.commits) ? body.commits.length : 0;
+        await this.systemNote(
+          target.corner_id,
+          target.author_id,
+          `Branch updated${commits ? ` with ${commits} commit${commits === 1 ? '' : 's'}` : ''}${compare ? ` — ${compare}` : ''}.`,
+          `github:push:${text(body.after) ?? hash(JSON.stringify(body))}`,
+        );
+        continue;
+      }
+      const result = checksResult(event, body);
+      if (result) {
+        const details =
+          text(record(body.check_run)?.html_url) ??
+          text(record(body.check_suite)?.url) ??
+          text(body.target_url);
+        await this.systemNote(
+          target.corner_id,
+          target.author_id,
+          `Checks ${result}${details ? ` — ${details}` : ''}.`,
+          `github:checks:${result}:${text(record(body.check_run)?.id) ?? text(record(body.check_suite)?.id) ?? text(body.sha) ?? hash(JSON.stringify(body))}`,
+        );
+      }
+    }
+  }
+
+  private async systemNote(roomId: string, authorId: string, note: string, dedupe: string) {
+    const noteId = hash(`beeline:${roomId}:${dedupe}`);
+    const inserted = await this.database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
+       VALUES($1,$2,$3,$4,'system','github-corner-note',$5::jsonb) ON CONFLICT(id) DO NOTHING`,
+      [noteId, roomId, authorId, note, JSON.stringify({ source: 'github', dedupe })],
+    );
+    if (inserted.rowCount) this.onRoomChanged?.(roomId);
+  }
+
+  private async mergeCorner(
+    target: CornerWebhookTarget,
+    pullRequest: {
+      repository: string;
+      branch: string;
+      title: string;
+      url: string;
+      commits: number;
+      files: number;
+    },
+  ) {
+    const mergeKey = `github:pull-request:merged:${pullRequest.url}`;
+    await this.database.transaction(async (database) => {
+      const changed = await database.query(
+        `UPDATE rooms SET archived_at=now(),updated_at=now()
+         WHERE id=$1 AND archived_at IS NULL`,
+        [target.corner_id],
+      );
+      if (!changed.rowCount) return;
+      await database.query(
+        `UPDATE corner_facts SET close_requested=true,
+           lifecycle=lifecycle||'{"lifecycle":"done","checks":"passing"}'::jsonb,
+           updated_at=now() WHERE corner_id=$1`,
+        [target.corner_id],
+      );
+      await database.query(
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
+         VALUES($1,$2,$3,$4,'system','github-corner-note',$5::jsonb) ON CONFLICT(id) DO NOTHING`,
+        [
+          hash(`beeline:${target.corner_id}:${mergeKey}`),
+          target.corner_id,
+          target.author_id,
+          `Pull request merged: ${pullRequest.title} — ${pullRequest.url}`,
+          JSON.stringify({ source: 'github', dedupe: mergeKey }),
+        ],
+      );
+      const commitLabel = `${pullRequest.commits} commit${pullRequest.commits === 1 ? '' : 's'}`;
+      const fileLabel = `${pullRequest.files} file${pullRequest.files === 1 ? '' : 's'} changed`;
+      await database.query(
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,durable_fact,card_type,card)
+         VALUES($1,$2,$3,$4,'system','merge','github-corner-note',$5::jsonb) ON CONFLICT(id) DO NOTHING`,
+        [
+          hash(`beeline:${target.parent_id}:${mergeKey}`),
+          target.parent_id,
+          target.author_id,
+          `Merged ${pullRequest.title} — ${pullRequest.url} (${commitLabel}, ${fileLabel}).`,
+          JSON.stringify({ source: 'github', dedupe: mergeKey, cornerId: target.corner_id }),
+        ],
+      );
+    });
+    this.onRoomChanged?.(target.corner_id);
+    this.onRoomChanged?.(target.parent_id);
+    try {
+      await this.app.deleteBranch(
+        Number(target.installation_id),
+        Number(target.repository_id),
+        pullRequest.repository,
+        pullRequest.branch,
+      );
+    } catch (error) {
+      // Archival and the helper close signal are authoritative. Branch cleanup is best-effort.
+      console.error(
+        `[server] failed to delete merged corner branch ${pullRequest.repository}:${pullRequest.branch}:`,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+
   private async syncInstallation(
     viewerId: string,
     installationId: number,
@@ -307,9 +538,11 @@ export class GitHubOperations {
       ],
     );
     const repositories = await this.app.listRepositories(installationId);
-    await database.query(`UPDATE github_repositories SET active=false,updated_at=now() WHERE installation_id=$1`, [installationId]);
-    for (const repository of repositories)
-      await this.storeRepository(repository, database);
+    await database.query(
+      `UPDATE github_repositories SET active=false,updated_at=now() WHERE installation_id=$1`,
+      [installationId],
+    );
+    for (const repository of repositories) await this.storeRepository(repository, database);
   }
   private async assertInstallationAccess(
     viewerId: string,

@@ -44,8 +44,24 @@ describe('GitHub App manifest flow', () => {
       origin: 'https://usebeeline.app',
       redirectUrl: 'https://usebeeline.app/auth/github/app-setup?token=x',
     });
-    expect(manifest.default_events).toEqual(['star', 'issues', 'pull_request']);
-    expect(REQUIRED_GITHUB_APP_EVENTS).toEqual(['star', 'issues', 'pull_request']);
+    expect(manifest.default_events).toEqual([
+      'star',
+      'issues',
+      'pull_request',
+      'push',
+      'check_run',
+      'check_suite',
+      'status',
+    ]);
+    expect(REQUIRED_GITHUB_APP_EVENTS).toEqual([
+      'star',
+      'issues',
+      'pull_request',
+      'push',
+      'check_run',
+      'check_suite',
+      'status',
+    ]);
   });
 
   it('preconfigures exactly the required permission levels', () => {
@@ -150,7 +166,7 @@ describe('GitHub App manifest flow', () => {
 describe('GitHub App configuration drift', () => {
   const LIVE_OK = {
     slug: 'beeline',
-    events: ['star', 'issues', 'pull_request'],
+    events: ['star', 'issues', 'pull_request', 'push', 'check_run', 'check_suite', 'status'],
     permissions: {
       contents: 'write',
       pull_requests: 'write',
@@ -175,12 +191,20 @@ describe('GitHub App configuration drift', () => {
     const drift = gitHubAppDrift({ ...LIVE_OK, events: [] });
     expect(drift).toMatchObject({
       ok: false,
-      missingEvents: ['star', 'issues', 'pull_request'],
+      missingEvents: [
+        'star',
+        'issues',
+        'pull_request',
+        'push',
+        'check_run',
+        'check_suite',
+        'status',
+      ],
       permissionProblems: [],
     });
     const line = formatGitHubAppDriftLine(drift, LIVE_OK.slug);
     expect(line).toContain("GitHub App configuration drift for 'beeline'");
-    expect(line).toContain('star, issues, pull_request');
+    expect(line).toContain('star, issues, pull_request, push, check_run, check_suite, status');
     expect(line).toContain('https://github.com/settings/apps/beeline/permissions');
   });
 

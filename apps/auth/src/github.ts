@@ -263,6 +263,35 @@ export class GitHubAppClient {
     return { token, expiresAt };
   }
 
+  /** Delete one installation-scoped branch after its corner has been archived. */
+  async deleteBranch(
+    installationId: number,
+    repositoryId: number,
+    fullName: string,
+    branch: string,
+  ): Promise<void> {
+    const token = await this.installationToken(installationId, {
+      repositoryIds: [repositoryId],
+      permissions: { contents: 'write' },
+    });
+    const repositoryPath = fullName
+      .split('/')
+      .map((part) => encodeURIComponent(part))
+      .join('/');
+    const branchPath = branch
+      .split('/')
+      .map((part) => encodeURIComponent(part))
+      .join('/');
+    const response = await fetch(
+      `${this.#config.apiBaseUrl}/repos/${repositoryPath}/git/refs/heads/${branchPath}`,
+      { method: 'DELETE', headers: githubHeaders(token.token) },
+    );
+    // A 404 means GitHub's delete-on-merge setting already removed the ref.
+    if (!response.ok && response.status !== 404) {
+      throw new Error(`GitHub branch deletion failed: HTTP ${response.status}`);
+    }
+  }
+
   #installationAccountFrom(body: Record<string, unknown>): GitHubInstallationAccount {
     const account = body.account;
     const accountRecord =

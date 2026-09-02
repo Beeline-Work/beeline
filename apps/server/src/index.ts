@@ -76,6 +76,7 @@ async function main() {
         githubClients.app,
         process.env.GITHUB_CLIENT_SECRET!,
         mountedAuth.sealedGitHubUserToken,
+        (roomId) => live.publish({ type: 'invalidate', roomId, reason: 'github' }),
       )
     : undefined;
   const pushSender =

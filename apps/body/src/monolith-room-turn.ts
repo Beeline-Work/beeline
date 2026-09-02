@@ -1,12 +1,20 @@
 import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
-import { AcpClient, isMutatingPermissionRequest, type McpServerWire } from './acp.js';
+import {
+  AcpClient,
+  type AcpPermissionDecision,
+  type AcpPermissionRequest,
+  type McpServerWire,
+} from './acp.js';
 import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
 import { isSenderPermitted, LEGACY_ACCESS_POLICY } from './access-policy.js';
 import { beelineCapabilityContextForHarness } from './beeline-skill.js';
 import { beelineAgentMcpServer, readOnlyMcpServer } from './room-session.js';
-import { isBeelineAgentMcpPermissionRequest } from './read-only-policy.js';
+import {
+  isBeelineAgentMcpPermissionRequest,
+  isReadOnlyMcpPermissionRequest,
+} from './read-only-policy.js';
 import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
@@ -26,6 +34,22 @@ type WorkspaceRoster = DaemonOperationMap['getWorkspaceRoster']['output'];
 type RoomMessage = DaemonOperationMap['getRoomInbox']['output']['items'][number];
 type HumanMessage = Pick<RoomMessage, 'id' | 'authorId' | 'body' | 'createdAt' | 'attachments'>;
 type RoomAuthority = DaemonOperationMap['getRoomAuthority']['output'];
+
+/**
+ * Rooms are fail-closed: only the MCP servers mounted by the host may cross
+ * ACP's permission callback. `beeline-readonly-mcp` validates every path
+ * against the daemon-pinned checkout; `beeline-agent` owns the one governed
+ * Room action. Everything else, including native reads and shell commands,
+ * remains unavailable to the Room harness.
+ */
+export function isRoomMcpPermissionRequest(request: AcpPermissionRequest): boolean {
+  return isReadOnlyMcpPermissionRequest(request) || isBeelineAgentMcpPermissionRequest(request);
+}
+
+/** The Room ACP client applies this host-owned MCP allowlist fail-closed. */
+export function roomMcpPermissionDecision(request: AcpPermissionRequest): AcpPermissionDecision {
+  return isRoomMcpPermissionRequest(request) ? 'allow' : 'reject';
+}
 
 /** Agents are server-validated Room members; human turns additionally honor host access policy. */
 export function roomPrincipalMayAddressAgent(
@@ -221,14 +245,7 @@ export class MonolithRoomTurnLoop {
       agentCwd: this.options.cwd,
       agentLabel: command,
       autoApprovePermissions: false,
-      permissionHandler: (request) =>
-        Promise.resolve(
-          isBeelineAgentMcpPermissionRequest(request)
-            ? 'allow'
-            : isMutatingPermissionRequest(request)
-              ? 'reject'
-              : 'allow',
-        ),
+      permissionAllowlist: isRoomMcpPermissionRequest,
     };
     this.client = (this.options.createAcpClient ?? ((value) => new AcpClient(value)))(
       clientOptions,

@@ -51,6 +51,11 @@ export class DaemonApiClient {
     private readonly fetchImpl: DaemonFetch = fetch,
   ) {}
 
+  /** Connection material for the daemon-owned MCP proxy and corner credentials. */
+  connection(): { baseUrl: string; daemonToken: string; agentId: string } {
+    return { baseUrl: this.baseUrl, daemonToken: this.daemonToken, agentId: this.agentId };
+  }
+
   async execute<Name extends keyof DaemonOperationMap>(
     name: Name,
     input: Input<Name>,

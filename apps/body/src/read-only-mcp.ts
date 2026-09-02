@@ -16,6 +16,7 @@
  * edit-corner worktree after the signed human ALLOW flow.
  */
 import { execFileSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import {
   closeSync,
   constants,
@@ -67,7 +68,7 @@ const DEFAULT_IGNORED_DIRECTORIES = new Set([
   'target',
 ]);
 
-const TOOLS: ToolDefinition[] = [
+const READ_ONLY_TOOLS: ToolDefinition[] = [
   {
     name: 'list_files',
     description:
@@ -206,11 +207,41 @@ const TOOLS: ToolDefinition[] = [
   },
 ];
 
+const AGENT_TOOLS: ToolDefinition[] = [
+  {
+    name: 'open_corner',
+    description:
+      'Open one write-enabled repository corner for a concrete task. The host creates the branch, isolated worktree, scoped GitHub credentials, and corner session.',
+    inputSchema: {
+      type: 'object',
+      required: ['task'],
+      properties: {
+        task: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 2000,
+          description: 'The complete objective the corner agent should carry out.',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'pr_checks_status',
+    description:
+      'Read the server-posted GitHub checks fact and current human hold state for this corner. Never infer passing checks from local git or gh output.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+];
+
+const agentSurface = process.env.BEELINE_MCP_SURFACE === 'agent';
+const TOOLS = agentSurface ? AGENT_TOOLS : READ_ONLY_TOOLS;
+
 // Nothing else ties TOOLS' names to READ_ONLY_TOOL_NAMES (the auto-allow
 // permission check's canonical list) — assert they match so the two can't
 // silently drift apart the way they did before this check existed.
 {
-  const declaredNames = new Set(TOOLS.map((tool) => tool.name));
+  const declaredNames = new Set(READ_ONLY_TOOLS.map((tool) => tool.name));
   const policyNames = new Set<string>(READ_ONLY_TOOL_NAMES);
   const mismatched =
     declaredNames.size !== policyNames.size ||
@@ -676,6 +707,144 @@ function callTool(name: string, args: JsonObject): string {
   }
 }
 
+function requiredEnv(name: string): string {
+  const value = process.env[name]?.trim();
+  if (!value) throw new Error(`agent tool is missing host context: ${name}`);
+  return value;
+}
+
+async function daemonExecute(name: string, input: JsonObject): Promise<JsonObject> {
+  const baseUrl = requiredEnv('BEELINE_DAEMON_BASE_URL');
+  const response = await fetch(new URL(`/v1/daemon/operations/${name}`, `${baseUrl}/`), {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${requiredEnv('BEELINE_DAEMON_TOKEN')}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    let code = 'request_failed';
+    try {
+      const body = (await response.json()) as { error?: unknown };
+      if (typeof body.error === 'string') code = body.error;
+    } catch {
+      // Never reflect a server body into the model-facing tool error.
+    }
+    throw new Error(`daemon operation ${name} failed (${response.status}: ${code})`);
+  }
+  return (await response.json()) as JsonObject;
+}
+
+function taskName(task: string): string {
+  return task
+    .split(/\r?\n/, 1)[0]!
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80) || 'Repository task';
+}
+
+async function openCorner(args: JsonObject): Promise<string> {
+  if (process.env.BEELINE_DAEMON_CORNER_ID) {
+    throw new Error('open_corner is available only in a top-level Room');
+  }
+  const task = stringArg(args, 'task')?.trim();
+  if (!task) throw new Error('task must be a non-empty string');
+  if (task.length > 2000) throw new Error('task exceeds 2000 characters');
+  const roomId = requiredEnv('BEELINE_DAEMON_ROOM_ID');
+  const repository = await daemonExecute('getRoomRepositoryState', { roomId });
+  if (
+    repository.resolution !== 'repository' ||
+    typeof repository.key !== 'string' ||
+    !repository.key
+  ) {
+    throw new Error('open_corner requires a verified repository-bound Room');
+  }
+  const requestId = randomBytes(32).toString('hex');
+  const created = await daemonExecute('createCorner', {
+    roomId,
+    requestId,
+    name: taskName(task),
+    task,
+    repository: repository.key,
+    ...(typeof repository.targetBranch === 'string'
+      ? { targetBranch: repository.targetBranch }
+      : {}),
+  });
+  if (typeof created.cornerId !== 'string' || !created.cornerId) {
+    throw new Error('createCorner returned no corner id');
+  }
+  await daemonExecute('postRoomMessage', {
+    roomId: created.cornerId,
+    requestId,
+    text: task,
+    presentation: 'message',
+  });
+  return JSON.stringify({
+    cornerId: created.cornerId,
+    objective: task,
+    status: 'starting',
+  });
+}
+
+async function prChecksStatus(): Promise<string> {
+  const cornerId = requiredEnv('BEELINE_DAEMON_CORNER_ID');
+  const workspaceId = requiredEnv('BEELINE_DAEMON_WORKSPACE_ID');
+  const agentId = requiredEnv('BEELINE_DAEMON_AGENT_ID');
+  const [conversation, roster, authority] = await Promise.all([
+    daemonExecute('getRoomConversation', { roomId: cornerId, limit: 200 }),
+    daemonExecute('getWorkspaceRoster', { agentId, workspaceId }),
+    daemonExecute('getRoomAuthority', { roomId: cornerId, principalId: agentId }),
+  ]);
+  const humans = new Set(
+    Array.isArray(roster.members)
+      ? roster.members.flatMap((member) => {
+          if (!member || typeof member !== 'object' || Array.isArray(member)) return [];
+          const record = member as Record<string, unknown>;
+          return record.kind === 'human' && typeof record.identityId === 'string'
+            ? [record.identityId]
+            : [];
+        })
+      : [],
+  );
+  let checks: 'passed' | 'failed' | 'pending' = 'pending';
+  let held = false;
+  let pullRequest: string | undefined;
+  const items = Array.isArray(conversation.items) ? conversation.items : [];
+  for (const item of items) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const message = item as Record<string, unknown>;
+    const body = typeof message.body === 'string' ? message.body : '';
+    if (/\b(?:all\s+)?checks?\s+(?:have\s+)?passed\b/i.test(body)) checks = 'passed';
+    if (/\bchecks?\s+(?:have\s+)?failed\b/i.test(body)) checks = 'failed';
+    const url = body.match(/https:\/\/github\.com\/[^\s/]+\/[^\s/]+\/pull\/\d+/)?.[0];
+    if (url) pullRequest = url;
+    if (typeof message.authorId === 'string' && humans.has(message.authorId)) {
+      if (/\bhold\b|\bdo not merge\b|\bdon't merge\b/i.test(body)) held = true;
+      if (/\bresume\b|\bproceed\b|\bgo ahead\b|\bmerge now\b/i.test(body)) held = false;
+    }
+  }
+  return JSON.stringify({
+    checks,
+    held,
+    archived: authority.archived === true,
+    ...(pullRequest ? { pullRequest } : {}),
+    rule:
+      'Merge only when checks is passed and held is false. A local or gh checks result is not authorization.',
+  });
+}
+
+async function callAgentTool(name: string, args: JsonObject): Promise<string> {
+  switch (name) {
+    case 'open_corner':
+      return openCorner(args);
+    case 'pr_checks_status':
+      return prChecksStatus();
+    default:
+      throw new Error(`tool is not available on the agent surface: ${name}`);
+  }
+}
+
 function send(message: JsonObject): void {
   process.stdout.write(`${JSON.stringify(message)}\n`);
 }
@@ -688,8 +857,7 @@ function failure(id: JsonRpcRequest['id'], code: number, message: string): void 
   send({ jsonrpc: '2.0', id: id ?? null, error: { code, message } });
 }
 
-const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
-lines.on('line', (line) => {
+async function handleLine(line: string): Promise<void> {
   let request: JsonRpcRequest;
   try {
     request = JSON.parse(line) as JsonRpcRequest;
@@ -720,7 +888,9 @@ lines.on('line', (line) => {
     if (request.method === 'tools/call') {
       const params = asObject(request.params);
       if (typeof params.name !== 'string') throw new Error('tool name must be a string');
-      const output = callTool(params.name, asObject(params.arguments));
+      const output = agentSurface
+        ? await callAgentTool(params.name, asObject(params.arguments))
+        : callTool(params.name, asObject(params.arguments));
       success(request.id, { content: [{ type: 'text', text: output }] });
       return;
     }
@@ -728,4 +898,7 @@ lines.on('line', (line) => {
   } catch (error) {
     failure(request.id, -32602, error instanceof Error ? error.message : String(error));
   }
-});
+}
+
+const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
+lines.on('line', (line) => void handleLine(line));

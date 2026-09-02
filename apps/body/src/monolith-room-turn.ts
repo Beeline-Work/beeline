@@ -5,7 +5,8 @@ import { AcpClient, isMutatingPermissionRequest, type McpServerWire } from './ac
 import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
 import { isSenderPermitted, LEGACY_ACCESS_POLICY } from './access-policy.js';
 import { beelineCapabilityContextForHarness } from './beeline-skill.js';
-import { readOnlyMcpServer } from './room-session.js';
+import { beelineAgentMcpServer, readOnlyMcpServer } from './room-session.js';
+import { isBeelineAgentMcpPermissionRequest } from './read-only-policy.js';
 import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
@@ -169,13 +170,25 @@ export class MonolithRoomTurnLoop {
       agentLabel: command,
       autoApprovePermissions: false,
       permissionHandler: (request) =>
-        Promise.resolve(isMutatingPermissionRequest(request) ? 'reject' : 'allow'),
+        Promise.resolve(
+          isBeelineAgentMcpPermissionRequest(request)
+            ? 'allow'
+            : isMutatingPermissionRequest(request)
+              ? 'reject'
+              : 'allow',
+        ),
     };
     this.client = (this.options.createAcpClient ?? ((value) => new AcpClient(value)))(
       clientOptions,
     );
     await this.client.start();
-    const servers: McpServerWire[] = [readOnlyMcpServer(this.options.config, this.options.cwd)];
+    const servers: McpServerWire[] = [
+      readOnlyMcpServer(this.options.config, this.options.cwd),
+      beelineAgentMcpServer(this.options.config, this.options.api, {
+        roomId: this.options.roomId,
+        workspaceId: this.options.workspaceId,
+      }),
+    ];
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
     const persona = configuration.soul ?? self?.soul;
     const identityInstructions = `Your Beeline Room identity is ${self?.name ?? this.agent.name}.`;
@@ -202,6 +215,7 @@ export class MonolithRoomTurnLoop {
         personaInstructions,
         capabilityContext.sessionPrompt,
         'You are answering inside a read-only Room. Use only the mounted read-only tools.',
+        'When repository work is needed, call beeline-agent open_corner with the complete objective. That host-governed call is the only way to start write work.',
         'Never claim an action or reply happened unless the prompt or a tool result proves it.',
       ]
         .filter(Boolean)

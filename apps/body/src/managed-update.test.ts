@@ -8,7 +8,9 @@ import { newIdentity } from '@beeline/gate';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   activeReleaseId,
+  readUpdateState,
   readUpdateAttempt,
+  writeUpdateState,
   type BeelineInstallLayout,
 } from './self-update.js';
 import {
@@ -112,7 +114,7 @@ describe('managed update handoff', () => {
     expect(restarts).toEqual(['new']);
   });
 
-  it('restarts after the bounded in-memory drain deadline expires', async () => {
+  it('keeps a routine update inert after the bounded drain window instead of interrupting work', async () => {
     const { layout, runtimeDir } = await layoutFixture();
     let now = 1_000;
     const restarts: string[] = [];
@@ -142,8 +144,8 @@ describe('managed update handoff', () => {
           restarts.push(desiredRelease);
         },
       ),
-    ).toBe('restarting');
-    expect(restarts).toEqual(['new']);
+    ).toBe('waiting-for-idle');
+    expect(restarts).toEqual([]);
   });
 
   it('converges to the exact desired release and accepts only its READY proof', async () => {
@@ -178,7 +180,7 @@ describe('managed update handoff', () => {
 
     expect(await rollbackFailedSuccessor(layout, runtimeDir)).toBe(true);
     expect(await activeReleaseId(layout)).toBe('old');
-    expect((await readUpdateAttempt(layout))).toMatchObject({ releaseId: 'new', status: 'reverted' });
+    expect(await readUpdateAttempt(layout)).toMatchObject({ releaseId: 'new', status: 'reverted' });
     expect(JSON.parse(await readFile(updateRollbackAlertPath(runtimeDir), 'utf8'))).toMatchObject({
       releaseId: 'new',
     });
@@ -207,7 +209,7 @@ describe('managed update handoff', () => {
 
     expect(result).toMatchObject({ kind: 'failed', rolledBack: true });
     expect(await activeReleaseId(layout)).toBe('old');
-    expect((await readUpdateAttempt(layout))).toMatchObject({ releaseId: 'new', status: 'reverted' });
+    expect(await readUpdateAttempt(layout)).toMatchObject({ releaseId: 'new', status: 'reverted' });
   });
 
   it('keeps the journal until every required runtime proves a functional session', async () => {
@@ -245,7 +247,7 @@ describe('managed update handoff', () => {
     expect((await readUpdateAttempt(layout))?.status).toBe('confirmed');
   });
 
-  it('stages automatic updates in the locked disposable worker before handoff', async () => {
+  it('stages automatic updates in the locked worker and activates only after intake quiesces', async () => {
     const { layout, runtimeDir } = await layoutFixture();
     let now = 1_000;
     let workerCalls = 0;
@@ -253,8 +255,7 @@ describe('managed update handoff', () => {
       env: { BEELINE_UPDATE_INITIAL_DELAY_MS: '50' },
       runUpdateWorker: async () => {
         workerCalls += 1;
-        await rm(layout.libDir);
-        await symlink('beeline-releases/new', layout.libDir);
+        await writeUpdateState(layout, { stagedReleaseId: 'new' });
       },
     });
 
@@ -262,8 +263,27 @@ describe('managed update handoff', () => {
     now += 50;
     expect(await update.check()).toBe(false);
     await vi.waitFor(() => expect(workerCalls).toBe(1));
-    await vi.waitFor(async () => expect(await update.check()).toBe(true));
+    await vi.waitFor(async () =>
+      expect(await readUpdateState(layout)).toMatchObject({ stagedReleaseId: 'new' }),
+    );
     expect(workerCalls).toBe(1);
+    expect(await activeReleaseId(layout)).toBe('old');
+    expect(
+      await coordinateManagedUpdateHandoff(
+        update,
+        () => false,
+        async () => undefined,
+      ),
+    ).toBe('waiting-for-idle');
+    expect(await activeReleaseId(layout)).toBe('old');
+    expect(
+      await coordinateManagedUpdateHandoff(
+        update,
+        () => true,
+        async () => undefined,
+      ),
+    ).toBe('restarting');
+    expect(await activeReleaseId(layout)).toBe('new');
     expect((await readUpdateAttempt(layout))?.releaseId).toBe('new');
   });
 

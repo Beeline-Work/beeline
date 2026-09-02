@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -18,9 +18,12 @@ import { DaemonApiClient } from './daemon-api-client.js';
 import { AcpClient } from './acp.js';
 import { Body } from './body.js';
 import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
+import { coordinateManagedUpdateHandoff, ManagedUpdateHandoff } from './managed-update.js';
 import { completeDevicePairing } from './pair-command.js';
 import { readRuntimeRecord, type AgentRuntimeRecord } from './runtime.js';
+import { activeReleaseId, writeUpdateState } from './self-update.js';
 import { SessionScheduler } from './session-scheduler.js';
+import { ThinDaemonCore } from './thin-core.js';
 
 const HUMAN = createHash('sha256').update('github:daemon-client-owner').digest('hex');
 const AGENT_SECRET = new Uint8Array(32).fill(11);
@@ -50,7 +53,7 @@ describe('daemon API client against the local monolith', () => {
       [
         AGENT,
         HUMAN,
-        JSON.stringify({ name: 'Bee', instructions: 'Help carefully.' }),
+        JSON.stringify({ name: 'Terra', instructions: 'Vishnu, destroyer of worlds.' }),
         JSON.stringify([{ id: 'gpt-5', category: 'model', options: [] }]),
       ],
     );
@@ -228,7 +231,8 @@ describe('daemon API client against the local monolith', () => {
     const polled = vi.fn();
     const sourceSha = 'd03cff8f'.padEnd(40, '0');
     const config = {
-      agentBinary: '/nonexistent',
+      agentBinary: '/nonexistent/codex-acp',
+      agentCommand: '/nonexistent/codex-acp',
       mcpBinary: '/nonexistent',
       readonlyMcpCommand: '/nonexistent-readonly-mcp',
       agentEnv: {},
@@ -239,6 +243,7 @@ describe('daemon API client against the local monolith', () => {
       relayWsUrl: origin.replace(/^http/, 'ws'),
       autoApprovePermissions: true,
       accessPolicy: 'everyone',
+      agentHomeRoot: join(supervisorRoot, 'agent-home'),
       daemonReleaseVersion: 'v0.0.22',
       daemonSourceSha: sourceSha,
     } as const;
@@ -267,15 +272,22 @@ describe('daemon API client against the local monolith', () => {
     };
     const acp = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
     vi.spyOn(acp, 'start').mockResolvedValue(undefined);
-    vi.spyOn(acp, 'sessionNew').mockResolvedValue({
+    const sessionNew = vi.spyOn(acp, 'sessionNew').mockResolvedValue({
       sessionId: 'repo-less-session',
       raw: {},
     });
-    vi.spyOn(acp, 'sessionPrompt').mockResolvedValue({
-      stopReason: 'end_turn',
-      updates: [],
-      agentText: 'I am Bee, and I am ready to help.',
-      toolCalls: [],
+    let finishHarnessTurn!: () => void;
+    const harnessTurn = new Promise<void>((resolveTurn) => {
+      finishHarnessTurn = resolveTurn;
+    });
+    const sessionPrompt = vi.spyOn(acp, 'sessionPrompt').mockImplementation(async () => {
+      await harnessTurn;
+      return {
+        stopReason: 'end_turn',
+        updates: [],
+        agentText: 'I am Terra, Vishnu, destroyer of worlds; I see the image you entrusted to me.',
+        toolCalls: [],
+      };
     });
     const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
     const abort = new AbortController();
@@ -320,9 +332,39 @@ describe('daemon API client against the local monolith', () => {
           messageId: 'e'.repeat(64),
           text: '@bee introduce yourself',
           mentions: [AGENT],
+          attachments: [
+            {
+              url: `${origin}/v1/media/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa`,
+              name: 'world.png',
+              mimeType: 'image/png',
+              size: 9,
+            },
+          ],
         },
         HUMAN,
       );
+      await vi.waitFor(() => expect(sessionPrompt).toHaveBeenCalled(), { timeout: 3_000 });
+      const systemPrompt = sessionNew.mock.calls[0]![0].systemPrompt ?? '';
+      expect(systemPrompt).toContain(
+        'Your human-authored identity and soul in this Workspace is Terra.',
+      );
+      expect(systemPrompt).toContain('Soul instructions: Vishnu, destroyer of worlds.');
+      expect(systemPrompt).toContain('using-beeline skill (SKILL.md)');
+      const wirePrompt = sessionPrompt.mock.calls[0]![1];
+      expect(wirePrompt).toContain('This is who you are in this Workspace.');
+      expect(wirePrompt).toContain('using-beeline skill (SKILL.md)');
+      expect(wirePrompt).toContain('image: world.png (image/png, 9 bytes)');
+      expect(wirePrompt).toContain('/v1/media/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+      expect(turnLoop.isBusy()).toBe(true);
+      await turnLoop.prepareForForcedUpdateRestart();
+      expect(turnLoop.isBusy()).toBe(true);
+      await expect(
+        readFile(
+          join(supervisorRoot, 'agent-home', 'codex', 'skills', 'using-beeline', 'SKILL.md'),
+          'utf8',
+        ),
+      ).resolves.toContain('name: using-beeline');
+      finishHarnessTurn();
       await vi.waitFor(
         async () => {
           const room = await phone.readRoom(ROOM, HUMAN);
@@ -330,13 +372,25 @@ describe('daemon API client against the local monolith', () => {
             expect.objectContaining({
               author: expect.objectContaining({ pubkey: AGENT }),
               requestId: sent.messageId,
-              text: 'I am Bee, and I am ready to help.',
+              text: 'I am Terra, Vishnu, destroyer of worlds; I see the image you entrusted to me.',
             }),
           );
         },
         { timeout: 3_000 },
       );
+      await vi.waitFor(async () => {
+        expect(turnLoop.isBusy()).toBe(false);
+        expect(
+          (
+            await database.query<{ status: string }>(
+              `SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
+              [ROOM, sent.messageId, AGENT],
+            )
+          ).rows[0]?.status,
+        ).toBe('complete');
+      });
     } finally {
+      finishHarnessTurn();
       abort.abort();
       await loop;
       await scheduler.dispose();
@@ -347,6 +401,190 @@ describe('daemon API client against the local monolith', () => {
       visibleOffline?.members.find((member) => member.identity.pubkey === AGENT),
     ).toMatchObject({ presence: { status: 'offline', roomId: ROOM } });
   }, 15_000);
+
+  it.skipIf(process.env.BEELINE_REAL_THIN_PROOF !== '1')(
+    'proves soul, image, skill, and clean update drain through a real thin daemon and harness',
+    async () => {
+      const agentCommand = process.env.BEELINE_REAL_AGENT_COMMAND;
+      const readonlyMcpCommand = process.env.BEELINE_REAL_READONLY_MCP_COMMAND;
+      if (!agentCommand || !readonlyMcpCommand) {
+        throw new Error('real thin proof requires absolute agent and read-only MCP command paths');
+      }
+      await database.query(
+        `UPDATE agents SET selected_model=NULL,selected_effort=NULL WHERE agent_id=$1`,
+        [AGENT],
+      );
+      const exchange = await auth.createDaemonExchange(AGENT);
+      const exchanged = await fetch(`${origin}/v1/auth/daemon/exchange`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ exchangeToken: exchange.exchangeToken }),
+      });
+      const token = (await exchanged.json()) as { daemonToken: string };
+      const client = new DaemonApiClient(origin, token.daemonToken, AGENT);
+      const configPath = join(supervisorRoot, 'runtime.json');
+      const runtime: AgentRuntimeRecord = {
+        version: 2,
+        communityId: WORKSPACE,
+        pairedBy: HUMAN,
+        agent: {
+          name: 'Bee',
+          publicKey: AGENT,
+          secretKeyHex: Buffer.from(AGENT_SECRET).toString('hex'),
+        },
+        body: {
+          name: 'Body',
+          publicKey: getPublicKey(new Uint8Array(32).fill(22)),
+          secretKeyHex: Buffer.from(new Uint8Array(32).fill(22)).toString('hex'),
+        },
+        rooms: [],
+        supervisorRoot,
+        relayBaseUrl: origin,
+        agentKind: 'codex',
+        agentCommand,
+        agentArgs: [],
+        agentBinary: agentCommand,
+        mcpBinary: readonlyMcpCommand,
+        createdAt: new Date().toISOString(),
+        accessPolicy: 'everyone',
+        transport: { kind: 'monolith', baseUrl: origin, daemonToken: token.daemonToken },
+      };
+      await writeFile(configPath, `${JSON.stringify(runtime)}\n`, { mode: 0o600 });
+      const config = {
+        agentKind: 'codex',
+        agentCommand,
+        agentArgs: [],
+        agentBinary: agentCommand,
+        mcpBinary: readonlyMcpCommand,
+        readonlyMcpCommand,
+        agentEnv: {
+          ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
+          ...(process.env.LANG ? { LANG: process.env.LANG } : {}),
+        },
+        workspaceRoot: join(supervisorRoot, 'workspace'),
+        relayBaseUrl: origin,
+        relayHost: '127.0.0.1',
+        relayScheme: 'http',
+        relayWsUrl: origin.replace(/^http/, 'ws'),
+        autoApprovePermissions: false,
+        accessPolicy: 'everyone',
+      } as const;
+      const core = new ThinDaemonCore(runtime, configPath, config as never, {
+        daemonApi: client,
+      });
+      const abort = new AbortController();
+      const daemon = core.run({ pollMs: 50, signal: abort.signal });
+      try {
+        await vi.waitFor(() => expect(core.activeRoomIds()).toContain(ROOM), { timeout: 5_000 });
+        const uploaded = await phone.uploadMedia(
+          HUMAN,
+          new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0]),
+          'image/png',
+          'world.png',
+          1_024,
+        );
+        const sent = await phone.execute(
+          'sendRoomMessage',
+          {
+            roomId: ROOM,
+            messageId: 'b'.repeat(64),
+            text: '@bee Examine your using-beeline skill, then state who you are according to your Workspace soul and acknowledge the attached image by filename. Do not use tools.',
+            mentions: [AGENT],
+            attachments: [uploaded],
+          },
+          HUMAN,
+        );
+        await vi.waitFor(
+          async () => {
+            expect(
+              (
+                await database.query<{ status: string }>(
+                  `SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
+                  [ROOM, sent.messageId, AGENT],
+                )
+              ).rows[0]?.status,
+            ).toBe('working');
+          },
+          { timeout: 10_000 },
+        );
+
+        const updateRoot = join(supervisorRoot, 'update-proof');
+        const layout = {
+          binDir: join(updateRoot, 'bin'),
+          libDir: join(updateRoot, 'lib', 'beeline'),
+          releasesRoot: join(updateRoot, 'lib', 'beeline-releases'),
+        };
+        for (const release of ['old', 'new']) {
+          const bundle = join(layout.releasesRoot, release, 'lib', 'beeline');
+          await mkdir(bundle, { recursive: true });
+          await writeFile(join(bundle, 'beeline-cli.mjs'), '#!/usr/bin/env node\n');
+          await writeFile(join(bundle, 'bundle.json'), JSON.stringify({ version: release }));
+        }
+        await mkdir(join(updateRoot, 'lib'), { recursive: true });
+        await symlink('beeline-releases/old', layout.libDir);
+        const update = await ManagedUpdateHandoff.create(layout, supervisorRoot);
+        await writeUpdateState(layout, { stagedReleaseId: 'new' });
+        let restarted = false;
+        expect(
+          await coordinateManagedUpdateHandoff(
+            update,
+            () => core.quiesceForUpdateIfIdle(),
+            async () => {
+              restarted = true;
+            },
+          ),
+        ).toBe('waiting-for-idle');
+        expect(restarted).toBe(false);
+        expect(await activeReleaseId(layout)).toBe('old');
+
+        let reply = '';
+        await vi.waitFor(
+          async () => {
+            const room = await phone.readRoom(ROOM, HUMAN);
+            reply =
+              room?.messages.find((message) => message.requestId === sent.messageId)?.text ?? '';
+            expect(reply).toMatch(/Terra|Vishnu|destroyer/i);
+            expect(reply).toMatch(/world\.png|image/i);
+          },
+          { timeout: 180_000, interval: 500 },
+        );
+        expect(
+          (
+            await database.query<{ status: string }>(
+              `SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
+              [ROOM, sent.messageId, AGENT],
+            )
+          ).rows[0]?.status,
+        ).toBe('complete');
+        expect(
+          await coordinateManagedUpdateHandoff(
+            update,
+            () => core.quiesceForUpdateIfIdle(),
+            async () => {
+              restarted = true;
+            },
+          ),
+        ).toBe('restarting');
+        expect(restarted).toBe(true);
+        expect(await activeReleaseId(layout)).toBe('new');
+        expect(
+          (
+            await database.query<{ count: string }>(
+              `SELECT count(*)::text count FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND status='failed'`,
+              [ROOM, sent.messageId],
+            )
+          ).rows[0]?.count,
+        ).toBe('0');
+        console.log(
+          `[real-thin-proof] request=${sent.messageId} reply=${JSON.stringify(reply)} update=old->new receipt=complete`,
+        );
+      } finally {
+        abort.abort();
+        await daemon;
+      }
+    },
+    240_000,
+  );
 
   it('exchanges a token and round-trips inbox, receipts, authority, settings, presence, and corners', async () => {
     const exchange = await auth.createDaemonExchange(AGENT);
@@ -367,7 +605,9 @@ describe('daemon API client against the local monolith', () => {
     await expect(
       client.execute('getAgentConfiguration', { agentId: AGENT, roomId: ROOM }),
     ).resolves.toEqual(
-      expect.objectContaining({ soul: { name: 'Bee', instructions: 'Help carefully.' } }),
+      expect.objectContaining({
+        soul: { name: 'Terra', instructions: 'Vishnu, destroyer of worlds.' },
+      }),
     );
     await expect(
       client.execute('getWorkspaceRoster', { agentId: AGENT, workspaceId: WORKSPACE }),
@@ -379,7 +619,7 @@ describe('daemon API client against the local monolith', () => {
             identityId: AGENT,
             kind: 'agent',
             name: 'Bee',
-            soul: expect.objectContaining({ instructions: 'Help carefully.' }),
+            soul: expect.objectContaining({ instructions: 'Vishnu, destroyer of worlds.' }),
           }),
         ]),
       }),
@@ -401,7 +641,9 @@ describe('daemon API client against the local monolith', () => {
       text: 'after activation',
     });
     await expect(
-      client.execute('getRoomInbox', { roomId: ROOM, after: activation.cursor }),
+      // Inbox intake deliberately suppresses the daemon's own messages. The
+      // conversation operation is the round-trip surface for its writes.
+      client.execute('getRoomConversation', { roomId: ROOM, after: activation.cursor }),
     ).resolves.toEqual(
       expect.objectContaining({
         items: [

@@ -7,9 +7,11 @@ import {
   readUpdateState,
   rollbackToPreviousRelease,
   SelfUpdateManager,
+  activateRelease,
   readUpdateAttempt,
   replaceUpdateAttempt,
   writeUpdateAttempt,
+  writeUpdateState,
   type BeelineInstallLayout,
   type UpdateAttemptRecord,
 } from './self-update.js';
@@ -84,6 +86,8 @@ export class ManagedUpdateHandoff {
   #worker: Promise<void> | undefined;
   #requested = false;
   #restartRequest: ManagedUpdateRestartRequest | undefined;
+  #stagedReleaseId: string | undefined;
+  #drainDeadlineLogged = false;
 
   private constructor(options: {
     layout: BeelineInstallLayout;
@@ -128,9 +132,9 @@ export class ManagedUpdateHandoff {
   }
 
   /**
-   * Return true once desired-release drift is represented by the single
-   * install-scoped update attempt. Restart intent itself is process-local:
-   * systemd restarts from the stable anchor after any crash.
+   * Return true once either a verified release is staged behind the serving
+   * daemon's idle gate or desired-release drift is represented by the single
+   * install-scoped update attempt. Restart intent itself is process-local.
    *
    * The core calls this only after a completed progress tick. Manifest I/O,
    * archive verification, extraction, and smoke tests run in a disposable
@@ -139,6 +143,7 @@ export class ManagedUpdateHandoff {
    */
   async check(): Promise<boolean> {
     if (this.#requested || !this.#loadedRelease) return this.#requested;
+    if (this.#stagedReleaseId) return false;
     let desiredRelease = await activeReleaseId(this.#layout).catch(() => undefined);
     if (desiredRelease && desiredRelease !== this.#loadedRelease) {
       try {
@@ -149,6 +154,24 @@ export class ManagedUpdateHandoff {
         );
         return false;
       }
+    }
+
+    const state = await readUpdateState(this.#layout);
+    if (state.stagedReleaseId && state.stagedReleaseId !== this.#loadedRelease) {
+      const requestedAt = this.#now();
+      this.#stagedReleaseId = state.stagedReleaseId;
+      this.#restartRequest = {
+        loadedRelease: this.#loadedRelease,
+        desiredRelease: state.stagedReleaseId,
+        drainDeadlineAt: requestedAt + this.#drainDeadlineMs,
+      };
+      console.log(
+        `[thin-core] staged update ${state.stagedReleaseId} is waiting for active turns to drain`,
+      );
+      // `check()` retains its historical meaning: true means the stable anchor
+      // already drifted and has an update-attempt journal. The staged state is
+      // consumed only by restartRequest(), which owns the idle/quiesce gate.
+      return false;
     }
 
     const now = this.#now();
@@ -247,11 +270,11 @@ export class ManagedUpdateHandoff {
 
   /**
    * Resolve one handoff tick against the daemon's authoritative turn registry.
-   * The staged release may already be active, but restart stays deferred while
-   * accepted work is running. `quiesceIfIdle` closes intake in the same
-   * synchronous transition that proves idle, so a new turn cannot race the
-   * handoff. The persisted wall-clock deadline is the only override, so a
-   * wedged turn cannot block convergence forever.
+   * A staged release stays inert while accepted work is running.
+   * `quiesceIfIdle` closes intake in the same synchronous transition that
+   * proves idle, so a new turn cannot race activation. Expiring the bounded
+   * drain window records delayed convergence; it never turns a routine update
+   * into an ACP cancellation or a failed Room receipt.
    */
   async restartRequest(quiesceIfIdle: () => boolean): Promise<
     | { kind: 'none' }
@@ -261,12 +284,41 @@ export class ManagedUpdateHandoff {
         request: ManagedUpdateRestartRequest;
       }
   > {
-    if (!(await this.check())) return { kind: 'none' };
+    const activeDrift = await this.check();
+    if (!activeDrift && !this.#stagedReleaseId) return { kind: 'none' };
     const request = this.#restartRequest;
     if (!request) throw new Error('update drift was detected without an in-memory restart request');
-    if (quiesceIfIdle()) return { kind: 'restart', request };
-    if (this.#now() < request.drainDeadlineAt) return { kind: 'waiting', request };
-    return { kind: 'restart', request };
+    if (!quiesceIfIdle()) {
+      if (this.#now() >= request.drainDeadlineAt && !this.#drainDeadlineLogged) {
+        console.log(
+          `[thin-core] update drain window elapsed with active work; keeping the staged release ` +
+            `${request.desiredRelease} inert instead of interrupting the Room turn`,
+        );
+        this.#drainDeadlineLogged = true;
+      }
+      return { kind: 'waiting', request };
+    }
+    if (this.#stagedReleaseId) {
+      const stagedReleaseId = this.#stagedReleaseId;
+      await withInstallLock(this.#layout, async () => {
+        const active = await activeReleaseId(this.#layout);
+        if (active === this.#loadedRelease) {
+          await activateRelease(this.#layout, stagedReleaseId);
+        } else if (active !== stagedReleaseId) {
+          throw new Error(
+            `staged release ${stagedReleaseId} lost activation race to ${active ?? 'unknown'}`,
+          );
+        }
+        const state = await readUpdateState(this.#layout);
+        const { stagedReleaseId: _stagedReleaseId, ...withoutStagedRelease } = state;
+        await writeUpdateState(this.#layout, withoutStagedRelease);
+      });
+      this.#stagedReleaseId = undefined;
+      this.#requested = false;
+      this.#restartRequest = undefined;
+      await this.#journalDrift(stagedReleaseId);
+    }
+    return { kind: 'restart', request: this.#restartRequest ?? request };
   }
 }
 
@@ -304,6 +356,7 @@ export async function runManagedUpdateWorker(): Promise<{ activeRelease?: string
     layout,
     env: process.env,
     isIdle: () => true,
+    stageOnly: true,
     requiredProbeIds: await runningRuntimeProbeIds(process.env),
     logger: (line) => console.error(line),
   });
@@ -406,7 +459,8 @@ export async function proveLoadedReleaseReady(
   const accepted = await withInstallLock(layout, async () => {
     if ((await activeReleaseId(layout).catch(() => undefined)) !== loadedRelease) return false;
     const current = await readUpdateAttempt(layout);
-    if (!current || current.releaseId !== loadedRelease || current.status !== 'pending') return false;
+    if (!current || current.releaseId !== loadedRelease || current.status !== 'pending')
+      return false;
     const confirmed = [...new Set([...(current.confirmedProbeIds ?? []), probeId])].sort();
     const required = current.requiredProbeIds ?? [probeId];
     await replaceUpdateAttempt(layout, {

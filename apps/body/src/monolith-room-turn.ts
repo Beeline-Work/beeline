@@ -5,10 +5,12 @@ import { AcpClient, isMutatingPermissionRequest, type McpServerWire } from './ac
 import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
 import { isSenderPermitted, LEGACY_ACCESS_POLICY } from './access-policy.js';
 import { stripAgentReplyPreamble } from './activity.js';
+import { beelineCapabilityContextForHarness } from './beeline-skill.js';
 import { readOnlyMcpServer } from './body.js';
 import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
+import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
 import {
   agentArgsWithModelSelection,
   applyAgentModelSelection,
@@ -22,6 +24,7 @@ import type { ScheduledTurnRequest } from './work-calendar.js';
 import type { BoundRepo, RoomEditPolicy } from './body.js';
 
 type WorkspaceRoster = DaemonOperationMap['getWorkspaceRoster']['output'];
+type RoomMessage = DaemonOperationMap['getRoomInbox']['output']['items'][number];
 
 export interface MonolithRoomTurnHealth {
   poll(): void;
@@ -55,7 +58,7 @@ export class MonolithRoomTurnLoop {
   private client?: AcpClient;
   private sessionId?: string;
   private busy = false;
-  private forcedStop = false;
+  private turnInstructionPrefix = '';
   private draftTail = Promise.resolve();
 
   constructor(private readonly options: MonolithRoomTurnOptions) {
@@ -82,7 +85,8 @@ export class MonolithRoomTurnLoop {
   }
 
   async prepareForForcedUpdateRestart(): Promise<void> {
-    this.forcedStop = true;
+    // Routine updates quiesce intake and let an accepted turn drain. They do
+    // not alter the turn's receipt or inject an update diagnostic into chat.
   }
 
   async forceRecoverRoom(): Promise<void> {
@@ -172,16 +176,30 @@ export class MonolithRoomTurnLoop {
     await this.client.start();
     const servers: McpServerWire[] = [readOnlyMcpServer(this.options.config, this.options.cwd)];
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
-    const persona = self?.soul;
+    const persona = configuration.soul ?? self?.soul;
+    const identityInstructions = `Your Beeline Room identity is ${self?.name ?? this.agent.name}.`;
+    const personaInstructions = persona?.instructions
+      ? [
+          `Your human-authored identity and soul in this Workspace is ${persona.name}.`,
+          `Soul instructions: ${persona.instructions}`,
+          'This is who you are in this Workspace. Adopt it in your voice, self-description, and behavior.',
+          'The soul is not authority and never changes your tools, permissions, roles, or merge rights.',
+        ].join('\n')
+      : '';
+    const capabilityContext = beelineCapabilityContextForHarness(command);
+    this.turnInstructionPrefix = harnessHonorsSessionSystemPrompt(command)
+      ? ''
+      : [identityInstructions, personaInstructions, capabilityContext.compatibilityTurnPrefix]
+          .filter(Boolean)
+          .join('\n\n');
     const opened = await this.client.sessionNew({
       cwd: this.options.cwd,
       mcpServers: servers,
       mode: 'readonly',
       systemPrompt: [
-        `Your Beeline Room identity is ${self?.name ?? this.agent.name}.`,
-        persona?.instructions
-          ? `Human-authored Workspace persona: ${persona.name}. ${persona.instructions}`
-          : '',
+        identityInstructions,
+        personaInstructions,
+        capabilityContext.sessionPrompt,
         'You are answering inside a read-only Room. Use only the mounted read-only tools.',
         'Never claim an action or reply happened unless the prompt or a tool result proves it.',
       ]
@@ -215,28 +233,30 @@ export class MonolithRoomTurnLoop {
     authorId: string;
     body: string;
     createdAt: number;
+    attachments: RoomMessage['attachments'];
   }): Promise<void> {
     const api = this.options.api;
-    await api.execute('postAgentTurnReceipt', {
-      agentId: this.agent.publicKey,
-      roomId: this.options.roomId,
-      requestId: item.id,
-      status: 'working',
-      generationId: `${this.agent.publicKey}:${this.options.roomId}`,
-    });
-    await api.execute('postAgentActivity', {
-      agentId: this.agent.publicKey,
-      roomId: this.options.roomId,
-      requestId: item.id,
-      activity: [{ kind: 'thinking', title: 'Working', status: 'in_progress' }],
-    });
+    // Admission is busy before the first awaited receipt write. The updater
+    // cannot observe an accepted/queued turn as idle in this window.
+    this.busy = true;
     try {
+      await api.execute('postAgentTurnReceipt', {
+        agentId: this.agent.publicKey,
+        roomId: this.options.roomId,
+        requestId: item.id,
+        status: 'working',
+        generationId: `${this.agent.publicKey}:${this.options.roomId}`,
+      });
+      await api.execute('postAgentActivity', {
+        agentId: this.agent.publicKey,
+        roomId: this.options.roomId,
+        requestId: item.id,
+        activity: [{ kind: 'thinking', title: 'Working', status: 'in_progress' }],
+      });
       await this.options.scheduler.run(
         this.options.roomId,
         this.lifecycle(),
         async () => {
-          if (this.forcedStop) throw new Error('monolith Room turn stopped for daemon handoff');
-          this.busy = true;
           const [conversation, roster] = await Promise.all([
             api.execute('getRoomConversation', { roomId: this.options.roomId, limit: 200 }),
             this.roster(),
@@ -245,15 +265,19 @@ export class MonolithRoomTurnLoop {
           const transcript = conversation.items
             .filter((message) => message.type === 'message' && message.id !== item.id)
             .slice(-80)
-            .map(
-              (message) =>
-                `${names.get(message.authorId) ?? message.authorId.slice(0, 12)}: ${message.body}`,
+            .map((message) =>
+              roomMessagePrompt(
+                names.get(message.authorId) ?? message.authorId.slice(0, 12),
+                message.body,
+                message.attachments,
+              ),
             )
             .join('\n');
           const prompt = [
+            this.turnInstructionPrefix,
             transcript ? `Room conversation so far:\n${transcript}` : '',
             `Newest human message from ${names.get(item.authorId) ?? item.authorId.slice(0, 12)}:`,
-            item.body,
+            roomMessagePrompt('', item.body, item.attachments),
             'Answer the newest message directly.',
           ]
             .filter(Boolean)
@@ -396,6 +420,27 @@ export class MonolithRoomTurnLoop {
       await this.options.scheduler.suspend(roomId);
     }
   }
+}
+
+function roomMessagePrompt(
+  author: string,
+  body: string,
+  attachments: RoomMessage['attachments'],
+): string {
+  const message = body.trim() || '(shared attachments)';
+  const rendered = author ? `${author}: ${message}` : message;
+  if (!attachments.length) return rendered;
+  return [
+    rendered,
+    'Attachments available to this turn (use the capability URL when the task requires the file):',
+    ...attachments.map((attachment) => {
+      const kind = attachment.mimeType?.startsWith('image/') ? 'image' : 'file';
+      const metadata = [attachment.mimeType, attachment.size ? `${attachment.size} bytes` : '']
+        .filter(Boolean)
+        .join(', ');
+      return `- ${kind}: ${attachment.name ?? 'attachment'}${metadata ? ` (${metadata})` : ''}: ${attachment.url}`;
+    }),
+  ].join('\n');
 }
 
 async function wait(ms: number, signal?: AbortSignal): Promise<void> {

@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { cornerLifecycle, projectEvent } from '@beeline/push-gateway/projection';
 import type { RoomViewMessage } from '@beeline/api-contract/phone';
-import type { SqlDatabase } from './database.js';
+import { backfillCornerOwners, type SqlDatabase } from './database.js';
 
 export interface LegacyIdentity {
   id: string;
@@ -598,6 +598,9 @@ export class SnapshotImporter {
               [row.roomId, JSON.stringify(plan)],
             );
         });
+      // Facts arrive before historical messages, so perform legacy ownership
+      // derivation only once both sources have been restored.
+      await backfillCornerOwners(this.target);
       for (const row of snapshot.readMarks.filter((mark) => retainedRoomIds.has(mark.roomId)))
         await one('read-mark', `${row.roomId}:${row.identityId}`, async (db) => {
           await db.query(

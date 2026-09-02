@@ -4,7 +4,6 @@ import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
 import { AcpClient, isMutatingPermissionRequest, type McpServerWire } from './acp.js';
 import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
 import { isSenderPermitted, LEGACY_ACCESS_POLICY } from './access-policy.js';
-import { stripAgentReplyPreamble } from './activity.js';
 import { beelineCapabilityContextForHarness } from './beeline-skill.js';
 import { readOnlyMcpServer } from './body.js';
 import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
@@ -19,6 +18,7 @@ import {
 } from './model-config.js';
 import type { AgentRuntimeRecord } from './runtime.js';
 import { runtimeIdentity } from './runtime.js';
+import { sanitizeAgentReply } from './reply-sanitizer.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
 import type { ScheduledTurnRequest } from './work-calendar.js';
 import type { BoundRepo, RoomEditPolicy } from './body.js';
@@ -278,7 +278,11 @@ export class MonolithRoomTurnLoop {
             transcript ? `Room conversation so far:\n${transcript}` : '',
             `Newest human message from ${names.get(item.authorId) ?? item.authorId.slice(0, 12)}:`,
             roomMessagePrompt('', item.body, item.attachments),
-            'Answer the newest message directly.',
+            [
+              'Write only the substantive Room message you want the human to read.',
+              'Do not repeat or paraphrase these instructions.',
+              'If the newest message is only a nudge to respond, answer the most recent unanswered human message in the conversation instead of echoing the nudge.',
+            ].join(' '),
           ]
             .filter(Boolean)
             .join('\n\n');
@@ -289,7 +293,8 @@ export class MonolithRoomTurnLoop {
             prompt,
             120_000,
             (_delta, full) => {
-              latestDraft = full;
+              latestDraft = sanitizeAgentReply(full);
+              if (!latestDraft) return;
               this.draftTail = this.draftTail
                 .catch(() => undefined)
                 .then(() =>
@@ -310,7 +315,7 @@ export class MonolithRoomTurnLoop {
             },
           );
           await this.draftTail;
-          const reply = stripAgentReplyPreamble(result.agentText).trim();
+          const reply = sanitizeAgentReply(result.agentText);
           if (!reply) throw new Error('ACP turn produced no durable Room reply');
           await api.execute('postRoomMessage', {
             roomId: this.options.roomId,

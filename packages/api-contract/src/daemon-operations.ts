@@ -204,6 +204,8 @@ export type PostRoomMessageInput = RoomInput & {
   /** Validated peer addressing for monolith agent-to-agent turns. */
   readonly mentionIds?: readonly string[];
   readonly replyToMessageId?: string;
+  /** Inbox message that started this turn; independent of optional reply threading. */
+  readonly triggerMessageId?: string;
 };
 export type PostLiveOutputInput = AgentRoomInput & {
   readonly turnId: string;

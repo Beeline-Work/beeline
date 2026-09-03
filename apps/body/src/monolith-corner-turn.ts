@@ -38,7 +38,6 @@ type WorkspaceRoster = DaemonOperationMap['getWorkspaceRoster']['output'];
 type DaemonActivity = DaemonOperationMap['postAgentActivity']['input']['activity'][number];
 
 const execFileAsync = promisify(execFile);
-const PULL_REQUEST_URL = /https:\/\/github\.com\/[^\s/]+\/[^\s/]+\/pull\/\d+/;
 const TOOL_ARGUMENT_MAX_BYTES = 1_200;
 const TOOL_OUTPUT_MAX_BYTES = 3_200;
 const TOOL_PATH_LIMIT = 12;
@@ -626,18 +625,6 @@ export class MonolithCornerTurnLoop {
               requestId,
               text: durableTail,
               presentation: 'message',
-            });
-          }
-          const pullRequest = reply.match(PULL_REQUEST_URL)?.[0];
-          const alreadyReady = conversation.items.some((item) =>
-            /\bPR ready for review\b/i.test(item.body),
-          );
-          if (pullRequest && !alreadyReady) {
-            await api.execute('postRoomMessage', {
-              roomId: cornerId,
-              requestId,
-              text: `PR ready for review\n${pullRequest}`,
-              presentation: 'system',
             });
           }
           await api.execute('retractAgentLiveOutput', {

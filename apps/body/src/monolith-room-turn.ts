@@ -3,7 +3,8 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
 import { parseGrantDecisionLine } from '@beeline/api-contract/agent-grants';
-import { SCHEDULED_PROMPT_PREFIX, SCHEDULE_SCHEDULER_NAME } from '@beeline/api-contract/scheduled-prompts';
+import { SCHEDULE_RAN_VERB, SCHEDULE_SCHEDULER_NAME } from '@beeline/api-contract/scheduled-prompts';
+import type { SystemEvent } from '@beeline/api-contract/daemon';
 import {
   AcpClient,
   type AcpPermissionDecision,
@@ -79,18 +80,29 @@ export function roomPrincipalMayAddressAgent(
   );
 }
 
-/** Server-authored scheduled prompts arrive as system lines ('Scheduled: <message>')
- *  mentioning this agent; the scheduler is not a Room principal, so its lines skip
- *  the per-author authority check (schedule creation was already authority-gated). */
+/** Server-authored scheduled prompts arrive as system lines (`Beeline Scheduler ran a
+ *  schedule for <agent> · <message>`) mentioning this agent and carrying the structured
+ *  event; the scheduler is not a Room principal, so its lines skip the per-author
+ *  authority check (schedule creation was already authority-gated). Recognised by
+ *  the event's verb, never by the text. */
 export function isScheduledPrompt(
-  item: { type: string; body: string; mentionIds: readonly string[] },
+  item: { type: string; body: string; mentionIds: readonly string[]; systemEvent?: SystemEvent },
   agentId: string,
 ): boolean {
   return (
     item.type === 'system' &&
-    item.body.startsWith(SCHEDULED_PROMPT_PREFIX) &&
+    item.systemEvent?.verb === SCHEDULE_RAN_VERB &&
     item.mentionIds.includes(agentId)
   );
+}
+
+/** What the harness is shown for an inbox item: a scheduled prompt's message
+ *  itself (the event's consequence), otherwise the row's text. */
+export function inboxItemPromptBody(
+  item: { type: string; body: string; mentionIds: readonly string[]; systemEvent?: SystemEvent },
+  agentId: string,
+): string {
+  return isScheduledPrompt(item, agentId) ? (item.systemEvent?.consequence ?? item.body) : item.body;
 }
 
 /** The owner's answer to a grant card arrives as a server-authored system line
@@ -571,7 +583,12 @@ export class MonolithRoomTurnLoop {
                 ? SCHEDULE_SCHEDULER_NAME
                 : (names.get(item.authorId) ?? item.authorId.slice(0, 12))
             }:`,
-            roomMessagePrompt('', item.body, item.attachments, delivered),
+            roomMessagePrompt(
+              '',
+              inboxItemPromptBody(item, this.agent.publicKey),
+              item.attachments,
+              delivered,
+            ),
             grantDecision
               ? [
                   'This is the answer to your grant request; your paused work resumes now.',

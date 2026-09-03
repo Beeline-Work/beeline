@@ -69,6 +69,7 @@ import { cornerObjectiveItems } from '@/buzz/corner-context';
 import { continuedSpeakerIds, ledgerSpeakerKey } from '@/buzz/ledger-attribution';
 import { publishFailurePresentation } from '@/buzz/publish-failure';
 import { ledgerStamp } from '@/buzz/relative-time';
+import { foldSystemLines } from '@/buzz/system-lines';
 import { CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import {
   COMPOSER_ACK_BOUND_MS,
@@ -208,7 +209,7 @@ import { AttachmentPickerSheet } from '@/components/buzz/AttachmentPickerSheet';
 import { HullFloatingSurface, HullModal } from '@/components/buzz/HullDialog';
 import { EmptyLedgerState, type EmptyLedgerVariant } from '@/components/buzz/EmptyLedgerState';
 import { HeaderIdentitySlot, HeaderMetaCaps, HeaderMetaRow } from '@/components/buzz/HeaderLadder';
-import { LEDGER_MARGINALIA_WIDTH, LedgerRoomUpdate } from '@/components/buzz/Ledger';
+import { LEDGER_MARGINALIA_WIDTH, LedgerRoomUpdate, LedgerSystemLine } from '@/components/buzz/Ledger';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { RoomRosterSheet, type RoomRosterParticipant } from '@/components/buzz/RoomRosterSheet';
 import { RepoPicker } from '@/components/buzz/RepoPicker';
@@ -654,7 +655,11 @@ export default function BuzzChat() {
   // first, then pages in from the relay once that's exhausted.
   // A corner turn's per-call activity rows read back as one collapsed group
   // per turn; the window and paging count those groups, not the raw rows.
-  const foldedMessages = useMemo(() => foldSettledActivityRuns(combinedMessages), [combinedMessages]);
+  // Same-verb system lines fold into one ("Candy, Terra and Codex joined").
+  const foldedMessages = useMemo(
+    () => foldSystemLines(foldSettledActivityRuns(combinedMessages)),
+    [combinedMessages],
+  );
   const unprojectedMessages = useMemo(
     () => visibleTranscriptWindow(foldedMessages, visibleMessageCount),
     [foldedMessages, visibleMessageCount],
@@ -2664,6 +2669,13 @@ export default function BuzzChat() {
   const handleOpenGitHubEvent = useCallback((url: string) => {
     void Linking.openURL(url).catch(() => undefined);
   }, []);
+  // A name in a system line opens the roster, where that identity lives.
+  const handleOpenSystemIdentity = useCallback(() => {
+    router.push({
+      pathname: '/beeline/members',
+      params: activeCommunityId ? { communityId: activeCommunityId } : {},
+    } as Href);
+  }, [activeCommunityId]);
   const handleCopyLedgerMessage = useCallback((text: string) => {
     void copyEntireTurn(text, Clipboard.setStringAsync);
   }, []);
@@ -2765,14 +2777,17 @@ export default function BuzzChat() {
         );
       }
 
-      // ── Offline notice (client-rendered only, never published) ────
+      // ── System line: one renderer for every server-phrased notification ──
       if (item.isSystemNotice) {
         return (
-          <LedgerRoomUpdate
+          <LedgerSystemLine
             id={item.id}
-            line={item.text}
+            text={item.text}
+            {...(item.systemEvent ? { event: item.systemEvent } : {})}
+            {...(item.systemSubjects ? { subjects: item.systemSubjects } : {})}
             stamp={ledgerStamp(item.timestamp)}
-            tone={/failed|red|error|could not answer/i.test(item.text) ? 'brass' : 'quiet'}
+            onOpenIdentity={handleOpenSystemIdentity}
+            onOpenUrl={handleOpenGitHubEvent}
           />
         );
       }
@@ -2819,6 +2834,7 @@ export default function BuzzChat() {
       agentByPubkey,
       handleWritePermission,
       handleGrantDecision,
+      handleOpenSystemIdentity,
       grantActionId,
       handleConfirmTargetBranch,
       openCorner,

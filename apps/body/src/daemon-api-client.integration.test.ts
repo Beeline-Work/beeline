@@ -28,6 +28,7 @@ import {
   roomPrincipalMayAddressAgent,
 } from './monolith-room-turn.js';
 import {
+  SCHEDULE_RAN_VERB,
   SCHEDULE_SCHEDULER_ID,
   SCHEDULE_SCHEDULER_NAME,
 } from '@beeline/api-contract/scheduled-prompts';
@@ -1593,12 +1594,8 @@ createInterface({ input: process.stdin }).on('line', (line) => {
             pullRequestUrl =
               transcript.match(/https:\/\/github\.com\/[^\s]+\/pull\/\d+/)?.[0] ?? '';
             expect(pullRequestUrl).toMatch(/\/pull\/\d+$/);
-            expect(
-              conversation.items.some(
-                (item) =>
-                  item.type === 'system' && item.body === `PR ready for review\n${pullRequestUrl}`,
-              ),
-            ).toBe(true);
+            // The daemon never posts a system line of its own.
+            expect(conversation.items.some((item) => item.type === 'system')).toBe(false);
             const activities = await database.query<{ activity: Array<{ kind?: string }> }>(
               `SELECT activity FROM messages WHERE room_id=$1 AND presentation='activity'`,
               [cornerId],
@@ -1709,7 +1706,13 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       authorId: SCHEDULE_SCHEDULER_ID,
       createdAt: 0,
       type: 'system' as const,
-      body: 'Scheduled: ping',
+      body: 'Beeline Scheduler ran a schedule for Bee · ping',
+      systemEvent: {
+        subject: { kind: 'system' as const, id: SCHEDULE_SCHEDULER_ID, name: 'Beeline Scheduler' },
+        verb: SCHEDULE_RAN_VERB,
+        object: { text: 'Bee', id: AGENT },
+        consequence: 'ping',
+      },
       mentionIds: [AGENT],
       attachments: [],
       ...over,
@@ -1717,7 +1720,9 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     expect(inboxItemTriggersTurn(line({}), AGENT)).toBe(true);
     expect(inboxItemTriggersTurn(line({ authorId: AGENT }), AGENT)).toBe(false);
     expect(inboxItemTriggersTurn(line({ mentionIds: [] }), AGENT)).toBe(false);
-    expect(inboxItemTriggersTurn(line({ body: 'Scout joined the Room' }), AGENT)).toBe(false);
+    expect(
+      inboxItemTriggersTurn(line({ body: 'Scout joined', systemEvent: undefined }), AGENT),
+    ).toBe(false);
     expect(inboxItemTriggersTurn(line({ type: 'message', authorId: HUMAN }), AGENT)).toBe(true);
 
     const exchange = await auth.createDaemonExchange(AGENT);
@@ -1818,19 +1823,26 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         ['e'.repeat(64), ROOM, SCHEDULE_SCHEDULER_ID, 'Beeline Scheduler checked the roster'],
       );
       await database.query(
-        `INSERT INTO messages(id,room_id,author_id,text,presentation,mention_ids)
-         VALUES($1,$2,$3,$4,'system',$5::jsonb) RETURNING id`,
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,mention_ids,system_event)
+         VALUES($1,$2,$3,$4,'system',$5::jsonb,$6::jsonb) RETURNING id`,
         [
           'd'.repeat(64),
           ROOM,
           SCHEDULE_SCHEDULER_ID,
-          'Scheduled: Post exactly: hello',
+          'Beeline Scheduler ran a schedule for Bee · Post exactly: hello',
           JSON.stringify([AGENT]),
+          JSON.stringify({
+            subject: { kind: 'system', id: SCHEDULE_SCHEDULER_ID, name: 'Beeline Scheduler' },
+            verb: SCHEDULE_RAN_VERB,
+            object: { text: 'Bee', id: AGENT },
+            consequence: 'Post exactly: hello',
+          }),
         ],
       );
       await vi.waitFor(() => expect(sessionPrompt).toHaveBeenCalled(), { timeout: 5_000 });
       const wirePrompt = sessionPrompt.mock.calls[0]![1];
-      expect(wirePrompt).toContain('Scheduled: Post exactly: hello');
+      expect(wirePrompt).toContain('Post exactly: hello');
+      expect(wirePrompt).not.toContain('ran a schedule for');
       expect(wirePrompt).toContain(`from ${SCHEDULE_SCHEDULER_NAME}`);
       // The plain system line stayed out of the turn.
       expect(wirePrompt).not.toContain('checked the roster');

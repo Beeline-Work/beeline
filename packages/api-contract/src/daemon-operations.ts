@@ -1,3 +1,4 @@
+import type { SystemEvent } from './system-events.js';
 import type { AgentGrantKind, AgentGrantStatus } from './agent-grants.js';
 import type { CornerLifecycleView } from './phone-types.js';
 import type { RoomScheduleCadence } from './phone-operations.js';
@@ -146,6 +147,8 @@ export type RoomInboxResult = {
     readonly rootMessageId?: string;
     readonly requestId?: string;
     readonly attachments: readonly DaemonAttachment[];
+    /** Present on a server-phrased system line; the daemon reads the structured event, never the text. */
+    readonly systemEvent?: SystemEvent;
   }[];
   readonly cursor?: string;
   /** Present on getCornerCloseRequests so helpers can reap an archived worktree. */
@@ -238,7 +241,8 @@ export type WriteResult = { readonly id: string; readonly createdAt: number };
 export type PostRoomMessageInput = RoomInput & {
   readonly requestId?: string;
   readonly text: string;
-  readonly presentation?: 'message' | 'system' | 'card';
+  /** The daemon never phrases a system line; the server does (`system-line.ts`). */
+  readonly presentation?: 'message' | 'card';
   readonly tags?: Readonly<Record<string, string>>;
   /** Validated peer addressing for monolith agent-to-agent turns. */
   readonly mentionIds?: readonly string[];

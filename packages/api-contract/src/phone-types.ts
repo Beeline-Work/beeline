@@ -356,7 +356,21 @@ export type AgentDetailView = {
   readonly catalog: readonly AgentModelConfigOption[];
   readonly runtimeSelection?: AgentModelSelection;
   readonly selected?: AgentModelSelection;
+  /**
+   * The agent "yolo" switch: grant requests are approved without asking.
+   * `canChange` is the server's verdict for this viewer (agent owner or a
+   * workspace admin); the phone mirrors it, never decides it.
+   */
+  readonly yolo?: AgentYoloView;
   readonly watchFilters: readonly SurfaceWatchFilter[];
+};
+
+export type AgentYoloView = {
+  readonly enabled: boolean;
+  readonly setBy?: { readonly name: string };
+  /** Absolute Unix timestamp in seconds. */
+  readonly setAt?: number;
+  readonly canChange: boolean;
 };
 
 export type InviteView = {

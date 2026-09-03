@@ -2796,6 +2796,186 @@ describe('monolith integration', () => {
     // The phone build's surface guard must accept the readAgent output as-is.
     expect(isAgentDetailView(view)).toBe(true);
   });
+
+  it('gates the agent yolo switch to the owner or a workspace admin and posts one system line per Room', async () => {
+    const adminToken = await phoneToken('admin');
+    const adminId = createHash('sha256').update('github:admin').digest('hex');
+    const memberToken = await phoneToken('member');
+    const memberId = createHash('sha256').update('github:member').digest('hex');
+    await operation('addWorkspaceMember', {
+      workspaceId: WORKSPACE,
+      memberId: adminId,
+      role: 'admin',
+    });
+    await operation('addWorkspaceMember', { workspaceId: WORKSPACE, memberId, role: 'member' });
+    // A second live Room the agent sits in, plus an archived one it must not touch.
+    const second = (await (
+      await operation('createRoom', { workspaceId: WORKSPACE, name: 'Second' })
+    ).json()) as { id: string };
+    await operation('addRoomMember', { roomId: second.id, memberId: AGENT });
+    const archived = (await (
+      await operation('createRoom', { workspaceId: WORKSPACE, name: 'Archived' })
+    ).json()) as { id: string };
+    await operation('addRoomMember', { roomId: archived.id, memberId: AGENT });
+    await database.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [archived.id]);
+    // A DM between the admin and the agent: the only Room where a plain line
+    // authored by the owner would push to the admin's device.
+    const dm = (await (
+      await operation(
+        'resolveDirectMessage',
+        { workspaceId: WORKSPACE, participantId: AGENT },
+        adminToken,
+      )
+    ).json()) as { id: string };
+    await database.query(
+      `INSERT INTO push_devices(token,identity_id,platform,environment,registered_at)
+       VALUES('yolo-admin-device',$1,'android','physical',now()-interval '1 hour')`,
+      [adminId],
+    );
+    await database.query(
+      `INSERT INTO push_delivery_floors(id,started_at) VALUES('message-delivery',now()-interval '1 hour')
+       ON CONFLICT(id) DO UPDATE SET started_at=EXCLUDED.started_at`,
+    );
+
+    const before = (await (
+      await request(`/v1/phone/workspaces/${WORKSPACE}/agents/${AGENT}`)
+    ).json()) as {
+      yolo: unknown;
+    };
+    expect(before.yolo).toEqual({ enabled: false, canChange: true });
+    const memberView = (await (
+      await request(
+        `/v1/phone/workspaces/${WORKSPACE}/agents/${AGENT}`,
+        'GET',
+        undefined,
+        memberToken,
+      )
+    ).json()) as { yolo: unknown };
+    expect(memberView.yolo).toEqual({ enabled: false, canChange: false });
+
+    // A plain member is refused with the plain message and nothing changes.
+    const refused = await operation(
+      'updateAgentYolo',
+      { workspaceId: WORKSPACE, agentId: AGENT, enabled: true },
+      memberToken,
+    );
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual({
+      error: "Only the agent's owner or a workspace admin can change this",
+    });
+    expect(
+      (await database.query(`SELECT yolo_mode FROM agents WHERE agent_id=$1`, [AGENT])).rows,
+    ).toEqual([{ yolo_mode: false }]);
+
+    // The owner (the identity that connected the agent) flips it on.
+    const owner = await operation('updateAgentYolo', {
+      workspaceId: WORKSPACE,
+      agentId: AGENT,
+      enabled: true,
+    });
+    expect(owner.status).toBe(204);
+    const on = (await (
+      await request(`/v1/phone/workspaces/${WORKSPACE}/agents/${AGENT}`)
+    ).json()) as {
+      yolo: { enabled: boolean; setBy?: { name: string }; setAt?: number; canChange: boolean };
+    };
+    expect(on.yolo).toEqual({
+      enabled: true,
+      setBy: { name: 'Owner' },
+      setAt: expect.any(Number),
+      canChange: true,
+    });
+    expect(
+      isAgentDetailView(
+        await (await request(`/v1/phone/workspaces/${WORKSPACE}/agents/${AGENT}`)).json(),
+      ),
+    ).toBe(true);
+    const onLines = await database.query<{
+      room_id: string;
+      text: string;
+      presentation: string;
+      mention_ids: string[];
+      author_id: string;
+    }>(
+      `SELECT room_id,text,presentation,mention_ids,author_id FROM messages WHERE card_type='agent-yolo' ORDER BY created_at`,
+    );
+    expect(onLines.rows.map((row) => row.room_id).sort()).toEqual([ROOM, second.id, dm.id].sort());
+    for (const row of onLines.rows) {
+      expect(row).toEqual(
+        expect.objectContaining({
+          text: 'Owner turned yolo on for Bee · grant requests are now approved automatically',
+          presentation: 'system',
+          mention_ids: [],
+          author_id: HUMAN,
+        }),
+      );
+    }
+    // The line reads as a system notice on the Room surface.
+    const room = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as {
+      messages: Array<{ text: string; presentation: string }>;
+    };
+    expect(room.messages).toContainEqual(
+      expect.objectContaining({
+        text: 'Owner turned yolo on for Bee · grant requests are now approved automatically',
+        presentation: 'system',
+      }),
+    );
+    // Repeating the same state is a no-op: no second line.
+    expect(
+      (
+        await operation('updateAgentYolo', {
+          workspaceId: WORKSPACE,
+          agentId: AGENT,
+          enabled: true,
+        })
+      ).status,
+    ).toBe(204);
+    expect(
+      (
+        await database.query(
+          `SELECT count(*)::int count FROM messages WHERE card_type='agent-yolo'`,
+        )
+      ).rows,
+    ).toEqual([{ count: 3 }]);
+    // The yolo line never pushes, even in the DM where a plain owner line would.
+    const send = vi.fn().mockResolvedValue(undefined);
+    expect(await new PushDeliveryLoop(database, { send }).runOnce()).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+
+    // The daemon-side agent view carries the flag.
+    const configuration = await daemonOperation('getAgentConfiguration', {
+      agentId: AGENT,
+      roomId: ROOM,
+    });
+    expect(await configuration.json()).toEqual(expect.objectContaining({ yoloMode: true }));
+
+    // A workspace admin who does not own the agent flips it off.
+    const admin = await operation(
+      'updateAgentYolo',
+      { workspaceId: WORKSPACE, agentId: AGENT, enabled: false },
+      adminToken,
+    );
+    expect(admin.status).toBe(204);
+    const off = (await (
+      await request(`/v1/phone/workspaces/${WORKSPACE}/agents/${AGENT}`)
+    ).json()) as {
+      yolo: { enabled: boolean; setBy?: { name: string } };
+    };
+    expect(off.yolo).toEqual(
+      expect.objectContaining({ enabled: false, setBy: { name: 'Admin' }, canChange: true }),
+    );
+    expect(
+      (
+        await database.query(
+          `SELECT text FROM messages WHERE card_type='agent-yolo' AND room_id=$1 ORDER BY created_at`,
+          [ROOM],
+        )
+      ).rows.map((row) => row.text),
+    ).toEqual([
+      'Owner turned yolo on for Bee · grant requests are now approved automatically',
+      'Admin turned yolo off for Bee · grant requests now ask before running',
+    ]);
+  });
 });
 
 function next(socket: WebSocket, type: string): Promise<Record<string, unknown>> {

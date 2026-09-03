@@ -636,15 +636,18 @@ export class DaemonService {
         selected_model: string | null;
         selected_effort: string | null;
         commands: Array<{ name: string; description?: string }>;
-      }>(`SELECT soul,selected_model,selected_effort,commands FROM agents WHERE agent_id=$1`, [
-        agentId,
-      ])
+        yolo_mode: boolean;
+      }>(
+        `SELECT soul,selected_model,selected_effort,commands,yolo_mode FROM agents WHERE agent_id=$1`,
+        [agentId],
+      )
     ).rows[0];
     return {
       ...(row?.soul ? { soul: { name: row.soul.name, instructions: row.soul.instructions } } : {}),
       ...(row?.selected_model ? { model: row.selected_model } : {}),
       ...(row?.selected_effort ? { effort: row.selected_effort } : {}),
       commands: row?.commands ?? [],
+      yoloMode: row?.yolo_mode ?? false,
     };
   }
   private async presence(input: Input<'getAgentPresence'>, agentId: string) {

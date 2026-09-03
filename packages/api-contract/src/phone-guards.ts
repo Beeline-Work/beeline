@@ -727,6 +727,18 @@ export function isCornerListView(value: unknown): value is CornerListView {
   );
 }
 
+function agentYolo(value: unknown): boolean {
+  const item = record(value);
+  const setBy = item?.setBy === undefined ? undefined : record(item.setBy);
+  return Boolean(
+    item &&
+    typeof item.enabled === 'boolean' &&
+    typeof item.canChange === 'boolean' &&
+    (setBy === undefined || (setBy && typeof setBy.name === 'string')) &&
+    (item.setAt === undefined || integer(item.setAt)),
+  );
+}
+
 export function isAgentDetailView(value: unknown): value is AgentDetailView {
   const item = record(value);
   const soul = item?.soul === undefined ? undefined : record(item.soul);
@@ -750,6 +762,7 @@ export function isAgentDetailView(value: unknown): value is AgentDetailView {
         (soul.avatar === undefined || httpUrl(soul.avatar)))) &&
     (item.runtimeSelection === undefined || modelSelection(item.runtimeSelection)) &&
     (item.selected === undefined || modelSelection(item.selected)) &&
+    (item.yolo === undefined || agentYolo(item.yolo)) &&
     watchFilters(item.watchFilters),
   );
 }

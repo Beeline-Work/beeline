@@ -57,6 +57,22 @@ const client = vi.hoisted(() => ({
   }),
 }));
 
+const phoneOperation = vi.hoisted(() =>
+  vi.fn(async (name: string, input: any) => {
+    if (name !== 'updateAgentYolo') throw new Error(`unexpected operation ${name}`);
+    state.agent = {
+      ...state.agent,
+      yolo: {
+        ...state.agent.yolo,
+        enabled: input.enabled,
+        setBy: { name: 'Viewer' },
+        setAt: 1_756_684_800,
+      },
+    };
+  }),
+);
+vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));
+
 vi.mock('expo-router', () => ({
   router: { back: vi.fn(), push: vi.fn(), replace: vi.fn() },
   useLocalSearchParams: () => ({ communityId: WORKSPACE }),
@@ -76,29 +92,32 @@ vi.mock('react-native', async () => {
   return {
     Share: { share },
     ScrollView: host('ScrollView'),
+    Switch: host('Switch'),
     Text: host('Text'),
     TextInput: host('TextInput'),
     TouchableOpacity: host('TouchableOpacity'),
     View: host('View'),
   };
 });
+const unistylesTheme = vi.hoisted(() => ({
+  buzz: {
+    bgTerminal: '#000',
+    bgRaised: '#111',
+    bgPressed: '#222',
+    textMuted: '#888',
+    textPrimary: '#fff',
+    border: '#333',
+    chrome: '#aaa',
+    accent: '#d7af5f',
+    danger: '#f00',
+  },
+}));
 vi.mock('react-native-unistyles', () => ({
   StyleSheet: {
     hairlineWidth: 1,
-    create: (factory: any) =>
-      factory({
-        buzz: {
-          bgTerminal: '#000',
-          bgRaised: '#111',
-          bgPressed: '#222',
-          textMuted: '#888',
-          textPrimary: '#fff',
-          border: '#333',
-          chrome: '#aaa',
-          danger: '#f00',
-        },
-      }),
+    create: (factory: any) => factory(unistylesTheme),
   },
+  useUnistyles: () => ({ theme: unistylesTheme }),
 }));
 vi.mock('@/constants/Typography', () => ({
   Typography: { mono: () => ({}), default: () => ({}) },
@@ -248,6 +267,7 @@ function baseAgent() {
       { id: 'mode', category: 'mode', options: [{ id: 'bypassPermissions' }] },
     ],
     selected: { model: 'sonnet', effort: 'low' },
+    yolo: { enabled: false, canChange: true },
     watchFilters: [],
   };
 }
@@ -420,6 +440,92 @@ describe('Members workspace management', () => {
     expect(renderer.root.findAllByProps({ testID: 'rename-agent' })).toHaveLength(0);
     await press(renderer, 'close-agent-settings');
     expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-model-config` })).toHaveLength(0);
+  });
+
+  it('lets the owner or a workspace admin flip yolo and shows who set it', async () => {
+    const renderer = await render();
+    await press(renderer, `agent-${AGENT}-identity`);
+
+    const toggle = renderer.root.findByProps({ testID: 'agent-yolo-switch' });
+    expect(toggle.props.disabled).toBe(false);
+    expect(toggle.props.value).toBe(false);
+    expect(toggle.props.trackColor).toEqual({ false: '#111', true: '#d7af5f' });
+    expect(renderer.root.findByProps({ testID: 'agent-yolo-caption' }).props.children).toBe(
+      'Grant requests are approved without asking. Only the owner or a workspace admin can change this.',
+    );
+    expect(renderer.root.findAllByProps({ testID: 'agent-yolo-set-by' })).toHaveLength(0);
+
+    await act(async () => {
+      await toggle.props.onValueChange(true);
+    });
+
+    expect(phoneOperation).toHaveBeenCalledWith('updateAgentYolo', {
+      workspaceId: WORKSPACE,
+      agentId: AGENT,
+      enabled: true,
+    });
+    expect(renderer.root.findByProps({ testID: 'agent-yolo-switch' }).props.value).toBe(true);
+    const setBy = renderer.root.findByProps({ testID: 'agent-yolo-set-by' }).props.children;
+    expect(setBy).toMatch(/^Set by Viewer · /);
+    expect(setBy).toContain('2025');
+    expect(renderer.root.findAllByProps({ testID: 'agent-yolo-error' })).toHaveLength(0);
+  });
+
+  it('renders the yolo switch disabled with the same caption for a plain member', async () => {
+    state.workspace = {
+      ...baseWorkspace(),
+      viewer: {
+        ...baseWorkspace().viewer,
+        role: 'member',
+        permissions: { send: true, manage: false },
+      },
+    };
+    state.agent = {
+      ...baseAgent(),
+      yolo: { enabled: true, canChange: false, setBy: { name: 'Captain' }, setAt: 1_756_684_800 },
+    };
+    const renderer = await render();
+    await press(renderer, `agent-${AGENT}-identity`);
+
+    const toggle = renderer.root.findByProps({ testID: 'agent-yolo-switch' });
+    expect(toggle.props.disabled).toBe(true);
+    expect(toggle.props.value).toBe(true);
+    expect(renderer.root.findByProps({ testID: 'agent-yolo-caption' }).props.children).toBe(
+      'Grant requests are approved without asking. Only the owner or a workspace admin can change this.',
+    );
+    expect(renderer.root.findByProps({ testID: 'agent-yolo-set-by' }).props.children).toMatch(
+      /^Set by Captain · /,
+    );
+  });
+
+  it('flips yolo optimistically and rolls back with the server message when refused', async () => {
+    const renderer = await render();
+    await press(renderer, `agent-${AGENT}-identity`);
+
+    let settle!: () => void;
+    const pending = new Promise<void>((resolve) => (settle = resolve));
+    phoneOperation.mockImplementationOnce(async () => {
+      await pending;
+      throw Object.assign(new Error('Monolith updateAgentYolo failed (403)'), {
+        code: "Only the agent's owner or a workspace admin can change this",
+      });
+    });
+    let flip!: Promise<void>;
+    await act(async () => {
+      flip = renderer.root.findByProps({ testID: 'agent-yolo-switch' }).props.onValueChange(true);
+    });
+    // Optimistic: on before the server answers.
+    expect(renderer.root.findByProps({ testID: 'agent-yolo-switch' }).props.value).toBe(true);
+    await act(async () => {
+      settle();
+      await flip;
+    });
+    // Rolled back with the server's plain message inline.
+    expect(renderer.root.findByProps({ testID: 'agent-yolo-switch' }).props.value).toBe(false);
+    expect(renderer.root.findByProps({ testID: 'agent-yolo-error' }).props.children).toBe(
+      "Only the agent's owner or a workspace admin can change this",
+    );
+    expect(roomView.agent).toHaveBeenCalled();
   });
 
   it('warns about and invokes the full removeAgent host teardown path', async () => {

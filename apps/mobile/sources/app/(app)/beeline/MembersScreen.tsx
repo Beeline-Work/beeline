@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Share, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { Share, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -30,6 +30,7 @@ import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { HullSurface, MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
 import { MEMBERS_GLYPH, MEMBERS_LABEL } from '@/buzz/vocabulary';
 import { BuzzRigTransport } from '@/sync/transport';
+import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { Typography } from '@/constants/Typography';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
@@ -51,7 +52,8 @@ type MembersAction =
   | 'person-role'
   | 'save-agent-soul'
   | 'remove-agent'
-  | 'model-config';
+  | 'model-config'
+  | 'agent-yolo';
 
 function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -96,6 +98,28 @@ function axisValue(detail: AgentDetailView, axis: AgentModelConfigOption): strin
   return detail.selected?.effort ?? detail.runtimeSelection?.effort ?? axis.currentValue;
 }
 
+/** The server's own refusal text when it sent one; otherwise the thrown reason. */
+function operationMessage(reason: unknown): string {
+  if (reason && typeof reason === 'object' && 'code' in reason) {
+    const code = (reason as { code?: unknown }).code;
+    if (typeof code === 'string' && code && code !== 'request_failed') return code;
+  }
+  return reason instanceof Error ? reason.message : String(reason);
+}
+
+function yoloSetByLine(yolo: NonNullable<AgentDetailView['yolo']>): string | null {
+  if (!yolo.enabled || !yolo.setBy) return null;
+  const date =
+    yolo.setAt === undefined
+      ? null
+      : new Date(yolo.setAt * 1000).toLocaleDateString(undefined, {
+          year: 'numeric',
+          month: 'short',
+          day: 'numeric',
+        });
+  return date ? `Set by ${yolo.setBy.name} · ${date}` : `Set by ${yolo.setBy.name}`;
+}
+
 /**
  * A model's effort choices can be model-specific. The catalog only proves an
  * effort compatible with its own current model, so a change to any other
@@ -119,6 +143,7 @@ function modelSelectionInput(
 }
 
 export default function BuzzMembers() {
+  const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{
     communityId?: string | string[];
@@ -138,6 +163,7 @@ export default function BuzzMembers() {
   const [relayUrl, setRelayUrl] = useState<string | null>(null);
   const [working, setWorking] = useState<MembersAction | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [yoloError, setYoloError] = useState<string | null>(null);
   const [retryGeneration, setRetryGeneration] = useState(0);
   const [agentInviteOpen, setAgentInviteOpen] = useState(false);
   const [pairCommand, setPairCommand] = useState<string | null>(null);
@@ -445,6 +471,34 @@ export default function BuzzMembers() {
     }
   };
 
+  const toggleYolo = async (enabled: boolean) => {
+    const yolo = selectedAgent?.yolo;
+    if (!selectedAgent || !yolo?.canChange) return;
+    const previous = selectedAgent;
+    const pubkey = previous.agent.identity.pubkey;
+    // Optimistic: the switch settles now; the indexed read confirms or the
+    // catch below rolls back with the server's own message inline.
+    setSelectedAgent({ ...previous, yolo: { ...yolo, enabled } });
+    setWorking('agent-yolo');
+    setYoloError(null);
+    try {
+      await monolithPhoneOperation('updateAgentYolo', {
+        workspaceId: previous.workspaceId,
+        agentId: pubkey,
+        enabled,
+      });
+      await waitForIndexedSurface(
+        () => readAgent(pubkey),
+        (value) => value.yolo?.enabled === enabled,
+      );
+    } catch (reason) {
+      setSelectedAgent(previous);
+      setYoloError(operationMessage(reason));
+    } finally {
+      setWorking(null);
+    }
+  };
+
   const removeSelectedAgent = async () => {
     if (!selectedAgent || !surface?.viewer.permissions.manage || !workspaceId) return;
     const pubkey = selectedAgent.agent.identity.pubkey;
@@ -747,6 +801,7 @@ export default function BuzzMembers() {
                     agentRequestGenerationRef.current += 1;
                     setSelectedAgent(null);
                     setEditingAgentSoul(false);
+                    setYoloError(null);
                   }}
                   style={styles.glyphControl}
                   testID="close-agent-settings"
@@ -869,6 +924,39 @@ export default function BuzzMembers() {
                     </View>
                   );
                 })}
+              </View>
+              <View style={styles.yoloSection} testID="agent-yolo">
+                <View style={styles.yoloRow}>
+                  <Text
+                    style={[styles.sectionLabel, selectedAgent.yolo?.enabled && styles.yoloLabelOn]}
+                    testID="agent-yolo-label"
+                  >
+                    YOLO
+                  </Text>
+                  <Switch
+                    accessibilityLabel="Yolo"
+                    disabled={!selectedAgent.yolo?.canChange || busy}
+                    onValueChange={(enabled) => void toggleYolo(enabled)}
+                    testID="agent-yolo-switch"
+                    thumbColor={theme.buzz.textPrimary}
+                    trackColor={{ false: theme.buzz.bgRaised, true: theme.buzz.accent }}
+                    value={selectedAgent.yolo?.enabled ?? false}
+                  />
+                </View>
+                <Text style={styles.detail} testID="agent-yolo-caption">
+                  Grant requests are approved without asking. Only the owner or a workspace admin
+                  can change this.
+                </Text>
+                {selectedAgent.yolo && yoloSetByLine(selectedAgent.yolo) && (
+                  <Text style={styles.detail} testID="agent-yolo-set-by">
+                    {yoloSetByLine(selectedAgent.yolo)}
+                  </Text>
+                )}
+                {yoloError && (
+                  <Text style={styles.yoloError} testID="agent-yolo-error">
+                    {yoloError}
+                  </Text>
+                )}
               </View>
               {canManage && (
                 <View style={styles.dangerZone}>
@@ -1036,6 +1124,16 @@ const styles = StyleSheet.create((theme) => {
       flex: 1,
       minWidth: 0,
     },
+    yoloSection: { gap: 4 },
+    yoloRow: {
+      minHeight: 40,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 10,
+    },
+    yoloLabelOn: { color: hull.accent },
+    yoloError: { ...Typography.default(), color: hull.danger, fontSize: 11 },
     dangerZone: {
       gap: 8,
       paddingTop: 12,

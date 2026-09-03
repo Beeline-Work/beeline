@@ -81,6 +81,7 @@ function workspaceMembers(view: WorkspaceView | null): WorkspaceMemberDisplayIte
       peerName: member.identity.name,
       peerKind: member.identity.kind === 'agent' ? 'agent' : 'person',
       ...(member.identity.avatar ? { avatarUrl: member.identity.avatar } : {}),
+      ...(member.identity.face ? { face: member.identity.face } : {}),
       ...(member.identity.kind === 'human' ? { role: member.role } : {}),
     }));
 }
@@ -509,6 +510,7 @@ export default function BuzzChannels() {
       canManageActiveCommunity={canManageWorkspace}
       viewerPubkey={identity?.publicKey}
       viewerAvatarUrl={chatList.viewer.avatar}
+      viewerFace={chatList.viewer.face}
     >
       <View
         style={[styles.container, { paddingTop: insets.top }]}

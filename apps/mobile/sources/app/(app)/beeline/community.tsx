@@ -50,6 +50,7 @@ export default function BuzzCommunityCreateOrJoin() {
     [workspaceList],
   );
   const viewerAvatarUrl = workspaceList?.viewer.avatar;
+  const viewerFace = workspaceList?.viewer.face;
   const canManageWorkspace =
     workspaceList?.workspaces.some(
       (workspace) =>
@@ -188,6 +189,7 @@ export default function BuzzCommunityCreateOrJoin() {
       canManageActiveCommunity={canManageWorkspace}
       viewerPubkey={identity?.publicKey}
       viewerAvatarUrl={viewerAvatarUrl}
+      viewerFace={viewerFace}
     >
       <View style={[styles.container, { paddingTop: insets.top }]}>
         <HullSurface strength="quiet" style={styles.header}>

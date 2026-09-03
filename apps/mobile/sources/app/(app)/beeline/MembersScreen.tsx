@@ -606,6 +606,7 @@ export default function BuzzMembers() {
       canManageActiveCommunity={canManage}
       viewerPubkey={surface.viewer.identity.pubkey}
       viewerAvatarUrl={surface.viewer.identity.avatar}
+      viewerFace={surface.viewer.identity.face}
     >
       <View
         style={[styles.container, { paddingTop: insets.top }]}
@@ -718,6 +719,7 @@ export default function BuzzMembers() {
                       kind="human"
                       seed={member.identity.pubkey}
                       avatarUrl={member.identity.avatar}
+                      face={member.identity.face}
                       name={member.identity.name}
                       size={38}
                     />

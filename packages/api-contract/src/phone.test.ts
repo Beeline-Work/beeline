@@ -32,6 +32,13 @@ describe('phone contract', () => {
       watchFilters: [],
     };
     expect(isRoomView(room)).toBe(true);
+    // The face ceremony: an optional face id on every identity, never a non-string.
+    expect(
+      isRoomView({ ...room, viewer: { ...room.viewer, identity: { ...identity, face: 'owl' } } }),
+    ).toBe(true);
+    expect(
+      isRoomView({ ...room, viewer: { ...room.viewer, identity: { ...identity, face: 7 } } }),
+    ).toBe(false);
     expect(isRoomView({ ...room, latestAgentTurns: [{ status: 'working' }] })).toBe(false);
   });
 

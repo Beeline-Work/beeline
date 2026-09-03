@@ -88,6 +88,8 @@ export type RoomViewIdentity = {
   readonly name: string;
   readonly handle?: string;
   readonly avatar?: string;
+  /** The chosen face (one of `FACE_IDS`); absent until the person picks one. */
+  readonly face?: string;
 };
 
 export type RoomViewMember = {

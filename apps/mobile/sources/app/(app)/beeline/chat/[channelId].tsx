@@ -823,6 +823,7 @@ export default function BuzzChat() {
           ? personHandle(profileName, person.pubkey)
           : shortNpub.replace(/[^a-zA-Z0-9_-]/g, ''),
         kind: 'person',
+        ...(person.identity.face ? { face: person.identity.face } : {}),
       });
     }
     for (const agent of availableAgents) {
@@ -3267,6 +3268,7 @@ export default function BuzzChat() {
                           kind="human"
                           seed={participant.pubkey}
                           avatarUrl={personProfileByPubkey.get(participant.pubkey)?.avatar}
+                          face={participant.face}
                           name={participant.name}
                           size={28}
                         />

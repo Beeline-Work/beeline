@@ -94,6 +94,7 @@ function MemberRow({
         {...(agent ? ({ kind: 'agent' } as const) : ({ kind: 'human' } as const))}
         seed={member.peerPubkey}
         avatarUrl={member.avatarUrl}
+        face={member.face}
         name={member.peerName}
         size={36}
       />

@@ -133,6 +133,12 @@ vi.mock('@/components/buzz/IdentityMark', async () => {
   const ReactModule = await import('react');
   return { IdentityMark: (props: unknown) => ReactModule.createElement('IdentityMark', props) };
 });
+vi.mock('@/components/buzz/FacePickerSheet', async () => {
+  const ReactModule = await import('react');
+  return {
+    FacePickerSheet: (props: unknown) => ReactModule.createElement('FacePickerSheet', props),
+  };
+});
 vi.mock('@/sync/transport', () => ({
   BuzzRigTransport: class {
     ensureClient = vi.fn(async () => client);

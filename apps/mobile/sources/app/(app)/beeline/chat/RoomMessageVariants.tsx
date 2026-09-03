@@ -646,7 +646,11 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
         mark: {
           seed: markSeed,
           kind: isAgent ? 'agent' : 'human',
-          ...(isAgent ? { alive: speakerOnline } : {}),
+          ...(isAgent
+            ? { alive: speakerOnline }
+            : indexedAuthor?.face
+              ? { face: indexedAuthor.face }
+              : {}),
         },
       };
   const activity = useMemo(

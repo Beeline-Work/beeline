@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { CronExpressionParser } from 'cron-parser';
 import type { RoomScheduleCadence } from '@beeline/api-contract/phone';
+import { SCHEDULE_SCHEDULER_ID, SCHEDULE_SCHEDULER_NAME, SCHEDULED_PROMPT_PREFIX } from '@beeline/api-contract/scheduled-prompts';
 import type { SqlDatabase } from './database.js';
 
 const MINUTE_MS = 60_000;
@@ -127,14 +128,29 @@ export class AgentScheduleLoop {
           [current.id, current.next_run_at, messageId],
         );
         if (!claim.rowCount) return undefined;
+        // A schedule created by the target agent itself must not be authored by
+        // that agent: its own-authored rows never reach the agent's inbox and the
+        // transcript would show the agent talking to itself. A human creator
+        // keeps authoring its schedule posts exactly as before.
+        const selfCreated = current.creator_id === current.agent_id;
+        if (selfCreated) {
+          await database.query(
+            `INSERT INTO identities(id,kind,name,hidden_from_roster) VALUES($1,'human',$2,true)
+             ON CONFLICT(id) DO NOTHING`,
+            [SCHEDULE_SCHEDULER_ID, SCHEDULE_SCHEDULER_NAME],
+          );
+        }
+        const authorId = selfCreated ? SCHEDULE_SCHEDULER_ID : current.creator_id;
+        const text = selfCreated ? `${SCHEDULED_PROMPT_PREFIX}${current.message}` : current.message;
         await database.query(
-          `INSERT INTO messages(id,room_id,author_id,text,mention_ids)
-           VALUES($1,$2,$3,$4,$5::jsonb)`,
+          `INSERT INTO messages(id,room_id,author_id,text,presentation,mention_ids)
+           VALUES($1,$2,$3,$4,$5,$6::jsonb)`,
           [
             messageId,
             current.room_id,
-            current.creator_id,
-            current.message,
+            authorId,
+            text,
+            selfCreated ? 'system' : 'message',
             JSON.stringify([current.agent_id]),
           ],
         );

@@ -33,7 +33,6 @@ import {
 import { authSessionOptions } from '@/auth/auth-session';
 import { Modal } from '@/modal';
 import { BuzzRigTransport } from '@/sync/transport';
-import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import {
   type ChannelRole,
   type RoomRepository,
@@ -199,8 +198,7 @@ import {
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { Typography } from '@/constants/Typography';
 import { CornerLiveBar } from '@/components/buzz/CornerLiveBar';
-import { CornerPlanPin } from '@/components/buzz/CornerPlanPin';
-import { CornerLifecyclePanel } from '@/components/buzz/CornerLifecyclePanel';
+import { CornerStatusLine } from '@/components/buzz/CornerStatusLine';
 import { TurnProgressLine } from '@/components/buzz/TurnProgressLine';
 import { AttachmentPickerSheet } from '@/components/buzz/AttachmentPickerSheet';
 import { HullFloatingSurface, HullModal } from '@/components/buzz/HullDialog';
@@ -426,8 +424,6 @@ export default function BuzzChat() {
   const [membershipError, setMembershipError] = useState<string | null>(null);
   const [membershipActionPubkey, setMembershipActionPubkey] = useState<string | null>(null);
   const [roomLifecycleBusy, setRoomLifecycleBusy] = useState(false);
-  const [cornerMergeApprovalBusy, setCornerMergeApprovalBusy] = useState(false);
-  const [cornerMergeApprovalResult, setCornerMergeApprovalResult] = useState<string>();
   const directMessage = roomSurface?.directMessage ?? null;
   const [composerFocused, setComposerFocused] = useState(false);
   const [permissionActionId, setPermissionActionId] = useState<string | null>(null);
@@ -665,7 +661,7 @@ export default function BuzzChat() {
     setVisibleMessageCount((count) => Math.max(count, INITIAL_CORNER_MESSAGE_WINDOW));
   }, [isCorner]);
   // The immutable summary stored on the corner Room is the objective for its
-  // entire lifecycle. Mutable plans never rewrite this panel.
+  // entire lifecycle; it names the empty transcript. Mutable plans never rewrite it.
   const cornerObjective = useMemo(
     () =>
       cornerObjectiveItems({
@@ -1990,56 +1986,6 @@ export default function BuzzChat() {
     [decodedId, targetBranchActionId, transport, viewerChannelRole, viewerIsAgent],
   );
 
-  const handleApproveCornerMerge = useCallback(
-    async (force = false) => {
-      if (
-        !isCorner ||
-        isArchived ||
-        viewerIsAgent ||
-        !canManageWorkspace ||
-        !roomSurface?.cornerLifecycle?.pr ||
-        cornerMergeApprovalBusy
-      )
-        return;
-      setCornerMergeApprovalBusy(true);
-      setCornerMergeApprovalResult(undefined);
-      try {
-        // The server remains the authority: this records a human merge approval;
-        // GitHub webhook facts drive the subsequent merge/archive UI state.
-        const result = await monolithPhoneOperation('approveCornerMerge', {
-          cornerId: decodedId,
-          ...(force ? { force: true } : {}),
-        });
-        setCornerMergeApprovalResult(
-          result.status === 'already-merged'
-            ? 'This pull request is already merged.'
-            : result.status === 'already-requested'
-              ? 'Merge was already approved. Waiting for the GitHub merge fact.'
-              : 'Merge approved. Waiting for the GitHub merge fact.',
-        );
-        refreshSignal.force();
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      } catch (error) {
-        setCornerMergeApprovalResult(
-          error instanceof Error ? error.message : 'Could not approve this merge.',
-        );
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      } finally {
-        setCornerMergeApprovalBusy(false);
-      }
-    },
-    [
-      canManageWorkspace,
-      cornerMergeApprovalBusy,
-      decodedId,
-      isArchived,
-      isCorner,
-      refreshSignal,
-      roomSurface?.cornerLifecycle?.pr,
-      viewerIsAgent,
-    ],
-  );
-
   const handleAddRoomMember = useCallback(
     async (option: RoomMemberOption) => {
       if (
@@ -2941,7 +2887,9 @@ export default function BuzzChat() {
             ) : (
               <Text
                 style={[styles.channelName, isCorner && styles.cornerChannelName]}
-                numberOfLines={1}
+                // A corner's name is its objective verbatim; let it wrap once
+                // rather than truncate to a slug fragment.
+                numberOfLines={isCorner ? 2 : 1}
               >
                 {displayHeaderTitle}
               </Text>
@@ -3042,27 +2990,17 @@ export default function BuzzChat() {
           )}
         </View>
 
-        {/* The fixed open_corner summary stays pinned above the transcript.
-            Mutable plans never rewrite it or add sub-goal cross-offs. */}
+        {/* The corner's PR state, inscribed above the transcript: one line
+            that links to GitHub, where review and merge happen. */}
         {isCorner && (
-          <CornerPlanPin
-            {...(cornerObjective.length ? { objectiveItems: cornerObjective } : {})}
-            testID="corner-plan-pin"
-          />
-        )}
-        {isCorner && (
-          <CornerLifecyclePanel
+          <CornerStatusLine
             lifecycle={roomSurface?.cornerLifecycle}
             archived={isArchived}
-            canApprove={!viewerIsAgent && canManageWorkspace}
-            approving={cornerMergeApprovalBusy}
-            {...(cornerMergeApprovalResult ? { approvalResult: cornerMergeApprovalResult } : {})}
             onOpenPullRequest={(url) => {
               void Linking.openURL(url).catch(() => {
                 Modal.alert('Could not open pull request', 'Open the PR from GitHub instead.');
               });
             }}
-            onApprove={(force) => void handleApproveCornerMerge(force)}
           />
         )}
 

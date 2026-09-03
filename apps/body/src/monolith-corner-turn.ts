@@ -394,6 +394,7 @@ export class MonolithCornerTurnLoop {
         'Work normally with the full coding tools. Commit and push only this feature branch. Use gh to open its pull request.',
         'PR-opening turn rule: as soon as a pull request exists, print its full GitHub URL as your final response and end the turn immediately. Do not call pr_checks_status in that same turn and do not wait for checks inside it. Then stay idle until a later corner fact or human message starts another turn.',
         'Never merge because local tests pass or because gh reports passing checks. On a later turn triggered by a server-posted checks-passed note, call beeline-agent pr_checks_status. Merge only when it returns checks="passed", held=false, and approvalPending=false.',
+        'Merge the PR yourself only after the checks-passed event shows every check green; if any check failed or is still running, say exactly which and stop - never merge red.',
         'If any human in this corner says hold or do not merge, do not merge until a later human explicitly resumes it.',
         'Do not tag the user when a corner turn finishes: the server posts the merge summary card and its push already cover completion. Tag a human only mid-turn, and only when you need a decision or input.',
         'A human approval in the app asks the server to merge. When approval is pending, wait for the server close request instead of racing it with gh. If checks passed, no hold exists, and no approval is pending, merge the pull request yourself with gh.',

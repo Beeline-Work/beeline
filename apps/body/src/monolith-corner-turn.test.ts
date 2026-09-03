@@ -606,6 +606,13 @@ describe('thin monolith corner turn', () => {
     expect(sessionNew).toHaveBeenCalledWith(
       expect.objectContaining({
         systemPrompt: expect.stringContaining(
+          'Merge the PR yourself only after the checks-passed event shows every check green; if any check failed or is still running, say exactly which and stop - never merge red.',
+        ),
+      }),
+    );
+    expect(sessionNew).toHaveBeenCalledWith(
+      expect.objectContaining({
+        systemPrompt: expect.stringContaining(
           'Do not tag the user when a corner turn finishes: the server posts the merge summary card and its push already cover completion.',
         ),
       }),

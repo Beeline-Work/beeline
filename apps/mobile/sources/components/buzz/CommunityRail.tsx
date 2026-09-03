@@ -37,6 +37,7 @@ type CommunityRailProps = {
   canManageActiveCommunity?: boolean;
   viewerPubkey?: string;
   viewerAvatarUrl?: string;
+  viewerFace?: string;
 };
 
 type RailButtonProps = {
@@ -143,6 +144,7 @@ export function CommunityRail({
   canManageActiveCommunity = false,
   viewerPubkey,
   viewerAvatarUrl,
+  viewerFace,
 }: CommunityRailProps) {
   const insets = useSafeAreaInsets();
   // Long-press arms ONE tile's exit affordance; any other tap dismisses it.
@@ -241,6 +243,7 @@ export function CommunityRail({
             kind="human"
             seed={viewerPubkey}
             avatarUrl={viewerAvatarUrl}
+            face={viewerFace}
             name="You"
             size={34}
           />
@@ -319,6 +322,7 @@ export function BuzzCommunityShell({
   canManageActiveCommunity,
   viewerPubkey,
   viewerAvatarUrl,
+  viewerFace,
 }: BuzzCommunityShellProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const drawerX = useSharedValue(-DRAWER_WIDTH);
@@ -417,6 +421,7 @@ export function BuzzCommunityShell({
                 canManageActiveCommunity={canManageActiveCommunity}
                 viewerPubkey={viewerPubkey}
                 viewerAvatarUrl={viewerAvatarUrl}
+                viewerFace={viewerFace}
               />
             </Animated.View>
           </View>

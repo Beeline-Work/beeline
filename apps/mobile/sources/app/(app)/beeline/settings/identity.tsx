@@ -66,6 +66,8 @@ import {
 import { buzzPushPhaseDetail, pushStatusLabel, pushSwitchValue } from '@/push/buzz-push-status';
 import { getPushPermissionInfo, type PushPermissionInfo } from '@/sync/pushRegistration';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
+import { FacePickerSheet } from '@/components/buzz/FacePickerSheet';
+import { defaultFaceForSeed } from '@/buzz/faces';
 import { authSessionOptions } from '@/auth/auth-session';
 import {
   clearPendingGitHubSignInState,
@@ -161,6 +163,8 @@ export default function BuzzIdentitySettings() {
     'checking' | 'connected' | 'not-linked' | 'unavailable'
   >('checking');
   const [managedIdentity, setManagedIdentity] = useState<ManagedIdentity | null>(null);
+  const [face, setFace] = useState<string | null>(null);
+  const [facePickerOpen, setFacePickerOpen] = useState(false);
   const [githubWorking, setGitHubWorking] = useState(false);
   const [githubNotice, setGitHubNotice] = useState<string | null>(null);
   const monolithEnabled = getBuzzRuntimeConfig().monolithEnabled;
@@ -211,6 +215,7 @@ export default function BuzzIdentitySettings() {
           if (monolithEnabled) {
             const hosted = await monolithPhoneOperation('getManagedIdentity', {});
             if (!cancelled) {
+              setFace(hosted.face ?? null);
               setManagedIdentity(
                 hosted.handle
                   ? {
@@ -665,6 +670,40 @@ export default function BuzzIdentitySettings() {
                 style={styles.nameButton}
               />
             </View>
+            {monolithEnabled && (
+              <View style={styles.avatarSection} testID="identity-face-setting">
+                <IdentityMark
+                  kind="human"
+                  seed={profilePubkey}
+                  face={face ?? defaultFaceForSeed(profilePubkey)}
+                  name={profileName || 'You'}
+                  size={76}
+                  testID="identity-face-mark"
+                />
+                <View style={styles.avatarCopy}>
+                  <Text style={styles.heading}>Your face</Text>
+                  <Text style={styles.body}>Animals only. You can change it anytime.</Text>
+                  <View style={styles.actions}>
+                    <TouchableOpacity
+                      accessibilityRole="button"
+                      onPress={() => setFacePickerOpen(true)}
+                      style={styles.secondaryButton}
+                      testID="identity-face-change"
+                    >
+                      <Text style={styles.secondaryButtonText}>Change face</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+                <FacePickerSheet
+                  face={face}
+                  onClose={() => setFacePickerOpen(false)}
+                  onFaceChange={setFace}
+                  onSave={(next) => monolithPhoneOperation('updateIdentityFace', { faceId: next })}
+                  seed={profilePubkey}
+                  visible={facePickerOpen}
+                />
+              </View>
+            )}
             {/* Photo-override darkflight: the picture-setting block renders
                 nothing while PHOTO_OVERRIDES_ENABLED is false. The handlers and
                 plumbing above stay intact for revival. */}
@@ -674,6 +713,7 @@ export default function BuzzIdentitySettings() {
                   kind="human"
                   seed={profilePubkey}
                   avatarUrl={avatarUrl}
+                  face={face ?? undefined}
                   name={profileName || 'You'}
                   size={76}
                 />

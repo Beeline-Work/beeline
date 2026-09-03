@@ -18,7 +18,12 @@ const runtime = vi.hoisted(() => ({
     monolithEnabled: false,
   },
 }));
-const monolith = vi.hoisted(() => ({ exchangeGitHubTicket: vi.fn(async () => undefined) }));
+const MONOLITH_IDENTITY = 'm'.repeat(64);
+const monolith = vi.hoisted(() => ({
+  exchangeGitHubTicket: vi.fn(async () => 'm'.repeat(64)),
+  identityId: vi.fn(async () => 'm'.repeat(64)),
+}));
+const phoneOperation = vi.hoisted(() => vi.fn(async (_name: string, _input: unknown) => ({})));
 const identityStorage = vi.hoisted(() => ({
   load: vi.fn(),
   save: vi.fn(async () => undefined),
@@ -111,6 +116,13 @@ vi.mock('@/buzz/runtime-config', () => ({
   getBuzzRuntimeConfig: () => runtime.current,
 }));
 vi.mock('@/auth/monolith-session', () => ({ monolithSession: monolith }));
+vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));
+vi.mock('@/components/buzz/FaceCeremonyStep', async () => {
+  const ReactModule = await import('react');
+  return {
+    FaceCeremonyStep: (props: any) => ReactModule.createElement('FaceCeremonyStep', props),
+  };
+});
 vi.mock('@/text', () => ({ t: (key: string) => key }));
 vi.mock('@/push/buzz-push-registration', () => ({
   registerBuzzPushNotifications: vi.fn(async () => undefined),
@@ -213,6 +225,9 @@ describe('GitHub callback delivery into onboarding', () => {
     linking.initialUrl = null;
     linking.listener = null;
     runtime.current.monolithEnabled = false;
+    monolith.exchangeGitHubTicket.mockResolvedValue(MONOLITH_IDENTITY);
+    monolith.identityId.mockResolvedValue(null);
+    phoneOperation.mockImplementation(async () => ({}));
     identityStorage.pending = null;
     identityStorage.load.mockResolvedValue(null);
     identityStorage.save.mockResolvedValue(undefined);
@@ -256,6 +271,43 @@ describe('GitHub callback delivery into onboarding', () => {
     expect(browser.open).toHaveBeenCalledTimes(1);
     expect(monolith.exchangeGitHubTicket).toHaveBeenCalledWith('t'.repeat(43));
     expect(sdk.finish).not.toHaveBeenCalled();
+
+    // The identity exists; before the app opens, the face ceremony.
+    expect(navigation.replace).not.toHaveBeenCalled();
+    expect(phoneOperation).toHaveBeenCalledWith('getManagedIdentity', {});
+    const ceremony = tree.root.findByType('FaceCeremonyStep' as never);
+    expect(ceremony.props.seed).toBe(MONOLITH_IDENTITY);
+    expect(ceremony.props.currentFace).toBeNull();
+    await act(async () => {
+      await ceremony.props.onConfirm('owl');
+    });
+    expect(phoneOperation).toHaveBeenCalledWith('updateIdentityFace', { faceId: 'owl' });
+    expect(navigation.replace).not.toHaveBeenCalled();
+    act(() => ceremony.props.onEntered());
+    expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels');
+  });
+
+  it('skips the face ceremony for a person who already chose a face', async () => {
+    runtime.current.monolithEnabled = true;
+    phoneOperation.mockImplementation(async (name: string) =>
+      name === 'getManagedIdentity'
+        ? { personId: MONOLITH_IDENTITY, name: 'Ada', face: 'cat' }
+        : {},
+    );
+    browser.open.mockImplementation(async (authorizationUrl: string) => {
+      const state = new URL(authorizationUrl).searchParams.get('app_state')!;
+      queueMicrotask(() => linking.listener?.({ url: callbackUrl(state) }));
+      return { type: 'dismiss' };
+    });
+    const tree = await render();
+    const signIn = tree.root.find(
+      (node: any) => node.type === 'MonoButton' && node.props.label === 'Continue with GitHub',
+    );
+    await act(async () => {
+      await signIn.props.onPress();
+    });
+    expect(tree.root.findAllByType('FaceCeremonyStep' as never)).toHaveLength(0);
+    expect(phoneOperation).not.toHaveBeenCalledWith('updateIdentityFace', expect.anything());
     expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels');
   });
 

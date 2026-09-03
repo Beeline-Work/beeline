@@ -161,6 +161,7 @@ CREATE TABLE IF NOT EXISTS identities (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE identities ADD COLUMN IF NOT EXISTS hidden_from_roster boolean NOT NULL DEFAULT false;
+ALTER TABLE identities ADD COLUMN IF NOT EXISTS face_id text NULL;
 
 CREATE TABLE IF NOT EXISTS identity_external_links (
   provider text NOT NULL,

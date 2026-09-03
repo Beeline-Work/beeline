@@ -19,6 +19,8 @@ export type RoomRosterParticipant = {
   handle: string;
   kind: 'person' | 'agent';
   agent?: AgentPresentation;
+  /** People only: the chosen face on record. */
+  face?: string;
 };
 
 type RoomRosterSections = {
@@ -154,6 +156,7 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
                           kind="human"
                           seed={participant.pubkey}
                           avatarUrl={personProfileByPubkey.get(participant.pubkey)?.avatar}
+                          face={participant.face}
                           name={displayName}
                           size={38}
                         />

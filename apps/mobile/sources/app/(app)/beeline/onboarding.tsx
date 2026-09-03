@@ -75,6 +75,8 @@ import { BuzzRigTransport } from '@/sync/transport';
 import { Typography } from '@/constants/Typography';
 import { monolithSession } from '@/auth/monolith-session';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
+import { FaceCeremonyStep } from '@/components/buzz/FaceCeremonyStep';
+import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { t } from '@/text';
 
 WebBrowser.maybeCompleteAuthSession();
@@ -125,7 +127,25 @@ export default function BuzzOnboarding() {
   const [namingIdentity, setNamingIdentity] = useState<Identity | null>(null);
   const [namingClient, setNamingClient] = useState<BuzzClient | null>(null);
   const [nameInput, setNameInput] = useState('');
+  // The face ceremony: set once the monolith identity exists, cleared by the
+  // crossfade into the app. `face` is a face already on record.
+  const [faceStep, setFaceStep] = useState<{ seed: string; face: string | null } | null>(null);
   const loading = loadingAction !== null;
+
+  /**
+   * After a monolith sign-in the identity exists; before the app opens the
+   * person chooses their face. A person who already chose (a returning
+   * sign-in on a new device) goes straight in — the picker lives in Settings.
+   */
+  const enterAfterMonolithSignIn = async (identityId: string | undefined) => {
+    const seed = identityId || (await monolithSession.identityId().catch(() => null)) || '';
+    const hosted = await monolithPhoneOperation('getManagedIdentity', {}).catch(() => null);
+    if (hosted?.face) {
+      router.replace('/beeline/channels');
+      return;
+    }
+    setFaceStep({ seed, face: null });
+  };
 
   const restorePendingBind = async (): Promise<boolean> => {
     const [challenge, identity] = await Promise.all([
@@ -302,9 +322,9 @@ export default function BuzzOnboarding() {
           (await resumeInitialGitHubSignIn(() => Promise.resolve(initialUrl))) ??
           (await loadPendingGitHubBindChallenge());
         if (challenge) {
-          await monolithSession.exchangeGitHubTicket(challenge.ticket);
+          const identityId = await monolithSession.exchangeGitHubTicket(challenge.ticket);
           await clearPendingGitHubSignInState();
-          if (alive) router.replace('/beeline/channels');
+          if (alive) await enterAfterMonolithSignIn(identityId);
           return;
         }
         if (await monolithSession.identityId()) {
@@ -407,9 +427,9 @@ export default function BuzzOnboarding() {
             Linking.addEventListener('url', ({ url }) => listener(url)),
         });
         const challenge = await resumeGitHubSignInCallback(callbackUrl);
-        await monolithSession.exchangeGitHubTicket(challenge.ticket);
+        const identityId = await monolithSession.exchangeGitHubTicket(challenge.ticket);
         await clearPendingGitHubSignInState();
-        router.replace('/beeline/channels');
+        await enterAfterMonolithSignIn(identityId);
         return;
       }
       const identity =
@@ -676,6 +696,22 @@ export default function BuzzOnboarding() {
   const canRetryBind = notice?.retryable === true && pendingBind.current !== null;
   const signInLabel = 'Continue with GitHub';
   const monolithEnabled = getBuzzRuntimeConfig().monolithEnabled;
+
+  if (faceStep) {
+    return (
+      <View
+        style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
+        testID="onboarding-face-ceremony"
+      >
+        <FaceCeremonyStep
+          currentFace={faceStep.face}
+          onConfirm={(face) => monolithPhoneOperation('updateIdentityFace', { faceId: face })}
+          onEntered={() => router.replace('/beeline/channels')}
+          seed={faceStep.seed}
+        />
+      </View>
+    );
+  }
 
   if (namingIdentity) {
     const normalized = normalizeManagedHandle(nameInput);

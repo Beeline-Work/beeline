@@ -182,7 +182,8 @@ function identity(value: unknown): value is RoomViewIdentity {
     (item.kind === 'human' || item.kind === 'agent') &&
     typeof item.name === 'string' &&
     optionalString(item.handle) &&
-    optionalString(item.avatar),
+    optionalString(item.avatar) &&
+    optionalString(item.face),
   );
 }
 

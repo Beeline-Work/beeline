@@ -36,6 +36,7 @@ export type PhoneOperationMap = {
   updateAgentYolo: { input: UpdateAgentYoloInput; output: void };
   removeAgent: { input: WorkspaceAgentInput; output: void };
   updatePersonProfile: { input: UpdatePersonProfileInput; output: PersonProfileResult };
+  updateIdentityFace: { input: UpdateIdentityFaceInput; output: void };
   setRoomRepository: { input: SetRoomRepositoryInput; output: RoomRepositoryResult };
   setRoomTargetBranch: { input: SetRoomTargetBranchInput; output: RoomRepositoryResult };
   setRoomGitHubEvents: { input: SetRoomGitHubEventsInput; output: RoomRepositoryResult };
@@ -162,6 +163,8 @@ export type UpdatePersonProfileInput = {
   readonly handle?: string;
   readonly avatar?: string;
 };
+/** One of `FACE_IDS`, or `null` to clear the chosen face. */
+export type UpdateIdentityFaceInput = { readonly faceId: string | null };
 export type PersonProfileResult = {
   readonly personId: string;
   readonly name: string;
@@ -213,6 +216,7 @@ export type ManagedIdentityResult = {
   readonly name: string;
   readonly handle?: string;
   readonly avatar?: string;
+  readonly face?: string;
 };
 export type ClaimManagedHandleInput = { readonly handle: string };
 export type RefreshInput = { readonly refresh?: boolean };

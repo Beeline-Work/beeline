@@ -1423,6 +1423,52 @@ describe('monolith integration', () => {
     ).toBe(401);
   });
 
+  it('runs the face ceremony: set, read back on every identity view, refuse an unknown id, clear', async () => {
+    const operation = (name: string, payload: unknown = {}) =>
+      request(`/v1/phone/operations/${name}`, 'POST', payload);
+    const viewerFace = async () =>
+      ((await (await operation('getManagedIdentity')).json()) as { face?: string }).face;
+
+    expect(await viewerFace()).toBeUndefined();
+
+    expect((await operation('updateIdentityFace', { faceId: 'owl' })).status).toBe(204);
+    expect(await viewerFace()).toBe('owl');
+
+    const sent = await operation('sendRoomMessage', { roomId: ROOM, text: 'hoot' });
+    expect(sent.status).toBe(200);
+    const room = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as {
+      viewer: { identity: { pubkey: string; face?: string } };
+      members: { identity: { pubkey: string; face?: string } }[];
+      messages: { text: string; author: { pubkey: string; face?: string } }[];
+    };
+    expect(room.viewer.identity.face).toBe('owl');
+    expect(room.members.find((member) => member.identity.pubkey === HUMAN)?.identity.face).toBe(
+      'owl',
+    );
+    expect(room.messages.find((message) => message.text === 'hoot')?.author.face).toBe('owl');
+    const workspace = (await (await request(`/v1/phone/workspaces/${WORKSPACE}`)).json()) as {
+      viewer: { identity: { face?: string } };
+      members: { identity: { pubkey: string; face?: string } }[];
+    };
+    expect(workspace.viewer.identity.face).toBe('owl');
+    expect(
+      workspace.members.find((member) => member.identity.pubkey === HUMAN)?.identity.face,
+    ).toBe('owl');
+
+    const refused = await operation('updateIdentityFace', { faceId: 'dragon' });
+    expect(refused.status).toBe(400);
+    expect(await viewerFace()).toBe('owl');
+    expect((await operation('updateIdentityFace', {})).status).toBe(400);
+    expect(await viewerFace()).toBe('owl');
+
+    expect((await operation('updateIdentityFace', { faceId: null })).status).toBe(204);
+    expect(await viewerFace()).toBeUndefined();
+    const cleared = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as {
+      viewer: { identity: { face?: string } };
+    };
+    expect(cleared.viewer.identity).not.toHaveProperty('face');
+  });
+
   it('proves every auth identity phone operation through bearer-authenticated HTTP', async () => {
     const operation = (name: string, payload: unknown = {}) =>
       request(`/v1/phone/operations/${name}`, 'POST', payload);

@@ -123,6 +123,7 @@ export default function BuzzCorners() {
       canManageActiveCommunity={surface.viewer.permissions.manage}
       viewerPubkey={surface.viewer.identity.pubkey}
       viewerAvatarUrl={surface.viewer.identity.avatar}
+      viewerFace={surface.viewer.identity.face}
     >
       <View style={[styles.container, { paddingTop: insets.top }]}>
         <HullSurface strength="quiet" style={styles.header}>

@@ -187,6 +187,33 @@ export class TokenAuth {
     });
   }
 
+  /** Resolve a daemon exchange token to its agent, consuming it in the same transaction. */
+  async consumeDaemonExchangeAgent(exchangeToken: string): Promise<string | null> {
+    const hash = tokenHash(exchangeToken);
+    return this.database.transaction(async (database) => {
+      const found = await database.query<{ agent_id: string; expires_at: Date }>(
+        `SELECT agent_id,expires_at FROM daemon_token_exchanges WHERE exchange_hash = $1 FOR UPDATE`,
+        [hash],
+      );
+      const exchange = found.rows[0];
+      if (!exchange || exchange.expires_at.getTime() <= this.now().getTime()) return null;
+      await database.query(`DELETE FROM daemon_token_exchanges WHERE exchange_hash = $1`, [hash]);
+      return exchange.agent_id;
+    });
+  }
+
+  /** Resolve a daemon exchange token to its agent even after it was consumed. */
+  async resolveDaemonExchangeAgent(exchangeToken: string): Promise<string | null> {
+    const row = (
+      await this.database.query<{ agent_id: string; expires_at: Date }>(
+        `SELECT agent_id,expires_at FROM daemon_token_exchanges WHERE exchange_hash = $1`,
+        [tokenHash(exchangeToken)],
+      )
+    ).rows[0];
+    if (!row || row.expires_at.getTime() <= this.now().getTime()) return null;
+    return row.agent_id;
+  }
+
   async authenticateDaemon(token: string): Promise<string | null> {
     const hash = tokenHash(token);
     const result = await this.database.query<{ agent_id: string; token_hash: string }>(

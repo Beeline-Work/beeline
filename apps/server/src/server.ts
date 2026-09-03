@@ -223,6 +223,15 @@ async function route(
     });
     return;
   }
+  if (method === 'POST' && url.pathname === '/v1/auth/daemon/rollback') {
+    const input = await body(request);
+    if (typeof input.exchangeToken !== 'string') throw new Error('exchangeToken is required');
+    const agentId = await options.auth.consumeDaemonExchangeAgent(input.exchangeToken);
+    if (!agentId) throw new Error('pairing not found');
+    await options.phone.rollbackUnrealizedAgent(agentId);
+    json(response, 204, {});
+    return;
+  }
   if (method === 'GET' && url.pathname === '/v1/releases/daemon-readiness') {
     json(response, 200, await options.daemon.releaseReadiness());
     return;

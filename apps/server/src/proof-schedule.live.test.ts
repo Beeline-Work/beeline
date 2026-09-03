@@ -9,6 +9,7 @@ import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { createBeelineServer } from './server.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
+import { SCHEDULE_SCHEDULER_ID } from '@beeline/api-contract/scheduled-prompts';
 import { createMonolithAuth } from './monolith-auth.js';
 
 const HUMAN = createHash('sha256').update('github:proof-owner').digest('hex');
@@ -133,7 +134,7 @@ describe('end-to-end agent schedule proof', () => {
     for (const row of stored.rows) console.log(`[proof] fired: ${JSON.stringify(row)}`);
     expect(stored.rowCount).toBe(5);
     for (const row of stored.rows) {
-      expect(row.author_id).toBe(AGENT);
+      expect(row.author_id).toBe(SCHEDULE_SCHEDULER_ID);
       expect(row.mention_ids).toEqual([AGENT]);
     }
     expect(

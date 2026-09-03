@@ -13,6 +13,11 @@
       "types": "./dist/daemon.d.ts",
       "import": "./dist/daemon.js",
       "default": "./dist/daemon.js"
+    },
+    "./scheduled-prompts": {
+      "types": "./dist/scheduled-prompts.d.ts",
+      "import": "./dist/scheduled-prompts.js",
+      "default": "./dist/scheduled-prompts.js"
     }
   },
   "scripts": {

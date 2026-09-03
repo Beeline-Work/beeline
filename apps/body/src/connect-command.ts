@@ -8,6 +8,7 @@ import { normalizeAgentPairingCode } from '@beeline/api-contract/phone';
 import { AUTO_DETECT_AGENT_KINDS, resolveAgentCommand, type AgentKind } from './agent-command.js';
 import { clackPromptOutput, unwrapPrompt } from './clack-support.js';
 import { fetchAgentModelCatalog } from './model-catalog.js';
+import { verifyProviderKey, type ConnectKeyProvider } from './provider-key-check.js';
 import { completeDevicePairing, type DevicePairingGrant } from './device-pairing.js';
 import {
   maskProviderKey,
@@ -187,7 +188,39 @@ const clackPrompts: ConnectPrompts = {
 type ConnectModelCatalog = {
   currentValue?: string;
   options: Array<{ id: string; name?: string }>;
+  note?: string;
 };
+
+/**
+ * Derive the wizard's model picker from the harness's advertised axes —
+ * never a hard failure. The credential filter (`filterModelOptionsByCredentials`)
+ * keeps only `<held-provider>/…`-prefixed choices; goose instead advertises a
+ * provider-agnostic builtin list (`anthropic/…`, `google/…`, …) that it routes
+ * through the configured provider, so when the filtered view is empty the raw
+ * advertised axis is used as-is. If the harness truly enumerated nothing, the
+ * provider default is offered with an explanatory note. The old behavior —
+ * throwing "did not advertise any available models" — refused connect runs
+ * that were fully serviceable.
+ */
+export function connectModelPickerFromAxes(
+  axes: Array<{ category: string; currentValue?: string; options: Array<{ id: string }> }>,
+  fallbackModel: string,
+  harness: string,
+): ConnectModelCatalog {
+  const filtered = axes.find((axis) => axis.category === 'model');
+  if (filtered?.options.length) {
+    return { currentValue: filtered.currentValue, options: filtered.options };
+  }
+  const raw = axes.find((axis) => axis.category === 'model' && axis.options.length);
+  if (raw) {
+    return { currentValue: raw.currentValue, options: raw.options };
+  }
+  return {
+    currentValue: fallbackModel,
+    options: [{ id: fallbackModel }],
+    note: `${harness} did not enumerate models; offering the provider default`,
+  };
+}
 
 async function loadConnectModelCatalog(input: {
   harness: ConnectWizardResult['harness'];
@@ -204,11 +237,11 @@ async function loadConnectModelCatalog(input: {
       model: defaultConnectModel(input.harness, input.provider),
     }),
   );
-  const modelAxis = catalog.catalog.find((axis) => axis.category === 'model');
-  if (!modelAxis?.options.length) {
-    throw new Error(`${input.harness} did not advertise any available models`);
-  }
-  return { currentValue: modelAxis.currentValue, options: modelAxis.options };
+  return connectModelPickerFromAxes(
+    catalog.catalog,
+    defaultConnectModel(input.harness, input.provider),
+    input.harness,
+  );
 }
 
 export async function collectConnectWizard(
@@ -220,6 +253,11 @@ export async function collectConnectWizard(
   }) => Promise<ConnectModelCatalog> = loadConnectModelCatalog,
   keyStore: ConnectKeyStore = fileConnectKeyStore,
   env: NodeJS.ProcessEnv = process.env,
+  verifyKey: (input: {
+    provider: ConnectProvider;
+    apiKey: string;
+  }) => Promise<void> = (input) =>
+    verifyProviderKey(input as { provider: ConnectKeyProvider; apiKey: string }),
 ): Promise<ConnectWizardResult> {
   const harness = await prompts.select<(typeof CONNECT_HARNESSES)[number]>({
     message: brass('Choose harness'),
@@ -261,19 +299,24 @@ export async function collectConnectWizard(
       });
       if (choice === 'saved') {
         apiKey = availableKey;
+        await verifyKey({ provider, apiKey });
       } else {
         apiKey = await prompts.password({
           message: brass(`${providerLabel} API key`),
           validate: (value) => (value.trim() ? undefined : 'API key is required'),
         });
-        await keyStore.save(provider, apiKey.trim());
+        apiKey = apiKey.trim();
+        await verifyKey({ provider, apiKey });
+        await keyStore.save(provider, apiKey);
       }
     } else {
       apiKey = await prompts.password({
         message: brass(`${providerLabel} API key`),
         validate: (value) => (value.trim() ? undefined : 'API key is required'),
       });
-      await keyStore.save(provider, apiKey.trim());
+      apiKey = apiKey.trim();
+      await verifyKey({ provider, apiKey });
+      await keyStore.save(provider, apiKey);
     }
   }
   const catalog = await loadModels({
@@ -283,7 +326,9 @@ export async function collectConnectWizard(
   });
   const initialModel = catalog.currentValue ?? defaultConnectModel(harness, provider);
   const model = await prompts.autocomplete({
-    message: brass('Choose model'),
+    message: brass(
+      catalog.note ? `Choose model (${catalog.note})` : 'Choose model',
+    ),
     options: catalog.options.map((choice) => ({
       value: choice.id,
       label: choice.name ? `${choice.name} (${choice.id})` : choice.id,
@@ -497,6 +542,7 @@ export async function runConnectCommand(
     throw new Error('`usebeeline connect` needs an interactive terminal');
   }
   clack.intro(brass('Beeline connect'));
+  const fetchImpl = options.fetchImpl ?? fetch;
   const pairingCode =
     code?.trim() ||
     (await clackPrompts.text({
@@ -504,8 +550,13 @@ export async function runConnectCommand(
       validate: (value) =>
         normalizeAgentPairingCode(value) ? undefined : 'Enter the pairing code shown in the app',
     }));
-  const selection = await collectConnectWizard();
-  const fetchImpl = options.fetchImpl ?? fetch;
+  const selection = await collectConnectWizard(
+    clackPrompts,
+    loadConnectModelCatalog,
+    fileConnectKeyStore,
+    process.env,
+    (input) => verifyProviderKey({ ...input, fetchImpl }),
+  );
   const baseUrl = (process.env.BEELINE_AUTH_URL ?? 'https://server.usebeeline.app').replace(
     /\/$/,
     '',
@@ -582,13 +633,43 @@ function isDevicePairingGrant(value: unknown): value is DevicePairingGrant {
   );
 }
 
+/**
+ * One plain sentence for a human at the end of a terminal — no stacks, no
+ * multi-frame ACP dumps. Keeps the first line of the message and drops any
+ * embedded stack or multi-line diagnostic.
+ */
+export function connectPlainFailure(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  const firstLine = raw
+    .split('\n')
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+  return `Connecting your agent failed: ${firstLine ?? 'unknown error'}`;
+}
+
+export class ConnectFailureError extends Error {
+  constructor(sentence: string) {
+    super(sentence);
+    this.name = 'ConnectFailureError';
+  }
+}
+
 export async function runConnectFinishCommand(path: string | undefined): Promise<void> {
   if (!path) throw new Error('connect-finish requires a grant path');
   if (!isCanonicalInstalledLauncher(process.env, process.argv[1])) {
     throw new Error('connect-finish may run only from the canonical installed Beeline launcher');
   }
-  const grant = JSON.parse(await readFile(resolve(path), 'utf8')) as unknown;
-  if (!isDevicePairingGrant(grant)) throw new Error('device connection grant is invalid');
-  await completeDevicePairing(grant);
-  await unlink(resolve(path));
+  try {
+    const grant = JSON.parse(await readFile(resolve(path), 'utf8')) as unknown;
+    if (!isDevicePairingGrant(grant)) throw new Error('device connection grant is invalid');
+    await completeDevicePairing(grant);
+    await unlink(resolve(path));
+  } catch (error) {
+    // connect-finish runs without a TTY (the parent spawns it with pipes), so
+    // the CLI's catch would print the full error object — stack included —
+    // into a diagnostic the wizard surfaces verbatim. Throw one plain
+    // sentence instead; the ConnectFailureError name tells the CLI catch to
+    // print the message only.
+    throw new ConnectFailureError(connectPlainFailure(error));
+  }
 }

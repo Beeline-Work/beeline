@@ -42,6 +42,12 @@ async function withAgentModelCatalog<T>(
     agentArgs: agentArgsWithModelSelection(agent, selection),
     agentEnv,
     agentCwd: scratchCwd,
+    // The wizard probe runs on the human's own machine for a few seconds —
+    // inherit the caller's environment so harness launchers resolve (`pi`,
+    // `pi-acp`, `claude-agent-acp`'s `env node`) and fnm/homebrew toolchains
+    // work. Daemon sessions keep the allowlisted-env boundary; only this
+    // probe opts in.
+    inheritProcessEnv: true,
   });
   try {
     await client.start();

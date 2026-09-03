@@ -3820,11 +3820,12 @@ export default function BuzzChat() {
 
       <HullModal
         accessibilityLabel="Close Room member picker"
+        contentStyle={styles.memberModalContent}
         onRequestClose={() => setParticipantPickerVisible(false)}
         placement="center"
         visible={participantPickerVisible}
       >
-        <HullFloatingSurface style={styles.memberModal}>
+        <HullFloatingSurface style={styles.memberModal} testID="room-member-picker-surface">
           <View style={styles.memberModalHeading}>
             <View style={styles.memberModalHeadingCopy}>
               <Text style={styles.memberModalTitle}>
@@ -4255,10 +4256,14 @@ const styles = StyleSheet.create((theme) => {
     },
     roomLifecycleDanger: { color: groknight.dialogDanger },
     // ── Room membership picker ─────────────────────────────────────
+    // The percent cap lives on the modal wrapper, whose parent (the flex:1
+    // modal root) has a definite height. On the surface itself it resolved
+    // against the wrapper's own auto height and clipped the member list.
+    memberModalContent: { maxHeight: '78%' },
     memberModal: {
       width: '100%',
       maxWidth: 460,
-      maxHeight: '78%',
+      maxHeight: '100%',
       padding: 16,
       borderWidth: 1,
       borderColor: groknight.borderStrong,

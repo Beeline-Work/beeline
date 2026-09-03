@@ -446,6 +446,13 @@ sweeping band, a moving crest, a progress bar, or a row of dashes all read as
 make about an agent's turn, and at rest they read as broken chrome. Breathing
 says "still going" and claims nothing else.
 
+The one drawn exception is the thinking line's glyph, `BeelineMarkSpinner`: a
+brass stroke draws the Beeline mark's outline from nothing, lingers complete,
+unwinds and redraws, on a 2s ping-pong. It is allowed because the loop returns
+to nothing every cycle — it never fills up towards a finish — and because the
+mark sits in a fixed 18px cell so nothing around it moves. Reduced motion, a
+backgrounded app, and the settled row all show the same completed static mark.
+
 ## Color exceptions, stated so no one re-litigates them
 
 1. **Brass (`#b08a4a` in Obsidian)** marks the viewer's byline dot and name,

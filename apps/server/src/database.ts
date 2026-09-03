@@ -540,8 +540,12 @@ CREATE TABLE IF NOT EXISTS github_user_tokens (
   subject text PRIMARY KEY,
   encrypted_token text NOT NULL,
   stale_at timestamptz,
+  encrypted_refresh_token text,
+  expires_at timestamptz,
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE github_user_tokens ADD COLUMN IF NOT EXISTS encrypted_refresh_token text;
+ALTER TABLE github_user_tokens ADD COLUMN IF NOT EXISTS expires_at timestamptz;
 
 CREATE TABLE IF NOT EXISTS github_auth_flows (
   state_hash text PRIMARY KEY CHECK (state_hash ~ '^[0-9a-f]{64}$'),

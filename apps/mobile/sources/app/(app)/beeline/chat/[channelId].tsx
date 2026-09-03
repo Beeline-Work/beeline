@@ -2174,6 +2174,11 @@ export default function BuzzChat() {
         const access = await transport.workspaceGitHubAccess({ refresh });
         setRoomRepoCandidates(access.candidates);
         setGitHubInstallations(access.installations);
+        setRoomRepoError(
+          access.githubReconnectNeeded
+            ? 'GitHub sign-in expired — reconnect GitHub in Settings to see new repositories.'
+            : null,
+        );
       } catch (error) {
         if (refresh) throw error;
         setRoomRepoCandidates(await transport.workspaceRoomRepositoryCandidates(activeCommunityId));
@@ -2199,7 +2204,7 @@ export default function BuzzChat() {
     try {
       await loadRoomRepoPicker(true);
     } catch (err) {
-      setRoomRepoError(`Could not load repos: ${String(err)}`);
+      setRoomRepoError('Could not load repos. Check your connection and try again.');
     }
   }, [activeCommunityId, loadRoomRepoPicker, showRoomRepoPicker, transport]);
 

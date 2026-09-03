@@ -93,11 +93,27 @@ function canAssignRole(viewerRole: WorkspaceRole, role: WorkspaceRole): boolean 
   return viewerRole === 'owner' || (viewerRole === 'admin' && role !== 'owner');
 }
 
-function axisValue(detail: AgentDetailView, axis: AgentModelConfigOption): string | undefined {
-  if (axis.category === 'model') {
-    return detail.selected?.model ?? detail.runtimeSelection?.model ?? axis.currentValue;
+type ModelAxisKind = 'model' | 'effort';
+
+/** The harness-generic effort ladder offered when no live catalog has arrived. */
+const GENERIC_EFFORT_LADDER: AgentModelConfigOption['options'] = [
+  { id: 'low' },
+  { id: 'medium' },
+  { id: 'high' },
+  { id: 'xhigh' },
+];
+const MODEL_APPLIES_NOTE_MS = 4_000;
+const UNSET_VALUE = '—';
+
+function axisValue(
+  detail: AgentDetailView,
+  kind: ModelAxisKind,
+  axis: AgentModelConfigOption | undefined,
+): string | undefined {
+  if (kind === 'model') {
+    return detail.selected?.model ?? detail.runtimeSelection?.model ?? axis?.currentValue;
   }
-  return detail.selected?.effort ?? detail.runtimeSelection?.effort ?? axis.currentValue;
+  return detail.selected?.effort ?? detail.runtimeSelection?.effort ?? axis?.currentValue;
 }
 
 /** The server's own refusal text when it sent one; otherwise the thrown reason. */
@@ -133,9 +149,12 @@ function yoloSetByLine(yolo: NonNullable<AgentDetailView['yolo']>): string | nul
  */
 function modelSelectionInput(
   detail: AgentDetailView,
-  axis: AgentModelConfigOption,
+  axis: AgentModelConfigOption | undefined,
   model: string,
 ): AgentModelConfigInput {
+  if (!axis) {
+    return axisValue(detail, 'model', undefined) === model ? { model } : { model, effort: null };
+  }
   if (axis.currentValue !== model) return { model, effort: null };
   const effortAxis = detail.catalog.find((candidate) => candidate.category !== 'model');
   const effort = effortAxis?.currentValue;
@@ -159,8 +178,10 @@ export default function BuzzMembers() {
   const [agentNameDraft, setAgentNameDraft] = useState('');
   const [agentSoulDraft, setAgentSoulDraft] = useState('');
   const [roleEditorPubkey, setRoleEditorPubkey] = useState<string | null>(null);
-  const [openModelAxis, setOpenModelAxis] = useState<string | null>(null);
+  const [openModelAxis, setOpenModelAxis] = useState<ModelAxisKind | null>(null);
   const [modelSearchQuery, setModelSearchQuery] = useState('');
+  const [modelAppliesNote, setModelAppliesNote] = useState<ModelAxisKind | null>(null);
+  const modelAppliesTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [relayUrl, setRelayUrl] = useState<string | null>(null);
   const [working, setWorking] = useState<MembersAction | null>(null);
@@ -289,6 +310,7 @@ export default function BuzzMembers() {
     const generation = ++agentRequestGenerationRef.current;
     setRoleEditorPubkey(null);
     setOpenModelAxis(null);
+    setModelAppliesNote(null);
     setEditingAgentSoul(false);
     setError(null);
     const address = surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id/agents/:agentId', {
@@ -442,11 +464,26 @@ export default function BuzzMembers() {
     }
   };
 
-  const setModelOption = async (axis: AgentModelConfigOption, choiceId: string) => {
+  const showModelAppliesNote = (kind: ModelAxisKind) => {
+    if (modelAppliesTimerRef.current) clearTimeout(modelAppliesTimerRef.current);
+    setModelAppliesNote(kind);
+    modelAppliesTimerRef.current = setTimeout(() => {
+      modelAppliesTimerRef.current = null;
+      setModelAppliesNote(null);
+    }, MODEL_APPLIES_NOTE_MS);
+  };
+  useEffect(
+    () => () => {
+      if (modelAppliesTimerRef.current) clearTimeout(modelAppliesTimerRef.current);
+    },
+    [],
+  );
+
+  const setModelOption = async (kind: ModelAxisKind, choiceId: string) => {
     if (!selectedAgent || !surface?.viewer.permissions.manage) return;
-    if (!isAllowedAgentModelConfigCategory(axis.category)) return;
+    const axis = kind === 'model' ? modelAxes.model : modelAxes.effort;
     const input: AgentModelConfigInput =
-      axis.category === 'model'
+      kind === 'model'
         ? modelSelectionInput(selectedAgent, axis, choiceId)
         : { effort: choiceId };
     setWorking('model-config');
@@ -458,16 +495,15 @@ export default function BuzzMembers() {
       await waitForIndexedSurface(
         () => readAgent(pubkey),
         (value) =>
-          axis.category === 'model'
+          kind === 'model'
             ? value.selected?.model === choiceId
             : value.selected?.effort === choiceId,
       );
       setOpenModelAxis(null);
       setModelSearchQuery('');
+      showModelAppliesNote(kind);
     } catch (reason) {
-      setError(
-        `Could not set ${axis.category === 'model' ? 'model' : 'effort'}: ${String(reason)}`,
-      );
+      setError(`Could not set ${kind}: ${String(reason)}`);
     } finally {
       setWorking(null);
     }
@@ -556,19 +592,20 @@ export default function BuzzMembers() {
     const selectedModel = selectedAgent?.selected?.model ?? selectedAgent?.runtimeSelection?.model;
     const awaitingSelectedModelCatalog =
       Boolean(advertisedModel) && Boolean(selectedModel) && advertisedModel !== selectedModel;
-    return (
+    const live =
       selectedAgent?.catalog.filter(
-        (axis) =>
-          isAllowedAgentModelConfigCategory(axis.category) &&
-          axis.options.length > 0 &&
-          // Effort choices may be model-specific. After a model switch, hide
-          // the old model's effort axis until the agent republishes a catalog
-          // whose current model matches the persisted human selection.
-          !(axis.category !== 'model' && awaitingSelectedModelCatalog),
-      ) ?? []
-    );
+        (axis) => isAllowedAgentModelConfigCategory(axis.category) && axis.options.length > 0,
+      ) ?? [];
+    return {
+      model: live.find((axis) => axis.category === 'model'),
+      // Effort choices may be model-specific. After a model switch, fall back
+      // to the generic ladder until the agent republishes a catalog whose
+      // current model matches the persisted human selection.
+      effort: awaitingSelectedModelCatalog
+        ? undefined
+        : live.find((axis) => axis.category !== 'model'),
+    };
   }, [selectedAgent]);
-  const hasAdvertisedModelCatalog = modelAxes.length > 0;
 
   if (!surface && !error) {
     return (
@@ -883,51 +920,46 @@ export default function BuzzMembers() {
               </View>
               <View style={styles.modelSection}>
                 <Text style={styles.sectionLabel}>MODEL / EFFORT</Text>
-                <Text style={styles.detail} testID="model-config-activation-note">
-                  Changes apply when the next session starts. Some effort settings take effect only
-                  after restarting the paired agent.
-                </Text>
-                {!hasAdvertisedModelCatalog && (
-                  <Text style={styles.detail} testID="model-catalog-missing">
-                    This agent has not reported selectable model or effort choices yet. Choose them
-                    during beeline pair, then restart the agent; this page updates when its live
-                    catalog arrives.
-                  </Text>
-                )}
-                {modelAxes.map((axis) => {
-                  const isEffort = axis.category !== 'model';
-                  const choices = axis.options;
-                  const current = axisValue(selectedAgent, axis);
-                  const open = openModelAxis === axis.id;
-                  const visibleChoices = isEffort
-                    ? choices
-                    : filterAgentModelOptions(choices, modelSearchQuery);
+                {(['model', 'effort'] as const).map((kind) => {
+                  const axis = kind === 'model' ? modelAxes.model : modelAxes.effort;
+                  const current = axisValue(selectedAgent, kind, axis);
+                  const open = openModelAxis === kind;
+                  const freeEntry = kind === 'model' && !axis;
+                  const choices = axis?.options ?? (kind === 'effort' ? GENERIC_EFFORT_LADDER : []);
+                  const visibleChoices =
+                    kind === 'model' ? filterAgentModelOptions(choices, modelSearchQuery) : choices;
+                  const submitTypedModel = () => {
+                    const typed = modelSearchQuery.trim();
+                    if (freeEntry && typed) void setModelOption('model', typed);
+                  };
                   return (
-                    <View key={axis.id} style={styles.axisBlock}>
+                    <View key={kind} style={styles.axisBlock}>
                       <TouchableOpacity
                         disabled={!canManage || busy}
                         onPress={() => {
-                          setOpenModelAxis(open ? null : axis.id);
+                          setOpenModelAxis(open ? null : kind);
                           setModelSearchQuery('');
                         }}
                         style={styles.axisRow}
-                        testID={`model-axis-${axis.id}`}
+                        testID={`model-axis-${kind}`}
                       >
-                        <Text style={styles.axisLabel}>{isEffort ? 'EFFORT' : 'MODEL'}</Text>
+                        <Text style={styles.axisLabel}>{kind === 'model' ? 'MODEL' : 'EFFORT'}</Text>
                         <Text style={styles.axisValue} numberOfLines={1}>
-                          {current ?? 'Not set — tap to choose'}
+                          {current ?? UNSET_VALUE}
                         </Text>
                         {canManage && <Text style={styles.chevron}>{open ? '⌄' : '›'}</Text>}
                       </TouchableOpacity>
-                      {open && !isEffort && (
+                      {open && kind === 'model' && (
                         <TextInput
                           autoCapitalize="none"
                           autoCorrect={false}
                           editable={!busy}
                           onChangeText={setModelSearchQuery}
-                          placeholder="Search models"
+                          onSubmitEditing={submitTypedModel}
+                          placeholder={freeEntry ? 'Model id' : 'Search models'}
+                          returnKeyType={freeEntry ? 'done' : 'search'}
                           style={styles.modelSearchInput}
-                          testID={`model-search-${axis.id}`}
+                          testID="model-search-model"
                           value={modelSearchQuery}
                         />
                       )}
@@ -936,14 +968,19 @@ export default function BuzzMembers() {
                           <TouchableOpacity
                             key={choice.id}
                             disabled={busy}
-                            onPress={() => void setModelOption(axis, choice.id)}
+                            onPress={() => void setModelOption(kind, choice.id)}
                             style={[styles.choice, choice.id === current && styles.choiceActive]}
-                            testID={`model-option-${axis.id}-${choice.id}`}
+                            testID={`model-option-${kind}-${choice.id}`}
                           >
                             <Text style={styles.choiceText}>{choice.name ?? choice.id}</Text>
                             {choice.id === current && <Text style={styles.choiceText}>✓</Text>}
                           </TouchableOpacity>
                         ))}
+                      {modelAppliesNote === kind && (
+                        <Text style={styles.detail} testID={`model-applies-${kind}`}>
+                          Applies at the next session
+                        </Text>
+                      )}
                     </View>
                   );
                 })}
@@ -1164,7 +1201,7 @@ const styles = StyleSheet.create((theme) => {
     modelSection: { gap: 8 },
     axisBlock: { borderWidth: StyleSheet.hairlineWidth, borderColor: hull.border },
     axisRow: {
-      minHeight: 48,
+      minHeight: 44,
       flexDirection: 'row',
       alignItems: 'center',
       gap: 10,
@@ -1177,6 +1214,7 @@ const styles = StyleSheet.create((theme) => {
       fontSize: 11,
       flex: 1,
       minWidth: 0,
+      textAlign: 'right',
     },
     grantSection: { gap: 6 },
     grantRow: {

@@ -23,6 +23,7 @@ import { loadBodyConfig } from './config.js';
 import { formatAgentCommand } from './agent-command.js';
 import { LEGACY_ACCESS_POLICY } from './access-policy.js';
 import { applyRuntimeModelPreflight } from './runtime-model-validation.js';
+import { syncAgentModelCatalog } from './model-catalog-sync.js';
 import { ThinDaemonCore } from './thin-core.js';
 import { activateDaemonTransport } from './daemon-api-client.js';
 import {
@@ -270,6 +271,17 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
         await writeDaemonReleaseStatus(runtimeDir, runtime.agent.publicKey, loadedReleaseIdentity);
         await notifier.ready(`ready; loaded_release=${loadedRelease ?? 'development'}`);
         ready = true;
+        // One bounded harness probe per activation keeps the phone's MODEL /
+        // EFFORT rows current; it never blocks readiness or the Room loop.
+        void syncAgentModelCatalog({
+          api: daemonApi,
+          agent,
+          agentEnv: config.agentEnv,
+          agentId: runtime.agent.publicKey,
+          workspaceId: runtime.communityId,
+          runtimeDir,
+          ...(runtime.modelSelection ? { runtimeSelection: runtime.modelSelection } : {}),
+        });
       },
       onProgress: async (status) => {
         void drainRollbackAlert(core.activeRoomIds()[0] ?? runtime.rooms[0]?.channelId);

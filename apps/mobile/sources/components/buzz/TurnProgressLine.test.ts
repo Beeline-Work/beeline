@@ -26,15 +26,38 @@ vi.mock('expo-haptics', () => ({
   NotificationFeedbackType: { Success: 'success' },
 }));
 
+vi.mock('react-native-svg', async () => {
+  const ReactModule = await import('react');
+  const host = (name: string) => (props: any) =>
+    ReactModule.createElement(name, props, props.children);
+  return { default: host('Svg'), Path: host('Path') };
+});
+
+const motion = vi.hoisted(() => ({ reducedMotion: false }));
+
 vi.mock('react-native-reanimated', async () => {
   const ReactModule = await import('react');
   return {
-    default: { View: (props: any) => ReactModule.createElement('AnimatedView', props) },
-    Easing: { linear: 'linear', out: (fn: unknown) => fn, poly: (n: number) => n },
+    default: {
+      View: (props: any) => ReactModule.createElement('AnimatedView', props),
+      // The animated path renders under its own host name so a test can tell
+      // the drawing ribbon from the static completed mark.
+      createAnimatedComponent: () => (props: any) =>
+        ReactModule.createElement('AnimatedPath', props),
+    },
+    Easing: {
+      cubic: 'cubic',
+      inOut: (fn: unknown) => fn,
+      linear: 'linear',
+      out: (fn: unknown) => fn,
+      poly: (n: number) => n,
+    },
     ReduceMotion: { System: 'system' },
+    useAnimatedProps: (factory: () => unknown) => factory(),
     useAnimatedStyle: (factory: () => unknown) => factory(),
-    useReducedMotion: () => false,
+    useReducedMotion: () => motion.reducedMotion,
     useSharedValue: (value: number) => ({ value }),
+    withDelay: (_ms: number, value: unknown) => value,
     withRepeat: (value: unknown) => value,
     withTiming: (value: number) => value,
     withSequence: (value: unknown) => value,
@@ -43,7 +66,7 @@ vi.mock('react-native-reanimated', async () => {
 });
 
 import { groknight } from '@/buzz/groknight';
-import { SPINNER_FRAMES, SPINNER_STEP_MS } from '@/buzz/turn-clock';
+import { MARK_CELL, ribbon } from './BeelineMarkSpinner';
 import { TurnProgressLine, TurnSettledLine } from './TurnProgressLine';
 
 const originalConsoleError = console.error;
@@ -70,13 +93,16 @@ function render(element: React.ReactElement): ReactTestRenderer {
 }
 
 describe('the per-turn progress indicator', () => {
-  afterEach(() => vi.useRealTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    motion.reducedMotion = false;
+  });
 
   it('says the agent is thinking, and nothing about any corner', () => {
     const renderer = render(
       React.createElement(TurnProgressLine, { label: 'beebee thinking\u2026' }),
     );
-    const label = renderer.root.findAllByType('Text')[1];
+    const label = renderer.root.findAllByType('Text')[0];
     expect(label.props.children).toBe('beebee thinking\u2026');
     // No `view \u2192`: there is nowhere for a turn in progress to go.
     expect(renderer.root.findAllByType('Pressable')).toHaveLength(0);
@@ -132,37 +158,89 @@ describe('the per-turn progress indicator', () => {
     expect(counter()).toBe('12s \u00b7 thinking');
   });
 
-  it('cycles the spinner glyph forward and back while counting', () => {
-    vi.useFakeTimers();
-    const startedAt = 1_000;
-    vi.setSystemTime(startedAt * 1_000);
+  it('draws the Beeline mark as a brass ribbon, not a cycling text glyph', () => {
     const renderer = render(
-      React.createElement(TurnProgressLine, { label: 'beebee Thinking\u2026', startedAt }),
+      React.createElement(TurnProgressLine, {
+        label: 'beebee Thinking\u2026',
+        startedAt: 1_000,
+        testID: 'turn-progress-line',
+      }),
     );
-    const glyph = () => renderer.root.findAllByType('Text')[0].props.children;
-    expect(glyph()).toBe(SPINNER_FRAMES[0]);
-    for (let step = 1; step <= 5; step += 1) {
-      act(() => {
-        vi.advanceTimersByTime(SPINNER_STEP_MS);
-      });
-      expect(glyph()).toBe(SPINNER_FRAMES[step]);
+    const cell = renderer.root.findByProps({ testID: 'turn-progress-line-glyph' });
+    // The mark is vector, in the cell; no Text carries a glyph before the label.
+    expect(cell.findAllByType('Text')).toHaveLength(0);
+    expect(cell.findAllByType('Svg')).toHaveLength(1);
+    const ribbons = cell.findAllByType('AnimatedPath');
+    expect(ribbons.length).toBeGreaterThanOrEqual(1);
+    for (const path of ribbons) {
+      // The authoritative geometry, stroked in the one accent: no fill, no
+      // second colour, and a dash as long as the outline so it can draw itself.
+      expect(path.props.d).toBe(ribbon.path);
+      expect(path.props.stroke).toBe(groknight.accent);
+      expect(path.props.fill).toBe('none');
+      expect(path.props.strokeDasharray).toEqual([ribbon.length, ribbon.length]);
     }
-    // Turnaround: the next step bounces back, never jumps.
-    act(() => {
-      vi.advanceTimersByTime(SPINNER_STEP_MS);
+    // Live means drawing: the static completed outline is not what is shown.
+    expect(cell.findAllByType('Path')).toHaveLength(0);
+    expect(renderer.root.findAllByType('Text')[0].props.children).toBe('beebee Thinking\u2026');
+  });
+
+  it('holds the mark in a fixed square so the label never jitters', () => {
+    const renderer = render(
+      React.createElement(TurnProgressLine, {
+        label: 'beebee Thinking\u2026',
+        startedAt: 1_000,
+        testID: 'turn-progress-line',
+      }),
+    );
+    const cell = renderer.root.findByProps({ testID: 'turn-progress-line-glyph' });
+    expect(cell.findAllByType('Text')).toHaveLength(0);
+    expect(cell.props.style).toMatchObject({
+      width: MARK_CELL,
+      height: MARK_CELL,
+      flexShrink: 0,
+      alignItems: 'center',
     });
-    expect(glyph()).toBe(SPINNER_FRAMES[4]);
+    expect(MARK_CELL).toBe(18);
+  });
+
+  it('shows the completed static mark under reduced motion', () => {
+    motion.reducedMotion = true;
+    const renderer = render(
+      React.createElement(TurnProgressLine, {
+        label: 'beebee Thinking\u2026',
+        startedAt: 1_000,
+        testID: 'turn-progress-line',
+      }),
+    );
+    const cell = renderer.root.findByProps({ testID: 'turn-progress-line-glyph' });
+    expect(cell.findAllByType('AnimatedPath')).toHaveLength(0);
+    const [mark] = cell.findAllByType('Path');
+    expect(mark.props.d).toBe(ribbon.path);
+    expect(mark.props.stroke).toBe(groknight.accent);
+    expect(mark.props.strokeDasharray).toBeUndefined();
   });
 
   it('settles to a static past-tense summary, with no counter', () => {
     const renderer = render(
-      React.createElement(TurnSettledLine, { line: 'Brewed for 14s \u00b7 done 7:10 PM' }),
+      React.createElement(TurnSettledLine, {
+        line: 'Brewed for 14s \u00b7 done 7:10 PM',
+        testID: 'turn-settled-line',
+      }),
     );
     const texts = renderer.root.findAllByType('Text');
     expect(texts.map((text) => text.props.children)).toEqual([
-      SPINNER_FRAMES[SPINNER_FRAMES.length - 1],
       'Brewed for 14s \u00b7 done 7:10 PM',
     ]);
     expect(renderer.root.findAllByType('AnimatedView')).toHaveLength(0);
+    // The settled row shares the live row's vocabulary: the same mark, in the
+    // same fixed cell, completed and still.
+    const cell = renderer.root.findByProps({ testID: 'turn-settled-line-glyph' });
+    expect(cell.props.style).toMatchObject({ width: MARK_CELL, height: MARK_CELL, flexShrink: 0 });
+    expect(cell.findAllByType('AnimatedPath')).toHaveLength(0);
+    const [mark] = cell.findAllByType('Path');
+    expect(mark.props.d).toBe(ribbon.path);
+    expect(mark.props.stroke).toBe(groknight.accent);
+    expect(mark.props.fill).toBe('none');
   });
 });

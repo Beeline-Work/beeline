@@ -10,6 +10,7 @@ import {
   harnessEnforcement,
   harnessHonorsSessionSystemPrompt,
   harnessSessionIdleMs,
+  roomModeCandidates,
   roomSandboxWarning,
   usesTextTargetBranchFallback,
 } from './harness-capabilities.js';
@@ -41,6 +42,32 @@ describe('session system-prompt delivery', () => {
     expect(harnessHonorsSessionSystemPrompt('grok')).toBe(false);
     expect(harnessHonorsSessionSystemPrompt('some-unknown-acp')).toBe(false);
     expect(harnessHonorsSessionSystemPrompt(undefined)).toBe(false);
+  });
+});
+
+describe('Room session modes', () => {
+  it('runs a codex Room in agent-full-access only while the OS sandbox holds the filesystem', () => {
+    // Codex's read-only mode is also offline (networkAccess:false). Under bwrap
+    // the checkout is already mounted read-only, so the Room runs full-access
+    // like a corner and gets network like claude/pi Rooms already have.
+    expect(roomModeCandidates('/usr/local/bin/codex-acp', { osSandbox: true })).toEqual([
+      'agent-full-access',
+    ]);
+    // Without bwrap nothing else holds the rule: keep Codex's own sandbox.
+    expect(roomModeCandidates('/usr/local/bin/codex-acp', { osSandbox: false })).toEqual([
+      'read-only',
+      'readonly',
+    ]);
+    expect(roomModeCandidates('codex-acp')).toEqual(['read-only', 'readonly']);
+  });
+
+  it('keeps the portable read-only candidates for every other harness', () => {
+    for (const osSandbox of [true, false]) {
+      expect(roomModeCandidates('claude-agent-acp', { osSandbox })).toEqual(['read-only', 'readonly']);
+      expect(roomModeCandidates('pi-acp', { osSandbox })).toEqual(['read-only', 'readonly']);
+      expect(roomModeCandidates('custom-acp', { osSandbox })).toEqual(['read-only', 'readonly']);
+      expect(roomModeCandidates(undefined, { osSandbox })).toEqual(['read-only', 'readonly']);
+    }
   });
 });
 
@@ -91,14 +118,28 @@ describe('harness permission enforcement', () => {
   });
 
   it('warns only for a harness the daemon cannot actually hold to the boundary', () => {
-    expect(roomSandboxWarning('codex-acp')).toBeUndefined();
     expect(roomSandboxWarning('claude-agent-acp')).toBeUndefined();
     expect(roomSandboxWarning('/home/op/.grok/bin/grok')).toBeUndefined();
     const warning = roomSandboxWarning('pi-acp');
     expect(warning).toMatch(/ADVISORY/);
     expect(warning).toMatch(/sandbox=OFF/);
     expect(warning).toMatch(/session\/request_permission/);
-    expect(roomSandboxWarning('some-unknown-acp')).toMatch(/ADVISORY/);
+    const unknown = roomSandboxWarning('some-unknown-acp');
+    expect(unknown).toMatch(/ADVISORY/);
+    // The fallback advice must not send an operator to codex expecting network.
+    expect(unknown).toMatch(/codex Rooms without bubblewrap stay offline-and-read-only/);
+  });
+
+  it('names which layer holds a codex Room in each sandbox state', () => {
+    const wrapped = roomSandboxWarning('codex-acp', { osSandbox: true });
+    expect(wrapped).toMatch(/sandbox=ON/);
+    expect(wrapped).toMatch(/agent-full-access/);
+    expect(wrapped).toMatch(/mounted read-only by bubblewrap/);
+    expect(wrapped).not.toMatch(/ADVISORY/);
+    const unwrapped = roomSandboxWarning('codex-acp');
+    expect(unwrapped).toMatch(/sandbox=OFF/);
+    expect(unwrapped).toMatch(/offline and read-only/);
+    expect(unwrapped).not.toMatch(/ADVISORY/);
   });
 
   it('stops calling the boundary advisory once the OS sandbox actually holds it', () => {
@@ -110,6 +151,6 @@ describe('harness permission enforcement', () => {
     expect(wrapped).not.toMatch(/ADVISORY/);
     expect(roomSandboxWarning('some-unknown-acp', { osSandbox: true })).toMatch(/sandbox=ON/);
     // A harness the callback already holds still needs no line at all.
-    expect(roomSandboxWarning('codex-acp', { osSandbox: true })).toBeUndefined();
+    expect(roomSandboxWarning('claude-agent-acp', { osSandbox: true })).toBeUndefined();
   });
 });

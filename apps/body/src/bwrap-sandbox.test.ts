@@ -19,6 +19,7 @@ import { createServer } from 'node:net';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import { AcpClient } from './acp.js';
 import {
   buildBwrapArgv,
   credentialMaskPaths,
@@ -553,6 +554,80 @@ liveDescribe('the wrapper enforces Room read-only and the corner hygiene denylis
 
     // The private /tmp is the one writable surface, and it is discarded.
     expect(runWrapped(spec, 'touch /tmp/scratch && echo ok').stdout.trim()).toBe('ok');
+  });
+
+  it('a full-access codex Room that never asks still cannot write: the kernel refuses, not the prompt', async () => {
+    // Under bwrap a codex Room selects `agent-full-access` (`roomModeCandidates`),
+    // so codex-acp stops sending session/request_permission. This fake codex
+    // runs the write DIRECTLY on prompt, never asking, exactly like a
+    // full-access harness — and the write must still die at the read-only
+    // filesystem. The Room callback (reject anything that is not a mounted MCP
+    // tool) stays wired but must never be the layer that held the rule here.
+    // Inside the checkout: the host /tmp is hidden behind the private one.
+    const fakeCodex = resolve(checkout, 'codex-acp.mjs');
+    writeFileSync(
+      fakeCodex,
+      `#!/usr/bin/env node
+import { createInterface } from 'node:readline';
+import { spawnSync } from 'node:child_process';
+const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');
+createInterface({ input: process.stdin }).on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') {
+    send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
+  } else if (message.method === 'session/new') {
+    send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 's', modes: {
+      currentModeId: 'read-only',
+      availableModes: [{ id: 'read-only' }, { id: 'agent' }, { id: 'agent-full-access' }],
+    } } });
+  } else if (message.method === 'session/set_mode') {
+    if (message.params.modeId !== 'agent-full-access') process.exit(71);
+    send({ jsonrpc: '2.0', id: message.id, result: {} });
+  } else if (message.method === 'session/prompt') {
+    const touch = spawnSync('touch', ['./evil.txt'], { encoding: 'utf8' });
+    send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 's', update: {
+      sessionUpdate: 'agent_message_chunk',
+      content: { type: 'text', text: 'exit=' + touch.status + ' ' + touch.stderr.trim() },
+    } } });
+    send({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn' } });
+  } else if (message.method === 'shutdown') {
+    process.exit(0);
+  }
+});
+`,
+      { mode: 0o755 },
+    );
+    const wrapped = wrapAgentCommand({
+      bwrapPath: bwrap.path!,
+      spec: { mode: 'readonly', cwd: checkout },
+      command: process.execPath,
+      args: [fakeCodex],
+    });
+    let permissionRequests = 0;
+    const client = new AcpClient({
+      agentCommand: wrapped.command,
+      agentArgs: wrapped.args,
+      agentLabel: fakeCodex,
+      agentEnv: {},
+      agentCwd: checkout,
+      osSandbox: true,
+      autoApprovePermissions: false,
+      permissionAllowlist: () => {
+        permissionRequests += 1;
+        return false;
+      },
+    });
+    await client.start();
+    try {
+      const { sessionId } = await client.sessionNew({ cwd: checkout, mode: 'readonly' });
+      const result = await client.sessionPrompt(sessionId, 'write evil.txt', 20_000);
+      expect(result.agentText).toMatch(/Read-only file system/);
+      expect(result.agentText).not.toMatch(/exit=0/);
+    } finally {
+      await client.stop();
+    }
+    expect(permissionRequests).toBe(0);
+    expect(existsSync(resolve(checkout, 'evil.txt'))).toBe(false);
   });
 
   it('keeps stores and session sockets created after activation outside the namespace', async () => {

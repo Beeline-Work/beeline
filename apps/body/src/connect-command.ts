@@ -9,6 +9,14 @@ import { clackPromptOutput, unwrapPrompt } from './clack-support.js';
 import { fetchAgentModelCatalog } from './model-catalog.js';
 import { completeDevicePairing, type DevicePairingGrant } from './device-pairing.js';
 import {
+  maskProviderKey,
+  PROVIDER_KEY_ENV_VARS,
+  providerKeyFromEnvironment,
+  readSavedProviderKey,
+  saveProviderKey,
+  type ProviderKeyProvider,
+} from './provider-key-store.js';
+import {
   activateRelease,
   defaultBeelineInstallLayout,
   hostPlatformKey,
@@ -30,8 +38,25 @@ function isReasonableAgentName(value: string): boolean {
   );
 }
 export const CONNECT_PROVIDER_HARNESSES = new Set<AgentKind>(['goose', 'pi']);
-export const CONNECT_PROVIDERS = ['openrouter', 'openai', 'anthropic', 'google', 'xai'] as const;
+export const CONNECT_PROVIDERS = [
+  'openrouter',
+  'openai',
+  'anthropic',
+  'google',
+  'xai',
+] as const;
 export type ConnectProvider = (typeof CONNECT_PROVIDERS)[number];
+
+/** Saved-key access seam so tests can stub the on-disk store. */
+export interface ConnectKeyStore {
+  read(provider: ConnectProvider): Promise<string | undefined>;
+  save(provider: ConnectProvider, key: string): Promise<void>;
+}
+
+export const fileConnectKeyStore: ConnectKeyStore = {
+  read: (provider: ProviderKeyProvider) => readSavedProviderKey(provider),
+  save: (provider: ProviderKeyProvider, key: string) => saveProviderKey(provider, key),
+};
 
 const DEFAULT_MODELS: Record<ConnectProvider | 'codex' | 'claude' | 'grok', string> = {
   openrouter: 'z-ai/glm-5.3-flash',
@@ -192,6 +217,8 @@ export async function collectConnectWizard(
     provider?: ConnectProvider;
     apiKey?: string;
   }) => Promise<ConnectModelCatalog> = loadConnectModelCatalog,
+  keyStore: ConnectKeyStore = fileConnectKeyStore,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<ConnectWizardResult> {
   const harness = await prompts.select<(typeof CONNECT_HARNESSES)[number]>({
     message: brass('Choose harness'),
@@ -212,10 +239,41 @@ export async function collectConnectWizard(
         ...(value === 'openrouter' ? { hint: 'default' } : {}),
       })),
     });
-    apiKey = await prompts.password({
-      message: brass(`${provider === 'openrouter' ? 'OpenRouter' : provider} API key`),
-      validate: (value) => (value.trim() ? undefined : 'API key is required'),
-    });
+    const providerLabel = provider === 'openrouter' ? 'OpenRouter' : provider;
+    const savedKey = await keyStore.read(provider);
+    const envKey = providerKeyFromEnvironment(provider, env);
+    const availableKey = savedKey ?? envKey;
+    if (availableKey) {
+      const masked = maskProviderKey(availableKey);
+      const choice = await prompts.select<'saved' | 'new'>({
+        message: brass(`${providerLabel} API key`),
+        initialValue: 'saved',
+        options: [
+          {
+            value: 'saved',
+            label: savedKey
+              ? `Use saved ${providerLabel} key (${masked})`
+              : `Use ${PROVIDER_KEY_ENV_VARS[provider]} from the environment (${masked})`,
+          },
+          { value: 'new', label: 'Enter a new key' },
+        ],
+      });
+      if (choice === 'saved') {
+        apiKey = availableKey;
+      } else {
+        apiKey = await prompts.password({
+          message: brass(`${providerLabel} API key`),
+          validate: (value) => (value.trim() ? undefined : 'API key is required'),
+        });
+        await keyStore.save(provider, apiKey.trim());
+      }
+    } else {
+      apiKey = await prompts.password({
+        message: brass(`${providerLabel} API key`),
+        validate: (value) => (value.trim() ? undefined : 'API key is required'),
+      });
+      await keyStore.save(provider, apiKey.trim());
+    }
   }
   const catalog = await loadModels({
     harness,

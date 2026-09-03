@@ -6,6 +6,9 @@ import { delimiter, resolve } from 'node:path';
 
 import { selectPairAgentCommand } from './pair-agent-selection.js';
 
+/** Hermetic: keep resolution on the fixture PATH only. */
+const PATH_ONLY = { BEELINE_HARNESS_PATH_AUGMENT: '0' } as const;
+
 const cleanup: string[] = [];
 
 afterEach(async () => {
@@ -40,7 +43,7 @@ function capture(): { output: Pick<NodeJS.WritableStream, 'write'>; text: () => 
 
 describe('pair agent auto-selection', () => {
   it('fails clearly when no real ACP-capable agent is installed', async () => {
-    await expect(selectPairAgentCommand({ env: { PATH: '' }, interactive: false })).rejects.toThrow(
+    await expect(selectPairAgentCommand({ env: { ...PATH_ONLY, PATH: '' }, interactive: false })).rejects.toThrow(
       /No supported ACP-capable coding agent.*codex.*claude.*goose.*pi.*--agent reference.*LLM key.*--agent custom/s,
     );
   });
@@ -50,7 +53,7 @@ describe('pair agent auto-selection', () => {
     const log = capture();
 
     const selected = await selectPairAgentCommand({
-      env: { PATH: directory },
+      env: { ...PATH_ONLY, PATH: directory },
       interactive: false,
       output: log.output,
     });
@@ -66,7 +69,7 @@ describe('pair agent auto-selection', () => {
     const selectAgent = vi.fn().mockResolvedValue('goose');
 
     const selected = await selectPairAgentCommand({
-      env: { PATH: [codex, goose].join(delimiter) },
+      env: { ...PATH_ONLY, PATH: [codex, goose].join(delimiter) },
       interactive: true,
       output: log.output,
       selectAgent,
@@ -85,7 +88,7 @@ describe('pair agent auto-selection', () => {
     const log = capture();
 
     const selected = await selectPairAgentCommand({
-      env: { PATH: grok },
+      env: { ...PATH_ONLY, PATH: grok },
       interactive: false,
       output: log.output,
     });
@@ -104,7 +107,7 @@ describe('pair agent auto-selection', () => {
 
     await expect(
       selectPairAgentCommand({
-        env: { PATH: [codex, goose].join(delimiter) },
+        env: { ...PATH_ONLY, PATH: [codex, goose].join(delimiter) },
         interactive: false,
       }),
     ).rejects.toThrow(/codex, goose.*non-interactive.*--agent <name>/);
@@ -117,7 +120,7 @@ describe('pair agent auto-selection', () => {
     const selectAgent = vi.fn().mockResolvedValue('claude');
 
     const selected = await selectPairAgentCommand({
-      env: { PATH: directory },
+      env: { ...PATH_ONLY, PATH: directory },
       interactive: true,
       output: log.output,
       selectAgent,
@@ -168,7 +171,7 @@ describe('pair agent auto-selection', () => {
 
       const selected = await selectPairAgentCommand({
         explicitKind: kind,
-        env: { PATH: directory },
+        env: { ...PATH_ONLY, PATH: directory },
         interactive: true,
         confirmInstall,
         install: async (command) => {
@@ -190,7 +193,7 @@ describe('pair agent auto-selection', () => {
     await expect(
       selectPairAgentCommand({
         explicitKind: 'pi',
-        env: { PATH: directory },
+        env: { ...PATH_ONLY, PATH: directory },
         interactive: true,
         confirmInstall: async () => false,
         install: async () => {
@@ -210,7 +213,7 @@ describe('pair agent auto-selection', () => {
     await expect(
       selectPairAgentCommand({
         explicitKind: 'pi',
-        env: { PATH: directory },
+        env: { ...PATH_ONLY, PATH: directory },
         interactive: false,
         output: log.output,
         install: async () => {
@@ -230,7 +233,7 @@ describe('pair agent auto-selection', () => {
 
     await expect(
       selectPairAgentCommand({
-        env: { PATH: directory },
+        env: { ...PATH_ONLY, PATH: directory },
         interactive: false,
         output: log.output,
         install: async () => {
@@ -252,7 +255,7 @@ describe('pair agent auto-selection', () => {
     const selectAgent = vi.fn().mockImplementation(async () => picks.shift());
 
     const selected = await selectPairAgentCommand({
-      env: { PATH: directory },
+      env: { ...PATH_ONLY, PATH: directory },
       interactive: true,
       output: log.output,
       selectAgent,
@@ -276,7 +279,7 @@ describe('pair agent auto-selection', () => {
 
     const selected = await selectPairAgentCommand({
       explicitKind: 'reference',
-      env: { PATH: reference },
+      env: { ...PATH_ONLY, PATH: reference },
       interactive: true,
       selectAgent,
     });
@@ -292,7 +295,7 @@ describe('pair agent auto-selection', () => {
       selectPairAgentCommand({
         explicitKind: 'custom',
         customCommand: 'my-acp serve --stdio',
-        env: { PATH: directory },
+        env: { ...PATH_ONLY, PATH: directory },
         interactive: false,
       }),
     ).resolves.toEqual({
@@ -324,7 +327,7 @@ describe('pair agent selection — clack cancel handling', () => {
 
       await expect(
         selectWithMockedClack({
-          env: { PATH: [codex, goose].join(delimiter) },
+          env: { ...PATH_ONLY, PATH: [codex, goose].join(delimiter) },
           interactive: true,
         }),
       ).rejects.toThrow('process.exit(1)');

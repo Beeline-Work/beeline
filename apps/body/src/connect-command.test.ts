@@ -6,6 +6,7 @@ import {
   defaultConnectModel,
   requestConnectGrant,
   runConnectFinishCommand,
+  type ConnectKeyStore,
   type ConnectPrompts,
 } from './connect-command.js';
 
@@ -179,10 +180,14 @@ describe('connect wizard', () => {
     ]);
 
     await expect(
-      collectConnectWizard(fixture.prompts, async () => ({
-        currentValue: 'z-ai/glm-5.3-flash',
-        options: [{ id: 'z-ai/glm-5.3-flash', name: 'GLM 5.3 Flash' }],
-      })),
+      collectConnectWizard(
+        fixture.prompts,
+        async () => ({
+          currentValue: 'z-ai/glm-5.3-flash',
+          options: [{ id: 'z-ai/glm-5.3-flash', name: 'GLM 5.3 Flash' }],
+        }),
+        { read: async () => undefined, save: async () => {} },
+      ),
     ).resolves.toEqual({
       name: 'Piper',
       harness: 'pi',
@@ -202,6 +207,107 @@ describe('connect wizard', () => {
     expect(fixture.calls[1]).toContain(':openrouter');
     expect(fixture.calls[3]).toContain(':z-ai/glm-5.3-flash');
     expect(defaultConnectModel('goose', 'openrouter')).toBe('z-ai/glm-5.3-flash');
+  });
+
+  it('offers the saved OpenRouter key as the default instead of re-asking', async () => {
+    const savedKey = 'sk-or-v1-abcdefghijklmn123';
+    const keyStore: ConnectKeyStore = {
+      read: vi.fn(async () => savedKey),
+      save: vi.fn(async () => {}),
+    };
+    const fixture = promptFixture([
+      'pi',
+      'openrouter',
+      'saved',
+      'z-ai/glm-5.3-flash',
+      'Piper',
+      'Warm and incisive.',
+    ]);
+
+    await expect(
+      collectConnectWizard(
+        fixture.prompts,
+        async () => ({
+          currentValue: 'z-ai/glm-5.3-flash',
+          options: [{ id: 'z-ai/glm-5.3-flash', name: 'GLM 5.3 Flash' }],
+        }),
+        keyStore,
+      ),
+    ).resolves.toEqual({
+      name: 'Piper',
+      harness: 'pi',
+      provider: 'openrouter',
+      apiKey: savedKey,
+      model: 'z-ai/glm-5.3-flash',
+      soul: 'Warm and incisive.',
+    });
+    expect(fixture.calls[2]).toContain('OpenRouter API key');
+    expect(fixture.calls.every((call) => !call.includes(savedKey))).toBe(true);
+    expect(fixture.calls.map((call) => call.split(':', 1)[0])).toEqual([
+      'select',
+      'select',
+      'select',
+      'autocomplete',
+      'text',
+      'text',
+    ]);
+    expect(keyStore.save).not.toHaveBeenCalled();
+  });
+
+  it('replaces the stored key when the user enters a new one', async () => {
+    const keyStore: ConnectKeyStore = {
+      read: vi.fn(async () => 'sk-or-v1-oldoldoldoldold99'),
+      save: vi.fn(async () => {}),
+    };
+    const fixture = promptFixture([
+      'pi',
+      'openrouter',
+      'new',
+      'sk-or-v1-freshfreshfresh7',
+      'z-ai/glm-5.3-flash',
+      'Piper',
+      'Warm and incisive.',
+    ]);
+
+    await expect(
+      collectConnectWizard(
+        fixture.prompts,
+        async () => ({
+          currentValue: 'z-ai/glm-5.3-flash',
+          options: [{ id: 'z-ai/glm-5.3-flash', name: 'GLM 5.3 Flash' }],
+        }),
+        keyStore,
+      ),
+    ).resolves.toMatchObject({ apiKey: 'sk-or-v1-freshfreshfresh7' });
+    expect(keyStore.save).toHaveBeenCalledWith('openrouter', 'sk-or-v1-freshfreshfresh7');
+  });
+
+  it('falls back to an environment key without storing it', async () => {
+    const keyStore: ConnectKeyStore = {
+      read: vi.fn(async () => undefined),
+      save: vi.fn(async () => {}),
+    };
+    const fixture = promptFixture([
+      'pi',
+      'openrouter',
+      'saved',
+      'z-ai/glm-5.3-flash',
+      'Piper',
+      'Warm and incisive.',
+    ]);
+
+    await expect(
+      collectConnectWizard(
+        fixture.prompts,
+        async () => ({
+          currentValue: 'z-ai/glm-5.3-flash',
+          options: [{ id: 'z-ai/glm-5.3-flash', name: 'GLM 5.3 Flash' }],
+        }),
+        keyStore,
+        { OPENROUTER_API_KEY: 'sk-or-v1-envenvenvenv0' },
+      ),
+    ).resolves.toMatchObject({ apiKey: 'sk-or-v1-envenvenvenv0' });
+    expect(keyStore.save).not.toHaveBeenCalled();
   });
 
   it('uses brass color only when the terminal supports it', () => {

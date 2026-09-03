@@ -182,7 +182,7 @@ describe('room event projection', () => {
     });
   });
 
-  it('projects a corner-open daemon fact with its human name and objective', () => {
+  it('projects a corner-open daemon fact with its objective as the sole summary', () => {
     const cornerId = '80a5a6f1-fb5a-493b-93eb-f3db33f696e6';
     expect(
       projectEvent(
@@ -198,7 +198,6 @@ describe('room event projection', () => {
             ['t', 'corner-open'],
             ['subchannel', cornerId],
             ['objective', 'Fix the flaky auth test'],
-            ['name', 'Fix flaky auth test'],
           ],
           content: 'Corner opened: Fix flaky auth test',
         },
@@ -211,12 +210,11 @@ describe('room event projection', () => {
         type: 'corner-open',
         cornerId,
         objective: 'Fix the flaky auth test',
-        name: 'Fix flaky auth test',
       },
     });
   });
 
-  it('discards a corner-open daemon fact missing its human name', () => {
+  it('projects a corner-open daemon fact without a generated name', () => {
     const cornerId = '80a5a6f1-fb5a-493b-93eb-f3db33f696e6';
     expect(
       projectEvent(
@@ -237,7 +235,9 @@ describe('room event projection', () => {
         },
         'room',
       ),
-    ).toBeUndefined();
+    ).toMatchObject({
+      daemonFact: { type: 'corner-open', cornerId, objective: 'Fix the flaky auth test' },
+    });
   });
 
   it('keeps the completed plan durable while projecting current tool activity only live', () => {

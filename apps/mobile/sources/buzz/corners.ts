@@ -126,7 +126,7 @@ export function resolveCornerLifecycleStatus(
 }
 
 export function cornerName(name: string | undefined, id: string): string {
-  const candidate = name?.trim().replace(/^#+/, '').replace(/\s+/g, '-');
+  const candidate = name?.trim().replace(/^#+/, '');
   if (!candidate || candidate.startsWith('sub-')) return `corner-${id.slice(0, 8)}`;
   return candidate;
 }

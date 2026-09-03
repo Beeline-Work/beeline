@@ -101,18 +101,18 @@ describe('chat header title (the # channel-mark convention)', () => {
       channelHeaderTitle('fix oauth callback', 'corner', 'c0ffee00deadbeef', {
         parentRoomName: 'Payments',
       }),
-    ).toBe('#Payments/fix-oauth-callback');
+    ).toBe('#Payments/fix oauth callback');
   });
 
   it('degrades a corner to the honest #<corner> while the parent name is unresolved', () => {
     expect(channelHeaderTitle('fix oauth callback', 'corner', 'c0ffee00deadbeef')).toBe(
-      '#fix-oauth-callback',
+      '#fix oauth callback',
     );
     expect(
       channelHeaderTitle('fix oauth callback', 'corner', 'c0ffee00deadbeef', {
         parentRoomName: null,
       }),
-    ).toBe('#fix-oauth-callback');
+    ).toBe('#fix oauth callback');
     // A corner with no stored name falls through to the id slug — marked,
     // never empty, and never the word "Room".
     expect(
@@ -126,7 +126,7 @@ describe('chat header title (the # channel-mark convention)', () => {
       channelHeaderTitle('fix oauth callback', 'corner', 'c0ffee00deadbeef', {
         parentRoomName: '#Payments',
       }),
-    ).toBe('#Payments/fix-oauth-callback');
+    ).toBe('#Payments/fix oauth callback');
   });
 
   it('marks a confirmed Room name, keeps the skeleton, and spares the generic label', () => {

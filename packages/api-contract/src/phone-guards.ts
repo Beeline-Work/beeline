@@ -278,8 +278,6 @@ function daemonFact(value: unknown): boolean {
     typeof item.objective !== 'string' ||
     !item.objective.trim() ||
     (item.outcome !== undefined && item.outcome !== 'landed' && item.outcome !== 'abandoned') ||
-    !optionalString(item.name) ||
-    (item.type === 'corner-open' && (typeof item.name !== 'string' || !item.name.trim())) ||
     (pullRequest !== undefined &&
       (!pullRequest ||
         (pullRequest.number !== undefined &&

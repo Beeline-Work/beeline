@@ -549,13 +549,13 @@ describe('Room row presentation', () => {
   describe('displayCornerTitle (the corner half of the same convention)', () => {
     it('composes #<room>/<corner> from stored names', () => {
       expect(displayCornerTitle('Roadmap', 'fix ledger drift', 'abc12345')).toBe(
-        '#Roadmap/fix-ledger-drift',
+        '#Roadmap/fix ledger drift',
       );
     });
 
     it('never double-prefixes either part', () => {
       expect(displayCornerTitle('#Roadmap', 'fix ledger drift', 'abc12345')).toBe(
-        '#Roadmap/fix-ledger-drift',
+        '#Roadmap/fix ledger drift',
       );
       // cornerName strips leading marks from a stored corner slug too.
       expect(displayCornerTitle('Roadmap', '#fix-ledger-drift', 'abc12345')).toBe(
@@ -565,10 +565,10 @@ describe('Room row presentation', () => {
 
     it('degrades to the honest #<corner> when the parent Room name is unknown or unresolved', () => {
       expect(displayCornerTitle(undefined, 'fix ledger drift', 'abc12345')).toBe(
-        '#fix-ledger-drift',
+        '#fix ledger drift',
       );
-      expect(displayCornerTitle(null, 'fix ledger drift', 'abc12345')).toBe('#fix-ledger-drift');
-      expect(displayCornerTitle('   ', 'fix ledger drift', 'abc12345')).toBe('#fix-ledger-drift');
+      expect(displayCornerTitle(null, 'fix ledger drift', 'abc12345')).toBe('#fix ledger drift');
+      expect(displayCornerTitle('   ', 'fix ledger drift', 'abc12345')).toBe('#fix ledger drift');
     });
 
     it('falls through to the id-slug fallback instead of an empty label', () => {
@@ -582,7 +582,7 @@ describe('Room row presentation', () => {
       const room = 'Roadmap';
       const corner = 'fix ledger drift';
       const display = displayCornerTitle(room, corner, 'abc12345');
-      expect(display).toBe('#Roadmap/fix-ledger-drift');
+      expect(display).toBe('#Roadmap/fix ledger drift');
       expect(room).toBe('Roadmap');
       expect(corner).toBe('fix ledger drift');
     });

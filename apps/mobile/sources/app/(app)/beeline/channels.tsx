@@ -60,6 +60,8 @@ import { Typography } from '@/constants/Typography';
 
 const AGE_TICK_MS = 60_000;
 const COMPOSE_FAB_CLEARANCE = 80;
+/** The empty deck's one primary: the same 44pt touch height as the FAB. */
+const EMPTY_PRIMARY_HEIGHT = 44;
 /** Speakeasy index row: 64 tall, a 40px identity tile leading. */
 const ROW_HEIGHT = 64;
 const ROW_TILE_SIZE = 40;
@@ -476,7 +478,7 @@ export default function BuzzChannels() {
   if (workspaceList?.workspaces.length === 0) {
     return (
       <View style={[styles.center, { paddingTop: insets.top }]} testID="workspace-list-empty">
-        <Text style={styles.emptyTitle}>No rooms yet</Text>
+        <Text style={styles.emptyTitle}>No Rooms yet</Text>
         <Text style={styles.emptyCopy}>Create a Workspace to start adding Rooms.</Text>
         <MonoButton
           label="CREATE WORKSPACE"
@@ -614,24 +616,33 @@ export default function BuzzChannels() {
           }}
           contentContainerStyle={chatList.chats.length ? styles.list : styles.emptyList}
           ListEmptyComponent={
+            // One quiet block in the upper third of the deck, not a hero in
+            // the void: the FAB already anchors the bottom. Exactly one
+            // obviously tappable primary (a 44pt content-width brass button,
+            // sentence case) and a quiet brass text link beside it — never a
+            // second box, never a tracked-uppercase label (those are section
+            // heads only).
             <View style={styles.empty}>
-              <Text style={styles.emptyTitle}>No rooms yet</Text>
+              <Text style={styles.emptyTitle}>No Rooms yet</Text>
               <Text style={styles.emptyCopy}>Start a Room to begin.</Text>
               {!viewerIsAgent && (
                 <View style={styles.emptyActions}>
-                  <MonoButton
-                    label="ADD ROOM"
+                  <TouchableOpacity
+                    accessibilityRole="button"
                     onPress={() => setShowCreateRoom(true)}
-                    style={styles.emptyAction}
+                    style={styles.emptyPrimary}
                     testID="empty-add-room"
-                  />
-                  <MonoButton
-                    label="INVITE AGENT"
+                  >
+                    <Text style={styles.emptyPrimaryLabel}>Start a Room</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    accessibilityRole="link"
                     onPress={() => compose('agent')}
-                    style={styles.emptyAction}
+                    style={styles.emptyLink}
                     testID="empty-invite-agent"
-                    variant="secondary"
-                  />
+                  >
+                    <Text style={styles.emptyLinkLabel}>Invite an agent</Text>
+                  </TouchableOpacity>
                 </View>
               )}
             </View>
@@ -760,9 +771,7 @@ export default function BuzzChannels() {
                             style={styles.cornerRow}
                             testID={`room-corner-${corner.corner.id}`}
                           >
-                            <Text style={styles.cornerName}>
-                              └ {label}
-                            </Text>
+                            <Text style={styles.cornerName}>└ {label}</Text>
                             <Text style={styles.cornerStatus}>{status}</Text>
                             <Text style={styles.cornerChevron}>›</Text>
                           </TouchableOpacity>
@@ -868,12 +877,36 @@ const styles = StyleSheet.create((theme) => {
     // clear of the floating compose control without turning that control into
     // a visually separate footer cell.
     list: { paddingBottom: COMPOSE_FAB_CLEARANCE },
-    emptyList: { flexGrow: 1, justifyContent: 'center', paddingBottom: COMPOSE_FAB_CLEARANCE },
-    empty: { alignItems: 'center', gap: 8, padding: 24 },
-    emptyTitle: { ...Typography.default('semiBold'), color: hull.textPrimary, fontSize: 18 },
-    emptyCopy: { ...Typography.default(), color: hull.textMuted, fontSize: 12 },
-    emptyActions: { width: '100%', maxWidth: 280, gap: 10, paddingTop: 10 },
-    emptyAction: { width: '100%' },
+    emptyList: {
+      flexGrow: 1,
+      justifyContent: 'flex-start',
+      paddingTop: hull.space.xxl,
+      paddingBottom: COMPOSE_FAB_CLEARANCE,
+    },
+    empty: { alignItems: 'flex-start', gap: hull.space.sm, paddingHorizontal: hull.space.md },
+    emptyTitle: { ...Typography.default(), ...hull.type.body, color: hull.textPrimary },
+    emptyCopy: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
+    emptyActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: hull.space.md,
+      marginTop: hull.space.sm,
+    },
+    emptyPrimary: {
+      height: EMPTY_PRIMARY_HEIGHT,
+      alignSelf: 'flex-start',
+      justifyContent: 'center',
+      paddingHorizontal: hull.space.md,
+      backgroundColor: hull.accent,
+      borderRadius: hull.radius,
+    },
+    emptyPrimaryLabel: {
+      ...Typography.default('semiBold'),
+      ...hull.type.bodyStrong,
+      color: hull.textInverted,
+    },
+    emptyLink: { height: EMPTY_PRIMARY_HEIGHT, justifyContent: 'center' },
+    emptyLinkLabel: { ...Typography.default(), ...hull.type.meta, color: hull.accent },
     roomCell: {
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: hull.border,

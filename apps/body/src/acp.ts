@@ -87,6 +87,10 @@ export interface PromptResult {
   toolCalls: ToolCallEntry[];
 }
 
+/** One `session/prompt` content block: text, or an inline image for a harness that advertises `promptCapabilities.image`. */
+export type AcpPromptBlock =
+  { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string };
+
 export interface SteerResult {
   runId: string;
   messageId: string;
@@ -456,6 +460,7 @@ export class AcpClient extends EventEmitter {
   private sessionCommands = new Map<string, AcpAvailableCommand[]>();
   private supportsStandardSteering = false;
   private supportsSessionLoading = false;
+  private supportsImagePrompts = false;
   private alive = false;
   /** Bounded tail of recent stderr, so a spawn/exit failure's rejection text
    *  carries the real reason (e.g. a harness's own "missing API key" notice)
@@ -592,8 +597,10 @@ export class AcpClient extends EventEmitter {
     const initMeta = initResult._meta as Record<string, unknown> | undefined;
     const steering = initMeta?.steering as Record<string, unknown> | undefined;
     this.supportsStandardSteering = steering?.supported === true;
-    const agentCapabilities = initResult.agentCapabilities as { loadSession?: unknown } | undefined;
+    const agentCapabilities = initResult.agentCapabilities as
+      { loadSession?: unknown; promptCapabilities?: { image?: unknown } } | undefined;
     this.supportsSessionLoading = agentCapabilities?.loadSession === true;
+    this.supportsImagePrompts = agentCapabilities?.promptCapabilities?.image === true;
     this.emit('initialized', initResult);
     this.notify('notifications/initialized', {});
   }
@@ -647,6 +654,11 @@ export class AcpClient extends EventEmitter {
   /** Whether this live ACP process advertised the stable `session/load` method. */
   canLoadSession(): boolean {
     return this.supportsSessionLoading;
+  }
+
+  /** Whether this live ACP process accepts `image` prompt blocks (`promptCapabilities.image`). */
+  canPromptWithImages(): boolean {
+    return this.supportsImagePrompts;
   }
 
   async sessionNew(opts: {
@@ -771,7 +783,7 @@ export class AcpClient extends EventEmitter {
    */
   async sessionPrompt(
     sessionId: string,
-    text: string,
+    text: string | readonly AcpPromptBlock[],
     timeoutMs = 120_000,
     onChunk?: AcpTextChunkHandler,
     onActivity?: AcpStreamHandler,
@@ -800,7 +812,7 @@ export class AcpClient extends EventEmitter {
         'session/prompt',
         {
           sessionId,
-          prompt: [{ type: 'text', text }],
+          prompt: typeof text === 'string' ? [{ type: 'text', text }] : [...text],
         },
         timeoutMs,
         (id) => {

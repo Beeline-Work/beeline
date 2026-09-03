@@ -104,6 +104,8 @@ import {
   type CornerSummary,
 } from '@/buzz/corners';
 import { personIdentityLabel, shortMemberNpub } from '@/buzz/member-display';
+import { createCommunityInviteUrl, resolveCommunityInvitePublicOrigin } from '@/buzz/community-invite';
+import { RoomMemberPickerActions } from '@/components/buzz/RoomMemberPickerActions';
 import { useVerifiedNip05Status } from '@/buzz/nip05-verification';
 import {
   canRenameRoom,
@@ -422,6 +424,7 @@ export default function BuzzChat() {
     null,
   );
   const [membershipError, setMembershipError] = useState<string | null>(null);
+  const [memberInviteBusy, setMemberInviteBusy] = useState(false);
   const [membershipActionPubkey, setMembershipActionPubkey] = useState<string | null>(null);
   const [roomLifecycleBusy, setRoomLifecycleBusy] = useState(false);
   const directMessage = roomSurface?.directMessage ?? null;
@@ -2045,6 +2048,45 @@ export default function BuzzChat() {
     },
     [decodedId, roomMemberByPubkey, transport, userPubkey, viewerRoomRole],
   );
+
+  // The picker's workspace-level rows. A one-person workspace has nobody to
+  // add from the roster, so the same invite flows the Room-list "+" menu
+  // reaches through the members screen live here too.
+  const handleInvitePerson = useCallback(async () => {
+    if (!activeCommunityId || memberInviteBusy) return;
+    setMemberInviteBusy(true);
+    setMembershipError(null);
+    try {
+      let inviteTransport = transport;
+      if (!inviteTransport) {
+        const identity = await loadBuzzIdentity();
+        if (!identity) throw new Error('Beeline identity is unavailable');
+        inviteTransport = new BuzzRigTransport(identity, await getEffectiveRelayUrl());
+        setSessionTransport(inviteTransport);
+      }
+      const url = await createCommunityInviteUrl(
+        await inviteTransport.ensureClient(),
+        activeCommunityId,
+        resolveCommunityInvitePublicOrigin(await getEffectiveRelayUrl(), getBuzzRuntimeConfig()),
+      );
+      await Share.share({ message: url });
+    } catch (reason) {
+      setMembershipError(`Could not create person invite: ${String(reason)}`);
+    } finally {
+      setMemberInviteBusy(false);
+    }
+  }, [activeCommunityId, memberInviteBusy, setSessionTransport, transport]);
+
+  const handleAddAgent = useCallback(() => {
+    setParticipantPickerVisible(false);
+    router.push({
+      pathname: '/beeline/members',
+      params: {
+        ...(activeCommunityId ? { communityId: activeCommunityId } : {}),
+        action: 'add-agent',
+      },
+    } as Href);
+  }, [activeCommunityId]);
 
   const returnToRoomList = useCallback(() => {
     setRosterVisible(false);
@@ -3877,9 +3919,13 @@ export default function BuzzChat() {
                 </View>
               ) : null,
             )}
-            {participantPickerOptions.length === 0 && (
-              <Text style={styles.memberPickerEmpty}>Workspace roster is empty</Text>
-            )}
+            <RoomMemberPickerActions
+              addableCount={participantPickerSections.addable.length}
+              busy={memberInviteBusy}
+              canManage={roomSurface?.viewer.permissions.manage ?? false}
+              onAddAgent={handleAddAgent}
+              onInvitePerson={() => void handleInvitePerson()}
+            />
           </ScrollView>
 
           {membershipError && (
@@ -4280,13 +4326,6 @@ const styles = StyleSheet.create((theme) => {
       color: groknight.chrome,
       fontSize: 9,
       letterSpacing: 0.3,
-    },
-    memberPickerEmpty: {
-      ...Typography.default(),
-      paddingVertical: 24,
-      color: groknight.textMuted,
-      fontSize: 12,
-      textAlign: 'center',
     },
     membershipError: {
       marginTop: 10,

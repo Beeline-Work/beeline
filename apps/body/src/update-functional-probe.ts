@@ -6,6 +6,7 @@ import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
 import { openRouterRoutingCacheDir, openRouterRoutingInput } from './openrouter-routing.js';
 import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
 import type { BodyConfig } from './config.js';
+import { explainEmptyAgentTurn, isAccountOrProviderRefusal } from './empty-turn.js';
 import {
   agentArgsWithModelSelection,
   applyAgentModelSelection,
@@ -47,12 +48,31 @@ export interface UpdateFunctionalProbeResult {
   sessionStarted: true;
   turnCompleted: true;
   nativeTools: readonly [];
+  /**
+   * `served`: the model answered through the bundle's ACP path. `unavailable`:
+   * the bundle reached the model boundary but the model's own answer was a
+   * refusal or empty (`modelAnswerReason`), which no release can change.
+   */
+  modelAnswer?: 'served' | 'unavailable';
+  modelAnswerReason?: string;
 }
 
 /**
  * Exercise the exact production ACP boundary before a successor may announce
  * READY. The probe is local-only: it creates no Room event and publishes no
  * model prose.
+ *
+ * The probe proves the bundle, not the model. It fails when the bundle cannot
+ * spawn the harness, initialize, open a session, or complete a prompt, and when
+ * the turn ends with no answer text that the harness's own record does not
+ * explain. It passes with a logged reason when pi's record shows the request
+ * reached the provider and the provider or account refused it (a 401/402/403/
+ * 407/408/429 or a 5xx, `isAccountOrProviderRefusal`) or the model answered
+ * with no text: the current release gets the same empty answer from the same
+ * model, so rolling back would change nothing and would hide the real fault
+ * (Room turns then carry it as `<agent> could not answer · provider error 402…`).
+ * A 400/404/422, a status-less failure, recorded-but-undelivered text, or no
+ * record at all still fails the probe: each can be a bundle fault.
  */
 export async function runUpdateFunctionalProbe(input: {
   config: BodyConfig;
@@ -109,6 +129,7 @@ export async function runUpdateFunctionalProbe(input: {
       command,
       args: agentArgsWithModelSelection(selectedAgent, input.config.modelSelection),
     };
+    let modelAnswer: Pick<UpdateFunctionalProbeResult, 'modelAnswer' | 'modelAnswerReason'> = {};
     if (input.config.bwrapPath) {
       const { stateDirs, tmpDir } = harnessStateDirsFromEnv(agentEnv);
       const operatorHome = input.config.operatorHome ?? homedir();
@@ -167,11 +188,28 @@ export async function runUpdateFunctionalProbe(input: {
           'Reply READY.',
           input.turnTimeoutMs ?? UPDATE_PROBE_TURN_TIMEOUT_MS,
         );
-        if (!served.agentText.trim()) {
-          throw new UpdateFunctionalProbeError(
-            'turn-failed',
-            'the harness completed a session/prompt without an agent answer',
+        if (served.agentText.trim()) {
+          modelAnswer = { modelAnswer: 'served' };
+        } else {
+          const explained = await explainEmptyAgentTurn({
+            agentLabel: command,
+            agentEnv,
+            sessionId: opened.sessionId,
+            result: served,
+          });
+          const modelSide =
+            isAccountOrProviderRefusal(explained.record) || explained.record?.kind === 'empty';
+          if (!modelSide) {
+            throw new UpdateFunctionalProbeError(
+              'turn-failed',
+              `the harness completed a session/prompt without an agent answer: ${explained.reason}`,
+            );
+          }
+          console.warn(
+            `[body] update probe: the bundle reached the model boundary but the model answered nothing (${explained.reason}); ` +
+              "that is the model's own answer on any release, so the probe passes without one",
           );
+          modelAnswer = { modelAnswer: 'unavailable', modelAnswerReason: explained.reason };
         }
       } catch (error) {
         throw new UpdateFunctionalProbeError(
@@ -194,6 +232,7 @@ export async function runUpdateFunctionalProbe(input: {
       sessionStarted: true,
       turnCompleted: true,
       nativeTools: [],
+      ...modelAnswer,
     };
   } finally {
     await client?.stop().catch(() => undefined);

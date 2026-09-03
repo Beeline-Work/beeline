@@ -28,6 +28,7 @@ import { isMountedMcpToolPermissionRequest, isSquireMcpPermissionRequest } from 
 import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
+import { explainEmptyAgentTurn } from './empty-turn.js';
 import type { GrantCommandRunner, GrantRunnerEndpoint } from './grant-runner.js';
 import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
 import {
@@ -230,6 +231,8 @@ export class MonolithRoomTurnLoop {
   private readonly agent: ReturnType<typeof runtimeIdentity>;
   private client?: AcpClient;
   private sessionId?: string;
+  /** The live session's environment, read back for pi's own turn record. */
+  private agentEnv: Record<string, string> = {};
   private busy = false;
   private turnInstructionPrefix = '';
   private draftTail = Promise.resolve();
@@ -351,6 +354,7 @@ export class MonolithRoomTurnLoop {
       : {};
     const command = this.options.config.agentCommand ?? this.options.config.agentBinary;
     const agentEnv = { ...this.options.config.agentEnv, ...homeOverlay };
+    this.agentEnv = agentEnv;
     const agentArgs = agentArgsWithModelSelection(
       {
         kind: this.options.config.agentKind,
@@ -692,8 +696,23 @@ export class MonolithRoomTurnLoop {
             this.options.onCornerOpened?.();
           }
           await this.draftTail;
-          const reply = sanitizeAgentReply(result!.agentText);
-          if (!reply) throw new Error('ACP turn produced no durable Room reply');
+          let reply = sanitizeAgentReply(result!.agentText);
+          if (!reply) {
+            // Either text the harness recorded but never streamed, or a named
+            // reason (pi's provider refusal, an empty model answer, the stream's
+            // shape) — never the bare "no reply" as the only fact.
+            const explained = await explainEmptyAgentTurn({
+              agentLabel: this.options.config.agentCommand ?? this.options.config.agentBinary,
+              agentEnv: this.agentEnv,
+              sessionId,
+              result: result!,
+            });
+            reply = explained.recoveredText ? sanitizeAgentReply(explained.recoveredText) : '';
+            if (!reply) throw new Error(explained.reason);
+            console.warn(
+              `[thin-core] monolith Room ${this.options.roomId} turn ${item.id}: ${explained.reason}`,
+            );
+          }
           await api.execute('postRoomMessage', {
             roomId: this.options.roomId,
             requestId: item.id,

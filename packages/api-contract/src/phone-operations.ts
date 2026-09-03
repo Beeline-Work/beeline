@@ -221,6 +221,8 @@ export type GitHubRepositoryListResult = {
   readonly installed: boolean;
   readonly installations: readonly GitHubInstallation[];
   readonly repositories: readonly GitHubRepository[];
+  /** GitHub user token expired and could not be refreshed; stored data is served. */
+  readonly githubReconnectNeeded?: boolean;
 };
 export type BeginGitHubInstallationInput = {
   readonly redirectUri: string;

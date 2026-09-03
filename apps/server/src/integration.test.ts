@@ -85,7 +85,7 @@ describe('monolith integration', () => {
       githubApp as unknown as GitHubAppClient,
       'github-client-secret',
     );
-    vi.spyOn(githubOperations, 'refresh').mockResolvedValue(undefined);
+    vi.spyOn(githubOperations, 'refresh').mockResolvedValue({});
     vi.spyOn(githubOperations, 'beginInstallation').mockResolvedValue({
       url: 'https://github.com/apps/beeline-test/installations/new?state=server-state',
     });
@@ -2169,6 +2169,30 @@ describe('monolith integration', () => {
     expect((await new PhoneService(database, origin).readRoom(ROOM, HUMAN))?.latestAgentTurns).toContainEqual(
       expect.objectContaining({ requestId, agentPubkey: AGENT, status: 'complete' }),
     );
+  });
+
+  it('never 503s the repo picker when GitHub refresh fails and flags reconnect', async () => {
+    await database.query(
+      `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,account_avatar_url,repository_selection,status) VALUES(77,$1,'42','owner','User','https://avatars.test/owner','selected','active')`,
+      [HUMAN],
+    );
+    await database.query(
+      `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch) VALUES(101,77,'owner/widgets','trunk')`,
+    );
+    vi.spyOn(githubOperations, 'refresh').mockRejectedValue(
+      new Error('GitHub user installations failed: HTTP 401'),
+    );
+    const listed = await request('/v1/phone/operations/listGitHubRepositories', 'POST', {
+      refresh: true,
+    });
+    expect(listed.status).toBe(200);
+    expect(await listed.json()).toMatchObject({
+      installed: true,
+      githubReconnectNeeded: true,
+      repositories: [
+        { id: 101, fullName: 'owner/widgets', installationId: 77, defaultBranch: 'trunk' },
+      ],
+    });
   });
 
   it('keeps the phone GitHub repository contract aligned through the real HTTP surface', async () => {

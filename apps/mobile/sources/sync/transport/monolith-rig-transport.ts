@@ -426,10 +426,12 @@ export class MonolithRigTransport {
         installationId: number;
         defaultBranch: string;
       }[];
+      githubReconnectNeeded?: boolean;
     };
     return {
       installed: value.installed,
       installations: value.installations,
+      githubReconnectNeeded: value.githubReconnectNeeded === true,
       candidates: value.repositories.map((repo) => ({
         key: `github:${repo.id}`,
         name: repo.fullName,

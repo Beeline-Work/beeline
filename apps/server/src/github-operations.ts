@@ -171,6 +171,8 @@ export class GitHubOperations {
     if (!flow) throw new Error('GitHub identity flow not found or expired');
     let github = flow.provider_identity;
     let sealed = flow.encrypted_token;
+    let exchangedRefresh: string | undefined;
+    let exchangedExpiresIn: number | undefined;
     if (!github || !sealed) {
       const exchanged = await this.oauth.exchangeCode(
         input.challenge,
@@ -185,6 +187,8 @@ export class GitHubOperations {
         audience: exchanged.audience,
       };
       sealed = this.seal(exchanged.accessToken);
+      exchangedRefresh = exchanged.refreshToken;
+      exchangedExpiresIn = exchanged.tokenExpiresIn;
       await this.database.query(
         `UPDATE github_auth_flows SET provider_identity=$2::jsonb,encrypted_token=$3 WHERE state_hash=$1 AND consumed_at IS NULL`,
         [hash(input.proof), JSON.stringify(github), sealed],
@@ -223,8 +227,13 @@ export class GitHubOperations {
         [viewerId, github!.name, github!.login, github!.subject],
       );
       await database.query(
-        `INSERT INTO github_user_tokens(subject,encrypted_token) VALUES($1,$2) ON CONFLICT(subject) DO UPDATE SET encrypted_token=EXCLUDED.encrypted_token,stale_at=NULL,updated_at=now()`,
-        [github!.subject, sealed],
+        `INSERT INTO github_user_tokens(subject,encrypted_token,encrypted_refresh_token,expires_at) VALUES($1,$2,$3,$4) ON CONFLICT(subject) DO UPDATE SET encrypted_token=EXCLUDED.encrypted_token,encrypted_refresh_token=EXCLUDED.encrypted_refresh_token,expires_at=EXCLUDED.expires_at,stale_at=NULL,updated_at=now()`,
+        [
+          github!.subject,
+          sealed,
+          exchangedRefresh ? this.seal(exchangedRefresh) : null,
+          exchangedExpiresIn ? new Date(Date.now() + exchangedExpiresIn * 1000) : null,
+        ],
       );
       await database.query(`UPDATE github_auth_flows SET consumed_at=now() WHERE state_hash=$1`, [
         hash(input.proof),
@@ -269,31 +278,51 @@ export class GitHubOperations {
     });
   }
 
-  async refresh(viewerId: string): Promise<void> {
+  async refresh(viewerId: string): Promise<{ githubReconnectNeeded?: boolean }> {
     const rows = await this.database.query<{ installation_id: string }>(
       `SELECT installation_id FROM github_installations WHERE owner_id=$1 AND status='active'`,
       [viewerId],
     );
     const installationIds = new Set(rows.rows.map((row) => Number(row.installation_id)));
     const credential = await this.userCredential(viewerId, this.database);
+    let githubReconnectNeeded: boolean | undefined;
     if (credential) {
       const installations = await this.app.listInstallations();
-      const administered = credential.token
-        ? new Set(await this.app.listUserInstallationIds(credential.token))
-        : new Set<number>();
-      for (const installation of installations) {
-        if (
-          installation.account.type === 'User'
-            ? installation.account.id === credential.subject
-            : administered.has(installation.installationId)
-        ) {
-          installationIds.add(installation.installationId);
+      let administered: Set<number> | undefined;
+      try {
+        administered = credential.token
+          ? new Set(await this.app.listUserInstallationIds(credential.token))
+          : new Set<number>();
+      } catch {
+        // User-to-server tokens expire after 8 hours; rotate once before giving up.
+        const rotated = credential.refreshToken
+          ? await this.rotateUserCredential(credential, this.database)
+          : undefined;
+        if (rotated) {
+          administered = new Set(await this.app.listUserInstallationIds(rotated));
+        } else {
+          // Refresh is impossible (no/revoked refresh token): degrade to the stored
+          // installations instead of surfacing a 503 to the repo picker.
+          administered = undefined;
+          githubReconnectNeeded = true;
+        }
+      }
+      if (administered) {
+        for (const installation of installations) {
+          if (
+            installation.account.type === 'User'
+              ? installation.account.id === credential.subject
+              : administered.has(installation.installationId)
+          ) {
+            installationIds.add(installation.installationId);
+          }
         }
       }
     }
     for (const installationId of installationIds) {
       await this.syncInstallation(viewerId, installationId);
     }
+    return { ...(githubReconnectNeeded ? { githubReconnectNeeded } : {}) };
   }
 
   async createRepository(viewerId: string, input: Input<'createGitHubRepository'>) {
@@ -842,24 +871,90 @@ export class GitHubOperations {
     installationId: number,
     database: SqlDatabase = this.database,
   ) {
-    const token = (await this.userCredential(viewerId, database))?.token;
-    if (!token || !(await this.app.userCanAccessInstallation(token, installationId)))
-      throw new Error('GitHub installation access denied');
+    const credential = await this.userCredential(viewerId, database);
+    let token = credential?.token;
+    if (token) {
+      let accessible = await this.app
+        .userCanAccessInstallation(token, installationId)
+        .catch(() => false);
+      if (!accessible && credential?.refreshToken) {
+        // 401 from an expired user token: rotate once and retry.
+        const rotated = await this.rotateUserCredential(credential, database);
+        if (rotated) {
+          token = rotated;
+          accessible = await this.app.userCanAccessInstallation(rotated, installationId).catch(() => false);
+        }
+      }
+      if (accessible) return;
+    }
+    throw new Error('GitHub installation access denied');
   }
-  private async userCredential(viewerId: string, database: SqlDatabase) {
+  private async userCredential(
+    viewerId: string,
+    database: SqlDatabase,
+  ): Promise<{ subject: string; token?: string; refreshToken?: string } | undefined> {
     const credential = (
-      await database.query<{ subject: string; encrypted_token: string | null }>(
-        `SELECT l.subject,t.encrypted_token FROM identity_external_links l LEFT JOIN github_user_tokens t ON t.subject=l.subject AND t.stale_at IS NULL WHERE l.provider='github' AND l.identity_id=$1`,
+      await database.query<{
+        subject: string;
+        encrypted_token: string | null;
+        encrypted_refresh_token: string | null;
+        expires_at: string | Date | null;
+      }>(
+        `SELECT l.subject,t.encrypted_token,t.encrypted_refresh_token,t.expires_at FROM identity_external_links l LEFT JOIN github_user_tokens t ON t.subject=l.subject AND t.stale_at IS NULL WHERE l.provider='github' AND l.identity_id=$1`,
         [viewerId],
       )
     ).rows[0];
     if (!credential) return undefined;
     const sealed =
       credential.encrypted_token ?? (await this.resolveSealedUserToken?.(credential.subject));
+    if (!sealed) return { subject: credential.subject };
+    const refreshToken = credential.encrypted_refresh_token
+      ? this.open(credential.encrypted_refresh_token)
+      : undefined;
+    let token = this.open(sealed);
+    const expiresAt = credential.expires_at ? new Date(credential.expires_at).getTime() : undefined;
+    if (
+      refreshToken &&
+      expiresAt !== undefined &&
+      expiresAt - Date.now() < 60_000
+    ) {
+      const rotated = await this.rotateUserCredential(
+        { subject: credential.subject, refreshToken },
+        database,
+      );
+      if (rotated) token = rotated;
+    }
     return {
       subject: credential.subject,
-      ...(sealed ? { token: this.open(sealed) } : {}),
+      token,
+      ...(refreshToken ? { refreshToken } : {}),
     };
+  }
+  /** Exchanges the stored refresh grant for a fresh user token; marks it stale on failure. */
+  private async rotateUserCredential(
+    credential: { subject: string; refreshToken?: string },
+    database: SqlDatabase,
+  ): Promise<string | undefined> {
+    if (!credential.refreshToken) return undefined;
+    try {
+      const refreshed = await this.oauth.refreshUserToken(credential.refreshToken);
+      await database.query(
+        `UPDATE github_user_tokens SET encrypted_token=$2,encrypted_refresh_token=$3,expires_at=$4,stale_at=NULL,updated_at=now() WHERE subject=$1`,
+        [
+          credential.subject,
+          this.seal(refreshed.accessToken),
+          refreshed.refreshToken ? this.seal(refreshed.refreshToken) : null,
+          refreshed.tokenExpiresIn ? new Date(Date.now() + refreshed.tokenExpiresIn * 1000) : null,
+        ],
+      );
+      return refreshed.accessToken;
+    } catch {
+      await database.query(
+        `UPDATE github_user_tokens SET stale_at=now(),updated_at=now() WHERE subject=$1`,
+        [credential.subject],
+      );
+      return undefined;
+    }
   }
   private async storeRepository(
     repository: { id: number; installationId: number; fullName: string; defaultBranch: string },

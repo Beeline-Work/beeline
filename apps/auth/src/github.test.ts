@@ -9,7 +9,7 @@ describe('GitHub-only account and repository access', () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ access_token: 'user-token', token_type: 'bearer' }), {
+        new Response(JSON.stringify({ access_token: 'user-token', refresh_token: 'refresh-token', expires_in: 28800, token_type: 'bearer' }), {
           status: 200,
           headers: { 'content-type': 'application/json' },
         }),
@@ -30,6 +30,39 @@ describe('GitHub-only account and repository access', () => {
       login: 'octocat',
       displayName: 'The Octocat',
       accessToken: 'user-token',
+      refreshToken: 'refresh-token',
+      tokenExpiresIn: 28800,
+    });
+  });
+
+  it('exchanges a refresh token for a fresh user access token', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            access_token: 'fresh-user-token',
+            refresh_token: 'next-refresh-token',
+            expires_in: 28800,
+            token_type: 'bearer',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new GitHubOAuthClient({ clientId: 'client-id', clientSecret: 'secret' });
+    await expect(client.refreshUserToken('stale-refresh-token')).resolves.toEqual({
+      accessToken: 'fresh-user-token',
+      refreshToken: 'next-refresh-token',
+      tokenExpiresIn: 28800,
+    });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe('https://github.com/login/oauth/access_token');
+    expect(JSON.parse(String(init?.body))).toMatchObject({
+      client_id: 'client-id',
+      client_secret: 'secret',
+      grant_type: 'refresh_token',
+      refresh_token: 'stale-refresh-token',
     });
   });
 

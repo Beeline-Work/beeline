@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { generateKeyPair, exportPKCS8 } from 'jose';
 import { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
@@ -379,5 +380,227 @@ describe('GitHub phone operations', () => {
         )
       ).rows[0]?.active,
     ).toBe(false);
+  });
+
+  describe('user token rotation', () => {
+    let privateKeyPem: string;
+    beforeAll(async () => {
+      const { privateKey } = await generateKeyPair('RS256');
+      privateKeyPem = await exportPKCS8(privateKey);
+    });
+    const INSTALLATION_ENTRY = {
+      id: 77,
+      account: { id: 42, login: 'owner', type: 'User', avatar_url: 'https://avatars.test/owner' },
+      repository_selection: 'selected',
+    };
+    const REPOSITORY_ENTRY = {
+      id: 101,
+      name: 'widgets',
+      full_name: 'owner/widgets',
+      clone_url: 'https://github.test/owner/widgets',
+      default_branch: 'main',
+    };
+
+    async function bindIdentity(database: PgliteDatabase) {
+      const tokenBodies: Array<Record<string, unknown>> = [];
+      const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        if (url === 'https://github.test/token') {
+          const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+          tokenBodies.push(body);
+          if (body.grant_type === 'refresh_token')
+            return new Response(
+              JSON.stringify({
+                access_token: 'fresh-user-token',
+                refresh_token: 'refresh-2',
+                expires_in: 28800,
+                token_type: 'bearer',
+              }),
+              { status: 200, headers: { 'content-type': 'application/json' } },
+            );
+          return new Response(
+            JSON.stringify({
+              access_token: 'secret-user-token',
+              refresh_token: 'refresh-1',
+              expires_in: 3600,
+              token_type: 'bearer',
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        if (url === 'https://api.github.test/user')
+          return new Response(JSON.stringify({ id: 42, login: 'owner', name: 'Owner' }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        if (url === 'https://api.github.test/app/installations?per_page=100&page=1')
+          return new Response(JSON.stringify([INSTALLATION_ENTRY]), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        if (url === 'https://api.github.test/user/installations?per_page=100&page=1') {
+          const authorization = (init?.headers as Record<string, string>).authorization;
+          if (authorization !== 'Bearer fresh-user-token')
+            return new Response(JSON.stringify({ message: 'Bad credentials' }), {
+              status: 401,
+              headers: { 'content-type': 'application/json' },
+            });
+          return new Response(
+            JSON.stringify({ total_count: 1, installations: [INSTALLATION_ENTRY] }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        if (url === 'https://api.github.test/app/installations/77')
+          return new Response(JSON.stringify(INSTALLATION_ENTRY), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        if (url === 'https://api.github.test/app/installations/77/access_tokens')
+          return new Response(
+            JSON.stringify({ token: 'installation-token', expires_at: '2030-01-01T00:00:00Z' }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          );
+        if (url === 'https://api.github.test/installation/repositories?per_page=100&page=1')
+          return new Response(JSON.stringify({ repositories: [REPOSITORY_ENTRY] }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        throw new Error(`unexpected fetch ${url}`);
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      return { tokenBodies, fetchMock };
+    }
+
+    function operationsFor(database: PgliteDatabase) {
+      const oauth = new GitHubOAuthClient({
+        clientId: 'client',
+        clientSecret: 'secret',
+        authorizationEndpoint: 'https://github.test/authorize',
+        tokenEndpoint: 'https://github.test/token',
+        apiBaseUrl: 'https://api.github.test',
+      });
+      const app = new GitHubAppClient({
+        appId: '1',
+        slug: 'beeline-test',
+        privateKey: privateKeyPem,
+        apiBaseUrl: 'https://api.github.test',
+      });
+      return new GitHubOperations(database, oauth, app, 'secret');
+    }
+
+    it('rotates an expired user token with its refresh grant before listing installations', async () => {
+      const operations = operationsFor(database);
+      const { tokenBodies, fetchMock } = await bindIdentity(database);
+      await operations.beginIdentity(HUMAN, {
+        redirectUri: 'beeline://callback',
+        state: 'rotation-state',
+      });
+      await expect(
+        operations.completeIdentity(HUMAN, { challenge: 'oauth-code', proof: 'rotation-state' }, false),
+      ).resolves.toEqual({ personId: HUMAN, recovered: false });
+      // The 8-hour expiry has passed: the next refresh must rotate first.
+      await database.query(
+        `UPDATE github_user_tokens SET expires_at = now() - interval '1 minute' WHERE subject='42'`,
+      );
+      tokenBodies.length = 0;
+      await expect(operations.refresh(HUMAN)).resolves.toEqual({});
+      expect(tokenBodies).toEqual([expect.objectContaining({ grant_type: 'refresh_token' })]);
+      expect(tokenBodies[0]).toMatchObject({ refresh_token: 'refresh-1' });
+      const stored = (
+        await database.query<{
+          expires_at: string | Date;
+          expires_in: number;
+        }>(
+          `SELECT encrypted_refresh_token, expires_at FROM github_user_tokens WHERE subject='42'`,
+        )
+      ).rows[0];
+      expect(stored?.encrypted_refresh_token).toBeDefined();
+      expect(new Date(stored!.expires_at).getTime()).toBeGreaterThan(Date.now());
+      expect(
+        (await database.query<{ installation_id: number | string }>(
+          `SELECT installation_id FROM github_installations WHERE owner_id=$1`,
+          [HUMAN],
+        )).rows[0]?.installation_id,
+      ).toEqual(77);
+      // The installation listing must use the rotated token, not the expired one.
+      const userInstallations = fetchMock.mock.calls.find(([input]) =>
+        String(input).includes('/user/installations'),
+      );
+      expect(
+        (userInstallations?.[1]?.headers as Record<string, string>).authorization,
+      ).toBe('Bearer fresh-user-token');
+    });
+
+    it('degrades to stored installations with a reconnect flag when refresh is impossible', async () => {
+      const operations = operationsFor(database);
+      await bindIdentity(database);
+      await operations.beginIdentity(HUMAN, {
+        redirectUri: 'beeline://callback',
+        state: 'degrade-state',
+      });
+      await operations.completeIdentity(HUMAN, { challenge: 'oauth-code', proof: 'degrade-state' }, false);
+      // The stored token expired and no refresh grant was persisted (legacy row).
+      await database.query(
+        `UPDATE github_user_tokens SET encrypted_refresh_token = NULL, expires_at = now() - interval '1 minute' WHERE subject='42'`,
+      );
+      // Previously synced installation/repositories answer the picker from storage.
+      await database.query(
+        `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status) VALUES(77,$1,'42','owner','User','selected','active')`,
+        [HUMAN],
+      );
+      await database.query(
+        `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch) VALUES(101,77,'owner/widgets','main')`,
+      );
+      await expect(operations.refresh(HUMAN)).resolves.toEqual({ githubReconnectNeeded: true });
+      // The stored installation and repositories are still recorded — the picker answers.
+      expect(
+        (await database.query<{ installation_id: string }>(
+          `SELECT installation_id FROM github_installations WHERE installation_id=77`,
+        )).rows[0]?.installation_id,
+      ).toBe(77);
+      expect(
+        (await database.query<{ full_name: string }>(
+          `SELECT full_name FROM github_repositories WHERE repository_id=101`,
+        )).rows[0]?.full_name,
+      ).toBe('owner/widgets');
+    });
+
+    it('retries once with a rotated token when the stored token is answered 401', async () => {
+      const operations = operationsFor(database);
+      const { fetchMock } = await bindIdentity(database);
+      await operations.beginIdentity(HUMAN, {
+        redirectUri: 'beeline://callback',
+        state: 'retry-state',
+      });
+      await operations.completeIdentity(HUMAN, { challenge: 'oauth-code', proof: 'retry-state' }, false);
+      // The stored token is not yet expired by GitHub's clock but is dead server-side.
+      const userInstallationsCalls: number[] = [];
+      const originalFetch = fetchMock.getMockImplementation()!;
+      fetchMock.mockImplementation(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        if (url === 'https://api.github.test/user/installations?per_page=100&page=1') {
+          const authorization = (init?.headers as Record<string, string>).authorization;
+          if (authorization === 'Bearer fresh-user-token')
+            return new Response(
+              JSON.stringify({ total_count: 1, installations: [INSTALLATION_ENTRY] }),
+              { status: 200, headers: { 'content-type': 'application/json' } },
+            );
+          userInstallationsCalls.push(1);
+          return new Response(JSON.stringify({ message: 'Bad credentials' }), {
+            status: 401,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+        return originalFetch(input, init);
+      });
+      await expect(operations.refresh(HUMAN)).resolves.toEqual({});
+      expect(userInstallationsCalls.length).toBe(1);
+      const successfulUserInstallationsCall = fetchMock.mock.calls.filter(([input]) =>
+        String(input).includes('/user/installations'),
+      ).at(-1);
+      expect(
+        (successfulUserInstallationsCall?.[1]?.headers as Record<string, string>).authorization,
+      ).toBe('Bearer fresh-user-token');
+    });
   });
 });

@@ -3,7 +3,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { BodyConfig } from './config.js';
-import { runUpdateFunctionalProbe, UpdateFunctionalProbeError } from './update-functional-probe.js';
+import {
+  probeOutcome,
+  runUpdateFunctionalProbe,
+  UpdateFunctionalProbeError,
+  type ProviderRefusal,
+} from './update-functional-probe.js';
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -32,6 +37,7 @@ const behavior = process.env.FAKE_PI_BEHAVIOR;
 const records = {
   'refused-402': { role: 'assistant', content: [], stopReason: 'error', errorMessage: '402: {"message":"This request requires more credits, or fewer max_tokens."}' },
   'refused-400': { role: 'assistant', content: [], stopReason: 'error', errorMessage: '400: {"message":"invalid provider routing"}' },
+  'refused-404': { role: 'assistant', content: [], stopReason: 'error', errorMessage: '404: {"message":"No endpoints found that can handle the requested parameters."}' },
   'empty': { role: 'assistant', content: [{ type: 'thinking', thinking: 'hmm' }], stopReason: 'stop' },
 };
 readline.createInterface({ input: process.stdin }).on('line', (line) => {
@@ -63,7 +69,10 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   return binary;
 }
 
-async function probe(behavior: string) {
+async function probe(
+  behavior: string,
+  extra: Partial<Parameters<typeof runUpdateFunctionalProbe>[0]> = {},
+) {
   const command = await fakePiAcp();
   const root = await mkdtemp(join(tmpdir(), 'beeline-probe-'));
   roots.push(root);
@@ -90,6 +99,7 @@ async function probe(behavior: string) {
     sandboxRequired: false,
     sessionTimeoutMs: 10_000,
     turnTimeoutMs: 10_000,
+    ...extra,
   });
 }
 
@@ -127,7 +137,84 @@ describe('runUpdateFunctionalProbe', () => {
     const error = await probe('refused-400').catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(UpdateFunctionalProbeError);
     expect((error as UpdateFunctionalProbeError).reason).toBe('turn-failed');
-    expect((error as Error).message).toContain('provider error 400: invalid provider routing');
+    expect((error as Error).message).toBe(
+      'functional update probe failed (turn-failed): the harness completed a session/prompt without an agent answer: provider error 400: invalid provider routing',
+    );
+    expect((error as UpdateFunctionalProbeError).providerRefusal).toEqual({
+      status: 400,
+      reason: 'provider error 400: invalid provider routing',
+    });
+  });
+
+  describe('compared with the current release', () => {
+    const refusal404 =
+      'provider error 404: No endpoints found that can handle the requested parameters.';
+
+    it('passes, logged, when the current release gets the identical provider refusal', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const compared: ProviderRefusal[] = [];
+      // The "current release" is the same fake harness refused with the same 404.
+      await expect(
+        probe('refused-404', {
+          compareWithCurrentRelease: async (refusal) => {
+            compared.push(refusal);
+            return probeOutcome(() => probe('refused-404'));
+          },
+        }),
+      ).resolves.toEqual(
+        expect.objectContaining({
+          turnCompleted: true,
+          modelAnswer: 'unavailable',
+          modelAnswerReason: `${refusal404} (the current release gets the same 404)`,
+        }),
+      );
+      expect(compared).toEqual([{ status: 404, reason: refusal404 }]);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('the provider refused this release and the current release alike'),
+      );
+    });
+
+    it('still fails when the current release answers', async () => {
+      const error = await probe('refused-404', {
+        compareWithCurrentRelease: async () => probeOutcome(() => probe('served')),
+      }).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(UpdateFunctionalProbeError);
+      expect((error as Error).message).toContain(`${refusal404}; the current release answered`);
+      expect((error as UpdateFunctionalProbeError).providerRefusal?.status).toBe(404);
+    });
+
+    it('still fails when the current release is refused differently', async () => {
+      const error = await probe('refused-404', {
+        compareWithCurrentRelease: async () => probeOutcome(() => probe('refused-400')),
+      }).catch((caught: unknown) => caught);
+      expect((error as Error).message).toContain(
+        'the current release got a different refusal (provider error 400: invalid provider routing)',
+      );
+    });
+
+    it('still fails when the current release cannot be compared', async () => {
+      const error = await probe('refused-404', {
+        compareWithCurrentRelease: async () => ({
+          kind: 'unavailable',
+          reason: 'release old printed no probe report (exit 1)',
+        }),
+      }).catch((caught: unknown) => caught);
+      expect((error as Error).message).toContain(
+        'the current release could not be compared (release old printed no probe report (exit 1))',
+      );
+    });
+
+    it('never compares an account-side refusal or a status-less failure', async () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const compare = vi.fn(async () => ({ kind: 'served' }) as const);
+      await expect(probe('refused-402', { compareWithCurrentRelease: compare })).resolves.toEqual(
+        expect.objectContaining({ modelAnswer: 'unavailable' }),
+      );
+      await expect(probe('no-record', { compareWithCurrentRelease: compare })).rejects.toThrow(
+        'pi left no readable turn record',
+      );
+      expect(compare).not.toHaveBeenCalled();
+    });
   });
 
   it('fails, named, when the turn ends empty and pi left no record', async () => {

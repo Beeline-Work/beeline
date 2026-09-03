@@ -50,7 +50,7 @@ describe('per-room harness state isolation', () => {
     const models = JSON.parse(readFileSync(resolve(roomRoot, 'pi/models.json'), 'utf8'));
     const routing = models.providers.openrouter.modelOverrides['z-ai/glm-5.3-flash'].compat
       .openRouterRouting;
-    expect(routing).toMatchObject({ allow_fallbacks: true, require_parameters: true });
+    expect(routing).toMatchObject({ allow_fallbacks: true, require_parameters: false });
     expect(routing.only).toEqual(routing.order);
     expect(routing.only.slice(0, 3)).toEqual(['morph', 'baseten', 'modal']);
     expect(routing.only).toContain('deepinfra');

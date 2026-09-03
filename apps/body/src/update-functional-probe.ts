@@ -29,16 +29,61 @@ export type UpdateFunctionalProbeFailure =
   | 'session-start-failed'
   | 'turn-failed';
 
+/** A provider-side HTTP refusal pi recorded for the probe turn. */
+export interface ProviderRefusal {
+  status: number;
+  reason: string;
+}
+
+/**
+ * What the CURRENT (previous, still-installed) release's own probe did when
+ * asked to compare against a successor's provider refusal.
+ */
+export type CurrentReleaseProbeOutcome =
+  | { kind: 'served' }
+  | { kind: 'refused'; status: number; reason: string }
+  /** The comparison could not run or the current release failed some other way. */
+  | { kind: 'unavailable'; reason: string };
+
 export class UpdateFunctionalProbeError extends Error {
   readonly code = 'BEELINE_UPDATE_FUNCTIONAL_PROBE_FAILED';
+  /** Present when the turn failed on a provider refusal with an HTTP status. */
+  readonly providerRefusal: ProviderRefusal | undefined;
 
   constructor(
     readonly reason: UpdateFunctionalProbeFailure,
     detail: string,
-    options?: ErrorOptions,
+    options?: ErrorOptions & { providerRefusal?: ProviderRefusal },
   ) {
     super(`functional update probe failed (${reason}): ${detail}`, options);
     this.name = 'UpdateFunctionalProbeError';
+    this.providerRefusal = options?.providerRefusal;
+  }
+}
+
+/** Reduce one probe run to the outcome a successor compares itself against. */
+export async function probeOutcome(
+  run: () => Promise<UpdateFunctionalProbeResult>,
+): Promise<CurrentReleaseProbeOutcome> {
+  try {
+    await run();
+    return { kind: 'served' };
+  } catch (error) {
+    if (error instanceof UpdateFunctionalProbeError && error.providerRefusal) {
+      return { kind: 'refused', ...error.providerRefusal };
+    }
+    return { kind: 'unavailable', reason: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+function describeCurrentReleaseOutcome(outcome: CurrentReleaseProbeOutcome): string {
+  switch (outcome.kind) {
+    case 'served':
+      return 'the current release answered';
+    case 'refused':
+      return `the current release got a different refusal (${outcome.reason})`;
+    case 'unavailable':
+      return `the current release could not be compared (${outcome.reason})`;
   }
 }
 
@@ -73,6 +118,15 @@ export interface UpdateFunctionalProbeResult {
  * (Room turns then carry it as `<agent> could not answer · provider error 402…`).
  * A 400/404/422, a status-less failure, recorded-but-undelivered text, or no
  * record at all still fails the probe: each can be a bundle fault.
+ *
+ * A 400/404/422 has one more court of appeal: `compareWithCurrentRelease`
+ * runs the same probe on the release still installed beside the successor
+ * (`current-release-probe.ts`). When that release is refused with the SAME
+ * status, the refusal is the provider's answer to both bundles (the live case:
+ * OpenRouter's 404 "No endpoints found that can handle the requested
+ * parameters" from a routing pin both releases wrote), so rolling back would
+ * change nothing; the probe passes as inconclusive, logged. A current release
+ * that answers, fails differently, or cannot be compared keeps the failure.
  */
 export async function runUpdateFunctionalProbe(input: {
   config: BodyConfig;
@@ -85,6 +139,17 @@ export async function runUpdateFunctionalProbe(input: {
   /** Test seam for the separate cold session/new budget. */
   sessionOpenTimeoutMs?: number;
   turnTimeoutMs?: number;
+  /**
+   * Scratch root for the checkout and agent home; defaults to
+   * `<runtimeDir>/update-functional-probe`. The current-release comparison
+   * runs while the successor's own probe still holds the default.
+   */
+  probeRoot?: string;
+  /**
+   * Runs the same probe on the current (previous) release when this one is
+   * refused by the provider with a status that could still be a bundle fault.
+   */
+  compareWithCurrentRelease?: (refusal: ProviderRefusal) => Promise<CurrentReleaseProbeOutcome>;
 }): Promise<UpdateFunctionalProbeResult> {
   const command = input.config.agentCommand ?? input.config.agentBinary;
   const harness = input.config.agentKind ?? command;
@@ -98,7 +163,7 @@ export async function runUpdateFunctionalProbe(input: {
     );
   }
 
-  const root = resolve(input.runtimeDir, 'update-functional-probe');
+  const root = input.probeRoot ?? resolve(input.runtimeDir, 'update-functional-probe');
   const cwd = resolve(root, 'checkout');
   const homeRoot = resolve(root, 'agent-home');
   await rm(root, { recursive: true, force: true });
@@ -200,18 +265,40 @@ export async function runUpdateFunctionalProbe(input: {
           const modelSide =
             isAccountOrProviderRefusal(explained.record) || explained.record?.kind === 'empty';
           if (!modelSide) {
-            throw new UpdateFunctionalProbeError(
-              'turn-failed',
-              `the harness completed a session/prompt without an agent answer: ${explained.reason}`,
+            const refusal: ProviderRefusal | undefined =
+              explained.record?.kind === 'error' && explained.record.status !== undefined
+                ? { status: explained.record.status, reason: explained.record.reason }
+                : undefined;
+            const detail = `the harness completed a session/prompt without an agent answer: ${explained.reason}`;
+            if (!refusal || !input.compareWithCurrentRelease) {
+              throw new UpdateFunctionalProbeError('turn-failed', detail, {
+                ...(refusal ? { providerRefusal: refusal } : {}),
+              });
+            }
+            const current = await input.compareWithCurrentRelease(refusal);
+            if (current.kind !== 'refused' || current.status !== refusal.status) {
+              throw new UpdateFunctionalProbeError(
+                'turn-failed',
+                `${detail}; ${describeCurrentReleaseOutcome(current)}`,
+                { providerRefusal: refusal },
+              );
+            }
+            const reason = `${explained.reason} (the current release gets the same ${refusal.status})`;
+            console.warn(
+              `[body] update probe: the provider refused this release and the current release alike (${refusal.reason}); ` +
+                "that refusal is not this bundle's doing, so the probe passes as inconclusive",
             );
+            modelAnswer = { modelAnswer: 'unavailable', modelAnswerReason: reason };
+          } else {
+            console.warn(
+              `[body] update probe: the bundle reached the model boundary but the model answered nothing (${explained.reason}); ` +
+                "that is the model's own answer on any release, so the probe passes without one",
+            );
+            modelAnswer = { modelAnswer: 'unavailable', modelAnswerReason: explained.reason };
           }
-          console.warn(
-            `[body] update probe: the bundle reached the model boundary but the model answered nothing (${explained.reason}); ` +
-              "that is the model's own answer on any release, so the probe passes without one",
-          );
-          modelAnswer = { modelAnswer: 'unavailable', modelAnswerReason: explained.reason };
         }
       } catch (error) {
+        if (error instanceof UpdateFunctionalProbeError) throw error;
         throw new UpdateFunctionalProbeError(
           'turn-failed',
           error instanceof Error ? error.message : String(error),

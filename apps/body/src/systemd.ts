@@ -188,6 +188,16 @@ async function notify(fields: string[]): Promise<void> {
   await execFileAsync('systemd-notify', fields, { timeout: SYSTEMD_COMMAND_TIMEOUT_MS });
 }
 
+/**
+ * Ask the service manager for more start time (`EXTEND_TIMEOUT_USEC`, honored
+ * by `Type=notify` units while the unit is still starting). The successor's
+ * comparison against the current release runs a second full probe inside the
+ * 90s start deadline, which the first probe may already have spent.
+ */
+export async function extendSystemdStartTimeout(ms: number): Promise<void> {
+  await notify([`EXTEND_TIMEOUT_USEC=${Math.max(0, Math.round(ms)) * 1000}`]).catch(() => undefined);
+}
+
 /** No timer lives here: callers may emit WATCHDOG only after a completed core tick. */
 export class SystemdNotifier implements DaemonNotifier {
   async ready(status: string): Promise<void> {

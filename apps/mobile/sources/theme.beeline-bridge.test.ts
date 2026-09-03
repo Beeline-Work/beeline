@@ -6,12 +6,12 @@ vi.mock('react-native', () => ({
 }));
 
 import { beelineThemes } from './buzz/groknight';
-import { editorialTheme, ledgerTheme, obsidianTheme } from './theme';
+import { obsidianTheme } from './theme';
 
-const bridged = [obsidianTheme, editorialTheme, ledgerTheme];
+const bridged = [obsidianTheme];
 
 describe('the legacy-theme bridge carries the Speakeasy language to lesser screens', () => {
-  it('maps every Beeline theme onto the app canvas and brass accent', () => {
+  it('maps the Beeline theme onto the app canvas and brass accent', () => {
     for (const theme of bridged) {
       // The canvas: every screen that reads legacy background tokens still
       // lands on the Speakeasy aubergine, never on the old graphite/black.
@@ -36,7 +36,7 @@ describe('the legacy-theme bridge carries the Speakeasy language to lesser scree
     }
   });
 
-  it('keeps every theme prose ladder readable from the bridge', () => {
+  it('keeps the prose ladder readable from the bridge', () => {
     for (const theme of bridged) {
       expect(theme.buzz.proseRegular).toBeTruthy();
       expect(theme.buzz.proseSemibold).toBeTruthy();

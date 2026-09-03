@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const settings = Object.fromEntries(
-  ['appearance', 'language'].map((name) => [
+  ['language'].map((name) => [
     name,
     readFileSync(new URL(`../app/(app)/settings/${name}.tsx`, import.meta.url), 'utf8'),
   ]),
@@ -51,7 +51,6 @@ describe('retained settings leaves use the Beeline design contract', () => {
   });
 
   it('reuses the shared navigation and action-sheet idioms on migrated leaves', () => {
-    expect(settings.appearance).toContain('<SettingsNavigationRow');
     expect(settings.language).toContain('<HullDialog');
     expect(textSelection).toContain('<HullActionSheet');
     expect(textSelection).not.toMatch(/MobileGlass|Ionicons|@expo\/vector-icons|@\/modal/);

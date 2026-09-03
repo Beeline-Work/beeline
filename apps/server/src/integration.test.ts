@@ -827,6 +827,59 @@ describe('monolith integration', () => {
     expect(stored.rows[0]?.mention_ids).toEqual([]);
   });
 
+  it('manages agent tool schedules over daemon HTTP with agent scoping', async () => {
+    const created = await daemonOperation('createAgentSchedule', {
+      agentId: AGENT,
+      roomId: ROOM,
+      prompt: "message 'hello @bananaman614305'",
+      cadence: { kind: 'interval', everyMinutes: 1 },
+      maxRuns: 5,
+    });
+    expect(created.status).toBe(200);
+    const { scheduleId, nextRunAt } = (await created.json()) as {
+      scheduleId: string;
+      nextRunAt: number;
+    };
+    expect(scheduleId).toMatch(/[0-9a-f-]{36}/);
+    expect(nextRunAt).toBeGreaterThan(Math.floor(Date.now() / 1000));
+    const listed = await daemonOperation('listAgentSchedules', { agentId: AGENT, roomId: ROOM });
+    expect(listed.status).toBe(200);
+    await expect(listed.json()).resolves.toEqual({
+      schedules: [
+        {
+          scheduleId,
+          prompt: "message 'hello @bananaman614305'",
+          cadence: { kind: 'interval', everyMinutes: 1 },
+          maxRuns: 5,
+          runCount: 0,
+          nextRunAt,
+        },
+      ],
+    });
+    // The daemon token's agent cannot be impersonated and cannot delete...
+    const foreignCreate = await daemonOperation('createAgentSchedule', {
+      agentId: 'f'.repeat(64),
+      roomId: ROOM,
+      prompt: 'Impersonation.',
+      cadence: { kind: 'interval', everyMinutes: 1 },
+    });
+    expect(foreignCreate.status).toBeGreaterThanOrEqual(400);
+    const deleted = await daemonOperation('deleteAgentSchedule', {
+      agentId: AGENT,
+      roomId: ROOM,
+      scheduleId,
+    });
+    expect(deleted.status).toBe(200);
+    const gone = await daemonOperation('listAgentSchedules', { agentId: AGENT, roomId: ROOM });
+    await expect(gone.json()).resolves.toEqual({ schedules: [] });
+    const missing = await daemonOperation('deleteAgentSchedule', {
+      agentId: AGENT,
+      roomId: ROOM,
+      scheduleId,
+    });
+    expect(missing.status).toBeGreaterThanOrEqual(400);
+  });
+
   it('reports daemon bundle readiness over public monolith HTTP', async () => {
     const sourceSha = 'd03cff8f'.padEnd(40, '0');
     const posted = await request(

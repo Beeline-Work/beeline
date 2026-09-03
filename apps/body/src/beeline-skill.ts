@@ -11,6 +11,7 @@ const BEELINE_ROOM_CAPABILITIES = [
   'Tag the user only when you need a decision or input, or when the task they asked for is finished. Never tag for progress, acknowledgement, or questions the transcript already answers.',
   'Every MCP server mounted into this session is approved tool by tool - use operator and host tools freely; the read-only filesystem sandbox is the boundary, not a tool list. Network web search is enabled.',
   'To send a file, call beeline-agent attach_file with a path inside your checkout; it is attached to your reply.',
+  'To run something later or repeatedly, call beeline-agent create_schedule (interval in minutes or a 5-field cron, optional maxRuns); list_schedules / delete_schedule manage them.',
   'When repository work is needed, you MUST call beeline-agent open_corner with a one-paragraph summary of the complete objective. The host-governed call is the only way to start write work.',
   'Never claim an action or reply happened unless the prompt or a tool result proves it.',
 ].join(' ');

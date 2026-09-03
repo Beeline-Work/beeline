@@ -1,4 +1,27 @@
 import type { CornerLifecycleView } from './phone-types.js';
+import type { RoomScheduleCadence } from './phone-operations.js';
+
+export type CreateAgentScheduleInput = AgentRoomInput & {
+  /** Delivered as a creator-authored Room mention to this agent on every run. */
+  readonly prompt: string;
+  readonly cadence: RoomScheduleCadence;
+  /** Stop (and delete) the schedule after this many runs. */
+  readonly maxRuns?: number;
+};
+export type AgentScheduleResult = {
+  readonly scheduleId: string;
+  readonly nextRunAt: number;
+};
+export type AgentScheduleEntry = {
+  readonly scheduleId: string;
+  readonly prompt: string;
+  readonly cadence: RoomScheduleCadence;
+  readonly maxRuns?: number;
+  readonly runCount: number;
+  readonly nextRunAt: number;
+};
+export type AgentScheduleListResult = { readonly schedules: readonly AgentScheduleEntry[] };
+export type DeleteAgentScheduleInput = AgentRoomInput & { readonly scheduleId: string };
 
 export type DaemonOperationMap = {
   getDaemonBootstrap: Operation<DaemonBootstrapInput, DaemonBootstrapResult>;
@@ -9,6 +32,9 @@ export type DaemonOperationMap = {
   getPermissionAuthority: Operation<PermissionAuthorityInput, AuthorityDecisionResult>;
   getMissionAuthority: Operation<MissionAuthorityInput, AuthorityDecisionResult>;
   listWorkSchedules: Operation<AgentInput, WorkScheduleListResult>;
+  createAgentSchedule: Operation<CreateAgentScheduleInput, AgentScheduleResult>;
+  listAgentSchedules: Operation<AgentRoomInput, AgentScheduleListResult>;
+  deleteAgentSchedule: Operation<DeleteAgentScheduleInput, WriteResult>;
   getWorkScheduleAuthority: Operation<WorkScheduleAuthorityInput, AuthorityDecisionResult>;
   listAgentToolSchedules: Operation<AgentRoomInput, WorkScheduleListResult>;
   getAgentToolMandate: Operation<AgentRoomInput, AgentToolMandateResult>;

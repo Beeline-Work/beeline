@@ -69,6 +69,8 @@ type DueSchedule = {
   creator_id: string;
   cadence: RoomScheduleCadence;
   message: string;
+  max_runs: number | null;
+  run_count: number;
   next_run_at: Date;
 };
 
@@ -81,10 +83,11 @@ export class AgentScheduleLoop {
   async runOnce(now = new Date()): Promise<number> {
     const due = await this.database.query<DueSchedule>(
       `SELECT schedule.id,schedule.room_id,schedule.agent_id,schedule.creator_id,
-        schedule.cadence,schedule.message,schedule.next_run_at
+        schedule.cadence,schedule.message,schedule.max_runs,schedule.run_count,schedule.next_run_at
        FROM agent_schedules schedule
        JOIN rooms room ON room.id=schedule.room_id AND room.archived_at IS NULL
-       JOIN identities creator ON creator.id=schedule.creator_id AND creator.kind='human'
+       JOIN identities creator ON creator.id=schedule.creator_id
+         AND (creator.kind='human' OR creator.id=schedule.agent_id)
        JOIN identities agent ON agent.id=schedule.agent_id AND agent.kind='agent'
        JOIN memberships creator_membership ON creator_membership.room_id=schedule.room_id
          AND creator_membership.identity_id=schedule.creator_id AND creator_membership.removed_at IS NULL
@@ -100,10 +103,11 @@ export class AgentScheduleLoop {
         const current = (
           await database.query<DueSchedule>(
             `SELECT schedule.id,schedule.room_id,schedule.agent_id,schedule.creator_id,
-              schedule.cadence,schedule.message,schedule.next_run_at
+              schedule.cadence,schedule.message,schedule.max_runs,schedule.run_count,schedule.next_run_at
              FROM agent_schedules schedule
              JOIN rooms room ON room.id=schedule.room_id AND room.archived_at IS NULL
-             JOIN identities creator ON creator.id=schedule.creator_id AND creator.kind='human'
+             JOIN identities creator ON creator.id=schedule.creator_id
+               AND (creator.kind='human' OR creator.id=schedule.agent_id)
              JOIN identities agent ON agent.id=schedule.agent_id AND agent.kind='agent'
              JOIN memberships creator_membership ON creator_membership.room_id=schedule.room_id
                AND creator_membership.identity_id=schedule.creator_id
@@ -134,11 +138,16 @@ export class AgentScheduleLoop {
             JSON.stringify([current.agent_id]),
           ],
         );
-        const next = nextScheduleOccurrence(current.cadence, now, current.next_run_at);
-        await database.query(
-          `UPDATE agent_schedules SET next_run_at=$2,updated_at=now() WHERE id=$1`,
-          [current.id, next],
-        );
+        const finished = current.max_runs !== null && current.run_count + 1 >= current.max_runs;
+        if (finished) {
+          await database.query(`DELETE FROM agent_schedules WHERE id=$1`, [current.id]);
+        } else {
+          const next = nextScheduleOccurrence(current.cadence, now, current.next_run_at);
+          await database.query(
+            `UPDATE agent_schedules SET next_run_at=$2,run_count=run_count+1,updated_at=now() WHERE id=$1`,
+            [current.id, next],
+          );
+        }
         return current.room_id;
       });
       if (!roomId) continue;

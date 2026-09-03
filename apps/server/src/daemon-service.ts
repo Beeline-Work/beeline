@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { DaemonAttachment, DaemonOperationMap } from '@beeline/api-contract/daemon';
+import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
 import type { SqlDatabase } from './database.js';
 import type { LiveHub } from './live.js';
 
@@ -72,6 +73,21 @@ export class DaemonService {
       case 'getWorkScheduleAuthority':
         return (await this.scheduleAuthority(
           input as Input<'getWorkScheduleAuthority'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
+      case 'createAgentSchedule':
+        return (await this.createAgentSchedule(
+          input as Input<'createAgentSchedule'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
+      case 'listAgentSchedules':
+        return (await this.listAgentSchedules(
+          input as Input<'listAgentSchedules'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
+      case 'deleteAgentSchedule':
+        return (await this.deleteAgentSchedule(
+          input as Input<'deleteAgentSchedule'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'getAgentToolMandate':
@@ -1080,6 +1096,76 @@ export class DaemonService {
     );
     return this.writeResult();
   }
+  /** Agent-driven schedules (beeline-agent create_schedule) run through the
+   *  same agent_schedules loop as manager-created schedules, with the agent as
+   *  both creator and beneficiary. */
+  private async createAgentSchedule(input: Input<'createAgentSchedule'>, agentId: string) {
+    if (typeof input.prompt !== 'string' || !input.prompt.trim()) {
+      throw new Error('schedule prompt is required');
+    }
+    validateScheduleCadence(input.cadence);
+    if (
+      input.maxRuns !== undefined &&
+      (!Number.isSafeInteger(input.maxRuns) || (input.maxRuns as number) < 1)
+    ) {
+      throw new Error('maxRuns must be a positive integer');
+    }
+    const room = await this.database.query<{ workspace_id: string }>(
+      `SELECT workspace_id FROM rooms WHERE id=$1`,
+      [input.roomId],
+    );
+    if (!room.rows[0]) throw new Error('schedule room not found');
+    const scheduleId = randomUUID();
+    const nextRunAt = nextScheduleOccurrence(input.cadence, new Date());
+    await this.database.query(
+      `INSERT INTO agent_schedules(
+         id,workspace_id,room_id,agent_id,creator_id,cadence,message,max_runs,next_run_at
+       ) VALUES($1,$2,$3,$4,$4,$5::jsonb,$6,$7,$8)`,
+      [
+        scheduleId,
+        room.rows[0].workspace_id,
+        input.roomId,
+        agentId,
+        JSON.stringify(input.cadence),
+        input.prompt.trim(),
+        input.maxRuns ?? null,
+        nextRunAt,
+      ],
+    );
+    return { scheduleId, nextRunAt: Math.floor(nextRunAt.getTime() / 1_000) };
+  }
+  private async listAgentSchedules(input: Input<'listAgentSchedules'>, agentId: string) {
+    const rows = await this.database.query<{
+      id: string;
+      cadence: import('@beeline/api-contract/phone').RoomScheduleCadence;
+      message: string;
+      max_runs: number | null;
+      run_count: number;
+      next_run_at: Date;
+    }>(
+      `SELECT id,cadence,message,max_runs,run_count,next_run_at
+       FROM agent_schedules WHERE room_id=$1 AND agent_id=$2 ORDER BY created_at,id`,
+      [input.roomId, agentId],
+    );
+    return {
+      schedules: rows.rows.map((row) => ({
+        scheduleId: row.id,
+        prompt: row.message,
+        cadence: row.cadence,
+        ...(row.max_runs !== null ? { maxRuns: row.max_runs } : {}),
+        runCount: row.run_count,
+        nextRunAt: Math.floor(row.next_run_at.getTime() / 1_000),
+      })),
+    };
+  }
+  private async deleteAgentSchedule(input: Input<'deleteAgentSchedule'>, agentId: string) {
+    const deleted = await this.database.query(
+      `DELETE FROM agent_schedules WHERE id=$1 AND room_id=$2 AND agent_id=$3`,
+      [input.scheduleId, input.roomId, agentId],
+    );
+    if (!deleted.rowCount) throw new Error('schedule not found');
+    return this.writeResult();
+  }
   private async scheduleReceipt(input: Input<'postWorkScheduleReceipt'>, agentId: string) {
     await this.database.query(
       `INSERT INTO schedule_receipts(schedule_id,occurrence_id,agent_id,room_id,status) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
@@ -1338,6 +1424,8 @@ export class DaemonService {
       'postPermissionExecution',
       'postWorkSchedule',
       'postWorkScheduleReceipt',
+      'createAgentSchedule',
+      'deleteAgentSchedule',
       'postAgentToolMandate',
       'postAgentPresence',
       'postCornerLifecycle',
@@ -1373,6 +1461,9 @@ export const DAEMON_OPERATION_NAMES = new Set<keyof DaemonOperationMap>([
   'listWorkSchedules',
   'getWorkScheduleAuthority',
   'listAgentToolSchedules',
+  'createAgentSchedule',
+  'listAgentSchedules',
+  'deleteAgentSchedule',
   'getAgentToolMandate',
   'getTargetAgentAuthority',
   'listRoomCorners',

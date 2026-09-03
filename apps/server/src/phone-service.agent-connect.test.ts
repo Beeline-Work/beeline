@@ -50,9 +50,16 @@ describe('PhoneService agent connect pairing claim', () => {
   }
 
   it('mints a prefix-free app pairing code with sixteen bytes of hex text', async () => {
-    const pairing = await phone.execute('createAgentPairingCode', { workspaceId: WORKSPACE }, OWNER);
+    const before = Math.floor(Date.now() / 1000);
+    const pairing = await phone.execute(
+      'createAgentPairingCode',
+      { workspaceId: WORKSPACE },
+      OWNER,
+    );
     expect(pairing.code).toMatch(/^[0-9A-F]{8}-[0-9A-F]{8}$/);
     expect(pairing.code).not.toContain('BUZZ-');
+    expect(pairing.expiresAt).toBeGreaterThanOrEqual(before + 15 * 60);
+    expect(pairing.expiresAt).toBeLessThan(10_000_000_000);
   });
 
   it('atomically creates and binds the generated agent before returning the grant metadata', async () => {

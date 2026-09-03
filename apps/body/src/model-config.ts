@@ -14,10 +14,7 @@
  * RAW advertised catalog every time something is about to be set — so even a
  * caller that forgot to filter first still cannot reach `mode`.
  */
-import {
-  isAllowedAgentModelConfigCategory,
-  type AgentModelConfigOption,
-} from './model-types.js';
+import { isAllowedAgentModelConfigCategory, type AgentModelConfigOption } from './model-types.js';
 import { lstatSync, readFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 
@@ -89,6 +86,24 @@ export function advertisedChoiceId(choice: Record<string, unknown>): string | un
   return undefined;
 }
 
+/** Put versioned model families newest-first while retaining provider order for ties. */
+export function sortModelChoicesNewestFirst(
+  choices: AgentModelConfigOption['options'],
+): AgentModelConfigOption['options'] {
+  return choices
+    .map((choice, index) => ({ choice, index }))
+    .sort((left, right) => {
+      const leftParts = left.choice.id.match(/\d+/g)?.map(Number) ?? [];
+      const rightParts = right.choice.id.match(/\d+/g)?.map(Number) ?? [];
+      for (let index = 0; index < Math.max(leftParts.length, rightParts.length); index += 1) {
+        const delta = (rightParts[index] ?? -1) - (leftParts[index] ?? -1);
+        if (delta !== 0) return delta;
+      }
+      return left.index - right.index;
+    })
+    .map(({ choice }) => choice);
+}
+
 /** Parse safe picker axes from raw `configOptions` and standard session model state. */
 export function parseAdvertisedConfigOptions(
   raw: unknown,
@@ -119,7 +134,7 @@ export function parseAdvertisedConfigOptions(
       id,
       category,
       ...(typeof record.currentValue === 'string' ? { currentValue: record.currentValue } : {}),
-      options: choices,
+      options: category === 'model' ? sortModelChoicesNewestFirst(choices) : choices,
     });
   }
 
@@ -146,7 +161,7 @@ export function parseAdvertisedConfigOptions(
       id: GROK_SESSION_MODEL_AXIS_ID,
       category: 'model',
       ...(currentModelId ? { currentValue: currentModelId } : {}),
-      options: modelChoices,
+      options: sortModelChoicesNewestFirst(modelChoices),
     });
   }
 

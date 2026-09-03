@@ -17,9 +17,11 @@ import {
   coordinateManagedUpdateHandoff,
   DEFAULT_UPDATE_INTERVAL_MS,
   gateManagedSuccessor,
+  ManagedUpdateDrain,
   ManagedUpdateHandoff,
   proveLoadedReleaseReady,
   rollbackFailedSuccessor,
+  UPDATE_DRAIN_DEADLINE_MS,
 } from './managed-update.js';
 import { UpdateFunctionalProbeError } from './update-functional-probe.js';
 import { updateRollbackAlertPath } from './update-rollback-alert.js';
@@ -114,10 +116,10 @@ describe('managed update handoff', () => {
     expect(restarts).toEqual(['new']);
   });
 
-  it('keeps a routine update inert after the bounded drain window instead of interrupting work', async () => {
+  it('forces the restart at the absolute drain deadline while a turn is still running', async () => {
     const { layout, runtimeDir } = await layoutFixture();
     let now = 1_000;
-    const restarts: string[] = [];
+    const restarts: Array<[string, string]> = [];
     const update = await ManagedUpdateHandoff.create(layout, runtimeDir, () => now, {
       drainDeadlineMs: 50,
     });
@@ -128,8 +130,8 @@ describe('managed update handoff', () => {
       await coordinateManagedUpdateHandoff(
         update,
         () => false,
-        async ({ desiredRelease }) => {
-          restarts.push(desiredRelease);
+        async ({ desiredRelease }, mode) => {
+          restarts.push([desiredRelease, mode]);
         },
       ),
     ).toBe('waiting-for-idle');
@@ -140,12 +142,36 @@ describe('managed update handoff', () => {
       await coordinateManagedUpdateHandoff(
         update,
         () => false,
-        async ({ desiredRelease }) => {
-          restarts.push(desiredRelease);
+        async ({ desiredRelease }, mode) => {
+          restarts.push([desiredRelease, mode]);
         },
       ),
-    ).toBe('waiting-for-idle');
-    expect(restarts).toEqual([]);
+    ).toBe('restarting');
+    expect(restarts).toEqual([['new', 'forced']]);
+  });
+
+  it('activates a staged release at the deadline even while a turn is still running', async () => {
+    const { layout, runtimeDir } = await layoutFixture();
+    let now = 1_000;
+    const restarts: string[] = [];
+    const update = await ManagedUpdateHandoff.create(layout, runtimeDir, () => now, {
+      drainDeadlineMs: 50,
+    });
+    await writeUpdateState(layout, { stagedReleaseId: 'new' });
+    const restart = async ({ desiredRelease }: { desiredRelease: string }, mode: string) => {
+      restarts.push(`${desiredRelease}:${mode}`);
+    };
+
+    expect(await coordinateManagedUpdateHandoff(update, () => false, restart)).toBe(
+      'waiting-for-idle',
+    );
+    expect(await activeReleaseId(layout)).toBe('old');
+
+    now += 50;
+    expect(await coordinateManagedUpdateHandoff(update, () => false, restart)).toBe('restarting');
+    expect(restarts).toEqual(['new:forced']);
+    expect(await activeReleaseId(layout)).toBe('new');
+    expect((await readUpdateAttempt(layout))?.status).toBe('pending');
   });
 
   it('converges to the exact desired release and accepts only its READY proof', async () => {
@@ -338,6 +364,145 @@ async function systemctl(...args: string[]): Promise<string> {
     })
   ).stdout;
 }
+
+/** Deterministic clock: `now` plus timers that fire only when the test advances time. */
+class FakeClock {
+  now = 1_000;
+  #timers = new Map<number, { at: number; callback: () => void }>();
+  #nextId = 1;
+  setTimer = (callback: () => void, ms: number): number => {
+    const id = this.#nextId++;
+    this.#timers.set(id, { at: this.now + ms, callback });
+    return id;
+  };
+  clearTimer = (handle: unknown): void => {
+    this.#timers.delete(handle as number);
+  };
+  pending(): number {
+    return this.#timers.size;
+  }
+  /** Advance `ms`, firing due timers in order and letting each one's async work settle. */
+  async advance(ms: number): Promise<void> {
+    const target = this.now + ms;
+    for (;;) {
+      const due = [...this.#timers.entries()]
+        .filter(([, timer]) => timer.at <= target)
+        .sort((a, b) => a[1].at - b[1].at)[0];
+      if (!due) break;
+      const [id, timer] = due;
+      this.#timers.delete(id);
+      this.now = timer.at;
+      timer.callback();
+      await settle();
+    }
+    this.now = target;
+  }
+}
+
+async function settle(): Promise<void> {
+  for (let index = 0; index < 20; index += 1) await new Promise((next) => setImmediate(next));
+}
+
+describe('managed update drain', () => {
+  const MINUTE = 60_000;
+
+  async function drainFixture(options: { activeTurns: number; drainDeadlineMs?: number }) {
+    const { layout, runtimeDir } = await layoutFixture();
+    const clock = new FakeClock();
+    const state = { activeTurns: options.activeTurns, intakeQuiesced: false };
+    const restarts: Array<{ release: string; mode: string; at: number }> = [];
+    const logs: string[] = [];
+    const update = await ManagedUpdateHandoff.create(layout, runtimeDir, () => clock.now, {
+      drainDeadlineMs: options.drainDeadlineMs ?? UPDATE_DRAIN_DEADLINE_MS,
+    });
+    await rm(layout.libDir);
+    await symlink('beeline-releases/new', layout.libDir);
+    const drain = new ManagedUpdateDrain({
+      update,
+      quiesceIfIdle: () => {
+        if (state.activeTurns > 0) return false;
+        state.intakeQuiesced = true;
+        return true;
+      },
+      activeTurnCount: () => state.activeTurns,
+      restart: async (request, mode) => {
+        restarts.push({ release: request.desiredRelease, mode, at: clock.now });
+      },
+      now: () => clock.now,
+      log: (line) => logs.push(line),
+      setTimer: clock.setTimer,
+      clearTimer: clock.clearTimer,
+    });
+    return { clock, state, restarts, logs, drain };
+  }
+
+  it('restarts an idle helper within one tick, arming no timer', async () => {
+    const { clock, state, restarts, drain } = await drainFixture({ activeTurns: 0 });
+    expect(await drain.tick()).toBe('restarting');
+    expect(restarts).toEqual([{ release: 'new', mode: 'drained', at: 1_000 }]);
+    expect(state.intakeQuiesced).toBe(true);
+    expect(clock.pending()).toBe(0);
+  });
+
+  it('restarts a busy helper on the first tick after its turn ends and cancels the deadline', async () => {
+    const { clock, state, restarts, logs, drain } = await drainFixture({ activeTurns: 1 });
+    expect(await drain.tick()).toBe('waiting-for-idle');
+    expect(restarts).toEqual([]);
+    expect(logs).toEqual(['[thin-core] update restart waiting: 1 active turn(s); deadline in 9m']);
+
+    await clock.advance(2 * MINUTE);
+    expect(restarts).toEqual([]);
+    state.activeTurns = 0;
+    expect(await drain.tick()).toBe('restarting');
+    expect(restarts).toEqual([{ release: 'new', mode: 'drained', at: 1_000 + 2 * MINUTE }]);
+    expect(state.intakeQuiesced).toBe(true);
+    expect(logs.filter((line) => line.includes('forced'))).toEqual([]);
+
+    // The deadline timer was disarmed with the restart: nothing fires later.
+    expect(clock.pending()).toBe(0);
+    await clock.advance(UPDATE_DRAIN_DEADLINE_MS);
+    expect(restarts).toHaveLength(1);
+    expect(await drain.tick()).toBe('restarting');
+    expect(restarts).toHaveLength(1);
+  });
+
+  it('forces the restart of a stuck turn at the absolute deadline from its own timer', async () => {
+    const { clock, state, restarts, logs, drain } = await drainFixture({ activeTurns: 2 });
+    expect(await drain.tick()).toBe('waiting-for-idle');
+    const armedAt = clock.now;
+
+    // No further core tick: the deadline timer alone must fire the restart.
+    await clock.advance(UPDATE_DRAIN_DEADLINE_MS - 1);
+    expect(restarts).toEqual([]);
+    await clock.advance(1);
+    expect(restarts).toEqual([
+      { release: 'new', mode: 'forced', at: armedAt + UPDATE_DRAIN_DEADLINE_MS },
+    ]);
+    expect(state.intakeQuiesced).toBe(false);
+    expect(logs.at(-1)).toBe(
+      '[thin-core] update restart forced: drain deadline reached with 2 active turn(s); ' +
+        'cancelling them and restarting onto new',
+    );
+    expect(clock.pending()).toBe(0);
+    expect(await drain.tick()).toBe('restarting');
+    expect(restarts).toHaveLength(1);
+  });
+
+  it('logs one waiting line per minute with the turn count and the minutes left', async () => {
+    const { clock, state, logs, drain } = await drainFixture({ activeTurns: 1 });
+    await drain.tick();
+    await clock.advance(MINUTE);
+    state.activeTurns = 3;
+    await clock.advance(MINUTE);
+    await drain.tick();
+    await drain.tick();
+    expect(logs).toEqual([
+      '[thin-core] update restart waiting: 1 active turn(s); deadline in 9m',
+      '[thin-core] update restart waiting: 1 active turn(s); deadline in 8m',
+      '[thin-core] update restart waiting: 3 active turn(s); deadline in 7m',
+    ]);
+  });
+});
 
 async function readSystemdState(path: string): Promise<Record<string, unknown>> {
   try {

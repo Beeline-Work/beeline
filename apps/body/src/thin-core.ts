@@ -54,6 +54,9 @@ export class ThinDaemonCore {
   isWorkspaceIdle(): boolean {
     return this.roomRuntime.isWorkspaceIdle();
   }
+  activeTurnCount(): number {
+    return this.roomRuntime.activeTurnCount();
+  }
   quiesceForUpdateIfIdle(): boolean {
     return this.roomRuntime.quiesceForUpdateIfIdle();
   }

@@ -160,7 +160,14 @@ export class RoomRuntimeCoordinator {
   }
 
   isWorkspaceIdle(): boolean {
-    return [...this.running.values()].every((room) => !room.body.isBusy());
+    return this.activeTurnCount() === 0;
+  }
+
+  /** Turns executing right now. Serving a Room or corner with no turn in flight is idle. */
+  activeTurnCount(): number {
+    let count = 0;
+    for (const room of this.running.values()) if (room.body.isBusy()) count += 1;
+    return count;
   }
 
   quiesceForUpdateIfIdle(): boolean {

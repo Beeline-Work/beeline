@@ -1760,6 +1760,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
 
     const acp = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
     vi.spyOn(acp, 'start').mockResolvedValue(undefined);
+    const polled = vi.fn();
     const sessionNew = vi.spyOn(acp, 'sessionNew').mockResolvedValue({
       sessionId: 'scheduled-session',
       raw: {},
@@ -1814,7 +1815,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       config: config as never,
       api: client,
       scheduler: new SessionScheduler({ maxLiveSessions: 2 }),
-      health: { poll: vi.fn(), failure: vi.fn(), presence: vi.fn() },
+      health: { poll: polled, failure: vi.fn(), presence: vi.fn() },
       signal: abort.signal,
       pollMs: 10,
       createAcpClient: () => acp,
@@ -1823,17 +1824,11 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     try {
       // The turn loop opens its inbox cursor at the latest row, so fire the
       // scheduled prompt while it is polling (as the real schedule loop would).
-      // Wait until the loop is polling (first presence heartbeat), then fire.
-      await vi.waitFor(
-        async () => {
-          const presence = await client.execute('getAgentPresence', {
-            agentId: AGENT,
-            roomId: ROOM,
-          });
-          expect(presence.status).toBe('online');
-        },
-        { timeout: 5_000 },
-      );
+      // Deterministic wake: `health.poll()` fires only AFTER the loop's first
+      // inbox fetch has established its `startAtLatest` cursor, so rows inserted
+      // once `polled` has been called are guaranteed to be picked up by a
+      // subsequent poll (unlike presence, which posts before the snapshot).
+      await vi.waitFor(() => expect(polled).toHaveBeenCalled(), { timeout: 5_000 });
       await database.query(
         `INSERT INTO messages(id,room_id,author_id,text,presentation) VALUES($1,$2,$3,$4,'system')`,
         ['e'.repeat(64), ROOM, SCHEDULE_SCHEDULER_ID, 'Beeline Scheduler checked the roster'],

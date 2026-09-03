@@ -264,7 +264,10 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
           pendingSuccessor = false;
           console.log(
             `[thin-core] successor functional probe passed on exact release ${loadedRelease}: ` +
-              `${functionalProof?.harness ?? 'unknown'} session/new + turn`,
+              `${functionalProof?.harness ?? 'unknown'} session/new + turn` +
+              (functionalProof?.modelAnswer === 'unavailable'
+                ? ` (model answer unavailable: ${functionalProof.modelAnswerReason})`
+                : ''),
           );
         }
         await clearDaemonStartFailures(runtimeDir);

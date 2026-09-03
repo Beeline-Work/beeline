@@ -22,6 +22,7 @@ import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './b
 import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
+import { explainEmptyAgentTurn } from './empty-turn.js';
 import type { GrantCommandRunner, GrantRunnerEndpoint } from './grant-runner.js';
 import {
   agentArgsWithModelSelection,
@@ -242,6 +243,8 @@ export class MonolithCornerTurnLoop {
   private readonly agent: ReturnType<typeof runtimeIdentity>;
   private client?: AcpClient;
   private sessionId?: string;
+  /** The live session's environment, read back for pi's own turn record. */
+  private agentEnv: Record<string, string> = {};
   private turnIdentityInstructions = '';
   private busy = false;
   private forcedStop = false;
@@ -323,6 +326,7 @@ export class MonolithCornerTurnLoop {
       GH_TOKEN: this.options.githubToken,
       GITHUB_TOKEN: this.options.githubToken,
     };
+    this.agentEnv = agentEnv;
     const agentArgs = agentArgsWithModelSelection(
       {
         kind: this.options.config.agentKind,
@@ -610,8 +614,20 @@ export class MonolithCornerTurnLoop {
           await this.activityTail;
           await this.draftTail;
           await this.activityTail;
-          const reply = stripAgentReplyPreamble(result.agentText).trim();
-          if (!reply) throw new Error('ACP corner turn produced no durable reply');
+          let reply = stripAgentReplyPreamble(result.agentText).trim();
+          if (!reply) {
+            const explained = await explainEmptyAgentTurn({
+              agentLabel: this.options.config.agentCommand ?? this.options.config.agentBinary,
+              agentEnv: this.agentEnv,
+              sessionId,
+              result,
+            });
+            reply = explained.recoveredText
+              ? stripAgentReplyPreamble(explained.recoveredText).trim()
+              : '';
+            if (!reply) throw new Error(explained.reason);
+            console.warn(`[thin-core] corner ${cornerId} turn ${requestId}: ${explained.reason}`);
+          }
           // The durable final carries only the tail the narration segments did
           // not already keep; when narration covered the whole reply the turn
           // settles through its explicit receipt instead.

@@ -1764,6 +1764,10 @@ export default function BuzzChat() {
       setReplyTarget(null);
       await activeOutbox.attempted(preparedEvent.id);
       await sendTransport.publishPreparedMessage(preparedEvent);
+      // Advance the read mark to our own message immediately: a message we
+      // wrote must never gold the Room list while the deck's working
+      // indicator carries the live turn (room-deck-state precedence).
+      void roomClient?.markRead(decodedId, preparedEvent.id).catch(() => undefined);
       refreshSignal.signal();
       scheduleOutboxConfirmation(preparedEvent.id);
     } catch (err) {

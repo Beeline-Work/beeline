@@ -556,6 +556,38 @@ describe('monolith integration', () => {
     socket.close();
   });
 
+  it('never reports unread for the viewer’s own latest message', async () => {
+    const sent = await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: 'c'.repeat(64),
+      text: 'My own note',
+    });
+    expect(sent.status).toBe(200);
+    const readChats = async () =>
+      ((await (await request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
+        chats: Array<{ room: { id: string }; unread: boolean }>;
+      }).chats.find((chat) => chat.room.id === ROOM)!;
+    expect((await readChats()).unread).toBe(false);
+
+    await daemonOperation('postRoomMessage', {
+      roomId: ROOM,
+      requestId: 'd'.repeat(64),
+      text: 'Agent reply',
+    });
+    expect((await readChats()).unread).toBe(true);
+
+    const agentMessage = ((await (
+      await request(`/v1/phone/rooms/${ROOM}`)
+    ).json()) as { messages: Array<{ id: string; text: string }> }).messages.find(
+      (message) => message.text === 'Agent reply',
+    );
+    expect(
+      (await request(`/v1/phone/rooms/${ROOM}/read`, 'POST', { messageId: agentMessage!.id }))
+        .status,
+    ).toBe(204);
+    expect((await readChats()).unread).toBe(false);
+  });
+
   it('keeps a Room view valid when live activity joins a full transcript', async () => {
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,created_at)

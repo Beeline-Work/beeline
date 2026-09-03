@@ -388,15 +388,16 @@ export class PhoneService {
         (SELECT count(*)::text FROM rooms c WHERE c.parent_id=r.id) corner_count,
         lm.id latest_id,lm.text latest_text,lm.created_at latest_created_at,lm.author_id latest_author_id,
         li.kind latest_author_kind,li.name latest_author_name,
-        (lm.id IS NOT NULL AND (
+        (lm_other.id IS NOT NULL AND (
           mark.message_created_at IS NULL OR
-          (lm.created_at,lm.id)>(mark.message_created_at,mark.message_id)
+          (lm_other.created_at,lm_other.id)>(mark.message_created_at,mark.message_id)
         )) unread,
         EXISTS(SELECT 1 FROM agent_turns t WHERE (t.room_id=r.id OR t.room_id IN (SELECT id FROM rooms WHERE parent_id=r.id)) AND t.status='working') working,
         EXISTS(SELECT 1 FROM permission_authority p WHERE (p.room_id=r.id OR p.room_id IN (SELECT id FROM rooms WHERE parent_id=r.id)) AND p.status='pending') needs_you
       FROM rooms r
       JOIN memberships member ON member.room_id=r.id AND member.identity_id=$2 AND member.removed_at IS NULL
       LEFT JOIN LATERAL (SELECT * FROM messages WHERE room_id=r.id AND presentation IN ('message','system') ORDER BY created_at DESC,id DESC LIMIT 1) lm ON true
+      LEFT JOIN LATERAL (SELECT * FROM messages WHERE room_id=r.id AND presentation IN ('message','system') AND author_id IS DISTINCT FROM $2 ORDER BY created_at DESC,id DESC LIMIT 1) lm_other ON true
       LEFT JOIN identities li ON li.id=lm.author_id
       LEFT JOIN room_read_marks mark ON mark.room_id=r.id AND mark.identity_id=$2
       WHERE r.workspace_id=$1 AND r.parent_id IS NULL AND r.archived_at IS NULL

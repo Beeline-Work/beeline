@@ -16,6 +16,26 @@ import type { LiveHub } from './live.js';
 type Input<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['input'];
 type Output<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['output'];
 const id = () => randomBytes(32).toString('hex');
+
+/** Server-side cap on the daemon's distilled failure reason (matches the daemon's own cap). */
+const TURN_FAILURE_REASON_MAX = 200;
+
+/** A durable success after a failed line settles that line in place. */
+async function settleTurnFailureLine(
+  database: SqlDatabase,
+  roomId: string,
+  requestId: string,
+  agentId: string,
+) {
+  await database.query(
+    `UPDATE messages SET
+       text=concat(COALESCE(NULLIF((SELECT name FROM identities WHERE id=$3),''),'The agent'),' answered after a retry'),
+       card=card||'{"state":"recovered"}'::jsonb
+     WHERE room_id=$1 AND card_type='turn-failed' AND card->>'requestId'=$2
+       AND card->>'agentId'=$3 AND card->>'state'='failed'`,
+    [roomId, requestId, agentId],
+  );
+}
 const seconds = (date: Date) => Math.floor(date.getTime() / 1_000);
 const AGENT_TO_AGENT_HOP_CAP = 3;
 const MEDIA_URL_PATTERN = /\/v1\/media\/([0-9a-f-]{36})$/;
@@ -918,6 +938,7 @@ export class DaemonService {
              status='complete',created_at=now()`,
           [input.roomId, input.requestId, agentId],
         );
+        await settleTurnFailureLine(database, input.roomId, input.requestId, agentId);
       }
     });
     this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'message' });
@@ -1004,12 +1025,72 @@ export class DaemonService {
   }
   private async turnReceipt(input: Input<'postAgentTurnReceipt'>, agentId: string) {
     await this.access(input.roomId, agentId);
-    await this.database.query(
-      `INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id) VALUES($1,$2,$3,$4,$5) ON CONFLICT(room_id,request_id,agent_id) DO UPDATE SET status=EXCLUDED.status,generation_id=EXCLUDED.generation_id,created_at=now()`,
-      [input.roomId, input.requestId, agentId, input.status, input.generationId ?? null],
-    );
+    const reason =
+      input.status === 'failed' && typeof input.reason === 'string'
+        ? input.reason.replace(/\s+/g, ' ').trim().slice(0, TURN_FAILURE_REASON_MAX) || null
+        : null;
+    await this.database.transaction(async (database) => {
+      await database.query(
+        `INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id,failure_reason) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(room_id,request_id,agent_id) DO UPDATE SET status=EXCLUDED.status,generation_id=EXCLUDED.generation_id,failure_reason=EXCLUDED.failure_reason,created_at=now()`,
+        [input.roomId, input.requestId, agentId, input.status, input.generationId ?? null, reason],
+      );
+      if (input.status === 'failed') {
+        await this.inscribeTurnFailure(database, input.roomId, input.requestId, agentId, reason);
+      } else if (input.status === 'complete') {
+        await settleTurnFailureLine(database, input.roomId, input.requestId, agentId);
+      }
+    });
     this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'turn' });
     return this.writeResult();
+  }
+  /**
+   * A failed turn is a fact the Room must carry. When a human asked, ONE
+   * `presentation='system'` line names the agent and the reason and mentions
+   * the requester so their tagged-mention push fires once; retries of the same
+   * request within ten minutes update that line in place (the push claim is
+   * keyed by message id, so an update never re-pushes). A later success settles
+   * the same row to "answered after a retry" — an inscribed record that stays
+   * true, never a stamped stale failure.
+   */
+  private async inscribeTurnFailure(
+    database: SqlDatabase,
+    roomId: string,
+    requestId: string,
+    agentId: string,
+    reason: string | null,
+  ) {
+    const trigger = (
+      await database.query<{ author_id: string; agent_name: string }>(
+        `SELECT message.author_id,COALESCE(NULLIF(agent.name,''),'The agent') agent_name
+         FROM messages message
+         JOIN identities requester ON requester.id=message.author_id AND requester.kind='human'
+         JOIN identities agent ON agent.id=$3
+         WHERE message.id=$2 AND message.presentation IN ('message','system')
+           AND (message.room_id=$1 OR message.room_id=(SELECT parent_id FROM rooms WHERE id=$1))`,
+        [roomId, requestId, agentId],
+      )
+    ).rows[0];
+    if (!trigger) return;
+    const text = `${trigger.agent_name} could not answer${reason ? ` · ${reason}` : ''}`;
+    const updated = await database.query(
+      `UPDATE messages SET text=$4 WHERE room_id=$1 AND card_type='turn-failed'
+         AND card->>'requestId'=$2 AND card->>'agentId'=$3 AND card->>'state'='failed'
+         AND created_at>now()-interval '10 minutes'`,
+      [roomId, requestId, agentId, text],
+    );
+    if (updated.rowCount) return;
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,mention_ids,card_type,card)
+       VALUES($1,$2,$3,$4,'system',$5::jsonb,'turn-failed',$6::jsonb)`,
+      [
+        id(),
+        roomId,
+        agentId,
+        text,
+        JSON.stringify([trigger.author_id]),
+        JSON.stringify({ requestId, agentId, state: 'failed' }),
+      ],
+    );
   }
   private async activity(input: Input<'postAgentActivity'>, agentId: string) {
     await this.access(input.roomId, agentId);

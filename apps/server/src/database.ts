@@ -349,8 +349,10 @@ CREATE TABLE IF NOT EXISTS agent_turns (
   status text NOT NULL CHECK (status IN ('working', 'complete', 'failed')),
   generation_id text,
   created_at timestamptz NOT NULL DEFAULT now(),
+  failure_reason text,
   PRIMARY KEY (room_id, request_id, agent_id)
 );
+ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS failure_reason text;
 
 CREATE TABLE IF NOT EXISTS live_outputs (
   room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,

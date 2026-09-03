@@ -15,6 +15,7 @@ import {
   type DeliveredAttachment,
 } from './attachment-delivery.js';
 import { stripAgentReplyPreamble } from './reply-sanitizer.js';
+import { distillTurnFailureReason, redactToolDetail } from './turn-failure-reason.js';
 import { beelineAgentMcpServer } from './room-session.js';
 import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
 import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
@@ -58,26 +59,6 @@ function record(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
-}
-
-/** Keep wire-visible tool detail useful without ever carrying credentials. */
-function redactToolDetail(value: string): string {
-  return value
-    .replace(
-      /\b(["']?)(api[_-]?key|token|secret|password|passwd|authorization|credential|cookie|private[_-]?key)\1\s*[:=]\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,}\]]+)/gi,
-      '"$2": "[REDACTED]"',
-    )
-    .replace(
-      /\b(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*=(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\S+)/g,
-      (assignment) => `${assignment.slice(0, assignment.indexOf('='))}=[REDACTED]`,
-    )
-    .replace(/\b(?:gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,})\b/gi, '[REDACTED]')
-    .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, '[REDACTED]')
-    .replace(/\b(Bearer\s+)[^\s,]+/gi, '$1[REDACTED]')
-    .replace(
-      /(--?(?:api[_-]?key|token|secret|password|authorization|credential|cookie)\s+)(?:"[^"]*"|'[^']*'|\S+)/gi,
-      '$1[REDACTED]',
-    );
 }
 
 function clampBytes(value: string, maxBytes: number): string {
@@ -680,6 +661,7 @@ export class MonolithCornerTurnLoop {
         requestId,
         status: 'failed',
         generationId: `${this.agent.publicKey}:${cornerId}`,
+        reason: distillTurnFailureReason(error),
       });
       throw error;
     } finally {

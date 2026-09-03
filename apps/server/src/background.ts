@@ -45,6 +45,7 @@ export class PushDeliveryLoop {
         JOIN push_delivery_floors floor ON floor.id='message-delivery'
         WHERE m.created_at>=d.registered_at AND m.created_at>=floor.started_at
           AND m.presentation IS DISTINCT FROM 'activity'
+          AND m.card_type IS DISTINCT FROM 'agent-yolo'
           AND (
             m.mention_ids @> jsonb_build_array(member.identity_id)
             OR room.direct_participants IS NOT NULL

@@ -294,9 +294,15 @@ CREATE TABLE IF NOT EXISTS agents (
   model_catalog jsonb NOT NULL DEFAULT '[]'::jsonb,
   commands jsonb NOT NULL DEFAULT '[]'::jsonb,
   schedule_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+  yolo_mode boolean NOT NULL DEFAULT false,
+  yolo_set_by text,
+  yolo_set_at timestamptz,
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS schedule_ids jsonb NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_mode boolean NOT NULL DEFAULT false;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_set_by text;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_set_at timestamptz;
 
 CREATE TABLE IF NOT EXISTS messages (
   id text PRIMARY KEY,

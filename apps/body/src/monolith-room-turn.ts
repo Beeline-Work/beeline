@@ -307,6 +307,9 @@ export class MonolithRoomTurnLoop {
       agentEnv,
       agentCwd: this.options.cwd,
       agentLabel: command,
+      // `bwrapPath` is set only when `detectBwrapSandbox` passed its self-test
+      // (`config.ts`), which is exactly when `wrapAgentCommand` above wraps.
+      osSandbox: Boolean(this.options.config.bwrapPath),
       autoApprovePermissions: false,
       permissionAllowlist: isRoomMcpPermissionRequest,
     };

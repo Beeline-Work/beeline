@@ -11,8 +11,15 @@
  *     execution and file change through `session/request_permission`
  *     (`approvalPolicy: 'on-request'`) AND advertises a real `read-only`
  *     session mode backed by Codex's own OS sandbox
- *     (`sandboxPolicy: { type: 'readOnly' }`). Beeline selects that mode for
- *     Rooms and `agent-full-access` for corners via `AcpClient.applySessionMode`.
+ *     (`sandboxPolicy: { type: 'readOnly', networkAccess: false }`). That mode
+ *     is offline as well as read-only, so Beeline selects it for a Room ONLY
+ *     when the daemon's own OS sandbox is not wrapping the child. Under
+ *     bubblewrap a Room selects `agent-full-access` exactly like a corner —
+ *     Codex stops asking and has network — and the read-only filesystem rule
+ *     is held by bwrap (checkout mounted read-only, private /tmp, harness
+ *     state the only writable roots), which is how claude/pi Rooms are already
+ *     held. See `roomModeCandidates`. Corners always select
+ *     `agent-full-access` (`cornerAutonomyModeCandidates`).
  *   - `claude-agent-acp` (@agentclientprotocol/claude-agent-acp): routes every
  *     tool through the SDK's `canUseTool` -> `session/request_permission`. It
  *     advertises no read-only mode, so a Room stays in `default`, which asks —
@@ -71,7 +78,7 @@ const PROFILES: Array<{ match: RegExp; profile: HarnessProfile }> = [
     match: /(^|[/\\])codex-acp(\.[a-z]+)?$/i,
     profile: {
       enforcement: 'sandboxed',
-      note: 'codex-acp asks for every command/file change and enforces a read-only OS sandbox in read-only mode',
+      note: 'codex-acp asks for every command/file change and enforces an offline read-only OS sandbox in read-only mode; under bubblewrap a Room runs it in agent-full-access and bwrap holds the filesystem rule',
     },
   },
   {
@@ -224,6 +231,31 @@ export function cornerAutonomyModeCandidates(agentCommand: string | undefined): 
 }
 
 /**
+ * ACP mode ids a top-level Room selects for each shipped harness.
+ *
+ * The portable answer is the harness's own read-only mode. Codex is the one
+ * harness whose read-only mode also cuts the network
+ * (`sandboxPolicy: { type: 'readOnly', networkAccess: false }`), so a Codex
+ * Room agent under it cannot fetch a shared attachment or search the web while
+ * claude/pi Room agents under bubblewrap can (`bwrap-sandbox.ts` shares the net
+ * namespace). When the daemon's OS sandbox is ACTIVE for the session, a Codex
+ * Room therefore selects `agent-full-access`, exactly as a corner does: the
+ * checkout is mounted read-only by bwrap, so the filesystem rule is held by the
+ * kernel rather than by Codex's mode, and the harness stops asking. Without
+ * bwrap (missing, self-test failed, or `sandbox: off`) Codex keeps its own
+ * offline read-only sandbox, because then nothing else holds the rule.
+ */
+export function roomModeCandidates(
+  agentCommand: string | undefined,
+  options: { osSandbox?: boolean } = {},
+): string[] {
+  if (options.osSandbox && agentCommand && /(^|[/\\])codex-acp(\.[a-z]+)?$/i.test(agentCommand)) {
+    return ['agent-full-access'];
+  }
+  return ['read-only', 'readonly'];
+}
+
+/**
  * One-line operator line about how a Room's read-only rule is actually held for
  * this harness, or `undefined` when nothing needs saying.
  *
@@ -240,7 +272,18 @@ export function roomSandboxWarning(
   options: { osSandbox?: boolean } = {},
 ): string | undefined {
   const { enforcement, note } = harnessEnforcement(agentCommand);
-  if (enforcement === 'sandboxed' || enforcement === 'permission-callback') return undefined;
+  if (enforcement === 'sandboxed') {
+    // codex-acp: the layer holding the rule depends on the OS sandbox, because
+    // under bwrap the Room runs in agent-full-access (`roomModeCandidates`).
+    return options.osSandbox
+      ? `Room read-only enforcement for this harness is the OS sandbox (sandbox=ON): the ` +
+          `session runs in Codex agent-full-access so it has network and never asks; the ` +
+          `checkout is mounted read-only by bubblewrap, so a write is refused by the kernel.`
+      : `Room read-only enforcement for this harness is Codex's own read-only mode ` +
+          `(sandbox=OFF): the Room stays offline and read-only. Install bubblewrap so the ` +
+          `daemon holds the filesystem rule and the Room can run in agent-full-access with network.`;
+  }
+  if (enforcement === 'permission-callback') return undefined;
   if (options.osSandbox) {
     return (
       `Room read-only enforcement for this harness is the OS sandbox (sandbox=ON): ${note}. ` +
@@ -251,7 +294,8 @@ export function roomSandboxWarning(
   return (
     `Room read-only enforcement is ADVISORY for this harness (sandbox=OFF): ${note}. ` +
     `The Room system prompt still forbids editing, but the daemon cannot block it. ` +
-    `Use codex or claude for a Room that must be read-only, or install bubblewrap so the ` +
-    `daemon can enforce it at the OS level.`
+    `Use claude for a Room that must be read-only (codex Rooms without bubblewrap stay ` +
+    `offline-and-read-only in Codex's own sandbox), or install bubblewrap so the daemon ` +
+    `can enforce it at the OS level.`
   );
 }

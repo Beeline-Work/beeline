@@ -1144,6 +1144,29 @@ describe('AcpClient live steering', () => {
     },
   );
 
+  it.each([
+    [true, 'agent-full-access'],
+    [false, 'read-only'],
+  ] as const)(
+    'puts a codex readonly session into full access only when osSandbox=%s says bwrap holds the filesystem',
+    async (osSandbox, expectedMode) => {
+      const client = new AcpClient({
+        agentCommand: await fakeAutonomyAgent(
+          'codex-acp.mjs',
+          ['read-only', 'agent', 'agent-full-access'],
+          expectedMode,
+        ),
+        agentEnv: {},
+        osSandbox,
+      });
+      await client.start();
+      await expect(
+        client.sessionNew({ cwd: process.cwd(), mode: 'readonly' }),
+      ).resolves.toMatchObject({ sessionId: 'autonomy-session' });
+      await client.stop();
+    },
+  );
+
   it('carries the child process stderr tail into a spawn/exit failure', async () => {
     const client = new AcpClient({
       agentCommand: await fakeAuthFailingAgent(),

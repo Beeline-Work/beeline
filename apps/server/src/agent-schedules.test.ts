@@ -10,7 +10,7 @@ import {
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
-import { SCHEDULE_SCHEDULER_ID } from '@beeline/api-contract/scheduled-prompts';
+import { SCHEDULE_RAN_VERB, SCHEDULE_SCHEDULER_ID } from '@beeline/api-contract/scheduled-prompts';
 
 const OWNER = 'a'.repeat(64);
 const MEMBER = 'b'.repeat(64);
@@ -216,15 +216,22 @@ describe('agent schedule background posting', () => {
         text: string;
         presentation: string;
         mention_ids: string[];
-      }>(`SELECT author_id,text,presentation,mention_ids FROM messages ORDER BY created_at`);
+        system_event: unknown;
+      }>(`SELECT author_id,text,presentation,mention_ids,system_event FROM messages ORDER BY created_at`);
       expect(messages.rowCount).toBe(2);
       // Never authored by the agent itself: the scheduler identity posts a
       // system-presentation line mentioning the agent.
       expect(messages.rows[0]).toEqual({
         author_id: SCHEDULE_SCHEDULER_ID,
-        text: 'Scheduled: Post exactly: hello @methoxine-debug',
+        text: 'Beeline Scheduler ran a schedule for Worker · Post exactly: hello @methoxine-debug',
         presentation: 'system',
         mention_ids: [AGENT],
+        system_event: {
+          subject: { kind: 'system', id: SCHEDULE_SCHEDULER_ID, name: 'Beeline Scheduler' },
+          verb: SCHEDULE_RAN_VERB,
+          object: { text: 'Worker', id: AGENT },
+          consequence: 'Post exactly: hello @methoxine-debug',
+        },
       });
       expect(messages.rows[1]).toEqual(messages.rows[0]);
       // The scheduler identity is hidden from rosters.
@@ -246,7 +253,7 @@ describe('agent schedule background posting', () => {
       const scheduledItems = inbox.items.filter(
         (item) =>
           item.type === 'system' &&
-          item.body.startsWith('Scheduled: ') &&
+          item.systemEvent?.verb === SCHEDULE_RAN_VERB &&
           item.mentionIds.includes(AGENT),
       );
       expect(scheduledItems).toHaveLength(2);

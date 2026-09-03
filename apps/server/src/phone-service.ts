@@ -19,6 +19,7 @@ import type {
   RoomViewIdentity,
   RoomViewMember,
   RoomViewMessage,
+  SystemEvent,
   WorkspaceListView,
   WorkspaceView,
 } from '@beeline/api-contract/phone';
@@ -28,15 +29,12 @@ import {
   isFaceId,
   type PhoneOperationMap,
 } from '@beeline/api-contract/phone';
-import {
-  formatGrantDecisionLine,
-  type AgentGrantDecision,
-  type AgentGrantStatus,
-} from '@beeline/api-contract/agent-grants';
+import type { AgentGrantDecision, AgentGrantStatus } from '@beeline/api-contract/agent-grants';
 import type { SqlDatabase } from './database.js';
 import type { GitHubOperations } from './github-operations.js';
 import { collapsePermissionCards } from '@beeline/push-gateway/projection';
 import { joinRooms } from './membership-join.js';
+import { identitySubject, systemLine } from './system-line.js';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
 
 const DURABLE_KINDS = [0, 9, 9000, 9001, 9002, 9007, 9008, 30078, 39000, 39001, 39002];
@@ -113,6 +111,7 @@ interface MessageRow {
   durable_fact: RoomViewMessage['durableFact'] | null;
   card_type: string | null;
   card: Record<string, unknown> | null;
+  system_event: SystemEvent | null;
   created_at: Date;
   author_kind: 'human' | 'agent';
   author_name: string;
@@ -232,6 +231,7 @@ function projectedMessage(row: MessageRow, publicOrigin: string): RoomViewMessag
       : {}),
     ...(row.activity ? { activity: row.activity as NonNullable<RoomViewMessage['activity']> } : {}),
     ...(row.durable_fact ? { durableFact: row.durable_fact } : {}),
+    ...(row.system_event ? { systemEvent: row.system_event } : {}),
   };
   if (!row.card_type || !row.card) return base;
   switch (row.card_type) {
@@ -1591,25 +1591,28 @@ export class PhoneService {
         [input.permissionId, status, input.roomId],
       );
       if (!updated.rowCount) throw new Error('permission not found');
-      await database.query(
-        `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card) VALUES ($1,$2,$3,'','card','permission',$4::jsonb)`,
-        [
-          id,
-          input.roomId,
-          viewerId,
-          JSON.stringify({
-            permissionId: input.permissionId,
-            requestId: input.requestId,
-            agent,
-            requester,
-            decider,
-            tool: typeof card?.tool === 'string' ? card.tool : 'edit files',
-            repository: input.repository,
-            ...(card?.purpose === 'squire-spending' ? { purpose: 'squire-spending' } : {}),
-            status: input.decision === 'allow' ? 'allowed' : 'denied',
-          }),
-        ],
-      );
+      const tool = typeof card?.tool === 'string' ? card.tool : 'edit files';
+      await systemLine(database, {
+        id,
+        roomId: input.roomId,
+        authorId: viewerId,
+        subject: identitySubject({ id: decider.pubkey, kind: decider.kind, name: decider.name }),
+        verb: input.decision === 'allow' ? 'allowed' : 'denied',
+        object: { text: `${agent.name} to ${tool}`, id: agent.pubkey },
+        presentation: 'card',
+        cardType: 'permission',
+        card: {
+          permissionId: input.permissionId,
+          requestId: input.requestId,
+          agent,
+          requester,
+          decider,
+          tool,
+          repository: input.repository,
+          ...(card?.purpose === 'squire-spending' ? { purpose: 'squire-spending' } : {}),
+          status: input.decision === 'allow' ? 'allowed' : 'denied',
+        },
+      });
     });
     return { messageId: id };
   }
@@ -1644,6 +1647,7 @@ export class PhoneService {
     );
   }
   private async leaveWorkspace(input: Input<'leaveWorkspace'>, viewerId: string) {
+    const leaver = await this.requireIdentity(viewerId);
     await this.database.transaction(async (database) => {
       await database.query(`SELECT 1 FROM workspaces WHERE id=$1 FOR UPDATE`, [input.workspaceId]);
       const current = (
@@ -1662,10 +1666,24 @@ export class PhoneService {
         );
         if (!otherOwner.rowCount) throw new Error('workspace manager cannot leave as sole owner');
       }
+      const rooms = await database.query<{ room_id: string }>(
+        `SELECT m.room_id FROM memberships m JOIN rooms r ON r.id=m.room_id
+         WHERE m.workspace_id=$1 AND m.identity_id=$2 AND m.removed_at IS NULL
+           AND r.archived_at IS NULL`,
+        [input.workspaceId, viewerId],
+      );
       await database.query(
         `UPDATE memberships SET removed_at=now() WHERE workspace_id=$1 AND identity_id=$2`,
         [input.workspaceId, viewerId],
       );
+      for (const room of rooms.rows)
+        await systemLine(database, {
+          roomId: room.room_id,
+          subject: identitySubject({ id: leaver.pubkey, kind: leaver.kind, name: leaver.name }),
+          verb: 'left',
+          cardType: 'member-left',
+          card: { identityId: viewerId },
+        });
     });
   }
   private async createRoom(input: Input<'createRoom'>, viewerId: string) {
@@ -1751,10 +1769,20 @@ export class PhoneService {
           : 'room membership required',
       );
     }
-    await this.database.query(
-      `UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,
-      [roomId, viewerId],
-    );
+    const leaver = await this.requireIdentity(viewerId);
+    await this.database.transaction(async (database) => {
+      await database.query(
+        `UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,
+        [roomId, viewerId],
+      );
+      await systemLine(database, {
+        roomId,
+        subject: identitySubject({ id: leaver.pubkey, kind: leaver.kind, name: leaver.name }),
+        verb: 'left',
+        cardType: 'member-left',
+        card: { identityId: viewerId },
+      });
+    });
   }
   private async addRoomMember(input: Input<'addRoomMember'>, viewerId: string) {
     const room = await this.requireTopLevelRoom(input.roomId);
@@ -1790,10 +1818,22 @@ export class PhoneService {
     if (target.role === 'owner' || (actor?.role === 'admin' && target.role === 'admin')) {
       throw new Error('room manager cannot remove a member with equal or greater authority');
     }
-    await this.database.query(
-      `UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,
-      [input.roomId, input.memberId],
-    );
+    const remover = await this.requireIdentity(viewerId);
+    const removed = await this.requireIdentity(input.memberId);
+    await this.database.transaction(async (database) => {
+      await database.query(
+        `UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,
+        [input.roomId, input.memberId],
+      );
+      await systemLine(database, {
+        roomId: input.roomId,
+        subject: identitySubject({ id: remover.pubkey, kind: remover.kind, name: remover.name }),
+        verb: 'removed',
+        object: { text: removed.name, id: removed.pubkey },
+        cardType: 'member-removed',
+        card: { identityId: input.memberId },
+      });
+    });
   }
   private async addWorkspaceMember(input: Input<'addWorkspaceMember'>, viewerId: string) {
     await this.requireWorkspaceManager(input.workspaceId, viewerId);
@@ -2010,23 +2050,19 @@ export class PhoneService {
           JSON.stringify(grants),
         ]);
       }
-      await database.query(
-        `INSERT INTO messages(id,room_id,author_id,text,presentation,mention_ids,card_type,card)
-         VALUES($1,$2,$3,$4,'system',$5::jsonb,'grant-decision',$6::jsonb)`,
-        [
-          messageId(),
-          grant.room_id,
-          viewerId,
-          formatGrantDecisionLine({
-            deciderName: decider.name,
-            decision,
-            kind: grant.kind,
-            target: grant.target,
-          }),
-          JSON.stringify([grant.agent_id]),
-          JSON.stringify({ grantId: input.grantId, status }),
-        ],
-      );
+      // The text this composes is exactly `formatGrantDecisionLine`'s shape
+      // (`<decider> approved command npm test`): the daemon recognises the
+      // owner's answer structurally with `parseGrantDecisionLine`.
+      await systemLine(database, {
+        roomId: grant.room_id,
+        authorId: viewerId,
+        subject: identitySubject({ id: decider.pubkey, kind: decider.kind, name: decider.name }),
+        verb: decision === 'always' ? 'approved' : decision === 'once' ? 'approved once' : 'declined',
+        object: `${grant.kind} ${grant.target}`,
+        mentions: [grant.agent_id],
+        cardType: 'grant-decision',
+        card: { grantId: input.grantId, status },
+      });
     });
     return { grantId: input.grantId, status, roomId: grant.room_id };
   }
@@ -2110,21 +2146,18 @@ export class PhoneService {
            AND r.workspace_id=$2 AND r.archived_at IS NULL`,
         [input.agentId, input.workspaceId],
       );
-      const text = input.enabled
-        ? `${agent.viewer_name} turned yolo on for ${agent.agent_name} · grant requests are now approved automatically`
-        : `${agent.viewer_name} turned yolo off for ${agent.agent_name} · grant requests now ask before running`;
       for (const room of rooms.rows)
-        await database.query(
-          `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
-           VALUES($1,$2,$3,$4,'system','agent-yolo',$5::jsonb)`,
-          [
-            randomBytes(32).toString('hex'),
-            room.room_id,
-            viewerId,
-            text,
-            JSON.stringify({ agentId: input.agentId, enabled: input.enabled }),
-          ],
-        );
+        await systemLine(database, {
+          roomId: room.room_id,
+          subject: { kind: 'person', id: viewerId, name: agent.viewer_name },
+          verb: input.enabled ? 'turned yolo on for' : 'turned yolo off for',
+          object: { text: agent.agent_name, id: input.agentId },
+          consequence: input.enabled
+            ? 'grant requests are now approved automatically'
+            : 'grant requests now ask before running',
+          cardType: 'agent-yolo',
+          card: { agentId: input.agentId, enabled: input.enabled },
+        });
     });
   }
   /**
@@ -2155,13 +2188,32 @@ export class PhoneService {
 
   private async removeAgent(input: Input<'removeAgent'>, viewerId: string) {
     await this.requireWorkspaceAgent(input.workspaceId, input.agentId, viewerId);
-    await this.database.query(
-      `UPDATE memberships SET removed_at=now() WHERE workspace_id=$1 AND identity_id=$2`,
-      [input.workspaceId, input.agentId],
-    );
-    await this.database.query(`UPDATE daemon_tokens SET revoked_at=now() WHERE agent_id=$1`, [
-      input.agentId,
-    ]);
+    const remover = await this.requireIdentity(viewerId);
+    const removed = await this.requireIdentity(input.agentId);
+    await this.database.transaction(async (database) => {
+      const rooms = await database.query<{ room_id: string }>(
+        `SELECT m.room_id FROM memberships m JOIN rooms r ON r.id=m.room_id
+         WHERE m.workspace_id=$1 AND m.identity_id=$2 AND m.removed_at IS NULL
+           AND r.archived_at IS NULL`,
+        [input.workspaceId, input.agentId],
+      );
+      await database.query(
+        `UPDATE memberships SET removed_at=now() WHERE workspace_id=$1 AND identity_id=$2`,
+        [input.workspaceId, input.agentId],
+      );
+      await database.query(`UPDATE daemon_tokens SET revoked_at=now() WHERE agent_id=$1`, [
+        input.agentId,
+      ]);
+      for (const room of rooms.rows)
+        await systemLine(database, {
+          roomId: room.room_id,
+          subject: identitySubject({ id: remover.pubkey, kind: remover.kind, name: remover.name }),
+          verb: 'removed',
+          object: { text: removed.name, id: removed.pubkey },
+          cardType: 'member-removed',
+          card: { identityId: input.agentId },
+        });
+    });
   }
   private async updateProfile(input: Input<'updatePersonProfile'>, viewerId: string) {
     if (input.name !== undefined && (!input.name.trim() || input.name.trim().length > 60))

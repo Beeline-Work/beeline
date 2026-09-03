@@ -1,3 +1,4 @@
+import { isSystemEvent } from './system-events.js';
 import {
   ROOM_VIEW_AGENT_LIMIT,
   ROOM_VIEW_BRIEFING_LIMIT,
@@ -400,7 +401,8 @@ export function isRoomViewMessage(value: unknown): value is RoomViewMessage {
     (item.grantRequest === undefined || grantRequest(item.grantRequest)) &&
     (item.targetBranch === undefined || targetBranch(item.targetBranch)) &&
     (item.githubEvent === undefined || githubEvent(item.githubEvent)) &&
-    (item.daemonFact === undefined || daemonFact(item.daemonFact)),
+    (item.daemonFact === undefined || daemonFact(item.daemonFact)) &&
+    (item.systemEvent === undefined || isSystemEvent(item.systemEvent)),
   );
 }
 

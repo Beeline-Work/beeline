@@ -155,6 +155,19 @@ lifecycle glyph family) and `→` means enterable, and that pairing is the one
 "enter this corner" vocabulary the product has, shared by
 `WritePermissionOutcome` and the pinned corner line below the transcript.
 
+**A system notification is one sentence in one voice.** The server phrases
+every one of them — a join, a leave, a yolo flip, a grant answer, a failed
+turn, a pull request, a check, a scheduled prompt — as `<subject> <verb>
+[ <object>][ · <consequence>]`: a name, a plain past-tense verb, the thing, one
+short clause. No colon, no em dash, no trailing period, no URL in the text.
+The phone has one renderer for it (`LedgerSystemLine`): the `meta` role in
+`ledgerQuiet`, no avatar, the stamp in the right gutter, names in brass and
+tappable, the object linked when it has a URL. Consecutive lines that share a
+verb fold into one sentence — "Candy, Terra and Codex joined" — because three
+identical captions in a row are noise, not record. A card is only for what a
+tap must settle (a grant request, a permission ask, the merge summary), and
+its header sentence is the same grammar.
+
 **A corner's status is never stamped into the transcript.** Not while it runs,
 not after it ends. A note inscribed the moment a corner opened scrolls away and
 then lies — still saying "open" long after the corner merged — and a terminal

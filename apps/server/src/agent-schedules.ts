@@ -1,8 +1,13 @@
 import { randomBytes } from 'node:crypto';
 import { CronExpressionParser } from 'cron-parser';
 import type { RoomScheduleCadence } from '@beeline/api-contract/phone';
-import { SCHEDULE_SCHEDULER_ID, SCHEDULE_SCHEDULER_NAME, SCHEDULED_PROMPT_PREFIX } from '@beeline/api-contract/scheduled-prompts';
+import {
+  SCHEDULE_RAN_VERB,
+  SCHEDULE_SCHEDULER_ID,
+  SCHEDULE_SCHEDULER_NAME,
+} from '@beeline/api-contract/scheduled-prompts';
 import type { SqlDatabase } from './database.js';
+import { systemLine } from './system-line.js';
 
 const MINUTE_MS = 60_000;
 const MAX_INTERVAL_MINUTES = 366 * 24 * 60;
@@ -73,6 +78,7 @@ type DueSchedule = {
   max_runs: number | null;
   run_count: number;
   next_run_at: Date;
+  agent_name: string;
 };
 
 export class AgentScheduleLoop {
@@ -104,7 +110,8 @@ export class AgentScheduleLoop {
         const current = (
           await database.query<DueSchedule>(
             `SELECT schedule.id,schedule.room_id,schedule.agent_id,schedule.creator_id,
-              schedule.cadence,schedule.message,schedule.max_runs,schedule.run_count,schedule.next_run_at
+              schedule.cadence,schedule.message,schedule.max_runs,schedule.run_count,schedule.next_run_at,
+              agent.name agent_name
              FROM agent_schedules schedule
              JOIN rooms room ON room.id=schedule.room_id AND room.archived_at IS NULL
              JOIN identities creator ON creator.id=schedule.creator_id
@@ -140,20 +147,29 @@ export class AgentScheduleLoop {
             [SCHEDULE_SCHEDULER_ID, SCHEDULE_SCHEDULER_NAME],
           );
         }
-        const authorId = selfCreated ? SCHEDULE_SCHEDULER_ID : current.creator_id;
-        const text = selfCreated ? `${SCHEDULED_PROMPT_PREFIX}${current.message}` : current.message;
-        await database.query(
-          `INSERT INTO messages(id,room_id,author_id,text,presentation,mention_ids)
-           VALUES($1,$2,$3,$4,$5,$6::jsonb)`,
-          [
-            messageId,
-            current.room_id,
-            authorId,
-            text,
-            selfCreated ? 'system' : 'message',
-            JSON.stringify([current.agent_id]),
-          ],
-        );
+        if (selfCreated) {
+          await systemLine(database, {
+            id: messageId,
+            roomId: current.room_id,
+            subject: { kind: 'system', id: SCHEDULE_SCHEDULER_ID, name: SCHEDULE_SCHEDULER_NAME },
+            verb: SCHEDULE_RAN_VERB,
+            object: { text: current.agent_name, id: current.agent_id },
+            consequence: current.message,
+            mentions: [current.agent_id],
+          });
+        } else {
+          await database.query(
+            `INSERT INTO messages(id,room_id,author_id,text,mention_ids)
+             VALUES($1,$2,$3,$4,$5::jsonb)`,
+            [
+              messageId,
+              current.room_id,
+              current.creator_id,
+              current.message,
+              JSON.stringify([current.agent_id]),
+            ],
+          );
+        }
         const finished = current.max_runs !== null && current.run_count + 1 >= current.max_runs;
         if (finished) {
           await database.query(`DELETE FROM agent_schedules WHERE id=$1`, [current.id]);

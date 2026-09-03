@@ -1,5 +1,6 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import type { SqlDatabase } from './database.js';
+import { systemLine } from './system-line.js';
 
 type RoomSelection =
   | { type: 'none' }
@@ -17,10 +18,6 @@ export interface JoinRoomsInput {
 export interface JoinRoomsResult {
   roomIds: string[];
   notificationId?: string;
-}
-
-function messageId(): string {
-  return randomBytes(32).toString('hex');
 }
 
 /**
@@ -75,8 +72,12 @@ export async function joinRooms(
     if (!input.workspaceJoined && !roomIds.length) return { roomIds };
 
     const context = (
-      await transaction.query<{ display_name: string; workspace_name: string }>(
-        `SELECT COALESCE(NULLIF(identity.handle,''),identity.name) display_name,
+      await transaction.query<{
+        display_name: string;
+        kind: 'human' | 'agent';
+        workspace_name: string;
+      }>(
+        `SELECT COALESCE(NULLIF(identity.handle,''),identity.name) display_name,identity.kind,
                 workspace.name workspace_name
          FROM identities identity CROSS JOIN workspaces workspace
          WHERE identity.id=$1 AND workspace.id=$2`,
@@ -86,17 +87,17 @@ export async function joinRooms(
     if (!context) throw new Error('join context not found');
 
     for (const roomId of roomIds) {
-      await transaction.query(
-        `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
-         VALUES($1,$2,$3,$4,'system','member-joined',$5::jsonb)`,
-        [
-          messageId(),
-          roomId,
-          input.identityId,
-          `${context.display_name} joined`,
-          JSON.stringify({ identityId: input.identityId }),
-        ],
-      );
+      await systemLine(transaction, {
+        roomId,
+        subject: {
+          kind: context.kind === 'agent' ? 'agent' : 'person',
+          id: input.identityId,
+          name: context.display_name,
+        },
+        verb: 'joined',
+        cardType: 'member-joined',
+        card: { identityId: input.identityId },
+      });
     }
 
     const notificationId = `workspace-join:${randomUUID()}`;

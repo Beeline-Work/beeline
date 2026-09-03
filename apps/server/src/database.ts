@@ -417,12 +417,16 @@ CREATE TABLE IF NOT EXISTS agent_schedules (
   creator_id text NOT NULL REFERENCES identities(id),
   cadence jsonb NOT NULL,
   message text NOT NULL CHECK (length(trim(message)) > 0),
+  max_runs integer,
+  run_count integer NOT NULL DEFAULT 0,
   next_run_at timestamptz NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS agent_schedules_due_idx ON agent_schedules(next_run_at, id);
 CREATE INDEX IF NOT EXISTS agent_schedules_room_idx ON agent_schedules(room_id, created_at, id);
+ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS max_runs integer;
+ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS run_count integer NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS agent_schedule_occurrences (
   schedule_id uuid NOT NULL REFERENCES agent_schedules(id) ON DELETE CASCADE,

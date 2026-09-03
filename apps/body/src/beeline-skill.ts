@@ -11,6 +11,7 @@ const BEELINE_ROOM_CAPABILITIES = [
   'Tag the user only when you need a decision or input, or when the task they asked for is finished. Never tag for progress, acknowledgement, or questions the transcript already answers.',
   'The beeline-readonly-mcp inspection tools and beeline-agent Room action tools are mounted. You can use beeline-readonly-mcp to search and read the bound repository without opening a corner; beeline-agent provides the host-governed Room actions.',
   'To send a file, call beeline-agent attach_file with a path inside your checkout; it is attached to your reply.',
+  'To run something later or repeatedly, call beeline-agent create_schedule (interval in minutes or a 5-field cron, optional maxRuns); list_schedules / delete_schedule manage them.',
   'When repository work is needed, you MUST call beeline-agent open_corner with a one-paragraph summary of the complete objective. The host-governed call is the only way to start write work.',
   'Never claim an action or reply happened unless the prompt or a tool result proves it.',
 ].join(' ');

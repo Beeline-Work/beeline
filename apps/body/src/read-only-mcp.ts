@@ -209,6 +209,65 @@ const READ_ONLY_TOOLS: ToolDefinition[] = [
 
 const AGENT_TOOLS: ToolDefinition[] = [
   {
+    name: 'create_schedule',
+    description:
+      'Create a schedule that runs your prompt as a mention to you in this Room, on an interval (everyMinutes, minimum 1) or a 5-field cron. With maxRuns the schedule deletes itself after that many runs.',
+    inputSchema: {
+      type: 'object',
+      required: ['prompt', 'cadence'],
+      properties: {
+        prompt: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 2000,
+          description: 'The prompt delivered to you as a Room mention on every run.',
+        },
+        cadence: {
+          type: 'object',
+          required: ['kind'],
+          properties: {
+            kind: { type: 'string', enum: ['interval', 'cron'] },
+            everyMinutes: {
+              type: 'integer',
+              minimum: 1,
+              description: 'Interval cadence: run every N minutes (minimum 1).',
+            },
+            expression: {
+              type: 'string',
+              description: 'Cron cadence: a 5-field cron expression.',
+            },
+            timeZone: { type: 'string', description: 'Optional IANA time zone for cron.' },
+          },
+          additionalProperties: false,
+        },
+        maxRuns: {
+          type: 'integer',
+          minimum: 1,
+          description: 'Delete the schedule automatically after this many runs.',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'list_schedules',
+    description: 'List the schedules you own in this Room, with their cadence and run counts.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'delete_schedule',
+    description:
+      'Delete one of your own schedules in this Room. You can only delete schedules you created.',
+    inputSchema: {
+      type: 'object',
+      required: ['scheduleId'],
+      properties: {
+        scheduleId: { type: 'string', description: 'The scheduleId from create_schedule or list_schedules.' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'open_corner',
     description:
       'Open one write-enabled repository corner with a fixed task summary. The host creates the branch, isolated worktree, scoped GitHub credentials, and corner session.',
@@ -948,6 +1007,132 @@ export async function attachFile(
   return `Attached ${name} (${details.size} bytes); it will be delivered with your final reply.`;
 }
 
+function agentScheduleRoomId(): string {
+  return process.env.BEELINE_DAEMON_CORNER_ID?.trim() || requiredEnv('BEELINE_DAEMON_ROOM_ID');
+}
+
+const MIN_SCHEDULE_MINUTES = 1;
+
+function parseScheduleCadence(args: JsonObject): {
+  cadence: JsonObject;
+  floored: boolean;
+  describe: () => string;
+} {
+  const cadence = asObject(args.cadence);
+  const kind = stringArg(cadence, 'kind');
+  if (kind === 'interval') {
+    const requested = cadence.everyMinutes;
+    if (typeof requested !== 'number' || !Number.isFinite(requested) || requested <= 0) {
+      throw new Error('everyMinutes must be a positive number of minutes');
+    }
+    const everyMinutes = Math.max(MIN_SCHEDULE_MINUTES, Math.round(requested));
+    return {
+      cadence: { kind: 'interval', everyMinutes },
+      floored: everyMinutes !== requested,
+      describe: () => `every ${everyMinutes} minute${everyMinutes === 1 ? '' : 's'}`,
+    };
+  }
+  if (kind === 'cron') {
+    const expression = stringArg(cadence, 'expression');
+    if (!expression || expression.trim().split(/\s+/).length !== 5) {
+      throw new Error('cron expression must have five fields');
+    }
+    const timeZone = stringArg(cadence, 'timeZone');
+    return {
+      cadence: { kind: 'cron', expression: expression.trim(), ...(timeZone ? { timeZone } : {}) },
+      floored: false,
+      describe: () => `cron '${expression.trim()}'`,
+    };
+  }
+  throw new Error('cadence kind must be interval or cron');
+}
+
+export interface AgentScheduleDeps {
+  roomId: string;
+  execute: (name: string, input: JsonObject) => Promise<JsonObject>;
+}
+
+export function agentScheduleDepsFromEnv(): AgentScheduleDeps {
+  return { roomId: agentScheduleRoomId(), execute: daemonExecute };
+}
+
+export async function createSchedule(
+  args: JsonObject,
+  deps: AgentScheduleDeps = agentScheduleDepsFromEnv(),
+): Promise<string> {
+  const prompt = stringArg(args, 'prompt')?.trim();
+  if (!prompt) throw new Error('prompt must be a non-empty string');
+  if (prompt.length > 2000) throw new Error('prompt exceeds 2000 characters');
+  const { cadence, floored, describe } = parseScheduleCadence(args);
+  const maxRuns = args.maxRuns;
+  if (
+    maxRuns !== undefined &&
+    (typeof maxRuns !== 'number' || !Number.isInteger(maxRuns) || maxRuns < 1)
+  ) {
+    throw new Error('maxRuns must be a positive integer');
+  }
+  const created = await deps.execute('createAgentSchedule', {
+    roomId: deps.roomId,
+    prompt,
+    cadence,
+    ...(maxRuns !== undefined ? { maxRuns } : {}),
+  });
+  const scheduleId = typeof created.scheduleId === 'string' ? created.scheduleId : 'unknown';
+  const floorNote = floored
+    ? ` The minimum cadence is ${MIN_SCHEDULE_MINUTES} minute; created every ${MIN_SCHEDULE_MINUTES} minute.`
+    : '';
+  return (
+    `Schedule ${scheduleId} created: ${describe()}` +
+    (maxRuns !== undefined ? `, ${maxRuns} run${maxRuns === 1 ? '' : 's'}` : '') +
+    `; the prompt runs as a mention to you in this Room.` +
+    floorNote +
+    ' Use delete_schedule with this scheduleId to remove it.'
+  );
+}
+
+export async function listSchedules(
+  deps: AgentScheduleDeps = agentScheduleDepsFromEnv(),
+): Promise<string> {
+  const result = await deps.execute('listAgentSchedules', { roomId: deps.roomId });
+  const schedules = Array.isArray(result.schedules) ? result.schedules : [];
+  if (!schedules.length) return 'No schedules in this Room.';
+  return schedules
+    .flatMap((entry) => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
+      const schedule = entry as Record<string, unknown>;
+      const cadence =
+        schedule.cadence && typeof schedule.cadence === 'object'
+          ? (schedule.cadence as Record<string, unknown>)
+          : {};
+      const cadenceText =
+        cadence.kind === 'interval'
+          ? `every ${String(cadence.everyMinutes)} minute(s)`
+          : `cron '${String(cadence.expression)}'`;
+      const runs =
+        typeof schedule.maxRuns === 'number'
+          ? ` (${String(schedule.runCount ?? 0)}/${String(schedule.maxRuns)} runs)`
+          : ` (${String(schedule.runCount ?? 0)} runs)`;
+      const nextRunAt =
+        typeof schedule.nextRunAt === 'number'
+          ? `, next run ${new Date(schedule.nextRunAt * 1_000).toISOString()}`
+          : '';
+      return [
+        `${String(schedule.scheduleId)}: ${cadenceText}${runs}${nextRunAt} — ${String(schedule.prompt)}`,
+      ];
+    })
+    .join('\n');
+}
+
+export async function deleteSchedule(
+  args: JsonObject,
+  deps: AgentScheduleDeps = agentScheduleDepsFromEnv(),
+): Promise<string> {
+  const scheduleId = stringArg(args, 'scheduleId')?.trim();
+  if (!scheduleId) throw new Error('scheduleId must be a non-empty string');
+  await deps.execute('deleteAgentSchedule', { roomId: deps.roomId, scheduleId });
+  return `Schedule ${scheduleId} deleted.`;
+}
+
 async function daemonUploadMedia(bytes: Buffer, mimeType: string, name: string): Promise<JsonObject> {
   const baseUrl = requiredEnv('BEELINE_DAEMON_BASE_URL');
   const response = await fetch(new URL('/v1/daemon/media', `${baseUrl}/`), {
@@ -980,6 +1165,12 @@ async function callAgentTool(name: string, args: JsonObject): Promise<string> {
       return prChecksStatus();
     case 'attach_file':
       return attachFile(args);
+    case 'create_schedule':
+      return createSchedule(args);
+    case 'list_schedules':
+      return listSchedules();
+    case 'delete_schedule':
+      return deleteSchedule(args);
     default:
       throw new Error(`tool is not available on the agent surface: ${name}`);
   }

@@ -31,7 +31,7 @@ function styleBlock(text: string, name: string): string {
 }
 
 describe('Room list layout contract', () => {
-  it('floats the compose button over the scrolling list at the bottom right', () => {
+  it('floats a 44pt brass square compose FAB bottom right, with no header plus', () => {
     // The compose affordance belongs to the deck, not to a footer list cell:
     // rows continue underneath it and no separator divides it from the list.
     expect(source).toContain('pointerEvents="box-none"');
@@ -44,54 +44,93 @@ describe('Room list layout contract', () => {
     expect(styleBlock(source, 'composeOverlay')).not.toMatch(/border(?:Top|Bottom|Left|Right)/);
     expect(styleBlock(source, 'list')).toContain('paddingBottom: COMPOSE_FAB_CLEARANCE');
     expect(composeSource).toContain('testID="room-deck-compose-fab"');
-    // The compose button matches the deck's 48px rail controls. Its plus is a
-    // geometric SVG, so Android font ascent/descent cannot offset it.
-    expect(styleBlock(composeSource, 'fab')).toContain('width: 48');
-    expect(styleBlock(composeSource, 'fab')).toContain('height: 48');
+    // Speakeasy: a sharp 44pt brass square. Its plus is a geometric SVG in
+    // ink, so Android font ascent/descent cannot offset it; no shadow — the
+    // hull's own radius token is the only softening, and contrast with the
+    // slab is the only affordance.
+    expect(composeSource).toContain('const FAB_SIZE = 44');
+    expect(styleBlock(composeSource, 'fab')).toContain('width: FAB_SIZE');
+    expect(styleBlock(composeSource, 'fab')).toContain('height: FAB_SIZE');
+    expect(styleBlock(composeSource, 'fab')).toContain('backgroundColor: groknight.accent');
+    expect(styleBlock(composeSource, 'fab')).not.toMatch(/shadow|elevation/);
     expect(styleBlock(composeSource, 'fabGlyph')).toContain('width: FAB_GLYPH_SIZE');
-    expect(styleBlock(composeSource, 'fabGlyph')).toContain('height: FAB_GLYPH_SIZE');
-    expect(composeSource).toContain('const FAB_GLYPH_SIZE = 24');
     expect(composeSource).toContain('d="M12 4v16M4 12h16"');
     expect(composeSource).not.toContain('<Text style={styles.fabGlyph}>');
     expect(source).toContain('const COMPOSE_FAB_CLEARANCE = 80');
+    // The header carries the Workspace switcher and MEMBERS only: the thin
+    // header plus is gone, the FAB is the one way to compose.
+    const header = source.slice(source.indexOf('<View style={styles.header}>'), source.indexOf('<HullDialog'));
+    expect(header).not.toMatch(/[+＋]/);
+    expect(header).toContain('testID="workspace-members"');
   });
 
-  it('uses one required unread fact for NEW and the needs-you mark', () => {
-    // A cached pre-read-mark response is rejected and fetched again; after
-    // that, every visual consequence reads the same server-owned boolean.
+  it('leads with the name on a 64pt row behind a 40px identity tile', () => {
+    expect(source).toContain('const ROW_HEIGHT = 64');
+    expect(source).toContain('const ROW_TILE_SIZE = 40');
+    expect(styleBlock(source, 'row')).toContain('minHeight: ROW_HEIGHT');
+    expect(styleBlock(source, 'rowMain')).toContain('minHeight: ROW_HEIGHT');
+    expect(source).toContain('size={ROW_TILE_SIZE}');
+    expect(source).toContain('kind={heading.tile.kind}');
+    expect(source).toContain('seed={heading.tile.seed}');
+    expect(styleBlock(source, 'title')).toContain('fontSize: 18');
+    expect(styleBlock(source, 'title')).toContain('color: hull.textPrimary');
+    expect(styleBlock(source, 'preview')).toContain('color: hull.ledgerQuiet');
+    expect(source).toContain('testID={`room-preview-${item.room.id}`}');
+    // One size, one weight: unread never bolds, enlarges, or tints the row.
+    expect(source).not.toContain('titleUnread');
+    expect(source).not.toContain('rowUnread');
+    expect(source).not.toContain('bgUnread');
+  });
+
+  it('draws the sigil — the name’s first glyph — in brass ahead of the name', () => {
+    // `@` for a DM, `#` for a Room; both come from one derivation.
+    expect(source).toContain("from '@/buzz/room-list-row'");
+    expect(source).toContain('const heading = roomRowName(item);');
+    expect(source).toContain('testID={`room-sigil-${item.room.id}`}');
+    expect(source).toContain('{heading.sigil}');
+    expect(styleBlock(source, 'sigil')).toContain('color: hull.accent');
+    expect(source).not.toContain('displayRoomIndexTitle(item.room.name)');
+  });
+
+  it('attributes the preview: `you:` muted, `@handle:` brass, empty Room plain', () => {
+    expect(source).toContain('const preview = roomRowPreview(item, chatList.viewer.pubkey);');
+    expect(source).toContain("preview.attribution === 'self' && (");
+    expect(source).toContain('<Text style={styles.previewSelf}>you: </Text>');
+    expect(source).toContain("preview.attribution === 'other' && (");
+    expect(source).toContain('<Text style={styles.previewAuthor}>@{preview.handle}: </Text>');
+    expect(styleBlock(source, 'previewSelf')).toContain('color: hull.textMuted');
+    expect(styleBlock(source, 'previewAuthor')).toContain('color: hull.accent');
+    expect(source).not.toContain('No activity yet');
+  });
+
+  it('reserves one 7×7 brass attention square per row and nothing else', () => {
+    // `unread` is server-owned and cross-device; a corner waiting on a human
+    // lights the same square. The slot exists on every row so read-state
+    // changes never shift the column — and there is no count, no NEW label,
+    // no gold dot, no leading state glyph.
     expect(roomViewSource).toContain('readonly unread: boolean;');
     expect(surfaceGuardSource).toContain("typeof item.unread === 'boolean'");
     expect(surfaceGuardSource).not.toContain('item.unread === undefined');
-    expect(source).toContain('const unread = item.unread;');
-    expect(source).toContain('<HullDeckMark state={deckState} />');
-    expect(source).toContain('unread ? (');
-    expect(source).toContain('unread && styles.rowUnread');
-  });
-
-  it('inherits the deck circle state from the server rollup, not unread alone', () => {
-    // Regression: a prior rebuild (#566) collapsed the circle to
-    // `unread ? 'needs-you' : 'idle'`, which could never show a live agent
-    // turn or a corner needing a human. The precedence decision lives in one
-    // pure, tested function — the screen only calls it.
-    expect(source).toContain("import { roomDeckState } from '@/buzz/room-deck-state';");
-    expect(source).toContain('const deckState = roomDeckState(item);');
+    expect(source).toContain('const attention = roomRowNeedsAttention(item);');
+    expect(source).toContain('const ATTENTION_SQUARE = 7');
+    expect(source).toContain('testID={`room-attention-${item.room.id}`}');
+    expect(source).toContain('style={[styles.attentionSquare, attention && styles.attentionSquareLit]}');
+    expect(styleBlock(source, 'attentionSquare')).toContain('width: ATTENTION_SQUARE');
+    expect(styleBlock(source, 'attentionSquare')).toContain('height: ATTENTION_SQUARE');
+    expect(styleBlock(source, 'attentionSquare')).toContain("backgroundColor: 'transparent'");
+    expect(styleBlock(source, 'attentionSquareLit')).toContain('backgroundColor: hull.accent');
+    expect(source).not.toContain('NEW');
+    expect(source).not.toContain('HullDeckMark');
+    expect(source).not.toContain('roomDeckState');
     expect(source).not.toContain("unread ? 'needs-you' : 'idle'");
-  });
-
-  it('names the corner count "corner(s)", never "changes", and hides it at zero', () => {
-    // Regression: the row used to print `${item.cornerCount} changes` verbatim,
-    // showing "0 changes" for a Room whose corners had all landed/closed —
-    // confusing wording (the product noun is "corner") for a count nothing
-    // could act on. The server count already excludes terminal corners; the
-    // row must additionally omit the segment entirely rather than show "0".
-    expect(source).toContain("import { formatRoomCornerCount } from '@/buzz/vocabulary';");
-    expect(source).toContain('const cornerCount = formatRoomCornerCount(item.cornerCount);');
-    expect(source).not.toMatch(/\{item\.cornerCount\}\s*changes/);
-    expect(source).not.toContain('changes</Text>');
-    expect(source).toContain("cornerCount ? ` · ${cornerCount}` : ''");
+    // The age stamp stays: one terse unit over the square.
+    expect(source).toContain('<Text style={styles.age}>{age}</Text>');
+    expect(source).toContain("import { compactRelativeTime } from '@/buzz/relative-time';");
   });
 
   it('gives every Room with live corners an inline expansion and navigation affordance', () => {
+    expect(source).toContain("import { formatRoomCornerCount } from '@/buzz/vocabulary';");
+    expect(source).toContain('const cornerCount = formatRoomCornerCount(item.cornerCount);');
     expect(source).toContain('item.cornerCount > 0 && (');
     expect(source).toContain('accessibilityState={{ expanded }}');
     expect(source).toContain('testID={`room-corners-toggle-${item.room.id}`}');
@@ -99,5 +138,8 @@ describe('Room list layout contract', () => {
     expect(source).toContain('testID={`room-corner-${corner.corner.id}`}');
     expect(source).toContain("'room-list',");
     expect(source).toContain('<Text style={styles.cornerStatus}>{status}</Text>');
+    // The toggle slot is reserved on every row so the age column keeps one
+    // straight right edge whether or not a Room has corners.
+    expect(styleBlock(source, 'cornerToggleSlot')).toContain('width: 32');
   });
 });

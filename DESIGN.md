@@ -191,29 +191,42 @@ shape language.
 
 The Room list is the screen the product opens on, and it is an index: one
 leading column, one right edge, no boxes and no row surfaces. Every row — Room
-or DM — hangs its copy off the same 30px leading unit and reserves the same
-trailing disclosure column, so the age stamps read down a single straight edge
-whether or not a row has corners. Rows are parted by the shared
-`hairlineDivider` and nothing else, so the slab shows through each one.
+or DM — is 64 tall, leads with a 40px identity tile, hangs its copy off the
+same edge, and reserves the same trailing column, so the age stamps read down a
+single straight edge whether or not a row has corners. Rows are parted by the
+shared `hairlineDivider` and nothing else, so the slab shows through each one.
 
-The leading unit reports the row's kind: a Room shows one state glyph (`◆` live
-corner, `▲` needs attention, `›` spoken in, `·` quiet); a DM shows its peer's
-faceted mark. Line one is the name; line two is one human-readable activity
-line — an uppercase mono author label, the same "who" the ledger's attribution
-carries, then the preview.
+**The row leads with the name, and the name leads with its sigil.** The first
+glyph of the name reports the row's kind, in brass: a DM row reads `@peer`, a
+Room row reads `#room`; the rest of the name follows in the primary tone at one
+size (18) and one weight. Corners keep `◇`; Workspaces on the rail carry no
+sigil at all. The tile is `IdentityMark` — a DM wears its peer's own mark, a
+Room a place mark seeded by the Room id. State no longer lives in the leading
+column: there is no state glyph, no ring, no dot beside the name.
+
+Line two is one preview line, single, truncated, in the quiet tone, with its
+attribution in front: the viewer's own last message reads `you: ` in the muted
+tone, anyone else's — a person or an agent alike — reads `@handle: ` in brass,
+and an empty Room reads `No messages yet` with no attribution. So a row
+previews the voice the transcript will show when it is opened.
 
 **The index reads on three tones and nothing else**, the ledger's ladder at
 index scale: the name is the brightest thing on the row (`textPrimary`), the
-activity line sits a step down on `ledgerQuiet` exactly as an inline handle
-does, and everything the gutter carries is `ledgerGhost`. So a row previews the
-voice the transcript will show when it is opened.
+preview sits a step down on `ledgerQuiet` exactly as an inline handle does, and
+everything the gutter carries is `ledgerGhost`.
 
 **Metadata hangs in the right gutter, as it does in the transcript.** The age
-stamp, and under it a Room's open-corner count, sit in a fixed 46px column that
-is *absolutely positioned over* the row rather than laid out inside it — so
-nothing hanging there can reflow the copy beside it, and every row reserves the
-column whether or not it has a count. Same marginalia rhythm, same ghosted
-register, one straight right edge down the whole screen.
+stamp is one terse unit (`1h`, `3d`, `1w`), and under it sits the one brass
+square. **Unread is a 7×7 brass square, and only that**: no count, no weight,
+no `NEW` label, no row fill. The slot is reserved on every row so a read-state
+change never shifts a column; a read row simply shows it dark. The same square
+lights when the Room wants the viewer for any reason — a message past their read
+mark or a corner waiting on a human — and stays dark while an agent merely
+works. Unread never reorders: needs-you clustering and `meaningfulAt` recency
+stay the only sorting inputs. Every row-level decision — sigil, name, tile
+seed, attribution, whether the square is lit — is derived once in
+`apps/mobile/sources/buzz/room-list-row.ts` (`roomRowName`, `roomRowPreview`,
+`roomRowNeedsAttention`), so the screen renders answers and never re-derives.
 
 Preview text is sanitized where it is stored, not rewritten where it is drawn:
 fenced code, markdown syntax, git and tool plumbing, bare 40-hex shas, and a
@@ -223,41 +236,23 @@ row applies one reader-side floor and no more — `isMachinePreview` declines a
 preview that a cache entry from an older build already holds, rather than
 re-deriving it.
 
-Unread is weight, plus one luminance step in two places — the whole row's
-ground (`bgUnread`, an area fill, never a stroke) and the preview line rising
-with the semibold name — plus a solid unread-count chip that takes the gutter's
-age slot (near-white fill, dark mono numeral, radius 3; uncountable reads
-`NEW`, exact counts cap at `9+`). The corner count keeps its own gutter slot in
-both states, so a read row is age + corner count and an unread row is chip +
-corner count. Unread never reorders: needs-you clustering and `meaningfulAt`
-recency stay the only sorting inputs. It is deliberately not gold — see the
-accent rule below. The index is
-the one surface that still spends weight, and unread is the only thing it
-spends weight on: it is scanned, not read, and the ledger's no-weight rule
-governs the transcript.
+**Brass on the index means the row is talking to you.** The sigil, the
+`@handle:` attribution, the attention square, and the compose square all take
+the accent; nothing on the index pulses or spins. The Room's own corner life
+is reachable through the reserved `⌄` slot at the row's right edge, which
+expands the same set the corner count reports: only `live`, `needs-attention`,
+and `open` corners (`roomListCorners`). `merged`, `archived`, and `failed`
+corners are excluded outright rather than dimmed, so the count always equals
+what expanding reveals; they stay reachable through the `ALL CORNERS` link the
+dropdown ends with, which is the one place in the product a finished corner is
+recorded. Expanded corners hang off a 1px rail, not a nested container.
 
-**Gold on the index means one thing: an agent is working in this Room right
-now.** A Room with a live corner takes the accent on its `◆` and on its corner
-count, and the `◆` breathes on `HullLivePulse` — the single-mark form of the
-corner's own `HullWaveSignal`, on the same clock, mounted only where there is
-life. Nothing else on the screen takes it: `needs-attention` is the most
-action-worthy state here and it escalates to the brightest *grey* instead,
-precisely so gold keeps meaning exactly one thing. Every row-level decision —
-which glyph, whether it is live, which corners count — is derived once in
-`apps/mobile/sources/buzz/room-list-row.ts`, so the heading's LIVE tally and the
-rows beneath it can never disagree.
-
-A Room's corner count and its expanded dropdown are the same set: only `live`,
-`needs-attention`, and `open` corners (`roomListCorners`). `merged`, `archived`,
-and `failed` corners are excluded outright rather than dimmed, so the count
-always equals what expanding reveals; they stay reachable through the
-`ALL CORNERS` link the dropdown ends with, which is the one place in the product
-a finished corner is recorded.
-Expanded corners hang off a 1px rail, not a nested container.
-
-The Room-list header is the Workspace name and nothing louder: the name is the
-anchor, and `⌬ MEMBERS` / `＋ ROOM` sit beside it as quiet named affordances on
-the same mono tier as the index's own section labels.
+**The plus is a brass square.** Compose is one 44pt brass square floating at
+the bottom right of the list — ink `+`, no shadow, no rounding, contrast with
+the slab its only affordance — opening the compose sheet. The header carries
+no plus: it is the Workspace name and nothing louder, with `⌬ MEMBERS` beside
+it as a quiet named affordance on the same mono tier as the index's own
+section labels.
 
 The Workspace rail is the same slab with one hairline edge. Selection reads
 three redundant ways and none of them is a box or a fill: an edge bar (never a

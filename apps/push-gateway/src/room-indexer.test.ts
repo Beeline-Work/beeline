@@ -1636,6 +1636,14 @@ describe('RoomIndexer', () => {
       directMessage: { participants: [VIEWER, AGENT].sort() },
     });
     expect(physicalQueries).toBe(1);
+
+    // The chat list carries the peer so the index can name the row `@peer`;
+    // an ordinary Room carries no peer.
+    const chats = await indexer.readChats(WORKSPACE, VIEWER);
+    expect(chats?.chats.find((chat) => chat.room.id === directRoom)?.directMessage).toMatchObject({
+      peer: { pubkey: AGENT, kind: 'agent' },
+    });
+    expect(chats?.chats.find((chat) => chat.room.id === ROOM)?.directMessage).toBeUndefined();
   });
 
   it('uses the same empty answer for a non-member and a missing Room', async () => {

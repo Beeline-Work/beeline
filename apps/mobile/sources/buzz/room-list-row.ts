@@ -14,7 +14,7 @@ import {
   type CornerVisualState,
 } from '@/buzz/corners';
 import { isMachinePreview } from '@/buzz/room-list-summary';
-import { isRetiredAgentNotice } from '@beeline/buzz-client';
+import { isRetiredAgentNotice, type ChatListItem, type RoomViewIdentity } from '@beeline/buzz-client';
 
 export type ExpandedCornerRefreshAction =
   | { kind: 'none' }
@@ -162,7 +162,96 @@ export type RoomRowPresentation = {
  * either nothing has been said, or everything said was machine plumbing that
  * `roomPreviewText` refused to put on the index.
  */
-export const NO_ACTIVITY_PREVIEW = 'Nothing said yet';
+export const NO_ACTIVITY_PREVIEW = 'No messages yet';
+
+// ── The index row (Speakeasy findings, 2026-09-03) ───────────────────────────
+//
+// Every row-level fact the Room list paints — the sigil, the name, the tile
+// identity, the preview attribution, and whether the attention square is lit —
+// is derived here from the server-indexed `ChatListItem`, so the screen only
+// renders answers. The three functions below are the whole contract.
+
+/**
+ * A row's leading glyph reports its KIND: `@` for a direct message, `#` for
+ * a Room. Both draw in brass; the name that follows draws in the primary
+ * tone. Corners keep `◇` (`vocabulary.ts`); Workspaces on the rail get none.
+ */
+export type RoomRowSigil = '@' | '#';
+
+export type RoomRowName = {
+  sigil: RoomRowSigil;
+  /** The name WITHOUT its sigil — the row draws the two in different tones. */
+  name: string;
+  /** What the 40px `IdentityMark` tile is seeded with. A DM row wears its
+   *  peer's own mark; a Room row wears a place mark seeded by the Room id. */
+  tile: { seed: string; kind: 'human' | 'agent' | 'workspace' };
+};
+
+/**
+ * The short form of an identity for an `@` prefix: the local part of a
+ * `name@domain` handle, else the display name. Never carries a leading `@`,
+ * because the sigil is drawn separately in brass.
+ */
+export function previewHandle(identity: Pick<RoomViewIdentity, 'name' | 'handle'>): string {
+  const handle = identity.handle?.trim().replace(/^@+/, '');
+  const local = handle?.split('@')[0]?.trim();
+  return local || identity.name.trim();
+}
+
+export function roomRowName(
+  item: Pick<ChatListItem, 'room' | 'directMessage'>,
+): RoomRowName {
+  const peer = item.directMessage?.peer;
+  if (peer) {
+    return {
+      sigil: '@',
+      name: previewHandle(peer),
+      tile: { seed: peer.pubkey, kind: peer.kind },
+    };
+  }
+  const stored = item.room.name.trim().replace(/^#+/, '');
+  return {
+    sigil: '#',
+    name: stored || item.room.id,
+    tile: { seed: item.room.id, kind: 'workspace' },
+  };
+}
+
+/**
+ * The preview line's attribution. The viewer's own last message reads
+ * `you: ` in the muted tone; anyone else's — a person or an agent alike —
+ * reads `@handle: ` in brass; an empty Room reads `No messages yet` with no
+ * attribution at all. The preview text itself always sits in the quiet tone.
+ */
+export type RoomRowPreview =
+  | { attribution: 'none'; text: string }
+  | { attribution: 'self'; text: string }
+  | { attribution: 'other'; handle: string; text: string };
+
+export function roomRowPreview(
+  item: Pick<ChatListItem, 'latestMessage'>,
+  viewerPubkey: string | undefined,
+): RoomRowPreview {
+  const latest = item.latestMessage;
+  const text = latest?.text.trim();
+  if (!latest || !text) return { attribution: 'none', text: NO_ACTIVITY_PREVIEW };
+  if (viewerPubkey && latest.author.pubkey === viewerPubkey) return { attribution: 'self', text };
+  return { attribution: 'other', handle: previewHandle(latest.author), text };
+}
+
+/**
+ * Whether the row's trailing brass square is lit. One square, one meaning:
+ * this Room wants the viewer — a message newer than their read mark, or a
+ * corner waiting on a human (`agentState === 'needs-you'`). A working agent
+ * is not attention; the square stays dark while it works. Unread is never
+ * hidden behind agent state: an unread Room lights the square whatever its
+ * agents are doing.
+ */
+export function roomRowNeedsAttention(
+  item: Pick<ChatListItem, 'unread' | 'agentState'>,
+): boolean {
+  return item.unread || item.agentState === 'needs-you';
+}
 
 /** Highest count shown exactly; anything more compacts so the chip stays one
  * small fixed object in the gutter (`9+`, never `12`). */

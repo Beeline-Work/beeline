@@ -7,6 +7,10 @@ import {
   expandedCornerRefreshAction,
   isRoomAlive,
   NO_ACTIVITY_PREVIEW,
+  previewHandle,
+  roomRowName,
+  roomRowNeedsAttention,
+  roomRowPreview,
   roomListFeed,
   roomRowPresentation,
 } from './room-list-row';
@@ -586,5 +590,107 @@ describe('Room row presentation', () => {
       expect(room).toBe('Roadmap');
       expect(corner).toBe('fix ledger drift');
     });
+  });
+});
+
+// ── The Speakeasy index row (captain decision 2026-09-03) ────────────────────
+
+const VIEWER = 'a'.repeat(64);
+const PEER = 'b'.repeat(64);
+const ROOM_ID = '7d111868-52eb-43ab-98ae-8a6c49b92da8';
+const room = { id: ROOM_ID, workspaceId: ROOM_ID, name: 'design', archived: false, createdAt: 1, updatedAt: 1 };
+const ada = { pubkey: PEER, kind: 'human' as const, name: 'Ada', handle: 'ada@usebeeline.app' };
+const beebee = { pubkey: PEER, kind: 'agent' as const, name: 'Beebee' };
+const message = (author: typeof ada | typeof beebee, text = 'Hello') => ({
+  id: 'c'.repeat(64),
+  text,
+  createdAt: 2,
+  author,
+});
+
+describe('roomRowName — the sigil is the name’s first glyph', () => {
+  it('names a Room `#` + its stored name, tiled by the Room id', () => {
+    expect(roomRowName({ room })).toEqual({
+      sigil: '#',
+      name: 'design',
+      tile: { seed: ROOM_ID, kind: 'workspace' },
+    });
+  });
+
+  it('never double-marks a stored name that already carries the mark', () => {
+    expect(roomRowName({ room: { ...room, name: '#design' } }).name).toBe('design');
+  });
+
+  it('names a DM `@` + its peer handle, tiled by the peer identity', () => {
+    expect(roomRowName({ room: { ...room, name: 'Direct message' }, directMessage: { peer: ada } })).toEqual({
+      sigil: '@',
+      name: 'ada',
+      tile: { seed: PEER, kind: 'human' },
+    });
+    expect(roomRowName({ room, directMessage: { peer: beebee } })).toEqual({
+      sigil: '@',
+      name: 'Beebee',
+      tile: { seed: PEER, kind: 'agent' },
+    });
+  });
+
+  it('falls back to the Room id rather than an empty name', () => {
+    expect(roomRowName({ room: { ...room, name: '  ' } }).name).toBe(ROOM_ID);
+  });
+});
+
+describe('previewHandle', () => {
+  it('uses the local part of a nip05 handle, stripping any leading @', () => {
+    expect(previewHandle({ name: 'Ada', handle: '@ada@usebeeline.app' })).toBe('ada');
+  });
+
+  it('falls back to the display name without a handle', () => {
+    expect(previewHandle(beebee)).toBe('Beebee');
+  });
+});
+
+describe('roomRowPreview — attribution', () => {
+  it('reads `you:` for the viewer’s own last message', () => {
+    expect(roomRowPreview({ latestMessage: message({ ...ada, pubkey: VIEWER }) }, VIEWER)).toEqual({
+      attribution: 'self',
+      text: 'Hello',
+    });
+  });
+
+  it('reads `@handle:` for anyone else, agents included', () => {
+    expect(roomRowPreview({ latestMessage: message(ada) }, VIEWER)).toEqual({
+      attribution: 'other',
+      handle: 'ada',
+      text: 'Hello',
+    });
+    expect(roomRowPreview({ latestMessage: message(beebee) }, VIEWER)).toEqual({
+      attribution: 'other',
+      handle: 'Beebee',
+      text: 'Hello',
+    });
+  });
+
+  it('reads `No messages yet` with no attribution for an empty Room', () => {
+    expect(roomRowPreview({}, VIEWER)).toEqual({ attribution: 'none', text: 'No messages yet' });
+    expect(roomRowPreview({ latestMessage: message(ada, '   ') }, VIEWER)).toEqual({
+      attribution: 'none',
+      text: NO_ACTIVITY_PREVIEW,
+    });
+  });
+});
+
+describe('roomRowNeedsAttention — the one brass square', () => {
+  it('lights for unread and for a corner waiting on a human', () => {
+    expect(roomRowNeedsAttention({ unread: true })).toBe(true);
+    expect(roomRowNeedsAttention({ unread: false, agentState: 'needs-you' })).toBe(true);
+  });
+
+  it('stays dark for a quiet or merely working Room', () => {
+    expect(roomRowNeedsAttention({ unread: false })).toBe(false);
+    expect(roomRowNeedsAttention({ unread: false, agentState: 'working' })).toBe(false);
+  });
+
+  it('never hides unread behind a working agent', () => {
+    expect(roomRowNeedsAttention({ unread: true, agentState: 'working' })).toBe(true);
   });
 });

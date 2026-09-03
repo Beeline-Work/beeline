@@ -385,6 +385,13 @@ export class PhoneService {
         latest_author_id: string | null;
         latest_author_kind: 'human' | 'agent' | null;
         latest_author_name: string | null;
+        latest_author_handle: string | null;
+        latest_author_avatar: string | null;
+        peer_id: string | null;
+        peer_kind: 'human' | 'agent' | null;
+        peer_name: string | null;
+        peer_handle: string | null;
+        peer_avatar: string | null;
         unread: boolean;
         working: boolean;
         needs_you: boolean;
@@ -395,7 +402,8 @@ export class PhoneService {
         (SELECT count(*)::text FROM memberships rm WHERE rm.room_id=r.id AND rm.removed_at IS NULL) member_count,
         (SELECT count(*)::text FROM rooms c WHERE c.parent_id=r.id AND c.archived_at IS NULL) corner_count,
         lm.id latest_id,lm.text latest_text,lm.created_at latest_created_at,lm.author_id latest_author_id,
-        li.kind latest_author_kind,li.name latest_author_name,
+        li.kind latest_author_kind,li.name latest_author_name,li.handle latest_author_handle,li.avatar latest_author_avatar,
+        peer.id peer_id,peer.kind peer_kind,peer.name peer_name,peer.handle peer_handle,peer.avatar peer_avatar,
         (lm_other.id IS NOT NULL AND (
           mark.message_created_at IS NULL OR
           lm_other.id<>mark.message_id AND
@@ -409,6 +417,8 @@ export class PhoneService {
       LEFT JOIN LATERAL (SELECT * FROM messages WHERE room_id=r.id AND presentation IN ('message','system') AND author_id IS DISTINCT FROM $2 ORDER BY created_at DESC,id DESC LIMIT 1) lm_other ON true
       LEFT JOIN identities li ON li.id=lm.author_id
       LEFT JOIN room_read_marks mark ON mark.room_id=r.id AND mark.identity_id=$2
+      LEFT JOIN identities peer ON r.direct_participants IS NOT NULL
+        AND peer.id=(SELECT p FROM jsonb_array_elements_text(r.direct_participants) p WHERE p<>$2 LIMIT 1)
       WHERE r.workspace_id=$1 AND r.parent_id IS NULL AND r.archived_at IS NULL
       ORDER BY COALESCE(lm.created_at,r.updated_at) DESC,r.id LIMIT 201`,
       [workspaceId, viewerId],
@@ -436,11 +446,32 @@ export class PhoneService {
                 id: row.latest_id,
                 text: row.latest_text ?? '',
                 createdAt: unix(row.latest_created_at),
-                author: {
-                  pubkey: row.latest_author_id,
-                  kind: row.latest_author_kind,
-                  name: row.latest_author_name,
-                },
+                author: identity(
+                  {
+                    id: row.latest_author_id,
+                    kind: row.latest_author_kind,
+                    name: row.latest_author_name,
+                    handle: row.latest_author_handle,
+                    avatar: row.latest_author_avatar,
+                  },
+                  this.publicOrigin,
+                ),
+              },
+            }
+          : {}),
+        ...(row.peer_id && row.peer_kind && row.peer_name
+          ? {
+              directMessage: {
+                peer: identity(
+                  {
+                    id: row.peer_id,
+                    kind: row.peer_kind,
+                    name: row.peer_name,
+                    handle: row.peer_handle,
+                    avatar: row.peer_avatar,
+                  },
+                  this.publicOrigin,
+                ),
               },
             }
           : {}),

@@ -32,7 +32,7 @@ export class PushDeliveryLoop {
             WHEN m.card_type='daemon-fact' AND m.card->>'type'='corner-complete'
               THEN concat_ws(' ',COALESCE(NULLIF(author.name,''),'An agent'),
                 CASE WHEN m.card->>'outcome'='landed' THEN 'merged:' ELSE 'closed:' END,m.card->>'objective')
-            WHEN m.card_type IN ('grant-request','turn-failed') THEN btrim(m.text)
+            WHEN m.card_type='grant-request' THEN btrim(m.text)
             ELSE concat_ws(': ',COALESCE(NULLIF(author.name,''),'Someone'),btrim(m.text))
           END text,
           d.token,m.created_at
@@ -47,6 +47,7 @@ export class PushDeliveryLoop {
         WHERE m.created_at>=d.registered_at AND m.created_at>=floor.started_at
           AND m.presentation IS DISTINCT FROM 'activity'
           AND m.card_type IS DISTINCT FROM 'agent-yolo'
+          AND m.card_type IS DISTINCT FROM 'turn-failed'
           AND (
             m.mention_ids @> jsonb_build_array(member.identity_id)
             OR room.direct_participants IS NOT NULL

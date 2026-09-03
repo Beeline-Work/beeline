@@ -1058,12 +1058,16 @@ export class DaemonService {
   }
   /**
    * A failed turn is a fact the Room must carry. When a human asked, ONE
-   * `presentation='system'` line names the agent and the reason and mentions
-   * the requester so their tagged-mention push fires once; retries of the same
-   * request within ten minutes update that line in place (the push claim is
-   * keyed by message id, so an update never re-pushes). A later success settles
-   * the same row to "answered after a retry" — an inscribed record that stays
-   * true, never a stamped stale failure.
+   * `presentation='system'` line names the agent and the reason; retries of
+   * the same request within ten minutes update that line in place. A later
+   * success settles the same row to "answered after a retry" — an inscribed
+   * record that stays true, never a stamped stale failure.
+   *
+   * The line carries NO mention. A push comes from exactly three sources — a
+   * person tags you, a corner opens or closes, one push per member join — and
+   * a system line never claims one through a synthetic mention (captain
+   * report C68: "Candy could not answer" pushed to the requester's phone).
+   * `background.ts` also excludes `turn-failed` rows outright.
    */
   private async inscribeTurnFailure(
     database: SqlDatabase,
@@ -1105,7 +1109,6 @@ export class DaemonService {
     await systemLine(database, {
       roomId,
       ...phrase,
-      mentions: [trigger.author_id],
       cardType: 'turn-failed',
       card: { requestId, agentId, state: 'failed' },
     });

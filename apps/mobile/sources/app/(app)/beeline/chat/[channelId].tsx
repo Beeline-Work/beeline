@@ -783,6 +783,7 @@ export default function BuzzChat() {
             pubkey: identity.pubkey,
             name: identity.name,
             ...(identity.avatar ? { avatar: identity.avatar } : {}),
+            ...(identity.face ? { face: identity.face } : {}),
           };
         }),
     [conversationIdentities, roomSurface?.members],
@@ -3920,6 +3921,7 @@ export default function BuzzChat() {
                               kind="human"
                               seed={option.pubkey}
                               avatarUrl={personProfileByPubkey.get(option.pubkey)?.avatar}
+                              face={personProfileByPubkey.get(option.pubkey)?.face}
                               name={option.name}
                               size={28}
                             />

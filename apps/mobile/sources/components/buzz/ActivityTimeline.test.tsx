@@ -310,7 +310,7 @@ describe('live streaming turn', () => {
         seed: 'agent-pubkey',
         kind: 'agent',
         alive: true,
-        size: 17,
+        size: 26,
       }),
     );
     const byline = mark.parent.parent;

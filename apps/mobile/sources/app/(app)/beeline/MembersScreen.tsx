@@ -778,6 +778,7 @@ export default function BuzzMembers() {
                   kind="agent"
                   seed={member.identity.pubkey}
                   avatarUrl={member.identity.avatar}
+                  face={member.identity.face}
                   name={member.identity.name}
                   size={38}
                   alive={member.presence?.status === 'online'}

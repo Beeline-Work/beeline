@@ -18,8 +18,13 @@ describe('roomDeckState', () => {
     expect(roomDeckState({ unread: true })).toBe('needs-you');
   });
 
-  it('never demotes needs-you to working: needs-you always wins the precedence', () => {
-    expect(roomDeckState({ unread: true, agentState: 'working' })).toBe('needs-you');
+  it('shows working over plain unread: a live turn is never hidden behind a gold dot', () => {
+    expect(roomDeckState({ unread: true, agentState: 'working' })).toBe('working');
+  });
+
+  it('never demotes needs-you to working: a corner waiting on a human always wins', () => {
+    expect(roomDeckState({ unread: true, agentState: 'needs-you' })).toBe('needs-you');
     expect(roomDeckState({ unread: false, agentState: 'needs-you' })).toBe('needs-you');
+    expect(roomDeckState({ unread: true, agentState: 'needs-you' })).not.toBe('working');
   });
 });

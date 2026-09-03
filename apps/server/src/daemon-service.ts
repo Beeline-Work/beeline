@@ -698,13 +698,12 @@ export class DaemonService {
        ORDER BY a.agent_id`,
     );
     const now = Date.now();
-    return {
-      daemons: result.rows.map((row) => {
+    const daemons = result.rows.map((row) => {
         const observedAt = row.body?.observedAt;
         const fresh =
           typeof observedAt === 'number' && Math.abs(now - observedAt * 1_000) <= 90_000;
         const state = !row.body
-          ? 'missing'
+          ? 'never-seen'
           : row.body.status !== 'online'
             ? 'offline'
             : fresh
@@ -717,8 +716,14 @@ export class DaemonService {
           ...(row.body?.releaseVersion ? { version: row.body.releaseVersion } : {}),
           ...(row.body?.sourceSha ? { sha: row.body.sourceSha } : {}),
         };
-      }),
-    };
+    });
+    const summary = { total: 0, ready: 0, neverSeen: 0 };
+    for (const daemon of daemons) {
+      summary.total += 1;
+      if (daemon.state === 'ready') summary.ready += 1;
+      if (daemon.state === 'never-seen') summary.neverSeen += 1;
+    }
+    return { daemons, summary };
   }
   private async completion(input: Input<'getRequestCompletion'>, agentId: string) {
     await this.access(input.roomId, agentId);

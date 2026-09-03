@@ -49,6 +49,41 @@ export async function completeDevicePairing(
     launch?: (configPath: string, agentPubkey: string) => Promise<number>;
   } = {},
 ): Promise<DeviceConnectionResult> {
+  try {
+    return await pairDevice(grant, options);
+  } catch (error) {
+    // The helper never started, so the server-side agent registration this
+    // pairing created is unrealized. Best-effort rollback keeps a ghost out of
+    // Members and off the release-readiness fleet.
+    await rollbackPairing(grant, options.fetchImpl).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function rollbackPairing(grant: DevicePairingGrant, fetchImpl?: DaemonFetch) {
+  const doFetch = fetchImpl ?? fetch;
+  await doFetch(new URL('/v1/auth/daemon/rollback', grant.monolithBaseUrl), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ exchangeToken: grant.daemonExchangeToken }),
+  });
+}
+
+async function pairDevice(
+  grant: DevicePairingGrant,
+  options: {
+    fetchImpl?: DaemonFetch;
+    supervisorRoot?: string;
+    selectedAgent?: AgentCommand;
+    localConfig?: { agentBinary: string; mcpBinary: string; agentEnv: Record<string, string> };
+    validateSelection?: (
+      agent: AgentCommand,
+      env: Record<string, string>,
+      selection: { model?: string; effort?: string },
+    ) => Promise<void>;
+    launch?: (configPath: string, agentPubkey: string) => Promise<number>;
+  } = {},
+): Promise<DeviceConnectionResult> {
   const selectedAgent =
     options.selectedAgent ??
     (await selectPairAgentCommand({

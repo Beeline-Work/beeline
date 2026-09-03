@@ -143,6 +143,56 @@ test('report subcommand requires and accepts the exact release identity', () => 
   }
 });
 
+test('a never-reported ghost agent does not block the release confirm, a silent one does', () => {
+  const ghost = 'd'.repeat(64);
+  assert.equal(
+    assertDaemonFleetReady(
+      {
+        daemons: [
+          {
+            agentPubkey: 'a'.repeat(64),
+            state: 'ready',
+            version: 'v0.0.1',
+            sha: SHA_1,
+          },
+          { agentPubkey: ghost, state: 'never-seen' },
+        ],
+        summary: { total: 2, ready: 1, neverSeen: 1 },
+      },
+      'v0.0.1',
+      SHA_1,
+    ).length,
+    2,
+  );
+  assert.throws(
+    () =>
+      assertDaemonFleetReady(
+        {
+          daemons: [
+            { agentPubkey: 'a'.repeat(64), state: 'ready', version: 'v0.0.1', sha: SHA_1 },
+            { agentPubkey: 'e'.repeat(64), state: 'missing' },
+          ],
+          summary: { total: 2, ready: 1, neverSeen: 0 },
+        },
+        'v0.0.1',
+        SHA_1,
+      ),
+    (error) => {
+      assert.match(error.message, new RegExp(`agent ${'e'.repeat(64)} reported missing`));
+      return true;
+    },
+  );
+  assert.throws(
+    () =>
+      assertDaemonFleetReady(
+        { daemons: [{ agentPubkey: ghost, state: 'never-seen' }] },
+        'v0.0.1',
+        SHA_1,
+      ),
+    /no agents that ever reported/,
+  );
+});
+
 test('daemon fleet readiness identifies every agent that is not on the exact release', () => {
   assert.equal(
     assertDaemonFleetReady(

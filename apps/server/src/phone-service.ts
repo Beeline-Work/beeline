@@ -1835,6 +1835,32 @@ export class PhoneService {
       [input.agentId, hasModel, input.model ?? null, hasEffort, input.effort ?? null],
     );
   }
+  /**
+   * Roll back an agent registration whose connect helper never came up. Only
+   * an agent that has NEVER reported presence is unrealizable: anything else
+   * is a real daemon and must be removed by a human through removeAgent.
+   */
+  async rollbackUnrealizedAgent(agentId: string) {
+    const claimed = await this.database.query(
+      `SELECT 1 FROM agent_pairing_codes WHERE claimed_by=$1`,
+      [agentId],
+    );
+    if (!claimed.rowCount) throw new Error('pairing not found');
+    const ran = await this.database.query(
+      `SELECT 1 FROM live_outputs WHERE agent_id=$1 AND kind='presence' LIMIT 1`,
+      [agentId],
+    );
+    if (ran.rowCount) throw new Error('agent already ran; use removeAgent instead');
+    await this.database.query(
+      `UPDATE memberships SET removed_at=now()
+       WHERE identity_id=$1 AND removed_at IS NULL`,
+      [agentId],
+    );
+    await this.database.query(`UPDATE daemon_tokens SET revoked_at=now() WHERE agent_id=$1`, [
+      agentId,
+    ]);
+  }
+
   private async removeAgent(input: Input<'removeAgent'>, viewerId: string) {
     await this.requireWorkspaceAgent(input.workspaceId, input.agentId, viewerId);
     await this.database.query(

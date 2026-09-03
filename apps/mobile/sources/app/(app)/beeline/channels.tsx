@@ -630,8 +630,9 @@ export default function BuzzChannels() {
             // inherits `agentState` — the server's max-severity rollup of the
             // Room's own conversational turn and every one of its corners —
             // so a live turn or a corner waiting on a human golds/spins the
-            // row even when every message has already been read. Precedence:
-            // needs-you (unread OR a corner needs a human) > working > idle.
+            // row even when every message has already been read. Precedence
+            // (room-deck-state.ts): needs-you (corner hold) > working >
+            // plain-unread gold; plain unread always keeps its NEW badge.
             const unread = item.unread;
             const deckState = roomDeckState(item);
             const title = displayRoomIndexTitle(item.room.name) ?? item.room.name;

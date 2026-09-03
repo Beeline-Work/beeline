@@ -7,11 +7,14 @@ import {
   nextScheduleOccurrence,
   validateScheduleCadence,
 } from './agent-schedules.js';
+import { DaemonService } from './daemon-service.js';
+import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
 
 const OWNER = 'a'.repeat(64);
 const MEMBER = 'b'.repeat(64);
 const AGENT = 'c'.repeat(64);
+const OTHER_AGENT = 'd'.repeat(64);
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
 
@@ -20,8 +23,8 @@ async function fixture() {
   await migrate(database);
   await database.query(
     `INSERT INTO identities(id,kind,name) VALUES
-      ($1,'human','Owner'),($2,'human','Member'),($3,'agent','Worker')`,
-    [OWNER, MEMBER, AGENT],
+      ($1,'human','Owner'),($2,'human','Member'),($3,'agent','Worker'),($4,'agent','Rival')`,
+    [OWNER, MEMBER, AGENT, OTHER_AGENT],
   );
   await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Workspace')`, [WORKSPACE]);
   await database.query(
@@ -30,9 +33,9 @@ async function fixture() {
   );
   await database.query(
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-      ($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,NULL,$4,'member'),
-      ($1,$5,$2,'owner'),($1,$5,$3,'member'),($1,$5,$4,'member')`,
-    [WORKSPACE, OWNER, MEMBER, AGENT, ROOM],
+      ($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,NULL,$4,'member'),($1,NULL,$6,'member'),
+      ($1,$5,$2,'owner'),($1,$5,$3,'member'),($1,$5,$4,'member'),($1,$5,$6,'member')`,
+    [WORKSPACE, OWNER, MEMBER, AGENT, ROOM, OTHER_AGENT],
   );
   return database;
 }
@@ -175,6 +178,185 @@ describe('agent schedule background posting', () => {
         ).rows,
       ).toEqual([{ author_id: OWNER, text: 'Post the status update.', mention_ids: [AGENT] }]);
       expect((await database.query(`SELECT 1 FROM agent_schedule_occurrences`)).rowCount).toBe(1);
+    } finally {
+      await database.close();
+    }
+  });
+
+  it('fires an agent-created schedule as a self-mention and auto-deletes after maxRuns', async () => {
+    const database = await fixture();
+    try {
+      const daemon = new DaemonService(database, new LiveHub());
+      const created = await daemon.execute(
+        'createAgentSchedule',
+        {
+          agentId: AGENT,
+          roomId: ROOM,
+          prompt: "message 'hello @bananaman614305'",
+          cadence: { kind: 'interval', everyMinutes: 1 },
+          maxRuns: 5,
+        },
+        AGENT,
+      );
+      expect(created.scheduleId).toMatch(/[0-9a-f-]{36}/);
+      // Force the schedule due so the loop can run all five occurrences now.
+      const forceDue = async () =>
+        database.query(`UPDATE agent_schedules SET next_run_at=now() - interval '1 second' WHERE id=$1`, [
+          created.scheduleId,
+        ]);
+      const loop = new AgentScheduleLoop(database);
+      for (let run = 0; run < 5; run += 1) {
+        await forceDue();
+        expect(await loop.runOnce()).toBe(1);
+      }
+      const messages = await database.query<{ author_id: string; text: string; mention_ids: string[] }>(
+        `SELECT author_id,text,mention_ids FROM messages ORDER BY created_at`,
+      );
+      expect(messages.rowCount).toBe(5);
+      expect(messages.rows[0]).toEqual({
+        author_id: AGENT,
+        text: "message 'hello @bananaman614305'",
+        mention_ids: [AGENT],
+      });
+      // The schedule deleted itself after the fifth run.
+      expect(
+        (await database.query(`SELECT 1 FROM agent_schedules WHERE id=$1`, [created.scheduleId]))
+          .rowCount,
+      ).toBe(0);
+    } finally {
+      await database.close();
+    }
+  });
+});
+
+describe('agent tool schedule daemon operations', () => {
+  it('creates, lists, and deletes via daemon operations with agent scoping', async () => {
+    const database = await fixture();
+    try {
+      const daemon = new DaemonService(database, new LiveHub());
+      const created = await daemon.execute(
+        'createAgentSchedule',
+        {
+          agentId: AGENT,
+          roomId: ROOM,
+          prompt: 'Ping the Room.',
+          cadence: { kind: 'interval', everyMinutes: 3 },
+          maxRuns: 5,
+        },
+        AGENT,
+      );
+      expect(created.nextRunAt).toBeGreaterThan(Math.floor(Date.now() / 1000));
+      const listed = await daemon.execute(
+        'listAgentSchedules',
+        { agentId: AGENT, roomId: ROOM },
+        AGENT,
+      );
+      expect(listed.schedules).toEqual([
+        {
+          scheduleId: created.scheduleId,
+          prompt: 'Ping the Room.',
+          cadence: { kind: 'interval', everyMinutes: 3 },
+          maxRuns: 5,
+          runCount: 0,
+          nextRunAt: created.nextRunAt,
+        },
+      ]);
+      // Another agent cannot see or delete it.
+      const rivalList = await daemon.execute(
+        'listAgentSchedules',
+        { agentId: OTHER_AGENT, roomId: ROOM },
+        OTHER_AGENT,
+      );
+      expect(rivalList.schedules).toEqual([]);
+      await expect(
+        daemon.execute(
+          'deleteAgentSchedule',
+          { agentId: OTHER_AGENT, roomId: ROOM, scheduleId: created.scheduleId },
+          OTHER_AGENT,
+        ),
+      ).rejects.toThrow('schedule not found');
+      await expect(
+        daemon.execute(
+          'deleteAgentSchedule',
+          { agentId: AGENT, roomId: ROOM, scheduleId: created.scheduleId },
+          AGENT,
+        ),
+      ).resolves.toBeTruthy();
+      expect(
+        (await daemon.execute('listAgentSchedules', { agentId: AGENT, roomId: ROOM }, AGENT))
+          .schedules,
+      ).toEqual([]);
+      // A daemon token cannot create schedules on behalf of another agent.
+      await expect(
+        daemon.execute(
+          'createAgentSchedule',
+          {
+            agentId: OTHER_AGENT,
+            roomId: ROOM,
+            prompt: 'Impersonation.',
+            cadence: { kind: 'interval', everyMinutes: 1 },
+          },
+          AGENT,
+        ),
+      ).rejects.toThrow('daemon token does not own requested agent');
+    } finally {
+      await database.close();
+    }
+  });
+
+  it('validates prompt, cadence floor, and maxRuns', async () => {
+    const database = await fixture();
+    try {
+      const daemon = new DaemonService(database, new LiveHub());
+      await expect(
+        daemon.execute(
+          'createAgentSchedule',
+          {
+            agentId: AGENT,
+            roomId: ROOM,
+            prompt: '   ',
+            cadence: { kind: 'interval', everyMinutes: 1 },
+          },
+          AGENT,
+        ),
+      ).rejects.toThrow('prompt is required');
+      await expect(
+        daemon.execute(
+          'createAgentSchedule',
+          {
+            agentId: AGENT,
+            roomId: ROOM,
+            prompt: 'Ping.',
+            cadence: { kind: 'interval', everyMinutes: 0 },
+          },
+          AGENT,
+        ),
+      ).rejects.toThrow('interval must be between 1 minute and 366 days');
+      await expect(
+        daemon.execute(
+          'createAgentSchedule',
+          {
+            agentId: AGENT,
+            roomId: ROOM,
+            prompt: 'Ping.',
+            cadence: { kind: 'interval', everyMinutes: 1 },
+            maxRuns: 0,
+          },
+          AGENT,
+        ),
+      ).rejects.toThrow('maxRuns must be a positive integer');
+      await expect(
+        daemon.execute(
+          'createAgentSchedule',
+          {
+            agentId: AGENT,
+            roomId: ROOM,
+            prompt: 'Ping.',
+            cadence: { kind: 'cron', expression: '* * * *' },
+          },
+          AGENT,
+        ),
+      ).rejects.toThrow('five fields');
     } finally {
       await database.close();
     }

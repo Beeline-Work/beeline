@@ -30,9 +30,9 @@ never qualifies — if two adjacent regions of a screen are both permanent, they
 are one slab.
 
 Source of truth: `apps/mobile/sources/buzz/groknight.ts`. It exports one
-semantic token shape and three sets: Obsidian Refined (default), Editorial Ink
-(warm near-black and IBM Plex Serif prose), and Ledger (dense IBM Plex Mono).
-Theme choice is device-local and app-wide. Obsidian content runs `#f0f0f3` /
+semantic token shape and one set: Obsidian Refined. There is no theme picker;
+the app ships this one visual language everywhere (the former Editorial Ink and
+Ledger sets are retired). Obsidian content runs `#f0f0f3` /
 `#c9c9d1`; `#83838d` and `#6c6c76` are reserved for chrome, labels, timestamps,
 and redundant machine noise. Brass is `#b08a4a` in Obsidian (the Editorial
 direction's single accent; the older gold `#c9a24b` is retired); diff green/red

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { beelineThemes, groknight } from './groknight';
 
-describe('Beeline appearance themes', () => {
+describe('Beeline theme tokens', () => {
   it('ships Obsidian Refined as the default token set', () => {
     expect(groknight).toMatchObject({
       name: 'obsidian',
@@ -19,22 +19,14 @@ describe('Beeline appearance themes', () => {
     });
   });
 
-  it('keeps content brighter than chrome and reserves mono for identity in every theme', () => {
-    expect(Object.keys(beelineThemes)).toEqual(['obsidian', 'editorial', 'ledger']);
+  it('keeps content brighter than chrome and reserves mono for identity', () => {
+    // Obsidian Refined is the only shipped visual language.
+    expect(Object.keys(beelineThemes)).toEqual(['obsidian']);
     for (const theme of Object.values(beelineThemes)) {
       expect(theme.textPrimary).not.toBe(theme.textMuted);
       expect(theme.ledgerBright).toBe(theme.textPrimary);
       expect(theme.monoRegular).toBe('IBMPlexMono-Regular');
-    }
-    expect(beelineThemes.editorial.proseRegular).toBe('IBMPlexSerif-Regular');
-    expect(beelineThemes.ledger.proseRegular).toBe('IBMPlexMono-Regular');
-    // The Editorial direction is the most generous rhythm: one-size type with
-    // wide turn padding, while the dense mono theme stays tight.
-    expect(beelineThemes.ledger.turnPaddingVertical).toBeLessThan(
-      beelineThemes.obsidian.turnPaddingVertical,
-    );
-    // ONE message size holds in every theme: no lead/prose size split.
-    for (const theme of Object.values(beelineThemes)) {
+      // ONE message size: no lead/prose size split.
       expect(theme.leadSize).toBe(theme.proseSize);
       expect(theme.proseMedium).toBeTruthy();
     }
@@ -42,7 +34,7 @@ describe('Beeline appearance themes', () => {
 });
 
 describe('Speakeasy canvas alignment', () => {
-  it('sets the app-wide background to the Speakeasy brand canvas in every theme', () => {
+  it('sets the app-wide background to the Speakeasy brand canvas ', () => {
     for (const theme of Object.values(beelineThemes)) {
       expect(theme.bgVoid).toBe('#14091A');
       expect(theme.bgTerminal).toBe('#14091A');

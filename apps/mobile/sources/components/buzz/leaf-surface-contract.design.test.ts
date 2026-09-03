@@ -38,7 +38,7 @@ describe('Beeline leaf-surface prohibited patterns', () => {
     for (const [name, source] of Object.entries(sources)) {
       expect(source, `${name} contains a local radius literal`).not.toMatch(/borderRadius:\s*\d/);
     }
-    expect(groknightSource.match(/radius:\s*3,/g)).toHaveLength(3);
+    expect(groknightSource.match(/radius:\s*3,/g)).toHaveLength(1);
     expect(groknightSource).not.toMatch(/radius:\s*(?!3,)\d+/);
   });
 

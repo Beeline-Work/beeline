@@ -9,7 +9,6 @@ import {
     type LocalSettings,
     localSettingsDefaults,
     localSettingsParse,
-    type ThemePreference,
 } from './localSettings';
 
 const mmkv = new MMKV();
@@ -43,10 +42,6 @@ export function loadLocalSettings(): LocalSettings {
 
 export function saveLocalSettings(settings: LocalSettings): void {
     mmkv.set('local-settings', JSON.stringify(settings));
-}
-
-export function loadThemePreference(): ThemePreference {
-    return loadLocalSettings().themePreference;
 }
 
 export function retrieveTempText(id: string): string | null {

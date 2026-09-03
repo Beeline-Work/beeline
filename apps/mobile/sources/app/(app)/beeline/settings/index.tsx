@@ -170,21 +170,6 @@ export default function BuzzSettings() {
         )}
 
         <Text style={styles.sectionLabel}>THIS DEVICE</Text>
-        <TouchableOpacity
-          accessibilityLabel="Open Appearance Settings"
-          accessibilityRole="button"
-          onPress={() => router.push('/settings/appearance' as Href)}
-          style={styles.settingsRow}
-          testID="appearance-setting"
-        >
-          <View style={styles.rowCopy}>
-            <Text style={styles.rowTitle}>Appearance</Text>
-            <Text style={styles.rowSubtitle}>Obsidian Refined, Editorial Ink, or dense Ledger</Text>
-          </View>
-          <View style={styles.rowGutter}>
-            <Text style={styles.rowChevron}>›</Text>
-          </View>
-        </TouchableOpacity>
         <View style={styles.settingsRow} testID="ota-update-info">
           <View style={styles.rowCopy}>
             <Text style={styles.rowTitle}>OTA update</Text>

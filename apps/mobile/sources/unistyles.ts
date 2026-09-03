@@ -1,12 +1,9 @@
 import { StyleSheet, UnistylesRuntime } from 'react-native-unistyles';
-import { editorialTheme, ledgerTheme, obsidianTheme } from './theme';
-import { loadThemePreference } from './sync/persistence';
+import { obsidianTheme } from './theme';
 import * as SystemUI from 'expo-system-ui';
 
 const appThemes = {
     obsidian: obsidianTheme,
-    editorial: editorialTheme,
-    ledger: ledgerTheme,
 };
 
 const breakpoints = {
@@ -16,8 +13,6 @@ const breakpoints = {
     lg: 800,
     xl: 1200,
 };
-
-const themePreference = loadThemePreference();
 
 type AppThemes = typeof appThemes;
 type AppBreakpoints = typeof breakpoints;
@@ -29,13 +24,13 @@ declare module 'react-native-unistyles' {
 
 StyleSheet.configure({
     settings: {
-        initialTheme: themePreference,
+        initialTheme: 'obsidian',
         CSSVars: true,
     },
     breakpoints,
     themes: appThemes,
 });
 
-const rootColor = appThemes[themePreference].colors.groupped.background;
+const rootColor = obsidianTheme.colors.groupped.background;
 UnistylesRuntime.setRootViewBackgroundColor(rootColor);
 void SystemUI.setBackgroundColorAsync(rootColor);

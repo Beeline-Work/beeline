@@ -550,8 +550,12 @@ export async function runConnectCommand(
       validate: (value) =>
         normalizeAgentPairingCode(value) ? undefined : 'Enter the pairing code shown in the app',
     }));
-  const selection = await collectConnectWizard(clackPrompts, loadConnectModelCatalog, (input) =>
-    verifyProviderKey({ ...input, fetchImpl }),
+  const selection = await collectConnectWizard(
+    clackPrompts,
+    loadConnectModelCatalog,
+    fileConnectKeyStore,
+    process.env,
+    (input) => verifyProviderKey({ ...input, fetchImpl }),
   );
   const baseUrl = (process.env.BEELINE_AUTH_URL ?? 'https://server.usebeeline.app').replace(
     /\/$/,

@@ -28,7 +28,7 @@ describe('Room deck bootstrap', () => {
       source.indexOf('if (!chatList && !error)'),
     );
     expect(emptyState).toContain('testID="workspace-list-empty"');
-    expect(emptyState).toContain('No rooms yet');
+    expect(emptyState).toContain('No Rooms yet');
     expect(emptyState).toContain('label="CREATE WORKSPACE"');
     expect(emptyState).not.toContain('LOADING ROOMS');
   });
@@ -42,6 +42,12 @@ describe('Room deck bootstrap', () => {
     expect(emptyDeck).toContain('setShowCreateRoom(true)');
     expect(emptyDeck).toContain('testID="empty-invite-agent"');
     expect(emptyDeck).toContain("compose('agent')");
+    // Sentence-case labels; the tracked-uppercase MonoButton pair is gone.
+    expect(emptyDeck).toContain('Start a Room</Text>');
+    expect(emptyDeck).toContain('Invite an agent</Text>');
+    expect(emptyDeck).not.toContain('label="ADD ROOM"');
+    expect(emptyDeck).not.toContain('label="INVITE AGENT"');
+    expect(emptyDeck).not.toContain('<MonoButton');
   });
 
   it('refetches an acknowledged Room write without leaving the refreshed deck', () => {

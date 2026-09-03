@@ -11,6 +11,9 @@ import {
   resolveReadonlyMcpCommand,
 } from './config.js';
 
+/** Hermetic: keep resolution on the fixture PATH only. */
+const PATH_ONLY = { BEELINE_HARNESS_PATH_AUGMENT: '0' } as const;
+
 const binaryEnv = {
   BUZZ_AGENT_BIN: process.execPath,
   BUZZ_DEV_MCP_BIN: process.execPath,
@@ -126,7 +129,7 @@ describe('resolveReadonlyMcpCommand', () => {
       process.argv[1] = cli;
       const config = loadBodyConfig({
         workspaceRoot: '.',
-        env: { PATH: '', BUZZ_DEV_MCP_BIN: process.execPath },
+        env: { ...PATH_ONLY, PATH: '', BUZZ_DEV_MCP_BIN: process.execPath },
         agent: { kind: 'reference', command: process.execPath, args: [] },
       });
 
@@ -150,7 +153,7 @@ describe('resolveReadonlyMcpCommand', () => {
 
 describe('resolveCodegraphCommand', () => {
   it('resolves an explicit, executable override', () => {
-    expect(resolveCodegraphCommand({ PATH: '', BUZZ_CODEGRAPH_BIN: process.execPath })).toBe(
+    expect(resolveCodegraphCommand({ ...PATH_ONLY, PATH: '', BUZZ_CODEGRAPH_BIN: process.execPath })).toBe(
       process.execPath,
     );
   });
@@ -163,13 +166,13 @@ describe('resolveCodegraphCommand', () => {
       }),
     ).not.toThrow();
     expect(
-      resolveCodegraphCommand({ PATH: '', BUZZ_CODEGRAPH_BIN: '/definitely/missing/codegraph' }),
+      resolveCodegraphCommand({ ...PATH_ONLY, PATH: '', BUZZ_CODEGRAPH_BIN: '/definitely/missing/codegraph' }),
     ).toBeUndefined();
   });
 
   it('is best-effort: no override and nothing on PATH returns undefined instead of throwing', () => {
-    expect(() => resolveCodegraphCommand({ PATH: '' })).not.toThrow();
-    expect(resolveCodegraphCommand({ PATH: '' })).toBeUndefined();
+    expect(() => resolveCodegraphCommand({ ...PATH_ONLY, PATH: '' })).not.toThrow();
+    expect(resolveCodegraphCommand({ ...PATH_ONLY, PATH: '' })).toBeUndefined();
   });
 });
 

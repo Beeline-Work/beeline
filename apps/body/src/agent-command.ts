@@ -1,5 +1,6 @@
-import { accessSync, constants, existsSync } from 'node:fs';
-import { delimiter, isAbsolute, resolve } from 'node:path';
+import { accessSync, constants, existsSync, readdirSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { delimiter, isAbsolute, join, resolve } from 'node:path';
 
 export const AGENT_KINDS = [
   'codex',
@@ -64,6 +65,92 @@ function adapterInstallHint(kind: keyof typeof ADAPTER_INSTALL_COMMANDS): string
   return formatAdapterInstallCommand(ADAPTER_INSTALL_COMMANDS[kind]);
 }
 
+/** Version triple parsed from a node version-manager directory name. */
+function nodeVersionRank(name: string): [number, number, number] | undefined {
+  const match = /^v?(\d+)\.(\d+)\.(\d+)$/.exec(name);
+  if (!match) return undefined;
+  return [Number(match[1] ?? 0), Number(match[2] ?? 0), Number(match[3] ?? 0)];
+}
+
+function nodeVersionBins(versionsDir: string, binSuffix: string): string[] {
+  let entries: string[];
+  try {
+    entries = readdirSync(versionsDir);
+  } catch {
+    return [];
+  }
+  return entries
+    .map((name) => ({ name, rank: nodeVersionRank(name) }))
+    .filter((entry): entry is { name: string; rank: [number, number, number] } =>
+      Boolean(entry.rank),
+    )
+    .sort((a, b) => {
+      for (let i = 0; i < 3; i += 1) {
+        const delta = (b.rank[i] ?? 0) - (a.rank[i] ?? 0);
+        if (delta !== 0) return delta;
+      }
+      return 0;
+    })
+    .map((entry) => join(versionsDir, entry.name, binSuffix));
+}
+
+/**
+ * Well-known install locations that are frequently missing from a non-login
+ * shell's PATH (fnm and nvm version dirs are discovered fresh each call so the
+ * newest installed node version wins when several match).
+ */
+export function wellKnownExecutableDirs(env: NodeJS.ProcessEnv = process.env): string[] {
+  const home = env.HOME?.trim() || homedir();
+  const xdgData = env.XDG_DATA_HOME?.trim() || resolve(home, '.local', 'share');
+  const fnmRoots = [
+    env.FNM_DIR?.trim(),
+    resolve(xdgData, 'fnm'),
+    resolve(home, '.fnm'),
+  ].filter((root): root is string => Boolean(root));
+  const nvmRoots = [env.NVM_DIR?.trim(), resolve(home, '.nvm')].filter(
+    (root): root is string => Boolean(root),
+  );
+  const versioned: string[] = [];
+  for (const root of fnmRoots) {
+    versioned.push(...nodeVersionBins(join(root, 'node-versions'), 'installation/bin'));
+  }
+  for (const root of nvmRoots) {
+    versioned.push(...nodeVersionBins(join(root, 'versions', 'node'), 'bin'));
+  }
+  return [
+    ...versioned,
+    resolve(home, '.local', 'bin'),
+    '/usr/local/bin',
+    '/opt/homebrew/bin',
+  ];
+}
+
+/**
+ * The full harness search order: the caller's PATH, then well-known global
+ * bins, then the launcher's own recorded PATH (`BEELINE_LAUNCHER_PATH`).
+ * Deduplicated; the wizard probe and the daemon-side resolution share this.
+ * `BEELINE_HARNESS_PATH_AUGMENT=0` restricts the search to the caller's PATH
+ * (hermetic test seam).
+ */
+export function augmentedSearchDirectories(env: NodeJS.ProcessEnv = process.env): string[] {
+  const directories: string[] = [];
+  const pushAll = (paths: string[]): void => {
+    for (const directory of paths) {
+      if (directory && !directories.includes(directory)) directories.push(directory);
+    }
+  };
+  pushAll((env.PATH ?? '').split(delimiter));
+  if (env.BEELINE_HARNESS_PATH_AUGMENT === '0') return directories;
+  pushAll(wellKnownExecutableDirs(env));
+  pushAll((env.BEELINE_LAUNCHER_PATH ?? '').split(delimiter));
+  return directories;
+}
+
+/** Human-readable list of everywhere a harness lookup looks, for error text. */
+export function describeExecutableSearch(env: NodeJS.ProcessEnv = process.env): string {
+  return augmentedSearchDirectories(env).join(', ');
+}
+
 function firstExisting(paths: string[]): string | undefined {
   return paths.find((path) => path && existsSync(path));
 }
@@ -72,8 +159,7 @@ export function executableOnPath(
   name: string,
   env: NodeJS.ProcessEnv = process.env,
 ): string | undefined {
-  for (const directory of (env.PATH ?? '').split(delimiter)) {
-    if (!directory) continue;
+  for (const directory of augmentedSearchDirectories(env)) {
     const candidate = resolve(directory, name);
     try {
       accessSync(candidate, constants.X_OK);
@@ -101,7 +187,7 @@ function requireExecutable(
       // Use the actionable caller-provided error below.
     }
   }
-  throw new Error(missingMessage);
+  throw new Error(`${missingMessage} Searched: ${describeExecutableSearch(env)}.`);
 }
 
 /** Parse a command string into argv without invoking a shell or expanding variables. */

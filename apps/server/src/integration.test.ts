@@ -1260,8 +1260,9 @@ describe('monolith integration', () => {
       presentation: string;
     }>(
       `SELECT room_id,text,presentation FROM messages
-       WHERE author_id=$1 AND card_type='member-joined' ORDER BY room_id`,
-      [recipient.identityId],
+       WHERE author_id=$1 AND card_type='member-joined' AND room_id=ANY($2::uuid[])
+       ORDER BY room_id`,
+      [recipient.identityId, [ROOM, secondRoom.id]],
     );
     expect(notes.rows).toEqual(
       [ROOM, secondRoom.id]

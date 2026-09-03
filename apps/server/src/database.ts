@@ -1,3 +1,4 @@
+import { seedDefaultWorkspace } from './default-workspace.js';
 import { Pool, type PoolClient, type QueryResultRow } from 'pg';
 
 const TRANSIENT_CONNECTION_CODES = new Set(['57P01', '08006', '08003', '08000']);
@@ -697,6 +698,7 @@ CREATE TABLE IF NOT EXISTS import_items (
 export async function migrate(database: SqlDatabase): Promise<void> {
   await database.query(SCHEMA);
   await backfillCornerOwners(database);
+  await seedDefaultWorkspace(database);
 }
 
 /**

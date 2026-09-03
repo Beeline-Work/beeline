@@ -28,6 +28,8 @@ import { workspaceRailItem, type WorkspaceMemberDisplayItem } from '@/buzz/room-
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { cornerHref } from '@/buzz/corner-navigation';
+import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
+import { claimFirstLaunchLanding, welcomeRoomHref } from '@/buzz/welcome-landing';
 import {
   displayCornerTitle,
   expandedCornerRefreshAction,
@@ -154,6 +156,15 @@ export default function BuzzChannels() {
       if (!nextIdentity) {
         router.replace('/beeline/onboarding');
         return;
+      }
+      if (getBuzzRuntimeConfig().monolithEnabled) {
+        // An identity's first launch opens #welcome in Beeline Welcome above
+        // the deck; the deck keeps loading underneath so Back lands on it.
+        const landing = await claimFirstLaunchLanding(nextIdentity.publicKey);
+        if (landing && !cancelled) {
+          await saveActiveCommunityId(nextIdentity.publicKey, landing.workspaceId);
+          router.push(welcomeRoomHref(landing) as Href);
+        }
       }
       const nextRelayUrl = await getEffectiveRelayUrl();
       if (cancelled) return;

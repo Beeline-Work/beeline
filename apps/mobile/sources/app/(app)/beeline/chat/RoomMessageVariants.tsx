@@ -550,6 +550,17 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
         <ActivityTimeline
           active={message.isAgentLiveTurn === true}
           handle={!continued && isAgent ? voiceName : undefined}
+          mark={
+            !continued && isAgent
+              ? {
+                  seed: markSeed,
+                  kind: 'agent',
+                  // Same axes the settled byline mark renders (working →
+                  // gold ring): the streaming lane pulses while it lives.
+                  alive: message.isAgentLiveTurn === true,
+                }
+              : undefined
+          }
           items={activity}
           messageDraft={message.agentMessageDraft}
           stamp={ledgerStamp(message.timestamp)}

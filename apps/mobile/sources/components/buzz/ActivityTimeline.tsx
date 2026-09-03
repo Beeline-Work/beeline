@@ -4,6 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import type { AgentActivityItem } from '@/sync/transport/rig-transport';
 import { buildTurnActivity, type TurnActivityAction } from '@/buzz/activity-timeline';
 import { Typography } from '@/constants/Typography';
+import { LedgerBylineView, type LedgerBylineMark } from './Ledger';
 import { PixelLoader } from './MonoHull';
 import { MonoMarkdown } from './MonoMarkdown';
 
@@ -14,6 +15,10 @@ type ActivityTimelineProps = {
   stamp?: string;
   testID?: string;
   messageDraft?: string;
+  /** The streaming speaker's identity mark — the SAME mark the settled row's
+   *  byline renders (`Ledger.LedgerBylineView`), so the draft lane carries the
+   *  agent triangle and nothing changes visually when the draft settles. */
+  mark?: LedgerBylineMark;
 };
 
 function stepGlyph(step: TurnActivityAction): string {
@@ -150,6 +155,7 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
   stamp,
   testID,
   messageDraft,
+  mark,
 }: ActivityTimelineProps) {
   const turn = useMemo(() => buildTurnActivity(items), [items]);
   const steps = turn.steps.filter((step) => step.kind === 'tool');
@@ -161,11 +167,9 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
   return (
     <View style={styles.timeline} testID={testID}>
       {handle ? (
-        <View style={styles.liveByline}>
-          <Text style={styles.liveBylineName}>{handle.toUpperCase()}</Text>
-          <Text style={styles.liveBylineRole}> · agent</Text>
-          {stamp ? <Text style={styles.liveStamp}>{stamp}</Text> : null}
-        </View>
+        <LedgerBylineView
+          byline={{ name: handle, role: 'agent', stamp: stamp ?? '', mark }}
+        />
       ) : null}
       {steps.length ? (
         <>
@@ -203,20 +207,6 @@ const styles = StyleSheet.create((theme) => {
   const groknight = theme.buzz;
   return {
     timeline: { width: '100%', minWidth: 0, paddingVertical: 4 },
-    liveByline: { flexDirection: 'row', alignItems: 'baseline', marginBottom: 8 },
-    liveBylineName: {
-      ...Typography.mono('semiBold'),
-      color: groknight.accent,
-      fontSize: 11,
-      letterSpacing: 0.5,
-    },
-    liveBylineRole: { ...Typography.mono(), color: groknight.ledgerGhost, fontSize: 11 },
-    liveStamp: {
-      ...Typography.mono(),
-      marginLeft: 'auto',
-      color: groknight.ledgerGhost,
-      fontSize: 10,
-    },
     messageDraft: {
       ...Typography.ledger(),
       color: groknight.ledgerBright,

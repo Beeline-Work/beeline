@@ -379,6 +379,43 @@ describe('Room message variant components', () => {
     expect(ledgerEntryRender.mock.lastCall?.[0].byline.mark.alive).toBe(true);
   });
 
+  it('gives the live draft lane the settled row\'s identity mark', () => {
+    // Captain report C42: while the agent streams, the draft row's byline is
+    // the same byline component as a settled agent message — IdentityMark
+    // (same seed/kind/alive axes) + name — so nothing changes on settle.
+    const renderer = render(
+      <OrdinaryLedgerMessage
+        message={message({
+          id: 'draft-1',
+          pubkey: 'agent',
+          isAgentAuthor: true,
+          isAgentActivity: true,
+          isAgentDraft: true,
+          isAgentLiveTurn: true,
+          agentMessageDraft: 'Working…',
+        })}
+        agent={{ pubkey: 'agent', displayName: 'CODEX' }}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerOnline
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+    const timeline = renderer.root.findByType('ActivityTimeline');
+    expect(timeline.props.handle).toBe('CODEX');
+    // The settled byline mark for the same speaker is {seed, kind:'agent',
+    // alive:true}; the draft lane must carry exactly that mark.
+    expect(timeline.props.mark).toEqual({ seed: 'agent', kind: 'agent', alive: true });
+  });
+
   it('uses the current server author label and shared mention renderer over stale roster data', () => {
     const agentPubkey = 'agent';
     const currentIdentityMessage = message({

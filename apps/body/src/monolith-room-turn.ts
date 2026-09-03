@@ -38,6 +38,7 @@ import type { AgentRuntimeRecord } from './runtime.js';
 import { runtimeIdentity } from './runtime.js';
 import { MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE } from './response-directives.js';
 import { sanitizeAgentReply } from './reply-sanitizer.js';
+import { distillTurnFailureReason } from './turn-failure-reason.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
 
 type WorkspaceRoster = DaemonOperationMap['getWorkspaceRoster']['output'];
@@ -705,6 +706,7 @@ export class MonolithRoomTurnLoop {
         requestId: item.id,
         status: 'failed',
         generationId: `${this.agent.publicKey}:${this.options.roomId}`,
+        reason: distillTurnFailureReason(error),
       });
       throw error;
     } finally {

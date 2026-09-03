@@ -32,7 +32,7 @@ export class PushDeliveryLoop {
             WHEN m.card_type='daemon-fact' AND m.card->>'type'='corner-complete'
               THEN concat_ws(' ',COALESCE(NULLIF(author.name,''),'An agent'),
                 CASE WHEN m.card->>'outcome'='landed' THEN 'merged:' ELSE 'closed:' END,m.card->>'objective')
-            WHEN m.card_type='grant-request' THEN btrim(m.text)
+            WHEN m.card_type IN ('grant-request','turn-failed') THEN btrim(m.text)
             ELSE concat_ws(': ',COALESCE(NULLIF(author.name,''),'Someone'),btrim(m.text))
           END text,
           d.token,m.created_at

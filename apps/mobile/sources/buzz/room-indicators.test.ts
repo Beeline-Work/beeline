@@ -270,6 +270,21 @@ describe('composer ack presentation', () => {
     expect(hasComposerAckReceipt('sent-message', turns)).toBe(true);
   });
 
+  it('lets a FAILED receipt clear the local sending… bridge like any terminal receipt', () => {
+    // The server inscribes the failure as a Room system line; the bridge must
+    // not outlive it, or the requester sees "sending…" over "could not answer".
+    const turns: readonly RoomViewAgentTurn[] = [
+      {
+        requestId: 'sent-message',
+        agentPubkey: 'agent-1',
+        status: 'failed',
+        createdAt: NOW / 1_000,
+      },
+    ];
+
+    expect(hasComposerAckReceipt('sent-message', turns)).toBe(true);
+  });
+
   it('does not let an older receipt clear a newer pending acknowledgement', () => {
     const turns: readonly RoomViewAgentTurn[] = [
       {

@@ -604,8 +604,10 @@ export class SnapshotImporter {
       for (const row of snapshot.readMarks.filter((mark) => retainedRoomIds.has(mark.roomId)))
         await one('read-mark', `${row.roomId}:${row.identityId}`, async (db) => {
           await db.query(
-            `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id) VALUES($1,$2,$3,$4) ON CONFLICT(room_id,identity_id) DO UPDATE SET message_created_at=EXCLUDED.message_created_at,message_id=EXCLUDED.message_id`,
-            [row.roomId, row.identityId, date(row.createdAt), row.messageId],
+            `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id)
+             SELECT $1,$2,message.created_at,$3 FROM messages message WHERE message.id=$3 AND message.room_id=$1
+             ON CONFLICT(room_id,identity_id) DO UPDATE SET message_created_at=EXCLUDED.message_created_at,message_id=EXCLUDED.message_id`,
+            [row.roomId, row.identityId, row.messageId],
           );
         });
       for (const row of snapshot.schedules.filter((schedule) =>

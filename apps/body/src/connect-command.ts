@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { stdin, stdout } from 'node:process';
@@ -298,6 +299,13 @@ export function requestConnectGrant(
 ): Promise<DeviceGrantResponse> {
   const normalizedPairingCode = normalizeAgentPairingCode(pairingCode);
   if (!normalizedPairingCode) throw new Error('invalid pairing code');
+  // The wizard cannot know the agent pubkey before the server mints the
+  // keypair, so it derives a deterministic avatar seed from the one-time
+  // pairing code; absent a seed, the server defaults to the pubkey.
+  const avatarSeed = createHash('sha256')
+    .update(normalizedPairingCode.toUpperCase())
+    .digest('hex')
+    .slice(0, 32);
   return jsonRequest<DeviceGrantResponse>(
     `${baseUrl}/auth/agent/connect`,
     {
@@ -306,6 +314,7 @@ export function requestConnectGrant(
       ...(selection.provider ? { provider: selection.provider } : {}),
       model: selection.model,
       soul: selection.soul,
+      avatar_seed: avatarSeed,
       agent_name: selection.name,
     },
     fetchImpl,

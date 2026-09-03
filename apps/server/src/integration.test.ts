@@ -15,6 +15,7 @@ import { GitHubOperations } from './github-operations.js';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import {
   isCommunityInviteToken,
+  isAgentDetailView,
   isRoomView,
   isRoomViewMessage,
   ROOM_VIEW_MESSAGE_LIMIT,
@@ -2428,6 +2429,22 @@ describe('monolith integration', () => {
       'owner-device-token-12345678901234567890',
       expect.objectContaining({ text: 'Bee opened a corner: Ship the widget end to end' }),
     );
+  });
+
+  it('defaults a connect-wizard soul stored without avatarSeed to the pubkey and passes the detail guard', async () => {
+    await database.query(
+      `UPDATE agents SET soul=$2::jsonb,selected_model='gpt-5.6' WHERE agent_id=$1`,
+      [AGENT, JSON.stringify({ name: 'Scout', instructions: 'Be brisk and kind.' })],
+    );
+    const phone = new PhoneService(database, 'http://placeholder');
+    const view = await phone.readAgent(WORKSPACE, AGENT, HUMAN);
+    expect(view?.soul).toEqual({
+      name: 'Scout',
+      instructions: 'Be brisk and kind.',
+      avatarSeed: AGENT,
+    });
+    // The phone build's surface guard must accept the readAgent output as-is.
+    expect(isAgentDetailView(view)).toBe(true);
   });
 });
 

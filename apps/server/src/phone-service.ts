@@ -777,7 +777,16 @@ export class PhoneService {
     return {
       workspaceId,
       agent: member,
-      ...(config?.soul ? { soul: config.soul } : {}),
+      ...(config?.soul
+        ? {
+            soul: {
+              ...config.soul,
+              // Souls stored before the avatar-seed rule (e.g. connect-wizard
+              // souls) default the seed to the agent pubkey, matching display.
+              avatarSeed: config.soul.avatarSeed || agentId,
+            },
+          }
+        : {}),
       catalog: config?.model_catalog ?? [],
       ...(config?.selected_model || config?.selected_effort
         ? {
@@ -859,6 +868,7 @@ export class PhoneService {
     agentName: string;
     model: string;
     soul: string;
+    avatarSeed?: string;
   }): Promise<
     | { status: 'claimed'; workspaceId: string; workspaceName: string; pairedBy: string }
     | { status: 'not_found' | 'expired' | 'already_claimed' }
@@ -870,6 +880,7 @@ export class PhoneService {
       agentName: string;
       model: string;
       soul: string;
+      avatarSeed?: string;
     },
     createDaemonExchange: (
       agentId: string,
@@ -892,6 +903,7 @@ export class PhoneService {
       agentName: string;
       model: string;
       soul: string;
+      avatarSeed?: string;
     },
     createDaemonExchange?: (
       agentId: string,
@@ -938,7 +950,11 @@ export class PhoneService {
         [
           input.agentPubkey,
           pairing.created_by,
-          JSON.stringify({ name: input.agentName, instructions: input.soul }),
+          JSON.stringify({
+          name: input.agentName,
+          instructions: input.soul,
+          avatarSeed: input.avatarSeed || input.agentPubkey,
+        }),
           input.model,
         ],
       );

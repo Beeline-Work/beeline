@@ -27,7 +27,9 @@ vi.mock('react-native-svg', async () => {
   return {
     default: host('Svg'),
     Circle: host('Circle'),
+    Ellipse: host('Ellipse'),
     G: host('G'),
+    Line: host('Line'),
     Path: host('Path'),
     Polygon: host('Polygon'),
     Rect: host('Rect'),
@@ -62,7 +64,10 @@ vi.mock('react-native-reanimated', async () => {
 });
 
 import { groknight } from '@/buzz/groknight';
-import { identityMarkGeometry, identityPalette } from '@/buzz/identity-mark';
+import { BONE, FACE_IDS, INK } from '@/buzz/faces/animals';
+import { defaultFaceForSeed } from '@/buzz/faces';
+import { PERSON_PLATE } from '@/buzz/faces/face-tile';
+import { identityPalette } from '@/buzz/identity-mark';
 import { IdentityMark } from './IdentityMark';
 
 const originalConsoleError = console.error;
@@ -102,28 +107,63 @@ function inks(renderer: ReactTestRenderer): string[] {
     );
 }
 
-describe('shape reports the type', () => {
-  it('draws △ for an agent, ○ for a human, ▢ for a workspace', () => {
-    const agent = render(
-      React.createElement(IdentityMark, { seed: AGENT, kind: 'agent', size: 40 }),
+/** The figure's painted leaves, excluding the lens band. */
+function figurePaints(renderer: ReactTestRenderer): any[] {
+  return renderer.root
+    .findByProps({ testID: 'face-figure' })
+    .findAll(
+      (node: any) =>
+        typeof node.type === 'string' &&
+        node.type !== 'G' &&
+        node.props.testID !== 'face-lens-band' &&
+        ((node.props.fill && node.props.fill !== 'none') ||
+          (node.props.stroke && node.props.stroke !== 'none')),
     );
-    expect(agent.root.findAllByType('Polygon').length).toBeGreaterThan(0);
-    expect(agent.root.findAllByType('Circle')).toHaveLength(0);
+}
 
-    const human = render(
-      React.createElement(IdentityMark, { seed: HUMAN, kind: 'human', size: 40 }),
-    );
-    expect(human.root.findAllByType('Circle').length).toBeGreaterThan(0);
-    expect(human.root.findAllByType('Polygon')).toHaveLength(0);
+/** Host nodes carrying a testID (the SVG mock's composite wrapper carries it too). */
+function hosts(renderer: ReactTestRenderer, testID: string): any[] {
+  return renderer.root.findAll(
+    (node: any) => typeof node.type === 'string' && node.props.testID === testID,
+  );
+}
 
-    const workspace = render(
-      React.createElement(IdentityMark, { seed: WORKSPACE, kind: 'workspace', size: 40 }),
+function plateOf(renderer: ReactTestRenderer): Record<string, any> {
+  const plate = renderer.root.findByProps({ testID: 'identity-face-plate' });
+  return Object.assign({}, ...(plate.props.style as Record<string, any>[]));
+}
+
+describe('a face is deterministic per seed', () => {
+  it('draws the same creature for the same seed, every time', () => {
+    const first = render(React.createElement(IdentityMark, { seed: HUMAN, kind: 'human', size: 40 }));
+    const again = render(React.createElement(IdentityMark, { seed: HUMAN, kind: 'human', size: 40 }));
+    expect(again.toJSON()).toEqual(first.toJSON());
+    // ...and it is the seed's default creature, so every reader agrees.
+    const chosen = render(
+      React.createElement(IdentityMark, {
+        seed: HUMAN,
+        kind: 'human',
+        size: 40,
+        face: defaultFaceForSeed(HUMAN),
+      }),
     );
-    expect(workspace.root.findAllByType('Rect').length).toBeGreaterThan(0);
-    expect(workspace.root.findAllByType('Circle')).toHaveLength(0);
+    expect(chosen.toJSON()).toEqual(first.toJSON());
   });
 
-  it('names the type for a screen reader too, never shape alone', () => {
+  it('wears a chosen face instead, and ignores a face it does not know', () => {
+    const chosen = FACE_IDS.find((id) => id !== defaultFaceForSeed(HUMAN))!;
+    const bySeed = render(React.createElement(IdentityMark, { seed: HUMAN, kind: 'human', size: 40 }));
+    const byChoice = render(
+      React.createElement(IdentityMark, { seed: HUMAN, kind: 'human', size: 40, face: chosen }),
+    );
+    expect(byChoice.toJSON()).not.toEqual(bySeed.toJSON());
+    const unknown = render(
+      React.createElement(IdentityMark, { seed: HUMAN, kind: 'human', size: 40, face: 'dragon' }),
+    );
+    expect(unknown.toJSON()).toEqual(bySeed.toJSON());
+  });
+
+  it('names the type for a screen reader too, never the creature alone', () => {
     const agent = render(
       React.createElement(IdentityMark, { seed: AGENT, kind: 'agent', name: 'beebee' }),
     );
@@ -131,76 +171,83 @@ describe('shape reports the type', () => {
   });
 });
 
-describe('colour is the memory hook', () => {
-  it('paints one identity in its own signature colour, every time', () => {
-    const palette = identityPalette(AGENT, 'agent');
-    const painted = inks(
-      render(React.createElement(IdentityMark, { seed: AGENT, kind: 'agent', size: 40 })),
-    );
+describe('plate polarity is the class', () => {
+  it('draws a person as a coloured creature on an ink plate, with the edge layer behind', () => {
+    const person = render(React.createElement(IdentityMark, { seed: HUMAN, kind: 'human', size: 40 }));
+    // The shipped themes are all dark: the person plate is the dark ground.
+    expect(groknight.dark).toBe(true);
+    expect(plateOf(person).backgroundColor).toBe(PERSON_PLATE.dark);
+    expect(plateOf(person).borderRadius).toBe(3);
+    const svg = person.root.findByType('Svg');
+    expect(svg.children.map((child: any) => child.props.testID)).toEqual(['face-edge', 'face-figure']);
+    // The creature carries the identity's signature hue where Speakeasy had brass.
+    const palette = identityPalette(HUMAN, 'human');
+    const painted = inks(person);
     expect(painted).toContain(palette.mid);
-    expect(painted.every((ink) => [palette.mid, palette.bright, palette.deep].includes(ink))).toBe(
+    expect(painted.every((ink) => [palette.mid, BONE, INK].includes(ink))).toBe(true);
+    expect(hosts(person, 'face-lens-band')).toHaveLength(0);
+  });
+
+  it('draws an agent as an all-ink creature with one lens band on its hue plate', () => {
+    const agent = render(React.createElement(IdentityMark, { seed: AGENT, kind: 'agent', size: 40 }));
+    const palette = identityPalette(AGENT, 'agent');
+    expect(plateOf(agent).backgroundColor).toBe(palette.mid);
+    const band = hosts(agent, 'face-lens-band');
+    expect(band).toHaveLength(1);
+    expect(band[0]!.props.fill).toBe(BONE);
+    for (const node of figurePaints(agent)) {
+      for (const ink of [node.props.fill, node.props.stroke]) {
+        if (ink && ink !== 'none') expect(ink).toBe(INK);
+      }
+    }
+    // Ink on colour always contrasts: no edge layer.
+    expect(hosts(agent, 'face-edge')).toHaveLength(0);
+  });
+
+  it('gives two identities visibly different signatures', () => {
+    const first = plateOf(
+      render(React.createElement(IdentityMark, { seed: AGENT, kind: 'agent', size: 40 })),
+    ).backgroundColor;
+    const second = plateOf(
+      render(React.createElement(IdentityMark, { seed: HUMAN, kind: 'agent', size: 40 })),
+    ).backgroundColor;
+    expect(first).not.toBe(second);
+  });
+
+  it('keeps the creature at every shipped size, byline tile included', () => {
+    for (const size of [26, 28, 34, 38, 40, 76]) {
+      const tile = render(React.createElement(IdentityMark, { seed: HUMAN, kind: 'human', size }));
+      expect(plateOf(tile).width).toBe(size);
+      expect(hosts(tile, 'face-figure')).toHaveLength(1);
+    }
+  });
+});
+
+describe('a Workspace keeps its brass plate', () => {
+  it('draws the 3×3 plate, never a creature', () => {
+    const workspace = render(
+      React.createElement(IdentityMark, { seed: WORKSPACE, kind: 'workspace', size: 40 }),
+    );
+    expect(workspace.root.findAllByType('Rect').length).toBeGreaterThan(3);
+    expect(hosts(workspace, 'face-figure')).toHaveLength(0);
+    expect(hosts(workspace, 'identity-face-plate')).toHaveLength(0);
+    const palette = identityPalette(WORKSPACE, 'workspace');
+    expect(inks(workspace).every((ink) => [palette.mid, palette.bright, palette.deep].includes(ink))).toBe(
       true,
     );
   });
 
-  it('gives two identities visibly different signatures', () => {
-    const first = new Set(
-      inks(render(React.createElement(IdentityMark, { seed: AGENT, kind: 'agent', size: 40 }))),
+  it('goes solid below the cypher floor', () => {
+    const dot = render(
+      React.createElement(IdentityMark, { seed: WORKSPACE, kind: 'workspace', size: 18 }),
     );
-    const second = new Set(
-      inks(render(React.createElement(IdentityMark, { seed: HUMAN, kind: 'agent', size: 40 }))),
-    );
-    expect([...first].some((ink) => second.has(ink))).toBe(false);
-  });
-
-  it('goes solid below the cypher floor, where colour and silhouette are the identity', () => {
-    const dot = render(React.createElement(IdentityMark, { seed: AGENT, kind: 'agent', size: 18 }));
-    // Frame only — no interior grid to turn to mud at presence-dot scale.
     expect(dot.root.findAllByType('G')).toHaveLength(0);
-    expect(inks(dot)).toContain(identityPalette(AGENT, 'agent').mid);
-  });
-});
-
-describe('fill stays coarse and inside the silhouette', () => {
-  it('renders solid, hollow and half as full-field treatments at 26dp', () => {
-    const seeds = Array.from({ length: 48 }, (_, index) => `fill-state-${index}`);
-    const solidSeed = seeds.find(
-      (seed) => identityMarkGeometry(seed, 'agent').fillState === 'solid',
-    )!;
-    const hollowSeed = seeds.find(
-      (seed) => identityMarkGeometry(seed, 'agent').fillState === 'hollow',
-    )!;
-    const halfSeed = seeds.find(
-      (seed) => identityMarkGeometry(seed, 'agent').fillState === 'half',
-    )!;
-
-    const solid = render(
-      React.createElement(IdentityMark, { seed: solidSeed, kind: 'agent', size: 26 }),
-    );
-    const hollow = render(
-      React.createElement(IdentityMark, { seed: hollowSeed, kind: 'agent', size: 26 }),
-    );
-    const half = render(
-      React.createElement(IdentityMark, { seed: halfSeed, kind: 'agent', size: 26 }),
-    );
-
-    expect(solid.root.findAllByType('Polygon')[0]!.props.fill).toBe(
-      identityPalette(solidSeed, 'agent').mid,
-    );
-    expect(hollow.root.findAllByType('Polygon')[0]!.props.fill).toBe(
-      identityPalette(hollowSeed, 'agent').deep,
-    );
-    expect(half.root.findAllByType('Polygon')[0]!.props.fill).toBe(
-      identityPalette(halfSeed, 'agent').deep,
-    );
-    expect(half.root.findAllByType('Polygon')[1]!.props.fill).toBe(
-      identityPalette(halfSeed, 'agent').mid,
-    );
+    expect(inks(dot)).toContain(identityPalette(WORKSPACE, 'workspace').mid);
   });
 });
 
 describe('gold means alive, and only alive', () => {
-  it('rings a working agent and leaves an idle one alone', () => {
+  it('rings a working agent around its plate and leaves an idle one alone', () => {
     const working = render(
       React.createElement(IdentityMark, { seed: AGENT, kind: 'agent', size: 40, alive: true }),
     );
@@ -211,6 +258,7 @@ describe('gold means alive, and only alive', () => {
     // The identity colour underneath is untouched: who you are and what you
     // are doing stay two separate reads.
     expect(ring.every((node: any) => node.props.fill === 'none')).toBe(true);
+    expect(plateOf(working).backgroundColor).toBe(identityPalette(AGENT, 'agent').mid);
     // It breathes on the shared live clock rather than sitting there static.
     expect(working.root.findAllByType('AnimatedView')).toHaveLength(1);
 
@@ -220,13 +268,6 @@ describe('gold means alive, and only alive', () => {
     expect(inks(idle)).not.toContain(groknight.accent);
     // A quiet mark must never pay for a clock it does not use.
     expect(idle.root.findAllByType('AnimatedView')).toHaveLength(0);
-  });
-
-  it('rings in the mark’s own silhouette, so the shape read survives', () => {
-    const agent = render(
-      React.createElement(IdentityMark, { seed: AGENT, kind: 'agent', size: 40, alive: true }),
-    );
-    expect(agent.root.findAllByType('Circle')).toHaveLength(0);
   });
 
   it('never lets gold mean anything but a live agent', () => {
@@ -289,6 +330,19 @@ describe('one mark, everywhere', () => {
     );
     expect(usesLegacyMark).toEqual([]);
 
+    // The creatures are drawn in exactly one place too: no surface composes
+    // `buzz/faces` on its own.
+    const drawsAFace = files.filter(
+      (file) =>
+        /\.tsx$/.test(file) &&
+        !/\.test\.tsx$/.test(file) &&
+        !file.includes('/buzz/faces/') &&
+        /from '@\/buzz\/faces\//.test(readFileSync(file, 'utf8')),
+    );
+    expect(drawsAFace.map((file) => file.slice(root.length))).toEqual([
+      'components/buzz/IdentityMark.tsx',
+    ]);
+
     // ...and every surface that draws an identity draws this one.
     const drawsAMark = files.filter(
       (file) => /\.tsx$/.test(file) && /<IdentityMark\b/.test(readFileSync(file, 'utf8')),
@@ -296,12 +350,10 @@ describe('one mark, everywhere', () => {
     expect(drawsAMark.length).toBeGreaterThanOrEqual(7);
   });
 
-  it('never lets a relay photo remove the semantic silhouette', () => {
+  it('never lets a relay photo replace the creature', () => {
     // DESIGN.md ("Identity"): `photoIdentityMarksEnabled` ships FALSE — a
-    // photo defeats every identity axis at once, so the gate stays off until
-    // a captain decides portraits may live inside the silhouette. Inverted
-    // from an older assertion that a photo suppresses the generated shape:
-    // that encoded the drift, not the contract.
+    // photo defeats the face system at once, so the gate stays off until a
+    // captain decides portraits may live inside the tile.
     const renderer = render(
       React.createElement(IdentityMark, {
         seed: HUMAN,
@@ -311,8 +363,7 @@ describe('one mark, everywhere', () => {
       }),
     );
     expect(renderer.root.findAllByType('Image')).toHaveLength(0);
-    // The ○ silhouette — the type read — is still on screen.
-    expect(renderer.root.findAllByType('Circle').length).toBeGreaterThan(0);
+    expect(hosts(renderer, 'face-figure')).toHaveLength(1);
     expect(groknight.photoIdentityMarksEnabled).toBe(false);
   });
 
@@ -340,11 +391,7 @@ describe('one mark, everywhere', () => {
   });
 
   it('keeps stored human and agent photos inert', () => {
-    const kinds = [
-      { kind: 'human' as const, shape: 'Circle' },
-      { kind: 'agent' as const, shape: 'Polygon' },
-    ];
-    for (const { kind, shape } of kinds) {
+    for (const kind of ['human', 'agent'] as const) {
       const renderer = render(
         React.createElement(IdentityMark, {
           seed: HUMAN,
@@ -354,9 +401,7 @@ describe('one mark, everywhere', () => {
         }),
       );
       expect(renderer.root.findAllByType('Image')).toHaveLength(0);
-      expect(
-        renderer.root.findAll((node: any) => node.type === shape).length,
-      ).toBeGreaterThan(0);
+      expect(hosts(renderer, 'face-figure')).toHaveLength(1);
     }
   });
 

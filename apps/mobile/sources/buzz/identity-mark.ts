@@ -1,23 +1,23 @@
 /**
- * The identity-mark system: one deterministic mark per identity, built from
- * five independent axes so that recognising someone never depends on reading
- * a name.
+ * The identity colour system, plus the Workspace plate's geometry.
  *
- *   1. SHAPE reports the *type*, instantly and pre-verbally.
- *        △ agent (angular, engineered)  ○ human (organic)  ▢ workspace (structural)
- *   2. COLOUR is the *memory* hook — "beebee is the amber one". One curated,
- *      well-separated, low-saturation palette, assigned deterministically.
+ *   1. COLOUR is the *memory* hook — "beebee is the amber one". One curated,
+ *      well-separated, low-saturation palette, assigned deterministically per
+ *      seed. A person's creature and an agent's plate carry it, and so does
+ *      the name in the transcript byline (`buzz/faces` draws the creatures;
+ *      `identityPalette` here is the one hue authority for every kind).
  *      EXCEPTION — a Workspace is not a person to remember but the house
  *      itself: every ▢ mark renders in the one house brass (Speakeasy
  *      treatment), distinguished per Workspace by fill and cypher, never by
  *      hue.
- *   3. FILL is the coarse, nameable collision axis — solid / hollow / half.
- *      It is stable from the identity seed and still reads at dense-list size.
- *   4. The CYPHER interior is the *uniqueness* tiebreak: a coarse hashed
- *      primitive grid, nine cells, drawn in tones of the signature colour.
- *   5. A gold RING means *alive* — an agent working right now. It is drawn
- *      outside the silhouette and never touches the identity colour, so
- *      "who this is" and "what it is doing" stay two separate reads.
+ *   2. FILL (solid / hollow / half) and the nine-cell CYPHER are the
+ *      Workspace plate's collision axes. They were once drawn on people and
+ *      agents too; those are Speakeasy's twelve creatures now, whose species
+ *      is the tiebreak, so `identityMarkGeometry` is only read for
+ *      `kind === 'workspace'`.
+ *   3. A gold RING means *alive* — an agent working right now. It is drawn
+ *      around the tile and never touches the identity colour, so "who this
+ *      is" and "what it is doing" stay two separate reads.
  *
  * Everything here is pure and free of React Native, so the whole system is
  * unit-testable without a renderer. `components/buzz/IdentityMark.tsx` is the

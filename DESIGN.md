@@ -43,10 +43,10 @@ remains the one domain-color exception.
 One corner radius, `groknight.radius = 3`, everywhere a box appears. No other
 radius value ships. No *box* renders as a circle or a soft pill.
 
-The identity marks are the one deliberate exception, and it is a shape
-*vocabulary*, not a softening: a mark's silhouette is what states its type, and
-three silhouettes that a person can tell apart before reading anything need a
-curve among them. See "Identity" below.
+The identity tiles are the one place a box holds a drawing: a person or an
+agent is one of Speakeasy's twelve creatures on a square plate at the house
+radius, and the plate's polarity — coloured creature on ink, ink creature on
+colour — is what states the type. See "Identity" below.
 
 A box (border + fill + radius) appears only around:
 - something the user must find and act on (an input, a button), or
@@ -85,12 +85,17 @@ messages into headlines and was explicitly corrected by the captain. Commands,
 bylines, file paths, hashes, diffs, tool rows, and corner names always use IBM
 Plex Mono.
 
-**A turn is announced by its byline.** Each run opens with one mono line — a
-small square dot, NAME · role · HH:MM, uppercase and letterspaced. Brass
-(#b08a4a) dot and name mark the viewer alone: that accent is the ONLY thing
-distinguishing your own message, never weight, size, or geometry. Everyone else
-gets a steel dot. There is no "YOU" caption and no dim-content trick. Tighter space within paragraphs and more space between turns
-make the transcript scannable without weakening the words.
+**A turn is announced by its byline, and the byline says who is talking.**
+Each run opens with the speaker's 26px face tile, then the name in the
+speaker's own signature hue — sentence case, medium weight, at body size — a
+quiet mono `agent` tag where applicable, and the mono HH:MM stamp pinned to
+the right. The name is never set in the 10px mono uppercase the design
+reserves for things it wants you to ignore: for a long time it was, and four
+voices read as one grey caption. Brass (#b08a4a) on the name marks the viewer
+alone: that accent is the ONLY thing distinguishing your own message, never
+weight, size, or geometry. There is no "YOU" caption and no dim-content trick.
+Tighter space within paragraphs and more space between turns make the
+transcript scannable without weakening the words.
 
 **A voice states its name once per run, above the words.** A run's opening turn
 carries the byline; consecutive entries by the same voice inherit it, and
@@ -99,7 +104,7 @@ anything else (another person, a merge summary) ends the run
 
 The two surfaces differ here, and only here, because they genuinely differ:
 
-- **A Corner carries no byline name at all** — the dot-and-stamp rhythm only. Its
+- **A Corner carries no byline name at all** — the tile-and-stamp rhythm only. Its
   identity is already in the top bar. This is derived from the surface, never
   from a lookup: a Corner is one administering agent plus you, so *anything that
   is not your own steer is that agent*. Deriving it any other way is a real bug,
@@ -271,81 +276,78 @@ only sign-out with it.
 
 ## Identity
 
-An identity mark answers five questions at once, on five independent axes, so
-that recognising someone never depends on reading a name. Source of truth:
-`apps/mobile/sources/buzz/identity-mark.ts` (pure, testable, no React Native)
-drawn by `components/buzz/IdentityMark.tsx`, the **one** identity component in
-the product. Every avatar, transcript handle mark, Members row, Workspace rail
-tile, presence-sized dot and Corner top bar renders that primitive. A second
-`SomethingAvatar` component is the drift this system replaced, and a test
-enforces that none comes back.
+A person or an agent is one of Speakeasy's twelve creatures — fox, owl,
+pigeon, hare, stag, whale, moth, octopus, heron, bear, cat, bat — on a square
+plate. Source of truth: `apps/mobile/sources/buzz/faces/` (the twelve static
+renders, Speakeasy's edge layer, the seed → face default) and
+`apps/mobile/sources/buzz/identity-mark.ts` (the hue palette, the Workspace
+plate), drawn by `components/buzz/IdentityMark.tsx`, the **one** identity
+component in the product. Every avatar, transcript byline tile, Members row,
+Workspace rail tile, picker row and Corner top bar renders that primitive; no
+other file composes `buzz/faces`. A second `SomethingAvatar` component is the
+drift this system replaced, and a test enforces that none comes back.
 
-**1 · Shape is the type.** `△` agent, `○` human, `▢` workspace. Agents are
-angular and engineered, people are organic, Workspaces are structural — read
-pre-verbally, at any size, before colour or detail resolves. This is why the
-circle exists in a product that otherwise has no curves: the type distinction
-is worth more than the purity, and it is contained to the marks alone.
+**1 · Species is the face.** The drawings are Speakeasy's originals, path for
+path; nothing was redrawn. A person chooses their creature at onboarding
+(`RoomViewIdentity.face`, server column `identities.face_id`); an identity
+with no choice wears `defaultFaceForSeed(pubkey)` — Speakeasy's FNV-1a into
+twelve — so every device draws the same animal for the same key. The old rule
+that *shape is the type* (△ agent, ○ human) is retired: at the 8px it actually
+shipped in the transcript no shape ever resolved, and a creature is a memory
+hook in a way a triangle never was.
 
-**2 · Colour is the memory.** "beebee is the amber one." Each identity gets one
-deterministic signature colour from its seed — a pubkey for a person or agent,
-the community id for a Workspace — and keeps it forever, everywhere.
+**2 · Plate polarity is the type.** A **person** is a coloured creature on an
+ink plate: the drawing with Speakeasy's BRASS swapped for the identity's hue,
+BONE and INK kept. An **agent** is the same creature inverted — figure entirely
+INK on a plate filled with the agent's hue, the two eyes replaced by one BONE
+lens band across where they were. The class reads from the plate before the
+species resolves, which is why it survives at 26px where a silhouette did not.
+A Workspace keeps its own plate (below).
+
+**3 · Colour is the memory.** "beebee is the amber one." Each identity gets one
+deterministic signature hue from its seed — a pubkey for a person or agent, the
+community id for a Workspace — and keeps it forever, everywhere: on the
+person's creature, on the agent's plate, and on the name in the byline.
 
 The palette is **curated, never hashed**. Sixteen hand-placed hues span the
 whole wheel with a hard 20° floor between neighbours; a raw `hash % 360` was
 tried and it clusters, putting three identities in one list on three
 near-identical purples. The array is stored scrambled rather than in hue
-order, hue, fill, and cypher draw from independent PRNG streams, and a third
-luminance register helps two identities that do land on one hue. The hue
-anchors are not a uniqueness claim: the closest measured agent pair is 100° /
-120° at ΔE00 4.31, and exact hue repeats become likely in ordinary rosters.
+order, and a third luminance register helps two identities that do land on one
+hue. The hue anchors are not a uniqueness claim; exact hue repeats become
+likely in ordinary rosters, and the species and the name break the tie.
 
-Saturation stays low so every mark sits inside the obsidian world rather than
-on top of it, and each type carries a temperament as a quiet second reading of
-what the shape already states: agents warmer and a step more saturated, people
-cooler and greyer.
+Saturation stays low so every tile sits inside the obsidian world rather than
+on top of it, and each type carries a temperament as a quiet second reading:
+agents warmer and a step more saturated, people cooler and greyer.
 
-**Workspace exception — the house brass.** A Workspace is not someone to
-remember; it is the house itself. Every `▢` mark therefore renders in ONE hue
-family — the Speakeasy brass (`WORKSPACE_BRASS_HUE`, ≈40°, matched to the
-theme accents) — regardless of its seed. Per-Workspace distinction rides the
-fill, cypher, and luminance-register axes only; no green/lavender/other-hued
-workspace glyph may exist anywhere. Humans (○) and agents (△) keep their full
-deterministic wheel.
-
-**3 · Fill is the nameable collision axis.** Each identity is **solid**,
-**hollow**, or **half-filled**, chosen from its seed on a stream independent of
-colour and kept forever across Workspaces. The treatment occupies the full
-interior field, so it survives at the shipped 26dp floor and can be said aloud:
-“the solid amber one” versus “the hollow amber one.” It never rotates or
-deforms the silhouette, and it stays inside the outer frame, away from the gold
-live ring. All three states are complete mark treatments rather than contextual
-decoration; a non-colliding identity therefore never changes appearance when a
-roster changes.
-
-**4 · The cypher is the tiebreak.** Inside the silhouette, a hashed
-nine-cell primitive grid drawn in tones of the signature colour (`void` /
-`mid` / `bright`, where a void shows the mark's own deep tone rather than a
-hole in the slab). One geometry per shape, all nine cells, so no type is a
-weaker tiebreak than another: a **triangular mesh** for `△`, **radial rings ×
-sectors** for `○`, and speakeasy's **3×3 block/slot/cut/void plate** for `▢`
-(the FNV-1a + primitive-grid method is adopted from that product's `RoomMark`;
-the tones are ours). Every cell is cut back from its neighbours — left
-edge-to-edge, two adjacent same-tone cells fuse and the cypher stops being one.
-
-The cypher is deliberately coarse, and below `CYPHER_MIN_SIZE` (24px) both the
-cypher and fill axis are dropped: at handle and presence-dot scale the mark goes
-solid, because there the colour and silhouette *are* the identity and nine
-cells of ~4px would only mud them. That is the design, not a degradation; all
-shipped identity surfaces are currently 26dp or larger.
+**4 · The edge layer is Speakeasy's, ported exactly.** BONE shapes vanish on a
+light plate and INK shapes on a dark one, so a person's creature is drawn
+twice: a second copy BEHIND it in which only the shapes painted the vanishing
+tone are recoloured to the contrast tone and grown by three units
+(`recolorEdge`, `EDGE_GROW`). The hairline shows only where such a shape is
+the outer silhouette — bear, cat, bat, whale and pigeon on a dark plate; hare,
+heron, moth and owl on a light one; never the hue-bodied fox, octopus and
+stag. An agent needs no edge: ink on colour always contrasts. The shipped
+themes are all dark; the light treatment exists so the same tile is correct
+anywhere a light ground appears.
 
 **5 · A gold ring means alive.** An agent working right now takes a gold ring
-plus a wider low-alpha halo *outside* its silhouette, breathing on the shared
-live clock (`HullLivePulse`). It never touches the identity colour: who this is
-and what it is doing stay two separate reads, and a gold *fill* would have
-destroyed the first to say the second. The ring is drawn in the mark's own
-shape — a circular halo around a triangle would blunt exactly the shape read
-the system is built on — and it is mounted only where something is genuinely
-live, so a quiet row pays for no clock.
+plus a wider low-alpha halo drawn *around* its plate, breathing on the shared
+live clock (`HullLivePulse`). It never touches the identity colour or the
+creature: who this is and what it is doing stay two separate reads, and a
+gold *fill* would have destroyed the first to say the second. It is mounted
+only where something is genuinely live, so a quiet row pays for no clock.
+
+**Workspace exception — the house brass plate.** A Workspace is not someone to
+remember; it is the house itself. Every `▢` mark renders in ONE hue family —
+the Speakeasy brass (`WORKSPACE_BRASS_HUE`, ≈40°, matched to the theme
+accents) — regardless of its seed, as speakeasy's **3×3 block/slot/cut/void
+plate** in tones of that brass. Per-Workspace distinction rides the fill axis
+(solid / hollow / half), the nine-cell cypher and the luminance register only;
+no green/lavender/other-hued workspace glyph may exist anywhere. Below
+`CYPHER_MIN_SIZE` (24px) the plate goes solid. Fill and cypher live on the
+Workspace plate alone now; people and agents no longer carry them.
 
 For humans and agents, a relay `picture` field never overrides any of this:
 `groknight.photoIdentityMarksEnabled` and `PHOTO_OVERRIDES_ENABLED` both ship
@@ -450,7 +452,7 @@ backgrounded app, and the settled row all show the same completed static mark.
 
 ## Color exceptions, stated so no one re-litigates them
 
-1. **Brass (`#b08a4a` in Obsidian)** marks the viewer's byline dot and name,
+1. **Brass (`#b08a4a` in Obsidian)** marks the viewer's byline name,
    a tagged `@handle` in prose (`MonoMarkdown`'s mention gloss — the Speakeasy
    chat effect), and
    the moment you act on agent work: the ring around a working agent's identity
@@ -458,8 +460,8 @@ backgrounded app, and the settled row all show the same completed static mark.
    pinned corner line, and a Room on the index with a live corner), owner role,
    and the merge-approval action. It is never the *only* signal for any of
    these — each is redundantly encoded by shape, glyph, or copy. Note what brass
-   is *not*: identity itself. An agent's mark carries its own signature colour,
-   and brass only rings it — a brass-filled mark would spend the one accent on
+   is *not*: identity itself. An agent's plate carries its own signature colour,
+   and brass only rings it — a brass-filled plate would spend the one accent on
    something that is true of every agent all the time, which is how an accent
    stops meaning anything. Do not add a second hue; do not let a further meaning
    attach to gold without checking whether it still needs to be redundant with

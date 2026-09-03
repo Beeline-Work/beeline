@@ -133,6 +133,7 @@ export type WorkspaceMemberDisplayItem = {
   peerName: string;
   peerKind: 'person' | 'agent';
   avatarUrl?: string;
+  /** The chosen face id; absent → derived from the pubkey. */
   face?: string;
   role?: 'owner' | 'admin' | 'member';
 };

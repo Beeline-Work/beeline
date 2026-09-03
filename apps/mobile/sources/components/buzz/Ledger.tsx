@@ -4,6 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { useReducedMotion } from 'react-native-reanimated';
 import { Typography } from '@/constants/Typography';
 import { hasMessageRevealed, markMessageRevealed } from '@/buzz/message-reveal';
+import { identityPalette } from '@/buzz/identity-mark';
 import { IdentityMark } from './IdentityMark';
 import { MonoMarkdown } from './MonoMarkdown';
 import type { ChannelReferenceIndex, ChannelReferenceTarget } from '@/buzz/channel-reference';
@@ -17,11 +18,12 @@ import type { ChannelReferenceIndex, ChannelReferenceTarget } from '@/buzz/chann
  * prose — never from size. Turns separate by a hairline divider plus generous
  * vertical padding; there are no speaker rails, bubbles, or boxes.
  *
- * Identity lives in the byline above each run's first turn: a small square
- * dot (brass for the viewer, steel for everyone else), then NAME · role ·
- * HH:MM in uppercase mono. A human message is plain body text — regular
- * weight, primary tone, same size as everything — so nothing but the brass
- * byline marks it as the viewer's own.
+ * Identity lives in the byline above each run's first turn: the speaker's
+ * 26px face tile, then the name in the identity's own hue at body size, a
+ * quiet mono `agent` tag where applicable, and the mono HH:MM stamp pinned
+ * right. A human message is plain body text — regular weight, primary tone,
+ * same size as everything — so nothing but the brass byline name marks it as
+ * the viewer's own.
  *
  * The surfaces differ in exactly one place, and it tracks a real difference
  * between them. A Corner has one administering agent (`openSubchannel` in
@@ -34,23 +36,23 @@ import type { ChannelReferenceIndex, ChannelReferenceTarget } from '@/buzz/chann
 /** The right margin the ghosted stamp hangs in, clear of the flowing column. */
 export const LEDGER_MARGINALIA_WIDTH = 36;
 
-/** Transcript scale for the speaker's identity mark (~16–18px). Below the
- *  cypher floor the mark renders as its solid signature shape + colour, which
- *  is exactly what a byline wants. */
-export const LEDGER_MARK_SIZE = 17;
+/** Transcript scale for the speaker's face tile. 26px is where the creature
+ *  and the plate polarity (person vs agent) still resolve; an 8px dot never
+ *  did, which is why the byline leads with a tile now. */
+export const LEDGER_MARK_SIZE = 26;
 
-/** The speaker's existing identity mark (`buzz/identity-mark.ts`), rendered at
- *  transcript scale in place of the generic byline dot. No new vocabulary:
- *  circle = person, triangle = agent, per-identity hue, gold ring while the
- *  agent works — the same axes every other surface renders. */
+/** The speaker's identity tile (`components/buzz/IdentityMark.tsx`), rendered
+ *  at transcript scale in place of the generic byline dot. No new vocabulary:
+ *  the same creature, hue and plate every other surface renders, gold ring
+ *  while the agent works. */
 export type LedgerBylineMark = {
   /** The speaker's stable seed (pubkey); same seed, same mark as everywhere. */
   seed: string;
   kind: 'agent' | 'human';
+  /** The creature the speaker chose; absent → derived from the seed. */
+  face?: string;
   /** Agents only: working right now → the gold ring. */
   alive?: boolean;
-  /** People only: the chosen face on record. */
-  face?: string;
 };
 
 /** The byline above a run's opening turn. */
@@ -234,13 +236,19 @@ export function LedgerMarginalia({
   );
 }
 
-/** The one byline view: identity mark (or viewer dot) + name · role · stamp.
+/** The one byline view: identity tile (or viewer dot) + name, role tag, stamp.
  *  Exported so the live draft lane's byline (`ActivityTimeline`) is exactly
  *  the settled row's byline — nothing changes visually when a draft settles. */
 export const LedgerBylineView = Byline;
 
 function Byline({ byline }: { byline: LedgerByline }) {
   const mark = byline.mark;
+  // The name is set in the speaker's own signature hue — the same colour the
+  // tile carries — so "who is talking" is read twice, by face and by name.
+  // The viewer alone stays brass; a byline with no mark has no hue to borrow
+  // and keeps the plain bright tone.
+  const nameHue =
+    mark && !byline.isViewer ? { color: identityPalette(mark.seed, mark.kind).mid } : undefined;
   return (
     <View style={styles.byline}>
       {mark ? (
@@ -248,6 +256,7 @@ function Byline({ byline }: { byline: LedgerByline }) {
           <IdentityMark
             seed={mark.seed}
             kind="agent"
+            face={mark.face}
             alive={Boolean(mark.alive)}
             size={LEDGER_MARK_SIZE}
             testID="chat-byline-mark"
@@ -267,14 +276,21 @@ function Byline({ byline }: { byline: LedgerByline }) {
           testID="chat-byline-dot"
         />
       )}
-      <Text style={styles.bylineText}>
-        {byline.name ? (
-          <Text style={[styles.bylineText, byline.isViewer && styles.bylineNameViewer]}>
-            {byline.name}
-            {' · '}
-          </Text>
-        ) : null}
-        {byline.role ? `${byline.role} · ` : ''}
+      {byline.name ? (
+        <Text
+          numberOfLines={1}
+          style={[styles.bylineName, nameHue, byline.isViewer && styles.bylineNameViewer]}
+          testID="chat-byline-name"
+        >
+          {byline.name}
+        </Text>
+      ) : null}
+      {byline.role ? (
+        <Text style={styles.bylineTag} testID="chat-byline-role">
+          {byline.role}
+        </Text>
+      ) : null}
+      <Text style={styles.bylineStamp} testID="chat-byline-stamp">
         {byline.stamp}
       </Text>
     </View>
@@ -517,7 +533,18 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.buzz.agentRail,
   },
   bylineDotViewer: { backgroundColor: theme.buzz.accent },
-  bylineText: {
+  // The name reads at body size, medium weight, sentence case — the one line
+  // that says who is talking is no longer styled like a timestamp.
+  bylineName: {
+    fontFamily: theme.buzz.proseMedium,
+    color: theme.buzz.ledgerBright,
+    fontSize: theme.buzz.proseSize,
+    lineHeight: theme.buzz.proseLineHeight,
+    flexShrink: 1,
+  },
+  bylineNameViewer: { color: theme.buzz.accent },
+  // The quiet role tag and the clock stamp keep the mono metadata voice.
+  bylineTag: {
     ...Typography.mono(),
     color: theme.buzz.ledgerQuiet,
     fontSize: 10,
@@ -525,7 +552,13 @@ const styles = StyleSheet.create((theme) => ({
     letterSpacing: 0.9,
     textTransform: 'uppercase',
   },
-  bylineNameViewer: { color: theme.buzz.accent },
+  bylineStamp: {
+    ...Typography.mono(),
+    color: theme.buzz.ledgerQuiet,
+    fontSize: 10,
+    lineHeight: 14,
+    marginLeft: 'auto',
+  },
   // ONE message size. The lead differs from the body by weight (medium) and
   // brightness (primary), never by size.
   ledgerLead: {

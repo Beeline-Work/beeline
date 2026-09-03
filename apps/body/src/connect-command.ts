@@ -11,6 +11,11 @@ import { fetchAgentModelCatalog } from './model-catalog.js';
 import { verifyProviderKey, type ConnectKeyProvider } from './provider-key-check.js';
 import { completeDevicePairing, type DevicePairingGrant } from './device-pairing.js';
 import {
+  openRouterModelId,
+  openRouterRoutingCacheDir,
+  resolveOpenRouterRouting,
+} from './openrouter-routing.js';
+import {
   maskProviderKey,
   PROVIDER_KEY_ENV_VARS,
   providerKeyFromEnvironment,
@@ -662,8 +667,24 @@ export async function runConnectFinishCommand(path: string | undefined): Promise
   try {
     const grant = JSON.parse(await readFile(resolve(path), 'utf8')) as unknown;
     if (!isDevicePairingGrant(grant)) throw new Error('device connection grant is invalid');
-    await completeDevicePairing(grant);
+    const connected = await completeDevicePairing(grant);
     await unlink(resolve(path));
+    // Warm the per-model OpenRouter routing cache so the daemon's first
+    // activation already knows its reliable provider set. Best effort: the
+    // daemon re-derives it at every activation regardless.
+    const providerEnv = grant.llmEnvFile
+      ? await readFile(grant.llmEnvFile, 'utf8').catch(() => '')
+      : '';
+    const model = openRouterModelId(grant.model, {
+      OPENROUTER_API_KEY: /^OPENROUTER_API_KEY=\S/m.test(providerEnv) ? 'set' : '',
+    });
+    if (model) {
+      const decision = await resolveOpenRouterRouting({
+        model,
+        cacheDir: openRouterRoutingCacheDir(dirname(connected.configPath)),
+      });
+      console.log(decision.line);
+    }
   } catch (error) {
     // connect-finish runs without a TTY (the parent spawns it with pipes), so
     // the CLI's catch would print the full error object — stack included —

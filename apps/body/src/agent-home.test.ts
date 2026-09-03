@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
@@ -13,8 +13,8 @@ import {
   harnessStateDirsFromEnv,
   prepareRoomAgentHome,
   roomAgentHomeEnv,
-  withReliableOpenRouterRouting,
 } from './agent-home.js';
+import { OPENROUTER_GLM_5_3_FLASH_ENDPOINTS } from './fixtures/openrouter-endpoints-glm-5.3-flash.js';
 const AGENT_PRIVATE_STATE_ENV = 'BUZZY_AGENT_PRIVATE_DIR';
 import { KNOWN_CREDENTIAL_MASK_PATHS } from './bwrap-sandbox.js';
 import { filterModelOptionsByCredentials } from './model-config.js';
@@ -33,21 +33,36 @@ afterEach(async () => {
 });
 
 describe('per-room harness state isolation', () => {
-  it('pins OpenRouter requests to the reliable provider pair', () => {
-    expect(withReliableOpenRouterRouting({ providers: { local: { models: [] } } })).toMatchObject({
-      providers: {
-        local: { models: [] },
-        openrouter: {
-          compat: {
-            openRouterRouting: {
-              only: ['deepinfra', 'novita'],
-              order: ['deepinfra', 'novita'],
-              allow_fallbacks: false,
-              require_parameters: true,
-            },
-          },
-        },
-      },
+  it('pins the selected OpenRouter model to its live-derived provider set, per model', async () => {
+    const operatorHome = await scratch('beeline-operator-home-');
+    const roomRoot = resolve(await scratch('beeline-room-a-'), 'agent-home');
+    const cacheDir = resolve(await scratch('beeline-routing-cache-'), 'openrouter-routing');
+    const fetchImpl = vi.fn(async () =>
+      new Response(JSON.stringify(OPENROUTER_GLM_5_3_FLASH_ENDPOINTS), { status: 200 }),
+    ) as unknown as typeof fetch;
+
+    await prepareRoomAgentHome({
+      root: roomRoot,
+      operatorHome,
+      openRouterRouting: { model: 'z-ai/glm-5.3-flash', cacheDir, fetchImpl },
+    });
+
+    const models = JSON.parse(readFileSync(resolve(roomRoot, 'pi/models.json'), 'utf8'));
+    const routing = models.providers.openrouter.modelOverrides['z-ai/glm-5.3-flash'].compat
+      .openRouterRouting;
+    expect(routing).toMatchObject({ allow_fallbacks: true, require_parameters: true });
+    expect(routing.only).toEqual(routing.order);
+    expect(routing.only.slice(0, 3)).toEqual(['morph', 'baseten', 'modal']);
+    expect(routing.only).toContain('deepinfra');
+    expect(routing.only).toContain('novita');
+    expect(routing.only).not.toContain('gmicloud');
+    expect(models.providers.openrouter.compat).toBeUndefined();
+    expect(existsSync(resolve(cacheDir, 'z-ai_glm-5.3-flash.json'))).toBe(true);
+
+    // No OpenRouter selection: nothing is pinned, globally or otherwise.
+    await prepareRoomAgentHome({ root: roomRoot, operatorHome });
+    expect(JSON.parse(readFileSync(resolve(roomRoot, 'pi/models.json'), 'utf8'))).toEqual({
+      providers: {},
     });
   });
   it('points every harness state directory and HOME at this Room', async () => {
@@ -143,12 +158,9 @@ describe('per-room harness state isolation', () => {
     expect(lstatSync(isolatedModels).isSymbolicLink()).toBe(false);
     expect(lstatSync(isolatedModels).mode & 0o777).toBe(0o600);
     expect(readFileSync(isolatedModels, 'utf8')).toContain('inline-secret');
-    expect(JSON.parse(readFileSync(isolatedModels, 'utf8')).providers).toContainEqual(
-      expect.objectContaining({
-        name: 'openrouter',
-        compat: { openRouterRouting: expect.objectContaining({ only: ['deepinfra', 'novita'] }) },
-      }),
-    );
+    expect(JSON.parse(readFileSync(isolatedModels, 'utf8')).providers).toEqual([
+      expect.objectContaining({ name: 'openrouter-ox', apiKey: 'inline-secret' }),
+    ]);
     expect(existsSync(resolve(roomRoot, 'pi/settings.json'))).toBe(false);
     const modelOptions = [
       {
@@ -205,11 +217,7 @@ describe('per-room harness state isolation', () => {
 
     await rm(resolve(operatorHome, '.pi/agent/models.json'));
     await prepareRoomAgentHome({ root: roomRoot, operatorHome });
-    expect(JSON.parse(readFileSync(isolatedModels, 'utf8'))).toMatchObject({
-      providers: {
-        openrouter: { compat: { openRouterRouting: { only: ['deepinfra', 'novita'] } } },
-      },
-    });
+    expect(JSON.parse(readFileSync(isolatedModels, 'utf8'))).toEqual({ providers: {} });
   });
 
   it('rejects a linked Pi provider source instead of copying credential material', async () => {

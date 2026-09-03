@@ -151,7 +151,7 @@ describe('resolveOpenRouterRouting', () => {
       only: EXPECTED_PROVIDERS,
       order: EXPECTED_PROVIDERS,
       allow_fallbacks: true,
-      require_parameters: true,
+      require_parameters: false,
     });
     expect(decision.line).toBe(
       `[body] openrouter routing for ${MODEL}: ${EXPECTED_PROVIDERS.join(', ')} (uptime ≥98%, tools)`,
@@ -283,7 +283,7 @@ describe('withOpenRouterModelRouting', () => {
     only: ['a', 'b'],
     order: ['a', 'b'],
     allow_fallbacks: true,
-    require_parameters: true,
+    require_parameters: false,
   };
 
   it('pins one model through modelOverrides and leaves every other provider alone', () => {

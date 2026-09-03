@@ -44,6 +44,7 @@ import {
   beelineInstallLayout,
   describeIdentity,
   readInstalledBundleIdentity,
+  readUpdateAttempt,
   repairInstallForwarders,
   settleUpdateAttemptOnStart,
 } from './self-update.js';
@@ -54,6 +55,7 @@ import {
   SystemdNotifier,
   UNKNOWN_AGENT_EXIT_STATUS,
   disableAgentService,
+  extendSystemdStartTimeout,
 } from './systemd.js';
 import {
   ManagedUpdateDrain,
@@ -64,6 +66,12 @@ import {
   runManagedUpdateWorker,
 } from './managed-update.js';
 import { runUpdateFunctionalProbe } from './update-functional-probe.js';
+import {
+  CURRENT_RELEASE_PROBE_TIMEOUT_MS,
+  probeReleaseInSubprocess,
+  runUpdateProbeCommand,
+  UPDATE_PROBE_COMMAND,
+} from './current-release-probe.js';
 import { reportUpdateRollback, queueUpdateRollbackAlert } from './update-rollback-alert.js';
 import { writeDaemonReleaseStatus } from './release-status.js';
 
@@ -271,6 +279,9 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
       onEstablished: async () => {
         let functionalProof: Awaited<ReturnType<typeof runUpdateFunctionalProbe>> | undefined;
         if (layout && pendingSuccessor) {
+          // The release this successor would roll back to; a provider refusal
+          // it shares with the successor is not the successor's fault.
+          const currentReleaseId = (await readUpdateAttempt(layout))?.previousReleaseId;
           const gate = await gateManagedSuccessor({
             layout,
             runtimeDir,
@@ -282,6 +293,22 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
                 runtimeDir,
                 releaseId: loadedRelease ?? 'unknown',
                 sandboxRequired: runtime.sandbox !== 'off',
+                ...(currentReleaseId
+                  ? {
+                      compareWithCurrentRelease: async (refusal) => {
+                        console.warn(
+                          `[thin-core] successor probe refused by the provider (${refusal.reason}); ` +
+                            `probing the current release ${currentReleaseId} for the same refusal`,
+                        );
+                        await extendSystemdStartTimeout(CURRENT_RELEASE_PROBE_TIMEOUT_MS + 15_000);
+                        return probeReleaseInSubprocess({
+                          layout,
+                          releaseId: currentReleaseId,
+                          runtimeConfigPath: configPath,
+                        });
+                      },
+                    }
+                  : {}),
               }),
           });
           if (gate.kind === 'failed') {
@@ -440,6 +467,13 @@ async function main(): Promise<void> {
 
   if (command === 'update') {
     await runUpdateCommand(args);
+    return;
+  }
+
+  // Internal: a successor's comparison probe spawns the CURRENT release's
+  // bundle this way (`current-release-probe.ts`); not listed in usage.
+  if (command === UPDATE_PROBE_COMMAND) {
+    await runUpdateProbeCommand(args);
     return;
   }
 

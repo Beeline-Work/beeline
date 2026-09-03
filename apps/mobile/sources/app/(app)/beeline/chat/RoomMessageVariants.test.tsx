@@ -315,7 +315,9 @@ describe('Room message variant components', () => {
     expect(onOpenCorner).toHaveBeenCalledWith('80a5a6f1-fb5a-493b-93eb-f3db33f696e6');
     expect(renderer.root.findAllByType('HullSurface')).toHaveLength(1);
     expect(renderer.root.findByProps({ testID: 'corner-summary-card' })).toBeDefined();
-    expect(JSON.stringify(renderer.toJSON())).toContain('MERGED · Ship the archived transcript card');
+    expect(JSON.stringify(renderer.toJSON())).toContain(
+      'MERGED · Ship fact cards with archived transcript access and preserve the entire objective instead of truncating it into a ledger line',
+    );
     expect(JSON.stringify(renderer.toJSON())).toContain('MERGED · Beebee');
     expect(JSON.stringify(renderer.toJSON())).toContain(
       'Ship fact cards with archived transcript access and preserve the entire objective instead of truncating it into a ledger line',

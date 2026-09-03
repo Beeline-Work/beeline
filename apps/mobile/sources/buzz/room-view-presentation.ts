@@ -351,6 +351,57 @@ export function roomViewTranscriptMessages(
   );
 }
 
+/**
+ * The helper posts each settled tool call as its own durable activity row so
+ * the record survives a helper restart. The phone reads them back as ONE
+ * collapsed group per turn: a run of adjacent settled activity rows from the
+ * same agent folds into the first row (its id and stamp stay stable) with every
+ * member's activity concatenated in order. A human steer, agent prose, or a
+ * durable-fact card between two rows ends the run. The agent's own in-flight
+ * draft lane is never swallowed and never breaks the run: it is re-emitted
+ * directly below the group it interrupted.
+ */
+export function foldSettledActivityRuns(
+  messages: readonly ChatDisplayMessage[],
+): ChatDisplayMessage[] {
+  const folded: ChatDisplayMessage[] = [];
+  let run: { pubkey: string; activity: AgentActivityItem[]; drafts: ChatDisplayMessage[] } | null =
+    null;
+  const close = () => {
+    if (!run) return;
+    folded.push(...run.drafts);
+    run = null;
+  };
+  for (const message of messages) {
+    if (run && message.isAgentDraft && message.pubkey === run.pubkey) {
+      run.drafts.push(message);
+      continue;
+    }
+    const settledActivity =
+      message.isAgentActivity &&
+      !message.isAgentLiveTurn &&
+      !message.isAgentDraft &&
+      !message.durableFact &&
+      message.pubkey &&
+      message.activity?.length;
+    if (!settledActivity) {
+      close();
+      folded.push(message);
+      continue;
+    }
+    if (run && run.pubkey === message.pubkey) {
+      run.activity.push(...message.activity!);
+      continue;
+    }
+    close();
+    const activity = [...message.activity!];
+    run = { pubkey: message.pubkey!, activity, drafts: [] };
+    folded.push({ ...message, activity });
+  }
+  close();
+  return folded;
+}
+
 export function mergeDisplayPages(
   ...pages: readonly (readonly ChatDisplayMessage[])[]
 ): ChatDisplayMessage[] {

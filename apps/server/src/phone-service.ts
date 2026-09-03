@@ -392,11 +392,13 @@ export class PhoneService {
         latest_author_name: string | null;
         latest_author_handle: string | null;
         latest_author_avatar: string | null;
+        latest_author_face: string | null;
         peer_id: string | null;
         peer_kind: 'human' | 'agent' | null;
         peer_name: string | null;
         peer_handle: string | null;
         peer_avatar: string | null;
+        peer_face: string | null;
         unread: boolean;
         working: boolean;
         needs_you: boolean;
@@ -407,8 +409,8 @@ export class PhoneService {
         (SELECT count(*)::text FROM memberships rm WHERE rm.room_id=r.id AND rm.removed_at IS NULL) member_count,
         (SELECT count(*)::text FROM rooms c WHERE c.parent_id=r.id AND c.archived_at IS NULL) corner_count,
         lm.id latest_id,lm.text latest_text,lm.created_at latest_created_at,lm.author_id latest_author_id,
-        li.kind latest_author_kind,li.name latest_author_name,li.handle latest_author_handle,li.avatar latest_author_avatar,
-        peer.id peer_id,peer.kind peer_kind,peer.name peer_name,peer.handle peer_handle,peer.avatar peer_avatar,
+        li.kind latest_author_kind,li.name latest_author_name,li.handle latest_author_handle,li.avatar latest_author_avatar,li.face_id latest_author_face,
+        peer.id peer_id,peer.kind peer_kind,peer.name peer_name,peer.handle peer_handle,peer.avatar peer_avatar,peer.face_id peer_face,
         (lm_other.id IS NOT NULL AND (
           mark.message_created_at IS NULL OR
           lm_other.id<>mark.message_id AND
@@ -460,6 +462,7 @@ export class PhoneService {
                     name: row.latest_author_name,
                     handle: row.latest_author_handle,
                     avatar: row.latest_author_avatar,
+                    face_id: row.latest_author_face,
                   },
                   this.publicOrigin,
                 ),
@@ -476,6 +479,7 @@ export class PhoneService {
                     name: row.peer_name,
                     handle: row.peer_handle,
                     avatar: row.peer_avatar,
+                    face_id: row.peer_face,
                   },
                   this.publicOrigin,
                 ),

@@ -7,6 +7,7 @@ import { parseGrantDecisionLine } from '@beeline/api-contract/agent-grants';
 import type { DaemonAttachment, DaemonOperationMap } from '@beeline/api-contract/daemon';
 import { AcpClient, type McpServerWire, type ToolCallEntry } from './acp.js';
 import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
+import { openRouterRoutingInput } from './openrouter-routing.js';
 import {
   attachmentImageBlocks,
   attachmentPromptLines,
@@ -302,6 +303,10 @@ export class MonolithCornerTurnLoop {
       this.roster(),
     ]);
     await mkdir(this.options.worktreePath, { recursive: true });
+    const selection =
+      configuration.model || configuration.effort
+        ? { model: configuration.model, effort: configuration.effort }
+        : this.options.config.modelSelection;
     const homeOverlay = this.options.config.agentHomeRoot
       ? await prepareRoomAgentHome({
           root: this.options.config.agentHomeRoot,
@@ -309,13 +314,10 @@ export class MonolithCornerTurnLoop {
           ...(this.options.config.operatorHome
             ? { operatorHome: this.options.config.operatorHome }
             : {}),
+          ...openRouterRoutingInput(this.options.config, selection, this.options.fetchImpl),
         })
       : {};
     const command = this.options.config.agentCommand ?? this.options.config.agentBinary;
-    const selection =
-      configuration.model || configuration.effort
-        ? { model: configuration.model, effort: configuration.effort }
-        : this.options.config.modelSelection;
     const agentEnv: Record<string, string> = {
       ...this.options.config.agentEnv,
       ...homeOverlay,

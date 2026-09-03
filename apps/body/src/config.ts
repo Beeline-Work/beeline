@@ -79,6 +79,11 @@ export interface BodyConfig {
    * already-provisioned Room from before per-room homes must keep using.
    */
   agentHomeRoot?: string;
+  /**
+   * Agent-level cache for live-derived OpenRouter provider sets
+   * (`openrouter-routing.ts`); one directory per daemon, shared by every Room.
+   */
+  openRouterRoutingCacheDir?: string;
   /** Runtime-owned names of operator skills explicitly shared with this agent. */
   sharedSkills?: string[];
   operatorHome?: string;

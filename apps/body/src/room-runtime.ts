@@ -10,6 +10,7 @@ import type { CornerRestoreResult } from '@beeline/api-contract/daemon';
 import { GrantCommandRunner, GrantRunnerServer, type GrantRunnerEndpoint } from './grant-runner.js';
 import { MonolithCornerTurnLoop } from './monolith-corner-turn.js';
 import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
+import { openRouterRoutingCacheDir } from './openrouter-routing.js';
 import type { AgentRuntimeRecord, RoomRuntimeRecord } from './runtime.js';
 import { runtimeIdentity } from './runtime.js';
 import {
@@ -298,6 +299,7 @@ export class RoomRuntimeCoordinator {
       workspaceRoot,
       agentPrivateRoot: resolve(workspaceRoot, 'agent-private'),
       agentMemoryRoot: resolve(dirname(this.configPath), 'memory'),
+      openRouterRoutingCacheDir: openRouterRoutingCacheDir(dirname(this.configPath)),
       ...(agentHomeRoot ? { agentHomeRoot } : {}),
     };
   }

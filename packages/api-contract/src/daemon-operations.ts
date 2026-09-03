@@ -262,6 +262,8 @@ export type PostTurnReceiptInput = AgentRoomInput & {
   readonly requestId: string;
   readonly status: 'working' | 'complete' | 'failed';
   readonly generationId?: string;
+  /** One distilled line (≤200 chars, no stack, secrets scrubbed) sent only with `failed`. */
+  readonly reason?: string;
 };
 export type PostAgentActivityInput = AgentRoomInput & {
   readonly requestId: string;

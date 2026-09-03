@@ -2532,6 +2532,107 @@ describe('monolith integration', () => {
     );
   });
 
+  it('inscribes a failed turn as one system line, coalesces its retry, and settles it on success', async () => {
+    const requestId = '8'.repeat(64);
+    await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: requestId,
+      text: "@bee what's up",
+      mentions: [AGENT],
+    });
+    await daemonOperation('postAgentTurnReceipt', { roomId: ROOM, requestId, status: 'working' });
+    const failed = await daemonOperation('postAgentTurnReceipt', {
+      roomId: ROOM,
+      requestId,
+      status: 'failed',
+      reason: 'provider error 429 concurrency_limit',
+    });
+    expect(failed.status).toBe(200);
+    expect(
+      (
+        await database.query(`SELECT status,failure_reason FROM agent_turns WHERE room_id=$1 AND request_id=$2`, [
+          ROOM,
+          requestId,
+        ])
+      ).rows[0],
+    ).toEqual({ status: 'failed', failure_reason: 'provider error 429 concurrency_limit' });
+    const lines = () =>
+      database.query<{ id: string; author_id: string; text: string; mention_ids: string[]; card: Record<string, string> }>(
+        `SELECT id,author_id,text,mention_ids,card FROM messages WHERE room_id=$1 AND presentation='system' AND card_type='turn-failed'`,
+        [ROOM],
+      );
+    const first = (await lines()).rows;
+    expect(first).toEqual([
+      expect.objectContaining({
+        author_id: AGENT,
+        text: 'Bee could not answer · provider error 429 concurrency_limit',
+        mention_ids: [HUMAN],
+        card: { requestId, agentId: AGENT, state: 'failed' },
+      }),
+    ]);
+    // The requester's tagged-mention push fires once for the line.
+    expect(
+      (await database.query(`SELECT text FROM messages WHERE id=$1 AND mention_ids @> $2::jsonb`, [
+        first[0]!.id,
+        JSON.stringify([HUMAN]),
+      ])).rowCount,
+    ).toBe(1);
+    // A retry of the same request within ten minutes updates the same line in place.
+    const stack = `ACP session timed out after 120s\n    at AcpClient.request (/opt/acp.js:1:1)`;
+    await daemonOperation('postAgentTurnReceipt', { roomId: ROOM, requestId, status: 'working' });
+    await daemonOperation('postAgentTurnReceipt', {
+      roomId: ROOM,
+      requestId,
+      status: 'failed',
+      reason: `${stack} ${'x'.repeat(400)}`,
+    });
+    const retried = (await lines()).rows;
+    expect(retried).toHaveLength(1);
+    expect(retried[0]!.id).toBe(first[0]!.id);
+    expect(retried[0]!.text.startsWith('Bee could not answer · ACP session timed out after 120s at AcpClient.request')).toBe(true);
+    expect(retried[0]!.text.length).toBeLessThanOrEqual('Bee could not answer · '.length + 200);
+    // A later durable reply settles the line instead of leaving a stale failure stamped in the transcript.
+    await daemonOperation('postRoomMessage', {
+      roomId: ROOM,
+      requestId,
+      triggerMessageId: requestId,
+      text: 'Not much!',
+      mentionIds: [],
+    });
+    expect((await lines()).rows).toEqual([
+      expect.objectContaining({
+        id: first[0]!.id,
+        text: 'Bee answered after a retry',
+        card: { requestId, agentId: AGENT, state: 'recovered' },
+      }),
+    ]);
+    const room = (await new PhoneService(database, origin).readRoom(ROOM, HUMAN))!;
+    expect(room.messages).toContainEqual(
+      expect.objectContaining({ id: first[0]!.id, presentation: 'system', text: 'Bee answered after a retry' }),
+    );
+    expect(room.latestAgentTurns).toContainEqual(
+      expect.objectContaining({ requestId, agentPubkey: AGENT, status: 'complete' }),
+    );
+    // A failure with no human trigger (an unknown request id) carries no Room line.
+    await daemonOperation('postAgentTurnReceipt', {
+      roomId: ROOM,
+      requestId: '9'.repeat(64),
+      status: 'failed',
+      reason: 'ACP agent exited (code 1)',
+    });
+    expect((await lines()).rows).toHaveLength(1);
+    // A failure older than the coalescing window starts a fresh line.
+    await database.query(`UPDATE messages SET created_at=now()-interval '11 minutes' WHERE id=$1`, [first[0]!.id]);
+    await database.query(`UPDATE messages SET card=card||'{"state":"failed"}'::jsonb WHERE id=$1`, [first[0]!.id]);
+    await daemonOperation('postAgentTurnReceipt', {
+      roomId: ROOM,
+      requestId,
+      status: 'failed',
+      reason: 'ACP agent exited (code 1)',
+    });
+    expect((await lines()).rows).toHaveLength(2);
+  });
+
   it('never 503s the repo picker when GitHub refresh fails and flags reconnect', async () => {
     await database.query(
       `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,account_avatar_url,repository_selection,status) VALUES(77,$1,'42','owner','User','https://avatars.test/owner','selected','active')`,

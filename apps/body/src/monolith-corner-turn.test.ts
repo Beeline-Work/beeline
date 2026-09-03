@@ -700,3 +700,129 @@ describe('thin monolith corner turn', () => {
     }
   });
 });
+
+describe('corner turn failure receipt', () => {
+  it('reports failed with a distilled, secret-free reason and never a stack trace', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-corner-failure-'));
+    roots.push(root);
+    await execFileAsync('git', ['init', root]);
+    const runtime = {
+      agentId: '11'.repeat(32),
+      agent: stored('11'.repeat(32), 'Bee'),
+      rooms: [],
+      supervisorRoot: root,
+      transport: {
+        kind: 'monolith',
+        baseUrl: 'https://server.example',
+        daemonToken: 'daemon-token',
+      },
+      agentBinary: '/fake-agent',
+      agentKind: 'codex',
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+    } as unknown as AgentRuntimeRecord;
+    const config: BodyConfig = {
+      agentBinary: '/fake-agent',
+      agentKind: 'codex',
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+      readonlyMcpCommand: '/fake-beeline-mcp',
+      agentEnv: {},
+      workspaceRoot: root,
+      autoApprovePermissions: true,
+    };
+    const abort = new AbortController();
+    let inboxReads = 0;
+    const receipts: Array<Record<string, unknown>> = [];
+    const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
+      if (name === 'getAgentConfiguration') return { commands: [] };
+      if (name === 'getWorkspaceRoster') {
+        return {
+          members: [{ identityId: '11'.repeat(32), kind: 'agent', name: 'Bee', role: 'member' }],
+        };
+      }
+      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getCornerCloseRequests') {
+        inboxReads += 1;
+        if (inboxReads === 1) {
+          return {
+            items: [
+              {
+                id: 'human-msg',
+                authorId: '22'.repeat(32),
+                createdAt: 1,
+                type: 'message',
+                body: 'Please continue',
+                mentionIds: [],
+                attachments: [],
+              },
+            ],
+            cursor: 'human-msg',
+          };
+        }
+        return { items: [], cursor: 'latest' };
+      }
+      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
+      if (name === 'postAgentTurnReceipt') receipts.push(input);
+      return { id: 'write-id', createdAt: 1 };
+    });
+    const api = {
+      execute,
+      connection: () => ({
+        baseUrl: 'https://server.example',
+        daemonToken: 'daemon-token',
+        agentId: runtime.agent.publicKey,
+      }),
+    } as unknown as DaemonApiClient;
+    const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
+    vi.spyOn(acp, 'start').mockResolvedValue(undefined);
+    vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: 'corner-session', raw: {} });
+    const failure = new Error('ACP session/prompt timed out after 120000ms of inactivity GH_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz');
+    failure.stack = `${failure.message}\n    at AcpClient.request (/opt/beeline/acp.js:984:20)`;
+    vi.spyOn(acp, 'sessionPrompt')
+      .mockRejectedValueOnce(failure)
+      .mockResolvedValue({ stopReason: 'end_turn', updates: [], agentText: 'Recovered.', toolCalls: [] });
+    const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
+    const running = new MonolithCornerTurnLoop({
+      cornerId: 'corner-id',
+      parentRoomId: 'room-id',
+      workspaceId: 'workspace',
+      objective: 'Implement the widget',
+      featureBranch: 'feature/widget',
+      targetBranch: 'main',
+      worktreePath: root,
+      gitCommonDir: join(root, '.git'),
+      githubToken: 'token',
+      runtime,
+      config,
+      api,
+      scheduler,
+      signal: abort.signal,
+      pollMs: 10,
+      onPoll: vi.fn(),
+      onFailure: vi.fn(),
+      onCloseRequested: vi.fn(async () => undefined),
+      createAcpClient: () => acp,
+    })
+      .run()
+      // The objective kickoff rethrows: the supervisor restarts the corner.
+      .catch((error: unknown) => error);
+    await vi.waitFor(
+      () => expect(receipts.some((receipt) => receipt.status === 'failed')).toBe(true),
+      { timeout: 5_000 },
+    );
+    abort.abort();
+    await expect(running).resolves.toBe(failure);
+    await scheduler.dispose();
+
+    const failed = receipts.find((receipt) => receipt.status === 'failed')!;
+    expect(failed).toEqual(expect.objectContaining({ roomId: 'corner-id', status: 'failed' }));
+    const reason = failed.reason as string;
+    expect(reason).toContain('timed out after 120000ms of inactivity');
+    expect(reason).toContain('[REDACTED]');
+    expect(reason).not.toMatch(/ghp_abc|\n|\bat AcpClient/);
+  });
+});

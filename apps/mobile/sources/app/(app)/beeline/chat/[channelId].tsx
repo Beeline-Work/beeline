@@ -2772,7 +2772,7 @@ export default function BuzzChat() {
             id={item.id}
             line={item.text}
             stamp={ledgerStamp(item.timestamp)}
-            tone={/failed|red|error/i.test(item.text) ? 'brass' : 'quiet'}
+            tone={/failed|red|error|could not answer/i.test(item.text) ? 'brass' : 'quiet'}
           />
         );
       }

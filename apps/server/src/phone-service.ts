@@ -25,6 +25,7 @@ import type {
 import {
   createCommunityInviteToken,
   isCommunityInviteToken,
+  isFaceId,
   type PhoneOperationMap,
 } from '@beeline/api-contract/phone';
 import {
@@ -72,6 +73,7 @@ interface IdentityRow {
   name: string;
   handle: string | null;
   avatar: string | null;
+  face_id: string | null;
 }
 interface RoomRow {
   id: string;
@@ -116,6 +118,7 @@ interface MessageRow {
   author_name: string;
   author_handle: string | null;
   author_avatar: string | null;
+  author_face: string | null;
 }
 interface RoomScheduleRow {
   id: string;
@@ -151,6 +154,7 @@ function identity(row: IdentityRow, publicOrigin: string): RoomViewIdentity {
     name: row.name,
     ...(row.handle ? { handle: row.handle } : {}),
     ...(row.avatar ? { avatar: assetUrl(row.avatar, publicOrigin) } : {}),
+    ...(row.face_id ? { face: row.face_id } : {}),
   };
 }
 function roomHeader(row: RoomRow, publicOrigin: string) {
@@ -176,6 +180,7 @@ function projectedMessage(row: MessageRow, publicOrigin: string): RoomViewMessag
       name: row.author_name,
       handle: row.author_handle,
       avatar: row.author_avatar,
+      face_id: row.author_face,
     },
     publicOrigin,
   );
@@ -562,13 +567,14 @@ export class PhoneService {
                 author_name: string;
                 author_handle: string | null;
                 author_avatar: string | null;
+                author_face: string | null;
               }
             >(
               `SELECT m.*,
                COALESCE(m.legacy_event->>'authorKind',i.kind) author_kind,
                COALESCE(m.legacy_event->>'authorName',i.name) author_name,
                CASE WHEN m.legacy_event IS NOT NULL THEN m.legacy_event->>'authorHandle' ELSE i.handle END author_handle,
-               CASE WHEN m.legacy_event IS NOT NULL THEN m.legacy_event->>'authorAvatar' ELSE i.avatar END author_avatar
+               CASE WHEN m.legacy_event IS NOT NULL THEN m.legacy_event->>'authorAvatar' ELSE i.avatar END author_avatar,i.face_id author_face
              FROM messages m JOIN identities i ON i.id=m.author_id
              WHERE m.room_id=$1 AND m.created_at<=$2
                AND (
@@ -1212,6 +1218,9 @@ export class PhoneService {
           input as Input<'updatePersonProfile'>,
           viewerId,
         )) as Output<Name>;
+      case 'updateIdentityFace':
+        await this.updateFace(input as Input<'updateIdentityFace'>, viewerId);
+        return undefined as Output<Name>;
       case 'setRoomRepository':
         return (await this.setRepository(
           input as Input<'setRoomRepository'>,
@@ -2181,6 +2190,15 @@ export class PhoneService {
       ...(profile.avatar ? { avatar: profile.avatar } : {}),
     };
   }
+  /** The face ceremony: one of `FACE_IDS` for the viewer's own identity, or null to clear. */
+  private async updateFace(input: Input<'updateIdentityFace'>, viewerId: string) {
+    if (input.faceId !== null && !isFaceId(input.faceId)) throw new Error('invalid face id');
+    const updated = await this.database.query(
+      `UPDATE identities SET face_id=$2,updated_at=now() WHERE id=$1`,
+      [viewerId, input.faceId],
+    );
+    if (!updated.rowCount) throw new Error('identity not found');
+  }
   private async setRepository(input: Input<'setRoomRepository'>, viewerId: string) {
     await this.requireManager(input.roomId, viewerId);
     if (input.githubInstallationId !== undefined) {
@@ -2254,6 +2272,7 @@ export class PhoneService {
       name: id.name,
       ...(id.handle ? { handle: id.handle } : {}),
       ...(id.avatar ? { avatar: id.avatar } : {}),
+      ...(id.face ? { face: id.face } : {}),
     };
   }
   private async claimManagedHandle(viewerId: string, handle: string) {
@@ -2371,7 +2390,7 @@ export class PhoneService {
   private async requireIdentity(id: string) {
     const row = (
       await this.database.query<IdentityRow>(
-        `SELECT id,kind,name,handle,avatar FROM identities WHERE id=$1`,
+        `SELECT id,kind,name,handle,avatar,face_id FROM identities WHERE id=$1`,
         [id],
       )
     ).rows[0];
@@ -2443,6 +2462,7 @@ export class PhoneService {
          COALESCE(m.identity_profile->>'name',i.name) name,
          CASE WHEN m.identity_profile IS NOT NULL THEN m.identity_profile->>'handle' ELSE i.handle END handle,
          CASE WHEN m.identity_profile IS NOT NULL THEN m.identity_profile->>'avatar' ELSE i.avatar END avatar,
+         i.face_id,
          m.role,lo.body presence_body,lo.updated_at presence_updated_at
        FROM memberships m JOIN identities i ON i.id=m.identity_id
        LEFT JOIN LATERAL(SELECT body,updated_at FROM live_outputs WHERE agent_id=i.id AND kind='presence' ${roomId ? 'AND room_id=$2' : ''} ORDER BY updated_at DESC LIMIT 1)lo ON true
@@ -2475,7 +2495,7 @@ export class PhoneService {
            COALESCE(m.legacy_event->>'authorKind',i.kind) author_kind,
            COALESCE(m.legacy_event->>'authorName',i.name) author_name,
            CASE WHEN m.legacy_event IS NOT NULL THEN m.legacy_event->>'authorHandle' ELSE i.handle END author_handle,
-           CASE WHEN m.legacy_event IS NOT NULL THEN m.legacy_event->>'authorAvatar' ELSE i.avatar END author_avatar
+           CASE WHEN m.legacy_event IS NOT NULL THEN m.legacy_event->>'authorAvatar' ELSE i.avatar END author_avatar,i.face_id author_face
          FROM messages m JOIN identities i ON i.id=m.author_id
          WHERE m.room_id=$1 AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
          ${before ? 'AND (m.created_at,m.id)<(to_timestamp($2),$3)' : ''}
@@ -2505,7 +2525,7 @@ export class PhoneService {
          COALESCE(m.legacy_event->>'authorKind',i.kind) author_kind,
          COALESCE(m.legacy_event->>'authorName',i.name) author_name,
          CASE WHEN m.legacy_event IS NOT NULL THEN m.legacy_event->>'authorHandle' ELSE i.handle END author_handle,
-         CASE WHEN m.legacy_event IS NOT NULL THEN m.legacy_event->>'authorAvatar' ELSE i.avatar END author_avatar
+         CASE WHEN m.legacy_event IS NOT NULL THEN m.legacy_event->>'authorAvatar' ELSE i.avatar END author_avatar,i.face_id author_face
        FROM messages m JOIN identities i ON i.id=m.author_id
        WHERE m.room_id=$1 AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
          AND (NOT EXISTS(SELECT 1 FROM legacy_room_events any_legacy WHERE any_legacy.room_id=$1) OR ${eligible})
@@ -2523,7 +2543,7 @@ export class PhoneService {
          COALESCE(m.legacy_event->>'authorKind',i.kind) author_kind,
          COALESCE(m.legacy_event->>'authorName',i.name) author_name,
          CASE WHEN m.legacy_event IS NOT NULL THEN m.legacy_event->>'authorHandle' ELSE i.handle END author_handle,
-         CASE WHEN m.legacy_event IS NOT NULL THEN m.legacy_event->>'authorAvatar' ELSE i.avatar END author_avatar
+         CASE WHEN m.legacy_event IS NOT NULL THEN m.legacy_event->>'authorAvatar' ELSE i.avatar END author_avatar,i.face_id author_face
        FROM messages m JOIN identities i ON i.id=m.author_id
        WHERE m.room_id=$1 AND m.presentation='activity' AND m.durable_fact IS NULL
          AND (NOT EXISTS(SELECT 1 FROM legacy_room_events any_legacy WHERE any_legacy.room_id=$1) OR ${eligible})
@@ -2548,7 +2568,7 @@ export class PhoneService {
                COALESCE(m.legacy_event->>'authorKind',i.kind) author_kind,
                COALESCE(m.legacy_event->>'authorName',i.name) author_name,
                CASE WHEN m.legacy_event IS NOT NULL THEN m.legacy_event->>'authorHandle' ELSE i.handle END author_handle,
-               CASE WHEN m.legacy_event IS NOT NULL THEN m.legacy_event->>'authorAvatar' ELSE i.avatar END author_avatar
+               CASE WHEN m.legacy_event IS NOT NULL THEN m.legacy_event->>'authorAvatar' ELSE i.avatar END author_avatar,i.face_id author_face
              FROM messages m JOIN identities i ON i.id=m.author_id
              WHERE m.room_id=$1 AND m.presentation='activity' AND m.durable_fact IS NULL
                AND EXISTS(SELECT 1 FROM jsonb_array_elements(m.activity) item WHERE item->>'kind'='tool')
@@ -2624,6 +2644,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'updateAgentYolo',
   'removeAgent',
   'updatePersonProfile',
+  'updateIdentityFace',
   'setRoomRepository',
   'setRoomTargetBranch',
   'setRoomGitHubEvents',

@@ -23,6 +23,10 @@ type IdentityMarkBaseProps = {
   selected?: boolean;
   name?: string;
   avatarUrl?: string;
+  /** The chosen face (one of `buzz/faces.ts`'s `FACE_IDS`), or absent for the
+   *  seed's default. Accepted today so every projection can already pass it
+   *  through; the animal tiles themselves arrive with the identity re-skin. */
+  face?: string;
   testID?: string;
 };
 

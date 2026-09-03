@@ -133,6 +133,7 @@ export type WorkspaceMemberDisplayItem = {
   peerName: string;
   peerKind: 'person' | 'agent';
   avatarUrl?: string;
+  face?: string;
   role?: 'owner' | 'admin' | 'member';
 };
 

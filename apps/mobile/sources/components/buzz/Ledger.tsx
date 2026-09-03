@@ -49,6 +49,8 @@ export type LedgerBylineMark = {
   kind: 'agent' | 'human';
   /** Agents only: working right now → the gold ring. */
   alive?: boolean;
+  /** People only: the chosen face on record. */
+  face?: string;
 };
 
 /** The byline above a run's opening turn. */
@@ -254,6 +256,7 @@ function Byline({ byline }: { byline: LedgerByline }) {
           <IdentityMark
             seed={mark.seed}
             kind="human"
+            face={mark.face}
             size={LEDGER_MARK_SIZE}
             testID="chat-byline-mark"
           />

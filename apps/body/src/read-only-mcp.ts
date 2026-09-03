@@ -312,7 +312,16 @@ const AGENT_TOOLS: ToolDefinition[] = [
 ];
 
 const agentSurface = process.env.BEELINE_MCP_SURFACE === 'agent';
-const TOOLS = agentSurface ? AGENT_TOOLS : READ_ONLY_TOOLS;
+
+/** The bounded daemon-control tools for one surface. A direct message is
+ *  strictly conversational: repository corners are never openable there. */
+export function agentToolsFor(agentSurface: boolean, directMessage: boolean): ToolDefinition[] {
+  if (!agentSurface) return READ_ONLY_TOOLS;
+  if (directMessage) return AGENT_TOOLS.filter((tool) => tool.name !== 'open_corner');
+  return AGENT_TOOLS;
+}
+
+const TOOLS = agentToolsFor(agentSurface, process.env.BEELINE_AGENT_DM === '1');
 
 const MAX_ATTACH_BYTES = 25 * 1024 * 1024;
 const ATTACH_MIME_BY_EXTENSION: Record<string, string> = {
@@ -837,7 +846,7 @@ function taskName(summary: string): string {
 }
 
 async function openCorner(args: JsonObject): Promise<string> {
-  if (process.env.BEELINE_DAEMON_CORNER_ID) {
+  if (process.env.BEELINE_DAEMON_CORNER_ID || process.env.BEELINE_AGENT_DM === '1') {
     throw new Error('open_corner is available only in a top-level Room');
   }
   const summary = stringArg(args, 'summary')?.replace(/\s+/g, ' ').trim();

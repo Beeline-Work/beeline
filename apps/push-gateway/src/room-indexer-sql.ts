@@ -714,8 +714,24 @@ SELECT 'chat', jsonb_build_object(
   'agentState', CASE
     WHEN COALESCE(turns.working, false) THEN 'working'
     ELSE NULL
-  END
+  END,
+  -- A direct Room's one other participant, resolved like a preview author,
+  -- so the index can name the row by its peer instead of the stored name.
+  'directPeer', CASE WHEN peer.pubkey IS NOT NULL THEN jsonb_build_object(
+    'pubkey', encode(peer.pubkey, 'hex'),
+    'name', ${resolvedIdentityNameSql('peer')},
+    'handle', peer.handle,
+    'avatar', COALESCE(peer.agent_content::jsonb->>'avatar', peer.avatar),
+    'agent', peer.agent_content IS NOT NULL
+  ) ELSE NULL END
 ) FROM chats a
+LEFT JOIN identities peer ON peer.community_id = a.community_id
+  AND EXISTS (SELECT 1 FROM jsonb_array_elements(a.tags) t
+    WHERE t->>0 = 't' AND t->>1 = 'buzz-dm')
+  AND EXISTS (SELECT 1 FROM jsonb_array_elements(a.tags) t
+    WHERE t->>0 = 'visibility' AND t->>1 = 'private')
+  AND peer.pubkey = (SELECT decode(t->>1, 'hex') FROM jsonb_array_elements(a.tags) t
+    WHERE t->>0 = 'p' AND t->>1 <> $2 ORDER BY t->>1 LIMIT 1)
 LEFT JOIN member_counts members ON members.community_id = a.community_id AND members.room_id = a.id
 LEFT JOIN corner_counts corners ON corners.community_id = a.community_id AND corners.room_id = a.id
 LEFT JOIN room_turns turns ON turns.community_id = a.community_id AND turns.room_id = a.id

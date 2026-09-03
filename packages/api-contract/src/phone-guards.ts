@@ -518,7 +518,8 @@ function chat(value: unknown): value is ChatListItem {
     optionalString(item.repositoryName) &&
     (item.agentState === undefined ||
       item.agentState === 'needs-you' ||
-      item.agentState === 'working'),
+      item.agentState === 'working') &&
+    (item.directMessage === undefined || identity(record(item.directMessage)?.peer)),
   );
 }
 

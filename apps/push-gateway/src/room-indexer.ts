@@ -456,6 +456,7 @@ export class RoomIndexer {
           unread: data.unread === true,
           ...(text(data.repositoryName) ? { repositoryName: text(data.repositoryName) } : {}),
           ...(agentState ? { agentState } : {}),
+          ...(data.directPeer ? { directMessage: { peer: identity(json(data.directPeer)) } } : {}),
         };
       })
       .sort(

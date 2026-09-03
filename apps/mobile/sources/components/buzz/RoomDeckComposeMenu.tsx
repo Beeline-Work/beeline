@@ -41,8 +41,11 @@ const COMPOSE_OPTIONS: readonly ComposeOption[] = [
 const GLYPH_ROTATION_MS = 180;
 const GLYPH_SIZE = 24;
 const GLYPH_STROKE_WIDTH = 1.25;
-const FAB_GLYPH_SIZE = 24;
-const FAB_GLYPH_STROKE_WIDTH = 1.5;
+const FAB_GLYPH_SIZE = 22;
+const FAB_GLYPH_STROKE_WIDTH = 1.75;
+/** Speakeasy: a sharp 44pt brass square. Contrast with the slab is the only
+ * affordance — no drop shadow, no rounding. */
+const FAB_SIZE = 44;
 
 /**
  * Flat hull compose affordance for the Room deck. The brass plus rotates into
@@ -191,18 +194,13 @@ const styles = StyleSheet.create((theme) => {
       justifyContent: 'center',
     },
     fab: {
-      width: 48,
-      height: 48,
+      width: FAB_SIZE,
+      height: FAB_SIZE,
       flexShrink: 0,
       borderRadius: groknight.radius,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: brand.mark,
-      shadowColor: '#000000',
-      shadowOffset: { width: 0, height: 8 },
-      shadowOpacity: 0.5,
-      shadowRadius: 12,
-      elevation: 10,
+      backgroundColor: groknight.accent,
     },
     fabGlyph: {
       width: FAB_GLYPH_SIZE,

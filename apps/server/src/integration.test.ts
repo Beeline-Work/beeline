@@ -403,6 +403,16 @@ describe('monolith integration', () => {
       ['c'.repeat(64)],
     );
     expect(stored.rows[0]?.mention_ids).toEqual([AGENT]);
+
+    // The chat list names a DM row by its peer, so it carries the one other
+    // participant's identity instead of leaving the client the stored name.
+    const chats = (await (await request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
+      chats: Array<{ room: { id: string }; directMessage?: { peer: { pubkey: string; kind: string } } }>;
+    };
+    expect(chats.chats.find((chat) => chat.room.id === dm.id)?.directMessage).toMatchObject({
+      peer: { pubkey: AGENT, kind: 'agent' },
+    });
+    expect(chats.chats.find((chat) => chat.room.id === ROOM)?.directMessage).toBeUndefined();
   });
 
   it('refuses a direct message with an agent outside the Workspace', async () => {

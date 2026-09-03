@@ -30,11 +30,11 @@ import { compactRelativeTime } from '@/buzz/relative-time';
 import { cornerHref } from '@/buzz/corner-navigation';
 import {
   displayCornerTitle,
-  displayRoomIndexTitle,
   expandedCornerRefreshAction,
+  roomRowName,
+  roomRowNeedsAttention,
+  roomRowPreview,
 } from '@/buzz/room-list-row';
-import { roomDeckState } from '@/buzz/room-deck-state';
-import { formatRoomParticipantTotal } from '@/buzz/room-participants';
 import { formatRoomCornerCount } from '@/buzz/vocabulary';
 import { runRoomDeckComposeAction } from '@/buzz/room-deck-compose-actions';
 import {
@@ -47,7 +47,8 @@ import {
 import { BuzzCommunityShell, CommunityDrawerTrigger } from '@/components/buzz/CommunityRail';
 import { DirectMessagePickerSheet } from '@/components/buzz/DirectMessagePickerSheet';
 import { HullDialog, HullDialogInput } from '@/components/buzz/HullDialog';
-import { HullDeckMark, MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
+import { IdentityMark } from '@/components/buzz/IdentityMark';
+import { MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
 import { RepoPicker } from '@/components/buzz/RepoPicker';
 import {
   RoomDeckComposeMenu,
@@ -59,6 +60,11 @@ import { Typography } from '@/constants/Typography';
 
 const AGE_TICK_MS = 60_000;
 const COMPOSE_FAB_CLEARANCE = 80;
+/** Speakeasy index row: 64 tall, a 40px identity tile leading. */
+const ROW_HEIGHT = 64;
+const ROW_TILE_SIZE = 40;
+/** The trailing brass unread/attention square — lit or reserved, never absent. */
+const ATTENTION_SQUARE = 7;
 
 function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -629,18 +635,16 @@ export default function BuzzChannels() {
             </View>
           }
           renderItem={({ item }: { item: ChatListItem }) => {
-            // `unread` is server-owned and cross-device. Badge and row
-            // emphasis share this exact fact so a row can never say NEW while
-            // looking idle (or vice versa). The circle's state additionally
-            // inherits `agentState` — the server's max-severity rollup of the
-            // Room's own conversational turn and every one of its corners —
-            // so a live turn or a corner waiting on a human golds/spins the
-            // row even when every message has already been read. Precedence
-            // (room-deck-state.ts): needs-you (corner hold) > working >
-            // plain-unread gold; plain unread always keeps its NEW badge.
-            const unread = item.unread;
-            const deckState = roomDeckState(item);
-            const title = displayRoomIndexTitle(item.room.name) ?? item.room.name;
+            // Every row-level fact is derived once in room-list-row.ts: the
+            // sigil and name (`@peer` for a DM, `#room` for a Room), the tile
+            // seed, the preview attribution, and whether the trailing brass
+            // square is lit. `unread` is server-owned and cross-device; a
+            // corner waiting on a human (`agentState === 'needs-you'`) lights
+            // the same square. The screen renders answers, never re-derives.
+            const heading = roomRowName(item);
+            const preview = roomRowPreview(item, chatList.viewer.pubkey);
+            const attention = roomRowNeedsAttention(item);
+            const title = `${heading.sigil}${heading.name}`;
             const age = compactRelativeTime(
               item.latestMessage?.createdAt ?? item.room.updatedAt,
               ageNow,
@@ -649,45 +653,52 @@ export default function BuzzChannels() {
             const expanded = expandedRoomId === item.room.id;
             const corners = cornersByRoom[item.room.id];
             return (
-              <View style={[styles.roomCell, unread && styles.rowUnread]}>
+              <View style={styles.roomCell}>
                 <View style={styles.row}>
                   <TouchableOpacity
+                    accessibilityLabel={`${title}${attention ? ', needs you' : ''}`}
                     testID={`room-${item.room.id}`}
                     onPress={() => openRoom(item.room.id)}
                     style={styles.rowMain}
                   >
-                    <HullDeckMark state={deckState} />
+                    <IdentityMark
+                      kind={heading.tile.kind}
+                      seed={heading.tile.seed}
+                      name={heading.name}
+                      size={ROW_TILE_SIZE}
+                      testID={`room-tile-${item.room.id}`}
+                    />
                     <View style={styles.rowCopy}>
-                      <View style={styles.rowHeading}>
-                        <Text
-                          numberOfLines={1}
-                          style={[styles.title, unread && styles.titleUnread]}
-                        >
-                          {title}
+                      <Text numberOfLines={1} style={styles.title}>
+                        <Text style={styles.sigil} testID={`room-sigil-${item.room.id}`}>
+                          {heading.sigil}
                         </Text>
-                        {!!item.repositoryName && (
-                          <Text numberOfLines={1} style={styles.repo}>
-                            {item.repositoryName}
-                          </Text>
-                        )}
-                      </View>
-                      <Text numberOfLines={1} style={styles.preview}>
-                        {item.latestMessage?.text ?? 'No activity yet'}
+                        {heading.name}
                       </Text>
-                      <Text style={styles.meta}>
-                        {formatRoomParticipantTotal(item.memberCount)}
-                        {cornerCount ? ` · ${cornerCount}` : ''}
+                      <Text
+                        numberOfLines={1}
+                        style={styles.preview}
+                        testID={`room-preview-${item.room.id}`}
+                      >
+                        {preview.attribution === 'self' && (
+                          <Text style={styles.previewSelf}>you: </Text>
+                        )}
+                        {preview.attribution === 'other' && (
+                          <Text style={styles.previewAuthor}>@{preview.handle}: </Text>
+                        )}
+                        {preview.text}
                       </Text>
                     </View>
                   </TouchableOpacity>
                   <View style={styles.gutter}>
-                    {unread ? (
-                      <View style={styles.unread}>
-                        <Text style={styles.unreadText}>NEW</Text>
-                      </View>
-                    ) : (
-                      <Text style={styles.age}>{age}</Text>
-                    )}
+                    <Text style={styles.age}>{age}</Text>
+                    <View
+                      accessibilityElementsHidden
+                      style={[styles.attentionSquare, attention && styles.attentionSquareLit]}
+                      testID={`room-attention-${item.room.id}`}
+                    />
+                  </View>
+                  <View style={styles.cornerToggleSlot}>
                     {item.cornerCount > 0 && (
                       <TouchableOpacity
                         accessibilityLabel={`${expanded ? 'Hide' : 'Show'} ${cornerCount} in ${title}`}
@@ -866,48 +877,64 @@ const styles = StyleSheet.create((theme) => {
       borderBottomColor: hull.border,
     },
     row: {
-      minHeight: 92,
+      minHeight: ROW_HEIGHT,
       flexDirection: 'row',
       alignItems: 'center',
     },
     rowMain: {
       flex: 1,
       minWidth: 0,
-      minHeight: 92,
+      minHeight: ROW_HEIGHT,
       flexDirection: 'row',
       alignItems: 'center',
       gap: 12,
       paddingLeft: 16,
-      paddingVertical: 13,
+      paddingVertical: 10,
     },
-    rowUnread: { backgroundColor: hull.bgUnread },
-    rowCopy: { flex: 1, minWidth: 0, gap: 4 },
-    rowHeading: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
+    rowCopy: { flex: 1, minWidth: 0, gap: 3 },
+    // The row leads with the name: one size, one weight, the brightest thing
+    // on the row. Ownership and unread never bold or enlarge it.
     title: {
       ...Typography.default('semiBold'),
-      color: hull.textSecondary,
-      fontSize: 15,
-      flexShrink: 1,
+      color: hull.textPrimary,
+      fontSize: 18,
+      lineHeight: 22,
     },
-    titleUnread: { color: hull.textPrimary },
-    repo: { ...Typography.mono(), color: hull.chrome, fontSize: 9, flexShrink: 1 },
-    preview: { ...Typography.default(), color: hull.textMuted, fontSize: 12 },
-    meta: { ...Typography.mono(), color: hull.steel, fontSize: 9 },
+    // The sigil is the name's first glyph in brass: `@` for a DM, `#` for a Room.
+    sigil: { ...Typography.default('semiBold'), color: hull.accent },
+    preview: { ...Typography.default(), color: hull.ledgerQuiet, fontSize: 13, lineHeight: 17 },
+    previewSelf: { ...Typography.default(), color: hull.textMuted },
+    previewAuthor: { ...Typography.default(), color: hull.accent },
+    // Age on top, the attention square under it; the square's slot is
+    // reserved on every row so read-state changes never shift the column.
     gutter: {
-      width: 58,
-      minHeight: 92,
+      width: 46,
+      minHeight: ROW_HEIGHT,
       alignItems: 'flex-end',
       justifyContent: 'center',
       gap: 8,
-      paddingRight: 16,
+      paddingRight: 4,
     },
-    age: { ...Typography.mono(), color: hull.steel, fontSize: 9 },
-    unread: { borderWidth: 1, borderColor: hull.chrome, paddingHorizontal: 5, paddingVertical: 2 },
-    unreadText: { ...Typography.mono('semiBold'), color: hull.chrome, fontSize: 8 },
+    age: { ...Typography.mono(), color: hull.ledgerGhost, fontSize: 11 },
+    attentionSquare: {
+      width: ATTENTION_SQUARE,
+      height: ATTENTION_SQUARE,
+      backgroundColor: 'transparent',
+    },
+    attentionSquareLit: { backgroundColor: hull.accent },
+    // Reserved whether or not the Room has corners, so the age column keeps
+    // one straight right edge down the whole index.
+    cornerToggleSlot: {
+      width: 32,
+      minHeight: ROW_HEIGHT,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginRight: 8,
+    },
     cornerToggle: {
-      minWidth: 36,
-      minHeight: 28,
-      alignItems: 'flex-end',
+      minWidth: 32,
+      minHeight: 32,
+      alignItems: 'center',
       justifyContent: 'center',
     },
     cornerToggleText: {
@@ -917,7 +944,7 @@ const styles = StyleSheet.create((theme) => {
       lineHeight: 18,
     },
     cornerDropdown: {
-      paddingLeft: 50,
+      paddingLeft: 68,
       paddingRight: 16,
       paddingBottom: 8,
       borderTopWidth: StyleSheet.hairlineWidth,

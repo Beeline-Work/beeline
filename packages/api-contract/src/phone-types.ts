@@ -329,6 +329,12 @@ export type ChatListItem = {
    * separate, independent needs-you signal — the deck combines both.
    */
   readonly agentState?: 'needs-you' | 'working';
+  /**
+   * Present only for a direct Room: the one participant who is not the
+   * viewer. The index names a DM row by this identity (`@peer`), never by
+   * the stored Room name.
+   */
+  readonly directMessage?: { readonly peer: RoomViewIdentity };
 };
 
 export type ChatListWorkspace = {

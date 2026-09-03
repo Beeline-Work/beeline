@@ -12,6 +12,7 @@ import {
   GROK_SESSION_MODEL_AXIS_ID,
   GROK_LAUNCH_EFFORT_AXIS_ID,
   agentArgsWithModelSelection,
+  sortModelChoicesNewestFirst,
 } from './model-config.js';
 import type { AgentModelConfigOption } from './model-types.js';
 import { CODEX_ACP_SESSION_NEW_CONFIG_OPTIONS } from './fixtures/codex-acp-config-options.js';
@@ -83,6 +84,21 @@ function grokLikeRaw(modelId = 'grok-4.6'): unknown {
 }
 
 describe('parseAdvertisedConfigOptions', () => {
+  it('sorts versioned model families newest-first without disturbing ties', () => {
+    expect(
+      sortModelChoicesNewestFirst([
+        { id: 'vendor/model-4.5' },
+        { id: 'vendor/model-5.3-flash' },
+        { id: 'vendor/model-5.3-pro' },
+        { id: 'vendor/model-5.2' },
+      ]).map((choice) => choice.id),
+    ).toEqual([
+      'vendor/model-5.3-flash',
+      'vendor/model-5.3-pro',
+      'vendor/model-5.2',
+      'vendor/model-4.5',
+    ]);
+  });
   it('captures every axis, unfiltered, from a raw session/new result', () => {
     const options = parseAdvertisedConfigOptions(claudeLikeRaw());
     expect(options.map((option) => option.id)).toEqual(['model', 'effort', 'mode']);

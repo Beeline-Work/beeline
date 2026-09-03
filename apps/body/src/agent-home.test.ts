@@ -13,6 +13,7 @@ import {
   harnessStateDirsFromEnv,
   prepareRoomAgentHome,
   roomAgentHomeEnv,
+  withReliableOpenRouterRouting,
 } from './agent-home.js';
 const AGENT_PRIVATE_STATE_ENV = 'BUZZY_AGENT_PRIVATE_DIR';
 import { KNOWN_CREDENTIAL_MASK_PATHS } from './bwrap-sandbox.js';
@@ -32,6 +33,23 @@ afterEach(async () => {
 });
 
 describe('per-room harness state isolation', () => {
+  it('pins OpenRouter requests to the reliable provider pair', () => {
+    expect(withReliableOpenRouterRouting({ providers: { local: { models: [] } } })).toMatchObject({
+      providers: {
+        local: { models: [] },
+        openrouter: {
+          compat: {
+            openRouterRouting: {
+              only: ['deepinfra', 'novita'],
+              order: ['deepinfra', 'novita'],
+              allow_fallbacks: false,
+              require_parameters: true,
+            },
+          },
+        },
+      },
+    });
+  });
   it('points every harness state directory and HOME at this Room', async () => {
     const operatorHome = await scratch('beeline-operator-home-');
     const roomA = resolve(await scratch('beeline-room-a-'), 'agent-home');
@@ -125,6 +143,12 @@ describe('per-room harness state isolation', () => {
     expect(lstatSync(isolatedModels).isSymbolicLink()).toBe(false);
     expect(lstatSync(isolatedModels).mode & 0o777).toBe(0o600);
     expect(readFileSync(isolatedModels, 'utf8')).toContain('inline-secret');
+    expect(JSON.parse(readFileSync(isolatedModels, 'utf8')).providers).toContainEqual(
+      expect.objectContaining({
+        name: 'openrouter',
+        compat: { openRouterRouting: expect.objectContaining({ only: ['deepinfra', 'novita'] }) },
+      }),
+    );
     expect(existsSync(resolve(roomRoot, 'pi/settings.json'))).toBe(false);
     const modelOptions = [
       {
@@ -181,7 +205,11 @@ describe('per-room harness state isolation', () => {
 
     await rm(resolve(operatorHome, '.pi/agent/models.json'));
     await prepareRoomAgentHome({ root: roomRoot, operatorHome });
-    expect(existsSync(isolatedModels)).toBe(false);
+    expect(JSON.parse(readFileSync(isolatedModels, 'utf8'))).toMatchObject({
+      providers: {
+        openrouter: { compat: { openRouterRouting: { only: ['deepinfra', 'novita'] } } },
+      },
+    });
   });
 
   it('rejects a linked Pi provider source instead of copying credential material', async () => {
@@ -491,7 +519,7 @@ describe('operator skills + MCP passthrough', () => {
     await prepareRoomAgentHome({ root: roomRoot, operatorHome });
     expect(readFileSync(resolve(roomRoot, 'codex', 'config.toml'), 'utf8')).toBe(
       '[agents]\nenabled = false\n\n[features]\nstandalone_web_search = true\n',
-    );
+  );
     expect(existsSync(resolve(roomRoot, 'claude', '.claude.json'))).toBe(false);
   });
 
@@ -529,7 +557,7 @@ describe('operator skills + MCP passthrough', () => {
     // harnesses still have no config to generate.
     expect(readFileSync(resolve(roomRoot, 'codex', 'config.toml'), 'utf8')).toBe(
       '[agents]\nenabled = false\n\n[features]\nstandalone_web_search = true\n',
-  );
+    );
     expect(existsSync(resolve(roomRoot, 'claude', 'config.toml'))).toBe(false);
     expect(existsSync(resolve(roomRoot, 'grok', 'config.toml'))).toBe(false);
     expect(existsSync(resolve(roomRoot, 'claude', '.claude.json'))).toBe(false);

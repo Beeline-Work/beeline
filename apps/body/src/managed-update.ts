@@ -87,7 +87,6 @@ export class ManagedUpdateHandoff {
   #requested = false;
   #restartRequest: ManagedUpdateRestartRequest | undefined;
   #stagedReleaseId: string | undefined;
-  #drainDeadlineLogged = false;
 
   private constructor(options: {
     layout: BeelineInstallLayout;
@@ -270,11 +269,13 @@ export class ManagedUpdateHandoff {
 
   /**
    * Resolve one handoff tick against the daemon's authoritative turn registry.
-   * A staged release stays inert while accepted work is running.
-   * `quiesceIfIdle` closes intake in the same synchronous transition that
-   * proves idle, so a new turn cannot race activation. Expiring the bounded
-   * drain window records delayed convergence; it never turns a routine update
-   * into an ACP cancellation or a failed Room receipt.
+   * Busy means a turn is executing right now; serving Rooms and corners with
+   * no turn in flight is idle. `quiesceIfIdle` closes intake in the same
+   * synchronous transition that proves idle, so a new turn cannot race
+   * activation. A staged release stays inert while a turn runs — until the
+   * absolute drain deadline, when the restart is forced (`forced: true`) and
+   * the caller cancels the running turn; the convergence contract outranks a
+   * stuck turn. `ManagedUpdateDrain` enforces that deadline with a timer.
    */
   async restartRequest(quiesceIfIdle: () => boolean): Promise<
     | { kind: 'none' }
@@ -282,21 +283,17 @@ export class ManagedUpdateHandoff {
     | {
         kind: 'restart';
         request: ManagedUpdateRestartRequest;
+        forced: boolean;
       }
   > {
     const activeDrift = await this.check();
     if (!activeDrift && !this.#stagedReleaseId) return { kind: 'none' };
     const request = this.#restartRequest;
     if (!request) throw new Error('update drift was detected without an in-memory restart request');
+    let forced = false;
     if (!quiesceIfIdle()) {
-      if (this.#now() >= request.drainDeadlineAt && !this.#drainDeadlineLogged) {
-        console.log(
-          `[thin-core] update drain window elapsed with active work; keeping the staged release ` +
-            `${request.desiredRelease} inert instead of interrupting the Room turn`,
-        );
-        this.#drainDeadlineLogged = true;
-      }
-      return { kind: 'waiting', request };
+      if (this.#now() < request.drainDeadlineAt) return { kind: 'waiting', request };
+      forced = true;
     }
     if (this.#stagedReleaseId) {
       const stagedReleaseId = this.#stagedReleaseId;
@@ -318,15 +315,18 @@ export class ManagedUpdateHandoff {
       this.#restartRequest = undefined;
       await this.#journalDrift(stagedReleaseId);
     }
-    return { kind: 'restart', request: this.#restartRequest ?? request };
+    return { kind: 'restart', request: this.#restartRequest ?? request, forced };
   }
 }
+
+/** How the restart was reached: every turn finished, or the absolute deadline forced it. */
+export type ManagedUpdateRestartMode = 'drained' | 'forced';
 
 /** One funnel from a completed core tick to the process handoff callback. */
 export async function coordinateManagedUpdateHandoff(
   update: ManagedUpdateHandoff,
   quiesceIfIdle: () => boolean,
-  restart: (request: ManagedUpdateRestartRequest) => Promise<void>,
+  restart: (request: ManagedUpdateRestartRequest, mode: ManagedUpdateRestartMode) => Promise<void>,
   waiting: (request: ManagedUpdateRestartRequest) => Promise<void> = async () => undefined,
 ): Promise<ManagedUpdateHandoffProgress> {
   const next = await update.restartRequest(quiesceIfIdle);
@@ -335,8 +335,135 @@ export async function coordinateManagedUpdateHandoff(
     await waiting(next.request);
     return 'waiting-for-idle';
   }
-  await restart(next.request);
+  await restart(next.request, next.forced ? 'forced' : 'drained');
   return 'restarting';
+}
+
+export const UPDATE_DRAIN_WAIT_LOG_INTERVAL_MS = 60_000;
+
+export interface ManagedUpdateDrainOptions {
+  update: ManagedUpdateHandoff;
+  /** Closes intake and returns true only when no turn is executing right now. */
+  quiesceIfIdle: () => boolean;
+  activeTurnCount: () => number;
+  /** Exits the process. `forced` means a turn is still running and must be cancelled first. */
+  restart: (request: ManagedUpdateRestartRequest, mode: ManagedUpdateRestartMode) => Promise<void>;
+  /** Progress report while a turn keeps the armed restart waiting (sd_notify STATUS). */
+  waiting?: (request: ManagedUpdateRestartRequest) => Promise<void>;
+  now?: () => number;
+  log?: (line: string) => void;
+  setTimer?: (callback: () => void, ms: number) => unknown;
+  clearTimer?: (handle: unknown) => void;
+}
+
+/**
+ * The armed restart's clock. Each completed core tick calls `tick()`: an idle
+ * helper restarts on that tick; a busy one restarts on the first tick after
+ * its last turn ends. The absolute drain deadline is enforced by a timer of
+ * its own, so a turn that never ends still restarts on time — the core tick
+ * loop is not trusted to reach it. While waiting, one log line per minute
+ * says how many turns hold the restart and how long the deadline has left.
+ */
+export class ManagedUpdateDrain {
+  readonly #options: ManagedUpdateDrainOptions;
+  readonly #now: () => number;
+  readonly #log: (line: string) => void;
+  readonly #setTimer: (callback: () => void, ms: number) => unknown;
+  readonly #clearTimer: (handle: unknown) => void;
+  #deadlineTimer: unknown;
+  #waitLogTimer: unknown;
+  #resolving: Promise<ManagedUpdateHandoffProgress> | undefined;
+  #restarting = false;
+
+  constructor(options: ManagedUpdateDrainOptions) {
+    this.#options = options;
+    this.#now = options.now ?? Date.now;
+    this.#log = options.log ?? ((line) => console.log(line));
+    this.#setTimer = options.setTimer ?? ((callback, ms) => setTimeout(callback, ms));
+    this.#clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle as NodeJS.Timeout));
+  }
+
+  /** Called from every completed core progress tick. */
+  tick(): Promise<ManagedUpdateHandoffProgress> {
+    return this.#resolve();
+  }
+
+  #resolve(): Promise<ManagedUpdateHandoffProgress> {
+    if (this.#restarting) return Promise.resolve('restarting');
+    if (this.#resolving) return this.#resolving;
+    this.#resolving = this.#step().finally(() => {
+      this.#resolving = undefined;
+    });
+    return this.#resolving;
+  }
+
+  async #step(): Promise<ManagedUpdateHandoffProgress> {
+    const { update, quiesceIfIdle, activeTurnCount } = this.#options;
+    let armed: ManagedUpdateRestartRequest | undefined;
+    const progress = await coordinateManagedUpdateHandoff(
+      update,
+      quiesceIfIdle,
+      async (request, mode) => {
+        this.#disarm();
+        if (mode === 'forced') {
+          this.#log(
+            `[thin-core] update restart forced: drain deadline reached with ${activeTurnCount()} ` +
+              `active turn(s); cancelling them and restarting onto ${request.desiredRelease}`,
+          );
+        }
+        await this.#options.restart(request, mode);
+        // Latched only once the process is on its way out; a failed restart
+        // attempt leaves the next tick free to try again.
+        this.#restarting = true;
+      },
+      async (request) => {
+        armed = request;
+        await this.#options.waiting?.(request);
+      },
+    );
+    if (armed && !this.#deadlineTimer) this.#arm(armed);
+    return progress;
+  }
+
+  #arm(request: ManagedUpdateRestartRequest): void {
+    this.#logWaiting(request);
+    this.#scheduleWaitLog(request);
+    this.#deadlineTimer = this.#setTimer(
+      () =>
+        void this.#resolve().catch((error) => {
+          // The next core tick retries: the deadline has passed, so it forces too.
+          this.#log(
+            `[thin-core] update restart at the drain deadline failed; retrying on the next tick: ` +
+              `${error instanceof Error ? error.message : String(error)}`,
+          );
+        }),
+      Math.max(0, request.drainDeadlineAt - this.#now()),
+    );
+  }
+
+  #scheduleWaitLog(request: ManagedUpdateRestartRequest): void {
+    this.#waitLogTimer = this.#setTimer(() => {
+      this.#waitLogTimer = undefined;
+      if (this.#restarting) return;
+      this.#logWaiting(request);
+      this.#scheduleWaitLog(request);
+    }, UPDATE_DRAIN_WAIT_LOG_INTERVAL_MS);
+  }
+
+  #logWaiting(request: ManagedUpdateRestartRequest): void {
+    const minutesLeft = Math.max(0, Math.ceil((request.drainDeadlineAt - this.#now()) / 60_000));
+    this.#log(
+      `[thin-core] update restart waiting: ${this.#options.activeTurnCount()} active turn(s); ` +
+        `deadline in ${minutesLeft}m`,
+    );
+  }
+
+  #disarm(): void {
+    if (this.#deadlineTimer !== undefined) this.#clearTimer(this.#deadlineTimer);
+    if (this.#waitLogTimer !== undefined) this.#clearTimer(this.#waitLogTimer);
+    this.#deadlineTimer = undefined;
+    this.#waitLogTimer = undefined;
+  }
 }
 
 function numberEnv(env: NodeJS.ProcessEnv, name: string, fallback: number): number {

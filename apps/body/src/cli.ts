@@ -56,7 +56,7 @@ import {
   disableAgentService,
 } from './systemd.js';
 import {
-  coordinateManagedUpdateHandoff,
+  ManagedUpdateDrain,
   gateManagedSuccessor,
   ManagedUpdateHandoff,
   rollbackFailedSuccessor,
@@ -238,6 +238,34 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   let stoppingStatus = 'daemon stopped';
   try {
     const core = new ThinDaemonCore(runtime, configPath, config, { daemonApi });
+    // Busy means a turn is executing right now. An idle helper restarts on the
+    // tick that arms the update; a busy one at the earlier of its last turn's
+    // end or the absolute drain deadline, which the drain's own timer enforces.
+    const updateDrain = update
+      ? new ManagedUpdateDrain({
+          update,
+          quiesceIfIdle: () => core.quiesceForUpdateIfIdle(),
+          activeTurnCount: () => core.activeTurnCount(),
+          restart: async ({ desiredRelease, drainDeadlineAt }, mode) => {
+            if (mode === 'forced') await core.prepareForForcedUpdateRestart();
+            core.setDrainDeadlineAt(drainDeadlineAt);
+            stoppingStatus =
+              `update pending, converging; loaded_release=${loadedRelease ?? 'unknown'}; ` +
+              `desired_release=${desiredRelease}; ` +
+              `${mode === 'forced' ? 'active work cancelled at the drain deadline' : 'active work drained'}; ` +
+              `intake quiesced; exit_deadline=${new Date(drainDeadlineAt).toISOString()}`;
+            await notifier.stopping(stoppingStatus);
+            controller.abort();
+          },
+          waiting: async ({ desiredRelease, drainDeadlineAt }) => {
+            await notifier.progress(
+              `loaded_release=${loadedRelease ?? 'unknown'}; update ready; ` +
+                `active agent work is still running; handoff deferred; ` +
+                `desired_release=${desiredRelease}; exit_deadline=${new Date(drainDeadlineAt).toISOString()}`,
+            );
+          },
+        })
+      : undefined;
     const result = await core.run({
       signal: controller.signal,
       onEstablished: async () => {
@@ -287,28 +315,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
         void drainRollbackAlert(core.activeRoomIds()[0] ?? runtime.rooms[0]?.channelId);
         // The watchdog heartbeat is coupled to this completed progress tick.
         await notifier.progress(`loaded_release=${loadedRelease ?? 'development'}; ${status}`);
-        if (!update) return;
-        await coordinateManagedUpdateHandoff(
-          update,
-          () => core.quiesceForUpdateIfIdle(),
-          async ({ desiredRelease, drainDeadlineAt }) => {
-            if (Date.now() >= drainDeadlineAt) await core.prepareForForcedUpdateRestart();
-            core.setDrainDeadlineAt(drainDeadlineAt);
-            stoppingStatus =
-              `update pending, converging; loaded_release=${loadedRelease ?? 'unknown'}; ` +
-              `desired_release=${desiredRelease}; active work drained; ` +
-              `intake quiesced; exit_deadline=${new Date(drainDeadlineAt).toISOString()}`;
-            await notifier.stopping(stoppingStatus);
-            controller.abort();
-          },
-          async ({ desiredRelease, drainDeadlineAt }) => {
-            await notifier.progress(
-              `loaded_release=${loadedRelease ?? 'unknown'}; update ready; ` +
-                `active agent work is still running; handoff deferred; ` +
-                `desired_release=${desiredRelease}; exit_deadline=${new Date(drainDeadlineAt).toISOString()}`,
-            );
-          },
-        );
+        await updateDrain?.tick();
       },
     });
     if (result === 'agent-removed') {

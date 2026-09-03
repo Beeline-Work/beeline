@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { FlatList, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
@@ -554,17 +554,7 @@ export default function BuzzChannels() {
           title={`New ${ROOM_LABEL}`}
           visible={showCreateRoom}
         >
-          <ScrollView keyboardShouldPersistTaps="handled" style={styles.createRoomContent}>
-            <HullDialogInput
-              accessibilityLabel={`${ROOM_LABEL} name`}
-              autoFocus
-              editable={!creatingRoom}
-              onChangeText={setRoomName}
-              onSubmitEditing={() => void createRoom()}
-              placeholder="#room-name"
-              testID="create-room-name"
-              value={roomName}
-            />
+          <View style={styles.createRoomContent}>
             <TouchableOpacity
               accessibilityRole="button"
               disabled={creatingRoom}
@@ -588,7 +578,17 @@ export default function BuzzChannels() {
                 testIDPrefix="create-room-repo-picker"
               />
             )}
-          </ScrollView>
+            <HullDialogInput
+              accessibilityLabel={`${ROOM_LABEL} name`}
+              autoFocus
+              editable={!creatingRoom}
+              onChangeText={setRoomName}
+              onSubmitEditing={() => void createRoom()}
+              placeholder="#room-name"
+              testID="create-room-name"
+              value={roomName}
+            />
+          </View>
         </HullDialog>
         {!!error && (
           <TouchableOpacity onPress={refreshNow} style={styles.errorBar}>

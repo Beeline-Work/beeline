@@ -385,11 +385,12 @@ export class PhoneService {
       `
       SELECT r.*,
         (SELECT count(*)::text FROM memberships rm WHERE rm.room_id=r.id AND rm.removed_at IS NULL) member_count,
-        (SELECT count(*)::text FROM rooms c WHERE c.parent_id=r.id) corner_count,
+        (SELECT count(*)::text FROM rooms c WHERE c.parent_id=r.id AND c.archived_at IS NULL) corner_count,
         lm.id latest_id,lm.text latest_text,lm.created_at latest_created_at,lm.author_id latest_author_id,
         li.kind latest_author_kind,li.name latest_author_name,
         (lm_other.id IS NOT NULL AND (
           mark.message_created_at IS NULL OR
+          lm_other.id<>mark.message_id AND
           (lm_other.created_at,lm_other.id)>(mark.message_created_at,mark.message_id)
         )) unread,
         EXISTS(SELECT 1 FROM agent_turns t WHERE (t.room_id=r.id OR t.room_id IN (SELECT id FROM rooms WHERE parent_id=r.id)) AND t.status='working') working,
@@ -1211,17 +1212,18 @@ export class PhoneService {
   }
 
   async markRead(roomId: string, messageIdValue: string, viewerId: string): Promise<void> {
-    const message = await this.database.query<{ created_at: Date }>(
-      `SELECT created_at FROM messages WHERE id=$1 AND room_id=$2`,
+    const message = await this.database.query<{ exists: boolean }>(
+      `SELECT true exists FROM messages WHERE id=$1 AND room_id=$2`,
       [messageIdValue, roomId],
     );
-    const row = message.rows[0];
-    if (!row || !(await this.hasRoomAccess(roomId, viewerId))) throw new Error('message not found');
+    if (!message.rows[0] || !(await this.hasRoomAccess(roomId, viewerId)))
+      throw new Error('message not found');
     await this.database.query(
-      `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id) VALUES ($1,$2,$3,$4)
+      `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id)
+      SELECT $1,$2,message.created_at,$3 FROM messages message WHERE message.id=$3 AND message.room_id=$1
       ON CONFLICT(room_id,identity_id) DO UPDATE SET message_created_at=EXCLUDED.message_created_at,message_id=EXCLUDED.message_id,updated_at=now()
       WHERE (EXCLUDED.message_created_at,EXCLUDED.message_id)>(room_read_marks.message_created_at,room_read_marks.message_id)`,
-      [roomId, viewerId, row.created_at, messageIdValue],
+      [roomId, viewerId, messageIdValue],
     );
   }
 

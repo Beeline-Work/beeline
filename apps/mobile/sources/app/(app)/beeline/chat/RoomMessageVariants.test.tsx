@@ -286,7 +286,6 @@ describe('Room message variant components', () => {
           daemonFact: {
             type: 'corner-complete',
             cornerId: '80a5a6f1-fb5a-493b-93eb-f3db33f696e6',
-            name: 'Ship the archived transcript card',
             objective:
               'Ship fact cards with archived transcript access and preserve the entire objective instead of truncating it into a ledger line',
             outcome: 'landed',
@@ -325,7 +324,7 @@ describe('Room message variant components', () => {
     expect(JSON.stringify(renderer.toJSON())).not.toContain('Open the archived transcript');
   });
 
-  it('renders the corner-open daemon fact as a linked card with the human name and objective', () => {
+  it('renders the corner-open objective verbatim as the linked card title', () => {
     const onOpenCorner = vi.fn();
     const renderer = render(
       <DaemonFactCard
@@ -334,7 +333,6 @@ describe('Room message variant components', () => {
             type: 'corner-open',
             cornerId: '80a5a6f1-fb5a-493b-93eb-f3db33f696e6',
             objective: 'Fix the flaky auth test',
-            name: 'Fix flaky auth test',
           },
         })}
         onOpenCorner={onOpenCorner}
@@ -347,7 +345,7 @@ describe('Room message variant components', () => {
     const texts = renderer.root
       .findAllByType('Text')
       .map((node: ReactTestInstance) => node.props.children);
-    expect(texts).toContain('Fix flaky auth test');
+    expect(texts).toContain('Fix the flaky auth test');
     expect(texts).toContain('Fix the flaky auth test');
     act(() => card.props.onPress());
     expect(onOpenCorner).toHaveBeenCalledWith('80a5a6f1-fb5a-493b-93eb-f3db33f696e6');

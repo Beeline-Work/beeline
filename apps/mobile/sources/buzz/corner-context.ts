@@ -31,25 +31,12 @@ export type RoomContextEntry = {
   isAgent: boolean;
 };
 
-/** A generated corner name (`corner-1a2b3c4d`) names nothing; a task slug does. */
-const GENERATED_CORNER_NAME = /^(?:corner|sub)-[0-9a-f]{4,}$/i;
-
-/** `add-color-to-code-blocks` reads as a branch; "add color to code blocks"
- *  reads as an objective. Only a real slug is expanded. */
-function unslug(name: string): string | undefined {
-  const trimmed = name.trim().replace(/^#+/, '');
-  if (!trimmed || GENERATED_CORNER_NAME.test(trimmed)) return undefined;
-  if (/\s/.test(trimmed)) return trimmed;
-  if (!trimmed.includes('-')) return trimmed;
-  return trimmed.replace(/-+/g, ' ').trim() || undefined;
-}
-
 /**
  * The corner's objective, as one line.
  *
  * The human's task from the immutable corner create event wins for the life of
  * the corner. A plan objective is only a compatibility fallback for corners
- * opened before the `task` tag shipped; the corner's name is the final fallback.
+ * opened before the `task` tag shipped. A generated room name is never content.
  * `undefined` means "say nothing" — never a placeholder, and never raw text.
  */
 export function cornerObjectiveLine(input: {
@@ -67,11 +54,9 @@ export function cornerObjectiveItems(input: {
   task?: string;
   cornerName?: string;
 }): string[] {
-  const candidates = [
-    input.task,
-    input.planObjective,
-    input.cornerName ? unslug(input.cornerName) : undefined,
-  ];
+  if (input.task?.trim() && roomPreviewText(input.task, Number.POSITIVE_INFINITY))
+    return [input.task];
+  const candidates = [input.planObjective];
   for (const candidate of candidates) {
     if (!candidate) continue;
     const lines = candidate.split('\n');

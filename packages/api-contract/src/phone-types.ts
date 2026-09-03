@@ -208,8 +208,6 @@ export type RoomViewMessage = {
       readonly step: string;
       readonly status: 'pending' | 'in_progress' | 'completed';
     }[];
-    /** The corner's human title. Only 'corner-open' carries this. */
-    readonly name?: string;
   };
 };
 

@@ -18,6 +18,7 @@ import { EventEmitter } from 'node:events';
 import type { SessionMode } from './config.js';
 import {
   cornerAutonomyModeCandidates,
+  roomModeCandidates,
   harnessSupportsNativeSessionResume,
 } from './harness-capabilities.js';
 import { harnessReadsMetaSystemPrompt, sessionToolScopeMeta } from './harness-tool-scope.js';
@@ -473,6 +474,7 @@ export class AcpClient extends EventEmitter {
   private agentCwd?: string;
   private inheritProcessEnv: boolean;
   private autoApprove: boolean;
+  private osSandbox: boolean;
   private permissionHandler?: AcpPermissionHandler;
   private permissionAllowlist?: AcpPermissionAllowlist;
 
@@ -488,6 +490,14 @@ export class AcpClient extends EventEmitter {
      * the wrapper, or every harness crash is logged as a bubblewrap crash.
      */
     agentLabel?: string;
+    /**
+     * The child is wrapped in the daemon's OS sandbox (`bwrap-sandbox.ts`), so
+     * the filesystem rule is held by the kernel and a `readonly` session may
+     * select a harness mode that does not itself cut the network
+     * (`roomModeCandidates`). Defaults to false: an unwrapped child keeps the
+     * harness's own read-only mode.
+     */
+    osSandbox?: boolean;
     agentEnv: Record<string, string>;
     /**
      * Working directory for the child process. The ACP session `cwd` is a
@@ -518,6 +528,7 @@ export class AcpClient extends EventEmitter {
     this.inheritProcessEnv =
       opts.inheritProcessEnv ?? process.env.BUZZY_BODY_AGENT_ENV_INHERIT === '1';
     this.autoApprove = opts.autoApprovePermissions ?? true;
+    this.osSandbox = opts.osSandbox ?? false;
     this.permissionHandler = opts.permissionHandler;
     this.permissionAllowlist = opts.permissionAllowlist;
   }
@@ -755,7 +766,7 @@ export class AcpClient extends EventEmitter {
       | undefined;
     const candidates =
       mode === 'readonly'
-        ? ['read-only', 'readonly']
+        ? roomModeCandidates(this.agentLabel, { osSandbox: this.osSandbox })
         : cornerAutonomyModeCandidates(this.agentLabel);
     const target = modes?.availableModes?.find(
       (candidate) => candidate.id && candidates.includes(candidate.id),

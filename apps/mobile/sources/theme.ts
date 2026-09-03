@@ -563,6 +563,4 @@ function createBeelineAppTheme(buzz: BeelineThemeTokens) {
 }
 
 export const obsidianTheme = createBeelineAppTheme(beelineThemes.obsidian);
-export const editorialTheme = createBeelineAppTheme(beelineThemes.editorial);
-export const ledgerTheme = createBeelineAppTheme(beelineThemes.ledger);
 export type BeelineAppTheme = typeof obsidianTheme;

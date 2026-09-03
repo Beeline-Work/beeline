@@ -163,12 +163,6 @@ export default function RootLayout() {
           }}
         />
         <Stack.Screen
-          name="settings/appearance"
-          options={{
-            headerTitle: t('settings.appearance'),
-          }}
-        />
-        <Stack.Screen
           name="settings/language"
           options={{
             headerTitle: t('settingsLanguage.title'),

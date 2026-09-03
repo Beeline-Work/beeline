@@ -384,7 +384,7 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
 
 const styles = StyleSheet.create((theme) => ({
   root: { width: '100%', minWidth: 0 },
-  block: { marginBottom: theme.buzz.name === 'ledger' ? 4 : 8 },
+  block: { marginBottom: 8 },
   lastBlock: { marginBottom: 0 },
   /**
    * Emphasis is a luminance step, never a heavier cut.

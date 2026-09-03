@@ -5,8 +5,7 @@ import { Platform } from 'react-native';
  *
  * Default/prose typography: IBM Plex Sans
  * Monospace typography: IBM Plex Mono
- * Editorial prose typography: IBM Plex Serif
- * Transcript prose typography: Space Grotesk (the Editorial chat direction)
+ * Transcript prose typography: Space Grotesk
  * Logo typography: Bricolage Grotesque (specific use only)
  *
  * Usage Examples:
@@ -47,14 +46,7 @@ export const FontFamilies = {
     semiBold: 'IBMPlexMono-SemiBold',
   },
 
-  // IBM Plex Serif (Editorial Ink prose)
-  serif: {
-    regular: 'IBMPlexSerif-Regular',
-    italic: 'IBMPlexSerif-Italic',
-    semiBold: 'IBMPlexSerif-SemiBold',
-  },
-
-  // Space Grotesk (Editorial transcript prose)
+  // Space Grotesk (transcript prose)
   grotesk: {
     regular: 'SpaceGrotesk-Regular',
     medium: 'SpaceGrotesk-Medium',
@@ -78,10 +70,6 @@ export const getDefaultFont = (weight: 'regular' | 'italic' | 'semiBold' = 'regu
 
 export const getMonoFont = (weight: 'regular' | 'italic' | 'semiBold' = 'regular') => {
   return FontFamilies.mono[weight];
-};
-
-export const getSerifFont = (weight: 'regular' | 'italic' | 'semiBold' = 'regular') => {
-  return FontFamilies.serif[weight];
 };
 
 export const getGroteskFont = (weight: 'regular' | 'medium' | 'semiBold' = 'regular') => {
@@ -111,14 +99,9 @@ export const Typography = {
     fontFamily: getMonoFont(weight),
   }),
 
-  serif: (weight: 'regular' | 'italic' | 'semiBold' = 'regular') => ({
-    fontFamily: getSerifFont(weight),
-  }),
-
   /**
-   * The semantic Buzz transcript voice. The Editorial chat direction sets this
-   * to Space Grotesk; theme-aware transcript styles override it with the
-   * active theme's `prose*` families where a theme carries its own voice.
+   * The semantic Buzz transcript voice: Space Grotesk, the Obsidian `prose*`
+   * families.
    */
   ledger: (weight: 'regular' | 'medium' | 'semiBold' = 'regular') => ({
     fontFamily:

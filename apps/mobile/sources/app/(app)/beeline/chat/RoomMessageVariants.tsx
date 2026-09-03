@@ -10,6 +10,7 @@ import type { MessageReplyDisplayTarget } from '@/buzz/message-reply';
 import { resolveAgentDisplayIdentity, resolvePendingAgentDisplay } from '@/buzz/agent-display';
 import { shortMemberNpub } from '@/buzz/member-display';
 import { describeWriteRequest } from '@/buzz/write-request-copy';
+import { grantAskLine, grantOutcomeLine } from '@/buzz/agent-grant-copy';
 import { shouldShowReplyReference } from '@/buzz/reply-reference';
 import { splitLedgerText } from '@/buzz/ledger-text';
 import { ledgerStamp } from '@/buzz/relative-time';
@@ -145,6 +146,123 @@ export const WritePermissionCard = React.memo(function WritePermissionCard({
           }
         />
       )}
+    </HullSurface>
+  );
+});
+
+export type GrantDecision = 'always' | 'once' | 'deny';
+
+export interface GrantRequestCardProps {
+  message: ChatDisplayMessage;
+  agent?: AgentPresentation;
+  viewerIsAgent: boolean;
+  viewerPubkey: string;
+  viewerRole: 'owner' | 'admin' | 'member' | null;
+  /** The grant whose decision is in flight. */
+  actionId: string | null;
+  onDecision(grantId: string, decision: GrantDecision): void;
+}
+
+/**
+ * The grant card: `<agent> asks <owner>`, one `<verb> <target>` line per grant with
+ * its reason in quiet text, and ALWAYS / ONCE / NO for the owner or a Workspace
+ * manager. Everyone else reads the ask and `waiting for <owner>`. After the tap
+ * each line settles into its inscribed outcome exactly as the write-permission
+ * card does; the phone mirrors the server's authority, it never decides it.
+ */
+export const GrantRequestCard = React.memo(function GrantRequestCard({
+  message,
+  agent,
+  viewerIsAgent,
+  viewerPubkey,
+  viewerRole,
+  actionId,
+  onDecision,
+}: GrantRequestCardProps) {
+  const request = message.grantRequest!;
+  const display = resolveAgentDisplayIdentity(request.agent.pubkey, agent);
+  // The server names the asking agent on the card; a loaded roster presentation
+  // (soul name) wins once it exists, never a pubkey-derived placeholder.
+  const agentName = agent ? display.name : request.agent.name;
+  const canDecide =
+    !viewerIsAgent &&
+    (viewerPubkey === request.owner.pubkey || viewerRole === 'admin' || viewerRole === 'owner');
+  const anyPending = request.grants.some((grant) => grant.status === 'pending');
+  return (
+    <HullSurface
+      strength="raised"
+      style={styles.permissionCard}
+      testID={`grant-request-${anyPending ? 'pending' : 'settled'}`}
+    >
+      <View style={styles.permissionHeading}>
+        <IdentityMark
+          kind="agent"
+          seed={display.avatarSeed ?? request.agent.pubkey}
+          avatarUrl={display.avatarUrl}
+          name={agentName}
+          size={30}
+        />
+        <View style={styles.permissionCopy}>
+          <Text style={styles.permissionTitle} testID="grant-request-title">
+            {agentName} asks {request.owner.name}
+          </Text>
+          {request.requester.pubkey !== request.owner.pubkey ? (
+            <Text style={styles.permissionIntent} numberOfLines={1}>
+              at {request.requester.name}’s request
+            </Text>
+          ) : null}
+        </View>
+      </View>
+      {request.grants.map((grant) => {
+        const busy = actionId === grant.grantId;
+        const outcome = grantOutcomeLine(grant);
+        return (
+          <View key={grant.grantId} style={styles.grantLine} testID={`grant-${grant.grantId}`}>
+            <Text style={styles.grantAsk} testID={`grant-${grant.grantId}-ask`}>
+              {grantAskLine(grant)}
+            </Text>
+            <Text style={styles.permissionIntent}>{grant.reason}</Text>
+            {grant.status === 'pending' && canDecide ? (
+              <View style={styles.permissionActions}>
+                <MonoButton
+                  label="ALWAYS"
+                  loading={busy}
+                  disabled={actionId !== null}
+                  onPress={() => onDecision(grant.grantId, 'always')}
+                  style={styles.permissionButton}
+                  testID={`grant-${grant.grantId}-always`}
+                />
+                <MonoButton
+                  label="ONCE"
+                  variant="secondary"
+                  disabled={actionId !== null}
+                  onPress={() => onDecision(grant.grantId, 'once')}
+                  style={styles.permissionButton}
+                  testID={`grant-${grant.grantId}-once`}
+                />
+                <MonoButton
+                  label="NO"
+                  variant="secondary"
+                  disabled={actionId !== null}
+                  onPress={() => onDecision(grant.grantId, 'deny')}
+                  style={styles.permissionButton}
+                  testID={`grant-${grant.grantId}-deny`}
+                />
+              </View>
+            ) : grant.status === 'pending' ? (
+              <Text style={styles.permissionStatus} testID={`grant-${grant.grantId}-waiting`}>
+                WAITING FOR {request.owner.name.toUpperCase()}
+              </Text>
+            ) : (
+              <WritePermissionOutcome
+                status={grant.status === 'denied' ? 'denied' : 'allowed'}
+                label={outcome ?? undefined}
+                testID={`grant-${grant.grantId}-outcome`}
+              />
+            )}
+          </View>
+        );
+      })}
     </HullSurface>
   );
 });
@@ -696,6 +814,13 @@ const styles = StyleSheet.create(() => ({
   },
   permissionActions: { flexDirection: 'row', gap: 8 },
   permissionButton: { flex: 1, minWidth: 0 },
+  grantLine: { gap: 6 },
+  grantAsk: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 12,
+    lineHeight: 17,
+  },
   permissionStatus: {
     ...Typography.mono('semiBold'),
     color: groknight.textSecondary,

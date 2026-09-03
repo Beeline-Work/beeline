@@ -199,6 +199,10 @@ const monoStyles = new Set([
   'previewLinkLabel',
   'previewLinkUrl',
   'finishedChevron',
+  // Grant cards and the profile grant list print the exact approved line
+  // (a command, a host, a secret name): a machine identifier, in mono.
+  'grantAsk',
+  'grantLine',
 ]);
 
 function styleDefinition(source: string, name: string): string {

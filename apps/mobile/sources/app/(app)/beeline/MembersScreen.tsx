@@ -35,6 +35,7 @@ import { Typography } from '@/constants/Typography';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
 import { filterAgentModelOptions } from '@/buzz/agent-model-picker';
+import { grantIsRevocable, grantProfileLine } from '@/buzz/agent-grant-copy';
 import { Modal } from '@/modal/ModalManager';
 
 const INDEX_CONFIRM_ATTEMPTS = 60;
@@ -53,7 +54,8 @@ type MembersAction =
   | 'save-agent-soul'
   | 'remove-agent'
   | 'model-config'
-  | 'agent-yolo';
+  | 'agent-yolo'
+  | 'revoke-grant';
 
 function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -499,6 +501,24 @@ export default function BuzzMembers() {
     }
   };
 
+  const revokeGrant = async (grantId: string) => {
+    if (!selectedAgent?.canManageGrants) return;
+    const pubkey = selectedAgent.agent.identity.pubkey;
+    setWorking('revoke-grant');
+    setError(null);
+    try {
+      await monolithPhoneOperation('revokeAgentGrant', { grantId });
+      await waitForIndexedSurface(
+        () => readAgent(pubkey),
+        (value) => value.grants?.find((grant) => grant.grantId === grantId)?.status === 'revoked',
+      );
+    } catch (reason) {
+      setError(`Could not revoke grant: ${operationMessage(reason)}`);
+    } finally {
+      setWorking(null);
+    }
+  };
+
   const removeSelectedAgent = async () => {
     if (!selectedAgent || !surface?.viewer.permissions.manage || !workspaceId) return;
     const pubkey = selectedAgent.agent.identity.pubkey;
@@ -925,6 +945,37 @@ export default function BuzzMembers() {
                   );
                 })}
               </View>
+              <View style={styles.grantSection} testID="agent-grants">
+                <Text style={styles.sectionLabel}>GRANTS</Text>
+                {(selectedAgent.grants ?? []).length === 0 ? (
+                  <Text style={styles.detail} testID="agent-grants-empty">
+                    Nothing granted yet. When this agent asks for reach outside its sandbox, the
+                    answers are listed here.
+                  </Text>
+                ) : (
+                  (selectedAgent.grants ?? []).map((grant) => (
+                    <View
+                      key={grant.grantId}
+                      style={styles.grantRow}
+                      testID={`agent-grant-${grant.grantId}`}
+                    >
+                      <Text style={styles.grantLine} testID={`agent-grant-${grant.grantId}-line`}>
+                        {grantProfileLine(grant)}
+                      </Text>
+                      {selectedAgent.canManageGrants && grantIsRevocable(grant) && (
+                        <MonoButton
+                          label="REVOKE"
+                          variant="secondary"
+                          disabled={busy}
+                          loading={working === 'revoke-grant'}
+                          onPress={() => void revokeGrant(grant.grantId)}
+                          testID={`agent-grant-${grant.grantId}-revoke`}
+                        />
+                      )}
+                    </View>
+                  ))
+                )}
+              </View>
               <View style={styles.yoloSection} testID="agent-yolo">
                 <View style={styles.yoloRow}>
                   <Text
@@ -1124,6 +1175,15 @@ const styles = StyleSheet.create((theme) => {
       flex: 1,
       minWidth: 0,
     },
+    grantSection: { gap: 6 },
+    grantRow: {
+      minHeight: 32,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 10,
+    },
+    grantLine: { ...Typography.mono(), color: hull.textPrimary, fontSize: 10, flex: 1, minWidth: 0 },
     yoloSection: { gap: 4 },
     yoloRow: {
       minHeight: 40,

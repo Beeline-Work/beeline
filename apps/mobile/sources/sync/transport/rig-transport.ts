@@ -77,6 +77,8 @@ export type AgentActivityItem = {
   input?: string;
   /** Bounded first/last-line excerpt from the completed tool result. */
   output?: string;
+  /** The identity whose message triggered the turn ("at Alex's request"). */
+  requestedBy?: { pubkey: string; name?: string };
   files?: Array<{
     path: string;
     status?: string;

@@ -1,3 +1,4 @@
+import type { AgentGrantKind, AgentGrantStatus } from './agent-grants.js';
 import type { CornerLifecycleView } from './phone-types.js';
 import type { RoomScheduleCadence } from './phone-operations.js';
 
@@ -70,6 +71,9 @@ export type DaemonOperationMap = {
   postCornerRemoteState: Operation<PostCornerRemoteStateInput, WriteResult>;
   postCornerPlan: Operation<PostCornerPlanInput, WriteResult>;
   postTargetBranchProposal: Operation<PostTargetBranchProposalInput, WriteResult>;
+  requestAgentGrant: Operation<RequestAgentGrantInput, RequestAgentGrantResult>;
+  listAgentGrants: Operation<AgentInput, AgentGrantListResult>;
+  consumeAgentGrant: Operation<ConsumeAgentGrantInput, WriteResult>;
   createCorner: Operation<CreateCornerInput, CornerResult>;
   archiveCorner: Operation<CornerInput, WriteResult>;
   ensureAgentMembership: Operation<AgentRoomInput, WriteResult>;
@@ -333,6 +337,39 @@ export type CreateCornerInput = RoomInput & {
 };
 export type CornerResult = { readonly cornerId: string };
 
+/** request_grant: the agent raises its hand for one kind of reach in one Room. */
+export type RequestAgentGrantInput = RoomInput & {
+  readonly kind: AgentGrantKind;
+  readonly target: string;
+  readonly reason: string;
+  /** Optional lifetime in seconds; the grant expires this long after the request. */
+  readonly ttlSeconds?: number;
+};
+export type RequestAgentGrantResult = {
+  readonly grantId: string;
+  readonly status: AgentGrantStatus;
+  /** True when yolo approved it on the spot (no card was posted). */
+  readonly auto: boolean;
+  /** The card message when one was posted or joined. */
+  readonly messageId?: string;
+};
+/** Every live (approved or once, unexpired) grant of this agent, for the rule runner. */
+export type AgentGrantListResult = {
+  readonly grants: readonly {
+    readonly grantId: string;
+    readonly workspaceId: string;
+    readonly roomId: string;
+    readonly kind: AgentGrantKind;
+    readonly target: string;
+    readonly status: AgentGrantStatus;
+    readonly requestedBy: string;
+    readonly requestedByName?: string;
+    readonly expiresAt?: number;
+  }[];
+};
+/** A 'once' grant is spent by its first run. */
+export type ConsumeAgentGrantInput = { readonly grantId: string };
+
 export type DaemonActivityItem = {
   readonly kind: 'thinking' | 'tool' | 'output' | 'summary';
   readonly title: string;
@@ -343,6 +380,8 @@ export type DaemonActivityItem = {
   readonly input?: string;
   /** Bounded first/last-line excerpt of a completed tool result. */
   readonly output?: string;
+  /** The identity whose message triggered the turn this row belongs to. */
+  readonly requestedBy?: { readonly pubkey: string; readonly name?: string };
   readonly files?: readonly { readonly path: string; readonly status?: string }[];
   readonly plan?: {
     readonly objective?: string;

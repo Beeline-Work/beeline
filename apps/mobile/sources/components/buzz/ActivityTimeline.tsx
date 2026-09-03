@@ -75,6 +75,9 @@ function LedgerStepRow({
     ...(step.files ?? []).map((file) => `${file.status ? `${file.status} ` : ''}${file.path}`),
     ...(step.output ? [`Output:\n${step.output}`] : []),
     ...(step.reason ? [step.reason] : []),
+    ...(step.requestedBy
+      ? [`at ${step.requestedBy.name ?? step.requestedBy.pubkey.slice(0, 12)}'s request`]
+      : []),
   ];
   const row = (
     <>

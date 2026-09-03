@@ -84,6 +84,7 @@ vi.mock('@/components/buzz/Ledger', async () => {
 import {
   GitHubEventCard,
   DaemonFactCard,
+  GrantRequestCard,
   OrdinaryLedgerMessage,
   TargetBranchProposalCard,
   WritePermissionCard,
@@ -459,4 +460,127 @@ describe('Room message variant components', () => {
       }),
     ).toEqual({ label: 'CODEX thinking…' });
   });
+  it('renders the grant card with ALWAYS / ONCE / NO only for the owner or a manager, and settles each line into its outcome', () => {
+    const onDecision = vi.fn();
+    const owner = { pubkey: 'owner', kind: 'human' as const, name: 'Charles' };
+    const requester = { pubkey: 'alex', kind: 'human' as const, name: 'Alex' };
+    const pending = message({
+      grantRequest: {
+        agent: { pubkey: 'agent', kind: 'agent', name: 'Terra' },
+        owner,
+        requester,
+        grants: [
+          {
+            grantId: 'g-1',
+            kind: 'command',
+            target: 'fly deploy -a beeline-preview --with FLY_TOKEN',
+            reason: 'to publish the preview build',
+            status: 'pending',
+            requestedBy: requester,
+            roomId: '22222222-2222-4222-8222-222222222222',
+            createdAt: 1,
+            auto: false,
+          },
+          {
+            grantId: 'g-2',
+            kind: 'host',
+            target: 'api.fly.io',
+            reason: 'to reach the Fly API',
+            status: 'pending',
+            requestedBy: requester,
+            roomId: '22222222-2222-4222-8222-222222222222',
+            createdAt: 1,
+            auto: false,
+          },
+        ],
+      },
+    });
+    const ownerView = render(
+      <GrantRequestCard
+        message={pending}
+        viewerIsAgent={false}
+        viewerPubkey="owner"
+        viewerRole="member"
+        actionId={null}
+        onDecision={onDecision}
+      />,
+    );
+    expect(ownerView.root.findByProps({ testID: 'grant-request-title' }).props.children.join('')).toBe(
+      'Terra asks Charles',
+    );
+    expect(ownerView.root.findByProps({ testID: 'grant-g-1-ask' }).props.children).toBe(
+      'run fly deploy -a beeline-preview --with FLY_TOKEN',
+    );
+    expect(ownerView.root.findByProps({ testID: 'grant-g-2-ask' }).props.children).toBe('reach api.fly.io');
+    const buttons = ownerView.root.findAllByType('MonoButton');
+    expect(buttons.map((button: { props: { label: string } }) => button.props.label)).toEqual([
+      'ALWAYS',
+      'ONCE',
+      'NO',
+      'ALWAYS',
+      'ONCE',
+      'NO',
+    ]);
+    act(() => ownerView.root.findByProps({ testID: 'grant-g-1-once' }).props.onPress());
+    expect(onDecision).toHaveBeenCalledWith('g-1', 'once');
+    act(() => ownerView.root.findByProps({ testID: 'grant-g-2-deny' }).props.onPress());
+    expect(onDecision).toHaveBeenCalledWith('g-2', 'deny');
+
+    // A workspace manager who is not the owner decides too.
+    const manager = render(
+      <GrantRequestCard
+        message={pending}
+        viewerIsAgent={false}
+        viewerPubkey="someone-else"
+        viewerRole="admin"
+        actionId={null}
+        onDecision={onDecision}
+      />,
+    );
+    expect(manager.root.findAllByType('MonoButton')).toHaveLength(6);
+
+    // A plain member (the requester included) sees the ask and waits for the owner.
+    const outsider = render(
+      <GrantRequestCard
+        message={pending}
+        viewerIsAgent={false}
+        viewerPubkey="alex"
+        viewerRole="member"
+        actionId={null}
+        onDecision={onDecision}
+      />,
+    );
+    expect(outsider.root.findAllByType('MonoButton')).toHaveLength(0);
+    expect(outsider.root.findByProps({ testID: 'grant-g-1-waiting' }).props.children.join('')).toBe(
+      'WAITING FOR CHARLES',
+    );
+
+    // After the taps the card settles in place: no buttons, one inscribed outcome per line.
+    const settled = render(
+      <GrantRequestCard
+        message={message({
+          grantRequest: {
+            ...pending.grantRequest!,
+            grants: [
+              { ...pending.grantRequest!.grants[0]!, status: 'once', decidedBy: owner, decidedAt: 1_756_900_060 },
+              { ...pending.grantRequest!.grants[1]!, status: 'denied', decidedBy: owner, decidedAt: 1_756_900_061 },
+            ],
+          },
+        })}
+        viewerIsAgent={false}
+        viewerPubkey="owner"
+        viewerRole="owner"
+        actionId={null}
+        onDecision={onDecision}
+      />,
+    );
+    expect(settled.root.findAllByType('MonoButton')).toHaveLength(0);
+    expect(settled.root.findByProps({ testID: 'grant-request-settled' })).toBeDefined();
+    const outcomes = settled.root.findAllByType('WritePermissionOutcome');
+    expect(outcomes.map((outcome: { props: { label: string; status: string } }) => [outcome.props.status, outcome.props.label])).toEqual([
+      ['allowed', expect.stringMatching(/^Charles allowed once · /)],
+      ['denied', expect.stringMatching(/^Charles declined · /)],
+    ]);
+  });
+
 });

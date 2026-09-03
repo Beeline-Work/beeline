@@ -2976,6 +2976,270 @@ describe('monolith integration', () => {
       'Admin turned yolo off for Bee · grant requests now ask before running',
     ]);
   });
+  it('runs the grant loop: pending card with mention, coalescing, owner ALWAYS/ONCE/NO, gate refusals, listing, revoke', async () => {
+    const send = vi.fn(async () => undefined);
+    const pushes = new PushDeliveryLoop(database, { send });
+    await pushes.runOnce();
+    await database.query(
+      `INSERT INTO push_devices(token,identity_id,platform,environment)
+       VALUES('grant-owner-device-1234567890123456789012',$1,'ios','physical')`,
+      [HUMAN],
+    );
+    const memberToken = await phoneToken('member');
+    const memberId = createHash('sha256').update('github:member').digest('hex');
+    await operation('addWorkspaceMember', { workspaceId: WORKSPACE, memberId, role: 'member' });
+    await operation('addRoomMember', { roomId: ROOM, memberId });
+    // The member asks the agent for a deploy: they are the requester on every row.
+    const ask = (await (
+      await operation(
+        'sendRoomMessage',
+        { roomId: ROOM, text: '@Bee deploy the preview', mentions: [AGENT] },
+        memberToken,
+      )
+    ).json()) as { messageId: string };
+    expect(ask.messageId).toMatch(/^[0-9a-f]{64}$/);
+    // Drain the join note and the ask so the card's push is the only one left.
+    await pushes.runOnce();
+    send.mockClear();
+
+    // Metacharacters in a command target are refused at request time.
+    const refusedTarget = await daemonOperation('requestAgentGrant', {
+      roomId: ROOM,
+      kind: 'command',
+      target: 'fly deploy; rm -rf /',
+      reason: 'publish the preview',
+    });
+    expect(refusedTarget.status).toBe(400);
+    expect(((await refusedTarget.json()) as { error: string }).error).toContain(
+      'shell metacharacters',
+    );
+
+    const first = (await (
+      await daemonOperation('requestAgentGrant', {
+        roomId: ROOM,
+        kind: 'command',
+        target: 'fly deploy -a beeline-preview --with FLY_TOKEN',
+        reason: 'publish the preview build',
+      })
+    ).json()) as { grantId: string; status: string; auto: boolean; messageId: string };
+    expect(first).toEqual(
+      expect.objectContaining({ status: 'pending', auto: false, messageId: expect.any(String) }),
+    );
+    // A second ask in the same turn joins the same card.
+    const second = (await (
+      await daemonOperation('requestAgentGrant', {
+        roomId: ROOM,
+        kind: 'host',
+        target: 'api.fly.io',
+        reason: 'reach the Fly API',
+        ttlSeconds: 3_600,
+      })
+    ).json()) as { grantId: string; status: string; messageId: string };
+    expect(second.messageId).toBe(first.messageId);
+    const cards = await database.query<{
+      author_id: string;
+      text: string;
+      mention_ids: string[];
+      presentation: string;
+      card: { grants: Array<Record<string, unknown>>; owner: { pubkey: string }; requester: { pubkey: string } };
+    }>(`SELECT author_id,text,mention_ids,presentation,card FROM messages WHERE card_type='grant-request'`);
+    expect(cards.rows).toHaveLength(1);
+    const card = cards.rows[0]!;
+    expect(card.author_id).toBe(AGENT);
+    expect(card.presentation).toBe('card');
+    expect(card.mention_ids).toEqual([HUMAN]);
+    expect(card.text).toBe(
+      'Bee asks Owner: run fly deploy -a beeline-preview --with FLY_TOKEN — publish the preview build; reach api.fly.io — reach the Fly API',
+    );
+    expect(card.card.owner.pubkey).toBe(HUMAN);
+    expect(card.card.requester.pubkey).toBe(memberId);
+    expect(card.card.grants.map((grant) => grant.status)).toEqual(['pending', 'pending']);
+    expect(card.card.grants[1]!.expiresAt).toEqual(expect.any(Number));
+    // The card is a tagged mention of the owner, so the ordinary push fires once.
+    expect(await pushes.runOnce()).toBe(1);
+    expect(send).toHaveBeenCalledWith(
+      'grant-owner-device-1234567890123456789012',
+      expect.objectContaining({
+        text: 'Bee asks Owner: run fly deploy -a beeline-preview --with FLY_TOKEN — publish the preview build; reach api.fly.io — reach the Fly API',
+      }),
+    );
+    // The phone reads the card as a validated grantRequest message.
+    const room = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as RoomView;
+    expect(isRoomView(room)).toBe(true);
+    const cardMessage = room.messages.find((message) => message.grantRequest);
+    expect(cardMessage?.grantRequest?.grants).toHaveLength(2);
+    expect(cardMessage?.mentionPubkeys).toEqual([HUMAN]);
+
+    // A plain member cannot answer; nothing changes.
+    const refused = await operation(
+      'decideAgentGrant',
+      { grantId: first.grantId, decision: 'always' },
+      memberToken,
+    );
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual({
+      error: "Only the agent's owner or a workspace admin can change this",
+    });
+    // Only pending answers are not yet on the profile.
+    const profileBefore = (await (
+      await request(`/v1/phone/workspaces/${WORKSPACE}/agents/${AGENT}`)
+    ).json()) as { grants: unknown[]; canManageGrants: boolean };
+    expect(profileBefore.grants).toEqual([]);
+    expect(profileBefore.canManageGrants).toBe(true);
+    const memberProfile = (await (
+      await request(`/v1/phone/workspaces/${WORKSPACE}/agents/${AGENT}`, 'GET', undefined, memberToken)
+    ).json()) as { canManageGrants: boolean };
+    expect(memberProfile.canManageGrants).toBe(false);
+
+    // Owner taps ONCE on the command and NO on the host.
+    const once = await operation('decideAgentGrant', { grantId: first.grantId, decision: 'once' });
+    expect(once.status).toBe(200);
+    expect(await once.json()).toEqual({ grantId: first.grantId, status: 'once', roomId: ROOM });
+    const deny = await operation('decideAgentGrant', { grantId: second.grantId, decision: 'deny' });
+    expect(await deny.json()).toEqual({ grantId: second.grantId, status: 'denied', roomId: ROOM });
+    const again = await operation('decideAgentGrant', { grantId: first.grantId, decision: 'always' });
+    expect(again.status).toBe(409);
+    // The card settled in place: same message id, per-grant outcome, decider.
+    const settled = await database.query<{ card: { grants: Array<Record<string, unknown>> } }>(
+      `SELECT card FROM messages WHERE card_type='grant-request'`,
+    );
+    expect(settled.rows).toHaveLength(1);
+    expect(settled.rows[0]!.card.grants.map((grant) => grant.status)).toEqual(['once', 'denied']);
+    expect(settled.rows[0]!.card.grants[0]!.decidedBy).toEqual(
+      expect.objectContaining({ pubkey: HUMAN, kind: 'human', name: 'Owner' }),
+    );
+    expect(settled.rows[0]!.card.grants[0]!.decidedAt).toEqual(expect.any(Number));
+    // One system line per decision wakes the daemon: it mentions the agent and
+    // reaches its inbox; it never pushes to a human.
+    const inbox = (await (
+      await daemonOperation('getRoomInbox', { roomId: ROOM, after: undefined })
+    ).json()) as { items: Array<{ type: string; body: string; mentionIds: string[]; authorId: string }> };
+    const decisions = inbox.items.filter(
+      (item) => item.type === 'system' && /\b(approved|declined)\b/.test(item.body),
+    );
+    expect(decisions.map((item) => item.body)).toEqual([
+      'Owner approved once: command fly deploy -a beeline-preview --with FLY_TOKEN',
+      'Owner declined: host api.fly.io',
+    ]);
+    expect(decisions.every((item) => item.mentionIds.includes(AGENT) && item.authorId === HUMAN)).toBe(
+      true,
+    );
+    expect(await pushes.runOnce()).toBe(0);
+    // The phone still validates the settled Room read.
+    const settledRoom = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as RoomView;
+    expect(isRoomView(settledRoom)).toBe(true);
+
+    // The daemon sees only the live once rule; consuming it spends it.
+    const rules = (await (
+      await daemonOperation('listAgentGrants', { agentId: AGENT })
+    ).json()) as { grants: Array<Record<string, unknown>> };
+    expect(rules.grants).toEqual([
+      expect.objectContaining({
+        grantId: first.grantId,
+        kind: 'command',
+        status: 'once',
+        target: 'fly deploy -a beeline-preview --with FLY_TOKEN',
+        requestedBy: memberId,
+        requestedByName: 'Member',
+      }),
+    ]);
+    expect((await daemonOperation('consumeAgentGrant', { grantId: first.grantId })).status).toBe(200);
+    expect((await daemonOperation('consumeAgentGrant', { grantId: first.grantId })).status).toBe(404);
+    expect(
+      ((await (await daemonOperation('listAgentGrants', { agentId: AGENT })).json()) as {
+        grants: unknown[];
+      }).grants,
+    ).toEqual([]);
+
+    // ALWAYS makes a durable rule the profile lists and the owner can revoke.
+    const third = (await (
+      await daemonOperation('requestAgentGrant', {
+        roomId: ROOM,
+        kind: 'command',
+        target: 'npm test',
+        reason: 'run the suite',
+      })
+    ).json()) as { grantId: string; messageId: string };
+    expect(third.messageId).not.toBe(first.messageId);
+    await operation('decideAgentGrant', { grantId: third.grantId, decision: 'always' });
+    const live = (await (
+      await daemonOperation('listAgentGrants', { agentId: AGENT })
+    ).json()) as { grants: Array<{ grantId: string; status: string }> };
+    expect(live.grants).toEqual([expect.objectContaining({ grantId: third.grantId, status: 'approved' })]);
+    const profile = (await (
+      await request(`/v1/phone/workspaces/${WORKSPACE}/agents/${AGENT}`)
+    ).json()) as {
+      grants: Array<{ grantId: string; status: string; decidedBy?: { name: string }; kind: string; target: string }>;
+    };
+    expect(isAgentDetailView(profile)).toBe(true);
+    expect(profile.grants.map((grant) => [grant.grantId, grant.status, grant.decidedBy?.name])).toEqual(
+      [
+        [third.grantId, 'approved', 'Owner'],
+        [second.grantId, 'denied', 'Owner'],
+        [first.grantId, 'once', 'Owner'],
+      ],
+    );
+    const memberRevoke = await operation('revokeAgentGrant', { grantId: third.grantId }, memberToken);
+    expect(memberRevoke.status).toBe(403);
+    const revoked = await operation('revokeAgentGrant', { grantId: third.grantId });
+    expect(await revoked.json()).toEqual({ grantId: third.grantId, status: 'revoked', roomId: ROOM });
+    expect(
+      ((await (await daemonOperation('listAgentGrants', { agentId: AGENT })).json()) as {
+        grants: unknown[];
+      }).grants,
+    ).toEqual([]);
+    expect((await operation('revokeAgentGrant', { grantId: third.grantId })).status).toBe(409);
+  });
+
+  it('approves grants on the spot under yolo with auto=true and no card, except budget which always asks', async () => {
+    await database.query(`UPDATE agents SET yolo_mode=true WHERE agent_id=$1`, [AGENT]);
+    const auto = (await (
+      await daemonOperation('requestAgentGrant', {
+        roomId: ROOM,
+        kind: 'secret',
+        target: 'FLY_TOKEN',
+        reason: 'deploy',
+      })
+    ).json()) as Record<string, unknown>;
+    expect(auto).toEqual({ grantId: expect.any(String), status: 'approved', auto: true });
+    const rows = await database.query<{ status: string; auto: boolean; decided_by: string | null }>(
+      `SELECT status,auto,decided_by FROM agent_grants WHERE id::text=$1`,
+      [auto.grantId as string],
+    );
+    expect(rows.rows).toEqual([{ status: 'approved', auto: true, decided_by: null }]);
+    const lines = await database.query<{ text: string; presentation: string; mention_ids: string[]; author_id: string }>(
+      `SELECT text,presentation,mention_ids,author_id FROM messages WHERE room_id=$1 AND card_type IN ('grant-request','grant-auto')`,
+      [ROOM],
+    );
+    expect(lines.rows).toEqual([
+      {
+        text: 'auto-approved under yolo: secret FLY_TOKEN · asked by Owner',
+        presentation: 'system',
+        mention_ids: [],
+        author_id: AGENT,
+      },
+    ]);
+    const profile = (await (
+      await request(`/v1/phone/workspaces/${WORKSPACE}/agents/${AGENT}`)
+    ).json()) as { grants: Array<{ auto: boolean; status: string; decidedBy?: unknown }> };
+    expect(profile.grants).toEqual([
+      expect.objectContaining({ auto: true, status: 'approved' }),
+    ]);
+    expect(profile.grants[0]!.decidedBy).toBeUndefined();
+    // Budget still asks: a pending card, not an auto approval.
+    const budget = (await (
+      await daemonOperation('requestAgentGrant', {
+        roomId: ROOM,
+        kind: 'budget',
+        target: '$10 of API spend',
+        reason: 'more tokens',
+      })
+    ).json()) as Record<string, unknown>;
+    expect(budget).toEqual(
+      expect.objectContaining({ status: 'pending', auto: false, messageId: expect.any(String) }),
+    );
+  });
+
 });
 
 function next(socket: WebSocket, type: string): Promise<Record<string, unknown>> {

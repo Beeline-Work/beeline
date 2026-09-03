@@ -35,6 +35,14 @@ import {
 } from 'node:fs';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { createInterface } from 'node:readline';
+import {
+  AGENT_GRANT_KINDS,
+  AGENT_GRANT_REASON_MAX_LENGTH,
+  AGENT_GRANT_TARGET_MAX_LENGTH,
+  AGENT_GRANT_VERBS,
+  isAgentGrantKind,
+  parseCommandGrantTarget,
+} from '@beeline/api-contract/agent-grants';
 import { READ_ONLY_TOOL_NAMES } from './read-only-policy.js';
 
 type JsonObject = Record<string, unknown>;
@@ -306,6 +314,55 @@ const AGENT_TOOLS: ToolDefinition[] = [
           type: 'string',
           description: 'Path of the file inside your checkout or worktree.',
           maxLength: 1024,
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'request_grant',
+    description:
+      'Raise your hand for reach outside the sandbox: kind path|host|secret|device|budget|command with one target and the reason. Under yolo it is approved at once; otherwise a card goes to your owner and your turn pauses on it: tell the human what you are waiting for and end the turn, you are woken when they answer. A command target is the exact line you want to run, no shell metacharacters; name secrets with a `--with SECRET_NAME` suffix.',
+    inputSchema: {
+      type: 'object',
+      required: ['kind', 'target', 'reason'],
+      properties: {
+        kind: { type: 'string', enum: [...AGENT_GRANT_KINDS] },
+        target: {
+          type: 'string',
+          minLength: 1,
+          maxLength: AGENT_GRANT_TARGET_MAX_LENGTH,
+          description:
+            'What you need: a path, a host, a secret name, a device, a budget, or the exact command line (with optional `--with SECRET_NAME` suffixes).',
+        },
+        reason: {
+          type: 'string',
+          minLength: 1,
+          maxLength: AGENT_GRANT_REASON_MAX_LENGTH,
+          description: 'One sentence: what you will do with it.',
+        },
+        ttl: {
+          type: 'integer',
+          minimum: 60,
+          description: 'Optional lifetime in seconds after which the grant expires.',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'run_granted_command',
+    description:
+      'Run a command under an approved command grant. The daemon runs it outside the sandbox in your checkout only when an approved grant is a word-for-word prefix of argv; the named secrets are in its environment and never in the output. Ten-minute timeout, capped output, one ledger row per run.',
+    inputSchema: {
+      type: 'object',
+      required: ['argv'],
+      properties: {
+        argv: {
+          type: 'array',
+          minItems: 1,
+          items: { type: 'string', minLength: 1 },
+          description: 'The command and its arguments as separate words.',
         },
       },
       additionalProperties: false,
@@ -1140,6 +1197,108 @@ export async function deleteSchedule(
   return `Schedule ${scheduleId} deleted.`;
 }
 
+
+export interface AgentGrantDeps {
+  roomId: string;
+  execute: (name: string, input: JsonObject) => Promise<JsonObject>;
+}
+
+export function agentGrantDepsFromEnv(): AgentGrantDeps {
+  return { roomId: agentScheduleRoomId(), execute: daemonExecute };
+}
+
+/** request_grant: one ask, one kind, one target; the server decides yolo vs card. */
+export async function requestGrant(
+  args: JsonObject,
+  deps: AgentGrantDeps = agentGrantDepsFromEnv(),
+): Promise<string> {
+  const kind = stringArg(args, 'kind');
+  if (!isAgentGrantKind(kind)) {
+    throw new Error(`kind must be one of ${AGENT_GRANT_KINDS.join(', ')}`);
+  }
+  const rawTarget = stringArg(args, 'target');
+  const target = kind === 'command' ? (rawTarget ?? '') : (rawTarget ?? '').trim();
+  if (!target) throw new Error('target must be a non-empty string');
+  if (target.length > AGENT_GRANT_TARGET_MAX_LENGTH) throw new Error('target is too long');
+  if (kind === 'command') parseCommandGrantTarget(target);
+  const reason = stringArg(args, 'reason')?.trim();
+  if (!reason) throw new Error('reason must be a non-empty string');
+  if (reason.length > AGENT_GRANT_REASON_MAX_LENGTH) throw new Error('reason is too long');
+  const ttl = args.ttl;
+  if (ttl !== undefined && (typeof ttl !== 'number' || !Number.isInteger(ttl) || ttl < 60)) {
+    throw new Error('ttl must be an integer number of seconds, at least 60');
+  }
+  const result = await deps.execute('requestAgentGrant', {
+    roomId: deps.roomId,
+    kind,
+    target,
+    reason,
+    ...(ttl !== undefined ? { ttlSeconds: ttl } : {}),
+  });
+  const grantId = typeof result.grantId === 'string' ? result.grantId : 'unknown';
+  const ask = `${AGENT_GRANT_VERBS[kind]} ${target}`;
+  if (result.auto === true) {
+    return kind === 'command'
+      ? `approved (yolo): ${ask} [grant ${grantId}]. Run it now with run_granted_command and the argv.`
+      : `approved (yolo): ${ask} [grant ${grantId}]; applies at the agent's next session.`;
+  }
+  return (
+    `pending, card posted: ${ask} [grant ${grantId}]. Your owner must answer ALWAYS, ONCE, or NO in this Room; ` +
+    'your turn is paused on this grant. Tell the human what you are waiting for and end your turn now; ' +
+    'you will be woken with the answer.'
+  );
+}
+
+export interface GrantRunDeps {
+  roomId: string;
+  run: (input: { roomId: string; argv: string[] }) => Promise<JsonObject>;
+}
+
+export function grantRunDepsFromEnv(): GrantRunDeps {
+  return {
+    roomId: agentScheduleRoomId(),
+    run: async (input) => {
+      const baseUrl = requiredEnv('BEELINE_GRANT_RUNNER_URL');
+      const response = await fetch(new URL('/run', `${baseUrl}/`), {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${requiredEnv('BEELINE_GRANT_RUNNER_TOKEN')}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify(input),
+      });
+      const body = (await response.json().catch(() => ({}))) as JsonObject;
+      if (!response.ok) {
+        throw new Error(
+          typeof body.error === 'string' ? body.error : `grant runner failed (${response.status})`,
+        );
+      }
+      return body;
+    },
+  };
+}
+
+/** run_granted_command: the daemon checks the rule and runs outside the sandbox. */
+export async function runGrantedCommand(
+  args: JsonObject,
+  deps: GrantRunDeps = grantRunDepsFromEnv(),
+): Promise<string> {
+  const argv = args.argv;
+  if (!Array.isArray(argv) || argv.length === 0 || !argv.every((word) => typeof word === 'string' && word)) {
+    throw new Error('argv must be a non-empty array of words');
+  }
+  const result = await deps.run({ roomId: deps.roomId, argv: argv as string[] });
+  const grantId = typeof result.grantId === 'string' ? result.grantId : 'unknown';
+  const verdict =
+    result.timedOut === true
+      ? 'timed out after 10 minutes'
+      : typeof result.exitCode === 'number'
+        ? `exit ${result.exitCode}`
+        : `did not start${typeof result.signal === 'string' ? ` (${result.signal})` : ''}`;
+  const output = typeof result.output === 'string' && result.output ? result.output : '(no output)';
+  return `ran under grant ${grantId}: ${verdict}\n${output}`;
+}
+
 async function daemonUploadMedia(
   bytes: Buffer,
   mimeType: string,
@@ -1182,6 +1341,10 @@ async function callAgentTool(name: string, args: JsonObject): Promise<string> {
       return listSchedules();
     case 'delete_schedule':
       return deleteSchedule(args);
+    case 'request_grant':
+      return requestGrant(args);
+    case 'run_granted_command':
+      return runGrantedCommand(args);
     default:
       throw new Error(`tool is not available on the agent surface: ${name}`);
   }

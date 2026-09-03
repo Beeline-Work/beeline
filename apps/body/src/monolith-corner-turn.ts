@@ -1,10 +1,18 @@
 import { execFile } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { promisify } from 'node:util';
-import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
+import type { DaemonAttachment, DaemonOperationMap } from '@beeline/api-contract/daemon';
 import { AcpClient, type McpServerWire, type ToolCallEntry } from './acp.js';
 import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
+import {
+  attachmentImageBlocks,
+  attachmentPromptLines,
+  deliverAttachments,
+  promptWithImages,
+  type DeliveredAttachment,
+} from './attachment-delivery.js';
 import { stripAgentReplyPreamble } from './reply-sanitizer.js';
 import { beelineAgentMcpServer } from './room-session.js';
 import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
@@ -226,6 +234,8 @@ export interface MonolithCornerTurnOptions {
   onFailure(retryInMs: number): void;
   onCloseRequested(): Promise<void>;
   createAcpClient?: (options: ConstructorParameters<typeof AcpClient>[0]) => AcpClient;
+  /** Attachment downloads (test seam). */
+  fetchImpl?: typeof fetch;
 }
 
 /**
@@ -249,6 +259,8 @@ export class MonolithCornerTurnLoop {
   private forcedStop = false;
   private draftTail = Promise.resolve();
   private activityTail = Promise.resolve();
+  /** Session scratch directory attachments are downloaded into (`TMPDIR/beeline-attachments`). */
+  private attachmentDir?: string;
 
   constructor(private readonly options: MonolithCornerTurnOptions) {
     this.agent = runtimeIdentity(options.runtime.agent);
@@ -322,6 +334,7 @@ export class MonolithCornerTurnLoop {
     );
     const operatorHome = this.options.config.operatorHome ?? homedir();
     const { stateDirs, tmpDir } = harnessStateDirsFromEnv(agentEnv);
+    this.attachmentDir = tmpDir ? join(tmpDir, 'beeline-attachments') : undefined;
     const homeStateDirs = harnessHomeStateDirs(command, agentEnv.HOME ?? operatorHome);
     await Promise.all(homeStateDirs.map((dir) => mkdir(dir, { recursive: true })));
     const spawnCommand = wrapAgentCommand({
@@ -424,7 +437,11 @@ export class MonolithCornerTurnLoop {
     };
   }
 
-  private async prompt(requestId: string, trigger: string): Promise<void> {
+  private async prompt(
+    requestId: string,
+    trigger: string,
+    attachments: readonly DaemonAttachment[] = [],
+  ): Promise<void> {
     const { api, cornerId } = this.options;
     await api.execute('postAgentTurnReceipt', {
       agentId: this.agent.publicKey,
@@ -440,9 +457,16 @@ export class MonolithCornerTurnLoop {
         async () => {
           if (this.forcedStop) throw new Error('corner turn stopped for daemon handoff');
           this.busy = true;
-          const [conversation, roster] = await Promise.all([
+          const [conversation, roster, delivered] = await Promise.all([
             api.execute('getRoomConversation', { roomId: cornerId, limit: 200 }),
             this.roster(),
+            this.attachmentDir && attachments.length
+              ? deliverAttachments(
+                  attachments,
+                  join(this.attachmentDir, requestId.replace(/[^\w-]/g, '_')),
+                  this.options.fetchImpl,
+                )
+              : Promise.resolve<DeliveredAttachment[]>([]),
           ]);
           const names = new Map(roster.members.map((member) => [member.identityId, member.name]));
           const transcript = conversation.items
@@ -456,7 +480,9 @@ export class MonolithCornerTurnLoop {
             this.turnIdentityInstructions,
             `Corner objective:\n${this.options.objective}`,
             transcript ? `Corner transcript:\n${transcript}` : '',
-            `Newest trigger:\n${trigger}`,
+            [`Newest trigger:\n${trigger}`, ...attachmentPromptLines(attachments, delivered)].join(
+              '\n',
+            ),
             'Continue the objective. Obey the PR checks and human hold rules in your session instructions.',
             MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE,
           ]
@@ -532,7 +558,10 @@ export class MonolithCornerTurnLoop {
           };
           const result = await this.client!.sessionPrompt(
             sessionId,
-            prompt,
+            promptWithImages(
+              prompt,
+              attachmentImageBlocks(delivered, this.client!.canPromptWithImages()),
+            ),
             120_000,
             (_delta, full) => {
               postNarrationSegments(full);
@@ -657,7 +686,7 @@ export class MonolithCornerTurnLoop {
                 principalId: item.authorId,
               });
               if (!authority.member || authority.principalKind !== 'human') continue;
-              await this.prompt(item.id, item.body);
+              await this.prompt(item.id, item.body, item.attachments);
               pollWithoutWait = true;
               continue;
             }

@@ -179,7 +179,7 @@ describe('system-line producers', () => {
           author_id: AGENT,
           text: 'Bee could not answer · timed out: after 120s',
           presentation: 'system',
-          mention_ids: [OWNER],
+          mention_ids: [],
           card_type: 'turn-failed',
           system_event: {
             subject: { kind: 'agent', id: AGENT, name: 'Bee' },

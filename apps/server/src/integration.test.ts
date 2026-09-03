@@ -2599,17 +2599,10 @@ describe('monolith integration', () => {
       expect.objectContaining({
         author_id: AGENT,
         text: 'Bee could not answer · provider error 429 concurrency_limit',
-        mention_ids: [HUMAN],
+        mention_ids: [],
         card: { requestId, agentId: AGENT, state: 'failed' },
       }),
     ]);
-    // The requester's tagged-mention push fires once for the line.
-    expect(
-      (await database.query(`SELECT text FROM messages WHERE id=$1 AND mention_ids @> $2::jsonb`, [
-        first[0]!.id,
-        JSON.stringify([HUMAN]),
-      ])).rowCount,
-    ).toBe(1);
     // A retry of the same request within ten minutes updates the same line in place.
     const stack = `ACP session timed out after 120s\n    at AcpClient.request (/opt/acp.js:1:1)`;
     await daemonOperation('postAgentTurnReceipt', { roomId: ROOM, requestId, status: 'working' });

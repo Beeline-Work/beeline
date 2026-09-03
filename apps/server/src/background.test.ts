@@ -6,6 +6,8 @@ import {
   type LeaderConnection,
 } from './background.js';
 import { migrate } from './database.js';
+import { DaemonService } from './daemon-service.js';
+import { LiveHub } from './live.js';
 import { PgliteDatabase } from './test-support.js';
 
 describe('background advisory-lock ownership', () => {

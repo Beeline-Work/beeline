@@ -1874,6 +1874,9 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     ).resolves.toEqual(
       expect.objectContaining({
         soul: { name: 'Terra', instructions: 'Vishnu, destroyer of worlds.' },
+        // The yolo switch reaches the runtime as a plain flag; slice 1 carries
+        // it only, the grant loop reads it.
+        yoloMode: false,
       }),
     );
     await expect(

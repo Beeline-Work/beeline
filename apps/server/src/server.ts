@@ -3,7 +3,11 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { SqlDatabase } from './database.js';
 import { bearer, type TokenAuth } from './auth.js';
-import { PHONE_OPERATION_NAMES, type PhoneService } from './phone-service.js';
+import {
+  PHONE_OPERATION_NAMES,
+  YOLO_AUTHORITY_MESSAGE,
+  type PhoneService,
+} from './phone-service.js';
 import { DAEMON_OPERATION_NAMES, type DaemonService } from './daemon-service.js';
 import type { LiveHub } from './live.js';
 
@@ -95,7 +99,9 @@ export function createBeelineServer(options: ServerOptions): Server {
               message.includes('conflict') ||
               message.includes('checks are failing')
             ? 409
-            : message.includes('access denied') || message.includes('manager')
+            : message.includes('access denied') ||
+                message.includes('manager') ||
+                message.includes(YOLO_AUTHORITY_MESSAGE)
               ? 403
               : message.includes('not found')
                 ? 404

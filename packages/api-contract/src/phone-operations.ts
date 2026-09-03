@@ -30,6 +30,7 @@ export type PhoneOperationMap = {
   claimAgentPairing: { input: PairingCodeInput; output: AgentPairingClaimView };
   updateAgentSoul: { input: UpdateAgentSoulInput; output: void };
   updateAgentModelSelection: { input: UpdateAgentModelInput; output: void };
+  updateAgentYolo: { input: UpdateAgentYoloInput; output: void };
   removeAgent: { input: WorkspaceAgentInput; output: void };
   updatePersonProfile: { input: UpdatePersonProfileInput; output: PersonProfileResult };
   setRoomRepository: { input: SetRoomRepositoryInput; output: RoomRepositoryResult };
@@ -141,6 +142,7 @@ export type UpdateAgentSoulInput = WorkspaceAgentInput & {
 };
 export type UpdateAgentModelInput = WorkspaceAgentInput &
   Omit<AgentModelSelection, 'effort'> & { readonly effort?: string | null };
+export type UpdateAgentYoloInput = WorkspaceAgentInput & { readonly enabled: boolean };
 export type UpdatePersonProfileInput = {
   readonly name?: string;
   readonly handle?: string;

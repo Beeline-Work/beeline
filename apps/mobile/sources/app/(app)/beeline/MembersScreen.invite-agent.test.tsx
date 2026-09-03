@@ -44,28 +44,31 @@ vi.mock('react-native', async () => {
   return {
     Share: { share },
     ScrollView: host('ScrollView'),
+    Switch: host('Switch'),
     Text: host('Text'),
     TouchableOpacity: host('TouchableOpacity'),
     View: host('View'),
   };
 });
+const unistylesTheme = vi.hoisted(() => ({
+  buzz: {
+    bgTerminal: '#000',
+    bgRaised: '#111',
+    bgPressed: '#222',
+    textMuted: '#888',
+    textPrimary: '#fff',
+    border: '#333',
+    chrome: '#aaa',
+    accent: '#d7af5f',
+    danger: '#f00',
+  },
+}));
 vi.mock('react-native-unistyles', () => ({
   StyleSheet: {
     hairlineWidth: 1,
-    create: (factory: any) =>
-      factory({
-        buzz: {
-          bgTerminal: '#000',
-          bgRaised: '#111',
-          bgPressed: '#222',
-          textMuted: '#888',
-          textPrimary: '#fff',
-          border: '#333',
-          chrome: '#aaa',
-          danger: '#f00',
-        },
-      }),
+    create: (factory: any) => factory(unistylesTheme),
   },
+  useUnistyles: () => ({ theme: unistylesTheme }),
 }));
 vi.mock('@/constants/Typography', () => ({
   Typography: { mono: () => ({ fontFamily: 'mono' }), default: () => ({}) },

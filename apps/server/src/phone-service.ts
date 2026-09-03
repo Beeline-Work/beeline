@@ -772,9 +772,23 @@ export class PhoneService {
         model_catalog: AgentDetailView['catalog'];
         selected_model: string | null;
         selected_effort: string | null;
-      }>(`SELECT soul,model_catalog,selected_model,selected_effort FROM agents WHERE agent_id=$1`, [
-        agentId,
-      ])
+        yolo_mode: boolean;
+        yolo_set_by_name: string | null;
+        yolo_set_at: Date | null;
+        can_change_yolo: boolean;
+      }>(
+        `SELECT a.soul,a.model_catalog,a.selected_model,a.selected_effort,a.yolo_mode,a.yolo_set_at,
+                setter.name yolo_set_by_name,
+                (a.owner_id=$3 OR EXISTS (
+                  SELECT 1 FROM memberships m
+                  WHERE m.workspace_id=$2 AND m.room_id IS NULL AND m.identity_id=$3
+                    AND m.role IN ('owner','admin') AND m.removed_at IS NULL
+                )) can_change_yolo
+         FROM agents a
+         LEFT JOIN identities setter ON setter.id=a.yolo_set_by
+         WHERE a.agent_id=$1`,
+        [agentId, workspaceId, viewerId],
+      )
     ).rows[0];
     return {
       workspaceId,
@@ -798,6 +812,12 @@ export class PhoneService {
             },
           }
         : {}),
+      yolo: {
+        enabled: config?.yolo_mode ?? false,
+        ...(config?.yolo_set_by_name ? { setBy: { name: config.yolo_set_by_name } } : {}),
+        ...(config?.yolo_set_at ? { setAt: unix(config.yolo_set_at) } : {}),
+        canChange: config?.can_change_yolo ?? false,
+      },
       watchFilters: [],
     };
   }
@@ -1086,6 +1106,9 @@ export class PhoneService {
         return undefined as Output<Name>;
       case 'updateAgentModelSelection':
         await this.updateAgentModel(input as Input<'updateAgentModelSelection'>, viewerId);
+        return undefined as Output<Name>;
+      case 'updateAgentYolo':
+        await this.updateAgentYolo(input as Input<'updateAgentYolo'>, viewerId);
         return undefined as Output<Name>;
       case 'removeAgent':
         await this.removeAgent(input as Input<'removeAgent'>, viewerId);
@@ -1838,6 +1861,64 @@ export class PhoneService {
     );
   }
   /**
+   * The agent "yolo" switch. Authorization is decided here, never on the phone:
+   * the viewer must be the agent's owner (the identity that connected it) or
+   * hold a manager role in the agent's Workspace. A flip posts one system line
+   * to every live Room the agent is in so the change is visible where the
+   * agent works; the line carries no mention and never pushes.
+   */
+  private async updateAgentYolo(input: Input<'updateAgentYolo'>, viewerId: string) {
+    if (typeof input.enabled !== 'boolean') throw new Error('enabled is required');
+    const agent = (
+      await this.database.query<{ owner_id: string; agent_name: string; viewer_name: string }>(
+        `SELECT a.owner_id,agent.name agent_name,viewer.name viewer_name
+         FROM agents a
+         JOIN identities agent ON agent.id=a.agent_id
+         JOIN memberships m ON m.identity_id=a.agent_id
+           AND m.workspace_id=$2 AND m.room_id IS NULL AND m.removed_at IS NULL
+         JOIN identities viewer ON viewer.id=$3
+         WHERE a.agent_id=$1`,
+        [input.agentId, input.workspaceId, viewerId],
+      )
+    ).rows[0];
+    if (!agent) throw new Error('agent not found in workspace');
+    const manager = await this.database.query(
+      `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND role IN ('owner','admin') AND removed_at IS NULL`,
+      [input.workspaceId, viewerId],
+    );
+    if (agent.owner_id !== viewerId && !manager.rowCount) throw new Error(YOLO_AUTHORITY_MESSAGE);
+    await this.database.transaction(async (database) => {
+      const changed = await database.query(
+        `UPDATE agents SET yolo_mode=$2,yolo_set_by=$3,yolo_set_at=now(),updated_at=now()
+         WHERE agent_id=$1 AND yolo_mode<>$2`,
+        [input.agentId, input.enabled, viewerId],
+      );
+      if (!changed.rowCount) return;
+      const rooms = await database.query<{ room_id: string }>(
+        `SELECT m.room_id FROM memberships m
+         JOIN rooms r ON r.id=m.room_id
+         WHERE m.identity_id=$1 AND m.room_id IS NOT NULL AND m.removed_at IS NULL
+           AND r.workspace_id=$2 AND r.archived_at IS NULL`,
+        [input.agentId, input.workspaceId],
+      );
+      const text = input.enabled
+        ? `${agent.viewer_name} turned yolo on for ${agent.agent_name} · grant requests are now approved automatically`
+        : `${agent.viewer_name} turned yolo off for ${agent.agent_name} · grant requests now ask before running`;
+      for (const room of rooms.rows)
+        await database.query(
+          `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
+           VALUES($1,$2,$3,$4,'system','agent-yolo',$5::jsonb)`,
+          [
+            randomBytes(32).toString('hex'),
+            room.room_id,
+            viewerId,
+            text,
+            JSON.stringify({ agentId: input.agentId, enabled: input.enabled }),
+          ],
+        );
+    });
+  }
+  /**
    * Roll back an agent registration whose connect helper never came up. Only
    * an agent that has NEVER reported presence is unrealizable: anything else
    * is a real daemon and must be removed by a human through removeAgent.
@@ -2277,10 +2358,9 @@ export class PhoneService {
         ).rows.map((row) => projectedMessage(row, this.publicOrigin))
       : [];
     const byId = new Map(
-      collapsePermissionCards([
-        ...transcript.reverse(),
-        ...liveActivity.reverse(),
-      ]).map((message) => [message.id, message]),
+      collapsePermissionCards([...transcript.reverse(), ...liveActivity.reverse()]).map(
+        (message) => [message.id, message],
+      ),
     );
     const merged = [...byId.values()].sort(
       (left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id),
@@ -2311,6 +2391,9 @@ export class PhoneService {
   }
 }
 
+/** Plain refusal for a yolo flip by anyone but the agent owner or a Workspace manager. */
+export const YOLO_AUTHORITY_MESSAGE = "Only the agent's owner or a workspace admin can change this";
+
 export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'sendRoomMessage',
   'sendRoomReply',
@@ -2336,6 +2419,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'claimAgentPairing',
   'updateAgentSoul',
   'updateAgentModelSelection',
+  'updateAgentYolo',
   'removeAgent',
   'updatePersonProfile',
   'setRoomRepository',

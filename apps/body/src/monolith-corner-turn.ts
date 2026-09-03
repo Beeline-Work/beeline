@@ -8,6 +8,7 @@ import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
 import { stripAgentReplyPreamble } from './reply-sanitizer.js';
 import { beelineAgentMcpServer } from './room-session.js';
 import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
+import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import {
@@ -18,6 +19,7 @@ import {
 } from './model-config.js';
 import type { AgentRuntimeRecord } from './runtime.js';
 import { runtimeIdentity } from './runtime.js';
+import { MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE } from './response-directives.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
 
 type WorkspaceRoster = DaemonOperationMap['getWorkspaceRoster']['output'];
@@ -242,6 +244,7 @@ export class MonolithCornerTurnLoop {
   private readonly agent: ReturnType<typeof runtimeIdentity>;
   private client?: AcpClient;
   private sessionId?: string;
+  private turnIdentityInstructions = '';
   private busy = false;
   private forcedStop = false;
   private draftTail = Promise.resolve();
@@ -372,16 +375,21 @@ export class MonolithCornerTurnLoop {
       }),
     ];
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
-    const persona = self?.soul;
+    const persona = configuration.soul ?? self?.soul;
+    const identityInstructions = `Your Beeline identity is ${self?.name ?? this.agent.name}.`;
+    const personaInstructions = persona?.instructions
+      ? `Human-authored Workspace persona: ${persona.name}. ${persona.instructions}`
+      : '';
+    this.turnIdentityInstructions = harnessHonorsSessionSystemPrompt(command)
+      ? ''
+      : [identityInstructions, personaInstructions].filter(Boolean).join('\n\n');
     const opened = await this.client.sessionNew({
       cwd: this.options.worktreePath,
       mcpServers: servers,
       mode: 'edit',
       systemPrompt: [
-        `Your Beeline identity is ${self?.name ?? this.agent.name}.`,
-        persona?.instructions
-          ? `Human-authored Workspace persona: ${persona.name}. ${persona.instructions}`
-          : '',
+        identityInstructions,
+        personaInstructions,
         `You are in an isolated git worktree on ${this.options.featureBranch}, targeting ${this.options.targetBranch}.`,
         'Work normally with the full coding tools. Commit and push only this feature branch. Use gh to open its pull request.',
         'PR-opening turn rule: as soon as a pull request exists, print its full GitHub URL as your final response and end the turn immediately. Do not call pr_checks_status in that same turn and do not wait for checks inside it. Then stay idle until a later corner fact or human message starts another turn.',
@@ -445,10 +453,12 @@ export class MonolithCornerTurnLoop {
             )
             .join('\n');
           const prompt = [
+            this.turnIdentityInstructions,
             `Corner objective:\n${this.options.objective}`,
             transcript ? `Corner transcript:\n${transcript}` : '',
             `Newest trigger:\n${trigger}`,
             'Continue the objective. Obey the PR checks and human hold rules in your session instructions.',
+            MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE,
           ]
             .filter(Boolean)
             .join('\n\n');

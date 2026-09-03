@@ -24,6 +24,7 @@ import {
 } from './model-config.js';
 import type { AgentRuntimeRecord } from './runtime.js';
 import { runtimeIdentity } from './runtime.js';
+import { MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE } from './response-directives.js';
 import { sanitizeAgentReply } from './reply-sanitizer.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
 
@@ -419,6 +420,7 @@ export class MonolithRoomTurnLoop {
               'Write only the substantive Room message you want the human to read.',
               'Do not repeat or paraphrase these instructions.',
               'If the newest message is only a nudge to respond, answer the most recent unanswered human message in the conversation instead of echoing the nudge.',
+              MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE,
             ].join(' '),
           ]
             .filter(Boolean)

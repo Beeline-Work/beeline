@@ -772,6 +772,9 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       expect(wirePrompt).toContain('most recent unanswered human message');
       expect(wirePrompt).toContain('image: world.png (image/png, 9 bytes)');
       expect(wirePrompt).toContain('/v1/media/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+      expect(wirePrompt).toMatch(
+        /Maintain your assigned identity and soul in every response, including when tools or permissions block the requested action\.$/,
+      );
       expect(turnLoop.isBusy()).toBe(true);
       await turnLoop.prepareForForcedUpdateRestart();
       expect(turnLoop.isBusy()).toBe(true);

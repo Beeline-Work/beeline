@@ -3,6 +3,8 @@ import {
   brass,
   brassSpinner,
   collectConnectWizard,
+  connectModelPickerFromAxes,
+  connectPlainFailure,
   defaultConnectModel,
   requestConnectGrant,
   runConnectFinishCommand,
@@ -214,6 +216,8 @@ describe('connect wizard', () => {
           options: [{ id: 'z-ai/glm-5.3-flash', name: 'GLM 5.3 Flash' }],
         }),
         { read: async () => undefined, save: async () => {} },
+        process.env,
+        async () => undefined,
       ),
     ).resolves.toEqual({
       name: 'Piper',
@@ -259,6 +263,8 @@ describe('connect wizard', () => {
           options: [{ id: 'z-ai/glm-5.3-flash', name: 'GLM 5.3 Flash' }],
         }),
         keyStore,
+        process.env,
+        async () => undefined,
       ),
     ).resolves.toEqual({
       name: 'Piper',
@@ -304,6 +310,8 @@ describe('connect wizard', () => {
           options: [{ id: 'z-ai/glm-5.3-flash', name: 'GLM 5.3 Flash' }],
         }),
         keyStore,
+        process.env,
+        async () => undefined,
       ),
     ).resolves.toMatchObject({ apiKey: 'sk-or-v1-freshfreshfresh7' });
     expect(keyStore.save).toHaveBeenCalledWith('openrouter', 'sk-or-v1-freshfreshfresh7');
@@ -332,6 +340,7 @@ describe('connect wizard', () => {
         }),
         keyStore,
         { OPENROUTER_API_KEY: 'sk-or-v1-envenvenvenv0' },
+        async () => undefined,
       ),
     ).resolves.toMatchObject({ apiKey: 'sk-or-v1-envenvenvenv0' });
     expect(keyStore.save).not.toHaveBeenCalled();
@@ -349,5 +358,85 @@ describe('connect wizard', () => {
     await expect(runConnectFinishCommand('/does/not/matter.json')).rejects.toThrow(
       /canonical installed Beeline launcher/,
     );
+  });
+
+  it('verifies a provider key right after the key step and aborts with the provider sentence', async () => {
+    const fixture = promptFixture(['goose', 'google', 'b', 'Gemini', 'Bright.']);
+    const verifyKey = vi.fn(async (input: { provider: string; apiKey: string }) => {
+      throw new Error('Google rejected the key (400).');
+    });
+    await expect(
+      collectConnectWizard(
+        fixture.prompts,
+        async () => ({ options: [{ id: 'gemini-2.5-pro' }] }),
+        { read: async () => undefined, save: async () => {} },
+        process.env,
+        verifyKey as never,
+      ),
+    ).rejects.toThrow('Google rejected the key (400).');
+    expect(verifyKey).toHaveBeenCalledWith({ provider: 'google', apiKey: 'b' });
+    // The catalog step is never reached with an unverified key.
+    expect(fixture.calls.map((call) => call.split(':', 1)[0])).toEqual([
+      'select',
+      'select',
+      'password',
+    ]);
+  });
+
+  it('keeps goose model picking alive when the credential filter empties the catalog', () => {
+    // goose advertises a provider-agnostic builtin list it routes through the
+    // configured provider; the credential filter (held: openrouter) keeps only
+    // `openrouter/…` ids, so the filtered axis is empty. The raw axis must win.
+    const picker = connectModelPickerFromAxes(
+      [
+        {
+          category: 'model',
+          currentValue: 'z-ai/glm-5.3-flash',
+          options: [
+            { id: 'z-ai/glm-5.3-flash' },
+            { id: 'anthropic/claude-opus-4.1' },
+            { id: 'google/gemini-2.5-pro' },
+          ],
+        },
+        { category: 'thought_level', currentValue: 'off', options: [{ id: 'off' }] },
+      ],
+      'z-ai/glm-5.3-flash',
+      'goose',
+    );
+    expect(picker.options.map((option) => option.id)).toEqual([
+      'z-ai/glm-5.3-flash',
+      'anthropic/claude-opus-4.1',
+      'google/gemini-2.5-pro',
+    ]);
+    expect(picker.currentValue).toBe('z-ai/glm-5.3-flash');
+    expect(picker.note).toBeUndefined();
+  });
+
+  it('falls back to the provider default model with a note when a harness enumerates nothing', () => {
+    const picker = connectModelPickerFromAxes(
+      [{ category: 'model', options: [] }],
+      'z-ai/glm-5.3-flash',
+      'goose',
+    );
+    expect(picker).toEqual({
+      currentValue: 'z-ai/glm-5.3-flash',
+      options: [{ id: 'z-ai/glm-5.3-flash' }],
+      note: 'goose did not enumerate models; offering the provider default',
+    });
+  });
+
+  it('collapses any connect finish failure into one plain sentence without a stack', () => {
+    const stacked = Object.assign(
+      new Error(
+        'model "gemini-2.5-pro" is unavailable. Choose one of the values in the live harness catalog.\n'
+          + '    at applyAgentModelSelection (model-config.ts:501)\n'
+          + '    at completeDevicePairing (device-pairing.ts:68)',
+      ),
+      { name: 'ModelSelectionUnavailableError' },
+    );
+    expect(connectPlainFailure(stacked)).toBe(
+      'Connecting your agent failed: model "gemini-2.5-pro" is unavailable. Choose one of the values in the live harness catalog.',
+    );
+    expect(connectPlainFailure('boom')).toBe('Connecting your agent failed: boom');
   });
 });

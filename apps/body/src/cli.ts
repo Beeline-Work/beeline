@@ -462,6 +462,15 @@ main().catch(async (err) => {
   const interactiveUi = process.argv[2] !== 'daemon' && Boolean(stdin.isTTY && stdout.isTTY);
   if (interactiveUi) {
     clack.cancel(err instanceof Error ? err.message : String(err));
+  } else if (
+    err instanceof Error &&
+    err.name === 'ConnectFailureError' &&
+    (process.argv[2] === 'connect' || process.argv[2] === 'connect-finish')
+  ) {
+    // A human is on the other end of the connect wizard even though this
+    // child has no TTY (the parent spawns it with pipes). One plain sentence,
+    // never a stack — the wizard surfaces this line verbatim.
+    console.error(pc.red(err.message));
   } else {
     console.error(pc.red('[body] fatal:'), err);
   }

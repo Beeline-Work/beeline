@@ -51,6 +51,7 @@ import {
   conversationIdentityByPubkey,
   displayRoomMessages,
   mergeDisplayPages,
+  foldSettledActivityRuns,
   roomViewTranscriptMessages,
   type ChatDisplayMessage,
   cornerSummaries,
@@ -649,9 +650,12 @@ export default function BuzzChat() {
   );
   // Open on the tail; older history reveals from what's already resident here
   // first, then pages in from the relay once that's exhausted.
+  // A corner turn's per-call activity rows read back as one collapsed group
+  // per turn; the window and paging count those groups, not the raw rows.
+  const foldedMessages = useMemo(() => foldSettledActivityRuns(combinedMessages), [combinedMessages]);
   const unprojectedMessages = useMemo(
-    () => visibleTranscriptWindow(combinedMessages, visibleMessageCount),
-    [combinedMessages, visibleMessageCount],
+    () => visibleTranscriptWindow(foldedMessages, visibleMessageCount),
+    [foldedMessages, visibleMessageCount],
   );
   // `parentChannelId` is often learned after the cold tail lands. At that
   // point expand to the full already-fetched corner page; older pages remain
@@ -674,7 +678,7 @@ export default function BuzzChat() {
   const loadOlderTranscriptMessages = useCallback(() => {
     if (loadingOlderMessages) return;
     const visibleRowCount = visibleTranscriptWindow(
-      combinedMessages,
+      foldedMessages,
       Number.MAX_SAFE_INTEGER,
     ).length;
     if (visibleMessageCount < visibleRowCount) {
@@ -705,6 +709,7 @@ export default function BuzzChat() {
     cacheViewerPubkey,
     combinedMessages,
     decodedId,
+    foldedMessages,
     loadingOlderMessages,
     roomClient,
     roomSurface,

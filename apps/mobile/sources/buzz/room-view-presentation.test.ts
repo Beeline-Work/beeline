@@ -6,6 +6,7 @@ import {
   createRoomMessageProjector,
   displayRoomMessage,
   displayRoomMessages,
+  foldSettledActivityRuns,
   mergeDisplayPages,
   roomViewTranscriptMessages,
   type ChatDisplayMessage,
@@ -258,5 +259,84 @@ describe('Room view presentation', () => {
       text: 'Step narration-1: updating only the ledger.',
     });
     expect(narrationRow).not.toHaveProperty('isAgentActivity');
+  });
+
+  it('folds a settled run of per-call tool rows from one agent into one group (C55)', () => {
+    const agent = 'b'.repeat(64);
+    const other = 'c'.repeat(64);
+    const human = 'a'.repeat(64);
+    const toolRow = (
+      id: string,
+      createdAt: number,
+      status: 'completed' | 'failed',
+      pubkey = agent,
+    ): RoomViewMessage => ({
+      id,
+      text: '',
+      createdAt,
+      author: { pubkey, kind: 'agent', name: 'Bee' },
+      presentation: 'activity',
+      activity: [{ kind: 'tool', title: 'Bash', operation: 'execute', command: id, status }],
+    });
+    const six = [
+      toolRow('t1', 1, 'completed'),
+      toolRow('t2', 2, 'completed'),
+      toolRow('t3', 3, 'failed'),
+      toolRow('t4', 4, 'failed'),
+      toolRow('t5', 5, 'failed'),
+      toolRow('t6', 6, 'failed'),
+    ];
+    const display = (rows: RoomViewMessage[]) => displayRoomMessages(rows, human);
+
+    const one = foldSettledActivityRuns(display(six));
+    expect(one).toHaveLength(1);
+    expect(one[0]).toMatchObject({ id: 't1', timestamp: 1, isAgentActivity: true, pubkey: agent });
+    expect(one[0].activity?.map((item) => item.command)).toEqual(['t1', 't2', 't3', 't4', 't5', 't6']);
+    expect(one[0].activity?.filter((item) => item.status === 'failed')).toHaveLength(4);
+
+    const steer: RoomViewMessage = {
+      id: 'steer',
+      text: 'try again',
+      createdAt: 3.5,
+      author: { pubkey: human, kind: 'human', name: 'Ann' },
+      presentation: 'message',
+    };
+    const split = foldSettledActivityRuns(
+      display([...six.slice(0, 3), steer, ...six.slice(3)]),
+    );
+    expect(split.map((row) => [row.id, row.activity?.length ?? 0])).toEqual([
+      ['t1', 3],
+      ['steer', 0],
+      ['t4', 3],
+    ]);
+
+    const otherAgent = foldSettledActivityRuns(
+      display([...six.slice(0, 2), toolRow('x1', 2.5, 'completed', other), ...six.slice(2)]),
+    );
+    expect(otherAgent.map((row) => [row.id, row.activity?.length ?? 0])).toEqual([
+      ['t1', 2],
+      ['x1', 1],
+      ['t3', 4],
+    ]);
+
+    const draft = {
+      id: 'live-turn:req',
+      text: 'Drafting…',
+      isUser: false,
+      timestamp: 3.5,
+      pubkey: agent,
+      isAgentAuthor: true,
+      isAgentActivity: true,
+      isAgentLiveTurn: true,
+      isAgentDraft: true,
+      agentMessageDraft: 'Drafting…',
+    };
+    const displayed = display(six);
+    const withDraft = foldSettledActivityRuns([...displayed.slice(0, 3), draft, ...displayed.slice(3)]);
+    expect(withDraft.map((row) => [row.id, row.activity?.length ?? 0])).toEqual([
+      ['t1', 6],
+      ['live-turn:req', 0],
+    ]);
+    expect(withDraft[1]).toBe(draft);
   });
 });

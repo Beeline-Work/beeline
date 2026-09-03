@@ -1,5 +1,6 @@
 import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
+import { join } from 'node:path';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
 import { SCHEDULED_PROMPT_PREFIX, SCHEDULE_SCHEDULER_NAME } from '@beeline/api-contract/scheduled-prompts';
 import {
@@ -10,6 +11,14 @@ import {
 } from './acp.js';
 import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
 import { isSenderPermitted, LEGACY_ACCESS_POLICY } from './access-policy.js';
+import {
+  attachmentImageBlocks,
+  attachmentPromptLines,
+  deliverAttachments,
+  promptWithImages,
+  withoutImageData,
+  type DeliveredAttachment,
+} from './attachment-delivery.js';
 import { beelineCapabilityContextForHarness } from './beeline-skill.js';
 import { beelineAgentMcpServer, readOnlyMcpServer } from './room-session.js';
 import { isMountedMcpToolPermissionRequest, isSquireMcpPermissionRequest } from './read-only-policy.js';
@@ -158,6 +167,8 @@ export interface MonolithRoomTurnOptions {
   pollMs?: number;
   createAcpClient?: (options: ConstructorParameters<typeof AcpClient>[0]) => AcpClient;
   onCornerOpened?: () => void;
+  /** Attachment downloads (test seam). */
+  fetchImpl?: typeof fetch;
 }
 
 /**
@@ -176,6 +187,10 @@ export class MonolithRoomTurnLoop {
   private draftTail = Promise.resolve();
   private activeTurn?: ActiveTurn;
   private readonly queuedTurns: HumanMessage[] = [];
+  /** Session scratch directory attachments are downloaded into (`TMPDIR/beeline-attachments`). */
+  private attachmentDir?: string;
+  /** Local copies already delivered this session, by message id, so transcript renders reuse them. */
+  private readonly deliveredAttachments = new Map<string, DeliveredAttachment[]>();
 
   constructor(private readonly options: MonolithRoomTurnOptions) {
     this.agent = runtimeIdentity(options.runtime.agent);
@@ -217,6 +232,20 @@ export class MonolithRoomTurnLoop {
     });
   }
 
+  /** Download a message's attachments into the session scratch directory once. */
+  private async deliver(item: HumanMessage): Promise<DeliveredAttachment[]> {
+    if (!item.attachments.length || !this.attachmentDir) return [];
+    const cached = this.deliveredAttachments.get(item.id);
+    if (cached) return cached;
+    const delivered = await deliverAttachments(
+      item.attachments,
+      join(this.attachmentDir, item.id.replace(/[^\w-]/g, '_')),
+      this.options.fetchImpl,
+    );
+    this.deliveredAttachments.set(item.id, withoutImageData(delivered));
+    return delivered;
+  }
+
   private async activate(): Promise<string> {
     if (this.client?.isAlive && this.sessionId) return this.sessionId;
     const [configuration, roster, repositoryState] = await Promise.all([
@@ -256,6 +285,7 @@ export class MonolithRoomTurnLoop {
     );
     const operatorHome = this.options.config.operatorHome ?? homedir();
     const { stateDirs, tmpDir } = harnessStateDirsFromEnv(agentEnv);
+    this.attachmentDir = tmpDir ? join(tmpDir, 'beeline-attachments') : undefined;
     const homeStateDirs = harnessHomeStateDirs(command, agentEnv.HOME ?? operatorHome);
     await Promise.all(homeStateDirs.map((dir) => mkdir(dir, { recursive: true })));
     const spawnCommand = wrapAgentCommand({
@@ -381,7 +411,7 @@ export class MonolithRoomTurnLoop {
       .catch(() => undefined)
       .then(async () => {
         try {
-          const roster = await this.roster();
+          const [roster, delivered] = await Promise.all([this.roster(), this.deliver(item)]);
           const author =
             roster.members.find((member) => member.identityId === item.authorId)?.name ??
             item.authorId.slice(0, 12);
@@ -389,7 +419,7 @@ export class MonolithRoomTurnLoop {
             this.sessionId!,
             [
               `Human steer received while the current turn is running from ${author}:`,
-              roomMessagePrompt('', item.body, item.attachments),
+              roomMessagePrompt('', item.body, item.attachments, delivered),
               'Adjust the current work now. Keep the original request and earlier messages as context.',
             ].join('\n\n'),
           );
@@ -428,9 +458,10 @@ export class MonolithRoomTurnLoop {
         this.options.roomId,
         this.lifecycle(),
         async () => {
-          const [conversation, roster] = await Promise.all([
+          const [conversation, roster, delivered] = await Promise.all([
             api.execute('getRoomConversation', { roomId: this.options.roomId, limit: 200 }),
             this.roster(),
+            this.deliver(item),
           ]);
           const names = new Map(roster.members.map((member) => [member.identityId, member.name]));
           const transcript = conversation.items
@@ -446,6 +477,7 @@ export class MonolithRoomTurnLoop {
                 names.get(message.authorId) ?? message.authorId.slice(0, 12),
                 message.body,
                 message.attachments,
+                this.deliveredAttachments.get(message.id),
               ),
             )
             .join('\n');
@@ -457,7 +489,7 @@ export class MonolithRoomTurnLoop {
                 ? SCHEDULE_SCHEDULER_NAME
                 : (names.get(item.authorId) ?? item.authorId.slice(0, 12))
             }:`,
-            roomMessagePrompt('', item.body, item.attachments),
+            roomMessagePrompt('', item.body, item.attachments, delivered),
             [
               'Write only the substantive Room message you want the human to read.',
               'Do not repeat or paraphrase these instructions.',
@@ -472,7 +504,10 @@ export class MonolithRoomTurnLoop {
           // reply with the same request id arrives. Keep this id stable through both
           // sides of that handoff so a delayed retract cannot render two bubbles.
           const turnId = item.id;
-          let nextPrompt = prompt;
+          let nextPrompt = promptWithImages(
+            prompt,
+            attachmentImageBlocks(delivered, this.client!.canPromptWithImages()),
+          );
           let result: Awaited<ReturnType<AcpClient['sessionPrompt']>> | undefined;
           for (;;) {
             let promptError: unknown;
@@ -524,6 +559,7 @@ export class MonolithRoomTurnLoop {
                   steerItem.authorId.slice(0, 12),
                   steerItem.body,
                   steerItem.attachments,
+                  this.deliveredAttachments.get(steerItem.id),
                 ),
               ),
               'Continue now and answer the updated request without erasing the earlier context.',
@@ -665,21 +701,11 @@ function roomMessagePrompt(
   author: string,
   body: string,
   attachments: RoomMessage['attachments'],
+  delivered?: readonly DeliveredAttachment[],
 ): string {
   const message = body.trim() || '(shared attachments)';
   const rendered = author ? `${author}: ${message}` : message;
-  if (!attachments.length) return rendered;
-  return [
-    rendered,
-    'Attachments available to this turn (use the capability URL when the task requires the file):',
-    ...attachments.map((attachment) => {
-      const kind = attachment.mimeType?.startsWith('image/') ? 'image' : 'file';
-      const metadata = [attachment.mimeType, attachment.size ? `${attachment.size} bytes` : '']
-        .filter(Boolean)
-        .join(', ');
-      return `- ${kind}: ${attachment.name ?? 'attachment'}${metadata ? ` (${metadata})` : ''}: ${attachment.url}`;
-    }),
-  ].join('\n');
+  return [rendered, ...attachmentPromptLines(attachments, delivered)].join('\n');
 }
 
 async function wait(ms: number, signal?: AbortSignal): Promise<void> {

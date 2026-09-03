@@ -153,13 +153,10 @@ function daemonFactCard(
     };
   }
   if (markerSet(values).has('corner-open')) {
-    const name = text(tag(values, 'name'));
-    if (!name) return undefined;
     return {
       type: 'corner-open',
       cornerId,
       objective,
-      name,
     };
   }
   return undefined;
@@ -767,8 +764,7 @@ export function cornerItem(data: Json, latest?: RoomViewMessage): CornerListItem
   const lifecycle = cornerLifecycle(data);
   const corner = header(data);
   const latestTurnStatus = text(data.latestTurnStatus);
-  const hasLiveWorkingTurn =
-    latestTurnStatus === 'working' && lifecycle.lifecycle !== 'done';
+  const hasLiveWorkingTurn = latestTurnStatus === 'working' && lifecycle.lifecycle !== 'done';
   const agentData = {
     pubkey: data.agentPubkey,
     name: data.agentName,
@@ -779,12 +775,7 @@ export function cornerItem(data: Json, latest?: RoomViewMessage): CornerListItem
   return {
     corner,
     lifecycle,
-    status:
-      lifecycle.lifecycle === 'done'
-        ? 'closed'
-        : hasLiveWorkingTurn
-          ? 'working'
-          : 'idle',
+    status: lifecycle.lifecycle === 'done' ? 'closed' : hasLiveWorkingTurn ? 'working' : 'idle',
     statusAt: hasLiveWorkingTurn ? integer(data.latestTurnCreatedAt) : corner.updatedAt,
     ...(text(data.agentPubkey) ? { agent: identity(agentData) } : {}),
     ...(latest

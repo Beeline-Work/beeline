@@ -1,15 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash, createHmac } from 'node:crypto';
-import {
-  access,
-  chmod,
-  mkdir,
-  mkdtemp,
-  readFile,
-  rm,
-  symlink,
-  writeFile,
-} from 'node:fs/promises';
+import { access, chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -123,10 +114,9 @@ describe('daemon API client against the local monolith', () => {
       if (!agentCommand || !readonlyMcpCommand) {
         throw new Error('real Room capability proof requires agent and read-only MCP commands');
       }
-      await database.query(
-        `INSERT INTO identities(id,kind,name) VALUES($1,'agent','Codex')`,
-        [PEER_AGENT],
-      );
+      await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Codex')`, [
+        PEER_AGENT,
+      ]);
       await database.query(
         `INSERT INTO agents(agent_id,owner_id,soul,selected_model,selected_effort,model_catalog)
          VALUES($1,$2,$3::jsonb,NULL,NULL,'[]'::jsonb)`,
@@ -160,12 +150,7 @@ describe('daemon API client against the local monolith', () => {
         [ROOM, `file://${process.cwd()}`],
       );
 
-      const makeCore = async (
-        agentId: string,
-        secret: Uint8Array,
-        name: string,
-        root: string,
-      ) => {
+      const makeCore = async (agentId: string, secret: Uint8Array, name: string, root: string) => {
         await mkdir(root, { recursive: true });
         const exchange = await auth.createDaemonExchange(agentId);
         const exchanged = await fetch(`${origin}/v1/auth/daemon/exchange`, {
@@ -766,9 +751,9 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         'beeline-agent',
       ]);
       expect(
-        sessionNew.mock.calls[0]![0].mcpServers
-          ?.flatMap((server) => server.env ?? [])
-          .map((entry) => entry.name),
+        sessionNew.mock.calls[0]![0].mcpServers?.flatMap((server) => server.env ?? []).map(
+          (entry) => entry.name,
+        ),
       ).not.toEqual(expect.arrayContaining(['GH_TOKEN', 'GITHUB_TOKEN']));
       const wirePrompt = sessionPrompt.mock.calls[0]![1];
       expect(wirePrompt).toContain('This is who you are in this Workspace.');
@@ -980,8 +965,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       const corner = await client.execute('createCorner', {
         roomId: ROOM,
         requestId: 'a'.repeat(64),
-        name: 'Live steering proof',
-        task: 'Prove live steering reaches a running corner harness session.',
+        objective: 'Prove live steering reaches a running corner harness session.',
       });
       const configPath = join(supervisorRoot, 'runtime.json');
       const runtime: AgentRuntimeRecord = {

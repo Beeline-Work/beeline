@@ -747,7 +747,7 @@ export default function BuzzChannels() {
                             style={styles.cornerRow}
                             testID={`room-corner-${corner.corner.id}`}
                           >
-                            <Text numberOfLines={1} style={styles.cornerName}>
+                            <Text style={styles.cornerName}>
                               └ {label}
                             </Text>
                             <Text style={styles.cornerStatus}>{status}</Text>

@@ -563,9 +563,10 @@ export class DaemonService {
         request_id: string | null;
         close_requested: boolean;
         lifecycle: import('@beeline/api-contract/phone').CornerLifecycleView;
-      }>(`SELECT feature_branch,request_id,close_requested,lifecycle FROM corner_facts WHERE corner_id=$1`, [
-        cornerId,
-      ])
+      }>(
+        `SELECT feature_branch,request_id,close_requested,lifecycle FROM corner_facts WHERE corner_id=$1`,
+        [cornerId],
+      )
     ).rows[0];
     return {
       cornerId,
@@ -699,23 +700,22 @@ export class DaemonService {
     );
     const now = Date.now();
     const daemons = result.rows.map((row) => {
-        const observedAt = row.body?.observedAt;
-        const fresh =
-          typeof observedAt === 'number' && Math.abs(now - observedAt * 1_000) <= 90_000;
-        const state = !row.body
-          ? 'never-seen'
-          : row.body.status !== 'online'
-            ? 'offline'
-            : fresh
-              ? 'ready'
-              : 'stale';
-        return {
-          agentPubkey: row.agent_id,
-          state,
-          ...(typeof observedAt === 'number' ? { observedAt } : {}),
-          ...(row.body?.releaseVersion ? { version: row.body.releaseVersion } : {}),
-          ...(row.body?.sourceSha ? { sha: row.body.sourceSha } : {}),
-        };
+      const observedAt = row.body?.observedAt;
+      const fresh = typeof observedAt === 'number' && Math.abs(now - observedAt * 1_000) <= 90_000;
+      const state = !row.body
+        ? 'never-seen'
+        : row.body.status !== 'online'
+          ? 'offline'
+          : fresh
+            ? 'ready'
+            : 'stale';
+      return {
+        agentPubkey: row.agent_id,
+        state,
+        ...(typeof observedAt === 'number' ? { observedAt } : {}),
+        ...(row.body?.releaseVersion ? { version: row.body.releaseVersion } : {}),
+        ...(row.body?.sourceSha ? { sha: row.body.sourceSha } : {}),
+      };
     });
     const summary = { total: 0, ready: 0, neverSeen: 0 };
     for (const daemon of daemons) {
@@ -879,10 +879,10 @@ export class DaemonService {
         ],
       );
       if (pending.length)
-        await database.query(`DELETE FROM agent_pending_attachments WHERE room_id=$1 AND agent_id=$2`, [
-          input.roomId,
-          agentId,
-        ]);
+        await database.query(
+          `DELETE FROM agent_pending_attachments WHERE room_id=$1 AND agent_id=$2`,
+          [input.roomId, agentId],
+        );
       // A durable final Room reply is also the turn's terminal proof. This
       // makes the Room view settle even if the daemon is interrupted before
       // its redundant explicit complete receipt reaches the server.
@@ -892,11 +892,7 @@ export class DaemonService {
            VALUES($1,$2,$3,'complete',NULL)
            ON CONFLICT(room_id,request_id,agent_id) DO UPDATE SET
              status='complete',created_at=now()`,
-          [
-            input.roomId,
-            input.requestId,
-            agentId,
-          ],
+          [input.roomId, input.requestId, agentId],
         );
       }
     });
@@ -912,7 +908,11 @@ export class DaemonService {
       throw new Error('attachment is required');
     if (typeof attachment.url !== 'string' || typeof attachment.name !== 'string')
       throw new Error('attachment url and name are required');
-    if (typeof attachment.size !== 'number' || !Number.isSafeInteger(attachment.size) || attachment.size <= 0)
+    if (
+      typeof attachment.size !== 'number' ||
+      !Number.isSafeInteger(attachment.size) ||
+      attachment.size <= 0
+    )
       throw new Error('attachment size is invalid');
     if (attachment.name.length > 512) throw new Error('attachment name is too long');
     if (typeof attachment.mimeType !== 'string' || attachment.mimeType.length > 255)
@@ -934,7 +934,14 @@ export class DaemonService {
     await this.database.query(
       `INSERT INTO agent_pending_attachments(room_id,agent_id,url,name,mime_type,size)
        VALUES($1,$2,$3,$4,$5,$6)`,
-      [input.roomId, agentId, attachment.url, attachment.name, attachment.mimeType, attachment.size],
+      [
+        input.roomId,
+        agentId,
+        attachment.url,
+        attachment.name,
+        attachment.mimeType,
+        attachment.size,
+      ],
     );
     return this.writeResult();
   }
@@ -1319,6 +1326,14 @@ export class DaemonService {
     return { id: messageId, createdAt: Math.floor(Date.now() / 1000) };
   }
   private async createCorner(input: Input<'createCorner'>, agentId: string) {
+    const objective = input.objective;
+    if (
+      !objective ||
+      objective !== objective.trim() ||
+      /\s{2,}|[\r\n\t]/.test(objective) ||
+      objective.split(' ').length > 24
+    )
+      throw new Error('corner objective must be one trimmed paragraph of at most 24 words');
     await this.access(input.roomId, agentId);
     const parent = (
       await this.database.query<{ workspace_id: string }>(
@@ -1335,7 +1350,7 @@ export class DaemonService {
           parent.workspace_id,
           input.roomId,
           agentId,
-          input.name,
+          objective,
           input.repository ?? null,
           input.targetBranch ?? 'main',
         ],
@@ -1354,7 +1369,7 @@ export class DaemonService {
       );
       await db.query(
         `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,request_id,lifecycle) VALUES($1,$2,$3,$4,'{"lifecycle":"working","checks":"unknown"}')`,
-        [cornerId, agentId, input.summary, input.requestId],
+        [cornerId, agentId, objective, input.requestId],
       );
       // One durable open marker in the parent Room; the phone renders this as
       // a daemon-fact card and the push rule fires on it.
@@ -1368,8 +1383,7 @@ export class DaemonService {
           JSON.stringify({
             type: 'corner-open',
             cornerId,
-            name: input.name,
-            objective: input.summary.trim() || input.name,
+            objective,
           }),
         ],
       );

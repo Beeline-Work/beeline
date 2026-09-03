@@ -317,13 +317,7 @@ export const DaemonFactCard = React.memo(function DaemonFactCard({
           : 'WORKTREE CLEANED';
   return (
     <RepositoryFactCard
-      title={
-        landedCorner
-          ? `MERGED · ${fact.name ?? 'CORNER'}`
-          : fact.type === 'corner-open'
-            ? fact.name!
-            : fact.objective
-      }
+      title={landedCorner ? `MERGED · ${fact.objective}` : fact.objective}
       body={body}
       actionLabel={
         fact.type === 'corner-complete' && fact.pullRequest

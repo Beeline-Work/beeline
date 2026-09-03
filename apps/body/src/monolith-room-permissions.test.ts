@@ -22,7 +22,11 @@ describe('top-level Room MCP permission policy', () => {
         toolCall: {
           kind: 'execute',
           title: 'mcp.beeline-agent.open_corner',
-          rawInput: { server: 'beeline-agent', tool: 'open_corner', arguments: { summary: 'Fix it.' } },
+          rawInput: {
+            server: 'beeline-agent',
+            tool: 'open_corner',
+            arguments: { objective: 'Fix it.' },
+          },
         },
       }),
     ).toBe('allow');

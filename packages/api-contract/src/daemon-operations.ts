@@ -324,9 +324,8 @@ export type PostTargetBranchProposalInput = RoomInput & {
 };
 export type CreateCornerInput = RoomInput & {
   readonly requestId: string;
-  readonly name: string;
-  /** Immutable one-paragraph statement of what this corner is meant to accomplish. */
-  readonly summary: string;
+  /** Immutable one-paragraph objective, limited to 24 whitespace-delimited words. */
+  readonly objective: string;
   readonly repository?: string;
   readonly targetBranch?: string;
 };

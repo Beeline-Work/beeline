@@ -616,9 +616,11 @@ describe('monolith integration', () => {
     });
     expect(sent.status).toBe(200);
     const readChats = async () =>
-      ((await (await request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
-        chats: Array<{ room: { id: string }; unread: boolean }>;
-      }).chats.find((chat) => chat.room.id === ROOM)!;
+      (
+        (await (await request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
+          chats: Array<{ room: { id: string }; unread: boolean }>;
+        }
+      ).chats.find((chat) => chat.room.id === ROOM)!;
     expect((await readChats()).unread).toBe(false);
 
     await daemonOperation('postRoomMessage', {
@@ -628,11 +630,11 @@ describe('monolith integration', () => {
     });
     expect((await readChats()).unread).toBe(true);
 
-    const agentMessage = ((await (
-      await request(`/v1/phone/rooms/${ROOM}`)
-    ).json()) as { messages: Array<{ id: string; text: string }> }).messages.find(
-      (message) => message.text === 'Agent reply',
-    );
+    const agentMessage = (
+      (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as {
+        messages: Array<{ id: string; text: string }>;
+      }
+    ).messages.find((message) => message.text === 'Agent reply');
     expect(
       (await request(`/v1/phone/rooms/${ROOM}/read`, 'POST', { messageId: agentMessage!.id }))
         .status,
@@ -746,8 +748,7 @@ describe('monolith integration', () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'tool-corner',
-      name: 'Tool ledger',
-      summary: 'Tool ledger',
+      objective: 'Tool ledger',
     });
     expect(created.status).toBe(200);
     const { cornerId } = (await created.json()) as { cornerId: string };
@@ -850,8 +851,7 @@ describe('monolith integration', () => {
     // only activity row that survives.
     expect(
       corner.messages.filter(
-        (message) =>
-          message.presentation === 'activity' && message.activity?.[0]?.kind !== 'tool',
+        (message) => message.presentation === 'activity' && message.activity?.[0]?.kind !== 'tool',
       ),
     ).toEqual([]);
     expect(corner.messages).toContainEqual(
@@ -1580,16 +1580,21 @@ describe('monolith integration', () => {
       mimeType: 'text/plain',
       size: 16,
     });
-    expect(await (await fetch(`${origin}/v1/daemon/media`, { method: 'POST', body: 'x' })).status).toBe(
-      401,
-    );
+    expect(
+      await (
+        await fetch(`${origin}/v1/daemon/media`, { method: 'POST', body: 'x' })
+      ).status,
+    ).toBe(401);
 
     // 2. Only media owned by the authenticated agent may be queued.
     expect(
       (
         await daemonOperation('postAgentAttachment', {
           roomId: ROOM,
-          attachment: { ...attachment, url: `${origin}/v1/media/22222222-2222-4222-8222-222222222222` },
+          attachment: {
+            ...attachment,
+            url: `${origin}/v1/media/22222222-2222-4222-8222-222222222222`,
+          },
         })
       ).status,
     ).toBe(503);
@@ -1887,8 +1892,7 @@ describe('monolith integration', () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'corner-request',
-      name: 'Ship widget',
-      summary: 'Ship widget',
+      objective: 'Ship widget',
       repository: 'owner/widgets',
       targetBranch: 'main',
     });
@@ -2062,7 +2066,9 @@ describe('monolith integration', () => {
         })
       ).status,
     ).toBe(200);
-    const cornerAfterDaemonRestart = (await (await request(`/v1/phone/rooms/${cornerId}`)).json()) as {
+    const cornerAfterDaemonRestart = (await (
+      await request(`/v1/phone/rooms/${cornerId}`)
+    ).json()) as {
       cornerLifecycle: {
         lifecycle: string;
         checks: string;
@@ -2083,10 +2089,10 @@ describe('monolith integration', () => {
     });
     // Corners hit by the pre-fix restart have already lost their PR payload. The next
     // pull-request webhook must recover them by their durable feature branch.
-    await database.query(
-      `UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
-      [cornerId, JSON.stringify({ branch: 'fm/widget', checks: 'unknown', lifecycle: 'working' })],
-    );
+    await database.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+      cornerId,
+      JSON.stringify({ branch: 'fm/widget', checks: 'unknown', lifecycle: 'working' }),
+    ]);
     await webhook('pull_request', 'corner-pr-recovery', {
       ...base,
       action: 'synchronize',
@@ -2100,7 +2106,9 @@ describe('monolith integration', () => {
         merged: false,
       },
     });
-    const cornerAfterWebhookRecovery = (await (await request(`/v1/phone/rooms/${cornerId}`)).json()) as {
+    const cornerAfterWebhookRecovery = (await (
+      await request(`/v1/phone/rooms/${cornerId}`)
+    ).json()) as {
       cornerLifecycle: { lifecycle: string; pr?: { url: string; mergeability?: string } };
     };
     expect(cornerAfterWebhookRecovery.cornerLifecycle).toMatchObject({
@@ -2236,8 +2244,7 @@ describe('monolith integration', () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'single-owner-corner',
-      name: 'Only Bee serves this',
-      summary: 'Only Bee serves this',
+      objective: 'Only Bee serves this',
     });
     expect(created.status).toBe(200);
     const { cornerId } = (await created.json()) as { cornerId: string };
@@ -2396,7 +2403,9 @@ describe('monolith integration', () => {
       daemonToken,
     );
     expect(withheldTrigger.status).toBe(400);
-    await expect(withheldTrigger.json()).resolves.toEqual({ error: 'turn trigger is invalid for agent' });
+    await expect(withheldTrigger.json()).resolves.toEqual({
+      error: 'turn trigger is invalid for agent',
+    });
     expect(
       (
         await database.query<{ count: string }>(
@@ -2460,7 +2469,9 @@ describe('monolith integration', () => {
       mentionIds: [],
     });
     expect(finalReply.status).toBe(200);
-    expect((await new PhoneService(database, origin).readRoom(ROOM, HUMAN))?.latestAgentTurns).toContainEqual(
+    expect(
+      (await new PhoneService(database, origin).readRoom(ROOM, HUMAN))?.latestAgentTurns,
+    ).toContainEqual(
       expect.objectContaining({ requestId, agentPubkey: AGENT, status: 'complete' }),
     );
   });
@@ -2648,7 +2659,10 @@ describe('monolith integration', () => {
     expect(await loop.runOnce()).toBe(1);
     expect(send).toHaveBeenCalledWith(
       'owner-device-token-12345678901234567890',
-      expect.objectContaining({ roomId: ROOM, text: 'Bee: @Owner Repository root files: README.md' }),
+      expect.objectContaining({
+        roomId: ROOM,
+        text: 'Bee: @Owner Repository root files: README.md',
+      }),
     );
   });
 
@@ -2690,8 +2704,7 @@ describe('monolith integration', () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'corner-complete-tag-turn',
-      name: 'Ship widget',
-      summary: 'Ship the widget end to end',
+      objective: 'Ship the widget end to end',
     });
     expect(created.status).toBe(200);
     const { cornerId } = (await created.json()) as { cornerId: string };
@@ -2724,8 +2737,7 @@ describe('monolith integration', () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'corner-open-card',
-      name: 'Ship widget',
-      summary: 'Ship the widget end to end',
+      objective: 'Ship the widget end to end',
     });
     expect(created.status).toBe(200);
     const { cornerId } = (await created.json()) as { cornerId: string };
@@ -2738,7 +2750,14 @@ describe('monolith integration', () => {
     expect(cards.rows[0]!.card).toEqual({
       type: 'corner-open',
       cornerId,
-      name: 'Ship widget',
+      objective: 'Ship the widget end to end',
+    });
+    const corner = await database.query<{ name: string; objective: string }>(
+      `SELECT r.name,cf.objective FROM rooms r JOIN corner_facts cf ON cf.corner_id=r.id WHERE r.id=$1`,
+      [cornerId],
+    );
+    expect(corner.rows[0]).toEqual({
+      name: 'Ship the widget end to end',
       objective: 'Ship the widget end to end',
     });
     expect(await loop.runOnce()).toBe(1);
@@ -2746,6 +2765,20 @@ describe('monolith integration', () => {
       'owner-device-token-12345678901234567890',
       expect.objectContaining({ text: 'Bee opened a corner: Ship the widget end to end' }),
     );
+  });
+
+  it('rejects an open-corner objective longer than 24 words', async () => {
+    const response = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'corner-objective-too-long',
+      objective: Array.from({ length: 25 }, (_, index) => `word${index + 1}`).join(' '),
+    });
+    expect(response.status).toBe(503);
+    const corners = await database.query(
+      `SELECT id FROM rooms WHERE parent_id=$1 AND name LIKE 'word1 %'`,
+      [ROOM],
+    );
+    expect(corners.rows).toEqual([]);
   });
 
   it('defaults a connect-wizard soul stored without avatarSeed to the pubkey and passes the detail guard', async () => {

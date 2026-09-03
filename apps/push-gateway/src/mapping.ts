@@ -49,9 +49,10 @@ export type PushNotificationType =
   'mention' | 'direct-message' | 'pull-request-opened' | 'actionable-failure';
 
 const MESSAGE_PREVIEW_LENGTH = 120;
-function normalizedDisplayText(value: string | undefined, maxLength: number): string | undefined {
+function normalizedDisplayText(value: string | undefined, maxLength?: number): string | undefined {
   const normalized = value?.trim().replace(/\s+/g, ' ');
-  return normalized ? [...normalized].slice(0, maxLength).join('') : undefined;
+  if (!normalized) return undefined;
+  return maxLength === undefined ? normalized : [...normalized].slice(0, maxLength).join('');
 }
 
 export function formatMessagePreview(content: string): string {
@@ -200,7 +201,7 @@ export function mapEventToNotification(
   const bodyMessage = showMessagePreview && preview ? preview : 'New message';
   const composedTitle = locationTitle(
     normalizedDisplayText(context.parentRoomName, 80),
-    normalizedDisplayText(context.cornerName, 80),
+    normalizedDisplayText(context.cornerName),
     resolvedRoomName,
   );
   const cornerId =

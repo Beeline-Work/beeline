@@ -262,7 +262,10 @@ const AGENT_TOOLS: ToolDefinition[] = [
       type: 'object',
       required: ['scheduleId'],
       properties: {
-        scheduleId: { type: 'string', description: 'The scheduleId from create_schedule or list_schedules.' },
+        scheduleId: {
+          type: 'string',
+          description: 'The scheduleId from create_schedule or list_schedules.',
+        },
       },
       additionalProperties: false,
     },
@@ -270,17 +273,16 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'open_corner',
     description:
-      'Open one write-enabled repository corner with a fixed task summary. The host creates the branch, isolated worktree, scoped GitHub credentials, and corner session.',
+      'Open one write-enabled repository corner with a fixed objective of no more than 24 words. The objective is used verbatim on every summary surface.',
     inputSchema: {
       type: 'object',
-      required: ['summary'],
+      required: ['objective'],
       properties: {
-        summary: {
+        objective: {
           type: 'string',
           minLength: 1,
           maxLength: 2000,
-          description:
-            'One paragraph stating the complete, fixed objective the corner agent should carry out.',
+          description: 'One paragraph of at most 24 words stating the complete, fixed objective.',
         },
       },
       additionalProperties: false,
@@ -839,19 +841,16 @@ async function daemonExecute(name: string, input: JsonObject): Promise<JsonObjec
   return (await response.json()) as JsonObject;
 }
 
-function taskName(summary: string): string {
-  return (
-    summary.split(/\r?\n/, 1)[0]!.replace(/\s+/g, ' ').trim().slice(0, 80) || 'Repository task'
-  );
-}
-
 async function openCorner(args: JsonObject): Promise<string> {
   if (process.env.BEELINE_DAEMON_CORNER_ID || process.env.BEELINE_AGENT_DM === '1') {
     throw new Error('open_corner is available only in a top-level Room');
   }
-  const summary = stringArg(args, 'summary')?.replace(/\s+/g, ' ').trim();
-  if (!summary) throw new Error('summary must be a non-empty string');
-  if (summary.length > 2000) throw new Error('summary exceeds 2000 characters');
+  const objective = stringArg(args, 'objective');
+  if (!objective?.trim()) throw new Error('objective must be a non-empty string');
+  if (objective !== objective.trim() || /\s{2,}|[\r\n\t]/.test(objective))
+    throw new Error('objective must be one trimmed paragraph with single spaces');
+  if (objective.length > 2000) throw new Error('objective exceeds 2000 characters');
+  if (objective.split(' ').length > 24) throw new Error('objective exceeds 24 words');
   const roomId = requiredEnv('BEELINE_DAEMON_ROOM_ID');
   const repository = await daemonExecute('getRoomRepositoryState', { roomId });
   if (
@@ -865,8 +864,7 @@ async function openCorner(args: JsonObject): Promise<string> {
   const created = await daemonExecute('createCorner', {
     roomId,
     requestId,
-    name: taskName(summary),
-    summary,
+    objective,
     repository: repository.key,
     ...(typeof repository.targetBranch === 'string'
       ? { targetBranch: repository.targetBranch }
@@ -878,12 +876,12 @@ async function openCorner(args: JsonObject): Promise<string> {
   await daemonExecute('postRoomMessage', {
     roomId: created.cornerId,
     requestId,
-    text: summary,
+    text: objective,
     presentation: 'message',
   });
   return JSON.stringify({
     cornerId: created.cornerId,
-    objective: summary,
+    objective,
     status: 'starting',
   });
 }
@@ -962,12 +960,12 @@ export function attachFileDepsFromEnv(): AttachFileDeps {
     root: requiredEnv('BEELINE_ATTACH_ROOT'),
     baseUrl: requiredEnv('BEELINE_DAEMON_BASE_URL'),
     token: requiredEnv('BEELINE_DAEMON_TOKEN'),
-    roomId:
-      process.env.BEELINE_DAEMON_CORNER_ID?.trim() || requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+    roomId: process.env.BEELINE_DAEMON_CORNER_ID?.trim() || requiredEnv('BEELINE_DAEMON_ROOM_ID'),
     upload: (bytes, mimeType, name) => daemonUploadMedia(bytes, mimeType, name),
     queue: async (attachment) => {
       await daemonExecute('postAgentAttachment', {
-        roomId: process.env.BEELINE_DAEMON_CORNER_ID?.trim() || requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+        roomId:
+          process.env.BEELINE_DAEMON_CORNER_ID?.trim() || requiredEnv('BEELINE_DAEMON_ROOM_ID'),
         attachment,
       });
     },
@@ -1142,7 +1140,11 @@ export async function deleteSchedule(
   return `Schedule ${scheduleId} deleted.`;
 }
 
-async function daemonUploadMedia(bytes: Buffer, mimeType: string, name: string): Promise<JsonObject> {
+async function daemonUploadMedia(
+  bytes: Buffer,
+  mimeType: string,
+  name: string,
+): Promise<JsonObject> {
   const baseUrl = requiredEnv('BEELINE_DAEMON_BASE_URL');
   const response = await fetch(new URL('/v1/daemon/media', `${baseUrl}/`), {
     method: 'POST',

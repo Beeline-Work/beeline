@@ -143,6 +143,7 @@ export interface AuthServerOptions {
     agentName: string;
     model: string;
     soul: string;
+    avatarSeed?: string;
   }) => Promise<
     | {
         status: 'claimed';

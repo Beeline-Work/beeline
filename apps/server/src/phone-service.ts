@@ -417,8 +417,10 @@ export class PhoneService {
       LEFT JOIN LATERAL (SELECT * FROM messages WHERE room_id=r.id AND presentation IN ('message','system') AND author_id IS DISTINCT FROM $2 ORDER BY created_at DESC,id DESC LIMIT 1) lm_other ON true
       LEFT JOIN identities li ON li.id=lm.author_id
       LEFT JOIN room_read_marks mark ON mark.room_id=r.id AND mark.identity_id=$2
-      LEFT JOIN identities peer ON r.direct_participants IS NOT NULL
-        AND peer.id=(SELECT p FROM jsonb_array_elements_text(r.direct_participants) p WHERE p<>$2 LIMIT 1)
+      LEFT JOIN identities peer ON jsonb_typeof(r.direct_participants)='array'
+        AND peer.id=(SELECT p FROM jsonb_array_elements_text(
+          CASE WHEN jsonb_typeof(r.direct_participants)='array' THEN r.direct_participants ELSE '[]'::jsonb END
+        ) p WHERE p<>$2 LIMIT 1)
       WHERE r.workspace_id=$1 AND r.parent_id IS NULL AND r.archived_at IS NULL
       ORDER BY COALESCE(lm.created_at,r.updated_at) DESC,r.id LIMIT 201`,
       [workspaceId, viewerId],

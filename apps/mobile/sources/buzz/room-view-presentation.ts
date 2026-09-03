@@ -10,6 +10,7 @@ import type {
   RoomViewMessage,
   WorkspaceView,
 } from '@beeline/buzz-client';
+import type { SystemEvent, SystemSubject } from '@beeline/api-contract/phone';
 import type { AgentActivityItem } from '@/sync/transport';
 import type { CornerStatus, CornerSummary } from '@/buzz/corners';
 
@@ -149,6 +150,12 @@ export type ChatDisplayMessage = {
   pubkey?: string;
   isArchivedNotice?: boolean;
   isSystemNotice?: boolean;
+  /** The server-phrased event behind a system line or card header (`buzz/system-lines.ts`). */
+  systemEvent?: SystemEvent;
+  /** Every subject of a folded run of system lines, oldest first. */
+  systemSubjects?: SystemSubject[];
+  /** The ids of every row folded into this one. */
+  foldedIds?: string[];
   isAgentAuthor?: boolean;
   isAgentActivity?: boolean;
   isAgentLiveTurn?: boolean;
@@ -262,6 +269,7 @@ export function displayRoomMessage(
       ? { isAgentAuthor: true }
       : {}),
     ...(message.presentation === 'system' ? { isSystemNotice: true } : {}),
+    ...(message.systemEvent ? { systemEvent: message.systemEvent } : {}),
     ...(message.presentation === 'activity' ? { isAgentActivity: true } : {}),
     ...(message.activity ? { activity: activityItems(message) } : {}),
     ...(message.attachments ? { attachments: [...message.attachments] } : {}),

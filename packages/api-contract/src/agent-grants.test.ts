@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   commandGrantMatches,
   formatGrantDecisionLine,
-  formatYoloAutoApprovedLine,
   parseCommandGrantTarget,
   parseGrantDecisionLine,
 } from './agent-grants.js';
@@ -72,17 +71,15 @@ describe('grant decision lines', () => {
         kind: 'host',
         target: 'api.fly.io',
       }),
-    ).toBe('Charles approved once: host api.fly.io');
+    ).toBe('Charles approved once host api.fly.io');
   });
 
   it('does not mistake ordinary system lines for decisions', () => {
-    expect(parseGrantDecisionLine('Scheduled: check the deploy')).toBeUndefined();
+    expect(parseGrantDecisionLine('Beeline Scheduler ran a schedule for Bee · check the deploy')).toBeUndefined();
     expect(parseGrantDecisionLine('Owner turned yolo on for Bee')).toBeUndefined();
-    expect(parseGrantDecisionLine('Charles approved: nothing here')).toBeUndefined();
+    expect(parseGrantDecisionLine('Charles approved nothing here')).toBeUndefined();
     expect(
-      parseGrantDecisionLine(
-        formatYoloAutoApprovedLine({ kind: 'command', target: 'npm test', requesterName: 'Alex' }),
-      ),
+      parseGrantDecisionLine('Bee was granted command npm test · auto-approved under yolo'),
     ).toBeUndefined();
   });
 });

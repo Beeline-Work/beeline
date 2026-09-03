@@ -1,10 +1,8 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import type { DaemonAttachment, DaemonOperationMap } from '@beeline/api-contract/daemon';
+import type { DaemonAttachment, DaemonOperationMap, SystemEvent } from '@beeline/api-contract/daemon';
 import {
   AGENT_GRANT_REASON_MAX_LENGTH,
   AGENT_GRANT_TARGET_MAX_LENGTH,
-  AGENT_GRANT_VERBS,
-  formatYoloAutoApprovedLine,
   isAgentGrantKind,
   parseCommandGrantTarget,
   type AgentGrantKind,
@@ -12,6 +10,7 @@ import {
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
 import type { SqlDatabase } from './database.js';
 import type { LiveHub } from './live.js';
+import { restateSystemLine, systemLine, type SystemPhrase } from './system-line.js';
 
 type Input<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['input'];
 type Output<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['output'];
@@ -27,14 +26,24 @@ async function settleTurnFailureLine(
   requestId: string,
   agentId: string,
 ) {
-  await database.query(
-    `UPDATE messages SET
-       text=concat(COALESCE(NULLIF((SELECT name FROM identities WHERE id=$3),''),'The agent'),' answered after a retry'),
-       card=card||'{"state":"recovered"}'::jsonb
-     WHERE room_id=$1 AND card_type='turn-failed' AND card->>'requestId'=$2
-       AND card->>'agentId'=$3 AND card->>'state'='failed'`,
+  const failed = await database.query<{
+    id: string;
+    card: Record<string, unknown>;
+    agent_name: string;
+  }>(
+    `SELECT message.id,message.card,COALESCE(NULLIF(agent.name,''),'The agent') agent_name
+     FROM messages message JOIN identities agent ON agent.id=$3
+     WHERE message.room_id=$1 AND message.card_type='turn-failed' AND message.card->>'requestId'=$2
+       AND message.card->>'agentId'=$3 AND message.card->>'state'='failed'`,
     [roomId, requestId, agentId],
   );
+  for (const row of failed.rows)
+    await restateSystemLine(
+      database,
+      row.id,
+      { subject: { kind: 'agent', id: agentId, name: row.agent_name }, verb: 'answered after a retry' },
+      { ...row.card, state: 'recovered' },
+    );
 }
 const seconds = (date: Date) => Math.floor(date.getTime() / 1_000);
 const AGENT_TO_AGENT_HOP_CAP = 3;
@@ -433,9 +442,10 @@ export class DaemonService {
       request_id: string | null;
       attachments: DaemonAttachment[];
       cursor_ms: string;
+      system_event: SystemEvent | null;
     }>(
       `SELECT id,author_id,created_at,presentation,text,mention_ids,reply_to_message_id,
-        root_message_id,request_id,attachments,
+        root_message_id,request_id,attachments,system_event,
         floor(extract(epoch FROM created_at)*1000)::bigint cursor_ms
         FROM messages WHERE room_id=$1
           ${after ? 'AND (floor(extract(epoch FROM created_at)*1000)::bigint,id)>($2::bigint,$3)' : ''}
@@ -463,6 +473,7 @@ export class DaemonService {
         ...(row.root_message_id ? { rootMessageId: row.root_message_id } : {}),
         ...(row.request_id ? { requestId: row.request_id } : {}),
         attachments: row.attachments ?? [],
+        ...(row.system_event ? { systemEvent: row.system_event } : {}),
       })),
       ...(page.at(-1) ? { cursor: `${page.at(-1)!.cursor_ms},${page.at(-1)!.id}` } : {}),
       ...(closeRequested !== undefined ? { closeRequested } : {}),
@@ -901,7 +912,9 @@ export class DaemonService {
           input.roomId,
           agentId,
           input.text,
-          input.presentation ?? 'message',
+          // The daemon posts conversation (or a card); a system line is only
+          // ever phrased by the server (`system-line.ts`).
+          input.presentation === 'card' ? 'card' : 'message',
           input.requestId ?? null,
           JSON.stringify(input.tags ?? {}),
           JSON.stringify(
@@ -1071,26 +1084,31 @@ export class DaemonService {
       )
     ).rows[0];
     if (!trigger) return;
-    const text = `${trigger.agent_name} could not answer${reason ? ` · ${reason}` : ''}`;
-    const updated = await database.query(
-      `UPDATE messages SET text=$4 WHERE room_id=$1 AND card_type='turn-failed'
-         AND card->>'requestId'=$2 AND card->>'agentId'=$3 AND card->>'state'='failed'
-         AND created_at>now()-interval '10 minutes'`,
-      [roomId, requestId, agentId, text],
-    );
-    if (updated.rowCount) return;
-    await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text,presentation,mention_ids,card_type,card)
-       VALUES($1,$2,$3,$4,'system',$5::jsonb,'turn-failed',$6::jsonb)`,
-      [
-        id(),
-        roomId,
-        agentId,
-        text,
-        JSON.stringify([trigger.author_id]),
-        JSON.stringify({ requestId, agentId, state: 'failed' }),
-      ],
-    );
+    const phrase: SystemPhrase = {
+      subject: { kind: 'agent', id: agentId, name: trigger.agent_name },
+      verb: 'could not answer',
+      ...(reason ? { consequence: reason } : {}),
+    };
+    const recent = (
+      await database.query<{ id: string }>(
+        `SELECT id FROM messages WHERE room_id=$1 AND card_type='turn-failed'
+           AND card->>'requestId'=$2 AND card->>'agentId'=$3 AND card->>'state'='failed'
+           AND created_at>now()-interval '10 minutes'
+         ORDER BY created_at DESC,id DESC LIMIT 1`,
+        [roomId, requestId, agentId],
+      )
+    ).rows[0];
+    if (recent) {
+      await restateSystemLine(database, recent.id, phrase);
+      return;
+    }
+    await systemLine(database, {
+      roomId,
+      ...phrase,
+      mentions: [trigger.author_id],
+      cardType: 'turn-failed',
+      card: { requestId, agentId, state: 'failed' },
+    });
   }
   private async activity(input: Input<'postAgentActivity'>, agentId: string) {
     await this.access(input.roomId, agentId);
@@ -1171,26 +1189,26 @@ export class DaemonService {
         ...(agentRow.avatar ? { avatar: agentRow.avatar } : {}),
       };
       const created = id();
-      await database.query(
-        `INSERT INTO messages(id,room_id,author_id,text,presentation,request_id,card_type,card)
-         VALUES($1,$2,$3,'','card',$4,'permission',$5::jsonb)`,
-        [
-          created,
-          input.roomId,
-          agentId,
-          input.requestId,
-          JSON.stringify({
-            permissionId: input.permissionId,
-            requestId: input.requestId,
-            agent,
-            requester,
-            tool,
-            ...(repository ? { repository } : {}),
-            ...(scope.type === 'money.spend' ? { purpose: 'squire-spending' } : {}),
-            status: 'pending',
-          }),
-        ],
-      );
+      await systemLine(database, {
+        id: created,
+        roomId: input.roomId,
+        subject: { kind: 'agent', id: agentId, name: agent.name },
+        verb: `asked ${requester.name} to`,
+        object: tool,
+        presentation: 'card',
+        requestId: input.requestId,
+        cardType: 'permission',
+        card: {
+          permissionId: input.permissionId,
+          requestId: input.requestId,
+          agent,
+          requester,
+          tool,
+          ...(repository ? { repository } : {}),
+          ...(scope.type === 'money.spend' ? { purpose: 'squire-spending' } : {}),
+          status: 'pending',
+        },
+      });
       return created;
     });
     if (!messageId) throw new Error('permission request is invalid');
@@ -1412,22 +1430,24 @@ export class DaemonService {
     await this.access(input.roomId, agentId);
     const messageId = id();
     const agent = await this.identity(agentId);
-    await this.database.query(
-      `INSERT INTO messages(id,room_id,author_id,text,presentation,request_id,card_type,card) VALUES($1,$2,$3,'','card',$4,'target-branch',$5::jsonb)`,
-      [
-        messageId,
-        input.roomId,
-        agentId,
-        input.requestId,
-        JSON.stringify({
-          proposalId: messageId,
-          from: input.from,
-          to: input.to,
-          repository: input.repository,
-          agent,
-        }),
-      ],
-    );
+    await systemLine(this.database, {
+      id: messageId,
+      roomId: input.roomId,
+      subject: { kind: 'agent', id: agentId, name: agent.name },
+      verb: 'proposed a target branch',
+      object: input.to,
+      consequence: `instead of ${input.from}`,
+      presentation: 'card',
+      requestId: input.requestId,
+      cardType: 'target-branch',
+      card: {
+        proposalId: messageId,
+        from: input.from,
+        to: input.to,
+        repository: input.repository,
+        agent,
+      },
+    });
     return { id: messageId, createdAt: Math.floor(Date.now() / 1000) };
   }
 
@@ -1572,17 +1592,15 @@ export class DaemonService {
         auto,
       };
       if (auto) {
-        await database.query(
-          `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
-           VALUES($1,$2,$3,$4,'system','grant-auto',$5::jsonb)`,
-          [
-            id(),
-            input.roomId,
-            agentId,
-            formatYoloAutoApprovedLine({ kind, target, requesterName: requester.name }),
-            JSON.stringify({ grantId }),
-          ],
-        );
+        await systemLine(database, {
+          roomId: input.roomId,
+          subject: { kind: 'agent', id: agentId, name: agent.name },
+          verb: 'was granted',
+          object: `${kind} ${target}`,
+          consequence: 'auto-approved under yolo',
+          cardType: 'grant-auto',
+          card: { grantId },
+        });
         return { messageId: undefined };
       }
       // Several asks in one turn become one card: join this agent's open card
@@ -1603,27 +1621,25 @@ export class DaemonService {
         )
       ).rows[0];
       if (open) {
-        const grants = [...(open.card.grants ?? []), grantView];
-        await database.query(`UPDATE messages SET text=$2,card=$3::jsonb WHERE id=$1`, [
-          open.id,
-          grantCardText(agent.name, owner.name, grants as typeof grantView[]),
-          JSON.stringify({ agent, owner, requester, grants }),
-        ]);
+        const grants = [...(open.card.grants ?? []), grantView] as (typeof grantView)[];
+        await restateSystemLine(database, open.id, grantCardPhrase(agent, owner, grants), {
+          agent,
+          owner,
+          requester,
+          grants,
+        });
         return { messageId: open.id };
       }
       const messageId = id();
-      await database.query(
-        `INSERT INTO messages(id,room_id,author_id,text,presentation,mention_ids,card_type,card)
-         VALUES($1,$2,$3,$4,'card',$5::jsonb,'grant-request',$6::jsonb)`,
-        [
-          messageId,
-          input.roomId,
-          agentId,
-          grantCardText(agent.name, owner.name, [grantView]),
-          JSON.stringify([owner.pubkey]),
-          JSON.stringify({ agent, owner, requester, grants: [grantView] }),
-        ],
-      );
+      await systemLine(database, {
+        id: messageId,
+        roomId: input.roomId,
+        ...grantCardPhrase(agent, owner, [grantView]),
+        mentions: [owner.pubkey],
+        presentation: 'card',
+        cardType: 'grant-request',
+        card: { agent, owner, requester, grants: [grantView] },
+      });
       return { messageId };
     });
     this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'grant' });
@@ -1697,6 +1713,7 @@ export class DaemonService {
       )
     ).rows[0]!;
     const cornerId = randomUUID();
+    const opener = await this.identity(agentId);
     await this.database.transaction(async (db) => {
       await db.query(
         `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name,repository_key,repository_target_branch) VALUES($1,$2,$3,$4,$5,$6,$7)`,
@@ -1728,20 +1745,15 @@ export class DaemonService {
       );
       // One durable open marker in the parent Room; the phone renders this as
       // a daemon-fact card and the push rule fires on it.
-      await db.query(
-        `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
-         VALUES($1,$2,$3,'','card','daemon-fact',$4::jsonb)`,
-        [
-          id(),
-          input.roomId,
-          agentId,
-          JSON.stringify({
-            type: 'corner-open',
-            cornerId,
-            objective,
-          }),
-        ],
-      );
+      await systemLine(db, {
+        roomId: input.roomId,
+        subject: { kind: 'agent', id: agentId, name: opener.name },
+        verb: 'opened a corner',
+        object: { text: objective, id: cornerId },
+        presentation: 'card',
+        cardType: 'daemon-fact',
+        card: { type: 'corner-open', cornerId, objective },
+      });
     });
     this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'corner' });
     return { cornerId };
@@ -1832,15 +1844,18 @@ export class DaemonService {
 }
 
 /** The push/preview text of a grant card: who asks whom for what, and why. */
-function grantCardText(
-  agentName: string,
-  ownerName: string,
+/** The grant card's header sentence: `Bee asked Owner for command npm test · run the tests`. */
+function grantCardPhrase(
+  agent: { pubkey: string; name: string },
+  owner: { name: string },
   grants: readonly { kind: AgentGrantKind; target: string; reason: string }[],
-): string {
-  const asks = grants
-    .map((grant) => `${AGENT_GRANT_VERBS[grant.kind]} ${grant.target} — ${grant.reason}`)
-    .join('; ');
-  return `${agentName} asks ${ownerName}: ${asks}`;
+): SystemPhrase {
+  return {
+    subject: { kind: 'agent', id: agent.pubkey, name: agent.name },
+    verb: `asked ${owner.name} for`,
+    object: grants.map((grant) => `${grant.kind} ${grant.target}`).join(' and '),
+    ...(grants.length === 1 && grants[0]!.reason ? { consequence: grants[0]!.reason } : {}),
+  };
 }
 
 export const DAEMON_OPERATION_NAMES = new Set<keyof DaemonOperationMap>([

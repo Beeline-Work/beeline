@@ -323,9 +323,11 @@ CREATE TABLE IF NOT EXISTS messages (
   card jsonb,
   legacy_event jsonb,
   agent_hop_count integer NOT NULL DEFAULT 0,
+  system_event jsonb,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS agent_hop_count integer NOT NULL DEFAULT 0;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS system_event jsonb;
 CREATE INDEX IF NOT EXISTS messages_room_page_idx ON messages(room_id, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS messages_request_idx ON messages(room_id, request_id) WHERE request_id IS NOT NULL;
 

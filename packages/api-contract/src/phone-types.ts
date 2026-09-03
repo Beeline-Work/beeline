@@ -1,3 +1,4 @@
+import type { SystemEvent } from './system-events.js';
 import type { AgentGrantKind, AgentGrantStatus } from './agent-grants.js';
 
 export interface AttachmentReference {
@@ -150,6 +151,9 @@ export type RoomViewMessage = {
   readonly createdAt: number;
   readonly author: RoomViewIdentity;
   readonly presentation: 'message' | 'system' | 'activity' | 'card';
+  /** The structured event behind a server-phrased system line or card header;
+   *  absent on rows written before the one system-line grammar. */
+  readonly systemEvent?: SystemEvent;
   /** Proof that this exact message belongs to this Room, for reply signing. */
   readonly reference?: KnownMessageReference;
   readonly liveTurnId?: string;

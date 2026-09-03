@@ -469,7 +469,7 @@ describe('thin monolith corner turn', () => {
                 authorId: runtime.agent.publicKey,
                 createdAt: 2,
                 type: 'system',
-                body: 'Checks passed — https://github.com/acme/widgets/pull/7.',
+                body: 'GitHub passed a check Beeline CI',
                 mentionIds: [],
                 attachments: [],
               },
@@ -496,19 +496,6 @@ describe('thin monolith corner turn', () => {
               requestId: 'request-id',
               attachments: [],
             },
-            ...(conversationReads >= 3
-              ? [
-                  {
-                    id: 'ready-message',
-                    authorId: runtime.agent.publicKey,
-                    createdAt: 2,
-                    type: 'system',
-                    body: 'PR ready for review\nhttps://github.com/acme/widgets/pull/7',
-                    mentionIds: [],
-                    attachments: [],
-                  },
-                ]
-              : []),
           ],
           cursor: 'latest',
         };
@@ -534,7 +521,7 @@ describe('thin monolith corner turn', () => {
       .spyOn(acp, 'sessionPrompt')
       .mockImplementation(async (_id, prompt, _timeout, draft, _activity, toolActivity) => {
         draft?.('Opening PR', 'Opening PR');
-        const checksTurn = prompt.includes('Checks passed');
+        const checksTurn = prompt.includes('passed a check');
         const toolCalls = checksTurn
           ? []
           : [
@@ -585,7 +572,7 @@ describe('thin monolith corner turn', () => {
     expect(conversationReads).toBeGreaterThanOrEqual(2);
     expect(sessionPrompt).toHaveBeenCalledTimes(2);
     expect(onCloseRequested).toHaveBeenCalledOnce();
-    expect(sessionPrompt.mock.calls[1]?.[1]).toContain('Checks passed');
+    expect(sessionPrompt.mock.calls[1]?.[1]).toContain('passed a check');
     expect(sessionNew).toHaveBeenCalledWith(
       expect.objectContaining({
         cwd: worktree,
@@ -642,14 +629,12 @@ describe('thin monolith corner turn', () => {
         }),
       }),
     );
-    expect(writes).toContainEqual(
+    // The daemon never phrases a system line: the server's GitHub webhook
+    // inscribes "opened a pull request" from the event.
+    expect(writes).not.toContainEqual(
       expect.objectContaining({
         name: 'postRoomMessage',
-        input: expect.objectContaining({
-          roomId: 'corner-id',
-          presentation: 'system',
-          text: 'PR ready for review\nhttps://github.com/acme/widgets/pull/7',
-        }),
+        input: expect.objectContaining({ presentation: 'system' }),
       }),
     );
     expect(writes.filter((write) => write.name === 'postAgentActivity')).toEqual([
@@ -665,11 +650,6 @@ describe('thin monolith corner turn', () => {
         }),
       }),
     ]);
-    expect(
-      writes.filter(
-        (write) => write.name === 'postRoomMessage' && write.input.presentation === 'system',
-      ),
-    ).toHaveLength(1);
     // The draft lane's turn id must equal its turn's durable final request id,
     // so a missed retract event is healed by the settled message instead of
     // leaving the final message rendered twice (#802 regression).

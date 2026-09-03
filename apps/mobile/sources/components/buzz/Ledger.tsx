@@ -8,6 +8,7 @@ import { identityPalette } from '@/buzz/identity-mark';
 import { IdentityMark } from './IdentityMark';
 import { MonoMarkdown } from './MonoMarkdown';
 import type { ChannelReferenceIndex, ChannelReferenceTarget } from '@/buzz/channel-reference';
+import type { SystemEvent, SystemSubject } from '@beeline/api-contract/phone';
 
 /**
  * The one transcript primitive a Room and a Corner both render, in the
@@ -459,6 +460,91 @@ export function LedgerRoomUpdate({
 }
 
 /**
+ * The one renderer for a server-phrased system line (`buzz/system-lines.ts`):
+ * `<subject> <verb>[ <object>][ · <consequence>]` in the quiet `meta` role,
+ * no avatar, the stamp pinned right. Names are brass and tappable; an object
+ * with a URL is a link. A folded run passes every subject in `subjects`. A row
+ * from before the grammar has no event and shows its text verbatim.
+ */
+export function LedgerSystemLine({
+  id,
+  text,
+  event,
+  subjects,
+  stamp,
+  onOpenIdentity,
+  onOpenUrl,
+}: {
+  id: string;
+  text: string;
+  event?: SystemEvent;
+  subjects?: readonly SystemSubject[];
+  stamp: string;
+  onOpenIdentity?: (identityId: string) => void;
+  onOpenUrl?: (url: string) => void;
+}) {
+  const names = event ? (subjects?.length ? subjects : [event.subject]) : [];
+  const name = (subject: SystemSubject, index: number) => (
+    <Text
+      key={`${subject.id ?? subject.name}-${index}`}
+      style={styles.systemLineName}
+      onPress={subject.id && onOpenIdentity ? () => onOpenIdentity(subject.id!) : undefined}
+      testID={`system-line-name-${id}-${index}`}
+    >
+      {subject.name}
+    </Text>
+  );
+  const spans: React.ReactNode[] = [];
+  if (event) {
+    names.forEach((subject, index) => {
+      if (index > 0) spans.push(index === names.length - 1 ? ' and ' : ', ');
+      spans.push(name(subject, index));
+    });
+    spans.push(names.length ? ` ${event.verb}` : event.verb);
+    const object = event.object;
+    if (object?.text) {
+      spans.push(' ');
+      if (object.id) {
+        spans.push(
+          <Text
+            key="object"
+            style={styles.systemLineName}
+            onPress={onOpenIdentity ? () => onOpenIdentity(object.id!) : undefined}
+            testID={`system-line-object-${id}`}
+          >
+            {object.text}
+          </Text>,
+        );
+      } else if (object.url) {
+        spans.push(
+          <Text
+            key="object"
+            style={styles.systemLineLink}
+            onPress={onOpenUrl ? () => onOpenUrl(object.url!) : undefined}
+            testID={`system-line-object-${id}`}
+          >
+            {object.text}
+          </Text>,
+        );
+      } else {
+        spans.push(object.text);
+      }
+    }
+    if (event.consequence) spans.push(` · ${event.consequence}`);
+  }
+  return (
+    <View style={styles.systemLine} testID={`system-line-${id}`}>
+      <Text numberOfLines={2} style={styles.systemLineText} testID={`system-line-text-${id}`}>
+        {event ? spans : text}
+      </Text>
+      <Text numberOfLines={1} style={styles.roomUpdateStamp} testID={`system-line-stamp-${id}`}>
+        {stamp}
+      </Text>
+    </View>
+  );
+}
+
+/**
  * A wall of tool output, folded into one ghost line.
  *
  * The dimmest tier, one line over a quiet left rule, with its own disclosure —
@@ -625,6 +711,25 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: 9,
     lineHeight: 12,
     textAlign: 'right',
+  },
+  systemLine: {
+    position: 'relative',
+    width: '100%',
+    minWidth: 0,
+    paddingVertical: theme.buzz.space.xs,
+    paddingRight: LEDGER_MARGINALIA_WIDTH + theme.buzz.space.sm,
+    marginBottom: theme.buzz.space.md,
+  },
+  systemLineText: {
+    ...theme.buzz.type.meta,
+    fontFamily: theme.buzz.proseRegular,
+    color: theme.buzz.ledgerQuiet,
+  },
+  systemLineName: { fontFamily: theme.buzz.proseRegular, color: theme.buzz.accent },
+  systemLineLink: {
+    fontFamily: theme.buzz.proseRegular,
+    color: theme.buzz.ledgerBody,
+    textDecorationLine: 'underline',
   },
   roomUpdateDigest: {
     fontFamily: theme.buzz.proseRegular,

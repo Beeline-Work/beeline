@@ -2094,14 +2094,34 @@ describe('monolith integration', () => {
       expect.arrayContaining([
         expect.objectContaining({
           presentation: 'system',
-          text: expect.stringContaining('Pull request opened: Ship the widget'),
+          text: 'GitHub opened a pull request Ship the widget',
+          systemEvent: {
+            subject: { kind: 'github', name: 'GitHub' },
+            verb: 'opened a pull request',
+            object: { text: 'Ship the widget', url: 'https://github.com/owner/widgets/pull/42' },
+          },
         }),
-        expect.objectContaining({ text: expect.stringContaining('Branch updated with 2 commits') }),
-        expect.objectContaining({ text: expect.stringContaining('Checks started: typecheck') }),
-        expect.objectContaining({ text: expect.stringContaining('Checks failed: Beeline CI') }),
-        expect.objectContaining({ text: expect.stringContaining('Checks passed: Beeline CI') }),
+        expect.objectContaining({
+          text: expect.stringMatching(/^GitHub pushed 2 commits to fm\/widget · at [0-9a-f]{12}$/),
+        }),
+        expect.objectContaining({
+          text: 'GitHub started a check typecheck',
+          systemEvent: expect.objectContaining({ verb: 'started a check' }),
+        }),
+        expect.objectContaining({ text: 'GitHub failed a check Beeline CI check suite' }),
+        expect.objectContaining({
+          text: 'GitHub passed a check Beeline CI check suite',
+          systemEvent: expect.objectContaining({
+            verb: 'passed a check',
+            object: expect.objectContaining({ text: 'Beeline CI check suite' }),
+          }),
+        }),
       ]),
     );
+    // No system line carries a colon, an em dash, a trailing period, or a URL.
+    for (const message of cornerBeforeMerge.messages.filter((m) => m.presentation === 'system')) {
+      expect(message.text).not.toMatch(/[:—]|\.$|https?:\/\//);
+    }
     expect(cornerBeforeMerge.cornerLifecycle).toMatchObject({
       checks: 'passing',
       pr: { url: 'https://github.com/owner/widgets/pull/42', mergeability: 'clean' },
@@ -2180,7 +2200,7 @@ describe('monolith integration', () => {
         items: expect.arrayContaining([
           expect.objectContaining({
             type: 'system',
-            body: expect.stringContaining('Checks passed'),
+            body: 'GitHub passed a check Beeline CI check suite',
           }),
         ]),
       }),
@@ -2221,7 +2241,14 @@ describe('monolith integration', () => {
       expect.objectContaining({
         closeRequested: true,
         items: expect.arrayContaining([
-          expect.objectContaining({ body: expect.stringContaining('Pull request merged') }),
+          expect.objectContaining({
+            body: 'owner merged Ship the widget',
+            systemEvent: expect.objectContaining({
+              subject: { kind: 'github', name: 'owner' },
+              verb: 'merged',
+              object: { text: 'Ship the widget', url: 'https://github.com/owner/widgets/pull/42' },
+            }),
+          }),
         ]),
       }),
     );
@@ -2243,7 +2270,13 @@ describe('monolith integration', () => {
     expect(parent.messages).toContainEqual(
       expect.objectContaining({
         presentation: 'card',
-        text: '',
+        // The card keeps its component; its header sentence is the one grammar.
+        text: 'owner merged Ship the widget',
+        systemEvent: {
+          subject: { kind: 'github', name: 'owner' },
+          verb: 'merged',
+          object: { text: 'Ship the widget', url: 'https://github.com/owner/widgets/pull/42' },
+        },
         daemonFact: {
           type: 'corner-complete',
           cornerId,
@@ -3210,7 +3243,7 @@ describe('monolith integration', () => {
     expect(card.presentation).toBe('card');
     expect(card.mention_ids).toEqual([HUMAN]);
     expect(card.text).toBe(
-      'Bee asks Owner: run fly deploy -a beeline-preview --with FLY_TOKEN — publish the preview build; reach api.fly.io — reach the Fly API',
+      'Bee asked Owner for command fly deploy -a beeline-preview --with FLY_TOKEN and host api.fly.io',
     );
     expect(card.card.owner.pubkey).toBe(HUMAN);
     expect(card.card.requester.pubkey).toBe(memberId);
@@ -3221,7 +3254,7 @@ describe('monolith integration', () => {
     expect(send).toHaveBeenCalledWith(
       'grant-owner-device-1234567890123456789012',
       expect.objectContaining({
-        text: 'Bee asks Owner: run fly deploy -a beeline-preview --with FLY_TOKEN — publish the preview build; reach api.fly.io — reach the Fly API',
+        text: 'Bee asked Owner for command fly deploy -a beeline-preview --with FLY_TOKEN and host api.fly.io',
       }),
     );
     // The phone reads the card as a validated grantRequest message.
@@ -3274,13 +3307,23 @@ describe('monolith integration', () => {
     // reaches its inbox; it never pushes to a human.
     const inbox = (await (
       await daemonOperation('getRoomInbox', { roomId: ROOM, after: undefined })
-    ).json()) as { items: Array<{ type: string; body: string; mentionIds: string[]; authorId: string }> };
+    ).json()) as {
+      items: Array<{ type: string; body: string; mentionIds: string[]; authorId: string; systemEvent?: unknown }>;
+    };
     const decisions = inbox.items.filter(
       (item) => item.type === 'system' && /\b(approved|declined)\b/.test(item.body),
     );
     expect(decisions.map((item) => item.body)).toEqual([
-      'Owner approved once: command fly deploy -a beeline-preview --with FLY_TOKEN',
-      'Owner declined: host api.fly.io',
+      'Owner approved once command fly deploy -a beeline-preview --with FLY_TOKEN',
+      'Owner declined host api.fly.io',
+    ]);
+    expect(decisions.map((item) => item.systemEvent)).toEqual([
+      {
+        subject: { kind: 'person', id: HUMAN, name: 'Owner' },
+        verb: 'approved once',
+        object: { text: 'command fly deploy -a beeline-preview --with FLY_TOKEN' },
+      },
+      { subject: { kind: 'person', id: HUMAN, name: 'Owner' }, verb: 'declined', object: { text: 'host api.fly.io' } },
     ]);
     expect(decisions.every((item) => item.mentionIds.includes(AGENT) && item.authorId === HUMAN)).toBe(
       true,
@@ -3368,16 +3411,28 @@ describe('monolith integration', () => {
       [auto.grantId as string],
     );
     expect(rows.rows).toEqual([{ status: 'approved', auto: true, decided_by: null }]);
-    const lines = await database.query<{ text: string; presentation: string; mention_ids: string[]; author_id: string }>(
-      `SELECT text,presentation,mention_ids,author_id FROM messages WHERE room_id=$1 AND card_type IN ('grant-request','grant-auto')`,
+    const lines = await database.query<{
+      text: string;
+      presentation: string;
+      mention_ids: string[];
+      author_id: string;
+      system_event: unknown;
+    }>(
+      `SELECT text,presentation,mention_ids,author_id,system_event FROM messages WHERE room_id=$1 AND card_type IN ('grant-request','grant-auto')`,
       [ROOM],
     );
     expect(lines.rows).toEqual([
       {
-        text: 'auto-approved under yolo: secret FLY_TOKEN · asked by Owner',
+        text: 'Bee was granted secret FLY_TOKEN · auto-approved under yolo',
         presentation: 'system',
         mention_ids: [],
         author_id: AGENT,
+        system_event: {
+          subject: { kind: 'agent', id: AGENT, name: 'Bee' },
+          verb: 'was granted',
+          object: { text: 'secret FLY_TOKEN' },
+          consequence: 'auto-approved under yolo',
+        },
       },
     ]);
     const profile = (await (

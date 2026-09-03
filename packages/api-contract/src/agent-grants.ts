@@ -97,7 +97,7 @@ export function commandGrantMatches(rule: CommandGrantRule, requested: readonly 
  * The system line the server posts when the owner answers a card. It mentions
  * the agent so the daemon inbox delivers it, and the daemon recognises it
  * structurally through `parseGrantDecisionLine` (plain system lines never wake
- * a turn). Shape: `<name> approved: command fly deploy -a preview`.
+ * a turn). Shape: `<name> approved command fly deploy -a preview`.
  */
 export type GrantDecisionLine = {
   readonly deciderName: string;
@@ -113,11 +113,11 @@ const DECISION_VERBS: Readonly<Record<AgentGrantDecision, string>> = {
 };
 
 export function formatGrantDecisionLine(line: GrantDecisionLine): string {
-  return `${line.deciderName} ${DECISION_VERBS[line.decision]}: ${line.kind} ${line.target}`;
+  return `${line.deciderName} ${DECISION_VERBS[line.decision]} ${line.kind} ${line.target}`;
 }
 
 const DECISION_LINE = new RegExp(
-  `^(.+?) (approved once|approved|declined): (${AGENT_GRANT_KINDS.join('|')}) (.+)$`,
+  `^(.+?) (approved once|approved|declined) (${AGENT_GRANT_KINDS.join('|')}) (.+)$`,
   's',
 );
 
@@ -132,13 +132,4 @@ export function parseGrantDecisionLine(body: string): GrantDecisionLine | undefi
     kind: match[3] as AgentGrantKind,
     target: match[4]!,
   };
-}
-
-/** The quiet ledger line under yolo; carries no mention and never wakes a turn. */
-export function formatYoloAutoApprovedLine(input: {
-  readonly kind: AgentGrantKind;
-  readonly target: string;
-  readonly requesterName: string;
-}): string {
-  return `auto-approved under yolo: ${input.kind} ${input.target} · asked by ${input.requesterName}`;
 }

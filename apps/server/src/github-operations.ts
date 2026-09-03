@@ -2,6 +2,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:
 import { GITHUB_IDENTITY_AUDIENCE, GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import type { CornerLifecycleView, PhoneOperationMap } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
+import { GITHUB_SUBJECT, systemLine, type SystemPhrase } from './system-line.js';
 
 type Input<Name extends keyof PhoneOperationMap> = PhoneOperationMap[Name]['input'];
 
@@ -540,6 +541,9 @@ export class GitHubOperations {
            '^(git://|https://)github.com/','','i'), '\\.git$','','i'))=lower($2)`,
       [installationId, repository, branch],
     );
+    const actorLogin = text(record(body.sender)?.login);
+    const actor = (login?: string) =>
+      login ? { kind: 'github' as const, name: login } : GITHUB_SUBJECT;
     for (const target of targets.rows) {
       if (!target.author_id) continue;
       if (event === 'pull_request') {
@@ -592,7 +596,11 @@ export class GitHubOperations {
           await this.systemNote(
             target.corner_id,
             target.author_id,
-            `Pull request opened: ${title} — ${url}`,
+            {
+              subject: actor(text(record(pullRequest?.user)?.login) ?? actorLogin),
+              verb: 'opened a pull request',
+              object: { text: title, url },
+            },
             `github:pull-request:opened:${url}`,
           );
         }
@@ -624,7 +632,15 @@ export class GitHubOperations {
         await this.systemNote(
           target.corner_id,
           target.author_id,
-          `Branch updated${commits ? ` with ${commits} commit${commits === 1 ? '' : 's'}` : ''}${head ? ` at ${head.slice(0, 12)}` : ''}${compare ? ` — ${compare}` : ''}.`,
+          {
+            subject: actor(text(record(body.pusher)?.name) ?? actorLogin),
+            verb: 'pushed',
+            object: {
+              text: `${commits ? `${commits} commit${commits === 1 ? '' : 's'} to ` : ''}${branch}`,
+              ...(compare ? { url: compare } : {}),
+            },
+            ...(head ? { consequence: `at ${head.slice(0, 12)}` } : {}),
+          },
           `github:push:${text(body.after) ?? hash(JSON.stringify(body))}`,
         );
         continue;
@@ -657,7 +673,14 @@ export class GitHubOperations {
         await this.systemNote(
           target.corner_id,
           target.author_id,
-          `Checks ${label}: ${check.name}${check.conclusion ? ` (${check.conclusion})` : ''}${check.url ? ` — ${check.url}` : ''}.`,
+          {
+            subject: GITHUB_SUBJECT,
+            verb: `${label} a check`,
+            object: { text: check.name, ...(check.url ? { url: check.url } : {}) },
+            ...(check.status === 'failed' && check.conclusion && check.conclusion !== 'failure'
+              ? { consequence: check.conclusion }
+              : {}),
+          },
           `github:checks:${label}:${check.name}:${check.headSha ?? hash(JSON.stringify(body))}`,
         );
       }
@@ -719,14 +742,21 @@ export class GitHubOperations {
     };
   }
 
-  private async systemNote(roomId: string, authorId: string, note: string, dedupe: string) {
-    const noteId = hash(`beeline:${roomId}:${dedupe}`);
-    const inserted = await this.database.query(
-      `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
-       VALUES($1,$2,$3,$4,'system','github-corner-note',$5::jsonb) ON CONFLICT(id) DO NOTHING`,
-      [noteId, roomId, authorId, note, JSON.stringify({ source: 'github', dedupe })],
-    );
-    if (inserted.rowCount) this.onRoomChanged?.(roomId);
+  private async systemNote(
+    roomId: string,
+    authorId: string,
+    phrase: SystemPhrase,
+    dedupe: string,
+  ) {
+    const note = await systemLine(this.database, {
+      id: hash(`beeline:${roomId}:${dedupe}`),
+      roomId,
+      authorId,
+      ...phrase,
+      cardType: 'github-corner-note',
+      card: { source: 'github', dedupe },
+    });
+    if (note.inserted) this.onRoomChanged?.(roomId);
   }
 
   private async mergeCorner(
@@ -788,40 +818,45 @@ export class GitHubOperations {
           }),
         ],
       );
-      await database.query(
-        `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
-         VALUES($1,$2,$3,$4,'system','github-corner-note',$5::jsonb) ON CONFLICT(id) DO NOTHING`,
-        [
-          hash(`beeline:${target.corner_id}:${mergeKey}`),
-          target.corner_id,
-          target.author_id,
-          `Pull request merged: ${pullRequest.title} — ${pullRequest.url}`,
-          JSON.stringify({ source: 'github', dedupe: mergeKey }),
-        ],
-      );
+      const merged: SystemPhrase = {
+        subject: pullRequest.mergedBy
+          ? { kind: 'github', name: pullRequest.mergedBy }
+          : GITHUB_SUBJECT,
+        verb: 'merged',
+        object: { text: pullRequest.title, url: pullRequest.url },
+      };
+      await systemLine(database, {
+        id: hash(`beeline:${target.corner_id}:${mergeKey}`),
+        roomId: target.corner_id,
+        authorId: target.author_id,
+        ...merged,
+        cardType: 'github-corner-note',
+        card: { source: 'github', dedupe: mergeKey },
+      });
       const summary = target.summary.trim() || pullRequest.title;
-      await database.query(
-        `INSERT INTO messages(id,room_id,author_id,text,presentation,durable_fact,card_type,card)
-         VALUES($1,$2,$3,'','card','merge','daemon-fact',$4::jsonb) ON CONFLICT(id) DO NOTHING`,
-        [
-          hash(`beeline:${target.parent_id}:${mergeKey}`),
-          target.parent_id,
-          target.author_id,
-          JSON.stringify({
-            type: 'corner-complete',
-            cornerId: target.corner_id,
-            name: target.corner_name,
-            objective: summary,
-            outcome: 'landed',
-            pullRequest: {
-              ...(pullRequest.number ? { number: pullRequest.number } : {}),
-              title: pullRequest.title,
-              url: pullRequest.url,
-              ...(pullRequest.targetBranch ? { targetBranch: pullRequest.targetBranch } : {}),
-            },
-          }),
-        ],
-      );
+      // The merge summary card in the parent Room: a tap opens the pull request.
+      await systemLine(database, {
+        id: hash(`beeline:${target.parent_id}:${mergeKey}`),
+        roomId: target.parent_id,
+        authorId: target.author_id,
+        ...merged,
+        presentation: 'card',
+        durableFact: 'merge',
+        cardType: 'daemon-fact',
+        card: {
+          type: 'corner-complete',
+          cornerId: target.corner_id,
+          name: target.corner_name,
+          objective: summary,
+          outcome: 'landed',
+          pullRequest: {
+            ...(pullRequest.number ? { number: pullRequest.number } : {}),
+            title: pullRequest.title,
+            url: pullRequest.url,
+            ...(pullRequest.targetBranch ? { targetBranch: pullRequest.targetBranch } : {}),
+          },
+        },
+      });
     });
     this.onRoomChanged?.(target.corner_id);
     this.onRoomChanged?.(target.parent_id);

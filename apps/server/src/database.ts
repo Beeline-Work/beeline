@@ -363,6 +363,14 @@ CREATE TABLE IF NOT EXISTS room_read_marks (
   updated_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (room_id, identity_id)
 );
+-- Clients send a message id, but their clock representation can lose the
+-- microseconds needed by the ordered unread comparison. Repair pre-existing
+-- marks from the canonical stored message timestamp.
+UPDATE room_read_marks
+SET message_created_at=messages.created_at
+FROM messages
+WHERE messages.id=room_read_marks.message_id
+  AND messages.room_id=room_read_marks.room_id;
 
 CREATE TABLE IF NOT EXISTS permission_authority (
   permission_id text PRIMARY KEY,

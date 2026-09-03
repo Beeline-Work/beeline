@@ -57,10 +57,18 @@ describe('Room creation — repository binding', () => {
     expect(loader).toContain('setRepoInstallations(access.installations)');
   });
 
-  it('keeps search copy and dialog actions visible at phone width and height', () => {
+  it('keeps the required repo control visible above the keyboard-focused Room name at small heights', () => {
     expect(repoPickerSource).toContain('placeholder="Search or paste owner/repo"');
     expect(source).toContain('createRoomContent: { flexShrink: 1, maxHeight: 520 }');
     expect(hullDialogSource).toContain('dialogCopy: { flexShrink: 1,');
+    const marker = source.indexOf('testID="new-room-dialog"');
+    const start = source.lastIndexOf('<HullDialog', marker);
+    const end = source.indexOf('</HullDialog>', marker);
+    const panel = source.slice(start, end);
+    expect(panel.indexOf('testID="create-room-repo-row"')).toBeLessThan(
+      panel.indexOf('testID="create-room-name"'),
+    );
+    expect(panel).not.toContain('<ScrollView');
   });
 
   it('gives the repo row a fixed full height so it never collapses before first tap', () => {

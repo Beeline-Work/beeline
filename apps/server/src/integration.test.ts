@@ -640,6 +640,66 @@ describe('monolith integration', () => {
     expect((await readChats()).unread).toBe(false);
   });
 
+  it('repairs millisecond-truncated read marks and treats their marked message as read', async () => {
+    const messageId = 'e'.repeat(64);
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES($1,$2,$3,'Precise reply','2026-09-03T01:30:33.596223Z')`,
+      [messageId, ROOM, AGENT],
+    );
+    expect((await request(`/v1/phone/rooms/${ROOM}/read`, 'POST', { messageId })).status).toBe(204);
+    expect(
+      (
+        await database.query<{ exact: boolean }>(
+          `SELECT mark.message_created_at=message.created_at exact
+           FROM room_read_marks mark JOIN messages message ON message.id=mark.message_id
+           WHERE mark.room_id=$1 AND mark.identity_id=$2`,
+          [ROOM, HUMAN],
+        )
+      ).rows[0]?.exact,
+    ).toBe(true);
+
+    // This is the timestamp a millisecond-precision client used to persist.
+    await database.query(
+      `UPDATE room_read_marks SET message_created_at='2026-09-03T01:30:33.596Z'
+       WHERE room_id=$1 AND identity_id=$2`,
+      [ROOM, HUMAN],
+    );
+
+    await migrate(database);
+
+    const chat = (
+      (await (await request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
+        chats: Array<{ room: { id: string }; unread: boolean }>;
+      }
+    ).chats.find((item) => item.room.id === ROOM);
+    expect(chat?.unread).toBe(false);
+    expect(
+      (
+        await database.query<{ exact: boolean }>(
+          `SELECT mark.message_created_at=message.created_at exact
+           FROM room_read_marks mark JOIN messages message ON message.id=mark.message_id
+           WHERE mark.room_id=$1 AND mark.identity_id=$2`,
+          [ROOM, HUMAN],
+        )
+      ).rows[0]?.exact,
+    ).toBe(true);
+  });
+
+  it('counts only open corners in the Room list', async () => {
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,name,archived_at) VALUES
+        ('33333333-3333-4333-8333-333333333333',$1,$2,'Done corner',now()),
+        ('44444444-4444-4444-8444-444444444444',$1,$2,'Open corner',NULL)`,
+      [WORKSPACE, ROOM],
+    );
+    const chat = (
+      (await (await request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
+        chats: Array<{ room: { id: string }; cornerCount: number }>;
+      }
+    ).chats.find((item) => item.room.id === ROOM);
+    expect(chat?.cornerCount).toBe(1);
+  });
+
   it('keeps a Room view valid when live activity joins a full transcript', async () => {
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,created_at)

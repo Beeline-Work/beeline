@@ -173,6 +173,7 @@ export default function BuzzCorners() {
                   kind={item.agent?.kind === 'agent' ? 'agent' : 'human'}
                   seed={item.agent?.pubkey ?? item.corner.id}
                   avatarUrl={item.agent?.avatar}
+                  face={item.agent?.face}
                   name={item.agent?.name ?? 'Corner'}
                   size={34}
                 />

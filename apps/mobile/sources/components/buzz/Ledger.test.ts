@@ -30,6 +30,7 @@ import {
   LedgerSteer,
   typewriterFrame,
 } from './Ledger';
+import { identityPalette } from '@/buzz/identity-mark';
 import { markMessageRevealed, resetMessageReveals } from '@/buzz/message-reveal';
 
 const originalConsoleError = console.error;
@@ -170,8 +171,12 @@ describe('the ledger — an agent turn', () => {
 
     const text = renderedText(renderer).join('');
     expect(text).toContain('Beebee');
-    expect(text).toContain('agent · ');
+    expect(text).toContain('agent');
     expect(text).toContain('09:41');
+    // Three separate runs — name, quiet tag, stamp — not one joined mono line.
+    expect(renderer.root.findByProps({ testID: 'chat-byline-name' }).props.children).toBe('Beebee');
+    expect(renderer.root.findByProps({ testID: 'chat-byline-role' }).props.children).toBe('agent');
+    expect(renderer.root.findByProps({ testID: 'chat-byline-stamp' }).props.children).toBe('09:41');
 
     // The dot defaults to steel for everyone but the viewer.
     const dots = stylesOfType(renderer, 'View').filter((style) => style.width === 5);
@@ -573,8 +578,8 @@ describe('the ledger — per-speaker identity marks', () => {
     expect(mark.seed).toBe('agent-pubkey-a');
     expect(mark.kind).toBe('agent');
     expect(mark.alive).toBe(true);
-    // Transcript scale, inside the brief's ~16–18px band.
-    expect(mark.size).toBe(17);
+    // The 26px tile: where the creature and the plate polarity still resolve.
+    expect(mark.size).toBe(26);
     // The mark REPLACES the generic dot — both never render together.
     const dots = stylesOfType(renderer, 'View').filter((style) => style.width === 5);
     expect(dots.length).toBe(0);
@@ -675,6 +680,22 @@ describe('the ledger — per-speaker identity marks', () => {
     expect(renderer.root.findAllByProps({ testID: 'chat-byline-mark' })).toHaveLength(0);
   });
 
+  it('carries the speaker’s chosen face into the tile', () => {
+    const renderer = render(
+      React.createElement(LedgerSteer, {
+        itemId: 'm8',
+        byline: {
+          name: 'Mika',
+          stamp: '09:42',
+          mark: { seed: 'person-pubkey-b', kind: 'human', face: 'heron' },
+        },
+        bodyText: 'Chosen at onboarding.',
+        bodyTestID: 'body',
+      }),
+    );
+    expect(markOf(renderer).face).toBe('heron');
+  });
+
   it('keeps the plain dot fallback for a byline without a mark', () => {
     const renderer = render(
       React.createElement(LedgerEntry, {
@@ -689,6 +710,120 @@ describe('the ledger — per-speaker identity marks', () => {
     expect(renderer.root.findAllByProps({ testID: 'chat-byline-mark' })).toHaveLength(0);
     const dots = stylesOfType(renderer, 'View').filter((style) => style.width === 5);
     expect(dots.length).toBeGreaterThan(0);
+  });
+});
+
+// ── The byline says who is talking ───────────────────────────────────────────
+//
+// The name is set in the identity's own hue, sentence case, medium weight, at
+// body size — never the 10px mono uppercase that the design reserves for
+// things it wants you to ignore. The stamp keeps that mono voice, pinned right.
+describe('the ledger — the byline says who is talking', () => {
+  const merged = (node: { props: { style?: unknown } }): Record<string, any> =>
+    Object.assign(
+      {},
+      ...(Array.isArray(node.props.style) ? node.props.style : [node.props.style ?? {}]).filter(
+        Boolean,
+      ),
+    );
+
+  it('sets the name in the speaker’s hue at body size, beside the 26px tile', () => {
+    const renderer = render(
+      React.createElement(LedgerEntry, {
+        itemId: 'b1',
+        luminous: true,
+        byline: {
+          name: 'Terra',
+          role: 'agent',
+          stamp: '11:38',
+          mark: { seed: 'agent-pubkey-terra', kind: 'agent' },
+        },
+        bodyText: 'Yes. The expiry bug is in the pairing store.',
+        bodyTestID: 'body',
+      }),
+    );
+    const name = merged(renderer.root.findByProps({ testID: 'chat-byline-name' }));
+    expect(name.color).toBe(identityPalette('agent-pubkey-terra', 'agent').mid);
+    expect(name.fontSize).toBe(16);
+    expect(name.fontFamily).toBe('SpaceGrotesk-Medium');
+    expect(name.textTransform).toBeUndefined();
+    expect(name.letterSpacing).toBeUndefined();
+    expect(renderer.root.findByProps({ testID: 'chat-byline-mark' }).props.size).toBe(26);
+
+    // The quiet tag and the stamp keep the mono metadata voice; the stamp is
+    // pinned to the right edge.
+    const role = merged(renderer.root.findByProps({ testID: 'chat-byline-role' }));
+    expect(role.fontFamily).toBe('IBMPlexMono-Regular');
+    expect(role.fontSize).toBe(10);
+    expect(role.textTransform).toBe('uppercase');
+    const stamp = merged(renderer.root.findByProps({ testID: 'chat-byline-stamp' }));
+    expect(stamp.fontFamily).toBe('IBMPlexMono-Regular');
+    expect(stamp.fontSize).toBe(10);
+    expect(stamp.color).toBe('#83838d');
+    expect(stamp.marginLeft).toBe('auto');
+  });
+
+  it('keeps the viewer’s name brass, whatever their own hue is', () => {
+    const renderer = render(
+      React.createElement(LedgerSteer, {
+        itemId: 'b2',
+        byline: {
+          name: 'You',
+          stamp: '11:39',
+          isViewer: true,
+          mark: { seed: 'viewer-pubkey', kind: 'human' },
+        },
+        bodyText: 'Go. Ping me when checks are green.',
+        bodyTestID: 'body',
+      }),
+    );
+    const name = merged(renderer.root.findByProps({ testID: 'chat-byline-name' }));
+    expect(name.color).toBe('#b08a4a');
+    expect(name.fontSize).toBe(16);
+  });
+
+  it('gives a person and an agent each their own hue from the one palette', () => {
+    const person = render(
+      React.createElement(LedgerSteer, {
+        itemId: 'b3',
+        byline: { name: 'Alex', stamp: '11:38', mark: { seed: 'alex-pubkey', kind: 'human' } },
+        bodyText: 'Can we ship the pairing fix today?',
+        bodyTestID: 'body',
+      }),
+    );
+    const agent = render(
+      React.createElement(LedgerEntry, {
+        itemId: 'b4',
+        luminous: true,
+        byline: {
+          name: 'Codex',
+          role: 'agent',
+          stamp: '11:41',
+          mark: { seed: 'codex-pubkey', kind: 'agent' },
+        },
+        bodyText: 'I can pick up the model sort.',
+        bodyTestID: 'body',
+      }),
+    );
+    const personName = merged(person.root.findByProps({ testID: 'chat-byline-name' }));
+    const agentName = merged(agent.root.findByProps({ testID: 'chat-byline-name' }));
+    expect(personName.color).toBe(identityPalette('alex-pubkey', 'human').mid);
+    expect(agentName.color).toBe(identityPalette('codex-pubkey', 'agent').mid);
+    expect(personName.color).not.toBe(agentName.color);
+    // A Corner byline carries no name at all — the tile alone.
+    const corner = render(
+      React.createElement(LedgerEntry, {
+        itemId: 'b5',
+        luminous: true,
+        byline: { stamp: '11:42', mark: { seed: 'codex-pubkey', kind: 'agent' } },
+        bodyText: 'Opening the corner.',
+        bodyTestID: 'body',
+      }),
+    );
+    expect(corner.root.findAllByProps({ testID: 'chat-byline-name' })).toHaveLength(0);
+    expect(
+      corner.root.findAll((node: any) => node.type === 'IdentityMark' && node.props.testID === 'chat-byline-mark'),
+    ).toHaveLength(1);
   });
 });
 

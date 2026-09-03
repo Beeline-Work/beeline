@@ -257,11 +257,13 @@ class LegacyBuzzRigTransport {
     installed: boolean;
     installations: GitHubInstallationAccess[];
     candidates: RepoCandidate[];
+    githubReconnectNeeded?: boolean;
   }> {
     const access = await listGitHubRepositories(this.baseUrl, this.identity, options);
     return {
       installed: access.installed,
       installations: access.installations,
+      githubReconnectNeeded: access.githubReconnectNeeded === true,
       candidates: dedupeRepoCandidates(
         access.repositories.map((repo) => ({
           key: `github:${repo.id}`,

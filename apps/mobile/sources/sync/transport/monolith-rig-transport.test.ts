@@ -374,6 +374,7 @@ describe('monolith Room send path', () => {
           defaultBranch: 'trunk',
         },
       ],
+      githubReconnectNeeded: false,
     });
     const linked = await transport.roomRepositorySet(ROOM, {
       key: 'github:101',

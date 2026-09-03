@@ -383,6 +383,11 @@ export default function BuzzChannels() {
       const access = await transport.workspaceGitHubAccess({ refresh });
       setRepoCandidates(access.candidates);
       setRepoInstallations(access.installations);
+      setRepoPickerError(
+        access.githubReconnectNeeded
+          ? 'GitHub sign-in expired — reconnect GitHub in Settings to see new repositories.'
+          : null,
+      );
     },
     [activeCommunityId, transport],
   );
@@ -394,7 +399,7 @@ export default function BuzzChannels() {
     try {
       await loadRepoPicker(true);
     } catch (reason) {
-      setRepoPickerError(`Could not load repos: ${String(reason)}`);
+      setRepoPickerError('Could not load repos. Check your connection and try again.');
     }
   }, [activeCommunityId, loadRepoPicker, showRepoPicker, transport]);
 

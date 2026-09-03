@@ -63,6 +63,10 @@ export interface GitHubIdentity {
   displayName?: string;
   /** Server-side credential used to prove installation membership and create personal repos. */
   accessToken: string;
+  /** GitHub OAuth refresh grant token; user-to-server tokens expire after 8 hours. */
+  refreshToken?: string;
+  /** Access-token lifetime in seconds, as reported by the token endpoint. */
+  tokenExpiresIn?: number;
 }
 
 /** GitHub OAuth is only an account lookup proof; the Nostr key bind stays unchanged. */
@@ -112,6 +116,11 @@ export class GitHubOAuthClient {
     const tokenBody = await jsonObject(tokenResponse, 'GitHub OAuth exchange');
     const accessToken = typeof tokenBody.access_token === 'string' ? tokenBody.access_token : '';
     if (!accessToken) throw new Error('GitHub OAuth response is missing access_token');
+    const refreshToken = typeof tokenBody.refresh_token === 'string' ? tokenBody.refresh_token : '';
+    const tokenExpiresIn =
+      typeof tokenBody.expires_in === 'number' && Number.isFinite(tokenBody.expires_in)
+        ? tokenBody.expires_in
+        : undefined;
     const userBody = await jsonObject(
       await fetch(`${this.config.apiBaseUrl}/user`, {
         headers: githubHeaders(accessToken),
@@ -130,6 +139,38 @@ export class GitHubOAuthClient {
       login,
       ...(displayName ? { displayName } : {}),
       accessToken,
+      ...(refreshToken ? { refreshToken } : {}),
+      ...(tokenExpiresIn !== undefined ? { tokenExpiresIn } : {}),
+    };
+  }
+
+  /** Exchanges a refresh token for a fresh user-to-server access token (GitHub OAuth refresh grant). */
+  async refreshUserToken(
+    refreshToken: string,
+  ): Promise<{ accessToken: string; refreshToken?: string; tokenExpiresIn?: number }> {
+    const tokenResponse = await fetch(this.config.tokenEndpoint, {
+      method: 'POST',
+      headers: { accept: 'application/json', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        client_id: this.config.clientId,
+        client_secret: this.config.clientSecret,
+        grant_type: 'refresh_token',
+        refresh_token: refreshToken,
+      }),
+    });
+    const tokenBody = await jsonObject(tokenResponse, 'GitHub OAuth refresh');
+    const accessToken = typeof tokenBody.access_token === 'string' ? tokenBody.access_token : '';
+    if (!accessToken) throw new Error('GitHub OAuth refresh response is missing access_token');
+    const nextRefreshToken =
+      typeof tokenBody.refresh_token === 'string' ? tokenBody.refresh_token : '';
+    const tokenExpiresIn =
+      typeof tokenBody.expires_in === 'number' && Number.isFinite(tokenBody.expires_in)
+        ? tokenBody.expires_in
+        : undefined;
+    return {
+      accessToken,
+      ...(nextRefreshToken ? { refreshToken: nextRefreshToken } : {}),
+      ...(tokenExpiresIn !== undefined ? { tokenExpiresIn } : {}),
     };
   }
 }

@@ -1131,10 +1131,20 @@ export class PhoneService {
           throw new Error('invalid managed handle');
         await this.claimManagedHandle(viewerId, (input as Input<'claimManagedHandle'>).handle);
         return (await this.managedIdentity(viewerId)) as Output<Name>;
-      case 'listGitHubRepositories':
-        if ((input as Input<'listGitHubRepositories'>).refresh)
-          await this.requireGitHub().refresh(viewerId);
-        return (await this.listRepositories(viewerId)) as Output<Name>;
+      case 'listGitHubRepositories': {
+        let githubReconnectNeeded = false;
+        if ((input as Input<'listGitHubRepositories'>).refresh) {
+          try {
+            const outcome = await this.requireGitHub().refresh(viewerId);
+            githubReconnectNeeded = Boolean(outcome?.githubReconnectNeeded);
+          } catch {
+            // Never 503 the repo picker: degrade to stored installations/repositories.
+            githubReconnectNeeded = true;
+          }
+        }
+        const result = (await this.listRepositories(viewerId)) as Output<Name>;
+        return githubReconnectNeeded ? { ...result, githubReconnectNeeded } : result;
+      }
       case 'getGitHubRepositoryAccess':
         return (await this.repositoryAccess(
           (input as Input<'getGitHubRepositoryAccess'>).fullName,

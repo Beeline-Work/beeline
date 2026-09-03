@@ -103,6 +103,7 @@ export async function listGitHubRepositories(
   installed: boolean;
   installations: GitHubInstallationAccess[];
   repositories: GitHubRepositoryAccess[];
+  githubReconnectNeeded?: boolean;
 }> {
   const url = authEndpoint(baseUrl, `/auth/github/repos/${identity.publicKey}`);
   if (options.refresh) url.searchParams.set('refresh', '1');
@@ -175,7 +176,12 @@ export async function listGitHubRepositories(
     }
     return installation as unknown as GitHubInstallationAccess;
   });
-  return { installed: body.installed, installations, repositories };
+  return {
+    installed: body.installed,
+    installations,
+    repositories,
+    ...(body.githubReconnectNeeded === true ? { githubReconnectNeeded: true } : {}),
+  };
 }
 
 export async function createGitHubRepository(

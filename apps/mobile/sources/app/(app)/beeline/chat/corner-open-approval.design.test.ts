@@ -24,11 +24,17 @@ describe('corner-open approval card design contract', () => {
     expect(variants).toContain('onOpenCorner(permission.subchannelId!)');
   });
 
-  it('keeps the indexed PR review surface pinned in corners and uses the typed merge route', () => {
-    expect(source).toContain('<CornerLifecyclePanel');
+  it('inscribes one PR status line in corners and offers no merge or objective panel', () => {
+    expect(source).toContain('<CornerStatusLine');
     expect(source).toContain('lifecycle={roomSurface?.cornerLifecycle}');
-    expect(source).toContain("monolithPhoneOperation('approveCornerMerge'");
-    expect(source).toContain('canApprove={!viewerIsAgent && canManageWorkspace}');
+    expect(source).not.toContain('CornerLifecyclePanel');
+    expect(source).not.toContain('CornerPlanPin');
+    expect(source).not.toContain("monolithPhoneOperation('approveCornerMerge'");
+    expect(source).not.toContain('approve-corner-merge');
     expect(source).toContain('<LedgerRoomUpdate');
+  });
+
+  it('lets the corner title wrap because the name is the objective verbatim', () => {
+    expect(source).toContain('numberOfLines={isCorner ? 2 : 1}');
   });
 });

@@ -13,7 +13,12 @@
  *   order  uptime desc
  *   only   that set; when fewer than 2 qualify the bar drops to 95 (logged);
  *          when none qualify at all, #840's pair remains the last resort
- *   allow_fallbacks: true WITHIN the set, require_parameters: true
+ *   allow_fallbacks: true WITHIN the set, require_parameters: false (a
+ *          provider may ignore a sampling knob it does not know; with `true`
+ *          OpenRouter answers pi's full parameter set — stop, top_p, reasoning,
+ *          tool_choice… — with 404 "No endpoints found that can handle the
+ *          requested parameters" for every provider, the live 2026-09-03 fault;
+ *          the `tools` filter above already guarantees tool calling)
  *
  * The result is cached per model for 24h (`<cacheDir>/<model>.json`), read
  * back when the API is unreachable (stale is better than blind), and applied
@@ -180,7 +185,7 @@ export function openRouterRoutingFor(providers: readonly string[]): OpenRouterRo
     only: [...providers],
     order: [...providers],
     allow_fallbacks: true,
-    require_parameters: true,
+    require_parameters: false,
   };
 }
 

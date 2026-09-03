@@ -31,6 +31,54 @@ function styleBlock(text: string, name: string): string {
 }
 
 describe('Room list layout contract', () => {
+  it('keeps the empty deck one quiet block with exactly one brass primary', () => {
+    // Captain report C67: two full-width 100pt buttons under centred copy
+    // shouted. The empty state sits in the upper third (the FAB anchors the
+    // bottom), speaks in calm roles, and offers one 44pt content-width brass
+    // button plus a quiet brass text link — never a second box.
+    expect(source).toContain('const EMPTY_PRIMARY_HEIGHT = 44');
+    expect(styleBlock(source, 'emptyList')).toContain("justifyContent: 'flex-start'");
+    expect(styleBlock(source, 'emptyList')).toContain('paddingTop: hull.space.xxl');
+    expect(styleBlock(source, 'empty')).toContain("alignItems: 'flex-start'");
+    expect(styleBlock(source, 'empty')).not.toMatch(/\bpadding: \d/);
+    expect(styleBlock(source, 'emptyTitle')).toContain('...hull.type.body,');
+    expect(styleBlock(source, 'emptyTitle')).toContain('color: hull.textPrimary');
+    expect(styleBlock(source, 'emptyCopy')).toContain('...hull.type.meta,');
+    expect(styleBlock(source, 'emptyCopy')).toContain('color: hull.textMuted');
+    expect(styleBlock(source, 'emptyActions')).toContain('gap: hull.space.md');
+    expect(styleBlock(source, 'emptyActions')).not.toContain("width: '100%'");
+    expect(styleBlock(source, 'emptyPrimary')).toContain('height: EMPTY_PRIMARY_HEIGHT');
+    expect(styleBlock(source, 'emptyPrimary')).toContain("alignSelf: 'flex-start'");
+    expect(styleBlock(source, 'emptyPrimary')).toContain('backgroundColor: hull.accent');
+    expect(styleBlock(source, 'emptyPrimaryLabel')).toContain('...hull.type.bodyStrong,');
+    expect(styleBlock(source, 'emptyPrimaryLabel')).toContain('color: hull.textInverted');
+    expect(styleBlock(source, 'emptyLink')).not.toMatch(/border|backgroundColor/);
+    expect(styleBlock(source, 'emptyLinkLabel')).toContain('...hull.type.meta,');
+    expect(styleBlock(source, 'emptyLinkLabel')).toContain('color: hull.accent');
+    // No raw sizes and no tracked uppercase anywhere in the empty block.
+    for (const name of [
+      'empty',
+      'emptyTitle',
+      'emptyCopy',
+      'emptyActions',
+      'emptyPrimary',
+      'emptyPrimaryLabel',
+      'emptyLink',
+      'emptyLinkLabel',
+    ]) {
+      expect(styleBlock(source, name), name).not.toMatch(/fontSize|letterSpacing|textTransform/);
+    }
+    const emptyDeck = source.slice(
+      source.indexOf('ListEmptyComponent='),
+      source.indexOf('renderItem='),
+    );
+    expect(emptyDeck).toContain('>Start a Room</Text>');
+    expect(emptyDeck).toContain('>Invite an agent</Text>');
+    expect(emptyDeck).toContain('accessibilityRole="link"');
+    expect(emptyDeck).not.toContain('<MonoButton');
+    expect(emptyDeck).not.toMatch(/[A-Z]{2,} [A-Z]{2,}/);
+  });
+
   it('floats a 44pt brass square compose FAB bottom right, with no header plus', () => {
     // The compose affordance belongs to the deck, not to a footer list cell:
     // rows continue underneath it and no separator divides it from the list.
@@ -59,7 +107,10 @@ describe('Room list layout contract', () => {
     expect(source).toContain('const COMPOSE_FAB_CLEARANCE = 80');
     // The header carries the Workspace switcher and MEMBERS only: the thin
     // header plus is gone, the FAB is the one way to compose.
-    const header = source.slice(source.indexOf('<View style={styles.header}>'), source.indexOf('<HullDialog'));
+    const header = source.slice(
+      source.indexOf('<View style={styles.header}>'),
+      source.indexOf('<HullDialog'),
+    );
     expect(header).not.toMatch(/[+＋]/);
     expect(header).toContain('testID="workspace-members"');
   });
@@ -114,7 +165,9 @@ describe('Room list layout contract', () => {
     expect(source).toContain('const attention = roomRowNeedsAttention(item);');
     expect(source).toContain('const ATTENTION_SQUARE = 7');
     expect(source).toContain('testID={`room-attention-${item.room.id}`}');
-    expect(source).toContain('style={[styles.attentionSquare, attention && styles.attentionSquareLit]}');
+    expect(source).toContain(
+      'style={[styles.attentionSquare, attention && styles.attentionSquareLit]}',
+    );
     expect(styleBlock(source, 'attentionSquare')).toContain('width: ATTENTION_SQUARE');
     expect(styleBlock(source, 'attentionSquare')).toContain('height: ATTENTION_SQUARE');
     expect(styleBlock(source, 'attentionSquare')).toContain("backgroundColor: 'transparent'");

@@ -1,4 +1,9 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
+import { completeDevicePairing } from './device-pairing.js';
+import { identityFromKey } from './runtime.js';
 import {
   brass,
   brassSpinner,
@@ -358,6 +363,83 @@ describe('connect wizard', () => {
     await expect(runConnectFinishCommand('/does/not/matter.json')).rejects.toThrow(
       /canonical installed Beeline launcher/,
     );
+  });
+
+  it('rolls back the pairing when the wizard fails before the helper starts', async () => {
+    const fetchImpl = vi.fn(async () => new Response('', { status: 204 }));
+    const grant = {
+      agentSecretKey: '1'.repeat(64),
+      bodySecretKey: '3'.repeat(64),
+      agentName: 'Scout',
+      harness: 'codex' as const,
+      model: 'gpt-5.4',
+      soul: 'Brisk and kind.',
+      workspaceId: 'workspace-id',
+      workspaceName: 'Builders',
+      pairedBy: '4'.repeat(64),
+      monolithBaseUrl: 'https://server.example',
+      daemonExchangeToken: `bde_${'5'.repeat(43)}`,
+    };
+    await expect(
+      completeDevicePairing(grant, {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        selectedAgent: { kind: 'codex', command: 'codex', args: [] },
+        localConfig: { agentBinary: 'codex', mcpBinary: 'buzz-dev-mcp', agentEnv: {} },
+        validateSelection: async () => {
+          throw new Error('model unavailable for this harness');
+        },
+      }),
+    ).rejects.toThrow('model unavailable for this harness');
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(String(fetchImpl.mock.calls[0]?.[0])).toBe(
+      'https://server.example/v1/auth/daemon/rollback',
+    );
+    expect(JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body))).toEqual({
+      exchangeToken: grant.daemonExchangeToken,
+    });
+  });
+
+  it('completes pairing without contacting the rollback endpoint', async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            daemonToken: `bdt_${'a'.repeat(43)}`,
+            agentId: identityFromKey('1'.repeat(64), 'Scout').publicKey,
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+    );
+    const supervisorRoot = await mkdtemp(join(tmpdir(), 'beeline-pair-'));
+    try {
+      await completeDevicePairing(
+        {
+          agentSecretKey: '1'.repeat(64),          bodySecretKey: '3'.repeat(64),
+          agentName: 'Scout',
+          harness: 'codex',
+          model: 'gpt-5.4',
+          soul: 'Brisk and kind.',
+          workspaceId: 'workspace-id',
+          workspaceName: 'Builders',
+          pairedBy: '4'.repeat(64),
+          monolithBaseUrl: 'https://server.example',
+          daemonExchangeToken: `bde_${'5'.repeat(43)}`,
+        },
+        {
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+          supervisorRoot,
+          selectedAgent: { kind: 'codex', command: 'codex', args: [] },
+          localConfig: { agentBinary: 'codex', mcpBinary: 'buzz-dev-mcp', agentEnv: {} },
+          validateSelection: async () => undefined,
+          launch: async () => 4242,
+        },
+      );
+      expect(fetchImpl.mock.calls.map((call) => String(call[0]))).not.toContain(
+        'https://server.example/v1/auth/daemon/rollback',
+      );
+    } finally {
+      await rm(supervisorRoot, { recursive: true, force: true });
+    }
   });
 
   it('verifies a provider key right after the key step and aborts with the provider sentence', async () => {

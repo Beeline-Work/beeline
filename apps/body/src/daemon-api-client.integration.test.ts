@@ -723,6 +723,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
             observedAt: expect.any(Number),
           }),
         ],
+        summary: { total: 1, ready: 1, neverSeen: 0 },
       });
 
       const sent = await phone.execute(

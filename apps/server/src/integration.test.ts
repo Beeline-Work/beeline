@@ -993,7 +993,104 @@ describe('monolith integration', () => {
           observedAt: expect.any(Number),
         },
       ],
+      summary: { total: 1, ready: 1, neverSeen: 0 },
     });
+  });
+
+  it('reports a registered agent that never ran as never-seen and rolls it back', async () => {
+    const ghost = await request('/v1/phone/operations/createAgentPairingCode', 'POST', {
+      workspaceId: WORKSPACE,
+    });
+    const { code } = (await ghost.json()) as { code: string };
+    const connectPayload = JSON.stringify({
+      pairing_code: code,
+      harness: 'claude',
+      model: 'claude-test-model',
+      soul: 'Helper soul.',
+      agent_name: 'Ghost Helper',
+    });
+    const claimed = await new Promise<{ status: number; body: Record<string, string> }>(
+      (resolve, reject) => {
+        const outgoing = httpRequest(`${origin}/auth/agent/connect`, {
+          method: 'POST',
+          headers: {
+            host: 'server.test',
+            'content-type': 'application/json',
+            'content-length': Buffer.byteLength(connectPayload),
+          },
+        });
+        outgoing.once('error', reject);
+        outgoing.once('response', (incoming) => {
+          const chunks: Buffer[] = [];
+          incoming.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+          incoming.on('end', () =>
+            resolve({
+              status: incoming.statusCode ?? 0,
+              body: JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, string>,
+            }),
+          );
+        });
+        outgoing.end(connectPayload);
+      },
+    );
+    expect(claimed.status).toBe(200);
+    const grant = {
+      agentPubkey: claimed.body.agent_pubkey!,
+      exchangeToken: claimed.body.daemon_exchange_token!,
+    };
+
+    // A real fleet member on the release, so the ghost is the only odd one out.
+    const realPresence = await request(
+      '/v1/daemon/operations/postAgentPresence',
+      'POST',
+      {
+        agentId: AGENT,
+        roomId: ROOM,
+        status: 'online',
+        releaseVersion: 'v0.0.22',
+        sourceSha: 'd03cff8f'.padEnd(40, '0'),
+      },
+      daemonToken,
+    );
+    expect(realPresence.status).toBe(200);
+
+    const readiness = await fetch(`${origin}/v1/releases/daemon-readiness`);
+    expect(readiness.status).toBe(200);
+    const body = (await readiness.json()) as {
+      daemons: Array<{ agentPubkey: string; state: string; observedAt?: number }>;
+      summary: { total: number; ready: number; neverSeen: number };
+    };
+    const ghostEntry = body.daemons.find((daemon) => daemon.agentPubkey === grant.agentPubkey);
+    expect(ghostEntry?.state).toBe('never-seen');
+    expect(ghostEntry?.observedAt).toBeUndefined();
+    expect(body.summary).toMatchObject({ total: 2, ready: 1, neverSeen: 1 });
+
+    const rolledBack = await request('/v1/auth/daemon/rollback', 'POST', {
+      exchangeToken: grant.exchangeToken,
+    });
+    expect(rolledBack.status).toBe(204);
+    const afterReadiness = await fetch(`${origin}/v1/releases/daemon-readiness`);
+    const afterBody = (await afterReadiness.json()) as typeof body;
+    expect(
+      afterBody.daemons.find((daemon) => daemon.agentPubkey === grant.agentPubkey),
+    ).toBeUndefined();
+    expect(afterBody.summary).toMatchObject({ total: 1, ready: 1, neverSeen: 0 });
+
+    const refuse = await request('/v1/auth/daemon/rollback', 'POST', {
+      exchangeToken: grant.exchangeToken,
+    });
+    expect(refuse.status).toBeGreaterThanOrEqual(400);
+  });
+
+  it('refuses to roll back an agent that has already reported presence', async () => {
+    await request(
+      '/v1/daemon/operations/postAgentPresence',
+      'POST',
+      { agentId: AGENT, roomId: ROOM, status: 'online' },
+      daemonToken,
+    );
+    const refused = await request('/v1/auth/daemon/rollback', 'POST', {});
+    expect(refused.status).toBe(400);
   });
 
   it('treats concurrent retries of the same message write as one successful send', async () => {

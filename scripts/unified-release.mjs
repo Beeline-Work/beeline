@@ -200,8 +200,13 @@ export function deliveryReport(state, observed = undefined) {
 export function assertDaemonFleetReady(status, version, sourceSha) {
   validateReleaseIdentity(version, sourceSha);
   const daemons = Array.isArray(status?.daemons) ? status.daemons : [];
-  if (daemons.length === 0) fail('daemon readiness reported no registered agents');
-  const failures = daemons.filter(
+  // An agent that has NEVER reported (no presence output at all) is a ghost
+  // registration, not a daemon in trouble: it cannot confirm a release and it
+  // must not block one. A daemon that reported before but has gone silent is
+  // 'missing'/'stale'/'offline' and still blocks — that is the real signal.
+  const observed = daemons.filter((daemon) => daemon?.state !== 'never-seen');
+  if (observed.length === 0) fail('daemon readiness reported no agents that ever reported');
+  const failures = observed.filter(
     (daemon) =>
       daemon?.state !== 'ready' ||
       daemon?.version !== version ||

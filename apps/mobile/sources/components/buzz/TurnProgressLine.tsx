@@ -2,13 +2,9 @@ import React, { useEffect, useState } from 'react';
 import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
+import { BeelineMarkSpinner, MARK_CELL } from './BeelineMarkSpinner';
 import { HullLivePulse } from './MonoHull';
-import {
-  SPINNER_FRAMES,
-  SPINNER_STEP_MS,
-  elapsedSeconds,
-  spinnerFrameAt,
-} from '@/buzz/turn-clock';
+import { SPINNER_STEP_MS, elapsedSeconds } from '@/buzz/turn-clock';
 
 /**
  * The ordinary per-turn indicator: the agent has taken this Room's question
@@ -26,11 +22,15 @@ import {
  * that pair to exactly one meaning, an agent is alive and working, which is
  * precisely what a turn in progress is.
  *
- * Modeled on the Claude Code status line: a spinner glyph cycling back and
- * forth, the verb line, then "(Ns · thinking)" ticking once per second. The
- * counter starts from the server receipt's own `createdAt` (unix seconds), so
- * it reads correctly even when the app opened mid-turn. The ticking interval
- * lives entirely inside this tiny leaf — it never recreates the transcript.
+ * The shape of the line is the status-line idiom: a mark, the verb line, then
+ * "(Ns · thinking)" ticking once per second. The mark is the Beeline ribbon
+ * (`BeelineMarkSpinner`) drawing itself, never a cycling text glyph — a glyph
+ * whose advance width changes per frame walks the label's left edge back and
+ * forth, so the mark sits in one fixed `MARK_CELL` square and the label's x
+ * never depends on it. The counter starts from the server receipt's own
+ * `createdAt` (unix seconds), so it reads correctly even when the app opened
+ * mid-turn. The ticking interval lives entirely inside this tiny leaf — it
+ * never recreates the transcript.
  *
  * The same live treatment also covers the short local "sending…" bridge. It
  * expires at its deadline; this component never presents an inferred waiting
@@ -53,8 +53,6 @@ export function TurnProgressLine({
     return () => clearInterval(timer);
   }, []);
 
-  const frame = startedAt != null ? spinnerFrameAt(now - startedAt * 1_000) : SPINNER_FRAMES[0];
-
   return (
     <View
       accessibilityLabel={startedAt != null ? `${label} (${elapsedSeconds(startedAt * 1_000, now)}s · thinking)` : label}
@@ -63,9 +61,9 @@ export function TurnProgressLine({
       testID={testID}
     >
       <HullLivePulse style={styles.row}>
-        <Text style={styles.glyph} testID={testID ? `${testID}-glyph` : undefined}>
-          {frame}
-        </Text>
+        <View style={styles.glyphCell} testID={testID ? `${testID}-glyph` : undefined}>
+          <BeelineMarkSpinner live />
+        </View>
         <Text numberOfLines={1} style={styles.label}>
           {label}
         </Text>
@@ -82,16 +80,16 @@ export function TurnProgressLine({
 /**
  * The one-line summary a finished turn leaves behind, briefly: the past-tense
  * verb, total seconds from the working receipt's server time, and the local
- * wall-clock "done" stamp. Static — no breath, no counter — because the turn
- * is over; the screen clears it after a few seconds.
+ * wall-clock "done" stamp. Static — no breath, no counter, the completed mark
+ * — because the turn is over; the screen clears it after a few seconds.
  */
 export function TurnSettledLine({ line, testID }: { line: string; testID?: string }) {
   return (
     <View accessibilityLabel={line} style={styles.bar} testID={testID}>
       <View style={styles.row}>
-        <Text style={styles.glyph} testID={testID ? `${testID}-glyph` : undefined}>
-          {SPINNER_FRAMES[SPINNER_FRAMES.length - 1]}
-        </Text>
+        <View style={styles.glyphCell} testID={testID ? `${testID}-glyph` : undefined}>
+          <BeelineMarkSpinner />
+        </View>
         <Text numberOfLines={1} style={styles.label}>
           {line}
         </Text>
@@ -119,12 +117,14 @@ const styles = StyleSheet.create((theme) => {
       alignItems: 'center',
       gap: 8,
     },
-    glyph: {
-      ...Typography.mono(),
+    // A fixed square, whatever the mark inside is doing: the label's left edge
+    // must never move with the glyph.
+    glyphCell: {
+      width: MARK_CELL,
+      height: MARK_CELL,
       flexShrink: 0,
-      color: groknight.accent,
-      fontSize: 12,
-      lineHeight: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
     },
     label: {
       ...Typography.mono(),

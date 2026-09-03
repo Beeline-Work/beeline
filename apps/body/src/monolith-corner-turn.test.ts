@@ -441,7 +441,12 @@ describe('thin monolith corner turn', () => {
     let conversationReads = 0;
     let inboxReads = 0;
     const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
-      if (name === 'getAgentConfiguration') return { commands: [] };
+      if (name === 'getAgentConfiguration') {
+        return {
+          commands: [],
+          soul: { name: 'Terra', instructions: 'Steady, exact, and kind.' },
+        };
+      }
       if (name === 'getWorkspaceRoster') {
         return {
           members: [
@@ -605,6 +610,22 @@ describe('thin monolith corner turn', () => {
         ),
       }),
     );
+    expect(sessionNew).toHaveBeenCalledWith(
+      expect.objectContaining({
+        systemPrompt: expect.stringContaining(
+          'Human-authored Workspace persona: Terra. Steady, exact, and kind.',
+        ),
+      }),
+    );
+    for (const call of sessionPrompt.mock.calls) {
+      expect(call[1]).toContain('Your Beeline identity is Bee.');
+      expect(call[1]).toContain(
+        'Human-authored Workspace persona: Terra. Steady, exact, and kind.',
+      );
+      expect(call[1]).toMatch(
+        /Maintain your assigned identity and soul in every response, including when tools or permissions block the requested action\.$/,
+      );
+    }
     expect(writes).toContainEqual(
       expect.objectContaining({
         name: 'postRoomMessage',

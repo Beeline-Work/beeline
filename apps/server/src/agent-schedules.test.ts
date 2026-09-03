@@ -10,6 +10,7 @@ import {
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
+import { SCHEDULE_SCHEDULER_ID } from '@beeline/api-contract/scheduled-prompts';
 
 const OWNER = 'a'.repeat(64);
 const MEMBER = 'b'.repeat(64);
@@ -183,7 +184,7 @@ describe('agent schedule background posting', () => {
     }
   });
 
-  it('fires an agent-created schedule as a self-mention and auto-deletes after maxRuns', async () => {
+  it('fires an agent-created schedule as a scheduler-authored system prompt and auto-deletes after maxRuns', async () => {
     const database = await fixture();
     try {
       const daemon = new DaemonService(database, new LiveHub());
@@ -192,33 +193,78 @@ describe('agent schedule background posting', () => {
         {
           agentId: AGENT,
           roomId: ROOM,
-          prompt: "message 'hello @bananaman614305'",
+          prompt: 'Post exactly: hello @methoxine-debug',
           cadence: { kind: 'interval', everyMinutes: 1 },
-          maxRuns: 5,
+          maxRuns: 2,
         },
         AGENT,
       );
       expect(created.scheduleId).toMatch(/[0-9a-f-]{36}/);
-      // Force the schedule due so the loop can run all five occurrences now.
+      // Force the schedule due so the loop can run both occurrences now.
       const forceDue = async () =>
-        database.query(`UPDATE agent_schedules SET next_run_at=now() - interval '1 second' WHERE id=$1`, [
-          created.scheduleId,
-        ]);
+        database.query(
+          `UPDATE agent_schedules SET next_run_at=now() - interval '1 second' WHERE id=$1`,
+          [created.scheduleId],
+        );
       const loop = new AgentScheduleLoop(database);
-      for (let run = 0; run < 5; run += 1) {
+      for (let run = 0; run < 2; run += 1) {
         await forceDue();
         expect(await loop.runOnce()).toBe(1);
       }
-      const messages = await database.query<{ author_id: string; text: string; mention_ids: string[] }>(
-        `SELECT author_id,text,mention_ids FROM messages ORDER BY created_at`,
-      );
-      expect(messages.rowCount).toBe(5);
+      const messages = await database.query<{
+        author_id: string;
+        text: string;
+        presentation: string;
+        mention_ids: string[];
+      }>(`SELECT author_id,text,presentation,mention_ids FROM messages ORDER BY created_at`);
+      expect(messages.rowCount).toBe(2);
+      // Never authored by the agent itself: the scheduler identity posts a
+      // system-presentation line mentioning the agent.
       expect(messages.rows[0]).toEqual({
-        author_id: AGENT,
-        text: "message 'hello @bananaman614305'",
+        author_id: SCHEDULE_SCHEDULER_ID,
+        text: 'Scheduled: Post exactly: hello @methoxine-debug',
+        presentation: 'system',
         mention_ids: [AGENT],
       });
-      // The schedule deleted itself after the fifth run.
+      expect(messages.rows[1]).toEqual(messages.rows[0]);
+      // The scheduler identity is hidden from rosters.
+      expect(
+        (
+          await database.query<{ hidden_from_roster: boolean }>(
+            `SELECT hidden_from_roster FROM identities WHERE id=$1`,
+            [SCHEDULE_SCHEDULER_ID],
+          )
+        ).rows[0],
+      ).toEqual({ hidden_from_roster: true });
+      // The agent's daemon inbox contains the scheduled prompt (the own-author
+      // drop would have hidden a self-authored row) and a simulated turn reply.
+      const inbox = await daemon.execute(
+        'getRoomInbox',
+        { roomId: ROOM, limit: 50 },
+        AGENT,
+      );
+      const scheduledItems = inbox.items.filter(
+        (item) =>
+          item.type === 'system' &&
+          item.body.startsWith('Scheduled: ') &&
+          item.mentionIds.includes(AGENT),
+      );
+      expect(scheduledItems).toHaveLength(2);
+      await daemon.execute(
+        'postRoomMessage',
+        {
+          roomId: ROOM,
+          text: 'hello @methoxine-debug',
+          replyToMessageId: scheduledItems[0]!.id,
+        },
+        AGENT,
+      );
+      const replies = await database.query<{ text: string }>(
+        `SELECT text FROM messages WHERE author_id=$1`,
+        [AGENT],
+      );
+      expect(replies.rows).toEqual([{ text: 'hello @methoxine-debug' }]);
+      // The schedule deleted itself after the second run.
       expect(
         (await database.query(`SELECT 1 FROM agent_schedules WHERE id=$1`, [created.scheduleId]))
           .rowCount,

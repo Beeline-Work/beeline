@@ -31,9 +31,15 @@ import { DaemonApiClient } from './daemon-api-client.js';
 import { AcpClient } from './acp.js';
 import {
   agentReplyMentionIds,
+  inboxItemTriggersTurn,
+  isScheduledPrompt,
   MonolithRoomTurnLoop,
   roomPrincipalMayAddressAgent,
 } from './monolith-room-turn.js';
+import {
+  SCHEDULE_SCHEDULER_ID,
+  SCHEDULE_SCHEDULER_NAME,
+} from '@beeline/api-contract/scheduled-prompts';
 import { completeDevicePairing } from './device-pairing.js';
 import { coordinateManagedUpdateHandoff, ManagedUpdateHandoff } from './managed-update.js';
 import {
@@ -1711,6 +1717,157 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     },
     720_000,
   );
+
+  it('wakes the agent from a scheduler-authored scheduled prompt, never from plain system lines', async () => {
+    // Gating unit checks: own rows and mentionless system lines never trigger.
+    const line = (over: Partial<Parameters<typeof isScheduledPrompt>[0]>) => ({
+      id: 'x',
+      authorId: SCHEDULE_SCHEDULER_ID,
+      createdAt: 0,
+      type: 'system' as const,
+      body: 'Scheduled: ping',
+      mentionIds: [AGENT],
+      attachments: [],
+      ...over,
+    });
+    expect(inboxItemTriggersTurn(line({}), AGENT)).toBe(true);
+    expect(inboxItemTriggersTurn(line({ authorId: AGENT }), AGENT)).toBe(false);
+    expect(inboxItemTriggersTurn(line({ mentionIds: [] }), AGENT)).toBe(false);
+    expect(inboxItemTriggersTurn(line({ body: 'Scout joined the Room' }), AGENT)).toBe(false);
+    expect(inboxItemTriggersTurn(line({ type: 'message', authorId: HUMAN }), AGENT)).toBe(true);
+
+    const exchange = await auth.createDaemonExchange(AGENT);
+    const exchanged = await fetch(`${origin}/v1/auth/daemon/exchange`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ exchangeToken: exchange.exchangeToken }),
+    });
+    const token = (await exchanged.json()) as { daemonToken: string };
+    const client = new DaemonApiClient(origin, token.daemonToken, AGENT);
+    // Drop the fixture's model selection; the mocked harness advertises no axis.
+    await database.query(
+      `UPDATE agents SET selected_model=NULL,selected_effort=NULL WHERE agent_id=$1`,
+      [AGENT],
+    );
+
+    // Seed the scheduler identity the way AgentScheduleLoop does for agent-created
+    // schedules; the transcript rows are inserted after the loop starts polling
+    // (its inbox cursor opens at the latest row).
+    await database.query(
+      `INSERT INTO identities(id,kind,name,hidden_from_roster) VALUES($1,'human',$2,true)`,
+      [SCHEDULE_SCHEDULER_ID, SCHEDULE_SCHEDULER_NAME],
+    );
+
+    const acp = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
+    vi.spyOn(acp, 'start').mockResolvedValue(undefined);
+    const polled = vi.fn();
+    const sessionNew = vi.spyOn(acp, 'sessionNew').mockResolvedValue({
+      sessionId: 'scheduled-session',
+      raw: {},
+    });
+    const sessionPrompt = vi.spyOn(acp, 'sessionPrompt').mockResolvedValue({
+      stopReason: 'end_turn',
+      updates: [],
+      agentText: 'hello',
+      toolCalls: [],
+    });
+    const config = {
+      agentBinary: '/nonexistent/codex-acp',
+      agentCommand: '/nonexistent/codex-acp',
+      mcpBinary: '/nonexistent',
+      readonlyMcpCommand: '/nonexistent-readonly-mcp',
+      agentEnv: {},
+      workspaceRoot: join(supervisorRoot, 'scheduled-room'),
+      autoApprovePermissions: true,
+      accessPolicy: 'everyone',
+      agentHomeRoot: join(supervisorRoot, 'agent-home'),
+      daemonReleaseVersion: 'v0.0.22',
+      daemonSourceSha: 'd03cff8f'.padEnd(40, '0'),
+    } as const;
+    const runtime: AgentRuntimeRecord = {
+      version: 2,
+      communityId: WORKSPACE,
+      pairedBy: HUMAN,
+      agent: {
+        name: 'Bee',
+        publicKey: AGENT,
+        secretKeyHex: Buffer.from(AGENT_SECRET).toString('hex'),
+      },
+      body: {
+        name: 'Body',
+        publicKey: getPublicKey(new Uint8Array(32).fill(22)),
+        secretKeyHex: Buffer.from(new Uint8Array(32).fill(22)).toString('hex'),
+      },
+      rooms: [],
+      supervisorRoot,
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      createdAt: new Date().toISOString(),
+      accessPolicy: 'everyone',
+      transport: { kind: 'monolith', baseUrl: origin, daemonToken: token.daemonToken },
+    };
+    const abort = new AbortController();
+    const turnLoop = new MonolithRoomTurnLoop({
+      roomId: ROOM,
+      workspaceId: WORKSPACE,
+      cwd: config.workspaceRoot,
+      runtime,
+      config: config as never,
+      api: client,
+      scheduler: new SessionScheduler({ maxLiveSessions: 2 }),
+      health: { poll: polled, failure: vi.fn(), presence: vi.fn() },
+      signal: abort.signal,
+      pollMs: 10,
+      createAcpClient: () => acp,
+    });
+    const loop = turnLoop.run();
+    try {
+      // The turn loop opens its inbox cursor at the latest row, so fire the
+      // scheduled prompt while it is polling (as the real schedule loop would).
+      // Deterministic wake: `health.poll()` fires only AFTER the loop's first
+      // inbox fetch has established its `startAtLatest` cursor, so rows inserted
+      // once `polled` has been called are guaranteed to be picked up by a
+      // subsequent poll (unlike presence, which posts before the snapshot).
+      await vi.waitFor(() => expect(polled).toHaveBeenCalled(), { timeout: 5_000 });
+      await database.query(
+        `INSERT INTO messages(id,room_id,author_id,text,presentation) VALUES($1,$2,$3,$4,'system')`,
+        ['e'.repeat(64), ROOM, SCHEDULE_SCHEDULER_ID, 'Beeline Scheduler checked the roster'],
+      );
+      await database.query(
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,mention_ids)
+         VALUES($1,$2,$3,$4,'system',$5::jsonb) RETURNING id`,
+        [
+          'd'.repeat(64),
+          ROOM,
+          SCHEDULE_SCHEDULER_ID,
+          'Scheduled: Post exactly: hello',
+          JSON.stringify([AGENT]),
+        ],
+      );
+      await vi.waitFor(() => expect(sessionPrompt).toHaveBeenCalled(), { timeout: 5_000 });
+      const wirePrompt = sessionPrompt.mock.calls[0]![1];
+      expect(wirePrompt).toContain('Scheduled: Post exactly: hello');
+      expect(wirePrompt).toContain(`from ${SCHEDULE_SCHEDULER_NAME}`);
+      // The plain system line stayed out of the turn.
+      expect(wirePrompt).not.toContain('checked the roster');
+      await vi.waitFor(
+        async () => {
+          const room = await phone.readRoom(ROOM, HUMAN);
+          expect(room?.messages).toContainEqual(
+            expect.objectContaining({
+              author: expect.objectContaining({ pubkey: AGENT }),
+              requestId: 'd'.repeat(64),
+              text: 'hello',
+            }),
+          );
+        },
+        { timeout: 10_000 },
+      );
+    } finally {
+      abort.abort();
+      await loop;
+    }
+  }, 30_000);
 
   it('exchanges a token and round-trips inbox, receipts, authority, settings, presence, and corners', async () => {
     const exchange = await auth.createDaemonExchange(AGENT);

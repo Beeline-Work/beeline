@@ -1,6 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
+import { SCHEDULED_PROMPT_PREFIX, SCHEDULE_SCHEDULER_NAME } from '@beeline/api-contract/scheduled-prompts';
 import {
   AcpClient,
   type AcpPermissionDecision,
@@ -30,7 +31,10 @@ import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js'
 
 type WorkspaceRoster = DaemonOperationMap['getWorkspaceRoster']['output'];
 type RoomMessage = DaemonOperationMap['getRoomInbox']['output']['items'][number];
-type HumanMessage = Pick<RoomMessage, 'id' | 'authorId' | 'body' | 'createdAt' | 'attachments'>;
+type HumanMessage = Pick<
+  RoomMessage,
+  'id' | 'authorId' | 'body' | 'createdAt' | 'attachments' | 'type' | 'mentionIds'
+>;
 type RoomAuthority = DaemonOperationMap['getRoomAuthority']['output'];
 
 /**
@@ -60,6 +64,32 @@ export function roomPrincipalMayAddressAgent(
     (authority.principalKind === 'agent' ||
       (authority.principalKind === 'human' && humanPermitted))
   );
+}
+
+/** Server-authored scheduled prompts arrive as system lines ('Scheduled: <message>')
+ *  mentioning this agent; the scheduler is not a Room principal, so its lines skip
+ *  the per-author authority check (schedule creation was already authority-gated). */
+export function isScheduledPrompt(
+  item: { type: string; body: string; mentionIds: readonly string[] },
+  agentId: string,
+): boolean {
+  return (
+    item.type === 'system' &&
+    item.body.startsWith(SCHEDULED_PROMPT_PREFIX) &&
+    item.mentionIds.includes(agentId)
+  );
+}
+
+/** Which inbox items may start or steer a turn: ordinary messages from others that
+ *  mention the agent, plus scheduler-authored scheduled prompts (never plain system
+ *  lines or the agent's own rows). */
+export function inboxItemTriggersTurn(
+  item: RoomMessage,
+  agentId: string,
+): boolean {
+  if (item.authorId === agentId) return false;
+  if (!item.mentionIds.includes(agentId)) return false;
+  return item.type === 'message' || isScheduledPrompt(item, agentId);
 }
 
 function escapeRegExp(value: string): string {
@@ -422,7 +452,11 @@ export class MonolithRoomTurnLoop {
           const prompt = [
             this.turnInstructionPrefix,
             transcript ? `Room conversation so far:\n${transcript}` : '',
-            `Newest human message from ${names.get(item.authorId) ?? item.authorId.slice(0, 12)}:`,
+            `Newest message from ${
+              isScheduledPrompt(item, this.agent.publicKey)
+                ? SCHEDULE_SCHEDULER_NAME
+                : (names.get(item.authorId) ?? item.authorId.slice(0, 12))
+            }:`,
             roomMessagePrompt('', item.body, item.attachments),
             [
               'Write only the substantive Room message you want the human to read.',
@@ -586,18 +620,18 @@ export class MonolithRoomTurnLoop {
             limit: 200,
           });
           for (const item of inbox.items) {
-            if (item.authorId === this.agent.publicKey || item.type !== 'message') continue;
-            const addressed = item.mentionIds.includes(this.agent.publicKey);
-            if (!addressed) continue;
-            const authority = await api.execute('getRoomAuthority', {
-              roomId,
-              principalId: item.authorId,
-            });
-            const humanPermitted =
-              authority.principalKind === 'human'
-                ? await this.currentPrincipalCanDrive(this.options.workspaceId, item.authorId)
-                : false;
-            if (!roomPrincipalMayAddressAgent(authority, humanPermitted)) continue;
+            if (!inboxItemTriggersTurn(item, this.agent.publicKey)) continue;
+            if (!isScheduledPrompt(item, this.agent.publicKey)) {
+              const authority = await api.execute('getRoomAuthority', {
+                roomId,
+                principalId: item.authorId,
+              });
+              const humanPermitted =
+                authority.principalKind === 'human'
+                  ? await this.currentPrincipalCanDrive(this.options.workspaceId, item.authorId)
+                  : false;
+              if (!roomPrincipalMayAddressAgent(authority, humanPermitted)) continue;
+            }
             const active = this.activeTurn;
             if (!active) this.startPrompt(item);
             else if (active.phase === 'prompting') this.steer(active, item);

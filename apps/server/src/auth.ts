@@ -1,13 +1,15 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { GITHUB_IDENTITY_AUDIENCE } from '@beeline/auth/github';
+import {
+  DEFAULT_WORKSPACE_ID as WELCOME_WORKSPACE_ID,
+  DEFAULT_WORKSPACE_NAME as WELCOME_WORKSPACE_NAME,
+} from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { joinRooms } from './membership-join.js';
 
 const ACCESS_LIFETIME_MS = 15 * 60_000;
 const REFRESH_LIFETIME_MS = 30 * 24 * 60 * 60_000;
 const DAEMON_EXCHANGE_LIFETIME_MS = 15 * 60_000;
-const WELCOME_WORKSPACE_ID = 'bee11e00-0000-4000-8000-000000000001';
-const WELCOME_WORKSPACE_NAME = 'Beeline Welcome';
 
 export interface GitHubIdentityProof {
   subject: string;

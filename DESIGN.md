@@ -399,20 +399,35 @@ Captain decision 2026-08, superseding the earlier no-`#` rule and the later
 
 ## Type
 
-Three semantic seams, with theme-selected prose.
+Four sizes, one mono role, held by a lint. The roles live in
+`apps/mobile/sources/buzz/groknight.ts` (`typeRoles`, on every theme as
+`theme.buzz.type`); each carries family, size, line height (1.45×, rounded)
+and tracking. A screen spreads a role; it never sets a raw size.
 
-`Typography.ledger()` is the semantic transcript seam and defaults to IBM Plex
-Sans. Theme-aware transcript styles select Sans, Serif, or Mono from the token
-set and select the regular/semibold cut by hierarchy.
+| role          | face                     | size | use                                              |
+| ------------- | ------------------------ | ---- | ------------------------------------------------ |
+| `hero`        | Space Grotesk Medium     | 22   | a screen's one big line, index row names (-0.3)  |
+| `body`        | Space Grotesk Regular    | 16   | body text, row titles, buttons (sentence case)   |
+| `bodyStrong`  | Space Grotesk SemiBold   | 16   | the emphasised cut of `body`                     |
+| `meta`        | Space Grotesk Regular    | 13   | everything secondary: previews, captions, stamps, counts |
+| `sectionHead` | Space Grotesk Medium     | 10   | section heads ONLY (tracking 2, uppercase)       |
+| `machine`     | IBM Plex Mono            | 13   | literal machine output: commands, paths, hashes, code, tool rows |
 
-`Typography.mono()` marks deliberate machine identifiers (commands, handles,
-roles, status, gutter stamps), enforced by an allowlist in
-`components/buzz/Typography.test.ts`. It always resolves to IBM Plex Mono,
-independent of theme.
+Space Grotesk is the one reading face: names, rows, buttons, labels, bylines,
+stamps. Mono is for strings a machine produced, never for a byline or a label.
+Small tracked capitals exist only to divide a list into sections. The spacing
+scale beside the roles is `space` (4 · 8 · 16 · 24 · 32 · 48) and `layout`
+(rows 64 tall, sections 24 apart, screens start 24 below the header).
 
-`Typography.default()` is IBM Plex Sans for prose outside theme-aware Buzz
-surfaces. IBM Plex Sans, Mono, and Serif are bundled and loaded explicitly;
-Bricolage Grotesque is the logo lockup only.
+`calm-lint.design.test.ts` scans every `sources/**/*.tsx` for raw `fontSize:`
+outside {22, 16, 13, 10} and `letterSpacing:` outside {-0.3, 0, 2}, and holds
+each file to the count in `apps/mobile/design/calm-baseline.json`. A count may
+only shrink: a surface PR that removes raw values regenerates the baseline
+with `CALM_BASELINE_WRITE=1 npx vitest run sources/buzz/calm-lint`.
+
+`Typography.mono()` still marks the deliberate machine identifiers, enforced by
+the allowlist in `components/buzz/Typography.test.ts`; `Typography.ledger()`
+is the transcript seam. Bricolage Grotesque is the logo lockup only.
 
 ## Motion
 

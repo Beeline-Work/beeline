@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { beelineThemes, groknight } from './groknight';
+import { beelineThemes, groknight, layout, space, typeRoles } from './groknight';
 
 describe('Beeline theme tokens', () => {
   it('ships Obsidian Refined as the default token set', () => {
@@ -69,6 +69,48 @@ describe('Speakeasy canvas alignment', () => {
       expect(lum(theme.bgUnread)).toBeLessThan(lum(theme.bgHighlight));
       // Hairlines must stay visible against both the canvas and raised surfaces.
       expect(lum(theme.border)).toBeGreaterThan(canvas);
+    }
+  });
+});
+
+describe('Borrowing Calm type roles and spacing', () => {
+  const role = (fontFamily: string, fontSize: number, lineHeight: number, letterSpacing: number) => ({
+    fontFamily,
+    fontSize,
+    lineHeight,
+    letterSpacing,
+  });
+
+  it('pins the four sizes and the one mono role', () => {
+    expect(typeRoles).toEqual({
+      hero: role('SpaceGrotesk-Medium', 22, 32, -0.3),
+      body: role('SpaceGrotesk-Regular', 16, 23, 0),
+      bodyStrong: role('SpaceGrotesk-SemiBold', 16, 23, 0),
+      meta: role('SpaceGrotesk-Regular', 13, 19, 0),
+      sectionHead: {
+        ...role('SpaceGrotesk-Medium', 10, 15, 2),
+        textTransform: 'uppercase',
+      },
+      machine: role('IBMPlexMono-Regular', 13, 19, 0),
+    });
+    for (const value of Object.values(typeRoles)) {
+      expect(value.lineHeight).toBe(Math.round(value.fontSize * 1.45));
+    }
+    // Section heads are the only tracked-uppercase style.
+    const uppercase = Object.entries(typeRoles).filter(([, value]) => 'textTransform' in value);
+    expect(uppercase.map(([name]) => name)).toEqual(['sectionHead']);
+  });
+
+  it('pins the spacing scale', () => {
+    expect(space).toEqual({ xs: 4, sm: 8, md: 16, lg: 24, xl: 32, xxl: 48 });
+    expect(layout).toEqual({ row: 64, sectionGap: 24, screenTop: 24 });
+  });
+
+  it('exposes the roles on every theme token set', () => {
+    for (const theme of Object.values(beelineThemes)) {
+      expect(theme.type).toBe(typeRoles);
+      expect(theme.space).toBe(space);
+      expect(theme.layout).toBe(layout);
     }
   });
 });

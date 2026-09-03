@@ -18,9 +18,63 @@ const shared = {
   photoIdentityMarksEnabled: false,
 } as const;
 
+/**
+ * Borrowing Calm — the type roles (design note 2026-09-03, DESIGN.md → Type).
+ *
+ * Four sizes, one mono role. A screen sets text through one of these
+ * roles, never a raw `fontSize`/`letterSpacing`; `calm-lint.design.test.ts`
+ * holds every file to its baseline count of raw values. Line height is 1.45×
+ * the size, rounded.
+ */
+const calmLineHeight = (fontSize: number) => Math.round(fontSize * 1.45);
+const sans = {
+  regular: 'SpaceGrotesk-Regular',
+  medium: 'SpaceGrotesk-Medium',
+  semiBold: 'SpaceGrotesk-SemiBold',
+} as const;
+const mono = 'IBMPlexMono-Regular';
+
+export type TypeRole = {
+  readonly fontFamily: string;
+  readonly fontSize: number;
+  readonly lineHeight: number;
+  readonly letterSpacing: number;
+  readonly textTransform?: 'uppercase';
+};
+
+export const typeRoles = {
+  /** A screen's one big line, including index row names. */
+  hero: { fontFamily: sans.medium, fontSize: 22, lineHeight: calmLineHeight(22), letterSpacing: -0.3 },
+  /** Body text and row titles. */
+  body: { fontFamily: sans.regular, fontSize: 16, lineHeight: calmLineHeight(16), letterSpacing: 0 },
+  bodyStrong: { fontFamily: sans.semiBold, fontSize: 16, lineHeight: calmLineHeight(16), letterSpacing: 0 },
+  /** Everything secondary: previews, captions, stamps, counts. Sans, never mono. */
+  meta: { fontFamily: sans.regular, fontSize: 13, lineHeight: calmLineHeight(13), letterSpacing: 0 },
+  /** Section heads ONLY — the one tracked-uppercase style. */
+  sectionHead: {
+    fontFamily: sans.medium,
+    fontSize: 10,
+    lineHeight: calmLineHeight(10),
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+  },
+  /** Literal machine output: commands, paths, hashes, code, tool rows, their timestamps. */
+  machine: { fontFamily: mono, fontSize: 13, lineHeight: calmLineHeight(13), letterSpacing: 0 },
+} as const satisfies Record<string, TypeRole>;
+export type TypeRoleName = keyof typeof typeRoles;
+
+/** The one spacing scale. Nothing is nudged by 3. */
+export const space = { xs: 4, sm: 8, md: 16, lg: 24, xl: 32, xxl: 48 } as const;
+export type SpaceStep = keyof typeof space;
+/** Rows are 64 tall, sections sit 24 apart, screens start 24 below the header. */
+export const layout = { row: 64, sectionGap: 24, screenTop: 24 } as const;
+
 export const beelineThemes = {
   obsidian: {
     ...shared,
+    type: typeRoles,
+    space,
+    layout,
     name: 'obsidian',
     label: 'Obsidian Refined',
     description: 'Readable sans prose on a quiet obsidian field',

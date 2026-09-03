@@ -26,6 +26,7 @@ import {
   type WorkspaceListView,
   type WorkspaceView,
 } from './phone-types.js';
+import { isAgentGrantKind, isAgentGrantStatus } from './agent-grants.js';
 
 const HEX = /^[0-9a-f]{64}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -76,6 +77,49 @@ function attachment(value: unknown): boolean {
   );
 }
 
+function activityRequester(value: unknown): boolean {
+  const item = record(value);
+  return Boolean(
+    item && typeof item.pubkey === 'string' && HEX.test(item.pubkey) && optionalString(item.name),
+  );
+}
+
+export function isAgentGrantView(value: unknown): boolean {
+  const item = record(value);
+  return Boolean(
+    item &&
+    typeof item.grantId === 'string' &&
+    item.grantId.length > 0 &&
+    isAgentGrantKind(item.kind) &&
+    typeof item.target === 'string' &&
+    typeof item.reason === 'string' &&
+    isAgentGrantStatus(item.status) &&
+    identity(item.requestedBy) &&
+    (item.decidedBy === undefined || identity(item.decidedBy)) &&
+    typeof item.roomId === 'string' &&
+    UUID.test(item.roomId) &&
+    integer(item.createdAt) &&
+    (item.decidedAt === undefined || integer(item.decidedAt)) &&
+    (item.expiresAt === undefined || integer(item.expiresAt)) &&
+    typeof item.auto === 'boolean',
+  );
+}
+
+function grantRequest(value: unknown): boolean {
+  const item = record(value);
+  return Boolean(
+    item &&
+    identity(item.agent) &&
+    item.agent.kind === 'agent' &&
+    identity(item.owner) &&
+    item.owner.kind === 'human' &&
+    identity(item.requester) &&
+    Array.isArray(item.grants) &&
+    item.grants.length > 0 &&
+    item.grants.every(isAgentGrantView),
+  );
+}
+
 function activity(value: unknown): boolean {
   const item = record(value);
   const rollup = item?.rollup === undefined ? undefined : record(item.rollup);
@@ -92,6 +136,7 @@ function activity(value: unknown): boolean {
     optionalString(item.command) &&
     optionalString(item.input) &&
     optionalString(item.output) &&
+    (item.requestedBy === undefined || activityRequester(item.requestedBy)) &&
     (item.thoughtMs === undefined || integer(item.thoughtMs)) &&
     (rollup === undefined || (rollup !== null && Object.values(rollup).every(integer))) &&
     (item.observed === undefined ||
@@ -351,6 +396,7 @@ export function isRoomViewMessage(value: unknown): value is RoomViewMessage {
       item.durableFact === 'action') &&
     (item.corner === undefined || messageCorner(item.corner)) &&
     (item.permission === undefined || messagePermission(item.permission)) &&
+    (item.grantRequest === undefined || grantRequest(item.grantRequest)) &&
     (item.targetBranch === undefined || targetBranch(item.targetBranch)) &&
     (item.githubEvent === undefined || githubEvent(item.githubEvent)) &&
     (item.daemonFact === undefined || daemonFact(item.daemonFact)),
@@ -763,6 +809,8 @@ export function isAgentDetailView(value: unknown): value is AgentDetailView {
     (item.runtimeSelection === undefined || modelSelection(item.runtimeSelection)) &&
     (item.selected === undefined || modelSelection(item.selected)) &&
     (item.yolo === undefined || agentYolo(item.yolo)) &&
+    (item.grants === undefined || (Array.isArray(item.grants) && item.grants.every(isAgentGrantView))) &&
+    (item.canManageGrants === undefined || typeof item.canManageGrants === 'boolean') &&
     watchFilters(item.watchFilters),
   );
 }

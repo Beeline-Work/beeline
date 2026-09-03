@@ -59,6 +59,15 @@ const client = vi.hoisted(() => ({
 
 const phoneOperation = vi.hoisted(() =>
   vi.fn(async (name: string, input: any) => {
+    if (name === 'revokeAgentGrant') {
+      state.agent = {
+        ...state.agent,
+        grants: state.agent.grants.map((grant: any) =>
+          grant.grantId === input.grantId ? { ...grant, status: 'revoked' } : grant,
+        ),
+      };
+      return { grantId: input.grantId, status: 'revoked', roomId: 'room' };
+    }
     if (name !== 'updateAgentYolo') throw new Error(`unexpected operation ${name}`);
     state.agent = {
       ...state.agent,
@@ -542,4 +551,88 @@ describe('Members workspace management', () => {
     );
     expect(client.removeAgent).toHaveBeenCalledWith(WORKSPACE, AGENT);
   });
+  it('lists the grant store on the agent profile and lets the owner revoke a live rule', async () => {
+    const owner = { pubkey: VIEWER, kind: 'human', name: 'Viewer' };
+    const alex = { pubkey: MEMBER, kind: 'human', name: 'Builder' };
+    state.agent = {
+      ...baseAgent(),
+      canManageGrants: true,
+      grants: [
+        {
+          grantId: 'g-live',
+          kind: 'command',
+          target: 'fly deploy -a preview --with FLY_TOKEN',
+          reason: 'publish the preview',
+          status: 'approved',
+          requestedBy: alex,
+          decidedBy: owner,
+          roomId: '22222222-2222-4222-8222-222222222222',
+          createdAt: 1_756_900_000,
+          decidedAt: 1_756_900_060,
+          auto: false,
+        },
+        {
+          grantId: 'g-denied',
+          kind: 'host',
+          target: 'api.fly.io',
+          reason: 'reach the API',
+          status: 'denied',
+          requestedBy: alex,
+          decidedBy: owner,
+          roomId: '22222222-2222-4222-8222-222222222222',
+          createdAt: 1_756_900_000,
+          decidedAt: 1_756_900_061,
+          auto: false,
+        },
+      ],
+    };
+    const renderer = await render();
+    await press(renderer, `agent-${AGENT}-identity`);
+
+    expect(renderer.root.findAllByProps({ testID: 'agent-grants-empty' })).toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: 'agent-grant-g-live-line' }).props.children).toMatch(
+      /^command · fly deploy -a preview --with FLY_TOKEN · always by Viewer · /,
+    );
+    expect(renderer.root.findByProps({ testID: 'agent-grant-g-denied-line' }).props.children).toMatch(
+      /^host · api.fly.io · denied by Viewer · /,
+    );
+    // Only the live rule can be revoked.
+    expect(renderer.root.findAllByProps({ testID: 'agent-grant-g-denied-revoke' })).toHaveLength(0);
+    await press(renderer, 'agent-grant-g-live-revoke');
+    expect(phoneOperation).toHaveBeenCalledWith('revokeAgentGrant', { grantId: 'g-live' });
+    expect(renderer.root.findByProps({ testID: 'agent-grant-g-live-line' }).props.children).toContain(
+      '· revoked by Viewer ·',
+    );
+    expect(renderer.root.findAllByProps({ testID: 'agent-grant-g-live-revoke' })).toHaveLength(0);
+  });
+
+  it('shows the grant list without revoke controls to a viewer the server does not authorize', async () => {
+    state.agent = {
+      ...baseAgent(),
+      canManageGrants: false,
+      grants: [
+        {
+          grantId: 'g-live',
+          kind: 'command',
+          target: 'npm test',
+          reason: 'run the suite',
+          status: 'approved',
+          requestedBy: { pubkey: MEMBER, kind: 'human', name: 'Builder' },
+          decidedBy: { pubkey: OWNER, kind: 'human', name: 'Captain' },
+          roomId: '22222222-2222-4222-8222-222222222222',
+          createdAt: 1_756_900_000,
+          decidedAt: 1_756_900_060,
+          auto: false,
+        },
+      ],
+    };
+    const renderer = await render();
+    await press(renderer, `agent-${AGENT}-identity`);
+    expect(renderer.root.findByProps({ testID: 'agent-grant-g-live-line' }).props.children).toContain(
+      'npm test · always by Captain',
+    );
+    expect(renderer.root.findAllByProps({ testID: 'agent-grant-g-live-revoke' })).toHaveLength(0);
+    expect(phoneOperation).not.toHaveBeenCalledWith('revokeAgentGrant', expect.anything());
+  });
+
 });

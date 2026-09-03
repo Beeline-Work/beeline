@@ -2,6 +2,7 @@ import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
+import { parseGrantDecisionLine } from '@beeline/api-contract/agent-grants';
 import { SCHEDULED_PROMPT_PREFIX, SCHEDULE_SCHEDULER_NAME } from '@beeline/api-contract/scheduled-prompts';
 import {
   AcpClient,
@@ -25,6 +26,7 @@ import { isMountedMcpToolPermissionRequest, isSquireMcpPermissionRequest } from 
 import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
+import type { GrantCommandRunner, GrantRunnerEndpoint } from './grant-runner.js';
 import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
 import {
   agentArgsWithModelSelection,
@@ -89,16 +91,45 @@ export function isScheduledPrompt(
   );
 }
 
+/** The owner's answer to a grant card arrives as a server-authored system line
+ *  mentioning this agent (`<name> approved: command …`); it resumes the turn that
+ *  paused on the ask. Recognised structurally, never by a bare `system` type. */
+export function isGrantDecisionLine(
+  item: { type: string; body: string; mentionIds: readonly string[] },
+  agentId: string,
+): boolean {
+  return (
+    item.type === 'system' &&
+    item.mentionIds.includes(agentId) &&
+    parseGrantDecisionLine(item.body) !== undefined
+  );
+}
+
 /** Which inbox items may start or steer a turn: ordinary messages from others that
- *  mention the agent, plus scheduler-authored scheduled prompts (never plain system
- *  lines or the agent's own rows). */
+ *  mention the agent, scheduler-authored scheduled prompts, and grant decisions
+ *  (never plain system lines or the agent's own rows). */
 export function inboxItemTriggersTurn(
   item: RoomMessage,
   agentId: string,
 ): boolean {
   if (item.authorId === agentId) return false;
   if (!item.mentionIds.includes(agentId)) return false;
-  return item.type === 'message' || isScheduledPrompt(item, agentId);
+  return (
+    item.type === 'message' ||
+    isScheduledPrompt(item, agentId) ||
+    isGrantDecisionLine(item, agentId)
+  );
+}
+
+/** A `request_grant` call whose reply says the card is posted pauses the turn. */
+export function pendingGrantToolCall(call: {
+  title?: string;
+  content?: unknown;
+}): boolean {
+  if (!/(?:^|[._:/-])request_grant$/i.test(call.title ?? '')) return false;
+  return /pending, card posted/i.test(
+    typeof call.content === 'string' ? call.content : JSON.stringify(call.content ?? ''),
+  );
 }
 
 function escapeRegExp(value: string): string {
@@ -169,6 +200,9 @@ export interface MonolithRoomTurnOptions {
   onCornerOpened?: () => void;
   /** Attachment downloads (test seam). */
   fetchImpl?: typeof fetch;
+  /** The daemon's command-grant runner; this Room registers its checkout and current turn. */
+  grantRunner?: GrantCommandRunner;
+  grantRunnerEndpoint?: GrantRunnerEndpoint;
 }
 
 /**
@@ -191,13 +225,38 @@ export class MonolithRoomTurnLoop {
   private attachmentDir?: string;
   /** Local copies already delivered this session, by message id, so transcript renders reuse them. */
   private readonly deliveredAttachments = new Map<string, DeliveredAttachment[]>();
+  /** Names from the latest roster read, for ledger bylines the runner writes. */
+  private memberNames = new Map<string, string>();
+  /** The request id of the turn that paused on a grant card, until its decision arrives. */
+  private pausedOnGrantRequestId?: string;
 
   constructor(private readonly options: MonolithRoomTurnOptions) {
     this.agent = runtimeIdentity(options.runtime.agent);
+    options.grantRunner?.register(options.roomId, {
+      workspaceId: options.workspaceId,
+      cwd: options.cwd,
+      turn: () => this.currentTurnForRunner(),
+    });
   }
 
   isBusy(): boolean {
     return this.busy;
+  }
+
+  /** The turn a `request_grant` paused, if any (cleared when its decision resumes it). */
+  pausedGrantRequestId(): string | undefined {
+    return this.pausedOnGrantRequestId;
+  }
+
+  private currentTurnForRunner(): { requestId: string; requester?: { pubkey: string; name?: string } } | undefined {
+    const active = this.activeTurn;
+    if (!active) return undefined;
+    return { requestId: active.item.id, requester: this.requesterOf(active.item.authorId) };
+  }
+
+  private requesterOf(authorId: string): { pubkey: string; name?: string } {
+    const name = this.memberNames.get(authorId);
+    return { pubkey: authorId, ...(name ? { name } : {}) };
   }
 
   currentPrincipalCanDrive(_workspaceId: string, principalId: string): Promise<boolean> {
@@ -225,11 +284,13 @@ export class MonolithRoomTurnLoop {
     await this.options.scheduler.forceSuspend(this.options.roomId);
   }
 
-  private roster(): Promise<WorkspaceRoster> {
-    return this.options.api.execute('getWorkspaceRoster', {
+  private async roster(): Promise<WorkspaceRoster> {
+    const roster = await this.options.api.execute('getWorkspaceRoster', {
       agentId: this.agent.publicKey,
       workspaceId: this.options.workspaceId,
     });
+    this.memberNames = new Map(roster.members.map((member) => [member.identityId, member.name]));
+    return roster;
   }
 
   /** Download a message's attachments into the session scratch directory once. */
@@ -324,6 +385,9 @@ export class MonolithRoomTurnLoop {
         workspaceId: this.options.workspaceId,
         attachRoot: this.options.cwd,
         directMessage,
+        ...(this.options.grantRunnerEndpoint
+          ? { grantRunner: this.options.grantRunnerEndpoint }
+          : {}),
       }),
     ];
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
@@ -444,6 +508,8 @@ export class MonolithRoomTurnLoop {
     // cannot observe an accepted/queued turn as idle in this window.
     this.busy = true;
     try {
+      // The first row of the turn names who asked; learn the name once per session.
+      if (!this.memberNames.has(item.authorId)) await this.roster().catch(() => undefined);
       await api.execute('postAgentTurnReceipt', {
         agentId: this.agent.publicKey,
         roomId: this.options.roomId,
@@ -455,7 +521,14 @@ export class MonolithRoomTurnLoop {
         agentId: this.agent.publicKey,
         roomId: this.options.roomId,
         requestId: item.id,
-        activity: [{ kind: 'thinking', title: 'Working', status: 'in_progress' }],
+        activity: [
+          {
+            kind: 'thinking',
+            title: 'Working',
+            status: 'in_progress',
+            requestedBy: this.requesterOf(item.authorId),
+          },
+        ],
       });
       await this.options.scheduler.run(
         this.options.roomId,
@@ -484,6 +557,9 @@ export class MonolithRoomTurnLoop {
               ),
             )
             .join('\n');
+          const grantDecision = isGrantDecisionLine(item, this.agent.publicKey);
+          const resumedRequestId = grantDecision ? this.pausedOnGrantRequestId : undefined;
+          if (grantDecision) this.pausedOnGrantRequestId = undefined;
           const prompt = [
             this.turnInstructionPrefix,
             transcript ? `Room conversation so far:\n${transcript}` : '',
@@ -493,6 +569,13 @@ export class MonolithRoomTurnLoop {
                 : (names.get(item.authorId) ?? item.authorId.slice(0, 12))
             }:`,
             roomMessagePrompt('', item.body, item.attachments, delivered),
+            grantDecision
+              ? [
+                  'This is the answer to your grant request; your paused work resumes now.',
+                  'If it was approved and it is a command grant, run it with run_granted_command and the exact argv.',
+                  'If it was declined, try another way or say plainly what you cannot do.',
+                ].join(' ')
+              : '',
             [
               'Write only the substantive Room message you want the human to read.',
               'Do not repeat or paraphrase these instructions.',
@@ -569,6 +652,16 @@ export class MonolithRoomTurnLoop {
             ].join('\n\n');
           }
           active.phase = 'finishing';
+          if (result?.toolCalls.some((call) => pendingGrantToolCall(call))) {
+            this.pausedOnGrantRequestId = item.id;
+            console.log(
+              `[thin-core] monolith Room ${this.options.roomId} turn ${item.id} paused on a grant card`,
+            );
+          } else if (resumedRequestId) {
+            console.log(
+              `[thin-core] monolith Room ${this.options.roomId} turn ${resumedRequestId} resumed by grant decision ${item.id}`,
+            );
+          }
           const openCornerCall = result?.toolCalls.find((call) =>
             /(?:^|[._:/-])open_corner$/i.test(call.title ?? ''),
           );
@@ -660,7 +753,12 @@ export class MonolithRoomTurnLoop {
           });
           for (const item of inbox.items) {
             if (!inboxItemTriggersTurn(item, this.agent.publicKey)) continue;
-            if (!isScheduledPrompt(item, this.agent.publicKey)) {
+            // Scheduled prompts and grant decisions were already authority-gated
+            // on the server (schedule creation; the owner/manager decision).
+            if (
+              !isScheduledPrompt(item, this.agent.publicKey) &&
+              !isGrantDecisionLine(item, this.agent.publicKey)
+            ) {
               const authority = await api.execute('getRoomAuthority', {
                 roomId,
                 principalId: item.authorId,
@@ -688,6 +786,7 @@ export class MonolithRoomTurnLoop {
       }
     } finally {
       clearInterval(heartbeat);
+      this.options.grantRunner?.unregister(roomId);
       if (this.activeTurn?.phase === 'prompting' && this.client && this.sessionId) {
         this.client.sessionCancel(this.sessionId);
       }

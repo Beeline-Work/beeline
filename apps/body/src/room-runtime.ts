@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import type { CornerRestoreResult } from '@beeline/api-contract/daemon';
+import { GrantCommandRunner, GrantRunnerServer, type GrantRunnerEndpoint } from './grant-runner.js';
 import { MonolithCornerTurnLoop } from './monolith-corner-turn.js';
 import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
 import type { AgentRuntimeRecord, RoomRuntimeRecord } from './runtime.js';
@@ -100,6 +101,9 @@ export class RoomRuntimeCoordinator {
   private workspaceRemovalConfirmations = 0;
   private readonly roomRemovalConfirmations = new Map<string, number>();
   private confirmationPending = false;
+  /** One command-grant runner per daemon; Rooms and corners register their checkouts on it. */
+  private readonly grantRunner: GrantCommandRunner;
+  private readonly grantRunnerServer: GrantRunnerServer;
 
   constructor(
     runtime: AgentRuntimeRecord,
@@ -117,6 +121,11 @@ export class RoomRuntimeCoordinator {
     this.runtime = runtime;
     this.agent = runtimeIdentity(runtime.agent);
     this.now = options.now ?? Date.now;
+    this.grantRunner = new GrantCommandRunner({
+      api: options.daemonApi,
+      agentId: this.agent.publicKey,
+    });
+    this.grantRunnerServer = new GrantRunnerServer(this.grantRunner);
     this.watchdogStaleMs = options.watchdogStaleMs ?? DEFAULT_ROOM_WATCHDOG_STALE_MS;
     this.reconcileHeartbeatMs = options.reconcileHeartbeatMs ?? DEFAULT_RECONCILE_HEARTBEAT_MS;
     this.drainDeadlineMs = options.drainDeadlineMs ?? DEFAULT_DRAIN_DEADLINE_MS;
@@ -293,14 +302,25 @@ export class RoomRuntimeCoordinator {
     };
   }
 
+  /** The loopback door for run_granted_command; started once, on first use. */
+  private grantRunnerEndpoint(): Promise<GrantRunnerEndpoint | undefined> {
+    return this.grantRunnerServer.start().catch((error) => {
+      console.error('[thin-core] grant runner unavailable; run_granted_command is off:', error);
+      return undefined;
+    });
+  }
+
   private async startRoom(roomId: string): Promise<void> {
     const controller = new AbortController();
     const cwd = await this.materializeRoomCheckout(roomId);
+    const grantRunnerEndpoint = await this.grantRunnerEndpoint();
     const startedAt = this.now();
     const loop = new MonolithRoomTurnLoop({
       roomId,
       workspaceId: this.runtime.communityId,
       cwd,
+      grantRunner: this.grantRunner,
+      ...(grantRunnerEndpoint ? { grantRunnerEndpoint } : {}),
       runtime: this.runtime,
       config: this.roomConfig(roomId),
       api: this.options.daemonApi,
@@ -425,9 +445,12 @@ export class RoomRuntimeCoordinator {
         });
       }
       const controller = new AbortController();
+      const grantRunnerEndpoint = await this.grantRunnerEndpoint();
       const startedAt = this.now();
       const loop = new MonolithCornerTurnLoop({
         cornerId: corner.cornerId,
+        grantRunner: this.grantRunner,
+        ...(grantRunnerEndpoint ? { grantRunnerEndpoint } : {}),
         parentRoomId: corner.parentRoomId,
         workspaceId: this.runtime.communityId,
         objective,
@@ -634,6 +657,7 @@ export class RoomRuntimeCoordinator {
       await Promise.allSettled(rooms.map((room) => room.body.forceRecoverRoom()));
       await drained;
     }
+    await this.grantRunnerServer.close();
     await this.scheduler.dispose();
   }
 }

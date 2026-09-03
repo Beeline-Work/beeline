@@ -18,6 +18,11 @@
       "types": "./dist/scheduled-prompts.d.ts",
       "import": "./dist/scheduled-prompts.js",
       "default": "./dist/scheduled-prompts.js"
+    },
+    "./agent-grants": {
+      "types": "./dist/agent-grants.d.ts",
+      "import": "./dist/agent-grants.js",
+      "default": "./dist/agent-grants.js"
     }
   },
   "scripts": {

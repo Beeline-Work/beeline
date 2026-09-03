@@ -1,3 +1,5 @@
+import type { AgentGrantKind, AgentGrantStatus } from './agent-grants.js';
+
 export interface AttachmentReference {
   url: string;
   previewUrl?: string;
@@ -122,6 +124,8 @@ export type RoomViewActivity = {
   /** Bounded first/last-line excerpt of a completed tool result. */
   readonly output?: string;
   readonly thoughtMs?: number;
+  /** The identity whose message triggered the turn this row belongs to ("at Alex's request"). */
+  readonly requestedBy?: { readonly pubkey: string; readonly name?: string };
   readonly rollup?: Readonly<Record<string, number>>;
   readonly observed?: readonly {
     readonly verb: string;
@@ -174,6 +178,8 @@ export type RoomViewMessage = {
     readonly status: 'pending' | 'allowed' | 'denied' | 'expired' | 'failed';
     readonly cornerId?: string;
   };
+  /** One grant card: the agent asks its owner; several asks in one turn share a card. */
+  readonly grantRequest?: GrantRequestCardView;
   readonly targetBranch?: {
     readonly proposalId: string;
     readonly from: string;
@@ -209,6 +215,31 @@ export type RoomViewMessage = {
       readonly status: 'pending' | 'in_progress' | 'completed';
     }[];
   };
+};
+
+/** One line of a grant card and one row of the agent profile's grant list. */
+export type AgentGrantView = {
+  readonly grantId: string;
+  readonly kind: AgentGrantKind;
+  readonly target: string;
+  readonly reason: string;
+  readonly status: AgentGrantStatus;
+  readonly requestedBy: RoomViewIdentity;
+  readonly decidedBy?: RoomViewIdentity;
+  readonly roomId: string;
+  /** Absolute Unix timestamps in seconds. */
+  readonly createdAt: number;
+  readonly decidedAt?: number;
+  readonly expiresAt?: number;
+  /** True when approved under yolo without a card. */
+  readonly auto: boolean;
+};
+
+export type GrantRequestCardView = {
+  readonly agent: RoomViewIdentity;
+  readonly owner: RoomViewIdentity;
+  readonly requester: RoomViewIdentity;
+  readonly grants: readonly AgentGrantView[];
 };
 
 export type RoomViewer = {
@@ -362,6 +393,10 @@ export type AgentDetailView = {
    * workspace admin); the phone mirrors it, never decides it.
    */
   readonly yolo?: AgentYoloView;
+  /** The grant store: every non-pending grant, newest first. */
+  readonly grants?: readonly AgentGrantView[];
+  /** Server verdict: this viewer may decide and revoke this agent's grants. */
+  readonly canManageGrants?: boolean;
   readonly watchFilters: readonly SurfaceWatchFilter[];
 };
 

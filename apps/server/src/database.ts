@@ -649,6 +649,27 @@ CREATE TABLE IF NOT EXISTS agent_pending_attachments (
 );
 ALTER TABLE agent_pending_attachments ALTER COLUMN size TYPE integer USING size::integer;
 
+-- Agent Grants (slice 2): the grant store. One row per ask; a 'once' grant is
+-- spent by setting expires_at at its first run; revoke flips status.
+CREATE TABLE IF NOT EXISTS agent_grants (
+  id uuid PRIMARY KEY,
+  agent_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  kind text NOT NULL CHECK (kind IN ('path','host','secret','device','budget','command')),
+  target text NOT NULL,
+  reason text NOT NULL,
+  requested_by text NOT NULL REFERENCES identities(id),
+  room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  status text NOT NULL CHECK (status IN ('pending','approved','once','denied','revoked')),
+  decided_by text REFERENCES identities(id),
+  decided_at timestamptz,
+  expires_at timestamptz,
+  auto boolean NOT NULL DEFAULT false,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS agent_grants_agent_idx ON agent_grants(agent_id, workspace_id, status);
+CREATE INDEX IF NOT EXISTS agent_grants_room_idx ON agent_grants(room_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS import_runs (
   import_id text PRIMARY KEY,
   source_fingerprint text NOT NULL,

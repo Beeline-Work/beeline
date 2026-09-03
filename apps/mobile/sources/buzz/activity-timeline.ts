@@ -55,6 +55,8 @@ export type TurnActivityAction = {
   command?: string;
   input?: string;
   output?: string;
+  /** Who asked for the turn this call belongs to; quiet text in the expanded row. */
+  requestedBy?: { pubkey: string; name?: string };
   files?: TurnActivityFile[];
 };
 
@@ -703,6 +705,7 @@ export function buildTurnActivity(items: readonly AgentActivityItem[]): TurnActi
       ...(tool.command ? { command: tool.command } : {}),
       ...(tool.input ? { input: tool.input } : {}),
       ...((tool.output ?? tool.text) ? { output: tool.output ?? tool.text } : {}),
+      ...(tool.requestedBy ? { requestedBy: { ...tool.requestedBy } } : {}),
       ...(tool.files?.length ? { files: tool.files.map((file) => ({ ...file })) } : {}),
     };
     toolSteps.set(id, row);

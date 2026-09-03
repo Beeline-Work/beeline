@@ -1,5 +1,14 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { DaemonAttachment, DaemonOperationMap } from '@beeline/api-contract/daemon';
+import {
+  AGENT_GRANT_REASON_MAX_LENGTH,
+  AGENT_GRANT_TARGET_MAX_LENGTH,
+  AGENT_GRANT_VERBS,
+  formatYoloAutoApprovedLine,
+  isAgentGrantKind,
+  parseCommandGrantTarget,
+  type AgentGrantKind,
+} from '@beeline/api-contract/agent-grants';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
 import type { SqlDatabase } from './database.js';
 import type { LiveHub } from './live.js';
@@ -243,6 +252,18 @@ export class DaemonService {
       case 'postTargetBranchProposal':
         return (await this.targetProposal(
           input as Input<'postTargetBranchProposal'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
+      case 'requestAgentGrant':
+        return (await this.requestAgentGrant(
+          input as Input<'requestAgentGrant'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
+      case 'listAgentGrants':
+        return (await this.listAgentGrants(authenticatedAgentId)) as Output<Name>;
+      case 'consumeAgentGrant':
+        return (await this.consumeAgentGrant(
+          input as Input<'consumeAgentGrant'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'createCorner':
@@ -1328,6 +1349,256 @@ export class DaemonService {
     );
     return { id: messageId, createdAt: Math.floor(Date.now() / 1000) };
   }
+
+  /**
+   * request_grant: the agent raises its hand. Under yolo the grant is approved
+   * on the spot (auto=true) and one quiet system line records it; otherwise a
+   * pending grant is stored and joins (or opens) this agent's one open card in
+   * the Room, addressed to the owner so the tagged-mention push fires. Budget
+   * always asks (the cap is out of scope), even under yolo.
+   */
+  private async requestAgentGrant(input: Input<'requestAgentGrant'>, agentId: string) {
+    if (!isAgentGrantKind(input.kind)) throw new Error('grant kind is invalid');
+    if (typeof input.target !== 'string' || !input.target.trim())
+      throw new Error('grant target is required');
+    if (input.target.length > AGENT_GRANT_TARGET_MAX_LENGTH)
+      throw new Error('grant target is invalid: too long');
+    if (typeof input.reason !== 'string' || !input.reason.trim())
+      throw new Error('grant reason is required');
+    if (input.reason.length > AGENT_GRANT_REASON_MAX_LENGTH)
+      throw new Error('grant reason is invalid: too long');
+    if (
+      input.ttlSeconds !== undefined &&
+      (!Number.isSafeInteger(input.ttlSeconds) || input.ttlSeconds <= 0)
+    )
+      throw new Error('grant ttlSeconds is invalid');
+    const kind: AgentGrantKind = input.kind;
+    const target = kind === 'command' ? input.target : input.target.trim();
+    if (kind === 'command') {
+      try {
+        parseCommandGrantTarget(target);
+      } catch (error) {
+        throw new Error(
+          `command target is invalid: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+    const reason = input.reason.trim();
+    const context = (
+      await this.database.query<{
+        workspace_id: string;
+        owner_id: string;
+        yolo_mode: boolean;
+        agent_name: string;
+        agent_handle: string | null;
+        agent_avatar: string | null;
+        owner_name: string;
+        owner_handle: string | null;
+        owner_avatar: string | null;
+      }>(
+        `SELECT room.workspace_id,a.owner_id,a.yolo_mode,
+                agent.name agent_name,agent.handle agent_handle,agent.avatar agent_avatar,
+                owner.name owner_name,owner.handle owner_handle,owner.avatar owner_avatar
+         FROM rooms room
+         JOIN agents a ON a.agent_id=$2
+         JOIN identities agent ON agent.id=a.agent_id
+         JOIN identities owner ON owner.id=a.owner_id
+         WHERE room.id=$1`,
+        [input.roomId, agentId],
+      )
+    ).rows[0];
+    if (!context) throw new Error('agent not found');
+    // The requester is whoever addressed the agent last in this Room: the
+    // identity whose message triggered the turn that is asking now. With no
+    // such message (a fresh corner objective), the owner asked.
+    const requesterRow = (
+      await this.database.query<{
+        id: string;
+        kind: 'human' | 'agent';
+        name: string;
+        handle: string | null;
+        avatar: string | null;
+      }>(
+        `SELECT identity.id,identity.kind,identity.name,identity.handle,identity.avatar
+         FROM messages message JOIN identities identity ON identity.id=message.author_id
+         WHERE message.room_id=$1 AND message.author_id<>$2
+           AND message.mention_ids @> $3::jsonb AND message.presentation IN ('message','system')
+         ORDER BY message.created_at DESC,message.id DESC LIMIT 1`,
+        [input.roomId, agentId, JSON.stringify([agentId])],
+      )
+    ).rows[0];
+    const owner = {
+      pubkey: context.owner_id,
+      kind: 'human' as const,
+      name: context.owner_name,
+      ...(context.owner_handle ? { handle: context.owner_handle } : {}),
+      ...(context.owner_avatar ? { avatar: context.owner_avatar } : {}),
+    };
+    const agent = {
+      pubkey: agentId,
+      kind: 'agent' as const,
+      name: context.agent_name,
+      ...(context.agent_handle ? { handle: context.agent_handle } : {}),
+      ...(context.agent_avatar ? { avatar: context.agent_avatar } : {}),
+    };
+    const requester = requesterRow
+      ? {
+          pubkey: requesterRow.id,
+          kind: requesterRow.kind,
+          name: requesterRow.name,
+          ...(requesterRow.handle ? { handle: requesterRow.handle } : {}),
+          ...(requesterRow.avatar ? { avatar: requesterRow.avatar } : {}),
+        }
+      : owner;
+    const grantId = randomUUID();
+    const auto = context.yolo_mode && kind !== 'budget';
+    const status = auto ? 'approved' : 'pending';
+    const result = await this.database.transaction(async (database) => {
+      const inserted = await database.query<{ created_at: Date; expires_at: Date | null }>(
+        `INSERT INTO agent_grants(
+           id,agent_id,workspace_id,kind,target,reason,requested_by,room_id,status,
+           decided_at,expires_at,auto
+         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,
+           CASE WHEN $10::boolean THEN now() END,
+           CASE WHEN $11::integer IS NULL THEN NULL ELSE now()+make_interval(secs=>$11::integer) END,
+           $10)
+         RETURNING created_at,expires_at`,
+        [
+          grantId,
+          agentId,
+          context.workspace_id,
+          kind,
+          target,
+          reason,
+          requester.pubkey,
+          input.roomId,
+          status,
+          auto,
+          input.ttlSeconds ?? null,
+        ],
+      );
+      const row = inserted.rows[0]!;
+      const grantView = {
+        grantId,
+        kind,
+        target,
+        reason,
+        status,
+        requestedBy: requester,
+        roomId: input.roomId,
+        createdAt: seconds(row.created_at),
+        ...(row.expires_at ? { expiresAt: seconds(row.expires_at) } : {}),
+        auto,
+      };
+      if (auto) {
+        await database.query(
+          `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
+           VALUES($1,$2,$3,$4,'system','grant-auto',$5::jsonb)`,
+          [
+            id(),
+            input.roomId,
+            agentId,
+            formatYoloAutoApprovedLine({ kind, target, requesterName: requester.name }),
+            JSON.stringify({ grantId }),
+          ],
+        );
+        return { messageId: undefined };
+      }
+      // Several asks in one turn become one card: join this agent's open card
+      // in the Room while every grant on it is still pending and it is recent.
+      const open = (
+        await database.query<{ id: string; card: { grants: unknown[] } }>(
+          `SELECT m.id,m.card FROM messages m
+           WHERE m.room_id=$1 AND m.author_id=$2 AND m.card_type='grant-request'
+             AND m.created_at>now()-interval '2 minutes'
+             AND NOT EXISTS (
+               SELECT 1 FROM jsonb_array_elements(m.card->'grants') entry
+               JOIN agent_grants pending_grant ON pending_grant.id=(entry->>'grantId')::uuid
+               WHERE pending_grant.status<>'pending'
+             )
+           ORDER BY m.created_at DESC,m.id DESC LIMIT 1
+           FOR UPDATE`,
+          [input.roomId, agentId],
+        )
+      ).rows[0];
+      if (open) {
+        const grants = [...(open.card.grants ?? []), grantView];
+        await database.query(`UPDATE messages SET text=$2,card=$3::jsonb WHERE id=$1`, [
+          open.id,
+          grantCardText(agent.name, owner.name, grants as typeof grantView[]),
+          JSON.stringify({ agent, owner, requester, grants }),
+        ]);
+        return { messageId: open.id };
+      }
+      const messageId = id();
+      await database.query(
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,mention_ids,card_type,card)
+         VALUES($1,$2,$3,$4,'card',$5::jsonb,'grant-request',$6::jsonb)`,
+        [
+          messageId,
+          input.roomId,
+          agentId,
+          grantCardText(agent.name, owner.name, [grantView]),
+          JSON.stringify([owner.pubkey]),
+          JSON.stringify({ agent, owner, requester, grants: [grantView] }),
+        ],
+      );
+      return { messageId };
+    });
+    this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'grant' });
+    return {
+      grantId,
+      status,
+      auto,
+      ...(result.messageId ? { messageId: result.messageId } : {}),
+    };
+  }
+  /** Every live rule for this agent: approved or once, unexpired, not revoked. */
+  private async listAgentGrants(agentId: string) {
+    const rows = await this.database.query<{
+      id: string;
+      workspace_id: string;
+      room_id: string;
+      kind: AgentGrantKind;
+      target: string;
+      status: 'approved' | 'once';
+      requested_by: string;
+      requester_name: string | null;
+      expires_at: Date | null;
+    }>(
+      `SELECT g.id,g.workspace_id,g.room_id,g.kind,g.target,g.status,g.requested_by,
+              requester.name requester_name,g.expires_at
+       FROM agent_grants g LEFT JOIN identities requester ON requester.id=g.requested_by
+       WHERE g.agent_id=$1 AND g.status IN ('approved','once')
+         AND (g.expires_at IS NULL OR g.expires_at>now())
+       ORDER BY g.created_at DESC,g.id`,
+      [agentId],
+    );
+    return {
+      grants: rows.rows.map((row) => ({
+        grantId: row.id,
+        workspaceId: row.workspace_id,
+        roomId: row.room_id,
+        kind: row.kind,
+        target: row.target,
+        status: row.status,
+        requestedBy: row.requested_by,
+        ...(row.requester_name ? { requestedByName: row.requester_name } : {}),
+        ...(row.expires_at ? { expiresAt: seconds(row.expires_at) } : {}),
+      })),
+    };
+  }
+  /** A 'once' grant is spent by its first run: it stops matching immediately. */
+  private async consumeAgentGrant(input: Input<'consumeAgentGrant'>, agentId: string) {
+    if (typeof input.grantId !== 'string' || !input.grantId) throw new Error('grantId is required');
+    const spent = await this.database.query(
+      `UPDATE agent_grants SET expires_at=now()
+       WHERE id::text=$1 AND agent_id=$2 AND status='once' AND (expires_at IS NULL OR expires_at>now())`,
+      [input.grantId, agentId],
+    );
+    if (!spent.rowCount) throw new Error('once grant not found');
+    return this.writeResult();
+  }
   private async createCorner(input: Input<'createCorner'>, agentId: string) {
     const objective = input.objective;
     if (
@@ -1460,6 +1731,7 @@ export class DaemonService {
       'postCornerRemoteState',
       'postCornerPlan',
       'postTargetBranchProposal',
+      'requestAgentGrant',
       'archiveCorner',
     ]).has(name);
   }
@@ -1476,6 +1748,18 @@ export class DaemonService {
   private writeResult() {
     return { id: id(), createdAt: Math.floor(Date.now() / 1000) };
   }
+}
+
+/** The push/preview text of a grant card: who asks whom for what, and why. */
+function grantCardText(
+  agentName: string,
+  ownerName: string,
+  grants: readonly { kind: AgentGrantKind; target: string; reason: string }[],
+): string {
+  const asks = grants
+    .map((grant) => `${AGENT_GRANT_VERBS[grant.kind]} ${grant.target} — ${grant.reason}`)
+    .join('; ');
+  return `${agentName} asks ${ownerName}: ${asks}`;
 }
 
 export const DAEMON_OPERATION_NAMES = new Set<keyof DaemonOperationMap>([
@@ -1525,6 +1809,9 @@ export const DAEMON_OPERATION_NAMES = new Set<keyof DaemonOperationMap>([
   'postCornerRemoteState',
   'postCornerPlan',
   'postTargetBranchProposal',
+  'requestAgentGrant',
+  'listAgentGrants',
+  'consumeAgentGrant',
   'createCorner',
   'archiveCorner',
   'ensureAgentMembership',

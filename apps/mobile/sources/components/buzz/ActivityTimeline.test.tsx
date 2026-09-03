@@ -32,6 +32,7 @@ vi.mock('react-native-reanimated', () => ({
 
 import { groknight } from '@/buzz/groknight';
 import { ActivityTimeline } from './ActivityTimeline';
+import { foldSettledActivityRuns } from '@/buzz/room-view-presentation';
 
 const originalConsoleError = console.error;
 beforeAll(() => {
@@ -75,6 +76,42 @@ const TOOLS = [
 ];
 
 describe('live streaming turn', () => {
+  it('renders a folded run of per-call rows as one chevron over all six calls (C55)', () => {
+    const agent = 'b'.repeat(64);
+    const call = (id: string, status: 'completed' | 'failed') => ({
+      id,
+      text: '',
+      isUser: false,
+      timestamp: Number(id.slice(1)),
+      pubkey: agent,
+      isAgentAuthor: true,
+      isAgentActivity: true,
+      activity: [{ kind: 'tool' as const, title: 'Bash', toolKind: 'execute', command: id, status }],
+    });
+    const [group, ...rest] = foldSettledActivityRuns([
+      call('t1', 'completed'),
+      call('t2', 'completed'),
+      call('t3', 'failed'),
+      call('t4', 'failed'),
+      call('t5', 'failed'),
+      call('t6', 'failed'),
+    ]);
+    expect(rest).toHaveLength(0);
+    const renderer = render(<ActivityTimeline active={false} items={group.activity!} />);
+    const hostNodes = (pattern: RegExp) =>
+      renderer.root.findAll(
+        (node: { type: unknown; props: { testID?: string } }) =>
+          typeof node.type === 'string' && pattern.test(node.props.testID ?? ''),
+      );
+    // One collapsed note, one chevron.
+    expect(hostNodes(/^corner-tool-summary$/)).toHaveLength(1);
+    const summary = renderer.root.findByProps({ testID: 'corner-tool-summary' });
+    expect(summary.props.children[0].props.children).toBe('6 TOOL CALLS · 4 FAILED');
+    expect(hostNodes(/^corner-tool-row-anonymous-\d+$/)).toHaveLength(0);
+    act(() => summary.props.onPress());
+    expect(hostNodes(/^corner-tool-row-anonymous-\d+$/)).toHaveLength(6);
+  });
+
   it('keeps settled tool rows collapsed and expandable after the turn completes (#804)', () => {
     const renderer = render(<ActivityTimeline active={false} items={TOOLS} />);
     // Collapsed by default: one compact activity row, no individual calls.

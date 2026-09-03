@@ -58,4 +58,15 @@ describe('Room deck bootstrap', () => {
     expect(createPath).toContain('chatScheduler.current?.force()');
     expect(createPath).not.toContain('openRoom(roomId)');
   });
+
+  it('opens #welcome once per identity before the stored Workspace is read', () => {
+    const landing = source.slice(
+      source.indexOf('claimFirstLaunchLanding(nextIdentity.publicKey)'),
+      source.indexOf('const storedWorkspaceId = await loadActiveCommunityId'),
+    );
+    expect(landing).toContain('saveActiveCommunityId(nextIdentity.publicKey, landing.workspaceId)');
+    expect(landing).toContain('router.push(welcomeRoomHref(landing) as Href)');
+    // The deck keeps bootstrapping underneath; the claim is never a replace.
+    expect(landing).not.toContain('router.replace(welcomeRoomHref');
+  });
 });

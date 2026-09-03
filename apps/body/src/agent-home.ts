@@ -160,6 +160,64 @@ const PI_CUSTOM_MODEL_CONFIG = {
   target: 'models.json',
 } as const;
 
+const OPENROUTER_RELIABLE_PROVIDERS = ['deepinfra', 'novita'] as const;
+
+/** Apply the daemon's OpenRouter route without replacing operator custom models. */
+export function withReliableOpenRouterRouting(value: unknown): Record<string, unknown> {
+  const root =
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? { ...(value as Record<string, unknown>) }
+      : {};
+  const routing = {
+    only: [...OPENROUTER_RELIABLE_PROVIDERS],
+    order: [...OPENROUTER_RELIABLE_PROVIDERS],
+    allow_fallbacks: false,
+    require_parameters: true,
+  };
+  if (Array.isArray(root.providers)) {
+    const providers = root.providers.map((provider) =>
+      provider && typeof provider === 'object'
+        ? { ...(provider as Record<string, unknown>) }
+        : provider,
+    );
+    const index = providers.findIndex(
+      (provider) => provider && typeof provider === 'object' && provider.name === 'openrouter',
+    );
+    const current =
+      index >= 0 ? (providers[index] as Record<string, unknown>) : { name: 'openrouter' };
+    const compat =
+      current.compat && typeof current.compat === 'object' && !Array.isArray(current.compat)
+        ? { ...(current.compat as Record<string, unknown>) }
+        : {};
+    current.compat = { ...compat, openRouterRouting: routing };
+    if (index >= 0) providers[index] = current;
+    else providers.push(current);
+    root.providers = providers;
+    return root;
+  }
+  const providers =
+    root.providers && typeof root.providers === 'object'
+      ? { ...(root.providers as Record<string, unknown>) }
+      : {};
+  const current =
+    providers.openrouter &&
+    typeof providers.openrouter === 'object' &&
+    !Array.isArray(providers.openrouter)
+      ? { ...(providers.openrouter as Record<string, unknown>) }
+      : {};
+  const compat =
+    current.compat && typeof current.compat === 'object' && !Array.isArray(current.compat)
+      ? { ...(current.compat as Record<string, unknown>) }
+      : {};
+  current.compat = {
+    ...compat,
+    openRouterRouting: routing,
+  };
+  providers.openrouter = current;
+  root.providers = providers;
+  return root;
+}
+
 /**
  * Codex's supported per-home switch for its internal delegation surface.
  * This removes spawn, follow-up, wait, and message controls without changing
@@ -351,7 +409,10 @@ async function provisionPiCustomModelConfig(
   try {
     const sourceStats = await lstat(source).catch(() => undefined);
     if (!sourceStats) {
-      await unlink(target).catch(() => undefined);
+      await writeIsolatedHarnessFile(
+        target,
+        `${JSON.stringify(withReliableOpenRouterRouting({}), null, 2)}\n`,
+      );
       return;
     }
     if (!sourceStats.isFile() || sourceStats.isSymbolicLink() || sourceStats.nlink !== 1) {
@@ -363,7 +424,11 @@ async function provisionPiCustomModelConfig(
     if (resolvedSource !== source) {
       throw new AgentHomeSecurityError(`Pi custom model config resolves through a link: ${source}`);
     }
-    await writeIsolatedHarnessFile(target, readFileSync(resolvedSource, 'utf8'));
+    const sourceValue = JSON.parse(readFileSync(resolvedSource, 'utf8')) as unknown;
+    await writeIsolatedHarnessFile(
+      target,
+      `${JSON.stringify(withReliableOpenRouterRouting(sourceValue), null, 2)}\n`,
+    );
   } catch (error) {
     // Never retain a stale credential-bearing copy when its current source is
     // unsafe or unreadable. A governed activation may choose to fail closed;

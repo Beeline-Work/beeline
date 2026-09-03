@@ -1803,7 +1803,7 @@ export class PhoneService {
       `INSERT INTO agent_pairing_codes(code_hash,workspace_id,created_by,expires_at) VALUES($1,$2,$3,$4)`,
       [hash(code), input.workspaceId, viewerId, new Date(expiresAt)],
     );
-    return { code, expiresAt };
+    return { code, expiresAt: Math.floor(expiresAt / 1000) };
   }
   private async updateAgentSoul(input: Input<'updateAgentSoul'>, viewerId: string) {
     await this.requireWorkspaceAgent(input.workspaceId, input.agentId, viewerId);

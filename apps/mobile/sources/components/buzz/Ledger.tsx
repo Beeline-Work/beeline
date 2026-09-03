@@ -232,6 +232,11 @@ export function LedgerMarginalia({
   );
 }
 
+/** The one byline view: identity mark (or viewer dot) + name · role · stamp.
+ *  Exported so the live draft lane's byline (`ActivityTimeline`) is exactly
+ *  the settled row's byline — nothing changes visually when a draft settles. */
+export const LedgerBylineView = Byline;
+
 function Byline({ byline }: { byline: LedgerByline }) {
   const mark = byline.mark;
   return (

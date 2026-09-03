@@ -62,6 +62,11 @@ import {
   usingBeelineSkillMarkdown,
 } from './beeline-skill.js';
 import { isTrustySquireMcpLaunch } from './external-mcp-capabilities.js';
+import {
+  resolveOpenRouterRouting,
+  withOpenRouterModelRouting,
+  type OpenRouterRoutingDecision,
+} from './openrouter-routing.js';
 import { extractTomlSections, tomlChildTableNames } from './toml-section.js';
 import { trustySquireLegacyStorePaths } from './trusty-squire-storage.js';
 
@@ -160,64 +165,6 @@ const PI_CUSTOM_MODEL_CONFIG = {
   target: 'models.json',
 } as const;
 
-const OPENROUTER_RELIABLE_PROVIDERS = ['deepinfra', 'novita'] as const;
-
-/** Apply the daemon's OpenRouter route without replacing operator custom models. */
-export function withReliableOpenRouterRouting(value: unknown): Record<string, unknown> {
-  const root =
-    value && typeof value === 'object' && !Array.isArray(value)
-      ? { ...(value as Record<string, unknown>) }
-      : {};
-  const routing = {
-    only: [...OPENROUTER_RELIABLE_PROVIDERS],
-    order: [...OPENROUTER_RELIABLE_PROVIDERS],
-    allow_fallbacks: false,
-    require_parameters: true,
-  };
-  if (Array.isArray(root.providers)) {
-    const providers = root.providers.map((provider) =>
-      provider && typeof provider === 'object'
-        ? { ...(provider as Record<string, unknown>) }
-        : provider,
-    );
-    const index = providers.findIndex(
-      (provider) => provider && typeof provider === 'object' && provider.name === 'openrouter',
-    );
-    const current =
-      index >= 0 ? (providers[index] as Record<string, unknown>) : { name: 'openrouter' };
-    const compat =
-      current.compat && typeof current.compat === 'object' && !Array.isArray(current.compat)
-        ? { ...(current.compat as Record<string, unknown>) }
-        : {};
-    current.compat = { ...compat, openRouterRouting: routing };
-    if (index >= 0) providers[index] = current;
-    else providers.push(current);
-    root.providers = providers;
-    return root;
-  }
-  const providers =
-    root.providers && typeof root.providers === 'object'
-      ? { ...(root.providers as Record<string, unknown>) }
-      : {};
-  const current =
-    providers.openrouter &&
-    typeof providers.openrouter === 'object' &&
-    !Array.isArray(providers.openrouter)
-      ? { ...(providers.openrouter as Record<string, unknown>) }
-      : {};
-  const compat =
-    current.compat && typeof current.compat === 'object' && !Array.isArray(current.compat)
-      ? { ...(current.compat as Record<string, unknown>) }
-      : {};
-  current.compat = {
-    ...compat,
-    openRouterRouting: routing,
-  };
-  providers.openrouter = current;
-  root.providers = providers;
-  return root;
-}
-
 /**
  * Codex's supported per-home switch for its internal delegation surface.
  * This removes spawn, follow-up, wait, and message controls without changing
@@ -249,6 +196,17 @@ export interface RoomAgentHomeInput {
   skillReleaseId?: string;
   /** Narrow, runtime-owned names explicitly shared with this one agent. */
   sharedSkills?: string[];
+  /**
+   * The OpenRouter model this activation will run, when there is one. Its
+   * live-derived provider set (`openrouter-routing.ts`, cached under
+   * `cacheDir` for 24h) is pinned on that one model's pi `models.json` entry.
+   */
+  openRouterRouting?: {
+    model: string;
+    cacheDir: string;
+    fetchImpl?: typeof fetch;
+    now?: () => number;
+  };
 }
 
 /**
@@ -299,6 +257,7 @@ export async function prepareRoomAgentHome(
         input.skillReleaseId ?? runningBeelineReleaseId(),
         input.failClosed ?? false,
         input.sharedSkills ?? [],
+        input.openRouterRouting,
       ),
     );
   agentHomeProvisionQueues.set(root, provision);
@@ -327,6 +286,7 @@ async function provisionAgentSkillsAndMcp(
   skillReleaseId: string,
   failClosed: boolean,
   sharedSkills: string[],
+  openRouterRouting: RoomAgentHomeInput['openRouterRouting'],
 ): Promise<void> {
   const managedSkills = [
     { name: USING_BEELINE_SKILL_NAME, content: usingBeelineSkillMarkdown(skillReleaseId) },
@@ -396,22 +356,30 @@ async function provisionAgentSkillsAndMcp(
     console.warn('[body] claude web-search settings provisioning failed:', error);
   }
 
-  await provisionPiCustomModelConfig(root, operatorHome, failClosed);
+  await provisionPiCustomModelConfig(root, operatorHome, failClosed, openRouterRouting);
 }
 
 async function provisionPiCustomModelConfig(
   root: string,
   operatorHome: string,
   failClosed: boolean,
+  openRouterRouting: RoomAgentHomeInput['openRouterRouting'],
 ): Promise<void> {
   const source = resolve(operatorHome, PI_CUSTOM_MODEL_CONFIG.source);
   const target = resolve(root, 'pi', PI_CUSTOM_MODEL_CONFIG.target);
+  // One decision per activation, one log line; never a failed activation.
+  let decision: OpenRouterRoutingDecision | undefined;
+  if (openRouterRouting) {
+    decision = await resolveOpenRouterRouting(openRouterRouting);
+    console.log(decision.line);
+  }
+  const pin = decision ? { model: decision.model, routing: decision.routing } : undefined;
   try {
     const sourceStats = await lstat(source).catch(() => undefined);
     if (!sourceStats) {
       await writeIsolatedHarnessFile(
         target,
-        `${JSON.stringify(withReliableOpenRouterRouting({}), null, 2)}\n`,
+        `${JSON.stringify(withOpenRouterModelRouting({}, pin), null, 2)}\n`,
       );
       return;
     }
@@ -427,7 +395,7 @@ async function provisionPiCustomModelConfig(
     const sourceValue = JSON.parse(readFileSync(resolvedSource, 'utf8')) as unknown;
     await writeIsolatedHarnessFile(
       target,
-      `${JSON.stringify(withReliableOpenRouterRouting(sourceValue), null, 2)}\n`,
+      `${JSON.stringify(withOpenRouterModelRouting(sourceValue, pin), null, 2)}\n`,
     );
   } catch (error) {
     // Never retain a stale credential-bearing copy when its current source is

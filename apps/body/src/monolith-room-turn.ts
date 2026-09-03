@@ -11,6 +11,7 @@ import {
   type McpServerWire,
 } from './acp.js';
 import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
+import { openRouterRoutingInput } from './openrouter-routing.js';
 import { isSenderPermitted, LEGACY_ACCESS_POLICY } from './access-policy.js';
 import {
   attachmentImageBlocks,
@@ -322,6 +323,10 @@ export class MonolithRoomTurnLoop {
       Array.isArray(repositoryState.directParticipants) &&
       repositoryState.directParticipants.length === 2;
     await mkdir(this.options.cwd, { recursive: true });
+    const selection =
+      configuration.model || configuration.effort
+        ? { model: configuration.model, effort: configuration.effort }
+        : this.options.config.modelSelection;
     const homeOverlay = this.options.config.agentHomeRoot
       ? await prepareRoomAgentHome({
           root: this.options.config.agentHomeRoot,
@@ -329,13 +334,10 @@ export class MonolithRoomTurnLoop {
           ...(this.options.config.operatorHome
             ? { operatorHome: this.options.config.operatorHome }
             : {}),
+          ...openRouterRoutingInput(this.options.config, selection, this.options.fetchImpl),
         })
       : {};
     const command = this.options.config.agentCommand ?? this.options.config.agentBinary;
-    const selection =
-      configuration.model || configuration.effort
-        ? { model: configuration.model, effort: configuration.effort }
-        : this.options.config.modelSelection;
     const agentEnv = { ...this.options.config.agentEnv, ...homeOverlay };
     const agentArgs = agentArgsWithModelSelection(
       {

@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { AcpClient } from './acp.js';
 import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
+import { openRouterRoutingCacheDir, openRouterRoutingInput } from './openrouter-routing.js';
 import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
 import type { BodyConfig } from './config.js';
 import {
@@ -93,6 +94,10 @@ export async function runUpdateFunctionalProbe(input: {
         sharedSkills: input.config.sharedSkills ?? [],
         skillReleaseId: input.releaseId,
         failClosed: true,
+        ...openRouterRoutingInput(
+          { ...input.config, openRouterRoutingCacheDir: openRouterRoutingCacheDir(input.runtimeDir) },
+          input.config.modelSelection,
+        ),
       })),
     };
     const selectedAgent = {

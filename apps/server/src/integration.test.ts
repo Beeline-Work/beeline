@@ -2837,7 +2837,7 @@ describe('monolith integration', () => {
     expect(corners.rows).toEqual([]);
   });
 
-  it('defaults a connect-wizard soul stored without avatarSeed to the pubkey and passes the detail guard', async () => {
+  it('reads the selection with an empty catalog, defaults a connect-wizard soul avatarSeed to the pubkey, and passes the detail guard', async () => {
     await database.query(
       `UPDATE agents SET soul=$2::jsonb,selected_model='gpt-5.6' WHERE agent_id=$1`,
       [AGENT, JSON.stringify({ name: 'Scout', instructions: 'Be brisk and kind.' })],
@@ -2849,6 +2849,10 @@ describe('monolith integration', () => {
       instructions: 'Be brisk and kind.',
       avatarSeed: AGENT,
     });
+    // The selection reaches the phone even before the daemon has posted any
+    // catalog: the MODEL / EFFORT rows show the current value regardless.
+    expect(view?.catalog).toEqual([]);
+    expect(view?.selected).toEqual({ model: 'gpt-5.6' });
     // The phone build's surface guard must accept the readAgent output as-is.
     expect(isAgentDetailView(view)).toBe(true);
   });

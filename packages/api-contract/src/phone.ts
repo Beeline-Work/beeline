@@ -3,3 +3,4 @@ export * from './phone-guards.js';
 export * from './phone-operations.js';
 export * from './invite-token.js';
 export * from './agent-pairing-code.js';
+export * from './agent-grants.js';

@@ -1,3 +1,4 @@
+import type { AgentGrantDecision, AgentGrantStatus } from './agent-grants.js';
 import type {
   AgentModelSelection,
   AgentPairingClaimView,
@@ -12,6 +13,8 @@ export type PhoneOperationMap = {
   listRoomSchedules: { input: RoomInput; output: RoomScheduleListResult };
   deleteRoomSchedule: { input: DeleteRoomScheduleInput; output: void };
   decideWritePermission: { input: DecideWritePermissionInput; output: MessageWriteResult };
+  decideAgentGrant: { input: DecideAgentGrantInput; output: AgentGrantDecisionResult };
+  revokeAgentGrant: { input: RevokeAgentGrantInput; output: AgentGrantDecisionResult };
   createWorkspace: { input: NamedWorkspaceInput; output: IdResult };
   updateWorkspace: { input: UpdateWorkspaceInput; output: void };
   leaveWorkspace: { input: WorkspaceInput; output: void };
@@ -109,6 +112,17 @@ export type DecideWritePermissionInput = RoomInput & {
   readonly agentId: string;
   readonly decision: 'allow' | 'deny';
   readonly repository: string;
+};
+export type DecideAgentGrantInput = {
+  readonly grantId: string;
+  readonly decision: AgentGrantDecision;
+};
+export type RevokeAgentGrantInput = { readonly grantId: string };
+export type AgentGrantDecisionResult = {
+  readonly grantId: string;
+  readonly status: AgentGrantStatus;
+  /** The Room the grant's card lives in, so the server can invalidate it. */
+  readonly roomId: string;
 };
 export type UpdateWorkspaceInput = WorkspaceInput & {
   readonly name?: string;

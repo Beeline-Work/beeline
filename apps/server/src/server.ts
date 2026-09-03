@@ -428,8 +428,14 @@ async function route(
     const input = await body(request);
     const result = await options.phone.execute(name as never, input as never, identityId!);
     console.log('[phone-op]', name, `identity=${identityId}`, 'ok');
-    if (typeof input.roomId === 'string')
-      options.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'phone-write' });
+    const invalidatedRoom =
+      typeof input.roomId === 'string'
+        ? input.roomId
+        : result && typeof (result as { roomId?: unknown }).roomId === 'string'
+          ? (result as { roomId: string }).roomId
+          : undefined;
+    if (invalidatedRoom)
+      options.live.publish({ type: 'invalidate', roomId: invalidatedRoom, reason: 'phone-write' });
     if (result === undefined) {
       response.writeHead(204, { 'cache-control': 'private, no-store' });
       response.end();

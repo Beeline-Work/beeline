@@ -334,4 +334,27 @@ describe('live streaming turn', () => {
     );
     expect(renderer.root.findAllByProps({ testID: 'chat-byline-mark' })).toHaveLength(0);
   });
+  it('prints who asked, in quiet text, inside the expanded tool row', () => {
+    const renderer = render(
+      <ActivityTimeline
+        items={[
+          {
+            kind: 'tool',
+            id: 'deploy',
+            title: 'ran fly deploy -a preview under grant g-1 · asked by Alex',
+            toolKind: 'execute',
+            command: 'fly deploy -a preview',
+            output: 'deployed',
+            status: 'exit 0',
+            requestedBy: { pubkey: 'b'.repeat(64), name: 'Alex' },
+          },
+        ]}
+      />,
+    );
+    expect(JSON.stringify(renderer.toJSON())).not.toContain("at Alex's request");
+    act(() => renderer.root.findByProps({ testID: 'corner-tool-summary' }).props.onPress());
+    act(() => renderer.root.findByProps({ testID: 'corner-tool-row-deploy' }).props.onPress());
+    expect(JSON.stringify(renderer.toJSON())).toContain("at Alex's request");
+  });
+
 });

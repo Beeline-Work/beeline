@@ -187,6 +187,8 @@ export type ChatDisplayMessage = {
   githubEvent?: NonNullable<RoomViewMessage['githubEvent']>;
   /** Daemon lifecycle facts are server-projected cards, never prose rows. */
   daemonFact?: NonNullable<RoomViewMessage['daemonFact']>;
+  /** An agent asking its owner for reach; rendered as the grant card. */
+  grantRequest?: NonNullable<RoomViewMessage['grantRequest']>;
   writePermission?: {
     permissionId: string;
     requestId: string;
@@ -214,6 +216,7 @@ function activityItems(message: RoomViewMessage): AgentActivityItem[] | undefine
     ...(activity.command ? { command: activity.command } : {}),
     ...(activity.input ? { input: activity.input } : {}),
     ...(activity.output ? { output: activity.output } : {}),
+    ...(activity.requestedBy ? { requestedBy: { ...activity.requestedBy } } : {}),
     ...(activity.files ? { files: activity.files.map((file) => ({ ...file })) } : {}),
     ...(activity.plan
       ? { plan: { ...activity.plan, items: activity.plan.items.map((item) => ({ ...item })) } }
@@ -291,6 +294,14 @@ export function displayRoomMessage(
       : {}),
     ...(githubEvent ? { githubEvent } : {}),
     ...(daemonFact ? { daemonFact } : {}),
+    ...(message.grantRequest
+      ? {
+          grantRequest: {
+            ...message.grantRequest,
+            grants: message.grantRequest.grants.map((grant) => ({ ...grant })),
+          },
+        }
+      : {}),
     ...(message.permission
       ? {
           writePermission: {

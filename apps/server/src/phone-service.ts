@@ -8,6 +8,7 @@ import {
   ROOM_VIEW_TOOL_ROW_LIMIT,
 } from '@beeline/api-contract/phone';
 import type {
+  AgentGrantView,
   AgentDetailView,
   AgentPairingClaimView,
   ChatListView,
@@ -26,6 +27,11 @@ import {
   isCommunityInviteToken,
   type PhoneOperationMap,
 } from '@beeline/api-contract/phone';
+import {
+  formatGrantDecisionLine,
+  type AgentGrantDecision,
+  type AgentGrantStatus,
+} from '@beeline/api-contract/agent-grants';
 import type { SqlDatabase } from './database.js';
 import type { GitHubOperations } from './github-operations.js';
 import { collapsePermissionCards } from '@beeline/push-gateway/projection';
@@ -226,6 +232,8 @@ function projectedMessage(row: MessageRow, publicOrigin: string): RoomViewMessag
   switch (row.card_type) {
     case 'permission':
       return { ...base, permission: row.card as NonNullable<RoomViewMessage['permission']> };
+    case 'grant-request':
+      return { ...base, grantRequest: row.card as NonNullable<RoomViewMessage['grantRequest']> };
     case 'target-branch':
       return { ...base, targetBranch: row.card as NonNullable<RoomViewMessage['targetBranch']> };
     case 'github-event':
@@ -818,8 +826,51 @@ export class PhoneService {
         ...(config?.yolo_set_at ? { setAt: unix(config.yolo_set_at) } : {}),
         canChange: config?.can_change_yolo ?? false,
       },
+      grants: await this.agentGrants(workspaceId, agentId),
+      // The same authority axis as yolo: the agent's owner or a Workspace manager.
+      canManageGrants: config?.can_change_yolo ?? false,
       watchFilters: [],
     };
+  }
+  /** The grant store as the profile lists it: every non-pending grant, newest first. */
+  private async agentGrants(workspaceId: string, agentId: string): Promise<AgentGrantView[]> {
+    const rows = await this.database.query<{
+      id: string;
+      kind: AgentGrantView['kind'];
+      target: string;
+      reason: string;
+      status: AgentGrantStatus;
+      room_id: string;
+      auto: boolean;
+      created_at: Date;
+      decided_at: Date | null;
+      expires_at: Date | null;
+      requester: IdentityRow;
+      decider: IdentityRow | null;
+    }>(
+      `SELECT g.id,g.kind,g.target,g.reason,g.status,g.room_id,g.auto,g.created_at,g.decided_at,g.expires_at,
+              to_jsonb(requester) requester,to_jsonb(decider) decider
+       FROM agent_grants g
+       JOIN identities requester ON requester.id=g.requested_by
+       LEFT JOIN identities decider ON decider.id=g.decided_by
+       WHERE g.agent_id=$1 AND g.workspace_id=$2 AND g.status<>'pending'
+       ORDER BY g.created_at DESC,g.id`,
+      [agentId, workspaceId],
+    );
+    return rows.rows.map((row) => ({
+      grantId: row.id,
+      kind: row.kind,
+      target: row.target,
+      reason: row.reason,
+      status: row.status,
+      requestedBy: identity(row.requester, this.publicOrigin),
+      ...(row.decider ? { decidedBy: identity(row.decider, this.publicOrigin) } : {}),
+      roomId: row.room_id,
+      createdAt: unix(row.created_at),
+      ...(row.decided_at ? { decidedAt: unix(row.decided_at) } : {}),
+      ...(row.expires_at ? { expiresAt: unix(row.expires_at) } : {}),
+      auto: row.auto,
+    }));
   }
 
   async readInvite(rawToken: string, viewerId: string): Promise<InviteView | null> {
@@ -1037,6 +1088,16 @@ export class PhoneService {
       case 'decideWritePermission':
         return (await this.decidePermission(
           input as Input<'decideWritePermission'>,
+          viewerId,
+        )) as Output<Name>;
+      case 'decideAgentGrant':
+        return (await this.decideAgentGrant(
+          input as Input<'decideAgentGrant'>,
+          viewerId,
+        )) as Output<Name>;
+      case 'revokeAgentGrant':
+        return (await this.revokeAgentGrant(
+          input as Input<'revokeAgentGrant'>,
           viewerId,
         )) as Output<Name>;
       case 'createWorkspace':
@@ -1861,6 +1922,112 @@ export class PhoneService {
     );
   }
   /**
+   * The owner's tap on a grant card. Authorization is the yolo axis: the agent's
+   * owner or a Workspace manager, decided here and never on the phone. The
+   * decision settles the card in place and posts one system line mentioning
+   * the agent so its daemon wakes and resumes the paused turn.
+   */
+  private async decideAgentGrant(input: Input<'decideAgentGrant'>, viewerId: string) {
+    const decision: AgentGrantDecision | undefined =
+      input.decision === 'always' || input.decision === 'once' || input.decision === 'deny'
+        ? input.decision
+        : undefined;
+    if (!decision) throw new Error('grant decision is invalid');
+    const grant = await this.requireGrantAuthority(input.grantId, viewerId);
+    if (grant.status !== 'pending') throw new Error('grant decision conflict: already decided');
+    const status: AgentGrantStatus =
+      decision === 'always' ? 'approved' : decision === 'once' ? 'once' : 'denied';
+    const decider = await this.requireIdentity(viewerId);
+    await this.database.transaction(async (database) => {
+      const updated = await database.query<{ decided_at: Date }>(
+        `UPDATE agent_grants SET status=$2,decided_by=$3,decided_at=now()
+         WHERE id::text=$1 AND status='pending' RETURNING decided_at`,
+        [input.grantId, status, viewerId],
+      );
+      const decidedAt = updated.rows[0]?.decided_at;
+      if (!decidedAt) throw new Error('grant decision conflict: already decided');
+      const card = (
+        await database.query<{ id: string; card: { grants: AgentGrantView[] } }>(
+          `SELECT id,card FROM messages
+           WHERE room_id=$1 AND card_type='grant-request'
+             AND EXISTS (
+               SELECT 1 FROM jsonb_array_elements(card->'grants') entry WHERE entry->>'grantId'=$2
+             )
+           ORDER BY created_at DESC,id DESC LIMIT 1 FOR UPDATE`,
+          [grant.room_id, input.grantId],
+        )
+      ).rows[0];
+      if (card) {
+        const grants = card.card.grants.map((entry) =>
+          entry.grantId === input.grantId
+            ? { ...entry, status, decidedBy: decider, decidedAt: unix(decidedAt) }
+            : entry,
+        );
+        await database.query(`UPDATE messages SET card=jsonb_set(card,'{grants}',$2::jsonb) WHERE id=$1`, [
+          card.id,
+          JSON.stringify(grants),
+        ]);
+      }
+      await database.query(
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,mention_ids,card_type,card)
+         VALUES($1,$2,$3,$4,'system',$5::jsonb,'grant-decision',$6::jsonb)`,
+        [
+          messageId(),
+          grant.room_id,
+          viewerId,
+          formatGrantDecisionLine({
+            deciderName: decider.name,
+            decision,
+            kind: grant.kind,
+            target: grant.target,
+          }),
+          JSON.stringify([grant.agent_id]),
+          JSON.stringify({ grantId: input.grantId, status }),
+        ],
+      );
+    });
+    return { grantId: input.grantId, status, roomId: grant.room_id };
+  }
+  /** Revoke is one tap on the profile; a command rule stops matching at once. */
+  private async revokeAgentGrant(input: Input<'revokeAgentGrant'>, viewerId: string) {
+    const grant = await this.requireGrantAuthority(input.grantId, viewerId);
+    // The profile shows who revoked it and when, in the same two columns.
+    const revoked = await this.database.query(
+      `UPDATE agent_grants SET status='revoked',decided_by=$2,decided_at=now()
+       WHERE id::text=$1 AND status IN ('approved','once')`,
+      [input.grantId, viewerId],
+    );
+    if (!revoked.rowCount) throw new Error('grant revoke conflict: grant is not active');
+    return { grantId: input.grantId, status: 'revoked' as const, roomId: grant.room_id };
+  }
+  private async requireGrantAuthority(grantId: unknown, viewerId: string) {
+    if (typeof grantId !== 'string' || !grantId) throw new Error('grantId is required');
+    const grant = (
+      await this.database.query<{
+        agent_id: string;
+        workspace_id: string;
+        room_id: string;
+        kind: AgentGrantView['kind'];
+        target: string;
+        status: AgentGrantStatus;
+        owner_id: string;
+      }>(
+        `SELECT g.agent_id,g.workspace_id,g.room_id,g.kind,g.target,g.status,a.owner_id
+         FROM agent_grants g JOIN agents a ON a.agent_id=g.agent_id WHERE g.id::text=$1`,
+        [grantId],
+      )
+    ).rows[0];
+    if (!grant) throw new Error('grant not found');
+    if (grant.owner_id !== viewerId) {
+      const manager = await this.database.query(
+        `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND role IN ('owner','admin') AND removed_at IS NULL`,
+        [grant.workspace_id, viewerId],
+      );
+      if (!manager.rowCount) throw new Error(YOLO_AUTHORITY_MESSAGE);
+    }
+    return grant;
+  }
+  /**
    * The agent "yolo" switch. Authorization is decided here, never on the phone:
    * the viewer must be the agent's owner (the identity that connected it) or
    * hold a manager role in the agent's Workspace. A flip posts one system line
@@ -2401,6 +2568,8 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'listRoomSchedules',
   'deleteRoomSchedule',
   'decideWritePermission',
+  'decideAgentGrant',
+  'revokeAgentGrant',
   'createWorkspace',
   'updateWorkspace',
   'leaveWorkspace',

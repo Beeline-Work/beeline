@@ -174,10 +174,12 @@ import { useRoomSurfaceSession, type RoomSurfaceSessionBindings } from './useRoo
 import {
   GitHubEventCard,
   DaemonFactCard,
+  GrantRequestCard,
   OrdinaryLedgerMessage,
   TargetBranchProposalCard,
   WritePermissionCard,
 } from './RoomMessageVariants';
+import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import { visibleTranscriptWindow } from '@/buzz/transcript-presentation';
 import {
@@ -430,6 +432,7 @@ export default function BuzzChat() {
   const directMessage = roomSurface?.directMessage ?? null;
   const [composerFocused, setComposerFocused] = useState(false);
   const [permissionActionId, setPermissionActionId] = useState<string | null>(null);
+  const [grantActionId, setGrantActionId] = useState<string | null>(null);
   /** Proposal currently being confirmed, and the last refusal/failure text. */
   const [targetBranchActionId, setTargetBranchActionId] = useState<string | null>(null);
   const [targetBranchNotice, setTargetBranchNotice] = useState<{
@@ -1950,6 +1953,31 @@ export default function BuzzChat() {
   );
 
   /**
+   * Answer a grant card. The server holds the authority (agent owner or a
+   * Workspace manager) and refuses anyone else; the card re-reads from the
+   * indexed Room, so nothing is decided on the phone.
+   */
+  const handleGrantDecision = useCallback(
+    async (grantId: string, decision: 'always' | 'once' | 'deny') => {
+      if (viewerIsAgent || grantActionId) return;
+      setGrantActionId(grantId);
+      try {
+        await monolithPhoneOperation('decideAgentGrant', { grantId, decision });
+        void Haptics.notificationAsync(
+          decision === 'deny'
+            ? Haptics.NotificationFeedbackType.Warning
+            : Haptics.NotificationFeedbackType.Success,
+        );
+      } catch (err) {
+        console.warn('Grant decision failed:', err);
+      } finally {
+        setGrantActionId(null);
+      }
+    },
+    [grantActionId, viewerIsAgent],
+  );
+
+  /**
    * Confirm a proposed target-branch change.
    *
    * The republished Room→repository event is signed by THIS viewer, so a
@@ -2677,6 +2705,20 @@ export default function BuzzChat() {
         );
       }
 
+      if (item.grantRequest) {
+        return (
+          <GrantRequestCard
+            message={item}
+            agent={agentByPubkey.get(item.grantRequest.agent.pubkey)}
+            viewerIsAgent={viewerIsAgent}
+            viewerPubkey={cacheViewerPubkey}
+            viewerRole={viewerChannelRole}
+            actionId={grantActionId}
+            onDecision={handleGrantDecision}
+          />
+        );
+      }
+
       if (item.targetBranchProposal) {
         const notice =
           targetBranchNotice?.proposalId === item.targetBranchProposal.proposalId
@@ -2774,6 +2816,8 @@ export default function BuzzChat() {
     [
       agentByPubkey,
       handleWritePermission,
+      handleGrantDecision,
+      grantActionId,
       handleConfirmTargetBranch,
       openCorner,
       participantsHydrated,

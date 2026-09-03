@@ -43,6 +43,9 @@ export function WritePermissionOutcome(props: {
   subchannelId?: string;
   awaitingPerson?: boolean;
   onOpen?: () => void;
+  /** A caller-supplied outcome sentence (the grant card's `Charles allowed always · 12:41`). */
+  label?: string;
+  testID?: string;
 }) {
   if (props.status === 'allowed' && props.subchannelId && props.onOpen) {
     return (
@@ -56,9 +59,10 @@ export function WritePermissionOutcome(props: {
     );
   }
   return (
-    <View style={styles.outcome}>
+    <View style={styles.outcome} testID={props.testID}>
       <Text style={styles.status}>
-        {writePermissionStatusLabel(props.status, props.subchannelId, props.awaitingPerson)}
+        {props.label ??
+          writePermissionStatusLabel(props.status, props.subchannelId, props.awaitingPerson)}
       </Text>
     </View>
   );

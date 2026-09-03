@@ -2,6 +2,7 @@ import { resolve } from 'node:path';
 import type { McpServerWire } from './acp.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
+import type { GrantRunnerEndpoint } from './grant-runner.js';
 import { BEELINE_AGENT_MCP_SERVER_NAME, READ_ONLY_MCP_SERVER_NAME } from './read-only-policy.js';
 
 export class ReadOnlyToolsUnavailableError extends Error {
@@ -18,6 +19,8 @@ export function beelineAgentMcpServer(
     cornerId?: string;
     attachRoot?: string;
     directMessage?: boolean;
+    /** The daemon's loopback grant runner, for run_granted_command. */
+    grantRunner?: GrantRunnerEndpoint;
   },
 ): McpServerWire {
   if (!config.readonlyMcpCommand) {
@@ -40,6 +43,12 @@ export function beelineAgentMcpServer(
       { name: 'BEELINE_DAEMON_WORKSPACE_ID', value: context.workspaceId },
       ...(context.cornerId ? [{ name: 'BEELINE_DAEMON_CORNER_ID', value: context.cornerId }] : []),
       ...(context.attachRoot ? [{ name: 'BEELINE_ATTACH_ROOT', value: context.attachRoot }] : []),
+      ...(context.grantRunner
+        ? [
+            { name: 'BEELINE_GRANT_RUNNER_URL', value: context.grantRunner.url },
+            { name: 'BEELINE_GRANT_RUNNER_TOKEN', value: context.grantRunner.token },
+          ]
+        : []),
     ],
   };
 }

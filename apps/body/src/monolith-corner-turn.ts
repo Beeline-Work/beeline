@@ -3,6 +3,7 @@ import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { parseGrantDecisionLine } from '@beeline/api-contract/agent-grants';
 import type { DaemonAttachment, DaemonOperationMap } from '@beeline/api-contract/daemon';
 import { AcpClient, type McpServerWire, type ToolCallEntry } from './acp.js';
 import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
@@ -19,6 +20,7 @@ import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './b
 import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
+import type { GrantCommandRunner, GrantRunnerEndpoint } from './grant-runner.js';
 import {
   agentArgsWithModelSelection,
   applyAgentModelSelection,
@@ -181,6 +183,7 @@ function isSuccessfulCommit(call: ToolCallEntry): boolean {
 export async function cornerToolActivity(
   call: ToolCallEntry,
   worktreePath: string,
+  requestedBy?: { pubkey: string; name?: string },
 ): Promise<DaemonActivity> {
   const operation = oneLine(call.kind ?? '') || 'tool';
   let title = oneLine(redactToolDetail(call.title ?? '')) || `${operation} tool`;
@@ -210,6 +213,7 @@ export async function cornerToolActivity(
     status: resultStatus(call),
     ...argumentsSummary,
     ...(output ? { output } : {}),
+    ...(requestedBy ? { requestedBy } : {}),
     ...(paths.length ? { files: paths.map((path) => ({ path })) } : {}),
   };
 }
@@ -236,6 +240,9 @@ export interface MonolithCornerTurnOptions {
   createAcpClient?: (options: ConstructorParameters<typeof AcpClient>[0]) => AcpClient;
   /** Attachment downloads (test seam). */
   fetchImpl?: typeof fetch;
+  /** The daemon's command-grant runner; this corner registers its worktree and current turn. */
+  grantRunner?: GrantCommandRunner;
+  grantRunnerEndpoint?: GrantRunnerEndpoint;
 }
 
 /**
@@ -261,9 +268,17 @@ export class MonolithCornerTurnLoop {
   private activityTail = Promise.resolve();
   /** Session scratch directory attachments are downloaded into (`TMPDIR/beeline-attachments`). */
   private attachmentDir?: string;
+  /** The turn in flight and who asked for it, for ledger rows and the grant runner. */
+  private currentTurn?: { requestId: string; requester?: { pubkey: string; name?: string } };
+  private memberNames = new Map<string, string>();
 
   constructor(private readonly options: MonolithCornerTurnOptions) {
     this.agent = runtimeIdentity(options.runtime.agent);
+    options.grantRunner?.register(options.cornerId, {
+      workspaceId: options.workspaceId,
+      cwd: options.worktreePath,
+      turn: () => this.currentTurn,
+    });
   }
 
   isBusy(): boolean {
@@ -287,11 +302,13 @@ export class MonolithCornerTurnLoop {
     await this.options.scheduler.forceSuspend(this.options.cornerId);
   }
 
-  private roster(): Promise<WorkspaceRoster> {
-    return this.options.api.execute('getWorkspaceRoster', {
+  private async roster(): Promise<WorkspaceRoster> {
+    const roster = await this.options.api.execute('getWorkspaceRoster', {
       agentId: this.agent.publicKey,
       workspaceId: this.options.workspaceId,
     });
+    this.memberNames = new Map(roster.members.map((member) => [member.identityId, member.name]));
+    return roster;
   }
 
   private async activate(): Promise<string> {
@@ -385,6 +402,9 @@ export class MonolithCornerTurnLoop {
         workspaceId: this.options.workspaceId,
         cornerId: this.options.cornerId,
         attachRoot: this.options.worktreePath,
+        ...(this.options.grantRunnerEndpoint
+          ? { grantRunner: this.options.grantRunnerEndpoint }
+          : {}),
       }),
     ];
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
@@ -442,8 +462,18 @@ export class MonolithCornerTurnLoop {
     requestId: string,
     trigger: string,
     attachments: readonly DaemonAttachment[] = [],
+    requestedById?: string,
   ): Promise<void> {
     const { api, cornerId } = this.options;
+    const requester = requestedById
+      ? {
+          pubkey: requestedById,
+          ...(this.memberNames.get(requestedById)
+            ? { name: this.memberNames.get(requestedById)! }
+            : {}),
+        }
+      : undefined;
+    this.currentTurn = { requestId, ...(requester ? { requester } : {}) };
     await api.execute('postAgentTurnReceipt', {
       agentId: this.agent.publicKey,
       roomId: cornerId,
@@ -470,6 +500,11 @@ export class MonolithCornerTurnLoop {
               : Promise.resolve<DeliveredAttachment[]>([]),
           ]);
           const names = new Map(roster.members.map((member) => [member.identityId, member.name]));
+          const requestedBy =
+            requester && !requester.name && names.get(requester.pubkey)
+              ? { ...requester, name: names.get(requester.pubkey)! }
+              : requester;
+          if (requestedBy) this.currentTurn = { requestId, requester: requestedBy };
           const transcript = conversation.items
             .slice(-120)
             .map(
@@ -542,7 +577,11 @@ export class MonolithCornerTurnLoop {
               this.activityTail = this.activityTail
                 .catch(() => undefined)
                 .then(async () => {
-                  const activity = await cornerToolActivity(call, this.options.worktreePath);
+                  const activity = await cornerToolActivity(
+                    call,
+                    this.options.worktreePath,
+                    requestedBy,
+                  );
                   await api.execute('postAgentActivity', {
                     agentId: this.agent.publicKey,
                     roomId: cornerId,
@@ -645,6 +684,7 @@ export class MonolithCornerTurnLoop {
       throw error;
     } finally {
       this.busy = false;
+      this.currentTurn = undefined;
     }
   }
 
@@ -687,7 +727,23 @@ export class MonolithCornerTurnLoop {
                 principalId: item.authorId,
               });
               if (!authority.member || authority.principalKind !== 'human') continue;
-              await this.prompt(item.id, item.body, item.attachments);
+              await this.prompt(item.id, item.body, item.attachments, item.authorId);
+              pollWithoutWait = true;
+              continue;
+            }
+            // The owner's grant decision (server-gated, mentioning this agent)
+            // resumes the paused work; the server's checks note starts a turn.
+            const grantDecision =
+              item.type === 'system' &&
+              item.mentionIds.includes(this.agent.publicKey) &&
+              parseGrantDecisionLine(item.body) !== undefined;
+            if (grantDecision) {
+              await this.prompt(
+                item.id,
+                `${item.body}\nThis answers your grant request; resume the paused work. If approved and it is a command grant, run it with run_granted_command and the exact argv; if declined, try another way or say what you cannot do.`,
+                [],
+                item.authorId,
+              );
               pollWithoutWait = true;
               continue;
             }
@@ -711,6 +767,7 @@ export class MonolithCornerTurnLoop {
         }
       }
     } finally {
+      this.options.grantRunner?.unregister(cornerId);
       await this.options.scheduler.suspend(cornerId);
     }
   }

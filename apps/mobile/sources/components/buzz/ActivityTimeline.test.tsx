@@ -23,6 +23,12 @@ vi.mock('./MonoHull', () => ({
 vi.mock('./MonoMarkdown', () => ({
   MonoMarkdown: (props: any) => React.createElement('MonoMarkdown', props, props.markdown),
 }));
+vi.mock('./IdentityMark', () => ({
+  IdentityMark: (props: any) => React.createElement('IdentityMark', props),
+}));
+vi.mock('react-native-reanimated', () => ({
+  useReducedMotion: () => false,
+}));
 
 import { groknight } from '@/buzz/groknight';
 import { ActivityTimeline } from './ActivityTimeline';
@@ -244,5 +250,51 @@ describe('live streaming turn', () => {
     expect(verdict.props.style).toContainEqual(
       expect.objectContaining({ color: groknight.accent }),
     );
+  });
+
+  it('renders the settled row\'s byline — IdentityMark + name + kind + stamp — on the live draft', () => {
+    // Captain report C42: the streamed draft lane's byline must be exactly
+    // the settled message byline (`Ledger.LedgerBylineView`), so the agent
+    // triangle is present and nothing changes visually when the draft
+    // settles in place.
+    const renderer = render(
+      <ActivityTimeline
+        active
+        handle="Codex"
+        stamp="14:02"
+        items={[{ kind: 'tool', id: 'edit', title: 'Edit files', toolKind: 'edit' }]}
+        messageDraft="Working on it now."
+        mark={{ seed: 'agent-pubkey', kind: 'agent', alive: true }}
+      />,
+    );
+    const mark = renderer.root.findByProps({ testID: 'chat-byline-mark' });
+    expect(mark.props).toEqual(
+      expect.objectContaining({
+        seed: 'agent-pubkey',
+        kind: 'agent',
+        alive: true,
+        size: 17,
+      }),
+    );
+    const byline = mark.parent.parent;
+    const textStrings: string[] = [];
+    const collect = (node: any) => {
+      if (typeof node === 'string') textStrings.push(node);
+      if (Array.isArray(node)) node.forEach(collect);
+      else if (node && typeof node === 'object' && node.props)
+        React.Children.forEach(node.props.children, collect);
+    };
+    byline.findAll((node: any) => node.type === 'Text').forEach(collect);
+    const bylineText = textStrings.join('');
+    expect(bylineText).toContain('Codex');
+    expect(bylineText).toContain('agent');
+    expect(bylineText).toContain('14:02');
+  });
+
+  it('renders no identity mark when no byline handle is present', () => {
+    const renderer = render(
+      <ActivityTimeline active items={TOOLS} mark={{ seed: 'agent-pubkey', kind: 'agent' }} />,
+    );
+    expect(renderer.root.findAllByProps({ testID: 'chat-byline-mark' })).toHaveLength(0);
   });
 });

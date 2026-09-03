@@ -128,6 +128,7 @@ import {
 } from '@/components/buzz/OwnerGrantNeededCard';
 import { isPinnedCornerLive, pinnedCornerVerb, selectPinnedCorner } from '@/buzz/room-indicators';
 import { displayCornerTitle } from '@/buzz/room-list-row';
+import { scrollFollowOnArrival } from '@/buzz/room-scroll-follow';
 import {
   loadActiveCommunityId,
   saveActiveCommunityId,
@@ -1287,6 +1288,32 @@ export default function BuzzChat() {
   // Newest-first for the inverted FlatList; chronological visibleMessages
   // above stays the source of truth for everything else that reads order.
   const invertedMessages = useMemo(() => [...visibleMessages].reverse(), [visibleMessages]);
+  // Captain's rule (2026-09): a new message or live draft always brings the
+  // viewport to the newest end — once per arrival, never mid-drag. The
+  // decision is one pure call (`buzz/room-scroll-follow.ts`); the actual
+  // scrollToOffset runs at most once per arrival, off the render path.
+  const userDraggingRef = useRef(false);
+  const newestMessageId = combinedMessages.length
+    ? combinedMessages[combinedMessages.length - 1].id
+    : null;
+  const prevNewestIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const previousNewestId = prevNewestIdRef.current;
+    prevNewestIdRef.current = newestMessageId;
+    if (
+      scrollFollowOnArrival({
+        previousNewestId,
+        nextNewestId: newestMessageId,
+        isUserDragging: userDraggingRef.current,
+      }) === 'hold'
+    ) {
+      return;
+    }
+    // Offset 0 is the visual bottom of the inverted list.
+    requestAnimationFrame(() =>
+      flatListRef.current?.scrollToOffset({ offset: 0, animated: false }),
+    );
+  }, [newestMessageId]);
   // Reveal the exact fact that caused the alert. Fresh messages usually land
   // in the cached tail; if the target is already resident outside the initial
   // window, widen the window first and scroll on the next render.
@@ -3046,13 +3073,27 @@ export default function BuzzChat() {
             // auto-stick-to-visual-bottom threshold — contentOffset 0 is the
             // visual bottom here, and this prop sticks the viewport to
             // offset 0 (revealing new content, including a taller multi-line
-            // send) whenever the user is already within N units of it. Do
-            // NOT pair this with a JS-side scrollToOffset call — the two
-            // fight and drag the viewport while reading older messages.
+            // send) whenever the user is already within N units of it. The
+            // captain's scroll rule adds ONE JS-side scrollToOffset per new
+            // arrival (`buzz/room-scroll-follow.ts`) so a message received
+            // while reading older history still surfaces; a drag in progress
+            // is never interrupted.
             minIndexForVisible: 1,
             autoscrollToTopThreshold: 50,
           }}
           keyboardShouldPersistTaps="handled"
+          onScrollBeginDrag={() => {
+            userDraggingRef.current = true;
+          }}
+          onScrollEndDrag={() => {
+            userDraggingRef.current = false;
+          }}
+          onMomentumScrollBegin={() => {
+            userDraggingRef.current = true;
+          }}
+          onMomentumScrollEnd={() => {
+            userDraggingRef.current = false;
+          }}
           renderItem={renderItem}
           onScrollToIndexFailed={({ averageItemLength, index }) => {
             // Variable-height ledger rows cannot provide getItemLayout. Jump

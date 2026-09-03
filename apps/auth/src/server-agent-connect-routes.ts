@@ -24,6 +24,11 @@ function userCode(): string {
   return `BEE-${pairingPart()}-${pairingPart()}`;
 }
 
+/** Trimmed, bounded avatar seed; empty when absent or unusable. */
+function normalizeAvatarSeed(value: unknown): string {
+  return typeof value === 'string' ? value.trim().slice(0, 128) : '';
+}
+
 function escapeHtml(value: string): string {
   return value
     .replaceAll('&', '&amp;')
@@ -102,6 +107,7 @@ export function registerServerAgentConnectRoutes(context: AuthRouteContext): voi
     const provider = typeof body.provider === 'string' ? body.provider.trim().toLowerCase() : '';
     const model = typeof body.model === 'string' ? body.model.trim().slice(0, 200) : '';
     const soul = typeof body.soul === 'string' ? body.soul.trim().slice(0, 1_000) : '';
+    const avatarSeed = normalizeAvatarSeed(body.avatar_seed);
     const agentName =
       typeof body.agent_name === 'string' ? body.agent_name.trim().replace(/\s+/g, ' ') : '';
     if (!pairingCode) {
@@ -131,6 +137,7 @@ export function registerServerAgentConnectRoutes(context: AuthRouteContext): voi
       agentName,
       model,
       soul,
+      ...(avatarSeed ? { avatarSeed } : {}),
     });
     if (claim.status === 'not_found') {
       throw new ProtocolError(404, 'pairing_code_not_found', 'pairing code was not found');

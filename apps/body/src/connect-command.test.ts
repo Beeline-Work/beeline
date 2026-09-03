@@ -108,8 +108,35 @@ describe('connect wizard', () => {
       harness: 'codex',
       model: 'gpt-5.4',
       soul: 'Brisk and kind.',
+      avatar_seed: '4ed3aee3a46d2b0b3476472dbc77eafb',
       agent_name: 'Scout',
     });
+  });
+
+  it('derives the posted avatar seed from the pairing code deterministically', async () => {
+    const fetchImpl = vi.fn(async () => new Response('{}', { status: 200 }));
+    await requestConnectGrant(
+      'https://server.example',
+      '9999AAAA-1111BBBB',
+      { name: 'Scout', harness: 'codex', model: 'gpt-5.4', soul: 'Brisk and kind.' },
+      fetchImpl as unknown as typeof fetch,
+    );
+    const body = JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body)) as {
+      avatar_seed?: string;
+    };
+    const first = body.avatar_seed;
+    fetchImpl.mockClear();
+    await requestConnectGrant(
+      'https://server.example',
+      '9999AAAA-1111BBBB',
+      { name: 'Scout', harness: 'codex', model: 'gpt-5.4', soul: 'Brisk and kind.' },
+      fetchImpl as unknown as typeof fetch,
+    );
+    expect(JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body))).toMatchObject({
+      soul: 'Brisk and kind.',
+      avatar_seed: first,
+    });
+    expect(first).toMatch(/^[0-9a-f]{32}$/);
   });
 
   it('surfaces a claimed or expired pairing code as one server message', async () => {

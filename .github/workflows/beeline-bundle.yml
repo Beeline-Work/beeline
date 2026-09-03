@@ -91,7 +91,10 @@ jobs:
   promote:
     if: inputs.phase == 'promote'
     runs-on: [self-hosted, beeline-prod-host]
-    timeout-minutes: 10
+    # The confirm step below waits up to 35 minutes: a busy helper may hold its
+    # restart for the whole drain deadline (`UPDATE_DRAIN_DEADLINE_MS`) before the
+    # forced restart, then systemd's restart backoff and the successor probe follow.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
         with:
@@ -111,8 +114,27 @@ jobs:
           RELEASE_VERSION: ${{ inputs.release_version }}
         run: |
           set -euo pipefail
+          # Wait at least the helper's drain budget plus margin: a helper with a
+          # turn in flight restarts at its absolute drain deadline, then systemd
+          # restart backoff and the successor's functional probe follow.
+          wait_minutes=35
+          deadline=$((SECONDS + wait_minutes * 60))
+          next_report=0
           : > "$RUNNER_TEMP/release-readiness-error.txt"
-          for _ in $(seq 1 120); do
+          readiness_table() {
+            # shellcheck disable=SC2016 # JavaScript template literals, not shell expansion
+            node -e '
+              const status = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+              for (const daemon of status.daemons ?? []) {
+                console.log(
+                  `  ${String(daemon.agentPubkey ?? "<unknown>").slice(0, 12)}  ` +
+                    `${String(daemon.state ?? "<missing-state>").padEnd(10)}  ` +
+                    `${daemon.version ?? "-"}@${String(daemon.sha ?? "-").slice(0, 8)}`,
+                );
+              }
+            ' "$RUNNER_TEMP/release-readiness.json" 2>/dev/null || echo "  (no readiness payload yet)"
+          }
+          while (( SECONDS < deadline )); do
             if curl -fsS --max-time 15 \
               https://server.usebeeline.app/v1/releases/daemon-readiness \
               -o "$RUNNER_TEMP/release-readiness.json" \
@@ -126,9 +148,16 @@ jobs:
               cat "$RUNNER_TEMP/release-readiness.json"
               exit 0
             fi
+            # One readiness table per minute, so a helper stuck on the old
+            # release is visible in the job log while the wait is still running.
+            if (( SECONDS >= next_report )); then
+              echo "daemon readiness at $(date -u +%FT%TZ); waiting up to $(( (deadline - SECONDS + 59) / 60 ))m more for $RELEASE_VERSION ($RELEASE_SHA)"
+              readiness_table
+              next_report=$((SECONDS + 60))
+            fi
             sleep 5
           done
-          echo "daemon fleet did not confirm $RELEASE_VERSION ($RELEASE_SHA) within 10 minutes" >&2
+          echo "daemon fleet did not confirm $RELEASE_VERSION ($RELEASE_SHA) within $wait_minutes minutes" >&2
           cat "$RUNNER_TEMP/release-readiness-error.txt" >&2 || true
-          cat "$RUNNER_TEMP/release-readiness.json" >&2 || true
+          readiness_table >&2
           exit 1

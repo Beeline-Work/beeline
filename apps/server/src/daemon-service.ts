@@ -566,8 +566,9 @@ export class DaemonService {
         repository_key: string | null;
         repository_remote: string | null;
         repository_target_branch: string;
+        direct_participants: string[] | null;
       }>(
-        `SELECT repository_key,repository_remote,repository_target_branch FROM rooms WHERE id=$1`,
+        `SELECT repository_key,repository_remote,repository_target_branch,direct_participants FROM rooms WHERE id=$1`,
         [roomId],
       )
     ).rows[0];
@@ -578,7 +579,12 @@ export class DaemonService {
           targetBranch: row.repository_target_branch,
           resolution: 'repository' as const,
         }
-      : { resolution: 'none' as const };
+      : {
+          resolution: 'none' as const,
+          ...(row?.direct_participants?.length === 2
+            ? { directParticipants: row.direct_participants }
+            : {}),
+        };
   }
   private async targetBranch(roomId: string, agentId: string) {
     await this.access(roomId, agentId);

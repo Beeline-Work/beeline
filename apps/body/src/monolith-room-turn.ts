@@ -196,6 +196,9 @@ export class MonolithRoomTurnLoop {
       this.roster(),
       this.options.api.execute('getRoomRepositoryState', { roomId: this.options.roomId }),
     ]);
+    const directMessage =
+      Array.isArray(repositoryState.directParticipants) &&
+      repositoryState.directParticipants.length === 2;
     await mkdir(this.options.cwd, { recursive: true });
     const homeOverlay = this.options.config.agentHomeRoot
       ? await prepareRoomAgentHome({
@@ -256,6 +259,7 @@ export class MonolithRoomTurnLoop {
         roomId: this.options.roomId,
         workspaceId: this.options.workspaceId,
         attachRoot: this.options.cwd,
+        directMessage,
       }),
     ];
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
@@ -276,7 +280,11 @@ export class MonolithRoomTurnLoop {
             branch: repositoryState.targetBranch || 'main',
           }
         : undefined;
-    const capabilityContext = beelineCapabilityContextForHarness(command, repositoryInfo);
+    const capabilityContext = beelineCapabilityContextForHarness(
+      command,
+      repositoryInfo,
+      directMessage,
+    );
     this.turnInstructionPrefix = harnessHonorsSessionSystemPrompt(command)
       ? ''
       : [identityInstructions, personaInstructions, capabilityContext.compatibilityTurnPrefix]

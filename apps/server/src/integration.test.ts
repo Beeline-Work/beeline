@@ -366,6 +366,57 @@ describe('monolith integration', () => {
     expect((await operation('leaveWorkspace', { workspaceId })).status).toBe(403);
   });
 
+  it('creates a deterministic agent direct message inside the Workspace', async () => {
+    const dm = (await (
+      await operation('resolveDirectMessage', { workspaceId: WORKSPACE, participantId: AGENT })
+    ).json()) as { id: string; created: boolean };
+    expect(dm.created).toBe(true);
+    const reopened = (await (
+      await operation('resolveDirectMessage', { workspaceId: WORKSPACE, participantId: AGENT })
+    ).json()) as { id: string; created: boolean };
+    expect(reopened).toEqual({ id: dm.id, created: false });
+
+    // The agent is auto-added as a Room member so it serves the DM.
+    const members = await database.query<{ identity_id: string }>(
+      `SELECT identity_id FROM memberships WHERE room_id=$1 AND removed_at IS NULL ORDER BY identity_id`,
+      [dm.id],
+    );
+    expect(members.rows.map((row) => row.identity_id).sort()).toEqual([AGENT, HUMAN].sort());
+
+    // The helper learns the Room is conversational-only from the daemon op.
+    const repositoryState = (await (
+      await daemonOperation('getRoomRepositoryState', { roomId: dm.id })
+    ).json()) as { resolution: string; directParticipants?: string[] };
+    expect(repositoryState.resolution).toBe('none');
+    expect([...(repositoryState.directParticipants ?? [])].sort()).toEqual([AGENT, HUMAN].sort());
+
+    // A human message in the DM implicitly addresses its one agent.
+    const sent = await operation('sendRoomMessage', {
+      roomId: dm.id,
+      messageId: 'c'.repeat(64),
+      text: 'Are you there?',
+    });
+    expect(sent.status).toBe(200);
+    const stored = await database.query<{ mention_ids: string[] }>(
+      `SELECT mention_ids FROM messages WHERE id=$1`,
+      ['c'.repeat(64)],
+    );
+    expect(stored.rows[0]?.mention_ids).toEqual([AGENT]);
+  });
+
+  it('refuses a direct message with an agent outside the Workspace', async () => {
+    const outsider = 'd'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Outsider')`, [
+      outsider,
+    ]);
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [outsider, HUMAN]);
+    const response = await operation('resolveDirectMessage', {
+      workspaceId: WORKSPACE,
+      participantId: outsider,
+    });
+    expect(response.status).toBe(400);
+  });
+
   it('emits one workspace push and Room join notes across explicit member adds', async () => {
     const aliceToken = await phoneToken('alice');
     const aliceId = createHash('sha256').update('github:alice').digest('hex');

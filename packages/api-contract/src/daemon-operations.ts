@@ -174,6 +174,8 @@ export type RoomRepositoryStateResult = {
   readonly remote?: string;
   readonly targetBranch?: string;
   readonly resolution: 'repository' | 'none' | 'unverified';
+  /** Present only on a direct-message Room: the two sorted participant pubkeys. */
+  readonly directParticipants?: readonly string[];
 };
 export type RoomGitHubTokenResult = {
   readonly token: string;

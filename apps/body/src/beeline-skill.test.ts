@@ -24,6 +24,18 @@ describe('using-beeline Room guidance', () => {
     expect(markdown).not.toContain('no action or corner tools');
   });
 
+  it('delivers strictly conversational guidance for a direct message', () => {
+    const primer = beelinePrimer(undefined, true);
+    expect(primer).toContain('private direct-message conversation with one person');
+    expect(primer).toContain('no repository binding and no corner can be opened');
+    expect(primer).not.toContain('open_corner');
+    expect(primer).not.toContain('@name');
+
+    const context = beelineCapabilityContextForHarness('codex-acp', undefined, true);
+    expect(context.sessionPrompt).toContain('direct-message conversation');
+    expect(context.sessionPrompt).not.toContain('open_corner');
+  });
+
   it('names the bound repository and branch when the Room has one', () => {
     const primer = beelinePrimer({ name: 'Beeline-Work/beeline', branch: 'main' });
     expect(primer).toContain(

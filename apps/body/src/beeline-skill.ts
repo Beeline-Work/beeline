@@ -16,12 +16,28 @@ const BEELINE_ROOM_CAPABILITIES = [
   'Never claim an action or reply happened unless the prompt or a tool result proves it.',
 ].join(' ');
 
+const BEELINE_DM_CAPABILITIES = [
+  'This is a private direct-message conversation with one person. Every message they send is addressed to you; reply without tagging.',
+  'This Room is strictly conversational: there is no repository binding and no corner can be opened from here.',
+  'The repository filesystem is read-only in this session.',
+  'Every MCP server mounted into this session is approved tool by tool - use operator and host tools freely; the read-only filesystem sandbox is the boundary, not a tool list. Network web search is enabled.',
+  'To send a file, call beeline-agent attach_file with a path inside your checkout; it is attached to your reply.',
+  'Tag the person only when you need a decision or input, or when the task they asked for is finished.',
+  'Never claim an action or reply happened unless the prompt or a tool result proves it.',
+].join(' ');
+
 export interface RepositoryPrimerInfo {
   name: string;
   branch: string;
 }
 
-export function beelinePrimer(repository?: RepositoryPrimerInfo): string {
+export function beelinePrimer(repository?: RepositoryPrimerInfo, directMessage?: boolean): string {
+  if (directMessage) {
+    return (
+      'Consult the release-versioned using-beeline skill (SKILL.md) when you need the managed ' +
+      `Room mechanics. ${BEELINE_DM_CAPABILITIES}`
+    );
+  }
   const repositoryLine = repository
     ? ` This Room is bound to ${repository.name} (branch ${repository.branch}); you have a read-only checkout at the session root.`
     : '';
@@ -41,8 +57,9 @@ export interface BeelineCapabilityContext {
 export function beelineCapabilityContextForHarness(
   agentCommand: string | undefined,
   repository?: RepositoryPrimerInfo,
+  directMessage?: boolean,
 ): BeelineCapabilityContext {
-  const primer = beelinePrimer(repository);
+  const primer = beelinePrimer(repository, directMessage);
   return {
     sessionPrompt: primer,
     ...(harnessHonorsSessionSystemPrompt(agentCommand) ? {} : { compatibilityTurnPrefix: primer }),

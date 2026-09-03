@@ -23,50 +23,85 @@ export function DirectMessagePickerSheet({
   visible,
 }: DirectMessagePickerSheetProps) {
   const people = members.filter((member) => member.peerKind === 'person');
+  const agents = members.filter((member) => member.peerKind === 'agent');
 
   return (
     <HullActionSheetModal
-      accessibilityLabel="Close person picker"
+      accessibilityLabel="Close member picker"
       onClose={onClose}
       scrimTestID="direct-message-picker-scrim"
-      subtitle="Choose a person in this Workspace."
+      subtitle="Choose a member of this Workspace."
       testID="direct-message-picker"
       title="Message"
       visible={visible}
     >
       <ScrollView contentContainerStyle={styles.list} showsVerticalScrollIndicator={false}>
-        {people.map((member) => {
-          const busy = busyPubkey === member.peerPubkey;
-          return (
-            <TouchableOpacity
-              accessibilityLabel={`Message ${member.peerName}`}
-              accessibilityRole="button"
-              disabled={Boolean(busyPubkey)}
-              key={member.peerPubkey}
-              onPress={() => onMessage(member)}
-              style={styles.row}
-              testID={`message-workspace-member-${member.peerPubkey}`}
-            >
-              <IdentityMark
-                kind="human"
-                seed={member.peerPubkey}
-                avatarUrl={member.avatarUrl}
-                name={member.peerName}
-                size={36}
-              />
-              <Text numberOfLines={1} style={styles.name}>
-                {member.peerName}
-              </Text>
-              <Text style={styles.action}>{busy ? 'OPENING…' : 'MESSAGE'}</Text>
-            </TouchableOpacity>
-          );
-        })}
-        {people.length === 0 && (
-          <Text style={styles.empty}>No other people in this Workspace yet.</Text>
+        {people.length > 0 && <SectionHeading label="PEOPLE" />}
+        {people.map((member) => (
+          <MemberRow
+            busy={busyPubkey === member.peerPubkey}
+            disabled={Boolean(busyPubkey)}
+            key={member.peerPubkey}
+            member={member}
+            onPress={() => onMessage(member)}
+          />
+        ))}
+        {people.length === 0 && agents.length === 0 && (
+          <Text style={styles.empty}>No other members in this Workspace yet.</Text>
         )}
+        {agents.length > 0 && <SectionHeading label="AGENTS" />}
+        {agents.map((member) => (
+          <MemberRow
+            busy={busyPubkey === member.peerPubkey}
+            disabled={Boolean(busyPubkey)}
+            key={member.peerPubkey}
+            member={member}
+            onPress={() => onMessage(member)}
+          />
+        ))}
       </ScrollView>
       <HullActionSheetCancel onPress={onClose} testID="direct-message-picker-close" />
     </HullActionSheetModal>
+  );
+}
+
+function SectionHeading({ label }: { label: string }) {
+  return <Text style={styles.section}>{label}</Text>;
+}
+
+function MemberRow({
+  busy,
+  disabled,
+  member,
+  onPress,
+}: {
+  busy: boolean;
+  disabled: boolean;
+  member: WorkspaceMemberDisplayItem;
+  onPress: () => void;
+}) {
+  const agent = member.peerKind === 'agent';
+  return (
+    <TouchableOpacity
+      accessibilityLabel={`Message ${member.peerName}`}
+      accessibilityRole="button"
+      disabled={disabled}
+      onPress={onPress}
+      style={styles.row}
+      testID={`message-workspace-member-${member.peerPubkey}`}
+    >
+      <IdentityMark
+        {...(agent ? ({ kind: 'agent' } as const) : ({ kind: 'human' } as const))}
+        seed={member.peerPubkey}
+        avatarUrl={member.avatarUrl}
+        name={member.peerName}
+        size={36}
+      />
+      <Text numberOfLines={1} style={styles.name}>
+        {member.peerName}
+      </Text>
+      <Text style={styles.action}>{busy ? 'OPENING…' : 'MESSAGE'}</Text>
+    </TouchableOpacity>
   );
 }
 
@@ -103,6 +138,15 @@ const styles = StyleSheet.create((theme) => {
       color: groknight.textMuted,
       textAlign: 'center',
       fontSize: 12,
+    },
+    section: {
+      ...Typography.mono('semiBold'),
+      color: groknight.chrome,
+      fontSize: 9,
+      letterSpacing: 0.6,
+      paddingTop: 14,
+      paddingBottom: 4,
+      paddingHorizontal: 10,
     },
   };
 });

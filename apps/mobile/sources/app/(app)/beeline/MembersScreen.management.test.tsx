@@ -333,21 +333,21 @@ describe('Members workspace management', () => {
     expect(client.waitUntilMemberRole).toHaveBeenCalledWith(WORKSPACE, MEMBER, 'admin');
   });
 
-  it('uses a typeahead live catalog for models and never offers custom IDs when one is reported', async () => {
+  it('renders MODEL and EFFORT rows with the live catalog as a typeahead chooser', async () => {
     const renderer = await render();
     await press(renderer, `agent-${AGENT}-identity`);
 
     expect(renderer.root.findAllByProps({ testID: 'model-axis-mode' })).toHaveLength(0);
-    expect(
-      renderer.root.findByProps({ testID: 'model-config-activation-note' }).props.children,
-    ).toContain('next session starts');
-    expect(
-      renderer.root.findByProps({ testID: 'model-config-activation-note' }).props.children,
-    ).toContain('restarting the paired agent');
+    expect(renderer.root.findAllByProps({ testID: 'model-config-activation-note' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'model-catalog-missing' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'model-applies-model' })).toHaveLength(0);
     await press(renderer, 'model-axis-effort');
-    expect(renderer.root.findAllByProps({ testID: 'model-custom-effort' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'model-option-effort-xhigh' })).toHaveLength(0);
     await press(renderer, 'model-option-effort-high');
     expect(client.setAgentModelConfig).toHaveBeenCalledWith(WORKSPACE, AGENT, { effort: 'high' });
+    expect(renderer.root.findByProps({ testID: 'model-applies-effort' }).props.children).toBe(
+      'Applies at the next session',
+    );
 
     await press(renderer, 'model-axis-model');
     await act(async () => {
@@ -355,14 +355,15 @@ describe('Members workspace management', () => {
     });
     expect(renderer.root.findByProps({ testID: 'model-option-model-opus' })).toBeDefined();
     expect(renderer.root.findAllByProps({ testID: 'model-option-model-sonnet' })).toHaveLength(0);
-    expect(renderer.root.findAllByProps({ testID: 'model-custom-model' })).toHaveLength(0);
     await press(renderer, 'model-option-model-opus');
     expect(client.setAgentModelConfig).toHaveBeenCalledWith(WORKSPACE, AGENT, {
       model: 'opus',
       effort: null,
     });
-    expect(renderer.root.findAllByProps({ testID: 'model-axis-effort' })).toHaveLength(0);
-    expect(renderer.root.findAllByProps({ testID: 'model-option-effort-high' })).toHaveLength(0);
+    // After a model switch the catalog's effort axis no longer applies; the
+    // row stays, offering the generic ladder until a fresh catalog arrives.
+    await press(renderer, 'model-axis-effort');
+    expect(renderer.root.findByProps({ testID: 'model-option-effort-xhigh' })).toBeDefined();
   });
 
   it('keeps the catalog default effort atomically when selecting its live model', async () => {
@@ -395,25 +396,65 @@ describe('Members workspace management', () => {
     });
   });
 
-  it('waits for the agent live catalog instead of guessing model IDs or effort levels', async () => {
+  it('shows the current selection with an empty catalog and takes a typed model id', async () => {
     state.agent = {
       ...baseAgent(),
       catalog: [],
-      selected: undefined,
-      runtimeSelection: { model: 'gpt-5.6-sol', effort: 'medium' },
+      selected: { model: 'openrouter/z-ai/glm-5.3-flash' },
     };
     const renderer = await render();
     await press(renderer, `agent-${AGENT}-identity`);
 
-    expect(renderer.root.findByProps({ testID: 'model-catalog-missing' })).toBeDefined();
-    expect(renderer.root.findAllByProps({ testID: 'model-axis-model' })).toHaveLength(0);
-    expect(renderer.root.findAllByProps({ testID: 'model-axis-effort' })).toHaveLength(0);
-    expect(renderer.root.findAllByProps({ testID: 'model-custom-model' })).toHaveLength(0);
-    expect(renderer.root.findAllByProps({ testID: 'model-option-effort-low' })).toHaveLength(0);
-    expect(renderer.root.findByProps({ testID: 'model-catalog-missing' }).props.children).toContain(
-      'during beeline pair',
-    );
-    expect(client.setAgentModelConfig).not.toHaveBeenCalled();
+    expect(renderer.root.findAllByProps({ testID: 'model-catalog-missing' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'model-config-activation-note' })).toHaveLength(0);
+    expect(
+      renderer.root.findByProps({ testID: 'model-axis-model' }).props.children[1].props.children,
+    ).toBe('openrouter/z-ai/glm-5.3-flash');
+    expect(
+      renderer.root.findByProps({ testID: 'model-axis-effort' }).props.children[1].props.children,
+    ).toBe('—');
+
+    await press(renderer, 'model-axis-model');
+    const input = renderer.root.findByProps({ testID: 'model-search-model' });
+    expect(input.props.placeholder).toBe('Model id');
+    await act(async () => {
+      input.props.onChangeText('openrouter/openai/gpt-5.6');
+    });
+    await act(async () => {
+      await renderer.root.findByProps({ testID: 'model-search-model' }).props.onSubmitEditing();
+    });
+    expect(client.setAgentModelConfig).toHaveBeenCalledWith(WORKSPACE, AGENT, {
+      model: 'openrouter/openai/gpt-5.6',
+      effort: null,
+    });
+    expect(renderer.root.findByProps({ testID: 'model-applies-model' })).toBeDefined();
+  });
+
+  it('offers the generic effort ladder without a catalog and drops the note after 4s', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      state.agent = { ...baseAgent(), catalog: [], selected: undefined };
+      const renderer = await render();
+      await press(renderer, `agent-${AGENT}-identity`);
+      expect(
+        renderer.root.findByProps({ testID: 'model-axis-model' }).props.children[1].props.children,
+      ).toBe('—');
+
+      await press(renderer, 'model-axis-effort');
+      expect(renderer.root.findByProps({ testID: 'model-option-effort-low' })).toBeDefined();
+      expect(renderer.root.findByProps({ testID: 'model-option-effort-xhigh' })).toBeDefined();
+      await press(renderer, 'model-option-effort-xhigh');
+      expect(client.setAgentModelConfig).toHaveBeenCalledWith(WORKSPACE, AGENT, {
+        effort: 'xhigh',
+      });
+      expect(renderer.root.findByProps({ testID: 'model-applies-effort' })).toBeDefined();
+      await act(async () => {
+        vi.advanceTimersByTime(4_000);
+      });
+      expect(renderer.root.findAllByProps({ testID: 'model-applies-effort' })).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('edits the human-authored soul fields through setAgentSoul', async () => {

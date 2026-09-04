@@ -136,13 +136,16 @@ export interface AuthServerOptions {
     tenant: AuthTenant,
     input: { agentPubkey: string; roomId: string; relayAuthorizations: readonly string[] },
   ) => Promise<GitHubRoomTokenAuthorityResult>;
-  /** Atomically reserves an app-minted pairing code for the generated agent. */
+  /**
+   * Atomically reserves an app-minted pairing code for the generated agent and
+   * assigns its seeded identity. Name, animal and soul are the server's to
+   * choose — only it knows the Workspace roster the animal must be unique in —
+   * so they come back out of the claim, never in.
+   */
   claimAgentPairingCode?: (input: {
     code: string;
     agentPubkey: string;
-    agentName: string;
     model: string;
-    soul: string;
     avatarSeed?: string;
   }) => Promise<
     | {
@@ -150,11 +153,22 @@ export interface AuthServerOptions {
         workspaceId: string;
         workspaceName: string;
         pairedBy: string;
+        agentName: string;
+        soul: string;
+        face: string;
         /** One-use credential promoted by the installed daemon on first activation. */
         daemonExchangeToken: string;
       }
     | { status: 'not_found' | 'expired' | 'already_claimed' }
   >;
+  /**
+   * The connect wizard's one rename, authorized by the pairing code the person
+   * typed out of the app and bounded to shortly after the claim.
+   */
+  renameConnectedAgent?: (input: {
+    code: string;
+    name: string;
+  }) => Promise<{ status: 'renamed'; agentName: string } | { status: 'not_found' | 'expired' }>;
 }
 
 class ProtocolError extends Error {

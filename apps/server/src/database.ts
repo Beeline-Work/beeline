@@ -239,6 +239,8 @@ CREATE TABLE IF NOT EXISTS workspaces (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
+ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS seeded_souls_enabled boolean NOT NULL DEFAULT true;
+
 CREATE TABLE IF NOT EXISTS rooms (
   id uuid PRIMARY KEY,
   workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,

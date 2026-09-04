@@ -1,5 +1,12 @@
 import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import {
+  FACE_NAMES,
+  FACE_SOULS,
+  defaultFaceForSeed,
+  isFaceId,
+  type FaceId,
+} from '@beeline/api-contract/phone';
 import { migrate } from './database.js';
 import { PhoneService } from './phone-service.js';
 import { PgliteDatabase } from './test-support.js';
@@ -65,31 +72,46 @@ describe('PhoneService agent connect pairing claim', () => {
   it('atomically creates and binds the generated agent before returning the grant metadata', async () => {
     await insertCode(new Date(Date.now() + 60_000));
 
-    await expect(
-      phone.claimAgentConnectPairing({
-        code: CODE,
-        agentPubkey: AGENT,
-        agentName: 'Scout',
-        model: 'gpt-5.4',
-        soul: 'Brisk and kind.',
-      }),
-    ).resolves.toEqual({
+    const claim = await phone.claimAgentConnectPairing({
+      code: CODE,
+      agentPubkey: AGENT,
+      model: 'gpt-5.4',
+    });
+    expect(claim).toMatchObject({
       status: 'claimed',
       workspaceId: WORKSPACE,
       workspaceName: 'Builders',
       pairedBy: OWNER,
     });
+    if (claim.status !== 'claimed') throw new Error('claim failed');
+    // Nobody typed a name or a soul: both are seeded from the animal the
+    // server picked, and all three name the same creature.
+    expect(isFaceId(claim.face)).toBe(true);
+    expect(claim.soul).toBe(FACE_SOULS[claim.face as FaceId]);
+    expect(FACE_NAMES[claim.face as FaceId]).toContain(claim.agentName);
     const identity = await database.query<{
       name: string;
+      face_id: string;
       owner_id: string;
       selected_model: string;
+      soul: { name: string; instructions: string };
     }>(
-      `SELECT identity.name,agent.owner_id,agent.selected_model
+      `SELECT identity.name,identity.face_id,agent.owner_id,agent.selected_model,agent.soul
        FROM identities identity JOIN agents agent ON agent.agent_id=identity.id
        WHERE identity.id=$1`,
       [AGENT],
     );
-    expect(identity.rows).toEqual([{ name: 'Scout', owner_id: OWNER, selected_model: 'gpt-5.4' }]);
+    expect(identity.rows).toEqual([
+      {
+        name: claim.agentName,
+        face_id: claim.face,
+        owner_id: OWNER,
+        selected_model: 'gpt-5.4',
+        soul: { name: claim.agentName, instructions: claim.soul, avatarSeed: AGENT },
+      },
+    ]);
+    // The owner already wears a face; the agent never takes it.
+    expect(claim.face).not.toBe(defaultFaceForSeed(OWNER));
     const memberships = await database.query<{ room_id: string | null }>(
       `SELECT room_id FROM memberships WHERE identity_id=$1 ORDER BY room_id NULLS FIRST`,
       [AGENT],
@@ -101,13 +123,7 @@ describe('PhoneService agent connect pairing claim', () => {
     await insertCode(new Date(Date.now() + 60_000));
     await expect(
       phone.claimAgentConnectPairing(
-        {
-          code: CODE,
-          agentPubkey: AGENT,
-          agentName: 'Scout',
-          model: 'gpt-5.4',
-          soul: 'Brisk and kind.',
-        },
+        { code: CODE, agentPubkey: AGENT, model: 'gpt-5.4' },
         async () => {
           throw new Error('exchange unavailable');
         },
@@ -132,13 +148,100 @@ describe('PhoneService agent connect pairing claim', () => {
   ] as const)('rejects expired and claimed codes clearly', async (expiresAt, claimedBy, status) => {
     await insertCode(expiresAt, claimedBy);
     await expect(
-      phone.claimAgentConnectPairing({
+      phone.claimAgentConnectPairing({ code: CODE, agentPubkey: AGENT, model: 'gpt-5.4' }),
+    ).resolves.toEqual({ status });
+  });
+
+  describe('seeded identity assignment', () => {
+    async function connect(index: number): Promise<{
+      pubkey: string;
+      face: string;
+      name: string;
+      soul: string;
+    }> {
+      const code = `AGENT${index}`;
+      await database.query(
+        `INSERT INTO agent_pairing_codes(code_hash,workspace_id,created_by,expires_at)
+         VALUES($1,$2,$3,$4)`,
+        [
+          createHash('sha256').update(code).digest('hex'),
+          WORKSPACE,
+          OWNER,
+          new Date(Date.now() + 60_000),
+        ],
+      );
+      const pubkey = index.toString(16).padStart(2, '0').repeat(32);
+      const claimed = await phone.claimAgentConnectPairing({
+        code,
+        agentPubkey: pubkey,
+        model: 'gpt-5.4',
+      });
+      if (claimed.status !== 'claimed') throw new Error(`claim ${index} failed`);
+      return { pubkey, face: claimed.face, name: claimed.agentName, soul: claimed.soul };
+    }
+
+    it('spends every animal once before repeating, and keeps name, face and soul one animal', async () => {
+      // The owner already wears one of the twelve, so eleven agents exhaust
+      // the set and the twelfth is the first that must repeat.
+      const ownerFace = defaultFaceForSeed(OWNER);
+      const connected = [];
+      for (let index = 1; index <= 11; index++) connected.push(await connect(index));
+      const faces = connected.map((entry) => entry.face);
+      expect(new Set(faces).size).toBe(11);
+      expect(faces).not.toContain(ownerFace);
+      expect(new Set(connected.map((entry) => entry.name)).size).toBe(11);
+      for (const entry of connected) {
+        expect(entry.soul).toBe(FACE_SOULS[entry.face as FaceId]);
+        expect(FACE_NAMES[entry.face as FaceId]).toContain(entry.name);
+      }
+
+      // All twelve are worn now; the next agent falls back to the hash default
+      // and still receives a face, a name, and a soul.
+      const thirteenth = await connect(12);
+      expect(thirteenth.face).toBe(defaultFaceForSeed(thirteenth.pubkey));
+      expect(thirteenth.soul).toBe(FACE_SOULS[thirteenth.face as FaceId]);
+      expect(thirteenth.name.length).toBeGreaterThan(0);
+      expect(connected.map((entry) => entry.name)).not.toContain(thirteenth.name);
+    });
+
+    it('renames the connected agent from the terminal, once, through the pairing code', async () => {
+      await insertCode(new Date(Date.now() + 60_000));
+      const claimed = await phone.claimAgentConnectPairing({
         code: CODE,
         agentPubkey: AGENT,
-        agentName: 'Scout',
         model: 'gpt-5.4',
-        soul: 'Brisk and kind.',
-      }),
-    ).resolves.toEqual({ status });
+      });
+      if (claimed.status !== 'claimed') throw new Error('claim failed');
+
+      await expect(phone.renameConnectedAgent({ code: CODE, name: '  Bramble ' })).resolves.toEqual(
+        { status: 'renamed', agentName: 'Bramble' },
+      );
+      const renamed = await database.query<{ name: string; soul: { name: string } }>(
+        `SELECT identity.name,agent.soul FROM identities identity
+         JOIN agents agent ON agent.agent_id=identity.id WHERE identity.id=$1`,
+        [AGENT],
+      );
+      // The soul's own name follows, so the roster and the harness agree.
+      expect(renamed.rows[0]).toMatchObject({ name: 'Bramble', soul: { name: 'Bramble' } });
+
+      await expect(phone.renameConnectedAgent({ code: CODE, name: 'rm -rf /' })).rejects.toThrow(
+        'short spoken name',
+      );
+      await expect(
+        phone.renameConnectedAgent({ code: 'NEVER-MINTED', name: 'Bramble' }),
+      ).resolves.toEqual({ status: 'not_found' });
+    });
+
+    it('closes the rename window once the claim is no longer fresh', async () => {
+      await insertCode(new Date(Date.now() + 60_000));
+      await phone.claimAgentConnectPairing({ code: CODE, agentPubkey: AGENT, model: 'gpt-5.4' });
+      await database.query(
+        `UPDATE agent_pairing_codes SET claimed_at=now() - interval '1 hour' WHERE code_hash=$1`,
+        [createHash('sha256').update(CODE).digest('hex')],
+      );
+      await expect(phone.renameConnectedAgent({ code: CODE, name: 'Bramble' })).resolves.toEqual({
+        status: 'expired',
+      });
+    });
   });
 });

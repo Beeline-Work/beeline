@@ -24,9 +24,13 @@ import type {
   WorkspaceView,
 } from '@beeline/api-contract/phone';
 import {
+  assignSeededAgentIdentity,
   createCommunityInviteToken,
+  defaultFaceForSeed,
+  FACE_SOULS,
   isCommunityInviteToken,
   isFaceId,
+  resolveFace,
   type PhoneOperationMap,
 } from '@beeline/api-contract/phone';
 import type { AgentGrantDecision, AgentGrantStatus } from '@beeline/api-contract/agent-grants';
@@ -38,6 +42,13 @@ import { identitySubject, systemLine } from './system-line.js';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
 
 const DURABLE_KINDS = [0, 9, 9000, 9001, 9002, 9007, 9008, 30078, 39000, 39001, 39002];
+
+/**
+ * How long after a claim the connect wizard may still rename its agent from
+ * the terminal. Long enough for the daemon install and the person to read the
+ * line; short enough that a leaked pairing code is not a standing handle.
+ */
+const CONNECT_RENAME_WINDOW_MS = 15 * 60 * 1_000;
 
 /**
  * Settled corner tool rows kept in the corner transcript after the turn
@@ -326,6 +337,7 @@ export class PhoneService {
       about: string | null;
       avatar: string | null;
       visibility: 'public' | 'invite-only';
+      seeded_souls_enabled: boolean;
       created_at: Date;
       updated_at: Date;
       role: 'owner' | 'admin' | 'member';
@@ -351,7 +363,7 @@ export class PhoneService {
         ...(row.about ? { about: row.about } : {}),
         createdAt: unix(row.created_at),
       },
-      managerSettings: { visibility: row.visibility },
+      managerSettings: { visibility: row.visibility, seededSouls: row.seeded_souls_enabled },
       members: humans.slice(0, ROOM_VIEW_MEMBER_LIMIT),
       agents: agents.slice(0, ROOM_VIEW_AGENT_LIMIT),
       membersTruncated: humans.length > ROOM_VIEW_MEMBER_LIMIT,
@@ -854,6 +866,9 @@ export class PhoneService {
             },
           }
         : {}),
+      // The soul this agent's animal carries: what an edited soul restores to.
+      // Derived from the face it wears, so name, avatar and soul stay one animal.
+      seededSoul: FACE_SOULS[resolveFace(member.identity.face, agentId)],
       catalog: config?.model_catalog ?? [],
       ...(config?.selected_model || config?.selected_effort
         ? {
@@ -978,24 +993,55 @@ export class PhoneService {
     });
   }
 
+  /**
+   * The animals, names and souls the Workspace is already using. Only the
+   * server knows the roster, so seeded-identity assignment happens here — and
+   * always inside the caller's transaction, under the Workspace row lock, so
+   * two agents connecting at once cannot both take the fox.
+   */
+  private async wornSeededIdentity(
+    database: SqlDatabase,
+    workspaceId: string,
+    exceptIdentityId: string,
+  ): Promise<{ faces: string[]; names: string[] }> {
+    const rows = await database.query<{ id: string; name: string; face_id: string | null }>(
+      `SELECT i.id,i.name,i.face_id
+       FROM memberships m
+       JOIN identities i ON i.id=m.identity_id
+       WHERE m.workspace_id=$1 AND m.room_id IS NULL AND m.removed_at IS NULL
+         AND i.hidden_from_roster=false AND i.id<>$2`,
+      [workspaceId, exceptIdentityId],
+    );
+    return {
+      // A member with no chosen face still wears one: the hash default every
+      // tile draws. Both count as taken, people and agents alike.
+      faces: rows.rows.map((row) => resolveFace(row.face_id, row.id)),
+      names: rows.rows.map((row) => row.name),
+    };
+  }
+
   async claimAgentConnectPairing(input: {
     code: string;
     agentPubkey: string;
-    agentName: string;
     model: string;
-    soul: string;
     avatarSeed?: string;
   }): Promise<
-    | { status: 'claimed'; workspaceId: string; workspaceName: string; pairedBy: string }
+    | {
+        status: 'claimed';
+        workspaceId: string;
+        workspaceName: string;
+        pairedBy: string;
+        agentName: string;
+        soul: string;
+        face: string;
+      }
     | { status: 'not_found' | 'expired' | 'already_claimed' }
   >;
   async claimAgentConnectPairing(
     input: {
       code: string;
       agentPubkey: string;
-      agentName: string;
       model: string;
-      soul: string;
       avatarSeed?: string;
     },
     createDaemonExchange: (
@@ -1008,6 +1054,9 @@ export class PhoneService {
         workspaceId: string;
         workspaceName: string;
         pairedBy: string;
+        agentName: string;
+        soul: string;
+        face: string;
         daemonExchangeToken: string;
       }
     | { status: 'not_found' | 'expired' | 'already_claimed' }
@@ -1016,9 +1065,7 @@ export class PhoneService {
     input: {
       code: string;
       agentPubkey: string;
-      agentName: string;
       model: string;
-      soul: string;
       avatarSeed?: string;
     },
     createDaemonExchange?: (
@@ -1031,6 +1078,9 @@ export class PhoneService {
         workspaceId: string;
         workspaceName: string;
         pairedBy: string;
+        agentName: string;
+        soul: string;
+        face: string;
         daemonExchangeToken?: string;
       }
     | { status: 'not_found' | 'expired' | 'already_claimed' }
@@ -1056,10 +1106,27 @@ export class PhoneService {
       if (pairing.expires_at.getTime() <= Date.now()) return { status: 'expired' };
       if (pairing.claimed_by) return { status: 'already_claimed' };
 
-      await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent',$2)`, [
-        input.agentPubkey,
-        input.agentName,
+      // Serialize seeded-identity assignment across the Workspace: the pairing
+      // row lock above only orders retries of THIS code. Taken after the
+      // pairing lock by every caller, so the order never deadlocks.
+      await database.query(`SELECT 1 FROM workspaces WHERE id=$1 FOR UPDATE`, [
+        pairing.workspace_id,
       ]);
+      const worn = await this.wornSeededIdentity(
+        database,
+        pairing.workspace_id,
+        input.agentPubkey,
+      );
+      const seeded = assignSeededAgentIdentity({
+        seed: input.agentPubkey,
+        takenFaces: worn.faces,
+        takenNames: worn.names,
+      });
+
+      await database.query(
+        `INSERT INTO identities(id,kind,name,face_id) VALUES($1,'agent',$2,$3)`,
+        [input.agentPubkey, seeded.name, seeded.face],
+      );
       await database.query(
         `INSERT INTO agents(agent_id,owner_id,soul,selected_model)
          VALUES($1,$2,$3::jsonb,$4)`,
@@ -1067,10 +1134,10 @@ export class PhoneService {
           input.agentPubkey,
           pairing.created_by,
           JSON.stringify({
-          name: input.agentName,
-          instructions: input.soul,
-          avatarSeed: input.avatarSeed || input.agentPubkey,
-        }),
+            name: seeded.name,
+            instructions: seeded.soul,
+            avatarSeed: input.avatarSeed || input.agentPubkey,
+          }),
           input.model,
         ],
       );
@@ -1097,8 +1164,50 @@ export class PhoneService {
         workspaceId: pairing.workspace_id,
         workspaceName: pairing.workspace_name,
         pairedBy: pairing.created_by,
+        agentName: seeded.name,
+        soul: seeded.soul,
+        face: seeded.face,
         ...(exchange ? { daemonExchangeToken: exchange.exchangeToken } : {}),
       };
+    });
+  }
+
+  /**
+   * The one rename the terminal may make: right after `usebeeline connect`
+   * prints the seeded identity, before the person has ever opened the app.
+   * Authority is the pairing code itself — typed out of the app by someone who
+   * could already add an agent — and it expires with the claim, so the CLI
+   * never holds standing authority over the name. Every later rename goes
+   * through the app's manager-gated agent page.
+   */
+  async renameConnectedAgent(input: {
+    code: string;
+    name: string;
+  }): Promise<{ status: 'renamed'; agentName: string } | { status: 'not_found' | 'expired' }> {
+    const name = input.name.trim().replace(/\s+/g, ' ');
+    if (!name || name.length > 32 || !/^\p{L}[\p{L}\p{M}'’ -]*$/u.test(name)) {
+      throw new Error('agent name must be a short spoken name');
+    }
+    return this.database.transaction(async (database) => {
+      const pairing = (
+        await database.query<{ claimed_by: string | null; claimed_at: Date | null }>(
+          `SELECT claimed_by,claimed_at FROM agent_pairing_codes WHERE code_hash=$1 FOR UPDATE`,
+          [hash(input.code)],
+        )
+      ).rows[0];
+      if (!pairing?.claimed_by || !pairing.claimed_at) return { status: 'not_found' };
+      if (Date.now() - pairing.claimed_at.getTime() > CONNECT_RENAME_WINDOW_MS)
+        return { status: 'expired' };
+      await database.query(`UPDATE identities SET name=$2,updated_at=now() WHERE id=$1`, [
+        pairing.claimed_by,
+        name,
+      ]);
+      await database.query(
+        `UPDATE agents SET soul=jsonb_set(soul,'{name}',to_jsonb($2::text)),updated_at=now()
+         WHERE agent_id=$1 AND soul IS NOT NULL`,
+        [pairing.claimed_by, name],
+      );
+      return { status: 'renamed', agentName: name };
     });
   }
 
@@ -1649,8 +1758,14 @@ export class PhoneService {
   private async updateWorkspace(input: Input<'updateWorkspace'>, viewerId: string) {
     await this.requireWorkspaceManager(input.workspaceId, viewerId);
     await this.database.query(
-      `UPDATE workspaces SET name=COALESCE($2,name),avatar=COALESCE($3,avatar),visibility=COALESCE($4,visibility),updated_at=now() WHERE id=$1`,
-      [input.workspaceId, input.name ?? null, input.avatar ?? null, input.visibility ?? null],
+      `UPDATE workspaces SET name=COALESCE($2,name),avatar=COALESCE($3,avatar),visibility=COALESCE($4,visibility),seeded_souls_enabled=COALESCE($5,seeded_souls_enabled),updated_at=now() WHERE id=$1`,
+      [
+        input.workspaceId,
+        input.name ?? null,
+        input.avatar ?? null,
+        input.visibility ?? null,
+        input.seededSouls ?? null,
+      ],
     );
   }
   private async leaveWorkspace(input: Input<'leaveWorkspace'>, viewerId: string) {

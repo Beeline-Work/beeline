@@ -338,6 +338,16 @@ export class DaemonService {
       [input.workspaceId, agentId],
     );
     if (!access.rowCount) throw new Error('workspace membership required');
+    // The same Workspace switch the daemon's own configuration honors: with
+    // seeded souls off nobody in the roster carries a persona either, so a
+    // turn loop cannot fall back to a peer-visible soul.
+    const soulsEnabled =
+      (
+        await this.database.query<{ seeded_souls_enabled: boolean }>(
+          `SELECT seeded_souls_enabled FROM workspaces WHERE id=$1`,
+          [input.workspaceId],
+        )
+      ).rows[0]?.seeded_souls_enabled ?? true;
     const rows = await this.database.query<{
       identity_id: string;
       kind: 'human' | 'agent';
@@ -373,7 +383,8 @@ export class DaemonService {
         name: row.name,
         ...(row.handle ? { handle: row.handle } : {}),
         role: row.role,
-        ...(row.kind === 'agent' &&
+        ...(soulsEnabled &&
+        row.kind === 'agent' &&
         row.soul?.name &&
         typeof row.soul.instructions === 'string' &&
         row.owner_id &&
@@ -689,13 +700,26 @@ export class DaemonService {
         selected_effort: string | null;
         commands: Array<{ name: string; description?: string }>;
         yolo_mode: boolean;
+        souls_enabled: boolean;
       }>(
-        `SELECT soul,selected_model,selected_effort,commands,yolo_mode FROM agents WHERE agent_id=$1`,
+        // A Workspace may switch seeded souls off for everyone in it; when it
+        // has, the daemon is handed no persona at all and runs on the shared
+        // house rule alone. The switch is the Workspace's, never the agent's.
+        `SELECT a.soul,a.selected_model,a.selected_effort,a.commands,a.yolo_mode,
+                COALESCE(bool_and(w.seeded_souls_enabled),true) souls_enabled
+         FROM agents a
+         LEFT JOIN memberships m
+           ON m.identity_id=a.agent_id AND m.room_id IS NULL AND m.removed_at IS NULL
+         LEFT JOIN workspaces w ON w.id=m.workspace_id
+         WHERE a.agent_id=$1
+         GROUP BY a.soul,a.selected_model,a.selected_effort,a.commands,a.yolo_mode`,
         [agentId],
       )
     ).rows[0];
     return {
-      ...(row?.soul ? { soul: { name: row.soul.name, instructions: row.soul.instructions } } : {}),
+      ...(row?.soul && row.souls_enabled
+        ? { soul: { name: row.soul.name, instructions: row.soul.instructions } }
+        : {}),
       ...(row?.selected_model ? { model: row.selected_model } : {}),
       ...(row?.selected_effort ? { effort: row.selected_effort } : {}),
       commands: row?.commands ?? [],

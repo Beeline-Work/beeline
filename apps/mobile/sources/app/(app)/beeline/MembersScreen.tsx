@@ -59,6 +59,7 @@ type MembersAction =
   | 'remove-agent'
   | 'model-config'
   | 'agent-yolo'
+  | 'workspace-seeded-souls'
   | 'revoke-grant';
 
 function first(value: string | string[] | undefined): string | undefined {
@@ -142,6 +143,19 @@ function axisValue(
 }
 
 /** The server's own refusal text when it sent one; otherwise the thrown reason. */
+/**
+ * The soul text this agent is running under: its own if a manager has written
+ * one, otherwise the soul seeded from its animal. `defaultAgentPersona` remains
+ * the last resort for a stack that does not index a seeded soul.
+ */
+function agentSoulCopy(detail: AgentDetailView): string {
+  return (
+    detail.soul?.instructions ??
+    detail.seededSoul ??
+    defaultAgentPersona(detail.agent.identity.pubkey).soul
+  );
+}
+
 function operationMessage(reason: unknown): string {
   if (reason && typeof reason === 'object' && 'code' in reason) {
     const code = (reason as { code?: unknown }).code;
@@ -485,9 +499,8 @@ export default function BuzzMembers() {
 
   const beginAgentSoulEdit = () => {
     if (!selectedAgent) return;
-    const fallback = defaultAgentPersona(selectedAgent.agent.identity.pubkey);
     setAgentNameDraft(selectedAgent.soul?.name ?? selectedAgent.agent.identity.name);
-    setAgentSoulDraft(selectedAgent.soul?.instructions ?? fallback.soul);
+    setAgentSoulDraft(agentSoulCopy(selectedAgent));
     setEditingAgentSoul(true);
   };
 
@@ -529,6 +542,23 @@ export default function BuzzMembers() {
       setEditingAgentSoul(false);
     } catch (reason) {
       setError(`Could not save agent settings: ${String(reason)}`);
+    } finally {
+      setWorking(null);
+    }
+  };
+
+  const setWorkspaceSeededSouls = async (enabled: boolean) => {
+    if (!workspaceId || !surface?.viewer.permissions.manage) return;
+    setWorking('workspace-seeded-souls');
+    setError(null);
+    try {
+      await monolithPhoneOperation('updateWorkspace', { workspaceId, seededSouls: enabled });
+      await waitForIndexedSurface(
+        readWorkspace,
+        (value) => value.managerSettings?.seededSouls === enabled,
+      );
+    } catch (reason) {
+      setError(`Could not change seeded souls: ${operationMessage(reason)}`);
     } finally {
       setWorking(null);
     }
@@ -853,6 +883,25 @@ export default function BuzzMembers() {
               );
             })}
           </View>
+          {canManage && surface.managerSettings?.seededSouls !== undefined && (
+            <View style={styles.section} testID="workspace-seeded-souls">
+              <View style={styles.yoloRow}>
+                <Text style={styles.sectionLabel}>Seeded souls</Text>
+                <Switch
+                  accessibilityLabel="Seeded souls"
+                  disabled={busy}
+                  onValueChange={(enabled) => void setWorkspaceSeededSouls(enabled)}
+                  testID="workspace-seeded-souls-switch"
+                  thumbColor={theme.buzz.textPrimary}
+                  trackColor={{ false: theme.buzz.bgRaised, true: theme.buzz.accent }}
+                  value={surface.managerSettings.seededSouls}
+                />
+              </View>
+              <Text style={styles.detail} testID="workspace-seeded-souls-caption">
+                Every agent here speaks as its animal. Off leaves them plain.
+              </Text>
+            </View>
+          )}
           <View style={styles.section} testID="members-agents-section">
             <View style={styles.sectionHeadRow}>
               <Text style={styles.sectionLabel} testID="members-agents-head">
@@ -967,6 +1016,16 @@ export default function BuzzMembers() {
                       value={agentSoulDraft}
                     />
                     <View style={styles.soulActions}>
+                      {!!selectedAgent.seededSoul &&
+                        agentSoulDraft.trim() !== selectedAgent.seededSoul && (
+                          <MonoButton
+                            label="SEEDED"
+                            disabled={busy}
+                            onPress={() => setAgentSoulDraft(selectedAgent.seededSoul ?? '')}
+                            testID="restore-seeded-soul"
+                            variant="secondary"
+                          />
+                        )}
                       <MonoButton
                         label="CANCEL"
                         disabled={busy}
@@ -984,8 +1043,7 @@ export default function BuzzMembers() {
                   </>
                 ) : (
                   <Text style={styles.soulCopy} testID="agent-soul-copy">
-                    {selectedAgent.soul?.instructions ??
-                      defaultAgentPersona(selectedAgent.agent.identity.pubkey).soul}
+                    {agentSoulCopy(selectedAgent)}
                   </Text>
                 )}
               </View>

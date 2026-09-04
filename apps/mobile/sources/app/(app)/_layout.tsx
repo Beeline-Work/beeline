@@ -134,6 +134,14 @@ export default function RootLayout() {
             statusBarStyle: 'light',
           }}
         />
+        {/* Scheduled work keeps the stack header (its back control); the page draws none. */}
+        <Stack.Screen
+          name="beeline/settings/schedules"
+          options={{
+            headerTitle: 'Scheduled work',
+            statusBarStyle: 'light',
+          }}
+        />
         <Stack.Screen
           name="beeline/chat/[channelId]"
           options={{

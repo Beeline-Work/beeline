@@ -8,7 +8,7 @@
   "app/(app)/beeline/onboarding.tsx": 20,
   "app/(app)/beeline/settings/identity.tsx": 28,
   "app/(app)/beeline/settings/index.tsx": 15,
-  "app/(app)/beeline/settings/schedules.tsx": 7,
+  "app/(app)/beeline/settings/schedules.tsx": 5,
   "app/(app)/beeline/settings/workspace.tsx": 21,
   "app/(app)/changelog.tsx": 6,
   "app/(app)/index.tsx": 2,

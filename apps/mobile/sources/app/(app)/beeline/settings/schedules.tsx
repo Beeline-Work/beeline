@@ -101,21 +101,12 @@ export default function ScheduledWork() {
   );
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+    <View style={[styles.container, { paddingBottom: insets.bottom }]}>
+      {/* The stack header owns the title and the only back control (C75). */}
       <View style={styles.header}>
-        <TouchableOpacity
-          accessibilityLabel="Back"
-          onPress={() => router.back()}
-          style={styles.back}
-        >
-          <Text style={styles.backText}>‹</Text>
-        </TouchableOpacity>
-        <View>
-          <Text style={styles.title}>Scheduled work</Text>
-          <Text numberOfLines={1} style={styles.subtitle}>
-            {roomName}
-          </Text>
-        </View>
+        <Text numberOfLines={1} style={styles.subtitle} testID="scheduled-work-room">
+          {roomName}
+        </Text>
       </View>
       {loading ? (
         <View style={styles.loading}>
@@ -185,23 +176,8 @@ export default function ScheduledWork() {
 
 const styles = StyleSheet.create(() => ({
   container: { flex: 1, backgroundColor: groknight.bgTerminal },
-  header: {
-    minHeight: 64,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingHorizontal: 14,
-  },
-  back: { width: 36, height: 44, alignItems: 'center', justifyContent: 'center' },
-  backText: { ...Typography.mono(), color: groknight.chrome, fontSize: 30 },
-  title: { ...Typography.default('semiBold'), color: groknight.textPrimary, fontSize: 20 },
-  subtitle: {
-    ...Typography.mono(),
-    color: groknight.textMuted,
-    fontSize: 10,
-    marginTop: 2,
-    maxWidth: 260,
-  },
+  header: { paddingHorizontal: 16, paddingTop: 8 },
+  subtitle: { ...Typography.mono(), color: groknight.textMuted, fontSize: 10 },
   loading: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   content: { padding: 16, gap: 18 },
   listSection: { gap: 10 },

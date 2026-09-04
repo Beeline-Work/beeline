@@ -34,9 +34,10 @@
  * approved prefix never showed a human, and a script nobody has read. An
  * interpreter grant is bound to the script bytes the approval card showed: the
  * file is re-hashed before every run, and a script that changed, or one that
- * appeared where the card had none, is refused. Every run writes one ledger tool row
- * naming the grant and who asked. A `once` grant is spent before its first run
- * starts; a revoked rule is simply absent from the next `listAgentGrants` read,
+ * appeared where the card had none, is refused.
+ *
+ * Every run writes one ledger tool row naming the grant and who asked. A `once`
+ * grant is spent before its first run starts; a revoked rule is simply absent from the next `listAgentGrants` read,
  * so it stops matching immediately.
  *
  * Secrets are resolved from the operator key store (`provider-key-store.ts`,
@@ -59,12 +60,12 @@ import {
   parseCommandGrantTarget,
   type CommandGrantRule,
 } from '@beeline/api-contract/agent-grants';
+import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
 import {
   surfaceAllows,
   type AgentSurface,
 } from '@beeline/api-contract/surface-capabilities';
 import { wrapAgentCommand, type MaskedPath } from './bwrap-sandbox.js';
-import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import {
   PROVIDER_KEY_ENV_VARS,

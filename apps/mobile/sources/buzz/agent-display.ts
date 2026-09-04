@@ -9,6 +9,30 @@ export type AgentDisplayIdentity = {
   avatarSeed: string;
   avatarUrl?: string;
   hasSoul: boolean;
+  /**
+   * The creature the SERVER assigned this agent (`identities.face_id`, via
+   * `RoomViewIdentity.face`). Absent → the tile falls back to
+   * `defaultFaceForSeed(pubkey)`.
+   *
+   * It has to travel with the name. An agent's animal is not decoration: the
+   * server picks the first animal no member of the Workspace already wears
+   * (`assignSeededAgentIdentity`) and derives the agent's NAME and SOUL from
+   * that same animal — "Foxy the fox". The seed default is only a hash, so a
+   * tile that drops the assigned face draws a whale beside the name Foxy, and
+   * two agents in one Workspace can wear one creature the dedup existed to
+   * prevent. Every surface already resolves the name through here; the face
+   * rides along so both halves of one identity can never disagree.
+   */
+  face?: string;
+};
+
+/** What a surface must know about an agent to present it. Its `face` is the
+ *  server's assignment, carried on the Room/Workspace view identity. */
+export type DisplayableAgent = Pick<
+  Agent,
+  'pubkey' | 'displayName' | 'avatar' | 'soulProfile'
+> & {
+  face?: string;
 };
 
 /**
@@ -18,13 +42,14 @@ export type AgentDisplayIdentity = {
  */
 export function resolveAgentDisplayIdentity(
   pubkey: string,
-  agent?: Pick<Agent, 'pubkey' | 'displayName' | 'avatar' | 'soulProfile'> | null,
+  agent?: DisplayableAgent | null,
 ): AgentDisplayIdentity {
   const overlay = agent?.soulProfile;
   const name = resolveAgentName(agent?.displayName, pubkey);
   const overlayPersonality = overlay?.soul.trim();
   // Once a human soul exists, its absent avatar explicitly selects the generated mark.
   const avatarUrl = overlay ? overlay.avatar?.trim() : agent?.avatar?.trim();
+  const face = agent?.face?.trim();
   return {
     name,
     handle: agentHandle(name, pubkey),
@@ -32,6 +57,7 @@ export function resolveAgentDisplayIdentity(
     avatarSeed: overlay?.avatarSeed.trim() || pubkey || 'unknown-agent',
     ...(avatarUrl ? { avatarUrl } : {}),
     hasSoul: Boolean(overlay),
+    ...(face ? { face } : {}),
   };
 }
 
@@ -49,7 +75,7 @@ export function resolveAgentDisplayIdentity(
  */
 export function resolvePendingAgentDisplay(
   pubkey: string,
-  agent: Pick<Agent, 'pubkey' | 'displayName' | 'avatar' | 'soulProfile'> | undefined,
+  agent: DisplayableAgent | undefined,
   hydrated: boolean,
 ): AgentDisplayIdentity | null {
   return hydrated ? resolveAgentDisplayIdentity(pubkey, agent) : null;

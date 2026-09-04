@@ -19,7 +19,7 @@ vi.mock('react-native-svg', async () => {
   };
 });
 
-import { BONE, BRASS, FACES, FACE_IDS, INK, LENS_BAND_HEIGHT, type FaceId } from './animals';
+import { BONE, BRASS, FACES, FACE_IDS, INK, type FaceId } from './animals';
 import { EDGE_GROW, recolorEdge } from './edge';
 import { PERSON_PLATE, agentFaceLayers, personFaceLayers, type FaceMode } from './face-tile';
 
@@ -123,9 +123,7 @@ function isSilhouette(node: Node, geometry: string): boolean {
 describe('the twelve are Speakeasy’s drawings, recoloured', () => {
   it('draws every creature, and swaps only BRASS for the identity hue', () => {
     for (const face of FACE_IDS) {
-      const renderer = render(
-        FACES[face]({ palette: { brass: HUE, bone: BONE, ink: INK }, eyes: 'drawn' }),
-      );
+      const renderer = render(FACES[face]({ palette: { brass: HUE, bone: BONE, ink: INK } }));
       const inks = new Set(
         paints(renderer.root).flatMap((node) => [node.props.fill, node.props.stroke]),
       );
@@ -137,8 +135,6 @@ describe('the twelve are Speakeasy’s drawings, recoloured', () => {
         [...inks].every((ink) => [HUE, BONE, INK].includes(ink as string)),
         `${face} paints outside hue/bone/ink`,
       ).toBe(true);
-      // No eyes-replacement in the person treatment.
-      expect(hosts(renderer.root, 'face-lens-band')).toHaveLength(0);
     }
   });
 });
@@ -215,33 +211,43 @@ describe('the edge layer is Speakeasy’s, ported exactly', () => {
   });
 });
 
-describe('an agent is the same creature, inverted', () => {
-  it('paints the whole figure INK, with one BONE lens band where the eyes were', () => {
+describe('an agent is the same creature, with the hue moved to the plate', () => {
+  it('draws every creature whole, in bone and ink, and never repeats the hue', () => {
     for (const face of FACE_IDS) {
-      const renderer = render(agentFaceLayers(face));
-      const bands = hosts(renderer.root, 'face-lens-band');
-      expect(bands, `${face} has no single lens band`).toHaveLength(1);
-      expect(bands[0]!.props).toMatchObject({ fill: BONE, rx: 1, height: LENS_BAND_HEIGHT });
-      const others = paints(renderer.root).filter((node) => node.props.testID !== 'face-lens-band');
-      expect(others.length, `${face} figure is empty`).toBeGreaterThan(0);
-      for (const node of others) {
-        for (const ink of [node.props.fill, node.props.stroke]) {
-          if (ink === undefined || ink === 'none') continue;
-          expect(ink, `${face} paints ${ink} outside ink`).toBe(INK);
-        }
-      }
-      // No edge layer: ink on a coloured plate always contrasts.
-      expect(hosts(renderer.root, 'face-edge')).toHaveLength(0);
+      const figure = render(agentFaceLayers(face)).root.findByProps({ testID: 'face-figure' });
+      const painted = paints(figure);
+      expect(painted.length, `${face} figure is empty`).toBeGreaterThan(0);
+      const tones = new Set(painted.flatMap((node) => [node.props.fill, node.props.stroke]));
+      tones.delete(undefined);
+      tones.delete('none');
+      expect([...tones].sort(), `${face} paints outside bone/ink`).toEqual([INK, BONE].sort());
     }
   });
 
-  it('spans the lens band across the eyes’ own centres', () => {
-    // Fox eyes sit at (36,44) and (64,44): the band reaches 7 past each and
-    // is 6.4 tall about their centre line — the approved contact sheet.
-    const band = render(agentFaceLayers('fox')).root.findByProps({ testID: 'face-lens-band' });
-    expect(band.props).toMatchObject({ x: 29, y: 40.8, width: 42, height: 6.4 });
-    // A profile creature with one eye gets a short band over that eye.
-    const pigeon = render(agentFaceLayers('pigeon')).root.findByProps({ testID: 'face-lens-band' });
-    expect(pigeon.props).toMatchObject({ x: 31, y: 40.8, width: 14 });
+  it('draws the identical shapes a person does — eyes included, no lens band', () => {
+    const geometry = (renderer: ReactTestRenderer) =>
+      paints(renderer.root.findByProps({ testID: 'face-figure' }))
+        .map(
+          (node) =>
+            `${String(node.type)}:${node.props.d ?? ''}:${node.props.points ?? ''}:${node.props.cx ?? ''},${node.props.cy ?? ''}:${node.props.r ?? node.props.rx ?? ''}`,
+        )
+        .join('|');
+    for (const face of FACE_IDS) {
+      const agent = render(agentFaceLayers(face));
+      expect(hosts(agent.root, 'face-lens-band'), `${face} still wears a lens band`).toHaveLength(0);
+      expect(geometry(agent), `${face} is not the person's drawing`).toBe(
+        geometry(render(personFaceLayers(face, HUE, 'dark'))),
+      );
+    }
+  });
+
+  it('edges the bone figure for the light hue plate it stands on', () => {
+    // The agent plate is the identity's own mid hue (`identityPalette`,
+    // lightness ≈0.62), so the vanishing tone is BONE in either theme.
+    const edgeLayer = render(agentFaceLayers('hare')).root.findByProps({ testID: 'face-edge' });
+    const body = paints(edgeLayer).filter((node) => isSilhouette(node, SILHOUETTE.hare.geometry));
+    expect(body).toHaveLength(1);
+    expect(body[0]!.props.stroke).toBe(INK);
+    expect(body[0]!.props.strokeWidth).toBe(EDGE_GROW);
   });
 });

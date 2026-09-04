@@ -343,19 +343,28 @@ drift this system replaced, and a test enforces that none comes back.
 
 **1 · Species is the face.** The drawings are Speakeasy's originals, path for
 path; nothing was redrawn. A person chooses their creature at onboarding
-(`RoomViewIdentity.face`, server column `identities.face_id`); an identity
-with no choice wears `defaultFaceForSeed(pubkey)` — Speakeasy's FNV-1a into
-twelve — so every device draws the same animal for the same key. The old rule
-that *shape is the type* (△ agent, ○ human) is retired: at the 8px it actually
-shipped in the transcript no shape ever resolved, and a creature is a memory
-hook in a way a triangle never was.
+(`RoomViewIdentity.face`, server column `identities.face_id`); an **agent is
+assigned** one — the first animal nobody in its Workspace wears, which also
+gives it its name and its soul (`assignSeededAgentIdentity`) — and an identity
+with neither wears `defaultFaceForSeed(pubkey)`, Speakeasy's FNV-1a into
+twelve, so every device draws the same animal for the same key. Because that
+assignment names the agent too, the face travels with the name through
+`resolveAgentDisplayIdentity` to every tile: a surface that redraws it from
+the seed puts a whale beside the name Foxy and un-does the dedup that kept two
+agents apart. The old rule that *shape is the type* (△ agent, ○ human) is
+retired: at the 8px it actually shipped in the transcript no shape ever
+resolved, and a creature is a memory hook in a way a triangle never was.
 
 **2 · Plate polarity is the type.** A **person** is a coloured creature on an
 ink plate: the drawing with Speakeasy's BRASS swapped for the identity's hue,
-BONE and INK kept. An **agent** is the same creature inverted — figure entirely
-INK on a plate filled with the agent's hue, the two eyes replaced by one BONE
-lens band across where they were. The class reads from the plate before the
-species resolves, which is why it survives at 26px where a silhouette did not.
+BONE and INK kept. An **agent** is the same creature with the hue moved out
+from under it — the figure takes BONE wherever the person's carries the hue,
+keeps INK, and stands on a plate filled with the agent's own hue. The class
+reads from the plate before the species resolves, which is why it survives at
+26px where a silhouette did not. Both classes draw the creature **whole**: the
+agent was once a flat ink figure with a BONE lens band across its eyes, and at
+26px that read as a blindfolded blob — the species never resolved and the eyes,
+the one feature that makes a face a face, were the part deliberately deleted.
 A Workspace keeps its own plate (below).
 
 **3 · Colour is the memory.** "beebee is the amber one." Each identity gets one
@@ -376,15 +385,16 @@ on top of it, and each type carries a temperament as a quiet second reading:
 agents warmer and a step more saturated, people cooler and greyer.
 
 **4 · The edge layer is Speakeasy's, ported exactly.** BONE shapes vanish on a
-light plate and INK shapes on a dark one, so a person's creature is drawn
-twice: a second copy BEHIND it in which only the shapes painted the vanishing
-tone are recoloured to the contrast tone and grown by three units
-(`recolorEdge`, `EDGE_GROW`). The hairline shows only where such a shape is
-the outer silhouette — bear, cat, bat, whale and pigeon on a dark plate; hare,
+light plate and INK shapes on a dark one, so a creature is drawn twice: a
+second copy BEHIND it in which only the shapes painted the vanishing tone are
+recoloured to the contrast tone and grown by three units (`recolorEdge`,
+`EDGE_GROW`). For a person the hairline shows only where such a shape is the
+outer silhouette — bear, cat, bat, whale and pigeon on a dark plate; hare,
 heron, moth and owl on a light one; never the hue-bodied fox, octopus and
-stag. An agent needs no edge: ink on colour always contrasts. The shipped
-themes are all dark; the light treatment exists so the same tile is correct
-anywhere a light ground appears.
+stag. An agent's plate is always a light hue (lightness ≈0.62), so an agent
+takes the light rule in either theme: an INK hairline under its bone shapes,
+nothing under its ink ones. The shipped themes are all dark; the light
+treatment exists so the same tile is correct anywhere a light ground appears.
 
 **5 · A gold ring means working.** An agent with a live turn or a live corner
 right now takes a gold ring plus a wider low-alpha halo drawn *around* its

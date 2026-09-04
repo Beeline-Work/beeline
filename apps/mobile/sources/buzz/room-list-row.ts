@@ -184,11 +184,12 @@ export type RoomRowName = {
   sigil: RoomRowSigil;
   /** The name WITHOUT its sigil — the row draws the two in different tones. */
   name: string;
-  /** What the 40px `IdentityMark` tile is seeded with. Only a DM row wears
-   *  one — its peer's own mark, drawn after the leading state column (C81).
-   *  A Room is many voices, so a Room row carries NO tile (C71): its
-   *  `#name` sigil is the row's mark. */
-  tile?: { seed: string; kind: 'human' | 'agent' };
+  /** What the 40px `IdentityMark` tile is seeded with, and the creature the
+   *  peer wears on every other surface. Only a DM row wears one — its peer's
+   *  own mark, drawn after the leading state column (C81). A Room is many
+   *  voices, so a Room row carries NO tile (C71): its `#name` sigil is the
+   *  row's mark. */
+  tile?: { seed: string; kind: 'human' | 'agent'; face?: string };
 };
 
 /**
@@ -208,7 +209,7 @@ export function roomRowName(item: Pick<ChatListItem, 'room' | 'directMessage'>):
     return {
       sigil: '@',
       name: previewHandle(peer),
-      tile: { seed: peer.pubkey, kind: peer.kind },
+      tile: { seed: peer.pubkey, kind: peer.kind, ...(peer.face ? { face: peer.face } : {}) },
     };
   }
   const stored = item.room.name.trim().replace(/^#+/, '');

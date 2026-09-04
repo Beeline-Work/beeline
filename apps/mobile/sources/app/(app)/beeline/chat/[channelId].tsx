@@ -913,6 +913,7 @@ export default function BuzzChat() {
             handle: display.handle,
             kind: 'agent' as const,
             ...(display.avatarUrl ? { avatarUrl: display.avatarUrl } : {}),
+            ...(display.face ? { face: display.face } : {}),
           };
         }
         return {
@@ -3027,6 +3028,7 @@ export default function BuzzChat() {
                 kind="agent"
                 seed={cornerAgentDisplay?.avatarSeed ?? cornerAgentPubkey}
                 avatarUrl={cornerAgentDisplay?.avatarUrl}
+                face={cornerAgentDisplay?.face}
                 name={cornerAgentDisplay?.name ?? 'Agent'}
                 size={26}
                 alive={sessionState === 'working'}
@@ -3334,6 +3336,7 @@ export default function BuzzChat() {
                           kind="agent"
                           seed={display.avatarSeed ?? participant.pubkey}
                           avatarUrl={display.avatarUrl}
+                          face={display.face}
                           name={display.name}
                           size={28}
                         />

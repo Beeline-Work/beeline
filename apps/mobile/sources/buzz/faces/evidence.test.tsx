@@ -163,7 +163,7 @@ describe.skipIf(!OUT)('faces contact sheet', () => {
         ),
       ).join(''),
     );
-    section('Agents · ink creature on the hue plate', '#14091A', '#c9c9d1', () =>
+    section('Agents · bone-and-ink creature on the hue plate', '#14091A', '#c9c9d1', () =>
       FACE_IDS.map((face) =>
         figure(
           tile(React.createElement(IdentityMark, { seed: SEED(face), kind: 'agent', face, size: 64 })),
@@ -226,6 +226,6 @@ figcaption{letter-spacing:.08em;opacity:.7}
 ${page.join('\n')}`;
     mkdirSync(OUT!, { recursive: true });
     writeFileSync(`${OUT}/faces.html`, doc);
-    expect(doc).toContain('face-lens-band');
+    expect(doc).toContain('face-figure');
   });
 });

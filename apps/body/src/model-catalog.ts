@@ -25,6 +25,43 @@ import {
 type ModelCatalogAgent = Pick<AgentCommand, 'command' | 'args'> &
   Partial<Pick<AgentCommand, 'kind'>>;
 
+/**
+ * A catalog read needs the selected provider, not the operator's normal Goose
+ * session profile. Goose loads every enabled extension from its config during
+ * `session/new`; a slow or wedged stdio extension therefore used to make the
+ * connect wizard hang even though no tools are needed to enumerate models.
+ * `GOOSE_PATH_ROOT` is Goose's supported per-process config/data/state root,
+ * so a probe gets a clean disposable profile without touching the operator's
+ * config or changing any other harness.
+ */
+export function modelCatalogProbeEnvironment(
+  agent: ModelCatalogAgent,
+  agentEnv: Record<string, string>,
+  scratchCwd: string,
+): Record<string, string> {
+  if (agent.kind !== 'goose') return agentEnv;
+  return {
+    ...agentEnv,
+    GOOSE_PATH_ROOT: resolve(scratchCwd, 'goose'),
+  };
+}
+
+/**
+ * Goose's advertised `vendor/model` values are model identifiers routed by
+ * the one selected provider (OpenRouter in the connect path), not evidence
+ * that the operator holds a separate Anthropic/Google/etc. credential. The
+ * generic credential filter is correct for Pi's multi-provider catalog but
+ * made Goose reject at finish the exact model the wizard had just offered.
+ */
+export function filterAgentModelCatalog(
+  agent: ModelCatalogAgent,
+  raw: AgentModelConfigOption[],
+  agentEnv: Record<string, string>,
+): AgentModelConfigOption[] {
+  const allowed = filterAllowedModelConfigOptions(raw);
+  return agent.kind === 'goose' ? allowed : filterModelOptionsByCredentials(allowed, agentEnv);
+}
+
 async function withAgentModelCatalog<T>(
   agent: ModelCatalogAgent,
   agentEnv: Record<string, string>,
@@ -37,10 +74,11 @@ async function withAgentModelCatalog<T>(
   }) => Promise<T>,
 ): Promise<T> {
   const scratchCwd = await mkdtemp(resolve(tmpdir(), 'beeline-pair-model-check-'));
+  const probeEnv = modelCatalogProbeEnvironment(agent, agentEnv, scratchCwd);
   const client = new AcpClient({
     agentCommand: agent.command,
     agentArgs: agentArgsWithModelSelection(agent, selection),
-    agentEnv,
+    agentEnv: probeEnv,
     agentCwd: scratchCwd,
     // The wizard probe runs on the human's own machine for a few seconds —
     // inherit the caller's environment so harness launchers resolve (`pi`,
@@ -57,7 +95,7 @@ async function withAgentModelCatalog<T>(
       selection?.model,
       isGrokAgentCommand(agent),
     );
-    const catalog = filterModelOptionsByCredentials(filterAllowedModelConfigOptions(raw), agentEnv);
+    const catalog = filterAgentModelCatalog(agent, raw, probeEnv);
     return await inspect({ client, sessionId, raw, catalog });
   } finally {
     await client.stop().catch(() => undefined);
@@ -67,9 +105,8 @@ async function withAgentModelCatalog<T>(
 
 /**
  * `raw` is the unfiltered ACP catalog retained for diagnostics; `catalog` is
- * the allow-list + credential filtered view
- * (#223's `filterAllowedModelConfigOptions`/`filterModelOptionsByCredentials`)
- * a human should actually be offered.
+ * the harness-aware safe view a human should actually be offered. Pi applies
+ * #223's credential filter; Goose keeps its provider-routed model identifiers.
  */
 export async function fetchAgentModelCatalog(
   agent: ModelCatalogAgent,

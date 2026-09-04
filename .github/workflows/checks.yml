@@ -2,8 +2,8 @@
 # client-truth-gates.yml, workflow-lint.yml, auth-image.yml). Check names are
 # the job `name:`s below and are unchanged: TYPECHECK, BODY SUITE, MOBILE
 # SUITE, MOBILE-EXPORT REACHABILITY, PRODUCTION-CORPUS REPLAY, FRAME-BUDGET,
-# STATE-UPGRADE, NATIVE FINGERPRINT, ACTIONLINT, Build auth container,
-# Detect changes.
+# STATE-UPGRADE, NATIVE FINGERPRINT, README PARITY, ACTIONLINT, Build auth
+# container, Detect changes.
 #
 # One `changes` job maps the diff to the gates it can affect; a gate whose
 # paths are untouched is skipped, and a skipped job still posts a passing
@@ -35,6 +35,7 @@ on:
           - frame-budget
           - state-upgrade
           - native-fingerprint
+          - readme-parity
           - actionlint
           - auth-image
 
@@ -56,6 +57,7 @@ jobs:
       frameBudget: ${{ steps.filter.outputs.frameBudget }}
       stateUpgrade: ${{ steps.filter.outputs.stateUpgrade }}
       nativeFingerprint: ${{ steps.filter.outputs.nativeFingerprint }}
+      readme: ${{ steps.filter.outputs.readme }}
       workflows: ${{ steps.filter.outputs.workflows }}
       authImage: ${{ steps.filter.outputs.authImage }}
     steps:
@@ -158,6 +160,15 @@ jobs:
               - 'apps/mobile/plugins/**'
               - 'apps/mobile/patches/**'
               - 'apps/mobile/scripts/native-fingerprint.mjs'
+              - '.github/workflows/checks.yml'
+            readme:
+              - 'README.md'
+              - 'packages/usebeeline/README.md'
+              - 'packages/usebeeline/package.json'
+              - 'scripts/sync-readme.mjs'
+              - 'scripts/verify-readme-badges.mjs'
+              - 'scripts/readme.test.mjs'
+              - 'package.json'
               - '.github/workflows/checks.yml'
             workflows:
               - '.github/workflows/*.yml'
@@ -442,6 +453,35 @@ jobs:
       - name: Compare the native fingerprint with the committed runtime pin
         working-directory: apps/mobile
         run: npm run fingerprint:check
+
+  # `packages/usebeeline/README.md` is the product README npm publishes; the root
+  # README.md is a byte-for-byte copy so GitHub's front page shows the same text.
+  # Drift between them is invisible until someone reads the wrong one, so it is a
+  # gate rather than a habit. The badge probe runs here too: a badge whose service
+  # answers "repo not found" still returns HTTP 200 and a valid SVG, so only
+  # reading the rendered badge catches it. An unreachable service is skipped, never
+  # failed — a third party being down must not block a merge.
+  readme-parity:
+    name: README PARITY
+    needs: changes
+    if: >-
+      !cancelled() && (
+        (github.event_name == 'pull_request' && needs.changes.outputs.readme == 'true') ||
+        (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'readme-parity'))
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Node builtins only — this gate needs no dependency install.
+      - name: Check the two READMEs are the same file
+        run: npm run readme:check
+      - run: npm run test:readme
+      - name: Check every badge in the README renders
+        run: npm run readme:badges
 
   actionlint:
     name: ACTIONLINT

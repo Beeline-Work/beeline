@@ -198,25 +198,24 @@ type ConnectModelCatalog = {
 
 /**
  * Derive the wizard's model picker from the harness's advertised axes —
- * never a hard failure. The credential filter (`filterModelOptionsByCredentials`)
- * keeps only `<held-provider>/…`-prefixed choices; goose instead advertises a
- * provider-agnostic builtin list (`anthropic/…`, `google/…`, …) that it routes
- * through the configured provider, so when the filtered view is empty the raw
- * advertised axis is used as-is. If the harness truly enumerated nothing, the
- * provider default is offered with an explanatory note. The old behavior —
- * throwing "did not advertise any available models" — refused connect runs
- * that were fully serviceable.
+ * never a hard failure. Prefer the catalog authority's safe view, retaining
+ * the raw advertised axis as a defensive fallback for adapters whose routed
+ * model identifiers cannot be classified generically. If the harness truly
+ * enumerated nothing, the provider default is offered with an explanatory
+ * note. The old behavior — throwing "did not advertise any available models"
+ * — refused connect runs that were fully serviceable.
  */
 export function connectModelPickerFromAxes(
   axes: Array<{ category: string; currentValue?: string; options: Array<{ id: string }> }>,
   fallbackModel: string,
   harness: string,
+  rawAxes = axes,
 ): ConnectModelCatalog {
   const filtered = axes.find((axis) => axis.category === 'model');
   if (filtered?.options.length) {
     return { currentValue: filtered.currentValue, options: filtered.options };
   }
-  const raw = axes.find((axis) => axis.category === 'model' && axis.options.length);
+  const raw = rawAxes.find((axis) => axis.category === 'model' && axis.options.length);
   if (raw) {
     return { currentValue: raw.currentValue, options: raw.options };
   }
@@ -227,7 +226,7 @@ export function connectModelPickerFromAxes(
   };
 }
 
-async function loadConnectModelCatalog(input: {
+export async function loadConnectModelCatalog(input: {
   harness: ConnectWizardResult['harness'];
   provider?: ConnectProvider;
   apiKey?: string;
@@ -246,6 +245,7 @@ async function loadConnectModelCatalog(input: {
     catalog.catalog,
     defaultConnectModel(input.harness, input.provider),
     input.harness,
+    catalog.raw,
   );
 }
 

@@ -7,14 +7,17 @@
  * Animated wrappers, prosody, gaze, blink, the call-mask variants — is
  * dropped, because a Beeline face is a still identity tile, not a puppet.
  *
- * Two things are parameterised so the same drawings serve two classes:
+ * One thing is parameterised, so the same drawings serve both classes:
+ * `palette` replaces Speakeasy's BRASS / BONE / INK. A person keeps BONE and
+ * INK and swaps BRASS for their signature hue; an agent takes BONE where the
+ * person's creature carries that hue, because for an agent the hue is the
+ * plate underneath (`face-tile.tsx`).
  *
- *  - `palette` replaces Speakeasy's BRASS / BONE / INK. A person keeps BONE
- *    and INK and swaps BRASS for their signature hue; an agent paints all
- *    three INK (an ink figure on a coloured plate).
- *  - `eyes` is either `drawn` (the original two eyes) or `lens` — the agent's
- *    one bone band spanning the same eyes, drawn in the eyes' own slot so it
- *    sits at exactly the depth the eyes did.
+ * Both classes draw the creature WHOLE. An agent used to be a flat ink
+ * silhouette with a bone band across its eyes, and at 26px that read as a
+ * blindfolded blob rather than as a fox: the species — the thing the whole
+ * system exists to make memorable — never resolved, and the eyes, which are
+ * where a face becomes a face, were the one feature deliberately deleted.
  *
  * Construction rules inherited from Speakeasy §2.2: three colours max, no
  * strokes except where noted (stag antlers, the mouth lines), 100×100 viewBox.
@@ -32,49 +35,19 @@ export const BONE = '#F2E9D8';
 export const INK = '#14091A';
 
 export type FacePalette = { brass: string; bone: string; ink: string };
-export type FaceEyes = 'drawn' | 'lens';
-export type FaceRenderProps = { palette: FacePalette; eyes: FaceEyes };
+export type FaceRenderProps = { palette: FacePalette };
 export type FaceRender = (props: FaceRenderProps) => React.ReactElement;
-
-/** The lens band: bone, ~6.4 units tall, `rx` 1, spanning the eyes' centres
- *  with a 7-unit reach past the outermost ones (the approved contact sheet's
- *  geometry). */
-export const LENS_BAND_HEIGHT = 6.4;
-export const LENS_BAND_REACH = 7;
-
-type Point = { x: number; y: number };
 
 /**
  * The pair of eyes. Speakeasy pivoted each in its own group so a blink could
- * collapse around the right point; the pivots are the eye centres, and they
- * are what the agent's lens band is measured from.
+ * collapse around the right point; the groups are kept so the port's draw
+ * order is Speakeasy's, and both eyes are always drawn.
  */
 function Eyes({
-  leftPivot,
-  rightPivot,
-  eyes,
   children,
 }: {
-  leftPivot: Point;
-  rightPivot: Point;
-  eyes: FaceEyes;
   children: [React.ReactElement, React.ReactElement];
 }): React.ReactElement {
-  if (eyes === 'lens') {
-    const left = Math.min(leftPivot.x, rightPivot.x) - LENS_BAND_REACH;
-    const right = Math.max(leftPivot.x, rightPivot.x) + LENS_BAND_REACH;
-    return (
-      <Rect
-        x={left}
-        y={leftPivot.y - LENS_BAND_HEIGHT / 2}
-        width={right - left}
-        height={LENS_BAND_HEIGHT}
-        rx={1}
-        fill={BONE}
-        testID="face-lens-band"
-      />
-    );
-  }
   return (
     <>
       <G>{children[0]}</G>
@@ -112,7 +85,7 @@ function MouthClosed({
 
 // ─────────────────────────────────────────────────────────────────────
 
-const Fox: FaceRender = ({ palette: { brass, bone, ink }, eyes }) => (
+const Fox: FaceRender = ({ palette: { brass, bone, ink } }) => (
   <>
     <G>
       <Polygon points="18,12 38,12 28,32" fill={brass} />
@@ -126,7 +99,7 @@ const Fox: FaceRender = ({ palette: { brass, bone, ink }, eyes }) => (
     <Path d="M20,28 L80,28 L74,62 L50,88 L26,62 Z" fill={brass} />
     {/* white chest */}
     <Path d="M38,56 L62,56 L50,86 Z" fill={bone} />
-    <Eyes leftPivot={{ x: 36, y: 44 }} rightPivot={{ x: 64, y: 44 }} eyes={eyes}>
+    <Eyes>
       <Ellipse cx={36} cy={44} rx={3.2} ry={3.2} fill={ink} />
       <Ellipse cx={64} cy={44} rx={3.2} ry={3.2} fill={ink} />
     </Eyes>
@@ -134,7 +107,7 @@ const Fox: FaceRender = ({ palette: { brass, bone, ink }, eyes }) => (
   </>
 );
 
-const Owl: FaceRender = ({ palette: { brass, bone, ink }, eyes }) => (
+const Owl: FaceRender = ({ palette: { brass, bone, ink } }) => (
   <G>
     {/* ear tufts */}
     <Polygon points="20,18 32,18 27,5" fill={brass} />
@@ -146,7 +119,7 @@ const Owl: FaceRender = ({ palette: { brass, bone, ink }, eyes }) => (
     />
     {/* face disk */}
     <Ellipse cx={50} cy={46} rx={30} ry={26} fill={bone} />
-    <Eyes leftPivot={{ x: 38, y: 44 }} rightPivot={{ x: 62, y: 44 }} eyes={eyes}>
+    <Eyes>
       <G>
         <Circle cx={38} cy={44} r={8} fill={ink} />
         <Circle cx={38} cy={44} r={2.5} fill={brass} />
@@ -162,11 +135,11 @@ const Owl: FaceRender = ({ palette: { brass, bone, ink }, eyes }) => (
   </G>
 );
 
-const Pigeon: FaceRender = ({ palette: { brass, ink }, eyes }) => (
+const Pigeon: FaceRender = ({ palette: { brass, ink } }) => (
   // Profile silhouette — single eye, beak as the mouth element.
   <G>
     <Ellipse cx={42} cy={52} rx={30} ry={24} fill={ink} />
-    <Eyes leftPivot={{ x: 38, y: 44 }} rightPivot={{ x: 38, y: 44 }} eyes={eyes}>
+    <Eyes>
       <Circle cx={38} cy={44} r={3} fill={brass} />
       {/* second eye intentionally identical — profile pose has only one
           visible eye; the slot is kept so the Eyes helper shape is consistent. */}
@@ -178,7 +151,7 @@ const Pigeon: FaceRender = ({ palette: { brass, ink }, eyes }) => (
   </G>
 );
 
-const Hare: FaceRender = ({ palette: { brass, bone, ink }, eyes }) => (
+const Hare: FaceRender = ({ palette: { brass, bone, ink } }) => (
   <>
     <G>
       <Rect x={33} y={6} width={11} height={38} rx={5} fill={bone} />
@@ -190,7 +163,7 @@ const Hare: FaceRender = ({ palette: { brass, bone, ink }, eyes }) => (
     </G>
     {/* head */}
     <Ellipse cx={50} cy={60} rx={28} ry={26} fill={bone} />
-    <Eyes leftPivot={{ x: 38, y: 56 }} rightPivot={{ x: 62, y: 56 }} eyes={eyes}>
+    <Eyes>
       <Circle cx={38} cy={56} r={2.8} fill={ink} />
       <Circle cx={62} cy={56} r={2.8} fill={ink} />
     </Eyes>
@@ -200,7 +173,7 @@ const Hare: FaceRender = ({ palette: { brass, bone, ink }, eyes }) => (
   </>
 );
 
-const Stag: FaceRender = ({ palette: { brass, bone, ink }, eyes }) => (
+const Stag: FaceRender = ({ palette: { brass, bone, ink } }) => (
   <G>
     {/* antlers — exception to the no-stroke rule per design notes */}
     <Path
@@ -221,7 +194,7 @@ const Stag: FaceRender = ({ palette: { brass, bone, ink }, eyes }) => (
     <Path d="M30,30 L70,30 L66,68 L50,88 L34,68 Z" fill={brass} />
     {/* white chin */}
     <Path d="M42,62 L58,62 L50,84 Z" fill={bone} />
-    <Eyes leftPivot={{ x: 40, y: 46 }} rightPivot={{ x: 60, y: 46 }} eyes={eyes}>
+    <Eyes>
       <Ellipse cx={40} cy={46} rx={2.6} ry={2.6} fill={ink} />
       <Ellipse cx={60} cy={46} rx={2.6} ry={2.6} fill={ink} />
     </Eyes>
@@ -231,14 +204,14 @@ const Stag: FaceRender = ({ palette: { brass, bone, ink }, eyes }) => (
   </G>
 );
 
-const Whale: FaceRender = ({ palette: { brass, bone, ink }, eyes }) => (
+const Whale: FaceRender = ({ palette: { brass, bone, ink } }) => (
   <G>
     <Path
       d="M10,55 Q15,38 40,38 Q70,38 78,52 L94,42 L88,58 L94,68 L78,60 Q70,72 40,72 Q15,72 10,55 Z"
       fill={ink}
     />
     <Path d="M22,58 Q40,68 65,64 L65,62 Q40,56 22,52 Z" fill={bone} />
-    <Eyes leftPivot={{ x: 68, y: 50 }} rightPivot={{ x: 68, y: 50 }} eyes={eyes}>
+    <Eyes>
       <Circle cx={68} cy={50} r={2} fill={brass} />
       <G />
     </Eyes>
@@ -249,7 +222,7 @@ const Whale: FaceRender = ({ palette: { brass, bone, ink }, eyes }) => (
   </G>
 );
 
-const Moth: FaceRender = ({ palette: { brass, bone, ink }, eyes }) => (
+const Moth: FaceRender = ({ palette: { brass, bone, ink } }) => (
   <>
     <Path d="M46,18 Q40,8 32,6" stroke={ink} strokeWidth={1.5} fill="none" />
     <Path d="M54,18 Q60,8 68,6" stroke={ink} strokeWidth={1.5} fill="none" />
@@ -266,14 +239,14 @@ const Moth: FaceRender = ({ palette: { brass, bone, ink }, eyes }) => (
     <Mouth>
       <Ellipse cx={50} cy={48} rx={4} ry={22} fill={ink} />
     </Mouth>
-    <Eyes leftPivot={{ x: 28, y: 36 }} rightPivot={{ x: 72, y: 36 }} eyes={eyes}>
+    <Eyes>
       <Circle cx={28} cy={36} r={3} fill={ink} />
       <Circle cx={72} cy={36} r={3} fill={ink} />
     </Eyes>
   </>
 );
 
-const Octopus: FaceRender = ({ palette: { brass, ink }, eyes }) => (
+const Octopus: FaceRender = ({ palette: { brass, ink } }) => (
   <>
     {/* mantle */}
     <Path
@@ -291,7 +264,7 @@ const Octopus: FaceRender = ({ palette: { brass, ink }, eyes }) => (
       <Path d="M64,62 Q68,80 58,88" stroke={brass} strokeWidth={5} fill="none" strokeLinecap="round" />
       <Path d="M74,62 Q80,75 72,88" stroke={brass} strokeWidth={5} fill="none" strokeLinecap="round" />
     </G>
-    <Eyes leftPivot={{ x: 40, y: 40 }} rightPivot={{ x: 60, y: 40 }} eyes={eyes}>
+    <Eyes>
       <Circle cx={40} cy={40} r={3.5} fill={ink} />
       <Circle cx={60} cy={40} r={3.5} fill={ink} />
     </Eyes>
@@ -302,7 +275,7 @@ const Octopus: FaceRender = ({ palette: { brass, ink }, eyes }) => (
   </>
 );
 
-const Heron: FaceRender = ({ palette: { brass, bone, ink }, eyes }) => (
+const Heron: FaceRender = ({ palette: { brass, bone, ink } }) => (
   <>
     {/* body */}
     <Ellipse cx={60} cy={72} rx={22} ry={14} fill={bone} />
@@ -311,7 +284,7 @@ const Heron: FaceRender = ({ palette: { brass, bone, ink }, eyes }) => (
     <G>
       {/* head */}
       <Ellipse cx={62} cy={16} rx={8} ry={7} fill={bone} />
-      <Eyes leftPivot={{ x: 60, y: 14 }} rightPivot={{ x: 60, y: 14 }} eyes={eyes}>
+      <Eyes>
         <Circle cx={60} cy={14} r={1.6} fill={ink} />
         <G />
       </Eyes>
@@ -324,7 +297,7 @@ const Heron: FaceRender = ({ palette: { brass, bone, ink }, eyes }) => (
   </>
 );
 
-const Bear: FaceRender = ({ palette: { brass, bone, ink }, eyes }) => (
+const Bear: FaceRender = ({ palette: { brass, bone, ink } }) => (
   <G>
     {/* ears */}
     <Circle cx={26} cy={24} r={10} fill={ink} />
@@ -340,14 +313,14 @@ const Bear: FaceRender = ({ palette: { brass, bone, ink }, eyes }) => (
         <Ellipse cx={50} cy={64} rx={3.5} ry={2.5} fill={ink} />
       </G>
     </Mouth>
-    <Eyes leftPivot={{ x: 38, y: 50 }} rightPivot={{ x: 62, y: 50 }} eyes={eyes}>
+    <Eyes>
       <Circle cx={38} cy={50} r={2.8} fill={brass} />
       <Circle cx={62} cy={50} r={2.8} fill={brass} />
     </Eyes>
   </G>
 );
 
-const Cat: FaceRender = ({ palette: { brass, ink }, eyes }) => (
+const Cat: FaceRender = ({ palette: { brass, ink } }) => (
   <>
     <G>
       <Polygon points="14,32 30,8 36,32" fill={ink} />
@@ -359,7 +332,7 @@ const Cat: FaceRender = ({ palette: { brass, ink }, eyes }) => (
     </G>
     {/* head */}
     <Ellipse cx={50} cy={56} rx={34} ry={30} fill={ink} />
-    <Eyes leftPivot={{ x: 36, y: 48 }} rightPivot={{ x: 64, y: 48 }} eyes={eyes}>
+    <Eyes>
       <G>
         <Path d="M28,48 Q36,42 44,48 Q36,54 28,48 Z" fill={brass} />
         <Ellipse cx={36} cy={48} rx={1.5} ry={3} fill={ink} />
@@ -375,7 +348,7 @@ const Cat: FaceRender = ({ palette: { brass, ink }, eyes }) => (
   </>
 );
 
-const Bat: FaceRender = ({ palette: { brass, bone, ink }, eyes }) => (
+const Bat: FaceRender = ({ palette: { brass, bone, ink } }) => (
   <>
     {/* wings */}
     <G>
@@ -388,7 +361,7 @@ const Bat: FaceRender = ({ palette: { brass, bone, ink }, eyes }) => (
     <Ellipse cx={50} cy={52} rx={14} ry={13} fill={ink} />
     <Polygon points="40,38 46,28 48,40" fill={ink} />
     <Polygon points="52,40 54,28 60,38" fill={ink} />
-    <Eyes leftPivot={{ x: 44, y: 50 }} rightPivot={{ x: 56, y: 50 }} eyes={eyes}>
+    <Eyes>
       <Circle cx={44} cy={50} r={2} fill={brass} />
       <Circle cx={56} cy={50} r={2} fill={brass} />
     </Eyes>

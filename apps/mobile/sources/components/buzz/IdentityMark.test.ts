@@ -107,7 +107,7 @@ function inks(renderer: ReactTestRenderer): string[] {
     );
 }
 
-/** The figure's painted leaves, excluding the lens band. */
+/** The figure's painted leaves. */
 function figurePaints(renderer: ReactTestRenderer): any[] {
   return renderer.root
     .findByProps({ testID: 'face-figure' })
@@ -115,7 +115,6 @@ function figurePaints(renderer: ReactTestRenderer): any[] {
       (node: any) =>
         typeof node.type === 'string' &&
         node.type !== 'G' &&
-        node.props.testID !== 'face-lens-band' &&
         ((node.props.fill && node.props.fill !== 'none') ||
           (node.props.stroke && node.props.stroke !== 'none')),
     );
@@ -203,25 +202,29 @@ describe('plate polarity is the class', () => {
     const painted = inks(person);
     expect(painted).toContain(palette.mid);
     expect(painted.every((ink) => [palette.mid, BONE, INK].includes(ink))).toBe(true);
-    expect(hosts(person, 'face-lens-band')).toHaveLength(0);
   });
 
-  it('draws an agent as an all-ink creature with one lens band on its hue plate', () => {
+  it('draws an agent as the same creature in bone and ink on its hue plate', () => {
     const agent = render(
       React.createElement(IdentityMark, { seed: AGENT, kind: 'agent', size: 40 }),
     );
     const palette = identityPalette(AGENT, 'agent');
     expect(plateOf(agent).backgroundColor).toBe(palette.mid);
-    const band = hosts(agent, 'face-lens-band');
-    expect(band).toHaveLength(1);
-    expect(band[0]!.props.fill).toBe(BONE);
-    for (const node of figurePaints(agent)) {
-      for (const ink of [node.props.fill, node.props.stroke]) {
-        if (ink && ink !== 'none') expect(ink).toBe(INK);
-      }
-    }
-    // Ink on colour always contrasts: no edge layer.
-    expect(hosts(agent, 'face-edge')).toHaveLength(0);
+    // The hue lives on the plate, so the figure never repeats it — and it is
+    // the whole creature, in both of the neutral tones, not an ink silhouette.
+    const painted = figurePaints(agent).flatMap((node: any) => [node.props.fill, node.props.stroke]);
+    expect(painted).toContain(BONE);
+    expect(painted).toContain(INK);
+    expect(
+      painted.every((ink: unknown) => !ink || ink === 'none' || ink === BONE || ink === INK),
+    ).toBe(true);
+    // The agent plate is a light hue, so the bone shapes take the light
+    // plate's INK edge — drawn behind the figure, exactly as a person's is.
+    const svg = agent.root.findByType('Svg');
+    expect(svg.children.map((child: any) => child.props.testID)).toEqual([
+      'face-edge',
+      'face-figure',
+    ]);
   });
 
   it('gives two identities visibly different signatures', () => {

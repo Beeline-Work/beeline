@@ -84,6 +84,7 @@ export const WritePermissionCard = React.memo(function WritePermissionCard({
           kind="agent"
           seed={display.avatarSeed ?? permission.agentPubkey}
           avatarUrl={display.avatarUrl}
+          face={display.face}
           name={display.name}
           size={30}
         />
@@ -210,6 +211,7 @@ export const GrantRequestCard = React.memo(function GrantRequestCard({
           kind="agent"
           seed={display.avatarSeed ?? request.agent.pubkey}
           avatarUrl={display.avatarUrl}
+          face={display.face}
           name={agentName}
           size={30}
         />
@@ -643,6 +645,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
 }: OrdinaryLedgerMessageProps) {
   const isOwn = message.isUser;
   const indexedAuthor = message.authorIdentity;
+  const speakerFace = indexedAuthor?.face ?? agent?.face;
   const currentAgent =
     indexedAuthor?.kind === 'agent'
       ? {
@@ -650,6 +653,9 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
           displayName: indexedAuthor.name,
           ...(indexedAuthor.avatar ? { avatar: indexedAuthor.avatar } : {}),
           ...(agent?.soulProfile ? { soulProfile: agent.soulProfile } : {}),
+          // This row's own server identity names the face first; the roster
+          // entry fills it in for a row the index has not identified.
+          ...(speakerFace ? { face: speakerFace } : {}),
         }
       : agent;
   const isAgent =
@@ -681,7 +687,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
         mark: {
           seed: markSeed,
           kind: isAgent ? 'agent' : 'human',
-          ...(indexedAuthor?.face ? { face: indexedAuthor.face } : {}),
+          ...(speakerFace ? { face: speakerFace } : {}),
           ...(isAgent ? { alive: speakerWorking } : {}),
         },
       };
@@ -725,8 +731,11 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
               ? {
                   seed: markSeed,
                   kind: 'agent',
-                  // Same axes the settled byline mark renders (working →
-                  // gold ring): the streaming lane pulses while it lives.
+                  // Same axes the settled byline mark renders (its creature,
+                  // and working → gold ring): the streaming lane is the same
+                  // speaker, so it must not wear a different animal for the
+                  // length of the turn.
+                  ...(speakerFace ? { face: speakerFace } : {}),
                   alive: message.isAgentLiveTurn === true,
                 }
               : undefined

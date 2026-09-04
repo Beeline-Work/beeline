@@ -659,6 +659,21 @@ describe('roomRowName — the sigil is the name’s first glyph', () => {
     });
   });
 
+  it('carries the peer’s own creature onto the tile, agent or person', () => {
+    // The row must draw the animal every other surface draws for that key —
+    // for an agent that is the server's assignment, not the seed default.
+    expect(roomRowName({ room, directMessage: { peer: { ...beebee, face: 'owl' } } }).tile).toEqual({
+      seed: PEER,
+      kind: 'agent',
+      face: 'owl',
+    });
+    expect(roomRowName({ room, directMessage: { peer: { ...ada, face: 'moth' } } }).tile).toEqual({
+      seed: PEER,
+      kind: 'human',
+      face: 'moth',
+    });
+  });
+
   it('falls back to the Room id rather than an empty name', () => {
     expect(roomRowName({ room: { ...room, name: '  ' } }).name).toBe(ROOM_ID);
   });

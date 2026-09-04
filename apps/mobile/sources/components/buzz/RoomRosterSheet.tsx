@@ -17,7 +17,8 @@ export type RoomRosterParticipant = {
   handle: string;
   kind: 'person' | 'agent';
   agent?: AgentPresentation;
-  /** People only: the chosen face on record. */
+  /** People only: the chosen face on record. An agent's assigned face rides
+   *  on `agent` and is read through `resolveAgentDisplayIdentity`. */
   face?: string;
 };
 
@@ -202,6 +203,7 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
                             kind="agent"
                             seed={display.avatarSeed ?? participant.pubkey}
                             avatarUrl={display.avatarUrl}
+                            face={display.face}
                             name={display.name}
                             size={38}
                             alive={agentWorking}

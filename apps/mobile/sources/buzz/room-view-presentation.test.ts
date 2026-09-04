@@ -7,6 +7,7 @@ import {
   displayRoomMessage,
   displayRoomMessages,
   foldSettledActivityRuns,
+  memberAgent,
   mergeDisplayPages,
   roomViewTranscriptMessages,
   type ChatDisplayMessage,
@@ -338,5 +339,30 @@ describe('Room view presentation', () => {
       ['live-turn:req', 0],
     ]);
     expect(withDraft[1]).toBe(draft);
+  });
+});
+
+describe('memberAgent', () => {
+  it('carries the server-assigned face, so every agent tile draws one animal', () => {
+    // Name, soul and face are one assignment (`assignSeededAgentIdentity`).
+    // Dropping the face here is what let a tile hash its own creature.
+    expect(
+      memberAgent(
+        {
+          identity: { pubkey: 'agent-key', kind: 'agent', name: 'Foxy', face: 'fox' },
+          role: 'member',
+        },
+        'workspace-id',
+      ),
+    ).toEqual({ pubkey: 'agent-key', displayName: 'Foxy', face: 'fox' });
+  });
+
+  it('omits a face no roster knows, leaving the seed default to stand', () => {
+    expect(
+      memberAgent(
+        { identity: { pubkey: 'agent-key', kind: 'agent', name: 'Foxy' }, role: 'member' },
+        'workspace-id',
+      ),
+    ).toEqual({ pubkey: 'agent-key', displayName: 'Foxy' });
   });
 });

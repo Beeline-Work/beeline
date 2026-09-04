@@ -112,6 +112,35 @@ describe('agent display identity', () => {
 
     expect(display.name).toBe(fallbackAgentName(pubkey));
   });
+
+  it('carries the assigned face beside the name, so a tile never redraws it', () => {
+    // The server picks the animal, then names and souls the agent from it
+    // (`assignSeededAgentIdentity`): the face has to reach the tile through
+    // the same resolution the name does, or "Foxy" wears whatever the hash
+    // says and the dedup that kept two agents apart is undone on screen.
+    const pubkey = 'foxy-pubkey';
+    const display = resolveAgentDisplayIdentity(pubkey, {
+      pubkey,
+      displayName: 'Foxy',
+      face: 'fox',
+    });
+
+    expect(display).toMatchObject({ name: 'Foxy', face: 'fox' });
+  });
+
+  it('leaves the face absent when no roster names one, so the seed default stands', () => {
+    const display = resolveAgentDisplayIdentity('unknown-pubkey', { pubkey: 'unknown-pubkey' });
+
+    expect(display.face).toBeUndefined();
+    expect(resolveAgentDisplayIdentity('p', { pubkey: 'p', face: '   ' }).face).toBeUndefined();
+  });
+
+  it('carries the face through the pending-hydration gate too', () => {
+    const agent = { pubkey: 'hare-pubkey', displayName: 'Zoomie', face: 'hare' };
+
+    expect(resolvePendingAgentDisplay('hare-pubkey', agent, false)).toBeNull();
+    expect(resolvePendingAgentDisplay('hare-pubkey', agent, true)?.face).toBe('hare');
+  });
 });
 
 describe('corner card agent identity resolution', () => {

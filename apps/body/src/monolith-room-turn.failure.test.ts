@@ -283,6 +283,11 @@ describe('Room turn failure receipt', () => {
         fetchedAt: Date.now(),
         providers: ['venice', 'phala'],
         bar: 98,
+        // A post-C87 cache entry always carries `input` (an array, or `null`
+        // when the listing named none); omitting it marks a pre-C87 entry
+        // and forces one live re-ask (`resolveUptimeRouting`), which this
+        // fully-cached, network-free test must never trigger.
+        input: null,
       }),
     );
     await writeFile(

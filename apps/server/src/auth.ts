@@ -228,6 +228,29 @@ export class TokenAuth {
     return row && sameHash(row.token_hash, hash) ? row.agent_id : null;
   }
 
+  /**
+   * The one definitive "your agent was removed" answer. A daemon token that
+   * was revoked AND whose agent holds no live membership anywhere is not a
+   * transient authentication failure: nothing can restore it, so the helper
+   * that presented it may retire itself on this and only this. A live agent
+   * whose token was merely rotated, an unknown token, and every transport or
+   * server failure all resolve to `null` here and stay a plain 401.
+   */
+  async retiredDaemonAgent(token: string): Promise<string | null> {
+    const hash = tokenHash(token);
+    const result = await this.database.query<{ agent_id: string; token_hash: string }>(
+      `SELECT agent_id,token_hash FROM daemon_tokens t
+       WHERE t.token_hash = $1 AND t.revoked_at IS NOT NULL
+         AND NOT EXISTS (
+           SELECT 1 FROM memberships m
+           WHERE m.identity_id = t.agent_id AND m.removed_at IS NULL
+         )`,
+      [hash],
+    );
+    const row = result.rows[0];
+    return row && sameHash(row.token_hash, hash) ? row.agent_id : null;
+  }
+
   private async issuePhoneTokens(
     identity: string,
     familyId: string,

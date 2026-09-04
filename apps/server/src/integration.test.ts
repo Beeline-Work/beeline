@@ -1977,6 +1977,15 @@ describe('monolith integration', () => {
         )
       ).rowCount,
     ).toBe(0);
+
+    // The helper's own tokens now answer with the one settled fact it may
+    // retire itself on, instead of a 401 it would retry against forever.
+    const refused = await daemonOperation('getDaemonBootstrap', { agentId: AGENT });
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual({ error: 'agent_removed' });
+    const unknownToken = await daemonOperation('getDaemonBootstrap', { agentId: AGENT }, 'bdt_nope');
+    expect(unknownToken.status).toBe(401);
+    expect(await unknownToken.json()).toEqual({ error: 'daemon_token_required' });
   });
 
   it('does not let a workspace manager mutate or revoke another workspace agent', async () => {

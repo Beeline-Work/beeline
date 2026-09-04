@@ -71,6 +71,18 @@ describe('Chat header — one language for Room and Corner', () => {
     expect(caps![0]).toMatch(/\.\.\.theme\.buzz\.type\.meta/);
   });
 
+  it('keeps the Room’s members line bare, not parted into its own meta-row rung (C85)', () => {
+    // #884 wrapped the Room's members line in a HeaderMetaRow to part it from
+    // the repo chip by a rung of the ladder; the captain wanted the old,
+    // tighter spacing back. The corner's own HeaderMetaRow (its status row)
+    // is unrelated and stays.
+    const roomBranch = chatSource.match(
+      /\) : \(\n\s*<HeaderMetaCaps testID="room-header-meta">[\s\S]*?<\/HeaderMetaCaps>\n\s*\)\}/,
+    );
+    expect(roomBranch, 'Room members line should render bare, unwrapped').toBeTruthy();
+    expect(chatSource).not.toContain('paddingVertical: 4');
+  });
+
   it('leads the Corner with the agent mark through the same slot', () => {
     const branch = chatSource.indexOf('{isCorner && cornerAgentPubkey && (');
     expect(branch, 'missing the Corner mark branch').toBeGreaterThanOrEqual(0);

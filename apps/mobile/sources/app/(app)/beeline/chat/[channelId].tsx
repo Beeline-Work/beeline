@@ -3112,16 +3112,11 @@ export default function BuzzChat() {
                 </HeaderMetaCaps>
               </HeaderMetaRow>
             ) : (
-              // Through the same shared row the corner uses, so the repo line
-              // and the members line are parted by the one gap in the ladder
-              // instead of sitting baseline-to-baseline.
-              <HeaderMetaRow>
-                <HeaderMetaCaps testID="room-header-meta">
-                  {participantsHydrated
-                    ? `${formatRoomParticipantTotal(roomParticipantTotal)}  ›`
-                    : 'LOADING MEMBERS'}
-                </HeaderMetaCaps>
-              </HeaderMetaRow>
+              <HeaderMetaCaps testID="room-header-meta">
+                {participantsHydrated
+                  ? `${formatRoomParticipantTotal(roomParticipantTotal)}  ›`
+                  : 'LOADING MEMBERS'}
+              </HeaderMetaCaps>
             )}
           </TouchableOpacity>
           {/* The trailing slot holds ONE control. There is no `+` beside it:
@@ -4066,17 +4061,7 @@ const styles = StyleSheet.create((theme) => {
       borderRadius: groknight.radius,
     },
     cornerChannelNameSkeleton: { width: 108 },
-    // A 13pt line is a ~19pt target on its own. The chip keeps its place in
-    // the ladder and buys its height back with padding plus hitSlop; it stays
-    // under 44 by design, because the same destination sits on the ••• at a
-    // full target and a 44pt box here would push the header into the
-    // transcript.
-    repoChip: {
-      alignSelf: 'flex-start',
-      marginTop: 2,
-      paddingVertical: 4,
-      maxWidth: '100%',
-    },
+    repoChip: { alignSelf: 'flex-start', marginTop: 2, maxWidth: '100%' },
     // The one thing on the corner's meta row with unbounded length, so it is
     // the one that gives: an unshrinkable name pushed the presence light, the
     // status glyph and the member count off the right edge.

@@ -59,7 +59,6 @@ type MembersAction =
   | 'remove-agent'
   | 'model-config'
   | 'agent-yolo'
-  | 'workspace-seeded-souls'
   | 'revoke-grant';
 
 function first(value: string | string[] | undefined): string | undefined {
@@ -547,23 +546,6 @@ export default function BuzzMembers() {
     }
   };
 
-  const setWorkspaceSeededSouls = async (enabled: boolean) => {
-    if (!workspaceId || !surface?.viewer.permissions.manage) return;
-    setWorking('workspace-seeded-souls');
-    setError(null);
-    try {
-      await monolithPhoneOperation('updateWorkspace', { workspaceId, seededSouls: enabled });
-      await waitForIndexedSurface(
-        readWorkspace,
-        (value) => value.managerSettings?.seededSouls === enabled,
-      );
-    } catch (reason) {
-      setError(`Could not change seeded souls: ${operationMessage(reason)}`);
-    } finally {
-      setWorking(null);
-    }
-  };
-
   const showModelAppliesNote = (kind: ModelAxisKind) => {
     if (modelAppliesTimerRef.current) clearTimeout(modelAppliesTimerRef.current);
     setModelAppliesNote(kind);
@@ -883,25 +865,6 @@ export default function BuzzMembers() {
               );
             })}
           </View>
-          {canManage && surface.managerSettings?.seededSouls !== undefined && (
-            <View style={styles.section} testID="workspace-seeded-souls">
-              <View style={styles.yoloRow}>
-                <Text style={styles.sectionLabel}>Seeded souls</Text>
-                <Switch
-                  accessibilityLabel="Seeded souls"
-                  disabled={busy}
-                  onValueChange={(enabled) => void setWorkspaceSeededSouls(enabled)}
-                  testID="workspace-seeded-souls-switch"
-                  thumbColor={theme.buzz.textPrimary}
-                  trackColor={{ false: theme.buzz.bgRaised, true: theme.buzz.accent }}
-                  value={surface.managerSettings.seededSouls}
-                />
-              </View>
-              <Text style={styles.detail} testID="workspace-seeded-souls-caption">
-                Every agent here speaks as its animal. Off leaves them plain.
-              </Text>
-            </View>
-          )}
           <View style={styles.section} testID="members-agents-section">
             <View style={styles.sectionHeadRow}>
               <Text style={styles.sectionLabel} testID="members-agents-head">
@@ -1263,7 +1226,7 @@ const styles = StyleSheet.create((theme) => {
     sectionAdd: {
       width: 44,
       height: 44,
-      alignItems: 'center',
+      alignItems: 'flex-end',
       justifyContent: 'center',
     },
     sectionAddGlyph: { ...Typography.default(), ...hull.type.hero, color: hull.accent },

@@ -353,7 +353,6 @@ export class PhoneService {
       about: string | null;
       avatar: string | null;
       visibility: 'public' | 'invite-only';
-      seeded_souls_enabled: boolean;
       created_at: Date;
       updated_at: Date;
       role: 'owner' | 'admin' | 'member';
@@ -379,7 +378,7 @@ export class PhoneService {
         ...(row.about ? { about: row.about } : {}),
         createdAt: unix(row.created_at),
       },
-      managerSettings: { visibility: row.visibility, seededSouls: row.seeded_souls_enabled },
+      managerSettings: { visibility: row.visibility },
       members: humans.slice(0, ROOM_VIEW_MEMBER_LIMIT),
       agents: agents.slice(0, ROOM_VIEW_AGENT_LIMIT),
       membersTruncated: humans.length > ROOM_VIEW_MEMBER_LIMIT,
@@ -1796,14 +1795,8 @@ export class PhoneService {
   private async updateWorkspace(input: Input<'updateWorkspace'>, viewerId: string) {
     await this.requireWorkspaceManager(input.workspaceId, viewerId);
     await this.database.query(
-      `UPDATE workspaces SET name=COALESCE($2,name),avatar=COALESCE($3,avatar),visibility=COALESCE($4,visibility),seeded_souls_enabled=COALESCE($5,seeded_souls_enabled),updated_at=now() WHERE id=$1`,
-      [
-        input.workspaceId,
-        input.name ?? null,
-        input.avatar ?? null,
-        input.visibility ?? null,
-        input.seededSouls ?? null,
-      ],
+      `UPDATE workspaces SET name=COALESCE($2,name),avatar=COALESCE($3,avatar),visibility=COALESCE($4,visibility),updated_at=now() WHERE id=$1`,
+      [input.workspaceId, input.name ?? null, input.avatar ?? null, input.visibility ?? null],
     );
   }
   private async leaveWorkspace(input: Input<'leaveWorkspace'>, viewerId: string) {

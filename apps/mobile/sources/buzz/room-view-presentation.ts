@@ -165,6 +165,9 @@ export type ChatDisplayMessage = {
   isAgentActivity?: boolean;
   isAgentLiveTurn?: boolean;
   isAgentDraft?: boolean;
+  /** The turn this row answers. The join a settling reply uses to recover the
+   *  provisional text it is replacing (`buzz/draft-settle.ts`, C98). */
+  requestId?: string;
   relayId?: string;
   activity?: AgentActivityItem[];
   agentThought?: string;
@@ -270,6 +273,7 @@ export function displayRoomMessage(
           pubkey: message.author.pubkey,
         }),
     reference: message.reference,
+    ...(message.requestId ? { requestId: message.requestId } : {}),
     ...(!githubEvent && !daemonFact && message.author.kind === 'agent'
       ? { isAgentAuthor: true }
       : {}),

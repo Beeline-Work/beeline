@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Linking, Pressable, ScrollView, Text, View } from 'react-native';
+import { Linking, Pressable, ScrollView, Text, View, type TextStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { useReducedMotion } from 'react-native-reanimated';
 import { Typography } from '@/constants/Typography';
@@ -90,6 +90,12 @@ type LedgerBodyProps = {
   /** A just-committed agent paragraph can reveal locally, even though the
    * relay publishes it atomically. */
   typewriter?: boolean;
+  /**
+   * The provisional text this durable reply is replacing (C98). Present only
+   * when the reader was actually watching this turn stream, and spent once —
+   * the settled words cross-fade up out of it instead of snapping over it.
+   */
+  settleFrom?: string;
   /** Handles backed by this message's real p-tags and current Room members. */
   mentionHandles?: readonly string[];
   /** Known rooms/corners of THIS workspace; omitted → no `#` reference links. */
@@ -239,7 +245,10 @@ export function LedgerMarginalia({
 
 /** The one byline view: identity tile (or viewer dot) + name, role tag, stamp.
  *  Exported so the live draft lane's byline (`ActivityTimeline`) is exactly
- *  the settled row's byline — nothing changes visually when a draft settles. */
+ *  the settled row's byline — the tile, the name and the stamp are byte-for-byte
+ *  the same, so NOTHING MOVES when a draft settles. What changes is the prose
+ *  itself: provisional text is italic and quiet while it is being written, and
+ *  cross-fades into the upright, content-toned reply (C98, `SettleFade`). */
 export const LedgerBylineView = Byline;
 
 function Byline({ byline }: { byline: LedgerByline }) {
@@ -298,6 +307,52 @@ function Byline({ byline }: { byline: LedgerByline }) {
   );
 }
 
+/** One short transition. Long enough to read as a dissolve, short enough that
+ *  nobody waits for the words they were already reading. */
+const SETTLE_MS = 220;
+const SETTLE_STEPS = 4;
+
+/**
+ * The settle (C98): provisional out, settled in, at the same place on the page.
+ *
+ * The two layers overlap — the settled words drive the layout and the
+ * provisional ghost is hung over them, absolutely, so nothing reflows while
+ * the fade runs. When the reply differs from what was streamed (a retracted
+ * sentence, a rewritten opening) the dissolve is what carries the reader
+ * across the difference; when it is identical the reader sees only the tone
+ * and the face resolve.
+ *
+ * Reduced motion settles instantly: no ghost, no steps, the provisional style
+ * simply gives way to the settled one.
+ */
+function SettleFade({ provisional, children }: { provisional: string; children: React.ReactNode }) {
+  const reducedMotion = useReducedMotion();
+  const [progress, setProgress] = useState(() => (reducedMotion ? 1 : 0));
+  useEffect(() => {
+    if (reducedMotion) return;
+    let step = 0;
+    const timer = setInterval(() => {
+      step += 1;
+      setProgress(step / SETTLE_STEPS);
+      if (step >= SETTLE_STEPS) clearInterval(timer);
+    }, SETTLE_MS / SETTLE_STEPS);
+    return () => clearInterval(timer);
+  }, [reducedMotion]);
+  if (progress >= 1) return <>{children}</>;
+  return (
+    <View testID="ledger-settle">
+      <View style={{ opacity: progress }}>{children}</View>
+      <View pointerEvents="none" style={[styles.settleGhost, { opacity: 1 - progress }]}>
+        <MonoMarkdown
+          markdown={provisional}
+          testID="ledger-settle-ghost"
+          textStyle={styles.ledgerProvisional}
+        />
+      </View>
+    </View>
+  );
+}
+
 /**
  * One turn, written straight onto the slab in the Editorial direction.
  *
@@ -318,6 +373,7 @@ export function LedgerEntry({
   attachments,
   machineNoise,
   typewriter = false,
+  settleFrom,
   mentionHandles,
   channelIndex,
   onChannelReference,
@@ -325,13 +381,11 @@ export function LedgerEntry({
   const [leadText, remainingText] =
     bodyText && !continued && luminous ? splitLeadSentence(bodyText) : ['', bodyText ?? ''];
   const bodyTextStyle = luminous ? styles.ledgerTextLuminous : styles.ledgerText;
-  return (
-    <View
-      style={[styles.entry, continued ? styles.entryContinued : styles.entryOpens]}
-      testID={`chat-message-${itemId}`}
-    >
-      {byline ? <Byline byline={byline} /> : null}
-      {replyReference}
+  // A settling reply was already typed out, live, in front of the reader. It
+  // cross-fades; it never re-types itself.
+  const typeOut = typewriter && !settleFrom;
+  const body = (
+    <>
       {leadText ? (
         <MonoMarkdown
           markdown={leadText}
@@ -343,7 +397,7 @@ export function LedgerEntry({
         />
       ) : null}
       {remainingText ? (
-        typewriter ? (
+        typeOut ? (
           <TypewriterMarkdown
             markdown={remainingText}
             testID={bodyTestID}
@@ -364,6 +418,20 @@ export function LedgerEntry({
           />
         )
       ) : null}
+    </>
+  );
+  return (
+    <View
+      style={[styles.entry, continued ? styles.entryContinued : styles.entryOpens]}
+      testID={`chat-message-${itemId}`}
+    >
+      {byline ? <Byline byline={byline} /> : null}
+      {replyReference}
+      {settleFrom && (leadText || remainingText) ? (
+        <SettleFade provisional={settleFrom}>{body}</SettleFade>
+      ) : (
+        body
+      )}
       {machineNoise}
       {attachments}
     </View>
@@ -390,7 +458,7 @@ export function LedgerSteer({
   mentionHandles,
   channelIndex,
   onChannelReference,
-}: Omit<LedgerBodyProps, 'marginalia' | 'machineNoise' | 'typewriter'>) {
+}: Omit<LedgerBodyProps, 'marginalia' | 'machineNoise' | 'typewriter' | 'settleFrom'>) {
   // Deliberately NO lead split here: a human message never takes the
   // emphasized lead treatment. Weight, size, and tone are exactly the agent
   // body's; ownership reads from the byline alone.
@@ -655,6 +723,29 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.buzz.proseSize,
     lineHeight: theme.buzz.proseLineHeight,
   },
+  /** Hung over the settled words, so the dissolve never moves the column. */
+  settleGhost: { position: 'absolute', left: 0, right: 0, top: 0 },
+  /**
+   * A turn still being written (C98). Same size, same leading, same column as
+   * the settled body — the ONLY differences are the italic face and the quiet
+   * tone, so a settling reply changes how the words read without moving them.
+   */
+  ledgerProvisional: {
+    // The italic FACE, not a synthetic slant: Space Grotesk ships no italic
+    // here, so `fontStyle: 'italic'` would substitute a platform default (see
+    // `roomUpdateLine`), and the ledger already spells italic as this family
+    // everywhere else (`MonoMarkdown.styles.italic`). A geometric skew is not
+    // an option through Markdown — it would apply to the block Text and again
+    // to every span nested in it. The one cost is Plex's slightly different
+    // advance widths, which can move a wrap point; that difference is exactly
+    // what the settle dissolves across.
+    fontFamily: theme.buzz.proseItalic,
+    width: '100%',
+    minWidth: 0,
+    color: theme.buzz.ledgerQuiet,
+    fontSize: theme.buzz.proseSize,
+    lineHeight: theme.buzz.proseLineHeight,
+  },
   ledgerTextLuminous: {
     fontFamily: theme.buzz.proseRegular,
     width: '100%',
@@ -793,3 +884,13 @@ const styles = StyleSheet.create((theme) => ({
     lineHeight: 15,
   },
 }));
+
+/**
+ * The one provisional tone, shared by the two surfaces that must agree on it:
+ * the live draft lane (`components/buzz/StreamingProse.tsx`) writes in it, and
+ * the settle cross-fade below fades OUT of it. Read through a function so the
+ * theme is resolved at render time, never snapshotted at import.
+ */
+export function provisionalProseStyle(): TextStyle {
+  return styles.ledgerProvisional as TextStyle;
+}

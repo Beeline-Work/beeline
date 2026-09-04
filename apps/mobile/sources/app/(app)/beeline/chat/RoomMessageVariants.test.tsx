@@ -8,6 +8,7 @@ import {
   type ChatDisplayMessage,
 } from '@/buzz/room-view-presentation';
 import { selectComposerAckPresentation } from '@/buzz/room-indicators';
+import { resetProvisionalDrafts } from '@/buzz/draft-settle';
 import { ALIVE_RING_PAD } from '@/buzz/identity-mark';
 import { Platform } from 'react-native';
 
@@ -107,7 +108,10 @@ beforeAll(() => {
   });
 });
 afterAll(() => vi.restoreAllMocks());
-beforeEach(() => ledgerEntryRender.mockClear());
+beforeEach(() => {
+  ledgerEntryRender.mockClear();
+  resetProvisionalDrafts();
+});
 
 function render(element: React.ReactElement): ReactTestRenderer {
   let renderer!: ReactTestRenderer;
@@ -552,6 +556,52 @@ describe('Room message variant components', () => {
       />,
     );
     expect(ledgerEntryRender.mock.lastCall?.[0].byline.mark).toMatchObject({ face: 'owl' });
+  });
+
+  it('hands the streamed words to the reply that settles them, exactly once (C98)', () => {
+    const rowProps = {
+      agent: { pubkey: 'agent', displayName: 'CODEX' },
+      participantsHydrated: true,
+      viewerPubkey: 'viewer',
+      speakerWorking: false,
+      continued: false,
+      participantHandles: [],
+      channelIndex: { rooms: [], corners: [] },
+      deliveryFailed: false,
+      onChannelReference: vi.fn(),
+      onReply: vi.fn(),
+      onCopy: vi.fn(),
+      onRetry: vi.fn(),
+      onDismiss: vi.fn(),
+    } as const;
+    const reply = message({
+      id: 'durable-1',
+      pubkey: 'agent',
+      isAgentAuthor: true,
+      requestId: 'request-9',
+      text: 'The answer is 42.',
+    });
+
+    render(
+      <OrdinaryLedgerMessage
+        {...rowProps}
+        message={message({
+          id: 'live-turn:request-9',
+          pubkey: 'agent',
+          isAgentAuthor: true,
+          isAgentActivity: true,
+          isAgentDraft: true,
+          isAgentLiveTurn: true,
+          agentMessageDraft: 'The answer is 4',
+        })}
+      />,
+    );
+    render(<OrdinaryLedgerMessage {...rowProps} message={reply} />);
+    expect(ledgerEntryRender.mock.calls.at(-1)?.[0].settleFrom).toBe('The answer is 4');
+
+    // Spent: a remount of the same settled row snaps nothing and replays nothing.
+    render(<OrdinaryLedgerMessage {...rowProps} message={reply} />);
+    expect(ledgerEntryRender.mock.calls.at(-1)?.[0].settleFrom).toBeUndefined();
   });
 
   it('uses the current server author label and shared mention renderer over stale roster data', () => {

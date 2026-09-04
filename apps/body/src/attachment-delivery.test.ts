@@ -7,7 +7,9 @@ import {
   attachmentPromptLines,
   deliverAttachments,
   MAX_ATTACHMENT_BYTES,
+  MAX_INLINE_IMAGE_BYTES,
   promptWithImages,
+  withoutImageData,
 } from './attachment-delivery.js';
 
 const roots: string[] = [];
@@ -112,5 +114,78 @@ describe('attachment delivery', () => {
     const lines = attachmentPromptLines([PHOTO]);
     expect(lines[1]).toContain('no local copy in this session');
     expect(lines[1]).toContain(`(source ${PHOTO.url})`);
+  });
+
+  // C87. A photo the harness cannot carry must be NAMED, in the same turn, not
+  // left looking like a picture the agent was shown.
+  it('names an image as unseen when the harness advertises no image capability', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'beeline-attachments-'));
+    roots.push(dir);
+    const delivered = await deliverAttachments(
+      [PHOTO],
+      dir,
+      fakeFetch({ [PHOTO.url]: { bytes: Buffer.from('jpg'), type: 'image/jpeg' } }),
+    );
+
+    const seen = attachmentPromptLines([PHOTO], delivered, true);
+    expect(seen[1]).not.toContain('NOT shown to you');
+    expect(seen).toHaveLength(2);
+
+    const unseen = attachmentPromptLines([PHOTO], delivered, false);
+    expect(unseen[1]).toContain('NOT shown to you as an image: this session cannot take image content');
+    expect(unseen[1]).toContain(`local file ${join(dir, 'photo.jpg')}`);
+    expect(unseen.at(-1)).toBe(
+      'You were not shown the picture itself: this session cannot take image content. If you are asked about it, say that in one plain sentence rather than describing an image you cannot see.',
+    );
+    // The degrade is a prompt fact, not a stall: no image block is ever built.
+    expect(attachmentImageBlocks(delivered, false)).toEqual([]);
+  });
+
+  it('bounds one inline image and keeps the local file, naming the ceiling', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'beeline-attachments-'));
+    roots.push(dir);
+    const big = Buffer.alloc(MAX_INLINE_IMAGE_BYTES + 1, 7);
+    const delivered = await deliverAttachments(
+      [PHOTO],
+      dir,
+      fakeFetch({ [PHOTO.url]: { bytes: big, type: 'image/jpeg' } }),
+    );
+    expect(delivered[0]?.path).toBe(join(dir, 'photo.jpg'));
+    expect(delivered[0]?.image).toBeUndefined();
+    expect(delivered[0]?.inlineSkipped).toContain(`past the ${MAX_INLINE_IMAGE_BYTES}-byte inline image limit`);
+    expect(attachmentImageBlocks(delivered, true)).toEqual([]);
+
+    const lines = attachmentPromptLines([PHOTO], delivered, true);
+    expect(lines[1]).toContain('NOT shown to you as an image');
+    expect(lines[1]).toContain(`local file ${join(dir, 'photo.jpg')}`);
+    expect(lines.at(-1)).toContain('say that in one plain sentence');
+  });
+
+  it('keeps the unseen reason on a transcript re-render, after the bytes are dropped', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'beeline-attachments-'));
+    roots.push(dir);
+    const delivered = await deliverAttachments(
+      [PHOTO],
+      dir,
+      fakeFetch({ [PHOTO.url]: { bytes: Buffer.alloc(MAX_INLINE_IMAGE_BYTES + 1, 7), type: 'image/jpeg' } }),
+    );
+    const cached = withoutImageData(delivered);
+    expect(cached[0]?.image).toBeUndefined();
+    expect(attachmentPromptLines([PHOTO], cached, true)[1]).toContain('NOT shown to you as an image');
+  });
+
+  // The existing text-only path is unchanged: a non-image attachment is never
+  // described as an unshown picture, whatever the harness advertises.
+  it('never marks a non-image attachment as unseen', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'beeline-attachments-'));
+    roots.push(dir);
+    const delivered = await deliverAttachments(
+      [PDF],
+      dir,
+      fakeFetch({ [PDF.url]: { bytes: Buffer.from('%PDF'), type: 'application/pdf' } }),
+    );
+    const lines = attachmentPromptLines([PDF], delivered, false);
+    expect(lines).toHaveLength(2);
+    expect(lines[1]).not.toContain('NOT shown to you');
   });
 });

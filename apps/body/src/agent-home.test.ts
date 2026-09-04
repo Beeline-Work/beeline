@@ -59,12 +59,61 @@ describe('per-room harness state isolation', () => {
     expect(models.providers.openrouter.compat).toBeUndefined();
     expect(existsSync(resolve(cacheDir, 'z-ai_glm-5.3-flash.json'))).toBe(true);
 
+    // C87: the model's live input modalities are pinned on the same override.
+    // Without them a custom-model entry defaults the model to text and pi
+    // strips every image from the prompt before it reaches OpenRouter.
+    expect(models.providers.openrouter.modelOverrides['z-ai/glm-5.3-flash'].input).toEqual([
+      'text',
+      'image',
+    ]);
+
     // No OpenRouter selection: nothing is pinned, globally or otherwise.
     await prepareRoomAgentHome({ root: roomRoot, operatorHome });
     expect(JSON.parse(readFileSync(resolve(roomRoot, 'pi/models.json'), 'utf8'))).toEqual({
       providers: {},
     });
   });
+  it("restores vision on the operator's own custom-model entry without touching it", async () => {
+    const operatorHome = await scratch('beeline-operator-home-');
+    const roomRoot = resolve(await scratch('beeline-room-pin-'), 'agent-home');
+    const cacheDir = resolve(await scratch('beeline-routing-cache-'), 'openrouter-routing');
+    const fetchImpl = vi.fn(async () =>
+      new Response(JSON.stringify(OPENROUTER_GLM_5_3_FLASH_ENDPOINTS), { status: 200 }),
+    ) as unknown as typeof fetch;
+    // The shape every Beeline OpenRouter agent has: the key is fronted by an
+    // egress proxy, so the model is a custom definition, and a custom
+    // definition without `input` is what pi downgrades to text.
+    await mkdir(resolve(operatorHome, '.pi/agent'), { recursive: true });
+    await writeFile(
+      resolve(operatorHome, '.pi/agent/models.json'),
+      JSON.stringify({
+        providers: {
+          openrouter: {
+            baseUrl: 'https://egress.example/v1',
+            apiKey: 'k',
+            api: 'openai-completions',
+            models: [{ id: 'z-ai/glm-5.3-flash', reasoning: true, contextWindow: 98304 }],
+          },
+        },
+      }),
+    );
+
+    await prepareRoomAgentHome({
+      root: roomRoot,
+      operatorHome,
+      openRouterRouting: { model: 'z-ai/glm-5.3-flash', cacheDir, fetchImpl },
+    });
+
+    const models = JSON.parse(readFileSync(resolve(roomRoot, 'pi/models.json'), 'utf8'));
+    expect(models.providers.openrouter.models).toEqual([
+      { id: 'z-ai/glm-5.3-flash', reasoning: true, contextWindow: 98304 },
+    ]);
+    expect(models.providers.openrouter.modelOverrides['z-ai/glm-5.3-flash'].input).toEqual([
+      'text',
+      'image',
+    ]);
+  });
+
   it("carries the operator's Goose configuration in as a copy, and drops it when removed", async () => {
     const operatorHome = await scratch('beeline-operator-home-');
     const roomRoot = resolve(await scratch('beeline-room-goose-'), 'agent-home');

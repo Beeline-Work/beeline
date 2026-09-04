@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
@@ -12,6 +12,7 @@ import {
   openRouterModelId,
   openRouterRoutingInput,
   parseOpenRouterEndpoints,
+  piInputModalities,
   probeOpenRouterProviders,
   resolveOpenRouterRouting,
   selectReliableOpenRouterProviders,
@@ -158,12 +159,15 @@ describe('resolveOpenRouterRouting', () => {
     expect(decision.line).toBe(
       `[body] openrouter routing for ${MODEL}: ${EXPECTED_PROVIDERS.join(', ')} (uptime ≥98%, tools)`,
     );
+    // C87: the listing's own input modalities ride with the pin.
+    expect(decision.input).toEqual(['text', 'image']);
     const cached = JSON.parse(readFileSync(resolve(cacheDir, 'z-ai_glm-5.3-flash.json'), 'utf8'));
     expect(cached).toEqual({
       model: MODEL,
       fetchedAt: 1_000_000,
       providers: EXPECTED_PROVIDERS,
       bar: 98,
+      input: ['text', 'image'],
     });
   });
 
@@ -288,6 +292,41 @@ describe('withOpenRouterModelRouting', () => {
     require_parameters: false,
   };
 
+  // C87. An operator custom-model entry REPLACES pi's catalog record for that
+  // id and pi defaults a definition without `input` to ["text"], which makes
+  // pi rewrite every image block to "(image omitted: model does not support
+  // images)" before the request leaves the process. The override layer, which
+  // is applied last, is where the live modalities have to land.
+  it('pins the model input modalities on the same override as the routing', () => {
+    const composed = withOpenRouterModelRouting(
+      {
+        providers: {
+          openrouter: {
+            baseUrl: 'https://egress.example/v1',
+            models: [{ id: MODEL, reasoning: true, contextWindow: 98304 }],
+          },
+        },
+      },
+      { model: MODEL, routing, input: ['text', 'image'] },
+    ) as any;
+    // The operator's own custom-model definition is untouched...
+    expect(composed.providers.openrouter.models).toEqual([
+      { id: MODEL, reasoning: true, contextWindow: 98304 },
+    ]);
+    // ...and the topmost layer restores what it dropped.
+    expect(composed.providers.openrouter.modelOverrides[MODEL]).toEqual({
+      compat: { openRouterRouting: routing },
+      input: ['text', 'image'],
+    });
+  });
+
+  it('leaves input alone when the decision could not name the modalities', () => {
+    const composed = withOpenRouterModelRouting({}, { model: MODEL, routing }) as any;
+    expect(composed.providers.openrouter.modelOverrides[MODEL]).toEqual({
+      compat: { openRouterRouting: routing },
+    });
+  });
+
   it('pins one model through modelOverrides and leaves every other provider alone', () => {
     expect(
       withOpenRouterModelRouting(
@@ -360,6 +399,91 @@ describe('withOpenRouterModelRouting', () => {
   });
 });
 
+describe('the model input modalities the pin carries (C87)', () => {
+  it('reads them from the same endpoints listing, in pi vocabulary', () => {
+    const parsed = parseOpenRouterEndpoints(OPENROUTER_GLM_5_3_FLASH_ENDPOINTS);
+    expect(parsed.inputModalities).toEqual(['text', 'image', 'video']);
+    // pi's config schema knows only text and image; video is dropped, not passed through.
+    expect(piInputModalities(parsed.inputModalities)).toEqual(['text', 'image']);
+    expect(piInputModalities(['text'])).toEqual(['text']);
+    expect(piInputModalities(undefined)).toBeUndefined();
+  });
+
+  it('leaves input alone when the listing names no modalities', () => {
+    const { data, ...rest } = OPENROUTER_GLM_5_3_FLASH_ENDPOINTS as Record<string, any>;
+    const { architecture: _architecture, ...withoutArchitecture } = data;
+    expect(parseOpenRouterEndpoints({ ...rest, data: withoutArchitecture }).inputModalities).toBeUndefined();
+  });
+
+  it('carries them through cache, stale cache and a one-provider override', async () => {
+    const cacheDir = await scratch();
+    const fetchImpl = fetchStub();
+    let clock = 1_000_000;
+    const now = () => clock;
+    await resolveOpenRouterRouting({ model: MODEL, cacheDir, fetchImpl, now });
+
+    clock += 1;
+    const cached = await resolveOpenRouterRouting({ model: MODEL, cacheDir, fetchImpl, now });
+    expect(cached.source).toBe('cache');
+    expect(cached.input).toEqual(['text', 'image']);
+
+    const down = vi.fn(async () => {
+      throw new Error('ECONNREFUSED');
+    }) as unknown as typeof fetch;
+    clock += OPENROUTER_ROUTING_CACHE_TTL_MS;
+    const stale = await resolveOpenRouterRouting({ model: MODEL, cacheDir, fetchImpl: down, now });
+    expect(stale.source).toBe('stale-cache');
+    expect(stale.input).toEqual(['text', 'image']);
+
+    const pinned = await resolveOpenRouterRouting({
+      model: MODEL,
+      cacheDir,
+      fetchImpl: down,
+      now,
+      providerOverride: 'baseten',
+    });
+    expect(pinned.providers).toEqual(['baseten']);
+    expect(pinned.input).toEqual(['text', 'image']);
+  });
+
+  it('records "the listing named none" so a modality-less model is not re-asked every activation', async () => {
+    const cacheDir = await scratch();
+    const { data, ...rest } = OPENROUTER_GLM_5_3_FLASH_ENDPOINTS as Record<string, any>;
+    const { architecture: _architecture, ...withoutArchitecture } = data;
+    const fetchImpl = vi.fn(
+      async () => new Response(JSON.stringify({ ...rest, data: withoutArchitecture })),
+    ) as unknown as typeof fetch;
+    let clock = 1_000_000;
+    const now = () => clock;
+
+    const live = await resolveOpenRouterRouting({ model: MODEL, cacheDir, fetchImpl, now });
+    expect(live.source).toBe('live');
+    expect(live.input).toBeUndefined();
+    expect(
+      JSON.parse(readFileSync(resolve(cacheDir, 'z-ai_glm-5.3-flash.json'), 'utf8')).input,
+    ).toBeNull();
+
+    clock += 1;
+    const cached = await resolveOpenRouterRouting({ model: MODEL, cacheDir, fetchImpl, now });
+    expect(cached.source).toBe('cache');
+    expect(cached.input).toBeUndefined();
+    expect((fetchImpl as unknown as { mock: { calls: unknown[] } }).mock.calls).toHaveLength(1);
+  });
+
+  it('re-asks rather than trusting a cache entry written before the modalities were recorded', async () => {
+    const cacheDir = await scratch();
+    const fetchImpl = fetchStub();
+    const now = () => 1_000_000;
+    writeFileSync(
+      resolve(cacheDir, 'z-ai_glm-5.3-flash.json'),
+      JSON.stringify({ model: MODEL, fetchedAt: 1_000_000, providers: ['baseten'], bar: 98 }),
+    );
+    const decision = await resolveOpenRouterRouting({ model: MODEL, cacheDir, fetchImpl, now });
+    expect(decision.source).toBe('live');
+    expect(decision.input).toEqual(['text', 'image']);
+  });
+});
+
 describe('openRouterRoutingInput', () => {
   it('names the model and cache dir only for an OpenRouter selection', () => {
     const config = { agentEnv: { OPENROUTER_API_KEY: 'k' }, openRouterRoutingCacheDir: '/cache' };
@@ -378,7 +502,13 @@ async function seedUptimeCache(cacheDir: string, providers: string[]): Promise<v
   await mkdir(cacheDir, { recursive: true });
   await writeFile(
     resolve(cacheDir, 'z-ai_glm-5.3-flash.json'),
-    JSON.stringify({ model: MODEL, fetchedAt: Date.now(), providers, bar: 98 }),
+    JSON.stringify({
+      model: MODEL,
+      fetchedAt: Date.now(),
+      providers,
+      bar: 98,
+      input: ['text', 'image'],
+    }),
   );
 }
 

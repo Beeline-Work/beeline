@@ -78,7 +78,7 @@ const styles = StyleSheet.create((theme) => {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 6,
-      marginTop: 3,
+      marginTop: 2,
       minWidth: 0,
     },
     // The one subtitle voice is the calm `meta` role (DESIGN.md → Type):

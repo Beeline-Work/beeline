@@ -1261,12 +1261,12 @@ const styles = StyleSheet.create((theme) => {
     },
     sectionLabel: { ...Typography.default(), ...hull.type.sectionHead, color: hull.textMuted },
     sectionAdd: {
-      minWidth: 44,
-      minHeight: 44,
+      width: 44,
+      height: 44,
       alignItems: 'center',
       justifyContent: 'center',
     },
-    sectionAddGlyph: { ...Typography.default(), ...hull.type.sectionHead, color: hull.accent },
+    sectionAddGlyph: { ...Typography.default(), ...hull.type.hero, color: hull.accent },
     row: {
       minHeight: hull.layout.row,
       flexDirection: 'row',

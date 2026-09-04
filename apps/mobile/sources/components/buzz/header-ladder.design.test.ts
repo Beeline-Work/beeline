@@ -71,6 +71,18 @@ describe('Chat header — one language for Room and Corner', () => {
     expect(caps![0]).toMatch(/\.\.\.theme\.buzz\.type\.meta/);
   });
 
+  it('keeps the Room’s members line bare, not parted into its own meta-row rung (C85)', () => {
+    // #884 wrapped the Room's members line in a HeaderMetaRow to part it from
+    // the repo chip by a rung of the ladder; the captain wanted the old,
+    // tighter spacing back. The corner's own HeaderMetaRow (its status row)
+    // is unrelated and stays.
+    const roomBranch = chatSource.match(
+      /\) : \(\n\s*<HeaderMetaCaps testID="room-header-meta">[\s\S]*?<\/HeaderMetaCaps>\n\s*\)\}/,
+    );
+    expect(roomBranch, 'Room members line should render bare, unwrapped').toBeTruthy();
+    expect(chatSource).not.toContain('paddingVertical: 4');
+  });
+
   it('leads the Corner with the agent mark through the same slot', () => {
     const branch = chatSource.indexOf('{isCorner && cornerAgentPubkey && (');
     expect(branch, 'missing the Corner mark branch').toBeGreaterThanOrEqual(0);
@@ -132,5 +144,37 @@ describe('Chat header — one language for Room and Corner', () => {
     const slot = ladderSource.match(/identitySlot:\s*\{[^}]*\}/);
     expect(slot, 'missing identitySlot style').toBeTruthy();
     expect(slot![0]).not.toMatch(/borderWidth|borderRadius|backgroundColor/);
+  });
+
+  it('closes the corner’s ladder rung to match the Room’s (C85)', () => {
+    // The shared HeaderMetaRow is now the corner's alone (the Room's members
+    // line went back to a bare HeaderMetaCaps); its rung above the meta row
+    // matches the Room's own rung (repoChip's marginTop: 2), not the wider
+    // gap it carried before.
+    const metaRow = ladderSource.match(/metaRow:\s*\{[\s\S]*?\n\s*\},/);
+    expect(metaRow, 'missing metaRow style').toBeTruthy();
+    expect(metaRow![0]).toContain('marginTop: 2');
+  });
+
+  it('carries neither the presence light nor the state glyph in the corner header (C85)', () => {
+    // Captain correction: inside a corner the working state is already
+    // carried by the thinking line above the composer and the live bar, and
+    // the Room list carries corner state for when you're outside it — a
+    // silent glyph in the header is a third copy of the same fact. Only the
+    // presence square (#873's already-retired signal: a helper can be up
+    // while the agent answers nothing) and the CornerGlyph state circle are
+    // gone; CornerGlyph/StateCircle themselves still serve the Room list,
+    // corner cards, and the live bar.
+    expect(chatSource).not.toContain('corner-header-presence');
+    expect(chatSource).not.toContain('AgentPresenceLight');
+    expect(chatSource).not.toContain('cornerAgentOnline');
+    expect(chatSource).not.toContain('corner-view-status');
+    expect(chatSource).not.toContain('displayedCornerStatus');
+    expect(chatSource).not.toContain('cornerHeaderState');
+    // The meta row still reads: agent name, then member count.
+    const branch = chatSource.match(/isCorner \? \(\s*<HeaderMetaRow>[\s\S]*?<\/HeaderMetaRow>/);
+    expect(branch, 'missing corner meta row branch').toBeTruthy();
+    expect(branch![0]).toContain('cornerHeaderAgent');
+    expect(branch![0]).toContain('formatRoomParticipantTotal(roomParticipantTotal)');
   });
 });

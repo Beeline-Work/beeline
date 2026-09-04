@@ -99,7 +99,6 @@ import {
 import {
   currentCornerStatus,
   roomListCorners,
-  resolveCornerLifecycleStatus,
   type CornerStatus,
   type CornerSummary,
 } from '@/buzz/corners';
@@ -220,7 +219,7 @@ import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { RoomRosterSheet, type RoomRosterParticipant } from '@/components/buzz/RoomRosterSheet';
 import { RepoPicker } from '@/components/buzz/RepoPicker';
 import { SlashVerbPicker } from '@/components/buzz/SlashVerbPicker';
-import { CornerGlyph, MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
+import { MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
 
 type RoomMemberOption = RoomRosterParticipant;
 
@@ -263,37 +262,6 @@ function durableFactLine(message: ChatDisplayMessage): string {
   return `${glyph} ${label}${step?.reason ? ` · ${step.reason}` : ''}`;
 }
 
-/**
- * Memoized: rendered once per agent transcript row inside FlatList's
- * renderItem, which is recreated on every presence tick — without this,
- * every row's presence dot re-renders even when only one other agent's
- * status actually changed. `online` is the only prop, so a shallow compare
- * bails correctly whenever this row's own agent status is unchanged.
- */
-const AgentPresenceLight = React.memo(function AgentPresenceLight({
-  decorative = false,
-  online,
-  testID,
-}: {
-  decorative?: boolean;
-  online: boolean;
-  testID?: string;
-}) {
-  return (
-    <View
-      accessibilityElementsHidden={decorative}
-      accessibilityLabel={decorative ? undefined : online ? 'Agent online' : 'Agent offline'}
-      accessibilityRole={decorative ? undefined : 'image'}
-      accessible={!decorative}
-      importantForAccessibility={decorative ? 'no' : 'auto'}
-      style={[
-        styles.agentPresenceLight,
-        online ? styles.agentPresenceOnline : styles.agentPresenceOffline,
-      ]}
-      testID={testID}
-    />
-  );
-});
 export default function BuzzChat() {
   const { theme } = useUnistyles();
   // `parent`/`title` are hints, not authority: every surface that opens a
@@ -1347,14 +1315,6 @@ export default function BuzzChat() {
         participantsHydrated,
       )
     : undefined;
-  const cornerAgentOnline = Boolean(
-    cornerAgentPubkey &&
-    isAgentPresenceOnlineWithReconnectGrace(
-      agentPresences[cornerAgentPubkey],
-      presenceNow,
-      presenceReconnectGrace[cornerAgentPubkey],
-    ),
-  );
   const visibleMessages = useMemo(
     () => projectActiveTurnStream(messages, activeAgentTurn, isArchived),
     [activeAgentTurn, isArchived, messages],
@@ -1489,15 +1449,6 @@ export default function BuzzChat() {
             .find((message) => message.corner?.subchannelId === pinnedCorner.cornerId)
         : undefined,
     [messages, pinnedCorner],
-  );
-  // displayedCornerStatus is a one-time snapshot fetched at mount; isArchived
-  // is kept live by several independent update paths (live archive signal,
-  // revalidated cache, fresh isChannelArchived check). A confirmed archive
-  // that resolves after mount must never leave this badge showing a stale
-  // non-terminal status.
-  const displayedCornerStatus = useMemo(
-    () => resolveCornerLifecycleStatus(canonicalCornerStatus, isArchived),
-    [canonicalCornerStatus, isArchived],
   );
   /**
    * The pinned corner line's whole state, resolved in one place so the words it
@@ -3099,29 +3050,16 @@ export default function BuzzChat() {
                 <Text numberOfLines={1} style={styles.cornerHeaderAgent}>
                   {(cornerAgentDisplay?.name ?? 'AGENT').toUpperCase()}
                 </Text>
-                {cornerAgentPubkey && (
-                  <AgentPresenceLight online={cornerAgentOnline} testID="corner-header-presence" />
-                )}
-                <CornerGlyph
-                  status={displayedCornerStatus}
-                  style={styles.cornerHeaderState}
-                  testID="corner-view-status"
-                />
                 <HeaderMetaCaps>
                   {participantsHydrated ? formatRoomParticipantTotal(roomParticipantTotal) : ''}
                 </HeaderMetaCaps>
               </HeaderMetaRow>
             ) : (
-              // Through the same shared row the corner uses, so the repo line
-              // and the members line are parted by the one gap in the ladder
-              // instead of sitting baseline-to-baseline.
-              <HeaderMetaRow>
-                <HeaderMetaCaps testID="room-header-meta">
-                  {participantsHydrated
-                    ? `${formatRoomParticipantTotal(roomParticipantTotal)}  ›`
-                    : 'LOADING MEMBERS'}
-                </HeaderMetaCaps>
-              </HeaderMetaRow>
+              <HeaderMetaCaps testID="room-header-meta">
+                {participantsHydrated
+                  ? `${formatRoomParticipantTotal(roomParticipantTotal)}  ›`
+                  : 'LOADING MEMBERS'}
+              </HeaderMetaCaps>
             )}
           </TouchableOpacity>
           {/* The trailing slot holds ONE control. There is no `+` beside it:
@@ -4066,20 +4004,10 @@ const styles = StyleSheet.create((theme) => {
       borderRadius: groknight.radius,
     },
     cornerChannelNameSkeleton: { width: 108 },
-    // A 13pt line is a ~19pt target on its own. The chip keeps its place in
-    // the ladder and buys its height back with padding plus hitSlop; it stays
-    // under 44 by design, because the same destination sits on the ••• at a
-    // full target and a 44pt box here would push the header into the
-    // transcript.
-    repoChip: {
-      alignSelf: 'flex-start',
-      marginTop: 2,
-      paddingVertical: 4,
-      maxWidth: '100%',
-    },
+    repoChip: { alignSelf: 'flex-start', marginTop: 2, maxWidth: '100%' },
     // The one thing on the corner's meta row with unbounded length, so it is
-    // the one that gives: an unshrinkable name pushed the presence light, the
-    // status glyph and the member count off the right edge.
+    // the one that gives: an unshrinkable name pushed the member count off
+    // the right edge.
     cornerHeaderAgent: {
       ...Typography.mono('semiBold'),
       flexShrink: 1,
@@ -4089,7 +4017,6 @@ const styles = StyleSheet.create((theme) => {
       lineHeight: 14,
       letterSpacing: 0.7,
     },
-    cornerHeaderState: { width: 14, height: 14, marginHorizontal: 4 },
     // The trailing slot holds exactly one thing — ••• on a live surface, the
     // archived badge on a dead one — and both hang on the same axis: 12 of
     // clear space off the title's own touch area (Material asks 8 between
@@ -4406,15 +4333,6 @@ const styles = StyleSheet.create((theme) => {
       marginBottom: 20,
     },
 
-    agentPresenceLight: {
-      width: 9,
-      height: 9,
-      borderRadius: groknight.radius,
-      borderWidth: 1,
-      borderColor: groknight.textSecondary,
-    },
-    agentPresenceOnline: { backgroundColor: groknight.textSecondary },
-    agentPresenceOffline: { backgroundColor: 'transparent' },
     // ── Archived notice ─────────────────────────────────────────────
     archivedBubble: {
       paddingVertical: 8,

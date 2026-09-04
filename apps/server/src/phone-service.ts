@@ -1159,6 +1159,9 @@ export class PhoneService {
           input as Input<'addWorkspaceMember'>,
           viewerId,
         )) as Output<Name>;
+      case 'removeWorkspaceMember':
+        await this.removeWorkspaceMember(input as Input<'removeWorkspaceMember'>, viewerId);
+        return undefined as Output<Name>;
       case 'createRoom':
         return (await this.createRoom(input as Input<'createRoom'>, viewerId)) as Output<Name>;
       case 'updateRoom':
@@ -1893,6 +1896,62 @@ export class PhoneService {
           workspaceJoined: true,
         });
       return { joined: inserted.rowCount > 0 };
+    });
+  }
+  /**
+   * A manager removes a person from the Workspace: the same authority ladder
+   * as addWorkspaceMember, then every live Room membership goes with the
+   * Workspace one and each of those Rooms carries the removal line. Agents
+   * are not people — their removal is the removeAgent host teardown.
+   */
+  private async removeWorkspaceMember(
+    input: Input<'removeWorkspaceMember'>,
+    viewerId: string,
+  ) {
+    await this.requireWorkspaceManager(input.workspaceId, viewerId);
+    if (input.memberId === viewerId) throw new Error('workspace managers cannot remove themselves');
+    const remover = await this.requireIdentity(viewerId);
+    const removed = await this.requireIdentity(input.memberId);
+    if (removed.kind !== 'human') throw new Error('invalid member: agents are removed through removeAgent');
+    await this.database.transaction(async (database) => {
+      await database.query(`SELECT 1 FROM workspaces WHERE id=$1 FOR UPDATE`, [input.workspaceId]);
+      const roles = await database.query<{
+        identity_id: string;
+        role: 'owner' | 'admin' | 'member';
+      }>(
+        `SELECT identity_id,role FROM memberships
+         WHERE workspace_id=$1 AND room_id IS NULL AND identity_id IN ($2,$3) AND removed_at IS NULL
+         FOR UPDATE`,
+        [input.workspaceId, viewerId, input.memberId],
+      );
+      const actor = roles.rows.find((row) => row.identity_id === viewerId);
+      const target = roles.rows.find((row) => row.identity_id === input.memberId);
+      if (!actor || (actor.role !== 'owner' && actor.role !== 'admin')) {
+        throw new Error('workspace manager required');
+      }
+      if (!target) throw new Error('workspace membership required');
+      if (target.role === 'owner' || (actor.role === 'admin' && target.role === 'admin')) {
+        throw new Error('workspace manager cannot remove a member with equal or greater authority');
+      }
+      const rooms = await database.query<{ room_id: string }>(
+        `SELECT m.room_id FROM memberships m JOIN rooms r ON r.id=m.room_id
+         WHERE m.workspace_id=$1 AND m.identity_id=$2 AND m.removed_at IS NULL
+           AND r.archived_at IS NULL`,
+        [input.workspaceId, input.memberId],
+      );
+      await database.query(
+        `UPDATE memberships SET removed_at=now() WHERE workspace_id=$1 AND identity_id=$2`,
+        [input.workspaceId, input.memberId],
+      );
+      for (const room of rooms.rows)
+        await systemLine(database, {
+          roomId: room.room_id,
+          subject: identitySubject({ id: remover.pubkey, kind: remover.kind, name: remover.name }),
+          verb: 'removed',
+          object: { text: removed.name, id: removed.pubkey },
+          cardType: 'member-removed',
+          card: { identityId: input.memberId },
+        });
     });
   }
   private async resolveDirectMessage(input: Input<'resolveDirectMessage'>, viewerId: string) {
@@ -2683,6 +2742,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'updateWorkspace',
   'leaveWorkspace',
   'addWorkspaceMember',
+  'removeWorkspaceMember',
   'createRoom',
   'updateRoom',
   'deleteRoom',

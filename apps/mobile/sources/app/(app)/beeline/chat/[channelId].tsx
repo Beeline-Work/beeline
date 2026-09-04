@@ -89,7 +89,6 @@ import {
   replaceActiveMention,
   resolveComposerMentions,
   sectionRoomParticipants,
-  sectionRoomRoster,
   selectedMentionAgentPubkey,
 } from '@/buzz/room-participants';
 import {
@@ -106,7 +105,7 @@ import {
 } from '@/buzz/corners';
 import { personIdentityLabel, shortMemberNpub } from '@/buzz/member-display';
 import { createCommunityInviteUrl, resolveCommunityInvitePublicOrigin } from '@/buzz/community-invite';
-import { RoomMemberPickerActions } from '@/components/buzz/RoomMemberPickerActions';
+import { MemberPickerSheet, type MemberPickerCandidate } from '@/components/buzz/MemberPickerSheet';
 import { useVerifiedNip05Status } from '@/buzz/nip05-verification';
 import {
   canRenameRoom,
@@ -399,7 +398,11 @@ export default function BuzzChat() {
   // What this corner inherited from the Room it was opened out of: the task
   // the daemon recorded on its create event, and the bounded window of Room
   // conversation that preceded it. Corner-only; a Room never reads it.
-  const [addingMemberPubkey, setAddingMemberPubkey] = useState<string | null>(null);
+  const [addingMembers, setAddingMembers] = useState(false);
+  /** The Workspace roster behind the member picker; null while its read is in flight. */
+  const [workspaceRoster, setWorkspaceRoster] = useState<Awaited<
+    ReturnType<NonNullable<typeof roomClient>['workspace']>
+  > | null>(null);
   // The repo this Room owns, or `null` for a chat-only Room. Corners never
   // read this — a corner has no room-repository binding of its own; the
   // daemon resolves its working repo from its parent Room instead.
@@ -892,17 +895,56 @@ export default function BuzzChat() {
       }),
     [agentByPubkey, memberOptions, selectedMembers, userPubkey],
   );
-  const participantPickerOptions = useMemo(
-    () =>
-      participantPickerKind
-        ? memberOptions.filter((option) => option.kind === participantPickerKind)
-        : memberOptions,
-    [memberOptions, participantPickerKind],
-  );
-  const participantPickerSections = useMemo(
-    () => sectionRoomRoster(participantPickerOptions, roomMemberPubkeys),
-    [participantPickerOptions, roomMemberPubkeys],
-  );
+  // The picker's candidates are the WORKSPACE roster minus this Room's
+  // members. The old picker filtered this Room's own member list, so its
+  // "add" section was always empty and the only visible path led to the
+  // pairing command (captain report C74). Read once per open; the sheet
+  // shows a loader until it lands and any failure inline.
+  useEffect(() => {
+    if (!participantPickerVisible || !roomClient || !activeCommunityId) return;
+    let cancelled = false;
+    setWorkspaceRoster(null);
+    roomClient
+      .workspace(activeCommunityId)
+      .then((view) => {
+        if (!cancelled) setWorkspaceRoster(view);
+      })
+      .catch((err) => {
+        if (!cancelled) setMembershipError(`Could not read the Workspace roster: ${String(err)}`);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeCommunityId, participantPickerVisible, roomClient]);
+  const participantPickerCandidates = useMemo<MemberPickerCandidate[] | null>(() => {
+    if (!workspaceRoster) return null;
+    return [...workspaceRoster.members, ...workspaceRoster.agents]
+      .filter((member) => !roomMemberPubkeys.has(member.identity.pubkey))
+      .map((member) => {
+        const identity = member.identity;
+        if (identity.kind === 'agent') {
+          const display = resolveAgentDisplayIdentity(
+            identity.pubkey,
+            memberAgent(member, workspaceRoster.workspace.id),
+          );
+          return {
+            pubkey: identity.pubkey,
+            name: display.name,
+            handle: display.handle,
+            kind: 'agent' as const,
+            ...(display.avatarUrl ? { avatarUrl: display.avatarUrl } : {}),
+          };
+        }
+        return {
+          pubkey: identity.pubkey,
+          name: identity.name,
+          handle: identity.handle ?? shortMemberNpub(identity.pubkey),
+          kind: 'person' as const,
+          ...(identity.face ? { face: identity.face } : {}),
+          ...(identity.avatar ? { avatarUrl: identity.avatar } : {}),
+        };
+      });
+  }, [roomMemberPubkeys, workspaceRoster]);
   const visibleRosterSections = useMemo(
     () => sectionRoomParticipants(roomParticipants),
     [roomParticipants],
@@ -2046,35 +2088,46 @@ export default function BuzzChat() {
     [decodedId, targetBranchActionId, transport, viewerChannelRole, viewerIsAgent],
   );
 
-  const handleAddRoomMember = useCallback(
-    async (option: RoomMemberOption) => {
-      if (
-        !transport ||
-        !activeCommunityId ||
-        roomMemberPubkeys.has(option.pubkey) ||
-        addingMemberPubkey
-      )
-        return;
-      setAddingMemberPubkey(option.pubkey);
+  const handleAddRoomMembers = useCallback(
+    async (pubkeys: string[]) => {
+      if (!transport || !activeCommunityId || addingMembers) return;
+      const chosen = (participantPickerCandidates ?? []).filter(
+        (candidate) =>
+          pubkeys.includes(candidate.pubkey) && !roomMemberPubkeys.has(candidate.pubkey),
+      );
+      if (chosen.length === 0) return;
+      setAddingMembers(true);
       setMembershipError(null);
+      let current = chosen[0]!;
       try {
-        if (option.kind === 'agent') {
-          await transport.inviteAgentToChannel(decodedId, option.pubkey, activeCommunityId);
-        } else {
-          await transport.inviteWorkspaceMemberToChannel(
-            decodedId,
-            option.pubkey,
-            activeCommunityId,
-          );
+        for (const candidate of chosen) {
+          current = candidate;
+          if (candidate.kind === 'agent') {
+            await transport.inviteAgentToChannel(decodedId, candidate.pubkey, activeCommunityId);
+          } else {
+            await transport.inviteWorkspaceMemberToChannel(
+              decodedId,
+              candidate.pubkey,
+              activeCommunityId,
+            );
+          }
         }
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        setParticipantPickerVisible(false);
       } catch (err) {
-        setMembershipError(`Could not add @${option.name}: ${String(err)}`);
+        setMembershipError(`Could not add @${current.name}: ${String(err)}`);
       } finally {
-        setAddingMemberPubkey(null);
+        setAddingMembers(false);
       }
     },
-    [activeCommunityId, addingMemberPubkey, decodedId, roomMemberPubkeys, transport],
+    [
+      activeCommunityId,
+      addingMembers,
+      decodedId,
+      participantPickerCandidates,
+      roomMemberPubkeys,
+      transport,
+    ],
   );
 
   const handleRemoveRoomMember = useCallback(
@@ -2134,7 +2187,9 @@ export default function BuzzChat() {
     }
   }, [activeCommunityId, memberInviteBusy, setSessionTransport, transport]);
 
-  const handleAddAgent = useCallback(() => {
+  // A NEW agent: the pairing command lives on the Members page. An agent
+  // already in the Workspace is a checkbox row in the picker itself.
+  const handleConnectAgent = useCallback(() => {
     setParticipantPickerVisible(false);
     router.push({
       pathname: '/beeline/members',
@@ -2501,27 +2556,6 @@ export default function BuzzChat() {
     if (plan.kind === 'manage') void handleManageGitHubInstallation(plan.installation);
     else void handleAddGitHubAccount();
   }, [handleAddGitHubAccount, handleManageGitHubInstallation, roomRepoAccessIssue, transport]);
-
-  const handleStartDirectMessage = useCallback(
-    async (option: RoomMemberOption) => {
-      if (!transport || !activeCommunityId || option.pubkey === userPubkey) return;
-      setAddingMemberPubkey(option.pubkey);
-      setMembershipError(null);
-      try {
-        const { channelId: dmChannelId } = await transport.resolveDirectMessage(
-          activeCommunityId,
-          option.pubkey,
-        );
-        setParticipantPickerVisible(false);
-        router.push(`/beeline/chat/${encodeURIComponent(dmChannelId)}` as Href);
-      } catch (err) {
-        setMembershipError(`Could not message @${option.name}: ${String(err)}`);
-      } finally {
-        setAddingMemberPubkey(null);
-      }
-    },
-    [activeCommunityId, transport, userPubkey],
-  );
 
   /**
    * Leave this transcript. A corner returns to its explicit opening surface
@@ -3884,144 +3918,18 @@ export default function BuzzChat() {
         </HullFloatingSurface>
       </HullModal>
 
-      <HullModal
-        accessibilityLabel="Close Room member picker"
-        contentStyle={styles.memberModalContent}
-        onRequestClose={() => setParticipantPickerVisible(false)}
-        placement="center"
+      <MemberPickerSheet
+        busy={addingMembers || memberInviteBusy}
+        canManage={roomSurface?.viewer.permissions.manage ?? false}
+        candidates={participantPickerCandidates}
+        error={membershipError}
+        kind={participantPickerKind}
+        onAdd={(pubkeys) => void handleAddRoomMembers(pubkeys)}
+        onClose={() => setParticipantPickerVisible(false)}
+        onConnectAgent={handleConnectAgent}
+        onInvitePerson={() => void handleInvitePerson()}
         visible={participantPickerVisible}
-      >
-        <HullFloatingSurface style={styles.memberModal} testID="room-member-picker-surface">
-          <View style={styles.memberModalHeading}>
-            <View style={styles.memberModalHeadingCopy}>
-              <Text style={styles.memberModalTitle}>
-                {participantPickerKind === 'agent'
-                  ? 'Add an Agent'
-                  : participantPickerKind === 'person'
-                    ? 'Invite a person'
-                    : 'Add people or Agents'}
-              </Text>
-            </View>
-            <TouchableOpacity
-              accessibilityLabel="Close Room member picker"
-              onPress={() => setParticipantPickerVisible(false)}
-              style={styles.memberModalClose}
-            >
-              <Text style={styles.memberModalCloseText}>×</Text>
-            </TouchableOpacity>
-          </View>
-
-          <ScrollView
-            contentContainerStyle={styles.memberPickerContent}
-            showsVerticalScrollIndicator={false}
-          >
-            {[
-              { key: 'in-room', label: 'IN ROOM', options: participantPickerSections.inRoom },
-              {
-                key: 'addable',
-                label: 'ADD',
-                options: participantPickerSections.addable,
-              },
-            ].map((section, sectionIndex) =>
-              section.options.length > 0 ? (
-                <View key={section.key}>
-                  <Text
-                    style={[
-                      styles.memberSectionLabel,
-                      sectionIndex > 0 && styles.memberSectionLabelSpaced,
-                    ]}
-                  >
-                    {section.label}
-                  </Text>
-                  {section.options.map((option) => {
-                    const inRoom = section.key === 'in-room';
-                    const adding = addingMemberPubkey === option.pubkey;
-                    const isSelf = option.pubkey === userPubkey;
-                    const display = option.agent
-                      ? resolveAgentDisplayIdentity(option.pubkey, option.agent)
-                      : undefined;
-                    return (
-                      <View
-                        key={option.pubkey}
-                        style={[styles.memberPickerRow, inRoom && styles.memberPickerRowPlaced]}
-                        testID={`add-room-member-${option.pubkey}`}
-                      >
-                        <View style={styles.memberPickerIdentity}>
-                          {display ? (
-                            <IdentityMark
-                              kind="agent"
-                              seed={display.avatarSeed ?? option.pubkey}
-                              avatarUrl={display.avatarUrl}
-                              name={display.name}
-                              size={28}
-                            />
-                          ) : (
-                            <IdentityMark
-                              kind="human"
-                              seed={option.pubkey}
-                              avatarUrl={personProfileByPubkey.get(option.pubkey)?.avatar}
-                              face={personProfileByPubkey.get(option.pubkey)?.face}
-                              name={option.name}
-                              size={28}
-                            />
-                          )}
-                          <View style={styles.memberPickerCopy}>
-                            <Text numberOfLines={1} style={styles.memberPickerName}>
-                              @{option.name}
-                            </Text>
-                            <Text style={styles.memberPickerNpub}>
-                              {option.kind === 'agent' ? 'AGENT' : 'PERSON'}
-                            </Text>
-                          </View>
-                        </View>
-                        <View style={styles.memberPickerActions}>
-                          {!isSelf && (
-                            <TouchableOpacity
-                              accessibilityLabel={`Message ${option.name}`}
-                              disabled={Boolean(addingMemberPubkey)}
-                              onPress={() => void handleStartDirectMessage(option)}
-                              style={styles.memberPickerActionButton}
-                              testID={`message-room-member-${option.pubkey}`}
-                            >
-                              <Text style={styles.memberPickerAction}>MESSAGE</Text>
-                            </TouchableOpacity>
-                          )}
-                          {!inRoom && (
-                            <TouchableOpacity
-                              accessibilityLabel={`Add ${option.name}`}
-                              disabled={Boolean(addingMemberPubkey)}
-                              onPress={() => void handleAddRoomMember(option)}
-                              style={styles.memberPickerActionButton}
-                            >
-                              <Text style={styles.memberPickerAction}>
-                                {adding ? 'ADDING…' : '＋ ADD'}
-                              </Text>
-                            </TouchableOpacity>
-                          )}
-                          {isSelf && <Text style={styles.memberPickerAction}>YOU</Text>}
-                        </View>
-                      </View>
-                    );
-                  })}
-                </View>
-              ) : null,
-            )}
-            <RoomMemberPickerActions
-              addableCount={participantPickerSections.addable.length}
-              busy={memberInviteBusy}
-              canManage={roomSurface?.viewer.permissions.manage ?? false}
-              onAddAgent={handleAddAgent}
-              onInvitePerson={() => void handleInvitePerson()}
-            />
-          </ScrollView>
-
-          {membershipError && (
-            <View accessibilityRole="alert" style={styles.membershipError}>
-              <Text style={styles.membershipErrorText}>! {membershipError}</Text>
-            </View>
-          )}
-        </HullFloatingSurface>
-      </HullModal>
+      />
     </BuzzCommunityShell>
   );
 }
@@ -4311,94 +4219,6 @@ const styles = StyleSheet.create((theme) => {
       lineHeight: 22,
     },
     roomLifecycleDanger: { color: groknight.dialogDanger },
-    // ── Room membership picker ─────────────────────────────────────
-    // The percent cap lives on the modal wrapper, whose parent (the flex:1
-    // modal root) has a definite height. On the surface itself it resolved
-    // against the wrapper's own auto height and clipped the member list.
-    memberModalContent: { maxHeight: '78%' },
-    memberModal: {
-      width: '100%',
-      maxWidth: 460,
-      maxHeight: '100%',
-      padding: 16,
-      borderWidth: 1,
-      borderColor: groknight.borderStrong,
-      backgroundColor: groknight.bgRaised,
-    },
-    memberModalHeading: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
-    memberModalHeadingCopy: { flex: 1, minWidth: 0 },
-    memberModalTitle: {
-      ...Typography.default('semiBold'),
-      color: groknight.textPrimary,
-      fontSize: 17,
-      lineHeight: 22,
-    },
-    memberModalClose: {
-      width: 44,
-      height: 44,
-      marginTop: -10,
-      marginRight: -10,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    memberModalCloseText: { ...Typography.default(), color: groknight.steel, fontSize: 24 },
-    memberPickerContent: { paddingTop: 18, paddingBottom: 4 },
-    memberSectionLabel: {
-      ...Typography.mono('semiBold'),
-      marginBottom: 7,
-      color: groknight.textMuted,
-      fontSize: 9,
-      lineHeight: 12,
-      letterSpacing: 0.7,
-    },
-    memberSectionLabelSpaced: { marginTop: 18 },
-    memberPickerRow: {
-      minHeight: 58,
-      paddingHorizontal: 10,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-      borderTopWidth: 1,
-      borderColor: groknight.border,
-      backgroundColor: groknight.bgBase,
-    },
-    memberPickerRowPlaced: { opacity: 0.58 },
-    memberPickerIdentity: {
-      flex: 1,
-      minWidth: 0,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-    },
-    memberPickerCopy: { flex: 1, minWidth: 0 },
-    memberPickerName: {
-      ...Typography.default('semiBold'),
-      color: groknight.textSecondary,
-      fontSize: 12,
-    },
-    memberPickerNpub: {
-      ...Typography.mono(),
-      marginTop: 2,
-      color: groknight.textMuted,
-      fontSize: 9,
-    },
-    memberPickerActions: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 4,
-    },
-    memberPickerActionButton: {
-      minHeight: 44,
-      paddingHorizontal: 8,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    memberPickerAction: {
-      ...Typography.mono('semiBold'),
-      color: groknight.chrome,
-      fontSize: 9,
-      letterSpacing: 0.3,
-    },
     membershipError: {
       marginTop: 10,
       padding: 10,

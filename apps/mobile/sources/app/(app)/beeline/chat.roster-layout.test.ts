@@ -16,12 +16,28 @@ describe('Room participant roster layout', () => {
     expect(rosterEnd).toBeGreaterThan(rosterStart);
     expect(rosterModal).toContain("maxHeight: '82%'");
     expect(source).toContain(
-      "rosterModal: {\n    width: '100%',\n    maxWidth: 460,\n    maxHeight: '100%'",
+      "rosterModal: {\n      width: '100%',\n      maxWidth: 460,\n      maxHeight: '100%'",
     );
   });
 
-  it('announces agent status once through the roster row, not again through its light', () => {
-    expect(source).toContain('<RosterPresenceLight online={agentOnline} />');
-    expect(source).toContain('importantForAccessibility="no"');
+  it('marks agent state with the tile ring alone: no status square, no kind word (C76)', () => {
+    // The ring reads the working record (C77); presence is the lowercase word
+    // ending the meta line and the row's accessibility label.
+    expect(source).toContain('alive={agentWorking}');
+    expect(source).not.toContain('alive={agentOnline}');
+    expect(source).toContain("' · online'");
+    expect(source).toContain("' · offline'");
+    expect(source).not.toContain('RosterPresenceLight');
+    expect(source).not.toMatch(/'AGENT'|'PERSON'/);
+    // Status is still announced once, through the row's accessibility label.
+    expect(source).toContain("', online'");
+  });
+
+  it('reads in the Members page vocabulary: one word over counted section heads, roles from the type scale', () => {
+    expect(source).toContain('{MEMBERS_LABEL}');
+    expect(source).toContain('{section.label} {section.options.length}');
+    expect(source).toContain('rosterName: { ...Typography.default(), ...hull.type.body');
+    expect(source).toContain('rosterMeta: { ...Typography.default(), ...hull.type.meta');
+    expect(source).not.toMatch(/fontSize:\s*\d/);
   });
 });

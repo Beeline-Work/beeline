@@ -367,6 +367,60 @@ describe('monolith integration', () => {
     expect((await operation('leaveWorkspace', { workspaceId })).status).toBe(403);
   });
 
+  it('lets a Workspace manager remove a person from the Workspace and every live Room', async () => {
+    const aliceToken = await phoneToken('alice');
+    const aliceId = createHash('sha256').update('github:alice').digest('hex');
+    const bobId = createHash('sha256').update('github:bob').digest('hex');
+    await phoneToken('bob');
+    const workspaceId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+    await operation('createWorkspace', { workspaceId, name: 'Removals' });
+    await operation('addWorkspaceMember', { workspaceId, memberId: aliceId, role: 'admin' });
+    await operation('addWorkspaceMember', { workspaceId, memberId: bobId, role: 'admin' });
+    const room = (await (
+      await operation('createRoom', { workspaceId, name: 'Shared' })
+    ).json()) as { id: string };
+    await operation('addRoomMember', { roomId: room.id, memberId: bobId });
+    await operation('addRoomMember', { roomId: room.id, memberId: aliceId });
+
+    // The authority ladder is addWorkspaceMember's: nobody removes themselves,
+    // an admin never removes an equal, an agent is not a person.
+    expect(
+      (await operation('removeWorkspaceMember', { workspaceId, memberId: HUMAN })).status,
+    ).toBe(403);
+    expect(
+      (
+        await operation('removeWorkspaceMember', { workspaceId, memberId: bobId }, aliceToken)
+      ).status,
+    ).toBe(403);
+    expect(
+      (await operation('removeWorkspaceMember', { workspaceId, memberId: AGENT })).status,
+    ).toBe(400);
+
+    expect(
+      (await operation('removeWorkspaceMember', { workspaceId, memberId: bobId })).status,
+    ).toBe(204);
+    const workspace = (await (await request(`/v1/phone/workspaces/${workspaceId}`)).json()) as {
+      members: Array<{ identity: { pubkey: string } }>;
+    };
+    expect(workspace.members.map((member) => member.identity.pubkey)).not.toContain(bobId);
+    const view = (await (await request(`/v1/phone/rooms/${room.id}`)).json()) as {
+      members: Array<{ identity: { pubkey: string } }>;
+      messages: Array<{ text: string; presentation: string; systemEvent?: { verb: string } }>;
+    };
+    expect(view.members.map((member) => member.identity.pubkey)).not.toContain(bobId);
+    expect(view.messages).toContainEqual(
+      expect.objectContaining({
+        presentation: 'system',
+        text: expect.stringMatching(/ removed /),
+        systemEvent: expect.objectContaining({ verb: 'removed', object: expect.objectContaining({ id: bobId }) }),
+      }),
+    );
+    // Gone means gone: the second removal has no membership to act on.
+    expect(
+      (await operation('removeWorkspaceMember', { workspaceId, memberId: bobId })).status,
+    ).toBe(400);
+  });
+
   it('creates a deterministic agent direct message inside the Workspace', async () => {
     const dm = (await (
       await operation('resolveDirectMessage', { workspaceId: WORKSPACE, participantId: AGENT })

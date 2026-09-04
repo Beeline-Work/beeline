@@ -3,65 +3,69 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
- * Source contract for the "Add people or Agents" picker (captain report C57,
- * v0.0.36): a percent `maxHeight` on a centered floating surface resolves
- * against the modal wrapper's own auto height, so the inner ScrollView
- * shrank to a fraction of its content and clipped after the first row. The
- * cap belongs on `HullModal`'s `contentStyle` (its parent is the flex:1
- * modal root), and the surface fills that wrapper — the same shape
- * `RoomRosterSheet.tsx` uses.
+ * Source contract for the Room's "Add people or agents" picker. Captain
+ * report C74 (v0.0.40): the old inline picker built its candidates from this
+ * Room's OWN member list, so its add section was always empty and the only
+ * visible path led to the pairing command on the Members page. The Room now
+ * mounts the one shared `MemberPickerSheet`, fed by a Workspace-roster read
+ * minus the Room's current members, and adds every checked row through the
+ * existing Room membership operations.
  */
 const chatSource = readFileSync(path.join(__dirname, '[channelId].tsx'), 'utf8');
 
-function pickerMarkup(): string {
-  const marker = chatSource.indexOf('testID="room-member-picker-surface"');
-  const start = chatSource.lastIndexOf('<HullModal', marker);
-  const end = chatSource.indexOf('</HullModal>', marker);
-  return chatSource.slice(start, end);
+function between(start: string, end: string): string {
+  const from = chatSource.indexOf(start);
+  expect(from, `missing ${start}`).toBeGreaterThanOrEqual(0);
+  const to = chatSource.indexOf(end, from);
+  expect(to, `missing ${end}`).toBeGreaterThan(from);
+  return chatSource.slice(from, to);
 }
 
-describe('Room member picker sizing', () => {
-  it('caps the modal wrapper, not the surface, so the list gets a real height', () => {
-    expect(pickerMarkup()).toContain('contentStyle={styles.memberModalContent}');
-    expect(chatSource).toContain("memberModalContent: { maxHeight: '78%' }");
-    const surface = chatSource.slice(
-      chatSource.indexOf('    memberModal: {'),
-      chatSource.indexOf('    memberModalHeading:'),
+describe('Room member picker', () => {
+  it('mounts the one shared picker sheet instead of an inline modal', () => {
+    expect(chatSource).toContain("from '@/components/buzz/MemberPickerSheet'");
+    expect(chatSource).toContain('<MemberPickerSheet');
+    expect(chatSource).not.toContain('accessibilityLabel="Close Room member picker"');
+    expect(chatSource).not.toContain('room-member-picker-surface');
+    expect(chatSource).not.toContain("label: 'IN ROOM'");
+  });
+
+  it('reads the Workspace roster when the picker opens and offers only members not yet in the Room', () => {
+    const effect = between(
+      '  useEffect(() => {\n    if (!participantPickerVisible',
+      '  }, [activeCommunityId, participantPickerVisible, roomClient]);',
     );
-    expect(surface).toContain("maxHeight: '100%'");
-    expect(surface).not.toContain("maxHeight: '78%'");
+    expect(effect).toContain('.workspace(activeCommunityId)');
+    expect(effect).toContain('setWorkspaceRoster(null)');
+    const memo = between(
+      'const participantPickerCandidates = useMemo',
+      '}, [roomMemberPubkeys, workspaceRoster]);',
+    );
+    expect(memo).toContain('[...workspaceRoster.members, ...workspaceRoster.agents]');
+    expect(memo).toContain('!roomMemberPubkeys.has(member.identity.pubkey)');
+    const sheet = between('<MemberPickerSheet', '/>');
+    expect(sheet).toContain('candidates={participantPickerCandidates}');
+    expect(sheet).toContain('kind={participantPickerKind}');
+    expect(sheet).toContain('canManage={roomSurface?.viewer.permissions.manage ?? false}');
   });
 
-  it('scrolls the whole IN ROOM + ADD list inside the surface', () => {
-    const markup = pickerMarkup();
-    expect(markup).toContain('<ScrollView');
-    expect(markup.indexOf("label: 'IN ROOM'")).toBeGreaterThan(markup.indexOf('<ScrollView'));
-    expect(markup.indexOf("label: 'ADD'")).toBeLessThan(markup.indexOf('</ScrollView>'));
-  });
-});
-
-/**
- * Captain report C59: a one-person workspace rendered "@You" and nothing
- * else — no way to bring a person or an agent in. The picker now always
- * ends with `RoomMemberPickerActions` (its own render test covers the
- * empty line, the manager gate, and both rows); this pins the wiring to
- * the product's existing invite flows.
- */
-describe('Room member picker invite actions', () => {
-  it('renders the action rows inside the scroll list, after the ADD section', () => {
-    const markup = pickerMarkup();
-    const actions = markup.indexOf('<RoomMemberPickerActions');
-    expect(actions).toBeGreaterThan(markup.indexOf("label: 'ADD'"));
-    expect(actions).toBeLessThan(markup.indexOf('</ScrollView>'));
-    expect(markup).toContain('addableCount={participantPickerSections.addable.length}');
-    expect(markup).toContain('canManage={roomSurface?.viewer.permissions.manage ?? false}');
-    expect(markup).not.toContain('Workspace roster is empty');
+  it('adds every checked person or agent through the existing Room membership operations', () => {
+    const handler = between(
+      'const handleAddRoomMembers = useCallback(',
+      'const handleRemoveRoomMember = useCallback(',
+    );
+    expect(handler).toContain(
+      'transport.inviteAgentToChannel(decodedId, candidate.pubkey, activeCommunityId)',
+    );
+    expect(handler).toContain('transport.inviteWorkspaceMemberToChannel(');
+    expect(handler).toContain('setParticipantPickerVisible(false)');
+    expect(handler).toContain('setMembershipError(`Could not add @${current.name}:');
   });
 
   it('invites a person through the workspace invite URL and the Share sheet', () => {
-    const handler = chatSource.slice(
-      chatSource.indexOf('const handleInvitePerson = useCallback('),
-      chatSource.indexOf('const handleAddAgent = useCallback('),
+    const handler = between(
+      'const handleInvitePerson = useCallback(',
+      'const handleConnectAgent = useCallback(',
     );
     expect(handler).toContain('createCommunityInviteUrl(');
     expect(handler).toContain('resolveCommunityInvitePublicOrigin(');
@@ -69,10 +73,10 @@ describe('Room member picker invite actions', () => {
     expect(handler).toContain('setMembershipError(`Could not create person invite:');
   });
 
-  it('adds an agent through the members screen pairing flow and closes the picker', () => {
-    const handler = chatSource.slice(
-      chatSource.indexOf('const handleAddAgent = useCallback('),
-      chatSource.indexOf('const returnToRoomList = useCallback('),
+  it('connects a NEW agent through the members screen pairing flow and closes the picker', () => {
+    const handler = between(
+      'const handleConnectAgent = useCallback(',
+      'const returnToRoomList = useCallback(',
     );
     expect(handler).toContain('setParticipantPickerVisible(false)');
     expect(handler).toContain("pathname: '/beeline/members'");

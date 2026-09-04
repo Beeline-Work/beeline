@@ -55,6 +55,12 @@ const client = vi.hoisted(() => ({
       agents: state.workspace.agents.filter((member: any) => member.identity.pubkey !== pubkey),
     };
   }),
+  removeMember: vi.fn(async (_workspaceId: string, pubkey: string) => {
+    state.workspace = {
+      ...state.workspace,
+      members: state.workspace.members.filter((member: any) => member.identity.pubkey !== pubkey),
+    };
+  }),
 }));
 
 const phoneOperation = vi.hoisted(() =>
@@ -110,6 +116,17 @@ vi.mock('react-native', async () => {
 });
 const unistylesTheme = vi.hoisted(() => ({
   buzz: {
+    type: {
+      hero: { fontSize: 22 },
+      body: { fontSize: 16 },
+      meta: { fontSize: 13 },
+      sectionHead: { fontSize: 10 },
+      machine: { fontSize: 13 },
+    },
+    space: { xs: 4, sm: 8, md: 16, lg: 24, xl: 32, xxl: 48 },
+    layout: { row: 64, sectionGap: 24 },
+    radius: 3,
+    dialogDanger: '#c4544d',
     bgTerminal: '#000',
     bgRaised: '#111',
     bgPressed: '#222',
@@ -156,9 +173,16 @@ vi.mock('@/components/buzz/MonoHull', async () => {
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
   return {
+    BrassButton: host('BrassButton'),
     HullSurface: host('HullSurface'),
     MonoButton: host('MonoButton'),
     PixelLoader: host('PixelLoader'),
+  };
+});
+vi.mock('@/components/buzz/MemberPickerSheet', async () => {
+  const ReactModule = await import('react');
+  return {
+    MemberPickerSheet: (props: any) => ReactModule.createElement('MemberPickerSheet', props),
   };
 });
 vi.mock('@/modal/ModalManager', () => ({ Modal: modal }));
@@ -216,7 +240,7 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 
 function member(pubkey: string, name: string, role: 'owner' | 'admin' | 'member') {
-  return { identity: { pubkey, kind: 'human', name }, role };
+  return { identity: { pubkey, kind: 'human', name, handle: name.toLowerCase() }, role };
 }
 
 function baseWorkspace(viewerRole: 'owner' | 'admin' = 'owner') {
@@ -236,7 +260,7 @@ function baseWorkspace(viewerRole: 'owner' | 'admin' = 'owner') {
     ],
     agents: [
       {
-        identity: { pubkey: AGENT, kind: 'agent', name: 'Clara' },
+        identity: { pubkey: AGENT, kind: 'agent', name: 'Clara', handle: 'clara' },
         role: 'member',
         presence: { status: 'online', observedAt: 1 },
       },
@@ -305,30 +329,109 @@ beforeEach(() => {
   modal.prompt.mockResolvedValue(null);
 });
 
+function sheet(renderer: ReactTestRenderer) {
+  return renderer.root.findByType('MemberPickerSheet' as any);
+}
+
 describe('Members workspace management', () => {
   it('draws no gold ring on an agent whose only fact is a live presence lease', async () => {
     // C77: the ring means WORKING (a live turn or corner). The Workspace view
     // carries presence only, so an online-but-idle agent wears no ring; the
-    // ONLINE word beside the name is the presence fact.
+    // lowercase presence word ending the meta line is the presence fact.
     const renderer = await render();
     const agentRow = renderer.root.findByProps({ testID: `agent-${AGENT}-identity` });
-    const mark = agentRow.findAll((node: any) => node.type === 'IdentityMark')[0];
+    const mark = agentRow.findByType('IdentityMark' as any);
     expect(mark.props.kind).toBe('agent');
     expect(mark.props.alive).toBeFalsy();
-    const detail = agentRow.findAll(
-      (node: any) => node.type === 'Text' && String(node.props.children?.[0] ?? '').includes('ONLINE'),
-    );
-    expect(detail.length).toBeGreaterThan(0);
+    expect(agentRow.findAllByType('Text' as any)[1].props.children).toBe('@clara · member · online');
   });
 
-  it('creates and shares a real Workspace invite from the People section', async () => {
+  it('opens the one picker from the brass action and shares a real Workspace invite through it', async () => {
     const renderer = await render();
-    await press(renderer, 'invite-person');
+    expect(sheet(renderer).props.visible).toBe(false);
+    // No Room is in scope here: the sheet carries only the Workspace-level ways in.
+    expect(sheet(renderer).props.candidates).toBeUndefined();
+    await press(renderer, 'add-members');
+    expect(sheet(renderer).props.visible).toBe(true);
+    await act(async () => {
+      await sheet(renderer).props.onInvitePerson();
+    });
 
     expect(client.createInvite).toHaveBeenCalledWith(WORKSPACE);
     expect(share).toHaveBeenCalledWith({
       message: `https://relay.test/join/inv_${'e'.repeat(64)}`,
     });
+    expect(renderer.root.findAllByProps({ testID: 'invite-person' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'invite-agent' })).toHaveLength(0);
+  });
+
+  it('shows the word alone over counted section heads and no loose total (C73, C79)', async () => {
+    const renderer = await render();
+    expect(renderer.root.findByProps({ testID: 'members-title' }).props.children).toBe('Members');
+    expect(renderer.root.findByProps({ testID: 'members-people-head' }).props.children).toEqual([
+      'People ',
+      3,
+    ]);
+    expect(renderer.root.findByProps({ testID: 'members-agents-head' }).props.children).toEqual([
+      'Agents ',
+      1,
+    ]);
+    const surface = renderer.root.findByProps({ testID: 'workspace-members-surface' });
+    const texts = surface.findAllByType('Text' as any).map((node: any) => node.props.children);
+    expect(texts).not.toContain(4);
+    expect(texts.flat().join(' ')).not.toMatch(/⌬|ONLINE|OFFLINE|MEMBER\b/);
+  });
+
+  it('gives every row a name and one quiet @handle · role line; the ring is the only agent state', async () => {
+    const renderer = await render();
+    const agentRow = renderer.root.findByProps({ testID: `agent-${AGENT}-identity` });
+    const agentTexts = agentRow.findAllByType('Text' as any).map((node: any) => node.props.children);
+    expect(agentTexts).toEqual(['Clara', '@clara · member · online', '›']);
+    expect(agentRow.findByType('IdentityMark' as any).props.alive).toBeFalsy();
+    const personRow = renderer.root.findByProps({ testID: `member-${MEMBER}-identity` });
+    expect(personRow.findAllByType('Text' as any).map((node: any) => node.props.children)).toEqual([
+      'Builder',
+      '@builder · member',
+      '›',
+    ]);
+    // The viewer's own row has no detail, so no chevron.
+    const selfRow = renderer.root.findByProps({ testID: `member-${VIEWER}-identity` });
+    expect(selfRow.props.disabled).toBe(true);
+    expect(selfRow.findAllByType('Text' as any).map((node: any) => node.props.children)).toEqual([
+      'Viewer',
+      '@viewer · owner',
+    ]);
+  });
+
+  it('keeps removal on the row detail and removes a person from the Workspace through it', async () => {
+    const renderer = await render();
+    expect(renderer.root.findAllByProps({ testID: `remove-person-${MEMBER}` })).toHaveLength(0);
+    await press(renderer, `member-${MEMBER}-identity`);
+    expect(
+      renderer.root.findByProps({ testID: `remove-person-${MEMBER}` }).findByType('Text' as any)
+        .props.children,
+    ).toBe('Remove from Workspace');
+    await press(renderer, `remove-person-${MEMBER}`);
+
+    expect(modal.confirm).toHaveBeenCalledWith(
+      'Remove Builder?',
+      expect.stringMatching(/every Room/),
+      { cancelText: 'Cancel', confirmText: 'Remove', destructive: true },
+    );
+    expect(client.removeMember).toHaveBeenCalledWith(WORKSPACE, MEMBER);
+    expect(renderer.root.findAllByProps({ testID: `member-${MEMBER}-identity` })).toHaveLength(0);
+  });
+
+  it('offers an admin no removal of an owner or another admin', async () => {
+    state.workspace = {
+      ...baseWorkspace('admin'),
+      members: [member(VIEWER, 'Viewer', 'admin'), member(OWNER, 'Captain', 'owner'), member(MEMBER, 'Builder', 'admin')],
+    };
+    const renderer = await render();
+    await press(renderer, `member-${MEMBER}-identity`);
+    expect(renderer.root.findAllByProps({ testID: `member-${MEMBER}-roles` }).length).toBeGreaterThan(0);
+    expect(renderer.root.findAllByProps({ testID: `remove-person-${MEMBER}` })).toHaveLength(0);
+    expect(client.removeMember).not.toHaveBeenCalled();
   });
 
   it('lets an admin change a member role but exposes no editor for an owner', async () => {

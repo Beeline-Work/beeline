@@ -142,7 +142,12 @@ export function isMountedMcpToolPermissionRequest(request: AcpPermissionRequest)
   return isReadOnlyMcpPermissionRequest(request) || isBeelineAgentMcpPermissionRequest(request);
 }
 
-const AGENT_SURFACE_TOOL_NAMES = ['open_corner', 'pr_checks_status', 'attach_file'] as const;
+const AGENT_SURFACE_TOOL_NAMES = [
+  'open_corner',
+  'pr_checks_status',
+  'attach_file',
+  'write_scratch_file',
+] as const;
 
 const SQUIRE_TITLE_PREFIXES = ['mcp__squire__', 'mcp.squire.', 'squire.', 'squire/'] as const;
 

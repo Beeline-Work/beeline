@@ -26,6 +26,54 @@ import { harnessReadsMetaSystemPrompt, sessionToolScopeMeta } from './harness-to
 /** Bound on the stderr tail kept for an exit-failure error message. */
 const STDERR_TAIL_MAX_CHARS = 2_000;
 
+function braceDelta(line: string): number {
+  let delta = 0;
+  for (const char of line) {
+    if (char === '{') delta += 1;
+    else if (char === '}') delta -= 1;
+  }
+  return delta;
+}
+
+/**
+ * Harness stderr worth carrying into a failure reason.
+ *
+ * pi-acp 0.0.33 answers our ACP `notifications/initialized` with `-32601
+ * Method not found` and dumps the whole notification to stderr on EVERY
+ * session, then serves the session fine. Gluing that block onto every timeout
+ * made each pi failure read as a handshake fault it never was, so a dumped
+ * notification-handling block is dropped here and the client no longer sends
+ * that notification to pi at all. Anything else the harness wrote is kept: a
+ * real cause still belongs in the reason.
+ */
+export function meaningfulHarnessStderr(tail: string): string {
+  const lines = tail.split(/\r?\n/);
+  const kept: string[] = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]!;
+    if (!/error handling notification/i.test(line)) {
+      kept.push(line);
+      continue;
+    }
+    const block = [line];
+    let depth = braceDelta(line);
+    // The dumped notification is either braced on the header line or on the
+    // lines that follow it; consume the whole object either way.
+    if (depth === 0 && lines[index + 1]?.trimStart().startsWith('{')) {
+      index += 1;
+      block.push(lines[index]!);
+      depth = braceDelta(lines[index]!);
+    }
+    while (depth > 0 && index + 1 < lines.length) {
+      index += 1;
+      block.push(lines[index]!);
+      depth += braceDelta(lines[index]!);
+    }
+    if (!/notifications\/initialized/.test(block.join('\n'))) kept.push(...block);
+  }
+  return kept.join('\n').trim();
+}
+
 /** Stable startup failure surfaced by bounded functional-update probes. */
 export class AcpRequestTimeoutError extends Error {
   readonly code = 'ACP_REQUEST_TIMEOUT';
@@ -36,7 +84,8 @@ export class AcpRequestTimeoutError extends Error {
     stderrTail = '',
     readonly inactivity = false,
   ) {
-    const suffix = stderrTail.trim() ? `; harness stderr: ${stderrTail.trim()}` : '';
+    const meaningful = meaningfulHarnessStderr(stderrTail);
+    const suffix = meaningful ? `; harness stderr: ${meaningful}` : '';
     super(
       `ACP ${method} timed out after ${timeoutMs}ms${inactivity ? ' of inactivity' : ''}${suffix}`,
     );
@@ -589,7 +638,8 @@ export class AcpClient extends EventEmitter {
 
     this.child.on('exit', (code, signal) => {
       this.alive = false;
-      const stderrSuffix = this.stderrTail.trim() ? `: ${this.stderrTail.trim()}` : '';
+      const meaningful = meaningfulHarnessStderr(this.stderrTail);
+      const stderrSuffix = meaningful ? `: ${meaningful}` : '';
       for (const [, p] of this.pending) {
         this.clearTimer(p);
         p.reject(
@@ -642,7 +692,10 @@ export class AcpClient extends EventEmitter {
     this.supportsSessionLoading = agentCapabilities?.loadSession === true;
     this.supportsImagePrompts = agentCapabilities?.promptCapabilities?.image === true;
     this.emit('initialized', initResult);
-    this.notify('notifications/initialized', {});
+    // ACP defines no `initialized` notification; pi-acp answers it with -32601
+    // and dumps the notification to stderr on every session. Do not send it to
+    // a harness that rejects it.
+    if (!isPiAcpHarness(this.agentLabel)) this.notify('notifications/initialized', {});
   }
 
   async stop(): Promise<void> {

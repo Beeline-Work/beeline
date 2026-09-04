@@ -3,7 +3,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { describeEmptyTurn, type PromptResult } from './acp.js';
-import { explainEmptyAgentTurn, isAccountOrProviderRefusal } from './empty-turn.js';
+import {
+  describeTurnProviders,
+  explainEmptyAgentTurn,
+  isAccountOrProviderRefusal,
+  nextPinnedProvider,
+  shouldRetryEmptyTurn,
+  turnFailureReasonWithProvider,
+} from './empty-turn.js';
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -126,5 +133,52 @@ describe('explainEmptyAgentTurn', () => {
     expect(isAccountOrProviderRefusal({ kind: 'error', reason: 'fetch failed' })).toBe(false);
     expect(isAccountOrProviderRefusal({ kind: 'empty', stopReason: 'stop' })).toBe(false);
     expect(isAccountOrProviderRefusal(undefined)).toBe(false);
+  });
+});
+
+describe('the empty-completion routing retry', () => {
+  it('retries a turn the model ended with no text, and a turn no record explains', () => {
+    expect(
+      shouldRetryEmptyTurn({ reason: 'x', record: { kind: 'empty', stopReason: 'end_turn' } }),
+    ).toBe(true);
+    expect(shouldRetryEmptyTurn({ reason: 'x', record: { kind: 'missing' } })).toBe(true);
+    expect(shouldRetryEmptyTurn({ reason: 'x' })).toBe(true);
+  });
+
+  it('never retries a named provider refusal, nor a turn whose text was recovered', () => {
+    expect(
+      shouldRetryEmptyTurn({
+        reason: 'provider error 402',
+        record: { kind: 'error', reason: 'x', status: 402 },
+      }),
+    ).toBe(false);
+    expect(
+      shouldRetryEmptyTurn({
+        reason: 'pi recorded the answer but the ACP stream delivered no text',
+        recoveredText: 'All good.',
+        record: { kind: 'answer', text: 'All good.' },
+      }),
+    ).toBe(false);
+  });
+
+  it('rotates to the next pinned provider and stops when the pin runs out', () => {
+    expect(nextPinnedProvider(['venice', 'phala', 'modal'], undefined)).toBe('phala');
+    expect(nextPinnedProvider(['venice', 'phala', 'modal'], 'phala')).toBe('modal');
+    expect(nextPinnedProvider(['venice', 'phala', 'modal'], 'modal')).toBeUndefined();
+    expect(nextPinnedProvider(['venice'], undefined)).toBeUndefined();
+    expect(nextPinnedProvider([], undefined)).toBeUndefined();
+  });
+
+  it('names the provider that served the turn, exactly when the pin named one', () => {
+    expect(describeTurnProviders(['venice'])).toBe('served by venice');
+    expect(describeTurnProviders(['venice', 'phala'])).toBe('routed to venice, phala');
+    expect(describeTurnProviders(['a', 'b', 'c', 'd'])).toBe('routed to a, b, c, …');
+    expect(describeTurnProviders([])).toBeUndefined();
+    expect(turnFailureReasonWithProvider('the model ended its turn with no text', ['venice'])).toBe(
+      'the model ended its turn with no text · served by venice',
+    );
+    expect(turnFailureReasonWithProvider('the model ended its turn with no text', [])).toBe(
+      'the model ended its turn with no text',
+    );
   });
 });

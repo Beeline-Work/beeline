@@ -7,10 +7,12 @@ import { resolve } from 'node:path';
 import { OPENROUTER_GLM_5_3_FLASH_ENDPOINTS } from './fixtures/openrouter-endpoints-glm-5.3-flash.js';
 import {
   OPENROUTER_FALLBACK_PROVIDERS,
+  OPENROUTER_PROBE_CACHE_TTL_MS,
   OPENROUTER_ROUTING_CACHE_TTL_MS,
   openRouterModelId,
   openRouterRoutingInput,
   parseOpenRouterEndpoints,
+  probeOpenRouterProviders,
   resolveOpenRouterRouting,
   selectReliableOpenRouterProviders,
   withOpenRouterModelRouting,
@@ -362,11 +364,235 @@ describe('openRouterRoutingInput', () => {
   it('names the model and cache dir only for an OpenRouter selection', () => {
     const config = { agentEnv: { OPENROUTER_API_KEY: 'k' }, openRouterRoutingCacheDir: '/cache' };
     expect(openRouterRoutingInput(config, { model: 'openrouter/z-ai/glm-5.3-flash' })).toEqual({
-      openRouterRouting: { model: MODEL, cacheDir: '/cache' },
+      openRouterRouting: { model: MODEL, cacheDir: '/cache', apiKey: 'k' },
     });
     expect(openRouterRoutingInput(config, { model: 'claude-opus-4-1' })).toEqual({});
     expect(
       openRouterRoutingInput({ agentEnv: {} }, { model: 'openrouter/z-ai/glm-5.3-flash' }),
     ).toEqual({});
+  });
+});
+
+/** The uptime pass, already decided, so a probe test never touches the listing. */
+async function seedUptimeCache(cacheDir: string, providers: string[]): Promise<void> {
+  await mkdir(cacheDir, { recursive: true });
+  await writeFile(
+    resolve(cacheDir, 'z-ai_glm-5.3-flash.json'),
+    JSON.stringify({ model: MODEL, fetchedAt: Date.now(), providers, bar: 98 }),
+  );
+}
+
+/**
+ * One chat completion per provider, recorded live on 2026-09-04: `text: ''` is
+ * the C92 failure — a 200 OK carrying nothing, which OpenRouter counts as
+ * uptime. `delayMs` is real elapsed time, so the latency ordering the pin
+ * derives is measured here exactly as it is in production.
+ */
+function probeFetchStub(
+  providers: Record<string, { text: string; delayMs?: number; status?: number }>,
+): { fetchImpl: typeof fetch; asked: string[] } {
+  const asked: string[] = [];
+  const impl = async (_url: unknown, init?: { body?: unknown }) => {
+    const body = JSON.parse(String(init?.body ?? '{}')) as { provider?: { only?: string[] } };
+    const provider = body.provider?.only?.[0] ?? '';
+    asked.push(provider);
+    const entry = providers[provider];
+    if (!entry) return jsonResponse({ error: { message: 'no endpoints' } }, 404);
+    if (entry.delayMs) await new Promise((done) => setTimeout(done, entry.delayMs));
+    if (entry.status && entry.status !== 200)
+      return jsonResponse({ error: 'refused' }, entry.status);
+    return jsonResponse({ choices: [{ message: { content: entry.text } }] });
+  };
+  return { fetchImpl: impl as unknown as typeof fetch, asked };
+}
+
+describe('the OpenRouter answer probe', () => {
+  it('drops a provider that returns an empty completion and orders the rest by latency', async () => {
+    const cacheDir = await scratch();
+    await seedUptimeCache(cacheDir, ['morph', 'venice', 'phala']);
+    const { fetchImpl, asked } = probeFetchStub({
+      morph: { text: '' },
+      venice: { text: 'ready', delayMs: 40 },
+      phala: { text: 'ready', delayMs: 5 },
+    });
+
+    const decision = await resolveOpenRouterRouting({
+      model: MODEL,
+      cacheDir,
+      apiKey: 'k',
+      fetchImpl,
+    });
+    const probed = await decision.refresh;
+
+    expect(asked.sort()).toEqual(['morph', 'phala', 'venice']);
+    expect(probed?.providers).toEqual(['phala', 'venice']);
+    expect(probed?.routing).toEqual({
+      only: ['phala', 'venice'],
+      order: ['phala', 'venice'],
+      allow_fallbacks: true,
+      require_parameters: false,
+    });
+    expect(probed?.line).toContain('answer-probed, fastest first');
+    expect(probed?.line).toContain('dropped morph (empty completion)');
+    const cached = JSON.parse(
+      readFileSync(resolve(cacheDir, 'z-ai_glm-5.3-flash.probe.json'), 'utf8'),
+    ) as { answered: { provider: string }[] };
+    expect(cached.answered.map((entry) => entry.provider)).toEqual(['phala', 'venice']);
+  });
+
+  it('never blocks a turn on a cold probe cache: the uptime order is served now', async () => {
+    const cacheDir = await scratch();
+    await seedUptimeCache(cacheDir, ['morph', 'venice', 'phala']);
+    const { fetchImpl } = probeFetchStub({
+      morph: { text: '' },
+      venice: { text: 'ready', delayMs: 40 },
+      phala: { text: 'ready', delayMs: 5 },
+    });
+
+    const decision = await resolveOpenRouterRouting({
+      model: MODEL,
+      cacheDir,
+      apiKey: 'k',
+      fetchImpl,
+    });
+
+    // The decision the activation applies is the uptime order, in hand before
+    // a single provider has been asked; the probe lands for the next one.
+    expect(decision.providers).toEqual(['morph', 'venice', 'phala']);
+    expect(decision.refresh).toBeDefined();
+    expect(existsSync(resolve(cacheDir, 'z-ai_glm-5.3-flash.probe.json'))).toBe(false);
+    await decision.refresh;
+  });
+
+  it('serves a fresh probe cache without asking anyone, and never resurrects a dropped provider', async () => {
+    const cacheDir = await scratch();
+    await seedUptimeCache(cacheDir, ['morph', 'venice', 'phala']);
+    await writeFile(
+      resolve(cacheDir, 'z-ai_glm-5.3-flash.probe.json'),
+      JSON.stringify({
+        model: MODEL,
+        fetchedAt: Date.now(),
+        // `fireworks` no longer clears the uptime/tools pass; a cached answer
+        // must not put it back in the pin.
+        answered: [
+          { provider: 'phala', latencyMs: 5 },
+          { provider: 'fireworks', latencyMs: 6 },
+          { provider: 'venice', latencyMs: 40 },
+        ],
+      }),
+    );
+    const { fetchImpl, asked } = probeFetchStub({});
+
+    const decision = await resolveOpenRouterRouting({
+      model: MODEL,
+      cacheDir,
+      apiKey: 'k',
+      fetchImpl,
+    });
+
+    expect(asked).toEqual([]);
+    expect(decision.refresh).toBeUndefined();
+    expect(decision.providers).toEqual(['phala', 'venice']);
+    expect(decision.line).toContain('answer-probed, cached');
+  });
+
+  it('refreshes rather than trusting a probe older than its TTL', async () => {
+    const cacheDir = await scratch();
+    await seedUptimeCache(cacheDir, ['morph', 'venice']);
+    await writeFile(
+      resolve(cacheDir, 'z-ai_glm-5.3-flash.probe.json'),
+      JSON.stringify({
+        model: MODEL,
+        fetchedAt: Date.now() - OPENROUTER_PROBE_CACHE_TTL_MS - 1,
+        answered: [{ provider: 'morph', latencyMs: 2 }],
+      }),
+    );
+    const { fetchImpl, asked } = probeFetchStub({
+      morph: { text: '' },
+      venice: { text: 'ready' },
+    });
+
+    const decision = await resolveOpenRouterRouting({
+      model: MODEL,
+      cacheDir,
+      apiKey: 'k',
+      fetchImpl,
+    });
+    const probed = await decision.refresh;
+
+    expect(asked.sort()).toEqual(['morph', 'venice']);
+    expect(probed?.providers).toEqual(['venice']);
+  });
+
+  it('keeps the uptime order and caches nothing when no provider answers', async () => {
+    const cacheDir = await scratch();
+    await seedUptimeCache(cacheDir, ['morph', 'venice']);
+    const { fetchImpl } = probeFetchStub({
+      morph: { text: '' },
+      venice: { text: '', status: 429 },
+    });
+
+    const decision = await resolveOpenRouterRouting({
+      model: MODEL,
+      cacheDir,
+      apiKey: 'k',
+      fetchImpl,
+    });
+
+    expect(await decision.refresh).toBeUndefined();
+    expect(decision.providers).toEqual(['morph', 'venice']);
+    expect(existsSync(resolve(cacheDir, 'z-ai_glm-5.3-flash.probe.json'))).toBe(false);
+  });
+
+  it('runs no probe at all without an OpenRouter key', async () => {
+    const cacheDir = await scratch();
+    await seedUptimeCache(cacheDir, ['morph', 'venice']);
+    const { fetchImpl, asked } = probeFetchStub({ morph: { text: 'ready' } });
+
+    const decision = await resolveOpenRouterRouting({ model: MODEL, cacheDir, fetchImpl });
+
+    expect(asked).toEqual([]);
+    expect(decision.refresh).toBeUndefined();
+    expect(decision.providers).toEqual(['morph', 'venice']);
+  });
+
+  it('asks at most the bounded number of candidates', async () => {
+    const { fetchImpl, asked } = probeFetchStub({
+      a: { text: 'ready' },
+      b: { text: 'ready' },
+      c: { text: 'ready' },
+    });
+    const results = await probeOpenRouterProviders({
+      model: MODEL,
+      providers: ['a', 'b', 'c'],
+      apiKey: 'k',
+      fetchImpl,
+      maxCandidates: 2,
+    });
+    expect(asked.sort()).toEqual(['a', 'b']);
+    expect(results.map((result) => result.answered)).toEqual([true, true]);
+  });
+
+  it('pins exactly one provider with no fallbacks when a turn re-pins after an empty completion', async () => {
+    const cacheDir = await scratch();
+    await seedUptimeCache(cacheDir, ['morph', 'venice', 'phala']);
+    const { fetchImpl, asked } = probeFetchStub({});
+
+    const decision = await resolveOpenRouterRouting({
+      model: MODEL,
+      cacheDir,
+      apiKey: 'k',
+      fetchImpl,
+      providerOverride: 'venice',
+    });
+
+    expect(asked).toEqual([]);
+    expect(decision.routing).toEqual({
+      only: ['venice'],
+      order: ['venice'],
+      allow_fallbacks: false,
+      require_parameters: false,
+    });
+    expect(decision.line).toContain('pinned to one provider after an empty completion');
   });
 });

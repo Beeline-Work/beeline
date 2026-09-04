@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { parseGrantDecisionLine } from '@beeline/api-contract/agent-grants';
 import type { DaemonAttachment, DaemonOperationMap } from '@beeline/api-contract/daemon';
-import { AcpClient, type McpServerWire, type ToolCallEntry } from './acp.js';
+import { AcpClient, type McpServerWire, type PromptResult, type ToolCallEntry } from './acp.js';
 import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
 import {
@@ -22,7 +22,14 @@ import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './b
 import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
-import { explainEmptyAgentTurn, isAccountOrProviderRefusal } from './empty-turn.js';
+import {
+  explainEmptyAgentTurn,
+  isAccountOrProviderRefusal,
+  nextPinnedProvider,
+  shouldRetryEmptyTurn,
+  turnFailureReasonWithProvider,
+  type EmptyTurnExplanation,
+} from './empty-turn.js';
 import {
   checksStateFromLifecycle,
   completedCheckNote,
@@ -250,6 +257,10 @@ export class MonolithCornerTurnLoop {
   private sessionId?: string;
   /** The live session's environment, read back for pi's own turn record. */
   private agentEnv: Record<string, string> = {};
+  /** OpenRouter providers this activation pinned, in order (C92). */
+  private pinnedProviders: string[] = [];
+  /** The one provider re-pinned after an empty completion, until the session ends. */
+  private pinnedProviderOverride?: string;
   private turnIdentityInstructions = '';
   private busy = false;
   private forcedStop = false;
@@ -323,7 +334,14 @@ export class MonolithCornerTurnLoop {
           ...(this.options.config.operatorHome
             ? { operatorHome: this.options.config.operatorHome }
             : {}),
-          ...openRouterRoutingInput(this.options.config, selection, this.options.fetchImpl),
+          ...openRouterRoutingInput(this.options.config, selection, this.options.fetchImpl, {
+            ...(this.pinnedProviderOverride
+              ? { providerOverride: this.pinnedProviderOverride }
+              : {}),
+            onDecision: (routing) => {
+              if (!this.pinnedProviderOverride) this.pinnedProviders = [...routing.providers];
+            },
+          }),
         })
       : {};
     const command = this.options.config.agentCommand ?? this.options.config.agentBinary;
@@ -453,9 +471,43 @@ export class MonolithCornerTurnLoop {
         const client = this.client;
         this.client = undefined;
         this.sessionId = undefined;
+        this.pinnedProviderOverride = undefined;
         if (client?.isAlive) await client.stop();
       },
     };
+  }
+
+  /** The pinned providers a failure reason should name for this session. */
+  private servingProviders(): string[] {
+    return this.pinnedProviderOverride ? [this.pinnedProviderOverride] : this.pinnedProviders;
+  }
+
+  /** Why a turn carried no answer text, or undefined when it did. */
+  private async explainEmpty(result: PromptResult): Promise<EmptyTurnExplanation | undefined> {
+    if (stripAgentReplyPreamble(result.agentText).trim()) return undefined;
+    return explainEmptyAgentTurn({
+      agentLabel: this.options.config.agentCommand ?? this.options.config.agentBinary,
+      agentEnv: this.agentEnv,
+      sessionId: this.sessionId!,
+      result,
+    });
+  }
+
+  /**
+   * Re-pin the session to the next provider in the OpenRouter order and open a
+   * fresh session on it, so the retry of an empty completion is served — and
+   * named — by exactly one provider (C92).
+   */
+  private async repinNextProvider(): Promise<string | undefined> {
+    const next = nextPinnedProvider(this.pinnedProviders, this.pinnedProviderOverride);
+    if (!next) return undefined;
+    this.pinnedProviderOverride = next;
+    const client = this.client;
+    this.client = undefined;
+    this.sessionId = undefined;
+    if (client?.isAlive) await client.stop();
+    await this.activate();
+    return next;
   }
 
   private async prompt(
@@ -533,7 +585,6 @@ export class MonolithCornerTurnLoop {
               ]
                 .filter(Boolean)
                 .join('\n\n');
-              const sessionId = this.sessionId!;
               // The draft lane's turn id must equal the turn's request id so the
               // durable final reconciles (and settles) the live draft, exactly as
               // in top-level Rooms; any other id leaves a ghost draft duplicating
@@ -608,53 +659,72 @@ export class MonolithCornerTurnLoop {
                     });
                 });
               };
-              const result = await this.client!.sessionPrompt(
-                sessionId,
-                promptWithImages(
-                  prompt,
-                  attachmentImageBlocks(delivered, this.client!.canPromptWithImages()),
-                ),
-                120_000,
-                (_delta, full) => {
-                  postNarrationSegments(full);
-                  this.draftTail = this.draftTail
-                    .catch(() => undefined)
-                    .then(() =>
-                      api.execute('postAgentDraft', {
-                        agentId: this.agent.publicKey,
-                        roomId: cornerId,
-                        turnId,
-                        text: full,
-                      }),
-                    )
-                    .then(() => undefined)
-                    .catch((error) =>
-                      console.error(`[thin-core] corner ${cornerId} draft publish failed:`, error),
-                    );
-                },
-                undefined,
-                (calls) => publishToolCalls(calls, true),
-              );
+              // One prompt run. It is a closure because an empty completion
+              // re-pins the session to another provider and runs it again
+              // (C92) — against the NEW client and session id.
+              const runPrompt = async (): Promise<PromptResult> =>
+                this.client!.sessionPrompt(
+                  this.sessionId!,
+                  promptWithImages(
+                    prompt,
+                    attachmentImageBlocks(delivered, this.client!.canPromptWithImages()),
+                  ),
+                  120_000,
+                  (_delta, full) => {
+                    postNarrationSegments(full);
+                    this.draftTail = this.draftTail
+                      .catch(() => undefined)
+                      .then(() =>
+                        api.execute('postAgentDraft', {
+                          agentId: this.agent.publicKey,
+                          roomId: cornerId,
+                          turnId,
+                          text: full,
+                        }),
+                      )
+                      .then(() => undefined)
+                      .catch((error) =>
+                        console.error(
+                          `[thin-core] corner ${cornerId} draft publish failed:`,
+                          error,
+                        ),
+                      );
+                  },
+                  undefined,
+                  (calls) => publishToolCalls(calls, true),
+                );
+              let result = await runPrompt();
+              let explained = await this.explainEmpty(result);
+              // A checks turn is told to say nothing when nothing changed; its
+              // silence is not a routing failure and must not buy a retry.
+              if (explained && !restates && shouldRetryEmptyTurn(explained)) {
+                const silent = this.servingProviders();
+                const next = await this.repinNextProvider();
+                if (next) {
+                  console.warn(
+                    `[thin-core] corner ${cornerId} turn ${requestId}: ` +
+                      `${turnFailureReasonWithProvider(explained.reason, silent)}; retrying on ${next}`,
+                  );
+                  result = await runPrompt();
+                  explained = await this.explainEmpty(result);
+                }
+              }
               await this.activityTail;
               publishToolCalls(result.toolCalls, false);
               await this.activityTail;
               await this.draftTail;
               await this.activityTail;
               let reply = stripAgentReplyPreamble(result.agentText).trim();
-              if (!reply) {
-                const explained = await explainEmptyAgentTurn({
-                  agentLabel: this.options.config.agentCommand ?? this.options.config.agentBinary,
-                  agentEnv: this.agentEnv,
-                  sessionId,
-                  result,
-                });
+              if (!reply && explained) {
                 reply = explained.recoveredText
                   ? stripAgentReplyPreamble(explained.recoveredText).trim()
                   : '';
                 // A checks turn is told to say nothing when nothing changed; only a
                 // provider refusal makes that silence a failure.
                 if (!reply && !(restates && !isAccountOrProviderRefusal(explained.record))) {
-                  throw new Error(explained.reason);
+                  throw new Error(
+                    turnFailureReasonWithProvider(explained.reason, this.servingProviders()),
+                  );
                 }
                 console.warn(
                   `[thin-core] corner ${cornerId} turn ${requestId}: ${explained.reason}`,

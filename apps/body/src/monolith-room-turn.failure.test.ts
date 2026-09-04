@@ -1,6 +1,7 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { existsSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AcpClient } from './acp.js';
 import type { BodyConfig } from './config.js';
@@ -20,10 +21,20 @@ const HUMAN = '22'.repeat(32);
 async function runTurn(options: {
   agentCommand: string;
   agentKind: string;
+  /** Applied over the default config: an OpenRouter pin needs a key and a cache. */
+  configOverrides?: Partial<BodyConfig>;
+  /** Model id the fake harness advertises, so a selection can be applied. */
+  advertisedModel?: string;
   prompt: (input: {
     agentHomeRoot: string;
+    attempt: number;
   }) => Promise<Awaited<ReturnType<AcpClient['sessionPrompt']>>>;
-}): Promise<{ receipts: Array<Record<string, unknown>>; posted: Array<Record<string, unknown>> }> {
+}): Promise<{
+  receipts: Array<Record<string, unknown>>;
+  posted: Array<Record<string, unknown>>;
+  attempts: number;
+  agentHomeRoot: string;
+}> {
   const root = await mkdtemp(join(tmpdir(), 'beeline-room-failure-'));
   roots.push(root);
   const agentHomeRoot = join(root, 'agent-home');
@@ -57,6 +68,7 @@ async function runTurn(options: {
     accessPolicy: 'everyone',
     agentHomeRoot,
     operatorHome: join(root, 'operator-home'),
+    ...options.configOverrides,
   } as BodyConfig;
   let inboxReads = 0;
   const receipts: Array<Record<string, unknown>> = [];
@@ -112,9 +124,24 @@ async function runTurn(options: {
   });
   const acp = new AcpClient({ agentBinary: options.agentCommand, agentEnv: {} });
   vi.spyOn(acp, 'start').mockResolvedValue(undefined);
-  vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: 'room-session', raw: {} });
+  vi.spyOn(acp, 'sessionNew').mockResolvedValue({
+    sessionId: 'room-session',
+    raw: options.advertisedModel
+      ? {
+          models: {
+            availableModels: [{ modelId: options.advertisedModel }],
+            currentModelId: options.advertisedModel,
+          },
+        }
+      : {},
+  });
   vi.spyOn(acp, 'canPromptWithImages').mockReturnValue(false);
-  vi.spyOn(acp, 'sessionPrompt').mockImplementation(() => options.prompt({ agentHomeRoot }));
+  vi.spyOn(acp, 'setModel').mockResolvedValue(undefined);
+  let attempts = 0;
+  vi.spyOn(acp, 'sessionPrompt').mockImplementation(() => {
+    attempts += 1;
+    return options.prompt({ agentHomeRoot, attempt: attempts });
+  });
   const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
   const abort = new AbortController();
   const loop = new MonolithRoomTurnLoop({
@@ -141,7 +168,7 @@ async function runTurn(options: {
   abort.abort();
   await running.catch(() => undefined);
   await scheduler.dispose();
-  return { receipts, posted };
+  return { receipts, posted, attempts, agentHomeRoot };
 }
 
 describe('Room turn failure receipt', () => {
@@ -226,6 +253,93 @@ describe('Room turn failure receipt', () => {
     expect(failed.reason).toBe(
       'harness ended the turn (end_turn) with no answer text; the stream carried only agent_thought_chunk×1',
     );
+  });
+
+  it('retries an empty completion on the next pinned provider, then fails naming it', async () => {
+    // The C92 failure: the provider accepts a tool-enabled request, returns
+    // 200, and says nothing. OpenRouter never falls back for that, so the turn
+    // loop must rotate the pin itself.
+    const cacheRoot = await mkdtemp(join(tmpdir(), 'beeline-room-routing-'));
+    roots.push(cacheRoot);
+    const emptyTurn = async ({ agentHomeRoot }: { agentHomeRoot: string }) => {
+      const dir = join(agentHomeRoot, 'pi', 'sessions', '--room--');
+      await mkdir(dir, { recursive: true });
+      await writeFile(
+        join(dir, '2026_room-session.jsonl'),
+        [
+          JSON.stringify({ type: 'message', message: { role: 'user', content: [] } }),
+          JSON.stringify({
+            type: 'message',
+            message: { role: 'assistant', content: [], stopReason: 'end_turn' },
+          }),
+        ].join('\n'),
+      );
+      return { stopReason: 'end_turn', updates: [], agentText: '', toolCalls: [] };
+    };
+    await writeFile(
+      join(cacheRoot, 'z-ai_glm-5.3-flash.json'),
+      JSON.stringify({
+        model: 'z-ai/glm-5.3-flash',
+        fetchedAt: Date.now(),
+        providers: ['venice', 'phala'],
+        bar: 98,
+      }),
+    );
+    await writeFile(
+      join(cacheRoot, 'z-ai_glm-5.3-flash.probe.json'),
+      JSON.stringify({
+        model: 'z-ai/glm-5.3-flash',
+        fetchedAt: Date.now(),
+        answered: [
+          { provider: 'venice', latencyMs: 700 },
+          { provider: 'phala', latencyMs: 4700 },
+        ],
+      }),
+    );
+    const warnings: string[] = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
+      warnings.push(args.map(String).join(' '));
+    });
+    let secondPin: unknown;
+    const { receipts, posted, attempts, agentHomeRoot } = await runTurn({
+      agentCommand: '/opt/harness/pi-acp',
+      agentKind: 'pi',
+      advertisedModel: 'z-ai/glm-5.3-flash',
+      configOverrides: {
+        agentEnv: { OPENROUTER_API_KEY: 'k' },
+        openRouterRoutingCacheDir: cacheRoot,
+        modelSelection: { model: 'z-ai/glm-5.3-flash' },
+      } as Partial<BodyConfig>,
+      prompt: async (input) => {
+        if (input.attempt === 2) {
+          secondPin = JSON.parse(
+            await readFile(join(input.agentHomeRoot, 'pi', 'models.json'), 'utf8'),
+          );
+        }
+        return emptyTurn(input);
+      },
+    });
+    warn.mockRestore();
+
+    // Exactly one retry, and it was pinned to ONE named provider with no
+    // fallbacks, so the failure names who actually served it.
+    expect(attempts).toBe(2);
+    expect(posted).toEqual([]);
+    expect(
+      (secondPin as Record<string, any>).providers.openrouter.modelOverrides['z-ai/glm-5.3-flash']
+        .compat.openRouterRouting,
+    ).toEqual({
+      only: ['phala'],
+      order: ['phala'],
+      allow_fallbacks: false,
+      require_parameters: false,
+    });
+    expect(existsSync(join(agentHomeRoot, 'pi', 'models.json'))).toBe(true);
+    const failed = receipts.find((receipt) => receipt.status === 'failed')!;
+    expect(failed.reason).toBe(
+      'the model ended its turn with no text (stop reason end_turn) · served by phala',
+    );
+    expect(warnings.join('\n')).toContain('routed to venice, phala; retrying on phala');
   });
 
   it('posts answer text pi recorded when the ACP stream delivered none', async () => {

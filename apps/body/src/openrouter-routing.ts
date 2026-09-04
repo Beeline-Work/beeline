@@ -23,13 +23,33 @@
  * The result is cached per model for 24h (`<cacheDir>/<model>.json`), read
  * back when the API is unreachable (stale is better than blind), and applied
  * to that one model's entry in the agent's pi `models.json` — never globally.
+ *
+ * Uptime is not the same fact as an answer (C92). Measured live on
+ * 2026-09-04 for `z-ai/glm-5.3-flash`, half the pinned set accepted a
+ * tool-enabled request and returned an EMPTY completion — a 200 OK that keeps
+ * the provider's uptime at 100%, never triggers OpenRouter's own fallback, and
+ * reaches the Room as a turn that says nothing. So the uptime/tools filter is
+ * only the first pass: the survivors are then ASKED, one small tool-enabled
+ * request each with `allow_fallbacks: false`, and only the ones that answer
+ * with text are pinned, ordered by measured latency. That probe costs money
+ * and time, so it is bounded (`OPENROUTER_PROBE_MAX_CANDIDATES`, run in
+ * parallel with a short timeout), cached beside the uptime set
+ * (`<cacheDir>/<model>.probe.json`, its own TTL), and NEVER blocks a turn: a
+ * cold probe cache returns the uptime order immediately and refreshes in the
+ * background for the next activation.
  */
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 export const OPENROUTER_ENDPOINTS_BASE_URL = 'https://openrouter.ai/api/v1/models';
+export const OPENROUTER_COMPLETIONS_URL = 'https://openrouter.ai/api/v1/chat/completions';
 export const OPENROUTER_ROUTING_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 export const OPENROUTER_ROUTING_FETCH_TIMEOUT_MS = 10_000;
+/** The answer probe is a live purchase; keep it short-lived but not per-turn. */
+export const OPENROUTER_PROBE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+/** At most this many uptime survivors are ever asked, in parallel. */
+export const OPENROUTER_PROBE_MAX_CANDIDATES = 6;
+export const OPENROUTER_PROBE_TIMEOUT_MS = 20_000;
 export const OPENROUTER_UPTIME_BAR = 98;
 export const OPENROUTER_UPTIME_BAR_RELAXED = 95;
 export const OPENROUTER_MIN_PROVIDERS = 2;
@@ -69,6 +89,12 @@ export interface OpenRouterRoutingDecision {
   source: OpenRouterRoutingSource;
   /** The one daemon log line describing this decision. */
   line: string;
+  /**
+   * Present only when the answer probe could not be served from cache: it is
+   * running in the background and resolves to the decision the NEXT activation
+   * will get. Never rejects, and never awaited on the turn path.
+   */
+  refresh?: Promise<OpenRouterRoutingDecision | undefined>;
 }
 
 interface CachedRouting {
@@ -76,6 +102,23 @@ interface CachedRouting {
   fetchedAt: number;
   providers: string[];
   bar: number | null;
+}
+
+/** One provider's answer to the probe. */
+export interface OpenRouterProbeResult {
+  provider: string;
+  /** The provider returned non-empty completion text. */
+  answered: boolean;
+  latencyMs: number;
+  /** Why it did not answer, for the log line ('empty completion', 'HTTP 429'…). */
+  note?: string;
+}
+
+interface CachedProbe {
+  model: string;
+  fetchedAt: number;
+  /** Only the providers that answered, ordered by measured latency. */
+  answered: { provider: string; latencyMs: number }[];
 }
 
 /**
@@ -180,11 +223,14 @@ export function selectReliableOpenRouterProviders(
   return { providers: [], bar: null, contextLength };
 }
 
-export function openRouterRoutingFor(providers: readonly string[]): OpenRouterRouting {
+export function openRouterRoutingFor(
+  providers: readonly string[],
+  allowFallbacks = true,
+): OpenRouterRouting {
   return {
     only: [...providers],
     order: [...providers],
-    allow_fallbacks: true,
+    allow_fallbacks: allowFallbacks,
     require_parameters: false,
   };
 }
@@ -229,12 +275,168 @@ async function writeCache(cacheDir: string, value: CachedRouting): Promise<void>
   });
 }
 
+function probeCachePath(cacheDir: string, model: string): string {
+  return resolve(cacheDir, `${model.replace(/[^A-Za-z0-9._-]+/g, '_')}.probe.json`);
+}
+
+async function readProbeCache(cacheDir: string, model: string): Promise<CachedProbe | undefined> {
+  try {
+    const parsed = JSON.parse(await readFile(probeCachePath(cacheDir, model), 'utf8')) as unknown;
+    if (!parsed || typeof parsed !== 'object') return undefined;
+    const cached = parsed as Partial<CachedProbe>;
+    if (cached.model !== model || typeof cached.fetchedAt !== 'number') return undefined;
+    if (!Array.isArray(cached.answered)) return undefined;
+    const answered: CachedProbe['answered'] = [];
+    for (const entry of cached.answered) {
+      if (!entry || typeof entry !== 'object') return undefined;
+      const { provider, latencyMs } = entry as { provider?: unknown; latencyMs?: unknown };
+      if (typeof provider !== 'string' || !provider || typeof latencyMs !== 'number') {
+        return undefined;
+      }
+      answered.push({ provider, latencyMs });
+    }
+    return { model, fetchedAt: cached.fetchedAt, answered };
+  } catch {
+    return undefined;
+  }
+}
+
+async function writeProbeCache(cacheDir: string, value: CachedProbe): Promise<void> {
+  await mkdir(cacheDir, { recursive: true, mode: 0o700 });
+  await writeFile(probeCachePath(cacheDir, value.model), `${JSON.stringify(value, null, 2)}\n`, {
+    mode: 0o600,
+  });
+}
+
+/**
+ * The one request the probe sends: a tool-enabled completion pinned to a
+ * single provider with no fallbacks, asking for one word. Tools are declared
+ * because a provider that silently drops tool calls is exactly the one this
+ * pin must not contain; the model is told never to call it.
+ */
+const PROBE_TOOL = {
+  type: 'function',
+  function: {
+    name: 'beeline_routing_probe',
+    description: 'Never call this tool. It exists only to prove the endpoint accepts tools.',
+    parameters: { type: 'object', properties: {} },
+  },
+} as const;
+
+function completionText(payload: unknown): string {
+  const choices = (payload as { choices?: unknown } | undefined)?.choices;
+  if (!Array.isArray(choices)) return '';
+  let text = '';
+  for (const choice of choices) {
+    const content = (choice as { message?: { content?: unknown } } | undefined)?.message?.content;
+    if (typeof content === 'string') text += content;
+    else if (Array.isArray(content)) {
+      for (const block of content) {
+        if (block && typeof block === 'object' && (block as { type?: unknown }).type === 'text') {
+          text += String((block as { text?: unknown }).text ?? '');
+        }
+      }
+    }
+  }
+  return text.trim();
+}
+
+/**
+ * Ask ONE provider for one word. `answered` is the only fact that matters: an
+ * empty 200 is a failure here even though it is a success to OpenRouter's
+ * uptime figure.
+ */
+export async function probeOpenRouterProvider(input: {
+  model: string;
+  provider: string;
+  apiKey: string;
+  fetchImpl?: typeof fetch;
+  now?: () => number;
+  timeoutMs?: number;
+}): Promise<OpenRouterProbeResult> {
+  const now = input.now ?? Date.now;
+  const started = now();
+  const doFetch = input.fetchImpl ?? fetch;
+  try {
+    const response = await doFetch(OPENROUTER_COMPLETIONS_URL, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${input.apiKey}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: input.model,
+        provider: { only: [input.provider], allow_fallbacks: false, require_parameters: false },
+        messages: [{ role: 'user', content: 'Reply with exactly one word: ready' }],
+        max_tokens: 32,
+        tools: [PROBE_TOOL],
+      }),
+      signal: AbortSignal.timeout(input.timeoutMs ?? OPENROUTER_PROBE_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      return {
+        provider: input.provider,
+        answered: false,
+        latencyMs: now() - started,
+        note: `HTTP ${response.status}`,
+      };
+    }
+    const text = completionText(await response.json());
+    return {
+      provider: input.provider,
+      answered: Boolean(text),
+      latencyMs: now() - started,
+      ...(text ? {} : { note: 'empty completion' }),
+    };
+  } catch (error) {
+    return {
+      provider: input.provider,
+      answered: false,
+      latencyMs: now() - started,
+      note: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+/**
+ * Ask the uptime survivors, in parallel and bounded, and keep only the ones
+ * that answered — fastest first. Order is the measured latency, so the pin's
+ * head is the provider that actually replies soonest.
+ */
+export async function probeOpenRouterProviders(input: {
+  model: string;
+  providers: readonly string[];
+  apiKey: string;
+  fetchImpl?: typeof fetch;
+  now?: () => number;
+  timeoutMs?: number;
+  maxCandidates?: number;
+}): Promise<OpenRouterProbeResult[]> {
+  const candidates = input.providers.slice(
+    0,
+    input.maxCandidates ?? OPENROUTER_PROBE_MAX_CANDIDATES,
+  );
+  return Promise.all(
+    candidates.map((provider) =>
+      probeOpenRouterProvider({
+        model: input.model,
+        provider,
+        apiKey: input.apiKey,
+        ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),
+        ...(input.now ? { now: input.now } : {}),
+        ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
+      }),
+    ),
+  );
+}
+
 function decision(
   model: string,
   providers: readonly string[],
   bar: number | null,
   source: OpenRouterRoutingSource,
   note?: string,
+  allowFallbacks = true,
 ): OpenRouterRoutingDecision {
   const criteria = bar === null ? 'fallback pair' : `uptime ≥${bar}%, tools`;
   const suffix = [
@@ -247,7 +449,7 @@ function decision(
     .join('; ');
   return {
     model,
-    routing: openRouterRoutingFor(providers),
+    routing: openRouterRoutingFor(providers, allowFallbacks),
     providers: [...providers],
     bar,
     source,
@@ -257,20 +459,38 @@ function decision(
   };
 }
 
+/** What `prepareRoomAgentHome` accepts: the resolve input plus a decision hook. */
+export interface OpenRouterRoutingHomeInput extends ResolveOpenRouterRoutingInput {
+  onDecision?: (decision: OpenRouterRoutingDecision) => void;
+}
+
 export interface ResolveOpenRouterRoutingInput {
   model: string;
   cacheDir: string;
   fetchImpl?: typeof fetch;
   now?: () => number;
   timeoutMs?: number;
+  /**
+   * OpenRouter key for the answer probe. Without it only the uptime/tools
+   * filter runs — the pin is then no worse than it was before C92.
+   */
+  apiKey?: string;
+  /**
+   * Pin this ONE provider with no fallbacks, whatever the live data says. The
+   * turn loops set it after an empty completion so the retry is served by a
+   * named provider (`empty-turn.ts`).
+   */
+  providerOverride?: string;
+  /** Bound on the probe; tests pass a smaller one. */
+  probeMaxCandidates?: number;
+  probeTimeoutMs?: number;
 }
 
 /**
- * The fallback ladder: fresh cache → live API (cached on success) → any
- * cached set, however old → #840's pair. Never throws; the decision's `line`
- * is the one log line a caller prints.
+ * The uptime/tools pass: fresh cache → live API (cached on success) → any
+ * cached set, however old → #840's pair. Never throws.
  */
-export async function resolveOpenRouterRouting(
+async function resolveUptimeRouting(
   input: ResolveOpenRouterRoutingInput,
 ): Promise<OpenRouterRoutingDecision> {
   const now = input.now ?? Date.now;
@@ -325,6 +545,115 @@ export async function resolveOpenRouterRouting(
     'fallback',
     `api unreachable: ${failure}`,
   );
+}
+
+/**
+ * One in-flight probe per (cache dir, model). Every Room of a daemon shares
+ * the cache, so without this a restart would ask each provider once per Room.
+ */
+const inFlightProbes = new Map<string, Promise<OpenRouterRoutingDecision | undefined>>();
+
+/** The probed set, restricted to providers the current uptime pass still keeps. */
+function answeringProviders(probe: CachedProbe, candidates: readonly string[]): string[] {
+  return probe.answered
+    .map((entry) => entry.provider)
+    .filter((provider) => candidates.includes(provider));
+}
+
+async function refreshAnswerProbe(
+  input: ResolveOpenRouterRoutingInput,
+  base: OpenRouterRoutingDecision,
+  apiKey: string,
+): Promise<OpenRouterRoutingDecision | undefined> {
+  const now = input.now ?? Date.now;
+  const results = await probeOpenRouterProviders({
+    model: input.model,
+    providers: base.providers,
+    apiKey,
+    ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),
+    ...(input.now ? { now: input.now } : {}),
+    ...(input.probeTimeoutMs === undefined ? {} : { timeoutMs: input.probeTimeoutMs }),
+    ...(input.probeMaxCandidates === undefined ? {} : { maxCandidates: input.probeMaxCandidates }),
+  });
+  const answered = results
+    .filter((result) => result.answered)
+    .sort((left, right) => left.latencyMs - right.latencyMs)
+    .map((result) => ({ provider: result.provider, latencyMs: result.latencyMs }));
+  const silent = results.filter((result) => !result.answered);
+  if (answered.length === 0) {
+    // Nobody answered: that is a fact about this moment, not about the set.
+    // Do not cache it — the uptime order stays in force and the next
+    // activation asks again.
+    return undefined;
+  }
+  await writeProbeCache(input.cacheDir, {
+    model: input.model,
+    fetchedAt: now(),
+    answered,
+  }).catch(() => undefined);
+  const dropped = silent.length
+    ? `dropped ${silent.map((result) => `${result.provider} (${result.note ?? 'no answer'})`).join(', ')}`
+    : 'every candidate answered';
+  return decision(
+    input.model,
+    answered.map((entry) => entry.provider),
+    base.bar,
+    base.source,
+    `answer-probed, fastest first; ${dropped}`,
+  );
+}
+
+/**
+ * The pin a daemon activation applies. The uptime ladder chooses the
+ * candidates; the answer probe (cached separately, refreshed in the
+ * background) reduces them to the providers that actually reply. Never
+ * throws, and never waits on the probe: the decision's `line` is the one log
+ * line a caller prints, and `refresh` — when present — is the background probe
+ * whose own line the caller may print when it lands.
+ */
+export async function resolveOpenRouterRouting(
+  input: ResolveOpenRouterRoutingInput,
+): Promise<OpenRouterRoutingDecision> {
+  const base = await resolveUptimeRouting(input);
+  const override = input.providerOverride?.trim();
+  if (override) {
+    return decision(
+      input.model,
+      [override],
+      base.bar,
+      base.source,
+      'pinned to one provider after an empty completion',
+      false,
+    );
+  }
+  const apiKey = input.apiKey?.trim();
+  if (!apiKey || base.providers.length < 2) return base;
+  const now = input.now ?? Date.now;
+  const probe = await readProbeCache(input.cacheDir, input.model);
+  if (probe && now() - probe.fetchedAt < OPENROUTER_PROBE_CACHE_TTL_MS) {
+    const answered = answeringProviders(probe, base.providers);
+    if (answered.length > 0) {
+      return decision(input.model, answered, base.bar, base.source, 'answer-probed, cached');
+    }
+  }
+  // Cold or unusable probe cache: the turn starts NOW on the uptime order and
+  // the probe lands for the next activation.
+  const key = `${input.cacheDir}\u0000${input.model}`;
+  let refresh = inFlightProbes.get(key);
+  if (!refresh) {
+    const tracked: Promise<OpenRouterRoutingDecision | undefined> = refreshAnswerProbe(
+      input,
+      base,
+      apiKey,
+    )
+      .catch(() => undefined)
+      .finally(() => {
+        if (inFlightProbes.get(key) === tracked) inFlightProbes.delete(key);
+      });
+    inFlightProbes.set(key, tracked);
+    refresh = tracked;
+  }
+  return { ...base, refresh };
 }
 
 /**
@@ -407,14 +736,24 @@ export function openRouterRoutingInput(
   config: { agentEnv: Record<string, string>; openRouterRoutingCacheDir?: string },
   selection: { model?: string } | undefined,
   fetchImpl?: typeof fetch,
-): { openRouterRouting?: ResolveOpenRouterRoutingInput } {
+  extra?: {
+    /** Retry pin after an empty completion (`empty-turn.ts`). */
+    providerOverride?: string;
+    /** Lets the turn loop learn the pinned order it may rotate through. */
+    onDecision?: (decision: OpenRouterRoutingDecision) => void;
+  },
+): { openRouterRouting?: OpenRouterRoutingHomeInput } {
   const model = openRouterModelId(selection?.model, config.agentEnv);
   if (!model || !config.openRouterRoutingCacheDir) return {};
+  const apiKey = config.agentEnv.OPENROUTER_API_KEY?.trim();
   return {
     openRouterRouting: {
       model,
       cacheDir: config.openRouterRoutingCacheDir,
+      ...(apiKey ? { apiKey } : {}),
       ...(fetchImpl ? { fetchImpl } : {}),
+      ...(extra?.providerOverride ? { providerOverride: extra.providerOverride } : {}),
+      ...(extra?.onDecision ? { onDecision: extra.onDecision } : {}),
     },
   };
 }

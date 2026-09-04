@@ -40,6 +40,7 @@ import type { AgentRuntimeRecord } from './runtime.js';
 import { runtimeIdentity } from './runtime.js';
 import { MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE, SOUL_HOUSE_RULE } from './response-directives.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
+import { withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
 
 type WorkspaceRoster = DaemonOperationMap['getWorkspaceRoster']['output'];
 type DaemonActivity = DaemonOperationMap['postAgentActivity']['input']['activity'][number];
@@ -145,9 +146,7 @@ function toolArguments(call: ToolCallEntry): { command?: string; input?: string 
           : undefined;
   if (command) return { command: clampBytes(redactToolDetail(command), TOOL_ARGUMENT_MAX_BYTES) };
   const input = serialized(call.rawInput);
-  return input
-    ? { input: clampBytes(redactToolDetail(input), TOOL_ARGUMENT_MAX_BYTES) }
-    : {};
+  return input ? { input: clampBytes(redactToolDetail(input), TOOL_ARGUMENT_MAX_BYTES) } : {};
 }
 
 function toolCallKey(call: ToolCallEntry, index: number): string {
@@ -478,202 +477,214 @@ export class MonolithCornerTurnLoop {
         }
       : undefined;
     this.currentTurn = { requestId, ...(requester ? { requester } : {}) };
-    await api.execute('postAgentTurnReceipt', {
-      agentId: this.agent.publicKey,
-      roomId: cornerId,
-      requestId,
-      status: 'working',
-      generationId: `${this.agent.publicKey}:${cornerId}`,
-    });
     try {
-      await this.options.scheduler.run(
-        cornerId,
-        this.lifecycle(),
-        async () => {
-          if (this.forcedStop) throw new Error('corner turn stopped for daemon handoff');
-          this.busy = true;
-          const [conversation, roster, delivered] = await Promise.all([
-            api.execute('getRoomConversation', { roomId: cornerId, limit: 200 }),
-            this.roster(),
-            this.attachmentDir && attachments.length
-              ? deliverAttachments(
-                  attachments,
-                  join(this.attachmentDir, requestId.replace(/[^\w-]/g, '_')),
-                  this.options.fetchImpl,
+      await withTurnReceiptHeartbeat(
+        api,
+        {
+          agentId: this.agent.publicKey,
+          roomId: cornerId,
+          requestId,
+          generationId: `${this.agent.publicKey}:${cornerId}`,
+        },
+        () =>
+          this.options.scheduler.run(
+            cornerId,
+            this.lifecycle(),
+            async () => {
+              if (this.forcedStop) throw new Error('corner turn stopped for daemon handoff');
+              this.busy = true;
+              const [conversation, roster, delivered] = await Promise.all([
+                api.execute('getRoomConversation', { roomId: cornerId, limit: 200 }),
+                this.roster(),
+                this.attachmentDir && attachments.length
+                  ? deliverAttachments(
+                      attachments,
+                      join(this.attachmentDir, requestId.replace(/[^\w-]/g, '_')),
+                      this.options.fetchImpl,
+                    )
+                  : Promise.resolve<DeliveredAttachment[]>([]),
+              ]);
+              const names = new Map(
+                roster.members.map((member) => [member.identityId, member.name]),
+              );
+              const requestedBy =
+                requester && !requester.name && names.get(requester.pubkey)
+                  ? { ...requester, name: names.get(requester.pubkey)! }
+                  : requester;
+              if (requestedBy) this.currentTurn = { requestId, requester: requestedBy };
+              const transcript = conversation.items
+                .slice(-120)
+                .map(
+                  (message) =>
+                    `${names.get(message.authorId) ?? 'Beeline'} [${message.type}]: ${message.body}`,
                 )
-              : Promise.resolve<DeliveredAttachment[]>([]),
-          ]);
-          const names = new Map(roster.members.map((member) => [member.identityId, member.name]));
-          const requestedBy =
-            requester && !requester.name && names.get(requester.pubkey)
-              ? { ...requester, name: names.get(requester.pubkey)! }
-              : requester;
-          if (requestedBy) this.currentTurn = { requestId, requester: requestedBy };
-          const transcript = conversation.items
-            .slice(-120)
-            .map(
-              (message) =>
-                `${names.get(message.authorId) ?? 'Beeline'} [${message.type}]: ${message.body}`,
-            )
-            .join('\n');
-          const prompt = [
-            this.turnIdentityInstructions,
-            `Corner objective:\n${this.options.objective}`,
-            transcript ? `Corner transcript:\n${transcript}` : '',
-            [`Newest trigger:\n${trigger}`, ...attachmentPromptLines(attachments, delivered)].join(
-              '\n',
-            ),
-            'Continue the objective. Obey the PR checks and human hold rules in your session instructions.',
-            MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE,
-          ]
-            .filter(Boolean)
-            .join('\n\n');
-          const sessionId = this.sessionId!;
-          // The draft lane's turn id must equal the turn's request id so the
-          // durable final reconciles (and settles) the live draft, exactly as
-          // in top-level Rooms; any other id leaves a ghost draft duplicating
-          // the final message when the retract event is missed.
-          const turnId = requestId;
-          const publishedToolCalls = new Set<string>();
-          // Colloquial corner ledger: each COMPLETED narration segment of the
-          // turn is kept as a durable Room line (server-indexed like any
-          // message), interleaved with the settled tool rows, instead of the
-          // corner staying silent until the finish. Segments carry no request
-          // id so they never settle the turn's receipt; the un-posted tail
-          // becomes the durable final. Offsets index the RAW stream text;
-          // a failed segment post reverts its offset so the text still lands
-          // in the final.
-          const NARRATION_MAX_SEGMENTS = 20;
-          let narrationPostedChars = 0;
-          let narrationSegments = 0;
-          const postNarrationSegments = (full: string) => {
-            if (narrationSegments >= NARRATION_MAX_SEGMENTS) return;
-            const unposted = full.slice(narrationPostedChars);
-            const boundaries = [...unposted.matchAll(/\n\n|[.!?](?=\s)/g)];
-            if (!boundaries.length) return;
-            const boundary = boundaries[boundaries.length - 1]!;
-            const segmentEnd = narrationPostedChars + boundary.index! + boundary[0].length;
-            const segment = stripAgentReplyPreamble(full.slice(narrationPostedChars, segmentEnd));
-            const start = narrationPostedChars;
-            narrationPostedChars = segmentEnd;
-            narrationSegments += 1;
-            const trimmed = spoken(segment.trim());
-            if (!trimmed) return;
-            this.activityTail = this.activityTail
-              .catch(() => undefined)
-              .then(async () => {
+                .join('\n');
+              const prompt = [
+                this.turnIdentityInstructions,
+                `Corner objective:\n${this.options.objective}`,
+                transcript ? `Corner transcript:\n${transcript}` : '',
+                [
+                  `Newest trigger:\n${trigger}`,
+                  ...attachmentPromptLines(attachments, delivered),
+                ].join('\n'),
+                'Continue the objective. Obey the PR checks and human hold rules in your session instructions.',
+                MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE,
+              ]
+                .filter(Boolean)
+                .join('\n\n');
+              const sessionId = this.sessionId!;
+              // The draft lane's turn id must equal the turn's request id so the
+              // durable final reconciles (and settles) the live draft, exactly as
+              // in top-level Rooms; any other id leaves a ghost draft duplicating
+              // the final message when the retract event is missed.
+              const turnId = requestId;
+              const publishedToolCalls = new Set<string>();
+              // Colloquial corner ledger: each COMPLETED narration segment of the
+              // turn is kept as a durable Room line (server-indexed like any
+              // message), interleaved with the settled tool rows, instead of the
+              // corner staying silent until the finish. Segments carry no request
+              // id so they never settle the turn's receipt; the un-posted tail
+              // becomes the durable final. Offsets index the RAW stream text;
+              // a failed segment post reverts its offset so the text still lands
+              // in the final.
+              const NARRATION_MAX_SEGMENTS = 20;
+              let narrationPostedChars = 0;
+              let narrationSegments = 0;
+              const postNarrationSegments = (full: string) => {
+                if (narrationSegments >= NARRATION_MAX_SEGMENTS) return;
+                const unposted = full.slice(narrationPostedChars);
+                const boundaries = [...unposted.matchAll(/\n\n|[.!?](?=\s)/g)];
+                if (!boundaries.length) return;
+                const boundary = boundaries[boundaries.length - 1]!;
+                const segmentEnd = narrationPostedChars + boundary.index! + boundary[0].length;
+                const segment = stripAgentReplyPreamble(
+                  full.slice(narrationPostedChars, segmentEnd),
+                );
+                const start = narrationPostedChars;
+                narrationPostedChars = segmentEnd;
+                narrationSegments += 1;
+                const trimmed = spoken(segment.trim());
+                if (!trimmed) return;
+                this.activityTail = this.activityTail
+                  .catch(() => undefined)
+                  .then(async () => {
+                    await api.execute('postRoomMessage', {
+                      roomId: cornerId,
+                      text: trimmed,
+                      presentation: 'message',
+                    });
+                  })
+                  .catch(() => {
+                    narrationPostedChars = start;
+                    narrationSegments -= 1;
+                  });
+              };
+              const publishToolCalls = (calls: readonly ToolCallEntry[], settledOnly: boolean) => {
+                calls.forEach((call, index) => {
+                  const key = toolCallKey(call, index);
+                  if (publishedToolCalls.has(key) || (settledOnly && !toolCallSettled(call)))
+                    return;
+                  publishedToolCalls.add(key);
+                  this.activityTail = this.activityTail
+                    .catch(() => undefined)
+                    .then(async () => {
+                      const activity = await cornerToolActivity(
+                        call,
+                        this.options.worktreePath,
+                        requestedBy,
+                      );
+                      await api.execute('postAgentActivity', {
+                        agentId: this.agent.publicKey,
+                        roomId: cornerId,
+                        requestId,
+                        activity: [activity],
+                      });
+                    })
+                    .then(() => undefined)
+                    .catch((error) => {
+                      publishedToolCalls.delete(key);
+                      console.error(`[thin-core] corner ${cornerId} tool activity failed:`, error);
+                    });
+                });
+              };
+              const result = await this.client!.sessionPrompt(
+                sessionId,
+                promptWithImages(
+                  prompt,
+                  attachmentImageBlocks(delivered, this.client!.canPromptWithImages()),
+                ),
+                120_000,
+                (_delta, full) => {
+                  postNarrationSegments(full);
+                  this.draftTail = this.draftTail
+                    .catch(() => undefined)
+                    .then(() =>
+                      api.execute('postAgentDraft', {
+                        agentId: this.agent.publicKey,
+                        roomId: cornerId,
+                        turnId,
+                        text: full,
+                      }),
+                    )
+                    .then(() => undefined)
+                    .catch((error) =>
+                      console.error(`[thin-core] corner ${cornerId} draft publish failed:`, error),
+                    );
+                },
+                undefined,
+                (calls) => publishToolCalls(calls, true),
+              );
+              await this.activityTail;
+              publishToolCalls(result.toolCalls, false);
+              await this.activityTail;
+              await this.draftTail;
+              await this.activityTail;
+              let reply = stripAgentReplyPreamble(result.agentText).trim();
+              if (!reply) {
+                const explained = await explainEmptyAgentTurn({
+                  agentLabel: this.options.config.agentCommand ?? this.options.config.agentBinary,
+                  agentEnv: this.agentEnv,
+                  sessionId,
+                  result,
+                });
+                reply = explained.recoveredText
+                  ? stripAgentReplyPreamble(explained.recoveredText).trim()
+                  : '';
+                // A checks turn is told to say nothing when nothing changed; only a
+                // provider refusal makes that silence a failure.
+                if (!reply && !(restates && !isAccountOrProviderRefusal(explained.record))) {
+                  throw new Error(explained.reason);
+                }
+                console.warn(
+                  `[thin-core] corner ${cornerId} turn ${requestId}: ${explained.reason}`,
+                );
+              }
+              // The durable final carries only the tail the narration segments did
+              // not already keep; when narration covered the whole reply the turn
+              // settles through its explicit receipt instead.
+              const durableTail = spoken(
+                narrationPostedChars > 0
+                  ? stripAgentReplyPreamble(result.agentText.slice(narrationPostedChars)).trim()
+                  : reply,
+              );
+              if (durableTail) {
                 await api.execute('postRoomMessage', {
                   roomId: cornerId,
-                  text: trimmed,
+                  requestId,
+                  text: durableTail,
                   presentation: 'message',
                 });
-              })
-              .catch(() => {
-                narrationPostedChars = start;
-                narrationSegments -= 1;
+              }
+              await api.execute('retractAgentLiveOutput', {
+                agentId: this.agent.publicKey,
+                roomId: cornerId,
+                turnId,
+                kind: 'draft',
               });
-          };
-          const publishToolCalls = (calls: readonly ToolCallEntry[], settledOnly: boolean) => {
-            calls.forEach((call, index) => {
-              const key = toolCallKey(call, index);
-              if (publishedToolCalls.has(key) || (settledOnly && !toolCallSettled(call))) return;
-              publishedToolCalls.add(key);
-              this.activityTail = this.activityTail
-                .catch(() => undefined)
-                .then(async () => {
-                  const activity = await cornerToolActivity(
-                    call,
-                    this.options.worktreePath,
-                    requestedBy,
-                  );
-                  await api.execute('postAgentActivity', {
-                    agentId: this.agent.publicKey,
-                    roomId: cornerId,
-                    requestId,
-                    activity: [activity],
-                  });
-                })
-                .then(() => undefined)
-                .catch((error) => {
-                  publishedToolCalls.delete(key);
-                  console.error(`[thin-core] corner ${cornerId} tool activity failed:`, error);
-                });
-            });
-          };
-          const result = await this.client!.sessionPrompt(
-            sessionId,
-            promptWithImages(
-              prompt,
-              attachmentImageBlocks(delivered, this.client!.canPromptWithImages()),
-            ),
-            120_000,
-            (_delta, full) => {
-              postNarrationSegments(full);
-              this.draftTail = this.draftTail
-                .catch(() => undefined)
-                .then(() =>
-                  api.execute('postAgentDraft', {
-                    agentId: this.agent.publicKey,
-                    roomId: cornerId,
-                    turnId,
-                    text: full,
-                  }),
-                )
-                .then(() => undefined)
-                .catch((error) =>
-                  console.error(`[thin-core] corner ${cornerId} draft publish failed:`, error),
-                );
             },
-            undefined,
-            (calls) => publishToolCalls(calls, true),
-          );
-          await this.activityTail;
-          publishToolCalls(result.toolCalls, false);
-          await this.activityTail;
-          await this.draftTail;
-          await this.activityTail;
-          let reply = stripAgentReplyPreamble(result.agentText).trim();
-          if (!reply) {
-            const explained = await explainEmptyAgentTurn({
-              agentLabel: this.options.config.agentCommand ?? this.options.config.agentBinary,
-              agentEnv: this.agentEnv,
-              sessionId,
-              result,
-            });
-            reply = explained.recoveredText
-              ? stripAgentReplyPreamble(explained.recoveredText).trim()
-              : '';
-            // A checks turn is told to say nothing when nothing changed; only a
-            // provider refusal makes that silence a failure.
-            if (!reply && !(restates && !isAccountOrProviderRefusal(explained.record))) {
-              throw new Error(explained.reason);
-            }
-            console.warn(`[thin-core] corner ${cornerId} turn ${requestId}: ${explained.reason}`);
-          }
-          // The durable final carries only the tail the narration segments did
-          // not already keep; when narration covered the whole reply the turn
-          // settles through its explicit receipt instead.
-          const durableTail = spoken(
-            narrationPostedChars > 0
-              ? stripAgentReplyPreamble(result.agentText.slice(narrationPostedChars)).trim()
-              : reply,
-          );
-          if (durableTail) {
-            await api.execute('postRoomMessage', {
-              roomId: cornerId,
-              requestId,
-              text: durableTail,
-              presentation: 'message',
-            });
-          }
-          await api.execute('retractAgentLiveOutput', {
-            agentId: this.agent.publicKey,
-            roomId: cornerId,
-            turnId,
-            kind: 'draft',
-          });
-        },
-        { priority: 'interactive', roomKey: cornerId },
+            { priority: 'interactive', roomKey: cornerId },
+          ),
+        (error) => console.error(`[thin-core] corner ${cornerId} receipt heartbeat failed:`, error),
       );
       await api.execute('postAgentTurnReceipt', {
         agentId: this.agent.publicKey,
@@ -800,10 +811,7 @@ export class MonolithCornerTurnLoop {
           }
           cursor = inbox.cursor ?? cursor;
           this.options.onPoll();
-          await wait(
-            pollWithoutWait ? 0 : (this.options.pollMs ?? cornerClosePollMs()),
-            signal,
-          );
+          await wait(pollWithoutWait ? 0 : (this.options.pollMs ?? cornerClosePollMs()), signal);
           pollWithoutWait = false;
         } catch (error) {
           if (signal?.aborted) break;

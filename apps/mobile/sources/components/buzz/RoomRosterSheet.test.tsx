@@ -108,10 +108,13 @@ function sheet(overrides: Partial<React.ComponentProps<typeof RoomRosterSheet>> 
   return (
     <RoomRosterSheet
       bottomInset={0}
+      canManage
       isDirectMessage={false}
       memberByPubkey={members as any}
       membershipActionPubkey={null}
       membershipError={null}
+      onAddAgents={vi.fn()}
+      onAddPeople={vi.fn()}
       onClose={vi.fn()}
       onRemove={vi.fn()}
       onlineByPubkey={{ [OX]: true }}
@@ -221,6 +224,31 @@ describe('RoomRosterSheet', () => {
     expect(remove.findByType('Text' as any).props.children).toBe('Remove from this Room');
     act(() => remove.props.onPress());
     expect(onRemove).toHaveBeenCalledWith(rosterSections.agents[0]);
+  });
+
+  it('renders a + on each section head that opens the picker pre-scoped to its own kind (C82)', () => {
+    const onAddPeople = vi.fn();
+    const onAddAgents = vi.fn();
+    const renderer = render(sheet({ onAddPeople, onAddAgents }));
+
+    const people = renderer.root.findByProps({ testID: 'room-roster-add-people' });
+    expect(people.props.accessibilityLabel).toBe('Add people');
+    expect(people.props.style.minHeight).toBeGreaterThanOrEqual(44);
+    act(() => people.props.onPress());
+    expect(onAddPeople).toHaveBeenCalledTimes(1);
+    expect(onAddAgents).not.toHaveBeenCalled();
+
+    const agents = renderer.root.findByProps({ testID: 'room-roster-add-agents' });
+    expect(agents.props.accessibilityLabel).toBe('Add agents');
+    expect(agents.props.style.minHeight).toBeGreaterThanOrEqual(44);
+    act(() => agents.props.onPress());
+    expect(onAddAgents).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows no + on either section head to a viewer who cannot manage members', () => {
+    const renderer = render(sheet({ canManage: false }));
+    expect(renderer.root.findAllByProps({ testID: 'room-roster-add-people' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'room-roster-add-agents' })).toHaveLength(0);
   });
 
   it('gives a row no chevron and no detail when the viewer may not remove it', () => {

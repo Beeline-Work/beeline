@@ -273,13 +273,17 @@ describe('Members agent invitation flow', () => {
 describe('Members invite affordance design', () => {
   const source = readFileSync(new URL('./MembersScreen.tsx', import.meta.url), 'utf8');
 
-  it('offers one brass primary, sentence case, in place of the boxed mono invite pair (C79)', async () => {
+  it('offers a quiet + on each section head, in place of the boxed mono invite pair and the full-width brass row (C82)', async () => {
     route.action = undefined;
     const renderer = await render();
-    const brass = renderer.root.findAllByType('BrassButton' as any);
-    expect(brass).toHaveLength(1);
-    expect(brass[0].props.testID).toBe('add-members');
-    expect(brass[0].props.label).toBe('Add people or agents');
+    expect(renderer.root.findAllByType('BrassButton' as any)).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'add-members' })).toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: 'members-add-people' }).props.accessibilityLabel).toBe(
+      'Add people',
+    );
+    expect(renderer.root.findByProps({ testID: 'members-add-agents' }).props.accessibilityLabel).toBe(
+      'Add agents',
+    );
     expect(renderer.root.findAllByProps({ testID: 'invite-person' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'invite-agent' })).toHaveLength(0);
     expect(renderer.root.findAllByType('MonoButton' as any)).toHaveLength(0);

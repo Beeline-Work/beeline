@@ -3601,10 +3601,21 @@ export default function BuzzChat() {
 
       <RoomRosterSheet
         bottomInset={insets.bottom}
+        canManage={roomSurface?.viewer.permissions.manage ?? false}
         isDirectMessage={isDirectMessage}
         memberByPubkey={roomMemberByPubkey}
         membershipActionPubkey={membershipActionPubkey}
         membershipError={membershipError}
+        onAddAgents={() => {
+          setMembershipError(null);
+          setParticipantPickerKind('agent');
+          setParticipantPickerVisible(true);
+        }}
+        onAddPeople={() => {
+          setMembershipError(null);
+          setParticipantPickerKind('person');
+          setParticipantPickerVisible(true);
+        }}
         onClose={closeRoster}
         onRemove={handleRemoveRoomMember}
         onlineByPubkey={speakerOnline}

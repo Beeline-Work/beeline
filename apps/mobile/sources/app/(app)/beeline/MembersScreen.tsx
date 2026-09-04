@@ -30,7 +30,7 @@ import { canRemoveRoomParticipant } from '@/buzz/room-management';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
-import { BrassButton, HullSurface, MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
+import { HullSurface, MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
 import { MEMBERS_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { BuzzRigTransport } from '@/sync/transport';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
@@ -738,21 +738,27 @@ export default function BuzzMembers() {
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
         >
-          {canManage && (
-            <BrassButton
-              label="Add people or agents"
-              disabled={busy}
-              onPress={() => {
-                setError(null);
-                setPickerOpen(true);
-              }}
-              testID="add-members"
-            />
-          )}
           <View style={styles.section} testID="members-people-section">
-            <Text style={styles.sectionLabel} testID="members-people-head">
-              People {surface.members.length}
-            </Text>
+            <View style={styles.sectionHeadRow}>
+              <Text style={styles.sectionLabel} testID="members-people-head">
+                People {surface.members.length}
+              </Text>
+              {canManage && (
+                <TouchableOpacity
+                  accessibilityLabel="Add people"
+                  disabled={busy}
+                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                  onPress={() => {
+                    setError(null);
+                    void invitePerson();
+                  }}
+                  style={styles.sectionAdd}
+                  testID="members-add-people"
+                >
+                  <Text style={styles.sectionAddGlyph}>+</Text>
+                </TouchableOpacity>
+              )}
+            </View>
             {surface.members.map((member) => {
               const editable = canChangeRole(
                 surface.viewer.role,
@@ -848,9 +854,23 @@ export default function BuzzMembers() {
             })}
           </View>
           <View style={styles.section} testID="members-agents-section">
-            <Text style={styles.sectionLabel} testID="members-agents-head">
-              Agents {surface.agents.length}
-            </Text>
+            <View style={styles.sectionHeadRow}>
+              <Text style={styles.sectionLabel} testID="members-agents-head">
+                Agents {surface.agents.length}
+              </Text>
+              {canManage && (
+                <TouchableOpacity
+                  accessibilityLabel="Add agents"
+                  disabled={busy}
+                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                  onPress={() => void connectAgent()}
+                  style={styles.sectionAdd}
+                  testID="members-add-agents"
+                >
+                  <Text style={styles.sectionAddGlyph}>+</Text>
+                </TouchableOpacity>
+              )}
+            </View>
             {surface.agents.map((member) => (
               <TouchableOpacity
                 key={member.identity.pubkey}
@@ -1175,7 +1195,20 @@ const styles = StyleSheet.create((theme) => {
       paddingBottom: hull.space.xxl,
     },
     section: {},
+    sectionHeadRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingRight: hull.space.sm,
+    },
     sectionLabel: { ...Typography.default(), ...hull.type.sectionHead, color: hull.textMuted },
+    sectionAdd: {
+      minWidth: 44,
+      minHeight: 44,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    sectionAddGlyph: { ...Typography.default(), ...hull.type.sectionHead, color: hull.accent },
     row: {
       minHeight: hull.layout.row,
       flexDirection: 'row',

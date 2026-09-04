@@ -121,8 +121,10 @@ ota_verify() {
   local token receipt group version sha
   token="$(token_from_file CUTOVER_OTA_RECEIPT_TOKEN_FILE "$CUTOVER_OTA_RECEIPT_TOKEN_FILE")"; receipt="$(mktemp)"; trap 'rm -f "$receipt"' RETURN
   curl --fail --silent --show-error --max-time 20 -H "Authorization: Bearer $token" "$CUTOVER_OTA_RECEIPT_ORIGIN/update-receipts/$CUTOVER_OWNER_PUBKEY" -o "$receipt"
-  group="$(jq -er '.production.groupId' "$CUTOVER_OTA_LEDGER")"; version="$(jq -er '.releaseVersion' "$CUTOVER_OTA_LEDGER")"; sha="$(jq -er '.sourceSha' "$CUTOVER_OTA_LEDGER")"
-  jq -e --arg g "$group" --arg v "$version" --arg s "$sha" '.devices|any(.environment=="physical" and .group==$g and .releaseVersion==$v and .sourceSha==$s)' "$receipt" >/dev/null || die 'owner physical device has not reported the exact cut OTA'
+  # One group per platform since the fingerprint runtime landed; the owner's
+  # physical device reports whichever group its own platform received.
+  group="$(jq -er '[(.production.groupIds // .production.groupId) | if type=="string" then split(",")[] else .[] end] | join(",")' "$CUTOVER_OTA_LEDGER")"; version="$(jq -er '.releaseVersion' "$CUTOVER_OTA_LEDGER")"; sha="$(jq -er '.sourceSha' "$CUTOVER_OTA_LEDGER")"
+  jq -e --arg g "$group" --arg v "$version" --arg s "$sha" '($g|split(",")) as $groups | .devices|any(.environment=="physical" and (.group|IN($groups[])) and .releaseVersion==$v and .sourceSha==$s)' "$receipt" >/dev/null || die 'owner physical device has not reported the exact cut OTA'
 }
 
 e2e_verify() {
@@ -157,7 +159,7 @@ rollback_daemons() {
 
 rollback_ota() {
   require node; require docker; need CUTOVER_OTA_LEDGER; need CUTOVER_OTA_ROLLBACK_LEDGER; need CUTOVER_OLD_STACK_DIR; local previous current
-  previous="$(jq -er '.previousProductionGroupId' "$CUTOVER_OTA_LEDGER")"; current="$(jq -er '.production.groupId' "$CUTOVER_OTA_LEDGER")"
+  previous="$(jq -er '[(.previousProductionGroupIds // .previousProductionGroupId) | if type=="string" then split(",")[] else .[] end] | unique | join(",")' "$CUTOVER_OTA_LEDGER")"; current="$(jq -er '[(.production.groupIds // .production.groupId) | if type=="string" then split(",")[] else .[] end] | unique | join(",")' "$CUTOVER_OTA_LEDGER")"
   (cd "$REPO_ROOT/apps/mobile" && node scripts/ota-release.mjs rollback --group "$previous" --expected-current-group "$current" --ledger "$CUTOVER_OTA_ROLLBACK_LEDGER")
   jq -e '.status=="rolled-back" and (.productionGroupId|type=="string")' "$CUTOVER_OTA_ROLLBACK_LEDGER" >/dev/null || die 'OTA rollback did not republish the expected previous group; old writes remain frozen'
   install -m 644 "$REPO_ROOT/relay-stack/prod/cutover-write-freeze.conf" "$CUTOVER_OLD_STACK_DIR/relay-front/cutover-write-freeze.conf"

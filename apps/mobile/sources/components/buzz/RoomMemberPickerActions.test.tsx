@@ -30,7 +30,7 @@ vi.mock('@/constants/Typography', () => ({
   Typography: { default: () => ({}), mono: () => ({}) },
 }));
 
-import { RoomMemberPickerActions } from './RoomMemberPickerActions';
+import { memberPickerEmptyLine, RoomMemberPickerActions } from './RoomMemberPickerActions';
 
 const originalConsoleError = console.error;
 beforeAll(() => {
@@ -79,7 +79,7 @@ describe('RoomMemberPickerActions', () => {
       'room-member-picker-add-agent',
     ]);
     const empty = renderer.root.findAllByProps({ testID: 'room-member-picker-empty' }).at(-1)!;
-    expect(empty.props.children).toBe('Nobody else in this workspace yet.');
+    expect(empty.props.children).toBe('No other members in this workspace yet.');
 
     act(() => {
       renderer.root.findAllByProps({ testID: 'room-member-picker-invite-person' }).at(-1)!.props.onPress();
@@ -91,6 +91,42 @@ describe('RoomMemberPickerActions', () => {
       renderer.root.findAllByProps({ testID: 'room-member-picker-add-agent' }).at(-1)!.props.onPress();
     });
     expect(onAddAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it('says the Room already holds them when the workspace has peers and none are addable (C83)', () => {
+    // The captain's report: a Room whose Workspace members are ALL already in
+    // it read "Nobody else in this workspace yet", which is a different fact.
+    const renderer = render(
+      <RoomMemberPickerActions
+        addableCount={0}
+        busy={false}
+        canManage
+        kind="person"
+        workspacePeerCount={3}
+        onAddAgent={vi.fn()}
+        onInvitePerson={vi.fn()}
+      />,
+    );
+    const empty = renderer.root.findAllByProps({ testID: 'room-member-picker-empty' }).at(-1)!;
+    expect(empty.props.children).toBe('All the people in this workspace are already here.');
+    // The two workspace-level entries stay below it either way.
+    expect(testIds(renderer)).toEqual([
+      'room-member-picker-actions',
+      'room-member-picker-empty',
+      'room-member-picker-invite-person',
+      'room-member-picker-add-agent',
+    ]);
+  });
+
+  it('names the kind the picker is listing in both empty sentences', () => {
+    expect(memberPickerEmptyLine('agent', 0)).toBe('No other agents in this workspace yet.');
+    expect(memberPickerEmptyLine('agent', 2)).toBe(
+      'All the agents in this workspace are already here.',
+    );
+    expect(memberPickerEmptyLine('person', 0)).toBe('No other people in this workspace yet.');
+    expect(memberPickerEmptyLine(null, 1)).toBe(
+      'All the members in this workspace are already here.',
+    );
   });
 
   it('tells a non-manager to ask a workspace manager instead of offering the actions', () => {

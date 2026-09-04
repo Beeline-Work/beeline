@@ -15,14 +15,20 @@ import {
   promptWithImages,
   type DeliveredAttachment,
 } from './attachment-delivery.js';
-import { stripAgentReplyPreamble } from './reply-sanitizer.js';
+import { isCornerStatusRestatement, stripAgentReplyPreamble } from './reply-sanitizer.js';
 import { distillTurnFailureReason, redactToolDetail } from './turn-failure-reason.js';
 import { beelineAgentMcpServer } from './room-session.js';
 import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
 import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
-import { explainEmptyAgentTurn } from './empty-turn.js';
+import { explainEmptyAgentTurn, isAccountOrProviderRefusal } from './empty-turn.js';
+import {
+  checksStateFromLifecycle,
+  completedCheckNote,
+  isCheckStartNote,
+  type CornerChecksState,
+} from './corner-checks.js';
 import type { GrantCommandRunner, GrantRunnerEndpoint } from './grant-runner.js';
 import {
   agentArgsWithModelSelection,
@@ -255,6 +261,8 @@ export class MonolithCornerTurnLoop {
   /** The turn in flight and who asked for it, for ledger rows and the grant runner. */
   private currentTurn?: { requestId: string; requester?: { pubkey: string; name?: string } };
   private memberNames = new Map<string, string>();
+  /** The last server check state that started a turn; the same state never starts another. */
+  private lastChecksState?: CornerChecksState;
 
   constructor(private readonly options: MonolithCornerTurnOptions) {
     this.agent = runtimeIdentity(options.runtime.agent);
@@ -416,6 +424,7 @@ export class MonolithCornerTurnLoop {
         'Merge the PR yourself only after the checks-passed event shows every check green; if any check failed or is still running, say exactly which and stop - never merge red.',
         'If any human in this corner says hold or do not merge, do not merge until a later human explicitly resumes it.',
         'Do not tag the user when a corner turn finishes: the server posts the merge summary card and its push already cover completion. Tag a human only mid-turn, and only when you need a decision or input.',
+        'GitHub check and merge notes are server lines already in the corner: never restate them (no "checks passed", "CI is green", "PR ready for review"). On a checks turn, say nothing unless you act - a merge or a pushed fix - and then one short line about that.',
         'A human approval in the app asks the server to merge. When approval is pending, wait for the server close request instead of racing it with gh. If checks passed, no hold exists, and no approval is pending, merge the pull request yourself with gh.',
         'Never push directly to the target branch. Never merge a different pull request.',
       ]
@@ -449,8 +458,12 @@ export class MonolithCornerTurnLoop {
     trigger: string,
     attachments: readonly DaemonAttachment[] = [],
     requestedById?: string,
+    /** Server system lines this turn answers; a reply that only restates them is dropped. */
+    restates?: readonly string[],
   ): Promise<void> {
     const { api, cornerId } = this.options;
+    const spoken = (text: string): string =>
+      restates && isCornerStatusRestatement(text, restates) ? '' : text;
     const requester = requestedById
       ? {
           pubkey: requestedById,
@@ -539,7 +552,7 @@ export class MonolithCornerTurnLoop {
             const start = narrationPostedChars;
             narrationPostedChars = segmentEnd;
             narrationSegments += 1;
-            const trimmed = segment.trim();
+            const trimmed = spoken(segment.trim());
             if (!trimmed) return;
             this.activityTail = this.activityTail
               .catch(() => undefined)
@@ -625,16 +638,21 @@ export class MonolithCornerTurnLoop {
             reply = explained.recoveredText
               ? stripAgentReplyPreamble(explained.recoveredText).trim()
               : '';
-            if (!reply) throw new Error(explained.reason);
+            // A checks turn is told to say nothing when nothing changed; only a
+            // provider refusal makes that silence a failure.
+            if (!reply && !(restates && !isAccountOrProviderRefusal(explained.record))) {
+              throw new Error(explained.reason);
+            }
             console.warn(`[thin-core] corner ${cornerId} turn ${requestId}: ${explained.reason}`);
           }
           // The durable final carries only the tail the narration segments did
           // not already keep; when narration covered the whole reply the turn
           // settles through its explicit receipt instead.
-          const durableTail =
+          const durableTail = spoken(
             narrationPostedChars > 0
               ? stripAgentReplyPreamble(result.agentText.slice(narrationPostedChars)).trim()
-              : reply;
+              : reply,
+          );
           if (durableTail) {
             await api.execute('postRoomMessage', {
               roomId: cornerId,
@@ -675,6 +693,22 @@ export class MonolithCornerTurnLoop {
     }
   }
 
+  /** The server's check state for this head, or the notes' own verdict when the server carries none. */
+  private async checksState(
+    notes: readonly { readonly type: string; readonly body: string }[],
+  ): Promise<CornerChecksState | undefined> {
+    try {
+      const restore = await this.options.api.execute('getCornerRestoreState', {
+        cornerId: this.options.cornerId,
+      });
+      const fromServer = checksStateFromLifecycle(restore.lifecycle);
+      if (fromServer) return fromServer;
+    } catch (error) {
+      console.error(`[thin-core] corner ${this.options.cornerId} check state read failed:`, error);
+    }
+    return notes.some((note) => completedCheckNote(note) === 'failed') ? 'failing' : 'passing';
+  }
+
   async run(): Promise<void> {
     const { api, cornerId, signal } = this.options;
     let cursor = (await api.execute('getRoomInbox', { roomId: cornerId, startAtLatest: true }))
@@ -706,6 +740,9 @@ export class MonolithCornerTurnLoop {
             await this.options.onCloseRequested();
             return;
           }
+          // Server check notes arrive one per GitHub run; a poll's worth of them
+          // is one fact, and only a changed server check state starts a turn.
+          const checkNotes: (typeof inbox.items)[number][] = [];
           for (const item of inbox.items) {
             if (item.type === 'message') {
               if (item.authorId === this.agent.publicKey) continue;
@@ -734,8 +771,25 @@ export class MonolithCornerTurnLoop {
               pollWithoutWait = true;
               continue;
             }
-            if (/\bchecks?\b/i.test(item.body)) {
-              await this.prompt(item.id, item.body);
+            if (isCheckStartNote(item)) {
+              // A new head is being checked: its verdict is a fresh fact.
+              this.lastChecksState = undefined;
+              continue;
+            }
+            if (completedCheckNote(item)) checkNotes.push(item);
+          }
+          if (checkNotes.length) {
+            const state = await this.checksState(checkNotes);
+            if (state && state !== 'pending' && state !== this.lastChecksState) {
+              this.lastChecksState = state;
+              const lines = checkNotes.map((note) => note.body);
+              await this.prompt(
+                checkNotes[checkNotes.length - 1]!.id,
+                lines.join('\n'),
+                [],
+                undefined,
+                lines,
+              );
               pollWithoutWait = true;
             }
           }

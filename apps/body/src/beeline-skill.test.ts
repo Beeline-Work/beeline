@@ -55,6 +55,9 @@ describe('using-beeline Room guidance', () => {
     expect(context.sessionPrompt).toContain('@name');
     expect(context.sessionPrompt).toContain('including another agent');
     expect(context.sessionPrompt).toContain('beeline-agent open_corner');
+    expect(context.sessionPrompt).toContain(
+      'When open_corner succeeds, the server posts the corner card: do not announce or restate the opening.',
+    );
     expect(context.sessionPrompt).toContain('the read-only filesystem sandbox is the boundary');
     expect(context.sessionPrompt).toContain('web search is enabled');
     expect(context.sessionPrompt).toContain(

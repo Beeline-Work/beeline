@@ -76,15 +76,19 @@ sideload keystore is not involved either way.
 ## Runtime compatibility stamp
 
 A store binary carries the same `runtimeVersion` as the OTA updates it may
-later receive: the Expo native fingerprint (`runtimeVersion: { policy:
-"fingerprint" }` in `app.config.js`). `apps/mobile/fingerprint.config.js` keeps
-that stamp identical for every artifact of one commit (store AAB/IPA, sideload
-APK, the `beta-apk` canary vehicle, and `eas update`), so nothing here needs a
-manual runtime bump. A native change (dependency, config plugin, permission)
-moves the stamp by itself; check it with
+later receive, and that value is pinned by hand in `app.config.js`. A store
+release therefore ships whatever pin is on the release commit; it needs no
+action here.
+
+What does need action is a native change (dependency, config plugin,
+permission). The `NATIVE FINGERPRINT` gate fails that PR until the pin is
+bumped, and a bumped pin means the phones on the old pin can only cross over by
+installing a new binary — so the bump has to be followed by a store submission
+(and, for the OTA canary, one `eas build --profile beta-apk`). Check the stamp
+with
 
 ```sh
-cd apps/mobile && npx expo-updates runtimeversion:resolve --platform android --workflow managed
+cd apps/mobile && npm run fingerprint:check
 ```
 
 ## Commands

@@ -22,9 +22,9 @@ import {
 } from './ota-delivery-index.mjs';
 
 const EAS_CLI_VERSION = '22.2.0';
-// A fingerprint runtime gives Android and iOS different runtime versions, so
-// the production branch carries one newest update group per platform. Read
-// enough of the branch to see both of them, then pick newest-per-platform.
+// The production branch can carry one newest update group per platform (it does
+// whenever the platforms do not share a runtime version). Read enough of the
+// branch to see both of them, then pick newest-per-platform.
 const PRODUCTION_LOOKUP_LIMIT = '10';
 
 function fail(message) {
@@ -155,11 +155,10 @@ function describePlatforms(platforms) {
   return platforms.length > 0 ? [...platforms].sort().join(', ') : 'no platform';
 }
 
-// One publish/republish call returns one update group per platform it covered:
-// with `runtimeVersion: { policy: "fingerprint" }` Android and iOS have
-// different runtime versions and therefore never share a group. A ledger
-// written before that change has a single group covering both platforms, which
-// still satisfies this check.
+// One publish/republish call returns at most one update group per platform it
+// covered: platforms on the same runtime version (the hand-pinned runtime in
+// `app.config.js`) share a single group, platforms on different runtime
+// versions get one each. Both shapes satisfy this check.
 function requirePublishedGroups(payload, label, expectedPlatforms) {
   const { updates, groupless } = collectUpdates(payload);
   if (groupless.length > 0) {
@@ -239,8 +238,8 @@ function republishGroups(entries, { label, describe, dryRun, expectedPlatforms }
   };
 }
 
-// A ledger written before the fingerprint runtime carries one candidate group
-// that covered every published platform; read it as that group for each.
+// A ledger that names one candidate group covering every published platform
+// (the shape a shared runtime version produces) reads as that group for each.
 function candidateGroupMap(ledger) {
   const published = Array.isArray(ledger.candidateUpdates)
     ? [...new Set(ledger.candidateUpdates.map((update) => update.platform).filter(Boolean))]

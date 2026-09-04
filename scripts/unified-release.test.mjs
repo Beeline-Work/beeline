@@ -420,6 +420,7 @@ test('the five PR gates live in one file under their unchanged check names', () 
     'PRODUCTION-CORPUS REPLAY',
     'FRAME-BUDGET',
     'STATE-UPGRADE',
+    'NATIVE FINGERPRINT',
     'ACTIONLINT',
     'Build auth container',
     'Detect changes',
@@ -439,6 +440,7 @@ test('the five PR gates live in one file under their unchanged check names', () 
     'productionCorpusReplay',
     'frameBudget',
     'stateUpgrade',
+    'nativeFingerprint',
     'workflows',
     'authImage',
   ]) {

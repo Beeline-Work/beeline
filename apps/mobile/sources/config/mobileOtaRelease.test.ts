@@ -177,9 +177,9 @@ exit 1
       `#!/bin/sh
 case "$1" in
   channel:view|channel:edit) printf '{}\\n' ;;
-  update:list) printf '[{"id":"prod-android","platform":"android","group":"known-good","runtimeVersion":"289448ddf90175b99ac40b3e2fe72ecefc8a7eb0"}]\\n' ;;
-  update) printf '[{"id":"beta-android","platform":"android","group":"candidate-group","runtimeVersion":"289448ddf90175b99ac40b3e2fe72ecefc8a7eb0"},{"id":"beta-ios","platform":"ios","group":"candidate-group","runtimeVersion":"289448ddf90175b99ac40b3e2fe72ecefc8a7eb0"}]\\n' ;;
-  update:republish) printf '[{"id":"prod-next-android","platform":"android","group":"production-group","runtime":{"version":"289448ddf90175b99ac40b3e2fe72ecefc8a7eb0"}},{"id":"prod-next-ios","platform":"ios","group":"production-group","runtime":{"version":"289448ddf90175b99ac40b3e2fe72ecefc8a7eb0"}}]\\n' ;;
+  update:list) printf '[{"id":"prod-android","platform":"android","group":"known-good","runtimeVersion":"21"}]\\n' ;;
+  update) printf '[{"id":"beta-android","platform":"android","group":"candidate-group","runtimeVersion":"21"},{"id":"beta-ios","platform":"ios","group":"candidate-group","runtimeVersion":"21"}]\\n' ;;
+  update:republish) printf '[{"id":"prod-next-android","platform":"android","group":"production-group","runtime":{"version":"21"}},{"id":"prod-next-ios","platform":"ios","group":"production-group","runtime":{"version":"21"}}]\\n' ;;
   *) exit 9 ;;
 esac
 `,
@@ -213,9 +213,9 @@ esac
   }, 60_000);
 
   it('carries one update group per platform through publish, promotion, and the delivery index', () => {
-    // `runtimeVersion: { policy: "fingerprint" }` gives Android and iOS
-    // different runtime versions, so one `eas update --platform all` publish
-    // returns one group per platform and every stored group is a map.
+    // Platforms that do not share a runtime version never share an update
+    // group, so one `eas update --platform all` publish returns one group per
+    // platform and every stored group is a map.
     const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-per-platform-'));
     const ledgerPath = join(directory, 'ledger.json');
     const indexPath = join(directory, 'index.json');
@@ -533,9 +533,9 @@ esac
     expect(existsSync(ledgerPath)).toBe(false);
   }, 60_000);
 
-  it('promotes and rolls back a legacy ledger whose single group covered both platforms', () => {
-    // Before the fingerprint runtime both platforms shared one literal runtime
-    // and therefore one update group. Such a ledger must still read.
+  it('promotes and rolls back a ledger whose single group covered both platforms', () => {
+    // The hand-pinned runtime in app.config.js is shared by both platforms, so
+    // one publish covers both with one update group. Such a ledger must read.
     const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-legacy-ledger-'));
     const ledgerPath = join(directory, 'ledger.json');
     const callsPath = join(directory, 'calls.log');
@@ -1484,7 +1484,7 @@ esac
               id: 'beta-android',
               platform: 'android',
               group: 'candidate-group',
-              runtimeVersion: '289448ddf90175b99ac40b3e2fe72ecefc8a7eb0',
+              runtimeVersion: '21',
             },
           ],
           canary: { status: 'pending' },
@@ -1509,7 +1509,7 @@ esac
                 id: 'production-android',
                 platform: 'android',
                 group: 'production-group',
-                runtimeVersion: '289448ddf90175b99ac40b3e2fe72ecefc8a7eb0',
+                runtimeVersion: '21',
               },
             ],
           },
@@ -1770,7 +1770,7 @@ esac
       return bin;
     }
 
-    it('parks with a self-describing reason when EAS has no finished beta-apk build for the runtime fingerprint', () => {
+    it('parks with a self-describing reason when EAS has no finished beta-apk build for the runtime version', () => {
       const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-no-beta-build-'));
       const sdkRoot = stubAdbSdk(directory, 'List of devices attached\nemulator-5554\tdevice');
       const stubBin = stubReleaseTools(directory, { buildListStdout: '[]' });
@@ -1785,16 +1785,12 @@ esac
 
       expect(result.status).toBe(2);
       expect(result.stderr).toContain('no finished beta-apk Android build');
-      expect(result.stderr).toContain(
-        'runtime fingerprint 289448ddf90175b99ac40b3e2fe72ecefc8a7eb0',
-      );
+      expect(result.stderr).toContain('runtime version 21');
       expect(result.stderr).toContain('build --profile beta-apk');
 
       const reason = readFileSync(reasonFile, 'utf8').trim();
-      expect(reason).toContain(
-        'no finished beta-apk Android build for runtime fingerprint 289448ddf90175b99ac40b3e2fe72ecefc8a7eb0',
-      );
-      // The one-time operator cost per fingerprint is one copy-pasteable command.
+      expect(reason).toContain('no finished beta-apk Android build for runtime version 21');
+      // The one-time operator cost per runtime version is one copy-pasteable command.
       expect(reason).toContain(
         'cd apps/mobile && npx --yes eas-cli@22.2.0 build --profile beta-apk --platform android --non-interactive --no-wait',
       );

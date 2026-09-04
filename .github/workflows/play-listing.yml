@@ -1,0 +1,61 @@
+# Push the Play store listing (title, descriptions, icon, feature graphic,
+# phone screenshots) from the committed metadata dir through the Play
+# Developer API. Manual only: `gh workflow run play-listing.yml`.
+#
+# The metadata dir apps/mobile/fastlane/metadata/android/<locale>/ is derived
+# from the human-reviewable apps/mobile/store/ package by
+# scripts/sync-play-metadata.mjs; the first step refuses to publish a stale
+# derivation. Everything lands in one Play Console edit that is validated and
+# committed as a unit (scripts/play-publish-listing.sh). Track releases are a
+# separate dimension and are untouched; use play-beta.yml / play-promote.yml.
+name: Sync Play Store listing
+
+on:
+  workflow_dispatch:
+    inputs:
+      language:
+        description: 'Locale to push (a subdirectory of apps/mobile/fastlane/metadata/android/)'
+        required: true
+        default: 'en-US'
+
+permissions:
+  contents: read
+
+jobs:
+  sync-listing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Require the Play service account secret
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [ -z "$PLAY_SERVICE_ACCOUNT_JSON" ]; then
+            echo "GOOGLE_PLAY_SERVICE_ACCOUNT_JSON repository secret is not set; add the Play service account JSON key before running this workflow."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Play metadata is derived from the store package
+        run: node scripts/sync-play-metadata.mjs --check --locale "${{ inputs.language }}"
+
+      - name: Authenticate to Google Play with the service account
+        id: gcp-auth
+        uses: google-github-actions/auth@v3
+        with:
+          credentials_json: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/androidpublisher
+
+      - name: Sync store listing
+        env:
+          ACCESS_TOKEN: ${{ steps.gcp-auth.outputs.access_token }}
+          PACKAGE_NAME: app.usebeeline.mobile
+          METADATA_DIR: apps/mobile/fastlane/metadata/android
+          LANGUAGE: ${{ inputs.language }}
+        run: bash scripts/play-publish-listing.sh

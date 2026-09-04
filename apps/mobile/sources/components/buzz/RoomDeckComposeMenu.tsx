@@ -123,8 +123,7 @@ export function RoomDeckComposeMenu({ onSelect }: RoomDeckComposeMenuProps) {
                     <ComposeGlyph action={option.action} />
                   </View>
                 }
-                metadata={option.description}
-                metadataWrap
+                description={option.description}
                 onPress={() => choose(option.action)}
                 testID={`room-deck-compose-${option.action}`}
               />

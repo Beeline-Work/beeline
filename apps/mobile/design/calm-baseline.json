@@ -1,7 +1,7 @@
 {
   "app/(app)/beeline/channels.tsx": 17,
   "app/(app)/beeline/chat/RoomMessageVariants.tsx": 24,
-  "app/(app)/beeline/chat/[channelId].tsx": 70,
+  "app/(app)/beeline/chat/[channelId].tsx": 58,
   "app/(app)/beeline/community.tsx": 9,
   "app/(app)/beeline/corners/[roomId].tsx": 12,
   "app/(app)/beeline/onboarding.tsx": 20,
@@ -30,7 +30,6 @@
   "components/buzz/CornerStatusLine.tsx": 3,
   "components/buzz/DirectMessagePickerSheet.tsx": 5,
   "components/buzz/FaceCeremonyStep.tsx": 5,
-  "components/buzz/HullActionSheet.tsx": 5,
   "components/buzz/HullDialog.tsx": 4,
   "components/buzz/Ledger.tsx": 7,
   "components/buzz/MonoHull.tsx": 4,

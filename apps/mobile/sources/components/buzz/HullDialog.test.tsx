@@ -16,7 +16,17 @@ const theme = vi.hoisted(() => ({
     proseRegular: 'GrokRegular',
     proseSemibold: 'GrokSemibold',
     radius: 3,
+    // Mirrors `space` / `typeRoles` in buzz/groknight.ts; the roles are pinned
+    // there by groknight.test.ts, so this fixture only has to carry shapes.
+    space: { xs: 4, sm: 8, md: 16, lg: 24, xl: 32, xxl: 48 },
     textDisabled: '#75687a',
+    textMuted: '#83838d',
+    type: {
+      body: { fontFamily: 'GrokRegular', fontSize: 16, lineHeight: 23, letterSpacing: 0 },
+      bodyStrong: { fontFamily: 'GrokSemibold', fontSize: 16, lineHeight: 23, letterSpacing: 0 },
+      hero: { fontFamily: 'GrokMedium', fontSize: 22, lineHeight: 32, letterSpacing: -0.3 },
+      meta: { fontFamily: 'GrokRegular', fontSize: 13, lineHeight: 19, letterSpacing: 0 },
+    },
     textInverted: '#14091a',
     textPrimary: '#f1edf2',
     textSecondary: '#aaa0ae',

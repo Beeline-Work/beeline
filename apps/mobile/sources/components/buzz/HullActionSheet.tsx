@@ -1,7 +1,7 @@
 import React from 'react';
-import { Pressable, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Pressable, Switch, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { HullFloatingSurface, HullModal } from './HullDialog';
 
@@ -48,68 +48,122 @@ export function HullActionSheet({
   );
 }
 
+/**
+ * The sheet row's trailing column is a closed vocabulary, and every form ends
+ * on the SAME axis — the sheet's own trailing inset:
+ *
+ *   - `metadata`  the row's current value (a setting's state, a source name);
+ *   - `toggle`    a switch, for a row that flips something on the spot;
+ *   - `chevron`   for a row that opens something — `'right'` to leave for it,
+ *                 `'down'` while it stands open beneath this row;
+ *   - nothing     for a plain action, which acts the moment it is pressed.
+ *
+ * A row never invents a fifth mark, and it never wears a box: the sheet is a
+ * list, so rows are parted by one hairline and nothing else (DESIGN.md → Shape).
+ */
 export type HullActionSheetAction = {
   accessibilityLabel?: string;
+  /** The trailing chevron of a row that opens something. */
+  chevron?: 'right' | 'down';
+  /** The quiet line beneath the label. A full sentence never shares the
+   *  label's line, so it wraps here rather than ellipsizing beside it. */
+  description?: string;
   destructive?: boolean;
   disabled?: boolean;
   label: string;
   leading?: React.ReactNode;
+  /** The row's current value, on the trailing axis. Never in the label. */
   metadata?: string;
-  /** A short value chip (a selection, a source name) sits beside the label on
-   *  one line by default. A full descriptive sentence never fits that way —
-   *  set this to let it wrap onto its own line below instead of silently
-   *  ellipsizing. Never combined with `selected`'s chip. */
-  metadataWrap?: boolean;
-  onPress: () => void;
+  /** A row with no `onPress` and no `toggle` is a fact, not a control. */
+  onPress?: () => void;
   selected?: boolean;
   testID?: string;
+  /** The trailing switch of a row that toggles. Excludes `chevron`. */
+  toggle?: {
+    accessibilityLabel?: string;
+    disabled?: boolean;
+    onValueChange: (next: boolean) => void;
+    value: boolean;
+  };
 };
 
 export function HullActionSheetRow({
   accessibilityLabel,
+  chevron,
+  description,
   destructive = false,
   disabled = false,
   label,
   leading,
   metadata,
-  metadataWrap = false,
   onPress,
   selected = false,
   testID,
+  toggle,
 }: HullActionSheetAction) {
+  const { theme } = useUnistyles();
   const metadataText = selected ? 'SELECTED' : metadata;
-  const header = (
+  const spoken = [metadataText, description].filter(Boolean).join('. ');
+  const body = (
     <>
       {leading}
-      <Text numberOfLines={1} style={[styles.rowLabel, destructive && styles.destructive]}>
-        {label}
-      </Text>
-      {!metadataWrap && metadataText ? (
+      <View style={styles.copy}>
+        <Text numberOfLines={1} style={[styles.rowLabel, destructive && styles.destructive]}>
+          {label}
+        </Text>
+        {description ? <Text style={styles.description}>{description}</Text> : null}
+      </View>
+      {metadataText ? (
         <Text numberOfLines={1} style={styles.metadata}>
           {metadataText}
         </Text>
       ) : null}
+      {toggle ? (
+        // A pressable row IS the switch to a screen reader (role + checked
+        // below), so the control itself must not be announced a second time.
+        <View
+          accessibilityElementsHidden={Boolean(onPress)}
+          importantForAccessibility={onPress ? 'no-hide-descendants' : 'auto'}
+        >
+          <Switch
+            accessibilityLabel={toggle.accessibilityLabel ?? label}
+            disabled={toggle.disabled ?? disabled}
+            onValueChange={toggle.onValueChange}
+            thumbColor={theme.buzz.textPrimary}
+            trackColor={{ false: theme.buzz.bgRaised, true: theme.buzz.accent }}
+            value={toggle.value}
+          />
+        </View>
+      ) : chevron ? (
+        <Text accessibilityElementsHidden style={styles.chevron}>
+          {chevron === 'down' ? '\u2304' : '\u203a'}
+        </Text>
+      ) : null}
     </>
   );
+  const rowAccessibilityLabel = accessibilityLabel ?? (spoken ? `${label}. ${spoken}` : label);
+  if (!onPress) {
+    return (
+      <View accessibilityLabel={rowAccessibilityLabel} style={styles.row} testID={testID}>
+        {body}
+      </View>
+    );
+  }
   return (
     <Pressable
-      accessibilityLabel={accessibilityLabel ?? `${label}${metadataText ? `. ${metadataText}` : ''}`}
-      accessibilityRole="button"
-      accessibilityState={{ disabled, selected }}
+      accessibilityLabel={rowAccessibilityLabel}
+      accessibilityRole={toggle ? 'switch' : 'button'}
+      accessibilityState={toggle ? { checked: toggle.value, disabled } : { disabled, selected }}
       disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => [
         styles.row,
-        metadataWrap && styles.rowWrap,
         pressed && styles.rowPressed,
         disabled && styles.disabled,
       ]}
       testID={testID}
     >
-      {metadataWrap ? <View style={styles.rowWrapHeader}>{header}</View> : header}
-      {metadataWrap && metadataText ? (
-        <Text style={styles.metadataWrap}>{metadataText}</Text>
-      ) : null}
+      {body}
     </Pressable>
   );
 }
@@ -139,6 +193,8 @@ export function HullActionSheetCancel({
 type HullActionSheetModalProps = {
   children: React.ReactNode;
   accessibilityLabel?: string;
+  /** Held false while a row's inline editor has unsaved work in flight. */
+  dismissOnBackdrop?: boolean;
   modalTestID?: string;
   onClose: () => void;
   scrimTestID?: string;
@@ -151,6 +207,7 @@ type HullActionSheetModalProps = {
 export function HullActionSheetModal({
   accessibilityLabel,
   children,
+  dismissOnBackdrop,
   modalTestID,
   onClose,
   scrimTestID,
@@ -164,6 +221,7 @@ export function HullActionSheetModal({
     <HullModal
       accessibilityLabel={accessibilityLabel ?? 'Close action sheet'}
       contentStyle={styles.modalContent}
+      dismissOnBackdrop={dismissOnBackdrop}
       onRequestClose={onClose}
       placement="bottom"
       scrimTestID={scrimTestID}
@@ -182,6 +240,10 @@ export function HullActionSheetModal({
   );
 }
 
+/** The sheet's own horizontal inset. Rows own it, so anything a caller hangs
+ *  between rows (an inline editor, a picker) lines up by spreading it too. */
+export const HULL_SHEET_INSET = 22;
+
 const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
@@ -199,72 +261,68 @@ const styles = StyleSheet.create((theme) => {
     },
     title: {
       ...Typography.default('semiBold'),
-      paddingHorizontal: 22,
-      paddingTop: 4,
-      paddingBottom: 10,
+      ...hull.type.bodyStrong,
+      paddingHorizontal: HULL_SHEET_INSET,
+      paddingTop: hull.space.xs,
+      paddingBottom: hull.space.sm,
       color: hull.chrome,
       fontFamily: hull.proseSemibold,
-      fontSize: 16,
-      lineHeight: 22,
     },
     subtitle: {
       ...Typography.default(),
-      paddingHorizontal: 22,
-      paddingBottom: 10,
+      ...hull.type.meta,
+      paddingHorizontal: HULL_SHEET_INSET,
+      paddingBottom: hull.space.sm,
       color: hull.textSecondary,
       fontFamily: hull.proseRegular,
-      fontSize: 13,
-      lineHeight: 18,
     },
     row: {
       minHeight: 52,
-      paddingHorizontal: 22,
+      paddingHorizontal: HULL_SHEET_INSET,
+      paddingVertical: hull.space.sm,
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 10,
+      gap: hull.space.md,
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: hull.border,
     },
-    // A full sentence cannot share the label's line, so this variant stacks:
-    // the same leading+label header on top, the description wrapping below.
-    rowWrap: {
-      flexDirection: 'column',
-      alignItems: 'stretch',
-      paddingVertical: 10,
-      gap: 4,
-    },
-    rowWrapHeader: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 10,
-    },
     rowPressed: { backgroundColor: hull.bgPressed },
     disabled: { opacity: 0.42 },
+    copy: { flex: 1, minWidth: 0 },
     rowLabel: {
       ...Typography.default(),
+      ...hull.type.body,
       fontFamily: hull.proseRegular,
-      flex: 1,
-      minWidth: 0,
       color: hull.textPrimary,
-      fontSize: 15,
-      lineHeight: 20,
     },
+    // The quiet line beneath the label: a full sentence, wrapping as far as it
+    // needs, never an ellipsis and never crammed into the label above it.
+    description: {
+      ...Typography.default(),
+      ...hull.type.meta,
+      marginTop: hull.space.xs,
+      color: hull.textMuted,
+      fontFamily: hull.proseRegular,
+    },
+    // The value, on the trailing axis. `flexShrink: 0` keeps it whole and the
+    // cap keeps a long one from eating the label.
     metadata: {
-      ...Typography.mono(),
+      ...Typography.default(),
+      ...hull.type.meta,
       flexShrink: 0,
       maxWidth: '46%',
-      color: hull.textDisabled,
-      fontSize: 11,
-      lineHeight: 15,
-    },
-    // The wrapping variant: same muted tone, but full width and no line cap —
-    // a description earns as many lines as it needs, never an ellipsis.
-    metadataWrap: {
-      ...Typography.default(),
+      textAlign: 'right',
+      color: hull.textMuted,
       fontFamily: hull.proseRegular,
-      color: hull.textDisabled,
-      fontSize: 12,
-      lineHeight: 16,
+    },
+    // Right-aligned in its own column so the glyph's trailing edge lands on the
+    // row's padding edge — the one axis every trailing mark shares (C99, C102).
+    chevron: {
+      ...Typography.default(),
+      ...hull.type.hero,
+      width: 16,
+      textAlign: 'right',
+      color: hull.textMuted,
     },
     destructive: { color: hull.dialogDanger },
     cancel: {
@@ -276,12 +334,10 @@ const styles = StyleSheet.create((theme) => {
       borderTopColor: hull.border,
     },
     cancelText: {
-      ...Typography.mono('semiBold'),
+      ...Typography.default(),
+      ...hull.type.body,
       color: hull.chrome,
-      fontSize: 12,
-      lineHeight: 16,
-      letterSpacing: 0.8,
-      textTransform: 'uppercase',
+      fontFamily: hull.proseRegular,
     },
   };
 });

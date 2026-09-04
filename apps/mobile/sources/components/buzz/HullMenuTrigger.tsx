@@ -8,8 +8,12 @@ import {
   type HullActionSheetAction,
 } from './HullActionSheet';
 
+/** A menu entry always acts, so `onPress` is required here even though the
+ *  shared sheet row admits a flat, factual row without one. */
+export type HullMenuAction = HullActionSheetAction & { onPress: () => void };
+
 export type HullMenuSection = {
-  actions: readonly HullActionSheetAction[];
+  actions: readonly HullMenuAction[];
   key: string;
   title?: string;
 };

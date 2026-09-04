@@ -186,9 +186,9 @@ describe('Room deck compose menu', () => {
   });
 
   it('never truncates a row description with a mystery ellipsis (screenshot 1cfe27eb)', () => {
-    // The shared sheet row's default layout squeezes `metadata` onto one line
-    // beside the label — fine for a short chip, but every description here is
-    // a full sentence. `metadataWrap` lets it wrap instead of ellipsizing.
+    // The shared sheet row keeps `metadata` — the row's VALUE — on one line
+    // beside the label. Every description here is a full sentence, so it rides
+    // the row's own `description` slot beneath the label and wraps (C102).
     const renderer = renderMenu();
     open(renderer);
 
@@ -211,7 +211,7 @@ describe('Room deck compose menu', () => {
       // device width.
       expect(descriptionText.props.numberOfLines).toBeUndefined();
     });
-    expect(source).toContain('metadataWrap');
+    expect(source).toContain('description={option.description}');
   });
 
   it('dismisses every row before dispatching its real-flow action', () => {

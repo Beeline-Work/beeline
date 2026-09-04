@@ -269,6 +269,8 @@ export class MonolithCornerTurnLoop {
   private activityTail = Promise.resolve();
   /** Session scratch directory attachments are downloaded into (`TMPDIR/beeline-attachments`). */
   private attachmentDir?: string;
+  /** The session's TMPDIR, where a granted command's script argument may also live. */
+  private sessionScratchDir?: string;
   /** The turn in flight and who asked for it, for ledger rows and the grant runner. */
   private currentTurn?: { requestId: string; requester?: { pubkey: string; name?: string } };
   private memberNames = new Map<string, string>();
@@ -280,6 +282,13 @@ export class MonolithCornerTurnLoop {
     options.grantRunner?.register(options.cornerId, {
       workspaceId: options.workspaceId,
       cwd: options.worktreePath,
+      // A corner is the surface with `run-host-command`: its worktree becomes a
+      // branch and a pull request, and host work belongs here, next to the
+      // transcript that explains it. A granted command runs unwrapped (C94).
+      writePolicy: () => ({
+        surface: 'corner',
+        ...(this.sessionScratchDir ? { scratch: this.sessionScratchDir } : {}),
+      }),
       turn: () => this.currentTurn,
     });
   }
@@ -364,6 +373,7 @@ export class MonolithCornerTurnLoop {
     const operatorHome = this.options.config.operatorHome ?? homedir();
     const { stateDirs, tmpDir } = harnessStateDirsFromEnv(agentEnv);
     this.attachmentDir = tmpDir ? join(tmpDir, 'beeline-attachments') : undefined;
+    this.sessionScratchDir = tmpDir;
     const homeStateDirs = harnessHomeStateDirs(command, agentEnv.HOME ?? operatorHome);
     await Promise.all(homeStateDirs.map((dir) => mkdir(dir, { recursive: true })));
     const spawnCommand = wrapAgentCommand({

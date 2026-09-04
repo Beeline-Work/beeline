@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Image, Linking, Platform, Pressable, Text, View } from 'react-native';
+import { Image, Linking, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { StyleSheet } from 'react-native-unistyles';
 import type { AttachmentReference } from '@beeline/buzz-client';
@@ -168,7 +168,10 @@ export interface GrantRequestCardProps {
 /**
  * The grant card: `<agent> asks <owner>`, one `<verb> <target>` line per grant with
  * its reason in quiet text, and ALWAYS / ONCE / NO for the owner or a Workspace
- * manager. Everyone else reads the ask and `waiting for <owner>`. After the tap
+ * manager. An interpreter command carries its SCRIPT (C94) — `python3 fix.py`
+ * describes nothing, so the body the approval is bound to is inscribed under the
+ * ask in the machine role, and the server refuses rather than truncating one too
+ * long to read. Everyone else reads the ask and `waiting for <owner>`. After the tap
  * each line settles into its inscribed outcome exactly as the write-permission
  * card does; the phone mirrors the server's authority, it never decides it.
  */
@@ -224,6 +227,14 @@ export const GrantRequestCard = React.memo(function GrantRequestCard({
               {grantAskLine(grant)}
             </Text>
             <Text style={styles.permissionIntent}>{grant.reason}</Text>
+            {grant.script ? (
+              <View style={styles.grantScript} testID={`grant-${grant.grantId}-script`}>
+                <Text style={styles.grantScriptPath}>{grant.script.path}</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                  <Text style={styles.grantScriptBody}>{grant.script.contents}</Text>
+                </ScrollView>
+              </View>
+            ) : null}
             {grant.status === 'pending' && canDecide ? (
               <View style={styles.permissionActions}>
                 <MonoButton
@@ -834,6 +845,27 @@ const styles = StyleSheet.create(() => ({
   permissionActions: { flexDirection: 'row', gap: 8 },
   permissionButton: { flex: 1, minWidth: 0 },
   grantLine: { gap: 6 },
+  // C94: an interpreter grant is approved on its BODY, not on its command line,
+  // so the card inscribes the script itself in the machine role.
+  grantScript: {
+    gap: 4,
+    paddingVertical: 8,
+    paddingLeft: 10,
+    borderLeftWidth: 1,
+    borderLeftColor: groknight.borderStrong,
+  },
+  grantScriptPath: {
+    ...Typography.mono('regular'),
+    color: groknight.textSecondary,
+    fontSize: 10,
+    lineHeight: 15,
+  },
+  grantScriptBody: {
+    ...Typography.mono('regular'),
+    color: groknight.textPrimary,
+    fontSize: 13,
+    lineHeight: 18,
+  },
   grantAsk: {
     ...Typography.mono('semiBold'),
     color: groknight.textPrimary,

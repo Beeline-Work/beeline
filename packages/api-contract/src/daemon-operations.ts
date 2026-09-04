@@ -1,5 +1,10 @@
 import type { SystemEvent } from './system-events.js';
-import type { AgentGrantKind, AgentGrantStatus } from './agent-grants.js';
+import type {
+  AgentGrantEscalation,
+  AgentGrantKind,
+  AgentGrantStatus,
+  CommandGrantScript,
+} from './agent-grants.js';
 import type { CornerLifecycleView } from './phone-types.js';
 import type { RoomScheduleCadence } from './phone-operations.js';
 
@@ -354,6 +359,12 @@ export type RequestAgentGrantInput = RoomInput & {
   readonly reason: string;
   /** Optional lifetime in seconds; the grant expires this long after the request. */
   readonly ttlSeconds?: number;
+  /**
+   * For an interpreter command, the script the daemon read out of the agent's
+   * checkout or scratch. The card shows it and the approval is bound to its
+   * hash (C94); the server never reads the operator's filesystem itself.
+   */
+  readonly script?: CommandGrantScript;
 };
 export type RequestAgentGrantResult = {
   readonly grantId: string;
@@ -362,6 +373,8 @@ export type RequestAgentGrantResult = {
   readonly auto: boolean;
   /** The card message when one was posted or joined. */
   readonly messageId?: string;
+  /** Why yolo did not cover this ask, when it did not (C94). */
+  readonly escalations?: readonly AgentGrantEscalation[];
 };
 /** Every live (approved or once, unexpired) grant of this agent, for the rule runner. */
 export type AgentGrantListResult = {
@@ -375,6 +388,8 @@ export type AgentGrantListResult = {
     readonly requestedBy: string;
     readonly requestedByName?: string;
     readonly expiresAt?: number;
+    /** The script bytes this approval was bound to, for the runner's re-check. */
+    readonly script?: CommandGrantScript;
   }[];
 };
 /** A 'once' grant is spent by its first run. */

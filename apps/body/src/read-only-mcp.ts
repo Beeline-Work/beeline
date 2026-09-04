@@ -16,7 +16,7 @@
  * edit-corner worktree after the signed human ALLOW flow.
  */
 import { execFileSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import {
   closeSync,
   constants,
@@ -48,8 +48,16 @@ import {
   AGENT_GRANT_REASON_MAX_LENGTH,
   AGENT_GRANT_TARGET_MAX_LENGTH,
   AGENT_GRANT_VERBS,
+  GRANT_SCRIPT_MAX_BYTES,
+  GRANT_SCRIPT_MAX_LINES,
+  formatGrantEscalationReason,
+  grantScriptTooLongMessage,
+  interpreterScriptArgument,
   isAgentGrantKind,
   parseCommandGrantTarget,
+  type AgentGrantEscalation,
+  type CommandGrantRule,
+  type CommandGrantScript,
 } from '@beeline/api-contract/agent-grants';
 import type { CornerLifecycleView } from '@beeline/api-contract/phone';
 import { checksVerdictFromLifecycle } from './corner-checks.js';
@@ -338,7 +346,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'request_grant',
     description:
-      'Raise your hand for reach outside the sandbox: kind path|host|secret|device|budget|command with one target and the reason. Under yolo it is approved at once; otherwise a card goes to your owner and your turn pauses on it: tell the human what you are waiting for and end the turn, you are woken when they answer. A command target is the exact line you want to run, no shell metacharacters; name secrets with a `--with SECRET_NAME` suffix.',
+      'Raise your hand for reach outside the sandbox: kind path|host|secret|device|budget|command with one target and the reason. Under yolo it is approved at once; otherwise a card goes to your owner and your turn pauses on it: tell the human what you are waiting for and end the turn, you are woken when they answer. A command target is the exact line you want to run, no shell metacharacters; name secrets with a `--with SECRET_NAME` suffix. Yolo is the scope gate: with it on, an approved command just runs. Exactly two shapes always wait for a person anyway, in a Room and in a corner alike: running a script nobody has read (the card carries the script in full and the approval is bound to those exact bytes — rewrite the file and the run is refused), and anything naming a credential or environment file.',
     inputSchema: {
       type: 'object',
       required: ['kind', 'target', 'reason'],
@@ -369,7 +377,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'run_granted_command',
     description:
-      'Run a command under an approved command grant. The daemon runs it outside the sandbox in your checkout only when an approved grant is a word-for-word prefix of argv; the named secrets are in its environment and never in the output. Ten-minute timeout, capped output, one ledger row per run.',
+      'Run a command under an approved command grant, only when an approved grant is a word-for-word prefix of argv. In a top-level Room it runs on the SAME read-only filesystem the Room promises — you can read anything and write only your own scratch, so open a corner for work that changes files. A corner can do everything a Room can and more: its worktree is writable and a command there may act on the live host, next to the branch and the transcript that explain it. The named secrets are in its environment and never in the output. Ten-minute timeout, capped output, one ledger row per run.',
     inputSchema: {
       type: 'object',
       required: ['argv'],
@@ -1265,10 +1273,75 @@ export async function deleteSchedule(
 export interface AgentGrantDeps {
   roomId: string;
   execute: (name: string, input: JsonObject) => Promise<JsonObject>;
+  /** Where a script argument may be read from: the checkout, then the scratch. */
+  scriptRoots?: string[];
+  /** Test seam for reading those bytes. */
+  readScript?: (path: string) => Buffer;
 }
 
 export function agentGrantDepsFromEnv(): AgentGrantDeps {
-  return { roomId: agentScheduleRoomId(), execute: daemonExecute };
+  const scratchRoot = process.env.BEELINE_ATTACH_SCRATCH_ROOT?.trim();
+  const attachRoot = process.env.BEELINE_ATTACH_ROOT?.trim();
+  return {
+    roomId: agentScheduleRoomId(),
+    execute: daemonExecute,
+    scriptRoots: [...(attachRoot ? [attachRoot] : []), ...(scratchRoot ? [scratchRoot] : [])],
+  };
+}
+
+/**
+ * The script an interpreter command will run, read so the approval card can
+ * SHOW it (C94).
+ *
+ * `python3 fix.py` tells the person deciding nothing about what runs, so the
+ * bytes travel with the ask and the approval is bound to their hash. A file too
+ * long to read on a card is REFUSED, never truncated — an honest card is the
+ * whole point, and a body that size belongs in a corner as a branch and a pull
+ * request. A line with no script argument (`python3 -V`) has nothing to bind;
+ * it still asks a human, because the interpreter class is never covered by yolo.
+ */
+export function readGrantScript(
+  rule: CommandGrantRule,
+  deps: AgentGrantDeps,
+): CommandGrantScript | undefined {
+  const argument = interpreterScriptArgument(rule.argv);
+  if (!argument) return undefined;
+  const roots = deps.scriptRoots ?? [];
+  if (!roots.length) return undefined;
+  let resolved: string;
+  try {
+    resolved = resolveAttachPath(roots, argument.path);
+  } catch (error) {
+    // A script that exists but sits outside the checkout and the scratch cannot
+    // be put in front of a human, so it is not approvable from here.
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes('outside')) {
+      throw new Error(
+        `${argument.path} is outside your checkout and scratch directory, so its contents ` +
+          'cannot be shown on the approval card. Move the script into your checkout or scratch, ' +
+          'or open a corner with open_corner and make the change there.',
+      );
+    }
+    return undefined;
+  }
+  const bytes = (deps.readScript ?? readFileSync)(resolved);
+  const contents = bytes.toString('utf8');
+  const lines = contents.split('\n').length;
+  if (bytes.byteLength > GRANT_SCRIPT_MAX_BYTES || lines > GRANT_SCRIPT_MAX_LINES) {
+    throw new Error(grantScriptTooLongMessage(argument.path, bytes.byteLength, lines));
+  }
+  if (!Buffer.from(contents, 'utf8').equals(bytes)) {
+    throw new Error(
+      `${argument.path} is not text, so nobody can read what it does on an approval card. ` +
+        'Open a corner with open_corner and make the change there.',
+    );
+  }
+  return {
+    path: argument.path,
+    sha256: createHash('sha256').update(bytes).digest('hex'),
+    bytes: bytes.byteLength,
+    contents,
+  };
 }
 
 /** request_grant: one ask, one kind, one target; the server decides yolo vs card. */
@@ -1284,7 +1357,8 @@ export async function requestGrant(
   const target = kind === 'command' ? (rawTarget ?? '') : (rawTarget ?? '').trim();
   if (!target) throw new Error('target must be a non-empty string');
   if (target.length > AGENT_GRANT_TARGET_MAX_LENGTH) throw new Error('target is too long');
-  if (kind === 'command') parseCommandGrantTarget(target);
+  const rule = kind === 'command' ? parseCommandGrantTarget(target) : undefined;
+  const script = rule ? readGrantScript(rule, deps) : undefined;
   const reason = stringArg(args, 'reason')?.trim();
   if (!reason) throw new Error('reason must be a non-empty string');
   if (reason.length > AGENT_GRANT_REASON_MAX_LENGTH) throw new Error('reason is too long');
@@ -1298,6 +1372,7 @@ export async function requestGrant(
     target,
     reason,
     ...(ttl !== undefined ? { ttlSeconds: ttl } : {}),
+    ...(script ? { script } : {}),
   });
   const grantId = typeof result.grantId === 'string' ? result.grantId : 'unknown';
   const ask = `${AGENT_GRANT_VERBS[kind]} ${target}`;
@@ -1306,8 +1381,17 @@ export async function requestGrant(
       ? `approved (yolo): ${ask} [grant ${grantId}]. Run it now with run_granted_command and the argv.`
       : `approved (yolo): ${ask} [grant ${grantId}]; applies at the agent's next session.`;
   }
+  // Yolo covers most asks; these two shapes never do, and saying which one this
+  // is stops the model retrying the same line expecting a different answer.
+  const escalations = Array.isArray(result.escalations)
+    ? (result.escalations as AgentGrantEscalation[])
+    : [];
+  const because = formatGrantEscalationReason(escalations);
   return (
-    `pending, card posted: ${ask} [grant ${grantId}]. Your owner must answer ALWAYS, ONCE, or NO in this Room; ` +
+    `pending, card posted: ${ask} [grant ${grantId}]. ` +
+    (because ? `A human always answers this one because ${because}. ` : '') +
+    (script ? `The card shows ${script.path} in full, and the approval is bound to those bytes. ` : '') +
+    'Your owner must answer ALWAYS, ONCE, or NO in this Room; ' +
     'your turn is paused on this grant. Tell the human what you are waiting for and end your turn now; ' +
     'you will be woken with the answer.'
   );
@@ -1360,7 +1444,11 @@ export async function runGrantedCommand(
         ? `exit ${result.exitCode}`
         : `did not start${typeof result.signal === 'string' ? ` (${result.signal})` : ''}`;
   const output = typeof result.output === 'string' && result.output ? result.output : '(no output)';
-  return `ran under grant ${grantId}: ${verdict}\n${output}`;
+  const refused =
+    result.writeRefused === true
+      ? '\nThis Room is read-only outside your scratch directory. Open a corner with open_corner to change files.'
+      : '';
+  return `ran under grant ${grantId}: ${verdict}\n${output}${refused}`;
 }
 
 async function daemonUploadMedia(

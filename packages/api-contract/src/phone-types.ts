@@ -1,5 +1,5 @@
 import type { SystemEvent } from './system-events.js';
-import type { AgentGrantKind, AgentGrantStatus } from './agent-grants.js';
+import type { AgentGrantKind, AgentGrantStatus, CommandGrantScript } from './agent-grants.js';
 
 export interface AttachmentReference {
   url: string;
@@ -241,6 +241,12 @@ export type AgentGrantView = {
   readonly expiresAt?: number;
   /** True when approved under yolo without a card. */
   readonly auto: boolean;
+  /**
+   * For an interpreter command, the script the approval is bound to: the card
+   * shows these bytes and the runner refuses if the file no longer hashes to
+   * them (C94).
+   */
+  readonly script?: CommandGrantScript;
 };
 
 export type GrantRequestCardView = {

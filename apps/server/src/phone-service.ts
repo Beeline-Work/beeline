@@ -34,7 +34,11 @@ import {
   resolveFace,
   type PhoneOperationMap,
 } from '@beeline/api-contract/phone';
-import type { AgentGrantDecision, AgentGrantStatus } from '@beeline/api-contract/agent-grants';
+import {
+  isCommandGrantScript,
+  type AgentGrantDecision,
+  type AgentGrantStatus,
+} from '@beeline/api-contract/agent-grants';
 import type { SqlDatabase } from './database.js';
 import type { GitHubOperations } from './github-operations.js';
 import { collapsePermissionCards } from '@beeline/push-gateway/projection';
@@ -917,9 +921,10 @@ export class PhoneService {
       expires_at: Date | null;
       requester: IdentityRow;
       decider: IdentityRow | null;
+      script: unknown;
     }>(
       `SELECT g.id,g.kind,g.target,g.reason,g.status,g.room_id,g.auto,g.created_at,g.decided_at,g.expires_at,
-              to_jsonb(requester) requester,to_jsonb(decider) decider
+              g.script,to_jsonb(requester) requester,to_jsonb(decider) decider
        FROM agent_grants g
        JOIN identities requester ON requester.id=g.requested_by
        LEFT JOIN identities decider ON decider.id=g.decided_by
@@ -940,6 +945,8 @@ export class PhoneService {
       ...(row.decided_at ? { decidedAt: unix(row.decided_at) } : {}),
       ...(row.expires_at ? { expiresAt: unix(row.expires_at) } : {}),
       auto: row.auto,
+      // C94: the profile shows what the interpreter approval was bound to.
+      ...(isCommandGrantScript(row.script) ? { script: row.script } : {}),
     }));
   }
 

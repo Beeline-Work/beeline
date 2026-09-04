@@ -4,10 +4,37 @@
  * An approved `command` grant is a rule: the exact approved line is an argv
  * prefix the agent may say. `run_granted_command` reaches this runner from the
  * beeline-agent MCP server, which lives INSIDE the session sandbox; the runner
- * itself is the daemon, so the command runs outside bubblewrap as a plain child
- * process with cwd = the agent's Room checkout or corner worktree, an
- * environment of PATH and HOME plus only the secrets the rule names, a
- * ten-minute timeout, and capped output. Every run writes one ledger tool row
+ * itself is the daemon, so it spawns the command as its own child, with cwd =
+ * the agent's Room checkout or corner worktree, an environment of PATH and HOME
+ * plus only the secrets the rule names, a ten-minute timeout, and capped output.
+ *
+ * ## The capability table decides where it runs (C94)
+ *
+ * `@beeline/api-contract/surface-capabilities` holds one row per capability and
+ * the standing invariant that a corner may do everything a Room may. A grant
+ * used to invert it: the runner spawned unwrapped with the operator's live
+ * project as cwd, so a Room was the more powerful surface for host work while a
+ * corner could only touch its worktree.
+ *
+ * Now the surface decides. A corner has `run-host-command`, so a corner grant
+ * spawns as a plain child and may act on the live host — that is the point, and
+ * under yolo it just runs. A Room does not, so a Room grant is spawned into the
+ * SAME read-only mount table an ordinary Room session gets (`bwrap-sandbox.ts`,
+ * `mode: 'readonly'`): the whole host readable, and writable only in the
+ * session's own scratch and harness home overlay, exactly as today. The refusal
+ * comes from the kernel, not from a guess about what the argv means.
+ *
+ * Fail-CLOSED, deliberately: with no usable bubblewrap on the host there is no
+ * way to keep a Room's promise, so a Room grant is refused outright and the
+ * agent is told to open a corner. That is the opposite of the harness spawn
+ * path, which fails open so a host without bwrap can still hold a conversation.
+ *
+ * Two hard stops survive yolo on both surfaces and are re-checked here as well
+ * as at request time: a credential or environment file named by words the
+ * approved prefix never showed a human, and a script nobody has read. An
+ * interpreter grant is bound to the script bytes the approval card showed: the
+ * file is re-hashed before every run, and a script that changed, or one that
+ * appeared where the card had none, is refused. Every run writes one ledger tool row
  * naming the grant and who asked. A `once` grant is spent before its first run
  * starts; a revoked rule is simply absent from the next `listAgentGrants` read,
  * so it stops matching immediately.
@@ -19,16 +46,24 @@
  * never reach the transcript, the ledger, or the model.
  */
 import { execFile } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { dirname, resolve } from 'node:path';
 import {
+  commandGrantEscalationsBeyondRule,
   commandGrantMatches,
+  formatGrantEscalationReason,
+  interpreterScriptArgument,
   parseCommandGrantTarget,
   type CommandGrantRule,
 } from '@beeline/api-contract/agent-grants';
+import {
+  surfaceAllows,
+  type AgentSurface,
+} from '@beeline/api-contract/surface-capabilities';
+import { wrapAgentCommand, type MaskedPath } from './bwrap-sandbox.js';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import {
@@ -47,10 +82,29 @@ type LiveGrant = DaemonOperationMap['listAgentGrants']['output']['grants'][numbe
 
 export type GrantRunRequester = { pubkey: string; name?: string };
 
+/**
+ * The surface a granted command runs on, plus what its session made writable.
+ * `surfaceAllows(surface, 'run-host-command')` decides whether the command is
+ * spawned plainly or into the Room's read-only mount table.
+ */
+export interface GrantWritePolicy {
+  surface: AgentSurface;
+  /** The self-tested bwrap; absent on a Room means its promise cannot be kept. */
+  bwrapPath?: string;
+  /** The session's TMPDIR, writable on both surfaces and where a script may live. */
+  scratch?: string;
+  /** The `agent-home.ts` overlay this session writes into; stays writable in a Room. */
+  harnessStateDirs?: string[];
+  /** Credential stores hidden from the run, exactly as a Room session hides them. */
+  maskPaths?: MaskedPath[];
+}
+
 /** What a serving Room registers so the runner knows where and for whom it runs. */
 export interface GrantRunnerRoom {
   workspaceId: string;
   cwd: string;
+  /** Read at each run, because a Room's scratch is only known once its session starts. */
+  writePolicy: () => GrantWritePolicy;
   /** The turn in flight, if any: its request id and the identity whose message started it. */
   turn: () => { requestId: string; requester?: GrantRunRequester } | undefined;
 }
@@ -61,7 +115,21 @@ export interface GrantRunResult {
   signal?: string;
   timedOut: boolean;
   output: string;
+  /** True when the read-only Room filesystem refused a write this command tried. */
+  writeRefused?: boolean;
 }
+
+/** The kernel's own words when the read-only bind refuses a write. */
+const WRITE_REFUSED = /Read-only file system|EROFS/;
+
+export const ROOM_SANDBOX_UNAVAILABLE =
+  'this Room cannot run granted commands: a Room promises a read-only filesystem and that ' +
+  'promise is enforced by bubblewrap, which is not usable on this host. Open a corner with ' +
+  'open_corner and run it there, where writes belong.';
+
+export const ROOM_WRITE_REFUSED_NOTE =
+  '[beeline] the Room filesystem is read-only outside your scratch directory, so this write ' +
+  'was refused by the kernel. Open a corner with open_corner to change files.';
 
 export type SecretResolver = (name: string) => Promise<string | undefined>;
 
@@ -180,6 +248,20 @@ export class GrantCommandRunner {
       );
     }
     const { grant, rule } = match;
+    // The rule is an argv PREFIX, so a run can always add words the human who
+    // answered the card never read. Anything those words escalate into is a
+    // fresh ask (C94).
+    const beyond = commandGrantEscalationsBeyondRule(rule, argv);
+    if (beyond.length) {
+      throw new Error(
+        `this run needs its own approval: ${formatGrantEscalationReason(beyond)}. ` +
+          'Ask with request_grant kind=command for the exact line so a human can read it.',
+      );
+    }
+    // Read once: the scratch directory is part of where a script may live, and
+    // the mount table below is built from the same answer.
+    const policy = room.writePolicy();
+    await this.checkScriptBinding(grant, scriptCandidates(room.cwd, policy.scratch, argv), argv);
     const secrets = new Map<string, string>();
     for (const name of rule.secrets) {
       const value = await this.resolveSecret(name);
@@ -198,6 +280,13 @@ export class GrantCommandRunner {
       ...Object.fromEntries(secrets),
     };
     const cap = this.options.outputCapBytes ?? GRANT_COMMAND_OUTPUT_CAP_BYTES;
+    // The capability table decides: a corner may act on the host, so it spawns
+    // plainly; a Room may not, so it spawns into the very mount table an
+    // ordinary Room session gets — whole host readable, writable only in its own
+    // scratch and home overlay.
+    const spawn = surfaceAllows(policy.surface, 'run-host-command')
+      ? { command: argv[0]!, args: argv.slice(1) }
+      : roomSandboxCommand(policy, room.cwd, argv);
     const outcome = await new Promise<{
       exitCode: number | null;
       signal?: string;
@@ -205,8 +294,8 @@ export class GrantCommandRunner {
       output: string;
     }>((resolveRun) => {
       const child = execFile(
-        argv[0]!,
-        argv.slice(1),
+        spawn.command,
+        spawn.args,
         {
           cwd: room.cwd,
           env,
@@ -230,7 +319,17 @@ export class GrantCommandRunner {
         },
       );
     });
-    const output = capOutput(scrubSecrets(outcome.output, secrets), cap);
+    // The record says what happened: a refused write is the Room boundary doing
+    // its job, and the agent is told where the work belongs instead.
+    const writeRefused =
+      !surfaceAllows(policy.surface, 'run-host-command') && WRITE_REFUSED.test(outcome.output);
+    const output = capOutput(
+      scrubSecrets(
+        writeRefused ? `${outcome.output.trimEnd()}\n${ROOM_WRITE_REFUSED_NOTE}` : outcome.output,
+        secrets,
+      ),
+      cap,
+    );
     const turn = room.turn();
     const requester = turn?.requester ?? {
       pubkey: grant.requestedBy,
@@ -265,8 +364,85 @@ export class GrantCommandRunner {
       ...(outcome.signal ? { signal: outcome.signal } : {}),
       timedOut: outcome.timedOut,
       output,
+      ...(writeRefused ? { writeRefused: true } : {}),
     };
   }
+
+  /**
+   * An interpreter grant may only run the bytes the approval card showed.
+   *
+   * The file is re-read and re-hashed here, immediately before the run: a
+   * script the agent rewrote after the human answered no longer matches, and a
+   * script that appeared where the card had none was never approved at all. A
+   * line with no such file (`python3 -V`) has nothing to bind and passes.
+   */
+  private async checkScriptBinding(
+    grant: LiveGrant,
+    candidates: readonly string[],
+    argv: readonly string[],
+  ): Promise<void> {
+    const argument = interpreterScriptArgument(argv);
+    if (!argument) return;
+    let bytes: Buffer | undefined;
+    for (const candidate of candidates) {
+      bytes = await readFile(candidate).catch(() => undefined);
+      if (bytes) break;
+    }
+    if (!bytes) return;
+    const script = grant.script;
+    if (!script || script.path !== argument.path) {
+      throw new Error(
+        `${argument.path} is a script no human has read: this grant was approved without it. ` +
+          'Ask with request_grant kind=command so the card carries what the command runs.',
+      );
+    }
+    if (createHash('sha256').update(bytes).digest('hex') !== script.sha256) {
+      throw new Error(
+        `${argument.path} changed after it was approved, so the approval no longer covers it. ` +
+          'Ask with request_grant kind=command again so a human reads what runs now.',
+      );
+    }
+  }
+}
+
+/**
+ * Where a script argument may live, in the order `resolveAttachPath` tried at
+ * request time: the checkout first, the session scratch second. Same order, so
+ * the bytes re-hashed here are the bytes the card showed.
+ */
+function scriptCandidates(
+  cwd: string,
+  scratch: string | undefined,
+  argv: readonly string[],
+): string[] {
+  const argument = interpreterScriptArgument(argv);
+  if (!argument) return [];
+  const paths = [resolve(cwd, argument.path), ...(scratch ? [resolve(scratch, argument.path)] : [])];
+  return [...new Set(paths)];
+}
+
+/** The bwrap-wrapped argv for a Room run, or a refusal when the host cannot wrap. */
+function roomSandboxCommand(
+  policy: GrantWritePolicy,
+  cwd: string,
+  argv: readonly string[],
+): { command: string; args: string[] } {
+  if (!policy.bwrapPath) throw new Error(ROOM_SANDBOX_UNAVAILABLE);
+  return wrapAgentCommand({
+    bwrapPath: policy.bwrapPath,
+    spec: {
+      mode: 'readonly',
+      cwd,
+      // The Room keeps every writable surface its session already had: the
+      // scratch and the agent-home overlay. Only the repository copy and the
+      // live host become read-only.
+      ...(policy.harnessStateDirs ? { harnessStateDirs: policy.harnessStateDirs } : {}),
+      ...(policy.scratch ? { tmpDir: policy.scratch } : {}),
+      ...(policy.maskPaths ? { maskPaths: policy.maskPaths } : {}),
+    },
+    command: argv[0]!,
+    args: argv.slice(1),
+  });
 }
 
 export interface GrantRunnerEndpoint {

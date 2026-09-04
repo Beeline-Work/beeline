@@ -1,4 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   agentToolsFor,
   requestGrant,
@@ -133,5 +137,93 @@ describe('beeline-agent run_granted_command', () => {
       },
     );
     expect(timedOut).toBe('ran under grant g: timed out after 10 minutes\n(no output)');
+  });
+});
+
+/**
+ * C94: `python3 fix.py` tells the person deciding nothing about what will run,
+ * so the ask carries the script and the approval is bound to those bytes.
+ */
+describe('request_grant carries the script an interpreter will run', () => {
+  const roots: string[] = [];
+  afterEach(() => {
+    for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  });
+
+  const checkout = (contents: string, name = 'fix.py') => {
+    const root = mkdtempSync(join(tmpdir(), 'beeline-grant-script-'));
+    roots.push(root);
+    writeFileSync(join(root, name), contents);
+    return root;
+  };
+
+  it('sends the file contents and its hash with the ask, and tells the agent so', async () => {
+    const body = 'import os\nos.remove("/tmp/x")\n';
+    const root = checkout(body);
+    const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
+    const reply = await requestGrant(
+      { kind: 'command', target: 'python3 fix.py', reason: 'clean up' },
+      { ...deps({ grantId: 'g-1', status: 'pending', auto: false, escalations: ['unseen-script'] }, ops), scriptRoots: [root] },
+    );
+    expect(ops[0]!.input.script).toEqual({
+      path: 'fix.py',
+      sha256: createHash('sha256').update(body).digest('hex'),
+      bytes: Buffer.byteLength(body),
+      contents: body,
+    });
+    expect(reply).toContain(
+      'A human always answers this one because it runs a script whose contents nobody has read',
+    );
+    expect(reply).toContain('the approval is bound to those bytes');
+  });
+
+  it('refuses a script too long to read honestly instead of truncating it', async () => {
+    const root = checkout(`${Array.from({ length: 400 }, (_, i) => `line ${i}`).join('\n')}\n`);
+    await expect(
+      requestGrant(
+        { kind: 'command', target: 'python3 fix.py', reason: 'x' },
+        { ...deps({ grantId: 'g' }), scriptRoots: [root] },
+      ),
+    ).rejects.toThrow('will not be truncated');
+  });
+
+  it('refuses a script outside the checkout and the scratch directory', async () => {
+    const root = checkout('print(1)\n');
+    await expect(
+      requestGrant(
+        { kind: 'command', target: 'python3 /etc/hosts', reason: 'x' },
+        { ...deps({ grantId: 'g' }), scriptRoots: [root] },
+      ),
+    ).rejects.toThrow('cannot be shown on the approval card');
+  });
+
+  it('asks without a body when the interpreter line names no file', async () => {
+    const root = checkout('print(1)\n');
+    const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
+    await requestGrant(
+      { kind: 'command', target: 'python3 -V', reason: 'x' },
+      { ...deps({ grantId: 'g', status: 'pending', auto: false }, ops), scriptRoots: [root] },
+    );
+    expect(ops[0]!.input.script).toBeUndefined();
+  });
+});
+
+describe('run_granted_command reports the Room boundary', () => {
+  it('names the corner when the read-only filesystem refused a write', async () => {
+    const reply = await runGrantedCommand(
+      { argv: ['cp', 'a', 'b'] },
+      {
+        roomId: 'room-1',
+        run: async () => ({
+          grantId: 'g-1',
+          exitCode: 1,
+          timedOut: false,
+          output: "cp: cannot create 'b': Read-only file system",
+          writeRefused: true,
+        }),
+      },
+    );
+    expect(reply).toContain('read-only outside your scratch directory');
+    expect(reply).toContain('open_corner');
   });
 });

@@ -27,7 +27,7 @@ import {
   type WorkspaceListView,
   type WorkspaceView,
 } from './phone-types.js';
-import { isAgentGrantKind, isAgentGrantStatus } from './agent-grants.js';
+import { isAgentGrantKind, isAgentGrantStatus, isCommandGrantScript } from './agent-grants.js';
 
 const HEX = /^[0-9a-f]{64}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -102,7 +102,10 @@ export function isAgentGrantView(value: unknown): boolean {
     integer(item.createdAt) &&
     (item.decidedAt === undefined || integer(item.decidedAt)) &&
     (item.expiresAt === undefined || integer(item.expiresAt)) &&
-    typeof item.auto === 'boolean',
+    typeof item.auto === 'boolean' &&
+    // C94: the card renders these bytes, so they are validated like anything
+    // else a screen draws verbatim.
+    (item.script === undefined || isCommandGrantScript(item.script)),
   );
 }
 

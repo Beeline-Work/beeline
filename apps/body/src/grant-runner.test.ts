@@ -1,9 +1,22 @@
+import { createHash } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
-import { GrantCommandRunner, GrantRunnerServer, matchCommandGrant } from './grant-runner.js';
+import {
+  interpreterScriptArgument,
+  parseCommandGrantTarget,
+} from '@beeline/api-contract/agent-grants';
+import { detectBwrapSandbox } from './bwrap-sandbox.js';
+import {
+  GrantCommandRunner,
+  GrantRunnerServer,
+  ROOM_SANDBOX_UNAVAILABLE,
+  matchCommandGrant,
+  type GrantWritePolicy,
+} from './grant-runner.js';
 
 const AGENT = 'a'.repeat(64);
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
@@ -30,7 +43,40 @@ function grant(overrides: Partial<LiveGrant>): LiveGrant {
   };
 }
 
-async function harness(grants: LiveGrant[], turn?: () => { requestId: string; requester?: { pubkey: string; name?: string } } | undefined) {
+/**
+ * The script binding an approval carries for an interpreter line (C94). The
+ * probes here run under `process.execPath`, which IS an interpreter, so every
+ * fixture grant is bound to the bytes of the probe it names — exactly as a real
+ * approval card binds what a human read.
+ */
+function bindScript(cwd: string, entry: LiveGrant): LiveGrant {
+  if (entry.kind !== 'command') return entry;
+  let argument: { path: string } | undefined;
+  try {
+    argument = interpreterScriptArgument(parseCommandGrantTarget(entry.target).argv);
+  } catch {
+    return entry;
+  }
+  if (!argument) return entry;
+  const path = resolve(cwd, argument.path);
+  if (!existsSync(path)) return entry;
+  const bytes = readFileSync(path);
+  return {
+    ...entry,
+    script: {
+      path: argument.path,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+      bytes: bytes.byteLength,
+      contents: bytes.toString('utf8'),
+    },
+  };
+}
+
+async function harness(
+  grants: LiveGrant[],
+  turn?: () => { requestId: string; requester?: { pubkey: string; name?: string } } | undefined,
+  writePolicy: () => GrantWritePolicy = () => ({ surface: 'corner' }),
+) {
   const cwd = await mkdtemp(join(tmpdir(), 'beeline-grant-runner-'));
   roots.push(cwd);
   // Command targets carry no shell metacharacters, so the probes are files in the checkout.
@@ -41,8 +87,13 @@ async function harness(grants: LiveGrant[], turn?: () => { requestId: string; re
   await writeFile(join(cwd, 'exit3.mjs'), 'process.exit(3);\n');
   await writeFile(join(cwd, 'seven.mjs'), 'console.log(7);\n');
   await writeFile(join(cwd, 'one.mjs'), '\n');
+  await writeFile(
+    join(cwd, 'write.mjs'),
+    "import { writeFileSync } from 'node:fs';\nwriteFileSync(process.argv[2] ?? 'evil.txt', 'x');\nconsole.log('wrote');\n",
+  );
+  await writeFile(join(cwd, 'read.mjs'), "import { readFileSync } from 'node:fs';\nconsole.log(readFileSync('probe.mjs', 'utf8').length > 0 ? 'read' : 'empty');\n");
   const calls: Array<{ name: string; input: Record<string, unknown> }> = [];
-  const live = [...grants];
+  const live = grants.map((entry) => bindScript(cwd, entry));
   const api = {
     execute: vi.fn(async (name: string, input: Record<string, unknown>) => {
       calls.push({ name, input });
@@ -69,9 +120,10 @@ async function harness(grants: LiveGrant[], turn?: () => { requestId: string; re
   runner.register(ROOM, {
     workspaceId: WORKSPACE,
     cwd,
+    writePolicy,
     turn: turn ?? (() => ({ requestId: 'turn-1', requester: { pubkey: ALEX, name: 'Alex' } })),
   });
-  return { runner, api, calls, cwd };
+  return { runner, api, calls, cwd, live };
 }
 
 describe('command grant matching', () => {
@@ -199,6 +251,160 @@ describe('GrantCommandRunner', () => {
         requestedBy: { pubkey: ALEX, name: 'Alex' },
         title: expect.stringContaining('asked by Alex'),
       }),
+    );
+  });
+});
+
+/**
+ * C94: the Room's read-only promise covers a granted command.
+ *
+ * These run the host's real bubblewrap, because the whole point is that the
+ * refusal comes from the kernel rather than from a guess about what the argv
+ * means. They soft-skip where `bwrap-sandbox.test.ts` does.
+ */
+const bwrap = detectBwrapSandbox();
+const roomDescribe = bwrap.path ? describe : describe.skip;
+
+roomDescribe('a granted command in a top-level Room', () => {
+  const roomPolicy = (scratch?: string): (() => GrantWritePolicy) => {
+    return () => ({ surface: 'room', bwrapPath: bwrap.path!, ...(scratch ? { scratch } : {}) });
+  };
+
+  it('reads freely but cannot write the checkout, and the refusal names the corner', async () => {
+    const { runner, calls, cwd } = await harness(
+      [
+        grant({ grantId: 'read', target: `${process.execPath} read.mjs` }),
+        grant({ grantId: 'write', target: `${process.execPath} write.mjs` }),
+      ],
+      undefined,
+      roomPolicy(),
+    );
+    const read = await runner.run({ roomId: ROOM, argv: [process.execPath, 'read.mjs'] });
+    expect(read.exitCode).toBe(0);
+    expect(read.output.trim()).toBe('read');
+    expect(read.writeRefused).toBeUndefined();
+
+    const write = await runner.run({ roomId: ROOM, argv: [process.execPath, 'write.mjs'] });
+    expect(write.exitCode).not.toBe(0);
+    expect(write.writeRefused).toBe(true);
+    expect(write.output).toMatch(/read-only file system/i);
+    expect(write.output).toContain('open_corner');
+    expect(existsSync(join(cwd, 'evil.txt'))).toBe(false);
+    // The record carries the refusal, not just the exit code.
+    const rows = calls.filter((call) => call.name === 'postAgentActivity');
+    expect((rows.at(-1)!.input.activity as Array<{ output: string }>)[0]!.output).toContain(
+      'read-only',
+    );
+  });
+
+  it('writes into the session scratch, the one place a Room may write', async () => {
+    const scratch = await mkdtemp(join(tmpdir(), 'beeline-grant-scratch-'));
+    roots.push(scratch);
+    const { runner } = await harness(
+      [grant({ target: `${process.execPath} write.mjs` })],
+      undefined,
+      roomPolicy(scratch),
+    );
+    const target = join(scratch, 'note.txt');
+    const result = await runner.run({
+      roomId: ROOM,
+      argv: [process.execPath, 'write.mjs', target],
+    });
+    expect(result.exitCode).toBe(0);
+    expect(readFileSync(target, 'utf8')).toBe('x');
+  });
+
+  it('keeps the session home overlay writable, exactly as the harness has it', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'beeline-grant-home-'));
+    roots.push(home);
+    const { runner } = await harness(
+      [grant({ target: `${process.execPath} write.mjs` })],
+      undefined,
+      () => ({ surface: 'room', bwrapPath: bwrap.path!, harnessStateDirs: [home] }),
+    );
+    const note = join(home, 'note.txt');
+    expect(
+      (await runner.run({ roomId: ROOM, argv: [process.execPath, 'write.mjs', note] })).exitCode,
+    ).toBe(0);
+    expect(readFileSync(note, 'utf8')).toBe('x');
+  });
+
+  it('lets the same write through in a corner, where writes belong', async () => {
+    const { runner, cwd } = await harness([grant({ target: `${process.execPath} write.mjs` })]);
+    const result = await runner.run({ roomId: ROOM, argv: [process.execPath, 'write.mjs'] });
+    expect(result.exitCode).toBe(0);
+    expect(result.writeRefused).toBeUndefined();
+    expect(readFileSync(join(cwd, 'evil.txt'), 'utf8')).toBe('x');
+  });
+});
+
+describe('a corner has strictly more freedom than a Room', () => {
+  it('acts on the live host, the capability a Room does not have', async () => {
+    const host = await mkdtemp(join(tmpdir(), 'beeline-grant-host-'));
+    roots.push(host);
+    const target = join(host, 'deployed.txt');
+    // The corner writes OUTSIDE its own worktree: this is the host operation
+    // that used to be reachable only from a Room, which was backwards.
+    const { runner, calls } = await harness([grant({ target: `${process.execPath} write.mjs` })]);
+    const result = await runner.run({
+      roomId: ROOM,
+      argv: [process.execPath, 'write.mjs', target],
+    });
+    expect(result.exitCode).toBe(0);
+    expect(readFileSync(target, 'utf8')).toBe('x');
+    // Under yolo this needed no card: the approval is the grant it already has.
+    expect(calls.map((call) => call.name)).toEqual(['listAgentGrants', 'postAgentActivity']);
+  });
+});
+
+describe('a Room with no usable sandbox', () => {
+  it('refuses the run rather than widening the boundary, and says where to go', async () => {
+    const { runner, calls } = await harness(
+      [grant({ target: `${process.execPath} one.mjs` })],
+      undefined,
+      () => ({ surface: 'room' }),
+    );
+    await expect(runner.run({ roomId: ROOM, argv: [process.execPath, 'one.mjs'] })).rejects.toThrow(
+      ROOM_SANDBOX_UNAVAILABLE,
+    );
+    expect(calls.some((call) => call.name === 'postAgentActivity')).toBe(false);
+  });
+});
+
+describe('the two hard stops', () => {
+  it('refuses a credential file the approved prefix never showed a human', async () => {
+    const { runner, calls } = await harness([grant({ grantId: 'cut', target: 'cut -d=' })]);
+    // The rule reads a column; the run reads the key names out of an env file.
+    await expect(
+      runner.run({ roomId: ROOM, argv: ['cut', '-d=', '-f1', '/home/op/proj/.env'] }),
+    ).rejects.toThrow('names a credential or environment file');
+    expect(calls.some((call) => call.name === 'postAgentActivity')).toBe(false);
+    // The approved shape itself still runs.
+    expect((await runner.run({ roomId: ROOM, argv: ['cut', '-d=', '-f1', '/dev/null'] })).exitCode).toBe(
+      0,
+    );
+  });
+
+  it('refuses an interpreter run whose script no card ever showed', async () => {
+    const { runner, live } = await harness([grant({ target: `${process.execPath} one.mjs` })]);
+    live[0] = { ...live[0]!, script: undefined };
+    await expect(runner.run({ roomId: ROOM, argv: [process.execPath, 'one.mjs'] })).rejects.toThrow(
+      'no human has read',
+    );
+  });
+
+  it('refuses a script that changed after it was approved', async () => {
+    const { runner, cwd } = await harness([grant({ target: `${process.execPath} one.mjs` })]);
+    await writeFile(join(cwd, 'one.mjs'), "console.log('rewritten after the yes');\n");
+    await expect(runner.run({ roomId: ROOM, argv: [process.execPath, 'one.mjs'] })).rejects.toThrow(
+      'changed after it was approved',
+    );
+  });
+
+  it('runs an interpreter line whose script still hashes to the approved bytes', async () => {
+    const { runner } = await harness([grant({ target: `${process.execPath} seven.mjs` })]);
+    expect((await runner.run({ roomId: ROOM, argv: [process.execPath, 'seven.mjs'] })).output).toBe(
+      '7\n',
     );
   });
 });

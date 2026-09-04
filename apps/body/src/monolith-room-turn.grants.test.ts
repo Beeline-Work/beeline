@@ -1,12 +1,13 @@
 import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { formatGrantDecisionLine } from '@beeline/api-contract/agent-grants';
 import { AcpClient } from './acp.js';
+import { credentialMaskPaths } from './bwrap-sandbox.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
-import { GrantCommandRunner } from './grant-runner.js';
+import { GrantCommandRunner, type GrantRunnerRoom } from './grant-runner.js';
 import {
   inboxItemTriggersTurn,
   isGrantDecisionLine,
@@ -209,7 +210,15 @@ describe('Room turn paused on a grant card', () => {
         agentText: 'Deployed the preview.',
         toolCalls: [],
       });
-    const grantRunner = new GrantCommandRunner({ api, agentId: agent.publicKey, resolveSecret: async () => undefined });
+    // C94: what the Room registers is what the runner enforces, so record it.
+    const registered: GrantRunnerRoom[] = [];
+    class RecordingRunner extends GrantCommandRunner {
+      override register(roomId: string, room: GrantRunnerRoom): void {
+        registered.push(room);
+        super.register(roomId, room);
+      }
+    }
+    const grantRunner = new RecordingRunner({ api, agentId: agent.publicKey, resolveSecret: async () => undefined });
     const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
     const abort = new AbortController();
     loop = new MonolithRoomTurnLoop({
@@ -251,6 +260,15 @@ describe('Room turn paused on a grant card', () => {
       { pubkey: HUMAN, name: 'Captain' },
       { pubkey: HUMAN, name: 'Captain' },
     ]);
+    // A Room registers itself as the surface with no host-command capability,
+    // and hands over the bwrap that keeps its read-only promise for grants.
+    expect(registered).toHaveLength(1);
+    const policy = registered[0]!.writePolicy();
+    expect(policy.surface).toBe('room');
+    expect(policy.bwrapPath).toBe(config.bwrapPath);
+    expect(policy.maskPaths).toEqual(
+      credentialMaskPaths(config.sandboxMaskPaths, config.operatorHome ?? homedir()),
+    );
     // The beeline-agent MCP mount carries the runner door.
     const servers = (sessionNew.mock.calls[0]![0] as { mcpServers: Array<{ name: string; env: Array<{ name: string; value: string }> }> })
       .mcpServers;

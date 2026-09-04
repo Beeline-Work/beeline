@@ -23,6 +23,11 @@
       "types": "./dist/agent-grants.d.ts",
       "import": "./dist/agent-grants.js",
       "default": "./dist/agent-grants.js"
+    },
+    "./surface-capabilities": {
+      "types": "./dist/surface-capabilities.d.ts",
+      "import": "./dist/surface-capabilities.js",
+      "default": "./dist/surface-capabilities.js"
     }
   },
   "scripts": {

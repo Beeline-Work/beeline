@@ -25,10 +25,13 @@ import {
 } from '@/buzz/community-invite';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { defaultAgentPersona } from '@/buzz/agent-persona';
+import { shortMemberNpub } from '@/buzz/member-display';
+import { canRemoveRoomParticipant } from '@/buzz/room-management';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
-import { HullSurface, MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
-import { MEMBERS_GLYPH, MEMBERS_LABEL } from '@/buzz/vocabulary';
+import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
+import { BrassButton, HullSurface, MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
+import { MEMBERS_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { BuzzRigTransport } from '@/sync/transport';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { Typography } from '@/constants/Typography';
@@ -51,6 +54,7 @@ type MembersAction =
   | 'invite-person'
   | 'pair-agent'
   | 'person-role'
+  | 'remove-person'
   | 'save-agent-soul'
   | 'remove-agent'
   | 'model-config'
@@ -92,6 +96,27 @@ function canChangeRole(
 function canAssignRole(viewerRole: WorkspaceRole, role: WorkspaceRole): boolean {
   return viewerRole === 'owner' || (viewerRole === 'admin' && role !== 'owner');
 }
+
+/**
+ * The one quiet line under a name: `@handle · role`, ending in an agent's
+ * lowercase presence word. That word is the Members page's presence fact —
+ * the tile's gold ring means WORKING (C77), and the Workspace view carries no
+ * turn or corner state, so no agent wears a ring here.
+ */
+function memberMetaLine(
+  identity: { handle?: string; pubkey: string },
+  role: WorkspaceRole,
+  presence?: 'online' | 'offline',
+): string {
+  const line = `@${identity.handle ?? shortMemberNpub(identity.pubkey)} · ${role}`;
+  return presence ? `${line} · ${presence}` : line;
+}
+
+const ROLE_LABELS: Record<WorkspaceRole, string> = {
+  owner: 'Owner',
+  admin: 'Admin',
+  member: 'Member',
+};
 
 type ModelAxisKind = 'model' | 'effort';
 
@@ -177,7 +202,7 @@ export default function BuzzMembers() {
   const [editingAgentSoul, setEditingAgentSoul] = useState(false);
   const [agentNameDraft, setAgentNameDraft] = useState('');
   const [agentSoulDraft, setAgentSoulDraft] = useState('');
-  const [roleEditorPubkey, setRoleEditorPubkey] = useState<string | null>(null);
+  const [openPersonPubkey, setOpenPersonPubkey] = useState<string | null>(null);
   const [openModelAxis, setOpenModelAxis] = useState<ModelAxisKind | null>(null);
   const [modelSearchQuery, setModelSearchQuery] = useState('');
   const [modelAppliesNote, setModelAppliesNote] = useState<ModelAxisKind | null>(null);
@@ -188,7 +213,7 @@ export default function BuzzMembers() {
   const [error, setError] = useState<string | null>(null);
   const [yoloError, setYoloError] = useState<string | null>(null);
   const [retryGeneration, setRetryGeneration] = useState(0);
-  const [agentInviteOpen, setAgentInviteOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [pairCommand, setPairCommand] = useState<string | null>(null);
   const schedulerRef = useRef<SurfaceRefreshScheduler<WorkspaceView> | null>(null);
   const agentRequestGenerationRef = useRef(0);
@@ -308,7 +333,7 @@ export default function BuzzMembers() {
   const openAgent = async (agentPubkey: string) => {
     if (!identity || !relayUrl || !workspaceId) return;
     const generation = ++agentRequestGenerationRef.current;
-    setRoleEditorPubkey(null);
+    setOpenPersonPubkey(null);
     setOpenModelAxis(null);
     setModelAppliesNote(null);
     setEditingAgentSoul(false);
@@ -353,10 +378,13 @@ export default function BuzzMembers() {
     }
   };
 
-  /** The app-minted code is the complete authorization for the public connect wizard. */
-  const openAgentInvite = async () => {
+  /**
+   * Connecting a NEW agent: the app-minted code is the complete authorization
+   * for the public connect wizard, shown inside the one picker sheet.
+   */
+  const connectAgent = async () => {
     if (!surface?.viewer.permissions.manage || !workspaceId) return;
-    setAgentInviteOpen(true);
+    setPickerOpen(true);
     setSelectedAgent(null);
     setPairCommand(null);
     setError(null);
@@ -371,6 +399,11 @@ export default function BuzzMembers() {
     }
   };
 
+  const closePicker = () => {
+    setPickerOpen(false);
+    setPairCommand(null);
+  };
+
   useEffect(() => {
     if (!surface?.viewer.permissions.manage || requestedActionHandledRef.current) return;
     if (requestedAction === 'invite') {
@@ -378,7 +411,7 @@ export default function BuzzMembers() {
       void invitePerson();
     } else if (requestedAction === 'add-agent') {
       requestedActionHandledRef.current = true;
-      void openAgentInvite();
+      void connectAgent();
     }
     // The route intent is consume-once. The handlers intentionally read the
     // current authenticated surface at that moment rather than reopening on
@@ -405,9 +438,46 @@ export default function BuzzMembers() {
       await waitForIndexedSurface(readWorkspace, (value) =>
         value.members.some((member) => member.identity.pubkey === pubkey && member.role === role),
       );
-      setRoleEditorPubkey(null);
+      setOpenPersonPubkey(null);
     } catch (reason) {
       setError(`Could not change person role: ${String(reason)}`);
+    } finally {
+      setWorking(null);
+    }
+  };
+
+  /** Removal from the Workspace takes the person out of every live Room with it. */
+  const removePerson = async (pubkey: string) => {
+    if (!surface || !workspaceId || !surface.viewer.permissions.manage) return;
+    const target = surface.members.find((member) => member.identity.pubkey === pubkey);
+    if (
+      !target ||
+      !canRemoveRoomParticipant(
+        surface.viewer.role,
+        target.role,
+        pubkey === surface.viewer.identity.pubkey,
+      )
+    )
+      return;
+    const name = target.identity.name;
+    const confirmed = await Modal.confirm(
+      `Remove ${name}?`,
+      `They leave this ${WORKSPACE_LABEL} and every Room in it. A new invite brings them back.`,
+      { cancelText: 'Cancel', confirmText: 'Remove', destructive: true },
+    );
+    if (!confirmed) return;
+    setWorking('remove-person');
+    setError(null);
+    try {
+      const client = await writeClient();
+      await client.removeMember(workspaceId, pubkey);
+      await waitForIndexedSurface(
+        readWorkspace,
+        (value) => !value.members.some((member) => member.identity.pubkey === pubkey),
+      );
+      setOpenPersonPubkey(null);
+    } catch (reason) {
+      setError(`Could not remove ${name}: ${String(reason)}`);
     } finally {
       setWorking(null);
     }
@@ -483,9 +553,7 @@ export default function BuzzMembers() {
     if (!selectedAgent || !surface?.viewer.permissions.manage) return;
     const axis = kind === 'model' ? modelAxes.model : modelAxes.effort;
     const input: AgentModelConfigInput =
-      kind === 'model'
-        ? modelSelectionInput(selectedAgent, axis, choiceId)
-        : { effort: choiceId };
+      kind === 'model' ? modelSelectionInput(selectedAgent, axis, choiceId) : { effort: choiceId };
     setWorking('model-config');
     setError(null);
     try {
@@ -611,7 +679,7 @@ export default function BuzzMembers() {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
         <PixelLoader />
-        <Text style={styles.loadingText}>LOADING {MEMBERS_LABEL.toUpperCase()}</Text>
+        <Text style={styles.loadingText}>Loading {MEMBERS_LABEL.toLowerCase()}…</Text>
       </View>
     );
   }
@@ -655,11 +723,10 @@ export default function BuzzMembers() {
           </TouchableOpacity>
           <View style={styles.headerCopy}>
             <Text style={styles.eyebrow}>{surface.workspace.name}</Text>
-            <Text style={styles.title}>
-              {MEMBERS_GLYPH} {MEMBERS_LABEL}
+            <Text style={styles.title} testID="members-title">
+              {MEMBERS_LABEL}
             </Text>
           </View>
-          <Text style={styles.count}>{surface.members.length + surface.agents.length}</Text>
         </View>
         {!!error && (
           <TouchableOpacity onPress={() => schedulerRef.current?.force()} style={styles.errorPanel}>
@@ -672,70 +739,20 @@ export default function BuzzMembers() {
           keyboardShouldPersistTaps="handled"
         >
           {canManage && (
-            <View style={styles.memberActions} testID="members-invite-actions">
-              <MonoButton
-                label={working === 'invite-person' ? 'CREATING INVITE' : 'INVITE PERSON'}
-                loading={working === 'invite-person'}
-                disabled={busy}
-                onPress={() => void invitePerson()}
-                variant="secondary"
-                labelStyle={styles.actionLabel}
-                testID="invite-person"
-              />
-              <MonoButton
-                label="INVITE AGENT"
-                disabled={busy}
-                onPress={() => void openAgentInvite()}
-                variant="secondary"
-                labelStyle={styles.actionLabel}
-                testID="invite-agent"
-              />
-            </View>
-          )}
-          {agentInviteOpen && (
-            <HullSurface strength="raised" style={styles.invitePanel} testID="invite-agent-flow">
-              <View style={styles.inviteHeading}>
-                <View style={styles.rowCopy}>
-                  <Text style={styles.sectionLabel}>INVITE AGENT</Text>
-                  <Text style={styles.detail}>
-                    Run this where the new agent will live. It joins every Room you're in.
-                  </Text>
-                </View>
-                <MonoButton
-                  label="CLOSE"
-                  variant="secondary"
-                  labelStyle={styles.actionLabel}
-                  onPress={() => {
-                    setAgentInviteOpen(false);
-                    setPairCommand(null);
-                  }}
-                />
-              </View>
-              {pairCommand ? (
-                <View style={styles.commandList}>
-                  <TouchableOpacity
-                    accessibilityLabel="Copy connect command"
-                    onPress={() => void copyText(pairCommand)}
-                    style={styles.commandRow}
-                  >
-                    <Text selectable style={styles.command} testID="pair-agent-command">
-                      {pairCommand}
-                    </Text>
-                    <Text style={styles.copy}>COPY</Text>
-                  </TouchableOpacity>
-                </View>
-              ) : (
-                working === 'pair-agent' && <PixelLoader />
-              )}
-            </HullSurface>
+            <BrassButton
+              label="Add people or agents"
+              disabled={busy}
+              onPress={() => {
+                setError(null);
+                setPickerOpen(true);
+              }}
+              testID="add-members"
+            />
           )}
           <View style={styles.section} testID="members-people-section">
-            <View style={styles.sectionHeading}>
-              <Text style={styles.sectionLabel}>PEOPLE</Text>
-              <Text style={styles.count} testID="members-people-count">
-                {surface.members.length}
-              </Text>
-            </View>
+            <Text style={styles.sectionLabel} testID="members-people-head">
+              People {surface.members.length}
+            </Text>
             {surface.members.map((member) => {
               const editable = canChangeRole(
                 surface.viewer.role,
@@ -743,12 +760,20 @@ export default function BuzzMembers() {
                 member.identity.pubkey,
                 member.role,
               );
-              const editorOpen = roleEditorPubkey === member.identity.pubkey;
+              const removable =
+                canManage &&
+                canRemoveRoomParticipant(
+                  surface.viewer.role,
+                  member.role,
+                  member.identity.pubkey === surface.viewer.identity.pubkey,
+                );
+              const hasDetail = editable || removable;
+              const open = openPersonPubkey === member.identity.pubkey;
               return (
                 <View key={member.identity.pubkey}>
                   <TouchableOpacity
-                    disabled={!editable || busy}
-                    onPress={() => setRoleEditorPubkey(editorOpen ? null : member.identity.pubkey)}
+                    disabled={!hasDetail || busy}
+                    onPress={() => setOpenPersonPubkey(open ? null : member.identity.pubkey)}
                     style={styles.row}
                     testID={`member-${member.identity.pubkey}-identity`}
                   >
@@ -761,38 +786,61 @@ export default function BuzzMembers() {
                       size={38}
                     />
                     <View style={styles.rowCopy}>
-                      <Text style={styles.name}>{member.identity.name}</Text>
-                      <Text style={styles.detail}>
-                        {member.identity.handle ?? member.identity.pubkey.slice(0, 12)} ·{' '}
-                        {member.role.toUpperCase()}
+                      <Text numberOfLines={1} style={styles.name}>
+                        {member.identity.name}
+                      </Text>
+                      <Text numberOfLines={1} style={styles.detail}>
+                        {memberMetaLine(member.identity, member.role)}
                       </Text>
                     </View>
-                    {editable && <Text style={styles.chevron}>{editorOpen ? '⌄' : '›'}</Text>}
+                    {hasDetail && <Text style={styles.chevron}>{open ? '⌄' : '›'}</Text>}
                   </TouchableOpacity>
-                  {editorOpen && (
+                  {open && (
                     <View
-                      style={styles.rolePicker}
-                      testID={`member-${member.identity.pubkey}-roles`}
+                      style={styles.personDetail}
+                      testID={`member-${member.identity.pubkey}-detail`}
                     >
-                      {(['member', 'admin', 'owner'] as const).map((role) => {
-                        const allowed = canAssignRole(surface.viewer.role, role);
-                        return (
-                          <TouchableOpacity
-                            key={role}
-                            disabled={!allowed || member.role === role || busy}
-                            onPress={() => void setPersonRole(member.identity.pubkey, role)}
-                            style={[
-                              styles.choice,
-                              styles.roleChoice,
-                              member.role === role && styles.choiceActive,
-                              !allowed && styles.choiceDisabled,
-                            ]}
-                            testID={`member-${member.identity.pubkey}-${role}`}
-                          >
-                            <Text style={styles.choiceText}>{role.toUpperCase()}</Text>
-                          </TouchableOpacity>
-                        );
-                      })}
+                      {editable && (
+                        <View
+                          style={styles.rolePicker}
+                          testID={`member-${member.identity.pubkey}-roles`}
+                        >
+                          {(['member', 'admin', 'owner'] as const).map((role) => {
+                            const allowed = canAssignRole(surface.viewer.role, role);
+                            return (
+                              <TouchableOpacity
+                                key={role}
+                                disabled={!allowed || member.role === role || busy}
+                                onPress={() => void setPersonRole(member.identity.pubkey, role)}
+                                style={[
+                                  styles.choice,
+                                  styles.roleChoice,
+                                  member.role === role && styles.choiceActive,
+                                  !allowed && styles.choiceDisabled,
+                                ]}
+                                testID={`member-${member.identity.pubkey}-${role}`}
+                              >
+                                <Text style={styles.choiceText}>{ROLE_LABELS[role]}</Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                      )}
+                      {removable && (
+                        <TouchableOpacity
+                          accessibilityRole="button"
+                          disabled={busy}
+                          onPress={() => void removePerson(member.identity.pubkey)}
+                          style={styles.removeControl}
+                          testID={`remove-person-${member.identity.pubkey}`}
+                        >
+                          <Text style={styles.removeText}>
+                            {working === 'remove-person'
+                              ? 'Removing…'
+                              : `Remove from ${WORKSPACE_LABEL}`}
+                          </Text>
+                        </TouchableOpacity>
+                      )}
                     </View>
                   )}
                 </View>
@@ -800,10 +848,9 @@ export default function BuzzMembers() {
             })}
           </View>
           <View style={styles.section} testID="members-agents-section">
-            <View style={styles.sectionHeading}>
-              <Text style={styles.sectionLabel}>AGENTS</Text>
-              <Text style={styles.count}>{surface.agents.length}</Text>
-            </View>
+            <Text style={styles.sectionLabel} testID="members-agents-head">
+              Agents {surface.agents.length}
+            </Text>
             {surface.agents.map((member) => (
               <TouchableOpacity
                 key={member.identity.pubkey}
@@ -818,15 +865,17 @@ export default function BuzzMembers() {
                   face={member.identity.face}
                   name={member.identity.name}
                   size={38}
-                  // No ring here: the Workspace view carries presence, not
-                  // turn or corner state, and the ring means WORKING (C77).
-                  // The ONLINE/OFFLINE word below is the presence fact.
                 />
                 <View style={styles.rowCopy}>
-                  <Text style={styles.name}>{member.identity.name}</Text>
-                  <Text style={styles.detail}>
-                    {member.presence?.status.toUpperCase() ?? 'OFFLINE'} ·{' '}
-                    {member.role.toUpperCase()}
+                  <Text numberOfLines={1} style={styles.name}>
+                    {member.identity.name}
+                  </Text>
+                  <Text numberOfLines={1} style={styles.detail}>
+                    {memberMetaLine(
+                      member.identity,
+                      member.role,
+                      member.presence?.status === 'online' ? 'online' : 'offline',
+                    )}
                   </Text>
                 </View>
                 <Text style={styles.chevron}>›</Text>
@@ -841,7 +890,7 @@ export default function BuzzMembers() {
             >
               <View style={styles.detailHeading}>
                 <View style={styles.rowCopy}>
-                  <Text style={styles.sectionLabel}>AGENT SETTINGS</Text>
+                  <Text style={styles.sectionLabel}>Agent settings</Text>
                   <View style={styles.agentTitleRow}>
                     <Text style={styles.name}>{selectedAgent.agent.identity.name}</Text>
                     {canManage && (
@@ -872,10 +921,10 @@ export default function BuzzMembers() {
                 </TouchableOpacity>
               </View>
               <View style={styles.soulSection}>
-                <Text style={styles.sectionLabel}>SOUL</Text>
+                <Text style={styles.sectionLabel}>Soul</Text>
                 {editingAgentSoul ? (
                   <>
-                    <Text style={styles.fieldLabel}>NAME</Text>
+                    <Text style={styles.fieldLabel}>Name</Text>
                     <TextInput
                       autoCapitalize="words"
                       editable={!busy}
@@ -886,7 +935,7 @@ export default function BuzzMembers() {
                       testID="agent-soul-name"
                       value={agentNameDraft}
                     />
-                    <Text style={styles.fieldLabel}>PERSONA / INSTRUCTIONS</Text>
+                    <Text style={styles.fieldLabel}>Persona / instructions</Text>
                     <TextInput
                       editable={!busy}
                       maxLength={1000}
@@ -921,7 +970,7 @@ export default function BuzzMembers() {
                 )}
               </View>
               <View style={styles.modelSection}>
-                <Text style={styles.sectionLabel}>MODEL / EFFORT</Text>
+                <Text style={styles.sectionLabel}>Model / effort</Text>
                 {(['model', 'effort'] as const).map((kind) => {
                   const axis = kind === 'model' ? modelAxes.model : modelAxes.effort;
                   const current = axisValue(selectedAgent, kind, axis);
@@ -945,7 +994,9 @@ export default function BuzzMembers() {
                         style={styles.axisRow}
                         testID={`model-axis-${kind}`}
                       >
-                        <Text style={styles.axisLabel}>{kind === 'model' ? 'MODEL' : 'EFFORT'}</Text>
+                        <Text style={styles.axisLabel}>
+                          {kind === 'model' ? 'Model' : 'Effort'}
+                        </Text>
                         <Text style={styles.axisValue} numberOfLines={1}>
                           {current ?? UNSET_VALUE}
                         </Text>
@@ -988,7 +1039,7 @@ export default function BuzzMembers() {
                 })}
               </View>
               <View style={styles.grantSection} testID="agent-grants">
-                <Text style={styles.sectionLabel}>GRANTS</Text>
+                <Text style={styles.sectionLabel}>Grants</Text>
                 {(selectedAgent.grants ?? []).length === 0 ? (
                   <Text style={styles.detail} testID="agent-grants-empty">
                     Nothing granted yet. When this agent asks for reach outside its sandbox, the
@@ -1024,7 +1075,7 @@ export default function BuzzMembers() {
                     style={[styles.sectionLabel, selectedAgent.yolo?.enabled && styles.yoloLabelOn]}
                     testID="agent-yolo-label"
                   >
-                    YOLO
+                    Yolo
                   </Text>
                   <Switch
                     accessibilityLabel="Yolo"
@@ -1069,6 +1120,19 @@ export default function BuzzMembers() {
             </HullSurface>
           )}
         </KeyboardAwareScrollView>
+        <MemberPickerSheet
+          busy={working === 'invite-person' || working === 'pair-agent'}
+          canManage={canManage}
+          candidates={undefined}
+          error={pickerOpen ? error : null}
+          onAdd={() => undefined}
+          onClose={closePicker}
+          onConnectAgent={() => void connectAgent()}
+          onCopyPairCommand={(command) => copyText(command)}
+          onInvitePerson={() => void invitePerson()}
+          pairCommand={pairCommand}
+          visible={pickerOpen}
+        />
       </View>
     </BuzzCommunityShell>
   );
@@ -1078,171 +1142,156 @@ const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
     container: { flex: 1, backgroundColor: hull.bgTerminal },
-    center: { alignItems: 'center', justifyContent: 'center', gap: 14, paddingHorizontal: 28 },
-    loadingText: {
-      ...Typography.mono('semiBold'),
-      color: hull.textMuted,
-      fontSize: 10,
-      letterSpacing: 1,
+    center: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: hull.space.md,
+      paddingHorizontal: hull.space.lg,
     },
+    loadingText: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
     header: {
       minHeight: 66,
       flexDirection: 'row',
       alignItems: 'center',
-      paddingHorizontal: 12,
+      paddingHorizontal: hull.space.sm,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: hull.border,
     },
     back: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-    backText: { ...Typography.default(), color: hull.textPrimary, fontSize: 30 },
+    backText: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
     headerCopy: { flex: 1 },
-    eyebrow: { ...Typography.default(), color: hull.textMuted, fontSize: 9 },
-    title: { ...Typography.default('semiBold'), color: hull.textPrimary, fontSize: 18 },
-    count: { ...Typography.mono('semiBold'), color: hull.chrome, fontSize: 11 },
-    errorPanel: { padding: 9 },
-    error: { ...Typography.default(), color: hull.danger, fontSize: 11, textAlign: 'center' },
-    content: { padding: 14, gap: 16, paddingBottom: 40 },
-    memberActions: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
-    actionLabel: { ...Typography.default('semiBold'), fontSize: 10, letterSpacing: 0.7 },
+    eyebrow: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
+    title: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
+    errorPanel: { padding: hull.space.sm },
+    error: {
+      ...Typography.default(),
+      ...hull.type.meta,
+      color: hull.danger,
+      textAlign: 'center',
+    },
+    content: {
+      padding: hull.space.md,
+      gap: hull.layout.sectionGap,
+      paddingBottom: hull.space.xxl,
+    },
     section: {},
-    sectionHeading: {
-      minHeight: 30,
-      gap: 10,
-      flexDirection: 'row',
-      alignItems: 'center',
-    },
-    sectionLabel: {
-      ...Typography.mono('semiBold'),
-      color: hull.textMuted,
-      fontSize: 9,
-      letterSpacing: 0.8,
-    },
+    sectionLabel: { ...Typography.default(), ...hull.type.sectionHead, color: hull.textMuted },
     row: {
-      minHeight: 62,
+      minHeight: hull.layout.row,
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 11,
-      paddingHorizontal: 12,
+      gap: hull.space.md,
+      paddingHorizontal: hull.space.sm,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: hull.border,
     },
     rowCopy: { flex: 1, minWidth: 0 },
-    name: { ...Typography.default('semiBold'), color: hull.textPrimary, fontSize: 14 },
-    detail: { ...Typography.default(), color: hull.textMuted, fontSize: 11, marginTop: 3 },
-    chevron: { ...Typography.default(), color: hull.textMuted, fontSize: 22 },
-    rolePicker: { flexDirection: 'row', padding: 8, gap: 6, backgroundColor: hull.bgRaised },
+    name: { ...Typography.default(), ...hull.type.body, color: hull.textPrimary },
+    detail: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
+    chevron: { ...Typography.default(), ...hull.type.hero, color: hull.textMuted },
+    personDetail: { gap: hull.space.sm, paddingVertical: hull.space.sm },
+    rolePicker: { flexDirection: 'row', gap: hull.space.sm },
+    removeControl: { minHeight: 44, justifyContent: 'center', paddingHorizontal: hull.space.sm },
+    removeText: { ...Typography.default(), ...hull.type.body, color: hull.dialogDanger },
     choice: {
-      minHeight: 38,
+      minHeight: 44,
       minWidth: 0,
-      paddingHorizontal: 10,
+      paddingHorizontal: hull.space.sm,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: hull.border,
+      borderRadius: hull.radius,
     },
     modelSearchInput: {
-      minHeight: 38,
-      paddingHorizontal: 10,
+      ...Typography.default(),
+      ...hull.type.body,
+      minHeight: 44,
+      paddingHorizontal: hull.space.sm,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: hull.border,
       color: hull.textPrimary,
-      ...Typography.default(),
-      fontSize: 11,
     },
     roleChoice: { flex: 1 },
     choiceActive: { borderColor: hull.chrome, backgroundColor: hull.bgPressed },
     choiceDisabled: { opacity: 0.35 },
-    choiceText: { ...Typography.default('semiBold'), color: hull.textPrimary, fontSize: 9 },
-    invitePanel: { padding: 12, gap: 12 },
-    inviteHeading: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-    commandList: { gap: 7 },
-    commandRow: {
-      minHeight: 44,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-      paddingHorizontal: 9,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: hull.border,
-      borderRadius: 3,
-    },
-    command: { ...Typography.mono(), color: hull.textPrimary, fontSize: 10, flex: 1 },
-    copy: { ...Typography.mono('semiBold'), color: hull.chrome, fontSize: 9 },
-    expiry: { ...Typography.mono(), color: hull.textMuted, fontSize: 9 },
-    detailPanel: { padding: 14, gap: 12 },
-    detailHeading: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-    agentTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    choiceText: { ...Typography.default(), ...hull.type.meta, color: hull.textPrimary },
+    detailPanel: { padding: hull.space.md, gap: hull.space.md },
+    detailHeading: { flexDirection: 'row', alignItems: 'center', gap: hull.space.md },
+    agentTitleRow: { flexDirection: 'row', alignItems: 'center', gap: hull.space.xs },
     glyphControl: {
       width: 32,
       height: 32,
       alignItems: 'center',
       justifyContent: 'center',
     },
-    glyphControlText: { ...Typography.default(), color: hull.textMuted, fontSize: 22 },
-    soulSection: { gap: 7 },
-    soulCopy: { ...Typography.default(), color: hull.textPrimary, fontSize: 11, lineHeight: 17 },
-    fieldLabel: {
-      ...Typography.mono('semiBold'),
-      color: hull.textMuted,
-      fontSize: 8,
-      letterSpacing: 0.7,
-    },
+    glyphControlText: { ...Typography.default(), ...hull.type.hero, color: hull.textMuted },
+    soulSection: { gap: hull.space.sm },
+    soulCopy: { ...Typography.default(), ...hull.type.body, color: hull.textPrimary },
+    fieldLabel: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
     textInput: {
       ...Typography.default(),
+      ...hull.type.body,
       color: hull.textPrimary,
-      minHeight: 40,
-      paddingHorizontal: 10,
-      paddingVertical: 8,
+      minHeight: 44,
+      paddingHorizontal: hull.space.sm,
+      paddingVertical: hull.space.sm,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: hull.border,
       backgroundColor: hull.bgTerminal,
     },
     soulInput: { minHeight: 112, textAlignVertical: 'top' },
-    soulActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8 },
-    modelSection: { gap: 8 },
+    soulActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: hull.space.sm },
+    modelSection: { gap: hull.space.sm },
     axisBlock: { borderWidth: StyleSheet.hairlineWidth, borderColor: hull.border },
     axisRow: {
       minHeight: 44,
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 10,
-      paddingHorizontal: 10,
+      gap: hull.space.sm,
+      paddingHorizontal: hull.space.sm,
     },
-    axisLabel: { ...Typography.default('semiBold'), color: hull.textMuted, fontSize: 9, width: 54 },
+    axisLabel: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted, width: 54 },
     axisValue: {
-      ...Typography.default('semiBold'),
+      ...Typography.default(),
+      ...hull.type.body,
       color: hull.textPrimary,
-      fontSize: 11,
       flex: 1,
       minWidth: 0,
       textAlign: 'right',
     },
-    grantSection: { gap: 6 },
+    grantSection: { gap: hull.space.sm },
     grantRow: {
       minHeight: 32,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      gap: 10,
+      gap: hull.space.sm,
     },
-    grantLine: { ...Typography.mono(), color: hull.textPrimary, fontSize: 10, flex: 1, minWidth: 0 },
-    yoloSection: { gap: 4 },
+    grantLine: {
+      ...Typography.mono(),
+      ...hull.type.machine,
+      color: hull.textPrimary,
+      flex: 1,
+      minWidth: 0,
+    },
+    yoloSection: { gap: hull.space.xs },
     yoloRow: {
       minHeight: 40,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      gap: 10,
+      gap: hull.space.sm,
     },
     yoloLabelOn: { color: hull.accent },
-    yoloError: { ...Typography.default(), color: hull.danger, fontSize: 11 },
+    yoloError: { ...Typography.default(), ...hull.type.meta, color: hull.danger },
     dangerZone: {
-      gap: 8,
-      paddingTop: 12,
+      gap: hull.space.sm,
+      paddingTop: hull.space.md,
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: hull.danger,
     },
-    dangerCopy: { ...Typography.default(), color: hull.danger, fontSize: 10 },
+    dangerCopy: { ...Typography.default(), ...hull.type.meta, color: hull.danger },
   };
 });

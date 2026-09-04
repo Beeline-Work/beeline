@@ -40,7 +40,6 @@ import {
 import { formatRoomCornerCount } from '@/buzz/vocabulary';
 import { runRoomDeckComposeAction } from '@/buzz/room-deck-compose-actions';
 import {
-  MEMBERS_GLYPH,
   MEMBERS_LABEL,
   ROOM_LABEL,
   WORKSPACE_LABEL,
@@ -554,7 +553,7 @@ export default function BuzzChannels() {
               testID="workspace-members"
             >
               <Text style={styles.headerActionText}>
-                {MEMBERS_GLYPH} {MEMBERS_LABEL.toUpperCase()}
+                {MEMBERS_LABEL.toUpperCase()}
               </Text>
             </TouchableOpacity>
           )}

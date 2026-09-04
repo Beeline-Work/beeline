@@ -2,7 +2,7 @@ import React from 'react';
 import { Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { Community } from '@beeline/buzz-client';
-import { MEMBERS_GLYPH, MEMBERS_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
+import { MEMBERS_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { Typography } from '@/constants/Typography';
 
 type CommunityInviteEntryProps = {
@@ -34,7 +34,6 @@ export function CommunityInviteEntry({
           style={styles.action}
           testID="members-action"
         >
-          <Text style={styles.actionIcon}>{MEMBERS_GLYPH}</Text>
           <Text style={styles.actionText}>{MEMBERS_LABEL}</Text>
         </TouchableOpacity>
       ) : allowPeopleInvites ? (

@@ -119,6 +119,10 @@ class MonolithClientAdapter {
   removeAgent(workspaceId: string, agentId: string) {
     return this.transport.operation('removeAgent', { workspaceId, agentId });
   }
+  /** A manager removes a person from the Workspace and every live Room in it. */
+  removeMember(workspaceId: string, memberId: string) {
+    return this.transport.operation('removeWorkspaceMember', { workspaceId, memberId });
+  }
   async getGlobalPersonProfile() {
     const profile = (await this.transport.operation('getManagedIdentity', {})) as {
       personId: string;

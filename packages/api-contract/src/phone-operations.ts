@@ -19,6 +19,7 @@ export type PhoneOperationMap = {
   updateWorkspace: { input: UpdateWorkspaceInput; output: void };
   leaveWorkspace: { input: WorkspaceInput; output: void };
   addWorkspaceMember: { input: WorkspaceMemberInput; output: MembershipResult };
+  removeWorkspaceMember: { input: RemoveWorkspaceMemberInput; output: void };
   createRoom: { input: CreateRoomInput; output: IdResult };
   updateRoom: { input: UpdateRoomInput; output: void };
   deleteRoom: { input: RoomInput; output: void };
@@ -72,6 +73,8 @@ export type WorkspaceMemberInput = WorkspaceInput & {
   readonly memberId: string;
   readonly role: 'owner' | 'admin' | 'member';
 };
+/** A manager removes a person from the Workspace and every live Room in it; agents use removeAgent. */
+export type RemoveWorkspaceMemberInput = WorkspaceInput & { readonly memberId: string };
 export type NamedWorkspaceInput = { readonly name: string; readonly workspaceId?: string };
 export type IdResult = { readonly id: string };
 export type MembershipResult = { readonly joined: boolean };

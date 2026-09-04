@@ -52,6 +52,17 @@ vi.mock('react-native', async () => {
 });
 const unistylesTheme = vi.hoisted(() => ({
   buzz: {
+    type: {
+      hero: { fontSize: 22 },
+      body: { fontSize: 16 },
+      meta: { fontSize: 13 },
+      sectionHead: { fontSize: 10 },
+      machine: { fontSize: 13 },
+    },
+    space: { xs: 4, sm: 8, md: 16, lg: 24, xl: 32, xxl: 48 },
+    layout: { row: 64, sectionGap: 24 },
+    radius: 3,
+    dialogDanger: '#c4544d',
     bgTerminal: '#000',
     bgRaised: '#111',
     bgPressed: '#222',
@@ -98,9 +109,16 @@ vi.mock('@/components/buzz/MonoHull', async () => {
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
   return {
+    BrassButton: host('BrassButton'),
     HullSurface: host('HullSurface'),
     MonoButton: host('MonoButton'),
     PixelLoader: host('PixelLoader'),
+  };
+});
+vi.mock('@/components/buzz/MemberPickerSheet', async () => {
+  const ReactModule = await import('react');
+  return {
+    MemberPickerSheet: (props: any) => ReactModule.createElement('MemberPickerSheet', props),
   };
 });
 vi.mock('@/modal/ModalManager', () => ({
@@ -223,13 +241,24 @@ describe('Members agent invitation flow', () => {
     );
   });
 
-  it('mints a fresh code and shows the exact one-command connect flow', async () => {
+  it('mints a fresh code and hands the exact one-command connect flow to the one picker sheet', async () => {
     const renderer = await render();
 
-    expect(renderer.root.findByProps({ testID: 'invite-agent-flow' })).toBeDefined();
+    const sheet = renderer.root.findByType('MemberPickerSheet' as any);
+    expect(sheet.props.visible).toBe(true);
     expect(client.createAgentPairingCode).toHaveBeenCalledWith(WORKSPACE);
-    const command = renderer.root.findByProps({ testID: 'pair-agent-command' }).props.children;
-    expect(command).toBe('npx usebeeline connect 1234ABCD-5678EF90');
+    expect(sheet.props.pairCommand).toBe('npx usebeeline connect 1234ABCD-5678EF90');
+    await act(async () => {
+      await sheet.props.onCopyPairCommand(sheet.props.pairCommand);
+    });
+    expect(clipboard).toHaveBeenCalledWith('npx usebeeline connect 1234ABCD-5678EF90');
+    // Closing the sheet forgets the code: the next open mints a fresh one.
+    await act(async () => {
+      sheet.props.onClose();
+    });
+    const closed = renderer.root.findByType('MemberPickerSheet' as any);
+    expect(closed.props.visible).toBe(false);
+    expect(closed.props.pairCommand).toBeNull();
   });
 
   it('honours the person-invite deep link without a second tap', async () => {
@@ -244,17 +273,19 @@ describe('Members agent invitation flow', () => {
 describe('Members invite affordance design', () => {
   const source = readFileSync(new URL('./MembersScreen.tsx', import.meta.url), 'utf8');
 
-  it('keeps person and agent invites as matching quiet mono controls', async () => {
+  it('offers one brass primary, sentence case, in place of the boxed mono invite pair (C79)', async () => {
     route.action = undefined;
     const renderer = await render();
-    const person = renderer.root.findByProps({ testID: 'invite-person' });
-    const agent = renderer.root.findByProps({ testID: 'invite-agent' });
-
-    expect(person.props.label).toBe('INVITE PERSON');
-    expect(agent.props.label).toBe('INVITE AGENT');
-    expect(person.props.variant).toBe('secondary');
-    expect(agent.props.variant).toBe('secondary');
-    expect(person.props.labelStyle).toEqual(agent.props.labelStyle);
+    const brass = renderer.root.findAllByType('BrassButton' as any);
+    expect(brass).toHaveLength(1);
+    expect(brass[0].props.testID).toBe('add-members');
+    expect(brass[0].props.label).toBe('Add people or agents');
+    expect(renderer.root.findAllByProps({ testID: 'invite-person' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'invite-agent' })).toHaveLength(0);
+    expect(renderer.root.findAllByType('MonoButton' as any)).toHaveLength(0);
+    // Every size on the page comes from the type roles; the glyph is gone.
+    expect(source).not.toMatch(/fontSize:\s*\d/);
+    expect(source).not.toContain('MEMBERS_GLYPH');
   });
 
   it('keeps permanent header and member indexes off lifted/card surfaces', () => {

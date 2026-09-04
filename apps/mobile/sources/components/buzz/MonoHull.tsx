@@ -25,7 +25,7 @@ import Animated, {
   withTiming,
   type SharedValue,
 } from 'react-native-reanimated';
-import { groknight } from '@/buzz/groknight';
+import { groknight, typeRoles } from '@/buzz/groknight';
 import { hasMessageRevealed, markMessageRevealed } from '@/buzz/message-reveal';
 import { cornerVisualState, type CornerStatus, type CornerVisualState } from '@/buzz/corners';
 import { Typography } from '@/constants/Typography';
@@ -216,6 +216,44 @@ export function MonoButton({
           {label}
         </Text>
       </HullSurface>
+    </BrittlePress>
+  );
+}
+
+type BrassButtonProps = Omit<BrittlePressProps, 'children'> & {
+  label: string;
+  loading?: boolean;
+};
+
+/**
+ * The one brass primary: a flat 44pt brass plate with an ink label in the body
+ * role, sentence case (`DESIGN.md` → Index rows: "the plus is a brass square";
+ * → Type: buttons read at body size). Brass on a control means "this is the
+ * thing to do here", so a surface carries at most one of these.
+ */
+export function BrassButton({
+  label,
+  loading = false,
+  disabled,
+  style,
+  ...props
+}: BrassButtonProps) {
+  const isDisabled = Boolean(disabled || loading);
+  return (
+    <BrittlePress
+      {...props}
+      accessibilityRole="button"
+      accessibilityState={{ disabled: isDisabled, busy: loading }}
+      disabled={isDisabled}
+      highValue
+      style={[styles.brassButtonFrame, style]}
+    >
+      <View style={[styles.brassButton, isDisabled && styles.brassButtonDisabled]}>
+        {loading && <PixelLoader compact />}
+        <Text style={[styles.brassButtonText, isDisabled && styles.disabledButtonText]}>
+          {label}
+        </Text>
+      </View>
     </BrittlePress>
   );
 }
@@ -787,6 +825,19 @@ const styles = StyleSheet.create((theme) => {
     disabledButton: { backgroundColor: groknight.bgBase, borderColor: groknight.border },
     monoButtonText: { ...Typography.default('semiBold'), fontSize: 13, lineHeight: 18 },
     primaryButtonText: { color: groknight.textInverted },
+    brassButtonFrame: { minHeight: 44 },
+    brassButton: {
+      minHeight: 44,
+      paddingHorizontal: 16,
+      borderRadius: 3,
+      backgroundColor: groknight.accent,
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexDirection: 'row',
+      gap: 8,
+    },
+    brassButtonDisabled: { backgroundColor: groknight.bgRaised },
+    brassButtonText: { ...Typography.default(), ...typeRoles.body, color: groknight.textInverted },
     secondaryButtonText: { color: groknight.textSecondary },
     disabledButtonText: { color: groknight.textDisabled },
     pixelLoader: { width: 42, height: 14, flexDirection: 'row', alignItems: 'center', gap: 4 },

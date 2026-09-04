@@ -53,9 +53,15 @@ export default {
         // from this package's release version. `version:check` rejects a tag
         // that does not match it before a release build starts.
         version: releaseVersion,
-        // The runtime is the native-compatibility fingerprint (fingerprint.config.js
-        // decides what counts); an OTA can only reach a binary with the same stamp.
-        runtimeVersion: { policy: "fingerprint" },
+        // The runtime is a hand-pinned label, not a computed policy: an
+        // installed binary carries whatever stamp it was BUILT with, so a
+        // policy that recomputes the stamp per commit silently cuts every
+        // already-installed app off from OTA updates (v0.0.42 did exactly
+        // that). Bumping this number is therefore a deliberate act that says
+        // "a new native build is shipping". `scripts/native-fingerprint.mjs`
+        // (the NATIVE FINGERPRINT gate) fails a PR that changes native inputs
+        // without bumping it.
+        runtimeVersion: "21",
         orientation: "default",
         icon: "./sources/assets/images/icon.png",
         scheme,

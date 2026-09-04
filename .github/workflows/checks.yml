@@ -2,7 +2,8 @@
 # client-truth-gates.yml, workflow-lint.yml, auth-image.yml). Check names are
 # the job `name:`s below and are unchanged: TYPECHECK, BODY SUITE, MOBILE
 # SUITE, MOBILE-EXPORT REACHABILITY, PRODUCTION-CORPUS REPLAY, FRAME-BUDGET,
-# STATE-UPGRADE, ACTIONLINT, Build auth container, Detect changes.
+# STATE-UPGRADE, NATIVE FINGERPRINT, ACTIONLINT, Build auth container,
+# Detect changes.
 #
 # One `changes` job maps the diff to the gates it can affect; a gate whose
 # paths are untouched is skipped, and a skipped job still posts a passing
@@ -33,6 +34,7 @@ on:
           - production-corpus-replay
           - frame-budget
           - state-upgrade
+          - native-fingerprint
           - actionlint
           - auth-image
 
@@ -53,6 +55,7 @@ jobs:
       productionCorpusReplay: ${{ steps.filter.outputs.productionCorpusReplay }}
       frameBudget: ${{ steps.filter.outputs.frameBudget }}
       stateUpgrade: ${{ steps.filter.outputs.stateUpgrade }}
+      nativeFingerprint: ${{ steps.filter.outputs.nativeFingerprint }}
       workflows: ${{ steps.filter.outputs.workflows }}
       authImage: ${{ steps.filter.outputs.authImage }}
     steps:
@@ -142,6 +145,19 @@ jobs:
               - 'package-lock.json'
               - 'tsconfig.base.json'
               - 'turbo.json'
+              - '.github/workflows/checks.yml'
+            # Exactly the inputs @expo/fingerprint hashes for this app, plus
+            # the gate's own parts. Anything else cannot move the stamp, and a
+            # gate that runs on unrelated diffs only teaches people to ignore it.
+            nativeFingerprint:
+              - 'apps/mobile/package.json'
+              - 'apps/mobile/package-lock.json'
+              - 'apps/mobile/app.config.js'
+              - 'apps/mobile/fingerprint.config.js'
+              - 'apps/mobile/native-fingerprint.json'
+              - 'apps/mobile/plugins/**'
+              - 'apps/mobile/patches/**'
+              - 'apps/mobile/scripts/native-fingerprint.mjs'
               - '.github/workflows/checks.yml'
             workflows:
               - '.github/workflows/*.yml'
@@ -394,6 +410,38 @@ jobs:
         run: npm ci
       - run: npm test --prefix apps/mobile -- --run sources/buzz/surface-storage.upgrade.test.ts
       - run: npm test -w @beeline/body -- --run src/durable-state.test.ts
+
+  # The runtime version in app.config.js is pinned by hand, because an
+  # installed binary keeps the stamp it was built with and a self-computing
+  # stamp orphans every app already on a phone. This gate is where the safety a
+  # computed stamp gave is enforced instead: it recomputes the Expo native
+  # fingerprint and fails when apps/mobile/native-fingerprint.json no longer
+  # describes the tree, naming both platforms' old and new stamps and telling
+  # the author to bump the pin and ship a native build.
+  native-fingerprint:
+    name: NATIVE FINGERPRINT
+    needs: changes
+    if: >-
+      !cancelled() && (
+        (github.event_name == 'pull_request' && needs.changes.outputs.nativeFingerprint == 'true') ||
+        (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'native-fingerprint'))
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # The fingerprint hashes the installed native dependency tree, so the
+      # isolated mobile app must be installed from its own lockfile.
+      - name: Install mobile dependencies
+        working-directory: apps/mobile
+        run: npm ci
+      - name: Compare the native fingerprint with the committed runtime pin
+        working-directory: apps/mobile
+        run: npm run fingerprint:check
 
   actionlint:
     name: ACTIONLINT

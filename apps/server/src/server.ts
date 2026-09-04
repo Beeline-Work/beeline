@@ -196,6 +196,22 @@ async function daemonIdentity(
   const value = bearer(request.headers.authorization);
   return value ? options.auth.authenticateDaemon(value) : null;
 }
+/**
+ * Why a daemon request was refused, in the only two shapes a helper may act
+ * on. `agent_removed` is a settled fact — the token is revoked and its agent
+ * holds no membership anywhere — and is what lets the helper stop itself.
+ * Everything else stays the ordinary 401 it retries against.
+ */
+async function refuseDaemon(
+  request: IncomingMessage,
+  response: ServerResponse,
+  options: ServerOptions,
+): Promise<void> {
+  const value = bearer(request.headers.authorization);
+  const retired = value ? await options.auth.retiredDaemonAgent(value) : null;
+  if (retired) json(response, 403, { error: 'agent_removed' });
+  else json(response, 401, { error: 'daemon_token_required' });
+}
 
 async function route(
   request: IncomingMessage,
@@ -448,7 +464,7 @@ async function route(
   if (method === 'POST' && url.pathname === '/v1/daemon/media') {
     const agentId = await daemonIdentity(request, options);
     if (!agentId) {
-      json(response, 401, { error: 'daemon_token_required' });
+      await refuseDaemon(request, response, options);
       return;
     }
     const raw = await bytes(request, options.mediaMaximumBytes + 1);
@@ -471,7 +487,7 @@ async function route(
   if (method === 'POST' && match) {
     const agentId = await daemonIdentity(request, options);
     if (!agentId) {
-      json(response, 401, { error: 'daemon_token_required' });
+      await refuseDaemon(request, response, options);
       return;
     }
     const name = match[1]!;

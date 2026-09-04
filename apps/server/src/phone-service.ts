@@ -1123,13 +1123,28 @@ export class PhoneService {
         takenNames: worn.names,
       });
 
-      await database.query(
-        `INSERT INTO identities(id,kind,name,face_id) VALUES($1,'agent',$2,$3)`,
+      // Pairing a key whose agent was removed starts it over rather than
+      // resurrecting it: the seeded name, animal and soul are assigned afresh
+      // under the same dedup, and every retired setting is written back to its
+      // freshly-paired value. A key that belongs to a person is never
+      // overwritten into an agent.
+      const identityRow = await database.query(
+        `INSERT INTO identities(id,kind,name,face_id) VALUES($1,'agent',$2,$3)
+         ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name,face_id=EXCLUDED.face_id,
+           avatar=NULL,hidden_from_roster=false,updated_at=now()
+         WHERE identities.kind='agent'
+         RETURNING id`,
         [input.agentPubkey, seeded.name, seeded.face],
       );
+      if (!identityRow.rowCount) throw new Error('pairing key belongs to a person');
       await database.query(
         `INSERT INTO agents(agent_id,owner_id,soul,selected_model)
-         VALUES($1,$2,$3::jsonb,$4)`,
+         VALUES($1,$2,$3::jsonb,$4)
+         ON CONFLICT(agent_id) DO UPDATE SET owner_id=EXCLUDED.owner_id,soul=EXCLUDED.soul,
+           selected_model=EXCLUDED.selected_model,selected_effort=NULL,
+           model_catalog='[]'::jsonb,commands='[]'::jsonb,schedule_ids='[]'::jsonb,
+           yolo_mode=false,yolo_set_by=NULL,yolo_set_at=NULL,
+           access_policy='{"type":"creator"}'::jsonb,updated_at=now()`,
         [
           input.agentPubkey,
           pairing.created_by,
@@ -1147,7 +1162,11 @@ export class PhoneService {
       );
       const workspaceMembership = await database.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-         VALUES ($1,NULL,$2,'member')`,
+         VALUES ($1,NULL,$2,'member')
+         ON CONFLICT (workspace_id,identity_id) WHERE room_id IS NULL
+         DO UPDATE SET role='member',removed_at=NULL,joined_at=now()
+           WHERE memberships.removed_at IS NOT NULL
+         RETURNING id`,
         [pairing.workspace_id, input.agentPubkey],
       );
       await joinRooms(database, {
@@ -2206,28 +2225,13 @@ export class PhoneService {
       );
       const decidedAt = updated.rows[0]?.decided_at;
       if (!decidedAt) throw new Error('grant decision conflict: already decided');
-      const card = (
-        await database.query<{ id: string; card: { grants: AgentGrantView[] } }>(
-          `SELECT id,card FROM messages
-           WHERE room_id=$1 AND card_type='grant-request'
-             AND EXISTS (
-               SELECT 1 FROM jsonb_array_elements(card->'grants') entry WHERE entry->>'grantId'=$2
-             )
-           ORDER BY created_at DESC,id DESC LIMIT 1 FOR UPDATE`,
-          [grant.room_id, input.grantId],
-        )
-      ).rows[0];
-      if (card) {
-        const grants = card.card.grants.map((entry) =>
-          entry.grantId === input.grantId
-            ? { ...entry, status, decidedBy: decider, decidedAt: unix(decidedAt) }
-            : entry,
-        );
-        await database.query(`UPDATE messages SET card=jsonb_set(card,'{grants}',$2::jsonb) WHERE id=$1`, [
-          card.id,
-          JSON.stringify(grants),
-        ]);
-      }
+      await this.settleGrantCard(database, {
+        roomId: grant.room_id,
+        grantId: input.grantId,
+        status,
+        decidedBy: decider,
+        decidedAt,
+      });
       // The text this composes is exactly `formatGrantDecisionLine`'s shape
       // (`<decider> approved command npm test`): the daemon recognises the
       // owner's answer structurally with `parseGrantDecisionLine`.
@@ -2255,6 +2259,50 @@ export class PhoneService {
     );
     if (!revoked.rowCount) throw new Error('grant revoke conflict: grant is not active');
     return { grantId: input.grantId, status: 'revoked' as const, roomId: grant.room_id };
+  }
+  /**
+   * Settle one grant's line inside the card the Room already shows. The card
+   * is what the phone renders its ALWAYS/ONCE/NO buttons from, so a rule that
+   * has been decided — or revoked out from under a retired agent — must stop
+   * offering a choice that can no longer be taken. Lines the card has already
+   * settled are left exactly as they are.
+   */
+  private async settleGrantCard(
+    database: SqlDatabase,
+    input: {
+      roomId: string;
+      grantId: string;
+      status: AgentGrantStatus;
+      decidedBy: RoomViewIdentity;
+      decidedAt: Date;
+    },
+  ) {
+    const card = (
+      await database.query<{ id: string; card: { grants: AgentGrantView[] } }>(
+        `SELECT id,card FROM messages
+         WHERE room_id=$1 AND card_type='grant-request'
+           AND EXISTS (
+             SELECT 1 FROM jsonb_array_elements(card->'grants') entry WHERE entry->>'grantId'=$2
+           )
+         ORDER BY created_at DESC,id DESC LIMIT 1 FOR UPDATE`,
+        [input.roomId, input.grantId],
+      )
+    ).rows[0];
+    if (!card) return;
+    const grants = card.card.grants.map((entry) =>
+      entry.grantId === input.grantId && entry.status === 'pending'
+        ? {
+            ...entry,
+            status: input.status,
+            decidedBy: input.decidedBy,
+            decidedAt: unix(input.decidedAt),
+          }
+        : entry,
+    );
+    await database.query(`UPDATE messages SET card=jsonb_set(card,'{grants}',$2::jsonb) WHERE id=$1`, [
+      card.id,
+      JSON.stringify(grants),
+    ]);
   }
   private async requireGrantAuthority(grantId: unknown, viewerId: string) {
     if (typeof grantId !== 'string' || !grantId) throw new Error('grantId is required');
@@ -2364,6 +2412,27 @@ export class PhoneService {
     ]);
   }
 
+  /**
+   * Removing an agent RETIRES it. Presence and authority end, its
+   * configuration is cleared so the same key can never inherit it, and
+   * everything that would still fire on its behalf stops — but the record of
+   * what it did stays: `agent_turns` and every message it authored are left
+   * exactly where they are, because the Room's account of the work outlives
+   * the worker.
+   *
+   * The `agents` row is cleared in place rather than deleted. Grant history
+   * and the agent detail read both join it for `owner_id`, so the row is what
+   * keeps "who connected this agent" answerable after the fact; only the
+   * mutable configuration — soul, model, effort, catalog, commands, schedule
+   * ids, access policy, yolo and its setter — is reset to a freshly-paired
+   * shape.
+   *
+   * A corner this agent owns is archived, exactly as a merged corner is:
+   * every corner write admits only its owner agent, so an open corner behind
+   * a retired agent is a Room nobody can advance and a pin the captain cannot
+   * clear. It settles as `done`/`abandoned` with the reason, keeping its
+   * transcript and its PR link readable.
+   */
   private async removeAgent(input: Input<'removeAgent'>, viewerId: string) {
     await this.requireWorkspaceAgent(input.workspaceId, input.agentId, viewerId);
     const remover = await this.requireIdentity(viewerId);
@@ -2382,6 +2451,60 @@ export class PhoneService {
       await database.query(`UPDATE daemon_tokens SET revoked_at=now() WHERE agent_id=$1`, [
         input.agentId,
       ]);
+      // No surface may draw it as a member again, whatever it reads from.
+      await database.query(
+        `UPDATE identities SET hidden_from_roster=true,updated_at=now()
+         WHERE id=$1 AND kind='agent'`,
+        [input.agentId],
+      );
+      await database.query(
+        `UPDATE agents SET soul=NULL,selected_model=NULL,selected_effort=NULL,
+           model_catalog='[]'::jsonb,commands='[]'::jsonb,schedule_ids='[]'::jsonb,
+           yolo_mode=false,yolo_set_by=NULL,yolo_set_at=NULL,
+           access_policy='{"type":"creator"}'::jsonb,updated_at=now()
+         WHERE agent_id=$1`,
+        [input.agentId],
+      );
+      // Nothing may fire for an agent that is gone; occurrences cascade.
+      await database.query(`DELETE FROM agent_schedules WHERE agent_id=$1 AND workspace_id=$2`, [
+        input.agentId,
+        input.workspaceId,
+      ]);
+      const revoked = await database.query<{ id: string; room_id: string; decided_at: Date }>(
+        `UPDATE agent_grants SET status='revoked',decided_by=$3,decided_at=now()
+         WHERE agent_id=$1 AND workspace_id=$2 AND status IN ('pending','approved','once')
+         RETURNING id,room_id,decided_at`,
+        [input.agentId, input.workspaceId, viewerId],
+      );
+      for (const grant of revoked.rows)
+        await this.settleGrantCard(database, {
+          roomId: grant.room_id,
+          grantId: grant.id,
+          status: 'revoked',
+          decidedBy: remover,
+          decidedAt: grant.decided_at,
+        });
+      const orphaned = await database.query<{ id: string }>(
+        `UPDATE rooms SET archived_at=now(),updated_at=now()
+         WHERE workspace_id=$2 AND parent_id IS NOT NULL AND archived_at IS NULL
+           AND id IN (SELECT corner_id FROM corner_facts WHERE owner_agent_id=$1)
+         RETURNING id`,
+        [input.agentId, input.workspaceId],
+      );
+      for (const corner of orphaned.rows)
+        await database.query(
+          `UPDATE corner_facts SET close_requested=true,
+             lifecycle=lifecycle||$2::jsonb,updated_at=now()
+           WHERE corner_id=$1`,
+          [
+            corner.id,
+            JSON.stringify({
+              lifecycle: 'done',
+              outcome: 'abandoned',
+              reason: `${removed.name} was removed`,
+            }),
+          ],
+        );
       for (const room of rooms.rows)
         await systemLine(database, {
           roomId: room.room_id,

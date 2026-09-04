@@ -186,8 +186,8 @@ export type RoomRowName = {
   name: string;
   /** What the 40px `IdentityMark` tile is seeded with. Only a DM row wears
    *  one — its peer's own mark. A Room is many voices, so a Room row carries
-   *  NO tile (C71): its `#name` sigil is the row's mark, and the screen leaves
-   *  the leading unit empty so every row's copy hangs off one edge. */
+   *  NO tile (C71) and no leading spacer either (C81): its `#name` sigil is
+   *  the row's mark, and its copy starts at the row's own left padding. */
   tile?: { seed: string; kind: 'human' | 'agent' };
 };
 

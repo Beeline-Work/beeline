@@ -115,7 +115,7 @@ describe('Room list layout contract', () => {
     expect(header).toContain('testID="workspace-members"');
   });
 
-  it('leads with the name on a 64pt row; only a DM row wears a 40px tile, a Room leaves the unit empty', () => {
+  it('leads with the name on a 64pt row; only a DM row wears a 40px tile, a Room starts at the row edge', () => {
     expect(source).toContain('const ROW_HEIGHT = 64');
     expect(source).toContain('const ROW_TILE_SIZE = 40');
     expect(styleBlock(source, 'row')).toContain('minHeight: ROW_HEIGHT');
@@ -123,16 +123,14 @@ describe('Room list layout contract', () => {
     // C71: a Room is many voices, so no picture stands for it — the `#name`
     // sigil is its mark. The tile renders only when the one derivation
     // (`roomRowName`) supplies one, i.e. for a DM's peer.
-    expect(source).toContain('{heading.tile ? (');
+    expect(source).toContain('{heading.tile && (');
     expect(source).toContain('size={ROW_TILE_SIZE}');
     expect(source).toContain('kind={heading.tile.kind}');
     expect(source).toContain('seed={heading.tile.seed}');
-    // The leading unit is reserved on a Room row at exactly the tile's width,
-    // so the copy column reads down ONE straight edge across both row kinds.
-    expect(source).toContain(
-      '<View style={styles.rowTileSlot} testID={`room-tile-slot-${item.room.id}`} />',
-    );
-    expect(styleBlock(source, 'rowTileSlot')).toContain('width: ROW_TILE_SIZE');
+    // C81: a Room row wears no leading spacer either — its copy starts at
+    // rowMain's own left padding, not a slot the tile's width away.
+    expect(source).not.toContain('rowTileSlot');
+    expect(source).not.toContain('room-tile-slot-');
     expect(source).not.toMatch(/kind="workspace"[^\n]*room\.id/);
     expect(styleBlock(source, 'title')).toContain('fontSize: 18');
     expect(styleBlock(source, 'title')).toContain('color: hull.textPrimary');
@@ -167,27 +165,30 @@ describe('Room list layout contract', () => {
 
   it('reserves one 7×7 brass attention square per row and nothing else', () => {
     // `unread` is server-owned and cross-device; a corner waiting on a human
-    // lights the same square. The slot exists on every row so read-state
-    // changes never shift the column — and there is no count, no NEW label,
-    // no gold dot, no leading state glyph.
+    // lights the same square. The slot exists on every row so the age stamp
+    // above it never shifts — and there is no count, no NEW label, no gold
+    // dot, no leading state glyph. An unlit row draws nothing at all: the
+    // square element itself only renders when `attention` is true.
     expect(roomViewSource).toContain('readonly unread: boolean;');
     expect(surfaceGuardSource).toContain("typeof item.unread === 'boolean'");
     expect(surfaceGuardSource).not.toContain('item.unread === undefined');
     expect(source).toContain('const attention = roomRowNeedsAttention(item);');
     expect(source).toContain('const ATTENTION_SQUARE = 7');
+    expect(source).toContain('<View style={styles.attentionSlot} accessibilityElementsHidden>');
+    expect(source).toContain('{attention && (');
+    expect(source).toContain('style={styles.attentionSquare}');
     expect(source).toContain('testID={`room-attention-${item.room.id}`}');
-    expect(source).toContain(
-      'style={[styles.attentionSquare, attention && styles.attentionSquareLit]}',
-    );
+    expect(styleBlock(source, 'attentionSlot')).toContain('width: ATTENTION_SQUARE');
+    expect(styleBlock(source, 'attentionSlot')).toContain('height: ATTENTION_SQUARE');
     expect(styleBlock(source, 'attentionSquare')).toContain('width: ATTENTION_SQUARE');
     expect(styleBlock(source, 'attentionSquare')).toContain('height: ATTENTION_SQUARE');
-    expect(styleBlock(source, 'attentionSquare')).toContain("backgroundColor: 'transparent'");
-    expect(styleBlock(source, 'attentionSquareLit')).toContain('backgroundColor: hull.accent');
+    expect(styleBlock(source, 'attentionSquare')).toContain('backgroundColor: hull.accent');
     expect(source).not.toContain('NEW');
     expect(source).not.toContain('HullDeckMark');
     expect(source).not.toContain('roomDeckState');
     expect(source).not.toContain("unread ? 'needs-you' : 'idle'");
-    // The age stamp stays: one terse unit over the square.
+    // The age stamp stays: one terse unit over the square's reserved slot,
+    // and its position never depends on whether the slot is lit.
     expect(source).toContain('<Text style={styles.age}>{age}</Text>');
     expect(source).toContain("import { compactRelativeTime } from '@/buzz/relative-time';");
   });

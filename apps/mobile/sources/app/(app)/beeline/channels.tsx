@@ -687,7 +687,7 @@ export default function BuzzChannels() {
                     onPress={() => openRoom(item.room.id)}
                     style={styles.rowMain}
                   >
-                    {heading.tile ? (
+                    {heading.tile && (
                       <IdentityMark
                         kind={heading.tile.kind}
                         seed={heading.tile.seed}
@@ -695,8 +695,6 @@ export default function BuzzChannels() {
                         size={ROW_TILE_SIZE}
                         testID={`room-tile-${item.room.id}`}
                       />
-                    ) : (
-                      <View style={styles.rowTileSlot} testID={`room-tile-slot-${item.room.id}`} />
                     )}
                     <View style={styles.rowCopy}>
                       <Text numberOfLines={1} style={styles.title}>
@@ -722,11 +720,14 @@ export default function BuzzChannels() {
                   </TouchableOpacity>
                   <View style={styles.gutter}>
                     <Text style={styles.age}>{age}</Text>
-                    <View
-                      accessibilityElementsHidden
-                      style={[styles.attentionSquare, attention && styles.attentionSquareLit]}
-                      testID={`room-attention-${item.room.id}`}
-                    />
+                    <View style={styles.attentionSlot} accessibilityElementsHidden>
+                      {attention && (
+                        <View
+                          style={styles.attentionSquare}
+                          testID={`room-attention-${item.room.id}`}
+                        />
+                      )}
+                    </View>
                   </View>
                   <View style={styles.cornerToggleSlot}>
                     {item.cornerCount > 0 && (
@@ -943,9 +944,6 @@ const styles = StyleSheet.create((theme) => {
       paddingLeft: 16,
       paddingVertical: 10,
     },
-    // The empty leading unit of a Room row: the same width as a DM's tile, so
-    // the copy column reads down one straight edge across both row kinds.
-    rowTileSlot: { width: ROW_TILE_SIZE, height: ROW_TILE_SIZE },
     rowCopy: { flex: 1, minWidth: 0, gap: 3 },
     // The row leads with the name: one size, one weight, the brightest thing
     // on the row. Ownership and unread never bold or enlarge it.
@@ -971,12 +969,14 @@ const styles = StyleSheet.create((theme) => {
       paddingRight: 4,
     },
     age: { ...Typography.mono(), color: hull.ledgerGhost, fontSize: 11 },
+    // Reserved whether or not the row is lit, so the age stamp above never
+    // shifts; the square itself only renders when the row wants the viewer.
+    attentionSlot: { width: ATTENTION_SQUARE, height: ATTENTION_SQUARE },
     attentionSquare: {
       width: ATTENTION_SQUARE,
       height: ATTENTION_SQUARE,
-      backgroundColor: 'transparent',
+      backgroundColor: hull.accent,
     },
-    attentionSquareLit: { backgroundColor: hull.accent },
     // Reserved whether or not the Room has corners, so the age column keeps
     // one straight right edge down the whole index.
     cornerToggleSlot: {

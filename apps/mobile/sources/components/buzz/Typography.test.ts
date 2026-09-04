@@ -230,7 +230,7 @@ describe('Buzz typography', () => {
         expect(primaryStyle, `${relativePath} has text without a named primary style`).toBeTruthy();
         const definition = styleDefinition(source, primaryStyle!);
         expect(definition, `${relativePath} styles.${primaryStyle} has no app font`).toMatch(
-          /Typography\.(?:default|mono|ledger|serif|logo)\(|fontFamily:\s*theme\.buzz\.(?:prose|mono)/,
+          /Typography\.(?:default|mono|ledger|serif|logo)\(|fontFamily:\s*theme\.buzz\.(?:prose|mono)|\.\.\.theme\.buzz\.type\.[a-zA-Z]+/,
         );
       }
 

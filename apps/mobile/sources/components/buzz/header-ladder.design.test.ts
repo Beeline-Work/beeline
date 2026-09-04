@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 /**
  * Design invariants for the chat screen's top bar — the Room and its Corners
  * must speak ONE header language: identity mark leading, title at its own
- * tier, and every piece of metadata in one shared mono micro-caps voice.
+ * tier, and every piece of metadata in one shared `meta`-role voice (C72).
  * Source assertions in the same style as `channels.design.test.ts`, because
  * what they lock in is structural: which shared primitive renders a thing.
  * DESIGN.md (repo root) is the authority they encode.
@@ -54,7 +54,7 @@ describe('Chat header — one language for Room and Corner', () => {
     expect(meta![0]).toContain('formatRoomParticipantTotal(roomParticipantTotal)');
   });
 
-  it('keeps the repo and member lines on one left axis in the shared mono token', () => {
+  it('keeps the repo and member lines on one left axis in the shared meta token', () => {
     const repoChip = chatSource.match(/repoChip:\s*\{[^}]*\}/);
     expect(repoChip, 'missing repo chip alignment style').toBeTruthy();
     expect(repoChip![0]).toContain("alignSelf: 'flex-start'");
@@ -68,7 +68,7 @@ describe('Chat header — one language for Room and Corner', () => {
 
     const caps = ladderSource.match(/metaCaps:\s*\{[\s\S]*?\n\s*\},/);
     expect(caps, 'missing shared metadata font token').toBeTruthy();
-    expect(caps![0]).toMatch(/Typography\.mono\(/);
+    expect(caps![0]).toMatch(/\.\.\.theme\.buzz\.type\.meta/);
   });
 
   it('leads the Corner with the agent mark through the same slot', () => {
@@ -79,12 +79,13 @@ describe('Chat header — one language for Room and Corner', () => {
     expect(window).toContain('<IdentityMark');
   });
 
-  it('keeps the shared ladder tokens mono micro-caps on the canvas', () => {
-    // The one metadata voice: IBM Plex Mono at the 10px micro tier, muted.
+  it('keeps the shared ladder tokens in the calm meta role on the canvas', () => {
+    // The one metadata voice: the `meta` type role (sans 13, never mono),
+    // muted; no raw size or tracking of its own (C72).
     const caps = ladderSource.match(/metaCaps:\s*\{[\s\S]*?\n\s*\},/);
     expect(caps, 'missing metaCaps style').toBeTruthy();
-    expect(caps![0]).toMatch(/Typography\.mono\(/);
-    expect(caps![0]).toMatch(/fontSize:\s*10/);
+    expect(caps![0]).toMatch(/\.\.\.theme\.buzz\.type\.meta/);
+    expect(caps![0]).not.toMatch(/Typography\.mono\(|fontSize:|letterSpacing:/);
     expect(caps![0]).toMatch(/color:\s*groknight\.textMuted/);
     // The slot carries no box of its own: chrome sits on the slab.
     const slot = ladderSource.match(/identitySlot:\s*\{[^}]*\}/);

@@ -208,22 +208,22 @@ shape language.
 ## Index rows
 
 The Room list is the screen the product opens on, and it is an index: one
-leading column, one right edge, no boxes and no row surfaces. Every row — Room
-or DM — is 64 tall, reserves the same 40px leading unit, hangs its copy off the
-same edge, and reserves the same trailing column, so the names and the age
-stamps each read down a single straight edge whether or not a row has corners
-or a tile. Rows are parted by the shared `hairlineDivider` and nothing else, so
-the slab shows through each one.
+leading column, one right edge, no boxes and no row surfaces. Every row —
+Room or DM — is 64 tall and reserves the same trailing column, so the age
+stamps read down a single straight edge whether or not a row has corners. The
+leading unit is the STATE column, on every row: a 7×7 brass mark, lit when the
+row wants the viewer, reserving its width either way so whatever follows it
+starts at the same edge whether or not the row is lit. Rows are parted by the
+shared `hairlineDivider` and nothing else, so the slab shows through each one.
 
-**The row leads with the name, and the name leads with its sigil.** The first
-glyph of the name reports the row's kind, in brass: a DM row reads `@peer`, a
-Room row reads `#room`; the rest of the name follows in the primary tone at one
-size (18) and one weight. Corners keep `◇`; Workspaces on the rail carry no
-sigil at all. **Only a DM row wears a tile** — its peer's own `IdentityMark` in
-the leading unit. A Room is many voices, so no one picture stands for it: a
-Room row leaves the leading unit empty and its `#name` sigil is the row's mark.
-State no longer lives in the leading column: there is no state glyph, no ring,
-no dot beside the name.
+**The row leads with state, then the name, and the name leads with its
+sigil.** After the state column, only a DM row also carries a 40px tile —
+its peer's own `IdentityMark`; a Room is many voices, so no one picture stands
+for it, and a Room row's copy follows the state column directly. The first
+glyph of the name itself reports the row's kind, in brass: a DM row reads
+`@peer`, a Room row reads `#room`; the rest of the name follows in the primary
+tone at one size (18) and one weight. Corners keep `◇`; Workspaces on the rail
+carry no sigil at all.
 
 Line two is one preview line, single, truncated, in the quiet tone, with its
 attribution in front: the viewer's own last message reads `you: ` in the muted
@@ -236,18 +236,20 @@ index scale: the name is the brightest thing on the row (`textPrimary`), the
 preview sits a step down on `ledgerQuiet` exactly as an inline handle does, and
 everything the gutter carries is `ledgerGhost`.
 
-**Metadata hangs in the right gutter, as it does in the transcript.** The age
-stamp is one terse unit (`1h`, `3d`, `1w`), and under it sits the one brass
-square. **Unread is a 7×7 brass square, and only that**: no count, no weight,
-no `NEW` label, no row fill. The slot is reserved on every row so a read-state
-change never shifts a column; a read row simply shows it dark. The same square
-lights when the Room wants the viewer for any reason — a message past their read
-mark or a corner waiting on a human — and stays dark while an agent merely
-works. Unread never reorders: needs-you clustering and `meaningfulAt` recency
-stay the only sorting inputs. Every row-level decision — sigil, name, tile
-seed, attribution, whether the square is lit — is derived once in
-`apps/mobile/sources/buzz/room-list-row.ts` (`roomRowName`, `roomRowPreview`,
-`roomRowNeedsAttention`), so the screen renders answers and never re-derives.
+**The right gutter carries the age stamp only** — one terse unit (`1h`, `3d`,
+`1w`), and nothing else; the trailing column never reserves space for a mark.
+**Unread is the leading 7×7 brass square, and only that**: no count, no
+weight, no `NEW` label, no row fill. A read row draws nothing in the leading
+state slot at all — the mark itself paints only when the row wants the
+viewer, so the slot's reserved width, not the mark, is what keeps the column
+straight. The same mark lights when the Room wants the viewer for any reason —
+a message past their read mark or a corner waiting on a human — and stays
+absent while an agent merely works. Unread never reorders: needs-you
+clustering and `meaningfulAt` recency stay the only sorting inputs. Every
+row-level decision — sigil, name, tile seed, attribution, whether the state
+mark is lit — is derived once in `apps/mobile/sources/buzz/room-list-row.ts`
+(`roomRowName`, `roomRowPreview`, `roomRowNeedsAttention`), so the screen
+renders answers and never re-derives.
 
 Preview text is sanitized where it is stored, not rewritten where it is drawn:
 fenced code, markdown syntax, git and tool plumbing, bare 40-hex shas, and a

@@ -1,5 +1,9 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import type { DaemonAttachment, DaemonOperationMap, SystemEvent } from '@beeline/api-contract/daemon';
+import type {
+  DaemonAttachment,
+  DaemonOperationMap,
+  SystemEvent,
+} from '@beeline/api-contract/daemon';
 import {
   AGENT_GRANT_REASON_MAX_LENGTH,
   AGENT_GRANT_TARGET_MAX_LENGTH,
@@ -41,7 +45,10 @@ async function settleTurnFailureLine(
     await restateSystemLine(
       database,
       row.id,
-      { subject: { kind: 'agent', id: agentId, name: row.agent_name }, verb: 'answered after a retry' },
+      {
+        subject: { kind: 'agent', id: agentId, name: row.agent_name },
+        verb: 'answered after a retry',
+      },
       { ...row.card, state: 'recovered' },
     );
 }
@@ -1062,15 +1069,34 @@ export class DaemonService {
   }
   private async turnReceipt(input: Input<'postAgentTurnReceipt'>, agentId: string) {
     await this.access(input.roomId, agentId);
+    if (input.heartbeat && input.status !== 'working') {
+      throw new Error('turn receipt heartbeat must be working');
+    }
     const reason =
       input.status === 'failed' && typeof input.reason === 'string'
         ? input.reason.replace(/\s+/g, ' ').trim().slice(0, TURN_FAILURE_REASON_MAX) || null
         : null;
     await this.database.transaction(async (database) => {
-      await database.query(
-        `INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id,failure_reason) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(room_id,request_id,agent_id) DO UPDATE SET status=EXCLUDED.status,generation_id=EXCLUDED.generation_id,failure_reason=EXCLUDED.failure_reason,created_at=now()`,
-        [input.roomId, input.requestId, agentId, input.status, input.generationId ?? null, reason],
-      );
+      if (input.heartbeat) {
+        await database.query(
+          `UPDATE agent_turns SET created_at=now()
+           WHERE room_id=$1 AND request_id=$2 AND agent_id=$3 AND status='working'
+             AND generation_id IS NOT DISTINCT FROM $4`,
+          [input.roomId, input.requestId, agentId, input.generationId ?? null],
+        );
+      } else {
+        await database.query(
+          `INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id,failure_reason) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(room_id,request_id,agent_id) DO UPDATE SET status=EXCLUDED.status,generation_id=EXCLUDED.generation_id,failure_reason=EXCLUDED.failure_reason,created_at=now()`,
+          [
+            input.roomId,
+            input.requestId,
+            agentId,
+            input.status,
+            input.generationId ?? null,
+            reason,
+          ],
+        );
+      }
       if (input.status === 'failed') {
         await this.inscribeTurnFailure(database, input.roomId, input.requestId, agentId, reason);
       } else if (input.status === 'complete') {
@@ -1140,10 +1166,17 @@ export class DaemonService {
   private async activity(input: Input<'postAgentActivity'>, agentId: string) {
     await this.access(input.roomId, agentId);
     const messageId = id();
-    await this.database.query(
-      `INSERT INTO messages(id,room_id,author_id,text,presentation,request_id,activity) VALUES($1,$2,$3,'','activity',$4,$5::jsonb)`,
-      [messageId, input.roomId, agentId, input.requestId, JSON.stringify(input.activity)],
-    );
+    await this.database.transaction(async (database) => {
+      await database.query(
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,request_id,activity) VALUES($1,$2,$3,'','activity',$4,$5::jsonb)`,
+        [messageId, input.roomId, agentId, input.requestId, JSON.stringify(input.activity)],
+      );
+      await database.query(
+        `UPDATE agent_turns SET created_at=now()
+         WHERE room_id=$1 AND request_id=$2 AND agent_id=$3 AND status='working'`,
+        [input.roomId, input.requestId, agentId],
+      );
+    });
     this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'activity' });
     return { id: messageId, createdAt: Math.floor(Date.now() / 1000) };
   }

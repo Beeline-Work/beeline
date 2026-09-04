@@ -266,6 +266,8 @@ export type PostTurnReceiptInput = AgentRoomInput & {
   readonly requestId: string;
   readonly status: 'working' | 'complete' | 'failed';
   readonly generationId?: string;
+  /** Refreshes an existing working receipt; never starts or resurrects a turn. */
+  readonly heartbeat?: boolean;
   /** One distilled line (≤200 chars, no stack, secrets scrubbed) sent only with `failed`. */
   readonly reason?: string;
 };

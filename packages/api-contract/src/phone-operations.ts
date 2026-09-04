@@ -132,8 +132,6 @@ export type UpdateWorkspaceInput = WorkspaceInput & {
   readonly name?: string;
   readonly avatar?: string;
   readonly visibility?: 'public' | 'invite-only';
-  /** The Workspace-wide seeded-soul switch; manager-gated like every other field here. */
-  readonly seededSouls?: boolean;
 };
 export type CreateRoomInput = WorkspaceInput & {
   readonly name: string;

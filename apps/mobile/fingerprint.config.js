@@ -1,7 +1,12 @@
-// Runtime-compatibility stamp policy for expo-updates (app.config.js sets
-// `runtimeVersion: { policy: "fingerprint" }`). EAS Build and `eas update` both
-// resolve the runtime through `expo-updates runtimeversion:resolve`, which
-// reads this file, so the rules below decide which changes force a new binary.
+// Native-change detector for the NATIVE FINGERPRINT gate
+// (`scripts/native-fingerprint.mjs`). `app.config.js` pins the runtime version
+// by hand; this file decides which changes count as a native change, so the
+// gate can tell an author that the pin has to move and a new binary has to
+// ship. It is NOT bound to `runtimeVersion` as a policy — a computed runtime
+// orphans every already-installed binary the moment the stamp moves.
+//
+// @expo/fingerprint reads this file automatically, so `npx expo-updates
+// runtimeversion:resolve` and `npx @expo/fingerprint` agree with the gate.
 //
 // The stamp must be the SAME for every artifact built from one commit: the
 // store AAB/IPA (`production`), the sideload APK (`production-apk`), the OTA
@@ -9,18 +14,27 @@
 // `eas update` export run by the release governor. Anything that differs
 // between those runs without changing native code is removed here.
 //
-// Verify: cd apps/mobile && npx expo-updates runtimeversion:resolve \
-//   --platform android --workflow managed   (repeat with EXPO_UPDATES_CHANNEL=beta)
-// The hashes must agree, and must survive `rm -rf node_modules && npm ci`.
+// Verify: cd apps/mobile && npm run fingerprint:check
+// The recorded hashes must survive `rm -rf node_modules && npm ci`.
 
 /** @type {import('@expo/fingerprint').Config} */
 module.exports = {
   sourceSkips: [
-    // Restore the library default (config-file sourceSkips replace it).
-    'PackageJsonAndroidAndIosScriptsIfNotContainRun',
+    // The whole `scripts` section is JS/CI tooling. The library hashes it by
+    // default only because `expo prebuild` rewrites the android/ios entries,
+    // and its narrower default skip (`PackageJsonAndroidAndIosScriptsIfNotContainRun`)
+    // does not apply here: this app's `android`/`ios` scripts are `expo
+    // run:*`, so every unrelated npm-script edit would otherwise read as a
+    // native change and train authors to bump the pin for nothing.
+    'PackageJsonScriptsAll',
     // apps/mobile/package.json `version` follows the release; EAS owns
     // versionCode/buildNumber remotely. Neither changes native compatibility.
     'ExpoConfigVersions',
+    // The hand-pinned `runtimeVersion` is the ANSWER to a native change, not an
+    // input to it. Skipping it keeps "the fingerprint moved" meaning exactly
+    // "native code changed", so bumping the pin settles the gate instead of
+    // moving the very number the gate compares.
+    'ExpoConfigRuntimeVersionIfString',
     // `extra` is JS-only data (release version/SHA, commit metadata, service
     // URLs from EXPO_PUBLIC_*): it changes on every commit and never touches
     // native code, so it must not fork the stamp.

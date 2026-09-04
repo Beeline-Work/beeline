@@ -36,13 +36,25 @@ workflow artifact. Manual recovery lives in the clearly named
 receipt is recorded by a bounded step of the release's own delivery report; it
 never changes the delivery verdict, and a receipt that has not arrived yet is
 confirmed by the next release's promote step.
-The runtime version is the Expo native fingerprint (`runtimeVersion: { policy:
-"fingerprint" }` in `app.config.js`; `fingerprint.config.js` keeps the stamp
-identical across the store, sideload, `beta-apk`, and `eas update` artifacts of
-one commit). A native change moves the fingerprint by itself, so an OTA can never
-reach an incompatible binary; the next release's canary then parks until a
-`beta-apk` for the new fingerprint exists, and its parked reason prints the one
-`eas build` command that fixes it.
+The runtime version is pinned by hand in `app.config.js` (`runtimeVersion:
+"21"`). It has to be: an installed binary keeps the stamp it was built with, so
+a stamp that recomputes itself per commit — the fingerprint policy v0.0.42
+shipped — silently orphans every app already on a phone, which then reports
+`NoUpdatesAvailable` forever. Bumping the pin is a deliberate act that says a
+new native build is shipping, and it must be paired with one.
+
+The compatibility check that a computed stamp did give is enforced at review
+time instead, by the `NATIVE FINGERPRINT` gate
+([`scripts/native-fingerprint.mjs`](scripts/native-fingerprint.mjs)): it
+recomputes the Expo native fingerprint of both platforms
+(`fingerprint.config.js` decides what counts) and fails when
+[`native-fingerprint.json`](native-fingerprint.json) no longer describes the
+tree, naming both platforms' old and new stamps. Run it locally with
+
+```sh
+cd apps/mobile && npm run fingerprint:check     # what CI runs
+cd apps/mobile && npm run fingerprint:write     # after a deliberate pin bump
+```
 
 ## Monorepo integration (isolated install)
 

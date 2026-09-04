@@ -262,16 +262,21 @@ describe('Beeline display branding', () => {
     expect(appConfig).toContain('"expo-channel-name": updatesChannel');
     expect(loadUpdatesChannel()).toBe('production');
     expect(loadUpdatesChannel('beta')).toBe('beta');
-    expect(appConfig).toContain('runtimeVersion: { policy: "fingerprint" }');
+    // The runtime is pinned by hand: an installed binary keeps the stamp it was
+    // built with, so a self-computing stamp cuts every installed app off from
+    // OTA updates (v0.0.42). apps/mobile/scripts/native-fingerprint.mjs is
+    // where the native-compatibility check moved to instead.
+    expect(appConfig).toContain('runtimeVersion: "21"');
   });
 
-  it('stamps one runtime fingerprint for the store, sideload, canary, and OTA artifacts of a commit', () => {
-    // EAS Build and `eas update` both resolve the runtime through
-    // `expo-updates runtimeversion:resolve`, which reads fingerprint.config.js.
-    // The beta-apk canary vehicle bakes channel `beta` while every other
-    // artifact bakes `production`; the stamp must ignore that difference and
-    // the JS-only `extra` block (release version/SHA change on every commit),
-    // or the canary could never receive the update it is meant to verify.
+  it('computes one native fingerprint for the store, sideload, canary, and OTA artifacts of a commit', () => {
+    // The NATIVE FINGERPRINT gate compares this stamp against the committed
+    // record, and `eas build`/`eas update` resolve the same one through
+    // `expo-updates runtimeversion:resolve`. The beta-apk canary vehicle bakes
+    // channel `beta` while every other artifact bakes `production`; the stamp
+    // must ignore that difference and the JS-only `extra` block (release
+    // version/SHA change on every commit), or the same commit would read as two
+    // different native states.
     const fingerprintConfig = require('../../fingerprint.config.js') as {
       sourceSkips: string[];
       fileHookTransform(
@@ -283,8 +288,11 @@ describe('Beeline display branding', () => {
     };
     expect(fingerprintConfig.sourceSkips).toEqual(
       expect.arrayContaining([
-        'PackageJsonAndroidAndIosScriptsIfNotContainRun',
+        'PackageJsonScriptsAll',
         'ExpoConfigVersions',
+        // The hand-pinned runtime is the answer to a native change, never an
+        // input to it: bumping it must settle the gate, not move its target.
+        'ExpoConfigRuntimeVersionIfString',
         'ExpoConfigExtraSection',
       ]),
     );

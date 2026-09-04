@@ -14,6 +14,8 @@
     "e2e": "bash scripts/maestro-e2e.sh",
     "e2e:build": "node scripts/check-release-version.cjs && BEELINE_ANDROID_KEEP_DEVICE=1 bash scripts/android-build.sh",
     "version:check": "node scripts/check-release-version.cjs",
+    "fingerprint:check": "node scripts/native-fingerprint.mjs",
+    "fingerprint:write": "node scripts/native-fingerprint.mjs --write",
     "release": "node ./release.cjs",
     "release:build:appstore": "sh ./release-production.sh",
     "release:build:appstore:interactive": "npm run version:check && eas build --profile production --platform ios --auto-submit-with-profile=production --no-wait && eas build --profile production --platform android --auto-submit-with-profile=production --no-wait",

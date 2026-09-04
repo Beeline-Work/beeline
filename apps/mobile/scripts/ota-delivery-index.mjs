@@ -5,12 +5,13 @@ function invalid(message) {
   throw new Error(message);
 }
 
-// One publish now yields one update group PER PLATFORM: `app.config.js` sets
-// `runtimeVersion: { policy: "fingerprint" }`, and the Android and iOS
-// fingerprints are legitimately different values. Every stored group is
-// therefore a platform -> group map. Ledgers and delivery indexes written
-// before that change carry a single group id that covered every platform;
-// read those as that one group standing for every platform.
+// One publish yields one update group PER PLATFORM whenever the platforms do
+// not share a runtime version, so every stored group is a platform -> group
+// map. With the hand-pinned runtime in `app.config.js` both platforms share one
+// group and the map simply points both keys at it; a per-platform runtime (as
+// the retired fingerprint policy produced) gives two. Ledgers and delivery
+// indexes written before this shape carry a single group id that covered every
+// platform; read those as that one group standing for every platform.
 export const RELEASE_PLATFORMS = ['android', 'ios'];
 
 export function groupIdList(value) {

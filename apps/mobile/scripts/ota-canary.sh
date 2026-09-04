@@ -202,9 +202,10 @@ if ! NODE_BIN_RESOLVED="$(resolve_node)"; then
 fi
 
 set +e
-# The canary is Android-only, and a fingerprint runtime gives Android and iOS
-# their own update group, so read the Android group out of the stage's updates.
-# A ledger written before that change has one group covering both platforms.
+# The canary is Android-only, and the platforms do not always share an update
+# group, so read the Android group out of the stage's updates. A ledger whose
+# one group covers both platforms (what a shared runtime version produces) falls
+# back to the recorded group id.
 candidate_group="$("$NODE_BIN_RESOLVED" -e 'const x=require(process.argv[1]); const stage=process.argv[2]; const production = stage === "production"; const update=(production ? x.production?.updates : x.candidateUpdates)?.find((item) => item.platform === "android"); process.stdout.write(update?.group || (production ? x.production?.groupIds?.android || x.production?.groupId : x.candidateGroupIds?.android || x.candidateGroupId) || "")' "$ledger" "$release_stage")"
 android_update="$("$NODE_BIN_RESOLVED" -e 'const x=require(process.argv[1]); const stage=process.argv[2]; const update=(stage === "production" ? x.production?.updates : x.candidateUpdates)?.find((item) => item.platform === "android"); process.stdout.write(update?.id || "")' "$ledger" "$release_stage")"
 android_runtime="$("$NODE_BIN_RESOLVED" -e 'const x=require(process.argv[1]); const stage=process.argv[2]; const update=(stage === "production" ? x.production?.updates : x.candidateUpdates)?.find((item) => item.platform === "android"); process.stdout.write(update?.runtimeVersion || "")' "$ledger" "$release_stage")"
@@ -258,7 +259,7 @@ if [[ -z "$apk" ]]; then
   url_status=$?
   set -e
   if (( url_status != 0 )) || [[ -z "$build_url" ]]; then
-    park "EAS has no finished ${BUILD_PROFILE} Android build for runtime fingerprint ${android_runtime:-unknown}. The OTA channel is baked into the APK, so post-promotion verification requires a production-channel binary and pre-promotion verification requires a beta-channel binary; the fingerprint changes only when native dependencies or config plugins change (apps/mobile/fingerprint.config.js). Fix once per fingerprint, from the release commit: cd apps/mobile && npx --yes eas-cli@22.2.0 build --profile ${BUILD_PROFILE} --platform android --non-interactive --no-wait, then re-run the release governor once the build finishes."
+    park "EAS has no finished ${BUILD_PROFILE} Android build for runtime version ${android_runtime:-unknown}. The OTA channel is baked into the APK, so post-promotion verification requires a production-channel binary and pre-promotion verification requires a beta-channel binary; the runtime version changes only when apps/mobile/app.config.js pins a new one (the NATIVE FINGERPRINT gate forces that when native code changes). Fix once per runtime version, from the release commit: cd apps/mobile && npx --yes eas-cli@22.2.0 build --profile ${BUILD_PROFILE} --platform android --non-interactive --no-wait, then re-run the release governor once the build finishes."
   fi
   apk="$temporary/beeline-${release_stage}.apk"
   if ! curl --fail --location --silent --show-error "$build_url" --output "$apk"; then
@@ -267,7 +268,7 @@ if [[ -z "$apk" ]]; then
 fi
 
 if [[ ! -f "$apk" ]]; then
-  park "operator-supplied ${SUPPLIED_APK_ENV} does not exist: $apk; point it at a ${release_stage}-channel APK built for runtime fingerprint ${android_runtime:-unknown}, or unset it to let the canary download the latest ${BUILD_PROFILE} build"
+  park "operator-supplied ${SUPPLIED_APK_ENV} does not exist: $apk; point it at a ${release_stage}-channel APK built for runtime version ${android_runtime:-unknown}, or unset it to let the canary download the latest ${BUILD_PROFILE} build"
 fi
 
 # -r preserves the channel-matched binary registration while replacing any

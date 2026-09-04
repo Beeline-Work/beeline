@@ -5,7 +5,7 @@
 # Source it; do not run it.
 #
 # Why curl + REST instead of `fastlane supply` or `eas submit`: the workflow
-# already holds a short-lived OAuth access token from google-github-actions/auth,
+# already holds a short-lived OAuth access token from scripts/play-token.mjs,
 # the REST API takes it directly, and every step's response body is printed on
 # failure so a rejected call names itself.
 #

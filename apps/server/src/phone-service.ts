@@ -2246,7 +2246,13 @@ export class PhoneService {
       });
       // The text this composes is exactly `formatGrantDecisionLine`'s shape
       // (`<decider> approved command npm test`): the daemon recognises the
-      // owner's answer structurally with `parseGrantDecisionLine`.
+      // owner's answer structurally with `parseGrantDecisionLine`, and the
+      // mention on a freshly-inserted row is what wakes it (a settled card's
+      // own JSONB update carries no mention and would not be seen as new).
+      // C101: kept deliberately for that wake, but never rendered — the
+      // settled card above already carries the same answer for a human
+      // reader, so this row is excluded from every phone-visible transcript
+      // query (`roomMessages`/`messageRows`) by its card_type.
       await systemLine(database, {
         roomId: grant.room_id,
         authorId: viewerId,
@@ -2863,6 +2869,7 @@ export class PhoneService {
            CASE WHEN m.legacy_event IS NOT NULL THEN m.legacy_event->>'authorAvatar' ELSE i.avatar END author_avatar,i.face_id author_face
          FROM messages m JOIN identities i ON i.id=m.author_id
          WHERE m.room_id=$1 AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
+           AND m.card_type IS DISTINCT FROM 'grant-decision'
          ${before ? 'AND (m.created_at,m.id)<(to_timestamp($2),$3)' : ''}
          ORDER BY m.created_at DESC,m.id DESC LIMIT ${limit}`,
         before ? [roomId, before.createdAt, before.id] : [roomId],
@@ -2893,6 +2900,7 @@ export class PhoneService {
          CASE WHEN m.legacy_event IS NOT NULL THEN m.legacy_event->>'authorAvatar' ELSE i.avatar END author_avatar,i.face_id author_face
        FROM messages m JOIN identities i ON i.id=m.author_id
        WHERE m.room_id=$1 AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
+         AND m.card_type IS DISTINCT FROM 'grant-decision'
          AND (NOT EXISTS(SELECT 1 FROM legacy_room_events any_legacy WHERE any_legacy.room_id=$1) OR ${eligible})
        ORDER BY m.created_at DESC,m.id DESC LIMIT ${ROOM_VIEW_MESSAGE_LIMIT}`,
       [roomId],

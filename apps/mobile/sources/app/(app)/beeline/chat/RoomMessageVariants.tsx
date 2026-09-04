@@ -23,6 +23,7 @@ import { monolithSession } from '@/auth/monolith-session';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { ActivityTimeline } from '@/components/buzz/ActivityTimeline';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
+import { ALIVE_RING_PAD } from '@/buzz/identity-mark';
 import {
   LedgerEntry,
   LedgerGhostLine,
@@ -542,6 +543,13 @@ function SwipeToReply({
   return (
     <Swipeable
       ref={swipeableRef}
+      // Swipeable's container clips (`overflow: 'hidden'`) at the row's content
+      // edge, where the byline tile sits — and a live agent's gold ring paints
+      // `ALIVE_RING_PAD` outside that tile. The clip box is outset by the ring
+      // gutter and the children padded back by the same amount, so the copy
+      // column never moves and the whole tile, ring included, stays visible.
+      containerStyle={styles.replySwipeContainer}
+      childrenContainerStyle={styles.replySwipeChildren}
       dragOffsetFromRightEdge={18}
       friction={1.35}
       onSwipeableOpen={(direction) => {
@@ -918,6 +926,8 @@ const styles = StyleSheet.create(() => ({
     letterSpacing: 0.5,
   },
   outboxFailureActions: { flexDirection: 'row', gap: 8, marginTop: 6 },
+  replySwipeContainer: { marginHorizontal: -ALIVE_RING_PAD },
+  replySwipeChildren: { paddingHorizontal: ALIVE_RING_PAD },
   replySwipeAction: {
     width: 78,
     marginBottom: 8,

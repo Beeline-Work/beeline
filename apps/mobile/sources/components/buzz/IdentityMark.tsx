@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Image, StyleSheet, View } from 'react-native';
 import Svg, { G, Rect } from 'react-native-svg';
 import {
+  ALIVE_RING_PAD,
   CYPHER_MIN_SIZE,
   identityKindLabel,
   identityMarkGeometry,
@@ -60,8 +61,9 @@ export type IdentityMarkProps = AgentIdentityMarkProps | NonAgentIdentityMarkPro
 
 /** The one box radius in the product (`groknight.radius`). */
 const FACE_PLATE_RADIUS = 3;
-/** How far outside the plate the alive ring sits, in px. */
-const ALIVE_RING_PAD = 4;
+// The alive ring sits `ALIVE_RING_PAD` (`buzz/identity-mark.ts`) outside the
+// plate: the mark's layout box stays `size` so tiles of both classes share one
+// column edge, and the ring is the one thing that paints past it.
 
 // ── The Workspace plate ──────────────────────────────────────────────────────
 

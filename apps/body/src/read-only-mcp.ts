@@ -25,6 +25,7 @@ import {
   fsyncSync,
   ftruncateSync,
   lstatSync,
+  mkdirSync,
   openSync,
   readFileSync,
   readdirSync,
@@ -33,7 +34,7 @@ import {
   writeFileSync,
   type Dirent,
 } from 'node:fs';
-import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { createInterface } from 'node:readline';
 import {
   CORNER_NAME_MAX_LENGTH,
@@ -325,6 +326,32 @@ const AGENT_TOOLS: ToolDefinition[] = [
     description:
       'Read the server-posted GitHub checks fact and current human hold state for this corner. Never infer passing checks from local git or gh output.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'write_scratch_file',
+    description:
+      "Write a file into your writable session area (the same scratch root attach_file reaches beyond your checkout) and return its path so attach_file can send it. This is how you create a file at all in a Room, whose filesystem is otherwise read-only. Content is plain text by default; pass encoding \"base64\" to write bytes you computed yourself. Capped at the same size attach_file allows. Path must be relative and stay inside your session area - no absolute paths, no .. traversal, no symlink escapes; in a corner this still writes only to your session area, never the worktree. This produces the file, not a picture: turning text, markdown, JSON or SVG into a raster image needs a converter, which needs shell, which a Room does not have.",
+    inputSchema: {
+      type: 'object',
+      required: ['path', 'content'],
+      properties: {
+        path: {
+          type: 'string',
+          description: 'Relative path inside your writable session area, e.g. "notes/summary.md".',
+          maxLength: 1024,
+        },
+        content: {
+          type: 'string',
+          description: 'The file content: plain text, or base64 when encoding is "base64".',
+        },
+        encoding: {
+          type: 'string',
+          enum: ['utf8', 'base64'],
+          description: 'How to interpret content. Defaults to utf8.',
+        },
+      },
+      additionalProperties: false,
+    },
   },
   {
     name: 'attach_file',
@@ -1047,6 +1074,68 @@ async function prChecksStatus(): Promise<string> {
   });
 }
 
+export interface WriteScratchFileDeps {
+  /** The agent's own writable session area - the same scratch root
+   *  attach_file treats as a second legal root, never the checkout/worktree. */
+  root: string;
+}
+
+export function writeScratchFileDepsFromEnv(): WriteScratchFileDeps {
+  return { root: requiredEnv('BEELINE_ATTACH_SCRATCH_ROOT') };
+}
+
+/** Resolve a write_scratch_file target strictly inside `root`: relative
+ *  input only, no absolute paths, no traversal, and no symlink escape
+ *  through an existing ancestor directory. The file need not exist yet, so
+ *  (unlike resolveAttachPath) this walks up to the deepest existing
+ *  ancestor to real-path-check it, then creates any missing directories
+ *  beneath that point - which, freshly created, cannot themselves be
+ *  symlinks. */
+export function resolveWriteScratchPath(root: string, input: string): string {
+  if (!input || input.includes('\0')) throw new Error('path must be a non-empty relative file path');
+  const realRoot = realpathSync(root);
+  const errorMessage = () => `path resolves outside your writable session area (${realRoot})`;
+  if (isAbsolute(input)) throw new Error(errorMessage());
+  const candidate = resolve(realRoot, input);
+  if (!withinRoot(realRoot, candidate)) throw new Error(errorMessage());
+  let existingAncestor = dirname(candidate);
+  while (!existsSync(existingAncestor)) {
+    const parent = dirname(existingAncestor);
+    if (parent === existingAncestor) throw new Error(errorMessage());
+    existingAncestor = parent;
+  }
+  const realAncestor = realpathSync(existingAncestor);
+  if (realAncestor !== realRoot && !withinRoot(realRoot, realAncestor)) {
+    throw new Error(errorMessage());
+  }
+  if (existsSync(candidate) && lstatSync(candidate).isSymbolicLink()) {
+    throw new Error(`refusing to write through a symlink (${realRoot})`);
+  }
+  mkdirSync(dirname(candidate), { recursive: true });
+  return candidate;
+}
+
+export async function writeScratchFile(
+  args: JsonObject,
+  deps: WriteScratchFileDeps = writeScratchFileDepsFromEnv(),
+): Promise<string> {
+  const path = stringArg(args, 'path');
+  if (!path) throw new Error('path must be a non-empty relative file path');
+  const content = args.content;
+  if (typeof content !== 'string') throw new Error('content must be a string');
+  const encoding = args.encoding;
+  if (encoding !== undefined && encoding !== 'utf8' && encoding !== 'base64') {
+    throw new Error('encoding must be "utf8" or "base64"');
+  }
+  const bytes = Buffer.from(content, encoding === 'base64' ? 'base64' : 'utf8');
+  if (bytes.length > MAX_ATTACH_BYTES) {
+    throw new Error(`content exceeds the ${MAX_ATTACH_BYTES}-byte attachment limit`);
+  }
+  const resolved = resolveWriteScratchPath(deps.root, path);
+  writeFileSync(resolved, bytes);
+  return `Wrote ${bytes.length} bytes to ${resolved}; attach_file with this path sends it.`;
+}
+
 export interface AttachFileDeps {
   /** Legal attachment roots: the session checkout, and (when configured) the
    *  session's whole writable home overlay, wherever the harness put a file
@@ -1487,6 +1576,8 @@ async function callAgentTool(name: string, args: JsonObject): Promise<string> {
       return openCorner(args);
     case 'pr_checks_status':
       return prChecksStatus();
+    case 'write_scratch_file':
+      return writeScratchFile(args);
     case 'attach_file':
       return attachFile(args);
     case 'create_schedule':

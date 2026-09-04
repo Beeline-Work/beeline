@@ -1,11 +1,15 @@
 import React, { useMemo, useState } from 'react';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { AgentActivityItem } from '@/sync/transport/rig-transport';
 import { buildTurnActivity, type TurnActivityAction } from '@/buzz/activity-timeline';
+import {
+  toolCallRow,
+  TOOL_CALL_OUTPUT_LINES,
+  type ToolCallRow,
+} from '@/buzz/tool-call-row';
 import { Typography } from '@/constants/Typography';
 import { LedgerBylineView, type LedgerBylineMark } from './Ledger';
-import { PixelLoader } from './MonoHull';
 import { MonoMarkdown } from './MonoMarkdown';
 
 type ActivityTimelineProps = {
@@ -21,126 +25,107 @@ type ActivityTimelineProps = {
   mark?: LedgerBylineMark;
 };
 
-function stepGlyph(step: TurnActivityAction): string {
-  const kind = step.toolKind?.toLowerCase();
-  if (step.weight === 'command' || kind === 'execute' || kind === 'ran' || step.command) {
-    return '>_';
-  }
-  if (step.weight === 'mutation' || ['edit', 'write', 'move', 'delete'].includes(kind ?? '')) {
-    return '▧';
-  }
-  return '◇';
-}
-
-function resolvedOutcome(
-  step: TurnActivityAction,
-  active: boolean,
-  isLast: boolean,
-): TurnActivityAction['outcome'] {
-  if (step.outcome === 'failure' || step.outcome === 'running') return step.outcome;
-  if (active && isLast && step.kind === 'tool' && !step.status) return 'running';
-  return 'success';
-}
-
-function presentedStepLabel(step: TurnActivityAction): string {
-  const hint = step.command ?? step.input ?? step.files?.[0]?.path ?? step.toolKind;
-  return hint ? `Used tool · ${hint}` : 'Used tool';
-}
-
-function LedgerStepRow({
-  active,
-  isLast,
-  step,
-}: {
-  active: boolean;
-  isLast: boolean;
-  step: TurnActivityAction;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const outcome = resolvedOutcome(step, active, isLast);
-  const label = presentedStepLabel(step);
-  const hasDetail = Boolean(step.command || step.input || step.output || step.files?.length);
+/**
+ * One expanded tool call, one line: verb, object, and — only when it is not the
+ * ordinary case — a duration and an outcome word (C88).
+ *
+ * Success says nothing at all; absence reads faster than a tick. A failed call
+ * arrives already open, because the one thing a reader expands this group for
+ * is the call that did not work.
+ */
+function ToolCallLine({ row }: { row: ToolCallRow }) {
+  const [expanded, setExpanded] = useState(row.outcome === 'failure');
+  const [allLines, setAllLines] = useState(false);
+  const shown = allLines ? row.output : row.output.slice(0, TOOL_CALL_OUTPUT_LINES);
+  const hidden = row.output.length - shown.length;
+  const hasDetail = Boolean(row.output.length || row.reason || row.files.length || row.requestedBy);
   const accessibilityLabel = [
-    label,
-    outcome === 'failure' ? 'failed' : outcome === 'running' ? 'running' : 'succeeded',
-    step.reason,
+    `${row.verb} ${row.object}`,
+    row.outcome === 'failure' ? 'failed' : row.outcome === 'running' ? 'running' : 'succeeded',
+    row.reason,
   ]
     .filter(Boolean)
     .join(', ');
-  const details = [
-    `Tool: ${step.title}`,
-    `Result: ${step.status ?? outcome}`,
-    ...(step.command ? [`Command:\n${step.command}`] : []),
-    ...(step.input ? [`Arguments:\n${step.input}`] : []),
-    ...(step.files ?? []).map((file) => `${file.status ? `${file.status} ` : ''}${file.path}`),
-    ...(step.output ? [`Output:\n${step.output}`] : []),
-    ...(step.reason ? [step.reason] : []),
-    ...(step.requestedBy
-      ? [`at ${step.requestedBy.name ?? step.requestedBy.pubkey.slice(0, 12)}'s request`]
-      : []),
-  ];
-  const row = (
+  const line = (
     <>
-      <View style={styles.stepRow}>
-        <Text accessibilityElementsHidden style={styles.stepGlyph}>
-          {stepGlyph(step)}
+      <View style={styles.callRow}>
+        <Text numberOfLines={1} style={styles.callVerb}>
+          {row.verb}
         </Text>
-        <Text numberOfLines={1} style={styles.stepLabel}>
-          {label}
+        {/* Middle, not tail: a command's flags are the half that identifies it,
+            and a narrow screen must cut the same place the data cap does. */}
+        <Text ellipsizeMode="middle" numberOfLines={1} style={styles.callObject}>
+          {row.object}
         </Text>
-        {outcome === 'running' ? (
-          <View style={styles.runningMark} testID={`activity-verdict-${step.id}`}>
-            <PixelLoader compact />
-          </View>
-        ) : (
-          <Text
-            accessibilityElementsHidden
-            style={[styles.verdict, outcome === 'failure' && styles.verdictFailed]}
-            testID={`activity-verdict-${step.id}`}
-          >
-            {outcome === 'failure' ? '×' : '✓'}
-          </Text>
-        )}
-        {hasDetail ? (
-          <Text accessibilityElementsHidden style={styles.disclosureGlyph}>
-            {expanded ? '⌃' : '⌄'}
+        {row.duration ? (
+          <Text accessibilityElementsHidden style={styles.callDuration}>
+            {row.duration}
           </Text>
         ) : null}
+        {row.outcome === 'success' ? null : (
+          <Text
+            accessibilityElementsHidden
+            style={[
+              styles.callOutcome,
+              row.outcome === 'failure' ? styles.callFailed : styles.callRunning,
+            ]}
+            testID={`activity-verdict-${row.id}`}
+          >
+            {row.outcome === 'failure' ? 'failed' : 'running'}
+          </Text>
+        )}
       </View>
       {expanded && hasDetail ? (
-        <ScrollView
-          nestedScrollEnabled
-          style={styles.stepDetails}
-          testID={`corner-tool-row-detail-${step.id}`}
-        >
-          {details.map((detail, index) => (
-            <Text key={`${step.id}:${index}`} style={styles.stepDetail}>
-              {detail}
+        <View style={styles.callDetail} testID={`corner-tool-row-detail-${row.id}`}>
+          {row.reason ? <Text style={[styles.detailLine, styles.detailFailed]}>{row.reason}</Text> : null}
+          {row.files.map((file) => (
+            <Text key={`${row.id}:file:${file.path}`} style={styles.detailLine}>
+              {file.status ? `${file.status} ${file.path}` : file.path}
             </Text>
           ))}
-        </ScrollView>
+          {shown.map((output, index) => (
+            <Text key={`${row.id}:out:${index}`} style={styles.detailLine}>
+              {output}
+            </Text>
+          ))}
+          {hidden > 0 ? (
+            <Pressable
+              accessibilityLabel={`Show ${hidden} more output lines`}
+              accessibilityRole="button"
+              onPress={() => setAllLines(true)}
+              testID={`corner-tool-row-more-${row.id}`}
+            >
+              <Text style={styles.detailMore}>{`+${hidden} more lines`}</Text>
+            </Pressable>
+          ) : null}
+          {row.requestedBy ? (
+            <Text style={styles.detailLine}>
+              {`at ${row.requestedBy.name ?? row.requestedBy.pubkey.slice(0, 12)}'s request`}
+            </Text>
+          ) : null}
+        </View>
       ) : null}
     </>
   );
-  if (!hasDetail) return <View testID={`corner-tool-row-${step.id}`}>{row}</View>;
+  if (!hasDetail) return <View testID={`corner-tool-row-${row.id}`}>{line}</View>;
   return (
     <Pressable
-      accessibilityHint={expanded ? 'Collapses activity details' : 'Shows activity details'}
+      accessibilityHint={expanded ? 'Collapses this call' : 'Shows this call’s output'}
       accessibilityLabel={accessibilityLabel}
       accessibilityRole="button"
-      accessibilityState={{ busy: outcome === 'running', expanded }}
+      accessibilityState={{ busy: row.outcome === 'running', expanded }}
       onPress={() => setExpanded((value) => !value)}
-      style={styles.stepDisclosure}
-      testID={`corner-tool-row-${step.id}`}
+      style={styles.callDisclosure}
+      testID={`corner-tool-row-${row.id}`}
     >
-      {row}
+      {line}
     </Pressable>
   );
 }
 
-function activitySummary(steps: readonly TurnActivityAction[], active: boolean): string {
-  const count = steps.length;
-  const failures = steps.filter((step) => step.outcome === 'failure').length;
+function activitySummary(rows: readonly ToolCallRow[], active: boolean): string {
+  const count = rows.length;
+  const failures = rows.filter((row) => row.outcome === 'failure').length;
   const head = `${count} TOOL ${count === 1 ? 'CALL' : 'CALLS'}`;
   if (failures) return `${head} · ${failures} FAILED`;
   return active ? `${head} · WORKING` : head;
@@ -148,8 +133,8 @@ function activitySummary(steps: readonly TurnActivityAction[], active: boolean):
 
 /**
  * The live conversational turn. One compact mechanism row sits between prose
- * outputs; it expands on demand into the helper's bounded, redacted per-call
- * record. The selector removes it when the signed turn ends.
+ * outputs; it expands on demand into one line per call, and each of those opens
+ * onto its own real output. Three levels: fold, line, detail.
  */
 export const ActivityTimeline = React.memo(function ActivityTimeline({
   active = false,
@@ -161,11 +146,14 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
   mark,
 }: ActivityTimelineProps) {
   const turn = useMemo(() => buildTurnActivity(items), [items]);
-  const steps = turn.steps.filter((step) => step.kind === 'tool');
+  const rows = useMemo(() => {
+    const steps = turn.steps.filter((step: TurnActivityAction) => step.kind === 'tool');
+    return steps.map((step, index) => toolCallRow(step, active && index === steps.length - 1));
+  }, [turn, active]);
   const [expanded, setExpanded] = useState(false);
   // Settled turns keep their collapsed tool rows (#804); only an empty live
   // lane (no steps, no draft) renders nothing.
-  if (!steps.length && !(active && messageDraft)) return null;
+  if (!rows.length && !(active && messageDraft)) return null;
 
   return (
     <View style={styles.timeline} testID={testID}>
@@ -174,25 +162,21 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
           byline={{ name: handle, role: 'agent', stamp: stamp ?? '', mark }}
         />
       ) : null}
-      {steps.length ? (
+      {rows.length ? (
         <>
           <Pressable
             accessibilityHint={expanded ? 'Hides individual tool calls' : 'Shows individual tool calls'}
-            accessibilityLabel={activitySummary(steps, active)}
+            accessibilityLabel={activitySummary(rows, active)}
             accessibilityRole="button"
             accessibilityState={{ busy: active, expanded }}
             onPress={() => setExpanded((value) => !value)}
             style={styles.summaryDisclosure}
             testID="corner-tool-summary"
           >
-            <Text style={styles.summaryLabel}>{activitySummary(steps, active)}</Text>
+            <Text style={styles.summaryLabel}>{activitySummary(rows, active)}</Text>
             <Text accessibilityElementsHidden style={styles.disclosureGlyph}>{expanded ? '⌃' : '⌄'}</Text>
           </Pressable>
-          {expanded
-            ? steps.map((step, index) => (
-                <LedgerStepRow active={active} isLast={index === steps.length - 1} key={step.id} step={step} />
-              ))
-            : null}
+          {expanded ? rows.map((row) => <ToolCallLine key={row.id} row={row} />) : null}
         </>
       ) : null}
       {messageDraft ? (
@@ -206,6 +190,9 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
   );
 });
 
+/** Seven mono characters — `deleted`, `fetched` — and the object column is straight. */
+const VERB_COLUMN = 56;
+
 const styles = StyleSheet.create((theme) => {
   const groknight = theme.buzz;
   return {
@@ -217,7 +204,7 @@ const styles = StyleSheet.create((theme) => {
       lineHeight: 25,
       marginTop: 2,
     },
-    stepDisclosure: {
+    callDisclosure: {
       minWidth: 0,
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: groknight.borderQuiet,
@@ -238,38 +225,48 @@ const styles = StyleSheet.create((theme) => {
       fontSize: 11,
       lineHeight: 18,
     },
-    stepRow: {
-      minHeight: 36,
+    callRow: {
       minWidth: 0,
-      paddingHorizontal: 4,
+      paddingHorizontal: groknight.space.xs,
+      paddingVertical: groknight.space.xs,
       flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
+      alignItems: 'baseline',
+      gap: groknight.space.sm,
     },
-    stepGlyph: {
+    // A fixed narrow column, so every object in the group starts on one line.
+    callVerb: {
       ...Typography.mono(),
-      width: 18,
+      width: VERB_COLUMN,
       flexShrink: 0,
       color: groknight.ledgerGhost,
-      fontSize: 10,
-      lineHeight: 18,
+      fontSize: groknight.type.machine.fontSize,
+      lineHeight: groknight.type.machine.lineHeight,
     },
-    stepLabel: {
+    callObject: {
       ...Typography.mono(),
       flex: 1,
       minWidth: 48,
-      color: groknight.ledgerQuiet,
-      fontSize: 11,
-      lineHeight: 18,
+      color: groknight.ledgerBody,
+      fontSize: groknight.type.machine.fontSize,
+      lineHeight: groknight.type.machine.lineHeight,
     },
-    verdict: {
+    callDuration: {
       ...Typography.mono(),
       flexShrink: 0,
       color: groknight.ledgerGhost,
-      fontSize: 11,
-      lineHeight: 18,
+      fontSize: groknight.type.machine.fontSize,
+      lineHeight: groknight.type.machine.lineHeight,
+      fontVariant: ['tabular-nums'],
     },
-    verdictFailed: { color: groknight.accent },
+    callOutcome: {
+      ...Typography.mono(),
+      flexShrink: 0,
+      fontSize: groknight.type.machine.fontSize,
+      lineHeight: groknight.type.machine.lineHeight,
+    },
+    // The two places colour is spent here: red for a failure, brass in flight.
+    callFailed: { color: groknight.diffRemoved },
+    callRunning: { color: groknight.accent },
     disclosureGlyph: {
       ...Typography.mono(),
       flexShrink: 0,
@@ -277,9 +274,20 @@ const styles = StyleSheet.create((theme) => {
       fontSize: 10,
       lineHeight: 18,
     },
-    runningMark: { flexShrink: 0, minWidth: 16, alignItems: 'center' },
-    stepDetails: { maxHeight: 168, paddingHorizontal: 30, paddingBottom: 9 },
-    stepDetail: {
+    callDetail: {
+      paddingLeft: VERB_COLUMN + groknight.space.sm + groknight.space.xs,
+      paddingRight: groknight.space.xs,
+      paddingBottom: groknight.space.sm,
+    },
+    detailLine: {
+      ...Typography.mono(),
+      color: groknight.ledgerGhost,
+      fontSize: 10,
+      lineHeight: 15,
+      marginBottom: 2,
+    },
+    detailFailed: { color: groknight.diffRemoved },
+    detailMore: {
       ...Typography.mono(),
       color: groknight.ledgerQuiet,
       fontSize: 10,

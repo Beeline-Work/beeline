@@ -430,7 +430,7 @@ describe('PushGateway', () => {
     ]);
   });
 
-  it('invalidates a cached fallback on a soul update and sends Joy only for real chat', async () => {
+  it('keeps the self-signed sender name after a soul update and sends chat only for real messages', async () => {
     const communityId = 'workspace-1';
     const roomId = 'room-1234';
     const agent = createIdentity('agent');
@@ -556,7 +556,10 @@ describe('PushGateway', () => {
     expect(captured).toHaveLength(1);
     expect(captured[0]).toMatchObject({
       tokens: [TOKEN_A],
-      notification: { title: '#Launch room', body: '@Joy: private message' },
+      // A human-authored soul carries no naming authority (#695): the
+      // self-signed agent record ("Rhea") stays the presentation name even
+      // after the soul event lands and the sender cache is invalidated.
+      notification: { title: '#Launch room', body: '@Rhea: private message' },
       data: { channelId: roomId, roomName: 'Launch room', type: 'mention' },
     });
     expect(JSON.stringify(captured)).not.toContain('displayName');

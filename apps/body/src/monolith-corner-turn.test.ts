@@ -155,8 +155,8 @@ describe('corner close-request polling cadence', () => {
     expect(onCloseRequested).toHaveBeenCalledOnce();
   });
 
-  it('keeps completed narration segments as durable corner ledger lines, not only the final', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'beeline-corner-narration-'));
+  it('lands the closing message whole after a tool call, and streams only drafts (C100)', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-corner-stream-'));
     roots.push(root);
     await execFileAsync('git', ['init', root]);
     const runtime = {
@@ -240,19 +240,17 @@ describe('corner close-request polling cadence', () => {
         if (promptCalls > 1) {
           return { stopReason: 'end_turn', updates: [], agentText: 'All done.', toolCalls: [] };
         }
-        draft?.('I will', 'I will');
-        draft?.(
-          'I will update only the ledger.',
-          'I will update only the ledger.',
-        );
-        draft?.(
-          'I will update only the ledger. Then commit.',
-          'I will update only the ledger. Then commit.',
-        );
+        // The reported shape: prose, a tool call, then the closing prose. The
+        // ACP delta hook is handed EVERY assistant run joined, while the result
+        // carries only the LAST run — two different strings.
+        draft?.('I inspected', 'I inspected');
+        draft?.(' the code.', 'I inspected the code.');
+        draft?.('The fix', 'I inspected the code.\n\nThe fix');
+        draft?.(' is ready.', 'I inspected the code.\n\nThe fix is ready.');
         return {
           stopReason: 'end_turn',
           updates: [],
-          agentText: 'I will update only the ledger. Then commit.',
+          agentText: 'The fix is ready.',
           toolCalls: [],
         };
       },
@@ -281,42 +279,44 @@ describe('corner close-request polling cadence', () => {
     }).run();
     await scheduler.dispose();
 
-    // The completed narration segment lands as a durable colloquial line
-    // with NO request id: it must never settle the turn's receipt.
-    const narrationPosts = writes.filter(
-      (write) =>
-        write.name === 'postRoomMessage' &&
-        write.input.presentation === 'message' &&
-        write.input.requestId === undefined,
-    );
-    expect(narrationPosts).toEqual([
+    const posts = writes.filter((write) => write.name === 'postRoomMessage');
+    // The closing message lands WHOLE and under the turn's request id, so it
+    // settles the receipt. Nothing is cut by a stream offset, and no durable
+    // row is written without a request id (the retired narration segments).
+    expect(posts[0]).toEqual(
       expect.objectContaining({
-        input: expect.objectContaining({
-          roomId: 'corner-id',
-          text: 'I will update only the ledger.',
-        }),
-      }),
-    ]);
-    // The durable final carries only the un-posted tail, under the turn's
-    // request id so it settles the receipt.
-    expect(writes).toContainEqual(
-      expect.objectContaining({
-        name: 'postRoomMessage',
         input: expect.objectContaining({
           roomId: 'corner-id',
           requestId: 'cornerid',
-          text: 'Then commit.',
+          text: 'The fix is ready.',
           presentation: 'message',
         }),
       }),
     );
+    for (const post of posts) expect(post.input.requestId).toEqual(expect.any(String));
+    // The pre-tool prose was shown provisionally on the draft lane, keyed by
+    // the same request id so the durable reply settles it (#903).
     expect(
-      writes.filter(
-        (write) =>
-          write.name === 'postRoomMessage' && write.input.text === 'I will update only the ledger. Then commit.',
-      ),
-    ).toEqual([]);
+      writes
+        .filter((write) => write.name === 'postAgentDraft')
+        .map((write) => write.input.text),
+    ).toEqual([
+      'I inspected',
+      'I inspected the code.',
+      'I inspected the code.\n\nThe fix',
+      'I inspected the code.\n\nThe fix is ready.',
+    ]);
+    for (const draft of writes.filter((write) => write.name === 'postAgentDraft')) {
+      expect(draft.input.turnId).toBe('cornerid');
+    }
+    expect(writes).toContainEqual(
+      expect.objectContaining({
+        name: 'retractAgentLiveOutput',
+        input: expect.objectContaining({ turnId: 'cornerid', kind: 'draft' }),
+      }),
+    );
   });
+
 });
 
 describe('thin monolith corner turn', () => {
@@ -1006,9 +1006,9 @@ describe('corner check notes', () => {
       () => 'Checks passed. Merged https://github.com/acme/widgets/pull/7',
     );
     expect(prompts).toHaveLength(1);
-    // The narration segment "Checks passed." restates the note and is dropped;
-    // the merge line is a new fact and lands.
-    expect(messages).toEqual(['Merged https://github.com/acme/widgets/pull/7']);
+    // The reply carries a new fact (the merge), so it is not a restatement of
+    // the server's own note and lands whole — the same rule a Room applies.
+    expect(messages).toEqual(['Checks passed. Merged https://github.com/acme/widgets/pull/7']);
     expect(receipts).toEqual([
       { requestId: 'ci-pass', status: 'working' },
       { requestId: 'ci-pass', status: 'complete' },

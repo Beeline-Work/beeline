@@ -58,7 +58,8 @@ import {
 import type { AgentRuntimeRecord } from './runtime.js';
 import { runtimeIdentity } from './runtime.js';
 import { MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE, SOUL_HOUSE_RULE } from './response-directives.js';
-import { sanitizeAgentReply, stripCornerOpenEcho } from './reply-sanitizer.js';
+import { stripCornerOpenEcho } from './reply-sanitizer.js';
+import { AgentTurnStream, durableReplyText } from './turn-stream.js';
 import { isFailedToolCall, toolCallFailureLine } from './tool-call-failure.js';
 import { distillTurnFailureReason } from './turn-failure-reason.js';
 import { withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
@@ -257,7 +258,6 @@ export class MonolithRoomTurnLoop {
   private pinnedProviderOverride?: string;
   private busy = false;
   private turnInstructionPrefix = '';
-  private draftTail = Promise.resolve();
   private activeTurn?: ActiveTurn;
   private readonly queuedTurns: HumanMessage[] = [];
   /** Session scratch directory attachments are downloaded into (`TMPDIR/beeline-attachments`). */
@@ -571,7 +571,7 @@ export class MonolithRoomTurnLoop {
 
   /** Why a turn carried no answer text, or undefined when it did. */
   private async explainEmpty(result: PromptResult): Promise<EmptyTurnExplanation | undefined> {
-    if (sanitizeAgentReply(result.agentText)) return undefined;
+    if (durableReplyText(result.agentText)) return undefined;
     return explainEmptyAgentTurn({
       agentLabel: this.options.config.agentCommand ?? this.options.config.agentBinary,
       agentEnv: this.agentEnv,
@@ -740,10 +740,16 @@ export class MonolithRoomTurnLoop {
               ]
                 .filter(Boolean)
                 .join('\n\n');
-              // The mobile live-overlay handoff suppresses a draft as soon as its durable
-              // reply with the same request id arrives. Keep this id stable through both
-              // sides of that handoff so a delayed retract cannot render two bubbles.
-              const turnId = item.id;
+              // Rooms and corners stream through ONE presentation (C100): the
+              // provisional draft lane, the request-id handoff, and the single
+              // durable reply that dissolves it all live in `turn-stream.ts`.
+              const stream = new AgentTurnStream({
+                api,
+                agentId: this.agent.publicKey,
+                roomId: this.options.roomId,
+                requestId: item.id,
+                label: `monolith Room ${this.options.roomId}`,
+              });
               // One prompt run, steers and all. It is a closure because an empty
               // completion re-pins the session to another provider and runs it
               // again (C92) — against the NEW client and session id.
@@ -756,32 +762,12 @@ export class MonolithRoomTurnLoop {
                 for (;;) {
                   let promptError: unknown;
                   try {
-                    let latestDraft = '';
+                    stream.beginRun();
                     result = await this.client!.sessionPrompt(
                       this.sessionId!,
                       nextPrompt,
                       120_000,
-                      (_delta, full) => {
-                        latestDraft = sanitizeAgentReply(full);
-                        if (!latestDraft) return;
-                        this.draftTail = this.draftTail
-                          .catch(() => undefined)
-                          .then(() =>
-                            api.execute('postAgentDraft', {
-                              agentId: this.agent.publicKey,
-                              roomId: this.options.roomId,
-                              turnId,
-                              text: latestDraft,
-                            }),
-                          )
-                          .then(() => undefined)
-                          .catch((error) =>
-                            console.error(
-                              `[thin-core] monolith Room ${this.options.roomId} draft publish failed:`,
-                              error,
-                            ),
-                          );
-                      },
+                      stream.onChunk,
                     );
                   } catch (error) {
                     promptError = error;
@@ -853,14 +839,14 @@ export class MonolithRoomTurnLoop {
                   console.warn(`[thin-core] monolith Room ${this.options.roomId} ${failure}`);
                 }
               }
-              await this.draftTail;
-              let reply = sanitizeAgentReply(result.agentText);
+              await stream.drained();
+              let reply = durableReplyText(result.agentText);
               if (!reply && explained) {
                 // Either text the harness recorded but never streamed, or a named
                 // reason (pi's provider refusal, an empty model answer, the stream's
                 // shape) carrying the provider that served the turn — never the bare
                 // "no reply" as the only fact.
-                reply = explained.recoveredText ? sanitizeAgentReply(explained.recoveredText) : '';
+                reply = explained.recoveredText ? durableReplyText(explained.recoveredText) : '';
                 if (!reply) {
                   throw new Error(
                     turnFailureReasonWithProvider(explained.reason, this.servingProviders()),
@@ -876,22 +862,15 @@ export class MonolithRoomTurnLoop {
               if (openCornerCall && !isFailedToolCall(openCornerCall)) {
                 reply = stripCornerOpenEcho(reply);
               }
-              if (reply) {
-                await api.execute('postRoomMessage', {
-                  roomId: this.options.roomId,
-                  requestId: item.id,
-                  triggerMessageId: item.id,
-                  text: reply,
-                  presentation: 'message',
-                  mentionIds: agentReplyMentionIds(reply, roster, this.agent.publicKey),
-                });
-              }
-              await api.execute('retractAgentLiveOutput', {
-                agentId: this.agent.publicKey,
-                roomId: this.options.roomId,
-                turnId,
-                kind: 'draft',
-              });
+              await stream.settle(
+                reply,
+                reply
+                  ? {
+                      triggerMessageId: item.id,
+                      mentionIds: agentReplyMentionIds(reply, roster, this.agent.publicKey),
+                    }
+                  : {},
+              );
             },
             { priority: 'interactive', roomKey: this.options.roomId },
           );

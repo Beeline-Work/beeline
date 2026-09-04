@@ -4,11 +4,16 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { completeDevicePairing } from './device-pairing.js';
 import { identityFromKey } from './runtime.js';
+import type { DetectedAgentCommand } from './agent-command.js';
 import {
   brass,
   brassRails,
   brassSpinner,
   collectConnectWizard,
+  connectFoundLine,
+  connectProbeFoundModels,
+  soleInstalledConnectHarness,
+  CONNECT_PROBE_TIMEOUT_MS,
   confirmSeededName,
   renameConnectedAgent,
   seededIdentityLine,
@@ -18,6 +23,7 @@ import {
   requestConnectGrant,
   runConnectFinishCommand,
   type ConnectKeyStore,
+  type ConnectModelCatalogRequest,
   type ConnectPrompts,
 } from './connect-command.js';
 
@@ -52,6 +58,43 @@ function promptFixture(answers: string[]) {
     password: async (input) => next('password', input.message),
   };
   return { prompts, calls };
+}
+
+/** Supported harnesses this machine is pretending to have installed. */
+function installed(...kinds: Array<'codex' | 'claude' | 'goose' | 'pi' | 'grok'>) {
+  return () =>
+    kinds.map(
+      (kind) =>
+        ({
+          kind,
+          status: 'ready',
+          agent: { kind, command: kind, args: [] },
+        }) as DetectedAgentCommand,
+    );
+}
+
+/**
+ * The one catalog seam the wizard has, answering as a real harness does: the
+ * discovery probe arrives with no key, the credentialed read arrives with one.
+ * A harness with no `configured` catalog is one that cannot answer unasked.
+ */
+function catalogSeam(input: {
+  configured?: { currentValue?: string; options: Array<{ id: string; name?: string }> };
+  credentialed?: { currentValue?: string; options: Array<{ id: string; name?: string }>; note?: string };
+  probeFailure?: Error;
+}) {
+  const requests: ConnectModelCatalogRequest[] = [];
+  const load = async (request: ConnectModelCatalogRequest) => {
+    requests.push(request);
+    if (request.apiKey) {
+      if (!input.credentialed) throw new Error('no credentialed catalog in this fixture');
+      return input.credentialed;
+    }
+    if (input.probeFailure) throw input.probeFailure;
+    if (!input.configured) throw new Error('goose is not configured');
+    return input.configured;
+  };
+  return { load, requests };
 }
 
 describe('connect wizard', () => {
@@ -187,19 +230,182 @@ describe('connect wizard', () => {
 
   it('uses a harness-native provider without asking for credentials', async () => {
     const fixture = promptFixture(['codex', 'gpt-5.4']);
-
-    await expect(
-      collectConnectWizard(fixture.prompts, async () => ({
-        currentValue: 'gpt-5.4',
+    // Several harnesses installed, and this one names no current model: the
+    // harness and the model are the two questions the machine cannot answer.
+    const seam = catalogSeam({
+      configured: {
         options: [
           { id: 'gpt-5.4', name: 'GPT-5.4' },
           { id: 'gpt-5.6-sol', name: 'GPT-5.6-Sol' },
         ],
-      })),
+      },
+    });
+
+    await expect(
+      collectConnectWizard(
+        fixture.prompts,
+        seam.load,
+        { read: async () => undefined, save: async () => {} },
+        process.env,
+        async () => undefined,
+        { detect: installed('codex', 'claude'), announce: () => {} },
+      ),
     ).resolves.toEqual({ harness: 'codex', model: 'gpt-5.4' });
     // Two questions, and neither is a name or a soul.
     expect(fixture.calls.map((call) => call.split(':', 1)[0])).toEqual(['select', 'autocomplete']);
     expect(fixture.calls.some((call) => /Agent name|soul/i.test(call))).toBe(false);
+  });
+
+  it('skips provider, key and model for a Goose that already holds a provider', async () => {
+    const fixture = promptFixture([]);
+    const announced: string[] = [];
+    const seam = catalogSeam({
+      configured: {
+        currentValue: 'anthropic/claude-sonnet-4.5',
+        options: [{ id: 'anthropic/claude-sonnet-4.5' }, { id: 'x-ai/grok-code-fast-1' }],
+      },
+    });
+    const keyStore: ConnectKeyStore = { read: vi.fn(), save: vi.fn() };
+    const verifyKey = vi.fn();
+
+    await expect(
+      collectConnectWizard(
+        fixture.prompts,
+        seam.load,
+        keyStore,
+        { OPENROUTER_API_KEY: 'sk-or-v1-envenvenvenv0' },
+        verifyKey as never,
+        { detect: installed('goose'), announce: (line) => announced.push(line) },
+      ),
+    ).resolves.toEqual({ harness: 'goose', model: 'anthropic/claude-sonnet-4.5' });
+    // Nothing was asked at all: harness, provider, key and model were all facts.
+    expect(fixture.calls).toEqual([]);
+    expect(keyStore.read).not.toHaveBeenCalled();
+    expect(verifyKey).not.toHaveBeenCalled();
+    expect(announced).toEqual([
+      'Goose is the only harness installed here, and it is already set up, running anthropic/claude-sonnet-4.5.',
+    ]);
+    // One bounded attempt, and no credentialed second read.
+    expect(seam.requests).toEqual([{ harness: 'goose', timeoutMs: CONNECT_PROBE_TIMEOUT_MS }]);
+  });
+
+  it('gives an unconfigured Goose the whole provider, key and model flow', async () => {
+    const fixture = promptFixture(['goose', 'openrouter', 'sk-or-v1-freshfreshfresh7', 'z-ai/glm-5.3-flash']);
+    const announced: string[] = [];
+    const keyStore: ConnectKeyStore = { read: vi.fn(async () => undefined), save: vi.fn(async () => {}) };
+    const seam = catalogSeam({
+      credentialed: {
+        currentValue: 'z-ai/glm-5.3-flash',
+        options: [{ id: 'z-ai/glm-5.3-flash', name: 'GLM 5.3 Flash' }],
+      },
+    });
+
+    await expect(
+      collectConnectWizard(
+        fixture.prompts,
+        seam.load,
+        keyStore,
+        {},
+        async () => undefined,
+        { detect: installed('goose'), announce: (line) => announced.push(line) },
+      ),
+    ).resolves.toEqual({
+      harness: 'goose',
+      provider: 'openrouter',
+      apiKey: 'sk-or-v1-freshfreshfresh7',
+      model: 'z-ai/glm-5.3-flash',
+    });
+    // The sole installed harness failed its probe, so the list is offered
+    // rather than assumed, and nothing is announced as found.
+    expect(fixture.calls.map((call) => call.split(':', 1)[0])).toEqual([
+      'select',
+      'select',
+      'password',
+      'autocomplete',
+    ]);
+    expect(announced).toEqual([]);
+    expect(keyStore.save).toHaveBeenCalledWith('openrouter', 'sk-or-v1-freshfreshfresh7');
+    // Picking the harness that already failed does not buy a second attempt.
+    expect(seam.requests.filter((request) => request.timeoutMs !== undefined)).toHaveLength(1);
+  });
+
+  it('falls back to asking when the probe times out, without a second attempt', async () => {
+    const fixture = promptFixture(['goose', 'openrouter', 'sk-or-v1-freshfreshfresh7', 'z-ai/glm-5.3-flash']);
+    const seam = catalogSeam({
+      probeFailure: new Error('ACP session/new timed out after 12000ms'),
+      credentialed: {
+        currentValue: 'z-ai/glm-5.3-flash',
+        options: [{ id: 'z-ai/glm-5.3-flash', name: 'GLM 5.3 Flash' }],
+      },
+    });
+
+    await expect(
+      collectConnectWizard(
+        fixture.prompts,
+        seam.load,
+        { read: async () => undefined, save: async () => {} },
+        {},
+        async () => undefined,
+        { detect: installed('goose'), announce: () => {} },
+      ),
+    ).resolves.toMatchObject({ harness: 'goose', model: 'z-ai/glm-5.3-flash' });
+    expect(fixture.calls.map((call) => call.split(':', 1)[0])).toEqual([
+      'select',
+      'select',
+      'password',
+      'autocomplete',
+    ]);
+    // The wizard bounded its one attempt and then asked instead of waiting.
+    expect(seam.requests[0]).toEqual({ harness: 'goose', timeoutMs: CONNECT_PROBE_TIMEOUT_MS });
+    expect(seam.requests.filter((request) => request.timeoutMs !== undefined)).toHaveLength(1);
+  }, 5_000);
+
+  it('offers the list when several harnesses are installed, and probes only the one picked', async () => {
+    const fixture = promptFixture(['claude']);
+    const announced: string[] = [];
+    const seam = catalogSeam({
+      configured: { currentValue: 'claude-opus-4-1', options: [{ id: 'claude-opus-4-1' }] },
+    });
+
+    await expect(
+      collectConnectWizard(
+        fixture.prompts,
+        seam.load,
+        { read: async () => undefined, save: async () => {} },
+        {},
+        async () => undefined,
+        { detect: installed('codex', 'claude', 'goose'), announce: (line) => announced.push(line) },
+      ),
+    ).resolves.toEqual({ harness: 'claude', model: 'claude-opus-4-1' });
+    expect(fixture.calls).toHaveLength(1);
+    expect(fixture.calls[0]).toContain('Choose harness');
+    expect(seam.requests).toEqual([{ harness: 'claude', timeoutMs: CONNECT_PROBE_TIMEOUT_MS }]);
+    expect(announced).toEqual(['Claude is already set up, running claude-opus-4-1.']);
+  });
+
+  it('reads a probe as evidence only when the harness enumerated models itself', () => {
+    expect(connectProbeFoundModels({ options: [{ id: 'gpt-5.4' }] })).toBe(true);
+    expect(connectProbeFoundModels({ options: [] })).toBe(false);
+    // The synthesised provider default is exactly what must not pass for one.
+    expect(
+      connectProbeFoundModels({
+        currentValue: 'z-ai/glm-5.3-flash',
+        options: [{ id: 'z-ai/glm-5.3-flash' }],
+        note: 'goose did not enumerate models; offering the provider default',
+      }),
+    ).toBe(false);
+  });
+
+  it('auto-selects only the single installed harness', () => {
+    expect(soleInstalledConnectHarness(installed('goose')())).toBe('goose');
+    expect(soleInstalledConnectHarness(installed('goose', 'pi')())).toBeUndefined();
+    expect(soleInstalledConnectHarness([])).toBeUndefined();
+    expect(
+      soleInstalledConnectHarness([
+        { kind: 'pi', status: 'missing-adapter', install: { command: 'npm', args: ['install', '-g', 'pi-acp'] } },
+      ]),
+    ).toBeUndefined();
+    expect(connectFoundLine({ harness: 'pi', sole: false })).toBe('Pi is already set up.');
   });
 
   it('asks provider and API key for Pi with OpenRouter and GLM defaults', async () => {
@@ -213,13 +419,16 @@ describe('connect wizard', () => {
     await expect(
       collectConnectWizard(
         fixture.prompts,
-        async () => ({
-          currentValue: 'z-ai/glm-5.3-flash',
-          options: [{ id: 'z-ai/glm-5.3-flash', name: 'GLM 5.3 Flash' }],
-        }),
+        catalogSeam({
+          credentialed: {
+            currentValue: 'z-ai/glm-5.3-flash',
+            options: [{ id: 'z-ai/glm-5.3-flash', name: 'GLM 5.3 Flash' }],
+          },
+        }).load,
         { read: async () => undefined, save: async () => {} },
         process.env,
         async () => undefined,
+        { detect: installed('pi', 'goose'), announce: () => {} },
       ),
     ).resolves.toEqual({
       harness: 'pi',
@@ -254,13 +463,16 @@ describe('connect wizard', () => {
     await expect(
       collectConnectWizard(
         fixture.prompts,
-        async () => ({
-          currentValue: 'z-ai/glm-5.3-flash',
-          options: [{ id: 'z-ai/glm-5.3-flash', name: 'GLM 5.3 Flash' }],
-        }),
+        catalogSeam({
+          credentialed: {
+            currentValue: 'z-ai/glm-5.3-flash',
+            options: [{ id: 'z-ai/glm-5.3-flash', name: 'GLM 5.3 Flash' }],
+          },
+        }).load,
         keyStore,
         process.env,
         async () => undefined,
+        { detect: installed('pi', 'goose'), announce: () => {} },
       ),
     ).resolves.toEqual({
       harness: 'pi',
@@ -295,13 +507,16 @@ describe('connect wizard', () => {
     await expect(
       collectConnectWizard(
         fixture.prompts,
-        async () => ({
-          currentValue: 'z-ai/glm-5.3-flash',
-          options: [{ id: 'z-ai/glm-5.3-flash', name: 'GLM 5.3 Flash' }],
-        }),
+        catalogSeam({
+          credentialed: {
+            currentValue: 'z-ai/glm-5.3-flash',
+            options: [{ id: 'z-ai/glm-5.3-flash', name: 'GLM 5.3 Flash' }],
+          },
+        }).load,
         keyStore,
         process.env,
         async () => undefined,
+        { detect: installed('pi', 'goose'), announce: () => {} },
       ),
     ).resolves.toMatchObject({ apiKey: 'sk-or-v1-freshfreshfresh7' });
     expect(keyStore.save).toHaveBeenCalledWith('openrouter', 'sk-or-v1-freshfreshfresh7');
@@ -322,13 +537,16 @@ describe('connect wizard', () => {
     await expect(
       collectConnectWizard(
         fixture.prompts,
-        async () => ({
-          currentValue: 'z-ai/glm-5.3-flash',
-          options: [{ id: 'z-ai/glm-5.3-flash', name: 'GLM 5.3 Flash' }],
-        }),
+        catalogSeam({
+          credentialed: {
+            currentValue: 'z-ai/glm-5.3-flash',
+            options: [{ id: 'z-ai/glm-5.3-flash', name: 'GLM 5.3 Flash' }],
+          },
+        }).load,
         keyStore,
         { OPENROUTER_API_KEY: 'sk-or-v1-envenvenvenv0' },
         async () => undefined,
+        { detect: installed('pi', 'goose'), announce: () => {} },
       ),
     ).resolves.toMatchObject({ apiKey: 'sk-or-v1-envenvenvenv0' });
     expect(keyStore.save).not.toHaveBeenCalled();
@@ -522,10 +740,11 @@ describe('connect wizard', () => {
     await expect(
       collectConnectWizard(
         fixture.prompts,
-        async () => ({ options: [{ id: 'gemini-2.5-pro' }] }),
+        catalogSeam({ credentialed: { options: [{ id: 'gemini-2.5-pro' }] } }).load,
         { read: async () => undefined, save: async () => {} },
         process.env,
         verifyKey as never,
+        { detect: installed('goose', 'pi'), announce: () => {} },
       ),
     ).rejects.toThrow('Google rejected the key (400).');
     expect(verifyKey).toHaveBeenCalledWith({ provider: 'google', apiKey: 'b' });

@@ -95,6 +95,21 @@ const SHARED_CREDENTIALS: Array<{
 ];
 
 /**
+ * Goose keeps no auth.json: its provider, its model and its keys all live in
+ * the config directory `GOOSE_PATH_ROOT` relocates wholesale (verified against
+ * goose 1.41 — `GOOSE_PATH_ROOT=<root>` reads `<root>/config/config.yaml` and
+ * writes `<root>/data`, `<root>/state`). `connect` skips the provider and key
+ * questions for a Goose that already holds a provider of its own, so the
+ * isolated home has to carry that configuration; without it the daemon would
+ * answer with a Goose configured by nobody.
+ *
+ * COPIED, never symlinked, and regenerated on every activation like the MCP
+ * files: Goose persists a session's selected model back into its own config,
+ * and a Room must not rewrite the operator's default through a shared link.
+ */
+const GOOSE_SHARED_CONFIG_FILES = ['config.yaml', 'secrets.yaml'] as const;
+
+/**
  * Operator skills directories shared (linked per entry) into an isolated
  * harness home's Beeline-managed skills directory, keyed by the state
  * directory the harness was pointed at. A missing source dir is skipped, not
@@ -179,7 +194,17 @@ const CODEX_ROOM_AGENT_LOCKDOWN_TOML = '[agents]\nenabled = false\n';
 const CODEX_ROOM_WEB_SEARCH_TOML = '[features]\nstandalone_web_search = true\n';
 
 /** Subdirectories created under a room-instance's agent home. */
-const HOME_SUBDIRS = ['user', 'claude', 'codex', 'grok', 'pi', 'state', 'cache', 'tmp'] as const;
+const HOME_SUBDIRS = [
+  'user',
+  'claude',
+  'codex',
+  'goose',
+  'grok',
+  'pi',
+  'state',
+  'cache',
+  'tmp',
+] as const;
 
 export interface RoomAgentHomeInput {
   /** Per-room agent home root, e.g. `<roomRoot>/agent-home`. */
@@ -318,6 +343,25 @@ async function provisionAgentSkillsAndMcp(
       if (failClosed) throw error;
       console.warn(`[body] operator MCP passthrough failed for ${config.dir}:`, error);
     }
+  }
+
+  try {
+    const gooseConfigDir = resolve(root, 'goose', 'config');
+    await mkdir(gooseConfigDir, { recursive: true, mode: 0o700 });
+    for (const name of GOOSE_SHARED_CONFIG_FILES) {
+      const source = resolve(operatorHome, '.config', 'goose', name);
+      const target = resolve(gooseConfigDir, name);
+      // Regeneration is deletion too: a config the operator removed must not
+      // keep answering in a Room.
+      if (existsSync(source)) {
+        await writeIsolatedHarnessFile(target, readFileSync(source, 'utf8'));
+      } else {
+        await unlink(target).catch(() => undefined);
+      }
+    }
+  } catch (error) {
+    if (failClosed) throw error;
+    console.warn('[body] operator Goose configuration passthrough failed:', error);
   }
 
   try {
@@ -698,6 +742,7 @@ export function roomAgentHomeEnv(root: string): Record<string, string> {
     HOME: resolve(resolved, 'user'),
     CLAUDE_CONFIG_DIR: resolve(resolved, 'claude'),
     CODEX_HOME: resolve(resolved, 'codex'),
+    GOOSE_PATH_ROOT: resolve(resolved, 'goose'),
     GROK_HOME: resolve(resolved, 'grok'),
     PI_CODING_AGENT_DIR: resolve(resolved, 'pi'),
     XDG_STATE_HOME: resolve(resolved, 'state'),
@@ -717,6 +762,7 @@ export function roomAgentHomeEnv(root: string): Record<string, string> {
 export const HARNESS_STATE_ENV_VARS = [
   'CLAUDE_CONFIG_DIR',
   'CODEX_HOME',
+  'GOOSE_PATH_ROOT',
   'GROK_HOME',
   'PI_CODING_AGENT_DIR',
   'XDG_STATE_HOME',

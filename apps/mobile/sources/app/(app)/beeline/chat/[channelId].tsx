@@ -134,7 +134,7 @@ import {
   selectWorkingAgents,
 } from '@/buzz/room-indicators';
 import { displayCornerTitle } from '@/buzz/room-list-row';
-import { scrollFollowOnArrival } from '@/buzz/room-scroll-follow';
+import { scrollFollowOnArrival, scrollFollowOnLayoutChange } from '@/buzz/room-scroll-follow';
 import {
   loadActiveCommunityId,
   saveActiveCommunityId,
@@ -225,6 +225,10 @@ type RoomMemberOption = RoomRosterParticipant;
 
 const COMPOSER_MIN_HEIGHT = 40;
 const COMPOSER_MAX_HEIGHT = 120;
+// Mirrors maintainVisibleContentPosition's autoscrollToTopThreshold: how
+// close to the visual bottom (offset 0 on this inverted list) counts as
+// "already reading the newest end" for the layout-change tail snap (C97).
+const TAIL_PIN_THRESHOLD = 50;
 // Open on the tail of a long transcript instead of the full history, then
 // page older messages in as the reader scrolls up.
 const INITIAL_MESSAGE_WINDOW = 30;
@@ -1353,6 +1357,14 @@ export default function BuzzChat() {
   // decision is one pure call (`buzz/room-scroll-follow.ts`); the actual
   // scrollToOffset runs at most once per arrival, off the render path.
   const userDraggingRef = useRef(false);
+  // Updated on every onScroll; offset 0 is the visual bottom of this
+  // inverted list, so "near 0" is "already reading the newest end".
+  const isPinnedToTailRef = useRef(true);
+  const scrollToNewestMessage = useCallback(() => {
+    requestAnimationFrame(() =>
+      flatListRef.current?.scrollToOffset({ offset: 0, animated: false }),
+    );
+  }, []);
   const newestMessageId = combinedMessages.length
     ? combinedMessages[combinedMessages.length - 1].id
     : null;
@@ -1369,11 +1381,32 @@ export default function BuzzChat() {
     ) {
       return;
     }
-    // Offset 0 is the visual bottom of the inverted list.
-    requestAnimationFrame(() =>
-      flatListRef.current?.scrollToOffset({ offset: 0, animated: false }),
-    );
-  }, [newestMessageId]);
+    scrollToNewestMessage();
+  }, [newestMessageId, scrollToNewestMessage]);
+  // C97: a send that collapses the composer (attach removed, field snaps
+  // back to its minimum height) or dismisses the keyboard makes the list
+  // taller with no new row id — the arrival rule above never fires for it,
+  // and maintainVisibleContentPosition's own threshold is too small to
+  // catch a keyboard-sized jump. Follow that layout change directly instead
+  // of widening the threshold (see room-scroll-follow.ts).
+  const keyboardHeight = useKeyboardState((state) => state.height);
+  const composerFootprint = composerHeight + keyboardHeight;
+  const prevComposerFootprintRef = useRef<number | null>(null);
+  useEffect(() => {
+    const previousFootprint = prevComposerFootprintRef.current;
+    prevComposerFootprintRef.current = composerFootprint;
+    if (
+      scrollFollowOnLayoutChange({
+        previousFootprint,
+        nextFootprint: composerFootprint,
+        isPinnedToTail: isPinnedToTailRef.current,
+        isUserDragging: userDraggingRef.current,
+      }) === 'hold'
+    ) {
+      return;
+    }
+    scrollToNewestMessage();
+  }, [composerFootprint, scrollToNewestMessage]);
   // Reveal the exact fact that caused the alert. Fresh messages usually land
   // in the cached tail; if the target is already resident outside the initial
   // window, widen the window first and scroll on the next render.
@@ -3157,6 +3190,11 @@ export default function BuzzChat() {
             autoscrollToTopThreshold: 50,
           }}
           keyboardShouldPersistTaps="handled"
+          onScroll={(event) => {
+            isPinnedToTailRef.current =
+              event.nativeEvent.contentOffset.y <= TAIL_PIN_THRESHOLD;
+          }}
+          scrollEventThrottle={100}
           onScrollBeginDrag={() => {
             userDraggingRef.current = true;
           }}

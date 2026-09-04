@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { sanitizeAgentReply } from './reply-sanitizer.js';
+import {
+  isCornerStatusRestatement,
+  sanitizeAgentReply,
+  stripCornerOpenEcho,
+} from './reply-sanitizer.js';
 
 describe('sanitizeAgentReply', () => {
   it.each([
@@ -67,5 +71,74 @@ describe('sanitizeAgentReply', () => {
 
     expect(sanitizeAgentReply(banner)).toBe('');
     expect(sanitizeAgentReply(`${banner}\nThe real answer.`)).toBe('The real answer.');
+  });
+});
+
+describe('stripCornerOpenEcho', () => {
+  it.each([
+    'Opened corner 3f2a9c1e-77d2-4b0e-9d1a-0c5b2e8f4a11 with the objective "Fix the widget".',
+    "I've opened a corner for this: Fix the widget. I'll report back when the PR is up.",
+    'Okay, opening a new write-enabled corner now.',
+    'Done. Opened the repository corner (id 3f2a9c1e).',
+  ])("drops the model's own announcement after the server posted the corner card: %j", (echo) => {
+    expect(stripCornerOpenEcho(echo)).toBe('');
+  });
+
+  it('keeps anything the model says after the announcement paragraph', () => {
+    expect(
+      stripCornerOpenEcho(
+        'Opened corner 3f2a9c1e for the widget fix.\n\nNote: the repo has no test runner, so I will add vitest first.',
+      ),
+    ).toBe('Note: the repo has no test runner, so I will add vitest first.');
+  });
+
+  it('keeps a reply that only mentions a corner without announcing one', () => {
+    const reply = 'The corner from yesterday merged already; nothing to open here.';
+    expect(stripCornerOpenEcho(reply)).toBe(reply);
+    expect(stripCornerOpenEcho('I could not open a corner: this Room has no repository.')).toBe(
+      'I could not open a corner: this Room has no repository.',
+    );
+  });
+
+  it('keeps a long first paragraph even when it starts as the announcement', () => {
+    const long = `Opened corner 3f2a9c1e. ${'The plan has several parts. '.repeat(16)}`.trim();
+    expect(stripCornerOpenEcho(long)).toBe(long);
+  });
+});
+
+describe('isCornerStatusRestatement', () => {
+  const passed = ['GitHub passed a check Beeline CI'];
+
+  it.each([
+    'PR checks have passed.',
+    'CI has passed',
+    'PR remains ready for review.',
+    'Beeline CI is green now; nothing further needed.',
+    'All checks passed. The PR is still ready for review.',
+    'Checks passed, no action required.',
+    '',
+  ])('drops a reply that only restates the server line: %j', (reply) => {
+    expect(isCornerStatusRestatement(reply, passed)).toBe(true);
+  });
+
+  it.each([
+    'Merged https://github.com/acme/widgets/pull/7',
+    'Checks passed. Merging the PR now.',
+    'Fixed the lint error and pushed a new commit.',
+    'Beeline CI failed on the typecheck step; looking into it.',
+    'Checks passed but the branch is held: waiting for @captain to resume.',
+    'Checks passed. The PR is ready. I also updated the changelog. Let me know.',
+  ])('keeps a reply that carries anything beyond the line: %j', (reply) => {
+    expect(isCornerStatusRestatement(reply, passed)).toBe(false);
+  });
+
+  it('admits only the words of the lines it was given', () => {
+    const failed = ['GitHub failed a check Beeline CI · lint'];
+    expect(isCornerStatusRestatement('CI failed on lint.', failed)).toBe(true);
+    expect(isCornerStatusRestatement('CI failed on lint.', passed)).toBe(false);
+    expect(isCornerStatusRestatement('The PR merged.', ['GitHub merged Ship the widget'])).toBe(
+      true,
+    );
+    expect(isCornerStatusRestatement('The PR merged.', passed)).toBe(false);
   });
 });

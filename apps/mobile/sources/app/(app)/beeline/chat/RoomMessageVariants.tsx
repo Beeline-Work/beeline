@@ -12,6 +12,12 @@ import { shortMemberNpub } from '@/buzz/member-display';
 import { describeWriteRequest } from '@/buzz/write-request-copy';
 import { grantAskLine, grantOutcomeLine } from '@/buzz/agent-grant-copy';
 import { shouldShowReplyReference } from '@/buzz/reply-reference';
+import {
+  draftRequestId,
+  provisionalDraftKey,
+  rememberProvisionalDraft,
+  takeProvisionalDraft,
+} from '@/buzz/draft-settle';
 import { splitLedgerText } from '@/buzz/ledger-text';
 import { ledgerStamp } from '@/buzz/relative-time';
 import { attachmentOpenUrl, formatAttachmentSize } from '@/buzz/chat-attachment';
@@ -686,6 +692,28 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
         : [{ kind: 'output' as const, title: 'Output', text: message.text }],
     [message.activity, message.text],
   );
+  // What the reader is being shown while the turn writes, remembered under the
+  // turn's own request id. The durable reply below collects it and fades out
+  // of it; nothing about the draft itself changes (C98).
+  const draftKey =
+    message.pubkey && message.agentMessageDraft ? draftRequestId(message.id) : undefined;
+  useEffect(() => {
+    if (!draftKey || !message.pubkey || !message.agentMessageDraft) return;
+    rememberProvisionalDraft(
+      provisionalDraftKey(message.pubkey, draftKey),
+      message.agentMessageDraft,
+    );
+  }, [draftKey, message.agentMessageDraft, message.pubkey]);
+  // Spent once per settled reply, and decided once per mounted row: a
+  // re-render mid-transition must not restart or cancel the dissolve.
+  const settleRef = useRef<string | undefined>(undefined);
+  if (settleRef.current === undefined) {
+    settleRef.current =
+      isAgent && message.requestId && message.pubkey && !message.isAgentActivity
+        ? (takeProvisionalDraft(provisionalDraftKey(message.pubkey, message.requestId)) ?? '')
+        : '';
+  }
+  const settleFrom = settleRef.current || undefined;
   if (message.isAgentActivity) {
     return (
       <View style={styles.activityGroup} testID="corner-activity">
@@ -769,6 +797,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
               continued={continued}
               luminous={isAgent}
               typewriter={isAgent && Boolean(message.isNew)}
+              settleFrom={settleFrom}
               bodyText={ledgerText ? ledgerText.prose : message.text}
               mentionHandles={mentionHandles}
               channelIndex={channelIndex}

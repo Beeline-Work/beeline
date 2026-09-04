@@ -9,8 +9,8 @@ import {
   type ToolCallRow,
 } from '@/buzz/tool-call-row';
 import { Typography } from '@/constants/Typography';
-import { LedgerBylineView, type LedgerBylineMark } from './Ledger';
-import { MonoMarkdown } from './MonoMarkdown';
+import { LedgerBylineView, provisionalProseStyle, type LedgerBylineMark } from './Ledger';
+import { StreamingProse } from './StreamingProse';
 
 type ActivityTimelineProps = {
   active?: boolean;
@@ -21,7 +21,9 @@ type ActivityTimelineProps = {
   messageDraft?: string;
   /** The streaming speaker's identity mark — the SAME mark the settled row's
    *  byline renders (`Ledger.LedgerBylineView`), so the draft lane carries the
-   *  agent triangle and nothing changes visually when the draft settles. */
+   *  agent tile and the byline never moves when the draft settles. The words
+   *  below it DO change: a draft is written in the provisional face and tone
+   *  and cross-fades into the settled reply (C98). */
   mark?: LedgerBylineMark;
 };
 
@@ -151,9 +153,20 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
     return steps.map((step, index) => toolCallRow(step, active && index === steps.length - 1));
   }, [turn, active]);
   const [expanded, setExpanded] = useState(false);
-  // Settled turns keep their collapsed tool rows (#804); only an empty live
-  // lane (no steps, no draft) renders nothing.
-  if (!rows.length && !(active && messageDraft)) return null;
+  // The provisional face and tone, plus this lane's own spacing. One object,
+  // memoised, so the markdown renderer's identity check still bails out.
+  const draftTextStyle = useMemo(
+    () => ({ ...provisionalProseStyle(), ...styles.messageDraft }),
+    [],
+  );
+  // Settled turns keep their collapsed tool rows (#804); only a lane with
+  // nothing in it at all renders nothing.
+  //
+  // A RETRACTED draft is deliberately included (C98). When a turn fails the
+  // lane stops being live but the words the reader was reading stay on the
+  // page, provisional, with the server's failure line beneath them — text a
+  // person was mid-way through must never evaporate on its own.
+  if (!rows.length && !messageDraft) return null;
 
   return (
     <View style={styles.timeline} testID={testID}>
@@ -180,9 +193,9 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
         </>
       ) : null}
       {messageDraft ? (
-        <MonoMarkdown
+        <StreamingProse
           markdown={messageDraft}
-          textStyle={styles.messageDraft}
+          textStyle={draftTextStyle}
           testID="activity-message-draft"
         />
       ) : null}
@@ -197,13 +210,10 @@ const styles = StyleSheet.create((theme) => {
   const groknight = theme.buzz;
   return {
     timeline: { width: '100%', minWidth: 0, paddingVertical: 4 },
-    messageDraft: {
-      ...Typography.ledger(),
-      color: groknight.ledgerBright,
-      fontSize: 16,
-      lineHeight: 25,
-      marginTop: 2,
-    },
+    // Spacing only. The face and the tone are the ledger's one provisional
+    // definition (`Ledger.provisionalProseStyle`), so a draft and the reply
+    // that settles it are the same words in the same column (C98).
+    messageDraft: { marginTop: 2 },
     callDisclosure: {
       minWidth: 0,
       borderTopWidth: StyleSheet.hairlineWidth,

@@ -16,7 +16,12 @@ import {
  * Kept local to this file: the parser above knows nothing about mentions or
  * channel references, and it must stay that way.
  */
-type MentionSpan = MarkdownSpan & { mention?: boolean; channelRef?: ChannelReferenceTarget };
+type MentionSpan = MarkdownSpan & {
+  mention?: boolean;
+  channelRef?: ChannelReferenceTarget;
+  /** The just-arrived region of a streaming draft (`tail`, C98). */
+  tail?: boolean;
+};
 
 /**
  * A tagged identity in prose: `@` followed by a handle token (letters,
@@ -126,13 +131,52 @@ type MonoMarkdownProps = {
   channelIndex?: ChannelReferenceIndex;
   /** Invoked when a recognized `#room`/`#room/corner` reference is pressed. */
   onChannelReference?: (target: ChannelReferenceTarget, text: string) => void;
+  /**
+   * The trailing characters that have only just arrived on a streaming draft
+   * (`components/buzz/StreamingProse.tsx`, C98). They take `style` on top of
+   * the body tone so the fade lands on the new text alone; everything before
+   * them is left exactly as it was rendered a frame ago.
+   *
+   * Scoped to the LAST block, which is where a stream is always writing. A
+   * fence or a table closing the message simply does not fade — better than
+   * animating a region the reader cannot see arrive.
+   */
+  tail?: { readonly length: number; readonly style: TextStyle };
   testID?: string;
 };
+
+/**
+ * Flag the final `length` characters of a block's spans, splitting the span
+ * they start inside. Pure, and exported for the honesty test: the marked
+ * region is always a suffix, never longer than the text it is taken from.
+ */
+export function markTailSpans(spans: MentionSpan[], length: number): MentionSpan[] {
+  if (length <= 0) return spans;
+  let remaining = length;
+  const out: MentionSpan[] = [];
+  for (let index = spans.length - 1; index >= 0; index -= 1) {
+    const span = spans[index]!;
+    if (remaining <= 0) {
+      out.unshift(span);
+      continue;
+    }
+    if (span.text.length <= remaining) {
+      remaining -= span.text.length;
+      out.unshift({ ...span, tail: true });
+      continue;
+    }
+    const cut = span.text.length - remaining;
+    out.unshift({ ...span, text: span.text.slice(cut), tail: true });
+    out.unshift({ ...span, text: span.text.slice(0, cut) });
+    remaining = 0;
+  }
+  return out;
+}
 
 /** Block kinds whose renderer starts with a `Text` that can host the handle. */
 const INLINE_HOSTS = new Set(['text', 'header', 'list', 'numbered-list']);
 
-function spanStyle(span: MentionSpan, base: TextStyle) {
+function spanStyle(span: MentionSpan, base: TextStyle, tailStyle?: TextStyle) {
   return [
     base,
     span.styles.includes('bold') && styles.bold,
@@ -143,6 +187,8 @@ function spanStyle(span: MentionSpan, base: TextStyle) {
     // A resolved channel reference shares the tagged-token brass: the same
     // interactive-text vocabulary as a @mention, never a new accent or chip.
     (span.mention || span.channelRef) && styles.mention,
+    // Last, so the arriving tail's tone wins over the settled body's.
+    span.tail && tailStyle,
   ];
 }
 
@@ -153,6 +199,7 @@ function InlineMarkdown({
   liveMentionHandles,
   channelIndex,
   onChannelReference,
+  tail,
 }: {
   spans: MarkdownSpan[];
   base: TextStyle;
@@ -160,11 +207,15 @@ function InlineMarkdown({
   liveMentionHandles: ReadonlySet<string>;
   channelIndex?: ChannelReferenceIndex;
   onChannelReference?: (target: ChannelReferenceTarget, text: string) => void;
+  tail?: { readonly length: number; readonly style: TextStyle };
 }) {
   // One funnel: every prose block (text, header, list items) renders its spans
   // here, so a mention or a channel reference glosses identically wherever it
   // is spoken.
-  const glossed = glossChannelReferences(glossMentions(spans, liveMentionHandles), channelIndex);
+  const glossed = markTailSpans(
+    glossChannelReferences(glossMentions(spans, liveMentionHandles), channelIndex),
+    tail?.length ?? 0,
+  );
   return (
     <>
       {glossed.map((span, index) => (
@@ -177,7 +228,7 @@ function InlineMarkdown({
                 ? () => onLink(span.url!)
                 : undefined
           }
-          style={spanStyle(span, base)}
+          style={spanStyle(span, base, tail?.style)}
         >
           {span.text}
         </Text>
@@ -226,6 +277,8 @@ export function monoMarkdownPropsAreEqual(
     previous.channelIndex === next.channelIndex &&
     previous.onChannelReference === next.onChannelReference &&
     previous.testID === next.testID &&
+    previous.tail?.length === next.tail?.length &&
+    previous.tail?.style === next.tail?.style &&
     mentionHandlesEqual(previous.mentionHandles, next.mentionHandles)
   );
 }
@@ -237,6 +290,7 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
   mentionHandles,
   channelIndex,
   onChannelReference,
+  tail,
   testID,
 }: MonoMarkdownProps) {
   const blocks = useMemo(() => parseMarkdown(markdown), [markdown]);
@@ -267,6 +321,8 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
         const last = index === blocks.length - 1;
         const blockStyle = [styles.block, last && styles.lastBlock];
         const lead = inlineHosted && index === 0 ? leadingInline : null;
+        // The stream is always writing at the end of the message.
+        const trail = last ? tail : undefined;
 
         if (block.type === 'text') {
           return (
@@ -279,6 +335,7 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
                 liveMentionHandles={liveMentionHandles}
                 channelIndex={channelIndex}
                 onChannelReference={onChannelReference}
+                tail={trail}
               />
             </Text>
           );
@@ -294,6 +351,7 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
                 liveMentionHandles={liveMentionHandles}
                 channelIndex={channelIndex}
                 onChannelReference={onChannelReference}
+                tail={trail}
               />
             </Text>
           );
@@ -318,6 +376,7 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
                     liveMentionHandles={liveMentionHandles}
                     channelIndex={channelIndex}
                     onChannelReference={onChannelReference}
+                    tail={itemIndex === block.items.length - 1 ? trail : undefined}
                   />
                 </Text>
               ))}

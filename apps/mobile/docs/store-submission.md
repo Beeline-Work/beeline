@@ -14,7 +14,13 @@ service account key and the App Store Connect API key outside this repository.
 1. **Repository secret `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON`** — the full JSON key of
    a Google Cloud service account (IAM → Service accounts → Keys → JSON). Paste
    the file's contents as the secret value. Every Play workflow reads only this
-   secret and stops with one plain line when it is missing.
+   secret and stops with one plain line when it is missing. The workflows mint
+   the access token themselves with the self-signed JWT flow
+   (`scripts/play-token.mjs`, node only): the key's private key signs a JWT that
+   `oauth2.googleapis.com/token` exchanges for a token. The IAM Service Account
+   Credentials API (`iamcredentials.googleapis.com`, which
+   `google-github-actions/auth` requires) is not enabled in the project and is
+   not needed; only the Google Play Android Developer API must be enabled.
 2. **Play Console invite for that service account** — Play Console → Users and
    permissions → Invite new users → the service account's email address, with
    app-level permissions on Beeline (`app.usebeeline.mobile`):

@@ -1,0 +1,80 @@
+# Promote the newest release on one Play track onto another (internal → beta,
+# beta → production). Manual only:
+#   gh workflow run play-promote.yml -f from_track=internal -f to_track=beta
+#
+# play-beta.yml only ever writes the track it was given; moving a release
+# onward is a deliberate step because a track's first roll-out starts
+# Google's review. scripts/play-promote-track.sh copies the release with the
+# highest versionCode, its name and its release notes, in one validated and
+# committed Play Console edit.
+#
+# Inputs:
+#   from_track     — internal | alpha | beta
+#   to_track       — alpha | beta | production ("beta" is Play Console's
+#                    Open testing, "alpha" its Closed testing)
+#   release_status — draft (default): lands as "Ready to publish"; you still
+#                    press Release in Play Console. completed: auto-publishes
+#                    once any review completes.
+name: Promote Play Store release between tracks
+
+on:
+  workflow_dispatch:
+    inputs:
+      from_track:
+        description: 'Source track'
+        type: choice
+        options: [internal, alpha, beta]
+        default: internal
+        required: true
+      to_track:
+        description: 'Destination track ("beta" = Open testing in Play Console)'
+        type: choice
+        options: [alpha, beta, production]
+        default: beta
+        required: true
+      release_status:
+        description: 'draft = ready to publish in Play Console; completed = auto-publish after review'
+        type: choice
+        options: [draft, completed]
+        default: draft
+        required: true
+
+concurrency:
+  group: play-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Require the Play service account secret
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [ -z "$PLAY_SERVICE_ACCOUNT_JSON" ]; then
+            echo "GOOGLE_PLAY_SERVICE_ACCOUNT_JSON repository secret is not set; add the Play service account JSON key before running this workflow."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Play with the service account
+        id: gcp-auth
+        uses: google-github-actions/auth@v3
+        with:
+          credentials_json: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/androidpublisher
+
+      - name: Promote release between tracks
+        env:
+          ACCESS_TOKEN: ${{ steps.gcp-auth.outputs.access_token }}
+          PACKAGE_NAME: app.usebeeline.mobile
+          FROM_TRACK: ${{ inputs.from_track }}
+          TO_TRACK: ${{ inputs.to_track }}
+          RELEASE_STATUS: ${{ inputs.release_status }}
+        run: bash scripts/play-promote-track.sh

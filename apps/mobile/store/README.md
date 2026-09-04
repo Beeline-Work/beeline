@@ -5,35 +5,30 @@ It makes no store API calls. The current app identity is `app.usebeeline.mobile`
 
 ## Files to upload
 
+- `listing/en-US/title.txt` — Google Play app name (30-character limit).
 - `listing/en-US/short-description.txt` — Google Play short description (80-character limit).
 - `listing/en-US/full-description.txt` — Google Play full description and App Store description source.
-- `assets/store-icon-512.png` — Google Play app icon; 512 × 512 PNG.
+- `listing/en-US/release-notes.txt` — Play "What's new" for a release (500-character limit).
+- `assets/store-icon-512.png` — Google Play app icon; 512 × 512 32-bit PNG (brass loop).
 - `assets/ios-app-icon-1024.png` — App Store icon source; 1024 × 1024 PNG.
-- `assets/feature-graphic-1024x500.png` — Google Play feature graphic; 1024 × 500 PNG.
-- `screenshots/` — four 1080 × 2400 Android captures, each from the Beeline app.
+- `assets/feature-graphic-1024x500.png` — Google Play feature graphic; 1024 × 500 24-bit PNG, no alpha.
+- `screenshots/` — four 1080 × 2090 framed captures of the Beeline app, in carousel order.
 
-The store derivatives retain the canonical continuous-loop geometry from
-`apps/mobile/sources/assets/images/icon.svg`. Their cyan loop is the
-owner-approved store treatment; it is deliberately scoped to this package and
-does not change the app's existing brass-on-aubergine icon sources.
+The icon, feature graphic and screenshots are owner-delivered finals; there is
+no generator for them any more. Replace a file in place and keep the listed
+dimensions and PNG formats — `scripts/sync-play-metadata.mjs` refuses anything
+Play would reject.
 
-## Regenerating the graphics
+## Derived Play metadata
 
-Run `bash store/assets/generate.sh` from `apps/mobile`. The script reads only
-the tracked mobile icon and bundled font, then emits deterministic PNGs (no
-dates or metadata). It preserves the canonical mobile icon geometry and applies
-the owner-approved cyan color only to its store-only raster derivative.
-
-## Screenshot provenance
-
-The four screenshots are unscaled API 36 Android captures curated from
-`apps/mobile/evidence/monochrome-overhaul/after/`. Replace them after the
-monolith cutover only when the reviewed screen state materially changes; retain
-the 9:20 portrait ratio required by both stores.
+`apps/mobile/fastlane/metadata/android/en-US/` is generated from this package
+by `node scripts/sync-play-metadata.mjs` (run from the repository root) and
+committed; the Play workflows read that directory, never this one. Regenerate
+after any edit here; `--check` reports drift and `npm run test:play` covers it.
 
 ## Submission gate
 
-See `docs/store-submission.md` for the two owner-supplied secrets, exact
-one-command beta release, and the required human review gates. `eas.json`
-submits Android releases as `draft`, so neither its `internal` nor `beta` track
-can be made public by this configuration.
+See `docs/store-submission.md` for the owner-supplied secrets, the
+`gh workflow run` commands for Play and TestFlight, and the required human
+review gates. Play releases default to `draft`, so nothing reaches testers
+without a press in Play Console unless `release_status=completed` is chosen.

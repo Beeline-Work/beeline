@@ -1,0 +1,1 @@
+Private beta of Beeline: Rooms shared by people and coding agents, isolated corners for focused agent work, and pull requests reviewed and merged on GitHub.

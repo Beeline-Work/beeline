@@ -115,20 +115,24 @@ describe('Room list layout contract', () => {
     expect(header).toContain('testID="workspace-members"');
   });
 
-  it('leads with the name on a 64pt row; only a DM row wears a 40px tile, a Room starts at the row edge', () => {
+  it('leads with the state column on a 64pt row; only a DM row also wears a 40px tile', () => {
     expect(source).toContain('const ROW_HEIGHT = 64');
     expect(source).toContain('const ROW_TILE_SIZE = 40');
     expect(styleBlock(source, 'row')).toContain('minHeight: ROW_HEIGHT');
     expect(styleBlock(source, 'rowMain')).toContain('minHeight: ROW_HEIGHT');
     // C71: a Room is many voices, so no picture stands for it — the `#name`
     // sigil is its mark. The tile renders only when the one derivation
-    // (`roomRowName`) supplies one, i.e. for a DM's peer.
-    expect(source).toContain('{heading.tile && (');
+    // (`roomRowName`) supplies one, i.e. for a DM's peer, and it renders
+    // AFTER the leading state column (C81): [state][tile if DM][copy][age].
+    const rowStateIndex = source.indexOf('styles.rowStateSlot');
+    const tileIndex = source.indexOf('{heading.tile && (');
+    const rowCopyIndex = source.indexOf('<View style={styles.rowCopy}>');
+    expect(rowStateIndex).toBeGreaterThan(0);
+    expect(tileIndex).toBeGreaterThan(rowStateIndex);
+    expect(rowCopyIndex).toBeGreaterThan(tileIndex);
     expect(source).toContain('size={ROW_TILE_SIZE}');
     expect(source).toContain('kind={heading.tile.kind}');
     expect(source).toContain('seed={heading.tile.seed}');
-    // C81: a Room row wears no leading spacer either — its copy starts at
-    // rowMain's own left padding, not a slot the tile's width away.
     expect(source).not.toContain('rowTileSlot');
     expect(source).not.toContain('room-tile-slot-');
     expect(source).not.toMatch(/kind="workspace"[^\n]*room\.id/);
@@ -163,33 +167,41 @@ describe('Room list layout contract', () => {
     expect(source).not.toContain('No activity yet');
   });
 
-  it('reserves one 7×7 brass attention square per row and nothing else', () => {
+  it('leads every row with one 7×7 brass state mark and nothing else; the gutter keeps only the timestamp', () => {
     // `unread` is server-owned and cross-device; a corner waiting on a human
-    // lights the same square. The slot exists on every row so the age stamp
-    // above it never shifts — and there is no count, no NEW label, no gold
-    // dot, no leading state glyph. An unlit row draws nothing at all: the
-    // square element itself only renders when `attention` is true.
+    // lights the same mark. The leading slot exists on every row — DM and
+    // Room alike — so whatever follows it (a DM's tile, a Room's copy) never
+    // shifts between lit and unlit rows; and there is no count, no NEW label,
+    // no gold dot. An unlit row draws nothing at all: the mark element itself
+    // only renders when `attention` is true.
     expect(roomViewSource).toContain('readonly unread: boolean;');
     expect(surfaceGuardSource).toContain("typeof item.unread === 'boolean'");
     expect(surfaceGuardSource).not.toContain('item.unread === undefined');
     expect(source).toContain('const attention = roomRowNeedsAttention(item);');
     expect(source).toContain('const ATTENTION_SQUARE = 7');
-    expect(source).toContain('<View style={styles.attentionSlot} accessibilityElementsHidden>');
+    expect(source).toContain('<View style={styles.rowStateSlot} accessibilityElementsHidden>');
     expect(source).toContain('{attention && (');
-    expect(source).toContain('style={styles.attentionSquare}');
+    expect(source).toContain('style={styles.rowStateMark}');
     expect(source).toContain('testID={`room-attention-${item.room.id}`}');
-    expect(styleBlock(source, 'attentionSlot')).toContain('width: ATTENTION_SQUARE');
-    expect(styleBlock(source, 'attentionSlot')).toContain('height: ATTENTION_SQUARE');
-    expect(styleBlock(source, 'attentionSquare')).toContain('width: ATTENTION_SQUARE');
-    expect(styleBlock(source, 'attentionSquare')).toContain('height: ATTENTION_SQUARE');
-    expect(styleBlock(source, 'attentionSquare')).toContain('backgroundColor: hull.accent');
+    expect(styleBlock(source, 'rowStateSlot')).toContain('width: ATTENTION_SQUARE');
+    expect(styleBlock(source, 'rowStateSlot')).toContain('height: ATTENTION_SQUARE');
+    expect(styleBlock(source, 'rowStateMark')).toContain('width: ATTENTION_SQUARE');
+    expect(styleBlock(source, 'rowStateMark')).toContain('height: ATTENTION_SQUARE');
+    expect(styleBlock(source, 'rowStateMark')).toContain('backgroundColor: hull.accent');
+    expect(source).not.toContain('attentionSquare');
     expect(source).not.toContain('NEW');
     expect(source).not.toContain('HullDeckMark');
     expect(source).not.toContain('roomDeckState');
     expect(source).not.toContain("unread ? 'needs-you' : 'idle'");
-    // The age stamp stays: one terse unit over the square's reserved slot,
-    // and its position never depends on whether the slot is lit.
-    expect(source).toContain('<Text style={styles.age}>{age}</Text>');
+    // The gutter carries only the timestamp — no mark, lit or unlit — so its
+    // position never depends on row state.
+    const gutterBlock = source.slice(
+      source.indexOf('<View style={styles.gutter}>'),
+      source.indexOf('<View style={styles.cornerToggleSlot}>'),
+    );
+    expect(gutterBlock).toContain('<Text style={styles.age}>{age}</Text>');
+    expect(gutterBlock).not.toContain('rowStateSlot');
+    expect(gutterBlock).not.toContain('rowStateMark');
     expect(source).toContain("import { compactRelativeTime } from '@/buzz/relative-time';");
   });
 

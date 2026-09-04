@@ -687,6 +687,14 @@ export default function BuzzChannels() {
                     onPress={() => openRoom(item.room.id)}
                     style={styles.rowMain}
                   >
+                    <View style={styles.rowStateSlot} accessibilityElementsHidden>
+                      {attention && (
+                        <View
+                          style={styles.rowStateMark}
+                          testID={`room-attention-${item.room.id}`}
+                        />
+                      )}
+                    </View>
                     {heading.tile && (
                       <IdentityMark
                         kind={heading.tile.kind}
@@ -720,14 +728,6 @@ export default function BuzzChannels() {
                   </TouchableOpacity>
                   <View style={styles.gutter}>
                     <Text style={styles.age}>{age}</Text>
-                    <View style={styles.attentionSlot} accessibilityElementsHidden>
-                      {attention && (
-                        <View
-                          style={styles.attentionSquare}
-                          testID={`room-attention-${item.room.id}`}
-                        />
-                      )}
-                    </View>
                   </View>
                   <View style={styles.cornerToggleSlot}>
                     {item.cornerCount > 0 && (
@@ -944,6 +944,15 @@ const styles = StyleSheet.create((theme) => {
       paddingLeft: 16,
       paddingVertical: 10,
     },
+    // The row's leading unit: the STATE column, on every row. Its width is
+    // reserved whether or not the row is lit, so the tile (a DM) or the copy
+    // (a Room) that follows starts at the same edge either way.
+    rowStateSlot: { width: ATTENTION_SQUARE, height: ATTENTION_SQUARE },
+    rowStateMark: {
+      width: ATTENTION_SQUARE,
+      height: ATTENTION_SQUARE,
+      backgroundColor: hull.accent,
+    },
     rowCopy: { flex: 1, minWidth: 0, gap: 3 },
     // The row leads with the name: one size, one weight, the brightest thing
     // on the row. Ownership and unread never bold or enlarge it.
@@ -958,25 +967,16 @@ const styles = StyleSheet.create((theme) => {
     preview: { ...Typography.default(), color: hull.ledgerQuiet, fontSize: 13, lineHeight: 17 },
     previewSelf: { ...Typography.default(), color: hull.textMuted },
     previewAuthor: { ...Typography.default(), color: hull.accent },
-    // Age on top, the attention square under it; the square's slot is
-    // reserved on every row so read-state changes never shift the column.
+    // The gutter carries the timestamp only now; state lives in the leading
+    // column (`rowStateSlot`).
     gutter: {
       width: 46,
       minHeight: ROW_HEIGHT,
       alignItems: 'flex-end',
       justifyContent: 'center',
-      gap: 8,
       paddingRight: 4,
     },
     age: { ...Typography.mono(), color: hull.ledgerGhost, fontSize: 11 },
-    // Reserved whether or not the row is lit, so the age stamp above never
-    // shifts; the square itself only renders when the row wants the viewer.
-    attentionSlot: { width: ATTENTION_SQUARE, height: ATTENTION_SQUARE },
-    attentionSquare: {
-      width: ATTENTION_SQUARE,
-      height: ATTENTION_SQUARE,
-      backgroundColor: hull.accent,
-    },
     // Reserved whether or not the Room has corners, so the age column keeps
     // one straight right edge down the whole index.
     cornerToggleSlot: {

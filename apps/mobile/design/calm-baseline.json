@@ -23,7 +23,7 @@
   "components/ShortcutHints.tsx": 2,
   "components/SidebarView.tsx": 4,
   "components/UpdateReadyPrompt.tsx": 1,
-  "components/buzz/ActivityTimeline.tsx": 3,
+  "components/buzz/ActivityTimeline.tsx": 1,
   "components/buzz/CodeHighlighter.tsx": 1,
   "components/buzz/CommunityRail.tsx": 5,
   "components/buzz/CornerLiveBar.tsx": 3,

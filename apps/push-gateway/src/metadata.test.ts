@@ -1,4 +1,4 @@
-import { createIdentity } from '@beeline/buzz-client';
+import { createIdentity, fallbackAgentName } from '@beeline/buzz-client';
 import { signEvent, type NostrEvent } from '@beeline/nostr';
 import { describe, expect, it, vi } from 'vitest';
 import { NotificationMetadataResolver, type RelayEventReader } from './metadata.js';
@@ -109,7 +109,7 @@ describe('NotificationMetadataResolver', () => {
     expect(query).toHaveBeenCalledTimes(3);
   });
 
-  it('uses the per-pubkey seed name when an agent has no soul', async () => {
+  it('uses the visibly synthetic per-pubkey fallback name when an agent has no soul', async () => {
     const agent = createIdentity('unsouled agent');
     const roomCreate = unsignedEvent(9007, [
       ['h', COMMUNITY_ID],
@@ -144,7 +144,7 @@ describe('NotificationMetadataResolver', () => {
     message.pubkey = agent.publicKey;
 
     const resolved = await new NotificationMetadataResolver().resolve(message, reader);
-    expect(resolved.senderName).toMatch(/^[A-Z][a-z]+$/);
+    expect(resolved.senderName).toBe(fallbackAgentName(agent.publicKey));
     expect(resolved.senderName).not.toBe('beeline-agent');
   });
 

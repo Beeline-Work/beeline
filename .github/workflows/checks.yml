@@ -1,9 +1,9 @@
 # The five PR gates in one file (was typecheck.yml, body-tests.yml,
 # client-truth-gates.yml, workflow-lint.yml, auth-image.yml). Check names are
-# the job `name:`s below and are unchanged: TYPECHECK, BODY SUITE, MOBILE
-# SUITE, MOBILE-EXPORT REACHABILITY, PRODUCTION-CORPUS REPLAY, FRAME-BUDGET,
-# STATE-UPGRADE, NATIVE FINGERPRINT, README PARITY, ACTIONLINT, Build auth
-# container, Detect changes.
+# the job `name:`s below and are unchanged: TYPECHECK, BODY SUITE,
+# PUSH-GATEWAY SUITE, MOBILE SUITE, MOBILE-EXPORT REACHABILITY,
+# PRODUCTION-CORPUS REPLAY, FRAME-BUDGET, STATE-UPGRADE, NATIVE FINGERPRINT,
+# README PARITY, ACTIONLINT, Build auth container, Detect changes.
 #
 # One `changes` job maps the diff to the gates it can affect; a gate whose
 # paths are untouched is skipped, and a skipped job still posts a passing
@@ -29,6 +29,7 @@ on:
           - all
           - typecheck
           - body-suite
+          - push-gateway-suite
           - mobile-suite
           - mobile-export-reachability
           - production-corpus-replay
@@ -51,6 +52,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       body: ${{ steps.filter.outputs.body }}
+      pushGateway: ${{ steps.filter.outputs.pushGateway }}
       mobileSuite: ${{ steps.filter.outputs.mobileSuite }}
       mobileExportReachability: ${{ steps.filter.outputs.mobileExportReachability }}
       productionCorpusReplay: ${{ steps.filter.outputs.productionCorpusReplay }}
@@ -73,6 +75,16 @@ jobs:
               - 'packages/nostr/**'
               - 'packages/buzz-client/**'
               - 'apps/gate/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'tsconfig.base.json'
+              - 'turbo.json'
+              - '.github/workflows/checks.yml'
+            pushGateway:
+              - 'apps/push-gateway/**'
+              - 'packages/nostr/**'
+              - 'packages/api-contract/**'
+              - 'packages/buzz-client/**'
               - 'package.json'
               - 'package-lock.json'
               - 'tsconfig.base.json'
@@ -264,6 +276,34 @@ jobs:
       - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client && npm run build -w @beeline/gate && npm run build -w @beeline/auth && npm run build -w @beeline/body && npm run build -w @beeline/push-gateway
       - name: Run the hermetic Body suite
         working-directory: apps/body
+        run: npx vitest run
+
+  push-gateway-suite:
+    name: PUSH-GATEWAY SUITE
+    needs: changes
+    # `!cancelled()` lets the job evaluate its own condition when `changes`
+    # was skipped (a dispatch); without it a skipped prerequisite skips this.
+    if: >-
+      !cancelled() && (
+        (github.event_name == 'pull_request' && needs.changes.outputs.pushGateway == 'true') ||
+        (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'push-gateway-suite'))
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # push-gateway's production entry imports Body subpaths (release-status),
+      # which in turn reach @beeline/auth/@beeline/gate; build the same chain
+      # body-suite uses, minus building push-gateway itself (its tests run
+      # straight from src via vitest, never its own dist).
+      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client && npm run build -w @beeline/gate && npm run build -w @beeline/auth && npm run build -w @beeline/body
+      - name: Run the push-gateway suite
+        working-directory: apps/push-gateway
         run: npx vitest run
 
   mobile-suite:

@@ -15,7 +15,8 @@ import {
   promptWithImages,
   type DeliveredAttachment,
 } from './attachment-delivery.js';
-import { isCornerStatusRestatement, stripAgentReplyPreamble } from './reply-sanitizer.js';
+import { isCornerStatusRestatement } from './reply-sanitizer.js';
+import { AgentTurnStream, durableReplyText } from './turn-stream.js';
 import { toolCallFailureLine } from './tool-call-failure.js';
 import { distillTurnFailureReason, redactToolDetail } from './turn-failure-reason.js';
 import { beelineAgentMcpServer } from './room-session.js';
@@ -267,7 +268,6 @@ export class MonolithCornerTurnLoop {
   private turnIdentityInstructions = '';
   private busy = false;
   private forcedStop = false;
-  private draftTail = Promise.resolve();
   private activityTail = Promise.resolve();
   /** Session scratch directory attachments are downloaded into (`TMPDIR/beeline-attachments`). */
   private attachmentDir?: string;
@@ -507,7 +507,7 @@ export class MonolithCornerTurnLoop {
 
   /** Why a turn carried no answer text, or undefined when it did. */
   private async explainEmpty(result: PromptResult): Promise<EmptyTurnExplanation | undefined> {
-    if (stripAgentReplyPreamble(result.agentText).trim()) return undefined;
+    if (durableReplyText(result.agentText)) return undefined;
     return explainEmptyAgentTurn({
       agentLabel: this.options.config.agentCommand ?? this.options.config.agentBinary,
       agentEnv: this.agentEnv,
@@ -608,52 +608,17 @@ export class MonolithCornerTurnLoop {
               ]
                 .filter(Boolean)
                 .join('\n\n');
-              // The draft lane's turn id must equal the turn's request id so the
-              // durable final reconciles (and settles) the live draft, exactly as
-              // in top-level Rooms; any other id leaves a ghost draft duplicating
-              // the final message when the retract event is missed.
-              const turnId = requestId;
+              // Rooms and corners stream through ONE presentation (C100): the
+              // provisional draft lane, the request-id handoff, and the single
+              // durable reply that dissolves it all live in `turn-stream.ts`.
+              const stream = new AgentTurnStream({
+                api,
+                agentId: this.agent.publicKey,
+                roomId: cornerId,
+                requestId,
+                label: `corner ${cornerId}`,
+              });
               const publishedToolCalls = new Set<string>();
-              // Colloquial corner ledger: each COMPLETED narration segment of the
-              // turn is kept as a durable Room line (server-indexed like any
-              // message), interleaved with the settled tool rows, instead of the
-              // corner staying silent until the finish. Segments carry no request
-              // id so they never settle the turn's receipt; the un-posted tail
-              // becomes the durable final. Offsets index the RAW stream text;
-              // a failed segment post reverts its offset so the text still lands
-              // in the final.
-              const NARRATION_MAX_SEGMENTS = 20;
-              let narrationPostedChars = 0;
-              let narrationSegments = 0;
-              const postNarrationSegments = (full: string) => {
-                if (narrationSegments >= NARRATION_MAX_SEGMENTS) return;
-                const unposted = full.slice(narrationPostedChars);
-                const boundaries = [...unposted.matchAll(/\n\n|[.!?](?=\s)/g)];
-                if (!boundaries.length) return;
-                const boundary = boundaries[boundaries.length - 1]!;
-                const segmentEnd = narrationPostedChars + boundary.index! + boundary[0].length;
-                const segment = stripAgentReplyPreamble(
-                  full.slice(narrationPostedChars, segmentEnd),
-                );
-                const start = narrationPostedChars;
-                narrationPostedChars = segmentEnd;
-                narrationSegments += 1;
-                const trimmed = spoken(segment.trim());
-                if (!trimmed) return;
-                this.activityTail = this.activityTail
-                  .catch(() => undefined)
-                  .then(async () => {
-                    await api.execute('postRoomMessage', {
-                      roomId: cornerId,
-                      text: trimmed,
-                      presentation: 'message',
-                    });
-                  })
-                  .catch(() => {
-                    narrationPostedChars = start;
-                    narrationSegments -= 1;
-                  });
-              };
               const publishToolCalls = (calls: readonly ToolCallEntry[], settledOnly: boolean) => {
                 calls.forEach((call, index) => {
                   const key = toolCallKey(call, index);
@@ -685,37 +650,20 @@ export class MonolithCornerTurnLoop {
               // One prompt run. It is a closure because an empty completion
               // re-pins the session to another provider and runs it again
               // (C92) — against the NEW client and session id.
-              const runPrompt = async (): Promise<PromptResult> =>
-                this.client!.sessionPrompt(
+              const runPrompt = async (): Promise<PromptResult> => {
+                stream.beginRun();
+                return this.client!.sessionPrompt(
                   this.sessionId!,
                   promptWithImages(
                     prompt,
                     attachmentImageBlocks(delivered, this.acceptsImages()),
                   ),
                   120_000,
-                  (_delta, full) => {
-                    postNarrationSegments(full);
-                    this.draftTail = this.draftTail
-                      .catch(() => undefined)
-                      .then(() =>
-                        api.execute('postAgentDraft', {
-                          agentId: this.agent.publicKey,
-                          roomId: cornerId,
-                          turnId,
-                          text: full,
-                        }),
-                      )
-                      .then(() => undefined)
-                      .catch((error) =>
-                        console.error(
-                          `[thin-core] corner ${cornerId} draft publish failed:`,
-                          error,
-                        ),
-                      );
-                  },
+                  stream.onChunk,
                   undefined,
                   (calls) => publishToolCalls(calls, true),
                 );
+              };
               let result = await runPrompt();
               let explained = await this.explainEmpty(result);
               // A checks turn is told to say nothing when nothing changed; its
@@ -740,13 +688,11 @@ export class MonolithCornerTurnLoop {
                 if (failure) console.warn(`[thin-core] corner ${cornerId} ${failure}`);
               }
               await this.activityTail;
-              await this.draftTail;
+              await stream.drained();
               await this.activityTail;
-              let reply = stripAgentReplyPreamble(result.agentText).trim();
+              let reply = durableReplyText(result.agentText);
               if (!reply && explained) {
-                reply = explained.recoveredText
-                  ? stripAgentReplyPreamble(explained.recoveredText).trim()
-                  : '';
+                reply = explained.recoveredText ? durableReplyText(explained.recoveredText) : '';
                 // A checks turn is told to say nothing when nothing changed; only a
                 // provider refusal makes that silence a failure.
                 if (!reply && !(restates && !isAccountOrProviderRefusal(explained.record))) {
@@ -758,28 +704,11 @@ export class MonolithCornerTurnLoop {
                   `[thin-core] corner ${cornerId} turn ${requestId}: ${explained.reason}`,
                 );
               }
-              // The durable final carries only the tail the narration segments did
-              // not already keep; when narration covered the whole reply the turn
-              // settles through its explicit receipt instead.
-              const durableTail = spoken(
-                narrationPostedChars > 0
-                  ? stripAgentReplyPreamble(result.agentText.slice(narrationPostedChars)).trim()
-                  : reply,
-              );
-              if (durableTail) {
-                await api.execute('postRoomMessage', {
-                  roomId: cornerId,
-                  requestId,
-                  text: durableTail,
-                  presentation: 'message',
-                });
-              }
-              await api.execute('retractAgentLiveOutput', {
-                agentId: this.agent.publicKey,
-                roomId: cornerId,
-                turnId,
-                kind: 'draft',
-              });
+              // The reply is posted WHOLE, never a slice: a corner that narrated
+              // before a tool call still lands its closing message. A reply that
+              // only restates the server's own check notes says nothing new, and
+              // that turn settles through its receipt instead.
+              await stream.settle(spoken(reply));
             },
             { priority: 'interactive', roomKey: cornerId },
           ),

@@ -221,10 +221,10 @@ describe('Room view presentation', () => {
     });
   });
 
-  it('interleaves durable corner narration lines with tool rows by creation time', () => {
+  it('interleaves an agent’s durable lines with tool rows by creation time', () => {
     const agent = 'b'.repeat(64);
     const author = { pubkey: agent, kind: 'agent' as const, name: 'Bee' };
-    const narration = (id: string, createdAt: number): RoomViewMessage => ({
+    const prose = (id: string, createdAt: number): RoomViewMessage => ({
       id,
       text: `Step ${id}: updating only the ledger.`,
       createdAt,
@@ -240,26 +240,26 @@ describe('Room view presentation', () => {
       activity: [{ kind: 'tool', title: 'Bash', operation: 'execute', command: `npm test ${id}` }],
     });
     const transcript = roomViewTranscriptMessages({
-      messages: [narration('narration-1', 1), narration('narration-2', 3), narration('final', 5)],
+      messages: [prose('prose-1', 1), prose('prose-2', 3), prose('final', 5)],
       toolRows: [toolRow('tool-1', 2), toolRow('tool-2', 4)],
     });
 
-    // Narration segments land between the collapsed tool-call groups in
+    // Durable agent lines land between the collapsed tool-call groups in
     // creation order, never before or after the whole activity block.
     expect(transcript.map((message) => message.id)).toEqual([
-      'narration-1',
+      'prose-1',
       'tool-1',
-      'narration-2',
+      'prose-2',
       'tool-2',
       'final',
     ]);
-    // Narration rows render as ordinary agent lines, not activity rows.
+    // They render as ordinary agent lines, not activity rows.
     const displayed = displayRoomMessages(transcript, 'a'.repeat(64));
-    const narrationRow = displayed.find((row) => row.id === 'narration-1');
-    expect(narrationRow).toMatchObject({
-      text: 'Step narration-1: updating only the ledger.',
+    const proseRow = displayed.find((row) => row.id === 'prose-1');
+    expect(proseRow).toMatchObject({
+      text: 'Step prose-1: updating only the ledger.',
     });
-    expect(narrationRow).not.toHaveProperty('isAgentActivity');
+    expect(proseRow).not.toHaveProperty('isAgentActivity');
   });
 
   it('folds a settled run of per-call tool rows from one agent into one group (C55)', () => {

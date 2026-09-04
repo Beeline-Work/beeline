@@ -470,6 +470,9 @@ describe('connect wizard', () => {
     // configured provider; the credential filter (held: openrouter) keeps only
     // `openrouter/…` ids, so the filtered axis is empty. The raw axis must win.
     const picker = connectModelPickerFromAxes(
+      [{ category: 'model', currentValue: 'z-ai/glm-5.3-flash', options: [] }],
+      'z-ai/glm-5.3-flash',
+      'goose',
       [
         {
           category: 'model',
@@ -482,8 +485,6 @@ describe('connect wizard', () => {
         },
         { category: 'thought_level', currentValue: 'off', options: [{ id: 'off' }] },
       ],
-      'z-ai/glm-5.3-flash',
-      'goose',
     );
     expect(picker.options.map((option) => option.id)).toEqual([
       'z-ai/glm-5.3-flash',

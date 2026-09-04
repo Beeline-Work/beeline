@@ -1,3 +1,20 @@
+# The one production release button. `gh workflow run unified-release.yml`
+# (no inputs) releases the current main head: one human version for one exact
+# SHA, every artifact built before the gate, then server -> daemon -> app
+# promotion, each confirmed, then the delivery report, npm publish, and the
+# optional store leg. The three legs are composite actions under
+# .github/actions/{server-leg,daemon-leg,mobile-ota-leg}, each called twice
+# (build, then promote). A merge to main never releases; the retry job
+# re-dispatches this same workflow with the same identity.
+#
+# Inputs:
+#   release_sha / release_version / retry_attempt — governor retry identity
+#   store_track — none (default) | internal | beta | production: after the
+#                 app is confirmed, build the store AAB/IPA on EAS from the
+#                 release SHA, upload the AAB to that Play track as a draft,
+#                 sync the Play listing, and submit the IPA to TestFlight.
+#                 A store failure fails only its own job; the delivery report
+#                 stays the authority on whether the release was delivered.
 name: Unified production release
 
 on:
@@ -16,6 +33,16 @@ on:
         type: string
         default: '1'
         required: true
+      store_track:
+        description: Also build store binaries from the release SHA and upload them (Play track as draft, TestFlight)
+        type: choice
+        default: none
+        options:
+          - none
+          - internal
+          - beta
+          - production
+        required: false
 
 permissions:
   actions: write
@@ -112,29 +139,48 @@ jobs:
   # its two host-native builds, but neither waits behind the mobile export.
   app_artifact:
     needs: initialize
-    uses: ./.github/workflows/mobile-ota.yml
-    with:
-      phase: build
-      release_sha: ${{ needs.initialize.outputs.release_sha }}
-      release_version: ${{ needs.initialize.outputs.release_version }}
-      retry_attempt: ${{ inputs.retry_attempt }}
-    secrets: inherit
+    runs-on: [self-hosted, beeline-prod-host]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.initialize.outputs.release_sha }}
+          fetch-depth: 0
+      - uses: ./.github/actions/mobile-ota-leg
+        with:
+          phase: build
+          release_sha: ${{ needs.initialize.outputs.release_sha }}
+          release_version: ${{ needs.initialize.outputs.release_version }}
+          retry_attempt: ${{ inputs.retry_attempt }}
+          expo_token: ${{ secrets.EXPO_TOKEN }}
 
   daemon_artifact:
     needs: initialize
-    uses: ./.github/workflows/beeline-bundle.yml
-    with:
-      phase: build
-      release_sha: ${{ needs.initialize.outputs.release_sha }}
-      release_version: ${{ needs.initialize.outputs.release_version }}
+    runs-on: [self-hosted, beeline-prod-host]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.initialize.outputs.release_sha }}
+      - uses: ./.github/actions/daemon-leg
+        with:
+          phase: build
+          release_sha: ${{ needs.initialize.outputs.release_sha }}
+          release_version: ${{ needs.initialize.outputs.release_version }}
 
   server_artifact:
     needs: initialize
-    uses: ./.github/workflows/deploy-host.yml
-    with:
-      phase: build
-      release_sha: ${{ needs.initialize.outputs.release_sha }}
-      release_version: ${{ needs.initialize.outputs.release_version }}
+    runs-on: [self-hosted, beeline-prod-host]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.initialize.outputs.release_sha }}
+      - uses: ./.github/actions/server-leg
+        with:
+          phase: build
+          release_sha: ${{ needs.initialize.outputs.release_sha }}
+          release_version: ${{ needs.initialize.outputs.release_version }}
 
   artifact_gate:
     needs: [initialize, app_artifact, daemon_artifact, server_artifact]
@@ -203,11 +249,22 @@ jobs:
 
   promote_server:
     needs: [initialize, artifact_gate]
-    uses: ./.github/workflows/deploy-host.yml
-    with:
-      phase: promote
-      release_sha: ${{ needs.initialize.outputs.release_sha }}
-      release_version: ${{ needs.initialize.outputs.release_version }}
+    runs-on: [self-hosted, beeline-prod-host]
+    timeout-minutes: 20
+    # Do not cancel an active Fly rollout. Let it finish before deploying the
+    # newest queued release SHA.
+    concurrency:
+      group: deploy-beeline-server
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.initialize.outputs.release_sha }}
+      - uses: ./.github/actions/server-leg
+        with:
+          phase: promote
+          release_sha: ${{ needs.initialize.outputs.release_sha }}
+          release_version: ${{ needs.initialize.outputs.release_version }}
 
   confirm_server:
     needs: [initialize, promote_server]
@@ -247,11 +304,21 @@ jobs:
 
   promote_daemon:
     needs: [initialize, confirm_server]
-    uses: ./.github/workflows/beeline-bundle.yml
-    with:
-      phase: promote
-      release_sha: ${{ needs.initialize.outputs.release_sha }}
-      release_version: ${{ needs.initialize.outputs.release_version }}
+    runs-on: [self-hosted, beeline-prod-host]
+    # The daemon leg's confirm step waits up to 35 minutes: a busy helper may
+    # hold its restart for the whole drain deadline (`UPDATE_DRAIN_DEADLINE_MS`)
+    # before the forced restart, then systemd's restart backoff and the
+    # successor probe follow.
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.initialize.outputs.release_sha }}
+      - uses: ./.github/actions/daemon-leg
+        with:
+          phase: promote
+          release_sha: ${{ needs.initialize.outputs.release_sha }}
+          release_version: ${{ needs.initialize.outputs.release_version }}
 
   confirm_daemon:
     needs: [initialize, promote_daemon]
@@ -273,13 +340,26 @@ jobs:
 
   promote_app:
     needs: [initialize, confirm_daemon]
-    uses: ./.github/workflows/mobile-ota.yml
-    with:
-      phase: promote
-      release_sha: ${{ needs.initialize.outputs.release_sha }}
-      release_version: ${{ needs.initialize.outputs.release_version }}
-      retry_attempt: ${{ inputs.retry_attempt }}
-    secrets: inherit
+    runs-on: [self-hosted, beeline-prod-host]
+    timeout-minutes: 10
+    outputs:
+      production_group_id: ${{ steps.leg.outputs.production_group_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.initialize.outputs.release_sha }}
+          fetch-depth: 0
+      - uses: ./.github/actions/mobile-ota-leg
+        id: leg
+        with:
+          phase: promote
+          release_sha: ${{ needs.initialize.outputs.release_sha }}
+          release_version: ${{ needs.initialize.outputs.release_version }}
+          retry_attempt: ${{ inputs.retry_attempt }}
+          expo_token: ${{ secrets.EXPO_TOKEN }}
+          owner_pubkey: ${{ secrets.MOBILE_OTA_OWNER_PUBKEY }}
+          receipt_token: ${{ secrets.MOBILE_OTA_RECEIPT_TOKEN }}
+          receipt_origin: ${{ vars.MOBILE_OTA_RECEIPT_ORIGIN || 'https://usebeeline.app/push' }}
 
   confirm_app:
     needs: [initialize, artifact_gate, promote_app]
@@ -376,6 +456,422 @@ jobs:
             echo
             cat "$RUNNER_TEMP/delivery-report.txt"
           } >> "$GITHUB_STEP_SUMMARY"
+      # Receipt-only bookkeeping (was the 15-minute mobile-ota-reconcile.yml
+      # cron). The delivery verdict above never depends on it: the owner
+      # device fetches the update when the app is next opened, so this waits a
+      # bounded three minutes for that receipt, records it in the cumulative
+      # delivery index when it arrives, and otherwise leaves the merge
+      # `published` for the next release's promote step to confirm (that step
+      # folds every unconfirmed merge into the new production group).
+      - uses: actions/download-artifact@v4
+        with:
+          name: mobile-ota-delivery-index
+          path: ${{ runner.temp }}/index
+      - name: Record the owner device receipt when it arrives within three minutes
+        id: receipt
+        continue-on-error: true
+        working-directory: apps/mobile
+        env:
+          DELIVERY_INDEX: ${{ runner.temp }}/index/mobile-ota-delivery-index.json
+          OWNER_PUBKEY: ${{ secrets.MOBILE_OTA_OWNER_PUBKEY }}
+          RECEIPT_TOKEN: ${{ secrets.MOBILE_OTA_RECEIPT_TOKEN }}
+          RECEIPT_ORIGIN: ${{ vars.MOBILE_OTA_RECEIPT_ORIGIN || 'https://usebeeline.app/push' }}
+          RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
+          RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
+        run: |
+          set -euo pipefail
+          readarray -t delivery < <(node scripts/ota-release.mjs delivery-target --index "$DELIVERY_INDEX")
+          group="${delivery[0]#group_id=}"
+          updates="${delivery[1]#update_ids=}"
+          confirmed=false
+          if [ -n "$group" ] && [ -n "$OWNER_PUBKEY" ] && [ -n "$RECEIPT_TOKEN" ]; then
+            deadline=$((SECONDS + 180))
+            while (( SECONDS < deadline )); do
+              if curl --fail --silent --show-error --max-time 15 \
+                -H "Authorization: Bearer $RECEIPT_TOKEN" \
+                "$RECEIPT_ORIGIN/update-receipts/$OWNER_PUBKEY" \
+                -o "$RUNNER_TEMP/owner-update-receipt.json"; then
+                result="$(node scripts/ota-release.mjs confirm --index "$DELIVERY_INDEX" \
+                  --receipt "$RUNNER_TEMP/owner-update-receipt.json" --group "$group" --update-ids "$updates" \
+                  --release-version "$RELEASE_VERSION" --sha "$RELEASE_SHA")"
+                echo "$result"
+                if node -e 'process.exit(JSON.parse(process.argv[1]).confirmed ? 0 : 1)' "$result"; then
+                  confirmed=true
+                  break
+                fi
+              else
+                echo "Owner receipt endpoint unavailable; retrying until the deadline." >&2
+              fi
+              sleep 20
+            done
+          fi
+          node scripts/ota-release.mjs list-undelivered --index "$DELIVERY_INDEX" \
+            --output "$RUNNER_TEMP/index/mobile-ota-undelivered.json"
+          {
+            echo
+            if [ "$confirmed" = true ]; then
+              echo "Owner device receipt: confirmed production group \`$group\` on the owner device."
+            else
+              echo "Owner device receipt: not yet reported for production group \`$group\`; the next release's promote step confirms it once the device has fetched an update."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Store cumulative delivery index with the receipt result
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-ota-delivery-index
+          path: |
+            ${{ runner.temp }}/index/mobile-ota-delivery-index.json
+            ${{ runner.temp }}/index/mobile-ota-undelivered.json
+          if-no-files-found: error
+          retention-days: 90
+          overwrite: true
+
+  # Final job of a delivered release (was npm-publish.yml's workflow_run
+  # trigger). The npm trusted publisher for `usebeeline` must name THIS
+  # workflow file; there is no token in the repository.
+  npm_publish:
+    needs: [initialize, delivery_report]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.initialize.outputs.release_sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: unified-release-index
+          path: ${{ runner.temp }}/release
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+      - name: Install an OIDC-capable npm CLI
+        run: npm install --global npm@^11.15.0
+      - name: Install dependencies
+        run: npm ci
+      - name: Build package
+        run: |
+          npm run build -w @beeline/nostr
+          npm run build -w @beeline/api-contract
+          npm run build -w @beeline/buzz-client
+          npm run build -w @beeline/gate
+          npm run build -w @beeline/body
+          npm run build -w usebeeline
+      - name: Resolve publish version from the delivered release index
+        id: version
+        env:
+          RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
+        run: |
+          release_version=$(node -e "const r=require(process.argv[1]);if(!/^v[0-9]+\\.[0-9]+\\.[0-9]+$/.test(r.version)||r.sourceSha!==process.argv[2])process.exit(1);process.stdout.write(r.version.slice(1))" "$RUNNER_TEMP/release/unified-release.json" "$RELEASE_SHA")
+          npm version "$release_version" --allow-same-version --no-git-tag-version --workspace usebeeline
+          echo "value=$release_version" >> "$GITHUB_OUTPUT"
+      - name: Publish with provenance
+        run: |
+          if npm view "usebeeline@${{ steps.version.outputs.value }}" version >/dev/null 2>&1; then
+            echo "usebeeline@${{ steps.version.outputs.value }} is already published"
+            exit 0
+          fi
+          npm publish --no-provenance --workspace usebeeline
+
+  # Store leg (was play-beta.yml + play-listing.yml + testflight.yml). Runs
+  # only when store_track is set, after the app is confirmed, from the exact
+  # release SHA. Signing: the AAB carries the EAS-managed upload key (the
+  # committed apps/mobile/android-signing keystore is sideload-only); Play
+  # auth is a short-lived token minted from GOOGLE_PLAY_SERVICE_ACCOUNT_JSON
+  # (scripts/play-token.mjs). A failure here fails this job only.
+  store_android:
+    needs: [initialize, confirm_app]
+    if: contains(fromJSON('["internal","beta","production"]'), inputs.store_track)
+    name: Store Android (Play ${{ inputs.store_track }} draft + listing)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    concurrency:
+      group: play-release
+      cancel-in-progress: false
+    env:
+      PACKAGE_NAME: app.usebeeline.mobile
+      EAS_CLI_VERSION: 22.2.0
+      BUNDLETOOL_VERSION: 1.18.1
+      TRACK: ${{ inputs.store_track }}
+    steps:
+      - name: Require the release secrets
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          if [ -z "$PLAY_SERVICE_ACCOUNT_JSON" ]; then
+            echo "GOOGLE_PLAY_SERVICE_ACCOUNT_JSON repository secret is not set; add the Play service account JSON key before releasing with store_track."
+            exit 1
+          fi
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "EXPO_TOKEN repository secret is not set; add an Expo access token before releasing with store_track."
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.initialize.outputs.release_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+      - name: Version check
+        id: version
+        working-directory: apps/mobile
+        run: |
+          version=$(node scripts/check-release-version.cjs)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Releasing app version $version"
+      - name: Play metadata is derived from the store package
+        run: node scripts/sync-play-metadata.mjs --check
+      - name: Install mobile dependencies
+        working-directory: apps/mobile
+        run: npm ci
+      - name: Build the AAB on EAS from the release SHA
+        id: build
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes "eas-cli@$EAS_CLI_VERSION" build --profile production --platform android \
+            --non-interactive --wait --json > "$RUNNER_TEMP/eas-build.json"
+          build=$(jq -c 'if type == "array" then .[0] else . end' "$RUNNER_TEMP/eas-build.json")
+          status=$(echo "$build" | jq -r '.status')
+          if [ "$status" != "FINISHED" ]; then
+            echo "EAS build ended with status $status"
+            echo "$build" | jq '.'
+            exit 1
+          fi
+          {
+            echo "id=$(echo "$build" | jq -r '.id')"
+            echo "app_version=$(echo "$build" | jq -r '.appVersion')"
+            echo "version_code=$(echo "$build" | jq -r '.appBuildVersion')"
+            echo "archive_url=$(echo "$build" | jq -r '.artifacts.applicationArchiveUrl // .artifacts.buildUrl')"
+          } >> "$GITHUB_OUTPUT"
+          echo "EAS build $(echo "$build" | jq -r '.id') finished: $(echo "$build" | jq -r '.appVersion') ($(echo "$build" | jq -r '.appBuildVersion'))"
+      - name: Download the AAB
+        env:
+          ARCHIVE_URL: ${{ steps.build.outputs.archive_url }}
+        run: |
+          set -euo pipefail
+          if [ -z "$ARCHIVE_URL" ] || [ "$ARCHIVE_URL" = "null" ]; then
+            echo "EAS build has no application archive URL"
+            exit 1
+          fi
+          curl -fsSL -o "$RUNNER_TEMP/beeline.aab" "$ARCHIVE_URL"
+          ls -l "$RUNNER_TEMP/beeline.aab"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Verify the AAB version and signer with bundletool
+        env:
+          EXPECTED_NAME: ${{ steps.version.outputs.version }}
+          EXPECTED_CODE: ${{ steps.build.outputs.version_code }}
+        run: |
+          set -euo pipefail
+          aab="$RUNNER_TEMP/beeline.aab"
+          bundletool="$RUNNER_TEMP/bundletool.jar"
+          curl -fsSL -o "$bundletool" \
+            "https://github.com/google/bundletool/releases/download/${BUNDLETOOL_VERSION}/bundletool-all-${BUNDLETOOL_VERSION}.jar"
+          aab_name=$(java -jar "$bundletool" dump manifest --bundle="$aab" --xpath=/manifest/@android:versionName)
+          aab_code=$(java -jar "$bundletool" dump manifest --bundle="$aab" --xpath=/manifest/@android:versionCode)
+          aab_package=$(java -jar "$bundletool" dump manifest --bundle="$aab" --xpath=/manifest/@package)
+          echo "Expected: $EXPECTED_NAME ($EXPECTED_CODE) $PACKAGE_NAME"
+          echo "AAB:      $aab_name ($aab_code) $aab_package"
+          if [ "$aab_name" != "$EXPECTED_NAME" ] || [ "$aab_code" != "$EXPECTED_CODE" ] || [ "$aab_package" != "$PACKAGE_NAME" ]; then
+            echo "The AAB does not carry the expected package, versionName and versionCode."
+            exit 1
+          fi
+          certs=$(keytool -printcert -jarfile "$aab")
+          echo "$certs" | grep -E '^Owner:' || true
+          if echo "$certs" | grep -q 'CN=Android Debug'; then
+            echo "The AAB is debug-signed."
+            exit 1
+          fi
+      - name: Upload the AAB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: beeline-${{ steps.version.outputs.version }}-${{ steps.build.outputs.version_code }}.aab
+          path: ${{ runner.temp }}/beeline.aab
+          if-no-files-found: error
+      # Self-signed JWT flow: google-github-actions/auth exchanges the key through
+      # the IAM Service Account Credentials API, which is not enabled in the
+      # Beeline project. The Android Developer API accepts a token minted from the
+      # key alone (scripts/play-token.mjs); the token is masked, never printed.
+      - name: Authenticate to Google Play with the service account
+        id: gcp-auth
+        env:
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+        run: node scripts/play-token.mjs
+      - name: Upload the AAB to the Play ${{ inputs.store_track }} track as a draft release
+        env:
+          ACCESS_TOKEN: ${{ steps.gcp-auth.outputs.access_token }}
+          AAB_PATH: ${{ runner.temp }}/beeline.aab
+          RELEASE_NAME: ${{ steps.version.outputs.version }}
+          RELEASE_STATUS: draft
+        run: bash scripts/play-publish.sh
+      - name: Sync the Play store listing
+        env:
+          ACCESS_TOKEN: ${{ steps.gcp-auth.outputs.access_token }}
+          METADATA_DIR: apps/mobile/fastlane/metadata/android
+          LANGUAGE: en-US
+        run: bash scripts/play-publish-listing.sh
+      - name: Store summary
+        if: always()
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          VERSION_CODE: ${{ steps.build.outputs.version_code }}
+          BUILD_ID: ${{ steps.build.outputs.id }}
+          RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
+          OUTCOME: ${{ job.status }}
+        run: |
+          {
+            echo "## Play ${TRACK} draft: app ${VERSION:-?} (${VERSION_CODE:-?}) for ${RELEASE_VERSION} — ${OUTCOME}"
+            echo ""
+            echo "- Play Console: https://play.google.com/console/u/0/developers/-/app-list?search=${PACKAGE_NAME}"
+            echo "- EAS builds: https://expo.dev/accounts/-/projects/buzzy/builds"
+            echo "- EAS build id: ${BUILD_ID:-not started}"
+            echo "- The release itself is judged by the delivery report, not by this job."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # iOS store leg (was testflight.yml). The `production-ci` profile is the
+  # store build with EAS-managed credentials (a hosted runner has no
+  # apps/mobile/credentials.json). eas-cli reads exactly EXPO_ASC_API_KEY_PATH,
+  # EXPO_ASC_KEY_ID, EXPO_ASC_ISSUER_ID to create or repair the App Store
+  # provisioning profile non-interactively, so the key is written BEFORE the
+  # build; the distribution certificate must already exist (one interactive
+  # `eas credentials --platform ios`, see apps/mobile/docs/store-submission.md).
+  store_ios:
+    needs: [initialize, confirm_app]
+    if: contains(fromJSON('["internal","beta","production"]'), inputs.store_track)
+    name: Store iOS (TestFlight)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    concurrency:
+      group: testflight-release
+      cancel-in-progress: false
+    env:
+      EAS_CLI_VERSION: 22.2.0
+      ASC_APP_ID: '6803948500'
+    steps:
+      - name: Require the release secrets
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EXPO_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
+          EXPO_ASC_ISSUER_ID: ${{ secrets.EXPO_ASC_ISSUER_ID }}
+          EXPO_ASC_API_KEY_P8: ${{ secrets.EXPO_ASC_API_KEY_P8 }}
+        run: |
+          missing=0
+          for name in EXPO_TOKEN EXPO_ASC_KEY_ID EXPO_ASC_ISSUER_ID EXPO_ASC_API_KEY_P8; do
+            if [ -z "${!name}" ]; then
+              echo "$name repository secret is not set; add it before releasing with store_track."
+              missing=1
+            fi
+          done
+          exit "$missing"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.initialize.outputs.release_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+      - name: Version check
+        id: version
+        working-directory: apps/mobile
+        run: |
+          version=$(node scripts/check-release-version.cjs)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Releasing app version $version"
+      - name: Install mobile dependencies
+        working-directory: apps/mobile
+        run: npm ci
+      - name: Write the App Store Connect API key
+        env:
+          EXPO_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
+          EXPO_ASC_API_KEY_P8: ${{ secrets.EXPO_ASC_API_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          key_path="$RUNNER_TEMP/AuthKey_${EXPO_ASC_KEY_ID}.p8"
+          echo "$EXPO_ASC_API_KEY_P8" | base64 -d > "$key_path"
+          chmod 600 "$key_path"
+          if ! grep -q 'BEGIN PRIVATE KEY' "$key_path"; then
+            echo "EXPO_ASC_API_KEY_P8 did not decode to a PEM private key; store the base64 of the .p8 file."
+            exit 1
+          fi
+          echo "EXPO_ASC_API_KEY_PATH=$key_path" >> "$GITHUB_ENV"
+      - name: Build the iOS app on EAS from the release SHA
+        id: build
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EXPO_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
+          EXPO_ASC_ISSUER_ID: ${{ secrets.EXPO_ASC_ISSUER_ID }}
+          EXPECTED_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          build_status=0
+          npx --yes "eas-cli@$EAS_CLI_VERSION" build --profile production-ci --platform ios \
+            --non-interactive --wait --json > "$RUNNER_TEMP/eas-build.json" \
+            2> >(tee "$RUNNER_TEMP/eas-build.log" >&2) || build_status=$?
+          wait
+          if [ "$build_status" -ne 0 ]; then
+            if grep -q 'Credentials are not set up. Run this command again in interactive mode.' "$RUNNER_TEMP/eas-build.log"; then
+              echo "::error::EAS holds no iOS distribution certificate for the production-ci profile, and eas-cli $EAS_CLI_VERSION can only create one interactively. An operator must run once, from apps/mobile: eas credentials --platform ios (Build Credentials > production-ci > Distribution Certificate), then re-run this job."
+            fi
+            exit "$build_status"
+          fi
+          build=$(jq -c 'if type == "array" then .[0] else . end' "$RUNNER_TEMP/eas-build.json")
+          status=$(echo "$build" | jq -r '.status')
+          if [ "$status" != "FINISHED" ]; then
+            echo "EAS build ended with status $status"
+            echo "$build" | jq '.'
+            exit 1
+          fi
+          app_version=$(echo "$build" | jq -r '.appVersion')
+          if [ "$app_version" != "$EXPECTED_VERSION" ]; then
+            echo "EAS built app version $app_version; the checked-out package version is $EXPECTED_VERSION"
+            exit 1
+          fi
+          {
+            echo "id=$(echo "$build" | jq -r '.id')"
+            echo "build_number=$(echo "$build" | jq -r '.appBuildVersion')"
+          } >> "$GITHUB_OUTPUT"
+          echo "EAS build $(echo "$build" | jq -r '.id') finished: $app_version ($(echo "$build" | jq -r '.appBuildVersion'))"
+      - name: Upload to TestFlight
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EXPO_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
+          EXPO_ASC_ISSUER_ID: ${{ secrets.EXPO_ASC_ISSUER_ID }}
+          BUILD_ID: ${{ steps.build.outputs.id }}
+        run: |
+          npx --yes "eas-cli@$EAS_CLI_VERSION" submit --platform ios --profile production \
+            --id "$BUILD_ID" --non-interactive --wait
+      - name: Store summary
+        if: always()
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD_NUMBER: ${{ steps.build.outputs.build_number }}
+          BUILD_ID: ${{ steps.build.outputs.id }}
+          RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
+          OUTCOME: ${{ job.status }}
+        run: |
+          {
+            echo "## TestFlight: app ${VERSION:-?} (${BUILD_NUMBER:-?}) for ${RELEASE_VERSION} — ${OUTCOME}"
+            echo ""
+            echo "- App Store Connect: https://appstoreconnect.apple.com/apps/${ASC_APP_ID}/testflight/ios"
+            echo "- EAS builds: https://expo.dev/accounts/-/projects/buzzy/builds"
+            echo "- EAS build id: ${BUILD_ID:-not started}"
+            echo "- The release itself is judged by the delivery report, not by this job."
+          } >> "$GITHUB_STEP_SUMMARY"
 
   not_delivered:
     if: always() && needs.delivery_report.result != 'success'
@@ -427,6 +923,7 @@ jobs:
           RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
           RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
           ATTEMPT: ${{ inputs.retry_attempt || 1 }}
+          STORE_TRACK: ${{ inputs.store_track || 'none' }}
         with:
           script: |
             const main = await github.rest.repos.getCommit({
@@ -445,5 +942,6 @@ jobs:
                 release_sha: process.env.RELEASE_SHA,
                 release_version: process.env.RELEASE_VERSION,
                 retry_attempt: String(attempt + 1),
+                store_track: process.env.STORE_TRACK,
               },
             });

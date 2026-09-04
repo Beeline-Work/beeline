@@ -129,10 +129,11 @@ test('a same-commit rerun repairs an incomplete live generation', () => {
   }
 });
 
-test('bundle workflow publishes to the host store without writing Git history', () => {
-  const workflow = fs.readFileSync(path.join(REPO, '.github/workflows/beeline-bundle.yml'), 'utf8');
-  assert.match(workflow, /BEELINE_DL_ROOT: \/home\/lunchbox\/buzz-router-relay-prod\/relay-front\/web\/dl/);
+test('daemon release leg publishes to the host store without writing Git history', () => {
+  const leg = fs.readFileSync(path.join(REPO, '.github/actions/daemon-leg/action.yml'), 'utf8');
+  const workflow = fs.readFileSync(path.join(REPO, '.github/workflows/unified-release.yml'), 'utf8');
+  assert.match(leg, /BEELINE_DL_ROOT: \/home\/lunchbox\/buzz-router-relay-prod\/relay-front\/web\/dl/);
   assert.match(workflow, /contents: read/);
-  assert.doesNotMatch(workflow, /git (?:add|commit|push)/);
-  assert.doesNotMatch(workflow, /beeline-bundle-bot/);
+  assert.doesNotMatch(leg, /git (?:add|commit|push)/);
+  assert.doesNotMatch(leg, /beeline-bundle-bot/);
 });

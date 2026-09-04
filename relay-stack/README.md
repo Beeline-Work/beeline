@@ -44,7 +44,8 @@ npm run bundle:beeline -- --platform darwin-arm64
 ```
 
 Each local build writes `web/dl/manifest.json`, a tarball, and its checksum
-sidecar as ignored build outputs. CI (`.github/workflows/beeline-bundle.yml`)
+sidecar as ignored build outputs. CI (the daemon leg of
+`.github/workflows/unified-release.yml`, `.github/actions/daemon-leg/`)
 publishes the verified set directly to the production host's persistent
 `relay-front/web/dl/` store; Git carries none of those generated files. The
 Fly monolith server leg does not touch that store. nginx continues to serve:

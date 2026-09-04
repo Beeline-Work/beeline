@@ -338,6 +338,8 @@ export type PostTargetBranchProposalInput = RoomInput & {
 };
 export type CreateCornerInput = RoomInput & {
   readonly requestId: string;
+  /** The corner's title on every surface, limited to 3 whitespace-delimited words. */
+  readonly name: string;
   /** Immutable one-paragraph objective, limited to 24 whitespace-delimited words. */
   readonly objective: string;
   readonly repository?: string;

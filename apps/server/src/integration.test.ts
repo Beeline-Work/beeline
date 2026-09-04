@@ -818,6 +818,7 @@ describe('monolith integration', () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'tool-corner',
+      name: 'Tool ledger',
       objective: 'Tool ledger',
     });
     expect(created.status).toBe(200);
@@ -2067,6 +2068,7 @@ describe('monolith integration', () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'corner-request',
+      name: 'Ship widget',
       objective: 'Ship widget',
       repository: 'owner/widgets',
       targetBranch: 'main',
@@ -2452,6 +2454,7 @@ describe('monolith integration', () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'single-owner-corner',
+      name: 'Bee corner',
       objective: 'Only Bee serves this',
     });
     expect(created.status).toBe(200);
@@ -3136,6 +3139,7 @@ describe('monolith integration', () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'corner-complete-tag-turn',
+      name: 'Ship the widget',
       objective: 'Ship the widget end to end',
     });
     expect(created.status).toBe(200);
@@ -3169,6 +3173,7 @@ describe('monolith integration', () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'corner-open-card',
+      name: 'Ship the widget',
       objective: 'Ship the widget end to end',
     });
     expect(created.status).toBe(200);
@@ -3182,35 +3187,105 @@ describe('monolith integration', () => {
     expect(cards.rows[0]!.card).toEqual({
       type: 'corner-open',
       cornerId,
+      name: 'Ship the widget',
       objective: 'Ship the widget end to end',
     });
+    // The NAME titles the corner; the objective stays the statement of work.
     const corner = await database.query<{ name: string; objective: string }>(
       `SELECT r.name,cf.objective FROM rooms r JOIN corner_facts cf ON cf.corner_id=r.id WHERE r.id=$1`,
       [cornerId],
     );
     expect(corner.rows[0]).toEqual({
-      name: 'Ship the widget end to end',
+      name: 'Ship the widget',
       objective: 'Ship the widget end to end',
     });
     expect(await loop.runOnce()).toBe(1);
     expect(send).toHaveBeenCalledWith(
       'owner-device-token-12345678901234567890',
-      expect.objectContaining({ text: 'Bee opened a corner: Ship the widget end to end' }),
+      expect.objectContaining({ text: 'Bee opened a corner: Ship the widget' }),
     );
   });
 
-  it('rejects an open-corner objective longer than 24 words', async () => {
+  it('rejects an open-corner objective longer than 24 words, naming the count', async () => {
     const response = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'corner-objective-too-long',
+      name: 'Too long',
       objective: Array.from({ length: 25 }, (_, index) => `word${index + 1}`).join(' '),
     });
     expect(response.status).toBe(503);
+    // The refusal names the limit AND what arrived: nobody could see why the
+    // old catch-all sentence fired, and the same turn failed twice (C90).
+    expect(await response.json()).toEqual({
+      error: 'the objective is 25 words; the limit is 24',
+    });
     const corners = await database.query(
       `SELECT id FROM rooms WHERE parent_id=$1 AND name LIKE 'word1 %'`,
       [ROOM],
     );
     expect(corners.rows).toEqual([]);
+  });
+
+  it('requires a corner name of at most three words and normalises an untidy one', async () => {
+    const missing = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'corner-name-missing',
+      objective: 'Ship the widget',
+    });
+    expect(missing.status).toBe(400);
+    expect(await missing.json()).toEqual({
+      error: 'the name is required; give a title of at most 3 words',
+    });
+
+    const tooLong = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'corner-name-too-long',
+      name: 'far too many words here',
+      objective: 'Ship the widget',
+    });
+    expect(tooLong.status).toBe(503);
+    expect(await tooLong.json()).toEqual({ error: 'the name is 5 words; the limit is 3' });
+
+    // Untidy is not wrong: line breaks and double spaces are flattened, and
+    // the objective that used to be refused outright now opens a corner.
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'corner-name-normalised',
+      name: '  widget \n ledger ',
+      objective: 'Ship the widget\nend to  end',
+    });
+    expect(created.status).toBe(200);
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    const corner = await database.query<{ name: string; objective: string }>(
+      `SELECT r.name,cf.objective FROM rooms r JOIN corner_facts cf ON cf.corner_id=r.id WHERE r.id=$1`,
+      [cornerId],
+    );
+    expect(corner.rows[0]).toEqual({
+      name: 'widget ledger',
+      objective: 'Ship the widget end to end',
+    });
+  });
+
+  it('titles a legacy corner card by the first three words of its objective', async () => {
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'corner-legacy-card',
+      name: 'Legacy corner',
+      objective: 'Rework the room list so every corner row carries a state mark',
+    });
+    expect(created.status).toBe(200);
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    // A card written before the name existed carries only the objective.
+    await database.query(
+      `UPDATE messages SET card=card-'name' WHERE room_id=$1 AND card->>'cornerId'=$2`,
+      [ROOM, cornerId],
+    );
+    const room = (await new PhoneService(database, origin).readRoom(ROOM, HUMAN))!;
+    const card = room.messages.find((message) => message.daemonFact?.cornerId === cornerId);
+    expect(card?.daemonFact).toMatchObject({
+      name: 'Rework the room',
+      objective: 'Rework the room list so every corner row carries a state mark',
+    });
   });
 
   it('reads the selection with an empty catalog, defaults a connect-wizard soul avatarSeed to the pubkey, and passes the detail guard', async () => {

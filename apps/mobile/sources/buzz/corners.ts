@@ -125,10 +125,24 @@ export function resolveCornerLifecycleStatus(
   return confirmedArchived ? 'archived' : known;
 }
 
+/**
+ * A corner is titled by its NAME, which the agent supplies at open_corner and
+ * which is at most three words (C89). Corners opened before the name existed
+ * stored the whole objective in that slot, so the first three words stand in
+ * — cut on a word boundary, never mid-word, and never with an ellipsis. Kept
+ * local rather than imported from the SDK so no screen depends on a fresh
+ * `dist/`; `packages/api-contract/src/corner-text.ts` holds the same rule for
+ * the server and the daemon.
+ */
+export const CORNER_NAME_MAX_WORDS = 3;
+
 export function cornerName(name: string | undefined, id: string): string {
-  const candidate = name?.trim().replace(/^#+/, '');
+  const candidate = name?.replace(/\s+/g, ' ').trim().replace(/^#+/, '').trim();
   if (!candidate || candidate.startsWith('sub-')) return `corner-${id.slice(0, 8)}`;
-  return candidate;
+  const words = candidate.split(' ');
+  return words.length <= CORNER_NAME_MAX_WORDS
+    ? candidate
+    : words.slice(0, CORNER_NAME_MAX_WORDS).join(' ');
 }
 
 /**

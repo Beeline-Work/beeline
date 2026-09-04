@@ -16,6 +16,7 @@ import {
   type DeliveredAttachment,
 } from './attachment-delivery.js';
 import { isCornerStatusRestatement, stripAgentReplyPreamble } from './reply-sanitizer.js';
+import { toolCallFailureLine } from './tool-call-failure.js';
 import { distillTurnFailureReason, redactToolDetail } from './turn-failure-reason.js';
 import { beelineAgentMcpServer } from './room-session.js';
 import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
@@ -711,6 +712,11 @@ export class MonolithCornerTurnLoop {
               }
               await this.activityTail;
               publishToolCalls(result.toolCalls, false);
+              // A refusal the operator cannot read is a refusal that happens twice.
+              for (const call of result.toolCalls) {
+                const failure = toolCallFailureLine(call);
+                if (failure) console.warn(`[thin-core] corner ${cornerId} ${failure}`);
+              }
               await this.activityTail;
               await this.draftTail;
               await this.activityTail;

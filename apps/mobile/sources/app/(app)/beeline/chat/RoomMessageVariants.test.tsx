@@ -314,9 +314,9 @@ describe('Room message variant components', () => {
     expect(onOpenCorner).toHaveBeenCalledWith('80a5a6f1-fb5a-493b-93eb-f3db33f696e6');
     expect(renderer.root.findAllByType('HullSurface')).toHaveLength(1);
     expect(renderer.root.findByProps({ testID: 'corner-summary-card' })).toBeDefined();
-    expect(JSON.stringify(renderer.toJSON())).toContain(
-      'MERGED · Ship fact cards with archived transcript access and preserve the entire objective instead of truncating it into a ledger line',
-    );
+    // A legacy card carries no name, so the title is the first three words of
+    // its objective; the body still carries the objective whole (C89).
+    expect(JSON.stringify(renderer.toJSON())).toContain('MERGED · Ship fact cards');
     expect(JSON.stringify(renderer.toJSON())).toContain('MERGED · Beebee');
     expect(JSON.stringify(renderer.toJSON())).toContain(
       'Ship fact cards with archived transcript access and preserve the entire objective instead of truncating it into a ledger line',
@@ -327,7 +327,7 @@ describe('Room message variant components', () => {
     expect(JSON.stringify(renderer.toJSON())).not.toContain('Open the archived transcript');
   });
 
-  it('renders the corner-open objective verbatim as the linked card title', () => {
+  it('titles the corner-open card with the name and keeps the objective as its body', () => {
     const onOpenCorner = vi.fn();
     const renderer = render(
       <DaemonFactCard
@@ -335,7 +335,8 @@ describe('Room message variant components', () => {
           daemonFact: {
             type: 'corner-open',
             cornerId: '80a5a6f1-fb5a-493b-93eb-f3db33f696e6',
-            objective: 'Fix the flaky auth test',
+            name: 'flaky auth',
+            objective: 'Fix the flaky auth test so the suite stops failing at random',
           },
         })}
         onOpenCorner={onOpenCorner}
@@ -348,10 +349,31 @@ describe('Room message variant components', () => {
     const texts = renderer.root
       .findAllByType('Text')
       .map((node: ReactTestInstance) => node.props.children);
-    expect(texts).toContain('Fix the flaky auth test');
-    expect(texts).toContain('Fix the flaky auth test');
+    expect(texts).toContain('flaky auth');
+    expect(texts).toContain('Fix the flaky auth test so the suite stops failing at random');
     act(() => card.props.onPress());
     expect(onOpenCorner).toHaveBeenCalledWith('80a5a6f1-fb5a-493b-93eb-f3db33f696e6');
+  });
+
+  it('titles a legacy corner-open card by the first three words of its objective', () => {
+    const renderer = render(
+      <DaemonFactCard
+        message={message({
+          daemonFact: {
+            type: 'corner-open',
+            cornerId: '80a5a6f1-fb5a-493b-93eb-f3db33f696e6',
+            objective: 'Fix the flaky auth test so the suite stops failing at random',
+          },
+        })}
+        onOpenCorner={() => undefined}
+        onOpenUrl={() => undefined}
+      />,
+    );
+    const texts = renderer.root
+      .findAllByType('Text')
+      .map((node: ReactTestInstance) => node.props.children);
+    expect(texts).toContain('Fix the flaky');
+    expect(texts).toContain('Fix the flaky auth test so the suite stops failing at random');
   });
 
   it('memoizes ordinary rows across unrelated working changes and updates the affected speaker', () => {

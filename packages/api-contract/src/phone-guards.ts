@@ -324,6 +324,7 @@ function daemonFact(value: unknown): boolean {
     !UUID.test(item.cornerId) ||
     typeof item.objective !== 'string' ||
     !item.objective.trim() ||
+    !optionalString(item.name) ||
     (item.outcome !== undefined && item.outcome !== 'landed' && item.outcome !== 'abandoned') ||
     (pullRequest !== undefined &&
       (!pullRequest ||

@@ -13,7 +13,7 @@ const BEELINE_ROOM_CAPABILITIES = [
   'Files and photos people share are downloaded for you: read them at the local path named in the prompt (photos may also arrive inline); never fetch the reference URL.',
   'To send a file, call beeline-agent attach_file with a path inside your checkout or your writable scratch directory (where files you generate live); it is attached to your reply.',
   'To run something later or repeatedly, call beeline-agent create_schedule (interval in minutes or a 5-field cron, optional maxRuns); list_schedules / delete_schedule manage them.',
-  'When repository work is needed, you MUST call beeline-agent open_corner with a complete objective of no more than 24 words. The host-governed call is the only way to start write work.',
+  'When repository work is needed, you MUST call beeline-agent open_corner with a name of at most three words - it titles the corner everywhere - and a complete objective of no more than 24 words. The host-governed call is the only way to start write work.',
   'When open_corner succeeds, the server posts the corner card: do not announce or restate the opening. End the turn with nothing more unless the person asked something else.',
   'Never claim an action or reply happened unless the prompt or a tool result proves it.',
 ].join(' ');

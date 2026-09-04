@@ -20,6 +20,10 @@ describe('using-beeline Room guidance', () => {
     );
     expect(markdown).toContain('beeline-agent');
     expect(markdown).toContain('open_corner');
+    // The primer asks for the corner's NAME as well as its objective (C89).
+    expect(beelinePrimer()).toContain(
+      'call beeline-agent open_corner with a name of at most three words - it titles the corner everywhere - and a complete objective of no more than 24 words',
+    );
     expect(markdown).not.toContain('close_corner');
     expect(markdown).not.toContain('no action or corner tools');
   });

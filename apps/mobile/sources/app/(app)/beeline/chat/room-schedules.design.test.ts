@@ -10,7 +10,7 @@ describe('scheduled Agent work', () => {
     expect(chat).toContain('getBuzzRuntimeConfig().monolithEnabled');
     expect(chat).toContain('testID="room-schedules-action"');
     expect(chat).toContain("pathname: '/beeline/settings/schedules'");
-    expect(chat).toContain('SCHEDULED WORK');
+    expect(chat).toContain('label="Scheduled work"');
     expect(chat).toContain('View or stop Agent-managed recurring work.');
   });
 
@@ -37,10 +37,14 @@ describe('scheduled Agent work', () => {
   });
 
   it('calls repository activity Repo notifications everywhere it is presented to people', () => {
-    expect(chat).toContain('REPO NOTIFICATIONS');
+    expect(chat).toContain('label="Repo notifications"');
     expect(chat).toContain('Turn repository notifications on');
     expect(chat).toContain('Turn repository notifications off');
     expect(chat).not.toContain('REPO ACTIVITY');
     expect(chat).not.toContain('repository activity notices');
+    // C102: the value is the switch on the trailing axis, so the broken
+    // `REPO NOTIFICATIONS· ON` title string is gone rather than repaired.
+    expect(chat).not.toContain('REPO NOTIFICATIONS');
+    expect(chat).not.toContain("{'\\u00b7'}");
   });
 });

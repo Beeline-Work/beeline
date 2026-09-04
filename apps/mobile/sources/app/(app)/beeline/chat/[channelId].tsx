@@ -209,7 +209,12 @@ import { CornerLiveBar } from '@/components/buzz/CornerLiveBar';
 import { CornerStatusLine } from '@/components/buzz/CornerStatusLine';
 import { TurnProgressLine } from '@/components/buzz/TurnProgressLine';
 import { AttachmentPickerSheet } from '@/components/buzz/AttachmentPickerSheet';
-import { HullFloatingSurface, HullModal } from '@/components/buzz/HullDialog';
+import {
+  HULL_SHEET_INSET,
+  HullActionSheetCancel,
+  HullActionSheetModal,
+  HullActionSheetRow,
+} from '@/components/buzz/HullActionSheet';
 import { EmptyLedgerState, type EmptyLedgerVariant } from '@/components/buzz/EmptyLedgerState';
 import { HeaderIdentitySlot, HeaderMetaCaps, HeaderMetaRow } from '@/components/buzz/HeaderLadder';
 import { ChannelHeaderTitle } from '@/components/buzz/ChannelHeaderTitle';
@@ -2255,6 +2260,15 @@ export default function BuzzChat() {
     userPubkey,
   ]);
 
+  /** One dismissal for the Room actions sheet: the scrim, the Cancel row and
+   *  the hardware back all land here, and a rename in flight holds it open. */
+  const closeRoomActions = useCallback(() => {
+    if (renameBusy) return;
+    setRenameEditing(false);
+    setRenameError(null);
+    setRoomActionsVisible(false);
+  }, [renameBusy]);
+
   const handleRenameRoom = useCallback(async () => {
     const name = renameDraft.trim();
     if (!name) {
@@ -3633,138 +3647,92 @@ export default function BuzzChat() {
         visible={rosterVisible}
       />
 
-      <HullModal
+      <HullActionSheetModal
         accessibilityLabel={`Close ${ROOM_LABEL} actions`}
-        contentStyle={{ paddingHorizontal: 16, paddingBottom: Math.max(insets.bottom, 18) }}
         dismissOnBackdrop={!renameBusy}
-        onRequestClose={() => {
-          if (renameBusy) return;
-          setRenameEditing(false);
-          setRenameError(null);
-          setRoomActionsVisible(false);
-        }}
-        placement="bottom"
+        onClose={closeRoomActions}
+        testID="room-actions-sheet"
+        title={displayRoomName}
         visible={roomActionsVisible}
       >
-        <HullFloatingSurface style={styles.roomActionsModal}>
-          <View style={styles.roomActionsModalHeading}>
-            <View style={styles.roomActionsModalCopy}>
-              <Text style={styles.roomActionsModalEyebrow}>{ROOM_LABEL.toUpperCase()}</Text>
-              <Text numberOfLines={1} style={styles.roomActionsModalTitle}>
-                {displayRoomName}
-              </Text>
-            </View>
-            <TouchableOpacity
-              accessibilityLabel={`Close ${ROOM_LABEL} actions`}
-              disabled={renameBusy}
-              onPress={() => {
-                setRenameEditing(false);
-                setRenameError(null);
-                setRoomActionsVisible(false);
-              }}
-              style={styles.roomActionsModalClose}
-            >
-              <Text style={styles.roomActionsModalCloseText}>×</Text>
-            </TouchableOpacity>
-          </View>
-          {canRenameRoom(viewerChannelRole) &&
-            (renameEditing ? (
-              <View style={styles.roomRenameEditor} testID="rename-room-editor">
-                <Text style={styles.roomRenameLabel}>NEW {ROOM_LABEL.toUpperCase()} NAME</Text>
-                <TextInput
-                  accessibilityLabel={`New ${ROOM_LABEL} name`}
-                  autoCapitalize="sentences"
-                  autoCorrect
-                  editable={!renameBusy}
-                  onChangeText={(value) => {
-                    setRenameDraft(value);
-                    if (value.trim()) setRenameError(null);
-                  }}
-                  onSubmitEditing={() => void handleRenameRoom()}
-                  returnKeyType="done"
-                  selectTextOnFocus
-                  style={styles.roomRenameInput}
-                  testID="rename-room-input"
-                  value={renameDraft}
-                />
-                <View style={styles.roomRenameControls}>
-                  <TouchableOpacity
-                    accessibilityRole="button"
-                    disabled={renameBusy}
-                    onPress={() => {
-                      setRenameEditing(false);
-                      setRenameError(null);
-                    }}
-                    style={styles.roomRenameCancel}
-                  >
-                    <Text style={styles.roomRenameCancelText}>CANCEL</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    accessibilityRole="button"
-                    disabled={renameBusy || !renameDraft.trim()}
-                    onPress={() => void handleRenameRoom()}
-                    style={[
-                      styles.roomRenameApply,
-                      (renameBusy || !renameDraft.trim()) && styles.roomRenameApplyDisabled,
-                    ]}
-                    testID="apply-room-rename"
-                  >
-                    <Text style={styles.roomRenameApplyText}>
-                      {renameBusy ? 'RENAMING…' : 'APPLY'}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ) : (
-              <TouchableOpacity
-                accessibilityLabel={`Rename ${ROOM_LABEL}`}
-                accessibilityRole="button"
-                disabled={renameBusy}
-                onPress={() => {
-                  // The rename draft is the STORED name; the header's `#`
-                  // mark is display-only and must never be saved back.
-                  setRenameDraft(storedRoomName);
-                  setRenameError(null);
-                  setRenameEditing(true);
+        {canRenameRoom(viewerChannelRole) &&
+          (renameEditing ? (
+            <View style={styles.roomRenameEditor} testID="rename-room-editor">
+              <Text style={styles.roomRenameLabel}>New {ROOM_LABEL.toLowerCase()} name</Text>
+              <TextInput
+                accessibilityLabel={`New ${ROOM_LABEL} name`}
+                autoCapitalize="sentences"
+                autoCorrect
+                editable={!renameBusy}
+                onChangeText={(value) => {
+                  setRenameDraft(value);
+                  if (value.trim()) setRenameError(null);
                 }}
-                style={styles.roomRenameAction}
-                testID="rename-room-action"
-              >
-                <View style={styles.roomLifecycleCopy}>
-                  <Text style={styles.roomLifecycleTitle}>RENAME {ROOM_LABEL.toUpperCase()}</Text>
-                  <Text style={styles.roomLifecycleHint}>Change its display name.</Text>
-                </View>
-                <Text style={styles.roomLifecycleGlyph}>✎</Text>
-              </TouchableOpacity>
-            ))}
-          {canManageRoomRepository(viewerChannelRole) ? (
-            <>
-              <TouchableOpacity
-                accessibilityLabel={
-                  roomRepository
-                    ? `Change repo, currently ${roomRepository.binding.name}`
-                    : 'Link a repo'
-                }
-                accessibilityRole="button"
-                disabled={roomRepoBusy}
-                onPress={() => void handleToggleRoomRepoPicker()}
-                style={styles.roomRenameAction}
-                testID="room-repo-action"
-              >
-                <View style={styles.roomLifecycleCopy}>
-                  <Text style={styles.roomLifecycleTitle}>
-                    REPO{' '}
-                    {roomRepository ? `· ${roomRepository.binding.name} · CHANGE` : '· NONE · LINK'}
-                  </Text>
-                  <Text style={styles.roomLifecycleHint}>
-                    {roomRepository
-                      ? `${CORNER_LABEL}s in this ${ROOM_LABEL} tree off this repo.`
-                      : `A ${ROOM_LABEL} needs a repo before a ${CORNER_LABEL} can open.`}
-                  </Text>
-                </View>
-                <Text style={styles.roomLifecycleGlyph}>{showRoomRepoPicker ? '⌄' : '▢'}</Text>
-              </TouchableOpacity>
-              {showRoomRepoPicker && (
+                onSubmitEditing={() => void handleRenameRoom()}
+                returnKeyType="done"
+                selectTextOnFocus
+                style={styles.roomRenameInput}
+                testID="rename-room-input"
+                value={renameDraft}
+              />
+              <View style={styles.roomRenameControls}>
+                <MonoButton
+                  disabled={renameBusy}
+                  label="Cancel"
+                  onPress={() => {
+                    setRenameEditing(false);
+                    setRenameError(null);
+                  }}
+                  variant="secondary"
+                />
+                <MonoButton
+                  disabled={renameBusy || !renameDraft.trim()}
+                  label={renameBusy ? 'Renaming…' : 'Apply'}
+                  loading={renameBusy}
+                  onPress={() => void handleRenameRoom()}
+                  testID="apply-room-rename"
+                />
+              </View>
+            </View>
+          ) : (
+            <HullActionSheetRow
+              accessibilityLabel={`Rename ${ROOM_LABEL}`}
+              chevron="right"
+              description="Change its display name."
+              disabled={renameBusy}
+              label="Rename"
+              onPress={() => {
+                // The rename draft is the STORED name; the header's `#`
+                // mark is display-only and must never be saved back.
+                setRenameDraft(storedRoomName);
+                setRenameError(null);
+                setRenameEditing(true);
+              }}
+              testID="rename-room-action"
+            />
+          ))}
+        {canManageRoomRepository(viewerChannelRole) ? (
+          <>
+            <HullActionSheetRow
+              accessibilityLabel={
+                roomRepository
+                  ? `Change repo, currently ${roomRepository.binding.name}`
+                  : 'Link a repo'
+              }
+              chevron={showRoomRepoPicker ? 'down' : 'right'}
+              description={
+                roomRepository
+                  ? `${CORNER_LABEL}s in this ${ROOM_LABEL} tree off this repo.`
+                  : `A ${ROOM_LABEL} needs a repo before a ${CORNER_LABEL} can open.`
+              }
+              disabled={roomRepoBusy}
+              label="Repo"
+              metadata={roomRepository ? roomRepository.binding.name : 'None'}
+              onPress={() => void handleToggleRoomRepoPicker()}
+              testID="room-repo-action"
+            />
+            {showRoomRepoPicker && (
+              <View style={styles.roomSheetInset}>
                 <RepoPicker
                   busy={roomRepoBusy}
                   candidates={roomRepoCandidates}
@@ -3783,155 +3751,103 @@ export default function BuzzChat() {
                   onSelect={handleSelectRoomRepoCandidate}
                   testIDPrefix="room-repo-picker"
                 />
-              )}
-              {roomRepository && (
-                <TouchableOpacity
-                  accessibilityLabel={
-                    roomRepository.githubEventsEnabled === false
-                      ? 'Turn repository notifications on'
-                      : 'Turn repository notifications off'
-                  }
-                  accessibilityRole="button"
-                  disabled={roomRepoBusy}
-                  onPress={() => void handleToggleGitHubEvents()}
-                  style={styles.roomRenameAction}
-                  testID="room-github-events-toggle"
-                >
-                  <View style={styles.roomLifecycleCopy}>
-                    <Text style={styles.roomLifecycleTitle}>
-                      REPO NOTIFICATIONS{'\u00b7'}
-                      {roomRepository.githubEventsEnabled === false ? ' OFF' : ' ON'}
-                    </Text>
-                    <Text style={styles.roomLifecycleHint}>
-                      Pushes, pull requests, issues, CI, and reviews posted here.
-                    </Text>
-                  </View>
-                  <Text style={styles.roomLifecycleGlyph}>
-                    {roomRepository.githubEventsEnabled === false ? '○' : '●'}
-                  </Text>
-                </TouchableOpacity>
-              )}
-            </>
-          ) : (
-            <View style={styles.roomRenameAction} testID="room-repo-readonly">
-              <View style={styles.roomLifecycleCopy}>
-                <Text style={styles.roomLifecycleTitle}>
-                  REPO {roomRepository ? `· ${roomRepository.binding.name}` : '· NONE'}
-                </Text>
               </View>
-            </View>
-          )}
-          {canRenameRoom(viewerChannelRole) && getBuzzRuntimeConfig().monolithEnabled && (
-            <TouchableOpacity
-              accessibilityLabel={`View ${ROOM_LABEL} scheduled work`}
-              accessibilityRole="button"
-              onPress={() => {
-                setRoomActionsVisible(false);
-                router.push({
-                  pathname: '/beeline/settings/schedules',
-                  params: { roomId: decodedId, workspaceId: activeCommunityId },
-                } as unknown as Href);
-              }}
-              style={styles.roomRenameAction}
-              testID="room-schedules-action"
-            >
-              <View style={styles.roomLifecycleCopy}>
-                <Text style={styles.roomLifecycleTitle}>SCHEDULED WORK</Text>
-                <Text style={styles.roomLifecycleHint}>
-                  View or stop Agent-managed recurring work.
-                </Text>
-              </View>
-              <Text style={styles.roomLifecycleGlyph}>◷</Text>
-            </TouchableOpacity>
-          )}
-          {lifecycleAction === 'delete' ? (
-            <TouchableOpacity
-              accessibilityLabel={`Delete ${ROOM_LABEL}`}
-              accessibilityRole="button"
-              disabled={roomLifecycleBusy}
-              onPress={handleRoomLifecycle}
-              style={styles.roomLifecycleAction}
-              testID="delete-room-action"
-            >
-              <View style={styles.roomLifecycleCopy}>
-                <Text style={[styles.roomLifecycleTitle, styles.roomLifecycleDanger]}>
-                  {roomLifecycleBusy ? 'DELETING…' : `DELETE ${ROOM_LABEL.toUpperCase()}`}
-                </Text>
-                <Text style={styles.roomLifecycleHint}>Permanently remove this Room.</Text>
-              </View>
-              <Text style={[styles.roomLifecycleGlyph, styles.roomLifecycleDanger]}>□</Text>
-            </TouchableOpacity>
-          ) : lifecycleAction === 'leave' ? (
-            <TouchableOpacity
-              accessibilityLabel={`Leave ${ROOM_LABEL}`}
-              accessibilityRole="button"
-              disabled={roomLifecycleBusy}
-              onPress={handleRoomLifecycle}
-              style={styles.roomLifecycleAction}
-              testID="leave-room-action"
-            >
-              <View style={styles.roomLifecycleCopy}>
-                <Text style={[styles.roomLifecycleTitle, styles.roomLifecycleDanger]}>
-                  {roomLifecycleBusy ? 'LEAVING…' : `LEAVE ${ROOM_LABEL.toUpperCase()}`}
-                </Text>
-                <Text style={styles.roomLifecycleHint}>Other members keep their access.</Text>
-              </View>
-              <Text style={[styles.roomLifecycleGlyph, styles.roomLifecycleDanger]}>↗</Text>
-            </TouchableOpacity>
-          ) : null}
-          {(renameError || membershipError) && (
-            <View accessibilityRole="alert" style={styles.membershipError}>
-              <Text style={styles.membershipErrorText}>! {renameError ?? membershipError}</Text>
-            </View>
-          )}
-        </HullFloatingSurface>
-      </HullModal>
+            )}
+            {roomRepository && (
+              <HullActionSheetRow
+                accessibilityLabel={
+                  roomRepository.githubEventsEnabled === false
+                    ? 'Turn repository notifications on'
+                    : 'Turn repository notifications off'
+                }
+                description="Pushes, pull requests, issues, CI, and reviews posted here."
+                disabled={roomRepoBusy}
+                label="Repo notifications"
+                onPress={() => void handleToggleGitHubEvents()}
+                testID="room-github-events-toggle"
+                toggle={{
+                  disabled: roomRepoBusy,
+                  onValueChange: () => void handleToggleGitHubEvents(),
+                  value: roomRepository.githubEventsEnabled !== false,
+                }}
+              />
+            )}
+          </>
+        ) : (
+          <HullActionSheetRow
+            label="Repo"
+            metadata={roomRepository ? roomRepository.binding.name : 'None'}
+            testID="room-repo-readonly"
+          />
+        )}
+        {canRenameRoom(viewerChannelRole) && getBuzzRuntimeConfig().monolithEnabled && (
+          <HullActionSheetRow
+            accessibilityLabel={`View ${ROOM_LABEL} scheduled work`}
+            chevron="right"
+            description="View or stop Agent-managed recurring work."
+            label="Scheduled work"
+            onPress={() => {
+              setRoomActionsVisible(false);
+              router.push({
+                pathname: '/beeline/settings/schedules',
+                params: { roomId: decodedId, workspaceId: activeCommunityId },
+              } as unknown as Href);
+            }}
+            testID="room-schedules-action"
+          />
+        )}
+        {lifecycleAction === 'delete' ? (
+          <HullActionSheetRow
+            accessibilityLabel={`Delete ${ROOM_LABEL}`}
+            description={`Permanently remove this ${ROOM_LABEL}.`}
+            destructive
+            disabled={roomLifecycleBusy}
+            label={roomLifecycleBusy ? 'Deleting…' : `Delete ${ROOM_LABEL}`}
+            onPress={handleRoomLifecycle}
+            testID="delete-room-action"
+          />
+        ) : lifecycleAction === 'leave' ? (
+          <HullActionSheetRow
+            accessibilityLabel={`Leave ${ROOM_LABEL}`}
+            description="Other members keep their access."
+            destructive
+            disabled={roomLifecycleBusy}
+            label={roomLifecycleBusy ? 'Leaving…' : `Leave ${ROOM_LABEL}`}
+            onPress={handleRoomLifecycle}
+            testID="leave-room-action"
+          />
+        ) : null}
+        {(renameError || membershipError) && (
+          <View accessibilityRole="alert" style={styles.membershipError}>
+            <Text style={styles.membershipErrorText}>! {renameError ?? membershipError}</Text>
+          </View>
+        )}
+        <HullActionSheetCancel onPress={closeRoomActions} testID="room-actions-close" />
+      </HullActionSheetModal>
 
-      <HullModal
+      <HullActionSheetModal
         accessibilityLabel={`Close ${CORNER_LABEL} actions`}
-        contentStyle={{ paddingHorizontal: 16, paddingBottom: Math.max(insets.bottom, 18) }}
-        onRequestClose={() => setCornerActionsVisible(false)}
-        placement="bottom"
+        onClose={() => setCornerActionsVisible(false)}
+        testID="corner-actions-sheet"
+        title={headerTitle ?? cornerAgentDisplay?.name ?? CORNER_LABEL}
         visible={cornerActionsVisible}
       >
-        <HullFloatingSurface style={styles.roomActionsModal} testID="corner-actions-sheet">
-          <View style={styles.roomActionsModalHeading}>
-            <View style={styles.roomActionsModalCopy}>
-              <Text style={styles.roomActionsModalEyebrow}>{CORNER_LABEL.toUpperCase()}</Text>
-              <Text numberOfLines={1} style={styles.roomActionsModalTitle}>
-                {headerTitle ?? cornerAgentDisplay?.name ?? CORNER_LABEL}
-              </Text>
-            </View>
-            <TouchableOpacity
-              accessibilityLabel={`Close ${CORNER_LABEL} actions`}
-              onPress={() => setCornerActionsVisible(false)}
-              style={styles.roomActionsModalClose}
-            >
-              <Text style={styles.roomActionsModalCloseText}>×</Text>
-            </TouchableOpacity>
-          </View>
-          <TouchableOpacity
-            accessibilityLabel={`Close ${CORNER_LABEL}`}
-            accessibilityRole="button"
-            onPress={() => {
-              setCornerActionsVisible(false);
-              void handleCloseCorner();
-            }}
-            style={styles.roomLifecycleAction}
-            testID="close-corner-action"
-          >
-            <View style={styles.roomLifecycleCopy}>
-              <Text style={[styles.roomLifecycleTitle, styles.roomLifecycleDanger]}>
-                CLOSE {CORNER_LABEL.toUpperCase()}
-              </Text>
-              <Text style={styles.roomLifecycleHint}>
-                Ends the edit session and archives this {CORNER_LABEL}. Unmerged work is lost.
-              </Text>
-            </View>
-            <Text style={[styles.roomLifecycleGlyph, styles.roomLifecycleDanger]}>■</Text>
-          </TouchableOpacity>
-        </HullFloatingSurface>
-      </HullModal>
+        <HullActionSheetRow
+          accessibilityLabel={`Close ${CORNER_LABEL}`}
+          description={`Ends the edit session and archives this ${CORNER_LABEL}. Unmerged work is lost.`}
+          destructive
+          label={`Close ${CORNER_LABEL}`}
+          onPress={() => {
+            setCornerActionsVisible(false);
+            void handleCloseCorner();
+          }}
+          testID="close-corner-action"
+        />
+        <HullActionSheetCancel
+          onPress={() => setCornerActionsVisible(false)}
+          testID="corner-actions-close"
+        />
+      </HullActionSheetModal>
 
       <MemberPickerSheet
         busy={addingMembers || memberInviteBusy}
@@ -4090,163 +4006,55 @@ const styles = StyleSheet.create((theme) => {
       fontSize: 11,
       lineHeight: 15,
     },
-    // ── Room lifecycle menu ─────────────────────────────────────────
-    roomActionsModal: {
-      width: '100%',
-      maxWidth: 460,
-      padding: 16,
-      borderWidth: 1,
-      borderColor: groknight.borderStrong,
-      backgroundColor: groknight.bgRaised,
-    },
-    roomActionsModalHeading: {
-      minWidth: 0,
-      flexDirection: 'row',
-      alignItems: 'flex-start',
-      gap: 12,
-    },
-    roomActionsModalCopy: { flex: 1, minWidth: 0 },
-    roomActionsModalEyebrow: {
-      ...Typography.mono('semiBold'),
-      color: groknight.textMuted,
-      fontSize: 9,
-      lineHeight: 12,
-      letterSpacing: 0.8,
-    },
-    roomActionsModalTitle: {
-      ...Typography.default('semiBold'),
-      marginTop: 4,
-      color: groknight.textPrimary,
-      fontSize: 19,
-      lineHeight: 24,
-    },
-    roomActionsModalClose: {
-      width: 44,
-      height: 44,
-      marginTop: -10,
-      marginRight: -10,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    roomActionsModalCloseText: {
-      ...Typography.default(),
-      color: groknight.steel,
-      fontSize: 24,
-    },
-    roomRenameAction: {
-      minHeight: 66,
-      marginTop: 18,
-      paddingHorizontal: 12,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 12,
-      borderWidth: 1,
-      borderColor: groknight.borderStrong,
-      backgroundColor: groknight.bgBase,
+    // ── Room / corner actions sheet ──────────────────────────────────
+    // The sheet itself, its rows and its trailing vocabulary live in
+    // `components/buzz/HullActionSheet.tsx`. What is left here is only what
+    // hangs BETWEEN rows: the rename editor and the picker's inset.
+    roomSheetInset: {
+      paddingHorizontal: HULL_SHEET_INSET,
+      paddingVertical: groknight.space.sm,
     },
     roomRenameEditor: {
-      marginTop: 18,
-      padding: 12,
-      borderWidth: 1,
-      borderColor: groknight.borderStrong,
-      backgroundColor: groknight.bgBase,
+      paddingHorizontal: HULL_SHEET_INSET,
+      paddingVertical: groknight.space.sm,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: groknight.border,
     },
     roomRenameLabel: {
-      ...Typography.mono('semiBold'),
+      ...Typography.default(),
+      ...groknight.type.meta,
       color: groknight.textMuted,
-      fontSize: 9,
-      lineHeight: 12,
-      letterSpacing: 0.7,
     },
     roomRenameInput: {
       ...Typography.default('semiBold'),
+      ...groknight.type.body,
       minHeight: 44,
-      marginTop: 8,
+      marginTop: groknight.space.xs,
       paddingHorizontal: 0,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: groknight.borderStrong,
       color: groknight.textPrimary,
-      fontSize: 16,
     },
     roomRenameControls: {
-      marginTop: 10,
+      marginTop: groknight.space.sm,
       flexDirection: 'row',
       justifyContent: 'flex-end',
-      gap: 8,
+      gap: groknight.space.sm,
     },
-    roomRenameCancel: {
-      minHeight: 40,
-      paddingHorizontal: 14,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    roomRenameCancelText: {
-      ...Typography.mono('semiBold'),
-      color: groknight.textMuted,
-      fontSize: 10,
-      letterSpacing: 0.6,
-    },
-    roomRenameApply: {
-      minHeight: 40,
-      paddingHorizontal: 18,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderWidth: 1,
-      borderColor: groknight.accent,
-      backgroundColor: groknight.accent,
-    },
-    roomRenameApplyDisabled: { opacity: 0.45 },
-    roomRenameApplyText: {
-      ...Typography.mono('semiBold'),
-      color: groknight.textInverted,
-      fontSize: 10,
-      letterSpacing: 0.6,
-    },
-    roomLifecycleAction: {
-      minHeight: 66,
-      marginTop: 18,
-      paddingHorizontal: 12,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 12,
-      borderWidth: 1,
-      borderColor: groknight.borderStrong,
-      backgroundColor: groknight.bgBase,
-    },
-    roomLifecycleCopy: { flex: 1, minWidth: 0 },
-    roomLifecycleTitle: {
-      ...Typography.mono('semiBold'),
-      color: groknight.textPrimary,
-      fontSize: 10,
-      lineHeight: 14,
-      letterSpacing: 0.6,
-    },
-    roomLifecycleHint: {
-      ...Typography.default(),
-      marginTop: 3,
-      color: groknight.textMuted,
-      fontSize: 11,
-      lineHeight: 15,
-    },
-    roomLifecycleGlyph: {
-      ...Typography.default(),
-      color: groknight.steel,
-      fontSize: 17,
-      lineHeight: 22,
-    },
-    roomLifecycleDanger: { color: groknight.dialogDanger },
+    // The sheet's one box: a notice the reader must act on, held to the same
+    // trailing axis as the rows above it (DESIGN.md → Shape).
     membershipError: {
-      marginTop: 10,
-      padding: 10,
+      marginHorizontal: HULL_SHEET_INSET,
+      marginTop: groknight.space.sm,
+      padding: groknight.space.sm,
       borderWidth: 1,
       borderColor: groknight.borderStrong,
       backgroundColor: groknight.bgHighlight,
     },
     membershipErrorText: {
       ...Typography.default('semiBold'),
+      ...groknight.type.meta,
       color: groknight.textSecondary,
-      fontSize: 11,
-      lineHeight: 16,
     },
 
     // ── Message blocks ──────────────────────────────────────────────

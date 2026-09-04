@@ -18,6 +18,8 @@ export function beelineAgentMcpServer(
     workspaceId: string;
     cornerId?: string;
     attachRoot?: string;
+    /** The session's writable scratch directory (TMPDIR), a second legal attach_file root. */
+    attachScratchRoot?: string;
     directMessage?: boolean;
     /** The daemon's loopback grant runner, for run_granted_command. */
     grantRunner?: GrantRunnerEndpoint;
@@ -43,6 +45,9 @@ export function beelineAgentMcpServer(
       { name: 'BEELINE_DAEMON_WORKSPACE_ID', value: context.workspaceId },
       ...(context.cornerId ? [{ name: 'BEELINE_DAEMON_CORNER_ID', value: context.cornerId }] : []),
       ...(context.attachRoot ? [{ name: 'BEELINE_ATTACH_ROOT', value: context.attachRoot }] : []),
+      ...(context.attachScratchRoot
+        ? [{ name: 'BEELINE_ATTACH_SCRATCH_ROOT', value: context.attachScratchRoot }]
+        : []),
       ...(context.grantRunner
         ? [
             { name: 'BEELINE_GRANT_RUNNER_URL', value: context.grantRunner.url },

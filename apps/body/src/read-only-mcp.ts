@@ -307,14 +307,14 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'attach_file',
     description:
-      'Attach one file from your own checkout (Room read-only checkout or corner worktree) to your final reply in this Room or corner. Paths outside the checkout are refused. The file is uploaded now and delivered with your next reply; describe it in your reply text.',
+      'Attach one file from your own checkout (Room read-only checkout or corner worktree) or your session scratch directory (the writable TMPDIR you generate files into) to your final reply in this Room or corner. Paths outside both are refused. The file is uploaded now and delivered with your next reply; describe it in your reply text.',
     inputSchema: {
       type: 'object',
       required: ['path'],
       properties: {
         path: {
           type: 'string',
-          description: 'Path of the file inside your checkout or worktree.',
+          description: 'Path of the file inside your checkout, worktree, or scratch directory.',
           maxLength: 1024,
         },
       },
@@ -1016,7 +1016,9 @@ async function prChecksStatus(): Promise<string> {
 }
 
 export interface AttachFileDeps {
-  root: string;
+  /** Legal attachment roots: the session checkout, and (when configured) the
+   *  session's writable scratch directory. */
+  roots: string[];
   baseUrl: string;
   token: string;
   roomId: string;
@@ -1025,8 +1027,9 @@ export interface AttachFileDeps {
 }
 
 export function attachFileDepsFromEnv(): AttachFileDeps {
+  const scratchRoot = process.env.BEELINE_ATTACH_SCRATCH_ROOT?.trim();
   return {
-    root: requiredEnv('BEELINE_ATTACH_ROOT'),
+    roots: [requiredEnv('BEELINE_ATTACH_ROOT'), ...(scratchRoot ? [scratchRoot] : [])],
     baseUrl: requiredEnv('BEELINE_DAEMON_BASE_URL'),
     token: requiredEnv('BEELINE_DAEMON_TOKEN'),
     roomId: process.env.BEELINE_DAEMON_CORNER_ID?.trim() || requiredEnv('BEELINE_DAEMON_ROOM_ID'),
@@ -1041,17 +1044,42 @@ export function attachFileDepsFromEnv(): AttachFileDeps {
   };
 }
 
-/** Resolve an attach_file path inside the session checkout, never following a
- *  symlink outside it. Returns the real path of an existing regular file. */
-export function resolveAttachPath(root: string, input: string): string {
+function withinRoot(root: string, resolved: string): boolean {
+  const rel = relative(root, resolved);
+  return rel !== '' && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+}
+
+/** Resolve an attach_file path inside the session checkout or the session's
+ *  writable scratch directory, never following a symlink outside either
+ *  root. Returns the real path of an existing regular file. A relative
+ *  `input` is tried against each root in order, taking the first that
+ *  exists; the escape check then requires the real path land inside at
+ *  least one of the roots. */
+export function resolveAttachPath(roots: string[], input: string): string {
   if (!input || input.includes('\0')) throw new Error('path must be a non-empty file path');
-  const base = realpathSync(root);
-  const candidate = isAbsolute(input) ? input : resolve(base, input);
-  const resolved = realpathSync(candidate);
-  const rel = relative(base, resolved);
-  if (rel === '' || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
-    throw new Error('path resolves outside the session checkout');
+  if (!roots.length) throw new Error('no attachment roots are configured');
+  const realRoots = roots.map((root) => realpathSync(root));
+  const errorMessage = () =>
+    `path resolves outside your checkout or scratch directory (${realRoots.join(', ')})`;
+  const resolveAgainst = (candidate: string): string => {
+    const resolved = realpathSync(candidate);
+    if (!realRoots.some((root) => withinRoot(root, resolved))) throw new Error(errorMessage());
+    return resolved;
+  };
+  if (isAbsolute(input)) return finishResolvedAttachPath(resolveAgainst(input));
+  let notFoundError: unknown;
+  for (const root of realRoots) {
+    const candidate = resolve(root, input);
+    if (!existsSync(candidate)) {
+      notFoundError ??= new Error(`no such file: ${input}`);
+      continue;
+    }
+    return finishResolvedAttachPath(resolveAgainst(candidate));
   }
+  throw notFoundError instanceof Error ? notFoundError : new Error(errorMessage());
+}
+
+function finishResolvedAttachPath(resolved: string): string {
   if (!statSync(resolved).isFile()) throw new Error('path is not a regular file');
   return resolved;
 }
@@ -1063,7 +1091,7 @@ export async function attachFile(
   if (args.caption !== undefined && typeof args.caption !== 'string') {
     throw new Error('caption must be a string');
   }
-  const path = resolveAttachPath(deps.root, stringArg(args, 'path') ?? '');
+  const path = resolveAttachPath(deps.roots, stringArg(args, 'path') ?? '');
   const details = statSync(path);
   if (details.size > MAX_ATTACH_BYTES) {
     throw new Error(`file exceeds the ${MAX_ATTACH_BYTES}-byte attachment limit`);

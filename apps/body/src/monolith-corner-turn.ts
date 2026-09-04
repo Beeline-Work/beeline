@@ -396,6 +396,7 @@ export class MonolithCornerTurnLoop {
         workspaceId: this.options.workspaceId,
         cornerId: this.options.cornerId,
         attachRoot: this.options.worktreePath,
+        ...(tmpDir ? { attachScratchRoot: tmpDir } : {}),
         ...(this.options.grantRunnerEndpoint
           ? { grantRunner: this.options.grantRunnerEndpoint }
           : {}),

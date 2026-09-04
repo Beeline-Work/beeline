@@ -3659,6 +3659,18 @@ describe('monolith integration', () => {
     // The phone still validates the settled Room read.
     const settledRoom = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as RoomView;
     expect(isRoomView(settledRoom)).toBe(true);
+    // C101: the settled request card already carries the answer, so the
+    // decision line that wakes the daemon is never ALSO drawn in the Room -
+    // one card, not a card plus a redundant restatement of it.
+    expect(
+      settledRoom.messages.filter((message) => /\b(approved|declined)\b/.test(message.text)),
+    ).toEqual([]);
+    const settledHistory = (await (
+      await request(`/v1/phone/rooms/${ROOM}/history`)
+    ).json()) as { messages: Array<{ text: string }> };
+    expect(
+      settledHistory.messages.filter((message) => /\b(approved|declined)\b/.test(message.text)),
+    ).toEqual([]);
 
     // The daemon sees only the live once rule; consuming it spends it.
     const rules = (await (await daemonOperation('listAgentGrants', { agentId: AGENT })).json()) as {

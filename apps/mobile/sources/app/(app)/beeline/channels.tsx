@@ -64,7 +64,10 @@ const AGE_TICK_MS = 60_000;
 const COMPOSE_FAB_CLEARANCE = 80;
 /** The empty deck's one primary: the same 44pt touch height as the FAB. */
 const EMPTY_PRIMARY_HEIGHT = 44;
-/** Speakeasy index row: 64 tall, a 40px identity tile leading. */
+/** Speakeasy index row: 64 tall, a 40px leading unit. A DM row fills it with
+ *  the peer's identity tile; a Room row leaves it empty (C71: a Room is many
+ *  voices, its `#name` sigil is the mark) so every row's copy hangs off ONE
+ *  straight edge. */
 const ROW_HEIGHT = 64;
 const ROW_TILE_SIZE = 40;
 /** The trailing brass unread/attention square — lit or reserved, never absent. */
@@ -685,13 +688,17 @@ export default function BuzzChannels() {
                     onPress={() => openRoom(item.room.id)}
                     style={styles.rowMain}
                   >
-                    <IdentityMark
-                      kind={heading.tile.kind}
-                      seed={heading.tile.seed}
-                      name={heading.name}
-                      size={ROW_TILE_SIZE}
-                      testID={`room-tile-${item.room.id}`}
-                    />
+                    {heading.tile ? (
+                      <IdentityMark
+                        kind={heading.tile.kind}
+                        seed={heading.tile.seed}
+                        name={heading.name}
+                        size={ROW_TILE_SIZE}
+                        testID={`room-tile-${item.room.id}`}
+                      />
+                    ) : (
+                      <View style={styles.rowTileSlot} testID={`room-tile-slot-${item.room.id}`} />
+                    )}
                     <View style={styles.rowCopy}>
                       <Text numberOfLines={1} style={styles.title}>
                         <Text style={styles.sigil} testID={`room-sigil-${item.room.id}`}>
@@ -937,6 +944,9 @@ const styles = StyleSheet.create((theme) => {
       paddingLeft: 16,
       paddingVertical: 10,
     },
+    // The empty leading unit of a Room row: the same width as a DM's tile, so
+    // the copy column reads down one straight edge across both row kinds.
+    rowTileSlot: { width: ROW_TILE_SIZE, height: ROW_TILE_SIZE },
     rowCopy: { flex: 1, minWidth: 0, gap: 3 },
     // The row leads with the name: one size, one weight, the brightest thing
     // on the row. Ownership and unread never bold or enlarge it.

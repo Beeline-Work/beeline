@@ -294,11 +294,7 @@ describe('Room row presentation', () => {
       },
       NO_NAMES,
     );
-    expect(row.corners.map((entry) => entry.status)).toEqual([
-      'live',
-      'needs-attention',
-      'failed',
-    ]);
+    expect(row.corners.map((entry) => entry.status)).toEqual(['live', 'needs-attention', 'failed']);
     expect(roomRowPresentation({ corners: [corner('merged')] }, NO_NAMES).corners).toEqual([]);
     expect(roomRowPresentation({ corners: [corner('archived')] }, NO_NAMES).corners).toEqual([]);
   });
@@ -338,7 +334,7 @@ describe('Room row presentation', () => {
     expect(roomRowPresentation({ latestMessage: exact }, NO_NAMES).fact).toBe(NO_ACTIVITY_PREVIEW);
 
     const attachmentEnoent =
-      "Attachment unavailable: ENOENT: no such file or directory, realpath " +
+      'Attachment unavailable: ENOENT: no such file or directory, realpath ' +
       "'/proc/2952774/root/home/lunchbox/.local/state/beeline/agents/agent/rooms/room/agent-private/workbench/report.html'";
     expect(roomRowPresentation({ latestMessage: attachmentEnoent }, NO_NAMES).fact).toBe(
       NO_ACTIVITY_PREVIEW,
@@ -598,7 +594,14 @@ describe('Room row presentation', () => {
 const VIEWER = 'a'.repeat(64);
 const PEER = 'b'.repeat(64);
 const ROOM_ID = '7d111868-52eb-43ab-98ae-8a6c49b92da8';
-const room = { id: ROOM_ID, workspaceId: ROOM_ID, name: 'design', archived: false, createdAt: 1, updatedAt: 1 };
+const room = {
+  id: ROOM_ID,
+  workspaceId: ROOM_ID,
+  name: 'design',
+  archived: false,
+  createdAt: 1,
+  updatedAt: 1,
+};
 const ada = { pubkey: PEER, kind: 'human' as const, name: 'Ada', handle: 'ada@usebeeline.app' };
 const beebee = { pubkey: PEER, kind: 'agent' as const, name: 'Beebee' };
 const message = (author: typeof ada | typeof beebee, text = 'Hello') => ({
@@ -609,12 +612,10 @@ const message = (author: typeof ada | typeof beebee, text = 'Hello') => ({
 });
 
 describe('roomRowName — the sigil is the name’s first glyph', () => {
-  it('names a Room `#` + its stored name, tiled by the Room id', () => {
-    expect(roomRowName({ room })).toEqual({
-      sigil: '#',
-      name: 'design',
-      tile: { seed: ROOM_ID, kind: 'workspace' },
-    });
+  it('names a Room `#` + its stored name, with no tile — the sigil is its mark', () => {
+    // C71: a Room is many voices, so no one picture stands for it.
+    expect(roomRowName({ room })).toEqual({ sigil: '#', name: 'design' });
+    expect(roomRowName({ room }).tile).toBeUndefined();
   });
 
   it('never double-marks a stored name that already carries the mark', () => {
@@ -622,7 +623,9 @@ describe('roomRowName — the sigil is the name’s first glyph', () => {
   });
 
   it('names a DM `@` + its peer handle, tiled by the peer identity', () => {
-    expect(roomRowName({ room: { ...room, name: 'Direct message' }, directMessage: { peer: ada } })).toEqual({
+    expect(
+      roomRowName({ room: { ...room, name: 'Direct message' }, directMessage: { peer: ada } }),
+    ).toEqual({
       sigil: '@',
       name: 'ada',
       tile: { seed: PEER, kind: 'human' },

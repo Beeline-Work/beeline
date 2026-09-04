@@ -585,6 +585,39 @@ describe('the ledger — per-speaker identity marks', () => {
     expect(dots.length).toBe(0);
   });
 
+  it('starts the tile at the row’s content edge for both kinds — never inset past it', () => {
+    // C70: the tile box sits on the byline's leading edge with no negative
+    // inset of its own. The alive ring paints `ALIVE_RING_PAD` outside that
+    // box, and the one clipping ancestor (the swipe-to-reply container,
+    // `RoomMessageVariants.tsx`) outsets by that gutter — never the row.
+    const marks = [
+      { seed: 'agent-pubkey-a', kind: 'agent' as const, alive: true },
+      { seed: 'human-pubkey-b', kind: 'human' as const },
+    ];
+    for (const mark of marks) {
+      const renderer = render(
+        React.createElement(LedgerEntry, {
+          itemId: `edge-${mark.kind}`,
+          luminous: mark.kind === 'agent',
+          byline: { name: 'Who', stamp: '09:41', mark },
+          bodyText: 'Hello.',
+          bodyTestID: 'body',
+        }),
+      );
+      const markNode = renderer.root.findByProps({ testID: 'chat-byline-mark' });
+      const row = markNode.parent!;
+      // The mark is the byline's first child, on the row's own edge.
+      expect(React.Children.toArray(row.props.children)[0]).toMatchObject({
+        props: { testID: 'chat-byline-mark' },
+      });
+      const rowStyle = Object.assign({}, ...[row.props.style].flat(Infinity).filter(Boolean));
+      for (const key of ['marginLeft', 'marginHorizontal', 'paddingLeft', 'left']) {
+        expect(rowStyle[key] ?? 0).toBeGreaterThanOrEqual(0);
+      }
+      expect(markNode.props.style).toBeUndefined();
+    }
+  });
+
   it('renders the same mark shape without the ring when the agent is idle', () => {
     const renderer = render(
       React.createElement(LedgerEntry, {
@@ -822,7 +855,9 @@ describe('the ledger — the byline says who is talking', () => {
     );
     expect(corner.root.findAllByProps({ testID: 'chat-byline-name' })).toHaveLength(0);
     expect(
-      corner.root.findAll((node: any) => node.type === 'IdentityMark' && node.props.testID === 'chat-byline-mark'),
+      corner.root.findAll(
+        (node: any) => node.type === 'IdentityMark' && node.props.testID === 'chat-byline-mark',
+      ),
     ).toHaveLength(1);
   });
 });

@@ -14,12 +14,14 @@ import {
   type CornerVisualState,
 } from '@/buzz/corners';
 import { isMachinePreview } from '@/buzz/room-list-summary';
-import { isRetiredAgentNotice, type ChatListItem, type RoomViewIdentity } from '@beeline/buzz-client';
+import {
+  isRetiredAgentNotice,
+  type ChatListItem,
+  type RoomViewIdentity,
+} from '@beeline/buzz-client';
 
 export type ExpandedCornerRefreshAction =
-  | { kind: 'none' }
-  | { kind: 'reload'; roomId: string }
-  | { kind: 'drop'; roomId: string };
+  { kind: 'none' } | { kind: 'reload'; roomId: string } | { kind: 'drop'; roomId: string };
 
 export function expandedCornerRefreshAction(
   expandedRoomId: string | null,
@@ -182,9 +184,11 @@ export type RoomRowName = {
   sigil: RoomRowSigil;
   /** The name WITHOUT its sigil — the row draws the two in different tones. */
   name: string;
-  /** What the 40px `IdentityMark` tile is seeded with. A DM row wears its
-   *  peer's own mark; a Room row wears a place mark seeded by the Room id. */
-  tile: { seed: string; kind: 'human' | 'agent' | 'workspace' };
+  /** What the 40px `IdentityMark` tile is seeded with. Only a DM row wears
+   *  one — its peer's own mark. A Room is many voices, so a Room row carries
+   *  NO tile (C71): its `#name` sigil is the row's mark, and the screen leaves
+   *  the leading unit empty so every row's copy hangs off one edge. */
+  tile?: { seed: string; kind: 'human' | 'agent' };
 };
 
 /**
@@ -198,9 +202,7 @@ export function previewHandle(identity: Pick<RoomViewIdentity, 'name' | 'handle'
   return local || identity.name.trim();
 }
 
-export function roomRowName(
-  item: Pick<ChatListItem, 'room' | 'directMessage'>,
-): RoomRowName {
+export function roomRowName(item: Pick<ChatListItem, 'room' | 'directMessage'>): RoomRowName {
   const peer = item.directMessage?.peer;
   if (peer) {
     return {
@@ -210,11 +212,7 @@ export function roomRowName(
     };
   }
   const stored = item.room.name.trim().replace(/^#+/, '');
-  return {
-    sigil: '#',
-    name: stored || item.room.id,
-    tile: { seed: item.room.id, kind: 'workspace' },
-  };
+  return { sigil: '#', name: stored || item.room.id };
 }
 
 /**
@@ -247,9 +245,7 @@ export function roomRowPreview(
  * hidden behind agent state: an unread Room lights the square whatever its
  * agents are doing.
  */
-export function roomRowNeedsAttention(
-  item: Pick<ChatListItem, 'unread' | 'agentState'>,
-): boolean {
+export function roomRowNeedsAttention(item: Pick<ChatListItem, 'unread' | 'agentState'>): boolean {
   return item.unread || item.agentState === 'needs-you';
 }
 

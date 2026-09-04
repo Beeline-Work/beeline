@@ -115,14 +115,25 @@ describe('Room list layout contract', () => {
     expect(header).toContain('testID="workspace-members"');
   });
 
-  it('leads with the name on a 64pt row behind a 40px identity tile', () => {
+  it('leads with the name on a 64pt row; only a DM row wears a 40px tile, a Room leaves the unit empty', () => {
     expect(source).toContain('const ROW_HEIGHT = 64');
     expect(source).toContain('const ROW_TILE_SIZE = 40');
     expect(styleBlock(source, 'row')).toContain('minHeight: ROW_HEIGHT');
     expect(styleBlock(source, 'rowMain')).toContain('minHeight: ROW_HEIGHT');
+    // C71: a Room is many voices, so no picture stands for it — the `#name`
+    // sigil is its mark. The tile renders only when the one derivation
+    // (`roomRowName`) supplies one, i.e. for a DM's peer.
+    expect(source).toContain('{heading.tile ? (');
     expect(source).toContain('size={ROW_TILE_SIZE}');
     expect(source).toContain('kind={heading.tile.kind}');
     expect(source).toContain('seed={heading.tile.seed}');
+    // The leading unit is reserved on a Room row at exactly the tile's width,
+    // so the copy column reads down ONE straight edge across both row kinds.
+    expect(source).toContain(
+      '<View style={styles.rowTileSlot} testID={`room-tile-slot-${item.room.id}`} />',
+    );
+    expect(styleBlock(source, 'rowTileSlot')).toContain('width: ROW_TILE_SIZE');
+    expect(source).not.toMatch(/kind="workspace"[^\n]*room\.id/);
     expect(styleBlock(source, 'title')).toContain('fontSize: 18');
     expect(styleBlock(source, 'title')).toContain('color: hull.textPrimary');
     expect(styleBlock(source, 'preview')).toContain('color: hull.ledgerQuiet');

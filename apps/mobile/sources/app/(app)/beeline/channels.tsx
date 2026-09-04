@@ -699,6 +699,7 @@ export default function BuzzChannels() {
                       <IdentityMark
                         kind={heading.tile.kind}
                         seed={heading.tile.seed}
+                        face={heading.tile.face}
                         name={heading.name}
                         size={ROW_TILE_SIZE}
                         testID={`room-tile-${item.room.id}`}

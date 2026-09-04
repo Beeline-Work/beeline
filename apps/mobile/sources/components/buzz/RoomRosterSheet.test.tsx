@@ -95,7 +95,7 @@ const rosterSections = {
       name: 'Ox',
       handle: 'ox',
       kind: 'agent' as const,
-      agent: { pubkey: OX, displayName: 'Ox' },
+      agent: { pubkey: OX, displayName: 'Ox', face: 'octopus' },
     },
   ],
 };
@@ -178,6 +178,19 @@ describe('RoomRosterSheet', () => {
     expect(agentRow.findByType('IdentityMark' as any).props.alive).toBe(true);
     expect(texts.flat().join(' ')).not.toMatch(/AGENT|PERSON|ONLINE/);
     expect(agentRow.props.accessibilityLabel).toBe('Ox, agent, online, at ox');
+  });
+
+  it('draws each agent its assigned creature, not one hashed from the key', () => {
+    // The server hands out the animal, the name and the soul together; a
+    // roster row that redrew the face from the pubkey would show a different
+    // species from the transcript byline for the same agent.
+    const renderer = render(sheet());
+    expect(
+      renderer.root
+        .findAllByProps({ testID: `room-roster-agent-${OX}` })
+        .at(-1)!
+        .findByType('IdentityMark' as any).props.face,
+    ).toBe('octopus');
   });
 
   it('rings an agent only while it is working, never for a presence lease alone', () => {

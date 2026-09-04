@@ -17,7 +17,7 @@ export type MemberPickerCandidate = {
   name: string;
   handle: string;
   kind: 'person' | 'agent';
-  /** People: the chosen face on record. */
+  /** The creature on record — a person's chosen one, an agent's assigned one. */
   face?: string;
   avatarUrl?: string;
 };
@@ -136,6 +136,7 @@ export function MemberPickerSheet({
                     kind="agent"
                     seed={candidate.pubkey}
                     avatarUrl={candidate.avatarUrl}
+                    face={candidate.face}
                     name={candidate.name}
                     size={38}
                   />

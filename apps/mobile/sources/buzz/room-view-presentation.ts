@@ -12,12 +12,16 @@ import type {
 } from '@beeline/buzz-client';
 import type { SystemEvent, SystemSubject } from '@beeline/api-contract/phone';
 import type { AgentActivityItem } from '@/sync/transport';
+import type { DisplayableAgent } from '@/buzz/agent-display';
 import type { CornerStatus, CornerSummary } from '@/buzz/corners';
 import { cornerName } from '@/buzz/corners';
 
 export type AgentTurnStatus = 'working' | 'complete' | 'failed';
 export type CornerProcessState = 'live' | 'suspended' | 'waiting-for-slot';
-export type AgentPresentation = Pick<Agent, 'pubkey' | 'displayName' | 'avatar' | 'soulProfile'>;
+/** What a screen hands `resolveAgentDisplayIdentity` — the relay-side agent
+ *  record plus the server-assigned face the Room view carries. One shape, so
+ *  a screen cannot assemble an agent this resolution cannot read. */
+export type AgentPresentation = DisplayableAgent;
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -495,6 +499,10 @@ export function memberAgent(member: RoomViewMember, _workspaceId: string): Agent
     displayName: member.identity.name,
     pubkey: member.identity.pubkey,
     ...(member.identity.avatar ? { avatar: member.identity.avatar } : {}),
+    // The server's own assignment travels with the name: an agent's animal
+    // decides its name and its soul too, so a tile that redraws it from the
+    // seed contradicts both (`agent-display.ts`).
+    ...(member.identity.face ? { face: member.identity.face } : {}),
   };
 }
 

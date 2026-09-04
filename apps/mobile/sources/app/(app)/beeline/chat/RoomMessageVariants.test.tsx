@@ -494,6 +494,66 @@ describe('Room message variant components', () => {
     expect(timeline.props.mark).toEqual({ seed: 'agent', kind: 'agent', alive: true });
   });
 
+  it('wears the agent’s assigned creature on both the settled byline and the live lane', () => {
+    // An agent's animal comes with its name and its soul from the server. A
+    // row that knows the agent only through the roster still has it, and the
+    // streaming lane is the same speaker — so neither may fall back to the
+    // key's hashed default while the other shows the real one.
+    const props = {
+      participantsHydrated: true,
+      viewerPubkey: 'viewer',
+      speakerWorking: true,
+      continued: false,
+      participantHandles: [],
+      channelIndex: { rooms: [], corners: [] },
+      deliveryFailed: false,
+      onChannelReference: vi.fn(),
+      onReply: vi.fn(),
+      onCopy: vi.fn(),
+      onRetry: vi.fn(),
+      onDismiss: vi.fn(),
+    };
+    render(
+      <OrdinaryLedgerMessage
+        {...props}
+        message={message({ id: 'settled', pubkey: 'agent', isAgentAuthor: true })}
+        agent={{ pubkey: 'agent', displayName: 'Foxy', face: 'fox' }}
+      />,
+    );
+    expect(ledgerEntryRender.mock.lastCall?.[0].byline.mark).toMatchObject({ face: 'fox' });
+
+    const live = render(
+      <OrdinaryLedgerMessage
+        {...props}
+        message={message({
+          id: 'live',
+          pubkey: 'agent',
+          isAgentAuthor: true,
+          isAgentActivity: true,
+          isAgentLiveTurn: true,
+          agentMessageDraft: 'Working…',
+        })}
+        agent={{ pubkey: 'agent', displayName: 'Foxy', face: 'fox' }}
+      />,
+    );
+    expect(live.root.findByType('ActivityTimeline').props.mark).toMatchObject({ face: 'fox' });
+
+    // The row's own server identity wins over the roster copy.
+    render(
+      <OrdinaryLedgerMessage
+        {...props}
+        message={message({
+          id: 'indexed',
+          pubkey: 'agent',
+          isAgentAuthor: true,
+          authorIdentity: { pubkey: 'agent', kind: 'agent', name: 'Foxy', face: 'owl' },
+        })}
+        agent={{ pubkey: 'agent', displayName: 'Foxy', face: 'fox' }}
+      />,
+    );
+    expect(ledgerEntryRender.mock.lastCall?.[0].byline.mark).toMatchObject({ face: 'owl' });
+  });
+
   it('uses the current server author label and shared mention renderer over stale roster data', () => {
     const agentPubkey = 'agent';
     const currentIdentityMessage = message({

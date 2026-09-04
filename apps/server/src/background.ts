@@ -27,11 +27,14 @@ export class PushDeliveryLoop {
       WITH candidates AS (
         SELECT m.id message_id,m.room_id::text room_id,
           CASE
+            -- A corner is named by its NAME on every surface, this one included.
             WHEN m.card_type='daemon-fact' AND m.card->>'type'='corner-open'
-              THEN concat_ws(' ',COALESCE(NULLIF(author.name,''),'An agent'),'opened a corner:',m.card->>'objective')
+              THEN concat_ws(' ',COALESCE(NULLIF(author.name,''),'An agent'),'opened a corner:',
+                COALESCE(NULLIF(m.card->>'name',''),m.card->>'objective'))
             WHEN m.card_type='daemon-fact' AND m.card->>'type'='corner-complete'
               THEN concat_ws(' ',COALESCE(NULLIF(author.name,''),'An agent'),
-                CASE WHEN m.card->>'outcome'='landed' THEN 'merged:' ELSE 'closed:' END,m.card->>'objective')
+                CASE WHEN m.card->>'outcome'='landed' THEN 'merged:' ELSE 'closed:' END,
+                COALESCE(NULLIF(m.card->>'name',''),m.card->>'objective'))
             WHEN m.card_type='grant-request' THEN btrim(m.text)
             ELSE concat_ws(': ',COALESCE(NULLIF(author.name,''),'Someone'),btrim(m.text))
           END text,

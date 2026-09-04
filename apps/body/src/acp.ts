@@ -126,6 +126,8 @@ export interface ToolCallEntry {
   status?: string;
   rawInput?: unknown;
   content?: unknown;
+  /** Some harnesses (grok) put a failed call's reason here and nowhere else. */
+  rawOutput?: unknown;
   locations?: unknown;
 }
 
@@ -491,6 +493,7 @@ export function toolCallEntries(updates: readonly SessionUpdate[]): ToolCallEntr
       ...(typeof update.status === 'string' ? { status: update.status } : {}),
       ...('rawInput' in update ? { rawInput: update.rawInput } : {}),
       ...('content' in update ? { content: update.content } : {}),
+      ...('rawOutput' in update ? { rawOutput: update.rawOutput } : {}),
       ...('locations' in update ? { locations: update.locations } : {}),
     });
     if (!id && sessionUpdate === 'tool_result') activeAnonymous = undefined;

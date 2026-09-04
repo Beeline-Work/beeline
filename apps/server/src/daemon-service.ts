@@ -4,6 +4,7 @@ import type {
   DaemonOperationMap,
   SystemEvent,
 } from '@beeline/api-contract/daemon';
+import { cornerTextRefusal, normalizeCornerText } from '@beeline/api-contract/daemon';
 import {
   AGENT_GRANT_REASON_MAX_LENGTH,
   AGENT_GRANT_TARGET_MAX_LENGTH,
@@ -1757,14 +1758,14 @@ export class DaemonService {
     return this.writeResult();
   }
   private async createCorner(input: Input<'createCorner'>, agentId: string) {
-    const objective = input.objective;
-    if (
-      !objective ||
-      objective !== objective.trim() ||
-      /\s{2,}|[\r\n\t]/.test(objective) ||
-      objective.split(' ').length > 24
-    )
-      throw new Error('corner objective must be one trimmed paragraph of at most 24 words');
+    // Untidy is not wrong: a brief handed over with line breaks or double
+    // spaces is flattened here, and only a genuinely over-long text is
+    // refused — in a sentence that names the limit and the count (C90).
+    const objective = normalizeCornerText(input.objective ?? '');
+    const name = normalizeCornerText(input.name ?? '');
+    const refusal =
+      cornerTextRefusal('name', input.name) ?? cornerTextRefusal('objective', input.objective);
+    if (refusal) throw new Error(refusal);
     await this.access(input.roomId, agentId);
     const parent = (
       await this.database.query<{ workspace_id: string }>(
@@ -1782,7 +1783,7 @@ export class DaemonService {
           parent.workspace_id,
           input.roomId,
           agentId,
-          objective,
+          name,
           input.repository ?? null,
           input.targetBranch ?? 'main',
         ],
@@ -1809,10 +1810,11 @@ export class DaemonService {
         roomId: input.roomId,
         subject: { kind: 'agent', id: agentId, name: opener.name },
         verb: 'opened a corner',
-        object: { text: objective, id: cornerId },
+        // The NAME titles the corner everywhere; the objective is the card body.
+        object: { text: name, id: cornerId },
         presentation: 'card',
         cardType: 'daemon-fact',
-        card: { type: 'corner-open', cornerId, objective },
+        card: { type: 'corner-open', cornerId, name, objective },
       });
     });
     this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'corner' });

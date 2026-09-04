@@ -7,3 +7,4 @@ export * from './agent-grants.js';
 export * from './faces.js';
 export * from './system-events.js';
 export * from './default-workspace.js';
+export * from './corner-text.js';

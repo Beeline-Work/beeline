@@ -403,6 +403,7 @@ export class MonolithRoomTurnLoop {
         roomId: this.options.roomId,
         workspaceId: this.options.workspaceId,
         attachRoot: this.options.cwd,
+        ...(tmpDir ? { attachScratchRoot: tmpDir } : {}),
         directMessage,
         ...(this.options.grantRunnerEndpoint
           ? { grantRunner: this.options.grantRunnerEndpoint }

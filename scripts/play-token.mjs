@@ -4,7 +4,7 @@
 // Why not google-github-actions/auth: that action exchanges the key through
 // iamcredentials.googleapis.com (the IAM Service Account Credentials API),
 // which is not enabled in the Beeline Google Cloud project and which the Play
-// service account cannot enable (play-listing.yml run 33821665867 failed with
+// service account cannot enable (the Play listing sync, run 33821665867, failed with
 // 403 SERVICE_DISABLED). The self-signed JWT flow only needs the key's private
 // key and oauth2.googleapis.com, and the Android Developer API accepts it.
 //

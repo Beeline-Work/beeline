@@ -2,8 +2,9 @@
 #
 # Promote the most recent release on one Play track onto another (for example
 # internal → beta, where the API name "beta" is Play Console's "Open testing")
-# through the AndroidPublisher REST API. Called from
-# .github/workflows/play-promote.yml.
+# through the AndroidPublisher REST API. Operator-run: the release's store
+# leg only ever writes a draft to the track it was given, so moving a release
+# onward stays a deliberate manual step (see apps/mobile/docs/store-submission.md).
 #
 # Required environment:
 #   ACCESS_TOKEN     — OAuth access token with the androidpublisher scope

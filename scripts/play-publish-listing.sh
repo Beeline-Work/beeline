@@ -2,7 +2,8 @@
 #
 # Push the Play store listing (title, descriptions, icon, feature graphic,
 # phone screenshots) from the committed fastlane metadata dir through the
-# AndroidPublisher REST API. Called from .github/workflows/play-listing.yml.
+# AndroidPublisher REST API. Called from the store_android job of
+# .github/workflows/unified-release.yml.
 #
 # Separate from the AAB upload because listing edits are rare (a copy pass, a
 # new screenshot) and must not ride along with every build.

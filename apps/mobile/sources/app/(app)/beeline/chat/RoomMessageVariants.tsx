@@ -16,6 +16,7 @@ import { splitLedgerText } from '@/buzz/ledger-text';
 import { ledgerStamp } from '@/buzz/relative-time';
 import { attachmentOpenUrl, formatAttachmentSize } from '@/buzz/chat-attachment';
 import { ROOM_LABEL, CORNER_LABEL } from '@/buzz/vocabulary';
+import { cornerName } from '@/buzz/corners';
 import { groknight } from '@/buzz/groknight';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
@@ -424,6 +425,10 @@ export const DaemonFactCard = React.memo(function DaemonFactCard({
   const fact = message.daemonFact!;
   const agent = message.authorIdentity?.kind === 'agent' ? message.authorIdentity.name : undefined;
   const landedCorner = fact.type === 'corner-complete' && fact.outcome === 'landed';
+  // The NAME titles the card; the objective is its body. A card written
+  // before the name existed falls back to the same three-word derivation
+  // every other corner surface uses (C89).
+  const title = cornerName(fact.name ?? fact.objective, fact.cornerId);
   const body =
     fact.type === 'corner-complete'
       ? landedCorner
@@ -436,7 +441,7 @@ export const DaemonFactCard = React.memo(function DaemonFactCard({
           : 'WORKTREE CLEANED';
   return (
     <RepositoryFactCard
-      title={landedCorner ? `MERGED · ${fact.objective}` : fact.objective}
+      title={landedCorner ? `MERGED · ${title}` : title}
       body={body}
       actionLabel={
         fact.type === 'corner-complete' && fact.pullRequest

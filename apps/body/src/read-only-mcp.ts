@@ -36,6 +36,14 @@ import {
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { createInterface } from 'node:readline';
 import {
+  CORNER_NAME_MAX_LENGTH,
+  CORNER_NAME_MAX_WORDS,
+  CORNER_OBJECTIVE_MAX_LENGTH,
+  CORNER_OBJECTIVE_MAX_WORDS,
+  cornerTextRefusal,
+  normalizeCornerText,
+} from '@beeline/api-contract/daemon';
+import {
   AGENT_GRANT_KINDS,
   AGENT_GRANT_REASON_MAX_LENGTH,
   AGENT_GRANT_TARGET_MAX_LENGTH,
@@ -283,16 +291,22 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'open_corner',
     description:
-      'Open one write-enabled repository corner with a fixed objective of no more than 24 words. The objective is used verbatim on every summary surface.',
+      'Open one write-enabled repository corner. Give it a name of AT MOST THREE WORDS - that name titles the corner in the Room list, the corner header and every card - and a fixed objective of no more than 24 words stating the work. Line breaks and extra spaces in either are flattened for you; only a text that is genuinely too long is refused.',
     inputSchema: {
       type: 'object',
-      required: ['objective'],
+      required: ['name', 'objective'],
       properties: {
+        name: {
+          type: 'string',
+          minLength: 1,
+          maxLength: CORNER_NAME_MAX_LENGTH,
+          description: `The corner's title: at most ${CORNER_NAME_MAX_WORDS} words, no line breaks.`,
+        },
         objective: {
           type: 'string',
           minLength: 1,
-          maxLength: 2000,
-          description: 'One paragraph of at most 24 words stating the complete, fixed objective.',
+          maxLength: CORNER_OBJECTIVE_MAX_LENGTH,
+          description: `One paragraph of at most ${CORNER_OBJECTIVE_MAX_WORDS} words stating the complete, fixed objective.`,
         },
       },
       additionalProperties: false,
@@ -900,16 +914,24 @@ async function daemonExecute(name: string, input: JsonObject): Promise<JsonObjec
   return (await response.json()) as JsonObject;
 }
 
+/** The corner's two texts, flattened and judged. Anything that reads as a
+ *  refusal is one plain sentence naming the limit and the actual count: a
+ *  refused call the model cannot understand is a silent one (C90). */
+export function cornerCallText(args: JsonObject): { name: string; objective: string } {
+  const refusal =
+    cornerTextRefusal('name', args.name) ?? cornerTextRefusal('objective', args.objective);
+  if (refusal) throw new Error(refusal);
+  return {
+    name: normalizeCornerText(String(args.name)),
+    objective: normalizeCornerText(String(args.objective)),
+  };
+}
+
 async function openCorner(args: JsonObject): Promise<string> {
   if (process.env.BEELINE_DAEMON_CORNER_ID || process.env.BEELINE_AGENT_DM === '1') {
     throw new Error('open_corner is available only in a top-level Room');
   }
-  const objective = stringArg(args, 'objective');
-  if (!objective?.trim()) throw new Error('objective must be a non-empty string');
-  if (objective !== objective.trim() || /\s{2,}|[\r\n\t]/.test(objective))
-    throw new Error('objective must be one trimmed paragraph with single spaces');
-  if (objective.length > 2000) throw new Error('objective exceeds 2000 characters');
-  if (objective.split(' ').length > 24) throw new Error('objective exceeds 24 words');
+  const { name, objective } = cornerCallText(args);
   const roomId = requiredEnv('BEELINE_DAEMON_ROOM_ID');
   const repository = await daemonExecute('getRoomRepositoryState', { roomId });
   if (
@@ -923,6 +945,7 @@ async function openCorner(args: JsonObject): Promise<string> {
   const created = await daemonExecute('createCorner', {
     roomId,
     requestId,
+    name,
     objective,
     repository: repository.key,
     ...(typeof repository.targetBranch === 'string'
@@ -940,6 +963,7 @@ async function openCorner(args: JsonObject): Promise<string> {
   });
   return JSON.stringify({
     cornerId: created.cornerId,
+    name,
     objective,
     status: 'starting',
   });
@@ -1436,9 +1460,25 @@ async function handleLine(line: string): Promise<void> {
     if (request.method === 'tools/call') {
       const params = asObject(request.params);
       if (typeof params.name !== 'string') throw new Error('tool name must be a string');
-      const output = agentSurface
-        ? await callAgentTool(params.name, asObject(params.arguments))
-        : callTool(params.name, asObject(params.arguments));
+      // A tool that refuses answers with an MCP tool RESULT carrying isError,
+      // not a JSON-RPC protocol error. A protocol error is a client bug in
+      // every harness that reads the spec, and reaches the model - when it
+      // reaches it at all - as "the call failed", with the sentence explaining
+      // why buried in a transport frame (C90).
+      let output: string;
+      try {
+        output = agentSurface
+          ? await callAgentTool(params.name, asObject(params.arguments))
+          : callTool(params.name, asObject(params.arguments));
+      } catch (error) {
+        success(request.id, {
+          content: [
+            { type: 'text', text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        });
+        return;
+      }
       success(request.id, { content: [{ type: 'text', text: output }] });
       return;
     }

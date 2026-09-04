@@ -25,6 +25,7 @@ import type {
 } from '@beeline/api-contract/phone';
 import {
   assignSeededAgentIdentity,
+  cornerDisplayName,
   createCommunityInviteToken,
   defaultFaceForSeed,
   FACE_SOULS,
@@ -255,12 +256,23 @@ function projectedMessage(row: MessageRow, publicOrigin: string): RoomViewMessag
     case 'github-event':
       return { ...base, githubEvent: row.card as NonNullable<RoomViewMessage['githubEvent']> };
     case 'daemon-fact':
-      return { ...base, daemonFact: row.card as NonNullable<RoomViewMessage['daemonFact']> };
+      return { ...base, daemonFact: titledDaemonFact(row.card) };
     case 'corner':
       return { ...base, corner: row.card as NonNullable<RoomViewMessage['corner']> };
     default:
       return base;
   }
+}
+
+/**
+ * Every corner card is titled by its NAME. A card written before the name
+ * existed carries only the objective, so its first three words stand in and
+ * nothing in the app is ever drawn with a blank title (C89).
+ */
+function titledDaemonFact(card: unknown): NonNullable<RoomViewMessage['daemonFact']> {
+  const fact = card as NonNullable<RoomViewMessage['daemonFact']>;
+  const title = cornerDisplayName(fact.name ?? fact.objective);
+  return title ? { ...fact, name: title } : fact;
 }
 
 function roomSchedule(row: RoomScheduleRow): Output<'createRoomSchedule'> {

@@ -208,6 +208,8 @@ export type RoomViewMessage = {
   readonly daemonFact?: {
     readonly type: 'corner-complete' | 'checks-failing' | 'worktree-cleaned' | 'corner-open';
     readonly cornerId: string;
+    /** The corner's short title (at most three words). Absent only on legacy cards. */
+    readonly name?: string;
     readonly objective: string;
     readonly outcome?: 'landed' | 'abandoned';
     readonly pullRequest?: {

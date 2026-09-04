@@ -13,6 +13,7 @@ import type {
 import type { SystemEvent, SystemSubject } from '@beeline/api-contract/phone';
 import type { AgentActivityItem } from '@/sync/transport';
 import type { CornerStatus, CornerSummary } from '@/buzz/corners';
+import { cornerName } from '@/buzz/corners';
 
 export type AgentTurnStatus = 'working' | 'complete' | 'failed';
 export type CornerProcessState = 'live' | 'suspended' | 'waiting-for-slot';
@@ -468,7 +469,9 @@ export function cornerSummaries(view: Pick<RoomView, 'corners'>): CornerSummary[
             : null;
     return {
       id: item.corner.id,
-      name: item.corner.name,
+      // Every consumer of a corner summary — the Room row's fact line, the
+      // corner deck, the header — reads the SHORT title (C89).
+      name: cornerName(item.corner.name, item.corner.id),
       status,
       machineState,
       ...(machineState === 'waiting' && item.reason ? { machineReason: item.reason } : {}),

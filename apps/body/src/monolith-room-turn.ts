@@ -54,6 +54,7 @@ import type { AgentRuntimeRecord } from './runtime.js';
 import { runtimeIdentity } from './runtime.js';
 import { MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE, SOUL_HOUSE_RULE } from './response-directives.js';
 import { sanitizeAgentReply, stripCornerOpenEcho } from './reply-sanitizer.js';
+import { isFailedToolCall, toolCallFailureLine } from './tool-call-failure.js';
 import { distillTurnFailureReason } from './turn-failure-reason.js';
 import { withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
@@ -619,9 +620,7 @@ export class MonolithRoomTurnLoop {
                 this.roster(),
                 this.deliver(item),
               ]);
-              const names = new Map(
-                roster.members.map((member) => [member.identityId, member.name]),
-              );
+              const names = new Map(roster.members.map((member) => [member.identityId, member.name]));
               const transcript = conversation.items
                 .filter(
                   (message) =>
@@ -773,9 +772,16 @@ export class MonolithRoomTurnLoop {
               );
               if (openCornerCall) {
                 console.log(
-                  `[thin-core] monolith Room ${this.options.roomId} tool call: ${openCornerCall.title}`,
+                  `[thin-core] monolith Room ${this.options.roomId} tool call: ${openCornerCall.title} (${openCornerCall.status ?? 'no status'})`,
                 );
-                this.options.onCornerOpened?.();
+                if (!isFailedToolCall(openCornerCall)) this.options.onCornerOpened?.();
+              }
+              // A refusal the operator cannot read is a refusal that happens twice.
+              for (const call of result?.toolCalls ?? []) {
+                const failure = toolCallFailureLine(call);
+                if (failure) {
+                  console.warn(`[thin-core] monolith Room ${this.options.roomId} ${failure}`);
+                }
               }
               await this.draftTail;
               let reply = sanitizeAgentReply(result.agentText);
@@ -797,7 +803,7 @@ export class MonolithRoomTurnLoop {
               // The server's corner-open card already announces a corner the
               // turn opened; the model's own "Opened corner …" echo is dropped and
               // a turn left with nothing else settles through its receipt.
-              if (openCornerCall && !/failed|error|denied/i.test(openCornerCall.status ?? '')) {
+              if (openCornerCall && !isFailedToolCall(openCornerCall)) {
                 reply = stripCornerOpenEcho(reply);
               }
               if (reply) {

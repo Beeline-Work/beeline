@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { CornerSummary, CornerStatus } from './corners';
+import { cornerName } from './corners';
 import {
   displayCornerTitle,
   displayRoomIndexTitle,
@@ -585,6 +586,27 @@ describe('Room row presentation', () => {
       expect(display).toBe('#Roadmap/fix ledger drift');
       expect(room).toBe('Roadmap');
       expect(corner).toBe('fix ledger drift');
+    });
+
+    // C89: a corner is named at open_corner and that name is at most three
+    // words. A corner opened before the name existed stored the whole
+    // objective in the same slot, so the row shows its first three words
+    // rather than a paragraph.
+    it('cuts a legacy corner title to three words on a word boundary', () => {
+      expect(
+        displayCornerTitle(
+          'Roadmap',
+          'Rework the room list so every corner row carries a state mark',
+          'abc12345',
+        ),
+      ).toBe('#Roadmap/Rework the room');
+      expect(cornerName('Rework the room list so every corner row carries', 'abc12345')).toBe(
+        'Rework the room',
+      );
+      // A real three-word name is left exactly as the agent wrote it.
+      expect(cornerName('fix ledger drift', 'abc12345')).toBe('fix ledger drift');
+      // A brief that arrived with line breaks still reads as one line.
+      expect(cornerName('fix\nledger  drift', 'abc12345')).toBe('fix ledger drift');
     });
   });
 });

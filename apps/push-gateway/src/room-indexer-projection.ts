@@ -21,6 +21,7 @@ import {
   type RoomViewMember,
   type RoomViewMessage,
 } from '@beeline/buzz-client';
+import { cornerDisplayName } from '@beeline/api-contract/phone';
 import { HISTORY_EVENT_LIMIT } from './room-indexer-sql.js';
 
 export type IndexRow = { readonly section: string; readonly data: unknown };
@@ -100,6 +101,9 @@ function daemonFactCard(
   const cornerId = text(tag(values, 'subchannel'));
   const objective = text(tag(values, 'objective'));
   if (!cornerId || !/^[0-9a-f-]{36}$/i.test(cornerId) || !objective) return undefined;
+  // A relay-era card carries only the objective; its first three words are the
+  // title, the same stand-in every other corner surface uses (C89).
+  const name = cornerDisplayName(objective);
   const subgoals = values.flatMap((value) => {
     const [name, step, status] = value;
     return name === 'subgoal' &&
@@ -129,6 +133,7 @@ function daemonFactCard(
     return {
       type: 'corner-complete',
       cornerId,
+      name,
       objective,
       outcome,
       ...(pullRequest ? { pullRequest } : {}),
@@ -139,6 +144,7 @@ function daemonFactCard(
     return {
       type: 'checks-failing',
       cornerId,
+      name,
       objective,
       ...(pullRequest ? { pullRequest } : {}),
       ...(subgoals.length ? { subgoals } : {}),
@@ -148,6 +154,7 @@ function daemonFactCard(
     return {
       type: 'worktree-cleaned',
       cornerId,
+      name,
       objective,
       ...(subgoals.length ? { subgoals } : {}),
     };
@@ -156,6 +163,7 @@ function daemonFactCard(
     return {
       type: 'corner-open',
       cornerId,
+      name,
       objective,
     };
   }

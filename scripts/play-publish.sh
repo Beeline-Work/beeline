@@ -3,7 +3,7 @@
 # Upload an Android App Bundle to a Google Play track through the
 # AndroidPublisher REST API: create edit → upload bundle → tracks.update →
 # commit. Called from .github/workflows/play-beta.yml after
-# google-github-actions/auth has minted an access token for the Play service
+# scripts/play-token.mjs has minted an access token for the Play service
 # account in the GOOGLE_PLAY_SERVICE_ACCOUNT_JSON secret.
 #
 # Required environment:

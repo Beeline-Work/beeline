@@ -84,6 +84,12 @@ export interface BodyConfig {
    * (`openrouter-routing.ts`); one directory per daemon, shared by every Room.
    */
   openRouterRoutingCacheDir?: string;
+  /**
+   * Operator-local turn traces (`turn-trace.ts`): `<runtimeDir>/turn-traces/`,
+   * one JSON line per turn. Unset (standalone/test Bodies) still measures the
+   * turn and simply drops the record. A trace NEVER reaches a Room.
+   */
+  turnTraceDir?: string;
   /** Runtime-owned names of operator skills explicitly shared with this agent. */
   sharedSkills?: string[];
   operatorHome?: string;

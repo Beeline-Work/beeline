@@ -675,6 +675,8 @@ CREATE TABLE IF NOT EXISTS agent_grants (
   auto boolean NOT NULL DEFAULT false,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+-- C94: an interpreter command grant is bound to the script the card showed.
+ALTER TABLE agent_grants ADD COLUMN IF NOT EXISTS script jsonb;
 CREATE INDEX IF NOT EXISTS agent_grants_agent_idx ON agent_grants(agent_id, workspace_id, status);
 CREATE INDEX IF NOT EXISTS agent_grants_room_idx ON agent_grants(room_id, created_at DESC);
 

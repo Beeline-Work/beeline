@@ -42,7 +42,11 @@ import {
   turnFailureReasonWithProvider,
   type EmptyTurnExplanation,
 } from './empty-turn.js';
-import type { GrantCommandRunner, GrantRunnerEndpoint } from './grant-runner.js';
+import type {
+  GrantCommandRunner,
+  GrantRunnerEndpoint,
+  GrantWritePolicy,
+} from './grant-runner.js';
 import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
 import {
   agentArgsWithModelSelection,
@@ -251,6 +255,10 @@ export class MonolithRoomTurnLoop {
   private readonly queuedTurns: HumanMessage[] = [];
   /** Session scratch directory attachments are downloaded into (`TMPDIR/beeline-attachments`). */
   private attachmentDir?: string;
+  /** The session's TMPDIR: writable to a granted command in a Room, as it is to the harness (C94). */
+  private sessionScratchDir?: string;
+  /** The `agent-home.ts` overlay this session writes into; a Room grant keeps it. */
+  private sessionStateDirs: string[] = [];
   /** Local copies already delivered this session, by message id, so transcript renders reuse them. */
   private readonly deliveredAttachments = new Map<string, DeliveredAttachment[]>();
   /** Names from the latest roster read, for ledger bylines the runner writes. */
@@ -263,6 +271,9 @@ export class MonolithRoomTurnLoop {
     options.grantRunner?.register(options.roomId, {
       workspaceId: options.workspaceId,
       cwd: options.cwd,
+      // A top-level Room keeps its read-only promise for grants too: the runner
+      // wraps the command in this Room's own mount table (C94).
+      writePolicy: () => this.grantWritePolicy(),
       turn: () => this.currentTurnForRunner(),
     });
   }
@@ -274,6 +285,26 @@ export class MonolithRoomTurnLoop {
   /** The turn a `request_grant` paused, if any (cleared when its decision resumes it). */
   pausedGrantRequestId(): string | undefined {
     return this.pausedOnGrantRequestId;
+  }
+
+  /**
+   * What the grant runner may write here: the session's own scratch and home
+   * overlay and nothing else, enforced by the same read-only mount table the
+   * harness runs under. With no usable bwrap there is no way to keep that
+   * promise, so the policy carries no path and the runner refuses the run
+   * rather than widening the boundary.
+   */
+  private grantWritePolicy(): GrantWritePolicy {
+    return {
+      surface: 'room',
+      ...(this.options.config.bwrapPath ? { bwrapPath: this.options.config.bwrapPath } : {}),
+      ...(this.sessionScratchDir ? { scratch: this.sessionScratchDir } : {}),
+      ...(this.sessionStateDirs.length ? { harnessStateDirs: this.sessionStateDirs } : {}),
+      maskPaths: credentialMaskPaths(
+        this.options.config.sandboxMaskPaths,
+        this.options.config.operatorHome ?? homedir(),
+      ),
+    };
   }
 
   private currentTurnForRunner():
@@ -387,6 +418,8 @@ export class MonolithRoomTurnLoop {
     const operatorHome = this.options.config.operatorHome ?? homedir();
     const { stateDirs, tmpDir } = harnessStateDirsFromEnv(agentEnv);
     this.attachmentDir = tmpDir ? join(tmpDir, 'beeline-attachments') : undefined;
+    this.sessionScratchDir = tmpDir;
+    this.sessionStateDirs = stateDirs;
     const homeStateDirs = harnessHomeStateDirs(command, agentEnv.HOME ?? operatorHome);
     await Promise.all(homeStateDirs.map((dir) => mkdir(dir, { recursive: true })));
     const spawnCommand = wrapAgentCommand({

@@ -3827,6 +3827,145 @@ describe('monolith integration', () => {
       expect.objectContaining({ status: 'pending', auto: false, messageId: expect.any(String) }),
     );
   });
+
+  /**
+   * C94. Goosy took 36 granted commands in a top-level Room and 4 in its corner,
+   * every one auto-approved under yolo, and among them wrote into the captain's
+   * live project, ran a script it had authored itself, and read the key names
+   * out of his environment file. Yolo stays the scope gate — an ordinary command
+   * still just runs — and only the two hard stops wait for a person.
+   */
+  it('keeps the two hard stops off yolo, records what a grant licensed, and binds a script to its bytes', async () => {
+    await database.query(`UPDATE agents SET yolo_mode=true WHERE agent_id=$1`, [AGENT]);
+    const ask = async (target: string, extra: Record<string, unknown> = {}) =>
+      (await (
+        await daemonOperation('requestAgentGrant', {
+          roomId: ROOM,
+          kind: 'command',
+          target,
+          reason: 'because',
+          ...extra,
+        })
+      ).json()) as Record<string, unknown>;
+
+    // An ordinary command still rides on yolo, and the line now says what that
+    // licensed: in a Room, nothing outside the agent's own scratch.
+    const ordinary = await ask('npm test');
+    expect(ordinary).toEqual(
+      expect.objectContaining({ status: 'approved', auto: true }),
+    );
+    const autoLine = await database.query<{ text: string; system_event: { consequence: string } }>(
+      `SELECT text,system_event FROM messages WHERE card_type='grant-auto' ORDER BY created_at DESC LIMIT 1`,
+    );
+    expect(autoLine.rows[0]!.text).toBe(
+      'Bee was granted command npm test · auto-approved under yolo, reads only outside its scratch',
+    );
+
+    // An interpreter and a credential file each ask a person, under yolo.
+    const script = 'import os\nos.remove("/tmp/x")\n';
+    const interpreter = await ask('python3 fix.py', {
+      script: {
+        path: 'fix.py',
+        sha256: createHash('sha256').update(script).digest('hex'),
+        bytes: Buffer.byteLength(script),
+        contents: script,
+      },
+    });
+    expect(interpreter).toEqual(
+      expect.objectContaining({
+        status: 'pending',
+        auto: false,
+        escalations: ['unseen-script'],
+        messageId: expect.any(String),
+      }),
+    );
+    // A named secret is scope, not a stop: yolo already answered that question.
+    expect(await ask('fly deploy -a preview --with FLY_TOKEN')).toEqual(
+      expect.objectContaining({ status: 'approved', auto: true }),
+    );
+    const credential = await ask('cut -d= -f1 /home/op/proj/.env');
+    expect(credential).toEqual(
+      expect.objectContaining({ status: 'pending', auto: false, escalations: ['credential'] }),
+    );
+
+    // The card carries the script's contents, so the person approves what runs.
+    const card = await database.query<{ card: { grants: Array<Record<string, unknown>> } }>(
+      `SELECT card FROM messages WHERE card_type='grant-request' ORDER BY created_at DESC LIMIT 1`,
+    );
+    const carded = card.rows[0]!.card.grants.find(
+      (entry) => entry.grantId === interpreter.grantId,
+    ) as { script?: { contents: string; sha256: string } };
+    expect(carded.script?.contents).toBe(script);
+
+    // Approved, the binding reaches the runner so it can re-check the bytes.
+    await operation('decideAgentGrant', { grantId: interpreter.grantId, decision: 'always' });
+    const live = (await (await daemonOperation('listAgentGrants', { agentId: AGENT })).json()) as {
+      grants: Array<{ grantId: string; script?: { sha256: string } }>;
+    };
+    expect(live.grants.find((entry) => entry.grantId === interpreter.grantId)!.script).toEqual(
+      expect.objectContaining({ path: 'fix.py', contents: script }),
+    );
+
+    // The hash is the binding, so contents that do not hash to it are refused.
+    const lying = await daemonOperation('requestAgentGrant', {
+      roomId: ROOM,
+      kind: 'command',
+      target: 'python3 lie.py',
+      reason: 'because',
+      script: {
+        path: 'lie.py',
+        sha256: 'a'.repeat(64),
+        bytes: Buffer.byteLength(script),
+        contents: script,
+      },
+    });
+    expect(lying.status).toBe(400);
+    expect(((await lying.json()) as { error: string }).error).toContain(
+      'hash does not match its contents',
+    );
+
+    // A script too long to read honestly is refused, never truncated.
+    const long = Array.from({ length: 400 }, (_, index) => `line ${index}`).join('\n');
+    const refused = await daemonOperation('requestAgentGrant', {
+      roomId: ROOM,
+      kind: 'command',
+      target: 'python3 huge.py',
+      reason: 'because',
+      script: {
+        path: 'huge.py',
+        sha256: createHash('sha256').update(long).digest('hex'),
+        bytes: Buffer.byteLength(long),
+        contents: long,
+      },
+    });
+    expect(refused.status).toBe(400);
+    expect(((await refused.json()) as { error: string }).error).toContain('will not be truncated');
+
+    // In a corner the same auto line says the opposite, because a corner IS the
+    // writable surface.
+    const cornerId = '44444444-4444-4444-8444-444444444444';
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Corner')`,
+      [cornerId, WORKSPACE, ROOM, AGENT],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
+      [WORKSPACE, cornerId, AGENT],
+    );
+    await daemonOperation('requestAgentGrant', {
+      roomId: cornerId,
+      kind: 'command',
+      target: 'npm test',
+      reason: 'because',
+    });
+    const cornerLine = await database.query<{ text: string }>(
+      `SELECT text FROM messages WHERE room_id=$1 AND card_type='grant-auto'`,
+      [cornerId],
+    );
+    expect(cornerLine.rows[0]!.text).toBe(
+      'Bee was granted command npm test · auto-approved under yolo, free to write the worktree and act on the host',
+    );
+  });
 });
 
 function next(socket: WebSocket, type: string): Promise<Record<string, unknown>> {

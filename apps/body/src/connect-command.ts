@@ -76,13 +76,15 @@ const DEFAULT_MODELS: Record<ConnectProvider | 'codex' | 'claude' | 'grok', stri
   grok: 'grok-4',
 };
 
+/**
+ * What the wizard still asks for. Name and soul are NOT here: the server seeds
+ * both from the animal it assigns the agent, so nobody types them.
+ */
 export interface ConnectWizardResult {
-  name: string;
   harness: (typeof CONNECT_HARNESSES)[number];
   provider?: ConnectProvider;
   apiKey?: string;
   model: string;
-  soul: string;
 }
 
 export interface ConnectPrompts {
@@ -132,15 +134,51 @@ function brassEnabled(
   return 'plain';
 }
 
+/** The one brand brass, #D7AF5F — the app's accent, and xterm 179 exactly. */
+const BRASS_TRUECOLOR = '\u001b[38;2;215;175;95m';
+const BRASS_256 = '\u001b[38;5;179m';
+
 export function brass(
   value: string,
   env: NodeJS.ProcessEnv = process.env,
   output: NodeJS.WriteStream = stdout,
 ): string {
   const level = brassEnabled(env, output);
-  if (level === 'truecolor') return `\u001b[38;2;194;147;60m${value}\u001b[39m`;
-  if (level === '256') return `\u001b[38;5;178m${value}\u001b[39m`;
+  if (level === 'truecolor') return `${BRASS_TRUECOLOR}${value}\u001b[39m`;
+  if (level === '256') return `${BRASS_256}${value}\u001b[39m`;
   return value;
+}
+
+/**
+ * Clack paints its rails — the active step symbol, the selected option, the
+ * submitted value — cyan, and there is no colour hook to ask it otherwise.
+ * Repaint that one colour brass on the way out so the wizard reads as the app
+ * does. Nothing else about the frame changes.
+ */
+export function brassRails(
+  text: string,
+  env: NodeJS.ProcessEnv = process.env,
+  output: NodeJS.WriteStream = stdout,
+): string {
+  const level = brassEnabled(env, output);
+  if (level === 'plain') return text;
+  return text.replace(/\u001b\[(?:36|96)m/g, level === 'truecolor' ? BRASS_TRUECOLOR : BRASS_256);
+}
+
+/** Hold the repaint for the life of the wizard; the return restores the stream. */
+export function paintWizardBrass(output: NodeJS.WriteStream = stdout): () => void {
+  const original = output.write;
+  const patched = function write(this: NodeJS.WriteStream, chunk: unknown, ...rest: unknown[]) {
+    return (original as unknown as (...args: unknown[]) => boolean).call(
+      this,
+      typeof chunk === 'string' ? brassRails(chunk, process.env, output) : chunk,
+      ...rest,
+    );
+  };
+  output.write = patched as unknown as NodeJS.WriteStream['write'];
+  return () => {
+    output.write = original;
+  };
 }
 
 const clackPrompts: ConnectPrompts = {
@@ -344,26 +382,11 @@ export async function collectConnectWizard(
     placeholder: 'Type to filter available models…',
     maxItems: 12,
   });
-  const name = await prompts.text({
-    message: brass('Agent name'),
-    validate: (value) => {
-      if (!value.trim()) return 'Agent name is required';
-      return isReasonableAgentName(value)
-        ? undefined
-        : `Use letters, spaces, hyphens, or apostrophes (${AGENT_NAME_MAX_LENGTH} characters max)`;
-    },
-  });
-  const soul = await prompts.text({
-    message: brass('Input soul'),
-    validate: (value) => (value.trim() ? undefined : 'Soul is required'),
-  });
   return {
-    name: name.trim().replace(/\s+/g, ' '),
     harness,
     ...(provider ? { provider } : {}),
     ...(apiKey ? { apiKey: apiKey.trim() } : {}),
     model: model.trim(),
-    soul: soul.trim(),
   };
 }
 
@@ -373,6 +396,7 @@ export interface DeviceGrantResponse {
   body_secret_key: string;
   daemon_exchange_token: string;
   agent_name: string;
+  agent_face?: string;
   workspace_id: string;
   workspace_name: string;
   paired_by: string;
@@ -421,12 +445,39 @@ export function requestConnectGrant(
       harness: selection.harness,
       ...(selection.provider ? { provider: selection.provider } : {}),
       model: selection.model,
-      soul: selection.soul,
       avatar_seed: avatarSeed,
-      agent_name: selection.name,
     },
     fetchImpl,
   );
+}
+
+/**
+ * The one rename the terminal may make, right after the seeded identity is
+ * printed. The pairing code is the authority and the server closes the window
+ * shortly after the claim; every later rename lives in the app.
+ */
+export async function renameConnectedAgent(
+  baseUrl: string,
+  pairingCode: string,
+  name: string,
+  fetchImpl: typeof fetch,
+): Promise<string> {
+  const normalizedPairingCode = normalizeAgentPairingCode(pairingCode);
+  if (!normalizedPairingCode) throw new Error('invalid pairing code');
+  const renamed = await jsonRequest<{ agent_name: string }>(
+    `${baseUrl}/auth/agent/connect/name`,
+    { pairing_code: normalizedPairingCode, agent_name: name.trim().replace(/\s+/g, ' ') },
+    fetchImpl,
+  );
+  return renamed.agent_name;
+}
+
+/** `Foxy the fox` — one line naming what to look for in the app. */
+export function seededIdentityLine(grant: {
+  agent_name: string;
+  agent_face?: string;
+}): string {
+  return grant.agent_face ? `${grant.agent_name} the ${grant.agent_face}` : grant.agent_name;
 }
 
 async function installCurrentRelease(
@@ -546,8 +597,19 @@ export async function runConnectCommand(
   if (!stdin.isTTY || !stdout.isTTY) {
     throw new Error('`usebeeline connect` needs an interactive terminal');
   }
+  const restoreRails = paintWizardBrass();
+  try {
+    await runConnectWizard(code, options.fetchImpl ?? fetch);
+  } finally {
+    restoreRails();
+  }
+}
+
+async function runConnectWizard(
+  code: string | undefined,
+  fetchImpl: typeof fetch,
+): Promise<void> {
   clack.intro(brass('Beeline connect'));
-  const fetchImpl = options.fetchImpl ?? fetch;
   const pairingCode =
     code?.trim() ||
     (await clackPrompts.text({
@@ -566,11 +628,15 @@ export async function runConnectCommand(
     /\/$/,
     '',
   );
-  const grant = await brassSpinner(
+  const claimed = await brassSpinner(
     'Connecting to your Beeline Workspace…',
     () => requestConnectGrant(baseUrl, pairingCode, selection, fetchImpl),
     (connectedGrant) => `Connected to ${connectedGrant.workspace_name}`,
   );
+  // The server seeded this agent's animal, name and soul from its Workspace
+  // roster. Show what to look for in the app, and offer the one rename the
+  // terminal gets before the helper starts under that name.
+  const grant = { ...claimed, agent_name: await confirmSeededName(baseUrl, pairingCode, claimed, fetchImpl) };
   const installedRelease = await brassSpinner(
     'Installing the Beeline daemon…',
     () => installCurrentRelease(fetchImpl),
@@ -603,9 +669,56 @@ export async function runConnectCommand(
     () => `Started ${grant.agent_name}`,
   );
   console.log('');
-  console.log(`${brass('Agent')}      ${grant.agent_name}`);
+  console.log(`${brass('Agent')}      ${seededIdentityLine(grant)}`);
   console.log(`${brass('Workspace')}  ${grant.workspace_name}`);
   clack.outro(brass('Say hi in the app.'));
+}
+
+/**
+ * Print the seeded identity, then two keys: keep it, or rename it here. The
+ * rename lands before the helper is staged, so the runtime is written under
+ * the name the person chose.
+ */
+export async function confirmSeededName(
+  baseUrl: string,
+  pairingCode: string,
+  grant: { agent_name: string; agent_face?: string },
+  fetchImpl: typeof fetch,
+  prompts: Pick<ConnectPrompts, 'select' | 'text'> = clackPrompts,
+): Promise<string> {
+  clack.log.info(brass(`Your agent is ${seededIdentityLine(grant)}.`));
+  const choice = await prompts.select<'keep' | 'rename'>({
+    message: brass('Name'),
+    initialValue: 'keep',
+    options: [
+      { value: 'keep', label: `Keep ${grant.agent_name}`, hint: 'default' },
+      { value: 'rename', label: 'Rename this agent' },
+    ],
+  });
+  if (choice === 'keep') return grant.agent_name;
+  const renamed = await prompts.text({
+    message: brass('Agent name'),
+    initialValue: grant.agent_name,
+    validate: (value) => {
+      if (!value.trim()) return 'Agent name is required';
+      return isReasonableAgentName(value)
+        ? undefined
+        : `Use letters, spaces, hyphens, or apostrophes (${AGENT_NAME_MAX_LENGTH} characters max)`;
+    },
+  });
+  try {
+    return await renameConnectedAgent(baseUrl, pairingCode, renamed, fetchImpl);
+  } catch (error) {
+    // The agent is already claimed and about to start. A failed rename is not
+    // worth losing the connection over: keep the seeded name and say so, so
+    // the person renames it in the app instead.
+    clack.log.warn(
+      brass(
+        `Could not rename this agent (${error instanceof Error ? error.message : String(error)}); it stays ${grant.agent_name}. Rename it in the app.`,
+      ),
+    );
+    return grant.agent_name;
+  }
 }
 
 function isDevicePairingGrant(value: unknown): value is DevicePairingGrant {

@@ -374,6 +374,13 @@ export type WorkspaceView = {
   };
   readonly managerSettings?: {
     readonly visibility: 'public' | 'invite-only';
+    /**
+     * Whether joining agents receive their animal's seeded soul, and whether
+     * the souls already on record are handed to the harness at all. On by
+     * default; off leaves every agent in this Workspace on the shared house
+     * rule with no persona. Absent on stacks that do not index it.
+     */
+    readonly seededSouls?: boolean;
   };
   readonly members: readonly RoomViewMember[];
   readonly agents: readonly RoomViewMember[];
@@ -396,6 +403,12 @@ export type AgentDetailView = {
     readonly avatarSeed: string;
     readonly avatar?: string;
   };
+  /**
+   * The soul this agent's animal carries. An edited soul restores to this
+   * text; it is derived from the face the agent wears, so name, avatar and
+   * soul always name the same animal. Absent on stacks that do not index it.
+   */
+  readonly seededSoul?: string;
   readonly catalog: readonly AgentModelConfigOption[];
   readonly runtimeSelection?: AgentModelSelection;
   readonly selected?: AgentModelSelection;

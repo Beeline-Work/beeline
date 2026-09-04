@@ -58,6 +58,7 @@ export async function createMonolithAuth(
         options.createDaemonExchange(agentId, transaction),
       );
     },
+    renameConnectedAgent: (input) => pairing.renameConnectedAgent(input),
   });
   await app.ready();
 

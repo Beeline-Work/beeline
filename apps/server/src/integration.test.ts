@@ -3,6 +3,12 @@ import { request as httpRequest } from 'node:http';
 import { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
+import {
+  FACE_NAMES,
+  FACE_SOULS,
+  isFaceId,
+  type FaceId,
+} from '@beeline/api-contract/phone';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { TokenAuth, tokenHash } from './auth.js';
@@ -1347,12 +1353,11 @@ describe('monolith integration', () => {
       await operation('createAgentPairingCode', { workspaceId: WORKSPACE })
     ).json()) as { code: string };
 
+    // Neither a name nor a soul is typed any more: the claim seeds both.
     const connectPayload = JSON.stringify({
       pairing_code: pairing.code,
       harness: 'codex',
       model: 'gpt-5.6',
-      soul: 'Practical and kind.',
-      agent_name: 'Terra',
     });
     const connected = await new Promise<{ status: number; body: Record<string, string> }>(
       (resolve, reject) => {
@@ -1379,7 +1384,15 @@ describe('monolith integration', () => {
       },
     );
     expect(connected.status).toBe(200);
-    const grant = connected.body as { agent_pubkey: string };
+    const grant = connected.body as {
+      agent_pubkey: string;
+      agent_name: string;
+      agent_face: string;
+      soul: string;
+    };
+    expect(isFaceId(grant.agent_face)).toBe(true);
+    expect(grant.soul).toBe(FACE_SOULS[grant.agent_face as FaceId]);
+    expect(FACE_NAMES[grant.agent_face as FaceId]).toContain(grant.agent_name);
 
     const notes = await database.query<{
       room_id: string;
@@ -1393,14 +1406,65 @@ describe('monolith integration', () => {
     expect(notes.rows).toEqual(
       [ROOM, secondRoom.id]
         .sort()
-        .map((room_id) => ({ room_id, text: 'Terra joined', presentation: 'system' })),
+        .map((room_id) => ({
+          room_id,
+          text: `${grant.agent_name} joined`,
+          presentation: 'system',
+        })),
     );
 
     expect(await loop.runOnce()).toBe(1);
     expect(send).toHaveBeenCalledWith(
       'owner-agent-join-device-token-1234567890',
-      expect.objectContaining({ text: 'Terra joined Hive' }),
+      expect.objectContaining({ text: `${grant.agent_name} joined Hive` }),
     );
+  });
+
+  it('lets a Workspace manager switch seeded souls off for everyone in it', async () => {
+    await database.query(
+      `UPDATE agents SET soul=$2::jsonb WHERE agent_id=$1`,
+      [AGENT, JSON.stringify({ name: 'Bee', instructions: 'You are a fox.', avatarSeed: AGENT })],
+    );
+    const soulOf = async () =>
+      ((await (
+        await daemonOperation('getAgentConfiguration', { agentId: AGENT, roomId: ROOM })
+      ).json()) as { soul?: { instructions: string } }).soul;
+    const rosterSoulOf = async () =>
+      ((await (
+        await daemonOperation('getWorkspaceRoster', { workspaceId: WORKSPACE })
+      ).json()) as { members: Array<{ identityId: string; soul?: unknown }> }).members.find(
+        (member) => member.identityId === AGENT,
+      )?.soul;
+
+    // On by default.
+    const view = (await (
+      await request(`/v1/phone/workspaces/${WORKSPACE}`)
+    ).json()) as { managerSettings?: { seededSouls?: boolean } };
+    expect(view.managerSettings?.seededSouls).toBe(true);
+    expect(await soulOf()).toMatchObject({ instructions: 'You are a fox.' });
+    expect(await rosterSoulOf()).toBeDefined();
+
+    expect(
+      (await operation('updateWorkspace', { workspaceId: WORKSPACE, seededSouls: false })).status,
+    ).toBe(204);
+
+    // Off: the daemon is handed no persona at all, from either seam, and the
+    // stored soul is preserved for when the switch comes back.
+    expect(await soulOf()).toBeUndefined();
+    expect(await rosterSoulOf()).toBeUndefined();
+    expect(
+      (
+        await database.query<{ soul: { instructions: string } }>(
+          `SELECT soul FROM agents WHERE agent_id=$1`,
+          [AGENT],
+        )
+      ).rows[0]?.soul.instructions,
+    ).toBe('You are a fox.');
+
+    expect(
+      (await operation('updateWorkspace', { workspaceId: WORKSPACE, seededSouls: true })).status,
+    ).toBe(204);
+    expect(await soulOf()).toMatchObject({ instructions: 'You are a fox.' });
   });
 
   it('creates Rooms with or without an installed repository binding', async () => {

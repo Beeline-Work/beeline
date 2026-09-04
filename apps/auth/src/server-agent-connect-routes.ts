@@ -106,10 +106,7 @@ export function registerServerAgentConnectRoutes(context: AuthRouteContext): voi
     const harness = typeof body.harness === 'string' ? body.harness.trim().toLowerCase() : '';
     const provider = typeof body.provider === 'string' ? body.provider.trim().toLowerCase() : '';
     const model = typeof body.model === 'string' ? body.model.trim().slice(0, 200) : '';
-    const soul = typeof body.soul === 'string' ? body.soul.trim().slice(0, 1_000) : '';
     const avatarSeed = normalizeAvatarSeed(body.avatar_seed);
-    const agentName =
-      typeof body.agent_name === 'string' ? body.agent_name.trim().replace(/\s+/g, ' ') : '';
     if (!pairingCode) {
       throw new ProtocolError(400, 'invalid_pairing_code', 'pairing code is invalid');
     }
@@ -122,8 +119,10 @@ export function registerServerAgentConnectRoutes(context: AuthRouteContext): voi
     if (!PROVIDER_REQUIRED.has(harness) && provider) {
       throw new ProtocolError(400, 'invalid_provider', 'this harness supplies its own provider');
     }
-    if (!model || !soul || !agentName || !isReasonableAgentName(agentName)) {
-      throw new ProtocolError(400, 'invalid_request', 'agent name, model, and soul are required');
+    // Name and soul are no longer typed: the server seeds both from the animal
+    // it assigns, so the wizard sends neither.
+    if (!model) {
+      throw new ProtocolError(400, 'invalid_request', 'model is required');
     }
     if (!options.claimAgentPairingCode) {
       throw new ProtocolError(503, 'connect_unavailable', 'agent connection is unavailable');
@@ -134,9 +133,7 @@ export function registerServerAgentConnectRoutes(context: AuthRouteContext): voi
     const claim = await options.claimAgentPairingCode({
       code: pairingCode,
       agentPubkey: agent.publicKey,
-      agentName,
       model,
-      soul,
       ...(avatarSeed ? { avatarSeed } : {}),
     });
     if (claim.status === 'not_found') {
@@ -161,12 +158,50 @@ export function registerServerAgentConnectRoutes(context: AuthRouteContext): voi
       workspace_id: claim.workspaceId,
       workspace_name: claim.workspaceName,
       paired_by: claim.pairedBy,
-      agent_name: agentName,
+      agent_name: claim.agentName,
+      agent_face: claim.face,
       harness,
       ...(provider ? { provider } : {}),
       model,
-      soul,
+      soul: claim.soul,
     });
+  });
+
+  /**
+   * The connect wizard's rename key. The pairing code is the authority: it was
+   * typed out of the app by someone who could already add an agent, and the
+   * window closes shortly after the claim. Every later rename is the app's.
+   */
+  app.post('/auth/agent/connect/name', async (request, reply) => {
+    tenantFor(request);
+    if (!request.body || typeof request.body !== 'object') {
+      throw new ProtocolError(400, 'invalid_request', 'expected agent rename request');
+    }
+    const body = request.body as Record<string, unknown>;
+    const pairingCode = normalizeAgentPairingCode(body.pairing_code);
+    const agentName =
+      typeof body.agent_name === 'string' ? body.agent_name.trim().replace(/\s+/g, ' ') : '';
+    if (!pairingCode) {
+      throw new ProtocolError(400, 'invalid_pairing_code', 'pairing code is invalid');
+    }
+    if (!agentName || !isReasonableAgentName(agentName)) {
+      throw new ProtocolError(400, 'invalid_request', 'agent name must be a short spoken name');
+    }
+    if (!options.renameConnectedAgent) {
+      throw new ProtocolError(503, 'connect_unavailable', 'agent connection is unavailable');
+    }
+    const renamed = await options.renameConnectedAgent({ code: pairingCode, name: agentName });
+    if (renamed.status === 'not_found') {
+      throw new ProtocolError(404, 'pairing_code_not_found', 'pairing code was not found');
+    }
+    if (renamed.status === 'expired') {
+      throw new ProtocolError(410, 'rename_window_closed', 'rename this agent in the app instead');
+    }
+    if (renamed.status !== 'renamed') {
+      throw new ProtocolError(500, 'connect_failed', 'renaming the agent failed');
+    }
+    noStore(reply);
+    return reply.send({ agent_name: renamed.agentName });
   });
 
   app.post('/auth/device/connect', async (request, reply) => {

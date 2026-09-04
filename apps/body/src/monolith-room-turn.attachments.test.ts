@@ -7,6 +7,7 @@ import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
+import { SOUL_HOUSE_RULE } from './response-directives.js';
 import { SessionScheduler } from './session-scheduler.js';
 
 const roots: string[] = [];
@@ -150,6 +151,16 @@ async function runTurn(acceptsImages: boolean) {
   const scratch = join(agentHomeRoot, 'tmp', 'beeline-attachments', 'msg-photo');
   return { prompt: sessionPrompt.mock.calls[0]![1], scratch, execute };
 }
+
+describe('Room turn voice', () => {
+  it('carries the shared house rule even when the Workspace grants no persona', async () => {
+    // `getAgentConfiguration` returns no soul here — the switched-off case.
+    // The house rule is said once and stands on its own.
+    const { prompt } = await runTurn(false);
+    expect(String(prompt)).toContain(SOUL_HOUSE_RULE);
+    expect(String(prompt)).not.toContain('Soul instructions:');
+  });
+});
 
 describe('Room turn attachment delivery', () => {
   it('downloads the files into the session scratch dir, names the local paths, and sends the photo inline to a multimodal harness', async () => {

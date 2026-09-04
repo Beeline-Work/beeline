@@ -6,8 +6,12 @@ import { completeDevicePairing } from './device-pairing.js';
 import { identityFromKey } from './runtime.js';
 import {
   brass,
+  brassRails,
   brassSpinner,
   collectConnectWizard,
+  confirmSeededName,
+  renameConnectedAgent,
+  seededIdentityLine,
   connectModelPickerFromAxes,
   connectPlainFailure,
   defaultConnectModel,
@@ -39,7 +43,12 @@ function promptFixture(answers: string[]) {
   const prompts: ConnectPrompts = {
     select: async (input) => next('select', input.message, input.initialValue) as never,
     autocomplete: async (input) => next('autocomplete', input.message, input.initialValue) as never,
-    text: async (input) => next('text', input.message, input.initialValue),
+    text: async (input) => {
+      const answer = next('text', input.message, input.initialValue);
+      const complaint = input.validate?.(answer);
+      if (complaint) throw new Error(complaint);
+      return answer;
+    },
     password: async (input) => next('password', input.message),
   };
   return { prompts, calls };
@@ -104,19 +113,18 @@ describe('connect wizard', () => {
       requestConnectGrant(
         'https://server.example',
         '1234abcd-5678ef90',
-        { name: 'Scout', harness: 'codex', model: 'gpt-5.4', soul: 'Brisk and kind.' },
+        { harness: 'codex', model: 'gpt-5.4' },
         fetchImpl as unknown as typeof fetch,
       ),
     ).resolves.toMatchObject({ workspace_name: 'Builders' });
     expect(fetchImpl).toHaveBeenCalledOnce();
     expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://server.example/auth/agent/connect');
+    // The wizard sends neither a name nor a soul: the server seeds both.
     expect(JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body))).toEqual({
       pairing_code: '1234ABCD-5678EF90',
       harness: 'codex',
       model: 'gpt-5.4',
-      soul: 'Brisk and kind.',
       avatar_seed: '4ed3aee3a46d2b0b3476472dbc77eafb',
-      agent_name: 'Scout',
     });
   });
 
@@ -125,7 +133,7 @@ describe('connect wizard', () => {
     await requestConnectGrant(
       'https://server.example',
       '9999AAAA-1111BBBB',
-      { name: 'Scout', harness: 'codex', model: 'gpt-5.4', soul: 'Brisk and kind.' },
+      { harness: 'codex', model: 'gpt-5.4' },
       fetchImpl as unknown as typeof fetch,
     );
     const body = JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body)) as {
@@ -136,11 +144,10 @@ describe('connect wizard', () => {
     await requestConnectGrant(
       'https://server.example',
       '9999AAAA-1111BBBB',
-      { name: 'Scout', harness: 'codex', model: 'gpt-5.4', soul: 'Brisk and kind.' },
+      { harness: 'codex', model: 'gpt-5.4' },
       fetchImpl as unknown as typeof fetch,
     );
     expect(JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body))).toMatchObject({
-      soul: 'Brisk and kind.',
       avatar_seed: first,
     });
     expect(first).toMatch(/^[0-9a-f]{32}$/);
@@ -158,7 +165,7 @@ describe('connect wizard', () => {
       requestConnectGrant(
         'https://server.example',
         '1234ABCD-5678EF90',
-        { name: 'Scout', harness: 'codex', model: 'gpt-5.4', soul: 'Brisk and kind.' },
+        { harness: 'codex', model: 'gpt-5.4' },
         fetchImpl as unknown as typeof fetch,
       ),
     ).rejects.toThrow('pairing code has expired');
@@ -171,7 +178,7 @@ describe('connect wizard', () => {
       requestConnectGrant(
         'https://server.example',
         'not-a-pairing-code',
-        { name: 'Scout', harness: 'codex', model: 'gpt-5.4', soul: 'Brisk and kind.' },
+        { harness: 'codex', model: 'gpt-5.4' },
         fetchImpl as unknown as typeof fetch,
       ),
     ).toThrow('invalid pairing code');
@@ -179,7 +186,7 @@ describe('connect wizard', () => {
   });
 
   it('uses a harness-native provider without asking for credentials', async () => {
-    const fixture = promptFixture(['codex', 'gpt-5.4', 'Scout', 'Brisk, practical, and kind.']);
+    const fixture = promptFixture(['codex', 'gpt-5.4']);
 
     await expect(
       collectConnectWizard(fixture.prompts, async () => ({
@@ -189,18 +196,10 @@ describe('connect wizard', () => {
           { id: 'gpt-5.6-sol', name: 'GPT-5.6-Sol' },
         ],
       })),
-    ).resolves.toEqual({
-      name: 'Scout',
-      harness: 'codex',
-      model: 'gpt-5.4',
-      soul: 'Brisk, practical, and kind.',
-    });
-    expect(fixture.calls.map((call) => call.split(':', 1)[0])).toEqual([
-      'select',
-      'autocomplete',
-      'text',
-      'text',
-    ]);
+    ).resolves.toEqual({ harness: 'codex', model: 'gpt-5.4' });
+    // Two questions, and neither is a name or a soul.
+    expect(fixture.calls.map((call) => call.split(':', 1)[0])).toEqual(['select', 'autocomplete']);
+    expect(fixture.calls.some((call) => /Agent name|soul/i.test(call))).toBe(false);
   });
 
   it('asks provider and API key for Pi with OpenRouter and GLM defaults', async () => {
@@ -209,8 +208,6 @@ describe('connect wizard', () => {
       'openrouter',
       'secret-key',
       'z-ai/glm-5.3-flash',
-      'Piper',
-      'Warm and incisive.',
     ]);
 
     await expect(
@@ -225,20 +222,16 @@ describe('connect wizard', () => {
         async () => undefined,
       ),
     ).resolves.toEqual({
-      name: 'Piper',
       harness: 'pi',
       provider: 'openrouter',
       apiKey: 'secret-key',
       model: 'z-ai/glm-5.3-flash',
-      soul: 'Warm and incisive.',
     });
     expect(fixture.calls.map((call) => call.split(':', 1)[0])).toEqual([
       'select',
       'select',
       'password',
       'autocomplete',
-      'text',
-      'text',
     ]);
     expect(fixture.calls[1]).toContain(':openrouter');
     expect(fixture.calls[3]).toContain(':z-ai/glm-5.3-flash');
@@ -256,8 +249,6 @@ describe('connect wizard', () => {
       'openrouter',
       'saved',
       'z-ai/glm-5.3-flash',
-      'Piper',
-      'Warm and incisive.',
     ]);
 
     await expect(
@@ -272,12 +263,10 @@ describe('connect wizard', () => {
         async () => undefined,
       ),
     ).resolves.toEqual({
-      name: 'Piper',
       harness: 'pi',
       provider: 'openrouter',
       apiKey: savedKey,
       model: 'z-ai/glm-5.3-flash',
-      soul: 'Warm and incisive.',
     });
     expect(fixture.calls[2]).toContain('OpenRouter API key');
     expect(fixture.calls.every((call) => !call.includes(savedKey))).toBe(true);
@@ -286,8 +275,6 @@ describe('connect wizard', () => {
       'select',
       'select',
       'autocomplete',
-      'text',
-      'text',
     ]);
     expect(keyStore.save).not.toHaveBeenCalled();
   });
@@ -303,8 +290,6 @@ describe('connect wizard', () => {
       'new',
       'sk-or-v1-freshfreshfresh7',
       'z-ai/glm-5.3-flash',
-      'Piper',
-      'Warm and incisive.',
     ]);
 
     await expect(
@@ -332,8 +317,6 @@ describe('connect wizard', () => {
       'openrouter',
       'saved',
       'z-ai/glm-5.3-flash',
-      'Piper',
-      'Warm and incisive.',
     ]);
 
     await expect(
@@ -353,10 +336,99 @@ describe('connect wizard', () => {
 
   it('uses brass color only when the terminal supports it', () => {
     const terminal = { isTTY: true } as NodeJS.WriteStream;
-    expect(brass('Beeline', { COLORTERM: 'truecolor' }, terminal)).toContain('38;2;194;147;60');
-    expect(brass('Beeline', { TERM: 'xterm-256color' }, terminal)).toContain('38;5;178');
+    // Brand brass #D7AF5F, which is xterm 179 exactly.
+    expect(brass('Beeline', { COLORTERM: 'truecolor' }, terminal)).toContain('38;2;215;175;95');
+    expect(brass('Beeline', { TERM: 'xterm-256color' }, terminal)).toContain('38;5;179');
     expect(brass('Beeline', { NO_COLOR: '1' }, terminal)).toBe('Beeline');
     expect(brass('Beeline', {}, { isTTY: false } as NodeJS.WriteStream)).toBe('Beeline');
+  });
+
+  it('names the seeded identity in one line with its animal', () => {
+    expect(seededIdentityLine({ agent_name: 'Foxy', agent_face: 'fox' })).toBe('Foxy the fox');
+    expect(seededIdentityLine({ agent_name: 'Foxy' })).toBe('Foxy');
+  });
+
+  it('accepts the seeded name on one key without asking for anything else', async () => {
+    const fixture = promptFixture(['keep']);
+    const fetchImpl = vi.fn();
+    await expect(
+      confirmSeededName(
+        'https://server.example',
+        '1234ABCD-5678EF90',
+        { agent_name: 'Foxy', agent_face: 'fox' },
+        fetchImpl as unknown as typeof fetch,
+        fixture.prompts,
+      ),
+    ).resolves.toBe('Foxy');
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(fixture.calls.map((call) => call.split(':', 1)[0])).toEqual(['select']);
+  });
+
+  it('renames on the other key, through the pairing code', async () => {
+    const fixture = promptFixture(['rename', 'Bramble']);
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ agent_name: 'Bramble' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    );
+    await expect(
+      confirmSeededName(
+        'https://server.example',
+        '1234abcd-5678ef90',
+        { agent_name: 'Foxy', agent_face: 'fox' },
+        fetchImpl as unknown as typeof fetch,
+        fixture.prompts,
+      ),
+    ).resolves.toBe('Bramble');
+    expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://server.example/auth/agent/connect/name');
+    expect(JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body))).toEqual({
+      pairing_code: '1234ABCD-5678EF90',
+      agent_name: 'Bramble',
+    });
+  });
+
+  it('keeps the seeded name rather than losing a live connection to a failed rename', async () => {
+    const fixture = promptFixture(['rename', 'Bramble']);
+    const fetchImpl = vi.fn(async () => new Response('{}', { status: 503 }));
+    await expect(
+      confirmSeededName(
+        'https://server.example',
+        '1234ABCD-5678EF90',
+        { agent_name: 'Foxy', agent_face: 'fox' },
+        fetchImpl as unknown as typeof fetch,
+        fixture.prompts,
+      ),
+    ).resolves.toBe('Foxy');
+  });
+
+  it('rejects an unusable rename before making a request', async () => {
+    const fixture = promptFixture(['rename', 'rm -rf /']);
+    const fetchImpl = vi.fn();
+    await expect(
+      confirmSeededName(
+        'https://server.example',
+        '1234ABCD-5678EF90',
+        { agent_name: 'Foxy' },
+        fetchImpl as unknown as typeof fetch,
+        fixture.prompts,
+      ),
+    ).rejects.toThrow();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('repaints the clack rails brass, leaving every other colour alone', () => {
+    const terminal = { isTTY: true } as NodeJS.WriteStream;
+    const painted = brassRails(
+      '\u001b[36m\u25c6\u001b[39m  \u001b[32mok\u001b[39m',
+      { COLORTERM: 'truecolor' },
+      terminal,
+    );
+    expect(painted).toContain('38;2;215;175;95');
+    expect(painted).not.toContain('[36m');
+    expect(painted).toContain('\u001b[32mok');
+    expect(brassRails('\u001b[36m\u25c6', { NO_COLOR: '1' }, terminal)).toContain('[36m');
   });
 
   it('refuses to write supervision state from the npm/worktree launcher', async () => {

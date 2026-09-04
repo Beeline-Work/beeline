@@ -175,25 +175,29 @@ describe('agent connect device exchange', () => {
 describe('app-authorized agent connect', () => {
   useAuthServerFixture();
 
+  // Neither a name nor a soul is sent: the server seeds both from the animal
+  // it assigns out of the Workspace roster.
   const payload = {
     pairing_code: '1234ABCD-5678EF90',
     harness: 'codex',
     model: 'gpt-5.4',
-    soul: 'Brisk, practical, and kind.',
-    agent_name: 'Scout',
   };
+  const seeded = {
+    status: 'claimed',
+    workspaceId: WORKSPACE,
+    workspaceName: 'Brass Works',
+    pairedBy: 'a'.repeat(64),
+    agentName: 'Foxy',
+    soul: 'You are a fox.',
+    face: 'fox',
+    daemonExchangeToken: `bde_${'d'.repeat(43)}`,
+  } as const;
 
   it('returns a complete grant immediately and reserves the app-minted code', async () => {
     let claimed: Parameters<typeof state.agentPairingClaim>[0] | undefined;
     state.agentPairingClaim = async (input) => {
       claimed = input;
-      return {
-        status: 'claimed',
-        workspaceId: WORKSPACE,
-        workspaceName: 'Brass Works',
-        pairedBy: 'a'.repeat(64),
-        daemonExchangeToken: `bde_${'d'.repeat(43)}`,
-      };
+      return seeded;
     };
 
     const response = await app.inject({
@@ -208,34 +212,26 @@ describe('app-authorized agent connect', () => {
       workspace_id: WORKSPACE,
       workspace_name: 'Brass Works',
       paired_by: 'a'.repeat(64),
-      agent_name: 'Scout',
+      agent_name: 'Foxy',
+      agent_face: 'fox',
       harness: 'codex',
       model: 'gpt-5.4',
-      soul: payload.soul,
+      soul: 'You are a fox.',
       daemon_exchange_token: `bde_${'d'.repeat(43)}`,
     });
     expect(response.json<Record<string, string>>().agent_secret_key).toMatch(/^[0-9a-f]{64}$/);
     expect(response.json<Record<string, string>>().body_secret_key).toMatch(/^[0-9a-f]{64}$/);
     expect(response.json<Record<string, string>>().agent_pubkey).toMatch(/^[0-9a-f]{64}$/);
-    expect(claimed).toMatchObject({
-      code: payload.pairing_code,
-      agentName: 'Scout',
-      model: 'gpt-5.4',
-      soul: payload.soul,
-    });
+    expect(claimed).toMatchObject({ code: payload.pairing_code, model: 'gpt-5.4' });
+    expect(claimed).not.toHaveProperty('agentName');
+    expect(claimed).not.toHaveProperty('soul');
     expect(claimed?.agentPubkey).toBe(response.json<Record<string, string>>().agent_pubkey);
   });
 
   it.each(['BUZZ-1234ABCD-5678EF90', 'not-a-pairing-code'])(
     'accepts legacy pairing codes but rejects garbage (%s)',
     async (pairingCode) => {
-      state.agentPairingClaim = async () => ({
-        status: 'claimed',
-        workspaceId: WORKSPACE,
-        workspaceName: 'Brass Works',
-        pairedBy: 'a'.repeat(64),
-        daemonExchangeToken: `bde_${'d'.repeat(43)}`,
-      });
+      state.agentPairingClaim = async () => seeded;
       const response = await app.inject({
         method: 'POST',
         url: '/auth/agent/connect',
@@ -259,5 +255,44 @@ describe('app-authorized agent connect', () => {
     });
     expect(response.statusCode).toBe(expectedCode);
     expect(response.json()).toMatchObject({ message });
+  });
+
+  it('renames the connected agent through the pairing code, once', async () => {
+    let renamed: Parameters<typeof state.agentConnectRename>[0] | undefined;
+    state.agentConnectRename = async (input) => {
+      renamed = input;
+      return { status: 'renamed', agentName: input.name };
+    };
+    const response = await app.inject({
+      method: 'POST',
+      url: '/auth/agent/connect/name',
+      headers: { host: alphaTenant.host },
+      payload: { pairing_code: payload.pairing_code, agent_name: '  Bramble  ' },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ agent_name: 'Bramble' });
+    expect(renamed).toEqual({ code: payload.pairing_code, name: 'Bramble' });
+  });
+
+  it('refuses a rename once the connect window has closed', async () => {
+    state.agentConnectRename = async () => ({ status: 'expired' });
+    const response = await app.inject({
+      method: 'POST',
+      url: '/auth/agent/connect/name',
+      headers: { host: alphaTenant.host },
+      payload: { pairing_code: payload.pairing_code, agent_name: 'Bramble' },
+    });
+    expect(response.statusCode).toBe(410);
+  });
+
+  it('refuses a rename that is not a spoken name', async () => {
+    state.agentConnectRename = async () => ({ status: 'renamed', agentName: 'x' });
+    const response = await app.inject({
+      method: 'POST',
+      url: '/auth/agent/connect/name',
+      headers: { host: alphaTenant.host },
+      payload: { pairing_code: payload.pairing_code, agent_name: 'rm -rf /' },
+    });
+    expect(response.statusCode).toBe(400);
   });
 });

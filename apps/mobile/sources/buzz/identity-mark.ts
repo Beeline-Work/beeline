@@ -289,6 +289,17 @@ export function identityMarkGeometry(seed: string, kind: IdentityKind): Identity
  */
 export const CYPHER_MIN_SIZE = 24;
 
+/**
+ * How far outside a face tile's layout box the gold alive ring paints, in px.
+ * The ring is drawn AROUND the plate (`components/buzz/IdentityMark.tsx`), so
+ * a mark's painted bounds are its box outset by this on every side. An
+ * ancestor that clips at the mark's edge — a gesture-handler `Swipeable`
+ * container is `overflow: 'hidden'` — must outset its clip box by at least
+ * this much or the ring is cut (v0.0.40, C70: the transcript byline's agent
+ * tile lost its left ring edge at the Room's content edge).
+ */
+export const ALIVE_RING_PAD = 4;
+
 export function identityKindLabel(kind: IdentityKind): string {
   return kind === 'agent' ? 'agent' : kind === 'human' ? 'person' : 'workspace';
 }

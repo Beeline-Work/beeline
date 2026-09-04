@@ -67,7 +67,7 @@ import { groknight } from '@/buzz/groknight';
 import { BONE, FACE_IDS, INK } from '@/buzz/faces/animals';
 import { defaultFaceForSeed } from '@/buzz/faces';
 import { PERSON_PLATE } from '@/buzz/faces/face-tile';
-import { identityPalette } from '@/buzz/identity-mark';
+import { ALIVE_RING_PAD, identityPalette } from '@/buzz/identity-mark';
 import { IdentityMark } from './IdentityMark';
 
 const originalConsoleError = console.error;
@@ -128,6 +128,13 @@ function hosts(renderer: ReactTestRenderer, testID: string): any[] {
   );
 }
 
+function flatten(style: unknown): Record<string, any> {
+  return Object.assign(
+    {},
+    ...(Array.isArray(style) ? style.flat(Infinity) : [style]).filter(Boolean),
+  );
+}
+
 function plateOf(renderer: ReactTestRenderer): Record<string, any> {
   const plate = renderer.root.findByProps({ testID: 'identity-face-plate' });
   return Object.assign({}, ...(plate.props.style as Record<string, any>[]));
@@ -135,8 +142,12 @@ function plateOf(renderer: ReactTestRenderer): Record<string, any> {
 
 describe('a face is deterministic per seed', () => {
   it('draws the same creature for the same seed, every time', () => {
-    const first = render(React.createElement(IdentityMark, { seed: HUMAN, kind: 'human', size: 40 }));
-    const again = render(React.createElement(IdentityMark, { seed: HUMAN, kind: 'human', size: 40 }));
+    const first = render(
+      React.createElement(IdentityMark, { seed: HUMAN, kind: 'human', size: 40 }),
+    );
+    const again = render(
+      React.createElement(IdentityMark, { seed: HUMAN, kind: 'human', size: 40 }),
+    );
     expect(again.toJSON()).toEqual(first.toJSON());
     // ...and it is the seed's default creature, so every reader agrees.
     const chosen = render(
@@ -152,7 +163,9 @@ describe('a face is deterministic per seed', () => {
 
   it('wears a chosen face instead, and ignores a face it does not know', () => {
     const chosen = FACE_IDS.find((id) => id !== defaultFaceForSeed(HUMAN))!;
-    const bySeed = render(React.createElement(IdentityMark, { seed: HUMAN, kind: 'human', size: 40 }));
+    const bySeed = render(
+      React.createElement(IdentityMark, { seed: HUMAN, kind: 'human', size: 40 }),
+    );
     const byChoice = render(
       React.createElement(IdentityMark, { seed: HUMAN, kind: 'human', size: 40, face: chosen }),
     );
@@ -173,13 +186,18 @@ describe('a face is deterministic per seed', () => {
 
 describe('plate polarity is the class', () => {
   it('draws a person as a coloured creature on an ink plate, with the edge layer behind', () => {
-    const person = render(React.createElement(IdentityMark, { seed: HUMAN, kind: 'human', size: 40 }));
+    const person = render(
+      React.createElement(IdentityMark, { seed: HUMAN, kind: 'human', size: 40 }),
+    );
     // The shipped themes are all dark: the person plate is the dark ground.
     expect(groknight.dark).toBe(true);
     expect(plateOf(person).backgroundColor).toBe(PERSON_PLATE.dark);
     expect(plateOf(person).borderRadius).toBe(3);
     const svg = person.root.findByType('Svg');
-    expect(svg.children.map((child: any) => child.props.testID)).toEqual(['face-edge', 'face-figure']);
+    expect(svg.children.map((child: any) => child.props.testID)).toEqual([
+      'face-edge',
+      'face-figure',
+    ]);
     // The creature carries the identity's signature hue where Speakeasy had brass.
     const palette = identityPalette(HUMAN, 'human');
     const painted = inks(person);
@@ -189,7 +207,9 @@ describe('plate polarity is the class', () => {
   });
 
   it('draws an agent as an all-ink creature with one lens band on its hue plate', () => {
-    const agent = render(React.createElement(IdentityMark, { seed: AGENT, kind: 'agent', size: 40 }));
+    const agent = render(
+      React.createElement(IdentityMark, { seed: AGENT, kind: 'agent', size: 40 }),
+    );
     const palette = identityPalette(AGENT, 'agent');
     expect(plateOf(agent).backgroundColor).toBe(palette.mid);
     const band = hosts(agent, 'face-lens-band');
@@ -232,9 +252,9 @@ describe('a Workspace keeps its brass plate', () => {
     expect(hosts(workspace, 'face-figure')).toHaveLength(0);
     expect(hosts(workspace, 'identity-face-plate')).toHaveLength(0);
     const palette = identityPalette(WORKSPACE, 'workspace');
-    expect(inks(workspace).every((ink) => [palette.mid, palette.bright, palette.deep].includes(ink))).toBe(
-      true,
-    );
+    expect(
+      inks(workspace).every((ink) => [palette.mid, palette.bright, palette.deep].includes(ink)),
+    ).toBe(true);
   });
 
   it('goes solid below the cypher floor', () => {
@@ -268,6 +288,50 @@ describe('gold means alive, and only alive', () => {
     expect(inks(idle)).not.toContain(groknight.accent);
     // A quiet mark must never pay for a clock it does not use.
     expect(idle.root.findAllByType('AnimatedView')).toHaveLength(0);
+  });
+
+  it('paints the ring exactly ALIVE_RING_PAD outside the tile box, and nothing else outside it', () => {
+    // The mark's layout box stays `size` so agent and person tiles share one
+    // column edge; the ring is the ONE thing that paints past it, by exactly
+    // the gutter every clipping ancestor outsets (`buzz/identity-mark.ts`).
+    for (const size of [26, 38, 40, 76]) {
+      const working = render(
+        React.createElement(IdentityMark, { seed: AGENT, kind: 'agent', size, alive: true }),
+      );
+      const frame = working.root.findAll(
+        (node: any) => typeof node.type === 'string' && node.props.accessibilityLabel,
+      )[0];
+      expect(flatten(frame.props.style)).toMatchObject({ width: size, height: size });
+      const outside = working.root
+        .findAll((node: any) => typeof node.type === 'string')
+        .map((node: any) => flatten(node.props.style))
+        .filter((style) => style.position === 'absolute');
+      expect(outside).toHaveLength(1);
+      expect(outside[0]).toMatchObject({
+        left: -ALIVE_RING_PAD,
+        top: -ALIVE_RING_PAD,
+        right: -ALIVE_RING_PAD,
+        bottom: -ALIVE_RING_PAD,
+      });
+      // The idle mark and a person paint nothing outside the box at all.
+      const idle = render(React.createElement(IdentityMark, { seed: AGENT, kind: 'agent', size }));
+      const person = render(
+        React.createElement(IdentityMark, { seed: HUMAN, kind: 'human', size }),
+      );
+      for (const renderer of [idle, person]) {
+        const styles = renderer.root
+          .findAll((node: any) => typeof node.type === 'string')
+          .map((node: any) => flatten(node.props.style));
+        expect(styles.some((style) => style.position === 'absolute')).toBe(false);
+        expect(
+          styles.some((style) =>
+            ['left', 'top', 'marginLeft', 'marginTop', 'marginHorizontal'].some(
+              (key) => typeof style[key] === 'number' && style[key] < 0,
+            ),
+          ),
+        ).toBe(false);
+      }
+    }
   });
 
   it('never lets gold mean anything but a live agent', () => {

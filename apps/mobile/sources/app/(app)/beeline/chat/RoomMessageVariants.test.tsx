@@ -8,6 +8,8 @@ import {
   type ChatDisplayMessage,
 } from '@/buzz/room-view-presentation';
 import { selectComposerAckPresentation } from '@/buzz/room-indicators';
+import { ALIVE_RING_PAD } from '@/buzz/identity-mark';
+import { Platform } from 'react-native';
 
 const ledgerEntryRender = vi.hoisted(() => vi.fn());
 const conversationSource = readFileSync(new URL('./[channelId].tsx', import.meta.url), 'utf8');
@@ -303,15 +305,11 @@ describe('Room message variant components', () => {
       />,
     );
     act(() =>
-      renderer.root
-        .findByProps({ testID: 'corner-summary-card-primary-action' })
-        .props.onPress(),
+      renderer.root.findByProps({ testID: 'corner-summary-card-primary-action' }).props.onPress(),
     );
     expect(onOpenUrl).toHaveBeenCalledWith('https://github.com/acme/beeline/pull/42');
     act(() =>
-      renderer.root
-        .findByProps({ testID: 'corner-summary-card-secondary-action' })
-        .props.onPress(),
+      renderer.root.findByProps({ testID: 'corner-summary-card-secondary-action' }).props.onPress(),
     );
     expect(onOpenCorner).toHaveBeenCalledWith('80a5a6f1-fb5a-493b-93eb-f3db33f696e6');
     expect(renderer.root.findAllByType('HullSurface')).toHaveLength(1);
@@ -323,7 +321,9 @@ describe('Room message variant components', () => {
     expect(JSON.stringify(renderer.toJSON())).toContain(
       'Ship fact cards with archived transcript access and preserve the entire objective instead of truncating it into a ledger line',
     );
-    expect(JSON.stringify(renderer.toJSON())).toContain('VIEW PR: Ship the archived transcript card ↗');
+    expect(JSON.stringify(renderer.toJSON())).toContain(
+      'VIEW PR: Ship the archived transcript card ↗',
+    );
     expect(JSON.stringify(renderer.toJSON())).not.toContain('Open the archived transcript');
   });
 
@@ -380,7 +380,61 @@ describe('Room message variant components', () => {
     expect(ledgerEntryRender.mock.lastCall?.[0].byline.mark.alive).toBe(true);
   });
 
-  it('gives the live draft lane the settled row\'s identity mark', () => {
+  it('keeps the whole byline tile, alive ring included, inside the swipe clip box for both kinds', () => {
+    // C70: on device the row lives in gesture-handler's Swipeable, whose
+    // container is `overflow: 'hidden'` at the row's content edge — exactly
+    // where the tile sits — so a live agent's ring lost its left edge. The
+    // clip box is outset by the ring gutter and the children padded back by
+    // the same amount: the copy column does not move, and the tile's painted
+    // bounds (box − ALIVE_RING_PAD) start at or after the clip edge.
+    const previous = Platform.OS;
+    (Platform as { OS: string }).OS = 'android';
+    try {
+      const speakers = [
+        { message: message({ id: 'a', pubkey: 'agent', isAgentAuthor: true }), online: true },
+        { message: message({ id: 'h', pubkey: 'ada', isUser: false }), online: false },
+      ];
+      for (const speaker of speakers) {
+        const renderer = render(
+          <OrdinaryLedgerMessage
+            message={speaker.message}
+            agent={speaker.online ? { pubkey: 'agent', displayName: 'Codex' } : undefined}
+            personName={speaker.online ? undefined : 'Ada'}
+            participantsHydrated
+            viewerPubkey="viewer"
+            speakerOnline={speaker.online}
+            continued={false}
+            participantHandles={[]}
+            channelIndex={{ rooms: [], corners: [] }}
+            deliveryFailed={false}
+            onChannelReference={vi.fn()}
+            onReply={vi.fn()}
+            onCopy={vi.fn()}
+            onRetry={vi.fn()}
+            onDismiss={vi.fn()}
+          />,
+        );
+        const swipe = renderer.root.findByType('Swipeable');
+        const flat = (style: unknown) =>
+          Object.assign({}, ...[style].flat(Infinity).filter(Boolean)) as Record<string, number>;
+        const clip = flat(swipe.props.containerStyle);
+        const children = flat(swipe.props.childrenContainerStyle);
+        const clipLeft = clip.marginHorizontal ?? clip.marginLeft ?? 0;
+        const tileLeft = clipLeft + (children.paddingHorizontal ?? children.paddingLeft ?? 0);
+        // The copy column stays exactly where the row's content edge was.
+        expect(tileLeft).toBe(0);
+        // The ring's leftmost paint lands inside the clip box.
+        expect(tileLeft - ALIVE_RING_PAD).toBeGreaterThanOrEqual(clipLeft);
+        const byline = ledgerEntryRender.mock.lastCall?.[0].byline;
+        expect(byline.mark.kind).toBe(speaker.online ? 'agent' : 'human');
+        if (speaker.online) expect(byline.mark.alive).toBe(true);
+      }
+    } finally {
+      (Platform as { OS: string }).OS = previous;
+    }
+  });
+
+  it("gives the live draft lane the settled row's identity mark", () => {
     // Captain report C42: while the agent streams, the draft row's byline is
     // the same byline component as a settled agent message — IdentityMark
     // (same seed/kind/alive axes) + name — so nothing changes on settle.
@@ -505,13 +559,15 @@ describe('Room message variant components', () => {
         onDecision={onDecision}
       />,
     );
-    expect(ownerView.root.findByProps({ testID: 'grant-request-title' }).props.children.join('')).toBe(
-      'Terra asks Charles',
-    );
+    expect(
+      ownerView.root.findByProps({ testID: 'grant-request-title' }).props.children.join(''),
+    ).toBe('Terra asks Charles');
     expect(ownerView.root.findByProps({ testID: 'grant-g-1-ask' }).props.children).toBe(
       'run fly deploy -a beeline-preview --with FLY_TOKEN',
     );
-    expect(ownerView.root.findByProps({ testID: 'grant-g-2-ask' }).props.children).toBe('reach api.fly.io');
+    expect(ownerView.root.findByProps({ testID: 'grant-g-2-ask' }).props.children).toBe(
+      'reach api.fly.io',
+    );
     const buttons = ownerView.root.findAllByType('MonoButton');
     expect(buttons.map((button: { props: { label: string } }) => button.props.label)).toEqual([
       'ALWAYS',
@@ -562,8 +618,18 @@ describe('Room message variant components', () => {
           grantRequest: {
             ...pending.grantRequest!,
             grants: [
-              { ...pending.grantRequest!.grants[0]!, status: 'once', decidedBy: owner, decidedAt: 1_756_900_060 },
-              { ...pending.grantRequest!.grants[1]!, status: 'denied', decidedBy: owner, decidedAt: 1_756_900_061 },
+              {
+                ...pending.grantRequest!.grants[0]!,
+                status: 'once',
+                decidedBy: owner,
+                decidedAt: 1_756_900_060,
+              },
+              {
+                ...pending.grantRequest!.grants[1]!,
+                status: 'denied',
+                decidedBy: owner,
+                decidedAt: 1_756_900_061,
+              },
             ],
           },
         })}
@@ -577,10 +643,14 @@ describe('Room message variant components', () => {
     expect(settled.root.findAllByType('MonoButton')).toHaveLength(0);
     expect(settled.root.findByProps({ testID: 'grant-request-settled' })).toBeDefined();
     const outcomes = settled.root.findAllByType('WritePermissionOutcome');
-    expect(outcomes.map((outcome: { props: { label: string; status: string } }) => [outcome.props.status, outcome.props.label])).toEqual([
+    expect(
+      outcomes.map((outcome: { props: { label: string; status: string } }) => [
+        outcome.props.status,
+        outcome.props.label,
+      ]),
+    ).toEqual([
       ['allowed', expect.stringMatching(/^Charles allowed once · /)],
       ['denied', expect.stringMatching(/^Charles declined · /)],
     ]);
   });
-
 });

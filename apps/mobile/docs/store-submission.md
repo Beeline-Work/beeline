@@ -31,9 +31,10 @@ service account key and the App Store Connect API key outside this repository.
    `EXPO_ASC_API_KEY_P8`** — an App Store Connect API key with the *App Manager*
    role: the key id, the issuer id, and the `.p8` file encoded with
    `base64 -w0 AuthKey_<id>.p8`. testflight.yml writes the decoded key to a
-   runner-temp file and points `EXPO_ASC_API_KEY_PATH` at it for the
-   `production` submit profile in `eas.json` (team `89KT3SWYAF`, app
-   `6803948500`).
+   runner-temp file and points `EXPO_ASC_API_KEY_PATH` at it before the build
+   (eas-cli needs it to create or repair the App Store provisioning profile
+   non-interactively) and for the `production` submit profile in `eas.json`
+   (team `89KT3SWYAF`, app `6803948500`).
 4. **EAS-managed iOS signing** — run once from an operator machine:
 
    ```sh
@@ -42,9 +43,14 @@ service account key and the App Store Connect API key outside this repository.
    ```
 
    and let EAS create or upload the distribution certificate and App Store
-   provisioning profile for `app.usebeeline.mobile`. The `production-ci` build
-   profile uses those remote credentials; the local-credentials `production`
-   profile stays for operator-machine builds.
+   provisioning profile for `app.usebeeline.mobile` (Build Credentials →
+   `production-ci` → Distribution Certificate). This step cannot be skipped:
+   eas-cli 22.2.0 never validates or creates a distribution certificate in
+   `--non-interactive` mode, with or without the API key, and a workflow run
+   without one fails at the build step with `Credentials are not set up. Run
+   this command again in interactive mode.` and prints this command. The
+   `production-ci` build profile uses those remote credentials; the
+   local-credentials `production` profile stays for operator-machine builds.
 
 Both stores also need the existing `EXPO_TOKEN` repository secret.
 

@@ -7,13 +7,26 @@
 # `credentialsSource: local` is for an operator's own machine). The one-time
 # `eas credentials --platform ios` setup is in apps/mobile/docs/store-submission.md.
 #
-# Submission runs `eas submit` with the `production` submit profile from
-# apps/mobile/eas.json (team 89KT3SWYAF, App Store Connect app 6803948500),
-# authenticated by an App Store Connect API key from three repository secrets:
+# Both the build and the submission authenticate with Apple through an App
+# Store Connect API key from three repository secrets:
 #   EXPO_ASC_KEY_ID       — the key id
 #   EXPO_ASC_ISSUER_ID    — the issuer id
 #   EXPO_ASC_API_KEY_P8   — base64 of the AuthKey_<id>.p8 file; written to a
 #                           runner-temp file that EXPO_ASC_API_KEY_PATH points at
+# eas-cli reads exactly those three variables (EXPO_ASC_API_KEY_PATH,
+# EXPO_ASC_KEY_ID, EXPO_ASC_ISSUER_ID: credentials/ios/appstore/resolveCredentials.js)
+# and, in --non-interactive mode, needs them to create or repair the App Store
+# provisioning profile (credentials/ios/actions/SetUpProvisioningProfile.js).
+# The distribution certificate is different: the pinned eas-cli never
+# validates or creates it non-interactively
+# (SetUpDistributionCertificate.runNonInteractiveAsync only warns and throws
+# when EAS holds none), so a missing certificate fails the build with
+# "Credentials are not set up. Run this command again in interactive mode."
+# no matter which secrets are present. The build step turns that exact
+# failure into the one interactive command an operator must run once.
+#
+# Submission runs `eas submit` with the `production` submit profile from
+# apps/mobile/eas.json (team 89KT3SWYAF, App Store Connect app 6803948500).
 # TestFlight processing and any external-tester review remain App Store
 # Connect actions.
 name: TestFlight release
@@ -74,16 +87,42 @@ jobs:
         working-directory: apps/mobile
         run: npm ci
 
+      - name: Write the App Store Connect API key
+        env:
+          EXPO_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
+          EXPO_ASC_API_KEY_P8: ${{ secrets.EXPO_ASC_API_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          key_path="$RUNNER_TEMP/AuthKey_${EXPO_ASC_KEY_ID}.p8"
+          echo "$EXPO_ASC_API_KEY_P8" | base64 -d > "$key_path"
+          chmod 600 "$key_path"
+          if ! grep -q 'BEGIN PRIVATE KEY' "$key_path"; then
+            echo "EXPO_ASC_API_KEY_P8 did not decode to a PEM private key; store the base64 of the .p8 file."
+            exit 1
+          fi
+          echo "EXPO_ASC_API_KEY_PATH=$key_path" >> "$GITHUB_ENV"
+
       - name: Build the iOS app on EAS
         id: build
         working-directory: apps/mobile
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EXPO_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
+          EXPO_ASC_ISSUER_ID: ${{ secrets.EXPO_ASC_ISSUER_ID }}
           EXPECTED_VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
+          build_status=0
           npx --yes "eas-cli@$EAS_CLI_VERSION" build --profile production-ci --platform ios \
-            --non-interactive --wait --json > "$RUNNER_TEMP/eas-build.json"
+            --non-interactive --wait --json > "$RUNNER_TEMP/eas-build.json" \
+            2> >(tee "$RUNNER_TEMP/eas-build.log" >&2) || build_status=$?
+          wait
+          if [ "$build_status" -ne 0 ]; then
+            if grep -q 'Credentials are not set up. Run this command again in interactive mode.' "$RUNNER_TEMP/eas-build.log"; then
+              echo "::error::EAS holds no iOS distribution certificate for the production-ci profile, and eas-cli $EAS_CLI_VERSION can only create one interactively. An operator must run once, from apps/mobile: eas credentials --platform ios (Build Credentials > production-ci > Distribution Certificate), then re-run this workflow."
+            fi
+            exit "$build_status"
+          fi
           build=$(jq -c 'if type == "array" then .[0] else . end' "$RUNNER_TEMP/eas-build.json")
           status=$(echo "$build" | jq -r '.status')
           if [ "$status" != "FINISHED" ]; then
@@ -101,21 +140,6 @@ jobs:
             echo "build_number=$(echo "$build" | jq -r '.appBuildVersion')"
           } >> "$GITHUB_OUTPUT"
           echo "EAS build $(echo "$build" | jq -r '.id') finished: $app_version ($(echo "$build" | jq -r '.appBuildVersion'))"
-
-      - name: Write the App Store Connect API key
-        env:
-          EXPO_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
-          EXPO_ASC_API_KEY_P8: ${{ secrets.EXPO_ASC_API_KEY_P8 }}
-        run: |
-          set -euo pipefail
-          key_path="$RUNNER_TEMP/AuthKey_${EXPO_ASC_KEY_ID}.p8"
-          echo "$EXPO_ASC_API_KEY_P8" | base64 -d > "$key_path"
-          chmod 600 "$key_path"
-          if ! grep -q 'BEGIN PRIVATE KEY' "$key_path"; then
-            echo "EXPO_ASC_API_KEY_P8 did not decode to a PEM private key; store the base64 of the .p8 file."
-            exit 1
-          fi
-          echo "EXPO_ASC_API_KEY_PATH=$key_path" >> "$GITHUB_ENV"
 
       - name: Upload to TestFlight
         working-directory: apps/mobile

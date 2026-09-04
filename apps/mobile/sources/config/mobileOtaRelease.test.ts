@@ -212,6 +212,432 @@ esac
     });
   }, 60_000);
 
+  it('carries one update group per platform through publish, promotion, and the delivery index', () => {
+    // `runtimeVersion: { policy: "fingerprint" }` gives Android and iOS
+    // different runtime versions, so one `eas update --platform all` publish
+    // returns one group per platform and every stored group is a map.
+    const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-per-platform-'));
+    const ledgerPath = join(directory, 'ledger.json');
+    const indexPath = join(directory, 'index.json');
+    const callsPath = join(directory, 'calls.log');
+    const fakeEas = join(directory, 'fake-eas.sh');
+    const sha = '8'.repeat(40);
+    writeFileSync(
+      fakeEas,
+      `#!/bin/sh
+printf '%s\\n' "$*" >> "${callsPath}"
+case "$1" in
+  channel:view|channel:edit) printf '{}\\n' ;;
+  update:list) printf '[{"id":"prod-android","platform":"android","group":"known-good-android","runtimeVersion":"android-fingerprint"},{"id":"prod-ios","platform":"ios","group":"known-good-ios","runtimeVersion":"ios-fingerprint"}]\\n' ;;
+  update) printf '[{"id":"beta-android","platform":"android","group":"candidate-android","runtimeVersion":"android-fingerprint"},{"id":"beta-ios","platform":"ios","group":"candidate-ios","runtimeVersion":"ios-fingerprint"}]\\n' ;;
+  update:republish)
+    case "$3" in
+      candidate-android) printf '[{"id":"prod-next-android","platform":"android","group":"production-android","runtimeVersion":"android-fingerprint"}]\\n' ;;
+      candidate-ios) printf '[{"id":"prod-next-ios","platform":"ios","group":"production-ios","runtimeVersion":"ios-fingerprint"}]\\n' ;;
+      *) exit 9 ;;
+    esac ;;
+  *) exit 9 ;;
+esac
+`,
+    );
+    chmodSync(fakeEas, 0o755);
+    const env = { EAS_CLI_PATH: fakeEas };
+
+    expect(
+      runRelease(
+        [
+          'init-delivery',
+          '--sha',
+          sha,
+          '--ref',
+          'main',
+          '--run-id',
+          'run-1',
+          '--ledger',
+          ledgerPath,
+          '--index',
+          indexPath,
+        ],
+        env,
+      ).status,
+    ).toBe(0);
+    expect(
+      runRelease(
+        ['publish', '--sha', sha, '--ref', 'main', '--ledger', ledgerPath, '--index', indexPath],
+        env,
+      ).status,
+    ).toBe(0);
+
+    expect(JSON.parse(readFileSync(ledgerPath, 'utf8'))).toMatchObject({
+      status: 'beta',
+      candidateGroupIds: { android: 'candidate-android', ios: 'candidate-ios' },
+      candidateGroupId: 'candidate-android,candidate-ios',
+      previousProductionGroupIds: { android: 'known-good-android', ios: 'known-good-ios' },
+      previousProductionGroupId: 'known-good-android,known-good-ios',
+      runtimeVersions: ['android-fingerprint', 'ios-fingerprint'],
+    });
+
+    expect(
+      runRelease(['mark-canary', '--ledger', ledgerPath, '--status', 'passed'], env).status,
+    ).toBe(0);
+    expect(runRelease(['promote', '--ledger', ledgerPath, '--index', indexPath], env).status).toBe(
+      0,
+    );
+
+    // Both beta groups are promoted, one republish per platform group.
+    const republished = readFileSync(callsPath, 'utf8')
+      .split('\n')
+      .filter((line) => line.startsWith('update:republish'));
+    expect(republished).toHaveLength(2);
+    expect(republished[0]).toContain('--group candidate-android');
+    expect(republished[1]).toContain('--group candidate-ios');
+
+    expect(JSON.parse(readFileSync(ledgerPath, 'utf8'))).toMatchObject({
+      status: 'production',
+      production: {
+        sourceGroupIds: { android: 'candidate-android', ios: 'candidate-ios' },
+        groupIds: { android: 'production-android', ios: 'production-ios' },
+        groupId: 'production-android,production-ios',
+      },
+    });
+    expect(JSON.parse(readFileSync(indexPath, 'utf8')).merges.at(-1).published).toMatchObject({
+      groupIds: ['production-android', 'production-ios'],
+      groupId: 'production-android,production-ios',
+    });
+
+    const proof = runRelease(['assert-promotion', '--ledger', ledgerPath, '--index', indexPath]);
+    expect(proof.status).toBe(0);
+    expect(proof.stdout).toContain('production_group_id=production-android,production-ios');
+    expect(proof.stdout).toContain(
+      'production_groups=android=production-android,ios=production-ios',
+    );
+    expect(proof.stdout).toContain('source_group_id=candidate-android,candidate-ios');
+
+    // The delivery target names both groups, and the Android device receipt
+    // confirms the whole publication through its own platform's group.
+    const receiptPath = join(directory, 'receipt.json');
+    writeFileSync(
+      receiptPath,
+      JSON.stringify({
+        devices: [
+          {
+            deviceId: 'owner-device',
+            environment: 'physical',
+            group: 'production-android',
+            updateId: 'prod-next-android',
+            reportedAt: '2026-09-03T00:00:00.000Z',
+          },
+        ],
+      }),
+    );
+    const target = runRelease(['delivery-target', '--index', indexPath]);
+    expect(target.stdout.split('\n')[0]).toBe(
+      'group_id=production-android,production-ios',
+    );
+    expect(
+      runRelease([
+        'confirm',
+        '--index',
+        indexPath,
+        '--ledger',
+        ledgerPath,
+        '--receipt',
+        receiptPath,
+        '--group',
+        'production-android,production-ios',
+        '--update-ids',
+        'prod-next-android,prod-next-ios',
+      ]).status,
+    ).toBe(0);
+    expect(JSON.parse(readFileSync(indexPath, 'utf8')).merges.at(-1)).toMatchObject({
+      state: 'confirmed',
+      confirmed: { groupId: 'production-android', groupIds: ['production-android', 'production-ios'] },
+    });
+  }, 60_000);
+
+  it('refuses a publish that silently covers only one of the built platforms', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-single-platform-'));
+    const fakeEas = join(directory, 'fake-eas.sh');
+    writeFileSync(
+      fakeEas,
+      `#!/bin/sh
+case "$1" in
+  channel:view|channel:edit) printf '{}\\n' ;;
+  update:list) printf '[]\\n' ;;
+  update) printf '[{"id":"beta-android","platform":"android","group":"candidate-android"}]\\n' ;;
+  *) exit 9 ;;
+esac
+`,
+    );
+    chmodSync(fakeEas, 0o755);
+
+    const result = runRelease(
+      [
+        'publish',
+        '--sha',
+        '1234567890abcdef',
+        '--ref',
+        'main',
+        '--ledger',
+        join(directory, 'ledger.json'),
+      ],
+      { EAS_CLI_PATH: fakeEas },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      'Beta publish must cover exactly android, ios; received android.',
+    );
+    expect(existsSync(join(directory, 'ledger.json'))).toBe(false);
+  }, 60_000);
+
+  it('refuses a publish whose updates belong to no update group', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-groupless-'));
+    const fakeEas = join(directory, 'fake-eas.sh');
+    writeFileSync(
+      fakeEas,
+      `#!/bin/sh
+case "$1" in
+  channel:view|channel:edit) printf '{}\\n' ;;
+  update:list) printf '[]\\n' ;;
+  update) printf '[{"id":"beta-android","platform":"android","group":"candidate-android"},{"id":"beta-ios","platform":"ios"}]\\n' ;;
+  *) exit 9 ;;
+esac
+`,
+    );
+    chmodSync(fakeEas, 0o755);
+
+    const result = runRelease(
+      [
+        'publish',
+        '--sha',
+        '1234567890abcdef',
+        '--ref',
+        'main',
+        '--ledger',
+        join(directory, 'ledger.json'),
+      ],
+      { EAS_CLI_PATH: fakeEas },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      'Beta publish returned updates that belong to no update group: ios/beta-ios.',
+    );
+  }, 60_000);
+
+  it('reads a publish payload that names each group around its updates', () => {
+    // EAS reports updates grouped as often as flat; an update inherits the
+    // group of the object enclosing it rather than counting as groupless.
+    const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-nested-groups-'));
+    const ledgerPath = join(directory, 'ledger.json');
+    const fakeEas = join(directory, 'fake-eas.sh');
+    writeFileSync(
+      fakeEas,
+      `#!/bin/sh
+case "$1" in
+  channel:view|channel:edit) printf '{}\\n' ;;
+  update:list) printf '[{"group":"known-good-android","updates":[{"id":"prod-android","platform":"android"}]}]\\n' ;;
+  update) printf '[{"group":"candidate-android","updates":[{"id":"beta-android","platform":"android"}]},{"group":"candidate-ios","updates":[{"id":"beta-ios","platform":"ios"}]}]\\n' ;;
+  *) exit 9 ;;
+esac
+`,
+    );
+    chmodSync(fakeEas, 0o755);
+
+    expect(
+      runRelease(
+        ['publish', '--sha', '1234567890abcdef', '--ref', 'main', '--ledger', ledgerPath],
+        { EAS_CLI_PATH: fakeEas },
+      ).status,
+    ).toBe(0);
+    expect(JSON.parse(readFileSync(ledgerPath, 'utf8'))).toMatchObject({
+      candidateGroupIds: { android: 'candidate-android', ios: 'candidate-ios' },
+      previousProductionGroupIds: { android: 'known-good-android' },
+    });
+  }, 60_000);
+
+  it('rolls production back to one known-good group per platform', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-rollback-per-platform-'));
+    const ledgerPath = join(directory, 'rollback.json');
+    const callsPath = join(directory, 'calls.log');
+    const fakeEas = join(directory, 'fake-eas.sh');
+    writeFileSync(
+      fakeEas,
+      `#!/bin/sh
+printf '%s\\n' "$*" >> "${callsPath}"
+case "$1" in
+  update:list) printf '[{"id":"bad-android","platform":"android","group":"failed-android"},{"id":"bad-ios","platform":"ios","group":"failed-ios"}]\\n' ;;
+  update:republish)
+    case "$3" in
+      known-good-android) printf '[{"id":"back-android","platform":"android","group":"restored-android"}]\\n' ;;
+      known-good-ios) printf '[{"id":"back-ios","platform":"ios","group":"restored-ios"}]\\n' ;;
+      *) exit 9 ;;
+    esac ;;
+  *) exit 9 ;;
+esac
+`,
+    );
+    chmodSync(fakeEas, 0o755);
+
+    const result = runRelease(
+      [
+        'rollback',
+        '--group',
+        'known-good-android,known-good-ios',
+        '--expected-current-group',
+        'failed-android,failed-ios',
+        '--ledger',
+        ledgerPath,
+      ],
+      { EAS_CLI_PATH: fakeEas },
+    );
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(readFileSync(ledgerPath, 'utf8'))).toMatchObject({
+      status: 'rolled-back',
+      sourceGroupIds: ['known-good-android', 'known-good-ios'],
+      productionGroupIds: { android: 'restored-android', ios: 'restored-ios' },
+      productionGroupId: 'restored-android,restored-ios',
+    });
+    const republished = readFileSync(callsPath, 'utf8')
+      .split('\n')
+      .filter((line) => line.startsWith('update:republish'));
+    expect(republished).toHaveLength(2);
+  }, 60_000);
+
+  it('refuses a rollback that leaves a platform on the failed production group', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-rollback-partial-'));
+    const ledgerPath = join(directory, 'rollback.json');
+    const fakeEas = join(directory, 'fake-eas.sh');
+    writeFileSync(
+      fakeEas,
+      `#!/bin/sh
+case "$1" in
+  update:republish) printf '[{"id":"back-android","platform":"android","group":"restored-android"}]\\n' ;;
+  *) exit 9 ;;
+esac
+`,
+    );
+    chmodSync(fakeEas, 0o755);
+
+    const result = runRelease(
+      ['rollback', '--group', 'known-good-android', '--ledger', ledgerPath],
+      { EAS_CLI_PATH: fakeEas },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      'Production rollback must restore android, ios; production received android.',
+    );
+    expect(existsSync(ledgerPath)).toBe(false);
+  }, 60_000);
+
+  it('promotes and rolls back a legacy ledger whose single group covered both platforms', () => {
+    // Before the fingerprint runtime both platforms shared one literal runtime
+    // and therefore one update group. Such a ledger must still read.
+    const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-legacy-ledger-'));
+    const ledgerPath = join(directory, 'ledger.json');
+    const callsPath = join(directory, 'calls.log');
+    const fakeEas = join(directory, 'fake-eas.sh');
+    writeFileSync(
+      ledgerPath,
+      JSON.stringify({
+        schemaVersion: 2,
+        status: 'beta',
+        sourceSha: '1234567890abcdef',
+        candidateGroupId: 'legacy-group',
+        candidateUpdates: [
+          { id: 'beta-android', platform: 'android', group: 'legacy-group', runtimeVersion: '21' },
+          { id: 'beta-ios', platform: 'ios', group: 'legacy-group', runtimeVersion: '21' },
+        ],
+        previousProductionGroupId: 'legacy-known-good',
+        canary: { status: 'passed' },
+      }),
+    );
+    writeFileSync(
+      fakeEas,
+      `#!/bin/sh
+printf '%s\\n' "$*" >> "${callsPath}"
+case "$1" in
+  update:republish) printf '[{"id":"prod-android","platform":"android","group":"legacy-production"},{"id":"prod-ios","platform":"ios","group":"legacy-production"}]\\n' ;;
+  *) exit 9 ;;
+esac
+`,
+    );
+    chmodSync(fakeEas, 0o755);
+    const env = { EAS_CLI_PATH: fakeEas };
+
+    expect(runRelease(['promote', '--ledger', ledgerPath], env).status).toBe(0);
+    expect(
+      readFileSync(callsPath, 'utf8')
+        .split('\n')
+        .filter((line) => line.startsWith('update:republish')),
+    ).toHaveLength(1);
+    expect(JSON.parse(readFileSync(ledgerPath, 'utf8'))).toMatchObject({
+      status: 'production',
+      production: {
+        sourceGroupIds: { android: 'legacy-group', ios: 'legacy-group' },
+        groupIds: { android: 'legacy-production', ios: 'legacy-production' },
+        groupId: 'legacy-production',
+      },
+    });
+
+    const indexPath = join(directory, 'index.json');
+    writeFileSync(
+      indexPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        merges: [
+          {
+            sha: '1234567890abcdef',
+            state: 'published',
+            published: { groupId: 'legacy-production' },
+          },
+        ],
+      }),
+    );
+    const proof = runRelease(['assert-promotion', '--ledger', ledgerPath, '--index', indexPath]);
+    expect(proof.status).toBe(0);
+    expect(proof.stdout).toContain('production_group_id=legacy-production');
+
+    // A legacy rollback anchor is a single group covering both platforms.
+    const rollbackLedger = join(directory, 'rollback.json');
+    const legacyRollbackEas = join(directory, 'legacy-rollback-eas.sh');
+    writeFileSync(
+      legacyRollbackEas,
+      `#!/bin/sh
+case "$1" in
+  update:republish) printf '[{"id":"back-android","platform":"android","group":"legacy-restored"},{"id":"back-ios","platform":"ios","group":"legacy-restored"}]\\n' ;;
+  *) exit 9 ;;
+esac
+`,
+    );
+    chmodSync(legacyRollbackEas, 0o755);
+    expect(
+      runRelease(['rollback', '--group', 'legacy-known-good', '--ledger', rollbackLedger], {
+        EAS_CLI_PATH: legacyRollbackEas,
+      }).status,
+    ).toBe(0);
+    expect(JSON.parse(readFileSync(rollbackLedger, 'utf8'))).toMatchObject({
+      status: 'rolled-back',
+      productionGroupIds: { android: 'legacy-restored', ios: 'legacy-restored' },
+      productionGroupId: 'legacy-restored',
+    });
+  }, 60_000);
+
+  it('reads the rollback anchor and the canary group per platform, legacy ledgers included', () => {
+    // The rollback workflow's predecessor lookup and the Android-only canary
+    // both prefer the per-platform map and fall back to the legacy scalar.
+    expect(rollbackWorkflow).toContain(
+      'ledger.previousProductionGroupIds ?? ledger.previousProductionGroupId',
+    );
+    expect(canaryScript).toContain('item.platform === "android"');
+    expect(canaryScript).toContain('x.candidateGroupIds?.android || x.candidateGroupId');
+    expect(canaryScript).toContain('x.production?.groupIds?.android || x.production?.groupId');
+    expect(workflow).toContain('ledger.production.groupIds ?? ledger.production.groupId');
+  });
+
   it('fails loudly unless the ledger and delivery index prove exact production promotion', () => {
     const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-assert-promotion-'));
     const ledgerPath = join(directory, 'ledger.json');

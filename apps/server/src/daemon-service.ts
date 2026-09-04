@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type {
   DaemonAttachment,
   DaemonOperationMap,
@@ -8,10 +8,24 @@ import { cornerTextRefusal, normalizeCornerText } from '@beeline/api-contract/da
 import {
   AGENT_GRANT_REASON_MAX_LENGTH,
   AGENT_GRANT_TARGET_MAX_LENGTH,
+  GRANT_SCRIPT_MAX_BYTES,
+  GRANT_SCRIPT_MAX_LINES,
+  commandRuleEscalations,
+  grantScriptTooLongMessage,
+  interpreterScriptArgument,
   isAgentGrantKind,
+  isCommandGrantScript,
   parseCommandGrantTarget,
+  type AgentGrantEscalation,
   type AgentGrantKind,
+  type CommandGrantRule,
+  type CommandGrantScript,
 } from '@beeline/api-contract/agent-grants';
+import {
+  surfaceForRoom,
+  surfaceGrantBoundary,
+  type AgentSurface,
+} from '@beeline/api-contract/surface-capabilities';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
 import type { SqlDatabase } from './database.js';
 import type { LiveHub } from './live.js';
@@ -1536,19 +1550,25 @@ export class DaemonService {
       throw new Error('grant ttlSeconds is invalid');
     const kind: AgentGrantKind = input.kind;
     const target = kind === 'command' ? input.target : input.target.trim();
+    let rule: CommandGrantRule | undefined;
     if (kind === 'command') {
       try {
-        parseCommandGrantTarget(target);
+        rule = parseCommandGrantTarget(target);
       } catch (error) {
         throw new Error(
           `command target is invalid: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
     }
+    // C94: yolo is the scope gate and it is enough — except for the two hard
+    // stops, which stand in a Room and in a corner whether yolo is on or not.
+    const script = rule ? validateGrantScript(rule, input.script) : undefined;
+    const escalations: AgentGrantEscalation[] = rule ? commandRuleEscalations(rule, script) : [];
     const reason = input.reason.trim();
     const context = (
       await this.database.query<{
         workspace_id: string;
+        parent_id: string | null;
         owner_id: string;
         yolo_mode: boolean;
         agent_name: string;
@@ -1558,7 +1578,7 @@ export class DaemonService {
         owner_handle: string | null;
         owner_avatar: string | null;
       }>(
-        `SELECT room.workspace_id,a.owner_id,a.yolo_mode,
+        `SELECT room.workspace_id,room.parent_id,a.owner_id,a.yolo_mode,
                 agent.name agent_name,agent.handle agent_handle,agent.avatar agent_avatar,
                 owner.name owner_name,owner.handle owner_handle,owner.avatar owner_avatar
          FROM rooms room
@@ -1613,17 +1633,17 @@ export class DaemonService {
         }
       : owner;
     const grantId = randomUUID();
-    const auto = context.yolo_mode && kind !== 'budget';
+    const auto = context.yolo_mode && kind !== 'budget' && escalations.length === 0;
     const status = auto ? 'approved' : 'pending';
     const result = await this.database.transaction(async (database) => {
       const inserted = await database.query<{ created_at: Date; expires_at: Date | null }>(
         `INSERT INTO agent_grants(
            id,agent_id,workspace_id,kind,target,reason,requested_by,room_id,status,
-           decided_at,expires_at,auto
+           decided_at,expires_at,auto,script
          ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,
            CASE WHEN $10::boolean THEN now() END,
            CASE WHEN $11::integer IS NULL THEN NULL ELSE now()+make_interval(secs=>$11::integer) END,
-           $10)
+           $10,$12::jsonb)
          RETURNING created_at,expires_at`,
         [
           grantId,
@@ -1637,6 +1657,7 @@ export class DaemonService {
           status,
           auto,
           input.ttlSeconds ?? null,
+          script ? JSON.stringify(script) : null,
         ],
       );
       const row = inserted.rows[0]!;
@@ -1651,6 +1672,7 @@ export class DaemonService {
         createdAt: seconds(row.created_at),
         ...(row.expires_at ? { expiresAt: seconds(row.expires_at) } : {}),
         auto,
+        ...(script ? { script } : {}),
       };
       if (auto) {
         await systemLine(database, {
@@ -1658,7 +1680,7 @@ export class DaemonService {
           subject: { kind: 'agent', id: agentId, name: agent.name },
           verb: 'was granted',
           object: `${kind} ${target}`,
-          consequence: 'auto-approved under yolo',
+          consequence: autoGrantConsequence(kind, surfaceForRoom(context.parent_id !== null)),
           cardType: 'grant-auto',
           card: { grantId },
         });
@@ -1709,6 +1731,7 @@ export class DaemonService {
       status,
       auto,
       ...(result.messageId ? { messageId: result.messageId } : {}),
+      ...(escalations.length ? { escalations } : {}),
     };
   }
   /** Every live rule for this agent: approved or once, unexpired, not revoked. */
@@ -1723,9 +1746,10 @@ export class DaemonService {
       requested_by: string;
       requester_name: string | null;
       expires_at: Date | null;
+      script: CommandGrantScript | null;
     }>(
       `SELECT g.id,g.workspace_id,g.room_id,g.kind,g.target,g.status,g.requested_by,
-              requester.name requester_name,g.expires_at
+              requester.name requester_name,g.expires_at,g.script
        FROM agent_grants g LEFT JOIN identities requester ON requester.id=g.requested_by
        WHERE g.agent_id=$1 AND g.status IN ('approved','once')
          AND (g.expires_at IS NULL OR g.expires_at>now())
@@ -1743,6 +1767,7 @@ export class DaemonService {
         requestedBy: row.requested_by,
         ...(row.requester_name ? { requestedByName: row.requester_name } : {}),
         ...(row.expires_at ? { expiresAt: seconds(row.expires_at) } : {}),
+        ...(isCommandGrantScript(row.script) ? { script: row.script } : {}),
       })),
     };
   }
@@ -1903,6 +1928,55 @@ export class DaemonService {
   private writeResult() {
     return { id: id(), createdAt: Math.floor(Date.now() / 1000) };
   }
+}
+
+/**
+ * What a yolo auto-approval actually licensed, so a scroll-back reads as an
+ * account of what happened and not a list of names (C94). The boundary is the
+ * capability table's, exact and enforced by the mount namespace the runner
+ * spawns into: a Room reads, a corner writes its worktree and acts on the host.
+ */
+function autoGrantConsequence(kind: AgentGrantKind, surface: AgentSurface): string {
+  if (kind !== 'command') return 'auto-approved under yolo';
+  return `auto-approved under yolo, ${surfaceGrantBoundary(surface)}`;
+}
+
+/**
+ * The script bytes the daemon read for an interpreter command, checked against
+ * the line they claim to belong to. The server never reads the operator's
+ * filesystem, so this validates the daemon's reading rather than repeating it;
+ * the runner re-hashes the file before every run.
+ */
+function validateGrantScript(
+  rule: CommandGrantRule,
+  script: unknown,
+): CommandGrantScript | undefined {
+  const argument = interpreterScriptArgument(rule.argv);
+  if (script === undefined || script === null) return undefined;
+  if (!argument) throw new Error('grant script is only for an interpreter command');
+  if (!isCommandGrantScript(script)) throw new Error('grant script is invalid');
+  if (script.path !== argument.path) {
+    throw new Error(`grant script must be the command's script argument (${argument.path})`);
+  }
+  // The hash is the binding, so the server re-derives it rather than trusting
+  // the number it was handed: the bytes on the card and the bytes the runner
+  // will check must be the same bytes.
+  const bytes = Buffer.byteLength(script.contents);
+  if (
+    script.bytes !== bytes ||
+    createHash('sha256').update(script.contents).digest('hex') !== script.sha256
+  ) {
+    throw new Error('grant script is invalid: its hash does not match its contents');
+  }
+  const lines = script.contents.split('\n').length;
+  if (bytes > GRANT_SCRIPT_MAX_BYTES || lines > GRANT_SCRIPT_MAX_LINES) {
+    // 'invalid' keeps this a 400 in `server.ts`'s status mapper, and the whole
+    // refusal still reaches the agent as its tool error.
+    throw new Error(
+      `grant script is invalid: ${grantScriptTooLongMessage(script.path, bytes, lines)}`,
+    );
+  }
+  return script;
 }
 
 /** The push/preview text of a grant card: who asks whom for what, and why. */

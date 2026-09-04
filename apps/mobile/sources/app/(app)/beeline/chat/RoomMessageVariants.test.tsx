@@ -27,6 +27,7 @@ vi.mock('react-native', async () => {
     Linking: { openURL: vi.fn(async () => undefined) },
     Platform: { OS: 'web', select: (choices: Record<string, unknown>) => choices.default },
     Pressable: host('Pressable'),
+    ScrollView: host('ScrollView'),
     Text: host('Text'),
     View: host('View'),
   };
@@ -674,5 +675,83 @@ describe('Room message variant components', () => {
       ['allowed', expect.stringMatching(/^Charles allowed once · /)],
       ['denied', expect.stringMatching(/^Charles declined · /)],
     ]);
+  });
+
+  it('shows the script an interpreter grant will run, because the command line does not (C94)', () => {
+    const owner = { pubkey: 'owner', kind: 'human' as const, name: 'Charles' };
+    const script = 'import os\nos.remove("/tmp/x")\n';
+    const card = render(
+      <GrantRequestCard
+        message={message({
+          grantRequest: {
+            agent: { pubkey: 'agent', kind: 'agent', name: 'Goosy' },
+            owner,
+            requester: owner,
+            grants: [
+              {
+                grantId: 'g-1',
+                kind: 'command',
+                target: 'python3 fix_serve_prod.py',
+                reason: 'to fix the serve script',
+                status: 'pending',
+                requestedBy: owner,
+                roomId: '22222222-2222-4222-8222-222222222222',
+                createdAt: 1,
+                auto: false,
+                script: {
+                  path: 'fix_serve_prod.py',
+                  sha256: 'a'.repeat(64),
+                  bytes: script.length,
+                  contents: script,
+                },
+              },
+            ],
+          },
+        })}
+        viewerIsAgent={false}
+        viewerPubkey="owner"
+        viewerRole="owner"
+        actionId={null}
+        onDecision={vi.fn()}
+      />,
+    );
+    const body = card.root.findByProps({ testID: 'grant-g-1-script' });
+    const texts = body.findAllByType('Text').map((node: { props: { children: unknown } }) => node.props.children);
+    expect(texts).toContain('fix_serve_prod.py');
+    expect(texts).toContain(script);
+  });
+
+  it('draws no script block for a grant that has none', () => {
+    const owner = { pubkey: 'owner', kind: 'human' as const, name: 'Charles' };
+    const card = render(
+      <GrantRequestCard
+        message={message({
+          grantRequest: {
+            agent: { pubkey: 'agent', kind: 'agent', name: 'Goosy' },
+            owner,
+            requester: owner,
+            grants: [
+              {
+                grantId: 'g-2',
+                kind: 'command',
+                target: 'npm test',
+                reason: 'to run the suite',
+                status: 'pending',
+                requestedBy: owner,
+                roomId: '22222222-2222-4222-8222-222222222222',
+                createdAt: 1,
+                auto: false,
+              },
+            ],
+          },
+        })}
+        viewerIsAgent={false}
+        viewerPubkey="owner"
+        viewerRole="owner"
+        actionId={null}
+        onDecision={vi.fn()}
+      />,
+    );
+    expect(card.root.findAllByProps({ testID: 'grant-g-2-script' })).toHaveLength(0);
   });
 });

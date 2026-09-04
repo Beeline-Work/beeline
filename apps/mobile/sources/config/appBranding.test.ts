@@ -234,8 +234,17 @@ describe('Beeline display branding', () => {
       readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
     ) as { scripts?: Record<string, string> };
 
-    expect(Object.keys(easBuildProfiles)).toEqual(['production', 'production-apk', 'beta-apk']);
+    // production-ci is the hosted-runner store build (testflight.yml): same as
+    // production but with EAS-managed iOS credentials, since CI has no credentials.json.
+    expect(Object.keys(easBuildProfiles)).toEqual([
+      'production',
+      'production-ci',
+      'production-apk',
+      'beta-apk',
+    ]);
     expect(resolveEasBuildProfile(easBuildProfiles, 'production').channel).toBe('production');
+    expect(resolveEasBuildProfile(easBuildProfiles, 'production-ci').channel).toBe('production');
+    expect(resolveEasBuildProfile(easBuildProfiles, 'production-ci').ios?.credentialsSource).toBe('remote');
     expect(resolveEasBuildProfile(easBuildProfiles, 'production-apk').channel).toBe('production');
     expect(resolveEasBuildProfile(easBuildProfiles, 'beta-apk').channel).toBe('beta');
     for (const [name, script] of Object.entries(packageJson.scripts ?? {})) {

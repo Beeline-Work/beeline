@@ -15,6 +15,12 @@
         "SHARP_IGNORE_GLOBAL_LIBVIPS": "1"
       }
     },
+    "production-ci": {
+      "extends": "production",
+      "ios": {
+        "credentialsSource": "remote"
+      }
+    },
     "production-apk": {
       "extends": "production",
       "channel": "production",

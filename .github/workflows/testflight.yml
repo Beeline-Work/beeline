@@ -1,0 +1,142 @@
+# Build the iOS app on EAS and upload it to TestFlight. Manual only:
+# `gh workflow run testflight.yml`.
+#
+# The build uses the `production-ci` EAS profile: the same store build as
+# `production` but with EAS-managed iOS credentials, because a GitHub-hosted
+# runner has no apps/mobile/credentials.json (the `production` profile's
+# `credentialsSource: local` is for an operator's own machine). The one-time
+# `eas credentials --platform ios` setup is in apps/mobile/docs/store-submission.md.
+#
+# Submission runs `eas submit` with the `production` submit profile from
+# apps/mobile/eas.json (team 89KT3SWYAF, App Store Connect app 6803948500),
+# authenticated by an App Store Connect API key from three repository secrets:
+#   EXPO_ASC_KEY_ID       — the key id
+#   EXPO_ASC_ISSUER_ID    — the issuer id
+#   EXPO_ASC_API_KEY_P8   — base64 of the AuthKey_<id>.p8 file; written to a
+#                           runner-temp file that EXPO_ASC_API_KEY_PATH points at
+# TestFlight processing and any external-tester review remain App Store
+# Connect actions.
+name: TestFlight release
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: testflight-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  EAS_CLI_VERSION: 22.2.0
+  ASC_APP_ID: '6803948500'
+
+jobs:
+  release:
+    name: Build on EAS and upload to TestFlight
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Require the release secrets
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EXPO_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
+          EXPO_ASC_ISSUER_ID: ${{ secrets.EXPO_ASC_ISSUER_ID }}
+          EXPO_ASC_API_KEY_P8: ${{ secrets.EXPO_ASC_API_KEY_P8 }}
+        run: |
+          missing=0
+          for name in EXPO_TOKEN EXPO_ASC_KEY_ID EXPO_ASC_ISSUER_ID EXPO_ASC_API_KEY_P8; do
+            if [ -z "${!name}" ]; then
+              echo "$name repository secret is not set; add it before running this workflow."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+
+      - name: Version check
+        id: version
+        working-directory: apps/mobile
+        run: |
+          version=$(node scripts/check-release-version.cjs)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Releasing app version $version"
+
+      - name: Install mobile dependencies
+        working-directory: apps/mobile
+        run: npm ci
+
+      - name: Build the iOS app on EAS
+        id: build
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EXPECTED_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          npx --yes "eas-cli@$EAS_CLI_VERSION" build --profile production-ci --platform ios \
+            --non-interactive --wait --json > "$RUNNER_TEMP/eas-build.json"
+          build=$(jq -c 'if type == "array" then .[0] else . end' "$RUNNER_TEMP/eas-build.json")
+          status=$(echo "$build" | jq -r '.status')
+          if [ "$status" != "FINISHED" ]; then
+            echo "EAS build ended with status $status"
+            echo "$build" | jq '.'
+            exit 1
+          fi
+          app_version=$(echo "$build" | jq -r '.appVersion')
+          if [ "$app_version" != "$EXPECTED_VERSION" ]; then
+            echo "EAS built app version $app_version; the checked-out package version is $EXPECTED_VERSION"
+            exit 1
+          fi
+          {
+            echo "id=$(echo "$build" | jq -r '.id')"
+            echo "build_number=$(echo "$build" | jq -r '.appBuildVersion')"
+          } >> "$GITHUB_OUTPUT"
+          echo "EAS build $(echo "$build" | jq -r '.id') finished: $app_version ($(echo "$build" | jq -r '.appBuildVersion'))"
+
+      - name: Write the App Store Connect API key
+        env:
+          EXPO_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
+          EXPO_ASC_API_KEY_P8: ${{ secrets.EXPO_ASC_API_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          key_path="$RUNNER_TEMP/AuthKey_${EXPO_ASC_KEY_ID}.p8"
+          echo "$EXPO_ASC_API_KEY_P8" | base64 -d > "$key_path"
+          chmod 600 "$key_path"
+          if ! grep -q 'BEGIN PRIVATE KEY' "$key_path"; then
+            echo "EXPO_ASC_API_KEY_P8 did not decode to a PEM private key; store the base64 of the .p8 file."
+            exit 1
+          fi
+          echo "EXPO_ASC_API_KEY_PATH=$key_path" >> "$GITHUB_ENV"
+
+      - name: Upload to TestFlight
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EXPO_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
+          EXPO_ASC_ISSUER_ID: ${{ secrets.EXPO_ASC_ISSUER_ID }}
+          BUILD_ID: ${{ steps.build.outputs.id }}
+        run: |
+          npx --yes "eas-cli@$EAS_CLI_VERSION" submit --platform ios --profile production \
+            --id "$BUILD_ID" --non-interactive --wait
+
+      - name: Release summary
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD_NUMBER: ${{ steps.build.outputs.build_number }}
+          BUILD_ID: ${{ steps.build.outputs.id }}
+        run: |
+          {
+            echo "## TestFlight: ${VERSION} (${BUILD_NUMBER})"
+            echo ""
+            echo "- App Store Connect: https://appstoreconnect.apple.com/apps/${ASC_APP_ID}/testflight/ios"
+            echo "- EAS build id: ${BUILD_ID}"
+          } >> "$GITHUB_STEP_SUMMARY"

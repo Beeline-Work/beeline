@@ -404,8 +404,8 @@ describe('Members workspace management', () => {
     const agents = renderer.root.findByProps({ testID: 'members-add-agents' });
     expect(people.props.accessibilityLabel).toBe('Add people');
     expect(agents.props.accessibilityLabel).toBe('Add agents');
-    expect(people.props.style.minHeight).toBeGreaterThanOrEqual(44);
-    expect(agents.props.style.minHeight).toBeGreaterThanOrEqual(44);
+    expect(people.props.style.height).toBeGreaterThanOrEqual(44);
+    expect(agents.props.style.height).toBeGreaterThanOrEqual(44);
   });
 
   it('shows the word alone over counted section heads and no loose total (C73, C79)', async () => {

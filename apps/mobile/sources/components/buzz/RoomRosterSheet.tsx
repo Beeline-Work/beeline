@@ -319,12 +319,12 @@ const styles = StyleSheet.create((theme) => {
       color: hull.textMuted,
     },
     rosterSectionAdd: {
-      minWidth: 44,
-      minHeight: 44,
+      width: 44,
+      height: 44,
       alignItems: 'center',
       justifyContent: 'center',
     },
-    rosterSectionAddGlyph: { ...Typography.default(), ...hull.type.sectionHead, color: hull.accent },
+    rosterSectionAddGlyph: { ...Typography.default(), ...hull.type.hero, color: hull.accent },
     rosterSectionLabelSpaced: { marginTop: hull.layout.sectionGap },
     rosterRow: {
       minHeight: hull.layout.row,

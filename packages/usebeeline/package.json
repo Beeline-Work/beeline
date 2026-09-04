@@ -2,6 +2,25 @@
   "name": "usebeeline",
   "version": "0.0.5",
   "description": "Connect an AI coding agent to Beeline with one command.",
+  "homepage": "https://usebeeline.app",
+  "bugs": {
+    "url": "https://github.com/Beeline-Work/beeline/issues"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "coding-agent",
+    "claude-code",
+    "codex",
+    "goose",
+    "pi",
+    "grok",
+    "acp",
+    "agent-client-protocol",
+    "mcp",
+    "pull-request",
+    "cli"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Beeline-Work/beeline.git",

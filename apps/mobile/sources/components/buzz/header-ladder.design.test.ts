@@ -156,14 +156,25 @@ describe('Chat header — one language for Room and Corner', () => {
     expect(metaRow![0]).toContain('marginTop: 2');
   });
 
-  it('carries no agent presence light in the corner header (C85)', () => {
-    // #873 retired this exact signal from the Members surfaces as misleading
-    // — a helper can be up while the agent answers nothing. The corner
-    // status glyph (CornerGlyph) carries the corner's real lifecycle and
-    // stays; the presence square next to the agent name does not.
+  it('carries neither the presence light nor the state glyph in the corner header (C85)', () => {
+    // Captain correction: inside a corner the working state is already
+    // carried by the thinking line above the composer and the live bar, and
+    // the Room list carries corner state for when you're outside it — a
+    // silent glyph in the header is a third copy of the same fact. Only the
+    // presence square (#873's already-retired signal: a helper can be up
+    // while the agent answers nothing) and the CornerGlyph state circle are
+    // gone; CornerGlyph/StateCircle themselves still serve the Room list,
+    // corner cards, and the live bar.
     expect(chatSource).not.toContain('corner-header-presence');
     expect(chatSource).not.toContain('AgentPresenceLight');
     expect(chatSource).not.toContain('cornerAgentOnline');
-    expect(chatSource).toContain('testID="corner-view-status"');
+    expect(chatSource).not.toContain('corner-view-status');
+    expect(chatSource).not.toContain('displayedCornerStatus');
+    expect(chatSource).not.toContain('cornerHeaderState');
+    // The meta row still reads: agent name, then member count.
+    const branch = chatSource.match(/isCorner \? \(\s*<HeaderMetaRow>[\s\S]*?<\/HeaderMetaRow>/);
+    expect(branch, 'missing corner meta row branch').toBeTruthy();
+    expect(branch![0]).toContain('cornerHeaderAgent');
+    expect(branch![0]).toContain('formatRoomParticipantTotal(roomParticipantTotal)');
   });
 });

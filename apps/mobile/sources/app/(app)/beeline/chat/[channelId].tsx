@@ -99,7 +99,6 @@ import {
 import {
   currentCornerStatus,
   roomListCorners,
-  resolveCornerLifecycleStatus,
   type CornerStatus,
   type CornerSummary,
 } from '@/buzz/corners';
@@ -220,7 +219,7 @@ import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { RoomRosterSheet, type RoomRosterParticipant } from '@/components/buzz/RoomRosterSheet';
 import { RepoPicker } from '@/components/buzz/RepoPicker';
 import { SlashVerbPicker } from '@/components/buzz/SlashVerbPicker';
-import { CornerGlyph, MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
+import { MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
 
 type RoomMemberOption = RoomRosterParticipant;
 
@@ -1450,15 +1449,6 @@ export default function BuzzChat() {
             .find((message) => message.corner?.subchannelId === pinnedCorner.cornerId)
         : undefined,
     [messages, pinnedCorner],
-  );
-  // displayedCornerStatus is a one-time snapshot fetched at mount; isArchived
-  // is kept live by several independent update paths (live archive signal,
-  // revalidated cache, fresh isChannelArchived check). A confirmed archive
-  // that resolves after mount must never leave this badge showing a stale
-  // non-terminal status.
-  const displayedCornerStatus = useMemo(
-    () => resolveCornerLifecycleStatus(canonicalCornerStatus, isArchived),
-    [canonicalCornerStatus, isArchived],
   );
   /**
    * The pinned corner line's whole state, resolved in one place so the words it
@@ -3060,11 +3050,6 @@ export default function BuzzChat() {
                 <Text numberOfLines={1} style={styles.cornerHeaderAgent}>
                   {(cornerAgentDisplay?.name ?? 'AGENT').toUpperCase()}
                 </Text>
-                <CornerGlyph
-                  status={displayedCornerStatus}
-                  style={styles.cornerHeaderState}
-                  testID="corner-view-status"
-                />
                 <HeaderMetaCaps>
                   {participantsHydrated ? formatRoomParticipantTotal(roomParticipantTotal) : ''}
                 </HeaderMetaCaps>
@@ -4021,8 +4006,8 @@ const styles = StyleSheet.create((theme) => {
     cornerChannelNameSkeleton: { width: 108 },
     repoChip: { alignSelf: 'flex-start', marginTop: 2, maxWidth: '100%' },
     // The one thing on the corner's meta row with unbounded length, so it is
-    // the one that gives: an unshrinkable name pushed the presence light, the
-    // status glyph and the member count off the right edge.
+    // the one that gives: an unshrinkable name pushed the member count off
+    // the right edge.
     cornerHeaderAgent: {
       ...Typography.mono('semiBold'),
       flexShrink: 1,
@@ -4032,7 +4017,6 @@ const styles = StyleSheet.create((theme) => {
       lineHeight: 14,
       letterSpacing: 0.7,
     },
-    cornerHeaderState: { width: 14, height: 14, marginHorizontal: 4 },
     // The trailing slot holds exactly one thing — ••• on a live surface, the
     // archived badge on a dead one — and both hang on the same axis: 12 of
     // clear space off the title's own touch area (Material asks 8 between

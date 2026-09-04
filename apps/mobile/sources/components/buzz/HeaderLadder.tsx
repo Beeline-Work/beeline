@@ -1,13 +1,12 @@
 import React from 'react';
 import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { Typography } from '@/constants/Typography';
 
 /**
  * One header language for both chat surfaces — the Room and its Corners share
  * this screen's top bar, and both must speak the same ladder: an identity mark
  * leading, the name at its own tier, and every piece of metadata (repo
- * binding, participant count, corner status) in one mono micro-caps voice on
+ * binding, participant count, corner status) in one quiet meta voice on
  * the obsidian canvas.
  *
  * These are the shared primitives; neither branch of `[channelId].tsx`'s
@@ -46,7 +45,7 @@ export function HeaderMetaRow({
   );
 }
 
-/** The one metadata voice: mono micro-caps, muted, single-line. Repo
+/** The one metadata voice: the `meta` type role, muted, single-line. Repo
  *  bindings, participant counts, and corner status all read through this
  *  token so the two headers can never drift apart again. */
 export function HeaderMetaCaps({
@@ -80,14 +79,13 @@ const styles = StyleSheet.create((theme) => {
       marginTop: 3,
       minWidth: 0,
     },
+    // The one subtitle voice is the calm `meta` role (DESIGN.md → Type):
+    // sans, never mono, muted. Callers still pass caps copy.
     metaCaps: {
-      ...Typography.mono(),
+      ...theme.buzz.type.meta,
       flexShrink: 1,
       minWidth: 0,
       color: groknight.textMuted,
-      fontSize: 10,
-      lineHeight: 14,
-      letterSpacing: 0.5,
     },
   };
 });

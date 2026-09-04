@@ -209,6 +209,8 @@ import { AttachmentPickerSheet } from '@/components/buzz/AttachmentPickerSheet';
 import { HullFloatingSurface, HullModal } from '@/components/buzz/HullDialog';
 import { EmptyLedgerState, type EmptyLedgerVariant } from '@/components/buzz/EmptyLedgerState';
 import { HeaderIdentitySlot, HeaderMetaCaps, HeaderMetaRow } from '@/components/buzz/HeaderLadder';
+import { ChannelHeaderTitle } from '@/components/buzz/ChannelHeaderTitle';
+import type { ChannelHeaderKind } from '@/buzz/channel-header-title';
 import { LEDGER_MARGINALIA_WIDTH, LedgerRoomUpdate, LedgerSystemLine } from '@/components/buzz/Ledger';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { RoomRosterSheet, type RoomRosterParticipant } from '@/components/buzz/RoomRosterSheet';
@@ -1189,6 +1191,7 @@ export default function BuzzChat() {
   // render the skeleton) from a resolved name. A DM is resolved as soon as its
   // peer is known, which the cached roster usually already answers.
   const displayHeaderTitle = dmPeerPubkey ? displayRoomName : headerTitle;
+  const headerTitleKind: ChannelHeaderKind = isCorner ? 'corner' : dmPeerPubkey ? 'dm' : 'room';
   const emptyLedgerVariant: EmptyLedgerVariant = isCorner
     ? 'corner'
     : isDirectMessage
@@ -2881,9 +2884,10 @@ export default function BuzzChat() {
               <Text style={styles.backText}>‹</Text>
             </TouchableOpacity>
             <View style={styles.headerCenter}>
-              <Text numberOfLines={1} style={styles.channelName}>
-                {displayHeaderTitle ?? routeChannelTitle ?? ROOM_LABEL}
-              </Text>
+              <ChannelHeaderTitle
+                kind={headerTitleKind}
+                title={displayHeaderTitle ?? routeChannelTitle ?? ROOM_LABEL}
+              />
               <HeaderMetaCaps>HISTORY UNAVAILABLE</HeaderMetaCaps>
             </View>
           </View>
@@ -2989,14 +2993,13 @@ export default function BuzzChat() {
                 testID="chat-title-skeleton"
               />
             ) : (
-              <Text
-                style={[styles.channelName, isCorner && styles.cornerChannelName]}
+              <ChannelHeaderTitle
+                kind={headerTitleKind}
                 // A corner's name is its objective verbatim; let it wrap once
                 // rather than truncate to a slug fragment.
                 numberOfLines={isCorner ? 2 : 1}
-              >
-                {displayHeaderTitle}
-              </Text>
+                title={displayHeaderTitle}
+              />
             )}
             {!isCorner && roomRepository && (
               <TouchableOpacity
@@ -4084,21 +4087,6 @@ const styles = StyleSheet.create((theme) => {
       minHeight: 44,
       minWidth: 0,
       justifyContent: 'center',
-    },
-    channelName: {
-      ...Typography.default('semiBold'),
-      fontSize: 20,
-      lineHeight: 24,
-      color: groknight.textPrimary,
-    },
-    // A corner's name is a slug, not a title — set it at label scale so it
-    // reads as an identifier beside the agent's mark rather than a headline.
-    cornerChannelName: {
-      ...Typography.mono('semiBold'),
-      fontSize: 15,
-      lineHeight: 19,
-      letterSpacing: 0.2,
-      color: groknight.textPrimary,
     },
     // Stands in for the name until the channel's own read lands, so the header
     // never has to guess between "Room" and a corner slug.

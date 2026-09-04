@@ -70,6 +70,20 @@ store distribution. Play builds therefore never use it. `play-beta.yml` runs
 If the upload key is ever lost, Play's upload-key reset flow applies; the
 sideload keystore is not involved either way.
 
+## Runtime compatibility stamp
+
+A store binary carries the same `runtimeVersion` as the OTA updates it may
+later receive: the Expo native fingerprint (`runtimeVersion: { policy:
+"fingerprint" }` in `app.config.js`). `apps/mobile/fingerprint.config.js` keeps
+that stamp identical for every artifact of one commit (store AAB/IPA, sideload
+APK, the `beta-apk` canary vehicle, and `eas update`), so nothing here needs a
+manual runtime bump. A native change (dependency, config plugin, permission)
+moves the stamp by itself; check it with
+
+```sh
+cd apps/mobile && npx expo-updates runtimeversion:resolve --platform android --workflow managed
+```
+
 ## Commands
 
 ```sh

@@ -261,7 +261,69 @@ describe('Beeline display branding', () => {
     expect(appConfig).toContain('"expo-channel-name": updatesChannel');
     expect(loadUpdatesChannel()).toBe('production');
     expect(loadUpdatesChannel('beta')).toBe('beta');
-    expect(appConfig).toContain('runtimeVersion: "21"');
+    expect(appConfig).toContain('runtimeVersion: { policy: "fingerprint" }');
+  });
+
+  it('stamps one runtime fingerprint for the store, sideload, canary, and OTA artifacts of a commit', () => {
+    // EAS Build and `eas update` both resolve the runtime through
+    // `expo-updates runtimeversion:resolve`, which reads fingerprint.config.js.
+    // The beta-apk canary vehicle bakes channel `beta` while every other
+    // artifact bakes `production`; the stamp must ignore that difference and
+    // the JS-only `extra` block (release version/SHA change on every commit),
+    // or the canary could never receive the update it is meant to verify.
+    const fingerprintConfig = require('../../fingerprint.config.js') as {
+      sourceSkips: string[];
+      fileHookTransform(
+        source: { type: string; id?: string; filePath?: string },
+        chunk: string | Buffer | null,
+        isEndOfFile: boolean,
+        encoding: string,
+      ): string | Buffer | null;
+    };
+    expect(fingerprintConfig.sourceSkips).toEqual(
+      expect.arrayContaining([
+        'PackageJsonAndroidAndIosScriptsIfNotContainRun',
+        'ExpoConfigVersions',
+        'ExpoConfigExtraSection',
+      ]),
+    );
+
+    const stamped = (channel: string, nodeEnv: 'production' | 'development') =>
+      fingerprintConfig.fileHookTransform(
+        { type: 'contents', id: 'expoConfig' },
+        JSON.stringify({
+          ios: {
+            infoPlist: {
+              NSAppTransportSecurity:
+                nodeEnv === 'production'
+                  ? { NSAllowsLocalNetworking: true }
+                  : { NSAllowsArbitraryLoads: true, NSAllowsLocalNetworking: true },
+            },
+          },
+          plugins: ['expo-updates'],
+          updates: {
+            requestHeaders: { 'expo-channel-name': channel },
+            url: 'https://u.expo.dev/project',
+          },
+        }),
+        true,
+        'utf8',
+      );
+    expect(stamped('beta', 'development')).toBe(stamped('production', 'production'));
+    expect(stamped('production', 'production')).toContain('"expo-updates"');
+    expect(stamped('production', 'production')).toContain('NSAllowsLocalNetworking');
+    expect(stamped('production', 'production')).not.toContain('expo-channel-name');
+
+    // Any other source passes through untouched.
+    const plugin = Buffer.from('module.exports = 1;');
+    expect(
+      fingerprintConfig.fileHookTransform(
+        { type: 'file', filePath: 'plugins/withEinkCompatibility.js' },
+        plugin,
+        true,
+        'utf8',
+      ),
+    ).toBe(plugin);
   });
 
   it('packages the production app as an APK without creating another app variant', () => {

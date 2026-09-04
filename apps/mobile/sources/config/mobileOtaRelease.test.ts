@@ -179,9 +179,9 @@ exit 1
       `#!/bin/sh
 case "$1" in
   channel:view|channel:edit) printf '{}\\n' ;;
-  update:list) printf '[{"id":"prod-android","platform":"android","group":"known-good","runtimeVersion":"21"}]\\n' ;;
-  update) printf '[{"id":"beta-android","platform":"android","group":"candidate-group","runtimeVersion":"21"},{"id":"beta-ios","platform":"ios","group":"candidate-group","runtimeVersion":"21"}]\\n' ;;
-  update:republish) printf '[{"id":"prod-next-android","platform":"android","group":"production-group","runtime":{"version":"21"}},{"id":"prod-next-ios","platform":"ios","group":"production-group","runtime":{"version":"21"}}]\\n' ;;
+  update:list) printf '[{"id":"prod-android","platform":"android","group":"known-good","runtimeVersion":"289448ddf90175b99ac40b3e2fe72ecefc8a7eb0"}]\\n' ;;
+  update) printf '[{"id":"beta-android","platform":"android","group":"candidate-group","runtimeVersion":"289448ddf90175b99ac40b3e2fe72ecefc8a7eb0"},{"id":"beta-ios","platform":"ios","group":"candidate-group","runtimeVersion":"289448ddf90175b99ac40b3e2fe72ecefc8a7eb0"}]\\n' ;;
+  update:republish) printf '[{"id":"prod-next-android","platform":"android","group":"production-group","runtime":{"version":"289448ddf90175b99ac40b3e2fe72ecefc8a7eb0"}},{"id":"prod-next-ios","platform":"ios","group":"production-group","runtime":{"version":"289448ddf90175b99ac40b3e2fe72ecefc8a7eb0"}}]\\n' ;;
   *) exit 9 ;;
 esac
 `,
@@ -1043,7 +1043,7 @@ esac
               id: 'beta-android',
               platform: 'android',
               group: 'candidate-group',
-              runtimeVersion: '21',
+              runtimeVersion: '289448ddf90175b99ac40b3e2fe72ecefc8a7eb0',
             },
           ],
           canary: { status: 'pending' },
@@ -1068,7 +1068,7 @@ esac
                 id: 'production-android',
                 platform: 'android',
                 group: 'production-group',
-                runtimeVersion: '21',
+                runtimeVersion: '289448ddf90175b99ac40b3e2fe72ecefc8a7eb0',
               },
             ],
           },
@@ -1329,7 +1329,7 @@ esac
       return bin;
     }
 
-    it('parks with a self-describing reason when EAS has no finished beta-apk build for the runtime', () => {
+    it('parks with a self-describing reason when EAS has no finished beta-apk build for the runtime fingerprint', () => {
       const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-no-beta-build-'));
       const sdkRoot = stubAdbSdk(directory, 'List of devices attached\nemulator-5554\tdevice');
       const stubBin = stubReleaseTools(directory, { buildListStdout: '[]' });
@@ -1344,12 +1344,20 @@ esac
 
       expect(result.status).toBe(2);
       expect(result.stderr).toContain('no finished beta-apk Android build');
-      expect(result.stderr).toContain('runtime version 21');
+      expect(result.stderr).toContain(
+        'runtime fingerprint 289448ddf90175b99ac40b3e2fe72ecefc8a7eb0',
+      );
       expect(result.stderr).toContain('build --profile beta-apk');
 
       const reason = readFileSync(reasonFile, 'utf8').trim();
-      expect(reason).toContain('no finished beta-apk Android build for runtime version 21');
-      expect(reason).toContain('build --profile beta-apk --platform android');
+      expect(reason).toContain(
+        'no finished beta-apk Android build for runtime fingerprint 289448ddf90175b99ac40b3e2fe72ecefc8a7eb0',
+      );
+      // The one-time operator cost per fingerprint is one copy-pasteable command.
+      expect(reason).toContain(
+        'cd apps/mobile && npx --yes eas-cli@22.2.0 build --profile beta-apk --platform android --non-interactive --no-wait',
+      );
+      expect(reason.split('\n')).toHaveLength(1);
 
       // The broken canary must never be recorded as success or silently
       // consumed: the beta ledger stays pending for the governor to park.

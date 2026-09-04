@@ -33,8 +33,13 @@ workflow artifact. Manual recovery lives in the clearly named
 `rollback_group` can override the recorded predecessor. Receipt-only checks
 live in [`mobile-ota-reconcile.yml`](../../.github/workflows/mobile-ota-reconcile.yml),
 whose name and summary explicitly say that green does not mean a release.
-Native changes still require a binary rebuild and runtimeVersion bump; the
-governor does not relax that compatibility boundary.
+The runtime version is the Expo native fingerprint (`runtimeVersion: { policy:
+"fingerprint" }` in `app.config.js`; `fingerprint.config.js` keeps the stamp
+identical across the store, sideload, `beta-apk`, and `eas update` artifacts of
+one commit). A native change moves the fingerprint by itself, so an OTA can never
+reach an incompatible binary; the next release's canary then parks until a
+`beta-apk` for the new fingerprint exists, and its parked reason prints the one
+`eas build` command that fixes it.
 
 ## Monorepo integration (isolated install)
 

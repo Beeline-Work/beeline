@@ -255,7 +255,7 @@ if [[ -z "$apk" ]]; then
   url_status=$?
   set -e
   if (( url_status != 0 )) || [[ -z "$build_url" ]]; then
-    park "EAS has no finished ${BUILD_PROFILE} Android build for runtime version ${android_runtime:-unknown}. The OTA channel is baked into the APK, so post-promotion verification requires a production-channel binary and pre-promotion verification requires a beta-channel binary. Fix once per runtime version: cd apps/mobile && npx --yes eas-cli@22.2.0 build --profile ${BUILD_PROFILE} --platform android --non-interactive, then re-run the release governor."
+    park "EAS has no finished ${BUILD_PROFILE} Android build for runtime fingerprint ${android_runtime:-unknown}. The OTA channel is baked into the APK, so post-promotion verification requires a production-channel binary and pre-promotion verification requires a beta-channel binary; the fingerprint changes only when native dependencies or config plugins change (apps/mobile/fingerprint.config.js). Fix once per fingerprint, from the release commit: cd apps/mobile && npx --yes eas-cli@22.2.0 build --profile ${BUILD_PROFILE} --platform android --non-interactive --no-wait, then re-run the release governor once the build finishes."
   fi
   apk="$temporary/beeline-${release_stage}.apk"
   if ! curl --fail --location --silent --show-error "$build_url" --output "$apk"; then
@@ -264,7 +264,7 @@ if [[ -z "$apk" ]]; then
 fi
 
 if [[ ! -f "$apk" ]]; then
-  park "operator-supplied ${SUPPLIED_APK_ENV} does not exist: $apk; point it at a ${release_stage}-channel APK built for runtime version ${android_runtime:-unknown}, or unset it to let the canary download the latest ${BUILD_PROFILE} build"
+  park "operator-supplied ${SUPPLIED_APK_ENV} does not exist: $apk; point it at a ${release_stage}-channel APK built for runtime fingerprint ${android_runtime:-unknown}, or unset it to let the canary download the latest ${BUILD_PROFILE} build"
 fi
 
 # -r preserves the channel-matched binary registration while replacing any

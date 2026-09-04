@@ -53,7 +53,9 @@ export default {
         // from this package's release version. `version:check` rejects a tag
         // that does not match it before a release build starts.
         version: releaseVersion,
-        runtimeVersion: "21",
+        // The runtime is the native-compatibility fingerprint (fingerprint.config.js
+        // decides what counts); an OTA can only reach a binary with the same stamp.
+        runtimeVersion: { policy: "fingerprint" },
         orientation: "default",
         icon: "./sources/assets/images/icon.png",
         scheme,

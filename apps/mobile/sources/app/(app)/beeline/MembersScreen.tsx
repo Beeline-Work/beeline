@@ -818,7 +818,9 @@ export default function BuzzMembers() {
                   face={member.identity.face}
                   name={member.identity.name}
                   size={38}
-                  alive={member.presence?.status === 'online'}
+                  // No ring here: the Workspace view carries presence, not
+                  // turn or corner state, and the ring means WORKING (C77).
+                  // The ONLINE/OFFLINE word below is the presence fact.
                 />
                 <View style={styles.rowCopy}>
                   <Text style={styles.name}>{member.identity.name}</Text>

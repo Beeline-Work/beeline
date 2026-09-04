@@ -62,6 +62,31 @@ export function selectTurnProgressAgentPubkey(input: TurnProgressInput): string 
   return input.activeTurnPubkey ?? null;
 }
 
+export type WorkingAgentsInput = {
+  /** The agent named by this channel's fresh server-indexed WORKING receipt. */
+  activeTurnPubkey?: string | null;
+  /** This corner's administering agent, only while the corner's canonical
+   * lifecycle is `working` and live (`sessionState === 'working'`). */
+  workingCornerAgentPubkey?: string | null;
+};
+
+/**
+ * The agents whose identity marks wear the gold ring right now, keyed by
+ * pubkey. The ring means WORKING — a live turn or a live corner — and this is
+ * the same proof `selectTurnProgressAgentPubkey` and the corner header read.
+ * The presence lease is deliberately not an input: a helper whose every turn
+ * fails still renews its lease (C77, Candy: four `failed` receipts, no
+ * `complete`, and a lease refreshed seconds ago), so "alive" said nothing
+ * about whether the agent could answer. An empty record is the ordinary
+ * result; the keys hold only agents genuinely working.
+ */
+export function selectWorkingAgents(input: WorkingAgentsInput): Readonly<Record<string, true>> {
+  const working: Record<string, true> = {};
+  if (input.activeTurnPubkey) working[input.activeTurnPubkey] = true;
+  if (input.workingCornerAgentPubkey) working[input.workingCornerAgentPubkey] = true;
+  return working;
+}
+
 /** How long a locally-armed "buzzing" ack waits for the real WORKING receipt
  * before it must stop implying the daemon is still on its way. */
 export const COMPOSER_ACK_BOUND_MS = 15_000;

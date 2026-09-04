@@ -581,7 +581,12 @@ export interface OrdinaryLedgerMessageProps {
   participantsHydrated: boolean;
   personName?: string;
   viewerPubkey: string;
-  speakerOnline: boolean;
+  /**
+   * The speaker is WORKING right now — a fresh working receipt or a live
+   * corner (`selectWorkingAgents`). Lights the byline's gold ring. Never the
+   * presence lease: a helper whose turns all fail still renews it (C77).
+   */
+  speakerWorking: boolean;
   continued: boolean;
   immediatelyPrecedingMessage?: ChatDisplayMessage;
   referencedTarget?: MessageReplyDisplayTarget;
@@ -601,7 +606,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   participantsHydrated,
   personName,
   viewerPubkey,
-  speakerOnline,
+  speakerWorking,
   continued,
   immediatelyPrecedingMessage,
   referencedTarget,
@@ -655,7 +660,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
           seed: markSeed,
           kind: isAgent ? 'agent' : 'human',
           ...(indexedAuthor?.face ? { face: indexedAuthor.face } : {}),
-          ...(isAgent ? { alive: speakerOnline } : {}),
+          ...(isAgent ? { alive: speakerWorking } : {}),
         },
       };
   const activity = useMemo(

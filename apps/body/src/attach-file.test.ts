@@ -2,7 +2,14 @@ import { mkdirSync, mkdtempSync, symlinkSync, truncateSync, writeFileSync } from
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { attachFile, resolveAttachPath, type AttachFileDeps } from './read-only-mcp.js';
+import { DaemonApiClient } from './daemon-api-client.js';
+import { beelineAgentMcpServer } from './room-session.js';
+import {
+  attachFile,
+  attachFileDepsFromEnv,
+  resolveAttachPath,
+  type AttachFileDeps,
+} from './read-only-mcp.js';
 
 describe('beeline-agent attach_file', () => {
   let root: string;
@@ -17,6 +24,13 @@ describe('beeline-agent attach_file', () => {
     mkdirSync(join(root, 'sub'));
     writeFileSync(join(root, 'sub', 'data.json'), '{}');
     writeFileSync(join(scratch, 'lunch.png'), 'fake-png');
+    // Mirrors a harness's own session state living alongside TMPDIR inside
+    // the same per-session writable overlay (e.g. grok's own images dir) —
+    // the agent never chose this path, its harness did.
+    mkdirSync(join(scratch, 'grok', 'sessions', 'cwd', 'session-1', 'images'), {
+      recursive: true,
+    });
+    writeFileSync(join(scratch, 'grok', 'sessions', 'cwd', 'session-1', 'images', '1.jpg'), 'jpg');
   });
   afterEach(() => {
     // Temp dirs are disposable; no cleanup needed on tmpdir.
@@ -39,30 +53,38 @@ describe('beeline-agent attach_file', () => {
     expect(resolveAttachPath([root, scratch], 'report.txt')).toBe(join(root, 'report.txt'));
   });
 
+  it('resolves a file the harness itself generated, in its own session subdirectory', () => {
+    const harnessImage = join(scratch, 'grok', 'sessions', 'cwd', 'session-1', 'images', '1.jpg');
+    expect(resolveAttachPath([root, scratch], harnessImage)).toBe(harnessImage);
+    expect(
+      resolveAttachPath([root, scratch], 'grok/sessions/cwd/session-1/images/1.jpg'),
+    ).toBe(harnessImage);
+  });
+
   it('refuses paths outside both roots, including symlink escapes', () => {
     expect(() => resolveAttachPath([root, scratch], '../escape.txt')).toThrow();
     const outsideFile = join(outside, 'escape.txt');
     writeFileSync(outsideFile, 'outside');
     expect(() => resolveAttachPath([root, scratch], outsideFile)).toThrow(
-      /checkout or scratch directory/,
+      /checkout or writable session home/,
     );
     expect(() => resolveAttachPath([root, scratch], '/etc/hostname')).toThrow(
-      /checkout or scratch directory/,
+      /checkout or writable session home/,
     );
     const secret = join(outside, 'secret.txt');
     writeFileSync(secret, 'secret');
     symlinkSync(secret, join(root, 'leak.txt'));
     expect(() => resolveAttachPath([root, scratch], 'leak.txt')).toThrow(
-      /checkout or scratch directory/,
+      /checkout or writable session home/,
     );
     symlinkSync('/etc', join(root, 'etc-link'));
     expect(() => resolveAttachPath([root, scratch], 'etc-link/hostname')).toThrow(
-      /checkout or scratch directory/,
+      /checkout or writable session home/,
     );
     // A symlink from the scratch root escaping both roots is refused too.
     symlinkSync(secret, join(scratch, 'scratch-leak.txt'));
     expect(() => resolveAttachPath([root, scratch], 'scratch-leak.txt')).toThrow(
-      /checkout or scratch directory/,
+      /checkout or writable session home/,
     );
     // The refusal message names both roots.
     try {
@@ -180,5 +202,49 @@ describe('beeline-agent attach_file', () => {
       },
     };
     await expect(attachFile({ path: 'huge.bin' }, deps)).rejects.toThrow(/attachment limit/);
+  });
+
+  describe('end to end from beelineAgentMcpServer through env to attachFile', () => {
+    const savedEnv = { ...process.env };
+    afterEach(() => {
+      process.env = { ...savedEnv };
+    });
+
+    it('attaches a file the harness itself generated, via the real env wiring, not a hand-picked root', () => {
+      // Mirrors the live miss: the agent home overlay is the ONE scratch
+      // root wired into the session, and the harness (grok, say) writes its
+      // generated image into its own session subdirectory of that overlay
+      // without ever telling the agent where — attach_file must still reach it.
+      const api = new DaemonApiClient('https://server.example', 'daemon-secret', 'agent-id');
+      const server = beelineAgentMcpServer(
+        {
+          agentBinary: 'agent',
+          mcpBinary: 'unused',
+          readonlyMcpCommand: '/bin/beeline-mcp',
+          agentEnv: {},
+          workspaceRoot: '/room',
+          autoApprovePermissions: false,
+        },
+        api,
+        { roomId: 'room-1', workspaceId: 'workspace-1', attachRoot: root, attachScratchRoot: scratch },
+      );
+      for (const { name, value } of server.env) process.env[name] = value;
+      const deps = attachFileDepsFromEnv();
+      expect(deps.roots).toEqual([root, scratch]);
+      const message = attachFile(
+        { path: 'grok/sessions/cwd/session-1/images/1.jpg' },
+        {
+          ...deps,
+          upload: async (bytes, mimeType, name) => ({
+            url: 'https://server.example/v1/media/harness',
+            name,
+            mimeType,
+            size: bytes.length,
+          }),
+          queue: async () => undefined,
+        },
+      );
+      return expect(message).resolves.toMatch(/Attached 1\.jpg/);
+    });
   });
 });

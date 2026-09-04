@@ -428,7 +428,9 @@ export class MonolithCornerTurnLoop {
         workspaceId: this.options.workspaceId,
         cornerId: this.options.cornerId,
         attachRoot: this.options.worktreePath,
-        ...(tmpDir ? { attachScratchRoot: tmpDir } : {}),
+        // The whole per-session overlay, not an enumerated subset: see
+        // `monolith-room-turn.ts`'s matching comment.
+        attachScratchRoot: this.options.config.agentHomeRoot ?? tmpDir,
         ...(this.options.grantRunnerEndpoint
           ? { grantRunner: this.options.grantRunnerEndpoint }
           : {}),

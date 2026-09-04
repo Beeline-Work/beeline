@@ -329,14 +329,14 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'attach_file',
     description:
-      'Attach one file from your own checkout (Room read-only checkout or corner worktree) or your session scratch directory (the writable TMPDIR you generate files into) to your final reply in this Room or corner. Paths outside both are refused. The file is uploaded now and delivered with your next reply; describe it in your reply text.',
+      'Attach one file from your own checkout (Room read-only checkout or corner worktree) or anywhere in your writable session home (wherever a harness put a file it generated, not just where you asked it to) to your final reply in this Room or corner. Paths outside those are refused. The file is uploaded now and delivered with your next reply; describe it in your reply text.',
     inputSchema: {
       type: 'object',
       required: ['path'],
       properties: {
         path: {
           type: 'string',
-          description: 'Path of the file inside your checkout, worktree, or scratch directory.',
+          description: 'Path of the file inside your checkout, worktree, or writable session home.',
           maxLength: 1024,
         },
       },
@@ -1049,7 +1049,8 @@ async function prChecksStatus(): Promise<string> {
 
 export interface AttachFileDeps {
   /** Legal attachment roots: the session checkout, and (when configured) the
-   *  session's writable scratch directory. */
+   *  session's whole writable home overlay, wherever the harness put a file
+   *  it generated. */
   roots: string[];
   baseUrl: string;
   token: string;
@@ -1081,18 +1082,19 @@ function withinRoot(root: string, resolved: string): boolean {
   return rel !== '' && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
 }
 
-/** Resolve an attach_file path inside the session checkout or the session's
- *  writable scratch directory, never following a symlink outside either
- *  root. Returns the real path of an existing regular file. A relative
- *  `input` is tried against each root in order, taking the first that
- *  exists; the escape check then requires the real path land inside at
- *  least one of the roots. */
+/** Resolve an attach_file path inside the session checkout or anywhere in
+ *  the session's writable home overlay (wherever a harness put a file it
+ *  generated), never following a symlink outside either root. Returns the
+ *  real path of an existing regular file. A relative `input` is tried
+ *  against each root in order, taking the first that exists; the escape
+ *  check then requires the real path land inside at least one of the
+ *  roots. */
 export function resolveAttachPath(roots: string[], input: string): string {
   if (!input || input.includes('\0')) throw new Error('path must be a non-empty file path');
   if (!roots.length) throw new Error('no attachment roots are configured');
   const realRoots = roots.map((root) => realpathSync(root));
   const errorMessage = () =>
-    `path resolves outside your checkout or scratch directory (${realRoots.join(', ')})`;
+    `path resolves outside your checkout or writable session home (${realRoots.join(', ')})`;
   const resolveAgainst = (candidate: string): string => {
     const resolved = realpathSync(candidate);
     if (!realRoots.some((root) => withinRoot(root, resolved))) throw new Error(errorMessage());

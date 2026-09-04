@@ -42,10 +42,13 @@ type RoomRosterSections = {
  */
 export const RoomRosterSheet = React.memo(function RoomRosterSheet({
   bottomInset,
+  canManage,
   isDirectMessage,
   memberByPubkey,
   membershipActionPubkey,
   membershipError,
+  onAddAgents,
+  onAddPeople,
   onClose,
   onRemove,
   onlineByPubkey,
@@ -59,10 +62,16 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
   visible,
 }: {
   bottomInset: number;
+  /** Whether the viewer may add people/agents to this Room (manager only). */
+  canManage: boolean;
   isDirectMessage: boolean;
   memberByPubkey: ReadonlyMap<string, ChannelMember>;
   membershipActionPubkey: string | null;
   membershipError: string | null;
+  /** Opens the member picker pre-scoped to agents. */
+  onAddAgents: () => void;
+  /** Opens the member picker pre-scoped to people. */
+  onAddPeople: () => void;
   onClose: () => void;
   onRemove: (participant: RoomRosterParticipant) => void;
   /** Presence lease verdicts: the row's online/offline word only. */
@@ -118,15 +127,30 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
           ].map((section, sectionIndex) =>
             section.options.length > 0 ? (
               <View key={section.key}>
-                <Text
+                <View
                   style={[
-                    styles.rosterSectionLabel,
+                    styles.rosterSectionHeadRow,
                     sectionIndex > 0 && styles.rosterSectionLabelSpaced,
                   ]}
-                  testID={`room-roster-${section.key}-head`}
                 >
-                  {section.label} {section.options.length}
-                </Text>
+                  <Text
+                    style={styles.rosterSectionLabel}
+                    testID={`room-roster-${section.key}-head`}
+                  >
+                    {section.label} {section.options.length}
+                  </Text>
+                  {canManage && (
+                    <TouchableOpacity
+                      accessibilityLabel={`Add ${section.key}`}
+                      hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                      onPress={section.key === 'people' ? onAddPeople : onAddAgents}
+                      style={styles.rosterSectionAdd}
+                      testID={`room-roster-add-${section.key}`}
+                    >
+                      <Text style={styles.rosterSectionAddGlyph}>+</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
                 {section.options.map((participant) => {
                   const display = participant.agent
                     ? resolveAgentDisplayIdentity(participant.pubkey, participant.agent)
@@ -278,12 +302,24 @@ const styles = StyleSheet.create((theme) => {
     },
     rosterModalCloseText: { ...Typography.default(), ...hull.type.hero, color: hull.steel },
     rosterContent: { paddingTop: hull.space.md, paddingBottom: hull.space.xs },
+    rosterSectionHeadRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: hull.space.sm,
+    },
     rosterSectionLabel: {
       ...Typography.default(),
       ...hull.type.sectionHead,
-      marginBottom: hull.space.sm,
       color: hull.textMuted,
     },
+    rosterSectionAdd: {
+      minWidth: 44,
+      minHeight: 44,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    rosterSectionAddGlyph: { ...Typography.default(), ...hull.type.sectionHead, color: hull.accent },
     rosterSectionLabelSpaced: { marginTop: hull.layout.sectionGap },
     rosterRow: {
       minHeight: hull.layout.row,

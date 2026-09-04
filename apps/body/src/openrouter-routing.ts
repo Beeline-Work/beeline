@@ -37,6 +37,17 @@
  * (`<cacheDir>/<model>.probe.json`, its own TTL), and NEVER blocks a turn: a
  * cold probe cache returns the uptime order immediately and refreshes in the
  * background for the next activation.
+ *
+ * The SAME listing also names the model's real input modalities
+ * (`architecture.input_modalities`), and that fact has to be pinned beside the
+ * providers (C87). A pi `models.json` custom-model entry — every Beeline
+ * OpenRouter agent has one, because the key is fronted by an egress proxy —
+ * REPLACES pi's built-in catalog record for that id, and pi defaults a
+ * definition without `input` to `["text"]`. pi then rewrites every image block
+ * in the prompt to the literal text `(image omitted: model does not support
+ * images)` before the request leaves the process, so a photo never reaches a
+ * vision-capable model. `modelOverrides[<model>].input` is applied last, over
+ * both layers, so the live modalities are pinned there.
  */
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
@@ -84,6 +95,13 @@ export type OpenRouterRoutingSource = 'live' | 'cache' | 'stale-cache' | 'fallba
 export interface OpenRouterRoutingDecision {
   model: string;
   routing: OpenRouterRouting;
+  /**
+   * The model's input modalities in pi's vocabulary, pinned beside the
+   * providers so a custom-model entry cannot silently downgrade a
+   * vision-capable model to text (C87). `undefined` when the listing did not
+   * name them — the pin then leaves `input` alone.
+   */
+  input?: Array<'text' | 'image'>;
   providers: string[];
   bar: number | null;
   source: OpenRouterRoutingSource;
@@ -102,6 +120,13 @@ interface CachedRouting {
   fetchedAt: number;
   providers: string[];
   bar: number | null;
+  /**
+   * Three states, and the difference matters (C87): an array is the model's
+   * known modalities, `null` records that the listing named none (so the entry
+   * is still complete and re-asking would loop forever), and ABSENT marks an
+   * entry written before C87 — never fresh, re-asked once.
+   */
+  input?: Array<'text' | 'image'> | null;
 }
 
 /** One provider's answer to the probe. */
@@ -141,10 +166,15 @@ export function openRouterModelId(
   return undefined;
 }
 
-/** Reduce the public endpoints payload to the four facts the selection needs. */
+/**
+ * Reduce the public endpoints payload to the facts the pin needs: the four
+ * per-endpoint reliability facts, plus the model's advertised input
+ * modalities (`undefined` when the listing does not name them).
+ */
 export function parseOpenRouterEndpoints(payload: unknown): {
   endpoints: OpenRouterEndpoint[];
   contextLength: number | undefined;
+  inputModalities: string[] | undefined;
 } {
   const data = (payload as { data?: unknown } | undefined)?.data;
   const record = data && typeof data === 'object' ? (data as Record<string, unknown>) : {};
@@ -163,13 +193,37 @@ export function parseOpenRouterEndpoints(payload: unknown): {
       : [];
     endpoints.push({ provider, uptime, contextLength, tools: supported.includes('tools') });
   }
+  const architecture =
+    record.architecture && typeof record.architecture === 'object'
+      ? (record.architecture as Record<string, unknown>)
+      : {};
+  const modalities = Array.isArray(architecture.input_modalities)
+    ? architecture.input_modalities.filter(
+        (value): value is string => typeof value === 'string' && value.length > 0,
+      )
+    : undefined;
   return {
     endpoints,
     contextLength:
       typeof record.context_length === 'number'
         ? record.context_length
         : advertisedContextLength(endpoints),
+    inputModalities: modalities?.length ? modalities : undefined,
   };
+}
+
+/**
+ * The `input` list pi understands, from OpenRouter's modality names. pi accepts
+ * only `text` and `image`; `video` and anything else it has no word for is
+ * dropped rather than passed through and rejected by its config schema.
+ */
+export function piInputModalities(
+  modalities: readonly string[] | undefined,
+): Array<'text' | 'image'> | undefined {
+  if (!modalities) return undefined;
+  const input: Array<'text' | 'image'> = ['text'];
+  if (modalities.includes('image')) input.push('image');
+  return input;
 }
 
 /**
@@ -257,11 +311,19 @@ async function readCache(cacheDir: string, model: string): Promise<CachedRouting
     ) {
       return undefined;
     }
+    const input = Array.isArray(cached.input)
+      ? cached.input.filter(
+          (value): value is 'text' | 'image' => value === 'text' || value === 'image',
+        )
+      : cached.input === null
+        ? null
+        : undefined;
     return {
       model,
       fetchedAt: cached.fetchedAt,
       providers: cached.providers,
       bar: typeof cached.bar === 'number' ? cached.bar : null,
+      ...(input === undefined ? {} : { input: input && input.length ? input : null }),
     };
   } catch {
     return undefined;
@@ -437,6 +499,7 @@ function decision(
   source: OpenRouterRoutingSource,
   note?: string,
   allowFallbacks = true,
+  input?: Array<'text' | 'image'>,
 ): OpenRouterRoutingDecision {
   const criteria = bar === null ? 'fallback pair' : `uptime ≥${bar}%, tools`;
   const suffix = [
@@ -450,6 +513,7 @@ function decision(
   return {
     model,
     routing: openRouterRoutingFor(providers, allowFallbacks),
+    ...(input ? { input } : {}),
     providers: [...providers],
     bar,
     source,
@@ -495,8 +559,18 @@ async function resolveUptimeRouting(
 ): Promise<OpenRouterRoutingDecision> {
   const now = input.now ?? Date.now;
   const cached = await readCache(input.cacheDir, input.model);
-  if (cached && now() - cached.fetchedAt < OPENROUTER_ROUTING_CACHE_TTL_MS) {
-    return decision(input.model, cached.providers, cached.bar, 'cache');
+  // A pre-C87 cache entry has no modality field at all; re-ask once rather
+  // than pin a model whose vision capability we never established.
+  if (cached?.input !== undefined && now() - cached.fetchedAt < OPENROUTER_ROUTING_CACHE_TTL_MS) {
+    return decision(
+      input.model,
+      cached.providers,
+      cached.bar,
+      'cache',
+      undefined,
+      true,
+      cached.input ?? undefined,
+    );
   }
   let failure: string;
   try {
@@ -505,7 +579,10 @@ async function resolveUptimeRouting(
       signal: AbortSignal.timeout(input.timeoutMs ?? OPENROUTER_ROUTING_FETCH_TIMEOUT_MS),
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const { endpoints, contextLength } = parseOpenRouterEndpoints(await response.json());
+    const { endpoints, contextLength, inputModalities } = parseOpenRouterEndpoints(
+      await response.json(),
+    );
+    const modelInput = piInputModalities(inputModalities);
     if (endpoints.length === 0) throw new Error('no endpoints listed');
     const selected = selectReliableOpenRouterProviders(endpoints, contextLength);
     if (selected.providers.length === 0) {
@@ -517,6 +594,8 @@ async function resolveUptimeRouting(
         null,
         'fallback',
         'no provider met the bar',
+        true,
+        modelInput,
       );
     }
     await writeCache(input.cacheDir, {
@@ -524,8 +603,18 @@ async function resolveUptimeRouting(
       fetchedAt: now(),
       providers: selected.providers,
       bar: selected.bar,
+      // `null` when the listing named no modalities: an answer, not a gap.
+      input: modelInput ?? null,
     }).catch(() => undefined);
-    return decision(input.model, selected.providers, selected.bar, 'live');
+    return decision(
+      input.model,
+      selected.providers,
+      selected.bar,
+      'live',
+      undefined,
+      true,
+      modelInput,
+    );
   } catch (error) {
     failure = error instanceof Error ? error.message : String(error);
   }
@@ -536,6 +625,8 @@ async function resolveUptimeRouting(
       cached.bar,
       'stale-cache',
       `api unreachable: ${failure}`,
+      true,
+      cached.input ?? undefined,
     );
   }
   return decision(
@@ -600,6 +691,8 @@ async function refreshAnswerProbe(
     base.bar,
     base.source,
     `answer-probed, fastest first; ${dropped}`,
+    true,
+    base.input,
   );
 }
 
@@ -624,6 +717,7 @@ export async function resolveOpenRouterRouting(
       base.source,
       'pinned to one provider after an empty completion',
       false,
+      base.input,
     );
   }
   const apiKey = input.apiKey?.trim();
@@ -633,7 +727,15 @@ export async function resolveOpenRouterRouting(
   if (probe && now() - probe.fetchedAt < OPENROUTER_PROBE_CACHE_TTL_MS) {
     const answered = answeringProviders(probe, base.providers);
     if (answered.length > 0) {
-      return decision(input.model, answered, base.bar, base.source, 'answer-probed, cached');
+      return decision(
+        input.model,
+        answered,
+        base.bar,
+        base.source,
+        'answer-probed, cached',
+        true,
+        base.input,
+      );
     }
   }
   // Cold or unusable probe cache: the turn starts NOW on the uptime order and
@@ -660,12 +762,17 @@ export async function resolveOpenRouterRouting(
  * Pin ONE model inside pi's `models.json` without touching operator custom
  * providers or any other model: the routing lands on
  * `providers.openrouter.modelOverrides[<model>].compat.openRouterRouting`,
- * pi's topmost per-model layer. With no model to pin, the object form still
- * gains an empty `providers` map (pi's schema requires the key).
+ * pi's topmost per-model layer, and the model's live input modalities land
+ * beside it on the same override as `input` (C87 — without it a custom-model
+ * entry defaults the model to text and pi strips every image from the prompt).
+ * With no model to pin, the object form still gains an empty `providers` map
+ * (pi's schema requires the key).
  */
 export function withOpenRouterModelRouting(
   value: unknown,
-  pin: { model: string; routing: OpenRouterRouting } | undefined,
+  pin:
+    | { model: string; routing: OpenRouterRouting; input?: Array<'text' | 'image'> }
+    | undefined,
 ): Record<string, unknown> {
   const root =
     value && typeof value === 'object' && !Array.isArray(value)
@@ -689,6 +796,7 @@ export function withOpenRouterModelRouting(
         ? { ...(override.compat as Record<string, unknown>) }
         : {};
     override.compat = { ...compat, openRouterRouting: pin.routing };
+    if (pin.input) override.input = pin.input;
     overrides[pin.model] = override;
     return { ...provider, modelOverrides: overrides };
   };

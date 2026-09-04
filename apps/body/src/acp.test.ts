@@ -6,6 +6,7 @@ import { dirname, resolve } from 'node:path';
 import {
   AcpClient,
   AcpRequestTimeoutError,
+  promptPayloadNote,
   agentStreamSnapshot,
   meaningfulHarnessStderr,
   isPureRetryNarration,
@@ -1471,6 +1472,37 @@ describe('meaningfulHarnessStderr', () => {
     expect(
       new AcpRequestTimeoutError('session/prompt', 120_000, 'fatal: out of memory', true).message,
     ).toContain('; harness stderr: fatal: out of memory');
+  });
+
+  // C87. "Inactivity" alone does not say what the turn was carrying; a wedged
+  // photo turn and a wedged text turn are different faults.
+  it('names an inline image payload in the timeout, and nothing extra for a text turn', () => {
+    expect(promptPayloadNote('just text')).toBe('');
+    expect(promptPayloadNote([{ type: 'text', text: 'hi' }])).toBe('');
+    const oneMegabyte = 'A'.repeat(4 * 1024 * 1024 / 3 * 3);
+    expect(
+      promptPayloadNote([
+        { type: 'text', text: 'hi' },
+        { type: 'image', data: oneMegabyte, mimeType: 'image/jpeg' },
+      ]),
+    ).toBe('prompt carried 1 inline image, 3072 KB');
+    expect(
+      promptPayloadNote([
+        { type: 'image', data: 'AAAA', mimeType: 'image/png' },
+        { type: 'image', data: 'AAAA', mimeType: 'image/png' },
+      ]),
+    ).toBe('prompt carried 2 inline images, 0 KB');
+    expect(
+      new AcpRequestTimeoutError(
+        'session/prompt',
+        120_000,
+        '',
+        true,
+        'prompt carried 1 inline image, 3072 KB',
+      ).message,
+    ).toBe(
+      'ACP session/prompt timed out after 120000ms of inactivity (prompt carried 1 inline image, 3072 KB)',
+    );
   });
 });
 

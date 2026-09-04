@@ -419,7 +419,16 @@ async function provisionPiCustomModelConfig(
       })
       .catch(() => undefined);
   }
-  const pin = decision ? { model: decision.model, routing: decision.routing } : undefined;
+  const pin = decision
+    ? {
+        model: decision.model,
+        routing: decision.routing,
+        // The model's live input modalities ride with the routing pin: a
+        // custom-model entry replaces pi's catalog record and defaults it to
+        // text, which strips every image from the prompt (C87).
+        ...(decision.input ? { input: decision.input } : {}),
+      }
+    : undefined;
   try {
     const sourceStats = await lstat(source).catch(() => undefined);
     if (!sourceStats) {

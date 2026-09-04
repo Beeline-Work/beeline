@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 const chat = readFileSync(new URL('./[channelId].tsx', import.meta.url), 'utf8');
 const screen = readFileSync(new URL('../settings/schedules.tsx', import.meta.url), 'utf8');
+const layout = readFileSync(new URL('../../_layout.tsx', import.meta.url), 'utf8');
 
 describe('scheduled Agent work', () => {
   it('exposes manager-only scheduled-work controls from the monolith Room action sheet', () => {
@@ -23,6 +24,16 @@ describe('scheduled Agent work', () => {
     );
     expect(screen).toContain('CONFIRM STOP');
     expect(screen).not.toContain('Alert.alert');
+  });
+
+  it('draws no in-page back control: the stack header is the only back button (C75)', () => {
+    expect(screen).not.toContain('router.back()');
+    expect(screen).not.toContain('accessibilityLabel="Back"');
+    expect(screen).not.toContain('styles.back');
+    expect(screen).not.toContain('paddingTop: insets.top');
+    expect(layout).toMatch(
+      /name="beeline\/settings\/schedules"\s*options=\{\{\s*headerTitle: 'Scheduled work'/,
+    );
   });
 
   it('calls repository activity Repo notifications everywhere it is presented to people', () => {

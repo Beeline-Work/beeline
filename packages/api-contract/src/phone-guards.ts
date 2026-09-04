@@ -741,9 +741,7 @@ export function isWorkspaceView(value: unknown): value is WorkspaceView {
     (managerSettings === undefined ||
       (managerSettings &&
         (managerSettings.visibility === 'public' ||
-          managerSettings.visibility === 'invite-only') &&
-        (managerSettings.seededSouls === undefined ||
-          typeof managerSettings.seededSouls === 'boolean'))) &&
+          managerSettings.visibility === 'invite-only'))) &&
     Array.isArray(item.members) &&
     item.members.length <= ROOM_VIEW_MEMBER_LIMIT &&
     item.members.every(member) &&

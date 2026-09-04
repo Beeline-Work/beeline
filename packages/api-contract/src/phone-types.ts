@@ -382,13 +382,6 @@ export type WorkspaceView = {
   };
   readonly managerSettings?: {
     readonly visibility: 'public' | 'invite-only';
-    /**
-     * Whether joining agents receive their animal's seeded soul, and whether
-     * the souls already on record are handed to the harness at all. On by
-     * default; off leaves every agent in this Workspace on the shared house
-     * rule with no persona. Absent on stacks that do not index it.
-     */
-    readonly seededSouls?: boolean;
   };
   readonly members: readonly RoomViewMember[];
   readonly agents: readonly RoomViewMember[];

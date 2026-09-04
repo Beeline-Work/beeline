@@ -30,11 +30,11 @@ import {
   findAgentRuntimeConfigPaths,
   migrateRuntimeRecordAccessPolicy,
   readRuntimeRecord,
-  removeAgentRuntime,
   resolveRuntimeConfigPath,
   runtimeAgentCommand,
   stopRuntimeDaemon,
 } from './runtime.js';
+import { retireRemovedAgent } from './agent-retirement.js';
 import { runStartCommand } from './start-command.js';
 import { runConnectCommand, runConnectFinishCommand } from './connect-command.js';
 import { runUpdateCommand } from './self-update-cli.js';
@@ -350,12 +350,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
     });
     if (result === 'agent-removed') {
       controller.abort();
-      const archivedRuntime = await removeAgentRuntime(runtime);
-      if (process.env.BEELINE_MANAGED_BY_SYSTEMD === '1') {
-        await disableAgentService(runtime.agent.publicKey, { stop: false }).catch((error) =>
-          console.error('[thin-core] could not disable deliberately removed unit:', error),
-        );
-      }
+      const archivedRuntime = await retireRemovedAgent(runtime);
       process.exitCode = DELIBERATE_REMOVAL_EXIT_STATUS;
       console.log(
         `[beeline] agent ${runtime.agent.publicKey} removed; runtime archived at ${archivedRuntime}`,

@@ -816,6 +816,26 @@ describe('Members workspace management', () => {
     );
     expect(client.removeAgent).toHaveBeenCalledWith(WORKSPACE, AGENT);
   });
+
+  it('draws a removed agent nowhere: no row, no count, no open detail', async () => {
+    const renderer = await render();
+    await press(renderer, `agent-${AGENT}-identity`);
+    expect(renderer.root.findByProps({ testID: 'members-agents-head' }).props.children).toEqual([
+      'Agents ',
+      1,
+    ]);
+
+    await press(renderer, 'remove-agent');
+
+    // The server stops naming it, so the screen stops drawing it — the row,
+    // the count, and the detail the removal was performed from.
+    expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-identity` })).toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: 'members-agents-head' }).props.children).toEqual([
+      'Agents ',
+      0,
+    ]);
+    expect(renderer.root.findAllByProps({ testID: 'remove-agent' })).toHaveLength(0);
+  });
   it('lists the grant store on the agent profile and lets the owner revoke a live rule', async () => {
     const owner = { pubkey: VIEWER, kind: 'human', name: 'Viewer' };
     const alex = { pubkey: MEMBER, kind: 'human', name: 'Builder' };

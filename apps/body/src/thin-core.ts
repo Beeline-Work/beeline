@@ -1,5 +1,5 @@
 import type { BodyConfig } from './config.js';
-import type { DaemonApiClient } from './daemon-api-client.js';
+import { isAgentRemovedError, type DaemonApiClient } from './daemon-api-client.js';
 import type { AgentRuntimeRecord } from './runtime.js';
 import { RoomRuntimeCoordinator, reconcileRetryMs } from './room-runtime.js';
 
@@ -94,6 +94,11 @@ export class ThinDaemonCore {
                 ? watchdogTickMs
                 : this.roomRuntime.reconcileHeartbeatIntervalMs());
           } catch (error) {
+            // The server has settled the question: this agent is gone. Every
+            // other failure — transport, 5xx, a plain 401 — is uncertainty and
+            // keeps retrying, because a helper must never retire itself over a
+            // server it merely could not reach.
+            if (isAgentRemovedError(error)) return 'agent-removed';
             const retryMs = reconcileRetryMs(error, watchdogTickMs);
             nextReconcileAt = this.now() + retryMs;
             waitMs = Math.min(waitMs, retryMs);

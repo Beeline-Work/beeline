@@ -17,10 +17,32 @@ export class DaemonApiError extends Error {
     message: string,
     readonly status: number,
     readonly retryable: boolean,
+    /** The server's machine-readable refusal code, `request_failed` if none. */
+    readonly code: string = 'request_failed',
   ) {
     super(message);
     this.name = 'DaemonApiError';
   }
+}
+
+/** The server's one settled answer that this agent no longer exists. */
+export const AGENT_REMOVED_CODE = 'agent_removed';
+
+/**
+ * Whether the server has definitively said this agent was removed.
+ *
+ * Nothing else may stand in for it. A refused connection, a timeout, a 5xx,
+ * an ordinary 401 from a token that could still be restored — every one of
+ * those is uncertainty, and a helper that tore itself down on uncertainty
+ * would delete a working runtime the first time the server hiccuped. Only a
+ * 403 carrying `agent_removed`, which the server answers exactly when the
+ * presented token is revoked AND its agent holds no live membership at all,
+ * is proof.
+ */
+export function isAgentRemovedError(error: unknown): boolean {
+  return (
+    error instanceof DaemonApiError && error.status === 403 && error.code === AGENT_REMOVED_CODE
+  );
 }
 
 function endpoint(origin: string, path: string): string {
@@ -39,6 +61,7 @@ async function responseError(response: Response): Promise<DaemonApiError> {
     `monolith daemon request failed (${response.status}: ${code})`,
     response.status,
     response.status === 408 || response.status === 429 || response.status >= 500,
+    code,
   );
 }
 

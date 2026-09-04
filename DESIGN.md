@@ -161,6 +161,27 @@ because the affordance is the reason the line exists. A fenced code block marks
 itself with a 2px left rule in the theme's peak steel — the same vocabulary tool
 readouts use — never a panel.
 
+**Text still being written says so, and settles by dissolving.** A streaming
+turn is not a finished message, and reading like one is a lie the reader pays
+for when the words are overwritten or retracted underneath them. So a draft is
+written in the provisional face and tone — the italic face (`proseItalic`, the
+same family every other italic in the ledger uses) at `ledgerQuiet` — at the
+identical size, leading and column as a settled turn, under the byline, tile
+and stamp a settled turn would carry, byte for byte. Nothing about the frame
+moves; only the words change register. The characters that just arrived fade up
+out of the transcript ground as they land, and only those: text already read
+never restates itself, nothing is revealed on a clock the producer did not set,
+and a harness that REWROTE what it wrote settles whole rather than pretending
+the replacement is new. When the durable reply lands, the provisional text
+cross-fades into it — italic to upright, quiet to content tone — over one short
+transition, and where the reply differs from what was streamed the dissolve is
+what carries the reader across the difference; it never snaps. A turn that
+FAILS keeps the words the reader was reading, still provisional, with the
+server's failure line beneath them: nothing a person was part-way through
+evaporates on its own. Reduced motion keeps the provisional register and drops
+both animations (`buzz/streaming-prose.ts`, `components/buzz/StreamingProse.tsx`,
+`Ledger.SettleFade` — captain report C98).
+
 **A status is inscribed, never framed.** A status is not something the reader
 must find and act on, so it earns no box: one dim line in `ledgerQuiet`, at the
 same left margin as the prose above it. Only its affordance lifts — `view →`
@@ -486,6 +507,12 @@ agent work rather than by decoration. On the Room list that means one per live
 Room, and if several Rooms are working at once the index is supposed to look
 like it. A quiet row must never pay for a clock it does not use: mount the
 primitive conditionally, do not pass it `active={false}`.
+
+The provisional lane's two transitions (C98) are style-only and carry no
+geometry: an arriving tail walks its colour up from the ground over 160ms, and a
+settling reply cross-fades opacity with its provisional ghost over 220ms. Both
+are inside the ~240ms bound, both stop the moment they finish, and both are
+skipped outright under reduced motion — the provisional style stays either way.
 
 It is also **the only motion "live" is allowed to have.** The pinned corner line
 and a working agent's gold ring both breathe on it — a calm heartbeat, on the

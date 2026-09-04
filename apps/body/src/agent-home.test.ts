@@ -65,6 +65,35 @@ describe('per-room harness state isolation', () => {
       providers: {},
     });
   });
+  it("carries the operator's Goose configuration in as a copy, and drops it when removed", async () => {
+    const operatorHome = await scratch('beeline-operator-home-');
+    const roomRoot = resolve(await scratch('beeline-room-goose-'), 'agent-home');
+    await mkdir(resolve(operatorHome, '.config/goose'), { recursive: true });
+    await writeFile(
+      resolve(operatorHome, '.config/goose/config.yaml'),
+      'GOOSE_PROVIDER: openrouter\nGOOSE_MODEL: anthropic/claude-sonnet-4.5\n',
+    );
+    await writeFile(resolve(operatorHome, '.config/goose/secrets.yaml'), 'OPENROUTER_API_KEY: k\n');
+
+    const env = await prepareRoomAgentHome({ root: roomRoot, operatorHome });
+    // `connect` may skip the provider and key questions for a Goose that
+    // already holds a provider; the daemon has to answer with that same Goose.
+    const config = resolve(env.GOOSE_PATH_ROOT!, 'config/config.yaml');
+    expect(readFileSync(config, 'utf8')).toContain('GOOSE_PROVIDER: openrouter');
+    expect(readFileSync(resolve(env.GOOSE_PATH_ROOT!, 'config/secrets.yaml'), 'utf8')).toContain(
+      'OPENROUTER_API_KEY',
+    );
+    // A copy, never a link: Goose writes a session's model back into its own
+    // config, and a Room must not rewrite the operator's default.
+    expect(lstatSync(config).isSymbolicLink()).toBe(false);
+    // Goose writes its sessions and logs beside that config, inside the Room.
+    expect(harnessStateDirsFromEnv(env).stateDirs).toContain(env.GOOSE_PATH_ROOT);
+
+    await rm(resolve(operatorHome, '.config/goose/config.yaml'));
+    await prepareRoomAgentHome({ root: roomRoot, operatorHome });
+    expect(existsSync(config)).toBe(false);
+  });
+
   it('points every harness state directory and HOME at this Room', async () => {
     const operatorHome = await scratch('beeline-operator-home-');
     const roomA = resolve(await scratch('beeline-room-a-'), 'agent-home');
@@ -274,6 +303,7 @@ describe('per-room harness state isolation', () => {
       HOME: '/rooms/room-a/agent-home/user',
       CLAUDE_CONFIG_DIR: '/rooms/room-a/agent-home/claude',
       CODEX_HOME: '/rooms/room-a/agent-home/codex',
+      GOOSE_PATH_ROOT: '/rooms/room-a/agent-home/goose',
       GROK_HOME: '/rooms/room-a/agent-home/grok',
       PI_CODING_AGENT_DIR: '/rooms/room-a/agent-home/pi',
       XDG_STATE_HOME: '/rooms/room-a/agent-home/state',

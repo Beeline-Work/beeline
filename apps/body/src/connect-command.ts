@@ -5,7 +5,13 @@ import { dirname, resolve } from 'node:path';
 import { stdin, stdout } from 'node:process';
 import * as clack from '@clack/prompts';
 import { normalizeAgentPairingCode } from '@beeline/api-contract/phone';
-import { AUTO_DETECT_AGENT_KINDS, resolveAgentCommand, type AgentKind } from './agent-command.js';
+import {
+  AUTO_DETECT_AGENT_KINDS,
+  detectInstalledAgentCommands,
+  resolveAgentCommand,
+  type AgentKind,
+  type DetectedAgentCommand,
+} from './agent-command.js';
 import { clackPromptOutput, unwrapPrompt } from './clack-support.js';
 import { fetchAgentModelCatalog } from './model-catalog.js';
 import { verifyProviderKey, type ConnectKeyProvider } from './provider-key-check.js';
@@ -264,11 +270,17 @@ export function connectModelPickerFromAxes(
   };
 }
 
-export async function loadConnectModelCatalog(input: {
+export interface ConnectModelCatalogRequest {
   harness: ConnectWizardResult['harness'];
   provider?: ConnectProvider;
   apiKey?: string;
-}): Promise<ConnectModelCatalog> {
+  /** Bound the read; the discovery probe sets one, the credentialed read does not. */
+  timeoutMs?: number;
+}
+
+export async function loadConnectModelCatalog(
+  input: ConnectModelCatalogRequest,
+): Promise<ConnectModelCatalog> {
   const agent = resolveAgentCommand({ kind: input.harness });
   const catalog = await fetchAgentModelCatalog(
     agent,
@@ -278,6 +290,8 @@ export async function loadConnectModelCatalog(input: {
       ...(input.apiKey ? { apiKey: input.apiKey } : {}),
       model: defaultConnectModel(input.harness, input.provider),
     }),
+    undefined,
+    input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs },
   );
   return connectModelPickerFromAxes(
     catalog.catalog,
@@ -287,13 +301,77 @@ export async function loadConnectModelCatalog(input: {
   );
 }
 
+/**
+ * How long the wizard waits for a harness to say what it can do before it
+ * gives up and asks instead. A configured harness answers the ACP handshake
+ * plus `session/new` in about three seconds on a warm machine (measured:
+ * goose 1.41 against a live OpenRouter config, 3.0s, nearly all of it
+ * `session/new` loading extensions). Twelve seconds is four times that — room
+ * for a cold binary on a loaded machine — and still short enough that nobody
+ * reads the wizard as hung. There is exactly one attempt: a harness that
+ * needs longer than this is one the person should simply be asked about.
+ */
+export const CONNECT_PROBE_TIMEOUT_MS = 12_000;
+
+/**
+ * A catalog is evidence that a harness is already configured only when the
+ * harness itself enumerated models. `connectModelPickerFromAxes` synthesises
+ * a one-entry picker with a `note` when it enumerated nothing; that entry is
+ * the provider default, which is exactly what the wizard must not mistake for
+ * an observation.
+ */
+export function connectProbeFoundModels(catalog: ConnectModelCatalog): boolean {
+  return catalog.note === undefined && catalog.options.length > 0;
+}
+
+/**
+ * The one harness worth auto-selecting: the only supported harness actually
+ * installed on this machine. Anything else — none, or several — is a genuine
+ * choice, so the list is offered.
+ */
+export function soleInstalledConnectHarness(
+  detected: DetectedAgentCommand[],
+): (typeof CONNECT_HARNESSES)[number] | undefined {
+  const ready = detected.filter((entry) => entry.status === 'ready');
+  return ready.length === 1 ? ready[0]!.kind : undefined;
+}
+
+export function connectHarnessLabel(harness: (typeof CONNECT_HARNESSES)[number]): string {
+  return harness === 'pi' ? 'Pi' : harness[0]!.toUpperCase() + harness.slice(1);
+}
+
+/** What the probe found, said once, in place of the questions it answered. */
+export function connectFoundLine(input: {
+  harness: (typeof CONNECT_HARNESSES)[number];
+  sole: boolean;
+  model?: string;
+}): string {
+  const name = connectHarnessLabel(input.harness);
+  const found = input.sole
+    ? `${name} is the only harness installed here, and it is already set up`
+    : `${name} is already set up`;
+  return input.model ? `${found}, running ${input.model}.` : `${found}.`;
+}
+
+export interface ConnectWizardSeams {
+  /** Supported harnesses installed on this machine; defaults to a real scan. */
+  detect?: () => DetectedAgentCommand[];
+  /** Where the wizard says what it found instead of asking for it. */
+  announce?: (line: string) => void;
+}
+
+/**
+ * Ask before prompting. Every question here is one the machine could not
+ * answer for itself: which harness (only when there is more than one), which
+ * provider and key (only when the harness holds none), which model (only when
+ * the harness named none). A harness that answers `session/new` with its own
+ * model list is authenticated by definition — its provider, its key and its
+ * current model are facts, not questions.
+ */
 export async function collectConnectWizard(
   prompts: ConnectPrompts = clackPrompts,
-  loadModels: (input: {
-    harness: ConnectWizardResult['harness'];
-    provider?: ConnectProvider;
-    apiKey?: string;
-  }) => Promise<ConnectModelCatalog> = loadConnectModelCatalog,
+  loadModels: (input: ConnectModelCatalogRequest) => Promise<ConnectModelCatalog> =
+    loadConnectModelCatalog,
   keyStore: ConnectKeyStore = fileConnectKeyStore,
   env: NodeJS.ProcessEnv = process.env,
   verifyKey: (input: {
@@ -301,14 +379,76 @@ export async function collectConnectWizard(
     apiKey: string;
   }) => Promise<void> = (input) =>
     verifyProviderKey(input as { provider: ConnectKeyProvider; apiKey: string }),
+  seams: ConnectWizardSeams = {},
 ): Promise<ConnectWizardResult> {
-  const harness = await prompts.select<(typeof CONNECT_HARNESSES)[number]>({
-    message: brass('Choose harness'),
-    options: CONNECT_HARNESSES.map((value) => ({
-      value,
-      label: value === 'pi' ? 'Pi' : value[0]!.toUpperCase() + value.slice(1),
-    })),
-  });
+  const announce = seams.announce ?? ((line: string) => clack.log.info(brass(line)));
+  const askModel = async (
+    catalog: ConnectModelCatalog,
+    forHarness: (typeof CONNECT_HARNESSES)[number],
+    forProvider?: ConnectProvider,
+  ): Promise<string> => {
+    const initialModel = catalog.currentValue ?? defaultConnectModel(forHarness, forProvider);
+    const picked = await prompts.autocomplete({
+      message: brass(catalog.note ? `Choose model (${catalog.note})` : 'Choose model'),
+      options: catalog.options.map((choice) => ({
+        value: choice.id,
+        label: choice.name ? `${choice.name} (${choice.id})` : choice.id,
+      })),
+      ...(catalog.options.some((choice) => choice.id === initialModel)
+        ? { initialValue: initialModel }
+        : {}),
+      placeholder: 'Type to filter available models…',
+      maxItems: 12,
+    });
+    return picked.trim();
+  };
+  // One bounded attempt, and never a hard failure: a harness that times out,
+  // refuses or crashes is simply one the wizard has to ask about.
+  const probe = async (
+    candidate: (typeof CONNECT_HARNESSES)[number],
+  ): Promise<ConnectModelCatalog | undefined> => {
+    try {
+      const catalog = await loadModels({
+        harness: candidate,
+        timeoutMs: CONNECT_PROBE_TIMEOUT_MS,
+      });
+      return connectProbeFoundModels(catalog) ? catalog : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
+  const sole = soleInstalledConnectHarness((seams.detect ?? detectInstalledAgentCommands)());
+  let harness = sole;
+  let configured = sole ? await probe(sole) : undefined;
+  if (!harness || !configured) {
+    const chosen = await prompts.select<(typeof CONNECT_HARNESSES)[number]>({
+      message: brass('Choose harness'),
+      options: CONNECT_HARNESSES.map((value) => ({
+        value,
+        label: connectHarnessLabel(value),
+      })),
+    });
+    // The sole harness has already had its one attempt; picking it again does
+    // not buy a second.
+    if (chosen !== harness) configured = await probe(chosen);
+    harness = chosen;
+  }
+  if (configured) {
+    announce(
+      connectFoundLine({
+        harness,
+        sole: harness === sole,
+        ...(configured.currentValue ? { model: configured.currentValue } : {}),
+      }),
+    );
+    // The harness's own current selection is an observation. Only a harness
+    // that enumerated models without naming one still owes an answer.
+    return {
+      harness,
+      model: configured.currentValue ?? (await askModel(configured, harness)),
+    };
+  }
   let provider: ConnectProvider | undefined;
   let apiKey: string | undefined;
   if (connectHarnessNeedsProvider(harness)) {
@@ -362,31 +502,20 @@ export async function collectConnectWizard(
       await keyStore.save(provider, apiKey);
     }
   }
+  // Unbounded, exactly as before: the wizard is committed to this harness now,
+  // so a slow catalog read is worth waiting for and a failed one is worth
+  // reporting rather than swallowing.
   const catalog = await loadModels({
     harness,
     ...(provider ? { provider } : {}),
     ...(apiKey ? { apiKey: apiKey.trim() } : {}),
   });
-  const initialModel = catalog.currentValue ?? defaultConnectModel(harness, provider);
-  const model = await prompts.autocomplete({
-    message: brass(
-      catalog.note ? `Choose model (${catalog.note})` : 'Choose model',
-    ),
-    options: catalog.options.map((choice) => ({
-      value: choice.id,
-      label: choice.name ? `${choice.name} (${choice.id})` : choice.id,
-    })),
-    ...(catalog.options.some((choice) => choice.id === initialModel)
-      ? { initialValue: initialModel }
-      : {}),
-    placeholder: 'Type to filter available models…',
-    maxItems: 12,
-  });
+  const model = await askModel(catalog, harness, provider);
   return {
     harness,
     ...(provider ? { provider } : {}),
     ...(apiKey ? { apiKey: apiKey.trim() } : {}),
-    model: model.trim(),
+    model,
   };
 }
 

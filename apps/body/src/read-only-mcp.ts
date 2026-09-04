@@ -43,6 +43,8 @@ import {
   isAgentGrantKind,
   parseCommandGrantTarget,
 } from '@beeline/api-contract/agent-grants';
+import type { CornerLifecycleView } from '@beeline/api-contract/phone';
+import { checksVerdictFromLifecycle } from './corner-checks.js';
 import { READ_ONLY_TOOL_NAMES } from './read-only-policy.js';
 
 type JsonObject = Record<string, unknown>;
@@ -947,7 +949,8 @@ async function prChecksStatus(): Promise<string> {
   const cornerId = requiredEnv('BEELINE_DAEMON_CORNER_ID');
   const workspaceId = requiredEnv('BEELINE_DAEMON_WORKSPACE_ID');
   const agentId = requiredEnv('BEELINE_DAEMON_AGENT_ID');
-  const [conversation, roster, authority] = await Promise.all([
+  const [restore, conversation, roster, authority] = await Promise.all([
+    daemonExecute('getCornerRestoreState', { cornerId }),
     daemonExecute('getRoomConversation', { roomId: cornerId, limit: 200 }),
     daemonExecute('getWorkspaceRoster', { agentId, workspaceId }),
     daemonExecute('getRoomAuthority', { roomId: cornerId, principalId: agentId }),
@@ -963,19 +966,28 @@ async function prChecksStatus(): Promise<string> {
         })
       : [],
   );
-  let checks: 'passed' | 'failed' | 'pending' = 'pending';
+  // The server's webhook-owned check state is the verdict; the transcript's
+  // wording only stands in while the server carries none (never the agent's
+  // own narration, which the corner loop now drops).
+  const lifecycle = restore.lifecycle as CornerLifecycleView | undefined;
+  const serverVerdict = checksVerdictFromLifecycle(lifecycle);
+  let checks: 'passed' | 'failed' | 'pending' = serverVerdict ?? 'pending';
   let held = false;
   let approvalPending = false;
-  let pullRequest: string | undefined;
+  let pullRequest: string | undefined = lifecycle?.pr?.url;
   const items = Array.isArray(conversation.items) ? conversation.items : [];
   for (const item of items) {
     if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
     const message = item as Record<string, unknown>;
     const body = typeof message.body === 'string' ? message.body : '';
-    if (/\b(?:all\s+)?checks?\s+(?:have\s+)?passed\b/i.test(body)) checks = 'passed';
-    if (/\bchecks?\s+(?:have\s+)?failed\b/i.test(body)) checks = 'failed';
+    if (!serverVerdict) {
+      if (/\b(?:all\s+)?checks?\s+(?:have\s+)?passed\b|\bpassed a check\b/i.test(body)) {
+        checks = 'passed';
+      }
+      if (/\bchecks?\s+(?:have\s+)?failed\b|\bfailed a check\b/i.test(body)) checks = 'failed';
+    }
     const url = body.match(/https:\/\/github\.com\/[^\s/]+\/[^\s/]+\/pull\/\d+/)?.[0];
-    if (url) pullRequest = url;
+    if (url && !lifecycle?.pr?.url) pullRequest = url;
     if (/\bapproval pending\b|\bmerge (?:approval )?requested\b/i.test(body)) {
       approvalPending = true;
     }

@@ -40,7 +40,7 @@ import {
 import type { AgentRuntimeRecord } from './runtime.js';
 import { runtimeIdentity } from './runtime.js';
 import { MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE } from './response-directives.js';
-import { sanitizeAgentReply } from './reply-sanitizer.js';
+import { sanitizeAgentReply, stripCornerOpenEcho } from './reply-sanitizer.js';
 import { distillTurnFailureReason } from './turn-failure-reason.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
 
@@ -713,14 +713,22 @@ export class MonolithRoomTurnLoop {
               `[thin-core] monolith Room ${this.options.roomId} turn ${item.id}: ${explained.reason}`,
             );
           }
-          await api.execute('postRoomMessage', {
-            roomId: this.options.roomId,
-            requestId: item.id,
-            triggerMessageId: item.id,
-            text: reply,
-            presentation: 'message',
-            mentionIds: agentReplyMentionIds(reply, roster, this.agent.publicKey),
-          });
+          // The server's corner-open card already announces a corner the
+          // turn opened; the model's own "Opened corner …" echo is dropped and
+          // a turn left with nothing else settles through its receipt.
+          if (openCornerCall && !/failed|error|denied/i.test(openCornerCall.status ?? '')) {
+            reply = stripCornerOpenEcho(reply);
+          }
+          if (reply) {
+            await api.execute('postRoomMessage', {
+              roomId: this.options.roomId,
+              requestId: item.id,
+              triggerMessageId: item.id,
+              text: reply,
+              presentation: 'message',
+              mentionIds: agentReplyMentionIds(reply, roster, this.agent.publicKey),
+            });
+          }
           await api.execute('retractAgentLiveOutput', {
             agentId: this.agent.publicKey,
             roomId: this.options.roomId,

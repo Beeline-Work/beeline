@@ -14,6 +14,7 @@ const BEELINE_ROOM_CAPABILITIES = [
   'To send a file, call beeline-agent attach_file with a path inside your checkout; it is attached to your reply.',
   'To run something later or repeatedly, call beeline-agent create_schedule (interval in minutes or a 5-field cron, optional maxRuns); list_schedules / delete_schedule manage them.',
   'When repository work is needed, you MUST call beeline-agent open_corner with a complete objective of no more than 24 words. The host-governed call is the only way to start write work.',
+  'When open_corner succeeds, the server posts the corner card: do not announce or restate the opening. End the turn with nothing more unless the person asked something else.',
   'Never claim an action or reply happened unless the prompt or a tool result proves it.',
 ].join(' ');
 

@@ -3,7 +3,10 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
 import { parseGrantDecisionLine } from '@beeline/api-contract/agent-grants';
-import { SCHEDULE_RAN_VERB, SCHEDULE_SCHEDULER_NAME } from '@beeline/api-contract/scheduled-prompts';
+import {
+  SCHEDULE_RAN_VERB,
+  SCHEDULE_SCHEDULER_NAME,
+} from '@beeline/api-contract/scheduled-prompts';
 import type { SystemEvent } from '@beeline/api-contract/daemon';
 import {
   AcpClient,
@@ -24,7 +27,10 @@ import {
 } from './attachment-delivery.js';
 import { beelineCapabilityContextForHarness } from './beeline-skill.js';
 import { beelineAgentMcpServer, readOnlyMcpServer } from './room-session.js';
-import { isMountedMcpToolPermissionRequest, isSquireMcpPermissionRequest } from './read-only-policy.js';
+import {
+  isMountedMcpToolPermissionRequest,
+  isSquireMcpPermissionRequest,
+} from './read-only-policy.js';
 import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
@@ -42,6 +48,7 @@ import { runtimeIdentity } from './runtime.js';
 import { MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE, SOUL_HOUSE_RULE } from './response-directives.js';
 import { sanitizeAgentReply, stripCornerOpenEcho } from './reply-sanitizer.js';
 import { distillTurnFailureReason } from './turn-failure-reason.js';
+import { withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
 
 type WorkspaceRoster = DaemonOperationMap['getWorkspaceRoster']['output'];
@@ -76,8 +83,7 @@ export function roomPrincipalMayAddressAgent(
 ): boolean {
   return (
     authority.member &&
-    (authority.principalKind === 'agent' ||
-      (authority.principalKind === 'human' && humanPermitted))
+    (authority.principalKind === 'agent' || (authority.principalKind === 'human' && humanPermitted))
   );
 }
 
@@ -103,7 +109,9 @@ export function inboxItemPromptBody(
   item: { type: string; body: string; mentionIds: readonly string[]; systemEvent?: SystemEvent },
   agentId: string,
 ): string {
-  return isScheduledPrompt(item, agentId) ? (item.systemEvent?.consequence ?? item.body) : item.body;
+  return isScheduledPrompt(item, agentId)
+    ? (item.systemEvent?.consequence ?? item.body)
+    : item.body;
 }
 
 /** The owner's answer to a grant card arrives as a server-authored system line
@@ -123,10 +131,7 @@ export function isGrantDecisionLine(
 /** Which inbox items may start or steer a turn: ordinary messages from others that
  *  mention the agent, scheduler-authored scheduled prompts, and grant decisions
  *  (never plain system lines or the agent's own rows). */
-export function inboxItemTriggersTurn(
-  item: RoomMessage,
-  agentId: string,
-): boolean {
+export function inboxItemTriggersTurn(item: RoomMessage, agentId: string): boolean {
   if (item.authorId === agentId) return false;
   if (!item.mentionIds.includes(agentId)) return false;
   return (
@@ -137,10 +142,7 @@ export function inboxItemTriggersTurn(
 }
 
 /** A `request_grant` call whose reply says the card is posted pauses the turn. */
-export function pendingGrantToolCall(call: {
-  title?: string;
-  content?: unknown;
-}): boolean {
+export function pendingGrantToolCall(call: { title?: string; content?: unknown }): boolean {
   if (!/(?:^|[._:/-])request_grant$/i.test(call.title ?? '')) return false;
   return /pending, card posted/i.test(
     typeof call.content === 'string' ? call.content : JSON.stringify(call.content ?? ''),
@@ -174,10 +176,7 @@ export function agentReplyMentionIds(
     (left, right) => right.display.length - left.display.length,
   )) {
     if (ids.size !== 1) continue;
-    const pattern = new RegExp(
-      `(^|[\\s([{])@${escapeRegExp(display)}(?=$|[\\s.,!?;:)\\]}])`,
-      'iu',
-    );
+    const pattern = new RegExp(`(^|[\\s([{])@${escapeRegExp(display)}(?=$|[\\s.,!?;:)\\]}])`, 'iu');
     if (!pattern.test(text)) continue;
     const identityId = [...ids][0]!;
     if (!mentioned.includes(identityId)) mentioned.push(identityId);
@@ -265,7 +264,8 @@ export class MonolithRoomTurnLoop {
     return this.pausedOnGrantRequestId;
   }
 
-  private currentTurnForRunner(): { requestId: string; requester?: { pubkey: string; name?: string } } | undefined {
+  private currentTurnForRunner():
+    { requestId: string; requester?: { pubkey: string; name?: string } } | undefined {
     const active = this.activeTurn;
     if (!active) return undefined;
     return { requestId: active.item.id, requester: this.requesterOf(active.item.authorId) };
@@ -446,11 +446,7 @@ export class MonolithRoomTurnLoop {
       cwd: this.options.cwd,
       mcpServers: servers,
       mode: 'readonly',
-      systemPrompt: [
-        identityInstructions,
-        personaInstructions,
-        capabilityContext.sessionPrompt,
-      ]
+      systemPrompt: [identityInstructions, personaInstructions, capabilityContext.sessionPrompt]
         .filter(Boolean)
         .join('\n\n'),
     });
@@ -534,214 +530,225 @@ export class MonolithRoomTurnLoop {
     try {
       // The first row of the turn names who asked; learn the name once per session.
       if (!this.memberNames.has(item.authorId)) await this.roster().catch(() => undefined);
-      await api.execute('postAgentTurnReceipt', {
-        agentId: this.agent.publicKey,
-        roomId: this.options.roomId,
-        requestId: item.id,
-        status: 'working',
-        generationId: `${this.agent.publicKey}:${this.options.roomId}`,
-      });
-      await api.execute('postAgentActivity', {
-        agentId: this.agent.publicKey,
-        roomId: this.options.roomId,
-        requestId: item.id,
-        activity: [
-          {
-            kind: 'thinking',
-            title: 'Working',
-            status: 'in_progress',
-            requestedBy: this.requesterOf(item.authorId),
-          },
-        ],
-      });
-      await this.options.scheduler.run(
-        this.options.roomId,
-        this.lifecycle(),
+      await withTurnReceiptHeartbeat(
+        api,
+        {
+          agentId: this.agent.publicKey,
+          roomId: this.options.roomId,
+          requestId: item.id,
+          generationId: `${this.agent.publicKey}:${this.options.roomId}`,
+        },
         async () => {
-          const [conversation, roster, delivered] = await Promise.all([
-            api.execute('getRoomConversation', { roomId: this.options.roomId, limit: 200 }),
-            this.roster(),
-            this.deliver(item),
-          ]);
-          const names = new Map(roster.members.map((member) => [member.identityId, member.name]));
-          const transcript = conversation.items
-            .filter(
-              (message) =>
-                message.type === 'message' &&
-                message.id !== item.id &&
-                !active.steers.some((steerItem) => steerItem.id === message.id),
-            )
-            .slice(-80)
-            .map((message) =>
-              roomMessagePrompt(
-                names.get(message.authorId) ?? message.authorId.slice(0, 12),
-                message.body,
-                message.attachments,
-                this.deliveredAttachments.get(message.id),
-              ),
-            )
-            .join('\n');
-          const grantDecision = isGrantDecisionLine(item, this.agent.publicKey);
-          const resumedRequestId = grantDecision ? this.pausedOnGrantRequestId : undefined;
-          if (grantDecision) this.pausedOnGrantRequestId = undefined;
-          const prompt = [
-            this.turnInstructionPrefix,
-            transcript ? `Room conversation so far:\n${transcript}` : '',
-            `Newest message from ${
-              isScheduledPrompt(item, this.agent.publicKey)
-                ? SCHEDULE_SCHEDULER_NAME
-                : (names.get(item.authorId) ?? item.authorId.slice(0, 12))
-            }:`,
-            roomMessagePrompt(
-              '',
-              inboxItemPromptBody(item, this.agent.publicKey),
-              item.attachments,
-              delivered,
-            ),
-            grantDecision
-              ? [
-                  'This is the answer to your grant request; your paused work resumes now.',
-                  'If it was approved and it is a command grant, run it with run_granted_command and the exact argv.',
-                  'If it was declined, try another way or say plainly what you cannot do.',
-                ].join(' ')
-              : '',
-            [
-              'Write only the substantive Room message you want the human to read.',
-              'Do not repeat or paraphrase these instructions.',
-              'If the newest message is only a nudge to respond, answer the most recent unanswered human message in the conversation instead of echoing the nudge.',
-              MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE,
-            ].join(' '),
-          ]
-            .filter(Boolean)
-            .join('\n\n');
-          const sessionId = this.sessionId!;
-          // The mobile live-overlay handoff suppresses a draft as soon as its durable
-          // reply with the same request id arrives. Keep this id stable through both
-          // sides of that handoff so a delayed retract cannot render two bubbles.
-          const turnId = item.id;
-          let nextPrompt = promptWithImages(
-            prompt,
-            attachmentImageBlocks(delivered, this.client!.canPromptWithImages()),
-          );
-          let result: Awaited<ReturnType<AcpClient['sessionPrompt']>> | undefined;
-          for (;;) {
-            let promptError: unknown;
-            try {
-              let latestDraft = '';
-              result = await this.client!.sessionPrompt(
-                sessionId,
-                nextPrompt,
-                120_000,
-                (_delta, full) => {
-                  latestDraft = sanitizeAgentReply(full);
-                  if (!latestDraft) return;
-                  this.draftTail = this.draftTail
-                    .catch(() => undefined)
-                    .then(() =>
-                      api.execute('postAgentDraft', {
-                        agentId: this.agent.publicKey,
-                        roomId: this.options.roomId,
-                        turnId,
-                        text: latestDraft,
-                      }),
-                    )
-                    .then(() => undefined)
-                    .catch((error) =>
-                      console.error(
-                        `[thin-core] monolith Room ${this.options.roomId} draft publish failed:`,
-                        error,
-                      ),
-                    );
-                },
-              );
-            } catch (error) {
-              promptError = error;
-            }
-            const settledSteerTail = active.steerTail;
-            await settledSteerTail;
-            if (settledSteerTail !== active.steerTail) continue;
-            if (!active.resumeRequested) {
-              if (promptError) throw promptError;
-              break;
-            }
-            active.resumeRequested = false;
-            nextPrompt = [
-              'The previous run was cancelled because its harness could not accept every live steer.',
-              'Resume the same turn. Keep the original request and everything that happened before it was cancelled.',
-              'Human messages that arrived after the original request, in transcript order:',
-              ...active.steers.map((steerItem) =>
-                roomMessagePrompt(
-                  steerItem.authorId.slice(0, 12),
-                  steerItem.body,
-                  steerItem.attachments,
-                  this.deliveredAttachments.get(steerItem.id),
-                ),
-              ),
-              'Continue now and answer the updated request without erasing the earlier context.',
-            ].join('\n\n');
-          }
-          active.phase = 'finishing';
-          if (result?.toolCalls.some((call) => pendingGrantToolCall(call))) {
-            this.pausedOnGrantRequestId = item.id;
-            console.log(
-              `[thin-core] monolith Room ${this.options.roomId} turn ${item.id} paused on a grant card`,
-            );
-          } else if (resumedRequestId) {
-            console.log(
-              `[thin-core] monolith Room ${this.options.roomId} turn ${resumedRequestId} resumed by grant decision ${item.id}`,
-            );
-          }
-          const openCornerCall = result?.toolCalls.find((call) =>
-            /(?:^|[._:/-])open_corner$/i.test(call.title ?? ''),
-          );
-          if (openCornerCall) {
-            console.log(
-              `[thin-core] monolith Room ${this.options.roomId} tool call: ${openCornerCall.title}`,
-            );
-            this.options.onCornerOpened?.();
-          }
-          await this.draftTail;
-          let reply = sanitizeAgentReply(result!.agentText);
-          if (!reply) {
-            // Either text the harness recorded but never streamed, or a named
-            // reason (pi's provider refusal, an empty model answer, the stream's
-            // shape) — never the bare "no reply" as the only fact.
-            const explained = await explainEmptyAgentTurn({
-              agentLabel: this.options.config.agentCommand ?? this.options.config.agentBinary,
-              agentEnv: this.agentEnv,
-              sessionId,
-              result: result!,
-            });
-            reply = explained.recoveredText ? sanitizeAgentReply(explained.recoveredText) : '';
-            if (!reply) throw new Error(explained.reason);
-            console.warn(
-              `[thin-core] monolith Room ${this.options.roomId} turn ${item.id}: ${explained.reason}`,
-            );
-          }
-          // The server's corner-open card already announces a corner the
-          // turn opened; the model's own "Opened corner …" echo is dropped and
-          // a turn left with nothing else settles through its receipt.
-          if (openCornerCall && !/failed|error|denied/i.test(openCornerCall.status ?? '')) {
-            reply = stripCornerOpenEcho(reply);
-          }
-          if (reply) {
-            await api.execute('postRoomMessage', {
-              roomId: this.options.roomId,
-              requestId: item.id,
-              triggerMessageId: item.id,
-              text: reply,
-              presentation: 'message',
-              mentionIds: agentReplyMentionIds(reply, roster, this.agent.publicKey),
-            });
-          }
-          await api.execute('retractAgentLiveOutput', {
+          await api.execute('postAgentActivity', {
             agentId: this.agent.publicKey,
             roomId: this.options.roomId,
-            turnId,
-            kind: 'draft',
+            requestId: item.id,
+            activity: [
+              {
+                kind: 'thinking',
+                title: 'Working',
+                status: 'in_progress',
+                requestedBy: this.requesterOf(item.authorId),
+              },
+            ],
           });
+          await this.options.scheduler.run(
+            this.options.roomId,
+            this.lifecycle(),
+            async () => {
+              const [conversation, roster, delivered] = await Promise.all([
+                api.execute('getRoomConversation', { roomId: this.options.roomId, limit: 200 }),
+                this.roster(),
+                this.deliver(item),
+              ]);
+              const names = new Map(
+                roster.members.map((member) => [member.identityId, member.name]),
+              );
+              const transcript = conversation.items
+                .filter(
+                  (message) =>
+                    message.type === 'message' &&
+                    message.id !== item.id &&
+                    !active.steers.some((steerItem) => steerItem.id === message.id),
+                )
+                .slice(-80)
+                .map((message) =>
+                  roomMessagePrompt(
+                    names.get(message.authorId) ?? message.authorId.slice(0, 12),
+                    message.body,
+                    message.attachments,
+                    this.deliveredAttachments.get(message.id),
+                  ),
+                )
+                .join('\n');
+              const grantDecision = isGrantDecisionLine(item, this.agent.publicKey);
+              const resumedRequestId = grantDecision ? this.pausedOnGrantRequestId : undefined;
+              if (grantDecision) this.pausedOnGrantRequestId = undefined;
+              const prompt = [
+                this.turnInstructionPrefix,
+                transcript ? `Room conversation so far:\n${transcript}` : '',
+                `Newest message from ${
+                  isScheduledPrompt(item, this.agent.publicKey)
+                    ? SCHEDULE_SCHEDULER_NAME
+                    : (names.get(item.authorId) ?? item.authorId.slice(0, 12))
+                }:`,
+                roomMessagePrompt(
+                  '',
+                  inboxItemPromptBody(item, this.agent.publicKey),
+                  item.attachments,
+                  delivered,
+                ),
+                grantDecision
+                  ? [
+                      'This is the answer to your grant request; your paused work resumes now.',
+                      'If it was approved and it is a command grant, run it with run_granted_command and the exact argv.',
+                      'If it was declined, try another way or say plainly what you cannot do.',
+                    ].join(' ')
+                  : '',
+                [
+                  'Write only the substantive Room message you want the human to read.',
+                  'Do not repeat or paraphrase these instructions.',
+                  'If the newest message is only a nudge to respond, answer the most recent unanswered human message in the conversation instead of echoing the nudge.',
+                  MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE,
+                ].join(' '),
+              ]
+                .filter(Boolean)
+                .join('\n\n');
+              const sessionId = this.sessionId!;
+              // The mobile live-overlay handoff suppresses a draft as soon as its durable
+              // reply with the same request id arrives. Keep this id stable through both
+              // sides of that handoff so a delayed retract cannot render two bubbles.
+              const turnId = item.id;
+              let nextPrompt = promptWithImages(
+                prompt,
+                attachmentImageBlocks(delivered, this.client!.canPromptWithImages()),
+              );
+              let result: Awaited<ReturnType<AcpClient['sessionPrompt']>> | undefined;
+              for (;;) {
+                let promptError: unknown;
+                try {
+                  let latestDraft = '';
+                  result = await this.client!.sessionPrompt(
+                    sessionId,
+                    nextPrompt,
+                    120_000,
+                    (_delta, full) => {
+                      latestDraft = sanitizeAgentReply(full);
+                      if (!latestDraft) return;
+                      this.draftTail = this.draftTail
+                        .catch(() => undefined)
+                        .then(() =>
+                          api.execute('postAgentDraft', {
+                            agentId: this.agent.publicKey,
+                            roomId: this.options.roomId,
+                            turnId,
+                            text: latestDraft,
+                          }),
+                        )
+                        .then(() => undefined)
+                        .catch((error) =>
+                          console.error(
+                            `[thin-core] monolith Room ${this.options.roomId} draft publish failed:`,
+                            error,
+                          ),
+                        );
+                    },
+                  );
+                } catch (error) {
+                  promptError = error;
+                }
+                const settledSteerTail = active.steerTail;
+                await settledSteerTail;
+                if (settledSteerTail !== active.steerTail) continue;
+                if (!active.resumeRequested) {
+                  if (promptError) throw promptError;
+                  break;
+                }
+                active.resumeRequested = false;
+                nextPrompt = [
+                  'The previous run was cancelled because its harness could not accept every live steer.',
+                  'Resume the same turn. Keep the original request and everything that happened before it was cancelled.',
+                  'Human messages that arrived after the original request, in transcript order:',
+                  ...active.steers.map((steerItem) =>
+                    roomMessagePrompt(
+                      steerItem.authorId.slice(0, 12),
+                      steerItem.body,
+                      steerItem.attachments,
+                      this.deliveredAttachments.get(steerItem.id),
+                    ),
+                  ),
+                  'Continue now and answer the updated request without erasing the earlier context.',
+                ].join('\n\n');
+              }
+              active.phase = 'finishing';
+              if (result?.toolCalls.some((call) => pendingGrantToolCall(call))) {
+                this.pausedOnGrantRequestId = item.id;
+                console.log(
+                  `[thin-core] monolith Room ${this.options.roomId} turn ${item.id} paused on a grant card`,
+                );
+              } else if (resumedRequestId) {
+                console.log(
+                  `[thin-core] monolith Room ${this.options.roomId} turn ${resumedRequestId} resumed by grant decision ${item.id}`,
+                );
+              }
+              const openCornerCall = result?.toolCalls.find((call) =>
+                /(?:^|[._:/-])open_corner$/i.test(call.title ?? ''),
+              );
+              if (openCornerCall) {
+                console.log(
+                  `[thin-core] monolith Room ${this.options.roomId} tool call: ${openCornerCall.title}`,
+                );
+                this.options.onCornerOpened?.();
+              }
+              await this.draftTail;
+              let reply = sanitizeAgentReply(result!.agentText);
+              if (!reply) {
+                // Either text the harness recorded but never streamed, or a named
+                // reason (pi's provider refusal, an empty model answer, the stream's
+                // shape) — never the bare "no reply" as the only fact.
+                const explained = await explainEmptyAgentTurn({
+                  agentLabel: this.options.config.agentCommand ?? this.options.config.agentBinary,
+                  agentEnv: this.agentEnv,
+                  sessionId,
+                  result: result!,
+                });
+                reply = explained.recoveredText ? sanitizeAgentReply(explained.recoveredText) : '';
+                if (!reply) throw new Error(explained.reason);
+                console.warn(
+                  `[thin-core] monolith Room ${this.options.roomId} turn ${item.id}: ${explained.reason}`,
+                );
+              }
+              // The server's corner-open card already announces a corner the
+              // turn opened; the model's own "Opened corner …" echo is dropped and
+              // a turn left with nothing else settles through its receipt.
+              if (openCornerCall && !/failed|error|denied/i.test(openCornerCall.status ?? '')) {
+                reply = stripCornerOpenEcho(reply);
+              }
+              if (reply) {
+                await api.execute('postRoomMessage', {
+                  roomId: this.options.roomId,
+                  requestId: item.id,
+                  triggerMessageId: item.id,
+                  text: reply,
+                  presentation: 'message',
+                  mentionIds: agentReplyMentionIds(reply, roster, this.agent.publicKey),
+                });
+              }
+              await api.execute('retractAgentLiveOutput', {
+                agentId: this.agent.publicKey,
+                roomId: this.options.roomId,
+                turnId,
+                kind: 'draft',
+              });
+            },
+            { priority: 'interactive', roomKey: this.options.roomId },
+          );
         },
-        { priority: 'interactive', roomKey: this.options.roomId },
+        (error) =>
+          console.error(
+            `[thin-core] monolith Room ${this.options.roomId} receipt heartbeat failed:`,
+            error,
+          ),
       );
       await api.execute('postAgentTurnReceipt', {
         agentId: this.agent.publicKey,

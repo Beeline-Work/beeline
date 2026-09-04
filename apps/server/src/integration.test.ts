@@ -3,12 +3,7 @@ import { request as httpRequest } from 'node:http';
 import { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
-import {
-  FACE_NAMES,
-  FACE_SOULS,
-  isFaceId,
-  type FaceId,
-} from '@beeline/api-contract/phone';
+import { FACE_NAMES, FACE_SOULS, isFaceId, type FaceId } from '@beeline/api-contract/phone';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { TokenAuth, tokenHash } from './auth.js';
@@ -394,9 +389,8 @@ describe('monolith integration', () => {
       (await operation('removeWorkspaceMember', { workspaceId, memberId: HUMAN })).status,
     ).toBe(403);
     expect(
-      (
-        await operation('removeWorkspaceMember', { workspaceId, memberId: bobId }, aliceToken)
-      ).status,
+      (await operation('removeWorkspaceMember', { workspaceId, memberId: bobId }, aliceToken))
+        .status,
     ).toBe(403);
     expect(
       (await operation('removeWorkspaceMember', { workspaceId, memberId: AGENT })).status,
@@ -418,7 +412,10 @@ describe('monolith integration', () => {
       expect.objectContaining({
         presentation: 'system',
         text: expect.stringMatching(/ removed /),
-        systemEvent: expect.objectContaining({ verb: 'removed', object: expect.objectContaining({ id: bobId }) }),
+        systemEvent: expect.objectContaining({
+          verb: 'removed',
+          object: expect.objectContaining({ id: bobId }),
+        }),
       }),
     );
     // Gone means gone: the second removal has no membership to act on.
@@ -467,7 +464,10 @@ describe('monolith integration', () => {
     // The chat list names a DM row by its peer, so it carries the one other
     // participant's identity instead of leaving the client the stored name.
     const chats = (await (await request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
-      chats: Array<{ room: { id: string }; directMessage?: { peer: { pubkey: string; kind: string } } }>;
+      chats: Array<{
+        room: { id: string };
+        directMessage?: { peer: { pubkey: string; kind: string } };
+      }>;
     };
     expect(chats.chats.find((chat) => chat.room.id === dm.id)?.directMessage).toMatchObject({
       peer: { pubkey: AGENT, kind: 'agent' },
@@ -1404,13 +1404,11 @@ describe('monolith integration', () => {
       [grant.agent_pubkey],
     );
     expect(notes.rows).toEqual(
-      [ROOM, secondRoom.id]
-        .sort()
-        .map((room_id) => ({
-          room_id,
-          text: `${grant.agent_name} joined`,
-          presentation: 'system',
-        })),
+      [ROOM, secondRoom.id].sort().map((room_id) => ({
+        room_id,
+        text: `${grant.agent_name} joined`,
+        presentation: 'system',
+      })),
     );
 
     expect(await loop.runOnce()).toBe(1);
@@ -1421,25 +1419,27 @@ describe('monolith integration', () => {
   });
 
   it('lets a Workspace manager switch seeded souls off for everyone in it', async () => {
-    await database.query(
-      `UPDATE agents SET soul=$2::jsonb WHERE agent_id=$1`,
-      [AGENT, JSON.stringify({ name: 'Bee', instructions: 'You are a fox.', avatarSeed: AGENT })],
-    );
+    await database.query(`UPDATE agents SET soul=$2::jsonb WHERE agent_id=$1`, [
+      AGENT,
+      JSON.stringify({ name: 'Bee', instructions: 'You are a fox.', avatarSeed: AGENT }),
+    ]);
     const soulOf = async () =>
-      ((await (
-        await daemonOperation('getAgentConfiguration', { agentId: AGENT, roomId: ROOM })
-      ).json()) as { soul?: { instructions: string } }).soul;
+      (
+        (await (
+          await daemonOperation('getAgentConfiguration', { agentId: AGENT, roomId: ROOM })
+        ).json()) as { soul?: { instructions: string } }
+      ).soul;
     const rosterSoulOf = async () =>
-      ((await (
-        await daemonOperation('getWorkspaceRoster', { workspaceId: WORKSPACE })
-      ).json()) as { members: Array<{ identityId: string; soul?: unknown }> }).members.find(
-        (member) => member.identityId === AGENT,
-      )?.soul;
+      (
+        (await (
+          await daemonOperation('getWorkspaceRoster', { workspaceId: WORKSPACE })
+        ).json()) as { members: Array<{ identityId: string; soul?: unknown }> }
+      ).members.find((member) => member.identityId === AGENT)?.soul;
 
     // On by default.
-    const view = (await (
-      await request(`/v1/phone/workspaces/${WORKSPACE}`)
-    ).json()) as { managerSettings?: { seededSouls?: boolean } };
+    const view = (await (await request(`/v1/phone/workspaces/${WORKSPACE}`)).json()) as {
+      managerSettings?: { seededSouls?: boolean };
+    };
     expect(view.managerSettings?.seededSouls).toBe(true);
     expect(await soulOf()).toMatchObject({ instructions: 'You are a fox.' });
     expect(await rosterSoulOf()).toBeDefined();
@@ -2684,6 +2684,118 @@ describe('monolith integration', () => {
     );
   });
 
+  it('keeps working receipts fresh without letting heartbeats resurrect terminal turns', async () => {
+    const requestId = '6'.repeat(64);
+    const generationId = `${AGENT}:${ROOM}`;
+    await daemonOperation('postAgentTurnReceipt', {
+      roomId: ROOM,
+      requestId,
+      status: 'working',
+      generationId,
+    });
+    await database.query(
+      `UPDATE agent_turns SET created_at=now()-interval '2 minutes'
+       WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
+      [ROOM, requestId, AGENT],
+    );
+
+    await daemonOperation('postAgentTurnReceipt', {
+      roomId: ROOM,
+      requestId,
+      status: 'working',
+      generationId,
+      heartbeat: true,
+    });
+    const fresh = await database.query<{ status: string; age_seconds: number }>(
+      `SELECT status,extract(epoch FROM now()-created_at)::float age_seconds
+       FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
+      [ROOM, requestId, AGENT],
+    );
+    expect(fresh.rows[0]?.status).toBe('working');
+    expect(fresh.rows[0]?.age_seconds).toBeLessThan(5);
+
+    await daemonOperation('postAgentTurnReceipt', {
+      roomId: ROOM,
+      requestId,
+      status: 'complete',
+      generationId,
+    });
+    await database.query(
+      `UPDATE agent_turns SET created_at=now()-interval '1 minute'
+       WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
+      [ROOM, requestId, AGENT],
+    );
+    await daemonOperation('postAgentTurnReceipt', {
+      roomId: ROOM,
+      requestId,
+      status: 'working',
+      generationId,
+      heartbeat: true,
+    });
+    const terminal = await database.query<{ status: string; old: boolean }>(
+      `SELECT status,created_at<now()-interval '30 seconds' old
+       FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
+      [ROOM, requestId, AGENT],
+    );
+    expect(terminal.rows[0]).toEqual({ status: 'complete', old: true });
+
+    await daemonOperation('postAgentTurnReceipt', {
+      roomId: ROOM,
+      requestId: 'heartbeat-without-turn',
+      status: 'working',
+      generationId,
+      heartbeat: true,
+    });
+    expect(
+      await database.query(`SELECT 1 FROM agent_turns WHERE request_id='heartbeat-without-turn'`),
+    ).toHaveProperty('rowCount', 0);
+  });
+
+  it('refreshes a working receipt from activity but leaves a terminal receipt untouched', async () => {
+    const requestId = '5'.repeat(64);
+    await daemonOperation('postAgentTurnReceipt', { roomId: ROOM, requestId, status: 'working' });
+    await database.query(
+      `UPDATE agent_turns SET created_at=now()-interval '2 minutes'
+       WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
+      [ROOM, requestId, AGENT],
+    );
+    await daemonOperation('postAgentActivity', {
+      roomId: ROOM,
+      requestId,
+      activity: [{ kind: 'thinking', title: 'Still working', status: 'in_progress' }],
+    });
+    expect(
+      (
+        await database.query<{ fresh: boolean }>(
+          `SELECT created_at>now()-interval '5 seconds' fresh FROM agent_turns
+           WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
+          [ROOM, requestId, AGENT],
+        )
+      ).rows[0],
+    ).toEqual({ fresh: true });
+
+    await daemonOperation('postAgentTurnReceipt', { roomId: ROOM, requestId, status: 'failed' });
+    await database.query(
+      `UPDATE agent_turns SET created_at=now()-interval '1 minute'
+       WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
+      [ROOM, requestId, AGENT],
+    );
+    await daemonOperation('postAgentActivity', {
+      roomId: ROOM,
+      requestId,
+      activity: [{ kind: 'thinking', title: 'Late activity', status: 'complete' }],
+    });
+    expect(
+      (
+        await database.query<{ status: string; old: boolean }>(
+          `SELECT status,created_at<now()-interval '30 seconds' old FROM agent_turns
+           WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
+          [ROOM, requestId, AGENT],
+        )
+      ).rows[0],
+    ).toEqual({ status: 'failed', old: true });
+  });
+
   it('inscribes a failed turn as one system line, coalesces its retry, and settles it on success', async () => {
     const requestId = '8'.repeat(64);
     await operation('sendRoomMessage', {
@@ -2702,14 +2814,20 @@ describe('monolith integration', () => {
     expect(failed.status).toBe(200);
     expect(
       (
-        await database.query(`SELECT status,failure_reason FROM agent_turns WHERE room_id=$1 AND request_id=$2`, [
-          ROOM,
-          requestId,
-        ])
+        await database.query(
+          `SELECT status,failure_reason FROM agent_turns WHERE room_id=$1 AND request_id=$2`,
+          [ROOM, requestId],
+        )
       ).rows[0],
     ).toEqual({ status: 'failed', failure_reason: 'provider error 429 concurrency_limit' });
     const lines = () =>
-      database.query<{ id: string; author_id: string; text: string; mention_ids: string[]; card: Record<string, string> }>(
+      database.query<{
+        id: string;
+        author_id: string;
+        text: string;
+        mention_ids: string[];
+        card: Record<string, string>;
+      }>(
         `SELECT id,author_id,text,mention_ids,card FROM messages WHERE room_id=$1 AND presentation='system' AND card_type='turn-failed'`,
         [ROOM],
       );
@@ -2734,7 +2852,11 @@ describe('monolith integration', () => {
     const retried = (await lines()).rows;
     expect(retried).toHaveLength(1);
     expect(retried[0]!.id).toBe(first[0]!.id);
-    expect(retried[0]!.text.startsWith('Bee could not answer · ACP session timed out after 120s at AcpClient.request')).toBe(true);
+    expect(
+      retried[0]!.text.startsWith(
+        'Bee could not answer · ACP session timed out after 120s at AcpClient.request',
+      ),
+    ).toBe(true);
     expect(retried[0]!.text.length).toBeLessThanOrEqual('Bee could not answer · '.length + 200);
     // A later durable reply settles the line instead of leaving a stale failure stamped in the transcript.
     await daemonOperation('postRoomMessage', {
@@ -2753,7 +2875,11 @@ describe('monolith integration', () => {
     ]);
     const room = (await new PhoneService(database, origin).readRoom(ROOM, HUMAN))!;
     expect(room.messages).toContainEqual(
-      expect.objectContaining({ id: first[0]!.id, presentation: 'system', text: 'Bee answered after a retry' }),
+      expect.objectContaining({
+        id: first[0]!.id,
+        presentation: 'system',
+        text: 'Bee answered after a retry',
+      }),
     );
     expect(room.latestAgentTurns).toContainEqual(
       expect.objectContaining({ requestId, agentPubkey: AGENT, status: 'complete' }),
@@ -2767,8 +2893,12 @@ describe('monolith integration', () => {
     });
     expect((await lines()).rows).toHaveLength(1);
     // A failure older than the coalescing window starts a fresh line.
-    await database.query(`UPDATE messages SET created_at=now()-interval '11 minutes' WHERE id=$1`, [first[0]!.id]);
-    await database.query(`UPDATE messages SET card=card||'{"state":"failed"}'::jsonb WHERE id=$1`, [first[0]!.id]);
+    await database.query(`UPDATE messages SET created_at=now()-interval '11 minutes' WHERE id=$1`, [
+      first[0]!.id,
+    ]);
+    await database.query(`UPDATE messages SET card=card||'{"state":"failed"}'::jsonb WHERE id=$1`, [
+      first[0]!.id,
+    ]);
     await daemonOperation('postAgentTurnReceipt', {
       roomId: ROOM,
       requestId,
@@ -3347,8 +3477,14 @@ describe('monolith integration', () => {
       text: string;
       mention_ids: string[];
       presentation: string;
-      card: { grants: Array<Record<string, unknown>>; owner: { pubkey: string }; requester: { pubkey: string } };
-    }>(`SELECT author_id,text,mention_ids,presentation,card FROM messages WHERE card_type='grant-request'`);
+      card: {
+        grants: Array<Record<string, unknown>>;
+        owner: { pubkey: string };
+        requester: { pubkey: string };
+      };
+    }>(
+      `SELECT author_id,text,mention_ids,presentation,card FROM messages WHERE card_type='grant-request'`,
+    );
     expect(cards.rows).toHaveLength(1);
     const card = cards.rows[0]!;
     expect(card.author_id).toBe(AGENT);
@@ -3393,7 +3529,12 @@ describe('monolith integration', () => {
     expect(profileBefore.grants).toEqual([]);
     expect(profileBefore.canManageGrants).toBe(true);
     const memberProfile = (await (
-      await request(`/v1/phone/workspaces/${WORKSPACE}/agents/${AGENT}`, 'GET', undefined, memberToken)
+      await request(
+        `/v1/phone/workspaces/${WORKSPACE}/agents/${AGENT}`,
+        'GET',
+        undefined,
+        memberToken,
+      )
     ).json()) as { canManageGrants: boolean };
     expect(memberProfile.canManageGrants).toBe(false);
 
@@ -3403,7 +3544,10 @@ describe('monolith integration', () => {
     expect(await once.json()).toEqual({ grantId: first.grantId, status: 'once', roomId: ROOM });
     const deny = await operation('decideAgentGrant', { grantId: second.grantId, decision: 'deny' });
     expect(await deny.json()).toEqual({ grantId: second.grantId, status: 'denied', roomId: ROOM });
-    const again = await operation('decideAgentGrant', { grantId: first.grantId, decision: 'always' });
+    const again = await operation('decideAgentGrant', {
+      grantId: first.grantId,
+      decision: 'always',
+    });
     expect(again.status).toBe(409);
     // The card settled in place: same message id, per-grant outcome, decider.
     const settled = await database.query<{ card: { grants: Array<Record<string, unknown>> } }>(
@@ -3420,7 +3564,13 @@ describe('monolith integration', () => {
     const inbox = (await (
       await daemonOperation('getRoomInbox', { roomId: ROOM, after: undefined })
     ).json()) as {
-      items: Array<{ type: string; body: string; mentionIds: string[]; authorId: string; systemEvent?: unknown }>;
+      items: Array<{
+        type: string;
+        body: string;
+        mentionIds: string[];
+        authorId: string;
+        systemEvent?: unknown;
+      }>;
     };
     const decisions = inbox.items.filter(
       (item) => item.type === 'system' && /\b(approved|declined)\b/.test(item.body),
@@ -3435,20 +3585,24 @@ describe('monolith integration', () => {
         verb: 'approved once',
         object: { text: 'command fly deploy -a beeline-preview --with FLY_TOKEN' },
       },
-      { subject: { kind: 'person', id: HUMAN, name: 'Owner' }, verb: 'declined', object: { text: 'host api.fly.io' } },
+      {
+        subject: { kind: 'person', id: HUMAN, name: 'Owner' },
+        verb: 'declined',
+        object: { text: 'host api.fly.io' },
+      },
     ]);
-    expect(decisions.every((item) => item.mentionIds.includes(AGENT) && item.authorId === HUMAN)).toBe(
-      true,
-    );
+    expect(
+      decisions.every((item) => item.mentionIds.includes(AGENT) && item.authorId === HUMAN),
+    ).toBe(true);
     expect(await pushes.runOnce()).toBe(0);
     // The phone still validates the settled Room read.
     const settledRoom = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as RoomView;
     expect(isRoomView(settledRoom)).toBe(true);
 
     // The daemon sees only the live once rule; consuming it spends it.
-    const rules = (await (
-      await daemonOperation('listAgentGrants', { agentId: AGENT })
-    ).json()) as { grants: Array<Record<string, unknown>> };
+    const rules = (await (await daemonOperation('listAgentGrants', { agentId: AGENT })).json()) as {
+      grants: Array<Record<string, unknown>>;
+    };
     expect(rules.grants).toEqual([
       expect.objectContaining({
         grantId: first.grantId,
@@ -3459,12 +3613,18 @@ describe('monolith integration', () => {
         requestedByName: 'Member',
       }),
     ]);
-    expect((await daemonOperation('consumeAgentGrant', { grantId: first.grantId })).status).toBe(200);
-    expect((await daemonOperation('consumeAgentGrant', { grantId: first.grantId })).status).toBe(404);
+    expect((await daemonOperation('consumeAgentGrant', { grantId: first.grantId })).status).toBe(
+      200,
+    );
+    expect((await daemonOperation('consumeAgentGrant', { grantId: first.grantId })).status).toBe(
+      404,
+    );
     expect(
-      ((await (await daemonOperation('listAgentGrants', { agentId: AGENT })).json()) as {
-        grants: unknown[];
-      }).grants,
+      (
+        (await (await daemonOperation('listAgentGrants', { agentId: AGENT })).json()) as {
+          grants: unknown[];
+        }
+      ).grants,
     ).toEqual([]);
 
     // ALWAYS makes a durable rule the profile lists and the owner can revoke.
@@ -3478,31 +3638,49 @@ describe('monolith integration', () => {
     ).json()) as { grantId: string; messageId: string };
     expect(third.messageId).not.toBe(first.messageId);
     await operation('decideAgentGrant', { grantId: third.grantId, decision: 'always' });
-    const live = (await (
-      await daemonOperation('listAgentGrants', { agentId: AGENT })
-    ).json()) as { grants: Array<{ grantId: string; status: string }> };
-    expect(live.grants).toEqual([expect.objectContaining({ grantId: third.grantId, status: 'approved' })]);
+    const live = (await (await daemonOperation('listAgentGrants', { agentId: AGENT })).json()) as {
+      grants: Array<{ grantId: string; status: string }>;
+    };
+    expect(live.grants).toEqual([
+      expect.objectContaining({ grantId: third.grantId, status: 'approved' }),
+    ]);
     const profile = (await (
       await request(`/v1/phone/workspaces/${WORKSPACE}/agents/${AGENT}`)
     ).json()) as {
-      grants: Array<{ grantId: string; status: string; decidedBy?: { name: string }; kind: string; target: string }>;
+      grants: Array<{
+        grantId: string;
+        status: string;
+        decidedBy?: { name: string };
+        kind: string;
+        target: string;
+      }>;
     };
     expect(isAgentDetailView(profile)).toBe(true);
-    expect(profile.grants.map((grant) => [grant.grantId, grant.status, grant.decidedBy?.name])).toEqual(
-      [
-        [third.grantId, 'approved', 'Owner'],
-        [second.grantId, 'denied', 'Owner'],
-        [first.grantId, 'once', 'Owner'],
-      ],
+    expect(
+      profile.grants.map((grant) => [grant.grantId, grant.status, grant.decidedBy?.name]),
+    ).toEqual([
+      [third.grantId, 'approved', 'Owner'],
+      [second.grantId, 'denied', 'Owner'],
+      [first.grantId, 'once', 'Owner'],
+    ]);
+    const memberRevoke = await operation(
+      'revokeAgentGrant',
+      { grantId: third.grantId },
+      memberToken,
     );
-    const memberRevoke = await operation('revokeAgentGrant', { grantId: third.grantId }, memberToken);
     expect(memberRevoke.status).toBe(403);
     const revoked = await operation('revokeAgentGrant', { grantId: third.grantId });
-    expect(await revoked.json()).toEqual({ grantId: third.grantId, status: 'revoked', roomId: ROOM });
+    expect(await revoked.json()).toEqual({
+      grantId: third.grantId,
+      status: 'revoked',
+      roomId: ROOM,
+    });
     expect(
-      ((await (await daemonOperation('listAgentGrants', { agentId: AGENT })).json()) as {
-        grants: unknown[];
-      }).grants,
+      (
+        (await (await daemonOperation('listAgentGrants', { agentId: AGENT })).json()) as {
+          grants: unknown[];
+        }
+      ).grants,
     ).toEqual([]);
     expect((await operation('revokeAgentGrant', { grantId: third.grantId })).status).toBe(409);
   });
@@ -3550,9 +3728,7 @@ describe('monolith integration', () => {
     const profile = (await (
       await request(`/v1/phone/workspaces/${WORKSPACE}/agents/${AGENT}`)
     ).json()) as { grants: Array<{ auto: boolean; status: string; decidedBy?: unknown }> };
-    expect(profile.grants).toEqual([
-      expect.objectContaining({ auto: true, status: 'approved' }),
-    ]);
+    expect(profile.grants).toEqual([expect.objectContaining({ auto: true, status: 'approved' })]);
     expect(profile.grants[0]!.decidedBy).toBeUndefined();
     // Budget still asks: a pending card, not an auto approval.
     const budget = (await (
@@ -3567,7 +3743,6 @@ describe('monolith integration', () => {
       expect.objectContaining({ status: 'pending', auto: false, messageId: expect.any(String) }),
     );
   });
-
 });
 
 function next(socket: WebSocket, type: string): Promise<Record<string, unknown>> {

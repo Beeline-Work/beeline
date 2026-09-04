@@ -145,4 +145,25 @@ describe('Chat header — one language for Room and Corner', () => {
     expect(slot, 'missing identitySlot style').toBeTruthy();
     expect(slot![0]).not.toMatch(/borderWidth|borderRadius|backgroundColor/);
   });
+
+  it('closes the corner’s ladder rung to match the Room’s (C85)', () => {
+    // The shared HeaderMetaRow is now the corner's alone (the Room's members
+    // line went back to a bare HeaderMetaCaps); its rung above the meta row
+    // matches the Room's own rung (repoChip's marginTop: 2), not the wider
+    // gap it carried before.
+    const metaRow = ladderSource.match(/metaRow:\s*\{[\s\S]*?\n\s*\},/);
+    expect(metaRow, 'missing metaRow style').toBeTruthy();
+    expect(metaRow![0]).toContain('marginTop: 2');
+  });
+
+  it('carries no agent presence light in the corner header (C85)', () => {
+    // #873 retired this exact signal from the Members surfaces as misleading
+    // — a helper can be up while the agent answers nothing. The corner
+    // status glyph (CornerGlyph) carries the corner's real lifecycle and
+    // stays; the presence square next to the agent name does not.
+    expect(chatSource).not.toContain('corner-header-presence');
+    expect(chatSource).not.toContain('AgentPresenceLight');
+    expect(chatSource).not.toContain('cornerAgentOnline');
+    expect(chatSource).toContain('testID="corner-view-status"');
+  });
 });

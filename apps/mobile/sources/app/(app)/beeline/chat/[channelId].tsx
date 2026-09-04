@@ -263,37 +263,6 @@ function durableFactLine(message: ChatDisplayMessage): string {
   return `${glyph} ${label}${step?.reason ? ` · ${step.reason}` : ''}`;
 }
 
-/**
- * Memoized: rendered once per agent transcript row inside FlatList's
- * renderItem, which is recreated on every presence tick — without this,
- * every row's presence dot re-renders even when only one other agent's
- * status actually changed. `online` is the only prop, so a shallow compare
- * bails correctly whenever this row's own agent status is unchanged.
- */
-const AgentPresenceLight = React.memo(function AgentPresenceLight({
-  decorative = false,
-  online,
-  testID,
-}: {
-  decorative?: boolean;
-  online: boolean;
-  testID?: string;
-}) {
-  return (
-    <View
-      accessibilityElementsHidden={decorative}
-      accessibilityLabel={decorative ? undefined : online ? 'Agent online' : 'Agent offline'}
-      accessibilityRole={decorative ? undefined : 'image'}
-      accessible={!decorative}
-      importantForAccessibility={decorative ? 'no' : 'auto'}
-      style={[
-        styles.agentPresenceLight,
-        online ? styles.agentPresenceOnline : styles.agentPresenceOffline,
-      ]}
-      testID={testID}
-    />
-  );
-});
 export default function BuzzChat() {
   const { theme } = useUnistyles();
   // `parent`/`title` are hints, not authority: every surface that opens a
@@ -1347,14 +1316,6 @@ export default function BuzzChat() {
         participantsHydrated,
       )
     : undefined;
-  const cornerAgentOnline = Boolean(
-    cornerAgentPubkey &&
-    isAgentPresenceOnlineWithReconnectGrace(
-      agentPresences[cornerAgentPubkey],
-      presenceNow,
-      presenceReconnectGrace[cornerAgentPubkey],
-    ),
-  );
   const visibleMessages = useMemo(
     () => projectActiveTurnStream(messages, activeAgentTurn, isArchived),
     [activeAgentTurn, isArchived, messages],
@@ -3099,9 +3060,6 @@ export default function BuzzChat() {
                 <Text numberOfLines={1} style={styles.cornerHeaderAgent}>
                   {(cornerAgentDisplay?.name ?? 'AGENT').toUpperCase()}
                 </Text>
-                {cornerAgentPubkey && (
-                  <AgentPresenceLight online={cornerAgentOnline} testID="corner-header-presence" />
-                )}
                 <CornerGlyph
                   status={displayedCornerStatus}
                   style={styles.cornerHeaderState}
@@ -4391,15 +4349,6 @@ const styles = StyleSheet.create((theme) => {
       marginBottom: 20,
     },
 
-    agentPresenceLight: {
-      width: 9,
-      height: 9,
-      borderRadius: groknight.radius,
-      borderWidth: 1,
-      borderColor: groknight.textSecondary,
-    },
-    agentPresenceOnline: { backgroundColor: groknight.textSecondary },
-    agentPresenceOffline: { backgroundColor: 'transparent' },
     // ── Archived notice ─────────────────────────────────────────────
     archivedBubble: {
       paddingVertical: 8,

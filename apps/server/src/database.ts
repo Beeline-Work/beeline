@@ -239,6 +239,9 @@ CREATE TABLE IF NOT EXISTS workspaces (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
+-- Retained but unused: the workspace-level seeded-souls switch was removed
+-- (C99); every agent now always carries its seeded soul as before that
+-- switch existed. Dropping the column is left for a later migration.
 ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS seeded_souls_enabled boolean NOT NULL DEFAULT true;
 
 CREATE TABLE IF NOT EXISTS rooms (

@@ -1419,7 +1419,7 @@ describe('monolith integration', () => {
     );
   });
 
-  it('lets a Workspace manager switch seeded souls off for everyone in it', async () => {
+  it('always hands an agent its seeded soul, at both daemon seams (no Workspace switch)', async () => {
     await database.query(`UPDATE agents SET soul=$2::jsonb WHERE agent_id=$1`, [
       AGENT,
       JSON.stringify({ name: 'Bee', instructions: 'You are a fox.', avatarSeed: AGENT }),
@@ -1437,35 +1437,12 @@ describe('monolith integration', () => {
         ).json()) as { members: Array<{ identityId: string; soul?: unknown }> }
       ).members.find((member) => member.identityId === AGENT)?.soul;
 
-    // On by default.
     const view = (await (await request(`/v1/phone/workspaces/${WORKSPACE}`)).json()) as {
-      managerSettings?: { seededSouls?: boolean };
+      managerSettings?: { visibility?: string };
     };
-    expect(view.managerSettings?.seededSouls).toBe(true);
+    expect(view.managerSettings).toEqual({ visibility: expect.any(String) });
     expect(await soulOf()).toMatchObject({ instructions: 'You are a fox.' });
     expect(await rosterSoulOf()).toBeDefined();
-
-    expect(
-      (await operation('updateWorkspace', { workspaceId: WORKSPACE, seededSouls: false })).status,
-    ).toBe(204);
-
-    // Off: the daemon is handed no persona at all, from either seam, and the
-    // stored soul is preserved for when the switch comes back.
-    expect(await soulOf()).toBeUndefined();
-    expect(await rosterSoulOf()).toBeUndefined();
-    expect(
-      (
-        await database.query<{ soul: { instructions: string } }>(
-          `SELECT soul FROM agents WHERE agent_id=$1`,
-          [AGENT],
-        )
-      ).rows[0]?.soul.instructions,
-    ).toBe('You are a fox.');
-
-    expect(
-      (await operation('updateWorkspace', { workspaceId: WORKSPACE, seededSouls: true })).status,
-    ).toBe(204);
-    expect(await soulOf()).toMatchObject({ instructions: 'You are a fox.' });
   });
 
   it('creates Rooms with or without an installed repository binding', async () => {

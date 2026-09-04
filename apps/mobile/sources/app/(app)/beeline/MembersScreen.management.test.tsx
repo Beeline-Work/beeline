@@ -78,13 +78,6 @@ const phoneOperation = vi.hoisted(() =>
       };
       return { grantId: input.grantId, status: 'revoked', roomId: 'room' };
     }
-    if (name === 'updateWorkspace') {
-      state.workspace = {
-        ...state.workspace,
-        managerSettings: { ...state.workspace.managerSettings, seededSouls: input.seededSouls },
-      };
-      return undefined;
-    }
     if (name !== 'updateAgentYolo') throw new Error(`unexpected operation ${name}`);
     state.agent = {
       ...state.agent,
@@ -276,7 +269,7 @@ function baseWorkspace(viewerRole: 'owner' | 'admin' = 'owner') {
         presence: { status: 'online', observedAt: 1 },
       },
     ],
-    managerSettings: { visibility: 'invite-only', seededSouls: true },
+    managerSettings: { visibility: 'invite-only' },
     membersTruncated: false,
     agentsTruncated: false,
     viewer: {
@@ -667,37 +660,6 @@ describe('Members workspace management', () => {
     expect(
       renderer.root.findByProps({ testID: 'agent-soul-copy' }).props.children,
     ).toBe(state.agent.seededSoul);
-  });
-
-  it('turns seeded souls off for the whole Workspace from one switch', async () => {
-    const renderer = await render();
-    const control = () =>
-      renderer.root.findByProps({ testID: 'workspace-seeded-souls-switch' }).props;
-    expect(control().value).toBe(true);
-    await act(async () => {
-      await control().onValueChange(false);
-    });
-    expect(phoneOperation).toHaveBeenCalledWith('updateWorkspace', {
-      workspaceId: WORKSPACE,
-      seededSouls: false,
-    });
-    expect(control().value).toBe(false);
-  });
-
-  it('shows the Workspace soul switch to a manager only', async () => {
-    const renderer = await render();
-    expect(renderer.root.findAllByProps({ testID: 'workspace-seeded-souls' }).length).toBeGreaterThan(0);
-
-    state.workspace = {
-      ...baseWorkspace(),
-      viewer: {
-        identity: { pubkey: VIEWER, kind: 'human', name: 'Viewer' },
-        role: 'member',
-        permissions: { send: true, manage: false },
-      },
-    };
-    const memberView = await render();
-    expect(memberView.root.findAllByProps({ testID: 'workspace-seeded-souls' })).toHaveLength(0);
   });
 
   it('uses pencil and close glyph controls instead of boxed rename and close actions', async () => {

@@ -545,6 +545,21 @@ describe('one-line ledger projection', () => {
     ]);
   });
 
+  it('collapses a whole path to its last segment, head included (C88)', () => {
+    // `node_modules/.bin/prettier` once came out as `node_modulesprettier`:
+    // only the slashed tail was matched, so the head was left glued on.
+    const turn = buildTurnActivity([
+      {
+        kind: 'tool',
+        id: 'fmt',
+        title: 'Ran node_modules/.bin/prettier --write sources',
+        toolKind: 'execute',
+      },
+    ]);
+    expect(turn.steps[0]?.label).not.toContain('node_modulesprettier');
+    expect(turn.steps[0]?.label).toContain('prettier');
+  });
+
   it('caps every derived label at forty characters', () => {
     const turn = buildTurnActivity([
       {

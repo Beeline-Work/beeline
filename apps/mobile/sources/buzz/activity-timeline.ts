@@ -124,8 +124,14 @@ function cleanTitle(value: string): string {
     .replace(/^\*\*|\*\*$/g, '');
 }
 
+/**
+ * A path collapses to its last segment — the WHOLE path, including a leading
+ * bare segment. Matching only the slashed tail left the head behind and glued
+ * it to the file name: `node_modules/.bin/prettier` came out as
+ * `node_modulesprettier` (captain report C88).
+ */
 function redactPaths(value: string): string {
-  return value.replace(/(?:file:\/\/)?(?:\/[\w.@~+%=,:-]+)+/g, (path) => {
+  return value.replace(/(?:file:\/\/)?(?:[\w.@~+%=,:-]+)?(?:\/[\w.@~+%=,:-]+)+/g, (path) => {
     const parts = path
       .replace(/^file:\/\//, '')
       .split('/')

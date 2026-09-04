@@ -125,13 +125,28 @@ including a single file edit, landing stage, or thought receipt, defaults to one
 compact mono disclosure: attribution, distinct step labels, thought duration
 when known, and the right-edge stamp all share one baseline. File edits are
 ordinary machine steps, never a separate file card or title block; real user
-attachments keep their attachment rows. Expanding reveals every tool call and
-thought as the existing 44pt row with its restrained kind glyph, verb-object
-label, quiet verdict, inline distilled failure reason when needed, and tabular
-duration when supplied. Tapping a step opens its complete, selectable raw output
-in `HullActionSheet`, never as inline multiline content. There are no tool
-counters, file-count badges, title/body stacks, or failure chips; brass is spent
-only on the failure cross.
+attachments keep their attachment rows.
+
+**Expanding a machine run is one line per call, and opening a call is its
+output.** Three levels — fold, line, detail — and each says something the level
+above it did not. A call's line is a **verb** in a fixed narrow column (mono,
+dim chrome: `ran`, `read`, `wrote`, `found`, `git`, or an MCP tool's own short
+name), the **object** it acted on at the content tone, a **duration** only once
+it passes a second (mono, tabular), and an **outcome** pinned right that is
+*nothing at all* when the call succeeded — absence reads faster than a tick —
+`failed` in the diff red, or `running` in brass. The object comes from the
+command; the harness's own title is a last resort, because a harness will
+happily label a directory listing "Reviewed the current changes". A long
+command truncates in the MIDDLE: the flags at the end are the half that says
+which command this was. Opening one call shows its real output, capped to a few
+lines with the rest one tap away, mono at the dim tone — and if all the wire
+handed us was a transport envelope with a terminal id, it shows *nothing*,
+because a machine identifier is not a result. A failed call arrives already
+open, and the fold counts it. Nothing is coloured by tool kind, the command is
+never printed twice, and there are no tool counters, file-count badges,
+title/body stacks, or failure chips (`buzz/tool-call-row.ts` decides what a
+call is, `components/buzz/ActivityTimeline.tsx` draws it — captain report
+C88).
 
 A wall of git/CLI output an agent pasted into its own narration remains a
 separate ghost line, projected by `buzz/ledger-text.ts`; this rendering change
@@ -506,7 +521,9 @@ backgrounded app, and the settled row all show the same completed static mark.
    something else first.
 2. **Diff green/red** (`#3FB950`/`#F85149`, `groknight.diffAdded`/
    `diffRemoved`) exist only inside diff/change-review views, redundant with
-   `+`/`−` prefixes and `A`/`M`/`D` status letters. This was a deliberate
+   `+`/`−` prefixes and `A`/`M`/`D` status letters. Red is also the failed
+   tool call and its error line in an expanded machine run (C88) — redundant
+   with the word `failed` and with the row opening itself. This was a deliberate
    captain override of the zero-chroma rule for one universally-understood
    convention — it is not an opening to add more domain-convention colors
    elsewhere without the same explicit sign-off.

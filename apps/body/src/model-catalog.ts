@@ -26,20 +26,26 @@ type ModelCatalogAgent = Pick<AgentCommand, 'command' | 'args'> &
   Partial<Pick<AgentCommand, 'kind'>>;
 
 /**
- * A catalog read needs the selected provider, not the operator's normal Goose
- * session profile. Goose loads every enabled extension from its config during
- * `session/new`; a slow or wedged stdio extension therefore used to make the
- * connect wizard hang even though no tools are needed to enumerate models.
- * `GOOSE_PATH_ROOT` is Goose's supported per-process config/data/state root,
- * so a probe gets a clean disposable profile without touching the operator's
- * config or changing any other harness.
+ * A catalog read against a provider the caller selected needs that provider,
+ * not the operator's normal Goose session profile: Goose loads every enabled
+ * extension from its config during `session/new`, and a slow or wedged stdio
+ * extension used to make the connect wizard hang even though no tools are
+ * needed to enumerate models. `GOOSE_PATH_ROOT` is Goose's supported
+ * per-process config/data/state root, so that read gets a clean disposable
+ * profile without touching the operator's config or changing any other
+ * harness.
+ *
+ * With no provider handed over, the operator's own config IS the thing under
+ * test — connect's discovery probe asks exactly whether Goose already holds a
+ * provider of its own, and a disposable profile would answer "no" every time.
+ * That read is bounded by a timeout instead (see `withAgentModelCatalog`).
  */
 export function modelCatalogProbeEnvironment(
   agent: ModelCatalogAgent,
   agentEnv: Record<string, string>,
   scratchCwd: string,
 ): Record<string, string> {
-  if (agent.kind !== 'goose') return agentEnv;
+  if (agent.kind !== 'goose' || !agentEnv.GOOSE_PROVIDER) return agentEnv;
   return {
     ...agentEnv,
     GOOSE_PATH_ROOT: resolve(scratchCwd, 'goose'),
@@ -62,6 +68,17 @@ export function filterAgentModelCatalog(
   return agent.kind === 'goose' ? allowed : filterModelOptionsByCredentials(allowed, agentEnv);
 }
 
+/**
+ * Whole-read deadline for a catalog probe. Connect's discovery probe sets one
+ * so a harness that cannot answer costs the wizard seconds rather than the
+ * session; the deadline is spent across the ACP handshake and `session/new`,
+ * and the client is still stopped and the scratch directory still removed
+ * when it expires. Omitted, both requests keep their own 60s defaults.
+ */
+export interface ModelCatalogProbeLimits {
+  timeoutMs?: number;
+}
+
 async function withAgentModelCatalog<T>(
   agent: ModelCatalogAgent,
   agentEnv: Record<string, string>,
@@ -72,7 +89,11 @@ async function withAgentModelCatalog<T>(
     raw: AgentModelConfigOption[];
     catalog: AgentModelConfigOption[];
   }) => Promise<T>,
+  limits: ModelCatalogProbeLimits = {},
 ): Promise<T> {
+  const deadline = limits.timeoutMs === undefined ? undefined : Date.now() + limits.timeoutMs;
+  const remaining = (): number | undefined =>
+    deadline === undefined ? undefined : Math.max(1, deadline - Date.now());
   const scratchCwd = await mkdtemp(resolve(tmpdir(), 'beeline-pair-model-check-'));
   const probeEnv = modelCatalogProbeEnvironment(agent, agentEnv, scratchCwd);
   const client = new AcpClient({
@@ -88,8 +109,12 @@ async function withAgentModelCatalog<T>(
     inheritProcessEnv: true,
   });
   try {
-    await client.start();
-    const { sessionId, raw: sessionRaw } = await client.sessionNew({ cwd: scratchCwd });
+    await client.start(remaining() ?? 60_000);
+    const sessionTimeout = remaining();
+    const { sessionId, raw: sessionRaw } = await client.sessionNew({
+      cwd: scratchCwd,
+      ...(sessionTimeout === undefined ? {} : { timeoutMs: sessionTimeout }),
+    });
     const raw = parseAdvertisedConfigOptions(
       sessionRaw,
       selection?.model,
@@ -112,11 +137,15 @@ export async function fetchAgentModelCatalog(
   agent: ModelCatalogAgent,
   agentEnv: Record<string, string>,
   selection?: { model?: string; effort?: string },
+  limits: ModelCatalogProbeLimits = {},
 ): Promise<{ raw: AgentModelConfigOption[]; catalog: AgentModelConfigOption[] }> {
-  return withAgentModelCatalog(agent, agentEnv, selection, async ({ raw, catalog }) => ({
-    raw,
-    catalog,
-  }));
+  return withAgentModelCatalog(
+    agent,
+    agentEnv,
+    selection,
+    async ({ raw, catalog }) => ({ raw, catalog }),
+    limits,
+  );
 }
 
 /**

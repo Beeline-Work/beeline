@@ -476,7 +476,11 @@ export class MonolithRoomTurnLoop {
         roomId: this.options.roomId,
         workspaceId: this.options.workspaceId,
         attachRoot: this.options.cwd,
-        ...(tmpDir ? { attachScratchRoot: tmpDir } : {}),
+        // The whole per-session overlay, not an enumerated subset: the agent
+        // never picks where a harness writes a file it generates (grok's own
+        // images dir, say), so anything inside the overlay it could possibly
+        // have written must be attachable, whatever subdirectory that is.
+        attachScratchRoot: this.options.config.agentHomeRoot ?? tmpDir,
         directMessage,
         ...(this.options.grantRunnerEndpoint
           ? { grantRunner: this.options.grantRunnerEndpoint }

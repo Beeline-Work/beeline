@@ -31,6 +31,7 @@ import { beelineAgentMcpServer, readOnlyMcpServer } from './room-session.js';
 import {
   isMountedMcpToolPermissionRequest,
   isSquireMcpPermissionRequest,
+  ROOM_MOUNTED_MCP_SERVERS,
 } from './read-only-policy.js';
 import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
 import type { BodyConfig } from './config.js';
@@ -78,14 +79,20 @@ type RoomAuthority = DaemonOperationMap['getRoomAuthority']['output'];
  * read-only sandbox is the boundary, not the tool list; Trusty Squire stays
  * broker-gated on the host and is never session-mounted.
  */
-export function isRoomMcpPermissionRequest(request: AcpPermissionRequest): boolean {
+export function isRoomMcpPermissionRequest(
+  request: AcpPermissionRequest,
+  mountedServers: readonly string[] = ROOM_MOUNTED_MCP_SERVERS,
+): boolean {
   if (isSquireMcpPermissionRequest(request)) return false;
-  return isMountedMcpToolPermissionRequest(request);
+  return isMountedMcpToolPermissionRequest(request, mountedServers);
 }
 
 /** The Room ACP client applies this host-owned MCP allowlist fail-closed. */
-export function roomMcpPermissionDecision(request: AcpPermissionRequest): AcpPermissionDecision {
-  return isRoomMcpPermissionRequest(request) ? 'allow' : 'reject';
+export function roomMcpPermissionDecision(
+  request: AcpPermissionRequest,
+  mountedServers: readonly string[] = ROOM_MOUNTED_MCP_SERVERS,
+): AcpPermissionDecision {
+  return isRoomMcpPermissionRequest(request, mountedServers) ? 'allow' : 'reject';
 }
 
 /** Agents are server-validated Room members; human turns additionally honor host access policy. */
@@ -454,22 +461,9 @@ export class MonolithRoomTurnLoop {
       command,
       args: agentArgs,
     });
-    const clientOptions: ConstructorParameters<typeof AcpClient>[0] = {
-      agentCommand: spawnCommand.command,
-      agentArgs: spawnCommand.args,
-      agentEnv,
-      agentCwd: this.options.cwd,
-      agentLabel: command,
-      // `bwrapPath` is set only when `detectBwrapSandbox` passed its self-test
-      // (`config.ts`), which is exactly when `wrapAgentCommand` above wraps.
-      osSandbox: Boolean(this.options.config.bwrapPath),
-      autoApprovePermissions: false,
-      permissionAllowlist: isRoomMcpPermissionRequest,
-    };
-    this.client = (this.options.createAcpClient ?? ((value) => new AcpClient(value)))(
-      clientOptions,
-    );
-    await this.client.start();
+    // Built before the client: the permission allowlist resolves a harness's
+    // own tool-dispatch envelope (grok's `use_tool`) against exactly the
+    // servers this session mounts, so it has to know them up front.
     const servers: McpServerWire[] = [
       readOnlyMcpServer(this.options.config, this.options.cwd),
       beelineAgentMcpServer(this.options.config, this.options.api, {
@@ -487,6 +481,23 @@ export class MonolithRoomTurnLoop {
           : {}),
       }),
     ];
+    const mountedServers = servers.map((server) => server.name);
+    const clientOptions: ConstructorParameters<typeof AcpClient>[0] = {
+      agentCommand: spawnCommand.command,
+      agentArgs: spawnCommand.args,
+      agentEnv,
+      agentCwd: this.options.cwd,
+      agentLabel: command,
+      // `bwrapPath` is set only when `detectBwrapSandbox` passed its self-test
+      // (`config.ts`), which is exactly when `wrapAgentCommand` above wraps.
+      osSandbox: Boolean(this.options.config.bwrapPath),
+      autoApprovePermissions: false,
+      permissionAllowlist: (request) => isRoomMcpPermissionRequest(request, mountedServers),
+    };
+    this.client = (this.options.createAcpClient ?? ((value) => new AcpClient(value)))(
+      clientOptions,
+    );
+    await this.client.start();
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
     const persona = configuration.soul ?? self?.soul;
     const identityInstructions = `Your Beeline Room identity is ${self?.name ?? this.agent.name}.`;

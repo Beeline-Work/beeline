@@ -125,7 +125,12 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
             { key: 'people', label: 'People', options: rosterSections.people },
             { key: 'agents', label: 'Agents', options: rosterSections.agents },
           ].map((section, sectionIndex) =>
-            section.options.length > 0 ? (
+            // A manager keeps the section head of a top-level Room even when
+            // the section is empty, because the head is where the add control
+            // lives: with the Room header's `+` retired (C83), an agentless
+            // Room would otherwise have no way to reach an agent at all.
+            section.options.length > 0 ||
+            (canManage && !parentChannelId && !isDirectMessage) ? (
               <View key={section.key}>
                 <View
                   style={[

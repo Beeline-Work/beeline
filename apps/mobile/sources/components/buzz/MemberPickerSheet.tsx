@@ -7,7 +7,10 @@ import { HullActionSheet } from './HullActionSheet';
 import { HullModal } from './HullDialog';
 import { IdentityMark } from './IdentityMark';
 import { BrassButton, PixelLoader } from './MonoHull';
-import { RoomMemberPickerActions } from './RoomMemberPickerActions';
+import {
+  RoomMemberPickerActions,
+  type MemberPickerKind,
+} from './RoomMemberPickerActions';
 
 export type MemberPickerCandidate = {
   pubkey: string;
@@ -31,7 +34,13 @@ type MemberPickerSheetProps = {
    */
   candidates: readonly MemberPickerCandidate[] | null | undefined;
   /** Narrow the checkbox list to one kind (the /invite and /add-agent verbs). */
-  kind?: 'person' | 'agent' | null;
+  kind?: MemberPickerKind;
+  /**
+   * Everyone of that kind in the Workspace besides the viewer, in-Room or
+   * not. An empty list with peers is "already here"; without them it is an
+   * empty Workspace (C83).
+   */
+  workspacePeerCount?: number;
   canManage: boolean;
   busy: boolean;
   error: string | null;
@@ -58,6 +67,7 @@ export function MemberPickerSheet({
   onClose,
   candidates,
   kind = null,
+  workspacePeerCount = 0,
   canManage,
   busy,
   error,
@@ -158,6 +168,8 @@ export function MemberPickerSheet({
             addableCount={visibleCandidates.length}
             busy={busy}
             canManage={canManage}
+            kind={kind}
+            workspacePeerCount={workspacePeerCount}
             onAddAgent={onConnectAgent}
             onInvitePerson={onInvitePerson}
             showEmpty={roomInScope && candidates !== null}

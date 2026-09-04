@@ -178,6 +178,29 @@ describe('MemberPickerSheet', () => {
     expect(has(renderer, 'room-member-picker-empty')).toBe(false);
   });
 
+  it('reports a full Room and an empty Workspace as the two different facts (C83)', () => {
+    // Every Workspace agent is already in the Room: the list is empty, but
+    // the Workspace is not.
+    const full = render(
+      <MemberPickerSheet {...baseProps()} candidates={[]} kind="agent" workspacePeerCount={2} />,
+    );
+    expect(
+      full.root.findAllByProps({ testID: 'room-member-picker-empty' }).at(-1)!.props.children,
+    ).toBe('All the agents in this workspace are already here.');
+
+    const alone = render(
+      <MemberPickerSheet {...baseProps()} candidates={[]} kind="agent" workspacePeerCount={0} />,
+    );
+    expect(
+      alone.root.findAllByProps({ testID: 'room-member-picker-empty' }).at(-1)!.props.children,
+    ).toBe('No other agents in this workspace yet.');
+    // The two Workspace-level entries stay under the sentence in both cases.
+    for (const renderer of [full, alone]) {
+      expect(has(renderer, 'room-member-picker-invite-person')).toBe(true);
+      expect(has(renderer, 'room-member-picker-add-agent')).toBe(true);
+    }
+  });
+
   it('carries only the two Workspace-level ways in when no Room is in scope', () => {
     const renderer = render(
       <MemberPickerSheet

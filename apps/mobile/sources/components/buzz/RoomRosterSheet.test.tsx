@@ -245,6 +245,29 @@ describe('RoomRosterSheet', () => {
     expect(onAddAgents).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps an empty section’s head so a manager can still add into it (C83)', () => {
+    // The Room header's `+` is gone, so an agentless Room reaches an agent
+    // only through this head. It stays a manager-of-a-top-level-Room affair.
+    const onAddAgents = vi.fn();
+    const empty = render(
+      sheet({ onAddAgents, rosterSections: { people: rosterSections.people, agents: [] } }),
+    );
+    const head = empty.root.findAllByProps({ testID: 'room-roster-agents-head' }).at(-1)!;
+    expect(head.props.children).toEqual(['Agents', ' ', 0]);
+    act(() =>
+      empty.root.findByProps({ testID: 'room-roster-add-agents' }).props.onPress(),
+    );
+    expect(onAddAgents).toHaveBeenCalledTimes(1);
+
+    // Not in a DM, and not in a corner: neither has a section to add into.
+    for (const scope of [{ isDirectMessage: true }, { parentChannelId: 'parent' }]) {
+      const scoped = render(
+        sheet({ ...scope, rosterSections: { people: rosterSections.people, agents: [] } }),
+      );
+      expect(scoped.root.findAllByProps({ testID: 'room-roster-agents-head' })).toHaveLength(0);
+    }
+  });
+
   it('shows no + on either section head to a viewer who cannot manage members', () => {
     const renderer = render(sheet({ canManage: false }));
     expect(renderer.root.findAllByProps({ testID: 'room-roster-add-people' })).toHaveLength(0);

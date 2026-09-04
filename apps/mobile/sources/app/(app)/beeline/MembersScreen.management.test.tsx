@@ -19,6 +19,10 @@ const modal = vi.hoisted(() => ({
 const client = vi.hoisted(() => ({
   surfaceSubscribe: vi.fn(async () => vi.fn()),
   createInvite: vi.fn(async () => ({ token: `inv_${'e'.repeat(64)}` })),
+  createAgentPairingCode: vi.fn(async () => ({
+    code: '1234ABCD-5678EF90',
+    expiresAt: 2_000_000_000,
+  })),
   addMember: vi.fn(async (_workspaceId: string, pubkey: string, role: string) => {
     state.workspace = {
       ...state.workspace,
@@ -346,16 +350,12 @@ describe('Members workspace management', () => {
     expect(agentRow.findAllByType('Text' as any)[1].props.children).toBe('@clara · member · online');
   });
 
-  it('opens the one picker from the brass action and shares a real Workspace invite through it', async () => {
+  it('shares a real Workspace invite directly from the PEOPLE section head +', async () => {
     const renderer = await render();
     expect(sheet(renderer).props.visible).toBe(false);
     // No Room is in scope here: the sheet carries only the Workspace-level ways in.
     expect(sheet(renderer).props.candidates).toBeUndefined();
-    await press(renderer, 'add-members');
-    expect(sheet(renderer).props.visible).toBe(true);
-    await act(async () => {
-      await sheet(renderer).props.onInvitePerson();
-    });
+    await press(renderer, 'members-add-people');
 
     expect(client.createInvite).toHaveBeenCalledWith(WORKSPACE);
     expect(share).toHaveBeenCalledWith({
@@ -363,6 +363,40 @@ describe('Members workspace management', () => {
     });
     expect(renderer.root.findAllByProps({ testID: 'invite-person' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'invite-agent' })).toHaveLength(0);
+  });
+
+  it('opens the pairing sheet directly from the AGENTS section head +', async () => {
+    const renderer = await render();
+    expect(sheet(renderer).props.visible).toBe(false);
+    await press(renderer, 'members-add-agents');
+    expect(sheet(renderer).props.visible).toBe(true);
+    expect(client.createAgentPairingCode).toHaveBeenCalledWith(WORKSPACE);
+  });
+
+  it('gives a non-manager neither section head + and no full-width brass row', async () => {
+    state.workspace = {
+      ...baseWorkspace(),
+      viewer: {
+        ...baseWorkspace().viewer,
+        role: 'member',
+        permissions: { send: true, manage: false },
+      },
+    };
+    const renderer = await render();
+    expect(renderer.root.findAllByProps({ testID: 'members-add-people' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'members-add-agents' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'add-members' })).toHaveLength(0);
+    expect(renderer.root.findAllByType('BrassButton' as any)).toHaveLength(0);
+  });
+
+  it('names the action and the kind on each section head +, with a 44pt hit area', async () => {
+    const renderer = await render();
+    const people = renderer.root.findByProps({ testID: 'members-add-people' });
+    const agents = renderer.root.findByProps({ testID: 'members-add-agents' });
+    expect(people.props.accessibilityLabel).toBe('Add people');
+    expect(agents.props.accessibilityLabel).toBe('Add agents');
+    expect(people.props.style.minHeight).toBeGreaterThanOrEqual(44);
+    expect(agents.props.style.minHeight).toBeGreaterThanOrEqual(44);
   });
 
   it('shows the word alone over counted section heads and no loose total (C73, C79)', async () => {

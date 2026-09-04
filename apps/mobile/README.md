@@ -17,22 +17,25 @@ production OTA channels.
 
 ## OTA release governor
 
-Every `main` commit enters the cumulative delivery ledger. An owner or firstmate
-can also dispatch [`mobile-ota.yml`](../../.github/workflows/mobile-ota.yml) to
-deliver the current `main` immediately. The self-hosted release leg installs and
-builds the SDKs, validates the app beside the immutable `beta` export, and
-republishes that exact group to `production`. The release is delivered when the
+Every `main` commit enters the cumulative delivery ledger. The one release
+button is [`unified-release.yml`](../../.github/workflows/unified-release.yml);
+its app leg is the composite action
+[`mobile-ota-leg`](../../.github/actions/mobile-ota-leg/action.yml), called
+once to build and once to promote. The self-hosted leg installs and builds the
+SDKs, validates the app beside the immutable `beta` export, and republishes
+that exact group to `production`. The release is delivered when the
 server and daemon health record and the OTA promotion ledger agree on the same
 version and source SHA; an owner receipt is incorporated when it is available.
 No emulator or device rehearsal runs in GitHub Actions.
 
 Every successful release stores `candidateGroupId`, the republished production
-group, and `previousProductionGroupId` in the `mobile-ota-ledger-<run-id>`
+group, and `previousProductionGroupId` in the `mobile-ota-promoted-<sha>`
 workflow artifact. Manual recovery lives in the clearly named
 [`mobile-ota-rollback.yml`](../../.github/workflows/mobile-ota-rollback.yml);
-`rollback_group` can override the recorded predecessor. Receipt-only checks
-live in [`mobile-ota-reconcile.yml`](../../.github/workflows/mobile-ota-reconcile.yml),
-whose name and summary explicitly say that green does not mean a release.
+`rollback_group` can override the recorded predecessor. The owner device
+receipt is recorded by a bounded step of the release's own delivery report; it
+never changes the delivery verdict, and a receipt that has not arrived yet is
+confirmed by the next release's promote step.
 The runtime version is the Expo native fingerprint (`runtimeVersion: { policy:
 "fingerprint" }` in `app.config.js`; `fingerprint.config.js` keeps the stamp
 identical across the store, sideload, `beta-apk`, and `eas update` artifacts of

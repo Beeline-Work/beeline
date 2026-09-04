@@ -1,49 +1,78 @@
-name: Client truth gates
+# The five PR gates in one file (was typecheck.yml, body-tests.yml,
+# client-truth-gates.yml, workflow-lint.yml, auth-image.yml). Check names are
+# the job `name:`s below and are unchanged: TYPECHECK, BODY SUITE, MOBILE
+# SUITE, MOBILE-EXPORT REACHABILITY, PRODUCTION-CORPUS REPLAY, FRAME-BUDGET,
+# STATE-UPGRADE, ACTIONLINT, Build auth container, Detect changes.
+#
+# One `changes` job maps the diff to the gates it can affect; a gate whose
+# paths are untouched is skipped, and a skipped job still posts a passing
+# check, so an unrelated diff never blocks a merge. TYPECHECK alone has no
+# path filter: a type error can be introduced by two independently green PRs
+# merging cleanly (see #850 + #851), so it observes the whole workspace graph.
+#
+# `gh workflow run checks.yml -f suite=<name>` runs one gate on demand
+# (default `all`); the four heavy client suites run on the self-hosted
+# production-squire runner so they never consume hosted minutes or queue
+# behind the production host's release work.
+name: Checks
 
 on:
   pull_request: {}
   workflow_dispatch:
     inputs:
       suite:
-        description: Heavy suite to run on the self-hosted production-squire runner
+        description: Gate to run on demand
         type: choice
         default: all
         options:
           - all
+          - typecheck
+          - body-suite
+          - mobile-suite
           - mobile-export-reachability
           - production-corpus-replay
           - frame-budget
           - state-upgrade
+          - actionlint
+          - auth-image
 
 permissions:
   contents: read
   pull-requests: read
 
 jobs:
-  # The path filter keeps the legacy required checks present on a relevant PR
-  # without starting their expensive suites. Those suites are explicitly
-  # dispatched and run on production-squire, so they cannot consume hosted
-  # minutes or queue behind the production host's release work.
   changes:
     name: Detect changes
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
+      body: ${{ steps.filter.outputs.body }}
       mobileSuite: ${{ steps.filter.outputs.mobileSuite }}
       mobileExportReachability: ${{ steps.filter.outputs.mobileExportReachability }}
       productionCorpusReplay: ${{ steps.filter.outputs.productionCorpusReplay }}
       frameBudget: ${{ steps.filter.outputs.frameBudget }}
       stateUpgrade: ${{ steps.filter.outputs.stateUpgrade }}
+      workflows: ${{ steps.filter.outputs.workflows }}
+      authImage: ${{ steps.filter.outputs.authImage }}
     steps:
       - uses: dorny/paths-filter@v3
         id: filter
-        if: github.event_name == 'pull_request'
         with:
           # Each list is written out flat and explicit per job rather than
           # composed from YAML anchors, so the diff-membership logic never
           # depends on how dorny/paths-filter treats a nested-list merge.
           filters: |
+            body:
+              - 'apps/body/**'
+              - 'packages/nostr/**'
+              - 'packages/buzz-client/**'
+              - 'apps/gate/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'tsconfig.base.json'
+              - 'turbo.json'
+              - '.github/workflows/checks.yml'
             mobileSuite:
               - 'packages/nostr/**'
               - 'packages/api-contract/**'
@@ -53,7 +82,7 @@ jobs:
               - 'package-lock.json'
               - 'tsconfig.base.json'
               - 'turbo.json'
-              - '.github/workflows/client-truth-gates.yml'
+              - '.github/workflows/checks.yml'
             mobileExportReachability:
               - 'packages/nostr/**'
               - 'packages/buzz-client/**'
@@ -68,7 +97,7 @@ jobs:
               - 'package-lock.json'
               - 'tsconfig.base.json'
               - 'turbo.json'
-              - '.github/workflows/client-truth-gates.yml'
+              - '.github/workflows/checks.yml'
             productionCorpusReplay:
               - 'packages/nostr/**'
               - 'packages/buzz-client/**'
@@ -79,7 +108,7 @@ jobs:
               - 'package-lock.json'
               - 'tsconfig.base.json'
               - 'turbo.json'
-              - '.github/workflows/client-truth-gates.yml'
+              - '.github/workflows/checks.yml'
             frameBudget:
               - 'packages/nostr/**'
               - 'packages/buzz-client/**'
@@ -94,7 +123,7 @@ jobs:
               - 'package-lock.json'
               - 'tsconfig.base.json'
               - 'turbo.json'
-              - '.github/workflows/client-truth-gates.yml'
+              - '.github/workflows/checks.yml'
             stateUpgrade:
               - 'packages/nostr/**'
               - 'packages/buzz-client/**'
@@ -113,12 +142,111 @@ jobs:
               - 'package-lock.json'
               - 'tsconfig.base.json'
               - 'turbo.json'
-              - '.github/workflows/client-truth-gates.yml'
+              - '.github/workflows/checks.yml'
+            workflows:
+              - '.github/workflows/*.yml'
+              - '.github/workflows/*.yaml'
+              - '.github/actions/**'
+              - '.github/actionlint.yaml'
+              - 'package.json'
+              - '**/*.sh'
+            authImage:
+              - '.github/workflows/checks.yml'
+              - '.dockerignore'
+              - 'apps/auth/**'
+              - 'packages/buzz-client/**'
+              - 'packages/nostr/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'tsconfig.base.json'
+
+  typecheck:
+    name: TYPECHECK
+    if: github.event_name == 'pull_request' || inputs.suite == 'all' || inputs.suite == 'typecheck'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # turbo's typecheck task depends on ^build, so every workspace's
+      # dist/ is produced before its dependents are checked.
+      - run: npx turbo run typecheck
+
+  body-suite:
+    name: BODY SUITE
+    needs: changes
+    # `!cancelled()` lets the job evaluate its own condition when `changes`
+    # was skipped (a dispatch); without it a skipped prerequisite skips this.
+    if: >-
+      !cancelled() && (
+        (github.event_name == 'pull_request' && needs.changes.outputs.body == 'true') ||
+        (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'body-suite'))
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # A hermetic suite must not react to whatever this happens to be on the
+      # runner image (a set value redirects Trusty Squire ambient-state
+      # detection at a real path outside any test's own scratch dir).
+      XDG_CONFIG_HOME: ''
+      # apps/body/README.md documents these as the standing escape hatch for
+      # a host with no cargo-built buzz-agent/buzz-dev-mcp (this monorepo
+      # vendors neither; they come from a private upstream). Point them at an
+      # inert placeholder so config/CLI-plumbing tests that only need SOME
+      # valid, immediately-exiting executable never depend on cargo tooling
+      # or a real ACP handshake. /bin/false matches this repo's existing
+      # placeholder-binary convention (e.g. `agentBinary: '/bin/false'`).
+      BUZZ_AGENT_BIN: /bin/false
+      BUZZ_DEV_MCP_BIN: /bin/false
+      BEELINE_READONLY_MCP_BIN: /bin/false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # Tests spawn fake ACP-agent scripts with a bare `#!/usr/bin/env node`
+      # shebang and an intentionally empty child environment (see
+      # apps/body/src/acp.ts's `inheritProcessEnv` doc comment) — `env`'s
+      # fallback PATH when none is set is the POSIX default (`/bin:/usr/bin`),
+      # not wherever setup-node installed this job's node.
+      - run: sudo ln -sf "$(command -v node)" /usr/bin/node
+      # Several git-backed fixtures commit as the daemon/operator without
+      # setting an identity themselves (they're proving something else).
+      - run: |
+          git config --global user.name "Body CI"
+          git config --global user.email "body-ci@users.noreply.github.com"
+      # bwrap-sandbox.test.ts's viability-detection tests need the binary on
+      # PATH; they inject a fake self-test runner, so it never has to
+      # actually build a namespace. Body's own tests that DO execute a real
+      # bwrap sandbox gate on `detectBwrapSandbox()`'s live viability probe
+      # and skip cleanly if this runner's kernel refuses unprivileged user
+      # namespaces (common under AppArmor hardening).
+      - run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      - run: npm ci
+      # apps/body imports these workspaces from their built dist, not
+      # their TS source (package.json "main"/"exports" point at dist/).
+      # The daemon API integration also imports the server harness, whose
+      # auth and phone services reach @beeline/auth/* and
+      # @beeline/push-gateway/projection. Build Body before push-gateway
+      # because push-gateway's production entry imports Body subpaths.
+      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client && npm run build -w @beeline/gate && npm run build -w @beeline/auth && npm run build -w @beeline/body && npm run build -w @beeline/push-gateway
+      - name: Run the hermetic Body suite
+        working-directory: apps/body
+        run: npx vitest run
 
   mobile-suite:
     name: MOBILE SUITE
     needs: changes
-    if: github.event_name == 'pull_request' && needs.changes.outputs.mobileSuite == 'true'
+    if: >-
+      !cancelled() && (
+        (github.event_name == 'pull_request' && needs.changes.outputs.mobileSuite == 'true') ||
+        (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'mobile-suite'))
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -145,6 +273,9 @@ jobs:
       - name: Typecheck the mobile app
         run: npm run mobile:typecheck
 
+  # The path filter keeps the heavy client checks present on a relevant PR
+  # without starting their expensive suites. Those suites are explicitly
+  # dispatched and run on production-squire.
   mobile-export-reachability:
     name: MOBILE-EXPORT REACHABILITY
     needs: changes
@@ -263,3 +394,47 @@ jobs:
         run: npm ci
       - run: npm test --prefix apps/mobile -- --run sources/buzz/surface-storage.upgrade.test.ts
       - run: npm test -w @beeline/body -- --run src/durable-state.test.ts
+
+  actionlint:
+    name: ACTIONLINT
+    needs: changes
+    if: >-
+      !cancelled() && (
+        (github.event_name == 'pull_request' && needs.changes.outputs.workflows == 'true') ||
+        (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'actionlint'))
+      )
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'beeline-production-squire' }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint GitHub Actions workflows
+        run: >-
+          docker run --rm
+          -v "$GITHUB_WORKSPACE:/repo"
+          -w /repo
+          rhysd/actionlint:1.7.7
+          -config-file .github/actionlint.yaml
+      - name: Install ShellCheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Lint tracked shell scripts
+        run: npm run lint:shell
+
+  auth-image:
+    name: Build auth container
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.authImage == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Preserve the required PR check without consuming a container runner
+        run: echo 'Auth image builds run only in the server release leg or via the on-demand self-hosted job.'
+
+  auth-image-on-demand:
+    name: Build auth container (on demand)
+    if: github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'auth-image')
+    runs-on: [self-hosted, beeline-production-squire]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build auth image
+        run: docker build -f apps/auth/Dockerfile .

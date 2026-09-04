@@ -248,16 +248,18 @@ test('daemon fleet readiness identifies every agent that is not on the exact rel
 
 test('one workflow owns parallel builds, ordered promotion, retry, and the final report', () => {
   const workflow = readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8');
-  const mobile = readFileSync(new URL('../.github/workflows/mobile-ota.yml', import.meta.url), 'utf8');
-  const daemon = readFileSync(new URL('../.github/workflows/beeline-bundle.yml', import.meta.url), 'utf8');
-  const server = readFileSync(new URL('../.github/workflows/deploy-host.yml', import.meta.url), 'utf8');
+  // The three release legs are composite actions, each called twice by the
+  // workflow above (build, then promote).
+  const mobile = readFileSync(new URL('../.github/actions/mobile-ota-leg/action.yml', import.meta.url), 'utf8');
+  const daemon = readFileSync(new URL('../.github/actions/daemon-leg/action.yml', import.meta.url), 'utf8');
+  const server = readFileSync(new URL('../.github/actions/server-leg/action.yml', import.meta.url), 'utf8');
 
   assert.match(workflow, /group: unified-production-release\s+cancel-in-progress: true/);
   assert.match(workflow, /else\s+release_version=v0\.0\.1/);
   assert.match(workflow, /app_artifact:[\s\S]*daemon_artifact:[\s\S]*server_artifact:/);
   assert.match(workflow, /retry_attempt:\s*\n\s*description: Governor-managed attempt number \(1-3\)\s*\n\s*type: string\s*\n\s*default: '1'/);
   assert.match(workflow, /app_artifact:[\s\S]*retry_attempt: \$\{\{ inputs\.retry_attempt \}\}/);
-  assert.match(mobile, /retry_attempt:\s*\n\s*type: string\s*\n\s*default: '1'/);
+  assert.match(mobile, /retry_attempt:\s*\n\s*default: '1'/);
   assert.match(workflow, /name: server-artifact-/);
   assert.match(workflow, /name: daemon-artifact-/);
   assert.match(workflow, /name: mobile-ota-candidate-/);
@@ -271,6 +273,19 @@ test('one workflow owns parallel builds, ordered promotion, retry, and the final
   );
   assert.match(workflow, /unified-release\.mjs confirm-delivery --state/);
   assert.match(workflow, /daemon: \{ version: daemon\.version, sourceSha: daemon\.sha \}/);
+  // Each leg is invoked exactly twice: one build call and one promote call.
+  for (const [action, phases] of [
+    ['./.github/actions/server-leg', ['build', 'promote']],
+    ['./.github/actions/daemon-leg', ['build', 'promote']],
+    ['./.github/actions/mobile-ota-leg', ['build', 'promote']],
+  ]) {
+    const calls = workflow.split(`uses: ${action}\n`).slice(1);
+    assert.equal(calls.length, 2, `${action} must be called exactly twice`);
+    assert.deepEqual(
+      calls.map((call) => call.match(/phase: (\w+)/)[1]),
+      phases,
+    );
+  }
   const retryJob = workflow.slice(workflow.indexOf('\n  retry:'));
   for (const job of [
     'promote_server',
@@ -283,6 +298,10 @@ test('one workflow owns parallel builds, ordered promotion, retry, and the final
     assert.match(retryJob, new RegExp(`needs\\.${job}\\.result == 'success'`));
   }
   assert.doesNotMatch(retryJob, /needs\.delivery_report\.result\s*!=\s*'success'/);
+  // The retry re-dispatches THIS workflow with the same identity, carrying
+  // the store choice so a retried release does not silently drop it.
+  assert.match(retryJob, /workflow_id: 'unified-release\.yml'/);
+  assert.match(retryJob, /store_track: process\.env\.STORE_TRACK/);
   assert.match(server, /flyctl auth whoami/);
   assert.match(server, /name: Deploy the exact release SHA to the monolith/);
   assert.match(server, /test "\$\(git rev-parse HEAD\)" = "\$RELEASE_SHA"/);
@@ -295,9 +314,12 @@ test('one workflow owns parallel builds, ordered promotion, retry, and the final
   assert.match(workflow, /deployed\.version !== version \|\| deployed\.sourceSha !== sourceSha/);
   assert.match(daemon, /https:\/\/server\.usebeeline\.app\/v1\/releases\/daemon-readiness/);
   assert.match(daemon, /unified-release\.mjs assert-daemons/);
-  assert.match(daemon, /for _ in \$\(seq 1 120\)/);
+  // A busy helper may hold its restart for the whole drain deadline, so the
+  // confirm waits 35 minutes and prints one readiness table per minute.
+  assert.match(daemon, /wait_minutes=35/);
+  assert.match(daemon, /readiness_table/);
+  assert.match(workflow, /promote_daemon:[\s\S]*?timeout-minutes: 40/);
   assert.match(daemon, /cat "\$RUNNER_TEMP\/release-readiness-error\.txt" >&2/);
-  assert.match(daemon, /cat "\$RUNNER_TEMP\/release-readiness\.json" >&2/);
   assert.doesNotMatch(daemon, /usebeeline\.app\/push\/health/);
   assert.match(workflow, /https:\/\/server\.usebeeline\.app\/v1\/releases\/daemon-readiness/);
   assert.doesNotMatch(workflow, /usebeeline\.app\/push\/health/);
@@ -305,32 +327,122 @@ test('one workflow owns parallel builds, ordered promotion, retry, and the final
   assert.match(workflow, /A newer main sha superseded this whole release/);
   assert.doesNotMatch(workflow, /push:\s*\n\s*branches:/);
   assert.match(workflow, /^on:\s*\n\s*workflow_dispatch:/m);
-  const promoteJob = mobile.slice(mobile.indexOf('\n  promote:'));
-  assert.match(promoteJob, /cache-dependency-path: apps\/mobile\/package-lock\.json/);
-  assert.match(promoteJob, /Install mobile dependencies for EAS project context[\s\S]*working-directory: apps\/mobile[\s\S]*run: npm ci/);
+  const promoteSteps = mobile.slice(mobile.indexOf('# ---- promote'));
+  assert.match(promoteSteps, /cache-dependency-path: apps\/mobile\/package-lock\.json/);
+  assert.match(promoteSteps, /Install mobile dependencies for EAS project context[\s\S]*working-directory: apps\/mobile[\s\S]*run: npm ci/);
   assert.ok(
-    promoteJob.indexOf('Install mobile dependencies for EAS project context') <
-      promoteJob.indexOf('Promote the exact beta group to production'),
+    promoteSteps.indexOf('Install mobile dependencies for EAS project context') <
+      promoteSteps.indexOf('Promote the exact beta group to production'),
   );
-  for (const componentWorkflow of [mobile, daemon, server]) {
-    assert.match(componentWorkflow, /workflow_call:/);
-    assert.doesNotMatch(componentWorkflow, /push:\s*\n\s*branches:/);
+  for (const leg of [mobile, daemon, server]) {
+    assert.match(leg, /using: composite/);
+    assert.doesNotMatch(leg, /push:\s*\n\s*branches:/);
   }
-  for (const [componentWorkflow, artifact] of [
+  for (const [leg, artifact] of [
     [server, 'server-artifact'],
     [daemon, 'daemon-artifact'],
     [mobile, 'mobile-ota-candidate'],
   ]) {
-    assert.match(componentWorkflow, /Find a downloadable .* (artifact|candidate).*exact release SHA/);
+    assert.match(leg, /Find a downloadable .* (artifact|candidate).*exact release SHA/);
     assert.match(
-      componentWorkflow,
-      new RegExp(`name = \`${artifact}-\\$\\{\\{ inputs\\.release_sha \\}\\}`),
+      leg,
+      new RegExp(`name = \\\`${artifact}-\\$\\{\\{ inputs\\.release_sha \\}\\}`),
     );
-    assert.match(componentWorkflow, /github\.rest\.actions\.listArtifactsForRepo/);
-    assert.match(componentWorkflow, /github\.rest\.actions\.downloadArtifact/);
-    assert.match(componentWorkflow, /actions\/download-artifact@v4/);
-    assert.match(componentWorkflow, /run-id: \$\{\{ steps\.reuse\.outputs\.run_id \}\}/);
+    assert.match(leg, /github\.rest\.actions\.listArtifactsForRepo/);
+    assert.match(leg, /github\.rest\.actions\.downloadArtifact/);
+    assert.match(leg, /actions\/download-artifact@v4/);
+    assert.match(leg, /run-id: \$\{\{ steps\.reuse\.outputs\.run_id \}\}/);
   }
   assert.match(mobile, /Reuse the exact mobile candidate, including its delivery sidecars/);
   assert.match(mobile, /path: \$\{\{ runner\.temp \}\}/);
+});
+
+test('the release publishes usebeeline to npm as its own final job, gated on delivery', () => {
+  const workflow = readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8');
+  const npmJob = workflow.slice(workflow.indexOf('\n  npm_publish:'));
+  // Gated on the delivery report, not on a workflow_run of a separate file.
+  assert.match(npmJob, /needs: \[initialize, delivery_report\]/);
+  assert.match(npmJob, /id-token: write/);
+  assert.match(npmJob, /npm publish --no-provenance --workspace usebeeline/);
+  // The version is the delivered release index's version, for the exact SHA.
+  assert.match(npmJob, /unified-release-index/);
+  assert.match(npmJob, /r\.sourceSha!==process\.argv\[2\]/);
+  assert.doesNotMatch(workflow, /workflow_run:/);
+});
+
+test('the store leg runs only on request, from the release sha, and never un-delivers a release', () => {
+  const workflow = readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8');
+  assert.match(
+    workflow,
+    /store_track:[\s\S]*?type: choice[\s\S]*?default: none[\s\S]*?- none[\s\S]*?- internal[\s\S]*?- beta[\s\S]*?- production/,
+  );
+  const android = workflow.slice(workflow.indexOf('\n  store_android:'), workflow.indexOf('\n  store_ios:'));
+  const ios = workflow.slice(workflow.indexOf('\n  store_ios:'), workflow.indexOf('\n  not_delivered:'));
+  for (const job of [android, ios]) {
+    assert.match(job, /needs: \[initialize, confirm_app\]/);
+    assert.match(
+      job,
+      /if: contains\(fromJSON\('\["internal","beta","production"\]'\), inputs\.store_track\)/,
+    );
+    // Both store binaries are built from the exact release SHA.
+    assert.match(job, /ref: \$\{\{ needs\.initialize\.outputs\.release_sha \}\}/);
+    assert.match(job, /The release itself is judged by the delivery report, not by this job\./);
+  }
+  assert.match(android, /build --profile production --platform android/);
+  assert.match(android, /RELEASE_STATUS: draft/);
+  assert.match(android, /run: bash scripts\/play-publish\.sh/);
+  assert.match(android, /run: bash scripts\/play-publish-listing\.sh/);
+  assert.match(android, /run: node scripts\/play-token\.mjs/);
+  assert.match(android, /TRACK: \$\{\{ inputs\.store_track \}\}/);
+  assert.match(ios, /build --profile production-ci --platform ios/);
+  assert.match(ios, /submit --platform ios --profile production/);
+  // The ASC key must be written before the build: eas-cli needs it to create
+  // or repair the provisioning profile non-interactively.
+  assert.ok(
+    ios.indexOf('Write the App Store Connect API key') <
+      ios.indexOf('Build the iOS app on EAS from the release SHA'),
+  );
+  // Nothing depends on the store jobs, so a store failure cannot fail the
+  // release: delivery_report and not_delivered never name them.
+  const deliveryJob = workflow.slice(workflow.indexOf('\n  delivery_report:'), workflow.indexOf('\n  npm_publish:'));
+  assert.doesNotMatch(deliveryJob, /store_android|store_ios/);
+  const retryJob = workflow.slice(workflow.indexOf('\n  retry:'));
+  assert.doesNotMatch(retryJob, /needs\.store_android|needs\.store_ios/);
+});
+
+test('the five PR gates live in one file under their unchanged check names', () => {
+  const checks = readFileSync(new URL('../.github/workflows/checks.yml', import.meta.url), 'utf8');
+  for (const name of [
+    'TYPECHECK',
+    'BODY SUITE',
+    'MOBILE SUITE',
+    'MOBILE-EXPORT REACHABILITY',
+    'PRODUCTION-CORPUS REPLAY',
+    'FRAME-BUDGET',
+    'STATE-UPGRADE',
+    'ACTIONLINT',
+    'Build auth container',
+    'Detect changes',
+  ]) {
+    assert.match(checks, new RegExp(`name: ${name}$`, 'm'), `check name ${name} must not change`);
+  }
+  assert.match(checks, /^on:\s*\n\s*pull_request: \{\}/m);
+  // TYPECHECK alone has no path filter (two green PRs can merge into a red main).
+  const typecheckJob = checks.slice(checks.indexOf('\n  typecheck:'), checks.indexOf('\n  body-suite:'));
+  assert.doesNotMatch(typecheckJob, /needs: changes/);
+  assert.match(typecheckJob, /npx turbo run typecheck/);
+  // Every other gate keeps a path filter through the one changes job.
+  for (const output of [
+    'body',
+    'mobileSuite',
+    'mobileExportReachability',
+    'productionCorpusReplay',
+    'frameBudget',
+    'stateUpgrade',
+    'workflows',
+    'authImage',
+  ]) {
+    assert.match(checks, new RegExp(`${output}: \\$\\{\\{ steps\\.filter\\.outputs\\.${output} \\}\\}`));
+  }
+  assert.match(checks, /'\.github\/actions\/\*\*'/);
 });

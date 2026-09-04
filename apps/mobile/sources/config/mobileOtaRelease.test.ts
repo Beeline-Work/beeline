@@ -19,8 +19,10 @@ const deliveryIndexScript = readFileSync(
 );
 const canaryScript = readFileSync(join(mobileRoot, 'scripts/ota-canary.sh'), 'utf8');
 const maestroScript = readFileSync(join(mobileRoot, 'scripts/maestro-e2e.sh'), 'utf8');
+// The three release legs are composite actions called twice each (build,
+// then promote) by the one release workflow.
 const workflow = readFileSync(
-  resolve(mobileRoot, '../../.github/workflows/mobile-ota.yml'),
+  resolve(mobileRoot, '../../.github/actions/mobile-ota-leg/action.yml'),
   'utf8',
 );
 const unifiedWorkflow = readFileSync(
@@ -28,15 +30,11 @@ const unifiedWorkflow = readFileSync(
   'utf8',
 );
 const daemonWorkflow = readFileSync(
-  resolve(mobileRoot, '../../.github/workflows/beeline-bundle.yml'),
+  resolve(mobileRoot, '../../.github/actions/daemon-leg/action.yml'),
   'utf8',
 );
 const serverWorkflow = readFileSync(
-  resolve(mobileRoot, '../../.github/workflows/deploy-host.yml'),
-  'utf8',
-);
-const reconcileWorkflow = readFileSync(
-  resolve(mobileRoot, '../../.github/workflows/mobile-ota-reconcile.yml'),
+  resolve(mobileRoot, '../../.github/actions/server-leg/action.yml'),
   'utf8',
 );
 const rollbackWorkflow = readFileSync(
@@ -693,8 +691,10 @@ esac
     expect(result.stdout).toBe(
       `group_id=current\nupdate_ids=android,ios\nrelease_version=v0.0.2\nsource_sha=${'2'.repeat(40)}\n`,
     );
+    // Both receipt readers resolve their target this way: the promote leg's
+    // own check, and the delivery report's bounded receipt step.
     expect(
-      `${workflow}\n${reconcileWorkflow}`.match(/ota-release\.mjs delivery-target/g),
+      `${workflow}\n${unifiedWorkflow}`.match(/ota-release\.mjs delivery-target/g),
     ).toHaveLength(2);
 
     index.merges[1].state = 'confirmed';
@@ -871,15 +871,28 @@ esac
     expect(JSON.parse(readFileSync(indexPath, 'utf8')).merges[0].state).toBe('published');
   });
 
-  it('splits receipt-only reconciliation from production delivery conclusions', () => {
-    expect(reconcileWorkflow).toContain('MOBILE_OTA_OWNER_PUBKEY');
-    expect(reconcileWorkflow).toContain('MOBILE_OTA_RECEIPT_TOKEN');
-    expect(reconcileWorkflow).toContain("cron: '*/15 * * * *'");
-    expect(reconcileWorkflow).toContain('node scripts/ota-release.mjs confirm');
-    expect(reconcileWorkflow).toContain('does not release');
-    expect(reconcileWorkflow).not.toContain('ota-release.mjs promote');
-    expect(reconcileWorkflow).toContain('Recheck canonical index before writing');
-    expect(reconcileWorkflow).toContain('ota-release.mjs merge-reconciliation');
+  it('records the owner receipt inside the delivery report without gating the release on it', () => {
+    // The 15-minute receipt cron is gone. Its one durable job — writing the
+    // owner device receipt into the cumulative delivery index — is a bounded
+    // step of delivery_report, and it cannot change the release verdict: it
+    // runs after the report, is continue-on-error, and only ever confirms.
+    const deliveryJob = unifiedWorkflow.slice(
+      unifiedWorkflow.indexOf('\n  delivery_report:'),
+      unifiedWorkflow.indexOf('\n  npm_publish:'),
+    );
+    expect(deliveryJob).toContain('MOBILE_OTA_OWNER_PUBKEY');
+    expect(deliveryJob).toContain('MOBILE_OTA_RECEIPT_TOKEN');
+    expect(deliveryJob).toContain('node scripts/ota-release.mjs confirm');
+    expect(deliveryJob).toContain('ota-release.mjs list-undelivered');
+    expect(deliveryJob).toContain('continue-on-error: true');
+    expect(deliveryJob).toContain('mobile-ota-delivery-index');
+    expect(deliveryJob).not.toContain('ota-release.mjs promote');
+    expect(
+      deliveryJob.indexOf('unified-release.mjs report'),
+    ).toBeLessThan(deliveryJob.indexOf('Record the owner device receipt'));
+    // No cron survives anywhere in the release path.
+    expect(unifiedWorkflow).not.toContain("cron: '*/15 * * * *'");
+    expect(unifiedWorkflow).not.toContain('schedule:');
     expect(workflow).not.toContain("cron: '*/15 * * * *'");
     expect(workflow).not.toMatch(/branches: \[main\][\s\S]{0,120}paths:/);
   });
@@ -930,7 +943,9 @@ esac
     expect(unifiedWorkflow).not.toMatch(
       /mobile-ota-post-promote|post_promote_rehearsal|emulator|Maestro/,
     );
-    expect(rollbackWorkflow).toContain("artifact.name.startsWith('mobile-ota-ledger-')");
+    // The predecessor comes from the release run's promoted-ledger artifact.
+    expect(rollbackWorkflow).toContain("artifact.name.startsWith('mobile-ota-promoted-')");
+    expect(rollbackWorkflow).toContain("workflow_id: 'unified-release.yml'");
     expect(rollbackWorkflow).toContain('dry_run:');
     expect(rollbackWorkflow).toContain(
       'update:list --branch production --limit 1 --json --non-interactive',
@@ -1987,7 +2002,7 @@ esac
     // scripts/provision-smoke.ts connects through BuzzClient, which needs
     // globalThis.WebSocket; node 20 lacks it and died at connect time after
     // module resolution was fixed. 22 is the floor that has it.
-    const releaseJob = workflow.slice(0, workflow.indexOf('  rollback:'));
-    expect(releaseJob).toContain("node-version: '22'");
+    expect(workflow).toContain("node-version: '22'");
+    expect(rollbackWorkflow).toContain("node-version: '22'");
   });
 });

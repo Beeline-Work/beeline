@@ -1,0 +1,104 @@
+# Server leg of the unified release (was .github/workflows/deploy-host.yml).
+# unified-release.yml calls it twice from the self-hosted production host:
+# phase=build records the SHA-pinned server artifact, phase=promote deploys
+# the exact release SHA to the Fly monolith. The caller checks out the
+# release SHA before invoking it and owns runner, timeout, and concurrency.
+name: Server release leg
+description: Build the exact server artifact or deploy the monolith to Fly.io
+
+inputs:
+  phase:
+    description: build | promote
+    required: true
+  release_sha:
+    required: true
+  release_version:
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # ---- build -------------------------------------------------------------
+    - name: Find a downloadable server artifact for this exact release SHA
+      if: inputs.phase == 'build'
+      id: reuse
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const name = `server-artifact-${{ inputs.release_sha }}`;
+          const artifacts = await github.paginate(github.rest.actions.listArtifactsForRepo, {
+            owner: context.repo.owner, repo: context.repo.repo, name, per_page: 100,
+          });
+          const artifact = artifacts
+            .filter((candidate) => candidate.name === name && !candidate.expired && candidate.workflow_run?.id)
+            .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+          if (artifact) {
+            try {
+              await github.rest.actions.downloadArtifact({
+                owner: context.repo.owner, repo: context.repo.repo,
+                artifact_id: artifact.id, archive_format: 'zip',
+              });
+              core.setOutput('run_id', String(artifact.workflow_run.id));
+            } catch (error) {
+              core.info(`Artifact ${artifact.id} is no longer downloadable: ${error.message}`);
+            }
+          }
+    - name: Reuse the exact server artifact
+      if: inputs.phase == 'build' && steps.reuse.outputs.run_id != ''
+      uses: actions/download-artifact@v4
+      with:
+        name: server-artifact-${{ inputs.release_sha }}
+        path: ${{ runner.temp }}/server-release
+        run-id: ${{ steps.reuse.outputs.run_id }}
+        github-token: ${{ github.token }}
+    - name: Build SHA-pinned server images without changing production
+      if: inputs.phase == 'build' && steps.reuse.outputs.run_id == ''
+      shell: bash
+      run: ./scripts/build-release-server-images.sh
+      env:
+        BEELINE_RELEASE_SHA: ${{ inputs.release_sha }}
+        BEELINE_RELEASE_VERSION: ${{ inputs.release_version }}
+    - name: Record the verified server artifact identity
+      if: inputs.phase == 'build' && steps.reuse.outputs.run_id == ''
+      shell: bash
+      env:
+        RELEASE_SHA: ${{ inputs.release_sha }}
+        RELEASE_VERSION: ${{ inputs.release_version }}
+      run: |
+        mkdir -p "$RUNNER_TEMP/server-release"
+        node - "$RUNNER_TEMP/server-release/identity.json" "$RELEASE_VERSION" "$RELEASE_SHA" <<'NODE'
+        const fs = require('node:fs');
+        fs.writeFileSync(process.argv[2], JSON.stringify({
+          version: process.argv[3], sourceSha: process.argv[4], images: ['auth', 'materializer'],
+        }));
+        NODE
+    - if: inputs.phase == 'build'
+      uses: actions/upload-artifact@v4
+      with:
+        name: server-artifact-${{ inputs.release_sha }}
+        path: ${{ runner.temp }}/server-release/identity.json
+        if-no-files-found: error
+        retention-days: 7
+
+    # ---- promote -----------------------------------------------------------
+    - name: Verify Fly.io deployment authority
+      if: inputs.phase == 'promote'
+      shell: bash
+      run: flyctl auth whoami
+    - name: Deploy the exact release SHA to the monolith
+      if: inputs.phase == 'promote'
+      shell: bash
+      run: |
+        set -euo pipefail
+        test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+        # Keep the config at the repository root so Fly preserves this root build context.
+        flyctl deploy . \
+          --config fly.beeline-server.toml \
+          --dockerfile apps/server/Dockerfile \
+          --app beeline-server \
+          --build-arg "BEELINE_RELEASE_VERSION=$RELEASE_VERSION" \
+          --build-arg "BEELINE_RELEASE_SHA=$RELEASE_SHA" \
+          --yes
+      env:
+        RELEASE_SHA: ${{ inputs.release_sha }}
+        RELEASE_VERSION: ${{ inputs.release_version }}

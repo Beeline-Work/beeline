@@ -1,10 +1,11 @@
 # Beeline CLI bundle channel ("latest from main")
 
-Every push to `main` that touches daemon/CLI bundle inputs runs
-`.github/workflows/beeline-bundle.yml`, which builds the CLI bundle natively
-for **linux-x64 on the self-hosted production-Linux runner** (same labels as
-`deploy-host.yml` — zero paid GitHub minutes) and publishes the bundle set
-directly to `/home/lunchbox/buzz-router-relay-prod/relay-front/web/dl/` on that
+The daemon leg of the one release workflow
+(`.github/actions/daemon-leg/action.yml`, called by
+`.github/workflows/unified-release.yml` as `daemon_artifact` then
+`promote_daemon`) builds the CLI bundle natively for **linux-x64 on the
+self-hosted production-Linux runner** (the same runner as the server leg —
+zero paid GitHub minutes) and publishes the bundle set directly to `/home/lunchbox/buzz-router-relay-prod/relay-front/web/dl/` on that
 host. nginx serves that host-local directory at `https://usebeeline.app/dl/`;
 the tarballs and manifest are not committed to Git. This is a rolling "latest"
 channel only; tagged releases (`v0.2.x`)
@@ -93,11 +94,10 @@ The first post-merge cutover is ordered as follows:
 
 1. The existing production `/dl/` directory continues serving the last
    checkout-published generation.
-2. `beeline-bundle.yml` builds and install-verifies the native bundle, then
+2. The daemon leg builds and install-verifies the native bundle, then
    publishes it into that same host-local directory.
-3. Only after publication succeeds does the bundle workflow dispatch
-   `deploy-host.yml`. The ordinary push-triggered deploy may run earlier, but
-   it preserves `/dl/`; the dispatched run performs the final public checks.
+3. The release promotes server first and daemon second, each confirmed before
+   the next; the server promotion preserves `/dl/`.
 4. After this change lands, source checkouts no longer contain release bytes.
 
 The repository already contains historical tarball blobs. Removing those

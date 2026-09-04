@@ -234,8 +234,9 @@ describe('Beeline display branding', () => {
       readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
     ) as { scripts?: Record<string, string> };
 
-    // production-ci is the hosted-runner store build (testflight.yml): same as
-    // production but with EAS-managed iOS credentials, since CI has no credentials.json.
+    // production-ci is the hosted-runner store build (the release's store_ios
+    // job): same as production but with EAS-managed iOS credentials, since CI
+    // has no credentials.json.
     expect(Object.keys(easBuildProfiles)).toEqual([
       'production',
       'production-ci',

@@ -102,6 +102,7 @@ describe('RoomRosterSheet', () => {
           onClose={onClose}
           onRemove={onRemove}
           onlineByPubkey={{ agent: online }}
+          workingByPubkey={{}}
           parentChannelId={null}
           personProfileByPubkey={personProfileByPubkey}
           rosterSections={rosterSections}
@@ -122,5 +123,68 @@ describe('RoomRosterSheet', () => {
     });
 
     expect(renderSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('rings an agent only while it is working, never for a presence lease alone', () => {
+    // C77: Candy's helper renewed its presence lease every few seconds while
+    // every turn ended `failed`; the ring pulsed on an agent that could not
+    // answer. The ring reads the working record; the online word reads presence.
+    const members = new Map([['agent', { pubkey: 'agent', role: 'member' }]]);
+    const rosterSections = {
+      people: [],
+      agents: [
+        {
+          pubkey: 'agent',
+          name: 'Candy',
+          handle: 'candy',
+          kind: 'agent' as const,
+          agent: { pubkey: 'agent', displayName: 'Candy' },
+        },
+      ],
+    };
+    const sheet = (online: boolean, working: boolean) => (
+      <RoomRosterSheet
+        bottomInset={0}
+        isDirectMessage={false}
+        memberByPubkey={members}
+        membershipActionPubkey={null}
+        membershipError={null}
+        onClose={vi.fn()}
+        onRemove={vi.fn()}
+        onlineByPubkey={{ agent: online }}
+        workingByPubkey={working ? { agent: true } : {}}
+        parentChannelId={null}
+        personProfileByPubkey={new Map()}
+        rosterSections={rosterSections}
+        total={1}
+        userPubkey="viewer"
+        viewerRole="owner"
+        visible
+      />
+    );
+    const markFor = (renderer: ReactTestRenderer) =>
+      renderer.root.findAll((node: any) => node.type === 'IdentityMark' && node.props.kind === 'agent')[0]
+        .props;
+
+    let renderer!: ReactTestRenderer;
+    // Working: ring on.
+    act(() => {
+      renderer = create(sheet(true, true));
+    });
+    expect(markFor(renderer).alive).toBe(true);
+    // Idle but present (lease live): ring off, the row still says online.
+    act(() => {
+      renderer = create(sheet(true, false));
+    });
+    expect(markFor(renderer).alive).toBe(false);
+    expect(
+      renderer.root.findAll((node: any) => String(node.props.accessibilityLabel ?? '').includes(', online'))
+        .length,
+    ).toBeGreaterThan(0);
+    // Absent: ring off.
+    act(() => {
+      renderer = create(sheet(false, false));
+    });
+    expect(markFor(renderer).alive).toBe(false);
   });
 });

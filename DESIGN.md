@@ -348,9 +348,13 @@ stag. An agent needs no edge: ink on colour always contrasts. The shipped
 themes are all dark; the light treatment exists so the same tile is correct
 anywhere a light ground appears.
 
-**5 · A gold ring means alive.** An agent working right now takes a gold ring
-plus a wider low-alpha halo drawn *around* its plate, breathing on the shared
-live clock (`HullLivePulse`). It never touches the identity colour or the
+**5 · A gold ring means working.** An agent with a live turn or a live corner
+right now takes a gold ring plus a wider low-alpha halo drawn *around* its
+plate, breathing on the shared live clock (`HullLivePulse`). Its proof is the
+server-indexed working receipt or the corner's canonical `working` state
+(`selectWorkingAgents`), the same signal as the thinking line — never the
+presence lease: a helper whose every turn fails still renews its lease, so
+"alive" said nothing about whether the agent could answer (C77). It never touches the identity colour or the
 creature: who this is and what it is doing stay two separate reads, and a
 gold *fill* would have destroyed the first to say the second. It is mounted
 only where something is genuinely live, so a quiet row pays for no clock.
@@ -487,8 +491,9 @@ backgrounded app, and the settled row all show the same completed static mark.
    a tagged `@handle` in prose (`MonoMarkdown`'s mention gloss — the Speakeasy
    chat effect), and
    the moment you act on agent work: the ring around a working agent's identity
-   mark, live/online presence (the Corner's LIVE wave, a presence dot, the
-   pinned corner line, and a Room on the index with a live corner), owner role,
+   mark (working means a live turn or corner, never presence alone), live work
+   elsewhere (the Corner's LIVE wave, the pinned corner line, and a Room on
+   the index with a live corner), owner role,
    and the merge-approval action. It is never the *only* signal for any of
    these — each is redundantly encoded by shape, glyph, or copy. Note what brass
    is *not*: identity itself. An agent's plate carries its own signature colour,

@@ -306,6 +306,21 @@ beforeEach(() => {
 });
 
 describe('Members workspace management', () => {
+  it('draws no gold ring on an agent whose only fact is a live presence lease', async () => {
+    // C77: the ring means WORKING (a live turn or corner). The Workspace view
+    // carries presence only, so an online-but-idle agent wears no ring; the
+    // ONLINE word beside the name is the presence fact.
+    const renderer = await render();
+    const agentRow = renderer.root.findByProps({ testID: `agent-${AGENT}-identity` });
+    const mark = agentRow.findAll((node: any) => node.type === 'IdentityMark')[0];
+    expect(mark.props.kind).toBe('agent');
+    expect(mark.props.alive).toBeFalsy();
+    const detail = agentRow.findAll(
+      (node: any) => node.type === 'Text' && String(node.props.children?.[0] ?? '').includes('ONLINE'),
+    );
+    expect(detail.length).toBeGreaterThan(0);
+  });
+
   it('creates and shares a real Workspace invite from the People section', async () => {
     const renderer = await render();
     await press(renderer, 'invite-person');

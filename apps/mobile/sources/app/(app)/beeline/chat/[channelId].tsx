@@ -129,7 +129,12 @@ import {
   ownerGrantShareMessage,
   type OwnerGrantNeeded,
 } from '@/components/buzz/OwnerGrantNeededCard';
-import { isPinnedCornerLive, pinnedCornerVerb, selectPinnedCorner } from '@/buzz/room-indicators';
+import {
+  isPinnedCornerLive,
+  pinnedCornerVerb,
+  selectPinnedCorner,
+  selectWorkingAgents,
+} from '@/buzz/room-indicators';
 import { displayCornerTitle } from '@/buzz/room-list-row';
 import { scrollFollowOnArrival } from '@/buzz/room-scroll-follow';
 import {
@@ -1254,6 +1259,20 @@ export default function BuzzChat() {
     () => resolveCornerViewAgentPubkey(messages, (pubkey) => agentByPubkey.has(pubkey)),
     [agentByPubkey, messages],
   );
+  // The gold ring on a byline means WORKING: this channel's fresh working
+  // receipt, or this corner's agent while the corner is live — the same
+  // proofs the thinking line and the corner header read. Never the presence
+  // lease (C77: a helper whose every turn fails still renews it). Only true
+  // entries, identity-stable until a verdict genuinely flips.
+  const rawSpeakerWorking = useMemo(
+    () =>
+      selectWorkingAgents({
+        activeTurnPubkey: activeAgentTurn?.agentPubkey ?? null,
+        workingCornerAgentPubkey: sessionState === 'working' ? cornerAgentPubkey : null,
+      }),
+    [activeAgentTurn?.agentPubkey, cornerAgentPubkey, sessionState],
+  );
+  const speakerWorking = useStable(rawSpeakerWorking, shallowEqualRecord);
   const cornerAgentDisplay = cornerAgentPubkey
     ? resolvePendingAgentDisplay(
         cornerAgentPubkey,
@@ -2815,7 +2834,7 @@ export default function BuzzChat() {
           participantsHydrated={participantsHydrated}
           {...(personName ? { personName } : {})}
           viewerPubkey={cacheViewerPubkey}
-          speakerOnline={Boolean(item.pubkey && speakerOnline[item.pubkey])}
+          speakerWorking={Boolean(item.pubkey && speakerWorking[item.pubkey])}
           continued={attributionContinued}
           {...(immediatelyPrecedingMessage ? { immediatelyPrecedingMessage } : {})}
           {...(referencedTarget ? { referencedTarget } : {})}
@@ -2848,7 +2867,7 @@ export default function BuzzChat() {
       targetBranchNotice,
       viewerChannelRole,
       viewerIsAgent,
-      speakerOnline,
+      speakerWorking,
       beginReply,
       dismissOutboxMessage,
       failedOutboxIds,
@@ -3552,6 +3571,7 @@ export default function BuzzChat() {
         onClose={closeRoster}
         onRemove={handleRemoveRoomMember}
         onlineByPubkey={speakerOnline}
+        workingByPubkey={speakerWorking}
         parentChannelId={parentChannelId ?? null}
         personProfileByPubkey={personProfileByPubkey}
         rosterSections={visibleRosterSections}

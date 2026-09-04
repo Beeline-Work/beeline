@@ -15,9 +15,11 @@
  *      agents too; those are Speakeasy's twelve creatures now, whose species
  *      is the tiebreak, so `identityMarkGeometry` is only read for
  *      `kind === 'workspace'`.
- *   3. A gold RING means *alive* — an agent working right now. It is drawn
- *      around the tile and never touches the identity colour, so "who this
- *      is" and "what it is doing" stay two separate reads.
+ *   3. A gold RING means *working* — an agent with a live turn or a live
+ *      corner right now, never one whose helper process merely holds a
+ *      presence lease (C77). It is drawn around the tile and never touches
+ *      the identity colour, so "who this is" and "what it is doing" stay two
+ *      separate reads.
  *
  * Everything here is pure and free of React Native, so the whole system is
  * unit-testable without a renderer. `components/buzz/IdentityMark.tsx` is the

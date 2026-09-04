@@ -1,53 +1,44 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-import { cornerStatusPresentation, type CornerStatus } from './corners';
-import { MEMBERS_GLYPH, MEMBERS_LABEL } from './vocabulary';
+import { MEMBERS_LABEL } from './vocabulary';
 
 /**
- * Every surface that routes a person to the members screen, and the one glyph
- * they now share. Before this, the same destination was reached through three
- * different words and only one of them carried a mark at all.
+ * Every surface that routes a person to the members screen. They share one
+ * word and, since captain report C73, no glyph: the angular hexagon that used
+ * to sit beside "Members" never belonged to the creature motif. The word
+ * alone, in the meta role, is the whole affordance.
  */
 const MEMBERS_ENTRY_POINTS = [
   '../app/(app)/beeline/channels.tsx',
   '../app/(app)/beeline/MembersScreen.tsx',
   '../app/(app)/beeline/settings/workspace.tsx',
   '../components/buzz/CommunityInviteEntry.tsx',
+  '../components/buzz/RoomRosterSheet.tsx',
 ];
 
-const CORNER_STATUSES: CornerStatus[] = [
-  'live',
-  'needs-attention',
-  'open',
-  'failed',
-  'merged',
-  'archived',
-];
+const RETIRED_GLYPH = '⌬';
 
-describe('the members mark', () => {
-  it('is one glyph, reached from every members entry point', () => {
+describe('the members word', () => {
+  it('names the destination the same way everywhere, from the shared vocabulary', () => {
+    expect(MEMBERS_LABEL).toBe('Members');
     for (const relativePath of MEMBERS_ENTRY_POINTS) {
       const source = readFileSync(new URL(relativePath, import.meta.url), 'utf8');
-      expect(source, `${relativePath} should import the shared members mark`).toContain(
-        'MEMBERS_GLYPH',
-      );
-      // ...and no screen hardcodes the glyph or a competing word for it.
-      expect(source, `${relativePath} hardcodes the members glyph`).not.toContain(
-        `>${MEMBERS_GLYPH}<`,
+      expect(source, `${relativePath} should spread the shared members word`).toContain(
+        'MEMBERS_LABEL',
       );
     }
   });
 
-  it('is visually distinct from every corner lifecycle glyph', () => {
-    // State is one circle family; the members mark remains a distinct route
-    // glyph and never joins that lifecycle vocabulary.
-    const cornerGlyphs = CORNER_STATUSES.map((status) => cornerStatusPresentation(status).glyph);
-    expect(cornerGlyphs).not.toContain(MEMBERS_GLYPH);
-    expect(new Set(cornerGlyphs)).toEqual(new Set(['○', '◌', '●']));
-  });
-
-  it('names the destination the same way everywhere', () => {
-    expect(MEMBERS_LABEL).toBe('Members');
+  it('travels alone: no entry point draws a glyph beside it', () => {
+    for (const relativePath of MEMBERS_ENTRY_POINTS) {
+      const source = readFileSync(new URL(relativePath, import.meta.url), 'utf8');
+      expect(source, `${relativePath} still carries the retired members glyph`).not.toContain(
+        RETIRED_GLYPH,
+      );
+      expect(source, `${relativePath} still imports a members glyph`).not.toContain(
+        'MEMBERS_GLYPH',
+      );
+    }
   });
 });

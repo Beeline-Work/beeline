@@ -18,7 +18,7 @@ import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-sto
 import { pickAndUploadAvatar } from '@/buzz/avatar-upload';
 import { WORKSPACE_PICTURES_ENABLED } from '@/buzz/photo-overrides';
 import { displayRoomIndexTitle } from '@/buzz/room-list-row';
-import { MEMBERS_GLYPH, MEMBERS_LABEL, ROOM_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
+import { MEMBERS_LABEL, ROOM_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { MonoButton, PixelGateReveal, PixelLoader } from '@/components/buzz/MonoHull';
 import { SettingsNavigationRow } from '@/components/buzz/SettingsNavigationRow';
 import { RoomGlyph } from '@/components/buzz/RoomGlyph';
@@ -397,10 +397,10 @@ export default function WorkspaceSettings() {
 
           <View style={styles.section} testID="workspace-members-link">
             <Text style={styles.sectionLabel}>
-              {MEMBERS_GLYPH} {MEMBERS_LABEL.toUpperCase()}
+              {MEMBERS_LABEL.toUpperCase()}
             </Text>
             <SettingsNavigationRow
-              glyph={MEMBERS_GLYPH}
+              glyph={null}
               label={MEMBERS_LABEL}
               supportingCopy="Invite people, connect agents, and manage roles."
               onPress={() =>

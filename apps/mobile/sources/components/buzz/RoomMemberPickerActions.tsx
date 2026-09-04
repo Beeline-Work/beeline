@@ -8,26 +8,34 @@ type RoomMemberPickerActionsProps = {
   addableCount: number;
   busy: boolean;
   canManage: boolean;
+  /**
+   * Whether an empty addable list is worth a line. A Room picker says so (a
+   * one-person workspace has nobody to add, captain report C59); the
+   * Workspace-level picker has no Room to add to and stays quiet.
+   */
+  showEmpty?: boolean;
   onAddAgent: () => void;
   onInvitePerson: () => void;
 };
 
 /**
- * The bottom of the "Add people or Agents" picker: a one-person workspace
- * (captain report C59) used to show only "@You" and no way out. A manager
- * always sees the two workspace-level invite rows here; everyone else sees
- * who to ask.
+ * The bottom of the "Add people or agents" picker: the two Workspace-level
+ * ways in. A manager always sees them; everyone else sees who to ask. The
+ * agent row connects a NEW agent through the pairing command — an agent
+ * already in the Workspace is a checkbox row above this, never this entry
+ * (captain report C74).
  */
 export function RoomMemberPickerActions({
   addableCount,
   busy,
   canManage,
+  showEmpty = true,
   onAddAgent,
   onInvitePerson,
 }: RoomMemberPickerActionsProps) {
   return (
     <View testID="room-member-picker-actions">
-      {addableCount === 0 && (
+      {showEmpty && addableCount === 0 && (
         <Text style={styles.quiet} testID="room-member-picker-empty">
           Nobody else in this workspace yet.
         </Text>
@@ -41,16 +49,18 @@ export function RoomMemberPickerActions({
             style={styles.row}
             testID="room-member-picker-invite-person"
           >
-            <Text style={styles.label}>+ Invite a person…</Text>
+            <Text style={styles.sigil}>+</Text>
+            <Text style={styles.label}>Invite a person…</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            accessibilityLabel="Add an agent"
+            accessibilityLabel="Connect a new agent"
             disabled={busy}
             onPress={onAddAgent}
             style={styles.row}
             testID="room-member-picker-add-agent"
           >
-            <Text style={styles.label}>+ Add an agent…</Text>
+            <Text style={styles.sigil}>+</Text>
+            <Text style={styles.label}>Connect a new agent…</Text>
           </TouchableOpacity>
         </>
       ) : (
@@ -63,27 +73,25 @@ export function RoomMemberPickerActions({
 }
 
 const styles = StyleSheet.create((theme) => {
-  const groknight = theme.buzz;
+  const hull = theme.buzz;
   return {
     quiet: {
       ...Typography.default(),
-      paddingVertical: 14,
-      paddingHorizontal: 10,
-      color: groknight.textMuted,
-      fontSize: 12,
+      ...hull.type.meta,
+      paddingVertical: hull.space.md,
+      paddingHorizontal: hull.space.md,
+      color: hull.textMuted,
     },
     row: {
-      minHeight: 44,
-      paddingHorizontal: 10,
-      justifyContent: 'center',
-      borderTopWidth: 1,
-      borderColor: groknight.border,
+      minHeight: hull.layout.row,
+      paddingHorizontal: hull.space.md,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: hull.space.sm,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderColor: hull.border,
     },
-    label: {
-      ...Typography.mono('semiBold'),
-      color: groknight.chrome,
-      fontSize: 11,
-      letterSpacing: 0.3,
-    },
+    sigil: { ...Typography.default(), ...hull.type.body, color: hull.accent },
+    label: { ...Typography.default(), ...hull.type.body, color: hull.textPrimary },
   };
 });

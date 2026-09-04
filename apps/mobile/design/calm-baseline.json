@@ -1,8 +1,7 @@
 {
-  "app/(app)/beeline/MembersScreen.tsx": 21,
   "app/(app)/beeline/channels.tsx": 17,
   "app/(app)/beeline/chat/RoomMessageVariants.tsx": 24,
-  "app/(app)/beeline/chat/[channelId].tsx": 79,
+  "app/(app)/beeline/chat/[channelId].tsx": 71,
   "app/(app)/beeline/community.tsx": 9,
   "app/(app)/beeline/corners/[roomId].tsx": 12,
   "app/(app)/beeline/onboarding.tsx": 20,
@@ -39,8 +38,6 @@
   "components/buzz/OwnerGrantNeededCard.tsx": 3,
   "components/buzz/RepoPicker.tsx": 12,
   "components/buzz/RoomContextPreamble.tsx": 3,
-  "components/buzz/RoomMemberPickerActions.tsx": 3,
-  "components/buzz/RoomRosterSheet.tsx": 12,
   "components/buzz/SettingsNavigationRow.tsx": 2,
   "components/buzz/SlashVerbPicker.tsx": 6,
   "components/buzz/TurnProgressLine.tsx": 3,

@@ -1,15 +1,13 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { ChannelMember, ChannelRole } from '@beeline/buzz-client';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
 import { shortMemberNpub } from '@/buzz/member-display';
 import { canRemoveRoomParticipant, normalizedRoomRole } from '@/buzz/room-management';
-import { formatRoomParticipantTotal } from '@/buzz/room-participants';
 import type { AgentPresentation } from '@/buzz/room-view-presentation';
-import { ROOM_LABEL } from '@/buzz/vocabulary';
+import { MEMBERS_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { Typography } from '@/constants/Typography';
-import { groknight } from '@/buzz/groknight';
 import { HullFloatingSurface, HullModal } from './HullDialog';
 import { IdentityMark } from './IdentityMark';
 
@@ -29,6 +27,15 @@ type RoomRosterSections = {
 };
 
 /**
+ * The Room's members, in the Members page's vocabulary so the two views read
+ * as one: "Members" over two counted section heads, a 64pt row per identity
+ * with its name at body size and one quiet `@handle · role` line that ends
+ * in the agent's presence word. The gold ring on the tile means WORKING
+ * (`workingByPubkey`, C77), never a presence lease, and there is no status
+ * square beside the name (C76). A row whose viewer may remove it carries a
+ * chevron and opens its one control in place; the list itself shows no
+ * remove text.
+ *
  * The shared HullModal boundary owns the no-flicker guarantee. This additional
  * memo remains a roster-specific CPU fast path: identity-stable sections and
  * collapsed online verdicts avoid rebuilding a potentially long member tree.
@@ -70,6 +77,10 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
   viewerRole: ChannelRole | null;
   visible: boolean;
 }) {
+  const [openPubkey, setOpenPubkey] = useState<string | null>(null);
+  useEffect(() => {
+    if (!visible) setOpenPubkey(null);
+  }, [visible]);
   return (
     <HullModal
       accessibilityLabel={`Close ${ROOM_LABEL} roster`}
@@ -85,8 +96,8 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
       <HullFloatingSurface style={styles.rosterModal} testID="room-roster-sheet">
         <View style={styles.rosterModalHeading}>
           <View style={styles.rosterModalHeadingCopy}>
-            <Text style={styles.rosterModalEyebrow}>IN THIS ROOM</Text>
-            <Text style={styles.rosterModalTitle}>{formatRoomParticipantTotal(total)}</Text>
+            <Text style={styles.rosterModalEyebrow}>In this {ROOM_LABEL}</Text>
+            <Text style={styles.rosterModalTitle}>{MEMBERS_LABEL}</Text>
           </View>
           <TouchableOpacity
             accessibilityLabel={`Close ${ROOM_LABEL} roster`}
@@ -102,8 +113,8 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
           showsVerticalScrollIndicator={false}
         >
           {[
-            { key: 'people', label: 'PEOPLE', options: rosterSections.people },
-            { key: 'agents', label: 'AGENTS', options: rosterSections.agents },
+            { key: 'people', label: 'People', options: rosterSections.people },
+            { key: 'agents', label: 'Agents', options: rosterSections.agents },
           ].map((section, sectionIndex) =>
             section.options.length > 0 ? (
               <View key={section.key}>
@@ -112,6 +123,7 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
                     styles.rosterSectionLabel,
                     sectionIndex > 0 && styles.rosterSectionLabelSpaced,
                   ]}
+                  testID={`room-roster-${section.key}-head`}
                 >
                   {section.label} {section.options.length}
                 </Text>
@@ -134,6 +146,7 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
                       targetRole,
                       participant.pubkey === userPubkey,
                     );
+                  const open = openPubkey === participant.pubkey;
                   const removing = membershipActionPubkey === participant.pubkey;
                   const agentOnline =
                     participant.kind === 'agent' && Boolean(onlineByPubkey[participant.pubkey]);
@@ -141,54 +154,63 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
                   const agentWorking =
                     participant.kind === 'agent' && Boolean(workingByPubkey[participant.pubkey]);
                   return (
-                    <View
-                      accessibilityLabel={`${displayName}, ${participant.kind}${
-                        participant.kind === 'agent' ? (agentOnline ? ', online' : ', offline') : ''
-                      }, at ${handle}`}
-                      key={participant.pubkey}
-                      style={styles.rosterRow}
-                      testID={`room-roster-${participant.kind}-${participant.pubkey}`}
-                    >
-                      {display ? (
-                        <IdentityMark
-                          kind="agent"
-                          seed={display.avatarSeed ?? participant.pubkey}
-                          avatarUrl={display.avatarUrl}
-                          name={display.name}
-                          size={38}
-                          alive={agentWorking}
-                        />
-                      ) : (
-                        <IdentityMark
-                          kind="human"
-                          seed={participant.pubkey}
-                          avatarUrl={personProfileByPubkey.get(participant.pubkey)?.avatar}
-                          face={participant.face}
-                          name={displayName}
-                          size={38}
-                        />
-                      )}
-                      <View style={styles.rosterIdentity}>
-                        <View style={styles.rosterNameRow}>
-                          {participant.kind === 'agent' ? (
-                            <RosterPresenceLight online={agentOnline} />
-                          ) : null}
+                    <View key={participant.pubkey}>
+                      <TouchableOpacity
+                        accessibilityLabel={`${displayName}, ${participant.kind}${
+                          participant.kind === 'agent'
+                            ? agentOnline
+                              ? ', online'
+                              : ', offline'
+                            : ''
+                        }, at ${handle}`}
+                        disabled={!canRemove}
+                        onPress={() => setOpenPubkey(open ? null : participant.pubkey)}
+                        style={styles.rosterRow}
+                        testID={`room-roster-${participant.kind}-${participant.pubkey}`}
+                      >
+                        {display ? (
+                          <IdentityMark
+                            kind="agent"
+                            seed={display.avatarSeed ?? participant.pubkey}
+                            avatarUrl={display.avatarUrl}
+                            name={display.name}
+                            size={38}
+                            alive={agentWorking}
+                          />
+                        ) : (
+                          <IdentityMark
+                            kind="human"
+                            seed={participant.pubkey}
+                            avatarUrl={personProfileByPubkey.get(participant.pubkey)?.avatar}
+                            face={participant.face}
+                            name={displayName}
+                            size={38}
+                          />
+                        )}
+                        <View style={styles.rosterIdentity}>
                           <Text numberOfLines={1} style={styles.rosterName}>
                             {displayName}
                           </Text>
+                          <Text numberOfLines={1} style={styles.rosterMeta}>
+                            @{handle} · {targetRole ?? 'member'}
+                            {participant.kind === 'agent'
+                              ? agentOnline
+                                ? ' · online'
+                                : ' · offline'
+                              : ''}
+                          </Text>
                         </View>
-                        <Text numberOfLines={1} style={styles.rosterHandle}>
-                          @{handle}
-                        </Text>
-                      </View>
-                      <View style={styles.rosterActions}>
-                        <Text style={styles.rosterKind}>
-                          {participant.kind === 'agent' ? 'AGENT' : 'PERSON'}
-                          {targetRole && targetRole !== 'member'
-                            ? ` · ${targetRole.toUpperCase()}`
-                            : ''}
-                        </Text>
                         {canRemove && (
+                          <Text accessibilityElementsHidden style={styles.chevron}>
+                            {open ? '⌄' : '›'}
+                          </Text>
+                        )}
+                      </TouchableOpacity>
+                      {open && canRemove && (
+                        <View
+                          style={styles.rosterDetail}
+                          testID={`room-roster-${participant.pubkey}-detail`}
+                        >
                           <TouchableOpacity
                             accessibilityLabel={`Remove ${displayName} from this ${ROOM_LABEL}`}
                             accessibilityRole="button"
@@ -198,11 +220,11 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
                             testID={`remove-room-member-${participant.pubkey}`}
                           >
                             <Text style={styles.rosterRemoveText}>
-                              {removing ? 'REMOVING…' : 'REMOVE'}
+                              {removing ? 'Removing…' : `Remove from this ${ROOM_LABEL}`}
                             </Text>
                           </TouchableOpacity>
-                        )}
-                      </View>
+                        </View>
+                      )}
                     </View>
                   );
                 })}
@@ -221,142 +243,86 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
   );
 });
 
-const RosterPresenceLight = React.memo(function RosterPresenceLight({
-  online,
-}: {
-  online: boolean;
-}) {
-  return (
-    <View
-      accessibilityElementsHidden
-      accessible={false}
-      importantForAccessibility="no"
-      style={[
-        styles.agentPresenceLight,
-        online ? styles.agentPresenceOnline : styles.agentPresenceOffline,
-      ]}
-    />
-  );
+const styles = StyleSheet.create((theme) => {
+  const hull = theme.buzz;
+  return {
+    rosterModal: {
+      width: '100%',
+      maxWidth: 460,
+      maxHeight: '100%',
+      padding: hull.space.md,
+      borderWidth: 1,
+      borderColor: hull.borderStrong,
+      backgroundColor: hull.bgRaised,
+    },
+    rosterModalHeading: { flexDirection: 'row', alignItems: 'flex-start', gap: hull.space.md },
+    rosterModalHeadingCopy: { flex: 1, minWidth: 0 },
+    rosterModalEyebrow: {
+      ...Typography.default(),
+      ...hull.type.sectionHead,
+      color: hull.textMuted,
+    },
+    rosterModalTitle: {
+      ...Typography.default(),
+      ...hull.type.hero,
+      marginTop: hull.space.xs,
+      color: hull.textPrimary,
+    },
+    rosterModalClose: {
+      width: 44,
+      height: 44,
+      marginTop: -10,
+      marginRight: -10,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    rosterModalCloseText: { ...Typography.default(), ...hull.type.hero, color: hull.steel },
+    rosterContent: { paddingTop: hull.space.md, paddingBottom: hull.space.xs },
+    rosterSectionLabel: {
+      ...Typography.default(),
+      ...hull.type.sectionHead,
+      marginBottom: hull.space.sm,
+      color: hull.textMuted,
+    },
+    rosterSectionLabelSpaced: { marginTop: hull.layout.sectionGap },
+    rosterRow: {
+      minHeight: hull.layout.row,
+      paddingHorizontal: hull.space.sm,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: hull.space.md,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderColor: hull.border,
+    },
+    rosterIdentity: { flex: 1, minWidth: 0 },
+    rosterName: { ...Typography.default(), ...hull.type.body, color: hull.textPrimary },
+    rosterMeta: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
+    chevron: { ...Typography.default(), ...hull.type.hero, color: hull.textMuted },
+    rosterDetail: {
+      paddingHorizontal: hull.space.sm,
+      paddingBottom: hull.space.sm,
+      alignItems: 'flex-start',
+    },
+    rosterRemoveButton: { minHeight: 44, justifyContent: 'center' },
+    rosterRemoveText: { ...Typography.default(), ...hull.type.body, color: hull.dialogDanger },
+    rosterEmpty: {
+      ...Typography.default(),
+      ...hull.type.meta,
+      paddingVertical: hull.space.lg,
+      color: hull.textMuted,
+      textAlign: 'center',
+    },
+    membershipError: {
+      marginTop: hull.space.sm,
+      padding: hull.space.sm,
+      borderWidth: 1,
+      borderColor: hull.borderStrong,
+      backgroundColor: hull.bgHighlight,
+    },
+    membershipErrorText: {
+      ...Typography.default(),
+      ...hull.type.meta,
+      color: hull.textSecondary,
+    },
+  };
 });
-
-const styles = StyleSheet.create(() => ({
-  agentPresenceLight: {
-    width: 9,
-    height: 9,
-    borderRadius: groknight.radius,
-    borderWidth: 1,
-    borderColor: groknight.textSecondary,
-  },
-  agentPresenceOnline: { backgroundColor: groknight.textSecondary },
-  agentPresenceOffline: { backgroundColor: 'transparent' },
-  rosterModal: {
-    width: '100%',
-    maxWidth: 460,
-    maxHeight: '100%',
-    padding: 16,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    backgroundColor: groknight.bgRaised,
-  },
-  rosterModalHeading: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
-  rosterModalHeadingCopy: { flex: 1, minWidth: 0 },
-  rosterModalEyebrow: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textMuted,
-    fontSize: 9,
-    lineHeight: 12,
-    letterSpacing: 0.8,
-  },
-  rosterModalTitle: {
-    ...Typography.default('semiBold'),
-    marginTop: 4,
-    color: groknight.textPrimary,
-    fontSize: 19,
-    lineHeight: 24,
-  },
-  rosterModalClose: {
-    width: 44,
-    height: 44,
-    marginTop: -10,
-    marginRight: -10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  rosterModalCloseText: { ...Typography.default(), color: groknight.steel, fontSize: 24 },
-  rosterContent: { paddingTop: 18, paddingBottom: 4 },
-  rosterSectionLabel: {
-    ...Typography.mono('semiBold'),
-    marginBottom: 7,
-    color: groknight.textMuted,
-    fontSize: 9,
-    lineHeight: 12,
-    letterSpacing: 0.7,
-  },
-  rosterSectionLabelSpaced: { marginTop: 20 },
-  rosterRow: {
-    minHeight: 62,
-    paddingHorizontal: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    borderTopWidth: 1,
-    borderColor: groknight.border,
-    backgroundColor: groknight.bgBase,
-  },
-  rosterIdentity: { flex: 1, minWidth: 0 },
-  rosterNameRow: { minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 6 },
-  rosterName: {
-    ...Typography.default('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 13,
-    lineHeight: 17,
-  },
-  rosterHandle: {
-    ...Typography.mono(),
-    marginTop: 2,
-    color: groknight.textMuted,
-    fontSize: 10,
-    lineHeight: 14,
-  },
-  rosterKind: {
-    ...Typography.mono('semiBold'),
-    color: groknight.steel,
-    fontSize: 8,
-    lineHeight: 12,
-    letterSpacing: 0.7,
-  },
-  rosterActions: { flexShrink: 0, alignItems: 'flex-end', justifyContent: 'center' },
-  rosterRemoveButton: {
-    minHeight: 44,
-    paddingLeft: 12,
-    alignItems: 'flex-end',
-    justifyContent: 'center',
-  },
-  rosterRemoveText: {
-    ...Typography.mono('semiBold'),
-    color: groknight.dialogDanger,
-    fontSize: 9,
-    lineHeight: 13,
-    letterSpacing: 0.4,
-  },
-  rosterEmpty: {
-    ...Typography.default(),
-    paddingVertical: 28,
-    color: groknight.textMuted,
-    fontSize: 12,
-    textAlign: 'center',
-  },
-  membershipError: {
-    marginTop: 10,
-    padding: 10,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    backgroundColor: groknight.bgHighlight,
-  },
-  membershipErrorText: {
-    ...Typography.default('semiBold'),
-    color: groknight.textSecondary,
-    fontSize: 11,
-    lineHeight: 16,
-  },
-}));

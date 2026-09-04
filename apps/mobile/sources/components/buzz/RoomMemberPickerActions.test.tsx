@@ -15,7 +15,15 @@ vi.mock('react-native', async () => {
 });
 vi.mock('react-native-unistyles', () => ({
   StyleSheet: {
-    create: (factory: (theme: unknown) => unknown) => factory({ buzz: {} }),
+    hairlineWidth: 1,
+    create: (factory: (theme: unknown) => unknown) =>
+      factory({
+        buzz: {
+          type: { body: { fontSize: 16 }, meta: { fontSize: 13 } },
+          space: { sm: 8, md: 16 },
+          layout: { row: 64 },
+        },
+      }),
   },
 }));
 vi.mock('@/constants/Typography', () => ({

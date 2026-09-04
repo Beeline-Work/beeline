@@ -28,12 +28,26 @@ vi.mock('react-native-keyboard-controller', async () => {
   return { KeyboardAvoidingView: host('KeyboardAvoidingView') };
 });
 
+const theme = vi.hoisted(() => ({
+  buzz: {
+    type: {
+      hero: { fontSize: 22 },
+      body: { fontSize: 16 },
+      meta: { fontSize: 13 },
+      sectionHead: { fontSize: 10 },
+    },
+    space: { xs: 4, sm: 8, md: 16, lg: 24 },
+    layout: { row: 64, sectionGap: 24 },
+  },
+}));
 vi.mock('react-native-unistyles', () => ({
   StyleSheet: {
+    hairlineWidth: 1,
     absoluteFillObject: { position: 'absolute', inset: 0 },
     create: (factory: unknown) =>
-      typeof factory === 'function' ? (factory as (theme: any) => unknown)({ buzz: {} }) : factory,
+      typeof factory === 'function' ? (factory as (value: any) => unknown)(theme) : factory,
   },
+  useUnistyles: () => ({ theme }),
 }));
 
 vi.mock('@/constants/Typography', () => ({
@@ -71,47 +85,66 @@ beforeAll(() => {
 
 afterAll(() => vi.restoreAllMocks());
 
+const OX = 'agent';
+const ANA = 'ana';
+const rosterSections = {
+  people: [{ pubkey: ANA, name: 'Ana', handle: 'ana', kind: 'person' as const }],
+  agents: [
+    {
+      pubkey: OX,
+      name: 'Ox',
+      handle: 'ox',
+      kind: 'agent' as const,
+      agent: { pubkey: OX, displayName: 'Ox' },
+    },
+  ],
+};
+const members = new Map([
+  [OX, { pubkey: OX, role: 'member' }],
+  [ANA, { pubkey: ANA, role: 'admin' }],
+]);
+
+function sheet(overrides: Partial<React.ComponentProps<typeof RoomRosterSheet>> = {}) {
+  return (
+    <RoomRosterSheet
+      bottomInset={0}
+      isDirectMessage={false}
+      memberByPubkey={members as any}
+      membershipActionPubkey={null}
+      membershipError={null}
+      onClose={vi.fn()}
+      onRemove={vi.fn()}
+      onlineByPubkey={{ [OX]: true }}
+      workingByPubkey={{ [OX]: true }}
+      parentChannelId={null}
+      personProfileByPubkey={new Map()}
+      rosterSections={rosterSections}
+      total={2}
+      userPubkey="viewer"
+      viewerRole="owner"
+      visible
+      {...overrides}
+    />
+  );
+}
+
+function render(element: React.ReactElement): ReactTestRenderer {
+  let renderer!: ReactTestRenderer;
+  act(() => {
+    renderer = create(element);
+  });
+  return renderer;
+}
+
 describe('RoomRosterSheet', () => {
   it('renders a changed collapsed online verdict through the shared modal boundary', () => {
-    const members = new Map([['agent', { pubkey: 'agent', role: 'member' }]]);
-    const rosterSections = {
-      people: [],
-      agents: [
-        {
-          pubkey: 'agent',
-          name: 'Ox',
-          handle: 'ox',
-          kind: 'agent' as const,
-          agent: { pubkey: 'agent', displayName: 'Ox' },
-        },
-      ],
-    };
-    const onClose = vi.fn();
-    const onRemove = vi.fn();
-    const personProfileByPubkey = new Map();
-
     function ChatHarness({ liveEventId, online }: { liveEventId: string; online: boolean }) {
       void liveEventId;
-      return (
-        <RoomRosterSheet
-          bottomInset={0}
-          isDirectMessage={false}
-          memberByPubkey={members}
-          membershipActionPubkey={null}
-          membershipError={null}
-          onClose={onClose}
-          onRemove={onRemove}
-          onlineByPubkey={{ agent: online }}
-          workingByPubkey={{}}
-          parentChannelId={null}
-          personProfileByPubkey={personProfileByPubkey}
-          rosterSections={rosterSections}
-          total={1}
-          userPubkey="viewer"
-          viewerRole="owner"
-          visible
-        />
-      );
+      return sheet({
+        rosterSections: { people: [], agents: rosterSections.agents },
+        total: 1,
+        onlineByPubkey: { [OX]: online },
+      });
     }
 
     let renderer!: ReactTestRenderer;
@@ -125,66 +158,79 @@ describe('RoomRosterSheet', () => {
     expect(renderSpy).toHaveBeenCalledTimes(2);
   });
 
+  it('reads like the Members page: counted section heads, name plus one @handle · role line, ring only', () => {
+    const renderer = render(sheet());
+    expect(
+      renderer.root.findAllByProps({ testID: 'room-roster-people-head' }).at(-1)!.props.children,
+    ).toEqual(['People', ' ', 1]);
+    expect(
+      renderer.root.findAllByProps({ testID: 'room-roster-agents-head' }).at(-1)!.props.children,
+    ).toEqual(['Agents', ' ', 1]);
+
+    const agentRow = renderer.root.findAllByProps({ testID: `room-roster-agent-${OX}` }).at(-1)!;
+    const texts = agentRow.findAllByType('Text' as any).map((node: any) => node.props.children);
+    expect(texts[0]).toBe('Ox');
+    expect(texts[1]).toEqual(['@', 'ox', ' · ', 'member', ' · online']);
+    // The gold ring is the only state mark: no status square, no kind word.
+    expect(agentRow.findByType('IdentityMark' as any).props.alive).toBe(true);
+    expect(texts.flat().join(' ')).not.toMatch(/AGENT|PERSON|ONLINE/);
+    expect(agentRow.props.accessibilityLabel).toBe('Ox, agent, online, at ox');
+  });
+
   it('rings an agent only while it is working, never for a presence lease alone', () => {
     // C77: Candy's helper renewed its presence lease every few seconds while
     // every turn ended `failed`; the ring pulsed on an agent that could not
-    // answer. The ring reads the working record; the online word reads presence.
-    const members = new Map([['agent', { pubkey: 'agent', role: 'member' }]]);
-    const rosterSections = {
-      people: [],
-      agents: [
-        {
-          pubkey: 'agent',
-          name: 'Candy',
-          handle: 'candy',
-          kind: 'agent' as const,
-          agent: { pubkey: 'agent', displayName: 'Candy' },
-        },
-      ],
-    };
-    const sheet = (online: boolean, working: boolean) => (
-      <RoomRosterSheet
-        bottomInset={0}
-        isDirectMessage={false}
-        memberByPubkey={members}
-        membershipActionPubkey={null}
-        membershipError={null}
-        onClose={vi.fn()}
-        onRemove={vi.fn()}
-        onlineByPubkey={{ agent: online }}
-        workingByPubkey={working ? { agent: true } : {}}
-        parentChannelId={null}
-        personProfileByPubkey={new Map()}
-        rosterSections={rosterSections}
-        total={1}
-        userPubkey="viewer"
-        viewerRole="owner"
-        visible
-      />
-    );
+    // answer. The ring reads the working record; the lowercase presence word
+    // at the end of the meta line reads the lease.
     const markFor = (renderer: ReactTestRenderer) =>
-      renderer.root.findAll((node: any) => node.type === 'IdentityMark' && node.props.kind === 'agent')[0]
-        .props;
+      renderer.root
+        .findAllByProps({ testID: `room-roster-agent-${OX}` })
+        .at(-1)!
+        .findByType('IdentityMark' as any).props;
+    const metaFor = (renderer: ReactTestRenderer) =>
+      renderer.root
+        .findAllByProps({ testID: `room-roster-agent-${OX}` })
+        .at(-1)!
+        .findAllByType('Text' as any)[1].props.children;
 
-    let renderer!: ReactTestRenderer;
     // Working: ring on.
-    act(() => {
-      renderer = create(sheet(true, true));
-    });
-    expect(markFor(renderer).alive).toBe(true);
-    // Idle but present (lease live): ring off, the row still says online.
-    act(() => {
-      renderer = create(sheet(true, false));
-    });
-    expect(markFor(renderer).alive).toBe(false);
     expect(
-      renderer.root.findAll((node: any) => String(node.props.accessibilityLabel ?? '').includes(', online'))
-        .length,
-    ).toBeGreaterThan(0);
-    // Absent: ring off.
-    act(() => {
-      renderer = create(sheet(false, false));
-    });
-    expect(markFor(renderer).alive).toBe(false);
+      markFor(render(sheet({ onlineByPubkey: { [OX]: true }, workingByPubkey: { [OX]: true } })))
+        .alive,
+    ).toBe(true);
+    // Idle but present (lease live): ring off, the row still says online.
+    const idle = render(sheet({ onlineByPubkey: { [OX]: true }, workingByPubkey: {} }));
+    expect(markFor(idle).alive).toBe(false);
+    expect(metaFor(idle)).toEqual(['@', 'ox', ' · ', 'member', ' · online']);
+    // Absent: ring off, the row says offline.
+    const absent = render(sheet({ onlineByPubkey: {}, workingByPubkey: {} }));
+    expect(markFor(absent).alive).toBe(false);
+    expect(metaFor(absent)).toEqual(['@', 'ox', ' · ', 'member', ' · offline']);
+  });
+
+  it('keeps remove off the list: an owner opens a row to find its one control', () => {
+    const onRemove = vi.fn();
+    const renderer = render(sheet({ onRemove }));
+    expect(renderer.root.findAllByProps({ testID: `remove-room-member-${OX}` })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: `remove-room-member-${ANA}` })).toHaveLength(0);
+
+    const agentRow = renderer.root.findAllByProps({ testID: `room-roster-agent-${OX}` }).at(-1)!;
+    expect(agentRow.props.disabled).toBe(false);
+    act(() => agentRow.props.onPress());
+    const remove = renderer.root.findAllByProps({ testID: `remove-room-member-${OX}` }).at(-1)!;
+    expect(remove.findByType('Text' as any).props.children).toBe('Remove from this Room');
+    act(() => remove.props.onPress());
+    expect(onRemove).toHaveBeenCalledWith(rosterSections.agents[0]);
+  });
+
+  it('gives a row no chevron and no detail when the viewer may not remove it', () => {
+    const renderer = render(sheet({ viewerRole: 'member' }));
+    const agentRow = renderer.root.findAllByProps({ testID: `room-roster-agent-${OX}` }).at(-1)!;
+    expect(agentRow.props.disabled).toBe(true);
+    expect(
+      agentRow.findAllByType('Text' as any).map((node: any) => node.props.children),
+    ).not.toContain('›');
+    act(() => agentRow.props.onPress());
+    expect(renderer.root.findAllByProps({ testID: `remove-room-member-${OX}` })).toHaveLength(0);
   });
 });

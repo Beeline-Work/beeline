@@ -108,6 +108,26 @@ describe('active turn stream projection', () => {
     ]);
   });
 
+  it('leaves a failed turn holding its streamed words and the failure line (C98)', () => {
+    // Nothing the reader was mid-way through evaporates: the retracted draft
+    // keeps its last text and the server-phrased failure line stands with it.
+    const rows = [
+      message('live-turn:request-1', 105, {
+        isAgentActivity: true,
+        isAgentDraft: true,
+        agentMessageDraft: 'The answer is',
+        text: 'The answer is',
+      }),
+      message('turn-failed', 106, {
+        isSystemNotice: true,
+        text: 'Clara could not answer · provider error 402',
+      }),
+    ];
+    const failed = { ...WORKING, status: 'failed' as const };
+
+    expect(projectActiveTurnStream(rows, failed, false)).toBe(rows);
+  });
+
   it('returns settled and archived transcripts verbatim', () => {
     const rows = [message('fact', 101, { durableFact: { kind: 'action' } })];
     const complete = { ...WORKING, status: 'complete' as const };

@@ -83,11 +83,14 @@ export class AcpRequestTimeoutError extends Error {
     readonly timeoutMs: number,
     stderrTail = '',
     readonly inactivity = false,
+    /** What the request was carrying, so "inactivity" is not the whole cause. */
+    detail = '',
   ) {
     const meaningful = meaningfulHarnessStderr(stderrTail);
     const suffix = meaningful ? `; harness stderr: ${meaningful}` : '';
     super(
-      `ACP ${method} timed out after ${timeoutMs}ms${inactivity ? ' of inactivity' : ''}${suffix}`,
+      `ACP ${method} timed out after ${timeoutMs}ms${inactivity ? ' of inactivity' : ''}` +
+        `${detail ? ` (${detail})` : ''}${suffix}`,
     );
     this.name = 'AcpRequestTimeoutError';
   }
@@ -142,6 +145,20 @@ export interface PromptResult {
 /** One `session/prompt` content block: text, or an inline image for a harness that advertises `promptCapabilities.image`. */
 export type AcpPromptBlock =
   { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string };
+
+/**
+ * What a prompt is carrying, for a timeout that would otherwise say only
+ * "inactivity" (C87). A turn that wedged while holding megabytes of inline
+ * image is a different fact from a wedged text turn, and the failure line the
+ * Room shows has to name which one it was.
+ */
+export function promptPayloadNote(prompt: string | readonly AcpPromptBlock[]): string {
+  if (typeof prompt === 'string') return '';
+  const images = prompt.filter((block) => block.type === 'image');
+  if (!images.length) return '';
+  const bytes = images.reduce((total, block) => total + Math.floor((block.data.length * 3) / 4), 0);
+  return `prompt carried ${images.length} inline image${images.length === 1 ? '' : 's'}, ${Math.round(bytes / 1024)} KB`;
+}
 
 export interface SteerResult {
   runId: string;
@@ -527,6 +544,8 @@ interface Pending {
   /** Idle window used to re-arm `timer` on activity; undefined for non-resettable requests. */
   idleTimeoutMs?: number;
   method?: string;
+  /** Named in this request's timeout so the cause is not just "inactivity". */
+  detail?: string;
 }
 
 export class AcpClient extends EventEmitter {
@@ -914,6 +933,7 @@ export class AcpClient extends EventEmitter {
         (id) => {
           requestId = id;
         },
+        promptPayloadNote(text),
       )) as { stopReason?: string };
 
       const agentText = finalAgentMessageText(updates, this.agentLabel);
@@ -1029,10 +1049,18 @@ export class AcpClient extends EventEmitter {
     const p = this.pending.get(id);
     if (!p || p.idleTimeoutMs === undefined) return;
     this.clearTimer(p);
-    const { idleTimeoutMs, method, reject } = p;
+    const { idleTimeoutMs, method, reject, detail } = p;
     p.timer = setTimeout(() => {
       this.pending.delete(id);
-      reject(new AcpRequestTimeoutError(method ?? 'request', idleTimeoutMs, this.stderrTail, true));
+      reject(
+        new AcpRequestTimeoutError(
+          method ?? 'request',
+          idleTimeoutMs,
+          this.stderrTail,
+          true,
+          detail ?? '',
+        ),
+      );
     }, idleTimeoutMs);
   }
 
@@ -1238,6 +1266,7 @@ export class AcpClient extends EventEmitter {
     params: unknown,
     timeoutMs = 60_000,
     onStart?: (id: number) => void,
+    detail = '',
   ): Promise<unknown> {
     if (!this.child || !this.alive) {
       return Promise.reject(new Error('AcpClient not started'));
@@ -1247,13 +1276,22 @@ export class AcpClient extends EventEmitter {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new AcpRequestTimeoutError(method, timeoutMs, this.stderrTail, Boolean(onStart)));
+        reject(
+          new AcpRequestTimeoutError(
+            method,
+            timeoutMs,
+            this.stderrTail,
+            Boolean(onStart),
+            detail,
+          ),
+        );
       }, timeoutMs);
       this.pending.set(id, {
         resolve,
         reject,
         timer,
         method,
+        ...(detail ? { detail } : {}),
         ...(onStart ? { idleTimeoutMs: timeoutMs } : {}),
       });
       onStart?.(id);

@@ -260,6 +260,8 @@ export class MonolithCornerTurnLoop {
   private agentEnv: Record<string, string> = {};
   /** OpenRouter providers this activation pinned, in order (C92). */
   private pinnedProviders: string[] = [];
+  /** Whether the pinned model takes images; `undefined` when the pin did not say. */
+  private modelTakesImages?: boolean;
   /** The one provider re-pinned after an empty completion, until the session ends. */
   private pinnedProviderOverride?: string;
   private turnIdentityInstructions = '';
@@ -350,6 +352,8 @@ export class MonolithCornerTurnLoop {
               : {}),
             onDecision: (routing) => {
               if (!this.pinnedProviderOverride) this.pinnedProviders = [...routing.providers];
+              // See `MonolithRoomTurnLoop.acceptsImages` (C87).
+              this.modelTakesImages = routing.input ? routing.input.includes('image') : undefined;
             },
           }),
         })
@@ -488,6 +492,12 @@ export class MonolithCornerTurnLoop {
     };
   }
 
+  /** A picture reaches the model only if the harness AND the model take one (C87). */
+  private acceptsImages(): boolean {
+    if (!(this.client?.canPromptWithImages() ?? false)) return false;
+    return this.modelTakesImages ?? true;
+  }
+
   /** The pinned providers a failure reason should name for this session. */
   private servingProviders(): string[] {
     return this.pinnedProviderOverride ? [this.pinnedProviderOverride] : this.pinnedProviders;
@@ -589,7 +599,7 @@ export class MonolithCornerTurnLoop {
                 transcript ? `Corner transcript:\n${transcript}` : '',
                 [
                   `Newest trigger:\n${trigger}`,
-                  ...attachmentPromptLines(attachments, delivered),
+                  ...attachmentPromptLines(attachments, delivered, this.acceptsImages()),
                 ].join('\n'),
                 'Continue the objective. Obey the PR checks and human hold rules in your session instructions.',
                 MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE,
@@ -678,7 +688,7 @@ export class MonolithCornerTurnLoop {
                   this.sessionId!,
                   promptWithImages(
                     prompt,
-                    attachmentImageBlocks(delivered, this.client!.canPromptWithImages()),
+                    attachmentImageBlocks(delivered, this.acceptsImages()),
                   ),
                   120_000,
                   (_delta, full) => {

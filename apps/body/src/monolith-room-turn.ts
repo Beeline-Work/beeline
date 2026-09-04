@@ -255,6 +255,8 @@ export class MonolithRoomTurnLoop {
   private readonly queuedTurns: HumanMessage[] = [];
   /** Session scratch directory attachments are downloaded into (`TMPDIR/beeline-attachments`). */
   private attachmentDir?: string;
+  /** Whether the pinned model takes images; `undefined` when the pin did not say. */
+  private modelTakesImages?: boolean;
   /** The session's TMPDIR: writable to a granted command in a Room, as it is to the harness (C94). */
   private sessionScratchDir?: string;
   /** The `agent-home.ts` overlay this session writes into; a Room grant keeps it. */
@@ -353,6 +355,18 @@ export class MonolithRoomTurnLoop {
     return roster;
   }
 
+  /**
+   * Whether a picture actually reaches the model this session. Both halves
+   * have to hold (C87): the harness must advertise `promptCapabilities.image`,
+   * AND — when the pin knows the model's modalities — the model must take
+   * images. `undefined` modalities mean the question was never settled, and
+   * the harness answer stands alone as before.
+   */
+  private acceptsImages(): boolean {
+    if (!(this.client?.canPromptWithImages() ?? false)) return false;
+    return this.modelTakesImages ?? true;
+  }
+
   /** Download a message's attachments into the session scratch directory once. */
   private async deliver(item: HumanMessage): Promise<DeliveredAttachment[]> {
     if (!item.attachments.length || !this.attachmentDir) return [];
@@ -400,6 +414,11 @@ export class MonolithRoomTurnLoop {
               // The override pins one provider; keep the full order it came
               // from so a later empty turn still knows what to rotate to.
               if (!this.pinnedProviderOverride) this.pinnedProviders = [...routing.providers];
+              // A pinned model that takes no images is a fact about THIS
+              // session (C87): the harness still advertises the capability,
+              // so without this the turn would ship megabytes the model never
+              // sees and say nothing about why (`modelTakesImages`).
+              this.modelTakesImages = routing.input ? routing.input.includes('image') : undefined;
             },
           }),
         })
@@ -598,7 +617,7 @@ export class MonolithRoomTurnLoop {
             this.sessionId!,
             [
               `Human steer received while the current turn is running from ${author}:`,
-              roomMessagePrompt('', item.body, item.attachments, delivered),
+              roomMessagePrompt('', item.body, item.attachments, delivered, this.acceptsImages()),
               'Adjust the current work now. Keep the original request and earlier messages as context.',
             ].join('\n\n'),
           );
@@ -668,6 +687,7 @@ export class MonolithRoomTurnLoop {
                     message.body,
                     message.attachments,
                     this.deliveredAttachments.get(message.id),
+                    this.acceptsImages(),
                   ),
                 )
                 .join('\n');
@@ -687,6 +707,7 @@ export class MonolithRoomTurnLoop {
                   inboxItemPromptBody(item, this.agent.publicKey),
                   item.attachments,
                   delivered,
+                  this.acceptsImages(),
                 ),
                 grantDecision
                   ? [
@@ -714,7 +735,7 @@ export class MonolithRoomTurnLoop {
               const runPrompt = async (): Promise<PromptResult> => {
                 let nextPrompt = promptWithImages(
                   prompt,
-                  attachmentImageBlocks(delivered, this.client!.canPromptWithImages()),
+                  attachmentImageBlocks(delivered, this.acceptsImages()),
                 );
                 let result: Awaited<ReturnType<AcpClient['sessionPrompt']>> | undefined;
                 for (;;) {
@@ -768,6 +789,7 @@ export class MonolithRoomTurnLoop {
                         steerItem.body,
                         steerItem.attachments,
                         this.deliveredAttachments.get(steerItem.id),
+                        this.acceptsImages(),
                       ),
                     ),
                     'Continue now and answer the updated request without erasing the earlier context.',
@@ -979,10 +1001,13 @@ function roomMessagePrompt(
   body: string,
   attachments: RoomMessage['attachments'],
   delivered?: readonly DeliveredAttachment[],
+  harnessAcceptsImages = true,
 ): string {
   const message = body.trim() || '(shared attachments)';
   const rendered = author ? `${author}: ${message}` : message;
-  return [rendered, ...attachmentPromptLines(attachments, delivered)].join('\n');
+  return [rendered, ...attachmentPromptLines(attachments, delivered, harnessAcceptsImages)].join(
+    '\n',
+  );
 }
 
 async function wait(ms: number, signal?: AbortSignal): Promise<void> {

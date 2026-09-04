@@ -31,8 +31,29 @@ const PDF = {
 };
 const JPEG = Buffer.from('jpg');
 
+const OPENROUTER_MODEL = 'z-ai/glm-5.3-flash';
+const ENDPOINTS_URL = `https://openrouter.ai/api/v1/models/${OPENROUTER_MODEL}/endpoints`;
+
+/** One tool-capable endpoint, so the answer probe never runs in this test. */
+function endpointsPayload(inputModalities: string[]) {
+  return {
+    data: {
+      id: OPENROUTER_MODEL,
+      architecture: { input_modalities: inputModalities },
+      endpoints: [
+        {
+          tag: 'baseten/fp8',
+          uptime_last_30m: 100,
+          context_length: 98304,
+          supported_parameters: ['tools'],
+        },
+      ],
+    },
+  };
+}
+
 /** One Room turn for a human message carrying a photo and a PDF; returns what the harness was prompted with. */
-async function runTurn(acceptsImages: boolean) {
+async function runTurn(acceptsImages: boolean, modelInputModalities?: string[]) {
   const root = await mkdtemp(join(tmpdir(), 'beeline-room-attachments-'));
   roots.push(root);
   const identity = identityFromKey(AGENT_HEX, 'Bee');
@@ -66,10 +87,19 @@ async function runTurn(acceptsImages: boolean) {
     accessPolicy: 'everyone',
     agentHomeRoot,
     operatorHome: join(root, 'operator-home'),
+    ...(modelInputModalities
+      ? {
+          agentEnv: { OPENROUTER_API_KEY: '' },
+          openRouterRoutingCacheDir: join(root, 'routing-cache'),
+        }
+      : {}),
   } as BodyConfig;
+  // An empty key still identifies the provider without buying an answer probe.
+  if (modelInputModalities) config.agentEnv.OPENROUTER_API_KEY = 'k';
   let inboxReads = 0;
   const execute = vi.fn(async (name: string) => {
-    if (name === 'getAgentConfiguration') return {};
+    if (name === 'getAgentConfiguration')
+      return modelInputModalities ? { model: OPENROUTER_MODEL } : {};
     if (name === 'getRoomRepositoryState') return { resolution: 'none' };
     if (name === 'getWorkspaceRoster') {
       return {
@@ -113,7 +143,21 @@ async function runTurn(acceptsImages: boolean) {
   } as unknown as DaemonApiClient;
   const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
   vi.spyOn(acp, 'start').mockResolvedValue(undefined);
-  vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: 'room-session', raw: {} });
+  vi.spyOn(acp, 'sessionNew').mockResolvedValue({
+    sessionId: 'room-session',
+    raw: modelInputModalities
+      ? {
+          configOptions: [
+            {
+              id: 'model',
+              category: 'model',
+              options: [{ value: OPENROUTER_MODEL, name: 'GLM 5.3 Flash' }],
+            },
+          ],
+        }
+      : {},
+  });
+  vi.spyOn(acp, 'setConfigOption').mockResolvedValue(undefined);
   vi.spyOn(acp, 'canPromptWithImages').mockReturnValue(acceptsImages);
   const sessionPrompt = vi.spyOn(acp, 'sessionPrompt').mockResolvedValue({
     stopReason: 'end_turn',
@@ -123,6 +167,8 @@ async function runTurn(acceptsImages: boolean) {
   });
   const fetchImpl = vi.fn(async (input: string | URL | Request) => {
     const url = String(input);
+    if (url === ENDPOINTS_URL)
+      return new Response(JSON.stringify(endpointsPayload(modelInputModalities ?? ['text'])));
     if (url === PHOTO.url) return new Response(JPEG, { headers: { 'content-type': 'image/jpeg' } });
     if (url === PDF.url)
       return new Response('%PDF', { headers: { 'content-type': 'application/pdf' } });
@@ -192,5 +238,42 @@ describe('Room turn attachment delivery', () => {
     expect(prompt).toContain(`local file ${join(scratch, 'photo.jpg')}`);
     expect(prompt).toContain(`local file ${join(scratch, 'spec.pdf')}`);
     expect(await readFile(join(scratch, 'photo.jpg'))).toEqual(JPEG);
+  });
+
+  // C87. Without the image, the turn must carry the REASON, so the agent says
+  // it in one plain sentence in the same turn instead of improvising a
+  // description or waiting on a picture that is not coming.
+  it('names the unseen photo in the prompt when the harness rejects image blocks', async () => {
+    const { prompt } = await runTurn(false);
+    const text = String(prompt);
+    expect(text).toContain('NOT shown to you as an image: this session cannot take image content');
+    expect(text).toContain('say that in one plain sentence rather than describing an image you cannot see');
+    // The PDF is not a picture and is never described as one.
+    expect(text.split('\n').find((line) => line.includes('spec.pdf'))).not.toContain(
+      'NOT shown to you',
+    );
+  });
+
+  it('says nothing about unseen pictures when the photo did ride inline', async () => {
+    const { prompt } = await runTurn(true);
+    const text = ((prompt as AcpPromptBlock[])[0] as { text: string }).text;
+    expect(text).not.toContain('NOT shown to you');
+    expect(text).not.toContain('You were not shown the picture itself');
+  });
+
+  // C87. The harness advertising `promptCapabilities.image` is only half the
+  // question: a text-only model behind it drops the picture anyway, so the
+  // turn must neither ship the bytes nor pretend the agent was shown one.
+  it('withholds the image block and names the reason when the pinned model takes no images', async () => {
+    const { prompt } = await runTurn(true, ['text']);
+    expect(typeof prompt).toBe('string');
+    expect(String(prompt)).toContain('NOT shown to you as an image');
+  });
+
+  it('sends the photo inline when the pinned model is the vision-capable one', async () => {
+    const { prompt } = await runTurn(true, ['text', 'image', 'video']);
+    const blocks = prompt as AcpPromptBlock[];
+    expect(blocks.map((block) => block.type)).toEqual(['text', 'image']);
+    expect((blocks[0] as { text: string }).text).not.toContain('NOT shown to you');
   });
 });

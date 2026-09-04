@@ -9,9 +9,11 @@ It keeps only four responsibilities:
 3. run the selected ACP harness with isolated home/sandbox state;
 4. self-update with a functional session-and-turn probe.
 
-Room data and writes go through `DaemonApiClient`. The helper has no relay transport, pairing-code
-redemption, corner/action tools, approval or mandate engine, work calendar, repository lifecycle,
-or GitHub event consumer.
+Room data and writes go through `DaemonApiClient`. The helper has no relay transport, legacy
+pairing-code redemption, approval or mandate engine, work calendar, repository lifecycle, or
+GitHub event consumer. Its sole action surface is repository corner start/status: `read-only-mcp.ts`
+exposes `open_corner` in top-level Rooms and `pr_checks_status` in corners through the `beeline-agent`
+MCP surface.
 
 ## Commands
 

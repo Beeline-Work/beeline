@@ -13,6 +13,7 @@ import {
   type AcpPermissionDecision,
   type AcpPermissionRequest,
   type McpServerWire,
+  type PromptResult,
 } from './acp.js';
 import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
@@ -34,7 +35,13 @@ import {
 import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
-import { explainEmptyAgentTurn } from './empty-turn.js';
+import {
+  explainEmptyAgentTurn,
+  nextPinnedProvider,
+  shouldRetryEmptyTurn,
+  turnFailureReasonWithProvider,
+  type EmptyTurnExplanation,
+} from './empty-turn.js';
 import type { GrantCommandRunner, GrantRunnerEndpoint } from './grant-runner.js';
 import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
 import {
@@ -232,6 +239,10 @@ export class MonolithRoomTurnLoop {
   private sessionId?: string;
   /** The live session's environment, read back for pi's own turn record. */
   private agentEnv: Record<string, string> = {};
+  /** OpenRouter providers this activation pinned, in order (C92). */
+  private pinnedProviders: string[] = [];
+  /** The one provider re-pinned after an empty completion, until the session ends. */
+  private pinnedProviderOverride?: string;
   private busy = false;
   private turnInstructionPrefix = '';
   private draftTail = Promise.resolve();
@@ -349,7 +360,16 @@ export class MonolithRoomTurnLoop {
           ...(this.options.config.operatorHome
             ? { operatorHome: this.options.config.operatorHome }
             : {}),
-          ...openRouterRoutingInput(this.options.config, selection, this.options.fetchImpl),
+          ...openRouterRoutingInput(this.options.config, selection, this.options.fetchImpl, {
+            ...(this.pinnedProviderOverride
+              ? { providerOverride: this.pinnedProviderOverride }
+              : {}),
+            onDecision: (routing) => {
+              // The override pins one provider; keep the full order it came
+              // from so a later empty turn still knows what to rotate to.
+              if (!this.pinnedProviderOverride) this.pinnedProviders = [...routing.providers];
+            },
+          }),
         })
       : {};
     const command = this.options.config.agentCommand ?? this.options.config.agentBinary;
@@ -468,9 +488,46 @@ export class MonolithRoomTurnLoop {
         const client = this.client;
         this.client = undefined;
         this.sessionId = undefined;
+        // A rotation is a fact about one live session; the next activation
+        // starts from the full probed set again.
+        this.pinnedProviderOverride = undefined;
         if (client?.isAlive) await client.stop();
       },
     };
+  }
+
+  /** The pinned providers a failure reason should name for this session. */
+  private servingProviders(): string[] {
+    return this.pinnedProviderOverride ? [this.pinnedProviderOverride] : this.pinnedProviders;
+  }
+
+  /** Why a turn carried no answer text, or undefined when it did. */
+  private async explainEmpty(result: PromptResult): Promise<EmptyTurnExplanation | undefined> {
+    if (sanitizeAgentReply(result.agentText)) return undefined;
+    return explainEmptyAgentTurn({
+      agentLabel: this.options.config.agentCommand ?? this.options.config.agentBinary,
+      agentEnv: this.agentEnv,
+      sessionId: this.sessionId!,
+      result,
+    });
+  }
+
+  /**
+   * Re-pin the session to the next provider in the OpenRouter order and open a
+   * fresh session on it, so the retry of an empty completion is served — and
+   * named — by exactly one provider. Undefined when the pin has nowhere left
+   * to go.
+   */
+  private async repinNextProvider(): Promise<string | undefined> {
+    const next = nextPinnedProvider(this.pinnedProviders, this.pinnedProviderOverride);
+    if (!next) return undefined;
+    this.pinnedProviderOverride = next;
+    const client = this.client;
+    this.client = undefined;
+    this.sessionId = undefined;
+    if (client?.isAlive) await client.stop();
+    await this.activate();
+    return next;
   }
 
   private startPrompt(item: HumanMessage): void {
@@ -615,74 +672,93 @@ export class MonolithRoomTurnLoop {
               ]
                 .filter(Boolean)
                 .join('\n\n');
-              const sessionId = this.sessionId!;
               // The mobile live-overlay handoff suppresses a draft as soon as its durable
               // reply with the same request id arrives. Keep this id stable through both
               // sides of that handoff so a delayed retract cannot render two bubbles.
               const turnId = item.id;
-              let nextPrompt = promptWithImages(
-                prompt,
-                attachmentImageBlocks(delivered, this.client!.canPromptWithImages()),
-              );
-              let result: Awaited<ReturnType<AcpClient['sessionPrompt']>> | undefined;
-              for (;;) {
-                let promptError: unknown;
-                try {
-                  let latestDraft = '';
-                  result = await this.client!.sessionPrompt(
-                    sessionId,
-                    nextPrompt,
-                    120_000,
-                    (_delta, full) => {
-                      latestDraft = sanitizeAgentReply(full);
-                      if (!latestDraft) return;
-                      this.draftTail = this.draftTail
-                        .catch(() => undefined)
-                        .then(() =>
-                          api.execute('postAgentDraft', {
-                            agentId: this.agent.publicKey,
-                            roomId: this.options.roomId,
-                            turnId,
-                            text: latestDraft,
-                          }),
-                        )
-                        .then(() => undefined)
-                        .catch((error) =>
-                          console.error(
-                            `[thin-core] monolith Room ${this.options.roomId} draft publish failed:`,
-                            error,
-                          ),
-                        );
-                    },
-                  );
-                } catch (error) {
-                  promptError = error;
-                }
-                const settledSteerTail = active.steerTail;
-                await settledSteerTail;
-                if (settledSteerTail !== active.steerTail) continue;
-                if (!active.resumeRequested) {
-                  if (promptError) throw promptError;
-                  break;
-                }
-                active.resumeRequested = false;
-                nextPrompt = [
-                  'The previous run was cancelled because its harness could not accept every live steer.',
-                  'Resume the same turn. Keep the original request and everything that happened before it was cancelled.',
-                  'Human messages that arrived after the original request, in transcript order:',
-                  ...active.steers.map((steerItem) =>
-                    roomMessagePrompt(
-                      steerItem.authorId.slice(0, 12),
-                      steerItem.body,
-                      steerItem.attachments,
-                      this.deliveredAttachments.get(steerItem.id),
+              // One prompt run, steers and all. It is a closure because an empty
+              // completion re-pins the session to another provider and runs it
+              // again (C92) — against the NEW client and session id.
+              const runPrompt = async (): Promise<PromptResult> => {
+                let nextPrompt = promptWithImages(
+                  prompt,
+                  attachmentImageBlocks(delivered, this.client!.canPromptWithImages()),
+                );
+                let result: Awaited<ReturnType<AcpClient['sessionPrompt']>> | undefined;
+                for (;;) {
+                  let promptError: unknown;
+                  try {
+                    let latestDraft = '';
+                    result = await this.client!.sessionPrompt(
+                      this.sessionId!,
+                      nextPrompt,
+                      120_000,
+                      (_delta, full) => {
+                        latestDraft = sanitizeAgentReply(full);
+                        if (!latestDraft) return;
+                        this.draftTail = this.draftTail
+                          .catch(() => undefined)
+                          .then(() =>
+                            api.execute('postAgentDraft', {
+                              agentId: this.agent.publicKey,
+                              roomId: this.options.roomId,
+                              turnId,
+                              text: latestDraft,
+                            }),
+                          )
+                          .then(() => undefined)
+                          .catch((error) =>
+                            console.error(
+                              `[thin-core] monolith Room ${this.options.roomId} draft publish failed:`,
+                              error,
+                            ),
+                          );
+                      },
+                    );
+                  } catch (error) {
+                    promptError = error;
+                  }
+                  const settledSteerTail = active.steerTail;
+                  await settledSteerTail;
+                  if (settledSteerTail !== active.steerTail) continue;
+                  if (!active.resumeRequested) {
+                    if (promptError) throw promptError;
+                    break;
+                  }
+                  active.resumeRequested = false;
+                  nextPrompt = [
+                    'The previous run was cancelled because its harness could not accept every live steer.',
+                    'Resume the same turn. Keep the original request and everything that happened before it was cancelled.',
+                    'Human messages that arrived after the original request, in transcript order:',
+                    ...active.steers.map((steerItem) =>
+                      roomMessagePrompt(
+                        steerItem.authorId.slice(0, 12),
+                        steerItem.body,
+                        steerItem.attachments,
+                        this.deliveredAttachments.get(steerItem.id),
+                      ),
                     ),
-                  ),
-                  'Continue now and answer the updated request without erasing the earlier context.',
-                ].join('\n\n');
+                    'Continue now and answer the updated request without erasing the earlier context.',
+                  ].join('\n\n');
+                }
+                return result!;
+              };
+              let result = await runPrompt();
+              let explained = await this.explainEmpty(result);
+              if (explained && shouldRetryEmptyTurn(explained)) {
+                const silent = this.servingProviders();
+                const next = await this.repinNextProvider();
+                if (next) {
+                  console.warn(
+                    `[thin-core] monolith Room ${this.options.roomId} turn ${item.id}: ` +
+                      `${turnFailureReasonWithProvider(explained.reason, silent)}; retrying on ${next}`,
+                  );
+                  result = await runPrompt();
+                  explained = await this.explainEmpty(result);
+                }
               }
               active.phase = 'finishing';
-              if (result?.toolCalls.some((call) => pendingGrantToolCall(call))) {
+              if (result.toolCalls.some((call) => pendingGrantToolCall(call))) {
                 this.pausedOnGrantRequestId = item.id;
                 console.log(
                   `[thin-core] monolith Room ${this.options.roomId} turn ${item.id} paused on a grant card`,
@@ -692,7 +768,7 @@ export class MonolithRoomTurnLoop {
                   `[thin-core] monolith Room ${this.options.roomId} turn ${resumedRequestId} resumed by grant decision ${item.id}`,
                 );
               }
-              const openCornerCall = result?.toolCalls.find((call) =>
+              const openCornerCall = result.toolCalls.find((call) =>
                 /(?:^|[._:/-])open_corner$/i.test(call.title ?? ''),
               );
               if (openCornerCall) {
@@ -702,19 +778,18 @@ export class MonolithRoomTurnLoop {
                 this.options.onCornerOpened?.();
               }
               await this.draftTail;
-              let reply = sanitizeAgentReply(result!.agentText);
-              if (!reply) {
+              let reply = sanitizeAgentReply(result.agentText);
+              if (!reply && explained) {
                 // Either text the harness recorded but never streamed, or a named
                 // reason (pi's provider refusal, an empty model answer, the stream's
-                // shape) — never the bare "no reply" as the only fact.
-                const explained = await explainEmptyAgentTurn({
-                  agentLabel: this.options.config.agentCommand ?? this.options.config.agentBinary,
-                  agentEnv: this.agentEnv,
-                  sessionId,
-                  result: result!,
-                });
+                // shape) carrying the provider that served the turn — never the bare
+                // "no reply" as the only fact.
                 reply = explained.recoveredText ? sanitizeAgentReply(explained.recoveredText) : '';
-                if (!reply) throw new Error(explained.reason);
+                if (!reply) {
+                  throw new Error(
+                    turnFailureReasonWithProvider(explained.reason, this.servingProviders()),
+                  );
+                }
                 console.warn(
                   `[thin-core] monolith Room ${this.options.roomId} turn ${item.id}: ${explained.reason}`,
                 );

@@ -5,7 +5,9 @@ import { dirname, resolve } from 'node:path';
 
 import {
   AcpClient,
+  AcpRequestTimeoutError,
   agentStreamSnapshot,
+  meaningfulHarnessStderr,
   isPureRetryNarration,
   openAcpConversation,
   toolCallEntries,
@@ -1080,7 +1082,9 @@ describe('AcpClient live steering', () => {
     await client.start();
     try {
       const { sessionId } = await client.sessionNew({ cwd: tmpdir() });
-      await expect(client.sessionPrompt(sessionId, 'Use the mounted tool', 5_000)).resolves.toMatchObject({
+      await expect(
+        client.sessionPrompt(sessionId, 'Use the mounted tool', 5_000),
+      ).resolves.toMatchObject({
         agentText: 'allow',
       });
     } finally {
@@ -1424,5 +1428,101 @@ describe('AcpClient failure reporting', () => {
       agentEnv: {},
     });
     await expect(client.start()).rejects.toThrow(/ACP agent \/bin\/sh exited code=4/);
+  });
+});
+
+/**
+ * pi-acp 0.0.33's answer to our ACP `notifications/initialized`, captured
+ * verbatim: it appears on EVERY pi session and the session then serves fine,
+ * so it is never the cause of a failure and must never reach a Room.
+ */
+const PI_HANDSHAKE_NOISE = [
+  'Error handling notification {',
+  '  "jsonrpc": "2.0",',
+  '  "method": "notifications/initialized",',
+  '  "params": {}',
+  '} Error: -32601 Method not found',
+].join('\n');
+
+describe('meaningfulHarnessStderr', () => {
+  it('drops the pi handshake dump entirely', () => {
+    expect(meaningfulHarnessStderr(PI_HANDSHAKE_NOISE)).toBe('');
+    expect(meaningfulHarnessStderr(`${PI_HANDSHAKE_NOISE}\n${PI_HANDSHAKE_NOISE}`)).toBe('');
+  });
+
+  it('keeps a real cause written before or after the handshake dump', () => {
+    expect(meaningfulHarnessStderr(`${PI_HANDSHAKE_NOISE}\nfatal: models.json is malformed`)).toBe(
+      'fatal: models.json is malformed',
+    );
+    expect(meaningfulHarnessStderr(`spawn failed: ENOENT\n${PI_HANDSHAKE_NOISE}`)).toBe(
+      'spawn failed: ENOENT',
+    );
+  });
+
+  it('keeps a notification-handling error that is NOT the known handshake', () => {
+    const other = 'Error handling notification { "method": "session/update" } Error: boom';
+    expect(meaningfulHarnessStderr(other)).toBe(other);
+  });
+
+  it('never lets the handshake reply reach a turn failure reason', () => {
+    const timeout = new AcpRequestTimeoutError('session/prompt', 120_000, PI_HANDSHAKE_NOISE, true);
+    expect(timeout.message).toBe('ACP session/prompt timed out after 120000ms of inactivity');
+    expect(timeout.message).not.toContain('harness stderr');
+    expect(
+      new AcpRequestTimeoutError('session/prompt', 120_000, 'fatal: out of memory', true).message,
+    ).toContain('; harness stderr: fatal: out of memory');
+  });
+});
+
+async function fakeHandshakeAgent(log: string): Promise<string> {
+  const directory = await mkdtemp(resolve(tmpdir(), 'buzzy-acp-handshake-'));
+  temporaryDirectories.push(directory);
+  const binary = resolve(directory, 'pi-acp');
+  await writeFile(
+    binary,
+    `#!/usr/bin/env node
+import { appendFileSync } from 'node:fs';
+import { createInterface } from 'node:readline';
+
+const lines = createInterface({ input: process.stdin });
+lines.on('line', (line) => {
+  const message = JSON.parse(line);
+  appendFileSync(${JSON.stringify(log)}, message.method + '\\n');
+  if (message.method === 'initialize') {
+    process.stdout.write(
+      JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } }) + '\\n',
+    );
+  } else if (message.method === 'shutdown') {
+    process.exit(0);
+  }
+});
+`,
+  );
+  await chmod(binary, 0o755);
+  return binary;
+}
+
+describe('the ACP handshake', () => {
+  it('does not send pi-acp the initialized notification it answers with -32601', async () => {
+    const directory = await mkdtemp(resolve(tmpdir(), 'buzzy-acp-handshake-log-'));
+    temporaryDirectories.push(directory);
+    const log = resolve(directory, 'methods.log');
+    await writeFile(log, '');
+    const binary = await fakeHandshakeAgent(log);
+
+    const pi = new AcpClient({ agentBinary: binary, agentEnv: { PATH: process.env.PATH ?? '' } });
+    await pi.start();
+    await pi.stop();
+    expect(await readFile(log, 'utf8')).toBe('initialize\nshutdown\n');
+
+    await writeFile(log, '');
+    const other = new AcpClient({
+      agentBinary: binary,
+      agentLabel: 'codex-acp',
+      agentEnv: { PATH: process.env.PATH ?? '' },
+    });
+    await other.start();
+    await other.stop();
+    expect(await readFile(log, 'utf8')).toContain('notifications/initialized');
   });
 });

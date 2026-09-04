@@ -788,15 +788,23 @@ export async function runConnectFinishCommand(path: string | undefined): Promise
     const providerEnv = grant.llmEnvFile
       ? await readFile(grant.llmEnvFile, 'utf8').catch(() => '')
       : '';
-    const model = openRouterModelId(grant.model, {
-      OPENROUTER_API_KEY: /^OPENROUTER_API_KEY=\S/m.test(providerEnv) ? 'set' : '',
-    });
+    const apiKey = (/^OPENROUTER_API_KEY=(\S+)/m.exec(providerEnv)?.[1] ?? '').replace(
+      /^["']|["']$/g,
+      '',
+    );
+    const model = openRouterModelId(grant.model, { OPENROUTER_API_KEY: apiKey });
     if (model) {
       const decision = await resolveOpenRouterRouting({
         model,
         cacheDir: openRouterRoutingCacheDir(dirname(connected.configPath)),
+        ...(apiKey ? { apiKey } : {}),
+        probeTimeoutMs: 10_000,
       });
       console.log(decision.line);
+      // Connect is the one place the answer probe MAY block: warming it here
+      // is what keeps the daemon's first turn off a silent provider.
+      const probed = await decision.refresh;
+      if (probed) console.log(probed.line);
     }
   } catch (error) {
     // connect-finish runs without a TTY (the parent spawns it with pipes), so

@@ -66,6 +66,7 @@ import {
   resolveOpenRouterRouting,
   withOpenRouterModelRouting,
   type OpenRouterRoutingDecision,
+  type OpenRouterRoutingHomeInput,
 } from './openrouter-routing.js';
 import { extractTomlSections, tomlChildTableNames } from './toml-section.js';
 import { trustySquireLegacyStorePaths } from './trusty-squire-storage.js';
@@ -99,9 +100,7 @@ const SHARED_CREDENTIALS: Array<{
  * directory the harness was pointed at. A missing source dir is skipped, not
  * fatal — not every host has every harness installed.
  */
-export const BEELINE_DEFAULT_SKILL_NAMES = [
-  USING_BEELINE_SKILL_NAME,
-] as const;
+export const BEELINE_DEFAULT_SKILL_NAMES = [USING_BEELINE_SKILL_NAME] as const;
 
 /**
  * Operator skill directories shared by default into an isolated harness
@@ -201,12 +200,7 @@ export interface RoomAgentHomeInput {
    * live-derived provider set (`openrouter-routing.ts`, cached under
    * `cacheDir` for 24h) is pinned on that one model's pi `models.json` entry.
    */
-  openRouterRouting?: {
-    model: string;
-    cacheDir: string;
-    fetchImpl?: typeof fetch;
-    now?: () => number;
-  };
+  openRouterRouting?: OpenRouterRoutingHomeInput;
 }
 
 /**
@@ -372,6 +366,14 @@ async function provisionPiCustomModelConfig(
   if (openRouterRouting) {
     decision = await resolveOpenRouterRouting(openRouterRouting);
     console.log(decision.line);
+    openRouterRouting.onDecision?.(decision);
+    // The answer probe never blocks an activation; its own line lands when the
+    // probe does, and the pin it produces is read by the NEXT activation.
+    void decision.refresh
+      ?.then((next) => {
+        if (next) console.log(next.line);
+      })
+      .catch(() => undefined);
   }
   const pin = decision ? { model: decision.model, routing: decision.routing } : undefined;
   try {

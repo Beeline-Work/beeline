@@ -228,7 +228,9 @@ runs:
         printf 'production_promotion\t%s\n' "$(( $(date +%s) - started ))" >> "$TIMINGS_FILE"
         node - "$RUN_LEDGER" >> "$GITHUB_OUTPUT" <<'NODE'
         const ledger = require(process.argv[2]);
-        console.log(`production_group_id=${ledger.production.groupId}`);
+        const groups = ledger.production.groupIds ?? ledger.production.groupId;
+        const ids = typeof groups === 'string' ? groups.split(',') : Object.values(groups);
+        console.log(`production_group_id=${[...new Set(ids.filter(Boolean))].join(',')}`);
         NODE
     - name: Check owner device receipt
       if: inputs.phase == 'promote'

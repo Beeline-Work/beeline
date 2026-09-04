@@ -5,6 +5,46 @@ function invalid(message) {
   throw new Error(message);
 }
 
+// One publish now yields one update group PER PLATFORM: `app.config.js` sets
+// `runtimeVersion: { policy: "fingerprint" }`, and the Android and iOS
+// fingerprints are legitimately different values. Every stored group is
+// therefore a platform -> group map. Ledgers and delivery indexes written
+// before that change carry a single group id that covered every platform;
+// read those as that one group standing for every platform.
+export const RELEASE_PLATFORMS = ['android', 'ios'];
+
+export function groupIdList(value) {
+  if (!value) return [];
+  const ids =
+    typeof value === 'string' ? value.split(',') : Array.isArray(value) ? value : Object.values(value);
+  return [...new Set(ids.map((id) => (typeof id === 'string' ? id.trim() : '')).filter(Boolean))];
+}
+
+export function joinGroupIds(value) {
+  return groupIdList(value).join(',');
+}
+
+export function groupMapFrom(value, platforms = RELEASE_PLATFORMS) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return Object.fromEntries(
+      Object.entries(value).filter(([, id]) => typeof id === 'string' && id.length > 0),
+    );
+  }
+  const ids = groupIdList(value);
+  if (ids.length !== 1) return {};
+  return Object.fromEntries(platforms.map((platform) => [platform, ids[0]]));
+}
+
+export function sameGroupSet(left, right) {
+  const a = groupIdList(left).sort();
+  const b = groupIdList(right).sort();
+  return a.length > 0 && a.length === b.length && a.every((id, index) => id === b[index]);
+}
+
+function publishedGroups(merge) {
+  return groupIdList(merge?.published?.groupIds ?? merge?.published?.groupId);
+}
+
 export function isoNow() {
   return new Date().toISOString();
 }
@@ -132,7 +172,8 @@ export function markPublished(indexPath, publication) {
     if (merge.state === 'confirmed') continue;
     merge.state = 'published';
     merge.published = {
-      groupId: publication.groupId,
+      groupId: joinGroupIds(publication.groupIds ?? publication.groupId),
+      groupIds: groupIdList(publication.groupIds ?? publication.groupId),
       updateIds: publication.updateIds,
       headSha: publication.headSha,
       releaseVersion: publication.releaseVersion,
@@ -196,6 +237,7 @@ export function recordFailure(options) {
 export function confirmDelivery(options) {
   if (!options.receipt || !options.group) invalid('confirm requires --receipt and --group');
   const payload = readJson(options.receipt);
+  const groups = groupIdList(options.group);
   const updateIds = new Set(
     String(options.updateIds ?? '')
       .split(',')
@@ -207,17 +249,18 @@ export function confirmDelivery(options) {
       device?.environment === 'physical' &&
       (!options.releaseVersion || device.releaseVersion === options.releaseVersion) &&
       (!options.sha || device.sourceSha === options.sha) &&
-      (device.group === options.group || (device.updateId && updateIds.has(device.updateId))),
+      (groups.includes(device.group) || (device.updateId && updateIds.has(device.updateId))),
   );
-  if (!receipt) return { confirmed: false, groupId: options.group };
+  if (!receipt) return { confirmed: false, groupId: joinGroupIds(groups) };
 
   const index = readDeliveryIndex(options.index);
   let count = 0;
   for (const merge of index.merges) {
-    if (merge.state !== 'published' || merge.published?.groupId !== options.group) continue;
+    if (merge.state !== 'published' || !sameGroupSet(publishedGroups(merge), groups)) continue;
     merge.state = 'confirmed';
     merge.confirmed = {
-      groupId: options.group,
+      groupId: receipt.group ?? joinGroupIds(groups),
+      groupIds: groups,
       updateId: receipt.updateId ?? null,
       channel: receipt.channel ?? null,
       deviceId: receipt.deviceId,
@@ -240,7 +283,7 @@ export function confirmDelivery(options) {
     };
     writeJson(options.ledger, ledger);
   }
-  return { confirmed: true, groupId: options.group, merges: count };
+  return { confirmed: true, groupId: joinGroupIds(groups), merges: count };
 }
 
 export function listUndelivered(options) {
@@ -261,7 +304,8 @@ export function latestPublishedDelivery(indexPath) {
     .at(-1);
   if (!merge) return null;
   return {
-    groupId: merge.published.groupId,
+    groupId: joinGroupIds(publishedGroups(merge)),
+    groupIds: publishedGroups(merge),
     updateIds: merge.published.updateIds,
     releaseVersion: merge.published.releaseVersion ?? merge.releaseVersion ?? '',
     sourceSha: merge.published.headSha ?? merge.sha,
@@ -287,7 +331,7 @@ export function mergeReconciliation(options) {
     if (
       observed.state === 'confirmed' &&
       current.state === 'published' &&
-      observed.confirmed?.groupId === current.published?.groupId
+      sameGroupSet(observed.confirmed?.groupIds ?? observed.confirmed?.groupId, publishedGroups(current))
     ) {
       current.state = 'confirmed';
       current.confirmed = observed.confirmed;

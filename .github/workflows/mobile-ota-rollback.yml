@@ -1,14 +1,14 @@
 # Manual recovery only: republish a known-good production update group. This
 # never releases current main. With no `rollback_group`, the predecessor is
 # read from the newest successful release run's `mobile-ota-promoted-<sha>`
-# ledger artifact (its `previousProductionGroupId`).
+# ledger artifact (its `previousProductionGroupIds`, one group per platform).
 name: Mobile OTA rollback recovery (does not release current main)
 
 on:
   workflow_dispatch:
     inputs:
       rollback_group:
-        description: Optional known-good source group; defaults to the latest release ledger predecessor
+        description: Optional known-good source group (comma-separate one group per platform); defaults to the latest release ledger predecessor
         type: string
         required: false
       dry_run:
@@ -71,8 +71,13 @@ jobs:
               const file = fs.readdirSync(root, { recursive: true }).find((entry) => entry.endsWith("mobile-ota-ledger.json"));
               if (!file) throw new Error("downloaded artifact has no mobile-ota-ledger.json");
               const ledger = JSON.parse(fs.readFileSync(path.join(root, file), "utf8"));
-              if (!ledger.previousProductionGroupId) throw new Error("release ledger has no previousProductionGroupId");
-              process.stdout.write(ledger.previousProductionGroupId);
+              // A fingerprint runtime gives Android and iOS their own update
+              // group, so the anchor is a platform -> group map. A ledger
+              // written before that change has one group covering both.
+              const anchor = ledger.previousProductionGroupIds ?? ledger.previousProductionGroupId;
+              const ids = [...new Set((typeof anchor === "string" ? anchor.split(",") : Object.values(anchor ?? {})).map((id) => String(id).trim()).filter(Boolean))];
+              if (ids.length === 0) throw new Error("release ledger has no previousProductionGroupId");
+              process.stdout.write(ids.join(","));
             ' "$RUNNER_TEMP/last-good")"
           fi
           echo "group_id=$group" >> "$GITHUB_OUTPUT"

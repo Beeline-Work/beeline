@@ -202,7 +202,10 @@ if ! NODE_BIN_RESOLVED="$(resolve_node)"; then
 fi
 
 set +e
-candidate_group="$("$NODE_BIN_RESOLVED" -e 'const x=require(process.argv[1]); const stage=process.argv[2]; process.stdout.write(stage === "production" ? (x.production?.groupId || "") : (x.candidateGroupId || ""))' "$ledger" "$release_stage")"
+# The canary is Android-only, and a fingerprint runtime gives Android and iOS
+# their own update group, so read the Android group out of the stage's updates.
+# A ledger written before that change has one group covering both platforms.
+candidate_group="$("$NODE_BIN_RESOLVED" -e 'const x=require(process.argv[1]); const stage=process.argv[2]; const production = stage === "production"; const update=(production ? x.production?.updates : x.candidateUpdates)?.find((item) => item.platform === "android"); process.stdout.write(update?.group || (production ? x.production?.groupIds?.android || x.production?.groupId : x.candidateGroupIds?.android || x.candidateGroupId) || "")' "$ledger" "$release_stage")"
 android_update="$("$NODE_BIN_RESOLVED" -e 'const x=require(process.argv[1]); const stage=process.argv[2]; const update=(stage === "production" ? x.production?.updates : x.candidateUpdates)?.find((item) => item.platform === "android"); process.stdout.write(update?.id || "")' "$ledger" "$release_stage")"
 android_runtime="$("$NODE_BIN_RESOLVED" -e 'const x=require(process.argv[1]); const stage=process.argv[2]; const update=(stage === "production" ? x.production?.updates : x.candidateUpdates)?.find((item) => item.platform === "android"); process.stdout.write(update?.runtimeVersion || "")' "$ledger" "$release_stage")"
 ledger_status=$?

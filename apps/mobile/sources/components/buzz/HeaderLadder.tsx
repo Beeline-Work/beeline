@@ -67,8 +67,10 @@ export function HeaderMetaCaps({
 const styles = StyleSheet.create((theme) => {
   const groknight = theme.buzz;
   return {
+    // One gutter value across the whole bar: the back chevron, the mark, and
+    // the trailing control all part from what follows them by 12.
     identitySlot: {
-      marginRight: 10,
+      marginRight: 12,
       alignItems: 'center',
       justifyContent: 'center',
     },

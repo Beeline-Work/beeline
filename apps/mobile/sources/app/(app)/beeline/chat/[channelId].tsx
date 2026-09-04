@@ -236,6 +236,14 @@ const INITIAL_CORNER_MESSAGE_WINDOW = 200;
 const OLDER_MESSAGES_PAGE_SIZE = 30;
 
 /**
+ * The header's edge controls draw at 44 so the back chevron and the overflow
+ * glyph stay optically centred 34 in from their own margins; the extra 4 all
+ * round carries the touch area over Material's 48dp floor without moving a
+ * pixel of chrome.
+ */
+const HEADER_EDGE_HIT_SLOP = { top: 4, bottom: 4, left: 4, right: 4 } as const;
+
+/**
  * The voice a transcript entry belongs to, or `null` for anything that is not
  * one, is decided by THE shared projection helper (`buzz/ledger-attribution.ts`
  * — Rooms and corners alike). This screen only supplies its roster union:
@@ -945,6 +953,20 @@ export default function BuzzChat() {
         };
       });
   }, [roomMemberPubkeys, workspaceRoster]);
+  // Everyone of the listed kind in the Workspace besides the viewer, whether
+  // or not they are already in this Room. An empty candidate list means two
+  // different things — a Room that already holds them all, or a Workspace
+  // with nobody else in it — and this count is what tells the sheet which
+  // one to say (captain report C83).
+  const participantPickerWorkspacePeers = useMemo(() => {
+    if (!workspaceRoster) return 0;
+    return [...workspaceRoster.members, ...workspaceRoster.agents].filter((member) => {
+      if (member.identity.pubkey === userPubkey) return false;
+      if (!participantPickerKind) return true;
+      const kind = member.identity.kind === 'agent' ? 'agent' : 'person';
+      return kind === participantPickerKind;
+    }).length;
+  }, [participantPickerKind, userPubkey, workspaceRoster]);
   const visibleRosterSections = useMemo(
     () => sectionRoomParticipants(roomParticipants),
     [roomParticipants],
@@ -3001,6 +3023,8 @@ export default function BuzzChat() {
                 ? `Back to this ${CORNER_LABEL}’s ${ROOM_LABEL}`
                 : 'Back to Rooms'
             }
+            accessibilityRole="button"
+            hitSlop={HEADER_EDGE_HIT_SLOP}
             onPress={handleBack}
             style={styles.backButton}
             testID="chat-back"
@@ -3060,6 +3084,7 @@ export default function BuzzChat() {
                   canManageRoomRepository(viewerChannelRole) ? 'View or change it' : 'View it'
                 }`}
                 accessibilityRole="button"
+                hitSlop={{ top: 6, bottom: 3, left: 12, right: 12 }}
                 onPress={() => setRoomActionsVisible(true)}
                 style={styles.repoChip}
                 testID="room-repo-chip"
@@ -3087,28 +3112,26 @@ export default function BuzzChat() {
                 </HeaderMetaCaps>
               </HeaderMetaRow>
             ) : (
-              <HeaderMetaCaps testID="room-header-meta">
-                {participantsHydrated
-                  ? `${formatRoomParticipantTotal(roomParticipantTotal)}  ›`
-                  : 'LOADING MEMBERS'}
-              </HeaderMetaCaps>
+              // Through the same shared row the corner uses, so the repo line
+              // and the members line are parted by the one gap in the ladder
+              // instead of sitting baseline-to-baseline.
+              <HeaderMetaRow>
+                <HeaderMetaCaps testID="room-header-meta">
+                  {participantsHydrated
+                    ? `${formatRoomParticipantTotal(roomParticipantTotal)}  ›`
+                    : 'LOADING MEMBERS'}
+                </HeaderMetaCaps>
+              </HeaderMetaRow>
             )}
           </TouchableOpacity>
-          {!parentChannelId && !isDirectMessage && !viewerIsAgent && !isArchived && (
-            <TouchableOpacity
-              accessibilityLabel={`Add people or Agents to this ${ROOM_LABEL}`}
-              onPress={() => {
-                setMembershipError(null);
-                setParticipantPickerKind(null);
-                setParticipantPickerVisible(true);
-              }}
-              style={styles.addMembersButton}
-              testID="room-member-picker"
-            >
-              <Text style={styles.addMembersGlyph}>＋</Text>
-            </TouchableOpacity>
-          )}
-          {/* One overflow vocabulary: the same ••• the Room header carries,
+          {/* The trailing slot holds ONE control. There is no `+` beside it:
+              a Room's members have one way in (C83) — the `N members ›` line
+              above opens the roster sheet, whose section heads carry the add
+              control. The header copy led to the same picker and, opened from
+              here with no section in scope, could only report the Workspace
+              as empty.
+
+              One overflow vocabulary: the same ••• the Room header carries,
               holding whatever destructive/rare actions the surface has. A
               corner's "close" belongs here, not as a permanent button sitting
               under the composer where the reader's thumb lives. */}
@@ -3116,6 +3139,7 @@ export default function BuzzChat() {
             <TouchableOpacity
               accessibilityLabel={`${CORNER_LABEL} actions`}
               accessibilityRole="button"
+              hitSlop={HEADER_EDGE_HIT_SLOP}
               onPress={() => setCornerActionsVisible(true)}
               style={styles.roomActionsButton}
               testID="corner-actions-menu"
@@ -3131,6 +3155,7 @@ export default function BuzzChat() {
               <TouchableOpacity
                 accessibilityLabel={`${ROOM_LABEL} actions`}
                 accessibilityRole="button"
+                hitSlop={HEADER_EDGE_HIT_SLOP}
                 onPress={() => {
                   setMembershipError(null);
                   setRenameEditing(false);
@@ -3935,6 +3960,7 @@ export default function BuzzChat() {
         candidates={participantPickerCandidates}
         error={membershipError}
         kind={participantPickerKind}
+        workspacePeerCount={participantPickerWorkspacePeers}
         onAdd={(pubkeys) => void handleAddRoomMembers(pubkeys)}
         onClose={() => setParticipantPickerVisible(false)}
         onConnectAgent={handleConnectAgent}
@@ -4006,10 +4032,13 @@ const styles = StyleSheet.create((theme) => {
       borderBottomColor: groknight.border,
       backgroundColor: groknight.bgBase,
     },
+    // The leading gutter is 12 (header padding) + 44 + 12, so the title starts
+    // on the SAME left axis as a Room-list row's name (16 + 40 tile slot + 12,
+    // `channels.tsx`) and pushing a row open never shifts the name sideways.
     backButton: {
       width: 44,
       height: 44,
-      marginRight: 8,
+      marginRight: 12,
       alignItems: 'center',
       justifyContent: 'center',
     },
@@ -4037,32 +4066,39 @@ const styles = StyleSheet.create((theme) => {
       borderRadius: groknight.radius,
     },
     cornerChannelNameSkeleton: { width: 108 },
-    repoChip: { alignSelf: 'flex-start', marginTop: 2, maxWidth: '100%' },
+    // A 13pt line is a ~19pt target on its own. The chip keeps its place in
+    // the ladder and buys its height back with padding plus hitSlop; it stays
+    // under 44 by design, because the same destination sits on the ••• at a
+    // full target and a 44pt box here would push the header into the
+    // transcript.
+    repoChip: {
+      alignSelf: 'flex-start',
+      marginTop: 2,
+      paddingVertical: 4,
+      maxWidth: '100%',
+    },
+    // The one thing on the corner's meta row with unbounded length, so it is
+    // the one that gives: an unshrinkable name pushed the presence light, the
+    // status glyph and the member count off the right edge.
     cornerHeaderAgent: {
       ...Typography.mono('semiBold'),
-      flexShrink: 0,
+      flexShrink: 1,
+      minWidth: 0,
       color: groknight.textSecondary,
       fontSize: 10,
       lineHeight: 14,
       letterSpacing: 0.7,
     },
     cornerHeaderState: { width: 14, height: 14, marginHorizontal: 4 },
-    addMembersButton: {
-      width: 44,
-      minHeight: 44,
-      marginLeft: 8,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    addMembersGlyph: {
-      ...Typography.default('semiBold'),
-      color: groknight.chrome,
-      fontSize: 24,
-      lineHeight: 28,
-    },
+    // The trailing slot holds exactly one thing — ••• on a live surface, the
+    // archived badge on a dead one — and both hang on the same axis: 12 of
+    // clear space off the title's own touch area (Material asks 8 between
+    // adjacent targets) and a glyph centred 34 from the right edge, mirroring
+    // the back chevron's 34 from the left.
     roomActionsButton: {
       minWidth: 44,
       minHeight: 44,
+      marginLeft: 12,
       alignItems: 'center',
       justifyContent: 'center',
     },
@@ -4076,6 +4112,7 @@ const styles = StyleSheet.create((theme) => {
     archivedBadge: {
       backgroundColor: groknight.bgHighlight,
       borderRadius: groknight.radius,
+      marginLeft: 12,
       paddingHorizontal: 6,
       paddingVertical: 2,
     },

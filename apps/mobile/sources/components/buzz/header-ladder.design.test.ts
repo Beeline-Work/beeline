@@ -79,6 +79,47 @@ describe('Chat header — one language for Room and Corner', () => {
     expect(window).toContain('<IdentityMark');
   });
 
+  it('hangs the title on the Room list’s own name axis (C83)', () => {
+    // 12 (header padding) + 44 (back target) + 12 = 68, the same left edge a
+    // Room-list row's name sits on (16 + 40 tile slot + 12, `channels.tsx`).
+    // Pushing a row open must not shift the name sideways.
+    const header = chatSource.match(/\n    header:\s*\{[\s\S]*?\n    \},/);
+    expect(header, 'missing header style').toBeTruthy();
+    expect(header![0]).toContain('paddingHorizontal: 12');
+    const back = chatSource.match(/backButton:\s*\{[\s\S]*?\n    \},/);
+    expect(back, 'missing backButton style').toBeTruthy();
+    expect(back![0]).toContain('width: 44');
+    expect(back![0]).toContain('marginRight: 12');
+  });
+
+  it('parts the trailing control from the title column and keeps both edge targets over 48', () => {
+    // Material asks for 8dp between adjacent targets; the title column is a
+    // touchable of its own, so the overflow cannot sit flush against it.
+    const actions = chatSource.match(/roomActionsButton:\s*\{[\s\S]*?\n    \},/);
+    expect(actions, 'missing roomActionsButton style').toBeTruthy();
+    expect(actions![0]).toContain('marginLeft: 12');
+    expect(actions![0]).toContain('minWidth: 44');
+    // The archived badge takes the same trailing axis.
+    const badge = chatSource.match(/archivedBadge:\s*\{[\s\S]*?\n    \},/);
+    expect(badge![0]).toContain('marginLeft: 12');
+    // 44 of chrome + 4 all round clears Android's 48dp floor without moving a
+    // pixel, so both edge glyphs stay optically centred on their own margins.
+    expect(chatSource).toContain(
+      'const HEADER_EDGE_HIT_SLOP = { top: 4, bottom: 4, left: 4, right: 4 } as const;',
+    );
+    expect(chatSource.match(/hitSlop=\{HEADER_EDGE_HIT_SLOP\}/g)).toHaveLength(3);
+  });
+
+  it('lets the corner’s agent name give before the facts beside it do', () => {
+    // An unshrinkable name pushed the presence light, the status glyph and
+    // the member count off the right edge of the corner's meta row.
+    const agent = chatSource.match(/cornerHeaderAgent:\s*\{[\s\S]*?\n    \},/);
+    expect(agent, 'missing cornerHeaderAgent style').toBeTruthy();
+    expect(agent![0]).toContain('flexShrink: 1');
+    expect(agent![0]).toContain('minWidth: 0');
+    expect(agent![0]).not.toContain('flexShrink: 0');
+  });
+
   it('keeps the shared ladder tokens in the calm meta role on the canvas', () => {
     // The one metadata voice: the `meta` type role (sans 13, never mono),
     // muted; no raw size or tracking of its own (C72).

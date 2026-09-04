@@ -233,14 +233,14 @@ describe('RoomRosterSheet', () => {
 
     const people = renderer.root.findByProps({ testID: 'room-roster-add-people' });
     expect(people.props.accessibilityLabel).toBe('Add people');
-    expect(people.props.style.minHeight).toBeGreaterThanOrEqual(44);
+    expect(people.props.style.height).toBeGreaterThanOrEqual(44);
     act(() => people.props.onPress());
     expect(onAddPeople).toHaveBeenCalledTimes(1);
     expect(onAddAgents).not.toHaveBeenCalled();
 
     const agents = renderer.root.findByProps({ testID: 'room-roster-add-agents' });
     expect(agents.props.accessibilityLabel).toBe('Add agents');
-    expect(agents.props.style.minHeight).toBeGreaterThanOrEqual(44);
+    expect(agents.props.style.height).toBeGreaterThanOrEqual(44);
     act(() => agents.props.onPress());
     expect(onAddAgents).toHaveBeenCalledTimes(1);
   });

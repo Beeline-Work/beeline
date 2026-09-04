@@ -36,13 +36,18 @@ type FaceProps = {
   face?: string;
 };
 
-// Gold means ONE thing product-wide: a live agent. The discriminated union is
+// Gold means ONE thing product-wide: an agent WORKING right now — a fresh
+// working receipt or a live corner (`selectWorkingAgents`, the proofs the
+// thinking line reads). It is never the presence lease: a helper whose every
+// turn fails keeps renewing its lease, and a ring that meant "process alive"
+// pulsed on an agent that could not answer (C77). The discriminated union is
 // that rule enforced at the type level — no human or Workspace mark can carry
 // `alive`, so a future boolean pass cannot redefine gold without a type error.
 export type AgentIdentityMarkProps = IdentityMarkBaseProps &
   FaceProps & {
     kind: 'agent';
-    /** An agent working right now. Draws the gold ring; never touches colour. */
+    /** An agent working right now (turn or corner). Draws the gold ring;
+     * never touches colour. Callers must not feed presence here. */
     alive?: boolean;
   };
 export type HumanIdentityMarkProps = IdentityMarkBaseProps & FaceProps & { kind: 'human' };
@@ -249,7 +254,7 @@ export const IdentityMark = React.memo(function IdentityMark(props: IdentityMark
       </View>
 
       {/*
-        Gold means one thing product-wide: an agent is alive. It is drawn
+        Gold means one thing product-wide: an agent is working. It is drawn
         *around* the plate, never on the creature or its colour, so it can
         never be confused with the identity underneath — who you are and what
         you are doing stay two separate reads. It breathes on the shared live

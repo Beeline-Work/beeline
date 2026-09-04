@@ -42,6 +42,7 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
   onClose,
   onRemove,
   onlineByPubkey,
+  workingByPubkey,
   parentChannelId,
   personProfileByPubkey,
   rosterSections,
@@ -57,7 +58,10 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
   membershipError: string | null;
   onClose: () => void;
   onRemove: (participant: RoomRosterParticipant) => void;
+  /** Presence lease verdicts: the row's online/offline word only. */
   onlineByPubkey: Readonly<Record<string, boolean>>;
+  /** Agents working right now (`selectWorkingAgents`): the gold ring only. */
+  workingByPubkey: Readonly<Record<string, boolean>>;
   parentChannelId: string | null;
   personProfileByPubkey: ReadonlyMap<string, { avatar?: string }>;
   rosterSections: RoomRosterSections;
@@ -133,6 +137,9 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
                   const removing = membershipActionPubkey === participant.pubkey;
                   const agentOnline =
                     participant.kind === 'agent' && Boolean(onlineByPubkey[participant.pubkey]);
+                  // The ring means working, never merely present (C77).
+                  const agentWorking =
+                    participant.kind === 'agent' && Boolean(workingByPubkey[participant.pubkey]);
                   return (
                     <View
                       accessibilityLabel={`${displayName}, ${participant.kind}${
@@ -149,7 +156,7 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
                           avatarUrl={display.avatarUrl}
                           name={display.name}
                           size={38}
-                          alive={agentOnline}
+                          alive={agentWorking}
                         />
                       ) : (
                         <IdentityMark

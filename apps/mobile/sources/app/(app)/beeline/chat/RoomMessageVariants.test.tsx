@@ -354,7 +354,7 @@ describe('Room message variant components', () => {
     expect(onOpenCorner).toHaveBeenCalledWith('80a5a6f1-fb5a-493b-93eb-f3db33f696e6');
   });
 
-  it('memoizes ordinary rows across unrelated presence changes and updates the affected speaker', () => {
+  it('memoizes ordinary rows across unrelated working changes and updates the affected speaker', () => {
     const ordinary = message({ id: 'agent-message', pubkey: 'agent', isAgentAuthor: true });
     const stable = {
       message: ordinary,
@@ -370,12 +370,12 @@ describe('Room message variant components', () => {
       onCopy: vi.fn(),
       onRetry: vi.fn(),
       onDismiss: vi.fn(),
-    } satisfies Omit<OrdinaryLedgerMessageProps, 'speakerOnline'>;
-    const renderer = render(<OrdinaryLedgerMessage {...stable} speakerOnline={false} />);
+    } satisfies Omit<OrdinaryLedgerMessageProps, 'speakerWorking'>;
+    const renderer = render(<OrdinaryLedgerMessage {...stable} speakerWorking={false} />);
     expect(ledgerEntryRender).toHaveBeenCalledTimes(1);
-    act(() => renderer.update(<OrdinaryLedgerMessage {...stable} speakerOnline={false} />));
+    act(() => renderer.update(<OrdinaryLedgerMessage {...stable} speakerWorking={false} />));
     expect(ledgerEntryRender).toHaveBeenCalledTimes(1);
-    act(() => renderer.update(<OrdinaryLedgerMessage {...stable} speakerOnline />));
+    act(() => renderer.update(<OrdinaryLedgerMessage {...stable} speakerWorking />));
     expect(ledgerEntryRender).toHaveBeenCalledTimes(2);
     expect(ledgerEntryRender.mock.lastCall?.[0].byline.mark.alive).toBe(true);
   });
@@ -391,18 +391,18 @@ describe('Room message variant components', () => {
     (Platform as { OS: string }).OS = 'android';
     try {
       const speakers = [
-        { message: message({ id: 'a', pubkey: 'agent', isAgentAuthor: true }), online: true },
-        { message: message({ id: 'h', pubkey: 'ada', isUser: false }), online: false },
+        { message: message({ id: 'a', pubkey: 'agent', isAgentAuthor: true }), working: true },
+        { message: message({ id: 'h', pubkey: 'ada', isUser: false }), working: false },
       ];
       for (const speaker of speakers) {
         const renderer = render(
           <OrdinaryLedgerMessage
             message={speaker.message}
-            agent={speaker.online ? { pubkey: 'agent', displayName: 'Codex' } : undefined}
-            personName={speaker.online ? undefined : 'Ada'}
+            agent={speaker.working ? { pubkey: 'agent', displayName: 'Codex' } : undefined}
+            personName={speaker.working ? undefined : 'Ada'}
             participantsHydrated
             viewerPubkey="viewer"
-            speakerOnline={speaker.online}
+            speakerWorking={speaker.working}
             continued={false}
             participantHandles={[]}
             channelIndex={{ rooms: [], corners: [] }}
@@ -426,8 +426,8 @@ describe('Room message variant components', () => {
         // The ring's leftmost paint lands inside the clip box.
         expect(tileLeft - ALIVE_RING_PAD).toBeGreaterThanOrEqual(clipLeft);
         const byline = ledgerEntryRender.mock.lastCall?.[0].byline;
-        expect(byline.mark.kind).toBe(speaker.online ? 'agent' : 'human');
-        if (speaker.online) expect(byline.mark.alive).toBe(true);
+        expect(byline.mark.kind).toBe(speaker.working ? 'agent' : 'human');
+        if (speaker.working) expect(byline.mark.alive).toBe(true);
       }
     } finally {
       (Platform as { OS: string }).OS = previous;
@@ -452,7 +452,7 @@ describe('Room message variant components', () => {
         agent={{ pubkey: 'agent', displayName: 'CODEX' }}
         participantsHydrated
         viewerPubkey="viewer"
-        speakerOnline
+        speakerWorking
         continued={false}
         participantHandles={[]}
         channelIndex={{ rooms: [], corners: [] }}
@@ -487,7 +487,7 @@ describe('Room message variant components', () => {
         agent={{ pubkey: agentPubkey, displayName: 'Arlo' }}
         participantsHydrated
         viewerPubkey="viewer"
-        speakerOnline
+        speakerWorking
         continued={false}
         participantHandles={[{ pubkey: agentPubkey, handle: 'codex' }]}
         channelIndex={{ rooms: [], corners: [] }}

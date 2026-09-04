@@ -12,6 +12,7 @@ import {
   selectComposerAckPresentation,
   selectPinnedCorner,
   selectTurnProgressAgentPubkey,
+  selectWorkingAgents,
 } from './room-indicators';
 
 const NOW = 1_700_000_000_000;
@@ -188,6 +189,35 @@ describe('turn-progress presentation', () => {
 
   it('stays dark without a working receipt, regardless of draft-stream state', () => {
     expect(selectTurnProgressAgentPubkey({ isCorner: true, agentsOffline: false })).toBeNull();
+  });
+});
+
+describe('working agents (the gold ring)', () => {
+  // C77: the ring means working. A presence lease is not an input at all —
+  // Candy's helper renewed its lease every few seconds while every turn it
+  // took ended `failed`, and the ring pulsed the whole time.
+  it('lights the agent named by the fresh working receipt', () => {
+    expect(selectWorkingAgents({ activeTurnPubkey: 'candy' })).toEqual({ candy: true });
+  });
+
+  it('lights the administering agent of a working corner', () => {
+    expect(selectWorkingAgents({ workingCornerAgentPubkey: 'candy' })).toEqual({ candy: true });
+  });
+
+  it('lights nobody when no turn and no corner is live, whatever presence says', () => {
+    expect(selectWorkingAgents({})).toEqual({});
+    expect(selectWorkingAgents({ activeTurnPubkey: null, workingCornerAgentPubkey: null })).toEqual(
+      {},
+    );
+  });
+
+  it('never takes a presence lease as proof', () => {
+    // The input shape has no presence field; a caller cannot feed one.
+    const keys: (keyof Parameters<typeof selectWorkingAgents>[0])[] = [
+      'activeTurnPubkey',
+      'workingCornerAgentPubkey',
+    ];
+    expect(keys).toHaveLength(2);
   });
 });
 

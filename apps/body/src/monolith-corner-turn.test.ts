@@ -13,6 +13,7 @@ import {
   MonolithCornerTurnLoop,
 } from './monolith-corner-turn.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
+import { SOUL_HOUSE_RULE } from './response-directives.js';
 import { SessionScheduler } from './session-scheduler.js';
 
 const roots: string[] = [];
@@ -618,11 +619,16 @@ describe('thin monolith corner turn', () => {
         ),
       }),
     );
+    // One shared house rule, said once beside the persona and never per soul.
+    expect(sessionNew).toHaveBeenCalledWith(
+      expect.objectContaining({ systemPrompt: expect.stringContaining(SOUL_HOUSE_RULE) }),
+    );
     for (const call of sessionPrompt.mock.calls) {
       expect(call[1]).toContain('Your Beeline identity is Bee.');
       expect(call[1]).toContain(
         'Human-authored Workspace persona: Terra. Steady, exact, and kind.',
       );
+      expect(call[1]).toContain(SOUL_HOUSE_RULE);
       expect(call[1]).toMatch(
         /Maintain your assigned identity and soul in every response, including when tools or permissions block the requested action\.$/,
       );

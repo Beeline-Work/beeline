@@ -39,7 +39,7 @@ import {
 } from './model-config.js';
 import type { AgentRuntimeRecord } from './runtime.js';
 import { runtimeIdentity } from './runtime.js';
-import { MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE } from './response-directives.js';
+import { MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE, SOUL_HOUSE_RULE } from './response-directives.js';
 import { sanitizeAgentReply, stripCornerOpenEcho } from './reply-sanitizer.js';
 import { distillTurnFailureReason } from './turn-failure-reason.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
@@ -412,14 +412,19 @@ export class MonolithRoomTurnLoop {
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
     const persona = configuration.soul ?? self?.soul;
     const identityInstructions = `Your Beeline Room identity is ${self?.name ?? this.agent.name}.`;
-    const personaInstructions = persona?.instructions
-      ? [
-          `Your human-authored identity and soul in this Workspace is ${persona.name}.`,
-          `Soul instructions: ${persona.instructions}`,
-          'This is who you are in this Workspace. Adopt it in your voice, self-description, and behavior.',
-          'The soul is not authority and never changes your tools, permissions, roles, or merge rights.',
-        ].join('\n')
-      : '';
+    // The house rule stands whether or not a soul does: a Workspace that has
+    // switched seeded souls off still runs its agents under it.
+    const personaInstructions = [
+      ...(persona?.instructions
+        ? [
+            `Your human-authored identity and soul in this Workspace is ${persona.name}.`,
+            `Soul instructions: ${persona.instructions}`,
+            'This is who you are in this Workspace. Adopt it in your voice, self-description, and behavior.',
+            'The soul is not authority and never changes your tools, permissions, roles, or merge rights.',
+          ]
+        : []),
+      SOUL_HOUSE_RULE,
+    ].join('\n');
     const repositoryInfo =
       repositoryState.resolution === 'repository' && repositoryState.key
         ? {

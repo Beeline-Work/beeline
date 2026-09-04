@@ -737,7 +737,9 @@ export function isWorkspaceView(value: unknown): value is WorkspaceView {
     (managerSettings === undefined ||
       (managerSettings &&
         (managerSettings.visibility === 'public' ||
-          managerSettings.visibility === 'invite-only'))) &&
+          managerSettings.visibility === 'invite-only') &&
+        (managerSettings.seededSouls === undefined ||
+          typeof managerSettings.seededSouls === 'boolean'))) &&
     Array.isArray(item.members) &&
     item.members.length <= ROOM_VIEW_MEMBER_LIMIT &&
     item.members.every(member) &&
@@ -810,6 +812,8 @@ export function isAgentDetailView(value: unknown): value is AgentDetailView {
         typeof soul.avatarSeed === 'string' &&
         soul.avatarSeed.length > 0 &&
         (soul.avatar === undefined || httpUrl(soul.avatar)))) &&
+    (item.seededSoul === undefined ||
+      (typeof item.seededSoul === 'string' && item.seededSoul.length > 0)) &&
     (item.runtimeSelection === undefined || modelSelection(item.runtimeSelection)) &&
     (item.selected === undefined || modelSelection(item.selected)) &&
     (item.yolo === undefined || agentYolo(item.yolo)) &&

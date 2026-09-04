@@ -78,6 +78,13 @@ const phoneOperation = vi.hoisted(() =>
       };
       return { grantId: input.grantId, status: 'revoked', roomId: 'room' };
     }
+    if (name === 'updateWorkspace') {
+      state.workspace = {
+        ...state.workspace,
+        managerSettings: { ...state.workspace.managerSettings, seededSouls: input.seededSouls },
+      };
+      return undefined;
+    }
     if (name !== 'updateAgentYolo') throw new Error(`unexpected operation ${name}`);
     state.agent = {
       ...state.agent,
@@ -269,6 +276,7 @@ function baseWorkspace(viewerRole: 'owner' | 'admin' = 'owner') {
         presence: { status: 'online', observedAt: 1 },
       },
     ],
+    managerSettings: { visibility: 'invite-only', seededSouls: true },
     membersTruncated: false,
     agentsTruncated: false,
     viewer: {
@@ -285,6 +293,7 @@ function baseAgent() {
     workspaceId: WORKSPACE,
     agent: { identity: { pubkey: AGENT, kind: 'agent', name: 'Clara' }, role: 'member' },
     soul: { name: 'Clara', instructions: 'Keep the tests green.', avatarSeed: AGENT },
+    seededSoul: 'You are a fox. You are a hustler who has already found the angle.',
     catalog: [
       {
         id: 'model',
@@ -626,6 +635,69 @@ describe('Members workspace management', () => {
       soul: 'Look for regressions before shipping.',
       avatarSeed: AGENT,
     });
+  });
+
+  it('opens the soul editor on the seeded text and restores it after an edit', async () => {
+    const renderer = await render();
+    await press(renderer, `agent-${AGENT}-identity`);
+    await press(renderer, 'edit-agent-soul');
+    // The editor opens on what the agent is actually running under.
+    expect(renderer.root.findByProps({ testID: 'agent-soul-instructions' }).props.value).toBe(
+      'Keep the tests green.',
+    );
+    await press(renderer, 'restore-seeded-soul');
+    expect(renderer.root.findByProps({ testID: 'agent-soul-instructions' }).props.value).toBe(
+      state.agent.seededSoul,
+    );
+    // Restored, the control has nothing left to do and leaves.
+    expect(renderer.root.findAllByProps({ testID: 'restore-seeded-soul' })).toHaveLength(0);
+
+    await press(renderer, 'save-agent-soul');
+    expect(client.setAgentSoul).toHaveBeenCalledWith(WORKSPACE, AGENT, {
+      name: 'Clara',
+      soul: state.agent.seededSoul,
+      avatarSeed: AGENT,
+    });
+  });
+
+  it('shows the seeded soul when no manager has written one', async () => {
+    state.agent = { ...baseAgent(), soul: undefined };
+    const renderer = await render();
+    await press(renderer, `agent-${AGENT}-identity`);
+    expect(
+      renderer.root.findByProps({ testID: 'agent-soul-copy' }).props.children,
+    ).toBe(state.agent.seededSoul);
+  });
+
+  it('turns seeded souls off for the whole Workspace from one switch', async () => {
+    const renderer = await render();
+    const control = () =>
+      renderer.root.findByProps({ testID: 'workspace-seeded-souls-switch' }).props;
+    expect(control().value).toBe(true);
+    await act(async () => {
+      await control().onValueChange(false);
+    });
+    expect(phoneOperation).toHaveBeenCalledWith('updateWorkspace', {
+      workspaceId: WORKSPACE,
+      seededSouls: false,
+    });
+    expect(control().value).toBe(false);
+  });
+
+  it('shows the Workspace soul switch to a manager only', async () => {
+    const renderer = await render();
+    expect(renderer.root.findAllByProps({ testID: 'workspace-seeded-souls' }).length).toBeGreaterThan(0);
+
+    state.workspace = {
+      ...baseWorkspace(),
+      viewer: {
+        identity: { pubkey: VIEWER, kind: 'human', name: 'Viewer' },
+        role: 'member',
+        permissions: { send: true, manage: false },
+      },
+    };
+    const memberView = await render();
+    expect(memberView.root.findAllByProps({ testID: 'workspace-seeded-souls' })).toHaveLength(0);
   });
 
   it('uses pencil and close glyph controls instead of boxed rename and close actions', async () => {

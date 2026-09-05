@@ -229,6 +229,9 @@ describe('agent schedule background posting', () => {
         system_event: {
           subject: { kind: 'system', id: SCHEDULE_SCHEDULER_ID, name: 'Beeline Scheduler' },
           verb: SCHEDULE_RAN_VERB,
+          // The machine half beside the prose: the daemon matches this, never
+          // the verb, and the text above is unchanged by its presence.
+          kind: 'schedule-ran',
           object: { text: 'Worker', id: AGENT },
           consequence: 'Post exactly: hello @methoxine-debug',
         },

@@ -153,6 +153,7 @@ export class AgentScheduleLoop {
             roomId: current.room_id,
             subject: { kind: 'system', id: SCHEDULE_SCHEDULER_ID, name: SCHEDULE_SCHEDULER_NAME },
             verb: SCHEDULE_RAN_VERB,
+            kind: 'schedule-ran',
             object: { text: current.agent_name, id: current.agent_id },
             consequence: current.message,
             mentions: [current.agent_id],

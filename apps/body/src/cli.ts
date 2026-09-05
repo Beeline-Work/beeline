@@ -21,7 +21,11 @@ import * as clack from '@clack/prompts';
 import pc from 'picocolors';
 import { loadBodyConfig } from './config.js';
 import { formatAgentCommand } from './agent-command.js';
-import { LEGACY_ACCESS_POLICY } from './access-policy.js';
+import {
+  AGENT_ACCESS_POLICIES,
+  isAgentAccessPolicy,
+  LEGACY_ACCESS_POLICY,
+} from './access-policy.js';
 import { applyRuntimeModelPreflight } from './runtime-model-validation.js';
 import { syncAgentModelCatalog } from './model-catalog-sync.js';
 import { ThinDaemonCore } from './thin-core.js';
@@ -36,7 +40,11 @@ import {
 } from './runtime.js';
 import { retireRemovedAgent } from './agent-retirement.js';
 import { runStartCommand } from './start-command.js';
-import { runConnectCommand, runConnectFinishCommand } from './connect-command.js';
+import {
+  parseConnectSubscriptions,
+  runConnectCommand,
+  runConnectFinishCommand,
+} from './connect-command.js';
 import { runUpdateCommand } from './self-update-cli.js';
 import { detectBwrapSandbox } from './bwrap-sandbox.js';
 import {
@@ -80,7 +88,12 @@ function usage(exitCode = 1): void {
 ${pc.bold('Beeline — thin Room agent.')}
 
 ${pc.dim('Usage:')}
-  beeline connect [XXXXXXXX-XXXXXXXX]       Install and connect an app-authorized agent
+  beeline connect [XXXXXXXX-XXXXXXXX] [--subscribe <kinds>] [--access <policy>]
+                                            Install and connect an app-authorized agent;
+                                            --subscribe takes a comma-separated list of
+                                            event kinds it reacts to (e.g. joined);
+                                            --access is everyone|creator|allowlist
+                                            (default creator)
   beeline start [agent-pubkey]              Start — or RESTART when already running,
                                             stopping cleanly after in-flight work —
                                             this repo's (or, outside a repo, this
@@ -394,7 +407,23 @@ async function main(): Promise<void> {
   }
 
   if (command === 'connect') {
-    await runConnectCommand(args[1]);
+    // `--subscribe joined,check-failed`: what this agent reacts to in the
+    // Rooms the claim joins it to. A greeter is set up with `--subscribe joined`.
+    const subscribeFlag = args.indexOf('--subscribe');
+    const subscribe = subscribeFlag >= 0 ? parseConnectSubscriptions(args[subscribeFlag + 1]) : [];
+    // `--access everyone`: who may drive this agent. Absent keeps the safe
+    // default, where only the person who paired it may. A Room's greeter needs
+    // `everyone`, because the people it greets are never its creator.
+    const accessFlag = args.indexOf('--access');
+    const accessPolicy = accessFlag >= 0 ? args[accessFlag + 1] : undefined;
+    if (accessFlag >= 0 && !isAgentAccessPolicy(accessPolicy)) {
+      throw new Error(`--access must be one of ${AGENT_ACCESS_POLICIES.join(', ')}`);
+    }
+    const code = args[1] && !args[1].startsWith('--') ? args[1] : undefined;
+    await runConnectCommand(code, {
+      ...(subscribe.length ? { subscribe } : {}),
+      ...(isAgentAccessPolicy(accessPolicy) ? { accessPolicy } : {}),
+    });
     return;
   }
 

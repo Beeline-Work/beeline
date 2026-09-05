@@ -56,6 +56,30 @@ describe('monolith-only thin daemon', () => {
     });
     expect(staged.runtime.transport).toMatchObject({ kind: 'monolith' });
     expect(staged.runtime.rooms).toEqual([]);
+    // Nobody but the person who paired it may drive it, unless they said so.
+    expect(staged.runtime.accessPolicy).toBe('creator');
+  });
+
+  it('stages the access policy connect was given, so a greeter can answer anyone', async () => {
+    // A Room's greeter must answer the people it greets, and a newcomer is
+    // never its creator: `usebeeline connect --access everyone`.
+    const root = await mkdtemp(resolve(tmpdir(), 'beeline-thin-access-'));
+    roots.push(root);
+    const staged = await stageMonolithAgentRuntime({
+      workspaceId: 'workspace',
+      pairedBy: 'human',
+      daemonExchangeToken: `bde_${'c'.repeat(43)}`,
+      agentBinary: 'pi-acp',
+      agentKind: 'pi',
+      agentCommand: 'pi-acp',
+      agentArgs: [],
+      mcpBinary: 'unused',
+      agentIdentity: identityFromKey('55'.repeat(32), 'Hoots'),
+      bodyIdentity: identityFromKey('66'.repeat(32), 'Body'),
+      supervisorRoot: root,
+      accessPolicy: 'everyone',
+    });
+    expect(staged.runtime.accessPolicy).toBe('everyone');
   });
 
   it('discovers Rooms through the daemon API and never constructs relay transport', async () => {

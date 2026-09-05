@@ -19,14 +19,19 @@ import {
   isAgentDetailView,
   isRoomView,
   isRoomViewMessage,
+  DEFAULT_WORKSPACE_ID,
+  WELCOME_ROOM_ID,
   ROOM_VIEW_MESSAGE_LIMIT,
   type RoomView,
 } from '@beeline/api-contract/phone';
 import { createMonolithAuth, type MonolithAuthMount } from './monolith-auth.js';
+import { REVIEW_IDENTITY_ID, ReviewAccess } from './review-access.js';
 
 const HUMAN = createHash('sha256').update('github:owner').digest('hex');
 const AGENT = 'b'.repeat(64);
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
+const REVIEW_SECRET = 'play-review-secret-value-0001';
+const WELCOME_AGENT = 'c'.repeat(64);
 const ROOM = '22222222-2222-4222-8222-222222222222';
 
 describe('monolith integration', () => {
@@ -41,6 +46,7 @@ describe('monolith integration', () => {
   let completeInstallation: ReturnType<typeof vi.fn>;
   let processWebhook: ReturnType<typeof vi.fn>;
   let githubOperations: GitHubOperations;
+  let phone: PhoneService;
   let githubApp: {
     deleteBranch: ReturnType<typeof vi.fn>;
     mergePullRequest: ReturnType<typeof vi.fn>;
@@ -98,7 +104,7 @@ describe('monolith integration', () => {
       defaultBranch: 'main',
     }));
     sendPushTest = vi.fn(async () => undefined);
-    const phone = new PhoneService(database, 'http://placeholder', githubOperations, sendPushTest);
+    phone = new PhoneService(database, 'http://placeholder', githubOperations, sendPushTest);
     const live = new LiveHub();
     const daemon = new DaemonService(database, live, async () => ({
       token: 'github-room-token',
@@ -132,6 +138,11 @@ describe('monolith integration', () => {
       phone,
       daemon,
       live,
+      review: new ReviewAccess({
+        secret: REVIEW_SECRET,
+        mint: () => auth.exchangeReviewIdentity(),
+        log: () => undefined,
+      }),
       authHandler: mountedAuth.handle,
       mediaMaximumBytes: 1024 * 1024,
       github: {
@@ -2599,6 +2610,7 @@ describe('monolith integration', () => {
         systemEvent: {
           subject: { kind: 'github', name: 'owner' },
           verb: 'merged',
+          kind: 'merged',
           object: { text: 'Ship the widget', url: 'https://github.com/owner/widgets/pull/42' },
         },
         daemonFact: {
@@ -3889,15 +3901,19 @@ describe('monolith integration', () => {
       'Owner approved once command fly deploy -a beeline-preview --with FLY_TOKEN',
       'Owner declined host api.fly.io',
     ]);
+    // The decision carries a RESUME kind: it answers the turn already paused on
+    // the ask, and the helper must not start a second turn on it.
     expect(decisions.map((item) => item.systemEvent)).toEqual([
       {
         subject: { kind: 'person', id: HUMAN, name: 'Owner' },
         verb: 'approved once',
+        kind: 'grant-decided',
         object: { text: 'command fly deploy -a beeline-preview --with FLY_TOKEN' },
       },
       {
         subject: { kind: 'person', id: HUMAN, name: 'Owner' },
         verb: 'declined',
+        kind: 'grant-decided',
         object: { text: 'host api.fly.io' },
       },
     ]);
@@ -4203,6 +4219,112 @@ describe('monolith integration', () => {
     expect(cornerLine.rows[0]!.text).toBe(
       'Bee was granted command npm test · auto-approved under yolo, free to write the worktree and act on the host',
     );
+  });
+
+  const redeemReview = (secret: unknown) =>
+    fetch(`${origin}/v1/auth/review/exchange`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ secret }),
+    });
+
+  it('signs the Google Play reviewer in from the link alone, and hides every miss behind a 404', async () => {
+    const redeemed = await redeemReview(REVIEW_SECRET);
+    expect(redeemed.status).toBe(200);
+    const session = (await redeemed.json()) as { identityId: string; accessToken: string };
+    expect(session.identityId).toBe(REVIEW_IDENTITY_ID);
+
+    // The session is the same one a GitHub ticket issues: it reads the app.
+    const workspaces = await request('/v1/phone/workspaces', 'GET', undefined, session.accessToken);
+    expect(workspaces.status).toBe(200);
+    const view = (await workspaces.json()) as { workspaces: { name: string }[] };
+    expect(view.workspaces.map((workspace) => workspace.name)).toContain('Beeline Welcome');
+
+    // A wrong secret is an ordinary 404 carrying nothing a guesser can use, and
+    // it is the same answer for a malformed one and for a missing field.
+    for (const wrong of [`${REVIEW_SECRET}x`, 'nope', undefined, 12]) {
+      const refused = await redeemReview(wrong);
+      expect(refused.status).toBe(404);
+      expect(await refused.json()).toEqual({ error: 'not_found' });
+    }
+  });
+
+  it('refuses the review identity every GitHub and repository write', async () => {
+    const session = (await (await redeemReview(REVIEW_SECRET)).json()) as { accessToken: string };
+    for (const [name, payload] of [
+      ['beginGitHubInstallation', {}],
+      ['createGitHubRepository', { installationId: 1, name: 'demo' }],
+      ['setRoomRepository', { roomId: ROOM, key: 'github:1', name: 'a/b', remote: 'git://github.com/a/b', targetBranch: 'main' }],
+      ['beginGitHubIdentityBind', {}],
+      ['adoptGitHubHandle', {}],
+    ] as const) {
+      const refused = await operation(name, payload, session.accessToken);
+      expect([refused.status, name]).toEqual([403, name]);
+    }
+  });
+
+  it('wakes the agents that subscribed to arrivals in that Room, and no one else', async () => {
+    await database.query(
+      `INSERT INTO identities(id,kind,name) VALUES($1,'agent','Owl')`,
+      [WELCOME_AGENT],
+    );
+    // The greeter subscribed to `joined` in #welcome; the ordinary Room's agent
+    // subscribed to nothing and must not spend a turn on a join it never asked for.
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role,event_subscriptions)
+       VALUES($1,NULL,$2,'member','[]'::jsonb),($1,$3,$2,'member','["joined"]'::jsonb)`,
+      [DEFAULT_WORKSPACE_ID, WELCOME_AGENT, WELCOME_ROOM_ID],
+    );
+
+    await redeemReview(REVIEW_SECRET);
+    const joined = await database.query<{
+      mention_ids: string[];
+      text: string;
+      system_event: { verb: string; kind?: string };
+    }>(
+      `SELECT mention_ids,text,system_event FROM messages
+       WHERE room_id=$1 AND card_type='member-joined' AND author_id=$2`,
+      [WELCOME_ROOM_ID, REVIEW_IDENTITY_ID],
+    );
+    expect(joined.rows).toHaveLength(1);
+    expect(joined.rows[0]!.system_event.kind).toBe('joined');
+    // The sentence a person reads is unchanged by the kind, and it names the
+    // newcomer by handle exactly as every other join line does.
+    expect(joined.rows[0]!.text).toBe('play-review joined');
+    expect(joined.rows[0]!.mention_ids).toEqual([WELCOME_AGENT]);
+
+    const otherRoom = await database.query<{ mention_ids: string[] }>(
+      `SELECT mention_ids FROM messages WHERE room_id=$1 AND card_type='member-joined'`,
+      [ROOM],
+    );
+    expect(otherRoom.rows.every((row) => row.mention_ids.length === 0)).toBe(true);
+  });
+
+  it('subscribes a connecting agent in the Rooms its claim joined it to', async () => {
+    const pairing = (await (
+      await operation('createAgentPairingCode', { workspaceId: WORKSPACE })
+    ).json()) as { code: string };
+    const agentPubkey = 'f'.repeat(64);
+    const claim = await phone.claimAgentConnectPairing({
+      code: pairing.code,
+      agentPubkey,
+      model: 'openrouter/z-ai/glm-5.3-flash',
+      eventSubscriptions: ['joined', 'not-a-kind'],
+    });
+    expect(claim.status).toBe('claimed');
+    const memberships = await database.query<{
+      room_id: string | null;
+      event_subscriptions: string[];
+    }>(
+      `SELECT room_id,event_subscriptions FROM memberships WHERE identity_id=$1
+       ORDER BY room_id NULLS FIRST`,
+      [agentPubkey],
+    );
+    // Per Room, never per identity — and a kind the server does not know is dropped.
+    expect(memberships.rows).toEqual([
+      { room_id: null, event_subscriptions: [] },
+      { room_id: ROOM, event_subscriptions: ['joined'] },
+    ]);
   });
 });
 

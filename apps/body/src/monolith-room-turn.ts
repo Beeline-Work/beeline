@@ -7,7 +7,11 @@ import {
   SCHEDULE_RAN_VERB,
   SCHEDULE_SCHEDULER_NAME,
 } from '@beeline/api-contract/scheduled-prompts';
-import type { SystemEvent } from '@beeline/api-contract/daemon';
+import {
+  isResumeKind,
+  isServerEventKind,
+  type SystemEvent,
+} from '@beeline/api-contract/daemon';
 import {
   AcpClient,
   type AcpPermissionDecision,
@@ -120,15 +124,18 @@ export function isScheduledPrompt(
   item: { type: string; body: string; mentionIds: readonly string[]; systemEvent?: SystemEvent },
   agentId: string,
 ): boolean {
-  return (
-    item.type === 'system' &&
-    item.systemEvent?.verb === SCHEDULE_RAN_VERB &&
-    item.mentionIds.includes(agentId)
-  );
+  if (item.type !== 'system' || !item.mentionIds.includes(agentId)) return false;
+  if (item.systemEvent?.kind) return item.systemEvent.kind === 'schedule-ran';
+  // One release of fallback: a line written before the server stamped kinds
+  // carries the verb and nothing else. Remove after the next release; the
+  // verb is display text and must not be a permanent contract.
+  return item.systemEvent?.verb === SCHEDULE_RAN_VERB;
 }
 
 /** What the harness is shown for an inbox item: a scheduled prompt's message
- *  itself (the event's consequence), otherwise the row's text. */
+ *  itself (the event's consequence), otherwise the row's text. An event line's
+ *  own sentence already carries the fact — `Ada joined Beeline Welcome` names
+ *  the newcomer — so it is shown as written rather than restated. */
 export function inboxItemPromptBody(
   item: { type: string; body: string; mentionIds: readonly string[]; systemEvent?: SystemEvent },
   agentId: string,
@@ -136,6 +143,46 @@ export function inboxItemPromptBody(
   return isScheduledPrompt(item, agentId)
     ? (item.systemEvent?.consequence ?? item.body)
     : item.body;
+}
+
+/**
+ * An event this agent subscribed to: a mentioned system line whose structured
+ * event carries a `kind`. The kind is the contract — never the line's wording,
+ * which is prose an editor may reword. A RESUME kind is excluded: a grant
+ * decision answers a turn already paused on the ask, and starting a second
+ * turn on it would run the same work twice.
+ */
+export function isSubscribedEvent(
+  item: { type: string; mentionIds: readonly string[]; systemEvent?: SystemEvent },
+  agentId: string,
+): boolean {
+  const kind = item.systemEvent?.kind;
+  return (
+    item.type === 'system' &&
+    kind !== undefined &&
+    !isResumeKind(kind) &&
+    item.mentionIds.includes(agentId)
+  );
+}
+
+/**
+ * Whether an item may skip the per-sender access policy. The SERVER authored a
+ * server-kind line — a join, a schedule, a check — so the row's author is the
+ * subject of the fact, not the principal asking for work: gating on them would
+ * keep a greeter asleep, since a newcomer is never the agent's creator. An
+ * `agent:` kind is a fact another agent emitted and stays gated on that agent.
+ * Grant decisions were already authority-gated by the owner's own decision.
+ */
+export function inboxItemSkipsSenderPolicy(
+  item: { type: string; mentionIds: readonly string[]; body: string; systemEvent?: SystemEvent },
+  agentId: string,
+): boolean {
+  if (isGrantDecisionLine(item, agentId)) return true;
+  if (item.type !== 'system' || !item.mentionIds.includes(agentId)) return false;
+  const kind = item.systemEvent?.kind;
+  // The one-release verb fallback covers a scheduled prompt written before the
+  // server stamped kinds; it is server-authored either way.
+  return kind === undefined ? isScheduledPrompt(item, agentId) : isServerEventKind(kind);
 }
 
 /** The owner's answer to a grant card arrives as a server-authored system line
@@ -153,13 +200,21 @@ export function isGrantDecisionLine(
 }
 
 /** Which inbox items may start or steer a turn: ordinary messages from others that
- *  mention the agent, scheduler-authored scheduled prompts, and grant decisions
- *  (never plain system lines or the agent's own rows). */
+ *  mention the agent, mentioned event lines (plus the one-release verb fallback for
+ *  a scheduled prompt written before the server stamped kinds), and the grant
+ *  decision that resumes a turn paused on the ask. Never a plain system line and
+ *  never the agent's own rows.
+ *
+ *  A RESUME kind reaches the loop only through `isGrantDecisionLine`, its own
+ *  path, which prompts the paused turn's session with the decision and the
+ *  resume instruction. `isSubscribedEvent` excludes it so it cannot ALSO be
+ *  handled as an ordinary event and prompt the granted work a second time. */
 export function inboxItemTriggersTurn(item: RoomMessage, agentId: string): boolean {
   if (item.authorId === agentId) return false;
   if (!item.mentionIds.includes(agentId)) return false;
   return (
     item.type === 'message' ||
+    isSubscribedEvent(item, agentId) ||
     isScheduledPrompt(item, agentId) ||
     isGrantDecisionLine(item, agentId)
   );
@@ -1082,12 +1137,10 @@ export class MonolithRoomTurnLoop {
           });
           for (const item of inbox.items) {
             if (!inboxItemTriggersTurn(item, this.agent.publicKey)) continue;
-            // Scheduled prompts and grant decisions were already authority-gated
-            // on the server (schedule creation; the owner/manager decision).
-            if (
-              !isScheduledPrompt(item, this.agent.publicKey) &&
-              !isGrantDecisionLine(item, this.agent.publicKey)
-            ) {
+            // A server-authored event was already authority-gated where the
+            // fact was made (schedule creation; the owner's grant decision;
+            // membership). Everything else answers to the per-sender policy.
+            if (!inboxItemSkipsSenderPolicy(item, this.agent.publicKey)) {
               const authority = await api.execute('getRoomAuthority', {
                 roomId,
                 principalId: item.authorId,

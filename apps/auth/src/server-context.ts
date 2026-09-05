@@ -147,6 +147,8 @@ export interface AuthServerOptions {
     agentPubkey: string;
     model: string;
     avatarSeed?: string;
+    /** Server event kinds this agent reacts to, in the Rooms the claim joins it to. */
+    eventSubscriptions?: readonly string[];
   }) => Promise<
     | {
         status: 'claimed';

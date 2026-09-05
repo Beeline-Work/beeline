@@ -228,6 +228,66 @@ describe('app-authorized agent connect', () => {
     expect(claimed?.agentPubkey).toBe(response.json<Record<string, string>>().agent_pubkey);
   });
 
+  it('accepts a self-configured pi with no provider, and still refuses an unknown one', async () => {
+    // C96: the wizard skips provider, key and model for a harness that
+    // enumerated models itself. This service stores no provider, so refusing
+    // that claim only broke connect for the harnesses already set up.
+    state.agentPairingClaim = async () => seeded;
+    const selfConfigured = await app.inject({
+      method: 'POST',
+      url: '/auth/agent/connect',
+      headers: { host: alphaTenant.host },
+      payload: { ...payload, harness: 'pi', provider: undefined, model: 'openai/gpt-5.5' },
+    });
+    expect(selfConfigured.statusCode).toBe(200);
+
+    const named = await app.inject({
+      method: 'POST',
+      url: '/auth/agent/connect',
+      headers: { host: alphaTenant.host },
+      payload: {
+        ...payload,
+        harness: 'pi',
+        provider: 'openrouter',
+        model: 'openrouter/z-ai/glm-5.3-flash',
+      },
+    });
+    expect(named.statusCode).toBe(200);
+
+    const bogus = await app.inject({
+      method: 'POST',
+      url: '/auth/agent/connect',
+      headers: { host: alphaTenant.host },
+      payload: { ...payload, harness: 'pi', provider: 'not-a-provider', model: 'x' },
+    });
+    expect(bogus.statusCode).toBe(400);
+    // A harness that supplies its own provider still may not be handed one.
+    const overreach = await app.inject({
+      method: 'POST',
+      url: '/auth/agent/connect',
+      headers: { host: alphaTenant.host },
+      payload: { ...payload, harness: 'codex', provider: 'openrouter' },
+    });
+    expect(overreach.statusCode).toBe(400);
+  });
+
+  it('passes the event kinds the CLI subscribed to into the claim', async () => {
+    let claimed: Parameters<typeof state.agentPairingClaim>[0] | undefined;
+    state.agentPairingClaim = async (input) => {
+      claimed = input;
+      return seeded;
+    };
+    const response = await app.inject({
+      method: 'POST',
+      url: '/auth/agent/connect',
+      headers: { host: alphaTenant.host },
+      payload: { ...payload, event_subscriptions: [' Joined ', '', 42, 'check-failed'] },
+    });
+    expect(response.statusCode).toBe(200);
+    // Trimmed and lowercased here; the monolith drops anything not a real kind.
+    expect(claimed?.eventSubscriptions).toEqual(['joined', 'check-failed']);
+  });
+
   it.each(['BUZZ-1234ABCD-5678EF90', 'not-a-pairing-code'])(
     'accepts legacy pairing codes but rejects garbage (%s)',
     async (pairingCode) => {

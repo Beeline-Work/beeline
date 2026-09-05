@@ -28,7 +28,7 @@ const appConfig = vi.hoisted(() => ({
 
 vi.mock('expo-router', () => ({ router: navigation }));
 vi.mock('expo-updates', () => ({
-  updateId: 'ota-running-123',
+  updateId: '01a06fba-cbb7-7f45-b86b-1e49b043f56a',
   channel: 'preview',
   get isEnabled() {
     return updates.isEnabled;
@@ -73,6 +73,7 @@ vi.mock('@/components/buzz/MonoHull', async () => {
     hairlineDivider: { borderBottomWidth: 1, borderBottomColor: '#4e4e4e' },
     HullSurface: host('HullSurface'),
     PixelGateReveal: host('PixelGateReveal'),
+    PixelLoader: host('PixelLoader'),
   };
 });
 
@@ -120,26 +121,26 @@ describe('Buzz global Settings', () => {
       .flatMap((node) => node.props.children)
       .join(' ');
 
-    expect(text).toContain('CONNECTED GITHUB ACCOUNTS');
-    expect(text).not.toContain('CONNECTED ACCOUNTS');
+    // The section head is written in sentence case and set in the one tracked
+    // -capitals role (`type.sectionHead`), exactly as the Members page writes
+    // `People 3` — the uppercase is presentation, not copy.
+    expect(text).toContain('Connected GitHub accounts');
+    expect(text).not.toContain('Connected accounts');
   });
 
-  it('shows the running OTA id and channel on the device settings surface', () => {
+  it('puts the release on the trailing axis and the machine ids on one quiet line', () => {
+    // The row used to spill the running update UUID down three lines. The
+    // release is the value a person wants, so it hangs in the trailing column
+    // where every other row's value hangs; the channel and the update id are
+    // machine detail on the row's one quiet line.
     const renderer = render();
+    const row = renderer.root.findByProps({ testID: 'ota-update-info' }).props;
 
-    expect(renderer.root.findByProps({ testID: 'ota-update-running-id' }).props.children).toEqual([
-      'Running update: ',
-      'ota-running-123',
-    ]);
-    expect(renderer.root.findByProps({ testID: 'ota-update-channel' }).props.children).toEqual([
-      'Channel: ',
-      'preview',
-    ]);
-    expect(renderer.root.findByProps({ testID: 'ota-release-version' }).props.children).toEqual([
-      'Release: ',
-      'v0.0.1',
-      ' · 1234567890ab',
-    ]);
+    expect(row.value).toBe('v0.0.1 · 1234567890ab');
+    // The channel and a readable prefix of the running update id, not the
+    // whole UUID down three lines.
+    expect(row.description).toBe('preview · 01a06fba');
+    expect(row.action).toBeUndefined();
   });
 
   it('checks on demand and reports when the running build is latest', async () => {
@@ -152,7 +153,7 @@ describe('Buzz global Settings', () => {
     expect(updates.checkForUpdateAsync).toHaveBeenCalledOnce();
     expect(updates.fetchUpdateAsync).not.toHaveBeenCalled();
     expect(updates.reloadAsync).not.toHaveBeenCalled();
-    expect(renderer.root.findByProps({ testID: 'ota-update-status' }).props.children).toBe(
+    expect(renderer.root.findByProps({ testID: 'ota-update-check' }).props.description).toBe(
       "You're on the latest version.",
     );
     expect(renderer.root.findByProps({ testID: 'ota-update-check' }).props.disabled).toBe(false);
@@ -207,7 +208,7 @@ describe('Buzz global Settings', () => {
       await renderer.root.findByProps({ testID: 'ota-update-check' }).props.onPress();
     });
 
-    expect(renderer.root.findByProps({ testID: 'ota-update-status' }).props.children).toContain(
+    expect(renderer.root.findByProps({ testID: 'ota-update-check' }).props.description).toContain(
       'try again',
     );
     expect(renderer.root.findByProps({ testID: 'ota-update-check' }).props.disabled).toBe(false);
@@ -219,7 +220,7 @@ describe('Buzz global Settings', () => {
     const renderer = render();
 
     expect(renderer.root.findByProps({ testID: 'ota-update-check' }).props.disabled).toBe(true);
-    expect(renderer.root.findByProps({ testID: 'ota-update-status' }).props.children).toBe(
+    expect(renderer.root.findByProps({ testID: 'ota-update-check' }).props.description).toBe(
       'Updates are unavailable in this build.',
     );
   });
@@ -253,14 +254,21 @@ describe('Buzz global Settings', () => {
   });
 
   it('renders as an index, not a stack of cards', () => {
-    // DESIGN.md: a box never wraps a repeating content unit. The one box left
-    // on this screen is the destructive confirmation, a non-repeating notice.
+    // DESIGN.md: a box never wraps a repeating content unit. Every row on this
+    // screen is the shared `SettingsRow`, which owns the hairline; the one box
+    // left here is the destructive confirmation, a non-repeating notice.
     const source = readFileSync(new URL('./index.tsx', import.meta.url), 'utf8');
-    const rowStyle = source.slice(source.indexOf('  settingsRow: {'));
+    const rowSource = readFileSync(
+      new URL('../../../../components/buzz/SettingsRow.tsx', import.meta.url),
+      'utf8',
+    );
+    const rowStyle = rowSource.slice(rowSource.indexOf('    row: {'));
     const rowBlock = rowStyle.slice(0, rowStyle.indexOf('},') + 2);
     expect(rowBlock).not.toMatch(/borderWidth|borderRadius|backgroundColor/);
-    expect(rowBlock).toMatch(/borderBottomWidth:\s*1/);
-    expect(rowBlock).toMatch(/borderBottomColor:\s*groknight\.border/);
+    expect(rowBlock).toMatch(/borderBottomWidth: StyleSheet\.hairlineWidth/);
+    expect(rowBlock).toMatch(/borderBottomColor: hull\.border/);
+    // No screen-local row shape stands beside the shared one.
+    expect(source).not.toMatch(/settingsRow|rowGutter|forgetGlyph|manageText/);
     // Persistent chrome carries no lifted surface of its own.
     expect(source).not.toContain('<HullSurface');
     expect(source).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);

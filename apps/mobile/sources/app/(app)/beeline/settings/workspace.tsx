@@ -19,9 +19,13 @@ import { pickAndUploadAvatar } from '@/buzz/avatar-upload';
 import { WORKSPACE_PICTURES_ENABLED } from '@/buzz/photo-overrides';
 import { displayRoomIndexTitle } from '@/buzz/room-list-row';
 import { MEMBERS_LABEL, ROOM_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
+import {
+  HullActionSheetCancel,
+  HullActionSheetModal,
+  HullActionSheetRow,
+} from '@/components/buzz/HullActionSheet';
 import { MonoButton, PixelGateReveal, PixelLoader } from '@/components/buzz/MonoHull';
-import { SettingsNavigationRow } from '@/components/buzz/SettingsNavigationRow';
-import { RoomGlyph } from '@/components/buzz/RoomGlyph';
+import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { Typography } from '@/constants/Typography';
 import { BuzzRigTransport } from '@/sync/transport';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
@@ -42,6 +46,8 @@ const ROOM_DATE_FORMATTER = new Intl.DateTimeFormat('en-US', {
   timeZone: 'UTC',
 });
 
+const VISIBILITY_LABELS = { public: 'Public', 'invite-only': 'Invite-only' } as const;
+
 function roomCreatedQualifier(createdAt: number): string {
   const created = new Date(createdAt * 1_000);
   return `Created ${ROOM_DATE_FORMATTER.format(created)} · ${created.toISOString().slice(11, 19)} UTC`;
@@ -51,6 +57,14 @@ function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
+/**
+ * Workspace Settings, the Members page's sibling: one list of `SettingsRow`s
+ * under small-caps section heads, values off the titles, and one trailing
+ * vocabulary per row. What used to be a picture slab, a boxed name field over
+ * a full-width commit plate, and a question with a paragraph and two toggle
+ * boxes is now four rows — the last of which opens the visibility picker as an
+ * ordinary Hull sheet, where its one line of explanation lives.
+ */
 export default function WorkspaceSettings() {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
@@ -60,6 +74,8 @@ export default function WorkspaceSettings() {
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView | null>(null);
   const [chatList, setChatList] = useState<ChatListView | null>(null);
   const [workspaceName, setWorkspaceName] = useState('');
+  const [renamingWorkspace, setRenamingWorkspace] = useState(false);
+  const [visibilityPickerOpen, setVisibilityPickerOpen] = useState(false);
   const [workingKey, setWorkingKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -179,6 +195,7 @@ export default function WorkspaceSettings() {
     try {
       await client.renameCommunity(communityId, workspaceName);
       workspaceSchedulerRef.current?.force();
+      setRenamingWorkspace(false);
     } catch (caught) {
       setError(`Could not rename ${WORKSPACE_LABEL}: ${String(caught)}`);
     } finally {
@@ -218,6 +235,7 @@ export default function WorkspaceSettings() {
 
   const changeWorkspaceVisibility = useCallback(
     async (visibility: 'public' | 'invite-only') => {
+      setVisibilityPickerOpen(false);
       if (!client || !communityId || workspace?.visibility === visibility) return;
       setWorkingKey('visibility');
       setError(null);
@@ -276,6 +294,9 @@ export default function WorkspaceSettings() {
     );
   }
 
+  const pictureAction =
+    workingKey === 'picture' ? 'Working…' : workspace?.avatar ? 'Change' : 'Set picture';
+
   return (
     <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
       <View style={styles.header}>
@@ -287,10 +308,10 @@ export default function WorkspaceSettings() {
           <Text style={styles.backText}>‹</Text>
         </TouchableOpacity>
         <View style={styles.headerCopy}>
-          <Text style={styles.title}>{WORKSPACE_LABEL}</Text>
-          <Text numberOfLines={1} style={styles.headerMeta}>
+          <Text numberOfLines={1} style={styles.eyebrow}>
             {workspace?.name ?? WORKSPACE_LABEL}
           </Text>
+          <Text style={styles.title}>{WORKSPACE_LABEL}</Text>
         </View>
       </View>
 
@@ -306,103 +327,108 @@ export default function WorkspaceSettings() {
       ) : (
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           <View style={styles.section} testID="workspace-overview-settings">
-            <Text style={styles.sectionLabel}>WORKSPACE</Text>
+            <Text style={styles.sectionLabel}>{WORKSPACE_LABEL}</Text>
             {WORKSPACE_PICTURES_ENABLED && (
-              <View style={styles.workspaceIdentityRow}>
-                <IdentityMark
-                  kind="workspace"
-                  seed={workspace?.id ?? 'workspace-loading'}
-                  avatarUrl={workspace?.avatar}
-                  name={workspace?.name}
-                  size={72}
+              <>
+                <SettingsRow
+                  accessibilityLabel={`${pictureAction} for this ${WORKSPACE_LABEL}`}
+                  action={pictureAction}
+                  disabled={workingKey === 'picture'}
+                  leading={
+                    <IdentityMark
+                      kind="workspace"
+                      seed={workspace?.id ?? 'workspace-loading'}
+                      avatarUrl={workspace?.avatar}
+                      name={workspace?.name}
+                      size={38}
+                    />
+                  }
+                  onPress={() => void changeWorkspacePicture()}
+                  testID="workspace-picture-change"
+                  title="Picture"
                 />
-                <View style={styles.workspaceIdentityCopy}>
-                  <Text style={styles.sectionTitle}>Picture</Text>
-                  <View style={styles.inlineActions}>
-                    <TouchableOpacity
-                      disabled={workingKey === 'picture'}
-                      onPress={() => void changeWorkspacePicture()}
-                      style={styles.textButton}
-                      testID="workspace-picture-change"
-                    >
-                      <Text style={styles.textButtonLabel}>
-                        {workingKey === 'picture'
-                          ? 'Working…'
-                          : workspace?.avatar
-                            ? 'Change'
-                            : 'Set picture'}
-                      </Text>
-                    </TouchableOpacity>
-                    {workspace?.avatar && (
-                      <TouchableOpacity
-                        disabled={workingKey === 'picture'}
-                        onPress={() => void resetWorkspacePicture()}
-                        style={styles.textButton}
-                        testID="workspace-picture-clear"
-                      >
-                        <Text style={styles.textButtonLabel}>Use generated mark</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
+                {workspace?.avatar && (
+                  <SettingsRow
+                    disabled={workingKey === 'picture'}
+                    onPress={() => void resetWorkspacePicture()}
+                    testID="workspace-picture-clear"
+                    title="Use generated mark"
+                    tone="action"
+                  />
+                )}
+              </>
+            )}
+            <SettingsRow
+              accessibilityLabel={`${WORKSPACE_LABEL} name`}
+              chevron={renamingWorkspace ? 'down' : 'right'}
+              onPress={() => {
+                setWorkspaceName(workspace?.name ?? '');
+                setRenamingWorkspace((open) => !open);
+              }}
+              testID="workspace-name-row"
+              title="Name"
+              value={renamingWorkspace ? undefined : (workspace?.name ?? '')}
+            />
+            {renamingWorkspace && (
+              <View style={styles.inlineEditor} testID="workspace-name-editor">
+                <TextInput
+                  accessibilityLabel={`New ${WORKSPACE_LABEL} name`}
+                  autoFocus
+                  editable={workingKey !== 'name'}
+                  maxLength={80}
+                  onChangeText={setWorkspaceName}
+                  onSubmitEditing={() => void saveWorkspaceName()}
+                  placeholder={`${WORKSPACE_LABEL} name`}
+                  placeholderTextColor={theme.buzz.dim}
+                  returnKeyType="done"
+                  selectTextOnFocus
+                  style={styles.input}
+                  testID="workspace-name-input"
+                  value={workspaceName}
+                />
+                <View style={styles.inlineEditorControls}>
+                  <MonoButton
+                    disabled={workingKey === 'name'}
+                    label="Cancel"
+                    onPress={() => setRenamingWorkspace(false)}
+                    variant="secondary"
+                  />
+                  <MonoButton
+                    disabled={
+                      !workspaceName.trim() ||
+                      workspaceName.trim() === workspace?.name ||
+                      workingKey === 'name'
+                    }
+                    label={workingKey === 'name' ? 'Saving…' : 'Save'}
+                    loading={workingKey === 'name'}
+                    onPress={() => void saveWorkspaceName()}
+                    testID="workspace-name-save"
+                  />
                 </View>
               </View>
             )}
-            <TextInput
-              accessibilityLabel={`${WORKSPACE_LABEL} name`}
-              editable={workingKey !== 'name'}
-              maxLength={80}
-              onChangeText={setWorkspaceName}
-              onSubmitEditing={() => void saveWorkspaceName()}
-              placeholder={`${WORKSPACE_LABEL} name`}
-              placeholderTextColor={theme.buzz.dim}
-              style={styles.input}
-              testID="workspace-name-input"
-              value={workspaceName}
-            />
-            <MonoButton
-              disabled={!workspaceName.trim() || workspaceName.trim() === workspace?.name}
-              label="Save name"
-              loading={workingKey === 'name'}
-              onPress={() => void saveWorkspaceName()}
-              style={styles.primaryAction}
-            />
           </View>
 
           <View style={styles.section} testID="workspace-visibility-setting">
-            <Text style={styles.sectionLabel}>VISIBILITY</Text>
-            <Text style={styles.sectionTitle}>Who can find this {WORKSPACE_LABEL}?</Text>
-            <Text style={styles.sectionBody}>
-              Invite-only keeps discovery closed. Existing members keep their access.
-            </Text>
-            <View style={styles.segmented}>
-              {(['public', 'invite-only'] as const).map((visibility) => {
-                const selected = workspace?.visibility === visibility;
-                return (
-                  <TouchableOpacity
-                    accessibilityState={{ selected }}
-                    disabled={workingKey === 'visibility'}
-                    key={visibility}
-                    onPress={() => void changeWorkspaceVisibility(visibility)}
-                    style={[styles.segment, selected && styles.segmentSelected]}
-                    testID={`workspace-visibility-${visibility}`}
-                  >
-                    <Text style={[styles.segmentText, selected && styles.segmentTextSelected]}>
-                      {visibility === 'public' ? 'PUBLIC' : 'INVITE-ONLY'}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
+            <Text style={styles.sectionLabel}>Visibility</Text>
+            <SettingsRow
+              accessibilityLabel={`Change who can find this ${WORKSPACE_LABEL}`}
+              chevron="right"
+              disabled={workingKey === 'visibility'}
+              onPress={() => setVisibilityPickerOpen(true)}
+              testID="workspace-visibility-row"
+              title="Visibility"
+              value={
+                workspace?.visibility ? VISIBILITY_LABELS[workspace.visibility] : 'Invite-only'
+              }
+            />
           </View>
 
           <View style={styles.section} testID="workspace-members-link">
-            <Text style={styles.sectionLabel}>
-              {MEMBERS_LABEL.toUpperCase()}
-            </Text>
-            <SettingsNavigationRow
-              glyph={null}
-              label={MEMBERS_LABEL}
-              supportingCopy="Invite people, connect agents, and manage roles."
+            <Text style={styles.sectionLabel}>{MEMBERS_LABEL}</Text>
+            <SettingsRow
+              chevron="right"
+              description="Invite people, connect agents, and manage roles."
               onPress={() =>
                 router.push({
                   pathname: '/beeline/members',
@@ -410,381 +436,162 @@ export default function WorkspaceSettings() {
                 } as unknown as Href)
               }
               testID="open-members"
+              title={MEMBERS_LABEL}
             />
           </View>
 
           <View style={styles.section} testID="channel-visibility-settings">
-            <Text style={styles.sectionLabel}>{ROOM_LABEL.toUpperCase()} VISIBILITY</Text>
-            <SettingsNavigationRow
-              glyph={<RoomGlyph color={theme.buzz.chrome} size={18} />}
-              label={`${ROOM_LABEL}s`}
-              supportingCopy="Create, rename, archive, and manage participants."
+            <Text style={styles.sectionLabel}>{ROOM_LABEL} visibility</Text>
+            <SettingsRow
+              chevron="right"
+              description="Create, rename, archive, and manage participants."
               onPress={() =>
                 router.push({ pathname: '/beeline/channels', params: { communityId } } as Href)
               }
               testID="open-rooms"
+              title={`${ROOM_LABEL}s`}
             />
             {rooms.map((room) => {
+              const displayName = displayRoomIndexTitle(room.name) ?? room.name;
               const duplicateName = duplicateRoomNames.has(room.name.trim().toLocaleLowerCase());
               const nextVisibility = room.visibility === 'public' ? 'invite-only' : 'public';
               return (
-                <View key={room.id} style={styles.roomRow}>
-                  <View accessibilityElementsHidden style={styles.roomMark}>
-                    <RoomGlyph color={theme.buzz.chrome} size={18} />
-                  </View>
-                  <View style={styles.roomCopy}>
-                    <TouchableOpacity
-                      accessibilityLabel={`Open ${ROOM_LABEL} ${
-                        displayRoomIndexTitle(room.name) ?? room.name
-                      }`}
-                      accessibilityRole="button"
-                      onPress={() =>
-                        router.push(`/beeline/chat/${encodeURIComponent(room.id)}` as Href)
-                      }
-                      style={styles.roomLink}
-                    >
-                      <Text numberOfLines={1} style={styles.roomName}>
-                        {displayRoomIndexTitle(room.name) ?? room.name}
-                      </Text>
-                    </TouchableOpacity>
-                    {duplicateName && (
-                      <View style={styles.roomQualifierRow}>
-                        <Text numberOfLines={1} style={styles.roomQualifier}>
-                          {roomCreatedQualifier(room.createdAt)}
-                        </Text>
-                        <TouchableOpacity
-                          accessibilityLabel={`View details for ${ROOM_LABEL} ${
-                            displayRoomIndexTitle(room.name) ?? room.name
-                          }`}
-                          accessibilityRole="button"
-                          onPress={() => showRoomDetails(room)}
-                          style={styles.roomDetailsButton}
-                          testID={`room-details-${room.id}`}
-                        >
-                          <Text style={styles.roomDetailsText}>DETAILS</Text>
-                        </TouchableOpacity>
-                      </View>
-                    )}
-                  </View>
-                  <TouchableOpacity
-                    accessibilityLabel={`Make ${displayRoomIndexTitle(room.name) ?? room.name} ${nextVisibility}`}
-                    accessibilityRole="button"
-                    accessibilityState={{ disabled: !room.canManage }}
-                    disabled={!room.canManage || workingKey === `room-${room.id}`}
-                    onPress={() => void changeRoomVisibility(room)}
-                    style={[styles.visibilityButton, !room.canManage && styles.disabledButton]}
-                    testID={`room-visibility-${room.id}`}
-                  >
-                    <Text style={styles.visibilityButtonText}>
-                      {room.visibility === 'public' ? 'PUBLIC' : 'INVITE-ONLY'}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
+                <SettingsRow
+                  accessibilityLabel={`Open ${ROOM_LABEL} ${displayName}`}
+                  description={duplicateName ? roomCreatedQualifier(room.createdAt) : undefined}
+                  descriptionAction={
+                    duplicateName
+                      ? {
+                          accessibilityLabel: `View details for ${ROOM_LABEL} ${displayName}`,
+                          label: 'Details',
+                          onPress: () => showRoomDetails(room),
+                          testID: `room-details-${room.id}`,
+                        }
+                      : undefined
+                  }
+                  chevron="right"
+                  key={room.id}
+                  onPress={() =>
+                    router.push(`/beeline/chat/${encodeURIComponent(room.id)}` as Href)
+                  }
+                  title={displayName}
+                  trailingPress={{
+                    accessibilityLabel: `Make ${displayName} ${nextVisibility}`,
+                    disabled: !room.canManage || workingKey === `room-${room.id}`,
+                    onPress: () => void changeRoomVisibility(room),
+                    testID: `room-visibility-${room.id}`,
+                  }}
+                  value={VISIBILITY_LABELS[room.visibility]}
+                />
               );
             })}
           </View>
 
           {error && (
             <PixelGateReveal accessibilityRole="alert" style={styles.errorPanel}>
-              <Text style={styles.errorLabel}>! ERROR</Text>
+              <Text style={styles.errorLabel}>! Error</Text>
               <Text style={styles.errorText}>{error}</Text>
             </PixelGateReveal>
           )}
         </ScrollView>
       )}
+
+      <HullActionSheetModal
+        accessibilityLabel="Close visibility picker"
+        onClose={() => setVisibilityPickerOpen(false)}
+        subtitle="Invite-only keeps discovery closed. Existing members keep their access."
+        testID="workspace-visibility-sheet"
+        title={`Who can find this ${WORKSPACE_LABEL}?`}
+        visible={visibilityPickerOpen}
+      >
+        {(['public', 'invite-only'] as const).map((visibility) => (
+          <HullActionSheetRow
+            disabled={workingKey === 'visibility'}
+            key={visibility}
+            label={VISIBILITY_LABELS[visibility]}
+            onPress={() => void changeWorkspaceVisibility(visibility)}
+            selected={workspace?.visibility === visibility}
+            testID={`workspace-visibility-${visibility}`}
+          />
+        ))}
+        <HullActionSheetCancel
+          onPress={() => setVisibilityPickerOpen(false)}
+          testID="workspace-visibility-close"
+        />
+      </HullActionSheetModal>
     </View>
   );
 }
 
 const styles = StyleSheet.create((theme) => {
-  const groknight = theme.buzz;
+  const hull = theme.buzz;
   return {
-    container: { flex: 1, backgroundColor: groknight.bgTerminal },
+    container: { flex: 1, backgroundColor: hull.bgTerminal },
     center: { alignItems: 'center', justifyContent: 'center' },
     header: {
       minHeight: 66,
-      paddingHorizontal: 12,
       flexDirection: 'row',
       alignItems: 'center',
-      borderBottomWidth: 1,
-      borderBottomColor: groknight.border,
-      backgroundColor: groknight.bgBase,
+      paddingHorizontal: hull.space.sm,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: hull.border,
     },
-    back: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-    backText: { ...Typography.default(), color: groknight.chrome, fontSize: 30, lineHeight: 34 },
-    headerCopy: { flex: 1, minWidth: 0, paddingRight: 44 },
-    title: {
-      ...Typography.default('semiBold'),
-      fontFamily: groknight.proseSemibold,
-      color: groknight.textPrimary,
-      fontSize: 18,
+    back: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+    backText: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
+    headerCopy: { flex: 1, minWidth: 0 },
+    eyebrow: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
+    title: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
+    content: {
+      padding: hull.space.md,
+      gap: hull.layout.sectionGap,
+      paddingBottom: hull.space.xxl,
     },
-    headerMeta: {
-      ...Typography.mono('semiBold'),
-      marginTop: 3,
-      color: groknight.textMuted,
-      fontSize: 9,
-      letterSpacing: 0.7,
-    },
-    content: { paddingHorizontal: 18, paddingTop: 24, paddingBottom: 48 },
-    section: {
-      paddingBottom: 28,
-      marginBottom: 28,
-      borderBottomWidth: 1,
-      borderBottomColor: groknight.border,
-    },
+    section: {},
     sectionLabel: {
-      ...Typography.mono('semiBold'),
-      color: groknight.textMuted,
-      fontSize: 10,
-      letterSpacing: 0.8,
-    },
-    sectionTitle: {
-      ...Typography.default('semiBold'),
-      fontFamily: groknight.proseSemibold,
-      marginTop: 8,
-      color: groknight.textPrimary,
-      fontSize: 17,
-    },
-    sectionBody: {
       ...Typography.default(),
-      fontFamily: groknight.proseRegular,
-      marginTop: 7,
-      color: groknight.textSecondary,
-      fontSize: 12,
-      lineHeight: 18,
+      ...hull.type.sectionHead,
+      paddingRight: hull.space.sm,
+      paddingBottom: hull.space.xs,
+      color: hull.textMuted,
     },
-    workspaceIdentityRow: { marginTop: 14, flexDirection: 'row', alignItems: 'center', gap: 14 },
-    workspaceIdentityCopy: { flex: 1, minWidth: 0 },
-    inlineActions: { marginTop: 4, flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
+    // An input is one of the two things DESIGN.md still lets a box wrap, and
+    // the editor hangs under the row it belongs to rather than beside it.
+    inlineEditor: { gap: hull.space.sm, paddingVertical: hull.space.sm },
+    inlineEditorControls: { flexDirection: 'row', justifyContent: 'flex-end', gap: hull.space.sm },
     input: {
       ...Typography.default(),
-      fontFamily: groknight.proseRegular,
-      minHeight: 48,
-      marginTop: 14,
-      paddingHorizontal: 12,
-      borderWidth: 1,
-      borderColor: groknight.border,
-      borderRadius: groknight.radius,
-      color: groknight.textPrimary,
-      backgroundColor: groknight.bgBase,
-      fontSize: 14,
-    },
-    primaryAction: { marginTop: 10 },
-    textButton: {
+      ...hull.type.body,
       minHeight: 44,
-      paddingHorizontal: 10,
-      alignItems: 'center',
-      justifyContent: 'center',
+      paddingHorizontal: hull.space.sm,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: hull.border,
+      borderRadius: hull.radius,
+      color: hull.textPrimary,
     },
-    textButtonLabel: {
-      ...Typography.mono('semiBold'),
-      color: groknight.textSecondary,
-      fontSize: 10,
-      letterSpacing: 0.6,
-    },
-    segmented: { marginTop: 14, flexDirection: 'row', gap: 8 },
-    segment: {
+    denied: {
       flex: 1,
-      minHeight: 44,
+      paddingHorizontal: hull.space.lg,
       alignItems: 'center',
       justifyContent: 'center',
-      borderWidth: 1,
-      borderColor: groknight.border,
-      borderRadius: groknight.radius,
-      backgroundColor: groknight.bgBase,
+      gap: hull.space.sm,
     },
-    segmentSelected: {
-      borderColor: groknight.selectedBorder,
-      backgroundColor: groknight.bgHighlight,
-    },
-    segmentText: {
-      ...Typography.mono('semiBold'),
-      color: groknight.textMuted,
-      fontSize: 10,
-      letterSpacing: 0.5,
-    },
-    segmentTextSelected: { color: groknight.textPrimary },
-    addMemberRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-    memberInput: { flex: 1, minWidth: 0 },
-    compactAction: {
-      minWidth: 58,
-      minHeight: 48,
-      marginTop: 14,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderRadius: groknight.radius,
-      backgroundColor: groknight.actionFill,
-    },
-    compactActionText: {
-      ...Typography.mono('semiBold'),
-      color: groknight.textInverted,
-      fontSize: 10,
-      letterSpacing: 0.7,
-    },
-    memberList: { marginTop: 14, borderBottomWidth: 1, borderBottomColor: groknight.border },
-    memberRow: {
-      minHeight: 94,
-      paddingHorizontal: 10,
-      paddingVertical: 10,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 10,
-      borderTopWidth: 1,
-      borderTopColor: groknight.border,
-      backgroundColor: groknight.bgBase,
-    },
-    memberCopy: { flex: 1, minWidth: 0 },
-    memberName: {
-      ...Typography.default('semiBold'),
-      fontFamily: groknight.proseSemibold,
-      color: groknight.textPrimary,
-      fontSize: 13,
-    },
-    memberHandle: { ...Typography.mono(), marginTop: 2, color: groknight.textMuted, fontSize: 9 },
-    roleRow: { marginTop: 7, flexDirection: 'row', flexWrap: 'wrap', gap: 5 },
-    roleButton: {
-      minHeight: 30,
-      paddingHorizontal: 8,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderWidth: 1,
-      borderColor: groknight.border,
-      borderRadius: groknight.radius,
-    },
-    roleButtonSelected: {
-      borderColor: groknight.selectedBorder,
-      backgroundColor: groknight.bgHighlight,
-    },
-    roleText: { ...Typography.mono('semiBold'), color: groknight.textMuted, fontSize: 8 },
-    roleTextSelected: { color: groknight.textPrimary },
-    removeButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-    removeText: {
-      ...Typography.default(),
-      fontFamily: groknight.proseRegular,
-      color: groknight.steel,
-      fontSize: 22,
-    },
-    inviteRow: {
-      minHeight: 62,
-      paddingHorizontal: 10,
-      flexDirection: 'row',
-      alignItems: 'center',
-      borderTopWidth: 1,
-      borderTopColor: groknight.border,
-      backgroundColor: groknight.bgBase,
-    },
-    settingCopy: { flex: 1, minWidth: 0, paddingVertical: 10 },
-    inviteTitle: {
-      ...Typography.mono('semiBold'),
-      color: groknight.textSecondary,
-      fontSize: 10,
-      letterSpacing: 0.5,
-    },
-    inviteMeta: {
-      ...Typography.default(),
-      fontFamily: groknight.proseRegular,
-      marginTop: 4,
-      color: groknight.textMuted,
-      fontSize: 10,
-    },
-    roomRow: {
-      minHeight: 66,
-      flexDirection: 'row',
-      alignItems: 'center',
-      borderTopWidth: 1,
-      borderTopColor: groknight.border,
-    },
-    roomMark: {
-      width: 30,
-      flexShrink: 0,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    roomCopy: { flex: 1, minWidth: 0, paddingHorizontal: 10 },
-    roomLink: { minHeight: 44, justifyContent: 'center' },
-    roomName: {
-      ...Typography.default('semiBold'),
-      fontFamily: groknight.proseSemibold,
-      color: groknight.textPrimary,
-      fontSize: 13,
-    },
-    roomQualifierRow: { minHeight: 44, flexDirection: 'row', alignItems: 'center' },
-    roomQualifier: {
-      ...Typography.default(),
-      fontFamily: groknight.proseRegular,
-      flex: 1,
-      minWidth: 0,
-      color: groknight.textMuted,
-      fontSize: 10,
-      lineHeight: 14,
-    },
-    roomDetailsButton: {
-      minWidth: 54,
-      minHeight: 44,
-      alignItems: 'flex-end',
-      justifyContent: 'center',
-    },
-    roomDetailsText: {
-      ...Typography.mono('semiBold'),
-      color: groknight.textSecondary,
-      fontSize: 8,
-      letterSpacing: 0.5,
-    },
-    visibilityButton: {
-      minWidth: 88,
-      minHeight: 44,
-      paddingHorizontal: 9,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderWidth: 1,
-      borderColor: groknight.borderStrong,
-      borderRadius: groknight.radius,
-    },
-    disabledButton: { opacity: 0.45 },
-    visibilityButtonText: {
-      ...Typography.mono('semiBold'),
-      color: groknight.textSecondary,
-      fontSize: 8,
-    },
-    denied: { flex: 1, paddingHorizontal: 28, alignItems: 'center', justifyContent: 'center' },
-    deniedGlyph: { ...Typography.default(), color: groknight.steel, fontSize: 34 },
-    deniedTitle: {
-      ...Typography.default('semiBold'),
-      fontFamily: groknight.proseSemibold,
-      marginTop: 14,
-      color: groknight.textPrimary,
-      fontSize: 18,
-    },
+    deniedGlyph: { ...Typography.default(), ...hull.type.hero, color: hull.steel },
+    deniedTitle: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
     deniedBody: {
       ...Typography.default(),
-      fontFamily: groknight.proseRegular,
+      ...hull.type.meta,
       maxWidth: 360,
-      marginTop: 8,
-      color: groknight.textSecondary,
-      fontSize: 13,
-      lineHeight: 19,
+      color: hull.textSecondary,
       textAlign: 'center',
     },
     errorPanel: {
-      padding: 12,
-      borderWidth: 1,
-      borderColor: groknight.borderStrong,
-      backgroundColor: groknight.bgHighlight,
+      padding: hull.space.md,
+      gap: hull.space.xs,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: hull.borderStrong,
+      borderRadius: hull.radius,
     },
-    errorLabel: {
-      ...Typography.mono('semiBold'),
-      color: groknight.textPrimary,
-      fontSize: 10,
-      letterSpacing: 0.7,
-    },
-    errorText: {
-      ...Typography.default(),
-      fontFamily: groknight.proseRegular,
-      marginTop: 4,
-      color: groknight.textSecondary,
-      fontSize: 12,
-      lineHeight: 17,
-    },
+    errorLabel: { ...Typography.default(), ...hull.type.bodyStrong, color: hull.textPrimary },
+    errorText: { ...Typography.default(), ...hull.type.meta, color: hull.textSecondary },
   };
 });

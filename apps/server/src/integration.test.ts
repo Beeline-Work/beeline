@@ -525,6 +525,10 @@ describe('monolith integration', () => {
     ).toEqual({ joined: true });
     expect(await loop.runOnce()).toBe(1);
     expect(send).toHaveBeenCalledTimes(2);
+    expect(send).toHaveBeenLastCalledWith(
+      'owner-explicit-add-device-token-1234567890',
+      expect.objectContaining({ text: 'alice joined Planning' }),
+    );
     const roomView = (await (
       await request(`/v1/phone/rooms/${room.id}`, 'GET', undefined, aliceToken)
     ).json()) as { messages: Array<{ text: string; presentation: string }> };

@@ -437,9 +437,13 @@ export class RoomRuntimeCoordinator {
         this.options.daemonApi.execute('getRoomRepositoryState', {
           roomId: corner.parentRoomId,
         }),
+        // Startup recovers the objective from the corner's FIRST durable
+        // message, so this is the one conversation read that wants the oldest
+        // end of the Room. Every other read defaults to the newest page.
         this.options.daemonApi.execute('getRoomConversation', {
           roomId: corner.cornerId,
           limit: 200,
+          window: 'earliest',
         }),
         this.options.daemonApi.execute('getRoomGitHubToken', {
           roomId: corner.parentRoomId,

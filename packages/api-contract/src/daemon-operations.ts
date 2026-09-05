@@ -34,7 +34,7 @@ export type DaemonOperationMap = {
   getDaemonBootstrap: Operation<DaemonBootstrapInput, DaemonBootstrapResult>;
   getWorkspaceRoster: Operation<WorkspaceRosterInput, WorkspaceRosterResult>;
   getRoomInbox: Operation<RoomCursorInput, RoomInboxResult>;
-  getRoomConversation: Operation<RoomCursorInput, RoomConversationResult>;
+  getRoomConversation: Operation<RoomConversationInput, RoomConversationResult>;
   getRoomAuthority: Operation<RoomPrincipalInput, RoomAuthorityResult>;
   getPermissionAuthority: Operation<PermissionAuthorityInput, AuthorityDecisionResult>;
   getMissionAuthority: Operation<MissionAuthorityInput, AuthorityDecisionResult>;
@@ -99,6 +99,19 @@ export type RoomCursorInput = RoomInput & {
   readonly limit?: number;
   /** Establish a high-water mark without replaying pre-activation history. */
   readonly startAtLatest?: boolean;
+};
+/**
+ * A conversation read and an inbox read are two different needs on one server
+ * code path. `recent` (the default) is the NEWEST page — what a turn must be
+ * prompted with, since the oldest page of a long Room is old news. `earliest`
+ * is the forward walk from the very first message, which is how corner startup
+ * recovers the objective. Never flip the shared sort to serve one of them; ask
+ * for the window you need. A read that carries `after` keeps the inbox's
+ * ascending cursor semantics and ignores this field.
+ */
+export type RoomConversationWindow = 'recent' | 'earliest';
+export type RoomConversationInput = RoomCursorInput & {
+  readonly window?: RoomConversationWindow;
 };
 export type RoomPrincipalInput = RoomInput & { readonly principalId: string };
 export type CornerCursorInput = CornerInput & { readonly after?: string };

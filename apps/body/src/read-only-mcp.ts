@@ -1010,6 +1010,8 @@ async function prChecksStatus(): Promise<string> {
   const agentId = requiredEnv('BEELINE_DAEMON_AGENT_ID');
   const [restore, conversation, roster, authority] = await Promise.all([
     daemonExecute('getCornerRestoreState', { cornerId }),
+    // Newest page: a hold, an approval and a PR link are questions about where
+    // the corner stands NOW, and this scan is last-write-wins over the page.
     daemonExecute('getRoomConversation', { roomId: cornerId, limit: 200 }),
     daemonExecute('getWorkspaceRoster', { agentId, workspaceId }),
     daemonExecute('getRoomAuthority', { roomId: cornerId, principalId: agentId }),

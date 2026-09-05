@@ -115,7 +115,7 @@ export class DaemonService {
       case 'getCornerCloseRequests':
         return (await this.inbox(
           name,
-          input as Input<'getRoomInbox'>,
+          input as Input<'getRoomConversation'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'waitForCornerWake':
@@ -420,7 +420,7 @@ export class DaemonService {
       })),
     };
   }
-  private async inbox(name: string, input: Input<'getRoomInbox'>, agentId: string) {
+  private async inbox(name: string, input: Input<'getRoomConversation'>, agentId: string) {
     const roomId =
       name === 'getCornerCloseRequests'
         ? (input as unknown as { cornerId: string }).cornerId
@@ -458,6 +458,15 @@ export class DaemonService {
     const limit = Math.max(1, Math.min(input.limit ?? 100, 200));
     const after = input.after?.match(/^(\d+),([0-9a-f]{64})$/);
     if (input.after && !after) throw new Error('invalid inbox cursor');
+    // A conversation read defaults to the NEWEST page: a turn is prompted from
+    // the most recent messages, and the first 200 rows of a long Room are old
+    // news. Startup objective recovery is the one caller that wants the other
+    // end and asks for it by name (`window: 'earliest'`) — the two needs share
+    // this code path, so they are selected here rather than by reversing the
+    // sort for everyone. `getRoomInbox` and any cursor walk keep the ascending
+    // forward semantics untouched.
+    const newestPage =
+      name === 'getRoomConversation' && !after && input.window !== 'earliest';
     const rows = await this.database.query<{
       id: string;
       author_id: string;
@@ -472,15 +481,21 @@ export class DaemonService {
       cursor_ms: string;
       system_event: SystemEvent | null;
     }>(
-      `SELECT id,author_id,created_at,presentation,text,mention_ids,reply_to_message_id,
-        root_message_id,request_id,attachments,system_event,
-        floor(extract(epoch FROM created_at)*1000)::bigint cursor_ms
-        FROM messages WHERE room_id=$1
-          ${after ? 'AND (floor(extract(epoch FROM created_at)*1000)::bigint,id)>($2::bigint,$3)' : ''}
-        ORDER BY cursor_ms,id LIMIT ${limit + 1}`,
+      // The newest page takes exactly `limit` rows from the tail and puts them
+      // back in transcript order; the forward walk keeps its `limit + 1` probe
+      // for whether another page exists.
+      newestPage
+        ? `SELECT * FROM (${conversationColumns}
+             FROM messages WHERE room_id=$1
+             ORDER BY cursor_ms DESC,id DESC LIMIT ${limit}) newest
+           ORDER BY cursor_ms,id`
+        : `${conversationColumns}
+             FROM messages WHERE room_id=$1
+               ${after ? 'AND (floor(extract(epoch FROM created_at)*1000)::bigint,id)>($2::bigint,$3)' : ''}
+             ORDER BY cursor_ms,id LIMIT ${limit + 1}`,
       after ? [roomId, after[1], after[2]] : [roomId],
     );
-    const page = rows.rows.slice(0, limit);
+    const page = newestPage ? rows.rows : rows.rows.slice(0, limit);
     const visiblePage =
       name === 'getRoomInbox'
         ? page.filter(
@@ -1996,6 +2011,11 @@ function grantCardPhrase(
     ...(grants.length === 1 && grants[0]!.reason ? { consequence: grants[0]!.reason } : {}),
   };
 }
+
+/** The one projection an inbox or conversation row is read through. */
+const conversationColumns = `SELECT id,author_id,created_at,presentation,text,mention_ids,
+        reply_to_message_id,root_message_id,request_id,attachments,system_event,
+        floor(extract(epoch FROM created_at)*1000)::bigint cursor_ms`;
 
 export const DAEMON_OPERATION_NAMES = new Set<keyof DaemonOperationMap>([
   'getDaemonBootstrap',

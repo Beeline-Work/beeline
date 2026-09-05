@@ -709,6 +709,7 @@ async function resolveSharedSkillSources(
   if (names.length > 0) return resolveExplicitSkillSources(operatorHome, names);
   const seen = new Set<string>();
   const resolved: Array<{ name: string; source: string }> = [];
+  const skipped: Array<{ path: string; reason: string }> = [];
   for (const relativeRoot of OPERATOR_SKILL_SOURCE_DIRS) {
     const sourceRoot = resolve(operatorHome, relativeRoot);
     const rootStats = await lstat(sourceRoot).catch(() => undefined);
@@ -718,21 +719,76 @@ async function resolveSharedSkillSources(
       const candidate = resolve(sourceRoot, entry);
       try {
         const candidateStats = await lstat(candidate);
-        if (!candidateStats.isDirectory() || candidateStats.isSymbolicLink()) continue;
+        if (candidateStats.isSymbolicLink()) {
+          const reason = await realpath(candidate).then(
+            () => 'symlinked directory',
+            (error: unknown) =>
+              isMissingPathError(error) ? 'dangling symlink' : 'symlinked directory',
+          );
+          skipped.push({
+            path: candidate,
+            reason,
+          });
+          continue;
+        }
+        if (!candidateStats.isDirectory()) {
+          skipped.push({ path: candidate, reason: 'not an ordinary directory' });
+          continue;
+        }
         assertContained(sourceRoot, candidate);
         const skillMd = resolve(candidate, 'SKILL.md');
-        const skillStats = await lstat(skillMd);
+        const skillStats = await lstat(skillMd).catch((error: unknown) => {
+          if (isMissingPathError(error)) {
+            skipped.push({ path: candidate, reason: 'missing SKILL.md' });
+            return undefined;
+          }
+          throw error;
+        });
+        if (!skillStats) continue;
         if (!skillStats.isFile() || skillStats.isSymbolicLink() || skillStats.nlink !== 1) {
-          throw new Error(`shared skill requires an ordinary SKILL.md: ${entry}`);
+          skipped.push({ path: candidate, reason: 'SKILL.md is not an ordinary file' });
+          continue;
         }
         seen.add(entry);
         resolved.push({ name: entry, source: candidate });
       } catch (error) {
+        if (isMissingPathError(error)) {
+          skipped.push({ path: candidate, reason: 'missing during discovery' });
+          continue;
+        }
+        // Unexpected filesystem errors remain loud: operators need their
+        // stack traces to distinguish a bad skill from a broken home volume.
         console.warn(`[body] skipping operator skill ${entry}:`, error);
       }
     }
   }
+  logSkippedOperatorSkills(skipped);
   return resolved;
+}
+
+function isMissingPathError(error: unknown): error is NodeJS.ErrnoException {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as NodeJS.ErrnoException).code === 'ENOENT'
+  );
+}
+
+/**
+ * Expected bad shapes in an operator's ambient skills directory are not daemon
+ * failures. Keep each diagnosis to one journal line, then give repeated
+ * reasons a per-activation total so a stale symlink farm does not hide real
+ * warnings later in the same activation.
+ */
+function logSkippedOperatorSkills(skipped: Array<{ path: string; reason: string }>): void {
+  const totals = new Map<string, number>();
+  for (const { path, reason } of skipped) {
+    console.warn(`[body] skipping operator skill ${path}: ${reason}`);
+    totals.set(reason, (totals.get(reason) ?? 0) + 1);
+  }
+  for (const [reason, count] of totals) {
+    if (count > 1) console.warn(`[body] ${count} skill entries skipped: ${reason}`);
+  }
 }
 
 async function resolveExplicitSkillSources(

@@ -14,10 +14,20 @@
  * Scenarios:
  *   live   cold + warm turns against a REAL harness and a REAL model.
  *   retry  a real re-pin over a scripted empty completion.
+ *   gap    the same two turns with a real WAIT between them, so the follow-up
+ *          is one a five-minute idle window would have made cold. Pass
+ *          `--idle-ms 300000` to measure the window this repo used to ship.
+ *   ceiling  N Rooms' worth of REAL harness processes held by the real
+ *          scheduler, so the resident cost of retention and the ceiling that
+ *          bounds it are both a number.
  *
  * Usage:
  *   node --import tsx apps/body/scripts/measure-turn-phases.ts live [--harness goose]
  *   node --import tsx apps/body/scripts/measure-turn-phases.ts retry
+ *   node --import tsx apps/body/scripts/measure-turn-phases.ts gap [--harness claude] \
+ *     [--gap-ms 330000] [--idle-ms 300000]
+ *   node --import tsx apps/body/scripts/measure-turn-phases.ts ceiling [--harness claude] \
+ *     [--rooms 5] [--max-warm 2]
  */
 import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
@@ -25,11 +35,13 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AcpClient } from '../src/acp.js';
+import type { AgentKind } from '../src/agent-command.js';
+import { prepareRoomAgentHome } from '../src/agent-home.js';
 import type { BodyConfig } from '../src/config.js';
 import type { DaemonApiClient } from '../src/daemon-api-client.js';
 import { MonolithRoomTurnLoop } from '../src/monolith-room-turn.js';
 import { identityFromKey, type AgentRuntimeRecord } from '../src/runtime.js';
-import { SessionScheduler } from '../src/session-scheduler.js';
+import { DEFAULT_MAX_WARM_SESSIONS, SessionScheduler } from '../src/session-scheduler.js';
 import {
   formatDuration,
   TURN_PHASES,
@@ -50,6 +62,48 @@ interface Ask {
 interface Rig {
   traces: TurnTraceRecord[];
   posted: string[];
+  /** What the daemon was holding resident while the gap was open. */
+  residentDuringGap?: Resident;
+}
+
+/** Live descendant processes of this measurement run, and what they cost. */
+interface Resident {
+  processes: number;
+  rssMb: number;
+  commands: string[];
+}
+
+/**
+ * The real resident cost, read from the OS rather than inferred. Every ACP
+ * harness and every MCP server a retained session holds open is a descendant
+ * of this process, so the process tree IS the ceiling made visible.
+ */
+function residentProcesses(): Resident {
+  const rows = execFileSync('ps', ['-eo', 'pid=,ppid=,rss=,comm='], { encoding: 'utf8' })
+    .split('\n')
+    .map((line) => line.trim().split(/\s+/))
+    .filter((parts) => parts.length >= 4)
+    .map(([pid, ppid, rss, ...comm]) => ({
+      pid: Number(pid),
+      ppid: Number(ppid),
+      rssKb: Number(rss),
+      comm: comm.join(' '),
+    }));
+  const children = new Map<number, typeof rows>();
+  for (const row of rows) children.set(row.ppid, [...(children.get(row.ppid) ?? []), row]);
+  const found: typeof rows = [];
+  const queue = [process.pid];
+  while (queue.length) {
+    for (const child of children.get(queue.shift()!) ?? []) {
+      found.push(child);
+      queue.push(child.pid);
+    }
+  }
+  return {
+    processes: found.length,
+    rssMb: Math.round(found.reduce((total, row) => total + row.rssKb, 0) / 1024),
+    commands: [...new Set(found.map((row) => row.comm))].sort(),
+  };
 }
 
 async function runRig(options: {
@@ -61,6 +115,10 @@ async function runRig(options: {
   configOverrides?: Partial<BodyConfig>;
   /** Occupy the scheduler's only slot for this long, so turn one really queues. */
   holdSlotMs?: number;
+  /** Real wall-clock silence between the first turn and the follow-up. */
+  gapMs?: number;
+  /** Retention window under test. Omit for the shipped default. */
+  idleMs?: number;
   /** Present only for the scripted-harness scenario. */
   fakePrompt?: (attempt: number) => Promise<{
     stopReason: string;
@@ -109,6 +167,7 @@ async function runRig(options: {
   const settled = () => receipts.filter((receipt) => receipt.status !== 'working').length;
   let bootstrapped = false;
   let delivered = 0;
+  let quietSince: number | undefined;
   const execute = async (name: string, input: Record<string, unknown>) => {
     if (name === 'getAgentConfiguration') return { commands: [], yoloMode: false };
     if (name === 'getRoomRepositoryState') return { resolution: 'none' };
@@ -128,6 +187,11 @@ async function runRig(options: {
         return { items: [], cursor: 'latest' };
       }
       if (delivered < options.asks.length && settled() === delivered) {
+        // A gap is silence the daemon actually lived through, not a fast-forward.
+        if (delivered > 0 && options.gapMs) {
+          quietSince ??= Date.now();
+          if (Date.now() - quietSince < options.gapMs) return { items: [], cursor: 'latest' };
+        }
         const ask = options.asks[delivered]!;
         delivered += 1;
         return {
@@ -161,7 +225,10 @@ async function runRig(options: {
   } as unknown as DaemonApiClient;
 
   // Capacity one, so the held slot below is a real capacity wait.
-  const scheduler = new SessionScheduler({ maxLiveSessions: 1 });
+  const scheduler = new SessionScheduler({
+    maxLiveSessions: 1,
+    ...(options.idleMs ? { idleMs: options.idleMs } : {}),
+  });
   // Attempts count across clients: a provider re-pin spawns a NEW client.
   let attempt = 0;
   const abort = new AbortController();
@@ -230,9 +297,15 @@ async function runRig(options: {
   }
 
   const running = loop.run();
-  const deadline = Date.now() + 240_000;
+  const deadline = Date.now() + 240_000 + (options.gapMs ?? 0);
+  let residentDuringGap: Resident | undefined;
   while (settled() < options.asks.length && Date.now() < deadline) {
     await new Promise((done) => setTimeout(done, 250));
+    // Sample at the END of the gap: what retention is still holding when the
+    // captain comes back is the number that matters.
+    if (quietSince && options.gapMs && Date.now() - quietSince >= options.gapMs - 1_000) {
+      residentDuringGap ??= residentProcesses();
+    }
   }
   abort.abort();
   await running.catch(() => undefined);
@@ -244,7 +317,7 @@ async function runRig(options: {
     .trim()
     .split('\n')
     .map((line) => JSON.parse(line) as TurnTraceRecord);
-  return { traces, posted };
+  return { traces, posted, ...(residentDuringGap ? { residentDuringGap } : {}) };
 }
 
 function table(record: TurnTraceRecord, title: string): string {
@@ -280,7 +353,7 @@ function table(record: TurnTraceRecord, title: string): string {
 }
 
 /** Harness name to the ACP command the daemon would actually spawn. */
-const LIVE_HARNESSES: Record<string, { kind: string; executable: string; args: string[] }> = {
+const LIVE_HARNESSES: Record<string, { kind: AgentKind; executable: string; args: string[] }> = {
   goose: { kind: 'goose', executable: 'goose', args: ['acp'] },
   claude: { kind: 'claude', executable: 'claude-agent-acp', args: [] },
   codex: { kind: 'codex', executable: 'codex-acp', args: [] },
@@ -361,6 +434,130 @@ async function retry(): Promise<void> {
   console.log(table(traces[0]!, 'Retry turn — real re-pin over a scripted empty completion'));
 }
 
-const [, , scenario = 'live', flag, value] = process.argv;
-const harness = flag === '--harness' && value ? value : 'goose';
-await (scenario === 'retry' ? retry() : live(harness));
+async function gap(harness: string, gapMs: number, idleMs?: number): Promise<void> {
+  const spec = LIVE_HARNESSES[harness];
+  if (!spec) throw new Error(`unknown harness ${harness}`);
+  const command = execFileSync('which', [spec.executable], { encoding: 'utf8' }).trim();
+  console.log(
+    `Cold turn, then ${formatDuration(gapMs)} of silence, then a follow-up.` +
+      ` Retention window: ${idleMs ? formatDuration(idleMs) : 'the shipped default'}.`,
+  );
+  const { traces, posted, residentDuringGap } = await runRig({
+    asks: [
+      { id: 'ask-cold', body: 'In one short sentence, what does this repository checkout contain?' },
+      { id: 'ask-gap', body: 'In one short sentence, name one thing you would check next.' },
+    ],
+    agentKind: spec.kind,
+    agentCommand: command,
+    agentArgs: spec.args,
+    configOverrides: { agentEnv: { PATH: process.env.PATH ?? '' } } as Partial<BodyConfig>,
+    holdSlotMs: 1_500,
+    gapMs,
+    ...(idleMs ? { idleMs } : {}),
+  });
+  console.log(`\nReplies: ${JSON.stringify(posted, null, 2)}\n`);
+  console.log(table(traces[0]!, 'Cold turn — real harness, real model'));
+  if (traces[1]) {
+    console.log(table(traces[1], `Follow-up after ${formatDuration(gapMs)} of silence`));
+  }
+  if (residentDuringGap) {
+    console.log(
+      `Resident at the end of the gap: ${residentDuringGap.processes} process(es), ` +
+        `${residentDuringGap.rssMb}MB RSS — ${residentDuringGap.commands.join(', ')}\n`,
+    );
+  }
+}
+
+/**
+ * What retention actually costs, and what bounds it.
+ *
+ * Real harness processes through the real scheduler, one per Room, with no
+ * model turn: the resident cost of a retained session is its process, and this
+ * measures that without spending a provider's tokens to learn it.
+ */
+async function ceiling(harness: string, rooms: number, maxWarm: number): Promise<void> {
+  const spec = LIVE_HARNESSES[harness];
+  if (!spec) throw new Error(`unknown harness ${harness}`);
+  const command = execFileSync('which', [spec.executable], { encoding: 'utf8' }).trim();
+  const root = await mkdtemp(join(tmpdir(), 'beeline-measure-ceiling-'));
+  const cwd = join(root, 'room');
+  await mkdir(cwd, { recursive: true });
+  const scheduler = new SessionScheduler({ maxLiveSessions: rooms, maxWarmSessions: maxWarm });
+  const clients: AcpClient[] = [];
+  try {
+    for (let index = 0; index < rooms; index += 1) {
+      const agentEnv = {
+        PATH: process.env.PATH ?? '',
+        ...(await prepareRoomAgentHome({
+          root: join(root, `agent-home-${index}`),
+          operatorHome: process.env.HOME ?? '',
+          agentKind: spec.kind,
+        })),
+      };
+      let client: AcpClient | undefined;
+      await scheduler.run(
+        `room-${index}`,
+        {
+          activate: async () => {
+            client = new AcpClient({
+              agentCommand: command,
+              agentArgs: spec.args,
+              agentEnv,
+              agentCwd: cwd,
+              agentLabel: command,
+              osSandbox: false,
+              autoApprovePermissions: false,
+            });
+            clients.push(client);
+            await client.start();
+            const opened = await client.sessionNew({ cwd, mcpServers: [], mode: 'readonly' });
+            return opened.sessionId;
+          },
+          suspend: async () => {
+            if (client?.isAlive) await client.stop();
+          },
+        },
+        async () => undefined,
+        { roomKey: `room-${index}` },
+      );
+    }
+    const held = residentProcesses();
+    console.log(
+      `### Retention ceiling — ${rooms} Rooms, \`maxWarm\` ${maxWarm}\n\n` +
+        `| moment | scheduler | resident processes | RSS |\n| --- | --- | --- | --- |\n` +
+        `| every Room answered | ${JSON.stringify(scheduler.snapshot())} | ${held.processes} | ${held.rssMb}MB |`,
+    );
+    await Reflect.get(scheduler, 'sweepIdle').call(scheduler);
+    const culled = residentProcesses();
+    console.log(
+      `| after one sweep | ${JSON.stringify(scheduler.snapshot())} | ${culled.processes} | ${culled.rssMb}MB |\n`,
+    );
+  } finally {
+    await scheduler.dispose();
+    await Promise.all(clients.map((client) => client.stop().catch(() => undefined)));
+  }
+}
+
+const [, , scenario = 'live', ...rest] = process.argv;
+const flags = new Map<string, string>();
+for (let index = 0; index < rest.length; index += 2) {
+  if (rest[index]?.startsWith('--') && rest[index + 1]) {
+    flags.set(rest[index]!.slice(2), rest[index + 1]!);
+  }
+}
+const harness = flags.get('harness') ?? (scenario === 'live' ? 'goose' : 'claude');
+if (scenario === 'retry') await retry();
+else if (scenario === 'gap') {
+  const idle = flags.get('idle-ms');
+  await gap(
+    harness,
+    Number(flags.get('gap-ms') ?? 330_000),
+    ...((idle ? [Number(idle)] : []) as [number?]),
+  );
+} else if (scenario === 'ceiling') {
+  await ceiling(
+    harness,
+    Number(flags.get('rooms') ?? 5),
+    Number(flags.get('max-warm') ?? DEFAULT_MAX_WARM_SESSIONS),
+  );
+} else await live(harness);

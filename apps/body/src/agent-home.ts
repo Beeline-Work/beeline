@@ -40,12 +40,13 @@
  * otherwise-implicit reads from the operator's `~/.pi` and `~/.agents` trees.
  */
 import { existsSync, readFileSync } from 'node:fs';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   chmod,
   copyFile,
   lstat,
   mkdir,
+  readFile,
   readdir,
   realpath,
   rename,
@@ -55,7 +56,8 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, dirname, relative, resolve, sep } from 'node:path';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import type { AgentKind } from './agent-command.js';
 import {
   runningBeelineReleaseId,
   USING_BEELINE_SKILL_NAME,
@@ -131,8 +133,25 @@ const OPERATOR_SKILL_SOURCE_DIRS = [
   '.pi/agent/skills',
 ] as const;
 
-/** Every supported Room harness consumes the same exact materialized inventory. */
+/**
+ * The harness homes that can carry a Beeline-managed skills directory.
+ *
+ * A session runs ONE harness, so only that harness's tree is provisioned
+ * (C104): materializing all four cost three recursive copies nobody read on
+ * every activation. `agentSkillDir` is the single mapping from the selected
+ * harness to its tree, and the read-only MCP surface resolves the skill root
+ * through the same function so a session can never be pointed at a tree that
+ * was not provisioned.
+ */
 export const AGENT_SKILL_DIRS = ['claude', 'codex', 'grok', 'pi'] as const;
+export type AgentSkillDir = (typeof AGENT_SKILL_DIRS)[number];
+
+/** The skills tree the selected harness reads. Anything else lands on codex's. */
+export function agentSkillDir(kind: AgentKind | undefined): AgentSkillDir {
+  return (AGENT_SKILL_DIRS as readonly string[]).includes(kind ?? '')
+    ? (kind as AgentSkillDir)
+    : 'codex';
+}
 export const SHARED_SKILL_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 export function isSharedSkillName(value: unknown): value is string {
@@ -221,6 +240,12 @@ export interface RoomAgentHomeInput {
   /** Narrow, runtime-owned names explicitly shared with this one agent. */
   sharedSkills?: string[];
   /**
+   * The harness this activation will spawn. Only ITS skills tree is
+   * provisioned; omitting it provisions codex's, the same tree
+   * `readOnlyMcpServer` falls back to for an unrecognised harness.
+   */
+  agentKind?: AgentKind;
+  /**
    * The OpenRouter model this activation will run, when there is one. Its
    * live-derived provider set (`openrouter-routing.ts`, cached under
    * `cacheDir` for 24h) is pinned on that one model's pi `models.json` entry.
@@ -276,6 +301,7 @@ export async function prepareRoomAgentHome(
         input.skillReleaseId ?? runningBeelineReleaseId(),
         input.failClosed ?? false,
         input.sharedSkills ?? [],
+        agentSkillDir(input.agentKind),
         input.openRouterRouting,
       ),
     );
@@ -305,16 +331,19 @@ async function provisionAgentSkillsAndMcp(
   skillReleaseId: string,
   failClosed: boolean,
   sharedSkills: string[],
+  skillDir: AgentSkillDir,
   openRouterRouting: RoomAgentHomeInput['openRouterRouting'],
 ): Promise<void> {
   const managedSkills = [
     { name: USING_BEELINE_SKILL_NAME, content: usingBeelineSkillMarkdown(skillReleaseId) },
   ];
   const shared = await resolveSharedSkillSources(operatorHome, sharedSkills);
-  for (const dir of AGENT_SKILL_DIRS) {
-    const target = resolve(root, dir, 'skills');
-    await provisionManagedSkillsDir(target, managedSkills, shared, sharedSkills.length === 0);
-  }
+  await provisionManagedSkillsDir(
+    resolve(root, skillDir, 'skills'),
+    managedSkills,
+    shared,
+    sharedSkills.length === 0,
+  );
 
   for (const config of HARNESS_MCP_CONFIGS) {
     try {
@@ -548,27 +577,23 @@ async function provisionManagedSkillsDir(
 ): Promise<void> {
   const parent = dirname(target);
   await assertRealContainedDirectory(parent, dirname(parent));
+  const plan = await planManagedSkills(managedSkills, sharedSkills, optionalShares);
+  // The reuse test is content, on BOTH sides. The destination is agent-writable,
+  // so its own existence, mtime or a receipt file it could have written are all
+  // worthless as proof: the only evidence that matters is that every byte still
+  // under it is the byte this plan would put there, and that nothing there is a
+  // link or a shared inode a session could mutate underneath the harness.
+  if ((await materializedSkillManifest(target)) === plan.manifest) return;
   const staged = resolve(parent, `.skills.${process.pid}.${randomUUID()}.tmp`);
   await mkdir(staged, { mode: 0o700 });
-  const names = new Set(managedSkills.map((skill) => skill.name));
   try {
-    for (const skill of managedSkills) {
-      const skillDir = resolve(staged, skill.name);
-      await mkdir(skillDir, { recursive: true });
-      await writeIsolatedHarnessFile(resolve(skillDir, 'SKILL.md'), skill.content);
-    }
-    for (const shared of sharedSkills) {
-      if (names.has(shared.name)) {
-        throw new Error(`shared skill collides with Beeline-owned skill: ${shared.name}`);
-      }
-      names.add(shared.name);
-      try {
-        await copySafeSkillTree(shared.source, resolve(staged, shared.name), shared.source);
-      } catch (error) {
-        // Default (implicit) shares degrade to fewer skills rather than
-        // failing the Room; an explicitly named share still fails loudly.
-        if (!optionalShares) throw error;
-        console.warn(`[body] skipping shared skill ${shared.name}:`, error);
+    for (const entry of plan.entries) {
+      if (entry.kind === 'managed') {
+        const skillDir = resolve(staged, entry.name);
+        await mkdir(skillDir, { recursive: true });
+        await writeIsolatedHarnessFile(resolve(skillDir, 'SKILL.md'), entry.content);
+      } else {
+        await copySafeSkillTree(entry.source, resolve(staged, entry.name), entry.source);
       }
     }
     const existing = await lstat(target).catch(() => undefined);
@@ -577,6 +602,96 @@ async function provisionManagedSkillsDir(
   } finally {
     await rm(staged, { recursive: true, force: true });
   }
+}
+
+type PlannedSkill =
+  | { kind: 'managed'; name: string; content: string }
+  | { kind: 'shared'; name: string; source: string };
+
+/**
+ * Everything this activation would materialize, plus the exact manifest of the
+ * tree it would produce.
+ *
+ * The plan is settled BEFORE anything is written, so the reuse test and the
+ * rebuild are the same decision read twice — a share that fails validation is
+ * skipped here (for an implicit share) or thrown here (for an explicit one),
+ * and therefore never appears in a manifest that a materialized tree is asked
+ * to match.
+ */
+async function planManagedSkills(
+  managedSkills: Array<{ name: string; content: string }>,
+  sharedSkills: Array<{ name: string; source: string }>,
+  optionalShares: boolean,
+): Promise<{ entries: PlannedSkill[]; manifest: string }> {
+  const entries: PlannedSkill[] = [];
+  const lines: string[] = [];
+  const names = new Set(managedSkills.map((skill) => skill.name));
+  for (const skill of managedSkills) {
+    entries.push({ kind: 'managed', name: skill.name, content: skill.content });
+    lines.push(`d ${skill.name}`, `f ${skill.name}/SKILL.md ${sha256(skill.content)}`);
+  }
+  for (const shared of sharedSkills) {
+    if (names.has(shared.name)) {
+      throw new Error(`shared skill collides with Beeline-owned skill: ${shared.name}`);
+    }
+    names.add(shared.name);
+    try {
+      const tree: string[] = [];
+      await walkSafeSkillTree(shared.source, shared.source, {
+        directory: async (rel) => void tree.push(`d ${join(shared.name, rel)}`),
+        file: async (rel, realPath) =>
+          void tree.push(`f ${join(shared.name, rel)} ${sha256(await readFile(realPath))}`),
+      });
+      entries.push({ kind: 'shared', name: shared.name, source: shared.source });
+      lines.push(...tree);
+    } catch (error) {
+      // Default (implicit) shares degrade to fewer skills rather than
+      // failing the Room; an explicitly named share still fails loudly.
+      if (!optionalShares) throw error;
+      console.warn(`[body] skipping shared skill ${shared.name}:`, error);
+    }
+  }
+  return { entries, manifest: lines.sort().join('\n') };
+}
+
+/**
+ * The manifest of a skills tree that already exists, or `undefined` when it
+ * cannot be read as one. A symlink, a device node, or a file sharing its inode
+ * with something outside the tree makes the whole tree unusable rather than
+ * merely different: those are the shapes a writable home could use to keep a
+ * mutable handle on what the harness reads, so a provision is never reused
+ * over them.
+ */
+async function materializedSkillManifest(target: string): Promise<string | undefined> {
+  const stats = await lstat(target).catch(() => undefined);
+  if (!stats?.isDirectory() || stats.isSymbolicLink()) return undefined;
+  const lines: string[] = [];
+  const visit = async (directory: string, prefix: string): Promise<boolean> => {
+    for (const entry of await readdir(directory)) {
+      const path = resolve(directory, entry);
+      const rel = prefix ? join(prefix, entry) : entry;
+      const entryStats = await lstat(path);
+      if (entryStats.isSymbolicLink()) return false;
+      if (entryStats.isDirectory()) {
+        lines.push(`d ${rel}`);
+        if (!(await visit(path, rel))) return false;
+        continue;
+      }
+      if (!entryStats.isFile() || entryStats.nlink !== 1) return false;
+      lines.push(`f ${rel} ${sha256(await readFile(path))}`);
+    }
+    return true;
+  };
+  try {
+    if (!(await visit(target, ''))) return undefined;
+  } catch {
+    return undefined;
+  }
+  return lines.sort().join('\n');
+}
+
+function sha256(value: string | Buffer): string {
+  return createHash('sha256').update(value).digest('hex');
 }
 
 /**
@@ -688,10 +803,26 @@ async function assertRealContainedDirectory(path: string, root: string): Promise
 const BLOCKED_SHARED_FILENAMES =
   /^(?:\.env(?:\..*)?|auth\.json|\.credentials\.json|config\.toml|settings(?:\.local)?\.json|\.mcp\.json|credentials?|secrets?|plugins?|\.codex-plugin|\.claude-plugin|memory(?:\.md)?|\.netrc|\.git-credentials|.*\.(?:pem|key))$/i;
 
-async function copySafeSkillTree(
+interface SkillTreeVisitor {
+  /** A directory the copy would create, by its path relative to the skill root. */
+  directory(rel: string): Promise<void>;
+  /** An ordinary file the copy would carry, with the real path to read it from. */
+  file(rel: string, realPath: string): Promise<void>;
+}
+
+/**
+ * Walk one shared skill under its whole safety boundary, once.
+ *
+ * Copying and hashing are the same walk with different visitors deliberately:
+ * the reuse test only means anything while the manifest it compares against is
+ * produced by exactly the rules the copy obeys, and a second walker written
+ * beside this one would drift out of that agreement silently.
+ */
+async function walkSafeSkillTree(
   source: string,
-  target: string,
   sourceRoot: string,
+  visitor: SkillTreeVisitor,
+  rel = '',
 ): Promise<void> {
   assertContained(sourceRoot, source);
   const resolvedSource = await realpath(source);
@@ -705,18 +836,39 @@ async function copySafeSkillTree(
     throw new Error(`shared skill contains credential or configuration material: ${source}`);
   }
   if (stats.isDirectory()) {
-    await mkdir(target, { mode: 0o700 });
+    await visitor.directory(rel);
     for (const entry of await readdir(resolvedSource)) {
       if (entry === '.' || entry === '..') throw new Error('invalid shared skill entry');
-      await copySafeSkillTree(resolve(source, entry), resolve(target, entry), sourceRoot);
+      await walkSafeSkillTree(
+        resolve(source, entry),
+        sourceRoot,
+        visitor,
+        rel ? join(rel, entry) : entry,
+      );
     }
     return;
   }
   if (!stats.isFile() || stats.nlink !== 1) {
     throw new Error(`shared skill contains a nonordinary file: ${source}`);
   }
-  await copyFile(resolvedSource, target);
-  await chmod(target, 0o600);
+  await visitor.file(rel, resolvedSource);
+}
+
+async function copySafeSkillTree(
+  source: string,
+  target: string,
+  sourceRoot: string,
+): Promise<void> {
+  await walkSafeSkillTree(source, sourceRoot, {
+    directory: async (rel) => {
+      await mkdir(resolve(target, rel), { mode: 0o700 });
+    },
+    file: async (rel, realPath) => {
+      const destination = resolve(target, rel);
+      await copyFile(realPath, destination);
+      await chmod(destination, 0o600);
+    },
+  });
 }
 
 /**

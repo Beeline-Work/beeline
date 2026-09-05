@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
-import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, link, mkdir, mkdtemp, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 
 import {
   AGENT_SKILL_DIRS,
+  agentSkillDir,
   BEELINE_DEFAULT_SKILL_NAMES,
   hasAmbientTrustySquireConfiguration,
   hasLocalTrustySquireState,
@@ -418,18 +419,21 @@ describe('operator skills + MCP passthrough', () => {
     const operatorHome = await operatorHomeWithHarnessConfigs();
     const roomRoot = resolve(await scratch('beeline-room-a-'), 'agent-home');
 
-    await prepareRoomAgentHome({ root: roomRoot, operatorHome });
+    await prepareRoomAgentHome({ root: roomRoot, operatorHome, agentKind: 'claude' });
 
-    for (const dir of AGENT_SKILL_DIRS) {
-      const skillsDir = resolve(roomRoot, dir, 'skills');
-      expect(lstatSync(skillsDir).isSymbolicLink()).toBe(false);
-      expect(lstatSync(skillsDir).isDirectory()).toBe(true);
-      // Default share: every validated operator entry rides along.
-      expect(readdirSync(skillsDir).sort()).toEqual(['greet', ...BEELINE_DEFAULT_SKILL_NAMES].sort());
-      expect(readFileSync(resolve(skillsDir, 'greet', 'SKILL.md'), 'utf8')).toBe('say hi');
-      const managedSkill = resolve(skillsDir, 'using-beeline', 'SKILL.md');
-      expect(lstatSync(resolve(skillsDir, 'using-beeline')).isSymbolicLink()).toBe(false);
-      expect(readFileSync(managedSkill, 'utf8')).toContain('name: using-beeline');
+    // Only the SELECTED harness's tree is materialized (C104); the other three
+    // are the copies nobody was ever going to read.
+    const skillsDir = resolve(roomRoot, 'claude', 'skills');
+    expect(lstatSync(skillsDir).isSymbolicLink()).toBe(false);
+    expect(lstatSync(skillsDir).isDirectory()).toBe(true);
+    // Default share: every validated operator entry rides along.
+    expect(readdirSync(skillsDir).sort()).toEqual(['greet', ...BEELINE_DEFAULT_SKILL_NAMES].sort());
+    expect(readFileSync(resolve(skillsDir, 'greet', 'SKILL.md'), 'utf8')).toBe('say hi');
+    const managedSkill = resolve(skillsDir, 'using-beeline', 'SKILL.md');
+    expect(lstatSync(resolve(skillsDir, 'using-beeline')).isSymbolicLink()).toBe(false);
+    expect(readFileSync(managedSkill, 'utf8')).toContain('name: using-beeline');
+    for (const dir of AGENT_SKILL_DIRS.filter((candidate) => candidate !== 'claude')) {
+      expect(existsSync(resolve(roomRoot, dir, 'skills'))).toBe(false);
     }
 
     // The codex MCP config is a COPY carrying only mcp_servers — never a
@@ -475,20 +479,23 @@ describe('operator skills + MCP passthrough', () => {
     const sharedAgent = resolve(await scratch('beeline-shared-agent-'), 'agent-home');
     const cleanAgent = resolve(await scratch('beeline-clean-agent-'), 'agent-home');
 
-    await prepareRoomAgentHome({ root: sharedAgent, operatorHome, sharedSkills: ['review-pr'] });
-    await prepareRoomAgentHome({ root: cleanAgent, operatorHome });
+    await prepareRoomAgentHome({
+      root: sharedAgent,
+      operatorHome,
+      sharedSkills: ['review-pr'],
+      agentKind: 'pi',
+    });
+    await prepareRoomAgentHome({ root: cleanAgent, operatorHome, agentKind: 'pi' });
 
-    for (const dir of AGENT_SKILL_DIRS) {
-      expect(readdirSync(resolve(sharedAgent, dir, 'skills')).sort()).toEqual(
-        [...BEELINE_DEFAULT_SKILL_NAMES, 'review-pr'].sort(),
-      );
-      expect(lstatSync(resolve(sharedAgent, dir, 'skills/review-pr')).isSymbolicLink()).toBe(false);
-      expect(lstatSync(resolve(sharedAgent, dir, 'skills/review-pr/run.sh')).mode & 0o111).toBe(0);
-      // A default-share agent gets every operator entry, review-pr included.
-      expect(existsSync(resolve(cleanAgent, dir, 'skills/review-pr'))).toBe(true);
-      // Explicit narrowing excludes the operator's other skills.
-      expect(readdirSync(resolve(sharedAgent, dir, 'skills')).sort()).not.toContain('greet');
-    }
+    expect(readdirSync(resolve(sharedAgent, 'pi', 'skills')).sort()).toEqual(
+      [...BEELINE_DEFAULT_SKILL_NAMES, 'review-pr'].sort(),
+    );
+    expect(lstatSync(resolve(sharedAgent, 'pi', 'skills/review-pr')).isSymbolicLink()).toBe(false);
+    expect(lstatSync(resolve(sharedAgent, 'pi', 'skills/review-pr/run.sh')).mode & 0o111).toBe(0);
+    // A default-share agent gets every operator entry, review-pr included.
+    expect(existsSync(resolve(cleanAgent, 'pi', 'skills/review-pr'))).toBe(true);
+    // Explicit narrowing excludes the operator's other skills.
+    expect(readdirSync(resolve(sharedAgent, 'pi', 'skills')).sort()).not.toContain('greet');
   });
 
   it('rejects unsafe explicit shares and destination escapes', async () => {
@@ -635,9 +642,11 @@ describe('operator skills + MCP passthrough', () => {
     await expect(prepareRoomAgentHome({ root: roomRoot, operatorHome })).resolves.toEqual(
       roomAgentHomeEnv(roomRoot),
     );
-    for (const dir of AGENT_SKILL_DIRS) {
-      // No operator skills to link, but the managed skill is still shipped.
-      expect(existsSync(resolve(roomRoot, dir, 'skills', 'using-beeline', 'SKILL.md'))).toBe(true);
+    // No operator skills to link, but the managed skill is still shipped —
+    // into the selected harness's tree, and only that one.
+    expect(existsSync(resolve(roomRoot, 'codex', 'skills', 'using-beeline', 'SKILL.md'))).toBe(true);
+    for (const dir of AGENT_SKILL_DIRS.filter((candidate) => candidate !== 'codex')) {
+      expect(existsSync(resolve(roomRoot, dir, 'skills'))).toBe(false);
     }
     // Codex's collaboration tools default on, so its isolated config is
     // intentionally present even without operator configuration. Other
@@ -683,5 +692,161 @@ describe('operator skills + MCP passthrough', () => {
         expect(target === maskedPath || target.startsWith(`${maskedPath}/`)).toBe(false);
       }
     }
+  });
+});
+
+describe('skill provision reuse', () => {
+  /**
+   * Provision twice and report whether the second call rebuilt the tree. The
+   * inode of the skills directory is the honest witness: a rebuild stages a
+   * fresh directory and renames it into place, so reuse is exactly the case
+   * where the directory the harness reads is still the same directory.
+   */
+  async function provisionTwice(
+    input: Parameters<typeof prepareRoomAgentHome>[0],
+    between?: () => Promise<void>,
+  ): Promise<{ rebuilt: boolean; skills: string }> {
+    const skills = resolve(input.root, agentSkillDir(input.agentKind), 'skills');
+    await prepareRoomAgentHome(input);
+    const before = lstatSync(skills).ino;
+    await between?.();
+    await prepareRoomAgentHome(input);
+    return { rebuilt: lstatSync(skills).ino !== before, skills };
+  }
+
+  async function operatorWithSkill(content: string): Promise<string> {
+    const operatorHome = await scratch('beeline-reuse-operator-');
+    await mkdir(resolve(operatorHome, '.agents/skills/greet'), { recursive: true });
+    await writeFile(resolve(operatorHome, '.agents/skills/greet/SKILL.md'), content);
+    return operatorHome;
+  }
+
+  it('reuses a provision whose every byte still matches the plan', async () => {
+    const operatorHome = await operatorWithSkill('say hi');
+    const root = resolve(await scratch('beeline-reuse-'), 'agent-home');
+
+    const { rebuilt, skills } = await provisionTwice({
+      root,
+      operatorHome,
+      agentKind: 'claude',
+      skillReleaseId: 'release-1',
+    });
+
+    expect(rebuilt).toBe(false);
+    expect(readFileSync(resolve(skills, 'greet', 'SKILL.md'), 'utf8')).toBe('say hi');
+  });
+
+  it('rebuilds when the operator edits, adds or deletes a source skill', async () => {
+    const edited = await operatorWithSkill('say hi');
+    const editedRoot = resolve(await scratch('beeline-reuse-edit-'), 'agent-home');
+    // Same length, same mtime: only the CONTENT moved, which is the case a
+    // stat-based reuse test would wave through.
+    const skillMd = resolve(edited, '.agents/skills/greet/SKILL.md');
+    const stamp = new Date(1_700_000_000_000);
+    await utimes(skillMd, stamp, stamp);
+    expect(
+      (
+        await provisionTwice({ root: editedRoot, operatorHome: edited, agentKind: 'claude' }, async () => {
+          await writeFile(skillMd, 'say HI');
+          await utimes(skillMd, stamp, stamp);
+        })
+      ).rebuilt,
+    ).toBe(true);
+    expect(
+      readFileSync(resolve(editedRoot, 'claude', 'skills', 'greet', 'SKILL.md'), 'utf8'),
+    ).toBe('say HI');
+
+    const added = await operatorWithSkill('say hi');
+    const addedRoot = resolve(await scratch('beeline-reuse-add-'), 'agent-home');
+    expect(
+      (
+        await provisionTwice({ root: addedRoot, operatorHome: added, agentKind: 'claude' }, async () => {
+          await mkdir(resolve(added, '.agents/skills/audit'), { recursive: true });
+          await writeFile(resolve(added, '.agents/skills/audit/SKILL.md'), 'audit');
+        })
+      ).rebuilt,
+    ).toBe(true);
+    expect(readdirSync(resolve(addedRoot, 'claude', 'skills')).sort()).toContain('audit');
+
+    const deleted = await operatorWithSkill('say hi');
+    const deletedRoot = resolve(await scratch('beeline-reuse-delete-'), 'agent-home');
+    expect(
+      (
+        await provisionTwice({ root: deletedRoot, operatorHome: deleted, agentKind: 'claude' }, () =>
+          rm(resolve(deleted, '.agents/skills/greet'), { recursive: true }),
+        )
+      ).rebuilt,
+    ).toBe(true);
+    expect(readdirSync(resolve(deletedRoot, 'claude', 'skills')).sort()).toEqual([
+      ...BEELINE_DEFAULT_SKILL_NAMES,
+    ]);
+  });
+
+  it('rebuilds when the release stamped into the managed skill moves', async () => {
+    const operatorHome = await operatorWithSkill('say hi');
+    const root = resolve(await scratch('beeline-reuse-release-'), 'agent-home');
+    await prepareRoomAgentHome({ root, operatorHome, agentKind: 'claude', skillReleaseId: 'r1' });
+    const before = lstatSync(resolve(root, 'claude', 'skills')).ino;
+    await prepareRoomAgentHome({ root, operatorHome, agentKind: 'claude', skillReleaseId: 'r2' });
+    expect(lstatSync(resolve(root, 'claude', 'skills')).ino).not.toBe(before);
+    expect(
+      readFileSync(resolve(root, 'claude', 'skills', 'using-beeline', 'SKILL.md'), 'utf8'),
+    ).toContain('r2');
+  });
+
+  it('never reuses a destination the session could have changed underneath it', async () => {
+    const operatorHome = await operatorWithSkill('say hi');
+    const cases: Array<{ what: string; tamper: (skills: string) => Promise<void> }> = [
+      { what: 'an edited file', tamper: (skills) => writeFile(resolve(skills, 'greet/SKILL.md'), 'own words') },
+      { what: 'an added file', tamper: (skills) => writeFile(resolve(skills, 'greet/extra.md'), 'extra') },
+      { what: 'a deleted file', tamper: (skills) => rm(resolve(skills, 'greet/SKILL.md')) },
+      {
+        what: 'a symlink standing in for a file',
+        tamper: async (skills) => {
+          const outside = await scratch('beeline-reuse-outside-');
+          await writeFile(resolve(outside, 'SKILL.md'), 'say hi');
+          await rm(resolve(skills, 'greet/SKILL.md'));
+          await symlink(resolve(outside, 'SKILL.md'), resolve(skills, 'greet/SKILL.md'));
+        },
+      },
+      {
+        // Same bytes, but a second name for the same inode: the session keeps a
+        // mutable handle on what the harness reads, so it is not reusable even
+        // though every hash matches.
+        what: 'a hardlink to the same bytes',
+        tamper: async (skills) => {
+          const outside = await scratch('beeline-reuse-hardlink-');
+          const shared = resolve(outside, 'SKILL.md');
+          await writeFile(shared, 'say hi');
+          await rm(resolve(skills, 'greet/SKILL.md'));
+          await link(shared, resolve(skills, 'greet/SKILL.md'));
+        },
+      },
+    ];
+
+    for (const { what, tamper } of cases) {
+      const root = resolve(await scratch('beeline-reuse-tamper-'), 'agent-home');
+      const { rebuilt, skills } = await provisionTwice(
+        { root, operatorHome, agentKind: 'claude' },
+        () => tamper(resolve(root, 'claude', 'skills')),
+      );
+      expect(rebuilt, what).toBe(true);
+      const restored = resolve(skills, 'greet', 'SKILL.md');
+      expect(lstatSync(restored).isSymbolicLink(), what).toBe(false);
+      expect(lstatSync(restored).nlink, what).toBe(1);
+      expect(readFileSync(restored, 'utf8'), what).toBe('say hi');
+      expect(readdirSync(resolve(skills, 'greet')), what).toEqual(['SKILL.md']);
+    }
+  });
+
+  it('provisions the newly selected harness when the agent switches harness', async () => {
+    const operatorHome = await operatorWithSkill('say hi');
+    const root = resolve(await scratch('beeline-reuse-harness-'), 'agent-home');
+
+    await prepareRoomAgentHome({ root, operatorHome, agentKind: 'claude' });
+    expect(existsSync(resolve(root, 'pi', 'skills'))).toBe(false);
+
+    await prepareRoomAgentHome({ root, operatorHome, agentKind: 'pi' });
+    expect(readFileSync(resolve(root, 'pi', 'skills', 'greet', 'SKILL.md'), 'utf8')).toBe('say hi');
   });
 });

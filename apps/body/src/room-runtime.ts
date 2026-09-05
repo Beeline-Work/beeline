@@ -16,7 +16,9 @@ import type { AgentRuntimeRecord, RoomRuntimeRecord } from './runtime.js';
 import { runtimeIdentity } from './runtime.js';
 import {
   DEFAULT_WORKSPACE_LIVE_SESSIONS_FLOOR,
+  resolveMaxWarmSessions,
   resolvePerRoomLiveSessions,
+  resolveSessionIdleMs,
   SessionScheduler,
   type SessionSchedulerSnapshot,
 } from './session-scheduler.js';
@@ -140,7 +142,8 @@ export class RoomRuntimeCoordinator {
         process.env.BUZZY_BODY_MAX_SESSIONS_FLOOR ?? String(DEFAULT_WORKSPACE_LIVE_SESSIONS_FLOOR),
       ),
       activeRoomCount: () => this.running.size,
-      idleMs: Number(process.env.BUZZY_BODY_SESSION_IDLE_MS ?? String(5 * 60_000)),
+      idleMs: resolveSessionIdleMs(process.env),
+      maxWarmSessions: resolveMaxWarmSessions(process.env),
       reserveInteractiveSlot: true,
     });
   }

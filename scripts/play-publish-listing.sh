@@ -10,7 +10,7 @@
 #
 # Required environment:
 #   ACCESS_TOKEN     — OAuth access token with the androidpublisher scope
-#   PACKAGE_NAME     — app.usebeeline.mobile
+#   PACKAGE_NAME     — app.usebeeline
 #   METADATA_DIR     — path to apps/mobile/fastlane/metadata/android (the parent
 #                      of the per-locale dirs such as en-US/)
 #   LANGUAGE         — locale code, e.g. en-US

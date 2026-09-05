@@ -148,7 +148,7 @@ Two MCP surfaces are mounted into every agent session.
 Beeline is on both stores:
 
 - [App Store](https://apps.apple.com/app/id6803948500)
-- [Google Play](https://play.google.com/store/apps/details?id=app.usebeeline.mobile)
+- [Google Play](https://play.google.com/store/apps/details?id=app.usebeeline)
 
 Sign in with GitHub, and the app hands you the pairing code that `npx usebeeline connect` asks for.
 

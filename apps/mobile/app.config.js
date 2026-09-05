@@ -3,6 +3,9 @@ const { version: releaseVersion } = require('./package.json');
 
 const name = "Beeline";
 const bundleId = "app.usebeeline.mobile";
+// Android ships under its own Play record (`app.usebeeline`); the iOS bundle
+// identifier keeps the original `app.usebeeline.mobile` App Store identity.
+const androidPackage = "app.usebeeline";
 const scheme = "beeline";
 const updatesChannel = process.env.EXPO_UPDATES_CHANNEL || "production";
 const consoleLoggingDefault = process.env.NODE_ENV !== 'production';
@@ -61,7 +64,7 @@ export default {
         // "a new native build is shipping". `scripts/native-fingerprint.mjs`
         // (the NATIVE FINGERPRINT gate) fails a PR that changes native inputs
         // without bumping it.
-        runtimeVersion: "22",
+        runtimeVersion: "23",
         orientation: "default",
         icon: "./sources/assets/images/icon.png",
         scheme,
@@ -112,7 +115,7 @@ export default {
                 "android.permission.READ_MEDIA_IMAGES",
                 "android.permission.READ_MEDIA_VIDEO",
             ],
-            package: bundleId,
+            package: androidPackage,
             googleServicesFile: "./google-services.json",
             intentFilters: [
                 {

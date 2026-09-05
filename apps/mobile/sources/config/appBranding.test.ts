@@ -158,7 +158,7 @@ describe('Beeline display branding', () => {
     expect(loadNativeIdentity()).toMatchObject({
       scheme: 'beeline',
       iosBundleIdentifier: 'app.usebeeline.mobile',
-      androidPackage: 'app.usebeeline.mobile',
+      androidPackage: 'app.usebeeline',
     });
     expect(appConfig).toContain('const name = "Beeline"');
     expect(appConfig).toContain('faceIDPermission: "Allow Beeline to verify');
@@ -224,7 +224,7 @@ describe('Beeline display branding', () => {
     expect(identities[0]).toEqual({
       scheme: 'beeline',
       iosBundleIdentifier: 'app.usebeeline.mobile',
-      androidPackage: 'app.usebeeline.mobile',
+      androidPackage: 'app.usebeeline',
     });
   });
 
@@ -266,7 +266,7 @@ describe('Beeline display branding', () => {
     // built with, so a self-computing stamp cuts every installed app off from
     // OTA updates (v0.0.42). apps/mobile/scripts/native-fingerprint.mjs is
     // where the native-compatibility check moved to instead.
-    expect(appConfig).toContain('runtimeVersion: "22"');
+    expect(appConfig).toContain('runtimeVersion: "23"');
   });
 
   it('computes one native fingerprint for the store, sideload, canary, and OTA artifacts of a commit', () => {
@@ -365,7 +365,7 @@ describe('Beeline display branding', () => {
     expect(loadNativeIdentity()).toEqual({
       scheme: 'beeline',
       iosBundleIdentifier: 'app.usebeeline.mobile',
-      androidPackage: 'app.usebeeline.mobile',
+      androidPackage: 'app.usebeeline',
     });
     expect(packageJson.scripts?.['release:build:apk']).toBe(
       'npm run version:check && eas build --profile production-apk --platform android --no-wait --non-interactive',

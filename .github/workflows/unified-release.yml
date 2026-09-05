@@ -594,7 +594,7 @@ jobs:
       group: play-release
       cancel-in-progress: false
     env:
-      PACKAGE_NAME: app.usebeeline.mobile
+      PACKAGE_NAME: app.usebeeline
       EAS_CLI_VERSION: 22.2.0
       BUNDLETOOL_VERSION: 1.18.1
       TRACK: ${{ inputs.store_track }}

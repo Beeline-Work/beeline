@@ -26,7 +26,7 @@ service account key and the App Store Connect API key outside this repository.
    not needed; only the Google Play Android Developer API must be enabled.
 2. **Play Console invite for that service account** — Play Console → Users and
    permissions → Invite new users → the service account's email address, with
-   app-level permissions on Beeline (`app.usebeeline.mobile`):
+   app-level permissions on Beeline (`app.usebeeline`):
    *Release to testing tracks* (the release's store leg) and *Manage store
    presence* (its listing sync). Promoting to production later also needs
    *Release to production*.
@@ -75,6 +75,17 @@ runs `eas build --profile production --platform android`, whose AAB is signed by
 If the upload key is ever lost, Play's upload-key reset flow applies; the
 sideload keystore is not involved either way.
 
+### App link fingerprints for the `app.usebeeline` record
+
+Both `assetlinks.json` copies (`relay-stack/web/.well-known/assetlinks.json`
+and `apps/mobile/public/.well-known/assetlinks.json`) currently carry only the
+sideload signing certificate. The Play App Signing certificate for the new
+`app.usebeeline` record does not exist until the first AAB is uploaded, so its
+SHA-256 fingerprint must be appended to the same `sha256_cert_fingerprints`
+array afterwards — Play Console → Test and release → Setup → App signing → *App
+signing key certificate*. Until that is done, verified `https://usebeeline.app`
+links open in the browser for Play installs; sideload installs are unaffected.
+
 ## Runtime compatibility stamp
 
 A store binary carries the same `runtimeVersion` as the OTA updates it may
@@ -102,7 +113,7 @@ node scripts/sync-play-metadata.mjs --check     # what the release's store leg r
 
 # Prove the Play API scripts without a service account
 npm run test:play
-PLAY_DRY_RUN=1 PACKAGE_NAME=app.usebeeline.mobile METADATA_DIR=apps/mobile/fastlane/metadata/android LANGUAGE=en-US \
+PLAY_DRY_RUN=1 PACKAGE_NAME=app.usebeeline METADATA_DIR=apps/mobile/fastlane/metadata/android LANGUAGE=en-US \
   bash scripts/play-publish-listing.sh
 
 # Release AND upload to the stores: one button, one release SHA.
@@ -115,7 +126,7 @@ gh workflow run unified-release.yml -f store_track=beta
 # play-token.mjs prints `access_token=<token>` on stdout when GITHUB_OUTPUT is unset.
 export GOOGLE_PLAY_SERVICE_ACCOUNT_JSON="$(cat service-account.json)"
 ACCESS_TOKEN="$(node scripts/play-token.mjs | sed 's/^access_token=//')" \
-PACKAGE_NAME=app.usebeeline.mobile FROM_TRACK=internal TO_TRACK=beta RELEASE_STATUS=draft \
+PACKAGE_NAME=app.usebeeline FROM_TRACK=internal TO_TRACK=beta RELEASE_STATUS=draft \
   bash scripts/play-promote-track.sh
 ```
 

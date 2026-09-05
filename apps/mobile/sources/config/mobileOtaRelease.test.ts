@@ -1839,7 +1839,7 @@ esac
         '    printf \'%s\\n\' "$count" > "$STUB_STATE_DIR/installs"',
         '    if [ "$count" -le "${STUB_INSTALL_FAILURES:-0}" ]; then',
         '      echo "Performing Streamed Install"',
-        '      echo "adb: failed to install cmd: INSTALL_FAILED_UPDATE_INCOMPATIBLE: Existing package app.usebeeline.mobile signatures do not match newer version; ignoring!"',
+        '      echo "adb: failed to install cmd: INSTALL_FAILED_UPDATE_INCOMPATIBLE: Existing package app.usebeeline signatures do not match newer version; ignoring!"',
         '      exit 1',
         '    fi',
         '    echo "Success"',
@@ -2001,11 +2001,9 @@ esac
 
       const calls = readFileSync(callLog, 'utf8').split('\n').filter(Boolean);
       expect(calls.filter((call) => call.includes('install -r'))).toHaveLength(2);
-      expect(calls.filter((call) => call.includes('uninstall app.usebeeline.mobile'))).toHaveLength(
-        1,
-      );
+      expect(calls.filter((call) => call.includes('uninstall app.usebeeline'))).toHaveLength(1);
       expect(readFileSync(join(stateDir, 'uninstall_call'), 'utf8')).toBe(
-        '-s emulator-5554 uninstall app.usebeeline.mobile\n',
+        '-s emulator-5554 uninstall app.usebeeline\n',
       );
     }, 60_000);
 
@@ -2029,7 +2027,7 @@ esac
 
       expect(result.status).toBe(2);
       expect(result.stderr).toContain(
-        'could not remove the differently-signed existing app.usebeeline.mobile',
+        'could not remove the differently-signed existing app.usebeeline',
       );
       // Exactly one install attempt, no retry past a failed cleanup.
       const calls = readFileSync(callLog, 'utf8').split('\n').filter(Boolean);

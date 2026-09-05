@@ -59,7 +59,7 @@ describe('Android verified invite links', () => {
           relation: ['delegate_permission/common.handle_all_urls'],
           target: {
             namespace: 'android_app',
-            package_name: 'app.usebeeline.mobile',
+            package_name: 'app.usebeeline',
             sha256_cert_fingerprints: [releaseFingerprint],
           },
         },

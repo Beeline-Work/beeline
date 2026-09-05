@@ -8,7 +8,7 @@
 #
 # Required environment:
 #   ACCESS_TOKEN     — OAuth access token with the androidpublisher scope
-#   PACKAGE_NAME     — app.usebeeline.mobile
+#   PACKAGE_NAME     — app.usebeeline
 #   FROM_TRACK       — internal | alpha | beta
 #   TO_TRACK         — alpha | beta | production
 #   RELEASE_STATUS   — draft | completed

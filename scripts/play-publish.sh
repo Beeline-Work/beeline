@@ -9,7 +9,7 @@
 #
 # Required environment:
 #   ACCESS_TOKEN     — OAuth access token with the androidpublisher scope
-#   PACKAGE_NAME     — app.usebeeline.mobile
+#   PACKAGE_NAME     — app.usebeeline
 #   AAB_PATH         — path to the .aab built by EAS (signed by the EAS upload key)
 #   TRACK            — internal | alpha | beta | production
 #   RELEASE_NAME     — release name shown in Play Console (the app version)

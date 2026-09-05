@@ -11,7 +11,7 @@
 #
 # Required environment (unless PLAY_DRY_RUN=1):
 #   ACCESS_TOKEN — OAuth access token with the androidpublisher scope
-#   PACKAGE_NAME — e.g. app.usebeeline.mobile
+#   PACKAGE_NAME — e.g. app.usebeeline
 #
 # PLAY_DRY_RUN=1 makes `api` print every call it would make (method, URL, and
 # the curl arguments minus the bearer token) and answer with a canned body, so
@@ -19,7 +19,7 @@
 # PLAY_DRY_RUN_VERSION_CODE sets the versionCode the canned upload/track bodies
 # report (default 0).
 
-: "${PACKAGE_NAME:?PACKAGE_NAME env var is required (e.g. app.usebeeline.mobile)}"
+: "${PACKAGE_NAME:?PACKAGE_NAME env var is required (e.g. app.usebeeline)}"
 if [ "${PLAY_DRY_RUN:-0}" != "1" ]; then
   : "${ACCESS_TOKEN:?ACCESS_TOKEN env var is required (androidpublisher OAuth access token)}"
 fi

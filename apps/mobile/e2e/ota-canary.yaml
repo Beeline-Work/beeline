@@ -1,4 +1,4 @@
-appId: app.usebeeline.mobile
+appId: app.usebeeline
 name: OTA release canary
 env:
   EXPECTED_ANDROID_UPDATE_ID: ${EXPECTED_ANDROID_UPDATE_ID}

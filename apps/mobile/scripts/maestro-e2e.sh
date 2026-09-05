@@ -5,7 +5,7 @@
 set -euo pipefail
 
 readonly DEVICE="${MAESTRO_DEVICE:-emulator-5554}"
-readonly APP_ID="app.usebeeline.mobile"
+readonly APP_ID="app.usebeeline"
 MOBILE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly MOBILE_DIR
 REPO_DIR="$(cd "$MOBILE_DIR/../.." && pwd -P)"

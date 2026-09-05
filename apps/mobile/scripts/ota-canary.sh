@@ -21,7 +21,7 @@ set -euo pipefail
 MOBILE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly MOBILE_DIR
 readonly DEVICE="${MAESTRO_DEVICE:-emulator-5554}"
-readonly APP_ID="app.usebeeline.mobile"
+readonly APP_ID="app.usebeeline"
 readonly MAX_SECONDS="${OTA_CANARY_MAX_SECONDS:-600}"
 readonly UPDATE_APPLY_TIMEOUT="${OTA_CANARY_UPDATE_APPLY_TIMEOUT_SECONDS:-120}"
 readonly UPDATE_PROBE_TIMEOUT="${OTA_CANARY_UPDATE_PROBE_TIMEOUT_SECONDS:-5}"

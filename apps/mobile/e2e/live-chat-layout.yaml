@@ -1,4 +1,4 @@
-appId: app.usebeeline.mobile
+appId: app.usebeeline
 name: Live chat stays pinned above a multiline composer
 env:
   LIVE_NSEC: ${LIVE_NSEC}

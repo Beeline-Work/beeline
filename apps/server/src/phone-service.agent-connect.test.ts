@@ -112,6 +112,8 @@ describe('PhoneService agent connect pairing claim', () => {
     ]);
     // The owner already wears a face; the agent never takes it.
     expect(claim.face).not.toBe(defaultFaceForSeed(OWNER));
+    // No `deferJoin` (every already-installed CLI): the claim itself joins
+    // Rooms immediately, exactly as it always has.
     const memberships = await database.query<{ room_id: string | null }>(
       `SELECT room_id FROM memberships WHERE identity_id=$1 ORDER BY room_id NULLS FIRST`,
       [AGENT],
@@ -242,6 +244,157 @@ describe('PhoneService agent connect pairing claim', () => {
       await expect(phone.renameConnectedAgent({ code: CODE, name: 'Bramble' })).resolves.toEqual({
         status: 'expired',
       });
+    });
+  });
+
+  describe('finishAgentConnectPairing', () => {
+    async function readJoinLine(): Promise<{ text: string; subjectName: string } | undefined> {
+      const rows = await database.query<{ text: string; system_event: { subject: { name: string } } }>(
+        `SELECT text,system_event FROM messages WHERE room_id=$1 AND card_type='member-joined'`,
+        [ROOM],
+      );
+      const row = rows.rows[0];
+      return row ? { text: row.text, subjectName: row.system_event.subject.name } : undefined;
+    }
+
+    it('joins the Rooms the owner belongs to and announces the agent under its current name', async () => {
+      await insertCode(new Date(Date.now() + 60_000));
+      await phone.claimAgentConnectPairing({
+        code: CODE,
+        agentPubkey: AGENT,
+        model: 'gpt-5.4',
+        deferJoin: true,
+      });
+
+      await expect(
+        phone.finishAgentConnectPairing({ code: CODE, workspaceJoined: true }),
+      ).resolves.toEqual({ status: 'finished' });
+
+      const memberships = await database.query<{ room_id: string | null }>(
+        `SELECT room_id FROM memberships WHERE identity_id=$1 ORDER BY room_id NULLS FIRST`,
+        [AGENT],
+      );
+      expect(memberships.rows).toEqual([{ room_id: null }, { room_id: ROOM }]);
+    });
+
+    // Regression: the wizard used to join Rooms (and write the "joined" line)
+    // during the claim itself, before the person's rename could land — so an
+    // agent renamed during `usebeeline connect` showed up in its own join line
+    // under the seeded placeholder name forever. The fix moves the join and its
+    // announcement to `finishAgentConnectPairing`, called only after the rename
+    // decision settles, so the line always carries the name the person chose.
+    it('announces the agent under a name chosen during connect, not the seeded placeholder', async () => {
+      await insertCode(new Date(Date.now() + 60_000));
+      const claimed = await phone.claimAgentConnectPairing({
+        code: CODE,
+        agentPubkey: AGENT,
+        model: 'gpt-5.4',
+        deferJoin: true,
+      });
+      if (claimed.status !== 'claimed') throw new Error('claim failed');
+      const seededName = claimed.agentName;
+
+      await expect(
+        phone.renameConnectedAgent({ code: CODE, name: 'greeter' }),
+      ).resolves.toEqual({ status: 'renamed', agentName: 'greeter' });
+
+      await phone.finishAgentConnectPairing({ code: CODE, workspaceJoined: true });
+
+      const joinLine = await readJoinLine();
+      expect(joinLine?.subjectName).toBe('greeter');
+      expect(joinLine?.text).toBe('greeter joined');
+      expect(joinLine?.subjectName).not.toBe(seededName);
+    });
+
+    it('rejects an unknown or already-expired pairing code', async () => {
+      await expect(
+        phone.finishAgentConnectPairing({ code: 'NEVER-MINTED', workspaceJoined: true }),
+      ).resolves.toEqual({ status: 'not_found' });
+
+      await insertCode(new Date(Date.now() + 60_000));
+      await phone.claimAgentConnectPairing({
+        code: CODE,
+        agentPubkey: AGENT,
+        model: 'gpt-5.4',
+        deferJoin: true,
+      });
+      await database.query(
+        `UPDATE agent_pairing_codes SET claimed_at=now() - interval '1 hour' WHERE code_hash=$1`,
+        [createHash('sha256').update(CODE).digest('hex')],
+      );
+      await expect(
+        phone.finishAgentConnectPairing({ code: CODE, workspaceJoined: true }),
+      ).resolves.toEqual({ status: 'expired' });
+    });
+  });
+
+  describe('backward compatibility: a CLI that never sends deferJoin', () => {
+    async function readJoinLine(): Promise<{ text: string; subjectName: string } | undefined> {
+      const rows = await database.query<{ text: string; system_event: { subject: { name: string } } }>(
+        `SELECT text,system_event FROM messages WHERE room_id=$1 AND card_type='member-joined'`,
+        [ROOM],
+      );
+      const row = rows.rows[0];
+      return row ? { text: row.text, subjectName: row.system_event.subject.name } : undefined;
+    }
+
+    // Every helper installed before this fix (usebeeline 0.0.48 and older)
+    // calls only `/auth/agent/connect` and never `/auth/agent/connect/finish`.
+    // Against a fixed server that claim must still join Rooms and announce on
+    // its own, exactly as it always has, or an old CLI would pair an agent
+    // that never joins anything and never shows up.
+    it('an old CLI that never calls finish still joins and announces', async () => {
+      await insertCode(new Date(Date.now() + 60_000));
+      const claimed = await phone.claimAgentConnectPairing({
+        code: CODE,
+        agentPubkey: AGENT,
+        model: 'gpt-5.4',
+      });
+      if (claimed.status !== 'claimed') throw new Error('claim failed');
+
+      const memberships = await database.query<{ room_id: string | null }>(
+        `SELECT room_id FROM memberships WHERE identity_id=$1 ORDER BY room_id NULLS FIRST`,
+        [AGENT],
+      );
+      expect(memberships.rows).toEqual([{ room_id: null }, { room_id: ROOM }]);
+      const joinLine = await readJoinLine();
+      expect(joinLine).toEqual({ text: `${claimed.agentName} joined`, subjectName: claimed.agentName });
+
+      // Calling finish afterward (an old CLI never does, but a mixed rollout
+      // might) is a harmless no-op: the agent is already a member everywhere
+      // it would be joined, so nothing is re-announced.
+      await expect(
+        phone.finishAgentConnectPairing({ code: CODE, workspaceJoined: false }),
+      ).resolves.toEqual({ status: 'finished' });
+      const afterFinish = await database.query<{ count: string }>(
+        `SELECT count(*)::text FROM messages WHERE room_id=$1 AND card_type='member-joined'`,
+        [ROOM],
+      );
+      expect(afterFinish.rows[0]?.count).toBe('1');
+    });
+
+    // Known, accepted trade-off of keeping the old path unchanged: an old CLI
+    // still renames *after* the immediate join above, so its join line stays
+    // under the seeded name it started with — the original bug, for exactly
+    // the population that cannot ask for the fixed, two-step behavior.
+    it('still shows the seeded name after an old-style rename, since the line already wrote', async () => {
+      await insertCode(new Date(Date.now() + 60_000));
+      const claimed = await phone.claimAgentConnectPairing({
+        code: CODE,
+        agentPubkey: AGENT,
+        model: 'gpt-5.4',
+      });
+      if (claimed.status !== 'claimed') throw new Error('claim failed');
+      const seededName = claimed.agentName;
+
+      await expect(phone.renameConnectedAgent({ code: CODE, name: 'greeter' })).resolves.toEqual({
+        status: 'renamed',
+        agentName: 'greeter',
+      });
+
+      const joinLine = await readJoinLine();
+      expect(joinLine?.subjectName).toBe(seededName);
+      expect(joinLine?.subjectName).not.toBe('greeter');
     });
   });
 });

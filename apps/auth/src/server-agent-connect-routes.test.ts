@@ -190,6 +190,7 @@ describe('app-authorized agent connect', () => {
     agentName: 'Foxy',
     soul: 'You are a fox.',
     face: 'fox',
+    workspaceJoined: true,
     daemonExchangeToken: `bde_${'d'.repeat(43)}`,
   } as const;
 
@@ -271,21 +272,26 @@ describe('app-authorized agent connect', () => {
     expect(overreach.statusCode).toBe(400);
   });
 
-  it('passes the event kinds the CLI subscribed to into the claim', async () => {
-    let claimed: Parameters<typeof state.agentPairingClaim>[0] | undefined;
-    state.agentPairingClaim = async (input) => {
-      claimed = input;
-      return seeded;
+  it('passes the event kinds the CLI subscribed to into the finish call', async () => {
+    let finished: Parameters<typeof state.agentConnectFinish>[0] | undefined;
+    state.agentConnectFinish = async (input) => {
+      finished = input;
+      return { status: 'finished' };
     };
     const response = await app.inject({
       method: 'POST',
-      url: '/auth/agent/connect',
+      url: '/auth/agent/connect/finish',
       headers: { host: alphaTenant.host },
-      payload: { ...payload, event_subscriptions: [' Joined ', '', 42, 'check-failed'] },
+      payload: {
+        pairing_code: payload.pairing_code,
+        workspace_joined: true,
+        event_subscriptions: [' Joined ', '', 42, 'check-failed'],
+      },
     });
     expect(response.statusCode).toBe(200);
     // Trimmed and lowercased here; the monolith drops anything not a real kind.
-    expect(claimed?.eventSubscriptions).toEqual(['joined', 'check-failed']);
+    expect(finished?.eventSubscriptions).toEqual(['joined', 'check-failed']);
+    expect(finished?.workspaceJoined).toBe(true);
   });
 
   it.each(['BUZZ-1234ABCD-5678EF90', 'not-a-pairing-code'])(

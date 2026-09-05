@@ -59,6 +59,7 @@ export async function createMonolithAuth(
       );
     },
     renameConnectedAgent: (input) => pairing.renameConnectedAgent(input),
+    finishAgentConnectPairing: (input) => pairing.finishAgentConnectPairing(input),
   });
   await app.ready();
 

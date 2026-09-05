@@ -468,6 +468,9 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       model: 'gpt-5.4',
       soul: 'Brisk and kind.',
       agent_name: 'Scout',
+      // This flow finishes the join itself via /auth/agent/connect/finish
+      // below, once its rename decision settles.
+      defer_join: true,
     });
     const connected = await new Promise<{ status: number; body: Record<string, string> }>(
       (resolveResponse, rejectResponse) => {
@@ -497,6 +500,30 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     const grant = connected.body;
     expect(grant.daemon_exchange_token).toMatch(/^bde_/);
     expect(grant).not.toHaveProperty('pairing_code');
+
+    // The wizard's rename window has closed (kept, in this test): join the
+    // Rooms the claim seeded and write the "joined" announcement.
+    const finishPayload = JSON.stringify({
+      pairing_code: code,
+      workspace_joined: (grant as unknown as { workspace_joined: boolean }).workspace_joined,
+    });
+    const finished = await new Promise<{ status: number }>((resolveResponse, rejectResponse) => {
+      const outgoing = request(`${origin}/auth/agent/connect/finish`, {
+        method: 'POST',
+        headers: {
+          host: 'server.usebeeline.app',
+          'content-type': 'application/json',
+          'content-length': Buffer.byteLength(finishPayload),
+        },
+      });
+      outgoing.once('error', rejectResponse);
+      outgoing.once('response', (incoming) => {
+        incoming.resume();
+        incoming.once('end', () => resolveResponse({ status: incoming.statusCode ?? 0 }));
+      });
+      outgoing.end(finishPayload);
+    });
+    expect(finished.status).toBe(200);
 
     const result = await completeDevicePairing(
       {

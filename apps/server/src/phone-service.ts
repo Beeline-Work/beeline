@@ -1092,7 +1092,16 @@ export class PhoneService {
     agentPubkey: string;
     model: string;
     avatarSeed?: string;
+    /** Server event kinds this agent reacts to; only spent on the immediate, legacy join below. */
     eventSubscriptions?: readonly string[];
+    /**
+     * The signal a two-step CLI sends: it will call `finishAgentConnectPairing`
+     * itself once its rename decision settles, so the claim must not join Rooms
+     * or announce yet. A CLI built before that two-step flow existed never
+     * sends this and never calls finish, so its absence keeps the original,
+     * immediate join — compatibility for every already-installed helper.
+     */
+    deferJoin?: boolean;
   }): Promise<
     | {
         status: 'claimed';
@@ -1102,6 +1111,7 @@ export class PhoneService {
         agentName: string;
         soul: string;
         face: string;
+        workspaceJoined: boolean;
       }
     | { status: 'not_found' | 'expired' | 'already_claimed' }
   >;
@@ -1112,6 +1122,7 @@ export class PhoneService {
       model: string;
       avatarSeed?: string;
       eventSubscriptions?: readonly string[];
+      deferJoin?: boolean;
     },
     createDaemonExchange: (
       agentId: string,
@@ -1126,6 +1137,7 @@ export class PhoneService {
         agentName: string;
         soul: string;
         face: string;
+        workspaceJoined: boolean;
         daemonExchangeToken: string;
       }
     | { status: 'not_found' | 'expired' | 'already_claimed' }
@@ -1137,6 +1149,7 @@ export class PhoneService {
       model: string;
       avatarSeed?: string;
       eventSubscriptions?: readonly string[];
+      deferJoin?: boolean;
     },
     createDaemonExchange?: (
       agentId: string,
@@ -1151,6 +1164,7 @@ export class PhoneService {
         agentName: string;
         soul: string;
         face: string;
+        workspaceJoined: boolean;
         daemonExchangeToken?: string;
       }
     | { status: 'not_found' | 'expired' | 'already_claimed' }
@@ -1239,22 +1253,29 @@ export class PhoneService {
          RETURNING id`,
         [pairing.workspace_id, input.agentPubkey],
       );
-      const joined = await joinRooms(database, {
-        workspaceId: pairing.workspace_id,
-        identityId: input.agentPubkey,
-        rooms: { type: 'inherited-live-top-level', identityId: pairing.created_by },
-        workspaceJoined: workspaceMembership.rowCount > 0,
-      });
-      // What this agent reacts to, in the Rooms it just joined. A subscription
-      // is per Room because an event happens in a Room; `usebeeline connect
-      // --subscribe joined` is what a greeter is set up with.
-      const subscriptions = [...new Set(input.eventSubscriptions ?? [])].filter(isServerEventKind);
-      if (subscriptions.length && joined.roomIds.length) {
-        await database.query(
-          `UPDATE memberships SET event_subscriptions=$3::jsonb
-           WHERE identity_id=$1 AND room_id=ANY($2::uuid[])`,
-          [input.agentPubkey, joined.roomIds, JSON.stringify(subscriptions)],
+      // A deferring CLI joins Rooms itself through `finishAgentConnectPairing`
+      // once its rename decision settles — a system line is a fact written
+      // once, never rewritten by a later rename, so it must not be written
+      // under the seeded name only to go stale the moment the person renames.
+      // A CLI that never asked to defer (every already-installed helper) gets
+      // the original, immediate join right here instead.
+      if (!input.deferJoin) {
+        const joined = await joinRooms(database, {
+          workspaceId: pairing.workspace_id,
+          identityId: input.agentPubkey,
+          rooms: { type: 'inherited-live-top-level', identityId: pairing.created_by },
+          workspaceJoined: workspaceMembership.rowCount > 0,
+        });
+        const subscriptions = [...new Set(input.eventSubscriptions ?? [])].filter(
+          isServerEventKind,
         );
+        if (subscriptions.length && joined.roomIds.length) {
+          await database.query(
+            `UPDATE memberships SET event_subscriptions=$3::jsonb
+             WHERE identity_id=$1 AND room_id=ANY($2::uuid[])`,
+            [input.agentPubkey, joined.roomIds, JSON.stringify(subscriptions)],
+          );
+        }
       }
       const exchange = createDaemonExchange
         ? await createDaemonExchange(input.agentPubkey, database)
@@ -1267,6 +1288,7 @@ export class PhoneService {
         agentName: seeded.name,
         soul: seeded.soul,
         face: seeded.face,
+        workspaceJoined: workspaceMembership.rowCount > 0,
         ...(exchange ? { daemonExchangeToken: exchange.exchangeToken } : {}),
       };
     });
@@ -1308,6 +1330,56 @@ export class PhoneService {
         [pairing.claimed_by, name],
       );
       return { status: 'renamed', agentName: name };
+    });
+  }
+
+  /**
+   * The last step of `usebeeline connect`: room membership and the "joined"
+   * announcement, run once the wizard's one rename window has closed (kept or
+   * renamed). `renameConnectedAgent` may have already retitled the identity by
+   * the time this runs, so `joinRooms` reads its final name straight off
+   * `identities` — the same order a human already follows, since GitHub
+   * sign-in seals a person's name before `landInWelcomeWorkspace` ever runs.
+   */
+  async finishAgentConnectPairing(input: {
+    code: string;
+    workspaceJoined: boolean;
+    eventSubscriptions?: readonly string[];
+  }): Promise<{ status: 'finished' } | { status: 'not_found' | 'expired' }> {
+    return this.database.transaction(async (database) => {
+      const pairing = (
+        await database.query<{
+          claimed_by: string | null;
+          claimed_at: Date | null;
+          created_by: string;
+          workspace_id: string;
+        }>(
+          `SELECT claimed_by,claimed_at,created_by,workspace_id
+           FROM agent_pairing_codes WHERE code_hash=$1 FOR UPDATE`,
+          [hash(input.code)],
+        )
+      ).rows[0];
+      if (!pairing?.claimed_by || !pairing.claimed_at) return { status: 'not_found' };
+      if (Date.now() - pairing.claimed_at.getTime() > CONNECT_RENAME_WINDOW_MS)
+        return { status: 'expired' };
+      const joined = await joinRooms(database, {
+        workspaceId: pairing.workspace_id,
+        identityId: pairing.claimed_by,
+        rooms: { type: 'inherited-live-top-level', identityId: pairing.created_by },
+        workspaceJoined: input.workspaceJoined,
+      });
+      // What this agent reacts to, in the Rooms it just joined. A subscription
+      // is per Room because an event happens in a Room; `usebeeline connect
+      // --subscribe joined` is what a greeter is set up with.
+      const subscriptions = [...new Set(input.eventSubscriptions ?? [])].filter(isServerEventKind);
+      if (subscriptions.length && joined.roomIds.length) {
+        await database.query(
+          `UPDATE memberships SET event_subscriptions=$3::jsonb
+           WHERE identity_id=$1 AND room_id=ANY($2::uuid[])`,
+          [pairing.claimed_by, joined.roomIds, JSON.stringify(subscriptions)],
+        );
+      }
+      return { status: 'finished' };
     });
   }
 

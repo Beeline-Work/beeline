@@ -15,6 +15,7 @@ import {
   soleInstalledConnectHarness,
   CONNECT_PROBE_TIMEOUT_MS,
   confirmSeededName,
+  finishConnectedAgentPairing,
   renameConnectedAgent,
   seededIdentityLine,
   connectModelPickerFromAxes,
@@ -163,32 +164,37 @@ describe('connect wizard', () => {
     ).resolves.toMatchObject({ workspace_name: 'Builders' });
     expect(fetchImpl).toHaveBeenCalledOnce();
     expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://server.example/auth/agent/connect');
-    // The wizard sends neither a name nor a soul: the server seeds both.
+    // The wizard sends neither a name nor a soul: the server seeds both. It
+    // always defers the join to `finishConnectedAgentPairing`, called once
+    // the rename prompt settles.
     expect(JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body))).toEqual({
       pairing_code: '1234ABCD-5678EF90',
       harness: 'codex',
       model: 'gpt-5.4',
       avatar_seed: '4ed3aee3a46d2b0b3476472dbc77eafb',
+      defer_join: true,
     });
   });
 
-  it('sends the event kinds --subscribe named, and nothing when it was not given', async () => {
+  it('finish sends the event kinds --subscribe named, and nothing when it was not given', async () => {
     const fetchImpl = vi.fn(async () => new Response('{}', { status: 200 }));
-    await requestConnectGrant(
+    await finishConnectedAgentPairing(
       'https://server.example',
       '1234abcd-5678ef90',
-      { harness: 'pi', model: 'openrouter/z-ai/glm-5.3-flash' },
-      fetchImpl as unknown as typeof fetch,
+      true,
       ['joined'],
+      fetchImpl as unknown as typeof fetch,
     );
+    expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://server.example/auth/agent/connect/finish');
     expect(
       (JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body)) as Record<string, unknown>)
         .event_subscriptions,
     ).toEqual(['joined']);
-    await requestConnectGrant(
+    await finishConnectedAgentPairing(
       'https://server.example',
       '1234abcd-5678ef90',
-      { harness: 'pi', model: 'openrouter/z-ai/glm-5.3-flash' },
+      true,
+      [],
       fetchImpl as unknown as typeof fetch,
     );
     expect(

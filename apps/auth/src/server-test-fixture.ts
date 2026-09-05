@@ -283,6 +283,9 @@ export const state: {
     | undefined;
   agentPairingClaim: NonNullable<Parameters<typeof buildAuthServer>[0]['claimAgentPairingCode']>;
   agentConnectRename: NonNullable<Parameters<typeof buildAuthServer>[0]['renameConnectedAgent']>;
+  agentConnectFinish: NonNullable<
+    Parameters<typeof buildAuthServer>[0]['finishAgentConnectPairing']
+  >;
   logLines: string[];
 } = {
   githubSubject: '123',
@@ -300,6 +303,7 @@ export const state: {
   roomTokenMint: undefined,
   agentPairingClaim: async () => ({ status: 'not_found' }),
   agentConnectRename: async () => ({ status: 'not_found' }),
+  agentConnectFinish: async () => ({ status: 'not_found' }),
   logLines: [],
 };
 
@@ -329,6 +333,8 @@ export function useAuthServerFixture(): void {
     });
     state.roomTokenMint = undefined;
     state.agentPairingClaim = async () => ({ status: 'not_found' });
+    state.agentConnectRename = async () => ({ status: 'not_found' });
+    state.agentConnectFinish = async () => ({ status: 'not_found' });
     state.logLines = [];
     app = buildAuthServer({
       store,
@@ -445,6 +451,7 @@ export function useAuthServerFixture(): void {
       authorizeGitHubRoomToken: (tenant, input) => state.roomTokenAuthority(tenant, input),
       claimAgentPairingCode: (input) => state.agentPairingClaim(input),
       renameConnectedAgent: (input) => state.agentConnectRename(input),
+      finishAgentConnectPairing: (input) => state.agentConnectFinish(input),
       logger: {
         level: 'warn',
         stream: { write: (line: string) => state.logLines.push(line) },

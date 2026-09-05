@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { directMessagePeer, personIdentityLabel, shortMemberNpub } from './member-display';
+import {
+  directMessagePeer,
+  fallbackMemberHandle,
+  fallbackMemberName,
+  personIdentityLabel,
+} from './member-display';
 
 const pubkey = 'a'.repeat(64);
 
@@ -13,8 +18,11 @@ describe('direct-message member display', () => {
     ).toBe('b'.repeat(64));
   });
 
-  it('uses a compact stable npub fallback', () => {
-    expect(shortMemberNpub('a'.repeat(64))).toMatch(/^npub1.{3}…$/);
+  it('keeps keys out of fallback names and handles', () => {
+    expect(fallbackMemberName('a'.repeat(64))).toMatch(/^\p{Lu}\p{Ll}+$/u);
+    expect(fallbackMemberHandle('a'.repeat(64))).toBe(
+      fallbackMemberName('a'.repeat(64)).toLowerCase(),
+    );
   });
 });
 
@@ -51,7 +59,7 @@ describe('personIdentityLabel', () => {
     expect(personIdentityLabel({ name: 'Ada Lovelace' }, pubkey)).toBe('Ada Lovelace');
   });
 
-  it('falls back to a truncated npub when the profile is missing entirely', () => {
-    expect(personIdentityLabel(undefined, pubkey)).toBe(shortMemberNpub(pubkey));
+  it('falls back to a friendly local name when the profile is missing entirely', () => {
+    expect(personIdentityLabel(undefined, pubkey)).toBe(fallbackMemberName(pubkey));
   });
 });

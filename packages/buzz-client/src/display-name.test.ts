@@ -13,12 +13,11 @@ import {
 } from './display-name.js';
 
 describe('agent presentation names', () => {
-  it('makes every unresolved agent visibly synthetic instead of manufacturing a first name', () => {
+  it('keeps unresolved agent keys out of presentation', () => {
     const codexPubkey = `54f4d261${'0'.repeat(56)}`;
-    expect(fallbackAgentName(codexPubkey)).toBe('Agent 54f4d261');
-    expect(fallbackAgentName(codexPubkey)).not.toBe('Arlo');
-    expect(fallbackAgentName('ab'.repeat(32))).toMatch(/^Agent [0-9a-f]{8}$/u);
-    expect(agentHandle(fallbackAgentName(codexPubkey), codexPubkey)).toBe('agent54f4d261');
+    expect(fallbackAgentName(codexPubkey)).toBe('Agent');
+    expect(fallbackAgentName('ab'.repeat(32))).toBe('Agent');
+    expect(agentHandle('Quiet Keeper')).toBe('quiet_keeper');
   });
 
   it('keeps the stable friendly first-name fallback exclusive to people', () => {
@@ -52,9 +51,9 @@ describe('agent presentation names', () => {
     expect(isReasonableAgentName('h4x0r')).toBe(false);
   });
 
-  it('derives a distinct pubkey seed name from every system marker, never one shared label', () => {
+  it('uses a neutral fallback for every system marker', () => {
     // The daemon mints `beeline-agent` (the Beeline-rebrand default); that is
-    // a placeholder which resolves to this agent's own stable seed name.
+    // a placeholder which resolves to the neutral agent label.
     expect(DEFAULT_AGENT_IDENTITY_NAME).toBe('beeline-agent');
     expect(deriveAgentDisplayName('beeline-agent', 'agent')).toBe(fallbackAgentName('agent'));
     // The pre-rebrand `buzzy-agent` marker is classified the same way.
@@ -67,15 +66,13 @@ describe('agent presentation names', () => {
     expect(deriveAgentDisplayName('Quiet Keeper', 'agent')).toBe('Quiet Keeper');
   });
 
-  it('never gives two agents the same default identity', () => {
+  it('never exposes keys when assigned names are unavailable', () => {
     const first = '11'.repeat(32);
     const second = '22'.repeat(32);
     expect(first).not.toBe(second);
     const firstName = deriveAgentDisplayName(DEFAULT_AGENT_IDENTITY_NAME, first);
     const secondName = deriveAgentDisplayName(DEFAULT_AGENT_IDENTITY_NAME, second);
-    // Both resolve to visibly synthetic labels, and they differ per pubkey.
-    expect(firstName).toBe('Agent 11111111');
-    expect(secondName).toBe('Agent 22222222');
-    expect(firstName).not.toBe(secondName);
+    expect(firstName).toBe('Agent');
+    expect(secondName).toBe('Agent');
   });
 });

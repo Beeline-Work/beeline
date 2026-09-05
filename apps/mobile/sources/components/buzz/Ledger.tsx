@@ -204,7 +204,7 @@ function TypewriterMarkdown({
 
 /**
  * The ghosted margin: a fixed-width clock stamp, and (when a voice first
- * announces itself in a Room) the author's short npub under it.
+ * announces itself in a Room) an optional secondary detail under it.
  *
  * Hung in the right margin rather than set into the flow, so the centre stays a
  * clean column — editor line numbers, verse numbers. It is absolutely
@@ -222,7 +222,7 @@ export function LedgerMarginalia({
   testID,
 }: {
   stamp: string;
-  /** A Room appends the author's short npub here; display names are not unique. */
+  /** Optional secondary detail for surfaces that have one. */
   detail?: string | null;
   testID?: string;
 }) {

@@ -33,8 +33,10 @@ function mentionHandleFromName(value: string): string {
   return value
     .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
+    .trim()
     .toLocaleLowerCase()
-    .replace(/[^a-z0-9]/g, '');
+    .replace(/\s+/g, '_')
+    .replace(/[^a-z0-9_]/g, '');
 }
 
 /** Find the mention fragment ending at a collapsed composer cursor. */

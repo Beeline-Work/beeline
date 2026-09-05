@@ -123,7 +123,7 @@ describe('agent entity model', () => {
     expect(parseAgent({ ...event, content: `${event.content}tampered` })).toBeNull();
   });
 
-  it('resolves the daemon default marker to a distinct pubkey seed name per agent', async () => {
+  it('resolves the daemon default marker without exposing the agent key', async () => {
     const published: NostrEvent[] = [];
     vi.stubGlobal(
       'fetch',
@@ -149,18 +149,17 @@ describe('agent entity model', () => {
     );
 
     // The daemon mints its identities with the generic `beeline-agent` marker;
-    // that placeholder resolves to this agent's OWN stable seed name.
+    // that placeholder resolves to the neutral agent label.
     const daemonIdentity = createAgentIdentity('beeline-agent');
     const agent = await createAgent(ctx(daemonIdentity), communityId);
 
-    // Distinct per agent, never a shared label ("buzzy-agent"/"Buzzy" is gone)
-    // and never a random-looking mask: same pubkey, same name, every time.
+    // The internal marker and key never become presentation copy.
     expect(agent.displayName).toBe(fallbackAgentName(daemonIdentity.publicKey));
     expect(agent.displayName).not.toBe('buzzy-agent');
     expect(published[0]!.tags).toContainEqual(['name', agent.displayName]);
   });
 
-  it('never registers two default-named agents under one shared display name', async () => {
+  it('keeps both default-named agent keys out of their display names', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
@@ -191,9 +190,8 @@ describe('agent entity model', () => {
     const secondAgent = await createAgent(ctx(second), communityId);
     expect(firstAgent.displayName).toBe(fallbackAgentName(first.publicKey));
     expect(secondAgent.displayName).toBe(fallbackAgentName(second.publicKey));
-    // The whole point of the seed-name derivation: no two freshly paired
-    // soul-less agents share one identity label.
-    expect(firstAgent.displayName).not.toBe(secondAgent.displayName);
+    expect(firstAgent.displayName).toBe('Agent');
+    expect(secondAgent.displayName).toBe('Agent');
   });
 
   it('preserves an authored multi-word display name end to end', async () => {
@@ -248,9 +246,12 @@ describe('agent entity model', () => {
           return jsonResponse({ accepted: true });
         }
         const filter = filterFrom(init);
-        if ((filter.kinds as number[])[0] === KIND_CREATE_GROUP) return jsonResponse([communityCreate()]);
-        if ((filter.kinds as number[])[0] === KIND_CHANNEL_MEMBERS) return jsonResponse([memberState()]);
-        if ((filter['#t'] as string[] | undefined)?.includes(TAG_AGENT)) return jsonResponse(declarations);
+        if ((filter.kinds as number[])[0] === KIND_CREATE_GROUP)
+          return jsonResponse([communityCreate()]);
+        if ((filter.kinds as number[])[0] === KIND_CHANNEL_MEMBERS)
+          return jsonResponse([memberState()]);
+        if ((filter['#t'] as string[] | undefined)?.includes(TAG_AGENT))
+          return jsonResponse(declarations);
         return jsonResponse([]);
       }),
     );

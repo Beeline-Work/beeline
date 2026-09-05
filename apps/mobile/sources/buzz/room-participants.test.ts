@@ -92,6 +92,15 @@ describe('Room participant presentation', () => {
     });
   });
 
+  it('resolves a multi-word agent name through its underscored handle', () => {
+    const participants = [{ pubkey: 'agent-keeper', name: 'Quiet Keeper', handle: 'quiet_keeper' }];
+
+    expect(resolveComposerMentions('Ask @quiet_keeper', participants, new Map())).toEqual({
+      pubkeys: ['agent-keeper'],
+      handles: ['quiet_keeper'],
+    });
+  });
+
   it('resolves the owner typed @codex message against the visible name in a two-agent roster', () => {
     const participants = [
       { pubkey: 'agent-ox', name: 'Ox', handle: 'ox' },

@@ -8,7 +8,7 @@ import type { AgentPresentation, ChatDisplayMessage } from '@/buzz/room-view-pre
 import type { ChannelReferenceIndex, ChannelReferenceTarget } from '@/buzz/channel-reference';
 import type { MessageReplyDisplayTarget } from '@/buzz/message-reply';
 import { resolveAgentDisplayIdentity, resolvePendingAgentDisplay } from '@/buzz/agent-display';
-import { shortMemberNpub } from '@/buzz/member-display';
+import { fallbackMemberName } from '@/buzz/member-display';
 import { describeWriteRequest } from '@/buzz/write-request-copy';
 import { grantAskLine, grantOutcomeLine } from '@/buzz/agent-grant-copy';
 import { shouldShowReplyReference } from '@/buzz/reply-reference';
@@ -194,7 +194,7 @@ export const GrantRequestCard = React.memo(function GrantRequestCard({
   const request = message.grantRequest!;
   const display = resolveAgentDisplayIdentity(request.agent.pubkey, agent);
   // The server names the asking agent on the card; a loaded roster presentation
-  // (soul name) wins once it exists, never a pubkey-derived placeholder.
+  // (soul name) wins once it exists, never a fallback placeholder.
   const agentName = agent ? display.name : request.agent.name;
   const canDecide =
     !viewerIsAgent &&
@@ -672,10 +672,13 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
     : null;
   const isSelfSteer = isOwn && !isAgent;
   const voiceName = isAgent
-    ? (indexedAuthor?.name ?? display?.name ?? personName ?? shortMemberNpub(message.pubkey ?? ''))
+    ? (indexedAuthor?.name ??
+      display?.name ??
+      personName ??
+      fallbackMemberName(message.pubkey ?? ''))
     : (indexedAuthor?.name ??
       personName ??
-      (message.pubkey ? shortMemberNpub(message.pubkey) : 'SOMEONE'));
+      (message.pubkey ? fallbackMemberName(message.pubkey) : 'SOMEONE'));
   const markSeed = message.pubkey ?? (isSelfSteer ? viewerPubkey || 'self' : 'unknown-person');
   const byline: LedgerByline | undefined = continued
     ? undefined

@@ -3,7 +3,7 @@ import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { ChannelMember, ChannelRole } from '@beeline/buzz-client';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
-import { shortMemberNpub } from '@/buzz/member-display';
+import { fallbackMemberHandle } from '@/buzz/member-display';
 import { canRemoveRoomParticipant, normalizedRoomRole } from '@/buzz/room-management';
 import type { AgentPresentation } from '@/buzz/room-view-presentation';
 import { MEMBERS_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
@@ -130,8 +130,7 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
             // the section is empty, because the head is where the add control
             // lives: with the Room header's `+` retired (C83), an agentless
             // Room would otherwise have no way to reach an agent at all.
-            section.options.length > 0 ||
-            (canManage && !parentChannelId && !isDirectMessage) ? (
+            section.options.length > 0 || (canManage && !parentChannelId && !isDirectMessage) ? (
               <View key={section.key}>
                 <View
                   style={[
@@ -166,7 +165,10 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
                     : participant.pubkey === userPubkey
                       ? 'You'
                       : participant.name;
-                  const handle = display?.handle ?? shortMemberNpub(participant.pubkey);
+                  const handle =
+                    display?.handle ??
+                    participant.handle ??
+                    fallbackMemberHandle(participant.pubkey);
                   const targetRole = normalizedRoomRole(memberByPubkey.get(participant.pubkey));
                   const canRemove =
                     !parentChannelId &&

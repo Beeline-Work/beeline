@@ -4328,6 +4328,174 @@ describe('monolith integration', () => {
     expect(otherRoom.rows.every((row) => row.mention_ids.length === 0)).toBe(true);
   });
 
+  it('lets an agent subscribe itself, and wakes it on the next arrival', async () => {
+    // The captain's objection, answered: nobody edits a database row for the
+    // agent. It calls the operation its own tool calls, in the Room it is in.
+    expect(await (await daemonOperation('listEventSubscriptions', { roomId: ROOM })).json()).toEqual(
+      { kinds: [] },
+    );
+    const set = await daemonOperation('setEventSubscriptions', {
+      roomId: ROOM,
+      kinds: ['joined', 'joined'],
+    });
+    expect(set.status).toBe(200);
+    expect(await set.json()).toEqual({ kinds: ['joined'] });
+    expect(await (await daemonOperation('listEventSubscriptions', { roomId: ROOM })).json()).toEqual(
+      { kinds: ['joined'] },
+    );
+
+    // The very next join in that Room mentions it, which is what starts a turn.
+    const newcomer = await phoneToken('newcomer');
+    const newcomerId = createHash('sha256').update('github:newcomer').digest('hex');
+    expect(newcomer).toBeTruthy();
+    expect(
+      (
+        await operation('addWorkspaceMember', {
+          workspaceId: WORKSPACE,
+          memberId: newcomerId,
+          role: 'member',
+        })
+      ).status,
+    ).toBe(200);
+    expect((await operation('addRoomMember', { roomId: ROOM, memberId: newcomerId })).status).toBe(
+      200,
+    );
+    const joins = await database.query<{ mention_ids: string[] }>(
+      `SELECT mention_ids FROM messages WHERE room_id=$1 AND author_id=$2 AND presentation IN ('system','card')`,
+      [ROOM, newcomerId],
+    );
+    expect(joins.rows.some((row) => row.mention_ids.includes(AGENT))).toBe(true);
+  });
+
+  it('refuses a subscription an agent may not hold, and a Room it is not in', async () => {
+    // The refusal an agent reads is the message; the daemon route's status
+    // mapping is by message content and shared with every other operation.
+    for (const kinds of [['agent:handoff'], ['everything'], ['joined', 'nope']]) {
+      const refused = await daemonOperation('setEventSubscriptions', { roomId: ROOM, kinds });
+      expect(refused.status).toBeGreaterThanOrEqual(400);
+      expect(((await refused.json()) as { error: string }).error).toMatch(
+        /not an event kind you can subscribe to/,
+      );
+    }
+    // Nothing was written by any of the refusals.
+    expect(await (await daemonOperation('listEventSubscriptions', { roomId: ROOM })).json()).toEqual(
+      { kinds: [] },
+    );
+    const otherRoom = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'closed')`, [
+      otherRoom,
+      WORKSPACE,
+    ]);
+    const outside = await daemonOperation('setEventSubscriptions', {
+      roomId: otherRoom,
+      kinds: ['joined'],
+    });
+    expect(outside.status).toBe(403);
+    expect(((await outside.json()) as { error: string }).error).toBe('daemon room access denied');
+  });
+
+  it('emits an agent event with the cause the server read, and refuses one outside a turn', async () => {
+    const peer = 'e'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Bat')`, [peer]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
+      [WORKSPACE, peer, ROOM],
+    );
+    // No live receipt: an event is emitted from inside a turn or not at all.
+    const outsideTurn = await daemonOperation('postRoomEvent', {
+      roomId: ROOM,
+      kind: 'agent:handoff',
+      consequence: 'the branch is ready',
+    });
+    expect(outsideTurn.status).toBeGreaterThanOrEqual(400);
+    expect(((await outsideTurn.json()) as { error: string }).error).toMatch(/no turn running/);
+
+    const trigger = await operation('sendRoomMessage', {
+      roomId: ROOM,
+      text: `@Bee please hand off`,
+    });
+    expect(trigger.status).toBe(200);
+    const requestId = ((await trigger.json()) as { messageId: string }).messageId;
+    expect(
+      (
+        await daemonOperation('postAgentTurnReceipt', {
+          agentId: AGENT,
+          roomId: ROOM,
+          requestId,
+          status: 'working',
+        })
+      ).status,
+    ).toBe(200);
+
+    const emitted = await daemonOperation('postRoomEvent', {
+      roomId: ROOM,
+      kind: 'agent:handoff',
+      consequence: 'the branch is ready',
+      mentionAgentIds: [peer],
+    });
+    expect(emitted.status).toBe(200);
+    const row = await database.query<{
+      text: string;
+      mention_ids: string[];
+      system_event: { kind?: string; subject: { id?: string } };
+      event_cause_id: string | null;
+      event_root_cause_id: string | null;
+      event_depth: number | null;
+    }>(
+      `SELECT text,mention_ids,system_event,event_cause_id,event_root_cause_id,event_depth
+       FROM messages WHERE id=$1`,
+      [((await emitted.json()) as { id: string }).id],
+    );
+    const line = row.rows[0]!;
+    // The sentence names the agent that said it, per A6: a receiving model must
+    // see WHO, not a bare clause.
+    expect(line.text).toBe('Bee emitted handoff · the branch is ready');
+    expect(line.system_event.kind).toBe('agent:handoff');
+    expect(line.system_event.subject.id).toBe(AGENT);
+    expect(line.mention_ids).toEqual([peer]);
+    // The cause came from the receipt, not from the helper.
+    expect(line.event_cause_id).toBe(requestId);
+    expect(line.event_root_cause_id).toBe(requestId);
+    expect(line.event_depth).toBe(1);
+  });
+
+  it('refuses a server kind, a stranger mention and more than three mentions', async () => {
+    const trigger = await operation('sendRoomMessage', { roomId: ROOM, text: '@Bee go' });
+    const requestId = ((await trigger.json()) as { messageId: string }).messageId;
+    await daemonOperation('postAgentTurnReceipt', {
+      agentId: AGENT,
+      roomId: ROOM,
+      requestId,
+      status: 'working',
+    });
+    const stranger = 'f'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Elsewhere')`, [
+      stranger,
+    ]);
+    for (const [payload, expected] of [
+      [{ kind: 'joined', consequence: 'hi' }, /a fact the server states/],
+      [{ kind: 'agent:Handoff', consequence: 'hi' }, /agent:<slug>/],
+      [{ kind: 'agent:x', consequence: '   ' }, /one sentence/],
+      [
+        { kind: 'agent:x', consequence: 'hi', mentionAgentIds: [stranger] },
+        /not an agent member of this Room/,
+      ],
+      [
+        { kind: 'agent:x', consequence: 'hi', mentionAgentIds: ['1', '2', '3', '4'] },
+        /at most 3 agents/,
+      ],
+    ] as const) {
+      const refused = await daemonOperation('postRoomEvent', { roomId: ROOM, ...payload });
+      expect(refused.status).toBeGreaterThanOrEqual(400);
+      expect(((await refused.json()) as { error: string }).error).toMatch(expected);
+    }
+    const written = await database.query(
+      `SELECT 1 FROM messages WHERE system_event->>'kind' LIKE 'agent:%'`,
+    );
+    expect(written.rowCount).toBe(0);
+  });
+
   it('subscribes a connecting agent in the Rooms its finish joined it to', async () => {
     const pairing = (await (
       await operation('createAgentPairingCode', { workspaceId: WORKSPACE })

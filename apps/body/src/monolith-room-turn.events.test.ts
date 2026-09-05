@@ -98,6 +98,25 @@ describe('an event line that woke a subscriber', () => {
     expect(inboxItemSkipsSenderPolicy(line(), AGENT)).toBe(true);
   });
 
+  it('prompts an agent-emitted event with the whole sentence, so the reader sees WHO said it', () => {
+    // A6: an agent event's payload is the formatted line, not the bare
+    // consequence. A model handed "the branch is ready" and nothing else
+    // cannot tell which agent it is answering.
+    const emitted = line({
+      authorId: OTHER_AGENT,
+      body: 'Bee emitted handoff · the branch is ready',
+      systemEvent: {
+        subject: { kind: 'agent', id: OTHER_AGENT, name: 'Bee' },
+        verb: 'emitted',
+        object: { text: 'handoff' },
+        consequence: 'the branch is ready',
+        kind: 'agent:handoff',
+      },
+    });
+    expect(inboxItemPromptBody(emitted, AGENT)).toBe('Bee emitted handoff · the branch is ready');
+    expect(inboxItemAuthorName(emitted, AGENT, new Map())).toBe('Bee');
+  });
+
   it('keeps an agent-emitted kind gated on its emitter', () => {
     const emitted = line({
       authorId: OTHER_AGENT,

@@ -339,6 +339,16 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS agent_hop_count integer NOT NULL DEFAULT 0;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS system_event jsonb;
+-- Where an event line came from. The cause is the message that triggered the
+-- turn that emitted it; the root is the first line of that whole cascade, and
+-- the depth is how far this line sits from it. Columns rather than more json
+-- because the loop guard COUNTS over the root and the partial index is what
+-- makes that count cheap; nothing outside a cascade carries them.
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS event_cause_id text;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS event_root_cause_id text;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS event_depth integer;
+CREATE INDEX IF NOT EXISTS messages_event_root_idx ON messages(event_root_cause_id)
+  WHERE event_root_cause_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS messages_room_page_idx ON messages(room_id, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS messages_request_idx ON messages(room_id, request_id) WHERE request_id IS NOT NULL;
 

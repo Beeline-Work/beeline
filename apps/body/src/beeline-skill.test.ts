@@ -28,6 +28,18 @@ describe('using-beeline Room guidance', () => {
     expect(markdown).not.toContain('no action or corner tools');
   });
 
+  it('tells a model it can subscribe itself, which is the point of the tool', () => {
+    // A tool a model never hears about is a tool nobody calls: the welcome
+    // agent could not subscribe, and someone edited a database row for it.
+    const primer = beelinePrimer();
+    expect(primer).toContain('beeline-agent subscribe_events');
+    expect(primer).toContain('list_event_subscriptions');
+    expect(primer).toContain('joined');
+    expect(primer).toContain('You do this yourself');
+    expect(primer).toContain('beeline-agent emit_event');
+    expect(usingBeelineSkillMarkdown('test-release')).toContain('subscribe_events');
+  });
+
   it('delivers strictly conversational guidance for a direct message', () => {
     const primer = beelinePrimer(undefined, true);
     expect(primer).toContain('private direct-message conversation with one person');

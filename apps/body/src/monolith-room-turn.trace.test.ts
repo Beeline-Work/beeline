@@ -256,9 +256,11 @@ describe('Room turn phase trace', () => {
       expect(trace.scheduler.atAdmission).toBeDefined();
       expect(trace.attempts[0]!.toolCalls).toBe(1);
     }
-    // Only the cold turn paid for an activation.
+    // Both turns record an activation, and they are different things: the cold
+    // one spawned a harness, the warm one only re-read the configuration its
+    // retained session had baked in (C104).
     expect(traces[0]!.attempts[0]!.phases.activation).toBeGreaterThanOrEqual(0);
-    expect(traces[1]!.attempts[0]!.phases.activation).toBeUndefined();
+    expect(traces[1]!.attempts[0]!.phases.activation).toBeGreaterThanOrEqual(0);
     expect(posted.map((message) => message.text)).toEqual([
       'Here you go for ask-1',
       'Here you go for ask-2',

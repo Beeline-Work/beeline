@@ -43,7 +43,11 @@ import type { SessionSchedulerSnapshot } from './session-scheduler.js';
 export const TURN_PHASES = [
   /** Enqueued on `SessionScheduler` until this turn holds a slot. A capacity wait lives here. */
   'queue-wait',
-  /** `lifecycle.activate()`: the ACP spawn and `session/new`. Zero on a warm session. */
+  /**
+   * The work that buys a usable session: on a cold turn `lifecycle.activate()`
+   * — the ACP spawn and `session/new` — and on a warm one only the check that
+   * the retained process still matches the agent's configuration (C104).
+   */
   'activation',
   /** Room conversation, Workspace roster and attachment downloads, before the prompt. */
   'context-fetch',
@@ -65,8 +69,8 @@ export interface TurnAttemptTrace {
   attempt: number;
   /**
    * Whether this attempt had to spawn a harness. `cold` means `activate()` ran
-   * a real ACP handshake; `warm` means the scheduler handed back a live
-   * session and `activation` is zero.
+   * a real ACP handshake; `warm` means the scheduler handed back a retained
+   * session, and `activation` then holds only its currency check.
    */
   activation: 'cold' | 'warm';
   /** True when the scheduler reported `waiting-for-slot` before admitting this turn. */

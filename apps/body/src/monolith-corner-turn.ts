@@ -532,7 +532,7 @@ export class MonolithCornerTurnLoop {
     return opened.sessionId;
   }
 
-  /** The scheduler seam: `queue-wait` closes when a slot buys an activate(). */
+  /** The scheduler seam: `queue-wait` closes when a slot buys a session. */
   private lifecycle(trace?: TurnTrace): SessionLifecycle {
     return {
       activate: async () => {
@@ -647,8 +647,8 @@ export class MonolithCornerTurnLoop {
             cornerId,
             this.lifecycle(trace),
             async () => {
-              // Warm and already live: admitted without an activate(), so the
-              // queue wait closes here instead.
+              // Belt and braces: `activate`/`isCurrent` already closed the
+              // queue wait, and `end` on a closed phase is a no-op.
               trace.end('queue-wait');
               trace.noteScheduler('admission', this.options.scheduler.snapshot());
               if (this.forcedStop) throw new Error('corner turn stopped for daemon handoff');

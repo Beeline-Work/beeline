@@ -337,16 +337,23 @@ describe('narrow live seam', () => {
     overlays = applyLiveOverlay(overlays, { ...first, text: 'first chunk grew', createdAt: 12 });
     overlays = applyLiveOverlay(overlays, { ...second, text: 'other chunk grew', createdAt: 13 });
 
+    // Edited in place in the LANE LIST too: an agent's newer chunk must not
+    // re-append its row behind the other agent's.
+
     expect(overlays.map((item) => [item.key, (item as Extract<LiveOverlay, { kind: 'draft' }>).text, item.createdAt])).toEqual([
       ['draft:goosy:request', 'first chunk grew', 10],
       ['draft:terra:request', 'other chunk grew', 11],
     ]);
 
-    // A NEW request from the same agent takes a new slot rather than
-    // inheriting the finished turn's position.
-    expect(
-      applyLiveOverlay(overlays, { ...first, key: 'draft:goosy:next', requestId: 'next', stableId: 'live-turn:goosy:next', text: 'a new turn', createdAt: 20 })[1],
-    ).toMatchObject({ key: 'draft:goosy:next', createdAt: 20 });
+    // A NEW request from the same agent takes a new stamp rather than
+    // inheriting the finished turn's position — the anchor holds a TURN in
+    // place, not an agent forever. The row stays where it sits in the lane
+    // list; the transcript orders by the stamp.
+    const next = applyLiveOverlay(overlays, { ...first, key: 'draft:goosy:next', requestId: 'next', stableId: 'live-turn:goosy:next', text: 'a new turn', createdAt: 20 });
+    expect(next.map((item) => [item.key, item.createdAt])).toEqual([
+      ['draft:goosy:next', 20],
+      ['draft:terra:request', 11],
+    ]);
   });
 });
 

@@ -490,7 +490,7 @@ export class PhoneService {
           lm_other.id<>mark.message_id AND
           (lm_other.created_at,lm_other.id)>(mark.message_created_at,mark.message_id)
         )) unread,
-        EXISTS(SELECT 1 FROM agent_turns t WHERE (t.room_id=r.id OR t.room_id IN (SELECT id FROM rooms WHERE parent_id=r.id)) AND t.status='working') working,
+        EXISTS(SELECT 1 FROM agent_turns t WHERE (t.room_id=r.id OR t.room_id IN (SELECT id FROM rooms WHERE parent_id=r.id AND archived_at IS NULL)) AND t.status='working') working,
         EXISTS(SELECT 1 FROM permission_authority p WHERE (p.room_id=r.id OR p.room_id IN (SELECT id FROM rooms WHERE parent_id=r.id)) AND p.status='pending') needs_you
       FROM rooms r
       JOIN memberships member ON member.room_id=r.id AND member.identity_id=$2 AND member.removed_at IS NULL

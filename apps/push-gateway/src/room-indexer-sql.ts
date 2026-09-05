@@ -671,6 +671,57 @@ WITH workspace_candidates AS (
   SELECT community_id, room_id, bool_or(status = 'working') AS working
   FROM room_turn_latest
   GROUP BY community_id, room_id
+), corner_open AS (
+  -- The corners a Room row may still speak for: not archived, and not
+  -- reported gone by the daemon's own remote-state marker. That is the same
+  -- lifecycle = done rule cornerItem applies before it calls a corner
+  -- working, so a landed corner whose helper died mid-turn cannot leave its
+  -- parent Room spinning forever.
+  SELECT cs.community_id, cs.corner_id, cs.parent_id
+  FROM corner_children cs
+  LEFT JOIN LATERAL (
+    SELECT e.content FROM events e
+    JOIN channel_members author ON author.community_id = e.community_id
+      AND author.channel_id = cs.corner_id AND author.pubkey = e.pubkey
+      AND author.removed_at IS NULL
+    WHERE e.community_id = cs.community_id AND e.kind = 30078 AND e.deleted_at IS NULL
+      AND e.tags @> jsonb_build_array(jsonb_build_array('h', cs.corner_id::text))
+      AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
+        WHERE t->>0 = 't' AND t->>1 = 'buzz-corner-remote-state')
+    ORDER BY e.created_at DESC, e.id DESC LIMIT 1
+  ) remote ON true
+  WHERE cs.archived_at IS NULL
+    AND COALESCE(remote.content::jsonb->>'state', '') <> 'gone'
+), corner_turn_latest AS (
+  -- A corner's working state IS its signed agent-turn receipt, the same event
+  -- the room-view query paints the corner list from. The helper publishes it
+  -- before its first visible output, so reading it here is what keeps the
+  -- Room label level with the work going on inside the corner instead of
+  -- trailing whatever the corner eventually says in its parent.
+  SELECT DISTINCT ON (e.channel_id, e.pubkey)
+    e.community_id, e.channel_id AS corner_id, cs.parent_id,
+    (SELECT t->>1 FROM jsonb_array_elements(e.tags) t
+      WHERE t->>0 = 'status' AND t->>1 IN ('working', 'complete', 'failed') LIMIT 1) AS status
+  FROM corner_open cs
+  JOIN events e ON e.community_id = cs.community_id AND e.channel_id = cs.corner_id
+    AND e.kind = 9 AND e.deleted_at IS NULL
+  JOIN channel_members member ON member.community_id = e.community_id
+    AND member.channel_id = e.channel_id AND member.pubkey = e.pubkey
+    AND member.removed_at IS NULL
+  JOIN agent_declarations agent ON agent.community_id = e.community_id
+    AND agent.pubkey = e.pubkey
+  WHERE e.tags @> '[["t", "agent-turn"]]'::jsonb
+    AND e.tags @> jsonb_build_array(jsonb_build_array('h', cs.corner_id::text))
+    AND e.tags @> jsonb_build_array(jsonb_build_array('agent', encode(e.pubkey, 'hex')))
+    AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
+      WHERE t->>0 = 'request' AND t->>1 ~ '^[0-9a-f]{64}$')
+    AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
+      WHERE t->>0 = 'status' AND t->>1 IN ('working', 'complete', 'failed'))
+  ORDER BY e.channel_id, e.pubkey, e.created_at DESC, e.id DESC
+), corner_turns AS (
+  SELECT community_id, parent_id AS room_id, bool_or(status = 'working') AS working
+  FROM corner_turn_latest
+  GROUP BY community_id, parent_id
 ), ${agentSoulsCteSql('workspace', 'w', 'w.id::text')}, identities AS (
   SELECT k.community_id, k.pubkey,
     NULLIF(u.display_name, '') AS name, u.nip05_handle AS handle, u.avatar_url AS avatar,
@@ -708,11 +759,13 @@ SELECT 'chat', jsonb_build_object(
     OR (latest.created_at = mark.message_created_at AND latest.id < mark.message_id)
   ),
   'repositoryName', repo.content::jsonb->>'name',
-  -- Max-severity rollup of the room's own conversational turn and every
-  -- corner's current state: a corner waiting on a human outranks a working
-  -- turn, and either outranks quiet. NULL means idle.
+  -- Max-severity rollup of the room's own conversational turn and the turns
+  -- running in its open corners. Both contributions are the agents' own
+  -- signed agent-turn receipts, so the row reports work the moment it starts
+  -- rather than when it is finally spoken about. NULL means idle.
   'agentState', CASE
-    WHEN COALESCE(turns.working, false) THEN 'working'
+    WHEN COALESCE(turns.working, false) OR COALESCE(corner_turns.working, false)
+      THEN 'working'
     ELSE NULL
   END,
   -- A direct Room's one other participant, resolved like a preview author,
@@ -735,6 +788,8 @@ LEFT JOIN identities peer ON peer.community_id = a.community_id
 LEFT JOIN member_counts members ON members.community_id = a.community_id AND members.room_id = a.id
 LEFT JOIN corner_counts corners ON corners.community_id = a.community_id AND corners.room_id = a.id
 LEFT JOIN room_turns turns ON turns.community_id = a.community_id AND turns.room_id = a.id
+LEFT JOIN corner_turns ON corner_turns.community_id = a.community_id
+  AND corner_turns.room_id = a.id::text
 LEFT JOIN repositories repo ON repo.community_id = a.community_id AND repo.room_id = a.id
 LEFT JOIN latest_events latest ON latest.community_id = a.community_id AND latest.room_id = a.id
 LEFT JOIN beeline_room_read_marks mark ON mark.community_id = a.community_id

@@ -54,9 +54,9 @@ describe('native fingerprint gate', () => {
     // already installed carried the literal stamp it was built with, so it
     // could never match the published updates and reported NoUpdatesAvailable.
     // This pair moves together, by hand, on every deliberate native bump.
-    expect(appConfig).toContain('runtimeVersion: "22"');
+    expect(appConfig).toContain('runtimeVersion: "23"');
     expect(appConfig).not.toContain('policy: "fingerprint"');
-    expect(baseline.runtimeVersion).toBe('22');
+    expect(baseline.runtimeVersion).toBe('23');
   });
 
   it('records one committed fingerprint per platform beside the runtime it belongs to', () => {
@@ -183,25 +183,25 @@ describe('native fingerprint gate', () => {
       expect(recordedRun.stderr).toBe('');
       expect(recordedRun.status).toBe(0);
       const before = JSON.parse(readFileSync(baselineFile, 'utf8'));
-      expect(before.runtimeVersion).toBe('22');
+      expect(before.runtimeVersion).toBe('23');
 
       appendFileSync(join(project, 'plugins/withEinkCompatibility.js'), '\n// native change\n');
       const dirty = await runGate(fixture);
 
       expect(dirty.status).toBe(1);
-      expect(dirty.stderr).toContain('Native inputs changed but runtimeVersion is still "22"');
+      expect(dirty.stderr).toContain('Native inputs changed but runtimeVersion is still "23"');
       expect(dirty.stderr).toContain(
         `android: ${before.fingerprints.android} -> `,
       );
       expect(dirty.stderr).toContain(`ios: ${before.fingerprints.ios} -> `);
-      expect(dirty.stderr).toContain('bump runtimeVersion in apps/mobile/app.config.js to "23"');
+      expect(dirty.stderr).toContain('bump runtimeVersion in apps/mobile/app.config.js to "24"');
       expect(dirty.stderr).toContain('new native build');
 
       // `--write` will not quietly re-record a native change under the old pin:
       // that is the move that strands installed binaries.
       const refused = await runGate(['--write', ...fixture]);
       expect(refused.status).toBe(1);
-      expect(refused.stderr).toContain('Native inputs changed but runtimeVersion is still "22"');
+      expect(refused.stderr).toContain('Native inputs changed but runtimeVersion is still "23"');
       expect(JSON.parse(readFileSync(baselineFile, 'utf8'))).toEqual(before);
     },
     240_000,

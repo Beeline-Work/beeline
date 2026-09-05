@@ -94,6 +94,27 @@ export function isResumeKind(value: unknown): boolean {
 export const MAX_EVENT_DEPTH = 4;
 export const MAX_TURNS_PER_ROOT = 12;
 export const MAX_MENTIONS_PER_EVENT = 3;
+/** One clause, the length of a system line's consequence anywhere else. */
+export const MAX_EVENT_CONSEQUENCE_LENGTH = 200;
+
+/**
+ * The refusal an agent reads when its event would extend a cascade past its
+ * bounds. Phrased once, here, because the server raises it and the helper's
+ * tool surfaces it verbatim: an agent that cannot tell "too deep" from "the
+ * Room is out of turns" cannot decide what to do instead.
+ */
+export function eventDepthRefusal(depth: number): string {
+  return (
+    `this event would sit ${depth} events deep and the limit is ${MAX_EVENT_DEPTH}; ` +
+    'nothing was posted. The chain that led here has run long enough - answer in the Room instead.'
+  );
+}
+export function eventBudgetRefusal(woken: number): string {
+  return (
+    `the chain this event belongs to has already woken ${woken} turns and the limit is ` +
+    `${MAX_TURNS_PER_ROOT}; nothing was posted. Answer in the Room instead of waking another agent.`
+  );
+}
 
 /** "Candy" · "Candy and Terra" · "Candy, Terra and Codex". */
 export function joinSystemNames(names: readonly string[]): string {

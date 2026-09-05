@@ -31,6 +31,7 @@ import {
   type DeliveredAttachment,
 } from './attachment-delivery.js';
 import { beelineCapabilityContextForHarness } from './beeline-skill.js';
+import { installPiMcpBridge } from './pi-mcp-bridge.js';
 import { beelineAgentMcpServer, readOnlyMcpServer } from './room-session.js';
 import { sessionConfigFingerprint } from './session-config-fingerprint.js';
 import {
@@ -638,6 +639,14 @@ export class MonolithRoomTurnLoop {
           : {}),
       }),
     ];
+    // pi never mounts what `session/new` hands it, so its whole daemon tool
+    // panel is written into its own extensions directory instead
+    // (`pi-mcp-bridge.ts`). Every other harness ignores this.
+    await installPiMcpBridge({
+      agentCommand: command,
+      piHome: agentEnv.PI_CODING_AGENT_DIR,
+      servers,
+    });
     const mountedServers = servers.map((server) => server.name);
     const clientOptions: ConstructorParameters<typeof AcpClient>[0] = {
       agentCommand: spawnCommand.command,

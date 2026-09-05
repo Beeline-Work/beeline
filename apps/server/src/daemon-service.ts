@@ -6,6 +6,14 @@ import type {
 } from '@beeline/api-contract/daemon';
 import { cornerTextRefusal, normalizeCornerText } from '@beeline/api-contract/daemon';
 import {
+  MAX_EVENT_CONSEQUENCE_LENGTH,
+  MAX_MENTIONS_PER_EVENT,
+  SERVER_EVENT_KINDS,
+  isAgentKind,
+  isServerEventKind,
+  type ServerEventKind,
+} from '@beeline/api-contract/phone';
+import {
   AGENT_GRANT_REASON_MAX_LENGTH,
   AGENT_GRANT_TARGET_MAX_LENGTH,
   GRANT_SCRIPT_MAX_BYTES,
@@ -29,11 +37,7 @@ import {
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
 import type { SqlDatabase } from './database.js';
 import type { LiveHub } from './live.js';
-import {
-  CORNER_WAKE_MIN_INTERVAL_MS,
-  CORNER_WAKE_TIMEOUT_MS,
-  wakesCorner,
-} from './corner-wake.js';
+import { CORNER_WAKE_MIN_INTERVAL_MS, CORNER_WAKE_TIMEOUT_MS, wakesCorner } from './corner-wake.js';
 import { restateSystemLine, systemLine, type SystemPhrase } from './system-line.js';
 
 type Input<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['input'];
@@ -152,6 +156,21 @@ export class DaemonService {
       case 'createAgentSchedule':
         return (await this.createAgentSchedule(
           input as Input<'createAgentSchedule'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
+      case 'setEventSubscriptions':
+        return (await this.setEventSubscriptions(
+          input as Input<'setEventSubscriptions'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
+      case 'listEventSubscriptions':
+        return (await this.listEventSubscriptions(
+          input as Input<'listEventSubscriptions'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
+      case 'postRoomEvent':
+        return (await this.postRoomEvent(
+          input as Input<'postRoomEvent'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'listAgentSchedules':
@@ -473,8 +492,7 @@ export class DaemonService {
     // this code path, so they are selected here rather than by reversing the
     // sort for everyone. `getRoomInbox` and any cursor walk keep the ascending
     // forward semantics untouched.
-    const newestPage =
-      name === 'getRoomConversation' && !after && input.window !== 'earliest';
+    const newestPage = name === 'getRoomConversation' && !after && input.window !== 'earliest';
     const rows = await this.database.query<{
       id: string;
       author_id: string;
@@ -1357,6 +1375,120 @@ export class DaemonService {
     );
     return { scheduleId, nextRunAt: Math.floor(nextRunAt.getTime() / 1_000) };
   }
+  /**
+   * What this agent reacts to in this Room, set by the agent itself.
+   *
+   * The whole point of an event subscription is that an agent asked to greet
+   * newcomers can start greeting newcomers without a person editing a database
+   * row for it. The write is scoped by construction: the daemon token names the
+   * agent, `roomId` names the Room, `execute` has already refused a Room this
+   * agent is not a member of, and the UPDATE touches exactly that one
+   * membership. Only server kinds may be subscribed to — an `agent:` kind is a
+   * sentence some agent chose to say, and reacting to it is a mention, not a
+   * subscription.
+   */
+  private async setEventSubscriptions(input: Input<'setEventSubscriptions'>, agentId: string) {
+    const requested = Array.isArray(input.kinds) ? input.kinds : [];
+    const unknown = requested.filter((kind) => !isServerEventKind(kind));
+    if (unknown.length) {
+      throw new Error(
+        `not an event kind you can subscribe to: ${unknown.join(', ')}. ` +
+          `The kinds are ${SERVER_EVENT_KINDS.join(', ')}.`,
+      );
+    }
+    const kinds = [...new Set(requested)] as ServerEventKind[];
+    const updated = await this.database.query(
+      `UPDATE memberships SET event_subscriptions=$3::jsonb
+       WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
+      [input.roomId, agentId, JSON.stringify(kinds)],
+    );
+    if (!updated.rowCount) throw new Error('daemon room access denied');
+    return { kinds };
+  }
+  private async listEventSubscriptions(input: Input<'listEventSubscriptions'>, agentId: string) {
+    const rows = await this.database.query<{ event_subscriptions: unknown }>(
+      `SELECT event_subscriptions FROM memberships
+       WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
+      [input.roomId, agentId],
+    );
+    const stored = rows.rows[0]?.event_subscriptions;
+    const kinds = (Array.isArray(stored) ? stored : []).filter(isServerEventKind);
+    return { kinds };
+  }
+
+  /**
+   * One event this agent emits, with the cause the SERVER read for itself.
+   *
+   * The helper sends the kind, the sentence and who to wake; it never sends a
+   * cause or a depth, because it is the agent's own process and a guard the
+   * guarded party sets is not a guard. The cause is the request id on this
+   * agent's live turn receipt in this Room — the message that woke it — so an
+   * emit outside a turn has nothing to cite and is refused. `systemLine` then
+   * derives the root and the depth from that row and refuses a cascade that has
+   * run too deep or woken too many turns; the refusal writes nothing and comes
+   * back out of here as the tool's error text.
+   */
+  private async postRoomEvent(input: Input<'postRoomEvent'>, agentId: string) {
+    if (isServerEventKind(input.kind)) {
+      throw new Error(
+        `${input.kind} is a fact the server states, not one an agent emits. ` +
+          'Use an agent:<slug> kind of your own.',
+      );
+    }
+    if (!isAgentKind(input.kind)) {
+      throw new Error(
+        'kind must be agent:<slug>, lower-case letters, digits and hyphens, at most 40 characters',
+      );
+    }
+    const consequence = typeof input.consequence === 'string' ? input.consequence.trim() : '';
+    if (!consequence) throw new Error('an event needs one sentence saying what happened');
+    if (consequence.length > MAX_EVENT_CONSEQUENCE_LENGTH)
+      throw new Error(
+        `the event sentence must be at most ${MAX_EVENT_CONSEQUENCE_LENGTH} characters`,
+      );
+    const mentions = [...new Set(input.mentionAgentIds ?? [])];
+    if (mentions.length > MAX_MENTIONS_PER_EVENT)
+      throw new Error(`an event may wake at most ${MAX_MENTIONS_PER_EVENT} agents`);
+    if (mentions.length) {
+      const members = await this.database.query<{ identity_id: string }>(
+        `SELECT member.identity_id FROM memberships member
+         JOIN identities identity ON identity.id=member.identity_id AND identity.kind='agent'
+         WHERE member.room_id=$1 AND member.removed_at IS NULL
+           AND member.identity_id=ANY($2::text[])`,
+        [input.roomId, mentions],
+      );
+      const present = new Set(members.rows.map((row) => row.identity_id));
+      const missing = mentions.filter((mention) => !present.has(mention));
+      if (missing.length)
+        throw new Error(`not an agent member of this Room: ${missing.join(', ')}`);
+    }
+    const active = await this.database.query<{ request_id: string }>(
+      `SELECT request_id FROM agent_turns
+       WHERE room_id=$1 AND agent_id=$2 AND status='working'
+       ORDER BY created_at DESC LIMIT 1`,
+      [input.roomId, agentId],
+    );
+    const causeId = active.rows[0]?.request_id;
+    if (!causeId)
+      throw new Error(
+        'an event is emitted from inside a turn; this agent has no turn running here',
+      );
+    const self = await this.database.query<{ name: string }>(
+      `SELECT COALESCE(NULLIF(name,''),'An agent') name FROM identities WHERE id=$1`,
+      [agentId],
+    );
+    const line = await systemLine(this.database, {
+      roomId: input.roomId,
+      subject: { kind: 'agent', id: agentId, name: self.rows[0]?.name ?? 'An agent' },
+      verb: 'emitted',
+      object: input.kind.slice('agent:'.length),
+      consequence,
+      kind: input.kind,
+      mentions,
+      causeId,
+    });
+    return { id: line.id, createdAt: Math.floor(Date.now() / 1_000) };
+  }
   private async listAgentSchedules(input: Input<'listAgentSchedules'>, agentId: string) {
     const rows = await this.database.query<{
       id: string;
@@ -1901,10 +2033,7 @@ export class DaemonService {
    * `CORNER_WAKE_MIN_INTERVAL_MS` apart, so a burst of qualifying events costs
    * one poll for the whole burst instead of one poll each.
    */
-  private async waitForCornerWake(
-    cornerId: string,
-    agentId: string,
-  ): Promise<{ woken: boolean }> {
+  private async waitForCornerWake(cornerId: string, agentId: string): Promise<{ woken: boolean }> {
     const horizon = Date.now() - CORNER_WAKE_TIMEOUT_MS;
     for (const [corner, at] of this.lastCornerWake)
       if (at < horizon) this.lastCornerWake.delete(corner);
@@ -1950,6 +2079,8 @@ export class DaemonService {
       'postWorkScheduleReceipt',
       'createAgentSchedule',
       'deleteAgentSchedule',
+      'setEventSubscriptions',
+      'postRoomEvent',
       'postAgentToolMandate',
       'postAgentPresence',
       'postCornerLifecycle',
@@ -2063,6 +2194,9 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   getWorkScheduleAuthority: true,
   listAgentToolSchedules: true,
   createAgentSchedule: true,
+  setEventSubscriptions: true,
+  listEventSubscriptions: true,
+  postRoomEvent: true,
   listAgentSchedules: true,
   deleteAgentSchedule: true,
   getAgentToolMandate: true,

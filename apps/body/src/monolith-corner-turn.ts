@@ -20,6 +20,7 @@ import { AgentTurnStream, durableReplyText } from './turn-stream.js';
 import { toolCallFailureLine } from './tool-call-failure.js';
 import { distillTurnFailureReason, redactToolDetail } from './turn-failure-reason.js';
 import { sessionConfigFingerprint } from './session-config-fingerprint.js';
+import { installPiMcpBridge } from './pi-mcp-bridge.js';
 import { beelineAgentMcpServer } from './room-session.js';
 import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
 import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
@@ -490,6 +491,13 @@ export class MonolithCornerTurnLoop {
           : {}),
       }),
     ];
+    // See `pi-mcp-bridge.ts`: pi drops `session/new`'s `mcpServers`, so a corner
+    // on pi would have no `pr_checks_status` and no `attach_file` either.
+    await installPiMcpBridge({
+      agentCommand: command,
+      piHome: agentEnv.PI_CODING_AGENT_DIR,
+      servers,
+    });
     const persona = configuration.soul ?? self?.soul;
     const identityInstructions = `Your Beeline identity is ${self?.name ?? this.agent.name}.`;
     // The house rule stands whether or not a soul does: a Workspace that has

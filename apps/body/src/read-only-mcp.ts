@@ -60,7 +60,14 @@ import {
   type CommandGrantRule,
   type CommandGrantScript,
 } from '@beeline/api-contract/agent-grants';
-import type { CornerLifecycleView } from '@beeline/api-contract/phone';
+import {
+  MAX_EVENT_CONSEQUENCE_LENGTH,
+  MAX_MENTIONS_PER_EVENT,
+  SERVER_EVENT_KINDS,
+  isAgentKind,
+  isServerEventKind,
+  type CornerLifecycleView,
+} from '@beeline/api-contract/phone';
 import { checksVerdictFromLifecycle } from './corner-checks.js';
 import { READ_ONLY_TOOL_NAMES } from './read-only-policy.js';
 
@@ -298,6 +305,64 @@ const AGENT_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: 'subscribe_events',
+    description:
+      `Choose which things happening in this Room wake you for a turn: ${SERVER_EVENT_KINDS.join(', ')}. ` +
+      'Subscribe to joined and every newcomer wakes you, so you can greet them. This REPLACES your ' +
+      'current list, so send every kind you want, not just the new one; call list_event_subscriptions ' +
+      'first if you are not sure what you already react to, and send an empty list to react to nothing.',
+    inputSchema: {
+      type: 'object',
+      required: ['kinds'],
+      properties: {
+        kinds: {
+          type: 'array',
+          items: { type: 'string', enum: [...SERVER_EVENT_KINDS] },
+          description: 'The complete list of event kinds you want to react to in this Room.',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'list_event_subscriptions',
+    description: 'List the events you currently react to in this Room.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'emit_event',
+    description:
+      'State one thing that happened, as a line in this Room, and optionally wake other agents with it. ' +
+      'The kind is your own agent:<slug> label (lower-case letters, digits and hyphens) and the sentence ' +
+      'is what happened; both appear in the transcript for people to read. Name at most ' +
+      `${MAX_MENTIONS_PER_EVENT} agent members of this Room in mentionAgentIds to wake them. Events chain, ` +
+      'and the chain is bounded: past a few hops, or once one chain has woken too many turns, the emit is ' +
+      'refused and nothing is posted - answer in the Room instead.',
+    inputSchema: {
+      type: 'object',
+      required: ['kind', 'consequence'],
+      properties: {
+        kind: {
+          type: 'string',
+          description: 'Your label for this event, as agent:<slug>, e.g. "agent:handoff".',
+        },
+        consequence: {
+          type: 'string',
+          minLength: 1,
+          maxLength: MAX_EVENT_CONSEQUENCE_LENGTH,
+          description: 'One sentence saying what happened.',
+        },
+        mentionAgentIds: {
+          type: 'array',
+          items: { type: 'string' },
+          maxItems: MAX_MENTIONS_PER_EVENT,
+          description: 'Agent members of this Room to wake with this event.',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'open_corner',
     description:
       'Open one write-enabled repository corner. Give it a name of AT MOST THREE WORDS - that name titles the corner in the Room list, the corner header and every card - and a fixed objective of no more than 24 words stating the work. Line breaks and extra spaces in either are flattened for you; only a text that is genuinely too long is refused.',
@@ -330,7 +395,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'write_scratch_file',
     description:
-      "Write a file into your writable session area (the same scratch root attach_file reaches beyond your checkout) and return its path so attach_file can send it. This is how you create a file at all in a Room, whose filesystem is otherwise read-only. Content is plain text by default; pass encoding \"base64\" to write bytes you computed yourself. Capped at the same size attach_file allows. Path must be relative and stay inside your session area - no absolute paths, no .. traversal, no symlink escapes; in a corner this still writes only to your session area, never the worktree. This produces the file, not a picture: turning text, markdown, JSON or SVG into a raster image needs a converter, which needs shell, which a Room does not have.",
+      'Write a file into your writable session area (the same scratch root attach_file reaches beyond your checkout) and return its path so attach_file can send it. This is how you create a file at all in a Room, whose filesystem is otherwise read-only. Content is plain text by default; pass encoding "base64" to write bytes you computed yourself. Capped at the same size attach_file allows. Path must be relative and stay inside your session area - no absolute paths, no .. traversal, no symlink escapes; in a corner this still writes only to your session area, never the worktree. This produces the file, not a picture: turning text, markdown, JSON or SVG into a raster image needs a converter, which needs shell, which a Room does not have.',
     inputSchema: {
       type: 'object',
       required: ['path', 'content'],
@@ -1094,7 +1159,8 @@ export function writeScratchFileDepsFromEnv(): WriteScratchFileDeps {
  *  beneath that point - which, freshly created, cannot themselves be
  *  symlinks. */
 export function resolveWriteScratchPath(root: string, input: string): string {
-  if (!input || input.includes('\0')) throw new Error('path must be a non-empty relative file path');
+  if (!input || input.includes('\0'))
+    throw new Error('path must be a non-empty relative file path');
   const realRoot = realpathSync(root);
   const errorMessage = () => `path resolves outside your writable session area (${realRoot})`;
   if (isAbsolute(input)) throw new Error(errorMessage());
@@ -1352,6 +1418,95 @@ export async function listSchedules(
     .join('\n');
 }
 
+/**
+ * The agent's own event subscriptions, written by the agent.
+ *
+ * A subscription is per Room and belongs to the agent's own membership row, so
+ * the tool sends kinds and nothing else: the daemon token names the agent and
+ * the environment names the Room. The reply always states the COMPLETE
+ * resulting list, because the write replaces rather than adds and a model that
+ * subscribed to one more kind must be able to see what it stopped reacting to.
+ */
+export async function subscribeEvents(
+  args: JsonObject,
+  deps: AgentScheduleDeps = agentScheduleDepsFromEnv(),
+): Promise<string> {
+  const requested = args.kinds;
+  if (!Array.isArray(requested))
+    throw new Error(`kinds must be an array of event kinds: ${SERVER_EVENT_KINDS.join(', ')}`);
+  const unknown = requested.filter((kind) => !isServerEventKind(kind));
+  if (unknown.length) {
+    throw new Error(
+      `not an event kind you can subscribe to: ${unknown.map(String).join(', ')}. ` +
+        `The kinds are ${SERVER_EVENT_KINDS.join(', ')}.`,
+    );
+  }
+  const result = await deps.execute('setEventSubscriptions', {
+    roomId: deps.roomId,
+    kinds: requested as string[],
+  });
+  return describeSubscriptions(result, 'You now react to');
+}
+
+export async function listEventSubscriptions(
+  deps: AgentScheduleDeps = agentScheduleDepsFromEnv(),
+): Promise<string> {
+  const result = await deps.execute('listEventSubscriptions', { roomId: deps.roomId });
+  return describeSubscriptions(result, 'You react to');
+}
+
+function describeSubscriptions(result: JsonObject, lead: string): string {
+  const kinds = (Array.isArray(result.kinds) ? result.kinds : []).map(String);
+  return kinds.length
+    ? `${lead} ${kinds.join(', ')} in this Room; each one wakes you for a turn.`
+    : 'You react to no events in this Room; only a message that mentions you wakes you.';
+}
+
+/**
+ * One event this agent emits into the Room it is answering in.
+ *
+ * The tool sends no cause: the server reads this agent's live turn receipt and
+ * derives the chain from it. A refusal — too deep, or a chain that has woken
+ * too many turns — comes back as this tool's error, which is the only way the
+ * emitting model learns that nothing was posted.
+ */
+export async function emitEvent(
+  args: JsonObject,
+  deps: AgentScheduleDeps = agentScheduleDepsFromEnv(),
+): Promise<string> {
+  const kind = stringArg(args, 'kind')?.trim();
+  if (!kind) throw new Error('kind must be a non-empty string');
+  if (isServerEventKind(kind)) {
+    throw new Error(
+      `${kind} is a fact the server states, not one you emit. Use an agent:<slug> kind of your own.`,
+    );
+  }
+  if (!isAgentKind(kind)) {
+    throw new Error(
+      'kind must be agent:<slug>, lower-case letters, digits and hyphens, at most 40 characters',
+    );
+  }
+  const consequence = stringArg(args, 'consequence')?.trim();
+  if (!consequence) throw new Error('consequence must say in one sentence what happened');
+  if (consequence.length > MAX_EVENT_CONSEQUENCE_LENGTH)
+    throw new Error(`consequence must be at most ${MAX_EVENT_CONSEQUENCE_LENGTH} characters`);
+  const mentions = args.mentionAgentIds;
+  if (mentions !== undefined && !Array.isArray(mentions))
+    throw new Error('mentionAgentIds must be an array of agent ids');
+  const mentionAgentIds = (mentions ?? []).map(String);
+  if (mentionAgentIds.length > MAX_MENTIONS_PER_EVENT)
+    throw new Error(`an event may wake at most ${MAX_MENTIONS_PER_EVENT} agents`);
+  await deps.execute('postRoomEvent', {
+    roomId: deps.roomId,
+    kind,
+    consequence,
+    ...(mentionAgentIds.length ? { mentionAgentIds } : {}),
+  });
+  return mentionAgentIds.length
+    ? `Posted ${kind} in this Room and woke ${mentionAgentIds.length} agent(s).`
+    : `Posted ${kind} in this Room.`;
+}
+
 export async function deleteSchedule(
   args: JsonObject,
   deps: AgentScheduleDeps = agentScheduleDepsFromEnv(),
@@ -1361,7 +1516,6 @@ export async function deleteSchedule(
   await deps.execute('deleteAgentSchedule', { roomId: deps.roomId, scheduleId });
   return `Schedule ${scheduleId} deleted.`;
 }
-
 
 export interface AgentGrantDeps {
   roomId: string;
@@ -1483,7 +1637,9 @@ export async function requestGrant(
   return (
     `pending, card posted: ${ask} [grant ${grantId}]. ` +
     (because ? `A human always answers this one because ${because}. ` : '') +
-    (script ? `The card shows ${script.path} in full, and the approval is bound to those bytes. ` : '') +
+    (script
+      ? `The card shows ${script.path} in full, and the approval is bound to those bytes. `
+      : '') +
     'Your owner must answer ALWAYS, ONCE, or NO in this Room; ' +
     'your turn is paused on this grant. Tell the human what you are waiting for and end your turn now; ' +
     'you will be woken with the answer.'
@@ -1525,7 +1681,11 @@ export async function runGrantedCommand(
   deps: GrantRunDeps = grantRunDepsFromEnv(),
 ): Promise<string> {
   const argv = args.argv;
-  if (!Array.isArray(argv) || argv.length === 0 || !argv.every((word) => typeof word === 'string' && word)) {
+  if (
+    !Array.isArray(argv) ||
+    argv.length === 0 ||
+    !argv.every((word) => typeof word === 'string' && word)
+  ) {
     throw new Error('argv must be a non-empty array of words');
   }
   const result = await deps.run({ roomId: deps.roomId, argv: argv as string[] });
@@ -1584,6 +1744,12 @@ async function callAgentTool(name: string, args: JsonObject): Promise<string> {
       return attachFile(args);
     case 'create_schedule':
       return createSchedule(args);
+    case 'subscribe_events':
+      return subscribeEvents(args);
+    case 'list_event_subscriptions':
+      return listEventSubscriptions();
+    case 'emit_event':
+      return emitEvent(args);
     case 'list_schedules':
       return listSchedules();
     case 'delete_schedule':
@@ -1655,9 +1821,7 @@ async function handleLine(line: string): Promise<void> {
           : callTool(params.name, asObject(params.arguments));
       } catch (error) {
         success(request.id, {
-          content: [
-            { type: 'text', text: error instanceof Error ? error.message : String(error) },
-          ],
+          content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }],
           isError: true,
         });
         return;

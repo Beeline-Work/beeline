@@ -1,4 +1,4 @@
-import type { SystemEvent } from './system-events.js';
+import type { ServerEventKind, SystemEvent } from './system-events.js';
 import type {
   AgentGrantEscalation,
   AgentGrantKind,
@@ -30,6 +30,34 @@ export type AgentScheduleEntry = {
 export type AgentScheduleListResult = { readonly schedules: readonly AgentScheduleEntry[] };
 export type DeleteAgentScheduleInput = AgentRoomInput & { readonly scheduleId: string };
 
+/**
+ * What this agent reacts to in ONE Room, written by the agent itself.
+ *
+ * The subscription lives on the agent's own Room membership, so the operation
+ * carries no identity: the daemon token names the agent and `roomId` names the
+ * Room, and the server refuses anything else. `kinds` REPLACES the list, so an
+ * agent asked to stop reacting sends the remaining kinds (or none).
+ */
+export type SetEventSubscriptionsInput = RoomInput & {
+  readonly kinds: readonly string[];
+};
+export type EventSubscriptionsResult = { readonly kinds: readonly ServerEventKind[] };
+
+/**
+ * One event this agent emits into the Room it is answering in.
+ *
+ * `kind` must be an `agent:<slug>` kind; a server kind is the server's own word
+ * and is refused here. The cause is NOT carried: the server reads the agent's
+ * active turn receipt and derives cause, root and depth from it, because a
+ * guard the guarded party sets is not a guard.
+ */
+export type PostRoomEventInput = RoomInput & {
+  readonly kind: string;
+  readonly consequence: string;
+  /** Agent members of this Room to wake, at most `MAX_MENTIONS_PER_EVENT`. */
+  readonly mentionAgentIds?: readonly string[];
+};
+
 export type DaemonOperationMap = {
   getDaemonBootstrap: Operation<DaemonBootstrapInput, DaemonBootstrapResult>;
   getWorkspaceRoster: Operation<WorkspaceRosterInput, WorkspaceRosterResult>;
@@ -40,6 +68,9 @@ export type DaemonOperationMap = {
   getMissionAuthority: Operation<MissionAuthorityInput, AuthorityDecisionResult>;
   listWorkSchedules: Operation<AgentInput, WorkScheduleListResult>;
   createAgentSchedule: Operation<CreateAgentScheduleInput, AgentScheduleResult>;
+  setEventSubscriptions: Operation<SetEventSubscriptionsInput, EventSubscriptionsResult>;
+  listEventSubscriptions: Operation<RoomInput, EventSubscriptionsResult>;
+  postRoomEvent: Operation<PostRoomEventInput, WriteResult>;
   listAgentSchedules: Operation<AgentRoomInput, AgentScheduleListResult>;
   deleteAgentSchedule: Operation<DeleteAgentScheduleInput, WriteResult>;
   getWorkScheduleAuthority: Operation<WorkScheduleAuthorityInput, AuthorityDecisionResult>;

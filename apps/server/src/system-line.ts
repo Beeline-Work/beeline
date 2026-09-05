@@ -1,5 +1,9 @@
 import { randomBytes } from 'node:crypto';
 import {
+  MAX_EVENT_DEPTH,
+  MAX_TURNS_PER_ROOT,
+  eventBudgetRefusal,
+  eventDepthRefusal,
   formatSystemLine,
   type SystemEvent,
   type SystemEventKind,
@@ -49,6 +53,26 @@ export interface SystemLineInput {
   readonly card?: Record<string, unknown>;
   readonly requestId?: string;
   readonly durableFact?: 'failure' | 'merge' | 'action';
+  /**
+   * The message this line is a consequence of, when it is one.
+   *
+   * Passed only by the server, from a fact the server read itself — an agent's
+   * active turn receipt, never a value a helper sent. A line with a cause is
+   * part of a cascade: it inherits that cause's root, sits one deeper, and is
+   * refused when the cascade has run too deep or woken too many turns. A line
+   * with a kind and no cause is the ROOT of its own cascade at depth 0, and is
+   * never refused — a join must not be lost to a guard meant for agents.
+   */
+  readonly causeId?: string;
+}
+
+/**
+ * The cascade bounds, refused at write time. Carries the sentence an agent
+ * reads: `postRoomEvent` lets it out of the operation so the emitting tool
+ * shows it verbatim, and nothing is written.
+ */
+export class EventCascadeRefusedError extends Error {
+  override readonly name = 'EventCascadeRefusedError';
 }
 
 export interface SystemLineResult {
@@ -131,6 +155,49 @@ async function subscribers(
   }
 }
 
+type Cascade = { causeId: string | null; rootCauseId: string; depth: number };
+
+/**
+ * Where this line sits in its cascade, and whether the cascade may grow.
+ *
+ * The depth and the root are DERIVED from the cause row the server reads here;
+ * neither is ever accepted from a caller, because the party a guard binds must
+ * not be the party that sets it. The count is serialised per root with
+ * `pg_advisory_xact_lock(hashtext(root))`: counting and then inserting races,
+ * and two emitters that each see eleven would otherwise both write the twelfth.
+ * The lock is per root, so unrelated Rooms never wait on each other, and it is
+ * released by the transaction that took it.
+ */
+async function resolveCascade(
+  database: SqlDatabase,
+  causeId: string,
+  mentionCount: number,
+): Promise<Cascade> {
+  const cause = await database.query<{
+    event_root_cause_id: string | null;
+    event_depth: number | null;
+  }>(`SELECT event_root_cause_id,event_depth FROM messages WHERE id=$1`, [causeId]);
+  const row = cause.rows[0];
+  if (!row) {
+    throw new EventCascadeRefusedError(
+      'the message that caused this turn is no longer in the Room, so this event has nothing to cite; nothing was posted',
+    );
+  }
+  const rootCauseId = row.event_root_cause_id ?? causeId;
+  const depth = (row.event_depth ?? 0) + 1;
+  await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [rootCauseId]);
+  if (depth > MAX_EVENT_DEPTH) throw new EventCascadeRefusedError(eventDepthRefusal(depth));
+  const spent = await database.query<{ woken: number }>(
+    `SELECT COALESCE(SUM(jsonb_array_length(mention_ids)),0)::int woken
+     FROM messages WHERE event_root_cause_id=$1`,
+    [rootCauseId],
+  );
+  const woken = spent.rows[0]?.woken ?? 0;
+  if (woken + mentionCount > MAX_TURNS_PER_ROOT)
+    throw new EventCascadeRefusedError(eventBudgetRefusal(woken));
+  return { causeId, rootCauseId, depth };
+}
+
 /** Insert one system line (or card) in a Room. */
 export async function systemLine(
   database: SqlDatabase,
@@ -141,30 +208,49 @@ export async function systemLine(
   const authorId = input.authorId ?? input.subject.id;
   if (!authorId) throw new Error('system line needs an author identity');
   const mentions = [
-    ...(input.mentions ?? []),
-    ...(await subscribers(database, input.roomId, input.kind)),
+    ...new Set([
+      ...(input.mentions ?? []),
+      ...(await subscribers(database, input.roomId, input.kind)),
+    ]),
   ];
-  const result = await database.query(
-    `INSERT INTO messages(
-       id,room_id,author_id,text,presentation,mention_ids,request_id,durable_fact,
-       card_type,card,system_event
-     ) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10::jsonb,$11::jsonb)
-     ON CONFLICT(id) DO NOTHING`,
-    [
-      id,
-      input.roomId,
-      authorId,
-      text,
-      input.presentation ?? 'system',
-      JSON.stringify([...new Set(mentions)]),
-      input.requestId ?? null,
-      input.durableFact ?? null,
-      input.cardType ?? null,
-      input.card ? JSON.stringify(input.card) : null,
-      JSON.stringify(event),
-    ],
+  // Only an event carries a cascade. A line with no kind is one nothing reacts
+  // to, so it has no root to belong to and no budget to spend.
+  const write = async (db: SqlDatabase, cascade: Cascade | undefined) => {
+    const result = await db.query(
+      `INSERT INTO messages(
+         id,room_id,author_id,text,presentation,mention_ids,request_id,durable_fact,
+         card_type,card,system_event,event_cause_id,event_root_cause_id,event_depth
+       ) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10::jsonb,$11::jsonb,$12,$13,$14)
+       ON CONFLICT(id) DO NOTHING`,
+      [
+        id,
+        input.roomId,
+        authorId,
+        text,
+        input.presentation ?? 'system',
+        JSON.stringify(mentions),
+        input.requestId ?? null,
+        input.durableFact ?? null,
+        input.cardType ?? null,
+        input.card ? JSON.stringify(input.card) : null,
+        JSON.stringify(event),
+        cascade?.causeId ?? null,
+        cascade?.rootCauseId ?? null,
+        cascade?.depth ?? null,
+      ],
+    );
+    return { id, text, event, inserted: Boolean(result.rowCount) };
+  };
+  if (!input.kind) return write(database, undefined);
+  if (input.causeId === undefined)
+    return write(database, { causeId: null, rootCauseId: id, depth: 0 });
+  // One transaction holds the advisory lock through the insert. A caller that
+  // already passed its own transaction handle gets that same handle back
+  // (`PostgresDatabase.transaction` does not nest), so the lock lives exactly
+  // as long as the write it protects.
+  return database.transaction(async (tx) =>
+    write(tx, await resolveCascade(tx, input.causeId as string, mentions.length)),
   );
-  return { id, text, event, inserted: Boolean(result.rowCount) };
 }
 
 /**

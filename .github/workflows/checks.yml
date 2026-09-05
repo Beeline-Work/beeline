@@ -9,12 +9,21 @@
 # paths are untouched is skipped, and a skipped job still posts a passing
 # check, so an unrelated diff never blocks a merge. TYPECHECK alone has no
 # path filter: a type error can be introduced by two independently green PRs
-# merging cleanly (see #850 + #851), so it observes the whole workspace graph.
+# merging cleanly (see #850 + #851), so it observes the whole workspace graph,
+# and it runs the root `npm run typecheck` — turbo's task alone omits the
+# isolated mobile app and tsconfig.scripts.json.
+#
+# Every gate here executes something, or names the run it takes its verdict
+# from. PRODUCTION-CORPUS REPLAY, FRAME-BUDGET and STATE-UPGRADE each name one
+# test that PUSH-GATEWAY SUITE or MOBILE SUITE already runs, so they read that
+# job's result instead of installing and building a second time to re-run it;
+# their filters are subsets of the suite's, and a suite that did not run fails
+# them closed. A path filter must cover the graph its tests import, not just
+# the directory they live in.
 #
 # `gh workflow run checks.yml -f suite=<name>` runs one gate on demand
-# (default `all`); the four heavy client suites run on the self-hosted
-# production-squire runner so they never consume hosted minutes or queue
-# behind the production host's release work.
+# (default `all`); the targeted `(on demand)` lanes run a single test on the
+# self-hosted production-squire runner without the surrounding suite.
 name: Checks
 
 on:
@@ -70,9 +79,18 @@ jobs:
           # composed from YAML anchors, so the diff-membership logic never
           # depends on how dorny/paths-filter treats a nested-list merge.
           filters: |
+            # apps/body/src/daemon-api-client.integration.test.ts imports the
+            # server harness directly (../../server/src/*.js), and the server
+            # reaches @beeline/auth and @beeline/push-gateway; body's own source
+            # imports @beeline/api-contract. All of it is in the job's build
+            # chain, so all of it can break this suite.
             body:
               - 'apps/body/**'
+              - 'apps/server/**'
+              - 'apps/auth/**'
+              - 'apps/push-gateway/**'
               - 'packages/nostr/**'
+              - 'packages/api-contract/**'
               - 'packages/buzz-client/**'
               - 'apps/gate/**'
               - 'package.json'
@@ -80,8 +98,11 @@ jobs:
               - 'tsconfig.base.json'
               - 'turbo.json'
               - '.github/workflows/checks.yml'
+            # apps/push-gateway/package.json depends on @beeline/body and its
+            # production entry imports @beeline/body/release-status.
             pushGateway:
               - 'apps/push-gateway/**'
+              - 'apps/body/**'
               - 'packages/nostr/**'
               - 'packages/api-contract/**'
               - 'packages/buzz-client/**'
@@ -100,23 +121,25 @@ jobs:
               - 'tsconfig.base.json'
               - 'turbo.json'
               - '.github/workflows/checks.yml'
+            # A Metro export resolves the whole app graph, so any app source
+            # file or any @beeline/* package it imports can break it — the old
+            # three-directory subset omitted packages/api-contract and most of
+            # sources/, which is exactly where an unreachable import lands.
             mobileExportReachability:
+              - 'apps/mobile/**'
               - 'packages/nostr/**'
+              - 'packages/api-contract/**'
               - 'packages/buzz-client/**'
-              - 'apps/mobile/package.json'
-              - 'apps/mobile/package-lock.json'
-              - 'apps/mobile/tsconfig.json'
-              - 'apps/mobile/app.config.js'
-              - 'apps/mobile/sources/buzz/**'
-              - 'apps/mobile/sources/sync/transport/**'
-              - 'apps/mobile/sources/app/(app)/buzz/chat/**'
               - 'package.json'
               - 'package-lock.json'
               - 'tsconfig.base.json'
               - 'turbo.json'
               - '.github/workflows/checks.yml'
+            # PRODUCTION-CORPUS REPLAY takes its verdict from PUSH-GATEWAY
+            # SUITE, so this list must stay a subset of pushGateway's above.
             productionCorpusReplay:
               - 'packages/nostr/**'
+              - 'packages/api-contract/**'
               - 'packages/buzz-client/**'
               - 'apps/push-gateway/src/room-indexer.ts'
               - 'apps/push-gateway/src/room-indexer*.test.ts'
@@ -126,6 +149,8 @@ jobs:
               - 'tsconfig.base.json'
               - 'turbo.json'
               - '.github/workflows/checks.yml'
+            # FRAME-BUDGET takes its verdict from MOBILE SUITE; subset of
+            # mobileSuite above.
             frameBudget:
               - 'packages/nostr/**'
               - 'packages/buzz-client/**'
@@ -141,10 +166,14 @@ jobs:
               - 'tsconfig.base.json'
               - 'turbo.json'
               - '.github/workflows/checks.yml'
+            # The daemon durable-state half of this gate is retired with the
+            # feature: apps/body/src/durable-state.ts and its test are deleted
+            # and stay deleted. The surviving state authority is the phone's
+            # stored-surface upgrade path, so this reads as a subset of
+            # mobileSuite and STATE-UPGRADE takes its verdict from MOBILE SUITE.
             stateUpgrade:
               - 'packages/nostr/**'
               - 'packages/buzz-client/**'
-              - 'apps/gate/**'
               - 'apps/mobile/package.json'
               - 'apps/mobile/package-lock.json'
               - 'apps/mobile/tsconfig.json'
@@ -152,9 +181,6 @@ jobs:
               - 'apps/mobile/sources/buzz/**'
               - 'apps/mobile/sources/sync/transport/**'
               - 'apps/mobile/sources/app/(app)/buzz/chat/**'
-              - 'apps/body/src/durable-state.ts'
-              - 'apps/body/src/durable-state.test.ts'
-              - 'apps/body/src/fixtures/durable-state/**'
               - 'package.json'
               - 'package-lock.json'
               - 'tsconfig.base.json'
@@ -187,12 +213,21 @@ jobs:
               - '.github/workflows/*.yaml'
               - '.github/actions/**'
               - '.github/actionlint.yaml'
+              - 'scripts/verify-workflow-paths.mjs'
               - 'package.json'
               - '**/*.sh'
+            # Both deployed containers build from this one root context, so
+            # they share one gate and one filter (the check context is still
+            # named for the auth image alone; see the job).
             authImage:
               - '.github/workflows/checks.yml'
               - '.dockerignore'
               - 'apps/auth/**'
+              - 'apps/server/**'
+              - 'apps/push-gateway/**'
+              - 'apps/body/**'
+              - 'apps/gate/**'
+              - 'packages/api-contract/**'
               - 'packages/buzz-client/**'
               - 'packages/nostr/**'
               - 'package.json'
@@ -203,7 +238,7 @@ jobs:
     name: TYPECHECK
     if: github.event_name == 'pull_request' || inputs.suite == 'all' || inputs.suite == 'typecheck'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -211,9 +246,22 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      # turbo's typecheck task depends on ^build, so every workspace's
-      # dist/ is produced before its dependents are checked.
-      - run: npx turbo run typecheck
+      # `npx turbo run typecheck` misses two of the three legs the root script
+      # runs: the isolated mobile app (its own tsconfig and node_modules, which
+      # turbo does not see) and tsconfig.scripts.json. This gate is unfiltered
+      # and advertises whole-workspace coverage, so it runs the whole script.
+      - name: Install mobile dependencies
+        working-directory: apps/mobile
+        run: npm ci
+      # turbo's typecheck task depends on ^build, so every workspace's dist/ is
+      # produced before its dependents — and before the mobile leg, which
+      # resolves @beeline/* from those dists exactly as Metro does.
+      - run: npm run typecheck
+      # Cheapest possible rot check, and it belongs on the one gate no path
+      # filter can skip: deleting a test that a workflow names touches no
+      # workflow file, so a filtered lane would never see it.
+      - name: Check no workflow names a deleted test
+        run: npm run lint:workflow-paths
 
   body-suite:
     name: BODY SUITE
@@ -340,23 +388,22 @@ jobs:
       - name: Typecheck the mobile app
         run: npm run mobile:typecheck
 
-  # The path filter keeps the heavy client checks present on a relevant PR
-  # without starting their expensive suites. Those suites are explicitly
-  # dispatched and run on production-squire.
+  # This is the one gate whose evidence exists nowhere else: a Metro export
+  # resolves the real package-export graph, and no source-only unit test
+  # catches a Node builtin imported through the built buzz-client barrel. It
+  # needs no Android SDK and no Gradle build — `expo export` is JS bundling —
+  # so it runs here on a hosted runner rather than being deferred to a dispatch
+  # on production-squire that nobody remembers to fire.
   mobile-export-reachability:
     name: MOBILE-EXPORT REACHABILITY
     needs: changes
-    if: github.event_name == 'pull_request' && needs.changes.outputs.mobileExportReachability == 'true'
+    if: >-
+      !cancelled() && (
+        (github.event_name == 'pull_request' && needs.changes.outputs.mobileExportReachability == 'true') ||
+        (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'mobile-export-reachability'))
+      )
     runs-on: ubuntu-latest
-    timeout-minutes: 2
-    steps:
-      - run: echo 'Required check retained; run this heavy suite via workflow_dispatch on production-squire.'
-
-  mobile-export-reachability-on-demand:
-    name: MOBILE-EXPORT REACHABILITY (on demand)
-    if: github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'mobile-export-reachability')
-    runs-on: [self-hosted, beeline-production-squire]
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -364,24 +411,48 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # Metro resolves @beeline/* from built dist, so the export proves the
+      # published entry points, not the TypeScript sources.
       - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client
       - name: Install mobile dependencies
         working-directory: apps/mobile
         run: npm ci
-      # Exercise Metro's real package-export graph. Source-only unit tests do
-      # not catch a Node builtin imported by the built buzz-client barrel.
       - name: Export Android bundle
         working-directory: apps/mobile
         run: npx expo export --platform android --output-dir "$RUNNER_TEMP/mobile-export" --clear
+      # An export that resolved nothing still exits 0 in some Metro failure
+      # modes; the bundle file is the evidence.
+      - name: Prove the export produced an Android bundle
+        run: |
+          set -euo pipefail
+          test -n "$(find "$RUNNER_TEMP/mobile-export/_expo/static/js/android" -name '*.hbc' -o -name '*.js' | head -n 1)"
 
+  # The three checks below name a test that a full suite in this same workflow
+  # already executes. Running it a second time on the same pull request would
+  # buy nothing but a duplicated install-and-build chain, so each takes its
+  # verdict from the run that really happened and says which one. Each filter
+  # above is a subset of that suite's filter, and a 'skipped' suite fails these
+  # closed rather than passing on an execution that never occurred.
   production-corpus-replay:
     name: PRODUCTION-CORPUS REPLAY
-    needs: changes
-    if: github.event_name == 'pull_request' && needs.changes.outputs.productionCorpusReplay == 'true'
+    needs: [changes, push-gateway-suite]
+    if: >-
+      !cancelled() && github.event_name == 'pull_request' &&
+      needs.changes.outputs.productionCorpusReplay == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 5
     steps:
-      - run: echo 'Required check retained; run this heavy suite via workflow_dispatch on production-squire.'
+      - name: Take the verdict from the suite that ran it
+        env:
+          SUITE_RESULT: ${{ needs.push-gateway-suite.result }}
+        run: |
+          set -euo pipefail
+          echo "PUSH-GATEWAY SUITE: $SUITE_RESULT"
+          if [ "$SUITE_RESULT" != 'success' ]; then
+            echo "::error::PRODUCTION-CORPUS REPLAY derives its verdict from PUSH-GATEWAY SUITE, which reported '$SUITE_RESULT'. It runs apps/push-gateway/src/room-indexer.production-corpus.test.ts. A 'skipped' result means the two path filters in this file have drifted apart — PRODUCTION-CORPUS REPLAY's filter must stay a subset of the suite's."
+            exit 1
+          fi
+          echo 'apps/push-gateway/src/room-indexer.production-corpus.test.ts ran there.'
 
   production-corpus-replay-on-demand:
     name: PRODUCTION-CORPUS REPLAY (on demand)
@@ -402,12 +473,24 @@ jobs:
 
   frame-budget:
     name: FRAME-BUDGET
-    needs: changes
-    if: github.event_name == 'pull_request' && needs.changes.outputs.frameBudget == 'true'
+    needs: [changes, mobile-suite]
+    if: >-
+      !cancelled() && github.event_name == 'pull_request' &&
+      needs.changes.outputs.frameBudget == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 5
     steps:
-      - run: echo 'Required check retained; run this heavy suite via workflow_dispatch on production-squire.'
+      - name: Take the verdict from the suite that ran it
+        env:
+          SUITE_RESULT: ${{ needs.mobile-suite.result }}
+        run: |
+          set -euo pipefail
+          echo "MOBILE SUITE: $SUITE_RESULT"
+          if [ "$SUITE_RESULT" != 'success' ]; then
+            echo "::error::FRAME-BUDGET derives its verdict from MOBILE SUITE, which reported '$SUITE_RESULT'. It runs apps/mobile/sources/buzz/surface-runtime.frame-budget.test.ts. A 'skipped' result means the two path filters in this file have drifted apart — FRAME-BUDGET's filter must stay a subset of the suite's."
+            exit 1
+          fi
+          echo 'apps/mobile/sources/buzz/surface-runtime.frame-budget.test.ts ran there.'
 
   frame-budget-on-demand:
     name: FRAME-BUDGET (on demand)
@@ -432,12 +515,24 @@ jobs:
 
   state-upgrade:
     name: STATE-UPGRADE
-    needs: changes
-    if: github.event_name == 'pull_request' && needs.changes.outputs.stateUpgrade == 'true'
+    needs: [changes, mobile-suite]
+    if: >-
+      !cancelled() && github.event_name == 'pull_request' &&
+      needs.changes.outputs.stateUpgrade == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 5
     steps:
-      - run: echo 'Required check retained; run this heavy suite via workflow_dispatch on production-squire.'
+      - name: Take the verdict from the suite that ran it
+        env:
+          SUITE_RESULT: ${{ needs.mobile-suite.result }}
+        run: |
+          set -euo pipefail
+          echo "MOBILE SUITE: $SUITE_RESULT"
+          if [ "$SUITE_RESULT" != 'success' ]; then
+            echo "::error::STATE-UPGRADE derives its verdict from MOBILE SUITE, which reported '$SUITE_RESULT'. It runs apps/mobile/sources/buzz/surface-storage.upgrade.test.ts. A 'skipped' result means the two path filters in this file have drifted apart — STATE-UPGRADE's filter must stay a subset of the suite's."
+            exit 1
+          fi
+          echo 'apps/mobile/sources/buzz/surface-storage.upgrade.test.ts ran there.'
 
   state-upgrade-on-demand:
     name: STATE-UPGRADE (on demand)
@@ -452,15 +547,17 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client
-      # The body durable-state suite imports @beeline/gate's package entry,
-      # which only resolves from its built dist.
-      - run: npm run build -w @beeline/gate
       # Same isolated-app requirement as FRAME-BUDGET above.
       - name: Install mobile dependencies
         working-directory: apps/mobile
         run: npm ci
+      # The daemon durable-state half of this lane (its suite, and the
+      # @beeline/gate build that existed only for it) is retired, not
+      # relocated: that feature and its test were deleted deliberately, and a
+      # workflow line left behind is not a reason to bring either back. The
+      # phone's stored-surface upgrade path is the state authority that
+      # survives, and it is what this lane runs.
       - run: npm test --prefix apps/mobile -- --run sources/buzz/surface-storage.upgrade.test.ts
-      - run: npm test -w @beeline/body -- --run src/durable-state.test.ts
 
   # The runtime version in app.config.js is pinned by hand, because an
   # installed binary keeps the stamp it was built with and a self-computing
@@ -546,23 +643,35 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y shellcheck
       - name: Lint tracked shell scripts
         run: npm run lint:shell
+      # Nothing type-checks a `run:` line. TYPECHECK runs this same guard on
+      # every pull request (a test can be deleted without touching a workflow);
+      # here it is where a workflow author gets the message.
+      - name: Check no workflow names a deleted test
+        run: npm run lint:workflow-paths
 
+  # Two containers are deployed from this repository's root build context: the
+  # auth image and, since the monolith cutover, apps/server/Dockerfile, which
+  # `flyctl deploy` builds at release time. A Dockerfile breaks on inputs no
+  # unit test observes — a COPY of a workspace that moved, a lockfile the
+  # runtime stage can no longer install — and the release is the wrong place to
+  # find that out, so both build here on the pull request that changes their
+  # inputs. The check context keeps its historical name because branch
+  # protection references it; it now covers both images.
   auth-image:
     name: Build auth container
     needs: changes
-    if: github.event_name == 'pull_request' && needs.changes.outputs.authImage == 'true'
+    if: >-
+      !cancelled() && (
+        (github.event_name == 'pull_request' && needs.changes.outputs.authImage == 'true') ||
+        (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'auth-image'))
+      )
     runs-on: ubuntu-latest
-    timeout-minutes: 2
-    steps:
-      - name: Preserve the required PR check without consuming a container runner
-        run: echo 'Auth image builds run only in the server release leg or via the on-demand self-hosted job.'
-
-  auth-image-on-demand:
-    name: Build auth container (on demand)
-    if: github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'auth-image')
-    runs-on: [self-hosted, beeline-production-squire]
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      # Neither image is pushed: this proves the build, and the release legs
+      # remain the only producers of a deployed image.
       - name: Build auth image
         run: docker build -f apps/auth/Dockerfile .
+      - name: Build monolith server image
+        run: docker build -f apps/server/Dockerfile .

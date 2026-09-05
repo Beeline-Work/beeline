@@ -12,10 +12,19 @@ if [ ! -f "$BUILD_GRADLE" ]; then
 fi
 
 # Add release signing config block after debug signingConfigs
-if grep -q 'buzz-release' "$BUILD_GRADLE"; then
+if grep -q 'ANDROID_SIDELOAD_KEYSTORE_PATH' "$BUILD_GRADLE"; then
   echo "Signing config already patched."
   exit 0
 fi
+
+for var in ANDROID_SIDELOAD_KEYSTORE_PATH ANDROID_SIDELOAD_KEY_ALIAS ANDROID_SIDELOAD_STORE_PASSWORD ANDROID_SIDELOAD_KEY_PASSWORD; do
+  if [ -z "${!var:-}" ]; then
+    echo "Error: $var is not set. Run scripts/android-build.sh (which materializes the keystore" \
+      "and these variables from the ANDROID_SIDELOAD_* repository secrets), or export all four" \
+      "yourself; see apps/mobile/android-signing/README.md." >&2
+    exit 1
+  fi
+done
 
 # Use python for precise editing
 python3 << EOF
@@ -40,10 +49,12 @@ new_signing_block = '''    signingConfigs {
             keyPassword 'android'
         }
         release {
-            storeFile file('../../android-signing/release.keystore')
-            storePassword 'REDACTED'
-            keyAlias 'buzz-release'
-            keyPassword 'REDACTED'
+            // Sourced at Gradle-execution time from the ANDROID_SIDELOAD_* env vars
+            // (see apps/mobile/scripts/android-build.sh); never a literal here.
+            storeFile file(System.getenv('ANDROID_SIDELOAD_KEYSTORE_PATH'))
+            storePassword System.getenv('ANDROID_SIDELOAD_STORE_PASSWORD')
+            keyAlias System.getenv('ANDROID_SIDELOAD_KEY_ALIAS')
+            keyPassword System.getenv('ANDROID_SIDELOAD_KEY_PASSWORD')
         }
     }'''
 

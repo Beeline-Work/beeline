@@ -9,6 +9,25 @@ readonly REPO_DIR
 readonly ANDROID_HOME="${ANDROID_HOME:-/home/lunchbox/android-sdk}"
 readonly CACHE_ROOT="${XDG_CACHE_HOME:-$HOME/.cache}"
 
+# The sideload signing key lives only in the ANDROID_SIDELOAD_* repository
+# secrets (see apps/mobile/android-signing/README.md); it is never checked
+# into the tree. Materialize it to a temporary path for this build only.
+for var in ANDROID_SIDELOAD_KEYSTORE_B64 ANDROID_SIDELOAD_KEY_ALIAS ANDROID_SIDELOAD_STORE_PASSWORD ANDROID_SIDELOAD_KEY_PASSWORD; do
+  if [[ -z "${!var:-}" ]]; then
+    echo "Error: $var is not set. A sideload release build signs with the key held in the" \
+      "ANDROID_SIDELOAD_KEYSTORE_B64, ANDROID_SIDELOAD_KEY_ALIAS, ANDROID_SIDELOAD_STORE_PASSWORD," \
+      "and ANDROID_SIDELOAD_KEY_PASSWORD repository secrets. Export all four locally before running" \
+      "this script (see apps/mobile/android-signing/README.md)." >&2
+    exit 1
+  fi
+done
+export ANDROID_SIDELOAD_KEY_ALIAS ANDROID_SIDELOAD_STORE_PASSWORD ANDROID_SIDELOAD_KEY_PASSWORD
+
+ANDROID_SIDELOAD_KEYSTORE_PATH="$(mktemp -t beeline-sideload-keystore.XXXXXX.jks)"
+readonly ANDROID_SIDELOAD_KEYSTORE_PATH
+export ANDROID_SIDELOAD_KEYSTORE_PATH
+base64 -d <<<"$ANDROID_SIDELOAD_KEYSTORE_B64" > "$ANDROID_SIDELOAD_KEYSTORE_PATH"
+
 # The host-side smoke fixture may use loopback while an Android device reaches
 # that same relay through 10.0.2.2. Expo reads this configuration again during
 # Gradle, so derive the device-facing runtime origin here as well as in the
@@ -30,6 +49,7 @@ export CCACHE_NOHASHDIR=true
 
 cleanup() {
   local status=$?
+  rm -f "$ANDROID_SIDELOAD_KEYSTORE_PATH"
   local teardown_args=("$MOBILE_DIR/android")
   if [[ "${BEELINE_ANDROID_KEEP_DEVICE:-0}" == "1" ]]; then
     teardown_args+=(--keep-emulator)

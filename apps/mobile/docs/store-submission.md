@@ -65,9 +65,11 @@ Both stores also need the existing `EXPO_TOKEN` repository secret.
 
 ## Signing choice: EAS credentials, never the sideload keystore
 
-`apps/mobile/android-signing/release.keystore` is the committed **sideload**
-keystore for `npm run apk:release`; its README says to rotate it before any
-store distribution. Play builds therefore never use it. The `store_android` job
+The **sideload** keystore for `npm run apk:release` lives only in the
+`ANDROID_SIDELOAD_*` repository secrets (see
+`apps/mobile/android-signing/README.md`) — never rotate it, since that would
+break in-place upgrades for existing sideload installs. Play builds never use
+it. The `store_android` job
 runs `eas build --profile production --platform android`, whose AAB is signed by the
 **EAS-managed upload key**, and Google Play App Signing owns the app signing key.
 If the upload key is ever lost, Play's upload-key reset flow applies; the

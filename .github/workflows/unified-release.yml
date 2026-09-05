@@ -580,9 +580,10 @@ jobs:
   # Store leg (was play-beta.yml + play-listing.yml + testflight.yml). Runs
   # only when store_track is set, after the app is confirmed, from the exact
   # release SHA. Signing: the AAB carries the EAS-managed upload key (the
-  # committed apps/mobile/android-signing keystore is sideload-only); Play
-  # auth is a short-lived token minted from GOOGLE_PLAY_SERVICE_ACCOUNT_JSON
-  # (scripts/play-token.mjs). A failure here fails this job only.
+  # ANDROID_SIDELOAD_* repository secrets are sideload-only, see
+  # apps/mobile/android-signing/README.md); Play auth is a short-lived token
+  # minted from GOOGLE_PLAY_SERVICE_ACCOUNT_JSON (scripts/play-token.mjs).
+  # A failure here fails this job only.
   store_android:
     needs: [initialize, confirm_app]
     if: contains(fromJSON('["internal","beta","production"]'), inputs.store_track)

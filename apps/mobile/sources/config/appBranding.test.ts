@@ -410,11 +410,11 @@ describe('Beeline display branding', () => {
       }>;
     };
     const beelineClient = googleServices.client.find(
-      (client) => client.client_info.android_client_info.package_name === 'app.usebeeline.mobile',
+      (client) => client.client_info.android_client_info.package_name === 'app.usebeeline',
     );
 
     expect(beelineClient?.client_info.mobilesdk_app_id).toBe(
-      '1:31955293663:android:a08dd03afc4ea13503206a',
+      '1:31955293663:android:2eba1e1e6d1b89dc03206a',
     );
   });
 });

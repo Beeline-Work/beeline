@@ -406,6 +406,19 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (command === 'corner-read-token') {
+    const configFlag = args.indexOf('--config');
+    const roomFlag = args.indexOf('--room');
+    const configPath = configFlag >= 0 ? args[configFlag + 1] : undefined;
+    const roomId = roomFlag >= 0 ? args[roomFlag + 1] : undefined;
+    if (!configPath || !roomId) throw new Error('corner-read-token requires --config and --room');
+    const activated = await activateDaemonTransport(resolve(configPath));
+    if (!activated) throw new Error('corner-read-token requires monolith transport');
+    const credential = await activated.client.execute('getRoomGitHubToken', { roomId });
+    process.stdout.write(`${credential.token}\n`);
+    return;
+  }
+
   if (command === 'connect') {
     // `--subscribe joined,check-failed`: what this agent reacts to in the
     // Rooms the claim joins it to. A greeter is set up with `--subscribe joined`.

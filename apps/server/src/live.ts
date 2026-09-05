@@ -1,7 +1,9 @@
 import { EventEmitter } from 'node:events';
 
 export type LiveEvent =
-  | { type: 'invalidate'; roomId: string; reason: string }
+  /** `agentId` names the author when one agent's own write caused it; a fact the
+   *  server itself publishes carries none. `corner-wake.ts` reads it. */
+  | { type: 'invalidate'; roomId: string; reason: string; agentId?: string }
   | { type: 'draft' | 'thought'; roomId: string; agentId: string; turnId: string; text: string }
   | { type: 'retract'; roomId: string; agentId: string; turnId: string; kind: 'draft' | 'thought' }
   | {

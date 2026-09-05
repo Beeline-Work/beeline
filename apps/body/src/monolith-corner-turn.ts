@@ -976,9 +976,11 @@ export class MonolithCornerTurnLoop {
 
 /**
  * Authenticated wake: races the corner's poll sleep against the server's
- * long-poll. Any failure (disconnect, timeout, refused request) resolves
- * quietly instead of throwing — the timed `wait()` this races against, and
- * the following poll cycle, are the recovery path for a wake this misses.
+ * long-poll. A failure (disconnect, refused request, an operation this server
+ * build does not route) never RESOLVES the race — it hands back a promise that
+ * only the abort settles, so the timed `wait()` keeps its full interval and
+ * stays the one recovery path. Resolving a failure instead turns the race into
+ * a spin: one poll per network round-trip, for as long as the wake is broken.
  */
 async function waitForWake(
   api: DaemonApiClient,
@@ -989,9 +991,16 @@ async function waitForWake(
   try {
     await api.execute('waitForCornerWake', { cornerId });
   } catch {
-    // Recovery is the timed wait this races against; a broken long-poll
-    // reconnects on the loop's next iteration.
+    await never(signal);
   }
+}
+
+/** Settles only on abort — the loser of a race that must not shorten it. */
+async function never(signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return;
+  await new Promise<void>((resolveNever) => {
+    signal?.addEventListener('abort', () => resolveNever(), { once: true });
+  });
 }
 
 async function wait(ms: number, signal?: AbortSignal): Promise<void> {

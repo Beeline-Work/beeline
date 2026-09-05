@@ -467,6 +467,40 @@ describe('operator skills + MCP passthrough', () => {
     expect(operatorText).not.toContain('scribe');
   });
 
+  it('reports malformed ambient skills as concise skipped-entry lines', async () => {
+    const operatorHome = await scratch('beeline-operator-home-');
+    const skillsRoot = resolve(operatorHome, '.claude/skills');
+    const danglingOne = resolve(skillsRoot, 'dangling-one');
+    const danglingTwo = resolve(skillsRoot, 'dangling-two');
+    const skillless = resolve(skillsRoot, 'skillless');
+    await mkdir(skillsRoot, { recursive: true });
+    await symlink(resolve(skillsRoot, 'gone-one'), danglingOne);
+    await symlink(resolve(skillsRoot, 'gone-two'), danglingTwo);
+    await mkdir(skillless);
+    const roomRoot = resolve(await scratch('beeline-room-a-'), 'agent-home');
+    const warnings: string[] = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation((...parts: unknown[]) => {
+      warnings.push(parts.map(String).join(' '));
+    });
+
+    try {
+      await prepareRoomAgentHome({ root: roomRoot, operatorHome, agentKind: 'claude' });
+    } finally {
+      warn.mockRestore();
+    }
+
+    expect(warnings).toEqual(
+      expect.arrayContaining([
+        `[body] skipping operator skill ${danglingOne}: dangling symlink`,
+        `[body] skipping operator skill ${danglingTwo}: dangling symlink`,
+        `[body] skipping operator skill ${skillless}: missing SKILL.md`,
+        '[body] 2 skill entries skipped: dangling symlink',
+      ]),
+    );
+    expect(warnings).toHaveLength(4);
+    expect(warnings.every((line) => !line.includes('\n'))).toBe(true);
+  });
+
   it('copies one explicit per-agent skill without enabling ambient inheritance', async () => {
     const operatorHome = await operatorHomeWithHarnessConfigs();
     await mkdir(resolve(operatorHome, '.agents/skills/review-pr'), { recursive: true });

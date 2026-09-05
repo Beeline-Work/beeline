@@ -315,6 +315,139 @@ describe('corner close-request polling cadence', () => {
     );
   });
 
+  async function cornerHarness(execute: ReturnType<typeof vi.fn>, pollMs: number) {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-corner-wake-'));
+    roots.push(root);
+    await execFileAsync('git', ['init', root]);
+    const runtime = {
+      agentId: '11'.repeat(32),
+      agent: stored('11'.repeat(32), 'Bee'),
+      rooms: [],
+      supervisorRoot: root,
+      transport: {
+        kind: 'monolith',
+        baseUrl: 'https://server.example',
+        daemonToken: 'daemon-token',
+      },
+      agentBinary: '/fake-agent',
+      agentKind: 'codex',
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+    } as unknown as AgentRuntimeRecord;
+    const config: BodyConfig = {
+      agentBinary: '/fake-agent',
+      agentKind: 'codex',
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+      readonlyMcpCommand: '/fake-beeline-mcp',
+      agentEnv: {},
+      workspaceRoot: root,
+      autoApprovePermissions: true,
+    };
+    const api = {
+      execute,
+      connection: () => ({
+        baseUrl: 'https://server.example',
+        daemonToken: 'daemon-token',
+        agentId: runtime.agent.publicKey,
+      }),
+    } as unknown as DaemonApiClient;
+    const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
+    vi.spyOn(acp, 'start').mockResolvedValue(undefined);
+    vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: 'corner-session', raw: {} });
+    vi.spyOn(acp, 'sessionPrompt').mockResolvedValue({
+      stopReason: 'end_turn',
+      updates: [],
+      agentText: 'Done.',
+      toolCalls: [],
+    });
+    const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
+    const abort = new AbortController();
+    return {
+      abort,
+      loop: new MonolithCornerTurnLoop({
+        cornerId: 'corner-id',
+        parentRoomId: 'room-id',
+        workspaceId: 'workspace',
+        objective: 'Implement the widget',
+        featureBranch: 'feature/widget',
+        targetBranch: 'main',
+        worktreePath: root,
+        gitCommonDir: join(root, '.git'),
+        githubToken: 'token',
+        runtime,
+        config,
+        api,
+        scheduler,
+        signal: abort.signal,
+        pollMs,
+        onPoll: vi.fn(),
+        onFailure: vi.fn(),
+        onCloseRequested: async () => undefined,
+        createAcpClient: () => acp,
+      }),
+      scheduler,
+    };
+  }
+
+  it('an arriving wake starts the next intake immediately, without waiting out the poll interval', async () => {
+    let closeReads = 0;
+    let wakeCalls = 0;
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getAgentConfiguration') return { commands: [] };
+      if (name === 'getWorkspaceRoster') return { members: [] };
+      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomConversation')
+        return { items: [{ type: 'message', authorId: '11'.repeat(32), requestId: 'r1' }] };
+      if (name === 'waitForCornerWake') {
+        wakeCalls += 1;
+        // The server has "just" published a new fact — this resolves almost
+        // instantly, far faster than the 60s poll interval below.
+        return { woken: true };
+      }
+      if (name === 'getCornerCloseRequests') {
+        closeReads += 1;
+        // Only the SECOND intake (after the wake) sees the close request —
+        // proving the wake, not the 60s interval, drove it.
+        if (closeReads === 1) return { items: [], cursor: 'latest' };
+        return { items: [], cursor: 'latest', closeRequested: true };
+      }
+      return { id: 'write-id', createdAt: 1 };
+    });
+    const { loop, scheduler } = await cornerHarness(execute, 60_000);
+    const started = Date.now();
+    await loop.run();
+    await scheduler.dispose();
+    expect(closeReads).toBe(2);
+    expect(wakeCalls).toBeGreaterThan(0);
+    expect(Date.now() - started).toBeLessThan(5_000);
+  });
+
+  it('a failed or reconnecting wake never blocks intake — the timed poll is still the recovery path', async () => {
+    let closeReads = 0;
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getAgentConfiguration') return { commands: [] };
+      if (name === 'getWorkspaceRoster') return { members: [] };
+      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomConversation')
+        return { items: [{ type: 'message', authorId: '11'.repeat(32), requestId: 'r1' }] };
+      if (name === 'waitForCornerWake') throw new Error('wake connection refused');
+      if (name === 'getCornerCloseRequests') {
+        closeReads += 1;
+        if (closeReads === 1) return { items: [], cursor: 'latest' };
+        return { items: [], cursor: 'latest', closeRequested: true };
+      }
+      return { id: 'write-id', createdAt: 1 };
+    });
+    // A short poll interval stands in for the wake's failure: the loop still
+    // reaches the second intake through the ordinary timed wait.
+    const { loop, scheduler } = await cornerHarness(execute, 20);
+    await loop.run();
+    await scheduler.dispose();
+    expect(closeReads).toBe(2);
+  });
 });
 
 describe('thin monolith corner turn', () => {

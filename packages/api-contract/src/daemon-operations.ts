@@ -49,6 +49,8 @@ export type DaemonOperationMap = {
   listRoomCorners: Operation<RoomInput, CornerListResult>;
   getCornerRestoreState: Operation<CornerInput, CornerRestoreResult>;
   getCornerCloseRequests: Operation<CornerCursorInput, RoomInboxResult>;
+  /** Long-poll: resolves as soon as the corner has something new, or on a bounded timeout. */
+  waitForCornerWake: Operation<CornerInput, CornerWakeResult>;
   listUntrackedCorners: Operation<RoomInput, CornerListResult>;
   getRoomRepositoryState: Operation<RoomInput, RoomRepositoryStateResult>;
   getRoomGitHubToken: Operation<RoomInput, RoomGitHubTokenResult>;
@@ -100,6 +102,8 @@ export type RoomCursorInput = RoomInput & {
 };
 export type RoomPrincipalInput = RoomInput & { readonly principalId: string };
 export type CornerCursorInput = CornerInput & { readonly after?: string };
+/** `woken` is false only when the timeout elapsed with nothing new. */
+export type CornerWakeResult = { readonly woken: boolean };
 export type PermissionAuthorityInput = RoomPrincipalInput & {
   readonly permissionId: string;
   readonly actionId?: string;

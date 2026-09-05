@@ -941,7 +941,13 @@ export class MonolithCornerTurnLoop {
           }
           cursor = inbox.cursor ?? cursor;
           this.options.onPoll();
-          await wait(pollWithoutWait ? 0 : (this.options.pollMs ?? cornerClosePollMs()), signal);
+          // The wake long-poll shortens the sleep when the server has
+          // something new; a failed or timed-out wake changes nothing — the
+          // timed wait below still runs and the next poll still catches up.
+          await Promise.race([
+            wait(pollWithoutWait ? 0 : (this.options.pollMs ?? cornerClosePollMs()), signal),
+            waitForWake(api, cornerId, signal),
+          ]);
           pollWithoutWait = false;
         } catch (error) {
           if (signal?.aborted) break;
@@ -954,6 +960,26 @@ export class MonolithCornerTurnLoop {
       this.options.grantRunner?.unregister(cornerId);
       await this.options.scheduler.suspend(cornerId);
     }
+  }
+}
+
+/**
+ * Authenticated wake: races the corner's poll sleep against the server's
+ * long-poll. Any failure (disconnect, timeout, refused request) resolves
+ * quietly instead of throwing — the timed `wait()` this races against, and
+ * the following poll cycle, are the recovery path for a wake this misses.
+ */
+async function waitForWake(
+  api: DaemonApiClient,
+  cornerId: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (signal?.aborted) return;
+  try {
+    await api.execute('waitForCornerWake', { cornerId });
+  } catch {
+    // Recovery is the timed wait this races against; a broken long-poll
+    // reconnects on the loop's next iteration.
   }
 }
 

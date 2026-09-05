@@ -295,17 +295,15 @@ describe('corner close-request polling cadence', () => {
     );
     for (const post of posts) expect(post.input.requestId).toEqual(expect.any(String));
     // The pre-tool prose was shown provisionally on the draft lane, keyed by
-    // the same request id so the durable reply settles it (#903).
+    // the same request id so the durable reply settles it (#903). The lane
+    // carries one write at a time and only the newest waiting snapshot, so a
+    // burst of four deltas the wire could not keep up with reaches the reader
+    // as its first frame and its newest one — forward, never backwards.
     expect(
       writes
         .filter((write) => write.name === 'postAgentDraft')
         .map((write) => write.input.text),
-    ).toEqual([
-      'I inspected',
-      'I inspected the code.',
-      'I inspected the code.\n\nThe fix',
-      'I inspected the code.\n\nThe fix is ready.',
-    ]);
+    ).toEqual(['I inspected', 'I inspected the code.\n\nThe fix is ready.']);
     for (const draft of writes.filter((write) => write.name === 'postAgentDraft')) {
       expect(draft.input.turnId).toBe('cornerid');
     }

@@ -15,6 +15,42 @@ function recorder() {
   return { api, writes };
 }
 
+/** Let every already-scheduled microtask and its followers run. */
+const settled = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+/**
+ * A recorder whose draft writes hang on the wire until the test releases them —
+ * slow HTTP, deterministically. Every other operation answers at once, so a
+ * held draft is the only thing a test is measuring.
+ */
+function gatedRecorder() {
+  const writes: Array<{ name: string; input: Record<string, unknown> }> = [];
+  const gates: Array<(error?: Error) => void> = [];
+  const api = {
+    execute: vi.fn((name: string, input: Record<string, unknown>) => {
+      writes.push({ name, input });
+      if (name !== 'postAgentDraft') return Promise.resolve({ id: 'write-id', createdAt: 1 });
+      return new Promise((resolve, reject) => {
+        gates.push((error) =>
+          error ? reject(error) : resolve({ id: 'write-id', createdAt: 1 }),
+        );
+      });
+    }),
+  } as unknown as DaemonApiClient;
+  /** Complete (or fail) the oldest draft still on the wire. */
+  const release = async (error?: Error) => {
+    gates.shift()?.(error);
+    await settled();
+  };
+  const names = () => writes.map((write) => write.name);
+  const texts = () =>
+    writes.filter((write) => write.name === 'postAgentDraft').map((write) => write.input.text);
+  return { api, writes, release, names, texts, held: () => gates.length };
+}
+
+const streamFor = (api: DaemonApiClient, roomId = 'room-id', label = 'monolith Room room-id') =>
+  new AgentTurnStream({ api, agentId: 'a'.repeat(64), roomId, requestId: 'request-id', label });
+
 /** One streamed turn as the ACP hook sees it: every run joined, growing. */
 const PROSE_TOOL_PROSE = [
   'I inspected',
@@ -51,17 +87,15 @@ describe('durable reply text', () => {
 });
 
 describe('agent turn stream', () => {
-  it('publishes every chunk as a provisional draft keyed by the turn’s request id', async () => {
+  it('shows the reader every snapshot the wire keeps up with, in order', async () => {
     const { api, writes } = recorder();
-    const stream = new AgentTurnStream({
-      api,
-      agentId: 'a'.repeat(64),
-      roomId: 'room-id',
-      requestId: 'request-id',
-      label: 'monolith Room room-id',
-    });
-    for (const full of PROSE_TOOL_PROSE) stream.onChunk('', full);
-    await stream.drained();
+    const stream = streamFor(api);
+    // A wire that keeps pace with the harness publishes each snapshot: the
+    // reader's experience of a streamed answer is unchanged.
+    for (const full of PROSE_TOOL_PROSE) {
+      stream.onChunk('', full);
+      await settled();
+    }
     expect(writes.map((write) => write.name)).toEqual(Array(4).fill('postAgentDraft'));
     expect(writes.map((write) => write.input.text)).toEqual(PROSE_TOOL_PROSE);
     for (const write of writes) expect(write.input.turnId).toBe('request-id');
@@ -70,69 +104,106 @@ describe('agent turn stream', () => {
     expect(stream.streamedText).toBe(PROSE_TOOL_PROSE.at(-1));
   });
 
+  it('keeps ONE draft on the wire and only the newest snapshot waiting', async () => {
+    // This replaces the old "publishes every chunk" rule. A draft is a picture
+    // of the whole answer so far, so a snapshot overtaken before it reached the
+    // wire is a frame nobody needed — not a lost message. What survives is that
+    // the reader only ever sees the text move forward.
+    const { api, release, texts, held } = gatedRecorder();
+    const stream = streamFor(api);
+    for (const full of PROSE_TOOL_PROSE) stream.onChunk('', full);
+    // Four deltas, one write: the lane no longer chains a write per delta.
+    expect(texts()).toEqual([PROSE_TOOL_PROSE[0]]);
+    expect(held()).toBe(1);
+    await release();
+    // The two snapshots in between were dropped; the reader jumps to the newest.
+    expect(texts()).toEqual([PROSE_TOOL_PROSE[0], PROSE_TOOL_PROSE.at(-1)]);
+    await release();
+    expect(texts()).toHaveLength(2);
+    expect(held()).toBe(0);
+  });
+
   it('never publishes an empty or preamble-only draft', async () => {
     const { api, writes } = recorder();
-    const stream = new AgentTurnStream({
-      api,
-      agentId: 'a'.repeat(64),
-      roomId: 'room-id',
-      requestId: 'request-id',
-      label: 'corner room-id',
-    });
+    const stream = streamFor(api, 'room-id', 'corner room-id');
     stream.onChunk('', '');
     stream.onChunk('', 'pi v1.2.3');
-    await stream.drained();
+    await settled();
     expect(writes).toEqual([]);
   });
 
-  it('forgets the previous run when a re-pinned retry starts', async () => {
-    const { api } = recorder();
-    const stream = new AgentTurnStream({
-      api,
-      agentId: 'a'.repeat(64),
-      roomId: 'room-id',
-      requestId: 'request-id',
-      label: 'corner room-id',
-    });
+  it('forgets the abandoned run, waiting snapshot and all, when a retry starts', async () => {
+    const { api, release, texts } = gatedRecorder();
+    const stream = streamFor(api, 'room-id', 'corner room-id');
     stream.onChunk('', 'First run text.');
+    stream.onChunk('', 'First run text. More of it.');
     stream.beginRun();
     expect(stream.streamedText).toBe('');
-    await stream.drained();
+    stream.onChunk('', 'Second run.');
+    await release();
+    // The abandoned run's waiting snapshot is dead text: the retry rewrites the
+    // answer from its first delta, so generations never interleave.
+    expect(texts()).toEqual(['First run text.', 'Second run.']);
+    await release();
+    expect(stream.streamedText).toBe('Second run.');
   });
 
-  it('keeps a failed draft publish off the turn: the reply still settles', async () => {
-    const writes: string[] = [];
-    const api = {
-      execute: vi.fn(async (name: string) => {
-        writes.push(name);
-        if (name === 'postAgentDraft') throw new Error('relay refused the draft');
-        return { id: 'write-id', createdAt: 1 };
-      }),
-    } as unknown as DaemonApiClient;
+  it('lets the finished answer overtake a draft still on the wire', async () => {
+    const { api, release, names, writes } = gatedRecorder();
+    const stream = streamFor(api);
+    for (const full of PROSE_TOOL_PROSE) stream.onChunk('', full);
+    stream.close();
+    const turn = stream.settle('The fix is ready.', { triggerMessageId: 'request-id' });
+    await settled();
+    // The durable reply is already published while the first draft has still
+    // not landed, and the snapshots waiting behind it were dropped by close().
+    expect(names()).toEqual(['postAgentDraft', 'postRoomMessage']);
+    await release();
+    await turn;
+    // The retract is the LAST word on the lane, after the late write.
+    expect(names()).toEqual(['postAgentDraft', 'postRoomMessage', 'retractAgentLiveOutput']);
+    const durable = writes.filter((write) => write.name === 'postRoomMessage');
+    expect(durable).toHaveLength(1);
+    expect(durable[0]?.input).toMatchObject({ requestId: 'request-id', text: 'The fix is ready.' });
+  });
+
+  it('keeps a failed draft publish off the turn, and the lane alive after it', async () => {
+    const { api, release, names, texts } = gatedRecorder();
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const stream = new AgentTurnStream({
-      api,
-      agentId: 'a'.repeat(64),
-      roomId: 'room-id',
-      requestId: 'request-id',
-      label: 'corner room-id',
-    });
+    const stream = streamFor(api, 'room-id', 'corner room-id');
     stream.onChunk('', 'Working on it.');
-    await stream.drained();
+    stream.onChunk('', 'Working on it. Nearly there.');
+    await release(new Error('relay refused the draft'));
+    // A refused write is logged and the next snapshot still goes out.
+    expect(texts()).toEqual(['Working on it.', 'Working on it. Nearly there.']);
+    await release();
     await stream.settle('The fix is ready.');
+    expect(errors).toHaveBeenCalled();
     errors.mockRestore();
-    expect(writes).toEqual(['postAgentDraft', 'postRoomMessage', 'retractAgentLiveOutput']);
+    expect(names()).toEqual([
+      'postAgentDraft',
+      'postAgentDraft',
+      'postRoomMessage',
+      'retractAgentLiveOutput',
+    ]);
+  });
+
+  it('settles even when the late draft write fails after the answer landed', async () => {
+    const { api, release, names } = gatedRecorder();
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const stream = streamFor(api, 'room-id', 'corner room-id');
+    stream.onChunk('', 'Working on it.');
+    const turn = stream.settle('The fix is ready.');
+    await settled();
+    await release(new Error('relay refused the draft'));
+    await expect(turn).resolves.toBeUndefined();
+    errors.mockRestore();
+    expect(names()).toEqual(['postAgentDraft', 'postRoomMessage', 'retractAgentLiveOutput']);
   });
 
   it('settles a silent turn by dissolving the draft with no durable message', async () => {
     const { api, writes } = recorder();
-    const stream = new AgentTurnStream({
-      api,
-      agentId: 'a'.repeat(64),
-      roomId: 'room-id',
-      requestId: 'request-id',
-      label: 'corner room-id',
-    });
+    const stream = streamFor(api, 'room-id', 'corner room-id');
     await stream.settle('');
     expect(writes).toEqual([
       {
@@ -154,8 +225,10 @@ describe('Room and corner streaming parity (C100)', () => {
     const run = async (roomId: string, label: string, fields = {}) => {
       const { api, writes } = recorder();
       const stream = new AgentTurnStream({ api, agentId, roomId, requestId: 'request-id', label });
-      for (const full of PROSE_TOOL_PROSE) stream.onChunk('', full);
-      await stream.drained();
+      for (const full of PROSE_TOOL_PROSE) {
+        stream.onChunk('', full);
+        await settled();
+      }
       await stream.settle(durableReplyText('The fix is ready.'), fields);
       return writes;
     };

@@ -56,9 +56,18 @@ export function durableReplyText(agentText: string): string {
 }
 
 export class AgentTurnStream {
-  /** Draft publishes are serialized so the lane never reorders. */
-  private tail = Promise.resolve();
   private latest = '';
+  /**
+   * The newest snapshot not yet handed to a write. A draft is a picture of the
+   * whole answer so far, so an older snapshot that never reached the wire is
+   * not a lost message — it is a frame nobody needed. Keeping only the newest
+   * one bounds the lane at ONE write in flight plus ONE waiting.
+   */
+  private pending: string | undefined;
+  /** The draft write on the wire, if any. Never rejects; failures are logged. */
+  private inFlight: Promise<void> | undefined;
+  /** Closed lanes publish nothing more, so the answer never queues behind a draft. */
+  private closed = false;
 
   constructor(private readonly options: AgentTurnStreamOptions) {}
 
@@ -70,18 +79,35 @@ export class AgentTurnStream {
   readonly onChunk = (_delta: string, full: string): void => {
     this.latest = full;
     const text = sanitizeAgentReply(full);
-    if (!text) return;
-    const { api, agentId, roomId, requestId, label } = this.options;
-    this.tail = this.tail
-      .catch(() => undefined)
-      .then(() =>
-        api.execute('postAgentDraft', { agentId, roomId, turnId: requestId, text }),
-      )
-      .then(() => undefined)
-      .catch((error) =>
-        console.error(`[thin-core] ${label} draft publish failed:`, error),
-      );
+    if (!text || this.closed) return;
+    this.pending = text;
+    this.publishPending();
   };
+
+  /**
+   * Hand the newest snapshot to the wire, one write at a time.
+   *
+   * Serialized, never parallel: two drafts in flight can land out of order and
+   * a reader would watch the answer go backwards. Serialized used to mean an
+   * unbounded chain — every delta got its own write, and the durable reply
+   * awaited the whole tail, so a finished answer sat behind writes showing text
+   * nobody would ever read. It waits for at most one write now, and only to
+   * keep the retract last.
+   */
+  private publishPending(): void {
+    if (this.inFlight || this.pending === undefined) return;
+    const text = this.pending;
+    this.pending = undefined;
+    const { api, agentId, roomId, requestId, label } = this.options;
+    this.inFlight = api
+      .execute('postAgentDraft', { agentId, roomId, turnId: requestId, text })
+      .then(() => undefined)
+      .catch((error) => console.error(`[thin-core] ${label} draft publish failed:`, error))
+      .then(() => {
+        this.inFlight = undefined;
+        this.publishPending();
+      });
+  }
 
   /**
    * Everything the delta hook has seen this turn: every assistant run joined,
@@ -95,11 +121,18 @@ export class AgentTurnStream {
   /** Forget the previous run's stream text; a re-pinned retry starts clean. */
   beginRun(): void {
     this.latest = '';
+    // A snapshot of the abandoned run that never reached the wire is dead text:
+    // the new run rewrites the answer from its first delta.
+    this.pending = undefined;
   }
 
-  /** Await every queued draft publish, so the lane is quiet before it settles. */
-  async drained(): Promise<void> {
-    await this.tail;
+  /**
+   * Stop drafting. The answer is known from here on, so anything still waiting
+   * is obsolete and is dropped rather than published ahead of the final.
+   */
+  close(): void {
+    this.closed = true;
+    this.pending = undefined;
   }
 
   /**
@@ -108,6 +141,7 @@ export class AgentTurnStream {
    * retracted either way.
    */
   async settle(reply: string, fields: DurableReplyFields = {}): Promise<void> {
+    this.close();
     const { api, agentId, roomId, requestId } = this.options;
     if (reply) {
       await api.execute('postRoomMessage', {
@@ -118,6 +152,10 @@ export class AgentTurnStream {
         ...fields,
       });
     }
+    // A draft write already on the wire can land after the durable reply. The
+    // retract has to be the last word on this lane, or that late write puts an
+    // obsolete draft back under a message the reader has already been given.
+    await this.inFlight;
     await api.execute('retractAgentLiveOutput', {
       agentId,
       roomId,

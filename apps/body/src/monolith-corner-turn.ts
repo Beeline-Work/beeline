@@ -735,8 +735,9 @@ export class MonolithCornerTurnLoop {
                 if (failure) console.warn(`[thin-core] corner ${cornerId} ${failure}`);
               }
               await this.activityTail;
-              await stream.drained();
-              await this.activityTail;
+              // Close the draft lane before the answer is published: the finished
+              // reply must never queue behind a draft nobody will read.
+              stream.close();
               let reply = durableReplyText(result.agentText);
               if (!reply && explained) {
                 reply = explained.recoveredText ? durableReplyText(explained.recoveredText) : '';

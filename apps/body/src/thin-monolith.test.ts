@@ -104,6 +104,106 @@ describe('monolith-only thin daemon', () => {
     expect(execute).toHaveBeenCalledWith('postAgentPresence', expect.objectContaining({ roomId: 'room' }));
   });
 
+  it('recovers a corner objective from the OLDEST page, not the newest one', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'beeline-corner-objective-'));
+    roots.push(root);
+    const staged = await stageMonolithAgentRuntime({
+      workspaceId: 'workspace',
+      pairedBy: 'human',
+      daemonExchangeToken: `bde_${'c'.repeat(43)}`,
+      agentBinary: '/nonexistent',
+      agentKind: 'codex',
+      agentCommand: '/nonexistent',
+      agentArgs: [],
+      mcpBinary: 'unused',
+      agentIdentity: identityFromKey('77'.repeat(32), 'Bee'),
+      bodyIdentity: identityFromKey('88'.repeat(32), 'Body'),
+      supervisorRoot: root,
+    });
+    const HANDOFF = [
+      'Handoff from the parent Room: add a `--dry-run` flag to the importer CLI.',
+      'It must print the plan it would apply and exit 0 without touching the database.',
+    ].join(' ');
+    // The server answers the default window with the newest page; only the
+    // `earliest` window reaches back to the corner's opening message.
+    const conversationReads: Array<Record<string, unknown>> = [];
+    const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
+      if (name === 'getCornerRestoreState') return { cornerId: 'corner', lifecycle: {} };
+      if (name === 'getRoomGitHubToken') return { token: 'gh-token' };
+      if (name === 'getRoomRepositoryState') {
+        return {
+          resolution: 'repository' as const,
+          remote: 'https://github.example/x/y',
+          targetBranch: 'main',
+        };
+      }
+      if (name === 'getRoomConversation') {
+        conversationReads.push(input);
+        const items =
+          input.window === 'earliest'
+            ? [
+                {
+                  id: 'row-1',
+                  authorId: 'human',
+                  createdAt: 1,
+                  type: 'message',
+                  body: HANDOFF,
+                  mentionIds: [],
+                  attachments: [],
+                },
+                {
+                  id: 'row-2',
+                  authorId: 'agent',
+                  createdAt: 2,
+                  type: 'message',
+                  body: 'on it',
+                  mentionIds: [],
+                  attachments: [],
+                },
+              ]
+            : [
+                {
+                  id: 'row-249',
+                  authorId: 'agent',
+                  createdAt: 249,
+                  type: 'message',
+                  body: 'pushed the branch',
+                  mentionIds: [],
+                  attachments: [],
+                },
+              ];
+        return { items, cursor: 'c' };
+      }
+      throw new Error(`unexpected daemon operation: ${name}`);
+    });
+    const failures: string[] = [];
+    const error = vi.spyOn(console, 'error').mockImplementation((...parts: unknown[]) => {
+      failures.push(
+        parts.map((part) => (part instanceof Error ? part.message : String(part))).join(' '),
+      );
+    });
+    const coordinator = new RoomRuntimeCoordinator(
+      staged.runtime,
+      staged.configPath,
+      { workspaceRoot: root } as BodyConfig,
+      { daemonApi: { execute } as unknown as DaemonApiClient },
+    );
+    // The clone against a bogus remote is what ends this run; everything the
+    // objective depends on has already happened by then.
+    await (
+      coordinator as unknown as {
+        startCorner(corner: { cornerId: string; parentRoomId: string }): Promise<void>;
+      }
+    ).startCorner({ cornerId: 'corner', parentRoomId: 'room' });
+    error.mockRestore();
+
+    expect(conversationReads).toEqual([{ roomId: 'corner', limit: 200, window: 'earliest' }]);
+    // The objective was found. The failure that did happen is the clone, not a
+    // corner whose opening message fell off the far end of the page.
+    expect(failures.join('\n')).not.toContain('corner has no durable objective post');
+    expect(failures.join('\n')).toContain('failed to start corner corner');
+  });
+
   it('materializes the server-bound repository as a Room inspection checkout', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'beeline-room-checkout-'));
     roots.push(root);

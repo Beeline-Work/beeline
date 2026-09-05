@@ -497,6 +497,18 @@ describe('thin monolith corner turn', () => {
               requestId: 'request-id',
               attachments: [],
             },
+            // A transcript long enough that a warm second turn has something to
+            // leave out. Human-authored, so the corner still has no durable
+            // agent reply and still kicks the objective off.
+            ...Array.from({ length: 40 }, (_, index) => ({
+              id: `corner-row-${index + 1}`,
+              authorId: 'human-pubkey',
+              createdAt: index + 2,
+              type: 'message',
+              body: `corner row ${index + 1}`,
+              mentionIds: [],
+              attachments: [],
+            })),
           ],
           cursor: 'latest',
         };
@@ -574,6 +586,18 @@ describe('thin monolith corner turn', () => {
     expect(sessionPrompt).toHaveBeenCalledTimes(2);
     expect(onCloseRequested).toHaveBeenCalledOnce();
     expect(sessionPrompt.mock.calls[1]?.[1]).toContain('passed a check');
+    // The first turn on a cold session renders the whole transcript window.
+    const firstPrompt = String(sessionPrompt.mock.calls[0]?.[1]);
+    const secondPrompt = String(sessionPrompt.mock.calls[1]?.[1]);
+    expect(firstPrompt).toContain('Corner transcript:');
+    expect(firstPrompt).toContain('corner row 1');
+    // The second turn is the SAME warm session: it sends only what is new, and
+    // the objective — which lives outside the transcript window — still rides
+    // on every prompt.
+    expect(secondPrompt).toContain('New in the corner since your last turn');
+    expect(secondPrompt).not.toContain('corner row 1\n');
+    expect(firstPrompt).toContain('Corner objective:\nImplement the widget');
+    expect(secondPrompt).toContain('Corner objective:\nImplement the widget');
     expect(sessionNew).toHaveBeenCalledWith(
       expect.objectContaining({
         cwd: worktree,

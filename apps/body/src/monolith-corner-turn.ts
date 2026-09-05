@@ -49,6 +49,7 @@ import type { AgentRuntimeRecord } from './runtime.js';
 import { runtimeIdentity } from './runtime.js';
 import { MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE, SOUL_HOUSE_RULE } from './response-directives.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
+import { WarmTranscript } from './warm-transcript.js';
 import { withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
 import { TurnTrace, TurnTraceFile, type TurnTraceSink } from './turn-trace.js';
 
@@ -258,6 +259,8 @@ export class MonolithCornerTurnLoop {
   private readonly agent: ReturnType<typeof runtimeIdentity>;
   private client?: AcpClient;
   private sessionId?: string;
+  /** What this exact ACP session has already been prompted with (`warm-transcript.ts`). */
+  private readonly warmTranscript = new WarmTranscript();
   /** The live session's environment, read back for pi's own turn record. */
   private agentEnv: Record<string, string> = {};
   /** OpenRouter providers this activation pinned, in order (C92). */
@@ -626,17 +629,22 @@ export class MonolithCornerTurnLoop {
                   ? { ...requester, name: names.get(requester.pubkey)! }
                   : requester;
               if (requestedBy) this.currentTurn = { requestId, requester: requestedBy };
-              const transcript = conversation.items
-                .slice(-120)
-                .map(
-                  (message) =>
-                    `${names.get(message.authorId) ?? 'Beeline'} [${message.type}]: ${message.body}`,
-                )
-                .join('\n');
-              const prompt = [
+              const transcriptRows = conversation.items.slice(-120).map((message) => ({
+                id: message.id,
+                line: `${names.get(message.authorId) ?? 'Beeline'} [${message.type}]: ${message.body}`,
+              }));
+              // Built per ATTEMPT, never once per turn: a C92 re-pin runs the
+              // same turn against a NEW session id that holds none of this
+              // transcript. The objective is outside the window and always
+              // renders, warm session or not.
+              const buildPrompt = (): string => [
                 this.turnIdentityInstructions,
                 `Corner objective:\n${this.options.objective}`,
-                transcript ? `Corner transcript:\n${transcript}` : '',
+                WarmTranscript.render(
+                  this.warmTranscript.select(this.sessionId, transcriptRows),
+                  'Corner transcript:',
+                  'New in the corner since your last turn (the earlier transcript is already in this session):',
+                ),
                 [
                   `Newest trigger:\n${trigger}`,
                   ...attachmentPromptLines(attachments, delivered, this.acceptsImages()),
@@ -694,7 +702,7 @@ export class MonolithCornerTurnLoop {
                 return this.client!.sessionPrompt(
                   this.sessionId!,
                   promptWithImages(
-                    prompt,
+                    buildPrompt(),
                     attachmentImageBlocks(delivered, this.acceptsImages()),
                   ),
                   120_000,
@@ -810,6 +818,9 @@ export class MonolithCornerTurnLoop {
     const { api, cornerId, signal } = this.options;
     let cursor = (await api.execute('getRoomInbox', { roomId: cornerId, startAtLatest: true }))
       .cursor;
+    // Newest page: "has this corner already answered?" is a question about the
+    // work as it stands now. On a corner past one page the oldest rows say
+    // nothing about whether the objective still needs kicking off.
     const history = await api.execute('getRoomConversation', { roomId: cornerId, limit: 200 });
     const durableAgentReplies = history.items.filter(
       (item) =>

@@ -65,6 +65,7 @@ import { isFailedToolCall, toolCallFailureLine } from './tool-call-failure.js';
 import { distillTurnFailureReason } from './turn-failure-reason.js';
 import { withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
+import { WarmTranscript } from './warm-transcript.js';
 
 type WorkspaceRoster = DaemonOperationMap['getWorkspaceRoster']['output'];
 type RoomMessage = DaemonOperationMap['getRoomInbox']['output']['items'][number];
@@ -269,6 +270,8 @@ export class MonolithRoomTurnLoop {
   private sessionScratchDir?: string;
   /** The `agent-home.ts` overlay this session writes into; a Room grant keeps it. */
   private sessionStateDirs: string[] = [];
+  /** What this exact ACP session has already been prompted with (`warm-transcript.ts`). */
+  private readonly warmTranscript = new WarmTranscript();
   /** Local copies already delivered this session, by message id, so transcript renders reuse them. */
   private readonly deliveredAttachments = new Map<string, DeliveredAttachment[]>();
   /** Names from the latest roster read, for ledger bylines the runner writes. */
@@ -737,7 +740,7 @@ export class MonolithRoomTurnLoop {
                 ]),
               );
               const names = new Map(roster.members.map((member) => [member.identityId, member.name]));
-              const transcript = conversation.items
+              const transcriptRows = conversation.items
                 .filter(
                   (message) =>
                     message.type === 'message' &&
@@ -745,22 +748,29 @@ export class MonolithRoomTurnLoop {
                     !active.steers.some((steerItem) => steerItem.id === message.id),
                 )
                 .slice(-80)
-                .map((message) =>
-                  roomMessagePrompt(
+                .map((message) => ({
+                  id: message.id,
+                  line: roomMessagePrompt(
                     names.get(message.authorId) ?? message.authorId.slice(0, 12),
                     message.body,
                     message.attachments,
                     this.deliveredAttachments.get(message.id),
                     this.acceptsImages(),
                   ),
-                )
-                .join('\n');
+                }));
               const grantDecision = isGrantDecisionLine(item, this.agent.publicKey);
               const resumedRequestId = grantDecision ? this.pausedOnGrantRequestId : undefined;
               if (grantDecision) this.pausedOnGrantRequestId = undefined;
-              const prompt = [
+              // Built per ATTEMPT, never once per turn: a C92 re-pin runs the
+              // same turn against a NEW session id that holds none of this
+              // conversation, so it has to render the whole window again.
+              const buildPrompt = (): string => [
                 this.turnInstructionPrefix,
-                transcript ? `Room conversation so far:\n${transcript}` : '',
+                WarmTranscript.render(
+                  this.warmTranscript.select(this.sessionId, transcriptRows),
+                  'Room conversation so far:',
+                  'New in the Room since your last turn (the earlier conversation is already in this session):',
+                ),
                 `Newest message from ${
                   isScheduledPrompt(item, this.agent.publicKey)
                     ? SCHEDULE_SCHEDULER_NAME
@@ -804,7 +814,7 @@ export class MonolithRoomTurnLoop {
               // again (C92) — against the NEW client and session id.
               const runPrompt = async (): Promise<PromptResult> => {
                 let nextPrompt = promptWithImages(
-                  prompt,
+                  buildPrompt(),
                   attachmentImageBlocks(delivered, this.acceptsImages()),
                 );
                 let result: Awaited<ReturnType<AcpClient['sessionPrompt']>> | undefined;

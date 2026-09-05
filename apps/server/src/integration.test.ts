@@ -678,6 +678,104 @@ describe('monolith integration', () => {
     socket.close();
   });
 
+  it('prompts a conversation past one page with its newest rows, and recovers the objective from its oldest', async () => {
+    // 250 ordered rows: row 1 is the parent-to-corner handoff the objective is
+    // recovered from, and the newest rows are what a turn must be prompted with.
+    const OBJECTIVE = [
+      'Handoff from the parent Room: add a `--dry-run` flag to the importer CLI.',
+      'It must print the plan it would apply and exit 0 without touching the database.',
+      'Keep the existing default behaviour byte-for-byte when the flag is absent.',
+    ].join(' ');
+    const rowId = (index: number) =>
+      createHash('sha256').update(`page-fixture-${index}`).digest('hex');
+    const base = Date.UTC(2026, 0, 1, 0, 0, 0);
+    for (let index = 1; index <= 250; index += 1) {
+      // Heavy activity rows and human decisions ride the same page as ordinary
+      // conversation, exactly as a long working Room carries them.
+      const presentation =
+        index % 25 === 0 ? 'system' : index % 3 === 0 ? 'activity' : 'message';
+      await database.query(
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,mention_ids,activity,created_at)
+         VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,to_timestamp($8::bigint/1000.0))`,
+        [
+          rowId(index),
+          ROOM,
+          index % 2 === 0 ? HUMAN : AGENT,
+          index === 1 ? OBJECTIVE : `row ${index}`,
+          presentation,
+          JSON.stringify(index % 2 === 0 ? [AGENT] : []),
+          presentation === 'activity'
+            ? JSON.stringify({ calls: Array.from({ length: 12 }, (_, call) => ({ title: `call ${call}` })) })
+            : null,
+          base + index * 1000,
+        ],
+      );
+    }
+    const bodies = async (payload: unknown) =>
+      (
+        (await (
+          await daemonOperation('getRoomConversation', payload)
+        ).json()) as { items: Array<{ body: string }> }
+      ).items.map((item) => item.body);
+
+    // Before: the default read answered with rows 1..200 and the Room's final
+    // 80 were rows 121..200. After: the default read is the newest page.
+    const recent = await bodies({ roomId: ROOM, limit: 200 });
+    expect(recent).toHaveLength(200);
+    expect(recent[0]).toBe('row 51');
+    expect(recent.at(-1)).toBe('row 250');
+    // Ascending transcript order inside the page is what a prompt renders.
+    expect(recent).toEqual(Array.from({ length: 200 }, (_, index) => `row ${index + 51}`));
+    // The Room turn's own final-80 slice now ends on the newest message.
+    const finalEighty = recent.slice(-80);
+    expect(finalEighty[0]).toBe('row 171');
+    expect(finalEighty.at(-1)).toBe('row 250');
+
+    // Startup objective recovery still reads the oldest end.
+    const earliest = await bodies({ roomId: ROOM, limit: 200, window: 'earliest' });
+    expect(earliest).toHaveLength(200);
+    expect(earliest[0]).toBe(OBJECTIVE);
+    expect(earliest.at(-1)).toBe('row 200');
+    // The whole handoff survives the trip, not just its first sentence.
+    expect(earliest.find((body) => body.includes('--dry-run'))).toBe(OBJECTIVE);
+
+    // A shorter page is still the newest rows, and the default limit too.
+    expect(await bodies({ roomId: ROOM, limit: 5 })).toEqual([
+      'row 246',
+      'row 247',
+      'row 248',
+      'row 249',
+      'row 250',
+    ]);
+    expect((await bodies({ roomId: ROOM })).at(-1)).toBe('row 250');
+
+    // The inbox keeps its ascending cursor semantics: a walk from the start
+    // still begins at row 1 and pages forward.
+    const firstInbox = (await (
+      await daemonOperation('getRoomInbox', { roomId: ROOM, limit: 100 })
+    ).json()) as { items: Array<{ body: string }>; cursor: string };
+    expect(firstInbox.items[0]?.body).toBe('row 2');
+    const secondInbox = (await (
+      await daemonOperation('getRoomInbox', { roomId: ROOM, limit: 100, after: firstInbox.cursor })
+    ).json()) as { items: Array<{ body: string }> };
+    expect(Number(secondInbox.items[0]!.body.split(' ')[1])).toBeGreaterThan(
+      Number(firstInbox.items.at(-1)!.body.split(' ')[1]),
+    );
+    // A conversation read carrying a cursor is a forward walk, not a page.
+    const walked = (await (
+      await daemonOperation('getRoomConversation', {
+        roomId: ROOM,
+        limit: 100,
+        after: firstInbox.cursor,
+      })
+    ).json()) as { items: Array<{ body: string }> };
+    expect(walked.items.at(-1)!.body).not.toBe('row 250');
+
+    // Nothing is dropped or duplicated across the two windows: together they
+    // cover every one of the 250 rows exactly once.
+    expect(new Set([...earliest, ...recent]).size).toBe(250);
+  });
+
   it('never reports unread for the viewer’s own latest message', async () => {
     const sent = await operation('sendRoomMessage', {
       roomId: ROOM,

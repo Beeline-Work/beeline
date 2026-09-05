@@ -69,6 +69,8 @@ async function settleTurnFailureLine(
 }
 const seconds = (date: Date) => Math.floor(date.getTime() / 1_000);
 const AGENT_TO_AGENT_HOP_CAP = 3;
+/** Bounds a corner's wake long-poll so a stuck HTTP request always resolves. */
+export const CORNER_WAKE_TIMEOUT_MS = 20_000;
 const MEDIA_URL_PATTERN = /\/v1\/media\/([0-9a-f-]{36})$/;
 const DEFAULT_MEDIA_MAXIMUM_BYTES = 25 * 1024 * 1024;
 
@@ -115,6 +117,10 @@ export class DaemonService {
           name,
           input as Input<'getRoomConversation'>,
           authenticatedAgentId,
+        )) as Output<Name>;
+      case 'waitForCornerWake':
+        return (await this.waitForCornerWake(
+          (input as Input<'waitForCornerWake'>).cornerId,
         )) as Output<Name>;
       case 'getRoomAuthority':
         return (await this.roomAuthority(input as Input<'getRoomAuthority'>)) as Output<Name>;
@@ -1875,6 +1881,25 @@ export class DaemonService {
       kind: 'agent' as const,
       name: row?.name ?? `Agent ${agentId.slice(0, 8)}`,
     };
+  }
+  /**
+   * Resolves on the room's next live event, or after the bounded timeout with
+   * nothing new — the daemon's poll is unaffected either way, so a missed or
+   * timed-out wake never loses an event; the next poll still catches it.
+   */
+  private async waitForCornerWake(cornerId: string): Promise<{ woken: boolean }> {
+    return new Promise((resolvePromise) => {
+      let unsubscribe: (() => void) | undefined;
+      const timer = setTimeout(() => {
+        unsubscribe?.();
+        resolvePromise({ woken: false });
+      }, CORNER_WAKE_TIMEOUT_MS);
+      unsubscribe = this.live.subscribe(cornerId, () => {
+        clearTimeout(timer);
+        unsubscribe?.();
+        resolvePromise({ woken: true });
+      });
+    });
   }
   private async access(roomId: string, agentId: string) {
     const result = await this.database.query(

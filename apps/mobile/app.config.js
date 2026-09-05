@@ -61,7 +61,7 @@ export default {
         // "a new native build is shipping". `scripts/native-fingerprint.mjs`
         // (the NATIVE FINGERPRINT gate) fails a PR that changes native inputs
         // without bumping it.
-        runtimeVersion: "21",
+        runtimeVersion: "22",
         orientation: "default",
         icon: "./sources/assets/images/icon.png",
         scheme,
@@ -128,6 +128,14 @@ export default {
                             "scheme": "https",
                             "host": "usebeeline.app",
                             "pathPrefix": "/auth/github/mobile-callback"
+                        },
+                        // The Google Play review link. Verified like every other
+                        // app link on this host; the app exposes no control for
+                        // it and the server judges the secret.
+                        {
+                            "scheme": "https",
+                            "host": "usebeeline.app",
+                            "pathPrefix": "/review/"
                         },
                         {
                             "scheme": "https",

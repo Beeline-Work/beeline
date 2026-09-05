@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Beeline app review access</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family:
+          'IBM Plex Sans',
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          sans-serif;
+        background: #090909;
+        color: #e8e8e8;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        min-height: 100vh;
+        margin: 0;
+        display: grid;
+        place-items: center;
+        padding: clamp(18px, 5vw, 40px);
+        background: #090909;
+      }
+
+      main {
+        width: min(100%, 560px);
+        border: 1px solid #444444;
+        border-radius: 4px;
+        padding: clamp(26px, 7vw, 48px);
+        background: #111111;
+      }
+
+      h1 {
+        margin: 0 0 14px;
+        font-size: clamp(20px, 4vw, 26px);
+        font-weight: 700;
+      }
+
+      p {
+        margin: 0 0 10px;
+        color: #a8a8a8;
+        font-size: 14px;
+        line-height: 1.6;
+      }
+
+      ol {
+        margin: 16px 0 0;
+        padding-left: 20px;
+        color: #a8a8a8;
+        font-size: 14px;
+        line-height: 1.7;
+      }
+    </style>
+  </head>
+  <body>
+    <!--
+      The browser fallback for the Google Play review link. On an Android device
+      with Beeline installed the OS never renders this page: the verified app
+      link opens the app, which signs in and lands in the Workspace. This page
+      is what a desktop browser, or a device without the app, sees instead. It
+      deliberately holds no control and echoes nothing back: the secret rides in
+      the address bar and only the app ever spends it.
+    -->
+    <main>
+      <h1>Open this link on the device</h1>
+      <p>
+        This link signs the Beeline app in for app review. It only works inside the app on the
+        device where Beeline is installed.
+      </p>
+      <ol>
+        <li>Install Beeline on the Android device.</li>
+        <li>Open this same link on that device.</li>
+        <li>Beeline opens signed in, with a Workspace and an agent already there.</li>
+      </ol>
+    </main>
+  </body>
+</html>

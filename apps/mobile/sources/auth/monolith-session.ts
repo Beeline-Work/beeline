@@ -43,6 +43,24 @@ export class MonolithSession {
     return tokens.identityId;
   }
 
+  /**
+   * Sign in as the fixed Google Play review identity. The same session a GitHub
+   * ticket issues — the reviewer gets the ordinary app, not a special mode. The
+   * server is the only judge of the secret: anything but a real one is a 404,
+   * which surfaces here as the ordinary "sign in" requirement.
+   */
+  async exchangeReviewSecret(secret: string): Promise<string> {
+    const response = await this.fetchImpl(`${this.baseUrl}/v1/auth/review/exchange`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ secret }),
+    });
+    if (!response.ok) throw new MonolithSessionRequiredError();
+    const tokens = (await response.json()) as MonolithTokens;
+    await this.accept(tokens);
+    return tokens.identityId;
+  }
+
   async identityId(): Promise<string | null> {
     return this.access?.identityId ?? (await secureStore()).getItemAsync(IDENTITY_KEY);
   }

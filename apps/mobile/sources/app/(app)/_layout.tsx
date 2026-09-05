@@ -164,6 +164,14 @@ export default function RootLayout() {
             statusBarStyle: 'light',
           }}
         />
+        {/* The Google Play review link's landing route. No control opens it. */}
+        <Stack.Screen
+          name="review/[secret]"
+          options={{
+            headerShown: false,
+            statusBarStyle: 'light',
+          }}
+        />
         <Stack.Screen
           name="settings/index"
           options={{

@@ -69,9 +69,34 @@ type StablePresentationValue =
       value: Readonly<Record<string, unknown>>;
     };
 
-function isPlainRecord(value: object): value is Record<string, unknown> {
+/**
+ * Whether this reconciler can REBUILD the object faithfully — which is the only
+ * thing it ever does with a record: `Object.fromEntries(Object.keys(...))`, a
+ * copy that can carry nothing but enumerable string-keyed own properties.
+ *
+ * A Unistyles style is the counter-example, and the reason this question has to
+ * be asked at all. `StyleSheet.create` returns the parsed properties plus one
+ * enumerable `unistyles_<hash>` key holding the style's C++ handle, and every
+ * member of that handle — `uni__getStyles` among them — is defined
+ * `enumerable: false` (`cxx/common/Helpers.h → defineHiddenProperty`). Copying
+ * it by its enumerable keys therefore yields `{}`: the key survives, the handle
+ * inside it does not. Most Unistyles components then recover through the C++
+ * hash-key fallback, but the `Pressable` wrapper reads the handle from JS and
+ * calls `style[unistyles_<hash>].uni__getStyles()`, so an emptied handle
+ * crashed the render outright — the Room member picker's candidate rows are
+ * the app's one `Pressable` with an object `style` mounted as HullModal
+ * children, so opening that picker was the one place it fired.
+ *
+ * An object this cannot reproduce is passed through by identity instead
+ * (the atomic branch), which is both correct and no less stable: a style object
+ * is allocated once by `StyleSheet.create` and is the same reference on every
+ * render, so `Object.is` keeps reusing it.
+ */
+function isRebuildableRecord(value: object): value is Record<string, unknown> {
   const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
+  if (prototype !== Object.prototype && prototype !== null) return false;
+  if (Object.getOwnPropertySymbols(value).length > 0) return false;
+  return Object.getOwnPropertyNames(value).length === Object.keys(value).length;
 }
 
 /**
@@ -145,7 +170,7 @@ function reconcilePresentationValue(
     };
   }
 
-  if (next !== null && typeof next === 'object' && isPlainRecord(next)) {
+  if (next !== null && typeof next === 'object' && isRebuildableRecord(next)) {
     const previousRecord = previous?.kind === 'record' ? previous : undefined;
     const keys = Object.keys(next);
     const entries: Record<string, StablePresentationValue> = {};

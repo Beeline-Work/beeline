@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Pressable } from 'react-native';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -93,7 +94,7 @@ vi.mock('./MonoHull', async () => {
   };
 });
 
-import { HullDialog, HullDialogInput } from './HullDialog';
+import { HullDialog, HullDialogInput, HullModal } from './HullDialog';
 import { HullActionSheetCancel, HullActionSheetModal, HullActionSheetRow } from './HullActionSheet';
 import { HullMenuTrigger } from './HullMenuTrigger';
 import { AttachmentPickerSheet } from './AttachmentPickerSheet';
@@ -317,6 +318,50 @@ describe('Hull dialog family', () => {
 
     expect(modalRenderSpy).toHaveBeenCalledTimes(1);
     expect(surfaceRenderSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('carries a style’s hidden Unistyles handle through the presentation boundary', () => {
+    // The boundary keeps a mounted surface still by REBUILDING the props it
+    // walks — a copy made from enumerable keys. A Unistyles style keeps its C++
+    // handle in an enumerable `unistyles_<hash>` key whose own members are all
+    // `enumerable: false`, so that copy used to hand the tree an emptied
+    // handle. Every RN primitive becomes a Unistyles wrapper in a release
+    // bundle, and the `Pressable` one reads the handle from JS:
+    // `style[unistyles_<hash>].uni__getStyles()`. Opening a Room's member
+    // picker — the app's one object-styled Pressable mounted as HullModal
+    // children — therefore died in the route's error boundary.
+    const handle = {};
+    Object.defineProperty(handle, 'uni__getStyles', {
+      value: () => ({ minHeight: 52 }),
+      enumerable: false,
+      configurable: true,
+    });
+    const rowStyle = { minHeight: 52, unistyles_row: handle };
+
+    function StyledHost({ tick }: { tick: number }) {
+      return (
+        <HullModal
+          accessibilityLabel="Close"
+          onRequestClose={() => undefined}
+          placement="bottom"
+          visible
+        >
+          <Pressable
+            accessibilityLabel={`Row ${tick}`}
+            onPress={() => undefined}
+            style={rowStyle}
+            testID="unistyles-row"
+          />
+        </HullModal>
+      );
+    }
+
+    const renderer = render(<StyledHost tick={0} />);
+    act(() => renderer.update(<StyledHost tick={1} />));
+    const delivered = hostByTestID(renderer, 'unistyles-row', 'Pressable').props.style;
+
+    expect(typeof delivered.unistyles_row.uni__getStyles).toBe('function');
+    expect(delivered.unistyles_row.uni__getStyles()).toEqual({ minHeight: 52 });
   });
 
   it('opens menu adapters as Hull sheets, closes before dispatch, and exposes a cancel row', () => {

@@ -3219,6 +3219,38 @@ describe('monolith integration', () => {
     expect(stored.rows[0]!.mention_ids).toEqual([HUMAN]);
   });
 
+  it("reports a corner's working receipt on its parent Room row, and stops at archive", async () => {
+    // The Room row's own state word is the turn receipt, the corner's
+    // included — a helper working in a corner is work happening in that Room,
+    // and the label must not wait for the corner to say so in the parent.
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'corner-room-label',
+      name: 'Ship the widget',
+      objective: 'Ship the widget end to end',
+    });
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    const roomRow = async () =>
+      (
+        (await (await request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
+          chats: Array<{ room: { id: string }; agentState?: string }>;
+        }
+      ).chats.find((chat) => chat.room.id === ROOM)!;
+    expect((await roomRow()).agentState).toBeUndefined();
+
+    await daemonOperation('postAgentTurnReceipt', {
+      roomId: cornerId,
+      requestId: '4'.repeat(64),
+      status: 'working',
+    });
+    expect((await roomRow()).agentState).toBe('working');
+
+    // An archived corner is finished work: whatever its last receipt says, it
+    // no longer speaks for its Room, exactly as it no longer counts in it.
+    await database.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [cornerId]);
+    expect((await roomRow()).agentState).toBeUndefined();
+  });
+
   it('delivers no human mention on a corner-complete post', async () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,

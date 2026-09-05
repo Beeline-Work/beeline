@@ -37,6 +37,7 @@
     "install:beeline": "bash scripts/install-beeline.sh",
     "bundle:beeline": "node scripts/build-beeline-bundle.mjs",
     "verify:beeline-install": "node scripts/verify-beeline-install.mjs",
+    "measure:corner-wake": "node --import tsx scripts/measure-corner-wake.ts",
     "mobile:install": "npm install --prefix apps/mobile",
     "mobile:web": "npm run web --prefix apps/mobile",
     "mobile:typecheck": "npm run typecheck --prefix apps/mobile"

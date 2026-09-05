@@ -29,6 +29,11 @@ import {
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
 import type { SqlDatabase } from './database.js';
 import type { LiveHub } from './live.js';
+import {
+  CORNER_WAKE_MIN_INTERVAL_MS,
+  CORNER_WAKE_TIMEOUT_MS,
+  wakesCorner,
+} from './corner-wake.js';
 import { restateSystemLine, systemLine, type SystemPhrase } from './system-line.js';
 
 type Input<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['input'];
@@ -69,8 +74,7 @@ async function settleTurnFailureLine(
 }
 const seconds = (date: Date) => Math.floor(date.getTime() / 1_000);
 const AGENT_TO_AGENT_HOP_CAP = 3;
-/** Bounds a corner's wake long-poll so a stuck HTTP request always resolves. */
-export const CORNER_WAKE_TIMEOUT_MS = 20_000;
+export { CORNER_WAKE_TIMEOUT_MS } from './corner-wake.js';
 const MEDIA_URL_PATTERN = /\/v1\/media\/([0-9a-f-]{36})$/;
 const DEFAULT_MEDIA_MAXIMUM_BYTES = 25 * 1024 * 1024;
 
@@ -83,6 +87,9 @@ export class DaemonService {
     ) => Promise<{ token: string; expiresAt: number }>,
     private readonly mediaMaximumBytes: number = DEFAULT_MEDIA_MAXIMUM_BYTES,
   ) {}
+
+  /** When each corner last woke, so `CORNER_WAKE_MIN_INTERVAL_MS` can be held. */
+  private readonly lastCornerWake = new Map<string, number>();
 
   async execute<Name extends keyof DaemonOperationMap>(
     name: Name,
@@ -121,6 +128,7 @@ export class DaemonService {
       case 'waitForCornerWake':
         return (await this.waitForCornerWake(
           (input as Input<'waitForCornerWake'>).cornerId,
+          authenticatedAgentId,
         )) as Output<Name>;
       case 'getRoomAuthority':
         return (await this.roomAuthority(input as Input<'getRoomAuthority'>)) as Output<Name>;
@@ -999,7 +1007,7 @@ export class DaemonService {
         await settleTurnFailureLine(database, input.roomId, input.requestId, agentId);
       }
     });
-    this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'message' });
+    this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'message', agentId });
     return { id: messageId, createdAt: Math.floor(Date.now() / 1000) };
   }
   /** An agent-claimed attachment queued by attach_file; stamped onto the agent's
@@ -1117,7 +1125,7 @@ export class DaemonService {
         await settleTurnFailureLine(database, input.roomId, input.requestId, agentId);
       }
     });
-    this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'turn' });
+    this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'turn', agentId });
     return this.writeResult();
   }
   /**
@@ -1191,7 +1199,7 @@ export class DaemonService {
         [input.roomId, input.requestId, agentId],
       );
     });
-    this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'activity' });
+    this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'activity', agentId });
     return { id: messageId, createdAt: Math.floor(Date.now() / 1000) };
   }
   private async permissionRequest(input: Input<'postPermissionRequest'>, agentId: string) {
@@ -1286,7 +1294,7 @@ export class DaemonService {
       return created;
     });
     if (!messageId) throw new Error('permission request is invalid');
-    this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'permission' });
+    this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'permission', agentId });
     return { id: messageId, createdAt: Math.floor(Date.now() / 1000) };
   }
   private async permissionExecution(input: Input<'postPermissionExecution'>, agentId: string) {
@@ -1724,7 +1732,7 @@ export class DaemonService {
       });
       return { messageId };
     });
-    this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'grant' });
+    this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'grant', agentId });
     return {
       grantId,
       status,
@@ -1841,7 +1849,7 @@ export class DaemonService {
         card: { type: 'corner-open', cornerId, name, objective },
       });
     });
-    this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'corner' });
+    this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'corner', agentId });
     return { cornerId };
   }
   private async archiveCorner(cornerId: string, agentId: string) {
@@ -1883,21 +1891,39 @@ export class DaemonService {
     };
   }
   /**
-   * Resolves on the room's next live event, or after the bounded timeout with
-   * nothing new — the daemon's poll is unaffected either way, so a missed or
-   * timed-out wake never loses an event; the next poll still catches it.
+   * Resolves on the corner's next live event the intake loop can act on
+   * (`wakesCorner`), or after the bounded timeout with nothing new — the
+   * daemon's poll is unaffected either way, so a missed or timed-out wake
+   * never loses an event; the next poll still catches it.
+   *
+   * Two consecutive wakes of one corner are held at least
+   * `CORNER_WAKE_MIN_INTERVAL_MS` apart, so a burst of qualifying events costs
+   * one poll for the whole burst instead of one poll each.
    */
-  private async waitForCornerWake(cornerId: string): Promise<{ woken: boolean }> {
+  private async waitForCornerWake(
+    cornerId: string,
+    agentId: string,
+  ): Promise<{ woken: boolean }> {
+    const horizon = Date.now() - CORNER_WAKE_TIMEOUT_MS;
+    for (const [corner, at] of this.lastCornerWake)
+      if (at < horizon) this.lastCornerWake.delete(corner);
     return new Promise((resolvePromise) => {
       let unsubscribe: (() => void) | undefined;
       const timer = setTimeout(() => {
         unsubscribe?.();
         resolvePromise({ woken: false });
       }, CORNER_WAKE_TIMEOUT_MS);
-      unsubscribe = this.live.subscribe(cornerId, () => {
+      const wake = () => {
+        this.lastCornerWake.set(cornerId, Date.now());
+        resolvePromise({ woken: true });
+      };
+      unsubscribe = this.live.subscribe(cornerId, (event) => {
+        if (!wakesCorner(event, agentId)) return;
         clearTimeout(timer);
         unsubscribe?.();
-        resolvePromise({ woken: true });
+        const since = Date.now() - (this.lastCornerWake.get(cornerId) ?? 0);
+        if (since >= CORNER_WAKE_MIN_INTERVAL_MS) wake();
+        else setTimeout(wake, CORNER_WAKE_MIN_INTERVAL_MS - since);
       });
     });
   }
@@ -2017,57 +2043,68 @@ const conversationColumns = `SELECT id,author_id,created_at,presentation,text,me
         reply_to_message_id,root_message_id,request_id,attachments,system_event,
         floor(extract(epoch FROM created_at)*1000)::bigint cursor_ms`;
 
-export const DAEMON_OPERATION_NAMES = new Set<keyof DaemonOperationMap>([
-  'getDaemonBootstrap',
-  'getWorkspaceRoster',
-  'getRoomInbox',
-  'getRoomConversation',
-  'getRoomAuthority',
-  'getPermissionAuthority',
-  'getMissionAuthority',
-  'listWorkSchedules',
-  'getWorkScheduleAuthority',
-  'listAgentToolSchedules',
-  'createAgentSchedule',
-  'listAgentSchedules',
-  'deleteAgentSchedule',
-  'getAgentToolMandate',
-  'getTargetAgentAuthority',
-  'listRoomCorners',
-  'getCornerRestoreState',
-  'getCornerCloseRequests',
-  'listUntrackedCorners',
-  'getRoomRepositoryState',
-  'getRoomGitHubToken',
-  'getRoomTargetBranch',
-  'getIdentitySuccession',
-  'getAgentConfiguration',
-  'getAgentPresence',
-  'getRequestCompletion',
-  'postRoomMessage',
-  'postAgentAttachment',
-  'postAgentDraft',
-  'postAgentThought',
-  'retractAgentLiveOutput',
-  'postAgentTurnReceipt',
-  'postAgentActivity',
-  'postPermissionRequest',
-  'postPermissionExecution',
-  'postWorkSchedule',
-  'postWorkScheduleReceipt',
-  'postAgentToolScheduleIndex',
-  'postAgentToolMandate',
-  'postAgentCommands',
-  'postAgentPresence',
-  'postAgentModelCatalog',
-  'postCornerLifecycle',
-  'postCornerRemoteState',
-  'postCornerPlan',
-  'postTargetBranchProposal',
-  'requestAgentGrant',
-  'listAgentGrants',
-  'consumeAgentGrant',
-  'createCorner',
-  'archiveCorner',
-  'ensureAgentMembership',
-]);
+/**
+ * Every daemon operation the HTTP route serves, as an EXHAUSTIVE record so a
+ * new operation cannot ship unroutable. `waitForCornerWake` did exactly that
+ * in #912: the route answered every call 404 `unknown_daemon_operation`
+ * instantly, and the corner intake loop's sleep-vs-wake race — which treated a
+ * failed wake as "resolved" — became a spin against the server.
+ */
+const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
+  getDaemonBootstrap: true,
+  getWorkspaceRoster: true,
+  getRoomInbox: true,
+  getRoomConversation: true,
+  getRoomAuthority: true,
+  getPermissionAuthority: true,
+  getMissionAuthority: true,
+  listWorkSchedules: true,
+  getWorkScheduleAuthority: true,
+  listAgentToolSchedules: true,
+  createAgentSchedule: true,
+  listAgentSchedules: true,
+  deleteAgentSchedule: true,
+  getAgentToolMandate: true,
+  getTargetAgentAuthority: true,
+  listRoomCorners: true,
+  getCornerRestoreState: true,
+  getCornerCloseRequests: true,
+  waitForCornerWake: true,
+  listUntrackedCorners: true,
+  getRoomRepositoryState: true,
+  getRoomGitHubToken: true,
+  getRoomTargetBranch: true,
+  getIdentitySuccession: true,
+  getAgentConfiguration: true,
+  getAgentPresence: true,
+  getRequestCompletion: true,
+  postRoomMessage: true,
+  postAgentAttachment: true,
+  postAgentDraft: true,
+  postAgentThought: true,
+  retractAgentLiveOutput: true,
+  postAgentTurnReceipt: true,
+  postAgentActivity: true,
+  postPermissionRequest: true,
+  postPermissionExecution: true,
+  postWorkSchedule: true,
+  postWorkScheduleReceipt: true,
+  postAgentToolScheduleIndex: true,
+  postAgentToolMandate: true,
+  postAgentCommands: true,
+  postAgentPresence: true,
+  postAgentModelCatalog: true,
+  postCornerLifecycle: true,
+  postCornerRemoteState: true,
+  postCornerPlan: true,
+  postTargetBranchProposal: true,
+  requestAgentGrant: true,
+  listAgentGrants: true,
+  consumeAgentGrant: true,
+  createCorner: true,
+  archiveCorner: true,
+  ensureAgentMembership: true,
+};
+export const DAEMON_OPERATION_NAMES = new Set(
+  Object.keys(DAEMON_OPERATION_ROUTES) as (keyof DaemonOperationMap)[],
+);

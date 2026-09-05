@@ -448,6 +448,46 @@ describe('corner close-request polling cadence', () => {
     await scheduler.dispose();
     expect(closeReads).toBe(2);
   });
+
+  it('a failing wake never SHORTENS the poll interval — it loses the race instead of winning it', async () => {
+    // A wake that rejects instantly (a disconnect, or an operation the server
+    // build does not route) must not resolve the sleep-vs-wake race: doing so
+    // turns intake into one poll per network round-trip, which is how a
+    // corner came to hammer the server at ~18 requests a second in production.
+    let closeReads = 0;
+    let wakeCalls = 0;
+    let stopEarly: (() => void) | undefined;
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getAgentConfiguration') return { commands: [] };
+      if (name === 'getWorkspaceRoster') return { members: [] };
+      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomConversation')
+        return { items: [{ type: 'message', authorId: '11'.repeat(32), requestId: 'r1' }] };
+      if (name === 'waitForCornerWake') {
+        wakeCalls += 1;
+        throw new Error('unknown_daemon_operation');
+      }
+      if (name === 'getCornerCloseRequests') {
+        closeReads += 1;
+        // Stop a spinning loop the moment it proves itself, so a regression
+        // fails this test instead of running away with the machine.
+        if (closeReads > 4) stopEarly?.();
+        return { items: [], cursor: 'latest' };
+      }
+      return { id: 'write-id', createdAt: 1 };
+    });
+    const { loop, scheduler, abort } = await cornerHarness(execute, 300);
+    stopEarly = () => abort.abort();
+    const running = loop.run();
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    abort.abort();
+    await running;
+    await scheduler.dispose();
+    expect(wakeCalls).toBeGreaterThan(0);
+    // 900ms of a 300ms interval is at most four intakes. Resolving the failure
+    // would make it hundreds.
+    expect(closeReads).toBeLessThanOrEqual(4);
+  });
 });
 
 describe('thin monolith corner turn', () => {

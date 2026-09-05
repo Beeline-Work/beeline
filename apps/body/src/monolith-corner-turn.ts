@@ -50,6 +50,7 @@ import { runtimeIdentity } from './runtime.js';
 import { MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE, SOUL_HOUSE_RULE } from './response-directives.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
 import { withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
+import { TurnTrace, TurnTraceFile, type TurnTraceSink } from './turn-trace.js';
 
 type WorkspaceRoster = DaemonOperationMap['getWorkspaceRoster']['output'];
 type DaemonActivity = DaemonOperationMap['postAgentActivity']['input']['activity'][number];
@@ -275,6 +276,8 @@ export class MonolithCornerTurnLoop {
   private sessionScratchDir?: string;
   /** The turn in flight and who asked for it, for ledger rows and the grant runner. */
   private currentTurn?: { requestId: string; requester?: { pubkey: string; name?: string } };
+  /** Operator-local turn traces; built once when the daemon configured a directory. */
+  private turnTraceSink?: TurnTraceSink;
   private memberNames = new Map<string, string>();
   /** The last server check state that started a turn; the same state never starts another. */
   private lastChecksState?: CornerChecksState;
@@ -481,9 +484,17 @@ export class MonolithCornerTurnLoop {
     return opened.sessionId;
   }
 
-  private lifecycle(): SessionLifecycle {
+  /** The scheduler seam: `queue-wait` closes when a slot buys an activate(). */
+  private lifecycle(trace?: TurnTrace): SessionLifecycle {
     return {
-      activate: () => this.activate(),
+      activate: async () => {
+        trace?.end('queue-wait');
+        trace?.noteActivation(this.client?.isAlive && this.sessionId ? 'warm' : 'cold');
+        return trace ? trace.measure('activation', () => this.activate()) : this.activate();
+      },
+      onStateChange: (state) => {
+        if (state === 'waiting-for-slot') trace?.noteCapacityWait();
+      },
       suspend: async () => {
         const client = this.client;
         this.client = undefined;
@@ -521,16 +532,34 @@ export class MonolithCornerTurnLoop {
    * fresh session on it, so the retry of an empty completion is served — and
    * named — by exactly one provider (C92).
    */
-  private async repinNextProvider(): Promise<string | undefined> {
+  private async repinNextProvider(
+    trace?: TurnTrace,
+    reason?: string,
+  ): Promise<string | undefined> {
     const next = nextPinnedProvider(this.pinnedProviders, this.pinnedProviderOverride);
     if (!next) return undefined;
+    // The retry is its own timeline, fresh ACP handshake included.
+    trace?.retry({ provider: next, ...(reason ? { reason } : {}) });
     this.pinnedProviderOverride = next;
     const client = this.client;
     this.client = undefined;
     this.sessionId = undefined;
     if (client?.isAlive) await client.stop();
-    await this.activate();
+    await (trace ? trace.measure('activation', () => this.activate()) : this.activate());
     return next;
+  }
+
+  /** One turn's stopwatch; writes only when the daemon configured a trace directory. */
+  private beginTurnTrace(requestId: string): TurnTrace {
+    const directory = this.options.config.turnTraceDir;
+    if (directory) this.turnTraceSink ??= new TurnTraceFile(directory);
+    return new TurnTrace({
+      surface: 'corner',
+      agentId: this.agent.publicKey,
+      roomId: this.options.cornerId,
+      requestId,
+      ...(this.turnTraceSink ? { sink: this.turnTraceSink } : {}),
+    });
   }
 
   private async prompt(
@@ -553,6 +582,7 @@ export class MonolithCornerTurnLoop {
         }
       : undefined;
     this.currentTurn = { requestId, ...(requester ? { requester } : {}) };
+    const trace = this.beginTurnTrace(requestId);
     try {
       await withTurnReceiptHeartbeat(
         api,
@@ -562,24 +592,32 @@ export class MonolithCornerTurnLoop {
           requestId,
           generationId: `${this.agent.publicKey}:${cornerId}`,
         },
-        () =>
-          this.options.scheduler.run(
+        () => {
+          trace.noteScheduler('queue', this.options.scheduler.snapshot());
+          trace.start('queue-wait');
+          return this.options.scheduler.run(
             cornerId,
-            this.lifecycle(),
+            this.lifecycle(trace),
             async () => {
+              // Warm and already live: admitted without an activate(), so the
+              // queue wait closes here instead.
+              trace.end('queue-wait');
+              trace.noteScheduler('admission', this.options.scheduler.snapshot());
               if (this.forcedStop) throw new Error('corner turn stopped for daemon handoff');
               this.busy = true;
-              const [conversation, roster, delivered] = await Promise.all([
-                api.execute('getRoomConversation', { roomId: cornerId, limit: 200 }),
-                this.roster(),
-                this.attachmentDir && attachments.length
-                  ? deliverAttachments(
-                      attachments,
-                      join(this.attachmentDir, requestId.replace(/[^\w-]/g, '_')),
-                      this.options.fetchImpl,
-                    )
-                  : Promise.resolve<DeliveredAttachment[]>([]),
-              ]);
+              const [conversation, roster, delivered] = await trace.measure('context-fetch', () =>
+                Promise.all([
+                  api.execute('getRoomConversation', { roomId: cornerId, limit: 200 }),
+                  this.roster(),
+                  this.attachmentDir && attachments.length
+                    ? deliverAttachments(
+                        attachments,
+                        join(this.attachmentDir, requestId.replace(/[^\w-]/g, '_')),
+                        this.options.fetchImpl,
+                      )
+                    : Promise.resolve<DeliveredAttachment[]>([]),
+                ]),
+              );
               const names = new Map(
                 roster.members.map((member) => [member.identityId, member.name]),
               );
@@ -652,6 +690,7 @@ export class MonolithCornerTurnLoop {
               // (C92) — against the NEW client and session id.
               const runPrompt = async (): Promise<PromptResult> => {
                 stream.beginRun();
+                trace.promptSent();
                 return this.client!.sessionPrompt(
                   this.sessionId!,
                   promptWithImages(
@@ -659,24 +698,32 @@ export class MonolithCornerTurnLoop {
                     attachmentImageBlocks(delivered, this.acceptsImages()),
                   ),
                   120_000,
-                  stream.onChunk,
+                  (delta, full) => {
+                    trace.firstModelOutput();
+                    stream.onChunk(delta, full);
+                  },
                   undefined,
-                  (calls) => publishToolCalls(calls, true),
+                  (calls) => {
+                    trace.toolCalls(calls);
+                    publishToolCalls(calls, true);
+                  },
                 );
               };
               let result = await runPrompt();
+              trace.promptSettled();
               let explained = await this.explainEmpty(result);
               // A checks turn is told to say nothing when nothing changed; its
               // silence is not a routing failure and must not buy a retry.
               if (explained && !restates && shouldRetryEmptyTurn(explained)) {
                 const silent = this.servingProviders();
-                const next = await this.repinNextProvider();
+                const next = await this.repinNextProvider(trace, explained.reason);
                 if (next) {
                   console.warn(
                     `[thin-core] corner ${cornerId} turn ${requestId}: ` +
                       `${turnFailureReasonWithProvider(explained.reason, silent)}; retrying on ${next}`,
                   );
                   result = await runPrompt();
+                  trace.promptSettled();
                   explained = await this.explainEmpty(result);
                 }
               }
@@ -708,10 +755,11 @@ export class MonolithCornerTurnLoop {
               // before a tool call still lands its closing message. A reply that
               // only restates the server's own check notes says nothing new, and
               // that turn settles through its receipt instead.
-              await stream.settle(spoken(reply));
+              await trace.measure('publish', () => stream.settle(spoken(reply)));
             },
             { priority: 'interactive', roomKey: cornerId },
-          ),
+          );
+        },
         (error) => console.error(`[thin-core] corner ${cornerId} receipt heartbeat failed:`, error),
       );
       await api.execute('postAgentTurnReceipt', {
@@ -721,15 +769,20 @@ export class MonolithCornerTurnLoop {
         status: 'complete',
         generationId: `${this.agent.publicKey}:${cornerId}`,
       });
+      // After the receipt: an operator artifact never delays the answer, and
+      // never becomes one — the trace has no way to post a Room row.
+      await trace.finish('complete');
     } catch (error) {
+      const reason = distillTurnFailureReason(error);
       await api.execute('postAgentTurnReceipt', {
         agentId: this.agent.publicKey,
         roomId: cornerId,
         requestId,
         status: 'failed',
         generationId: `${this.agent.publicKey}:${cornerId}`,
-        reason: distillTurnFailureReason(error),
+        reason,
       });
+      await trace.finish('failed', reason);
       throw error;
     } finally {
       this.busy = false;

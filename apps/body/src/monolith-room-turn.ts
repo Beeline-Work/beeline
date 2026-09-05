@@ -60,6 +60,7 @@ import { runtimeIdentity } from './runtime.js';
 import { MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE, SOUL_HOUSE_RULE } from './response-directives.js';
 import { stripCornerOpenEcho } from './reply-sanitizer.js';
 import { AgentTurnStream, durableReplyText } from './turn-stream.js';
+import { TurnTrace, TurnTraceFile, type TurnTraceSink } from './turn-trace.js';
 import { isFailedToolCall, toolCallFailureLine } from './tool-call-failure.js';
 import { distillTurnFailureReason } from './turn-failure-reason.js';
 import { withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
@@ -274,6 +275,8 @@ export class MonolithRoomTurnLoop {
   private memberNames = new Map<string, string>();
   /** The request id of the turn that paused on a grant card, until its decision arrives. */
   private pausedOnGrantRequestId?: string;
+  /** Operator-local turn traces; built once when the daemon configured a directory. */
+  private turnTraceSink?: TurnTraceSink;
 
   constructor(private readonly options: MonolithRoomTurnOptions) {
     this.agent = runtimeIdentity(options.runtime.agent);
@@ -314,6 +317,23 @@ export class MonolithRoomTurnLoop {
         this.options.config.operatorHome ?? homedir(),
       ),
     };
+  }
+
+  /**
+   * One turn's stopwatch. It is created for every turn — measuring is cheap —
+   * and only WRITES when the daemon configured a runtime directory to write
+   * into, so a standalone or test Body stays silent.
+   */
+  private beginTurnTrace(requestId: string): TurnTrace {
+    const directory = this.options.config.turnTraceDir;
+    if (directory) this.turnTraceSink ??= new TurnTraceFile(directory);
+    return new TurnTrace({
+      surface: 'room',
+      agentId: this.agent.publicKey,
+      roomId: this.options.roomId,
+      requestId,
+      ...(this.turnTraceSink ? { sink: this.turnTraceSink } : {}),
+    });
   }
 
   private currentTurnForRunner():
@@ -549,9 +569,22 @@ export class MonolithRoomTurnLoop {
     return opened.sessionId;
   }
 
-  private lifecycle(): SessionLifecycle {
+  /**
+   * The scheduler seam, and the only place that can see the boundary between
+   * waiting for a slot and spawning a harness: `queue-wait` closes the instant
+   * `activate()` is called, and `cold` vs `warm` is decided by whether this
+   * Room already holds a live ACP client.
+   */
+  private lifecycle(trace?: TurnTrace): SessionLifecycle {
     return {
-      activate: () => this.activate(),
+      activate: async () => {
+        trace?.end('queue-wait');
+        trace?.noteActivation(this.client?.isAlive && this.sessionId ? 'warm' : 'cold');
+        return trace ? trace.measure('activation', () => this.activate()) : this.activate();
+      },
+      onStateChange: (state) => {
+        if (state === 'waiting-for-slot') trace?.noteCapacityWait();
+      },
       suspend: async () => {
         const client = this.client;
         this.client = undefined;
@@ -586,15 +619,22 @@ export class MonolithRoomTurnLoop {
    * named — by exactly one provider. Undefined when the pin has nowhere left
    * to go.
    */
-  private async repinNextProvider(): Promise<string | undefined> {
+  private async repinNextProvider(
+    trace?: TurnTrace,
+    reason?: string,
+  ): Promise<string | undefined> {
     const next = nextPinnedProvider(this.pinnedProviders, this.pinnedProviderOverride);
     if (!next) return undefined;
+    // The retry is its own timeline: everything from here — the fresh ACP
+    // handshake included — belongs to attempt two, never to attempt one's
+    // first-token time.
+    trace?.retry({ provider: next, ...(reason ? { reason } : {}) });
     this.pinnedProviderOverride = next;
     const client = this.client;
     this.client = undefined;
     this.sessionId = undefined;
     if (client?.isAlive) await client.stop();
-    await this.activate();
+    await (trace ? trace.measure('activation', () => this.activate()) : this.activate());
     return next;
   }
 
@@ -653,6 +693,7 @@ export class MonolithRoomTurnLoop {
     // Admission is busy before the first awaited receipt write. The updater
     // cannot observe an accepted/queued turn as idle in this window.
     this.busy = true;
+    const trace = this.beginTurnTrace(item.id);
     try {
       // The first row of the turn names who asked; learn the name once per session.
       if (!this.memberNames.has(item.authorId)) await this.roster().catch(() => undefined);
@@ -678,15 +719,23 @@ export class MonolithRoomTurnLoop {
               },
             ],
           });
+          trace.noteScheduler('queue', this.options.scheduler.snapshot());
+          trace.start('queue-wait');
           await this.options.scheduler.run(
             this.options.roomId,
-            this.lifecycle(),
+            this.lifecycle(trace),
             async () => {
-              const [conversation, roster, delivered] = await Promise.all([
-                api.execute('getRoomConversation', { roomId: this.options.roomId, limit: 200 }),
-                this.roster(),
-                this.deliver(item),
-              ]);
+              // Warm and already live: the scheduler admitted this turn without
+              // calling activate(), so the queue wait closes here instead.
+              trace.end('queue-wait');
+              trace.noteScheduler('admission', this.options.scheduler.snapshot());
+              const [conversation, roster, delivered] = await trace.measure('context-fetch', () =>
+                Promise.all([
+                  api.execute('getRoomConversation', { roomId: this.options.roomId, limit: 200 }),
+                  this.roster(),
+                  this.deliver(item),
+                ]),
+              );
               const names = new Map(roster.members.map((member) => [member.identityId, member.name]));
               const transcript = conversation.items
                 .filter(
@@ -763,11 +812,17 @@ export class MonolithRoomTurnLoop {
                   let promptError: unknown;
                   try {
                     stream.beginRun();
+                    trace.promptSent();
                     result = await this.client!.sessionPrompt(
                       this.sessionId!,
                       nextPrompt,
                       120_000,
-                      stream.onChunk,
+                      (delta, full) => {
+                        trace.firstModelOutput();
+                        stream.onChunk(delta, full);
+                      },
+                      undefined,
+                      (calls) => trace.toolCalls(calls),
                     );
                   } catch (error) {
                     promptError = error;
@@ -799,16 +854,18 @@ export class MonolithRoomTurnLoop {
                 return result!;
               };
               let result = await runPrompt();
+              trace.promptSettled();
               let explained = await this.explainEmpty(result);
               if (explained && shouldRetryEmptyTurn(explained)) {
                 const silent = this.servingProviders();
-                const next = await this.repinNextProvider();
+                const next = await this.repinNextProvider(trace, explained.reason);
                 if (next) {
                   console.warn(
                     `[thin-core] monolith Room ${this.options.roomId} turn ${item.id}: ` +
                       `${turnFailureReasonWithProvider(explained.reason, silent)}; retrying on ${next}`,
                   );
                   result = await runPrompt();
+                  trace.promptSettled();
                   explained = await this.explainEmpty(result);
                 }
               }
@@ -862,14 +919,16 @@ export class MonolithRoomTurnLoop {
               if (openCornerCall && !isFailedToolCall(openCornerCall)) {
                 reply = stripCornerOpenEcho(reply);
               }
-              await stream.settle(
-                reply,
-                reply
-                  ? {
-                      triggerMessageId: item.id,
-                      mentionIds: agentReplyMentionIds(reply, roster, this.agent.publicKey),
-                    }
-                  : {},
+              await trace.measure('publish', () =>
+                stream.settle(
+                  reply,
+                  reply
+                    ? {
+                        triggerMessageId: item.id,
+                        mentionIds: agentReplyMentionIds(reply, roster, this.agent.publicKey),
+                      }
+                    : {},
+                ),
               );
             },
             { priority: 'interactive', roomKey: this.options.roomId },
@@ -888,15 +947,20 @@ export class MonolithRoomTurnLoop {
         status: 'complete',
         generationId: `${this.agent.publicKey}:${this.options.roomId}`,
       });
+      // After the receipt: an operator artifact must never delay the answer,
+      // and it never becomes one — the trace has no way to post a Room row.
+      await trace.finish('complete');
     } catch (error) {
+      const reason = distillTurnFailureReason(error);
       await api.execute('postAgentTurnReceipt', {
         agentId: this.agent.publicKey,
         roomId: this.options.roomId,
         requestId: item.id,
         status: 'failed',
         generationId: `${this.agent.publicKey}:${this.options.roomId}`,
-        reason: distillTurnFailureReason(error),
+        reason,
       });
+      await trace.finish('failed', reason);
       throw error;
     } finally {
       this.busy = false;

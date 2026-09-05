@@ -22,7 +22,7 @@ export interface JoinRoomsResult {
 
 /**
  * The one write path for adding an existing identity to existing top-level Rooms.
- * It keeps membership, transcript notes, and the single workspace push event atomic.
+ * It keeps membership, transcript notes, and the single join push event atomic.
  */
 export async function joinRooms(
   database: SqlDatabase,
@@ -76,12 +76,14 @@ export async function joinRooms(
         display_name: string;
         kind: 'human' | 'agent';
         workspace_name: string;
+        room_name: string | null;
       }>(
         `SELECT COALESCE(NULLIF(identity.handle,''),identity.name) display_name,identity.kind,
-                workspace.name workspace_name
+                workspace.name workspace_name,
+                (SELECT name FROM rooms WHERE id=$3) room_name
          FROM identities identity CROSS JOIN workspaces workspace
          WHERE identity.id=$1 AND workspace.id=$2`,
-        [input.identityId, input.workspaceId],
+        [input.identityId, input.workspaceId, roomIds[0] ?? null],
       )
     ).rows[0];
     if (!context) throw new Error('join context not found');
@@ -110,7 +112,7 @@ export async function joinRooms(
         input.workspaceId,
         roomIds[0] ?? null,
         input.identityId,
-        `${context.display_name} joined ${context.workspace_name}`,
+        `${context.display_name} joined ${input.workspaceJoined ? context.workspace_name : context.room_name}`,
       ],
     );
     await transaction.query(

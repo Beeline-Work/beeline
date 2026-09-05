@@ -15,6 +15,7 @@ import {
   soleInstalledConnectHarness,
   CONNECT_PROBE_TIMEOUT_MS,
   confirmSeededName,
+  finishConnectedAgentPairing,
   renameConnectedAgent,
   seededIdentityLine,
   connectModelPickerFromAxes,
@@ -172,23 +173,25 @@ describe('connect wizard', () => {
     });
   });
 
-  it('sends the event kinds --subscribe named, and nothing when it was not given', async () => {
+  it('finish sends the event kinds --subscribe named, and nothing when it was not given', async () => {
     const fetchImpl = vi.fn(async () => new Response('{}', { status: 200 }));
-    await requestConnectGrant(
+    await finishConnectedAgentPairing(
       'https://server.example',
       '1234abcd-5678ef90',
-      { harness: 'pi', model: 'openrouter/z-ai/glm-5.3-flash' },
-      fetchImpl as unknown as typeof fetch,
+      true,
       ['joined'],
+      fetchImpl as unknown as typeof fetch,
     );
+    expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://server.example/auth/agent/connect/finish');
     expect(
       (JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body)) as Record<string, unknown>)
         .event_subscriptions,
     ).toEqual(['joined']);
-    await requestConnectGrant(
+    await finishConnectedAgentPairing(
       'https://server.example',
       '1234abcd-5678ef90',
-      { harness: 'pi', model: 'openrouter/z-ai/glm-5.3-flash' },
+      true,
+      [],
       fetchImpl as unknown as typeof fetch,
     );
     expect(

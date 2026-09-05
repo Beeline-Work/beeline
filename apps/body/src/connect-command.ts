@@ -529,6 +529,7 @@ export interface DeviceGrantResponse {
   agent_face?: string;
   workspace_id: string;
   workspace_name: string;
+  workspace_joined: boolean;
   paired_by: string;
   harness: ConnectWizardResult['harness'];
   provider?: ConnectProvider;
@@ -573,7 +574,6 @@ export function requestConnectGrant(
   pairingCode: string,
   selection: ConnectWizardResult,
   fetchImpl: typeof fetch,
-  eventSubscriptions: readonly string[] = [],
 ): Promise<DeviceGrantResponse> {
   const normalizedPairingCode = normalizeAgentPairingCode(pairingCode);
   if (!normalizedPairingCode) throw new Error('invalid pairing code');
@@ -592,7 +592,6 @@ export function requestConnectGrant(
       ...(selection.provider ? { provider: selection.provider } : {}),
       model: selection.model,
       avatar_seed: avatarSeed,
-      ...(eventSubscriptions.length ? { event_subscriptions: [...eventSubscriptions] } : {}),
     },
     fetchImpl,
   );
@@ -617,6 +616,32 @@ export async function renameConnectedAgent(
     fetchImpl,
   );
   return renamed.agent_name;
+}
+
+/**
+ * The wizard's last step: joins the agent to the Workspace's live top-level
+ * Rooms and writes the "joined" announcement. Called once the rename decision
+ * above is settled (kept or renamed), so the announcement carries whichever
+ * name the person ends up with — never the seeded placeholder it started as.
+ */
+export async function finishConnectedAgentPairing(
+  baseUrl: string,
+  pairingCode: string,
+  workspaceJoined: boolean,
+  eventSubscriptions: readonly string[],
+  fetchImpl: typeof fetch,
+): Promise<void> {
+  const normalizedPairingCode = normalizeAgentPairingCode(pairingCode);
+  if (!normalizedPairingCode) throw new Error('invalid pairing code');
+  await jsonRequest<{ ok: true }>(
+    `${baseUrl}/auth/agent/connect/finish`,
+    {
+      pairing_code: normalizedPairingCode,
+      workspace_joined: workspaceJoined,
+      ...(eventSubscriptions.length ? { event_subscriptions: [...eventSubscriptions] } : {}),
+    },
+    fetchImpl,
+  );
 }
 
 /** `Foxy the fox` — one line naming what to look for in the app. */
@@ -788,13 +813,22 @@ async function runConnectWizard(
   );
   const claimed = await brassSpinner(
     'Connecting to your Beeline Workspace…',
-    () => requestConnectGrant(baseUrl, pairingCode, selection, fetchImpl, eventSubscriptions),
+    () => requestConnectGrant(baseUrl, pairingCode, selection, fetchImpl),
     (connectedGrant) => `Connected to ${connectedGrant.workspace_name}`,
   );
   // The server seeded this agent's animal, name and soul from its Workspace
   // roster. Show what to look for in the app, and offer the one rename the
   // terminal gets before the helper starts under that name.
   const grant = { ...claimed, agent_name: await confirmSeededName(baseUrl, pairingCode, claimed, fetchImpl) };
+  // Only now is the agent's final name on record: join it into the Workspace's
+  // Rooms and let the "joined" line land under that name, not the seeded one.
+  await finishConnectedAgentPairing(
+    baseUrl,
+    pairingCode,
+    grant.workspace_joined,
+    eventSubscriptions,
+    fetchImpl,
+  );
   const installedRelease = await brassSpinner(
     'Installing the Beeline daemon…',
     () => installCurrentRelease(fetchImpl),

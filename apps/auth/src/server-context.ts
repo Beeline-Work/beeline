@@ -147,8 +147,6 @@ export interface AuthServerOptions {
     agentPubkey: string;
     model: string;
     avatarSeed?: string;
-    /** Server event kinds this agent reacts to, in the Rooms the claim joins it to. */
-    eventSubscriptions?: readonly string[];
   }) => Promise<
     | {
         status: 'claimed';
@@ -158,6 +156,8 @@ export interface AuthServerOptions {
         agentName: string;
         soul: string;
         face: string;
+        /** Whether this claim newly added the agent to the Workspace (vs. already a member). */
+        workspaceJoined: boolean;
         /** One-use credential promoted by the installed daemon on first activation. */
         daemonExchangeToken: string;
       }
@@ -171,6 +171,18 @@ export interface AuthServerOptions {
     code: string;
     name: string;
   }) => Promise<{ status: 'renamed'; agentName: string } | { status: 'not_found' | 'expired' }>;
+  /**
+   * The wizard's last step: joins the agent to the Workspace's live top-level
+   * Rooms and writes the "joined" announcement, run after the one rename
+   * window above has closed so the announcement carries the agent's final
+   * name, never the seeded placeholder.
+   */
+  finishAgentConnectPairing?: (input: {
+    code: string;
+    workspaceJoined: boolean;
+    /** Server event kinds this agent reacts to, in the Rooms it is joined to. */
+    eventSubscriptions?: readonly string[];
+  }) => Promise<{ status: 'finished' } | { status: 'not_found' | 'expired' }>;
 }
 
 class ProtocolError extends Error {

@@ -112,11 +112,13 @@ describe('PhoneService agent connect pairing claim', () => {
     ]);
     // The owner already wears a face; the agent never takes it.
     expect(claim.face).not.toBe(defaultFaceForSeed(OWNER));
+    // Room membership and the "joined" line wait for `finishAgentConnectPairing`
+    // — the claim only seats the agent in the Workspace.
     const memberships = await database.query<{ room_id: string | null }>(
       `SELECT room_id FROM memberships WHERE identity_id=$1 ORDER BY room_id NULLS FIRST`,
       [AGENT],
     );
-    expect(memberships.rows).toEqual([{ room_id: null }, { room_id: ROOM }]);
+    expect(memberships.rows).toEqual([{ room_id: null }]);
   });
 
   it('rolls the agent claim back when its daemon exchange cannot be minted', async () => {
@@ -242,6 +244,76 @@ describe('PhoneService agent connect pairing claim', () => {
       await expect(phone.renameConnectedAgent({ code: CODE, name: 'Bramble' })).resolves.toEqual({
         status: 'expired',
       });
+    });
+  });
+
+  describe('finishAgentConnectPairing', () => {
+    async function readJoinLine(): Promise<{ text: string; subjectName: string } | undefined> {
+      const rows = await database.query<{ text: string; system_event: { subject: { name: string } } }>(
+        `SELECT text,system_event FROM messages WHERE room_id=$1 AND card_type='member-joined'`,
+        [ROOM],
+      );
+      const row = rows.rows[0];
+      return row ? { text: row.text, subjectName: row.system_event.subject.name } : undefined;
+    }
+
+    it('joins the Rooms the owner belongs to and announces the agent under its current name', async () => {
+      await insertCode(new Date(Date.now() + 60_000));
+      await phone.claimAgentConnectPairing({ code: CODE, agentPubkey: AGENT, model: 'gpt-5.4' });
+
+      await expect(
+        phone.finishAgentConnectPairing({ code: CODE, workspaceJoined: true }),
+      ).resolves.toEqual({ status: 'finished' });
+
+      const memberships = await database.query<{ room_id: string | null }>(
+        `SELECT room_id FROM memberships WHERE identity_id=$1 ORDER BY room_id NULLS FIRST`,
+        [AGENT],
+      );
+      expect(memberships.rows).toEqual([{ room_id: null }, { room_id: ROOM }]);
+    });
+
+    // Regression: the wizard used to join Rooms (and write the "joined" line)
+    // during the claim itself, before the person's rename could land — so an
+    // agent renamed during `usebeeline connect` showed up in its own join line
+    // under the seeded placeholder name forever. The fix moves the join and its
+    // announcement to `finishAgentConnectPairing`, called only after the rename
+    // decision settles, so the line always carries the name the person chose.
+    it('announces the agent under a name chosen during connect, not the seeded placeholder', async () => {
+      await insertCode(new Date(Date.now() + 60_000));
+      const claimed = await phone.claimAgentConnectPairing({
+        code: CODE,
+        agentPubkey: AGENT,
+        model: 'gpt-5.4',
+      });
+      if (claimed.status !== 'claimed') throw new Error('claim failed');
+      const seededName = claimed.agentName;
+
+      await expect(
+        phone.renameConnectedAgent({ code: CODE, name: 'greeter' }),
+      ).resolves.toEqual({ status: 'renamed', agentName: 'greeter' });
+
+      await phone.finishAgentConnectPairing({ code: CODE, workspaceJoined: true });
+
+      const joinLine = await readJoinLine();
+      expect(joinLine?.subjectName).toBe('greeter');
+      expect(joinLine?.text).toBe('greeter joined');
+      expect(joinLine?.subjectName).not.toBe(seededName);
+    });
+
+    it('rejects an unknown or already-expired pairing code', async () => {
+      await expect(
+        phone.finishAgentConnectPairing({ code: 'NEVER-MINTED', workspaceJoined: true }),
+      ).resolves.toEqual({ status: 'not_found' });
+
+      await insertCode(new Date(Date.now() + 60_000));
+      await phone.claimAgentConnectPairing({ code: CODE, agentPubkey: AGENT, model: 'gpt-5.4' });
+      await database.query(
+        `UPDATE agent_pairing_codes SET claimed_at=now() - interval '1 hour' WHERE code_hash=$1`,
+        [createHash('sha256').update(CODE).digest('hex')],
+      );
+      await expect(
+        phone.finishAgentConnectPairing({ code: CODE, workspaceJoined: true }),
+      ).resolves.toEqual({ status: 'expired' });
     });
   });
 });

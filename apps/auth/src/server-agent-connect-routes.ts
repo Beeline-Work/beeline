@@ -107,15 +107,6 @@ export function registerServerAgentConnectRoutes(context: AuthRouteContext): voi
     const provider = typeof body.provider === 'string' ? body.provider.trim().toLowerCase() : '';
     const model = typeof body.model === 'string' ? body.model.trim().slice(0, 200) : '';
     const avatarSeed = normalizeAvatarSeed(body.avatar_seed);
-    // Opaque here: the monolith owns the kind registry and drops anything that
-    // is not a server kind, so a stale CLI can never write a made-up one.
-    const eventSubscriptions = Array.isArray(body.event_subscriptions)
-      ? body.event_subscriptions
-          .filter((value): value is string => typeof value === 'string')
-          .map((value) => value.trim().toLowerCase())
-          .filter(Boolean)
-          .slice(0, 16)
-      : [];
     if (!pairingCode) {
       throw new ProtocolError(400, 'invalid_pairing_code', 'pairing code is invalid');
     }
@@ -151,7 +142,6 @@ export function registerServerAgentConnectRoutes(context: AuthRouteContext): voi
       agentPubkey: agent.publicKey,
       model,
       ...(avatarSeed ? { avatarSeed } : {}),
-      ...(eventSubscriptions.length ? { eventSubscriptions } : {}),
     });
     if (claim.status === 'not_found') {
       throw new ProtocolError(404, 'pairing_code_not_found', 'pairing code was not found');
@@ -174,6 +164,7 @@ export function registerServerAgentConnectRoutes(context: AuthRouteContext): voi
       daemon_exchange_token: claim.daemonExchangeToken,
       workspace_id: claim.workspaceId,
       workspace_name: claim.workspaceName,
+      workspace_joined: claim.workspaceJoined,
       paired_by: claim.pairedBy,
       agent_name: claim.agentName,
       agent_face: claim.face,
@@ -219,6 +210,49 @@ export function registerServerAgentConnectRoutes(context: AuthRouteContext): voi
     }
     noStore(reply);
     return reply.send({ agent_name: renamed.agentName });
+  });
+
+  /**
+   * The wizard's last step, called once the rename decision above is settled
+   * (kept or renamed): joins the agent to the Workspace's live top-level Rooms
+   * and writes the "joined" announcement under whatever name is on record now.
+   */
+  app.post('/auth/agent/connect/finish', async (request, reply) => {
+    tenantFor(request);
+    if (!request.body || typeof request.body !== 'object') {
+      throw new ProtocolError(400, 'invalid_request', 'expected agent connect finish request');
+    }
+    const body = request.body as Record<string, unknown>;
+    const pairingCode = normalizeAgentPairingCode(body.pairing_code);
+    const workspaceJoined = body.workspace_joined === true;
+    // Opaque here: the monolith owns the kind registry and drops anything that
+    // is not a server kind, so a stale CLI can never write a made-up one.
+    const eventSubscriptions = Array.isArray(body.event_subscriptions)
+      ? body.event_subscriptions
+          .filter((value): value is string => typeof value === 'string')
+          .map((value) => value.trim().toLowerCase())
+          .filter(Boolean)
+          .slice(0, 16)
+      : [];
+    if (!pairingCode) {
+      throw new ProtocolError(400, 'invalid_pairing_code', 'pairing code is invalid');
+    }
+    if (!options.finishAgentConnectPairing) {
+      throw new ProtocolError(503, 'connect_unavailable', 'agent connection is unavailable');
+    }
+    const finished = await options.finishAgentConnectPairing({
+      code: pairingCode,
+      workspaceJoined,
+      ...(eventSubscriptions.length ? { eventSubscriptions } : {}),
+    });
+    if (finished.status === 'not_found') {
+      throw new ProtocolError(404, 'pairing_code_not_found', 'pairing code was not found');
+    }
+    if (finished.status === 'expired') {
+      throw new ProtocolError(410, 'rename_window_closed', 'reconnect this agent from the app');
+    }
+    noStore(reply);
+    return reply.send({ ok: true });
   });
 
   app.post('/auth/device/connect', async (request, reply) => {

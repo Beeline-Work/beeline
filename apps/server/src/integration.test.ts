@@ -1613,15 +1613,40 @@ describe('monolith integration', () => {
       },
     );
     expect(connected.status).toBe(200);
-    const grant = connected.body as {
+    const grant = connected.body as unknown as {
       agent_pubkey: string;
       agent_name: string;
       agent_face: string;
       soul: string;
+      workspace_joined: boolean;
     };
     expect(isFaceId(grant.agent_face)).toBe(true);
     expect(grant.soul).toBe(FACE_SOULS[grant.agent_face as FaceId]);
     expect(FACE_NAMES[grant.agent_face as FaceId]).toContain(grant.agent_name);
+
+    // The wizard's rename window has closed (kept, in this test): now the
+    // agent joins the Rooms it inherited and the "joined" line is written.
+    const finishPayload = JSON.stringify({
+      pairing_code: pairing.code,
+      workspace_joined: grant.workspace_joined,
+    });
+    const finished = await new Promise<{ status: number }>((resolve, reject) => {
+      const outgoing = httpRequest(`${origin}/auth/agent/connect/finish`, {
+        method: 'POST',
+        headers: {
+          host: 'server.test',
+          'content-type': 'application/json',
+          'content-length': Buffer.byteLength(finishPayload),
+        },
+      });
+      outgoing.once('error', reject);
+      outgoing.once('response', (incoming) => {
+        incoming.resume();
+        incoming.once('end', () => resolve({ status: incoming.statusCode ?? 0 }));
+      });
+      outgoing.end(finishPayload);
+    });
+    expect(finished.status).toBe(200);
 
     const notes = await database.query<{
       room_id: string;
@@ -4300,7 +4325,7 @@ describe('monolith integration', () => {
     expect(otherRoom.rows.every((row) => row.mention_ids.length === 0)).toBe(true);
   });
 
-  it('subscribes a connecting agent in the Rooms its claim joined it to', async () => {
+  it('subscribes a connecting agent in the Rooms its finish joined it to', async () => {
     const pairing = (await (
       await operation('createAgentPairingCode', { workspaceId: WORKSPACE })
     ).json()) as { code: string };
@@ -4309,9 +4334,16 @@ describe('monolith integration', () => {
       code: pairing.code,
       agentPubkey,
       model: 'openrouter/z-ai/glm-5.3-flash',
-      eventSubscriptions: ['joined', 'not-a-kind'],
     });
     expect(claim.status).toBe('claimed');
+    if (claim.status !== 'claimed') throw new Error('claim failed');
+    await expect(
+      phone.finishAgentConnectPairing({
+        code: pairing.code,
+        workspaceJoined: claim.workspaceJoined,
+        eventSubscriptions: ['joined', 'not-a-kind'],
+      }),
+    ).resolves.toEqual({ status: 'finished' });
     const memberships = await database.query<{
       room_id: string | null;
       event_subscriptions: string[];

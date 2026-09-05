@@ -864,7 +864,16 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         },
         HUMAN,
       );
-      await vi.waitFor(() => expect(sessionPrompt).toHaveBeenCalledTimes(2), { timeout: 3_000 });
+      // Each of the remaining messages is awaited to its OWN prompt before the
+      // next one is sent. `sessionPrompt`'s count only ever climbs, so a target
+      // the loop can run past is a target `vi.waitFor` can miss between polls
+      // and then never see again: waiting here for 2 (the count already
+      // reached before this message was sent) returned instantly, left the
+      // followup's prompt in flight, and handed the next wait a count that
+      // could jump 2 → 3 → 4 inside one poll interval — 'expected 3, got 4',
+      // for good. One message outstanding at a time makes every target a
+      // resting point.
+      await vi.waitFor(() => expect(sessionPrompt).toHaveBeenCalledTimes(3), { timeout: 3_000 });
       await vi.waitFor(async () => {
         const room = await phone.readRoom(ROOM, HUMAN);
         expect(room?.messages).toContainEqual(
@@ -889,7 +898,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         },
         HUMAN,
       );
-      await vi.waitFor(() => expect(sessionPrompt).toHaveBeenCalledTimes(3), { timeout: 3_000 });
+      await vi.waitFor(() => expect(sessionPrompt).toHaveBeenCalledTimes(4), { timeout: 3_000 });
       await vi.waitFor(async () => {
         const room = await phone.readRoom(ROOM, HUMAN);
         expect(room?.messages).toContainEqual(

@@ -40,6 +40,7 @@ import {
   type AgentGrantStatus,
 } from '@beeline/api-contract/agent-grants';
 import type { SqlDatabase } from './database.js';
+import type { LiveEvent } from './live.js';
 import type { GitHubOperations } from './github-operations.js';
 import { collapsePermissionCards } from '@beeline/push-gateway/projection';
 import { joinRooms } from './membership-join.js';
@@ -316,6 +317,52 @@ export class PhoneService {
     return this.hasRoomAccess(roomId, identityId);
   }
 
+  /**
+   * The live draft a joining reader has already missed.
+   *
+   * `LiveHub` is publish-only: a socket receives what is written after it
+   * subscribes, and `live_outputs` — which holds the running text — was never
+   * offered to anyone who was not already listening. A top-level Room hides
+   * that, because its turn writes a fresh whole-answer snapshot every few
+   * hundred milliseconds and repaints a late reader almost immediately. A
+   * corner turn spends minutes inside tool calls between assistant runs, so
+   * the same reader sits in front of the collapsed tool group and the clock
+   * with no prose at all for as long as the tools run.
+   *
+   * Bounded by the turn receipt on exactly the rule the phone uses to call a
+   * turn active (`AGENT_TURN_FRESHNESS_MS`, 90s, kept inside itself by the
+   * daemon's 30s heartbeat and by every activity row it posts): a finished or
+   * abandoned turn never has its draft resurrected.
+   */
+  async liveDraftSnapshot(roomId: string): Promise<LiveEvent[]> {
+    const rows = await this.database.query<{
+      agent_id: string;
+      turn_id: string;
+      body: { text?: unknown } | null;
+    }>(
+      `SELECT o.agent_id, o.turn_id, o.body FROM live_outputs o
+       JOIN agent_turns t ON t.room_id=o.room_id AND t.request_id=o.turn_id AND t.agent_id=o.agent_id
+       WHERE o.room_id=$1 AND o.kind='draft'
+         AND t.status='working' AND t.created_at>now()-interval '90 seconds'
+       ORDER BY o.updated_at`,
+      [roomId],
+    );
+    return rows.rows.flatMap((row) => {
+      const text = typeof row.body?.text === 'string' ? row.body.text : '';
+      return text
+        ? [
+            {
+              type: 'draft' as const,
+              roomId,
+              agentId: row.agent_id,
+              turnId: row.turn_id,
+              text,
+            },
+          ]
+        : [];
+    });
+  }
+
   async readWorkspaces(viewerId: string): Promise<WorkspaceListView> {
     const rows = await this.database.query<{
       id: string;
@@ -443,7 +490,7 @@ export class PhoneService {
           lm_other.id<>mark.message_id AND
           (lm_other.created_at,lm_other.id)>(mark.message_created_at,mark.message_id)
         )) unread,
-        EXISTS(SELECT 1 FROM agent_turns t WHERE (t.room_id=r.id OR t.room_id IN (SELECT id FROM rooms WHERE parent_id=r.id)) AND t.status='working') working,
+        EXISTS(SELECT 1 FROM agent_turns t WHERE (t.room_id=r.id OR t.room_id IN (SELECT id FROM rooms WHERE parent_id=r.id AND archived_at IS NULL)) AND t.status='working') working,
         EXISTS(SELECT 1 FROM permission_authority p WHERE (p.room_id=r.id OR p.room_id IN (SELECT id FROM rooms WHERE parent_id=r.id)) AND p.status='pending') needs_you
       FROM rooms r
       JOIN memberships member ON member.room_id=r.id AND member.identity_id=$2 AND member.removed_at IS NULL

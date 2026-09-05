@@ -903,6 +903,146 @@ describe('RoomIndexer', () => {
     expect(idle?.chats.find((chat) => chat.room.id === ROOM)?.agentState).toBeUndefined();
   });
 
+  it("lights the Room row from a corner's own working receipt, and clears on its complete", async () => {
+    // The Room label used to speak only for the Room's own conversation, so a
+    // helper working away in a corner — already painting `status: 'working'`
+    // in the corner list off the very same receipt — left its Room reading
+    // idle until the corner eventually said something in the parent. Settle
+    // the Room's own turn first so nothing but the corner can light the row.
+    const cornerRequest = 'd'.repeat(64);
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
+       VALUES ($1, $2, $3, to_timestamp(31), 9, $4, '', $5)`,
+      [
+        TENANT,
+        bytes('1'.repeat(64)),
+        bytes(AGENT),
+        JSON.stringify([
+          ['h', ROOM],
+          ['t', 'agent-turn'],
+          ['request', 'c'.repeat(64)],
+          ['agent', AGENT],
+          ['status', 'complete'],
+        ]),
+        ROOM,
+      ],
+    );
+    expect(
+      (await indexer.readChats(WORKSPACE, VIEWER))?.chats.find((chat) => chat.room.id === ROOM)
+        ?.agentState,
+    ).toBeUndefined();
+
+    // The corner agent publishes its signed working receipt — the event that
+    // precedes every visible thing it is about to say.
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
+       VALUES ($1, $2, $3, to_timestamp(32), 9, $4, '', $5)`,
+      [
+        TENANT,
+        bytes('2'.repeat(64)),
+        bytes(AGENT),
+        JSON.stringify([
+          ['h', CORNER],
+          ['t', 'agent-turn'],
+          ['request', cornerRequest],
+          ['agent', AGENT],
+          ['status', 'working'],
+        ]),
+        CORNER,
+      ],
+    );
+    expect(
+      (await indexer.readChats(WORKSPACE, VIEWER))?.chats.find((chat) => chat.room.id === ROOM)
+        ?.agentState,
+    ).toBe('working');
+    // The same receipt, read by the corner list: one fact, two surfaces.
+    expect((await indexer.readCorners(ROOM, VIEWER))?.corners[0]).toMatchObject({
+      status: 'working',
+      statusAt: 32,
+    });
+
+    // The corner's own terminal receipt puts the row back to quiet: an old
+    // lease does not linger, exactly as a Room-level turn's does not.
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
+       VALUES ($1, $2, $3, to_timestamp(33), 9, $4, '', $5)`,
+      [
+        TENANT,
+        bytes('3'.repeat(64)),
+        bytes(AGENT),
+        JSON.stringify([
+          ['h', CORNER],
+          ['t', 'agent-turn'],
+          ['request', cornerRequest],
+          ['agent', AGENT],
+          ['status', 'complete'],
+        ]),
+        CORNER,
+      ],
+    );
+    expect(
+      (await indexer.readChats(WORKSPACE, VIEWER))?.chats.find((chat) => chat.room.id === ROOM)
+        ?.agentState,
+    ).toBeUndefined();
+
+    // A second turn starts, and a corner the daemon then reports gone is
+    // finished work — not a live label, however its last receipt reads.
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
+       VALUES ($1, $2, $3, to_timestamp(34), 9, $4, '', $5)`,
+      [
+        TENANT,
+        bytes('4'.repeat(64)),
+        bytes(AGENT),
+        JSON.stringify([
+          ['h', CORNER],
+          ['t', 'agent-turn'],
+          ['request', 'e'.repeat(64)],
+          ['agent', AGENT],
+          ['status', 'working'],
+        ]),
+        CORNER,
+      ],
+    );
+    expect(
+      (await indexer.readChats(WORKSPACE, VIEWER))?.chats.find((chat) => chat.room.id === ROOM)
+        ?.agentState,
+    ).toBe('working');
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id, d_tag)
+       VALUES ($1, $2, $3, to_timestamp(35), 30078, $4, $5, NULL, $6)`,
+      [
+        TENANT,
+        bytes('6'.repeat(64)),
+        bytes(AGENT),
+        JSON.stringify([
+          ['h', CORNER],
+          ['d', `buzz-corner-remote-state:${CORNER}`],
+          ['t', 'buzz-corner-remote-state'],
+        ]),
+        JSON.stringify({
+          version: 1,
+          cornerId: CORNER,
+          branch: 'feature/corner',
+          state: 'gone',
+          checks: 'passing',
+          observedAt: 35,
+          outcome: 'landed',
+        }),
+        `buzz-corner-remote-state:${CORNER}`,
+      ],
+    );
+    expect(
+      (await indexer.readChats(WORKSPACE, VIEWER))?.chats.find((chat) => chat.room.id === ROOM)
+        ?.agentState,
+    ).toBeUndefined();
+  });
+
   it("excludes terminal corners from the Room row's corner count", async () => {
     // The base fixture's CORNER is already 'working' (created_at=7), so the
     // row starts with one open corner — the count a person can act on.

@@ -667,7 +667,7 @@ export class SnapshotImporter {
         for (const pushToken of registration.tokens)
           await one('push-device', pushToken, async (db) => {
             await db.query(
-              `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES($1,$2,'ios','physical') ON CONFLICT(token) DO UPDATE SET identity_id=EXCLUDED.identity_id`,
+              `INSERT INTO push_devices(token,identity_id,platform,environment,registered_at) VALUES($1,$2,'ios','physical',now()) ON CONFLICT(token) DO UPDATE SET identity_id=EXCLUDED.identity_id,updated_at=now()`,
               [pushToken, registration.pubkey],
             );
           });

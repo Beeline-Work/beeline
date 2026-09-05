@@ -8,10 +8,7 @@ const sources = {
   ),
   'HullActionSheet.tsx': readFileSync(new URL('./HullActionSheet.tsx', import.meta.url), 'utf8'),
   'HullDialog.tsx': readFileSync(new URL('./HullDialog.tsx', import.meta.url), 'utf8'),
-  'SettingsNavigationRow.tsx': readFileSync(
-    new URL('./SettingsNavigationRow.tsx', import.meta.url),
-    'utf8',
-  ),
+  'SettingsRow.tsx': readFileSync(new URL('./SettingsRow.tsx', import.meta.url), 'utf8'),
   'EmptyLedgerState.tsx': readFileSync(new URL('./EmptyLedgerState.tsx', import.meta.url), 'utf8'),
   'workspace.tsx': readFileSync(
     new URL('../../app/(app)/beeline/settings/workspace.tsx', import.meta.url),
@@ -44,7 +41,11 @@ describe('Beeline leaf-surface prohibited patterns', () => {
 
   it('uses the named primitives only on their intended leaf surfaces', () => {
     expect(sources['RoomDeckComposeMenu.tsx']).toContain('<HullActionSheet');
-    expect(sources['workspace.tsx'].match(/<SettingsNavigationRow/g)).toHaveLength(2);
+    // Workspace Settings is one list of the shared settings row: the picture,
+    // the name, visibility, Members, Rooms, and one row per Room — no screen
+    // -local row shape beside them (C106).
+    expect(sources['workspace.tsx'].match(/<SettingsRow/g)?.length).toBeGreaterThanOrEqual(6);
+    expect(sources['workspace.tsx']).not.toMatch(/<SettingsNavigationRow/);
     expect(sources['[channelId].tsx']).toContain('<EmptyLedgerState');
   });
 });

@@ -84,6 +84,18 @@ vi.mock('@/components/buzz/MonoHull', async () => {
     PixelLoader: host('PixelLoader'),
   };
 });
+vi.mock('@/components/buzz/HullActionSheet', async () => {
+  const ReactModule = await import('react');
+  const host = (name: string) => (props: any) =>
+    ReactModule.createElement(name, props, props.children);
+  return {
+    HULL_SHEET_INSET: 22,
+    HullActionSheet: host('HullActionSheet'),
+    HullActionSheetCancel: host('HullActionSheetCancel'),
+    HullActionSheetModal: host('HullActionSheetModal'),
+    HullActionSheetRow: host('HullActionSheetRow'),
+  };
+});
 vi.mock('@/components/buzz/IdentityMark', async () => {
   const ReactModule = await import('react');
   return { IdentityMark: (props: any) => ReactModule.createElement('IdentityMark', props) };
@@ -267,6 +279,52 @@ describe('Workspace Settings authority', () => {
     expect(client.setCommunityAvatar).not.toHaveBeenCalled();
   });
 
+  it('states the name and visibility as row values, not as fields and toggle boxes', async () => {
+    // The page used to carry a boxed text field over a full-width disabled
+    // commit plate, and a question in title type over a paragraph over two
+    // toggle boxes. Both are one row now, stating their value on the trailing
+    // axis; the name's editor hangs under its own row and the visibility
+    // choice is an ordinary Hull sheet.
+    const renderer = await render();
+
+    expect(renderer.root.findByProps({ testID: 'workspace-name-row' }).props.value).toBe('Hull');
+    expect(renderer.root.findAllByProps({ testID: 'workspace-name-editor' })).toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: 'workspace-visibility-row' }).props.value).toBe(
+      'Invite-only',
+    );
+    expect(renderer.root.findByProps({ testID: 'workspace-visibility-sheet' }).props.visible).toBe(
+      false,
+    );
+
+    act(() => renderer.root.findByProps({ testID: 'workspace-name-row' }).props.onPress());
+    expect(renderer.root.findByProps({ testID: 'workspace-name-input' }).props.value).toBe('Hull');
+
+    act(() => renderer.root.findByProps({ testID: 'workspace-visibility-row' }).props.onPress());
+    expect(renderer.root.findByProps({ testID: 'workspace-visibility-sheet' }).props.visible).toBe(
+      true,
+    );
+
+    await act(async () => {
+      await renderer.root.findByProps({ testID: 'workspace-visibility-public' }).props.onPress();
+    });
+    expect(client.setCommunityVisibility).toHaveBeenCalledWith('workspace-1', 'public');
+  });
+
+  it('renames through the row editor and keeps the save affordance with it', async () => {
+    const renderer = await render();
+
+    act(() => renderer.root.findByProps({ testID: 'workspace-name-row' }).props.onPress());
+    act(() =>
+      renderer.root.findByProps({ testID: 'workspace-name-input' }).props.onChangeText('Atlas'),
+    );
+    await act(async () => {
+      await renderer.root.findByProps({ testID: 'workspace-name-save' }).props.onPress();
+    });
+
+    expect(client.renameCommunity).toHaveBeenCalledWith('workspace-1', 'Atlas');
+    expect(renderer.root.findAllByProps({ testID: 'workspace-name-editor' })).toHaveLength(0);
+  });
+
   it('opens the unified Members page', async () => {
     const renderer = await render();
 
@@ -343,9 +401,13 @@ describe('Workspace Settings authority', () => {
 
     const renderer = await render();
     const openRow = renderer.root.findByProps({ accessibilityLabel: 'Open Room #atlas' });
-    const rowText = openRow.findByType('Text').props.children;
+    // The title leads the row; the visibility value trails it on the one axis.
+    const [rowTitle, rowValue] = openRow
+      .findAllByType('Text')
+      .map((node: any) => node.props.children);
     // The display form carries exactly one mark...
-    expect(rowText).toBe('#atlas');
+    expect(rowTitle).toBe('#atlas');
+    expect(rowValue).toBe('Public');
     // ...and the duplicate-name qualifier still keys off the RAW name.
     expect(openRow.props.accessibilityLabel).toContain('#atlas');
   });

@@ -175,7 +175,9 @@ vi.mock('@/constants/Typography', () => ({
 
 const { persistGitHubSignInState } = await import('@/auth/github-auth-session');
 const { OidcBindError } = await import('@beeline/buzz-client');
-const { clearOnboardingNotice } = await import('@/auth/onboarding-state');
+const { clearOnboardingFaceStep, clearOnboardingNotice, markSignInInFlight } = await import(
+  '@/auth/onboarding-state'
+);
 const { default: BuzzOnboarding } = await import('./onboarding');
 
 (
@@ -202,6 +204,11 @@ function callbackUrl(state = STATE, issuedAt = Math.floor(Date.now() / 1_000)): 
   return `beeline://beeline/github-callback?${params}`;
 }
 
+/** Let every queued microtask and timer-free continuation run. */
+async function settle(): Promise<void> {
+  for (let turn = 0; turn < 20; turn += 1) await Promise.resolve();
+}
+
 async function render(): Promise<ReactTestRenderer> {
   let tree!: ReactTestRenderer;
   await act(async () => {
@@ -222,6 +229,8 @@ describe('GitHub callback delivery into onboarding', () => {
     vi.clearAllMocks();
     storage.clear();
     clearOnboardingNotice();
+    clearOnboardingFaceStep();
+    markSignInInFlight(false);
     linking.initialUrl = null;
     linking.listener = null;
     runtime.current.monolithEnabled = false;
@@ -283,6 +292,71 @@ describe('GitHub callback delivery into onboarding', () => {
     });
     expect(phoneOperation).toHaveBeenCalledWith('updateIdentityFace', { faceId: 'owl' });
     expect(navigation.replace).not.toHaveBeenCalled();
+    act(() => ceremony.props.onEntered());
+    expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels');
+  });
+
+  // The callback is a deep link, so expo-router routes it and puts a second
+  // onboarding screen over the one whose press is still finishing the sign-in.
+  // The first press stored the session either way; what was lost was the
+  // ceremony, painted by a component the person could no longer see — so the
+  // sign-in looked like it had not counted and only a second press got in.
+  it('finishes the first press on the onboarding screen its own callback routed in', async () => {
+    runtime.current.monolithEnabled = true;
+    let releaseBrowser!: () => void;
+    let releaseExchange!: (identityId: string) => void;
+    browser.open.mockImplementation(async (authorizationUrl: string) => {
+      const state = new URL(authorizationUrl).searchParams.get('app_state')!;
+      await new Promise<void>((resolve) => {
+        releaseBrowser = () => {
+          linking.listener?.({ url: callbackUrl(state) });
+          resolve();
+        };
+      });
+      return { type: 'dismiss' };
+    });
+    monolith.exchangeGitHubTicket.mockImplementation(
+      () => new Promise<string>((resolve) => (releaseExchange = resolve)),
+    );
+
+    const pressed = await render();
+    const signIn = pressed.root.find(
+      (node: any) => node.type === 'MonoButton' && node.props.label === 'Continue with GitHub',
+    );
+    let press!: Promise<void>;
+    await act(async () => {
+      press = signIn.props.onPress();
+      await settle();
+    });
+    expect(browser.open).toHaveBeenCalledTimes(1);
+
+    // The browser hands the callback back, and the exchange is in flight.
+    await act(async () => {
+      releaseBrowser();
+      await settle();
+    });
+
+    // expo-router routes that callback: a second onboarding screen, on top.
+    const routed = await render();
+    expect(monolith.exchangeGitHubTicket).toHaveBeenCalledTimes(1);
+    expect(
+      routed.root.findAll(
+        (node: any) => node.type === 'MonoButton' && node.props.label === 'Continue with GitHub',
+      ),
+    ).toHaveLength(1);
+
+    await act(async () => {
+      releaseExchange(MONOLITH_IDENTITY);
+      await press;
+      await settle();
+    });
+
+    // One press: the ceremony is on the screen the person is looking at.
+    const ceremony = routed.root.findByType('FaceCeremonyStep' as never);
+    expect(ceremony.props.seed).toBe(MONOLITH_IDENTITY);
+    expect(ceremony.props.currentFace).toBeNull();
+    expect(monolith.exchangeGitHubTicket).toHaveBeenCalledTimes(1);
+
     act(() => ceremony.props.onEntered());
     expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels');
   });

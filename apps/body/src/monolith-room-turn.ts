@@ -896,7 +896,9 @@ export class MonolithRoomTurnLoop {
                   console.warn(`[thin-core] monolith Room ${this.options.roomId} ${failure}`);
                 }
               }
-              await stream.drained();
+              // Close the draft lane before the answer is published: the finished
+              // reply must never queue behind a draft nobody will read.
+              stream.close();
               let reply = durableReplyText(result.agentText);
               if (!reply && explained) {
                 // Either text the harness recorded but never streamed, or a named

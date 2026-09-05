@@ -39,7 +39,6 @@ import {
   type GitHubInstallationAccess,
   type AgentCommandList,
   type KnownMessageReference,
-  visibleLiveOverlays,
   addRoomPage,
   type RoomViewMessage,
   AGENT_PRESENCE_STALE_MS,
@@ -80,7 +79,7 @@ import {
 import { formatSettledLine, type TurnVerb } from '@/buzz/turn-clock';
 import { TurnSettledLine } from '@/components/buzz/TurnProgressLine';
 import { useRoomSendFrame } from '@/buzz/room-send-frame';
-import { projectActiveTurnStream } from '@/buzz/live-turn-stream';
+import { liveDraftMessages, projectActiveTurnStream } from '@/buzz/live-turn-stream';
 import {
   activeMentionAtCursor,
   filterMentionCandidates,
@@ -197,6 +196,7 @@ import {
   AGENT_PRESENCE_BACKGROUND_GRACE_MS,
 } from '@/buzz/agent-presence';
 import {
+  sameElementRefs,
   sameMessageRefMap,
   sameSelectedMembers,
   sameStringSet,
@@ -580,30 +580,10 @@ export default function BuzzChat() {
     () => new Set(cachedMessages.map((message) => message.id)),
     [cachedMessages],
   );
-  const liveMessages = useMemo<ChatDisplayMessage[]>(() => {
-    if (!roomSurface) return [];
-    return visibleLiveOverlays(liveOverlays, roomSurface.messages).flatMap((overlay) => {
-      // Draft prose is the only live transcript overlay. Presence drives its
-      // own indicator, and private thought text never enters message rows.
-      if (overlay.kind !== 'draft') return [];
-      return [
-        {
-          id: overlay.stableId,
-          text: overlay.text ?? '',
-          isUser: false,
-          timestamp: overlay.createdAt,
-          pubkey: overlay.agentPubkey,
-          isAgentAuthor: true,
-          isAgentActivity: true,
-          // A settled draft (retracted, final not yet arrived) keeps its text
-          // but stops pulsing as the live turn.
-          isAgentLiveTurn: !overlay.closed,
-          isAgentDraft: true,
-          agentMessageDraft: overlay.text ?? '',
-        },
-      ];
-    });
-  }, [liveOverlays, roomSurface]);
+  const liveMessages = useMemo<ChatDisplayMessage[]>(
+    () => (roomSurface ? liveDraftMessages(liveOverlays, roomSurface.messages) : []),
+    [liveOverlays, roomSurface],
+  );
   const olderMessages = useMemo(
     () => (cacheViewerPubkey ? displayRoomMessages(olderPages.flat(), cacheViewerPubkey) : []),
     [cacheViewerPubkey, olderPages],
@@ -1048,9 +1028,11 @@ export default function BuzzChat() {
     () => roomSurface?.latestAgentTurns ?? [],
     [roomSurface?.latestAgentTurns],
   );
-  const activeAgentTurn = useMemo(
+  // Every agent answering right now, not just the first: two agents asked in
+  // one message run two concurrent turns and each owns its own live lane.
+  const rawActiveAgentTurns = useMemo(
     () =>
-      agentTurnMarkers.find((turn) =>
+      agentTurnMarkers.filter((turn) =>
         isAgentTurnActive(
           turn,
           agentPresences[turn.agentPubkey],
@@ -1060,6 +1042,12 @@ export default function BuzzChat() {
       ),
     [agentTurnMarkers, agentPresences, presenceNow, presenceReconnectGrace],
   );
+  // A filter rebuilds its array on every presence tick even when it selected
+  // the same receipts, and this feeds the transcript projection.
+  const activeAgentTurns = useStable(rawActiveAgentTurns, sameElementRefs);
+  // The composer's thinking line and its settled summary are ONE line, so they
+  // read the first of them; the transcript and the gold ring take them all.
+  const activeAgentTurn = activeAgentTurns[0];
   const messages = unprojectedMessages;
   const isDirectMessage = Boolean(directMessage);
   const currentSlashQuery = useMemo(() => slashVerbQuery(inputText), [inputText]);
@@ -1312,10 +1300,10 @@ export default function BuzzChat() {
   const rawSpeakerWorking = useMemo(
     () =>
       selectWorkingAgents({
-        activeTurnPubkey: activeAgentTurn?.agentPubkey ?? null,
+        activeTurnPubkeys: activeAgentTurns.map((turn) => turn.agentPubkey),
         workingCornerAgentPubkey: sessionState === 'working' ? cornerAgentPubkey : null,
       }),
-    [activeAgentTurn?.agentPubkey, cornerAgentPubkey, sessionState],
+    [activeAgentTurns, cornerAgentPubkey, sessionState],
   );
   const speakerWorking = useStable(rawSpeakerWorking, shallowEqualRecord);
   const cornerAgentDisplay = cornerAgentPubkey
@@ -1326,8 +1314,8 @@ export default function BuzzChat() {
       )
     : undefined;
   const visibleMessages = useMemo(
-    () => projectActiveTurnStream(messages, activeAgentTurn, isArchived),
-    [activeAgentTurn, isArchived, messages],
+    () => projectActiveTurnStream(messages, activeAgentTurns, isArchived),
+    [activeAgentTurns, isArchived, messages],
   );
   // Attribution is per run, not per entry: only the first entry of a voice's
   // run carries its mark and name (see `buzz/ledger-attribution.ts`). Corners

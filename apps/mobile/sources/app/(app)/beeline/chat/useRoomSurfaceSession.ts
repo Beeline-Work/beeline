@@ -19,6 +19,7 @@ import {
   type ChatDisplayMessage,
 } from '@/buzz/room-view-presentation';
 import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-storage';
+import { liveDraftRowId } from '@/buzz/draft-settle';
 import { createRoomOutbox, mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { BuzzRigTransport } from '@/sync/transport';
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
@@ -228,6 +229,13 @@ export function useRoomSurfaceSession({
     setHydrationError(null);
     bindingsRef.current.resetTranscript();
 
+    // Seconds, but not WHOLE seconds. A draft's first snapshot is the anchor
+    // its row keeps for the rest of the turn (C107), and two turns starting a
+    // few hundred milliseconds apart floored to the same second — leaving the
+    // transcript to break the tie by row id rather than by which agent
+    // started. Fractional seconds compare against durable stamps unchanged.
+    const liveLaneStamp = () => Date.now() / 1000;
+
     const applyDecodedOverlay = (overlay: LiveOverlay) => {
       setLiveOverlays((current) => applyLiveOverlay(current, overlay));
       if (overlay.kind === 'presence') {
@@ -356,12 +364,12 @@ export function useRoomSurfaceSession({
               applyDecodedOverlay({
                 kind: 'draft',
                 key: `draft:${live.agentId}:${live.turnId}`,
-                stableId: `live-turn:${live.turnId}`,
+                stableId: liveDraftRowId(live.agentId, live.turnId),
                 agentPubkey: live.agentId,
                 requestId: live.turnId,
                 text: live.text,
                 closed: false,
-                createdAt: Math.floor(Date.now() / 1000),
+                createdAt: liveLaneStamp(),
               });
             } else if (live.type === 'thought') {
               applyDecodedOverlay({
@@ -371,7 +379,7 @@ export function useRoomSurfaceSession({
                 sessionId: live.turnId,
                 text: live.text,
                 closed: false,
-                createdAt: Math.floor(Date.now() / 1000),
+                createdAt: liveLaneStamp(),
               });
             } else if (live.type === 'retract') {
               applyDecodedOverlay(
@@ -379,11 +387,11 @@ export function useRoomSurfaceSession({
                   ? {
                       kind: 'draft',
                       key: `draft:${live.agentId}:${live.turnId}`,
-                      stableId: `live-turn:${live.turnId}`,
+                      stableId: liveDraftRowId(live.agentId, live.turnId),
                       agentPubkey: live.agentId,
                       requestId: live.turnId,
                       closed: true,
-                      createdAt: Math.floor(Date.now() / 1000),
+                      createdAt: liveLaneStamp(),
                     }
                   : {
                       kind: 'thought',
@@ -391,7 +399,7 @@ export function useRoomSurfaceSession({
                       agentPubkey: live.agentId,
                       sessionId: live.turnId,
                       closed: true,
-                      createdAt: Math.floor(Date.now() / 1000),
+                      createdAt: liveLaneStamp(),
                     },
               );
             }

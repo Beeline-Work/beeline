@@ -177,6 +177,7 @@ export async function runUpdateFunctionalProbe(input: {
         root: homeRoot,
         operatorHome: input.config.operatorHome ?? homedir(),
         sharedSkills: input.config.sharedSkills ?? [],
+        ...(input.config.agentKind ? { agentKind: input.config.agentKind } : {}),
         skillReleaseId: input.releaseId,
         failClosed: true,
         ...openRouterRoutingInput(

@@ -1,6 +1,16 @@
 export interface SessionLifecycle {
   activate(): Promise<string>;
   suspend(): Promise<void>;
+  /**
+   * Whether a retained process is still the one the operator configured.
+   *
+   * The scheduler asks this before it hands a live session back, because that
+   * hand-back is the ONLY moment a retained session is reused and `activate()`
+   * is never called. Answering `false` retires the process and the turn goes
+   * through an ordinary cold activation, generation history included. Absent
+   * means a live session is always current.
+   */
+  isCurrent?(): Promise<boolean>;
   onStateChange?(state: SessionProcessState): Promise<void> | void;
   /** Optional harness-specific idle retention. Capacity/LRU eviction still wins. */
   idleMs?: number;
@@ -15,6 +25,10 @@ export interface SessionSchedulerSnapshot {
   queuedChannels: number;
   maxLive: number;
   perRoom: number;
+  /** Live sessions with no turn running: the retained processes (C104). */
+  warm: number;
+  /** How many of those retention keeps. The resident-process ceiling. */
+  maxWarm: number;
 }
 
 export type SessionRunPriority = 'interactive' | 'background';
@@ -60,6 +74,49 @@ export function resolvePerRoomLiveSessions(env: NodeJS.ProcessEnv = process.env)
 }
 
 /**
+ * How long a session with no turn running is retained.
+ *
+ * Retention is the whole point (C104): a cold turn pays a real ACP handshake
+ * (measured at ~1.05s for claude-agent-acp) plus its wait for a scheduler
+ * slot, and a captain who comes back after a short break used to pay it every
+ * time. Retention is bounded on two axes and neither is time
+ * alone: `DEFAULT_MAX_WARM_SESSIONS` caps how many retained processes may be
+ * resident at once (LRU beyond it), and the existing capacity ceilings still
+ * evict a retained session the moment another Room needs its slot.
+ */
+export const DEFAULT_SESSION_IDLE_MS = 30 * 60_000;
+
+/**
+ * Retained (live, idle) sessions the daemon keeps resident.
+ *
+ * This is the memory ceiling, and it is deliberately NOT the capacity ceiling:
+ * capacity governs how many turns may run at once and still grows with the
+ * Rooms served, while this governs how many processes survive their turn.
+ * Every retained session is a resident ACP process with its MCP servers behind
+ * it — measured at roughly 500MB for a claude-agent-acp Room
+ * (`npm run measure:turns -w @beeline/body -- ceiling`) — so the default is
+ * small and LRU decides which ones stay. Operators who want a different
+ * memory budget set `BUZZY_BODY_MAX_WARM_SESSIONS`.
+ */
+export const DEFAULT_MAX_WARM_SESSIONS = 4;
+
+/** Read the retained-session ceiling without letting bad env crash startup. */
+export function resolveMaxWarmSessions(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.BUZZY_BODY_MAX_WARM_SESSIONS?.trim();
+  if (!raw) return DEFAULT_MAX_WARM_SESSIONS;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value > 0 ? value : DEFAULT_MAX_WARM_SESSIONS;
+}
+
+/** Read the retention window without letting bad env crash startup. */
+export function resolveSessionIdleMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.BUZZY_BODY_SESSION_IDLE_MS?.trim();
+  if (!raw) return DEFAULT_SESSION_IDLE_MS;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value > 0 ? value : DEFAULT_SESSION_IDLE_MS;
+}
+
+/**
  * Smallest Workspace-wide ceiling. The dynamic ceiling is
  * `max(this, perRoom x activeRooms)` so a Workspace with many Rooms is not
  * squeezed through a fixed pool, while a single-Room Workspace still gets
@@ -91,6 +148,7 @@ export class SessionScheduler {
   private readonly activeRoomCount?: () => number;
   private readonly reserveInteractiveSlot: boolean;
   private readonly idleMs: number;
+  private readonly maxWarmSessions: number;
   private readonly live = new Map<string, LiveSession>();
   private readonly busy = new Set<string>();
   /** Per-logical-session queue. Interactive turns sort ahead of waiting background work. */
@@ -119,12 +177,18 @@ export class SessionScheduler {
       /** Rooms the supervisor is currently serving; drives the dynamic ceiling. */
       activeRoomCount?: () => number;
       idleMs?: number;
+      /** Retained idle processes kept resident. LRU decides which ones stay. */
+      maxWarmSessions?: number;
       reserveInteractiveSlot?: boolean;
     } = {},
   ) {
-    this.idleMs = options.idleMs ?? 5 * 60_000;
+    this.idleMs = options.idleMs ?? DEFAULT_SESSION_IDLE_MS;
     if (!Number.isSafeInteger(this.idleMs) || this.idleMs < 1) {
       throw new Error('idleMs must be a positive integer');
+    }
+    this.maxWarmSessions = options.maxWarmSessions ?? DEFAULT_MAX_WARM_SESSIONS;
+    if (!Number.isSafeInteger(this.maxWarmSessions) || this.maxWarmSessions < 1) {
+      throw new Error('maxWarmSessions must be a positive integer');
     }
     this.reserveInteractiveSlot = options.reserveInteractiveSlot ?? false;
     if (options.maxLiveSessions !== undefined) {
@@ -260,7 +324,26 @@ export class SessionScheduler {
       queuedChannels: new Set([...this.queues.keys(), ...this.drainingKeys]).size,
       maxLive: this.workspaceCapacity(),
       perRoom: this.perRoomLiveSessions,
+      warm: this.warmKeys().length,
+      maxWarm: this.maxWarmSessions,
     };
+  }
+
+  /**
+   * Live keys with no turn running and nothing queued behind them: exactly the
+   * processes retention is keeping resident, LRU-ordered oldest first.
+   */
+  private warmKeys(): string[] {
+    return [...this.live.entries()]
+      .filter(
+        ([key, session]) =>
+          !session.pending &&
+          !this.busy.has(key) &&
+          !this.drainingKeys.has(key) &&
+          (this.queues.get(key)?.length ?? 0) === 0,
+      )
+      .sort((a, b) => a[1].lastUsedAt - b[1].lastUsedAt)
+      .map(([key]) => key);
   }
 
   async suspend(key: string): Promise<void> {
@@ -352,6 +435,7 @@ export class SessionScheduler {
       let waitForCapacity: Promise<void> | undefined;
       let evicted: LiveSession | undefined;
       let reservation: LiveSession | undefined;
+      let retained: LiveSession | undefined;
       try {
         // `previousCapacity` may have been held while an interactive turn was
         // enqueued. Re-check under the mutex; from here through reservation
@@ -359,40 +443,53 @@ export class SessionScheduler {
         if (priority === 'background' && interactiveQueued()) return false;
         // The per-key FIFO in run() means a pending reservation for this key
         // can only belong to this call chain, never a concurrent one.
-        if (this.live.has(key)) {
+        // A live session for this key holds its slot already: it neither
+        // reserves nor evicts. Whether it is still USABLE is asked outside
+        // this mutex, since that answer costs a server round trip.
+        retained = this.live.get(key);
+        if (retained) {
           this.busy.add(key);
-          return true;
-        }
-
-        const reserved = priority === 'background' && this.reserveInteractiveSlot ? 1 : 0;
-        const roomLimit = Math.max(1, this.perRoomLiveSessions - reserved);
-        const workspaceLimit = Math.max(1, this.workspaceCapacity() - reserved);
-        const roomLive = [...this.live.values()].filter(
-          (session) => session.roomKey === roomKey,
-        ).length;
-
-        // A Room over its own budget only ever evicts one of its own idle
-        // sessions, so a busy Room can never evict a quiet Room's process.
-        if (roomLive >= roomLimit) {
-          evicted = this.claimIdleVictim((session) => session.roomKey === roomKey);
-        } else if (this.occupied() >= workspaceLimit) {
-          evicted = this.claimIdleVictim(() => true);
-        }
-        if (!evicted && (roomLive >= roomLimit || this.occupied() >= workspaceLimit)) {
-          // Register before releasing the capacity lock so a completion
-          // cannot race between the full-capacity check and this waiter.
-          waitForCapacity = new Promise<void>((resolveWaiter) => this.waiters.push(resolveWaiter));
         } else {
-          const idleMs = lifecycle.idleMs ?? this.idleMs;
-          if (!Number.isSafeInteger(idleMs) || idleMs < 1) {
-            throw new Error('session lifecycle idleMs must be a positive integer');
+          const reserved = priority === 'background' && this.reserveInteractiveSlot ? 1 : 0;
+          const roomLimit = Math.max(1, this.perRoomLiveSessions - reserved);
+          const workspaceLimit = Math.max(1, this.workspaceCapacity() - reserved);
+          const roomLive = [...this.live.values()].filter(
+            (session) => session.roomKey === roomKey,
+          ).length;
+
+          // A Room over its own budget only ever evicts one of its own idle
+          // sessions, so a busy Room can never evict a quiet Room's process.
+          if (roomLive >= roomLimit) {
+            evicted = this.claimIdleVictim((session) => session.roomKey === roomKey);
+          } else if (this.occupied() >= workspaceLimit) {
+            evicted = this.claimIdleVictim(() => true);
           }
-          reservation = { lifecycle, lastUsedAt: Date.now(), roomKey, pending: true, idleMs };
-          this.live.set(key, reservation);
-          this.busy.add(key);
+          if (!evicted && (roomLive >= roomLimit || this.occupied() >= workspaceLimit)) {
+            // Register before releasing the capacity lock so a completion
+            // cannot race between the full-capacity check and this waiter.
+            waitForCapacity = new Promise<void>((resolveWaiter) => this.waiters.push(resolveWaiter));
+          } else {
+            const idleMs = lifecycle.idleMs ?? this.idleMs;
+            if (!Number.isSafeInteger(idleMs) || idleMs < 1) {
+              throw new Error('session lifecycle idleMs must be a positive integer');
+            }
+            reservation = { lifecycle, lastUsedAt: Date.now(), roomKey, pending: true, idleMs };
+            this.live.set(key, reservation);
+            this.busy.add(key);
+          }
         }
       } finally {
         releaseCapacity();
+      }
+
+      if (retained) {
+        if (await this.stillCurrent(lifecycle)) return true;
+        // Stale: retire the process and fall through to a fresh activation,
+        // so the new generation is recorded like any other cold start.
+        if (this.live.get(key) === retained) this.live.delete(key);
+        this.busy.delete(key);
+        await this.retire(retained);
+        continue;
       }
 
       if (!reservation) {
@@ -453,6 +550,15 @@ export class SessionScheduler {
     return victim[1];
   }
 
+  /**
+   * Retire what retention should no longer be holding: first anything past its
+   * idle window, then — LRU first — whatever still exceeds the resident
+   * ceiling. The second pass is the real bound on retention: without it a
+   * longer idle window would let a Workspace with many Rooms grow its resident
+   * process count with the capacity ceiling. It runs on the sweep tick (at
+   * most every 30s), so the ceiling is enforced within one tick of a turn
+   * ending rather than instantly.
+   */
   private async sweepIdle(): Promise<void> {
     const now = Date.now();
     for (const [key, session] of [...this.live.entries()]) {
@@ -464,6 +570,26 @@ export class SessionScheduler {
       ) {
         await this.suspend(key);
       }
+    }
+    const warm = this.warmKeys();
+    for (const key of warm.slice(0, Math.max(0, warm.length - this.maxWarmSessions))) {
+      await this.suspend(key);
+    }
+  }
+
+  /**
+   * Ask a lifecycle whether its retained process is still usable. A lifecycle
+   * that cannot answer keeps its session: a server hiccup is not a
+   * configuration change, and throwing away a live process over one would
+   * spend a cold start to learn nothing.
+   */
+  private async stillCurrent(lifecycle: SessionLifecycle): Promise<boolean> {
+    if (!lifecycle.isCurrent) return true;
+    try {
+      return await lifecycle.isCurrent();
+    } catch (error) {
+      console.warn('[body] retained session currency check failed; keeping it:', error);
+      return true;
     }
   }
 

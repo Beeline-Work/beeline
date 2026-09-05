@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const PACKAGE = 'app.usebeeline.mobile';
+const PACKAGE = 'app.usebeeline';
 const API = `https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${PACKAGE}`;
 const UPLOAD = `https://androidpublisher.googleapis.com/upload/androidpublisher/v3/applications/${PACKAGE}`;
 

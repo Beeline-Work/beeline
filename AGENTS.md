@@ -106,7 +106,7 @@ Committed home for project-intrinsic agent knowledge: rule + authoritative file 
 
 ## Mobile client (Happy fork)
 
-- `apps/mobile` is vendored Happy, isolated from root workspaces (`npm run mobile:install`); `@beeline/*` via Metro aliases to `dist/`. One identity `app.usebeeline.mobile`/`beeline://`. **BuzzRigTransport is write/live-only**; reads go through `RoomViewClient`; MMKV holds only scoped DTO responses + outbox.
+- `apps/mobile` is vendored Happy, isolated from root workspaces (`npm run mobile:install`); `@beeline/*` via Metro aliases to `dist/`. One app, two store identities: Android package `app.usebeeline`, iOS bundle id `app.usebeeline.mobile`, scheme `beeline://`. **BuzzRigTransport is write/live-only**; reads go through `RoomViewClient`; MMKV holds only scoped DTO responses + outbox.
 - **Corner status renders the indexed remote fact verbatim** (`corner-remote-state.ts`: working/PR-open/checks-failing/unknown/done); no approval projector or merge controls.
 - **Pinned corner line and thinking indicator are independent** (`room-indicators.ts`: any non-terminal corner is a candidate, gold/pulse for `live` only); glyph is `BeelineMarkSpinner`, never a cycling text glyph. Corner status is NEVER in the transcript.
 - **The foreground never blocks on the network** (new reads are independent `step()`s, never chain links); live events coalesce per frame, projections identity-stable. **Transcript FlatList is `inverted`** with `maintainVisibleContentPosition`; the scroll-follow rule holds while a drag/momentum is in progress and fires once per new arrival, plus once when the composer/keyboard footprint shrinks while already pinned to the tail (C97).

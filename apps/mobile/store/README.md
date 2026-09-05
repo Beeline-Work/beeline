@@ -1,7 +1,7 @@
 # Beeline store listing package
 
 This directory is the reviewable source package for the native-store listing.
-It makes no store API calls. The current app identity is `app.usebeeline.mobile`.
+It makes no store API calls. The current app identity is `app.usebeeline`.
 
 ## Files to upload
 

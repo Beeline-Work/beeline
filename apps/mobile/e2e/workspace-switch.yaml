@@ -1,4 +1,4 @@
-appId: app.usebeeline.mobile
+appId: app.usebeeline
 name: Workspace switch stays navigable
 env:
   SMOKE_WORKSPACE_ID: ${SMOKE_WORKSPACE_ID}

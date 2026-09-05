@@ -66,7 +66,7 @@ describe('production iOS capabilities', () => {
       'applinks:usebeeline.app',
       'applinks:relay.buzzrouter.com',
     ]);
-    expect(config.android?.package).toBe('app.usebeeline.mobile');
+    expect(config.android?.package).toBe('app.usebeeline');
     expect(config.android?.intentFilters).toContainEqual(
       expect.objectContaining({
         action: 'VIEW',

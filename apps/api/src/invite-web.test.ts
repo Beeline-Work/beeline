@@ -49,7 +49,7 @@ describe('relay invite web front', () => {
         relation: ['delegate_permission/common.handle_all_urls'],
         target: {
           namespace: 'android_app',
-          package_name: 'app.usebeeline.mobile',
+          package_name: 'app.usebeeline',
           sha256_cert_fingerprints: [
             'F1:0A:CD:08:4A:67:32:53:9D:3C:72:27:9C:8D:64:97:EB:3F:3A:3D:C4:EB:FF:74:F9:6C:57:76:D9:99:72:18',
           ],

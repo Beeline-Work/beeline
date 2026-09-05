@@ -7,12 +7,14 @@ import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { parseCommunityInviteToken } from '@/buzz/community-invite';
+import { parseReviewSecret } from '@/buzz/review-link';
 import { isPersonNameOnboardingPending } from '@/buzz/person-name';
 
 export default function Home() {
   const [buzzCheckDone, setBuzzCheckDone] = React.useState(false);
   const [hasBuzzIdentity, setHasBuzzIdentity] = React.useState(false);
   const [initialInviteToken, setInitialInviteToken] = React.useState<string | null>(null);
+  const [initialReviewSecret, setInitialReviewSecret] = React.useState<string | null>(null);
   const [personNameOnboardingPending, setPersonNameOnboardingPending] = React.useState(false);
   const [buzzStorageError, setBuzzStorageError] = React.useState<string | null>(null);
 
@@ -22,6 +24,7 @@ export default function Home() {
         setHasBuzzIdentity(identity !== null);
         setPersonNameOnboardingPending(identity ? await isPersonNameOnboardingPending() : false);
         setInitialInviteToken(parseCommunityInviteToken(initialUrl ?? undefined));
+        setInitialReviewSecret(parseReviewSecret(initialUrl ?? undefined));
         setBuzzCheckDone(true);
       })
       .catch((err: unknown) => {
@@ -33,7 +36,15 @@ export default function Home() {
   React.useEffect(() => {
     if (!buzzCheckDone || buzzStorageError) return;
 
-    if (initialInviteToken) {
+    // A cold start hands this route the launching URL as well, so an app link
+    // that has its own destination must be honored here or the identity check
+    // below replaces it.
+    if (initialReviewSecret) {
+      router.replace({
+        pathname: '/review/[secret]',
+        params: { secret: initialReviewSecret },
+      });
+    } else if (initialInviteToken) {
       router.replace({
         pathname: '/join/[token]',
         params: { token: initialInviteToken },
@@ -48,6 +59,7 @@ export default function Home() {
     buzzStorageError,
     hasBuzzIdentity,
     initialInviteToken,
+    initialReviewSecret,
     personNameOnboardingPending,
   ]);
 

@@ -20,6 +20,7 @@ import {
   connectModelPickerFromAxes,
   connectPlainFailure,
   defaultConnectModel,
+  parseConnectSubscriptions,
   requestConnectGrant,
   runConnectFinishCommand,
   type ConnectKeyStore,
@@ -169,6 +170,39 @@ describe('connect wizard', () => {
       model: 'gpt-5.4',
       avatar_seed: '4ed3aee3a46d2b0b3476472dbc77eafb',
     });
+  });
+
+  it('sends the event kinds --subscribe named, and nothing when it was not given', async () => {
+    const fetchImpl = vi.fn(async () => new Response('{}', { status: 200 }));
+    await requestConnectGrant(
+      'https://server.example',
+      '1234abcd-5678ef90',
+      { harness: 'pi', model: 'openrouter/z-ai/glm-5.3-flash' },
+      fetchImpl as unknown as typeof fetch,
+      ['joined'],
+    );
+    expect(
+      (JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body)) as Record<string, unknown>)
+        .event_subscriptions,
+    ).toEqual(['joined']);
+    await requestConnectGrant(
+      'https://server.example',
+      '1234abcd-5678ef90',
+      { harness: 'pi', model: 'openrouter/z-ai/glm-5.3-flash' },
+      fetchImpl as unknown as typeof fetch,
+    );
+    expect(
+      JSON.parse(String(fetchImpl.mock.calls[1]?.[1]?.body)) as Record<string, unknown>,
+    ).not.toHaveProperty('event_subscriptions');
+  });
+
+  it('reads --subscribe as a comma-separated list, deduped and trimmed', () => {
+    expect(parseConnectSubscriptions('joined, check-failed ,JOINED')).toEqual([
+      'joined',
+      'check-failed',
+    ]);
+    expect(parseConnectSubscriptions('')).toEqual([]);
+    expect(parseConnectSubscriptions(undefined)).toEqual([]);
   });
 
   it('derives the posted avatar seed from the pairing code deterministically', async () => {

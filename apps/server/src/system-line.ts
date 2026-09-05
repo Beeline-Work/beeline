@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import {
   formatSystemLine,
   type SystemEvent,
+  type SystemEventKind,
   type SystemObject,
   type SystemSubject,
 } from '@beeline/api-contract/phone';
@@ -33,6 +34,12 @@ export interface SystemLineInput {
   readonly id?: string;
   readonly subject: SystemSubject;
   readonly verb: string;
+  /**
+   * What this line IS. A producer says the kind and nothing else: the
+   * subscriber fill below turns it into mentions, in one place. A line with no
+   * kind is one nothing subscribes to.
+   */
+  readonly kind?: SystemEventKind;
   readonly object?: string | SystemObject;
   readonly consequence?: string;
   /** Identities to mention: the only thing that makes a line push or wake a daemon. */
@@ -52,7 +59,10 @@ export interface SystemLineResult {
   readonly inserted: boolean;
 }
 
-export type SystemPhrase = Pick<SystemLineInput, 'subject' | 'verb' | 'object' | 'consequence'>;
+export type SystemPhrase = Pick<
+  SystemLineInput,
+  'subject' | 'verb' | 'object' | 'consequence' | 'kind'
+>;
 
 const CLEAN = /[\s ]+/g;
 
@@ -74,8 +84,51 @@ export function composeSystemLine(phrase: SystemPhrase): { text: string; event: 
     verb: clause(phrase.verb),
     ...(object && object.text ? { object } : {}),
     ...(consequence ? { consequence } : {}),
+    ...(phrase.kind ? { kind: phrase.kind } : {}),
   };
+  // The kind never reaches the text: `formatSystemLine` reads subject, verb,
+  // object and consequence, so a line's wording is exactly what it was before
+  // it carried a kind.
   return { text: formatSystemLine(event), event };
+}
+
+/**
+ * The agent members of this Room that subscribed to `kind`.
+ *
+ * One query, one place: a producer says the kind, never who cares about it.
+ * Rooms hold tens of agents, so no index is needed yet — when a Room holds
+ * hundreds, this is the query that wants a GIN index on `event_subscriptions`.
+ *
+ * A failure here must never take the caller down with it: the join that posts
+ * the line is a real membership write, and losing it to a subscription lookup
+ * would be a silent partial join. So the lookup is caught and logged, and the
+ * line is still written with whatever mentions the producer named explicitly.
+ * The residual limit, stated plainly: PostgreSQL aborts a transaction on a
+ * failed statement, so a caller that passes its own transaction handle is
+ * still lost if THIS query is what failed inside it. The catch covers every
+ * caller that passes the pool, and every failure that is not the statement
+ * itself. Keeping the query trivial — one indexed predicate over a column the
+ * migration creates — is what keeps that case theoretical.
+ */
+async function subscribers(
+  database: SqlDatabase,
+  roomId: string,
+  kind: SystemEventKind | undefined,
+): Promise<string[]> {
+  if (!kind) return [];
+  try {
+    const rows = await database.query<{ identity_id: string }>(
+      `SELECT member.identity_id FROM memberships member
+       JOIN identities identity ON identity.id=member.identity_id AND identity.kind='agent'
+       WHERE member.room_id=$1 AND member.removed_at IS NULL
+         AND member.event_subscriptions @> $2::jsonb`,
+      [roomId, JSON.stringify([kind])],
+    );
+    return rows.rows.map((row) => row.identity_id);
+  } catch (error) {
+    console.error('[system-line] subscriber lookup failed', roomId, kind, error);
+    return [];
+  }
 }
 
 /** Insert one system line (or card) in a Room. */
@@ -87,6 +140,10 @@ export async function systemLine(
   const id = input.id ?? randomBytes(32).toString('hex');
   const authorId = input.authorId ?? input.subject.id;
   if (!authorId) throw new Error('system line needs an author identity');
+  const mentions = [
+    ...(input.mentions ?? []),
+    ...(await subscribers(database, input.roomId, input.kind)),
+  ];
   const result = await database.query(
     `INSERT INTO messages(
        id,room_id,author_id,text,presentation,mention_ids,request_id,durable_fact,
@@ -99,7 +156,7 @@ export async function systemLine(
       authorId,
       text,
       input.presentation ?? 'system',
-      JSON.stringify([...new Set(input.mentions ?? [])]),
+      JSON.stringify([...new Set(mentions)]),
       input.requestId ?? null,
       input.durableFact ?? null,
       input.cardType ?? null,

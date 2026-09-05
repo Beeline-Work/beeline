@@ -6,6 +6,11 @@ import {
 } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { joinRooms } from './membership-join.js';
+import {
+  REVIEW_IDENTITY_HANDLE,
+  REVIEW_IDENTITY_ID,
+  REVIEW_IDENTITY_NAME,
+} from './review-access.js';
 
 const ACCESS_LIFETIME_MS = 15 * 60_000;
 const REFRESH_LIFETIME_MS = 30 * 24 * 60 * 60_000;
@@ -36,6 +41,29 @@ function sameHash(left: string, right: string): boolean {
   const a = Buffer.from(left, 'hex');
   const b = Buffer.from(right, 'hex');
   return a.length === b.length && timingSafeEqual(a, b);
+}
+
+/**
+ * Land an identity where every person lands: the shared welcome Workspace and
+ * its live top-level Rooms. One path, so a GitHub sign-in and the Play review
+ * sign-in cannot drift apart.
+ */
+async function landInWelcomeWorkspace(database: SqlDatabase, id: string): Promise<void> {
+  await database.query(
+    `INSERT INTO workspaces(id,name) VALUES($1,$2) ON CONFLICT(id) DO NOTHING`,
+    [WELCOME_WORKSPACE_ID, WELCOME_WORKSPACE_NAME],
+  );
+  const membership = await database.query(
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+     VALUES($1,NULL,$2,'member') ON CONFLICT DO NOTHING`,
+    [WELCOME_WORKSPACE_ID, id],
+  );
+  await joinRooms(database, {
+    workspaceId: WELCOME_WORKSPACE_ID,
+    identityId: id,
+    rooms: { type: 'all-live-top-level' },
+    workspaceJoined: membership.rowCount > 0,
+  });
 }
 
 export interface PhoneTokens {
@@ -84,23 +112,29 @@ export class TokenAuth {
            provider_login=EXCLUDED.provider_login`,
         [github.subject, id, GITHUB_IDENTITY_AUDIENCE, github.login],
       );
-      await database.query(
-        `INSERT INTO workspaces(id,name) VALUES($1,$2) ON CONFLICT(id) DO NOTHING`,
-        [WELCOME_WORKSPACE_ID, WELCOME_WORKSPACE_NAME],
-      );
-      const membership = await database.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-         VALUES($1,NULL,$2,'member') ON CONFLICT DO NOTHING`,
-        [WELCOME_WORKSPACE_ID, id],
-      );
-      await joinRooms(database, {
-        workspaceId: WELCOME_WORKSPACE_ID,
-        identityId: id,
-        rooms: { type: 'all-live-top-level' },
-        workspaceJoined: membership.rowCount > 0,
-      });
+      await landInWelcomeWorkspace(database, id);
     });
     return this.issuePhoneTokens(id, randomUUID());
+  }
+
+  /**
+   * Sign in the one fixed Google Play review identity. Deliberately the same
+   * landing as a GitHub sign-in — the reviewer must see the ordinary product —
+   * and deliberately without a `github_subject` or an external link, so the
+   * identity holds no GitHub token and can never install the App or link a
+   * repository. The secret itself is checked by `ReviewAccess`, never here.
+   */
+  async exchangeReviewIdentity(): Promise<PhoneTokens> {
+    await this.database.transaction(async (database) => {
+      await database.query(
+        `INSERT INTO identities(id, kind, name, handle, updated_at)
+         VALUES ($1, 'human', $2, $3, $4)
+         ON CONFLICT (id) DO NOTHING`,
+        [REVIEW_IDENTITY_ID, REVIEW_IDENTITY_NAME, REVIEW_IDENTITY_HANDLE, this.now()],
+      );
+      await landInWelcomeWorkspace(database, REVIEW_IDENTITY_ID);
+    });
+    return this.issuePhoneTokens(REVIEW_IDENTITY_ID, randomUUID());
   }
 
   async refresh(refreshToken: string): Promise<PhoneTokens | null> {

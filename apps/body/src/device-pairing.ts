@@ -1,3 +1,4 @@
+import type { AgentAccessPolicy } from './access-policy.js';
 import type { AgentCommand, AgentKind } from './agent-command.js';
 import { loadBodyConfig } from './config.js';
 import { activateDaemonTransport, type DaemonFetch } from './daemon-api-client.js';
@@ -25,6 +26,8 @@ export interface DevicePairingGrant {
   monolithBaseUrl: string;
   daemonExchangeToken: string;
   llmEnvFile?: string;
+  /** `usebeeline connect --access everyone`; absent keeps the safe `creator`. */
+  accessPolicy?: AgentAccessPolicy;
 }
 
 export interface DeviceConnectionResult {
@@ -117,6 +120,7 @@ async function pairDevice(
     agentCommand: selectedAgent.command,
     agentArgs: selectedAgent.args,
     modelSelection: { model: grant.model },
+    ...(grant.accessPolicy ? { accessPolicy: grant.accessPolicy } : {}),
     mcpBinary: localConfig.mcpBinary,
     agentIdentity,
     bodyIdentity: identityFromKey(grant.bodySecretKey, DEFAULT_BODY_IDENTITY_NAME),

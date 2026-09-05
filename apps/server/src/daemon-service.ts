@@ -1842,6 +1842,7 @@ export class DaemonService {
         roomId: input.roomId,
         subject: { kind: 'agent', id: agentId, name: opener.name },
         verb: 'opened a corner',
+        kind: 'corner-opened',
         // The NAME titles the corner everywhere; the objective is the card body.
         object: { text: name, id: cornerId },
         presentation: 'card',

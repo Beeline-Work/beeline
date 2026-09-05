@@ -194,7 +194,13 @@ export function deriveAgentDisplayName(value: string | undefined | null, pubkey:
   return resolveAgentName(value ?? undefined, pubkey);
 }
 
-export function agentHandle(name: string): string {
+/**
+ * `pubkey` is intentionally retained as an ignored optional argument while
+ * mobile installations transition from the previous declaration bundle. The
+ * handle is now name-derived, but callers compiled against either declaration
+ * shape must remain type-safe.
+ */
+export function agentHandle(name: string, _pubkey?: string): string {
   const handle = name
     .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')

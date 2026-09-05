@@ -18,6 +18,7 @@ describe('agent presentation names', () => {
     expect(fallbackAgentName(codexPubkey)).toBe('Agent');
     expect(fallbackAgentName('ab'.repeat(32))).toBe('Agent');
     expect(agentHandle('Quiet Keeper')).toBe('quiet_keeper');
+    expect(agentHandle('Quiet Keeper', codexPubkey)).toBe('quiet_keeper');
   });
 
   it('keeps the stable friendly first-name fallback exclusive to people', () => {

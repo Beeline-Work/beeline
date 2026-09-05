@@ -54,6 +54,7 @@ import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js'
 import { WarmTranscript } from './warm-transcript.js';
 import { withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
 import { TurnTrace, TurnTraceFile, type TurnTraceSink } from './turn-trace.js';
+import { installCornerGitHubWrappers } from './corner-github-auth.js';
 
 type WorkspaceRoster = DaemonOperationMap['getWorkspaceRoster']['output'];
 type DaemonActivity = DaemonOperationMap['postAgentActivity']['input']['activity'][number];
@@ -414,11 +415,29 @@ export class MonolithCornerTurnLoop {
         })
       : {};
     const command = this.options.config.agentCommand ?? this.options.config.agentBinary;
+    let githubEnv: Record<string, string> = {
+      GH_TOKEN: this.options.githubToken,
+      GITHUB_TOKEN: this.options.githubToken,
+    };
+    if (this.options.config.runtimeConfigPath && this.options.config.agentHomeRoot) {
+      const gitBinary = (await execFileAsync('which', ['git'])).stdout.trim();
+      const ghBinary = await execFileAsync('which', ['gh'])
+        .then((result) => result.stdout.trim())
+        .catch(() => undefined);
+      githubEnv = await installCornerGitHubWrappers({
+        root: this.options.config.agentHomeRoot,
+        runtimeConfigPath: this.options.config.runtimeConfigPath,
+        roomId: this.options.parentRoomId,
+        cliEntrypoint: process.argv[1]!,
+        gitBinary,
+        ...(ghBinary ? { ghBinary } : {}),
+        inheritedPath: this.options.config.agentEnv.PATH ?? process.env.PATH,
+      });
+    }
     const agentEnv: Record<string, string> = {
       ...this.options.config.agentEnv,
       ...homeOverlay,
-      GH_TOKEN: this.options.githubToken,
-      GITHUB_TOKEN: this.options.githubToken,
+      ...githubEnv,
     };
     this.agentEnv = agentEnv;
     const agentArgs = agentArgsWithModelSelection(

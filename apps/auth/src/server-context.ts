@@ -147,6 +147,14 @@ export interface AuthServerOptions {
     agentPubkey: string;
     model: string;
     avatarSeed?: string;
+    /** Server event kinds this agent reacts to; spent only on the immediate, legacy join below. */
+    eventSubscriptions?: readonly string[];
+    /**
+     * Sent by a CLI that will call `finishAgentConnectPairing` itself once its
+     * rename decision settles. Omitted by any CLI built before that two-step
+     * flow existed, which gets the original immediate join instead.
+     */
+    deferJoin?: boolean;
   }) => Promise<
     | {
         status: 'claimed';

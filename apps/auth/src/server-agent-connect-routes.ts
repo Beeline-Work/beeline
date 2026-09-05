@@ -107,6 +107,20 @@ export function registerServerAgentConnectRoutes(context: AuthRouteContext): voi
     const provider = typeof body.provider === 'string' ? body.provider.trim().toLowerCase() : '';
     const model = typeof body.model === 'string' ? body.model.trim().slice(0, 200) : '';
     const avatarSeed = normalizeAvatarSeed(body.avatar_seed);
+    // A two-step CLI (this one) sets this to say it will call
+    // `/auth/agent/connect/finish` itself once its rename decision settles.
+    // An already-installed CLI built before that flow never sends it, so the
+    // claim keeps joining Rooms immediately, exactly as it always has.
+    const deferJoin = body.defer_join === true;
+    // Only spent on that immediate, legacy join: a deferring CLI sends its
+    // subscriptions to `/auth/agent/connect/finish` instead.
+    const eventSubscriptions = Array.isArray(body.event_subscriptions)
+      ? body.event_subscriptions
+          .filter((value): value is string => typeof value === 'string')
+          .map((value) => value.trim().toLowerCase())
+          .filter(Boolean)
+          .slice(0, 16)
+      : [];
     if (!pairingCode) {
       throw new ProtocolError(400, 'invalid_pairing_code', 'pairing code is invalid');
     }
@@ -142,6 +156,8 @@ export function registerServerAgentConnectRoutes(context: AuthRouteContext): voi
       agentPubkey: agent.publicKey,
       model,
       ...(avatarSeed ? { avatarSeed } : {}),
+      ...(eventSubscriptions.length ? { eventSubscriptions } : {}),
+      ...(deferJoin ? { deferJoin } : {}),
     });
     if (claim.status === 'not_found') {
       throw new ProtocolError(404, 'pairing_code_not_found', 'pairing code was not found');

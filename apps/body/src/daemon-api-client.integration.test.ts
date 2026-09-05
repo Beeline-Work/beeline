@@ -468,6 +468,9 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       model: 'gpt-5.4',
       soul: 'Brisk and kind.',
       agent_name: 'Scout',
+      // This flow finishes the join itself via /auth/agent/connect/finish
+      // below, once its rename decision settles.
+      defer_join: true,
     });
     const connected = await new Promise<{ status: number; body: Record<string, string> }>(
       (resolveResponse, rejectResponse) => {

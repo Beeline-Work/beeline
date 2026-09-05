@@ -1582,11 +1582,14 @@ describe('monolith integration', () => {
       await operation('createAgentPairingCode', { workspaceId: WORKSPACE })
     ).json()) as { code: string };
 
-    // Neither a name nor a soul is typed any more: the claim seeds both.
+    // Neither a name nor a soul is typed any more: the claim seeds both. This
+    // wizard defers the join to the finish call below, made once its rename
+    // decision settles.
     const connectPayload = JSON.stringify({
       pairing_code: pairing.code,
       harness: 'codex',
       model: 'gpt-5.6',
+      defer_join: true,
     });
     const connected = await new Promise<{ status: number; body: Record<string, string> }>(
       (resolve, reject) => {
@@ -4334,6 +4337,7 @@ describe('monolith integration', () => {
       code: pairing.code,
       agentPubkey,
       model: 'openrouter/z-ai/glm-5.3-flash',
+      deferJoin: true,
     });
     expect(claim.status).toBe('claimed');
     if (claim.status !== 'claimed') throw new Error('claim failed');

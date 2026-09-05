@@ -592,6 +592,10 @@ export function requestConnectGrant(
       ...(selection.provider ? { provider: selection.provider } : {}),
       model: selection.model,
       avatar_seed: avatarSeed,
+      // This wizard always finishes the join itself (`finishConnectedAgentPairing`,
+      // called once the rename prompt below settles), so the claim must not
+      // join Rooms or announce yet.
+      defer_join: true,
     },
     fetchImpl,
   );

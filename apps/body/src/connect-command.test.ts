@@ -164,12 +164,15 @@ describe('connect wizard', () => {
     ).resolves.toMatchObject({ workspace_name: 'Builders' });
     expect(fetchImpl).toHaveBeenCalledOnce();
     expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://server.example/auth/agent/connect');
-    // The wizard sends neither a name nor a soul: the server seeds both.
+    // The wizard sends neither a name nor a soul: the server seeds both. It
+    // always defers the join to `finishConnectedAgentPairing`, called once
+    // the rename prompt settles.
     expect(JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body))).toEqual({
       pairing_code: '1234ABCD-5678EF90',
       harness: 'codex',
       model: 'gpt-5.4',
       avatar_seed: '4ed3aee3a46d2b0b3476472dbc77eafb',
+      defer_join: true,
     });
   });
 

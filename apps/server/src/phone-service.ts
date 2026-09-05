@@ -1092,6 +1092,16 @@ export class PhoneService {
     agentPubkey: string;
     model: string;
     avatarSeed?: string;
+    /** Server event kinds this agent reacts to; only spent on the immediate, legacy join below. */
+    eventSubscriptions?: readonly string[];
+    /**
+     * The signal a two-step CLI sends: it will call `finishAgentConnectPairing`
+     * itself once its rename decision settles, so the claim must not join Rooms
+     * or announce yet. A CLI built before that two-step flow existed never
+     * sends this and never calls finish, so its absence keeps the original,
+     * immediate join — compatibility for every already-installed helper.
+     */
+    deferJoin?: boolean;
   }): Promise<
     | {
         status: 'claimed';
@@ -1111,6 +1121,8 @@ export class PhoneService {
       agentPubkey: string;
       model: string;
       avatarSeed?: string;
+      eventSubscriptions?: readonly string[];
+      deferJoin?: boolean;
     },
     createDaemonExchange: (
       agentId: string,
@@ -1136,6 +1148,8 @@ export class PhoneService {
       agentPubkey: string;
       model: string;
       avatarSeed?: string;
+      eventSubscriptions?: readonly string[];
+      deferJoin?: boolean;
     },
     createDaemonExchange?: (
       agentId: string,
@@ -1239,11 +1253,30 @@ export class PhoneService {
          RETURNING id`,
         [pairing.workspace_id, input.agentPubkey],
       );
-      // Room membership and the "joined" announcement wait for
-      // `finishAgentConnectPairing`: the wizard's one rename (`renameConnectedAgent`)
-      // still has a chance to land, and a system line is a fact written once —
-      // never rewritten by a later rename — so it must not be written under the
-      // seeded name only to go stale the moment the person picks a different one.
+      // A deferring CLI joins Rooms itself through `finishAgentConnectPairing`
+      // once its rename decision settles — a system line is a fact written
+      // once, never rewritten by a later rename, so it must not be written
+      // under the seeded name only to go stale the moment the person renames.
+      // A CLI that never asked to defer (every already-installed helper) gets
+      // the original, immediate join right here instead.
+      if (!input.deferJoin) {
+        const joined = await joinRooms(database, {
+          workspaceId: pairing.workspace_id,
+          identityId: input.agentPubkey,
+          rooms: { type: 'inherited-live-top-level', identityId: pairing.created_by },
+          workspaceJoined: workspaceMembership.rowCount > 0,
+        });
+        const subscriptions = [...new Set(input.eventSubscriptions ?? [])].filter(
+          isServerEventKind,
+        );
+        if (subscriptions.length && joined.roomIds.length) {
+          await database.query(
+            `UPDATE memberships SET event_subscriptions=$3::jsonb
+             WHERE identity_id=$1 AND room_id=ANY($2::uuid[])`,
+            [input.agentPubkey, joined.roomIds, JSON.stringify(subscriptions)],
+          );
+        }
+      }
       const exchange = createDaemonExchange
         ? await createDaemonExchange(input.agentPubkey, database)
         : undefined;

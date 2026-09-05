@@ -153,7 +153,9 @@ export const SidebarView = React.memo(function SidebarView() {
                 pressed && styles.roomRowSelected,
               ]}
             >
-              <HullDeckMark state="idle" />
+              {/* The server's own rollup of this Room's turn and its
+                  corners' signed receipts. Never a locally derived word. */}
+              <HullDeckMark state={item.agentState ?? 'idle'} />
               <View style={styles.roomCopy}>
                 <Text
                   numberOfLines={1}

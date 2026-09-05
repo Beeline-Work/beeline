@@ -9,7 +9,7 @@ import {
   type PhoneService,
 } from './phone-service.js';
 import { DAEMON_OPERATION_NAMES, type DaemonService } from './daemon-service.js';
-import type { LiveHub } from './live.js';
+import type { LiveEvent, LiveHub } from './live.js';
 
 export const DEFAULT_MEDIA_MAXIMUM_BYTES = 25 * 1024 * 1024;
 
@@ -159,13 +159,31 @@ export function createBeelineServer(options: ServerOptions): Server {
             (await options.phone.canReadRoom(item.roomId, identityId)) &&
             !releases.has(item.roomId)
           ) {
+            // Agents whose draft this socket has already been handed live.
+            // The snapshot below is read asynchronously, so a delta can land
+            // first; replacing it with the older row would show the reader the
+            // answer going backwards.
+            const streamed = new Set<string>();
             releases.set(
               item.roomId,
               options.live.subscribe(item.roomId, (event) => {
+                if (event.type === 'draft') streamed.add(event.agentId);
                 if (client.readyState === client.OPEN) client.send(JSON.stringify(event));
               }),
             );
             client.send(JSON.stringify({ type: 'subscribed', roomId: item.roomId }));
+            // A live lane carries only what is written after this point, so a
+            // reader who joins a turn already in progress has missed the draft
+            // it is writing. Hand over the running one now; every later delta
+            // arrives through the subscription above and replaces it. A read
+            // that fails leaves the lane exactly as it was before.
+            const snapshot = await options.phone
+              .liveDraftSnapshot(item.roomId)
+              .catch(() => [] as LiveEvent[]);
+            for (const event of snapshot) {
+              if (event.type === 'draft' && streamed.has(event.agentId)) continue;
+              if (client.readyState === client.OPEN) client.send(JSON.stringify(event));
+            }
           }
           if (item.type === 'unsubscribe' && typeof item.roomId === 'string') {
             releases.get(item.roomId)?.();

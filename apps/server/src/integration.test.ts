@@ -682,6 +682,121 @@ describe('monolith integration', () => {
     socket.close();
   });
 
+  it('hands a corner reader the draft its turn is already writing when they subscribe', async () => {
+    // The captain's report: a corner turn eight minutes into its tool work,
+    // opened from the Room list. Everything the corner shows — the objective,
+    // the collapsed tool group, the clock — is read durably over HTTP. The
+    // draft is the one thing that was only ever pushed, so a reader who was
+    // not already listening saw prose nowhere.
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'corner-draft-request',
+      name: 'Room join push',
+      objective: 'Trace the Room-join push producer and correct it',
+    });
+    expect(created.status).toBe(200);
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    const turnId = 'corner-draft-turn';
+    expect(
+      (
+        await daemonOperation('postAgentTurnReceipt', {
+          agentId: AGENT,
+          roomId: cornerId,
+          requestId: turnId,
+          status: 'working',
+        })
+      ).status,
+    ).toBe(200);
+    // The turn narrates, then disappears into tool calls. Every one of those
+    // rows is durable and readable later; the narration is not.
+    expect(
+      (
+        await daemonOperation('postAgentDraft', {
+          agentId: AGENT,
+          roomId: cornerId,
+          turnId,
+          text: "I'll trace the Room-join push producer and its existing coverage",
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await daemonOperation('postAgentActivity', {
+          agentId: AGENT,
+          roomId: cornerId,
+          requestId: turnId,
+          activity: [
+            { kind: 'tool', title: 'Bash', operation: 'execute', command: 'rg push', status: 'exit 0' },
+          ],
+        })
+      ).status,
+    ).toBe(200);
+
+    const socket = new WebSocket(`${origin.replace('http', 'ws')}/v1/phone/live`, [
+      `bearer.${accessToken}`,
+    ]);
+    await new Promise<void>((resolve, reject) => {
+      socket.once('open', () => resolve());
+      socket.once('error', reject);
+    });
+    const drafted = next(socket, 'draft');
+    socket.send(JSON.stringify({ type: 'subscribe', roomId: cornerId }));
+    await next(socket, 'subscribed');
+    expect(await drafted).toEqual({
+      type: 'draft',
+      roomId: cornerId,
+      agentId: AGENT,
+      turnId,
+      text: "I'll trace the Room-join push producer and its existing coverage",
+    });
+    socket.close();
+  });
+
+  it('never resurrects the draft of a turn that has stopped working', async () => {
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'settled-corner-request',
+      name: 'Settled corner',
+      objective: 'A turn that has already answered',
+    });
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    const turnId = 'settled-corner-turn';
+    await daemonOperation('postAgentTurnReceipt', {
+      agentId: AGENT,
+      roomId: cornerId,
+      requestId: turnId,
+      status: 'working',
+    });
+    await daemonOperation('postAgentDraft', {
+      agentId: AGENT,
+      roomId: cornerId,
+      turnId,
+      text: 'half an answer',
+    });
+    await daemonOperation('postAgentTurnReceipt', {
+      agentId: AGENT,
+      roomId: cornerId,
+      requestId: turnId,
+      status: 'complete',
+    });
+    expect(await new PhoneService(database, origin).liveDraftSnapshot(cornerId)).toEqual([]);
+
+    // A working turn nobody has heartbeated inside the horizon is equally
+    // dead: its words must not reappear as provisional prose on every open.
+    await daemonOperation('postAgentTurnReceipt', {
+      agentId: AGENT,
+      roomId: cornerId,
+      requestId: turnId,
+      status: 'working',
+    });
+    expect(await new PhoneService(database, origin).liveDraftSnapshot(cornerId)).toHaveLength(1);
+    await database.query(
+      `UPDATE agent_turns SET created_at=now()-interval '5 minutes' WHERE room_id=$1 AND request_id=$2`,
+      [cornerId, turnId],
+    );
+    expect(await new PhoneService(database, origin).liveDraftSnapshot(cornerId)).toEqual([]);
+  });
+
   it('prompts a conversation past one page with its newest rows, and recovers the objective from its oldest', async () => {
     // 250 ordered rows: row 1 is the parent-to-corner handoff the objective is
     // recovered from, and the newest rows are what a turn must be prompted with.
@@ -3221,6 +3336,38 @@ describe('monolith integration', () => {
     expect(stored.rows).toHaveLength(1);
     // Only the first human tag is delivered; the second stays plain text.
     expect(stored.rows[0]!.mention_ids).toEqual([HUMAN]);
+  });
+
+  it("reports a corner's working receipt on its parent Room row, and stops at archive", async () => {
+    // The Room row's own state word is the turn receipt, the corner's
+    // included — a helper working in a corner is work happening in that Room,
+    // and the label must not wait for the corner to say so in the parent.
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'corner-room-label',
+      name: 'Ship the widget',
+      objective: 'Ship the widget end to end',
+    });
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    const roomRow = async () =>
+      (
+        (await (await request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
+          chats: Array<{ room: { id: string }; agentState?: string }>;
+        }
+      ).chats.find((chat) => chat.room.id === ROOM)!;
+    expect((await roomRow()).agentState).toBeUndefined();
+
+    await daemonOperation('postAgentTurnReceipt', {
+      roomId: cornerId,
+      requestId: '4'.repeat(64),
+      status: 'working',
+    });
+    expect((await roomRow()).agentState).toBe('working');
+
+    // An archived corner is finished work: whatever its last receipt says, it
+    // no longer speaks for its Room, exactly as it no longer counts in it.
+    await database.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [cornerId]);
+    expect((await roomRow()).agentState).toBeUndefined();
   });
 
   it('delivers no human mention on a corner-complete post', async () => {

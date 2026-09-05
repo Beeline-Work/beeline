@@ -27,7 +27,8 @@ import { initConsoleLogging, setConsoleOutputEnabled } from '@/utils/consoleLogg
 import { useLocalSetting } from '@/sync/storage';
 import { useUnistyles } from 'react-native-unistyles';
 import { AsyncLock } from '@/utils/lock';
-import { navigateToBuzzNotificationResponse } from '@/utils/notificationRouting';
+import { routeBuzzNotificationResponse } from '@/push/notification-response';
+import { whenInitialLandingResolved } from '@/navigation/initial-landing';
 import { useTauriZoom } from '@/hooks/useTauriZoom';
 import { useTauriDrag } from '@/hooks/useTauriDrag';
 import { BrowserNavigationShortcuts } from '@/hooks/useBrowserNavigationShortcuts';
@@ -128,15 +129,6 @@ function HorizontalSafeAreaWrapper({ children }: { children: React.ReactNode }) 
 
 let lock = new AsyncLock();
 let loaded = false;
-
-function stringifyNotificationPayload(value: unknown): string {
-  try {
-    const serialized = JSON.stringify(value, null, 2);
-    return serialized ?? String(value);
-  } catch (error) {
-    return `[unserializable notification payload: ${error instanceof Error ? error.message : 'Unknown error'}]`;
-  }
-}
 
 async function loadFonts() {
   await lock.inLock(async () => {
@@ -336,48 +328,13 @@ export default function RootLayout() {
   const handledNotificationIds = React.useRef<Set<string>>(new Set());
   const handleNotificationResponse = React.useCallback(
     async (response: Notifications.NotificationResponse | null) => {
-      if (!response) {
-        console.log('[PUSH ROUTING] Notification response is null');
-        return;
-      }
-
-      console.log(
-        '[PUSH ROUTING] Full notification response:\n' + stringifyNotificationPayload(response),
-      );
-
-      const responseId = response.notification.request.identifier;
-      if (handledNotificationIds.current.has(responseId)) {
-        console.log(`[PUSH ROUTING] Duplicate notification response ignored: ${responseId}`);
-        return;
-      }
-
-      handledNotificationIds.current.add(responseId);
-
-      try {
-        if (response.actionIdentifier !== Notifications.DEFAULT_ACTION_IDENTIFIER) {
-          console.log(`[PUSH ROUTING] Ignoring non-default action: ${response.actionIdentifier}`);
-          return;
-        }
-
-        console.log(
-          '[PUSH ROUTING] notification.request.content.data:\n' +
-            stringifyNotificationPayload(response.notification.request.content.data),
-        );
-        const buzzTarget = navigateToBuzzNotificationResponse(router, response);
-        if (buzzTarget) {
-          console.log(
-            `[PUSH ROUTING] Navigating to Beeline ${buzzTarget.target}: ${buzzTarget.channelId}`,
-          );
-          return;
-        }
-        console.log('[PUSH ROUTING] No supported route found in notification.request.content.data');
-      } finally {
-        try {
-          await Notifications.clearLastNotificationResponseAsync();
-        } catch (error) {
-          console.log('Failed to clear last notification response:', error);
-        }
-      }
+      await routeBuzzNotificationResponse(response, {
+        router,
+        handled: handledNotificationIds.current,
+        defaultActionIdentifier: Notifications.DEFAULT_ACTION_IDENTIFIER,
+        waitForInitialLanding: whenInitialLandingResolved,
+        clearLastResponse: Notifications.clearLastNotificationResponseAsync,
+      });
     },
     [router],
   );

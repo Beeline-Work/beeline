@@ -8,6 +8,7 @@ import { Typography } from '@/constants/Typography';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { parseCommunityInviteToken } from '@/buzz/community-invite';
 import { isPersonNameOnboardingPending } from '@/buzz/person-name';
+import { markInitialLandingResolved } from '@/navigation/initial-landing';
 
 export default function Home() {
   const [buzzCheckDone, setBuzzCheckDone] = React.useState(false);
@@ -31,7 +32,14 @@ export default function Home() {
   }, []);
 
   React.useEffect(() => {
-    if (!buzzCheckDone || buzzStorageError) return;
+    if (!buzzCheckDone) return;
+    // Whichever way this resolves — including the storage-error screen below —
+    // the landing route is now settled, and a tapped push may open its Room on
+    // top of it instead of being replaced by this redirect.
+    if (buzzStorageError) {
+      markInitialLandingResolved();
+      return;
+    }
 
     if (initialInviteToken) {
       router.replace({
@@ -43,6 +51,7 @@ export default function Home() {
     } else {
       router.replace('/beeline/onboarding');
     }
+    markInitialLandingResolved();
   }, [
     buzzCheckDone,
     buzzStorageError,

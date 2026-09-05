@@ -217,7 +217,10 @@ describe('navigateToBuzzChannelFromNotification', () => {
     expect(appLayoutSource).toContain('Notifications.addNotificationResponseReceivedListener');
     expect(appLayoutSource).toContain('Notifications.getLastNotificationResponseAsync()');
     expect(appLayoutSource.match(/handleNotificationResponse\(response\)/g)).toHaveLength(2);
-    expect(appLayoutSource).toContain('navigateToBuzzNotificationResponse(router, response)');
+    // The routing itself lives in push/notification-response.ts, which owns the
+    // once-per-response guard and the wait for the app root's landing route;
+    // push/notification-response.test.ts covers what a tap does.
+    expect(appLayoutSource).toContain('routeBuzzNotificationResponse(response, {');
   });
 
   it('anchors messages, then replaces a missing corner with its parent Room', () => {

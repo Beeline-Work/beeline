@@ -132,6 +132,26 @@ export function isScheduledPrompt(
   return item.systemEvent?.verb === SCHEDULE_RAN_VERB;
 }
 
+/**
+ * Who the harness is told an inbox item is from.
+ *
+ * An event line's subject is the person or agent the fact is ABOUT, and the
+ * server put their display name on the structured event. A newcomer's join is
+ * the case that needs it: the roster this turn was built from was read before
+ * they arrived, so a lookup by author id finds nothing and the greeting comes
+ * out addressed to a truncated public key instead of a name.
+ */
+export function inboxItemAuthorName(
+  item: { type: string; authorId: string; mentionIds: readonly string[]; body: string; systemEvent?: SystemEvent },
+  agentId: string,
+  names: ReadonlyMap<string, string>,
+): string {
+  if (isScheduledPrompt(item, agentId)) return SCHEDULE_SCHEDULER_NAME;
+  const subject = item.systemEvent?.subject;
+  if (item.type === 'system' && subject?.name) return subject.name;
+  return names.get(item.authorId) ?? item.authorId.slice(0, 12);
+}
+
 /** What the harness is shown for an inbox item: a scheduled prompt's message
  *  itself (the event's consequence), otherwise the row's text. An event line's
  *  own sentence already carries the fact — `Ada joined Beeline Welcome` names
@@ -888,11 +908,7 @@ export class MonolithRoomTurnLoop {
                   'Room conversation so far:',
                   'New in the Room since your last turn (the earlier conversation is already in this session):',
                 ),
-                `Newest message from ${
-                  isScheduledPrompt(item, this.agent.publicKey)
-                    ? SCHEDULE_SCHEDULER_NAME
-                    : (names.get(item.authorId) ?? item.authorId.slice(0, 12))
-                }:`,
+                `Newest message from ${inboxItemAuthorName(item, this.agent.publicKey, names)}:`,
                 roomMessagePrompt(
                   '',
                   inboxItemPromptBody(item, this.agent.publicKey),

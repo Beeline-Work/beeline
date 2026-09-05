@@ -57,7 +57,24 @@ describe('the corner line and the turn indicator are independent', () => {
     for (const cornerState of CORNER_STATE) expect(turn).not.toContain(cornerState);
     expect(turn).toContain('activeAgentTurn');
     expect(chatSource).toContain('roomSurface?.latestAgentTurns ?? []');
-    expect(memoBody('activeAgentTurn')).not.toContain('liveOverlays');
+    expect(memoBody('rawActiveAgentTurns')).not.toContain('liveOverlays');
+  });
+
+  it('gives every concurrently answering agent its own lane and its own ring', () => {
+    // One human message can address two agents, so the Room can hold two
+    // working receipts at once. The transcript projection and the gold ring
+    // take them ALL; only the single composer line reads the first of them.
+    expect(memoBody('rawActiveAgentTurns')).toContain('agentTurnMarkers.filter(');
+    expect(chatSource).toContain(
+      'const activeAgentTurns = useStable(rawActiveAgentTurns, sameElementRefs);',
+    );
+    expect(chatSource).toContain('const activeAgentTurn = activeAgentTurns[0];');
+    expect(memoBody('visibleMessages')).toContain(
+      'projectActiveTurnStream(messages, activeAgentTurns, isArchived)',
+    );
+    expect(memoBody('rawSpeakerWorking')).toContain(
+      'activeTurnPubkeys: activeAgentTurns.map((turn) => turn.agentPubkey)',
+    );
   });
 
   it('runs the same thinking indicator for an active turn inside a corner', () => {

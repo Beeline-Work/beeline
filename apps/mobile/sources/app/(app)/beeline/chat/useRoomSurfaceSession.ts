@@ -19,6 +19,7 @@ import {
   type ChatDisplayMessage,
 } from '@/buzz/room-view-presentation';
 import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-storage';
+import { liveDraftRowId } from '@/buzz/draft-settle';
 import { createRoomOutbox, mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { BuzzRigTransport } from '@/sync/transport';
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
@@ -356,7 +357,7 @@ export function useRoomSurfaceSession({
               applyDecodedOverlay({
                 kind: 'draft',
                 key: `draft:${live.agentId}:${live.turnId}`,
-                stableId: `live-turn:${live.turnId}`,
+                stableId: liveDraftRowId(live.agentId, live.turnId),
                 agentPubkey: live.agentId,
                 requestId: live.turnId,
                 text: live.text,
@@ -379,7 +380,7 @@ export function useRoomSurfaceSession({
                   ? {
                       kind: 'draft',
                       key: `draft:${live.agentId}:${live.turnId}`,
-                      stableId: `live-turn:${live.turnId}`,
+                      stableId: liveDraftRowId(live.agentId, live.turnId),
                       agentPubkey: live.agentId,
                       requestId: live.turnId,
                       closed: true,

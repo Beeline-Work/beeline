@@ -46,7 +46,7 @@ export class LiveOverlayDecoder {
       const key = `draft:${agentPubkey}:${requestId ?? '*'}`;
       if (!this.isNewest(`draft-lane:${agentPubkey}:${this.roomId}`, event)) return null;
       return {
-        kind: 'draft', key, stableId: `live-turn:${requestId ?? agentPubkey}`,
+        kind: 'draft', key, stableId: `live-turn:${agentPubkey}:${requestId ?? '*'}`,
         agentPubkey, requestId: requestId ?? '', ...(event.content.trim() ? { text: event.content } : {}),
         closed, createdAt: event.created_at,
       };
@@ -86,20 +86,29 @@ export function applyLiveOverlay(
   if (update.kind === 'draft') {
     const withoutAgentDraft = current.filter((item) =>
       item.kind !== 'draft' || item.agentPubkey !== update.agentPubkey);
-    if (!update.closed) return [...withoutAgentDraft, update];
-    // A retract settles the streamed draft IN PLACE: the last streamed text
-    // stays visible (marked closed) until the durable final with the matching
-    // requestId removes it through `visibleLiveOverlays`. Blanking the row on
-    // retract showed deleted text whenever the final landed a beat later.
+    // A draft is EDITED IN PLACE: every snapshot of one turn keeps the stamp
+    // the turn started at. Each snapshot carries a fresh stamp on the wire, so
+    // taking it would walk this agent's row down the transcript on every
+    // chunk — with two agents streaming at once the two rows traded places
+    // with each other on every delta. Only a new request may take a new slot.
     const previous = current.find(
       (item): item is Extract<LiveOverlay, { kind: 'draft' }> =>
         item.kind === 'draft' && item.agentPubkey === update.agentPubkey,
     );
+    const anchored =
+      previous && previous.requestId === update.requestId
+        ? { ...update, createdAt: previous.createdAt }
+        : update;
+    if (!update.closed) return [...withoutAgentDraft, anchored];
+    // A retract settles the streamed draft IN PLACE: the last streamed text
+    // stays visible (marked closed) until the durable final with the matching
+    // requestId removes it through `visibleLiveOverlays`. Blanking the row on
+    // retract showed deleted text whenever the final landed a beat later.
     const text = update.text ?? previous?.text;
     if (!text) return withoutAgentDraft;
     return [
       ...withoutAgentDraft,
-      previous ? { ...previous, text, closed: true } : { ...update, text, closed: true },
+      previous ? { ...previous, text, closed: true } : { ...anchored, text, closed: true },
     ];
   }
   const withoutKey = current.filter((item) => item.key !== update.key);

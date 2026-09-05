@@ -66,6 +66,17 @@ export function sameMessageRefMap<T>(
   return true;
 }
 
+/**
+ * Element-wise reference equality for a derived array of already-stable
+ * objects — a filter over a memoized list rebuilds the array on every
+ * recompute even when it selected exactly the same members.
+ */
+export function sameElementRefs<T>(previous: readonly T[], next: readonly T[]): boolean {
+  if (previous === next) return true;
+  if (previous.length !== next.length) return false;
+  return previous.every((item, index) => item === next[index]);
+}
+
 /** Field-wise equality for one selected Room member. */
 function sameSelectedMember(
   previous: {

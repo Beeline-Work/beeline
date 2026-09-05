@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   draftRequestId,
+  joinedTurnRowId,
+  liveDraftRowId,
   provisionalDraftKey,
   rememberProvisionalDraft,
   resetProvisionalDrafts,
@@ -11,10 +13,25 @@ afterEach(() => resetProvisionalDrafts());
 
 describe('provisional draft memory', () => {
   it('reads the request id out of both live draft row ids, and nothing else', () => {
-    expect(draftRequestId('live-turn:request-1')).toBe('request-1');
-    expect(draftRequestId('active-turn-stream:request-1')).toBe('request-1');
+    const goosy = 'a'.repeat(64);
+    expect(draftRequestId(liveDraftRowId(goosy, 'request-1'))).toBe('request-1');
+    expect(draftRequestId(joinedTurnRowId(goosy, 'request-1'))).toBe('request-1');
     expect(draftRequestId('some-durable-message-id')).toBeUndefined();
     expect(draftRequestId('live-turn:')).toBeUndefined();
+    // The pre-author shape is not a draft row id: it named two agents at once.
+    expect(draftRequestId('live-turn:request-1')).toBeUndefined();
+  });
+
+  it('names a row by author AND request, so two agents on one request differ', () => {
+    // A human message addressing two agents starts two turns under the SAME
+    // request id (`monolith-room-turn.ts` posts `requestId: item.id`). The
+    // transcript is keyed by row id, so the author has to be in it.
+    const goosy = 'a'.repeat(64);
+    const terra = 'b'.repeat(64);
+    const request = 'c'.repeat(64);
+    expect(liveDraftRowId(goosy, request)).not.toBe(liveDraftRowId(terra, request));
+    expect(draftRequestId(liveDraftRowId(goosy, request))).toBe(request);
+    expect(draftRequestId(liveDraftRowId(terra, request))).toBe(request);
   });
 
   it('hands the last streamed text to the reply that settles it, exactly once', () => {

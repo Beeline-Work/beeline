@@ -132,9 +132,11 @@ native release build and rejects a release-tagged commit unless the tag is exact
 
 ### Signing
 
-The release keystore is at [`android-signing/release.keystore`](./android-signing/README.md).
-Credentials are committed alongside it because this repo is private. **Rotate the
-keystore before any public distribution.**
+The release keystore lives only in the `ANDROID_SIDELOAD_*` repository
+secrets, not in the tree — see
+[`android-signing/README.md`](./android-signing/README.md) for the secret
+names and how `apk:release` materializes and signs with them. **Never rotate
+this keystore** (it would break in-place upgrades for existing installs).
 
 iOS production builds use local EAS credentials (`credentialsSource: "local"`).
 The distribution certificate and App Store provisioning profile were created through

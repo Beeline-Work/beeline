@@ -40,12 +40,18 @@ import {
   type NewKeyDraft,
 } from '@/auth/new-key-onboarding';
 import {
+  clearOnboardingFaceStep,
   clearOnboardingNotice,
+  isSignInInFlight,
+  markSignInInFlight,
   nextOnboardingStatus,
   noticeForAuthError,
+  publishOnboardingFaceStep,
   publishOnboardingNotice,
+  subscribeToOnboardingFaceStep,
   subscribeToOnboardingNotices,
   waitForAuthCallback,
+  type OnboardingFaceStep,
   type OnboardingNotice,
   type OnboardingStatus,
 } from '@/auth/onboarding-state';
@@ -127,10 +133,15 @@ export default function BuzzOnboarding() {
   const [namingIdentity, setNamingIdentity] = useState<Identity | null>(null);
   const [namingClient, setNamingClient] = useState<BuzzClient | null>(null);
   const [nameInput, setNameInput] = useState('');
-  // The face ceremony: set once the monolith identity exists, cleared by the
-  // crossfade into the app. `face` is a face already on record.
-  const [faceStep, setFaceStep] = useState<{ seed: string; face: string | null } | null>(null);
+  // The face ceremony: published once the monolith identity exists, cleared by
+  // the crossfade into the app. `face` is a face already on record.
+  const [faceStep, setFaceStep] = useState<OnboardingFaceStep | null>(null);
   const loading = loadingAction !== null;
+
+  // The ceremony reaches whichever onboarding screen is on the page, not only
+  // the one whose press started the sign-in — the GitHub callback deep link
+  // routes a second one over it before the exchange comes back.
+  useEffect(() => subscribeToOnboardingFaceStep(setFaceStep), []);
 
   /**
    * After a monolith sign-in the identity exists; before the app opens the
@@ -144,7 +155,7 @@ export default function BuzzOnboarding() {
       router.replace('/beeline/channels');
       return;
     }
-    setFaceStep({ seed, face: null });
+    publishOnboardingFaceStep({ seed, face: null });
   };
 
   const restorePendingBind = async (): Promise<boolean> => {
@@ -318,6 +329,11 @@ export default function BuzzOnboarding() {
     void (async () => {
       const initialUrl = await Linking.getInitialURL().catch(() => null);
       if (getBuzzRuntimeConfig().monolithEnabled) {
+        // A press already running in this process owns its own callback. This
+        // screen is the one expo-router routed over it when that callback
+        // arrived: it must neither spend the one-use ticket a second time nor
+        // race the press into the app past the ceremony it is about to publish.
+        if (isSignInInFlight()) return;
         const challenge =
           (await resumeInitialGitHubSignIn(() => Promise.resolve(initialUrl))) ??
           (await loadPendingGitHubBindChallenge());
@@ -409,6 +425,7 @@ export default function BuzzOnboarding() {
     setStatus('opening_browser');
     clearOnboardingNotice();
     setNotice(null);
+    markSignInInFlight(true);
     try {
       const runtime = getBuzzRuntimeConfig();
       if (runtime.monolithEnabled) {
@@ -463,6 +480,7 @@ export default function BuzzOnboarding() {
       setNotice(next);
       publishOnboardingNotice(next);
     } finally {
+      markSignInInFlight(false);
       setLoadingAction(null);
     }
   };
@@ -706,7 +724,10 @@ export default function BuzzOnboarding() {
         <FaceCeremonyStep
           currentFace={faceStep.face}
           onConfirm={(face) => monolithPhoneOperation('updateIdentityFace', { faceId: face })}
-          onEntered={() => router.replace('/beeline/channels')}
+          onEntered={() => {
+            clearOnboardingFaceStep();
+            router.replace('/beeline/channels');
+          }}
           seed={faceStep.seed}
         />
       </View>

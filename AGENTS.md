@@ -52,6 +52,7 @@ Committed home for project-intrinsic agent knowledge: rule + authoritative file 
 
 - Gate `apps/gate/`; live `cd apps/gate && npm run test:live` after `npm run stack:up`. Relay defaults `relay-config.ts` → `usebeeline.app`. Room tenancy is server-stamped `channels.community_id`, NOT the kind:9007 `community` tag.
 - GitHub sign-in: `github-auth-session.ts` keeps browser authorization and ticket exchange on one stack; identity is sealed pre-browser, `/auth/oidc/bind` is create-once, `/auth/oidc/recover` is explicit replacement. Provisioning `apps/gate/src/provisioning.ts`; human custody/role verification `human-authority.ts`. Coverage: `github-auth-session.test.ts`, `onboarding.github-callback.test.ts`.
+- **A GitHub callback is a deep link, so it routes a SECOND onboarding screen over the one whose press is still finishing the sign-in.** Nothing that press must still show may live in that component's own state — it paints where nobody is looking, and the sign-in reads as not having counted. `auth/onboarding-state.ts` publishes both the failure notice and the face ceremony (`publishOnboardingFaceStep`) so whichever screen is on the page shows them, and a screen routed in mid-press does nothing while `isSignInInFlight()`: it must neither spend the one-use ticket twice nor enter the app past the ceremony. Coverage: `onboarding.github-callback.test.ts`.
 
 ## Body (@beeline/body)
 

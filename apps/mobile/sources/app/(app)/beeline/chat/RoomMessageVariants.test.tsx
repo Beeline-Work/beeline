@@ -586,7 +586,7 @@ describe('Room message variant components', () => {
       <OrdinaryLedgerMessage
         {...rowProps}
         message={message({
-          id: 'live-turn:request-9',
+          id: 'live-turn:agent:request-9',
           pubkey: 'agent',
           isAgentAuthor: true,
           isAgentActivity: true,

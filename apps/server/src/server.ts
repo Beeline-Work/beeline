@@ -9,7 +9,8 @@ import {
   type PhoneService,
 } from './phone-service.js';
 import { DAEMON_OPERATION_NAMES, type DaemonService } from './daemon-service.js';
-import type { LiveHub } from './live.js';
+import type { LiveEvent, LiveHub } from './live.js';
+import type { ReviewAccess } from './review-access.js';
 
 export const DEFAULT_MEDIA_MAXIMUM_BYTES = 25 * 1024 * 1024;
 
@@ -30,6 +31,8 @@ export interface ServerOptions {
   live: LiveHub;
   mediaMaximumBytes: number;
   github?: GitHubServerHooks;
+  /** Absent when no review secret is configured; the endpoint then refuses like any wrong secret. */
+  review?: ReviewAccess;
   authHandler?: (request: IncomingMessage, response: ServerResponse) => void;
 }
 
@@ -71,6 +74,13 @@ function tokenFromProtocol(request: IncomingMessage): string | null {
     .map((item) => item.trim())
     .find((item) => item.startsWith('bearer.'));
   return value ? value.slice('bearer.'.length) : null;
+}
+/** Who a rate limit counts against: the edge's client address, else the socket peer. */
+function clientKey(request: IncomingMessage): string {
+  const forwarded = request.headers['fly-client-ip'] ?? request.headers['x-forwarded-for'];
+  const value = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+  const first = value?.split(',')[0]?.trim();
+  return first || request.socket.remoteAddress || 'unknown';
 }
 function signatureMatches(secret: string, payload: Buffer, header: string | undefined) {
   if (!header?.startsWith('sha256=')) return false;
@@ -159,13 +169,31 @@ export function createBeelineServer(options: ServerOptions): Server {
             (await options.phone.canReadRoom(item.roomId, identityId)) &&
             !releases.has(item.roomId)
           ) {
+            // Agents whose draft this socket has already been handed live.
+            // The snapshot below is read asynchronously, so a delta can land
+            // first; replacing it with the older row would show the reader the
+            // answer going backwards.
+            const streamed = new Set<string>();
             releases.set(
               item.roomId,
               options.live.subscribe(item.roomId, (event) => {
+                if (event.type === 'draft') streamed.add(event.agentId);
                 if (client.readyState === client.OPEN) client.send(JSON.stringify(event));
               }),
             );
             client.send(JSON.stringify({ type: 'subscribed', roomId: item.roomId }));
+            // A live lane carries only what is written after this point, so a
+            // reader who joins a turn already in progress has missed the draft
+            // it is writing. Hand over the running one now; every later delta
+            // arrives through the subscription above and replaces it. A read
+            // that fails leaves the lane exactly as it was before.
+            const snapshot = await options.phone
+              .liveDraftSnapshot(item.roomId)
+              .catch(() => [] as LiveEvent[]);
+            for (const event of snapshot) {
+              if (event.type === 'draft' && streamed.has(event.agentId)) continue;
+              if (client.readyState === client.OPEN) client.send(JSON.stringify(event));
+            }
           }
           if (item.type === 'unsubscribe' && typeof item.roomId === 'string') {
             releases.get(item.roomId)?.();
@@ -262,6 +290,18 @@ async function route(
     const input = await body(request);
     if (typeof input.oidcToken !== 'string') throw new Error('oidcToken is required');
     json(response, 200, await options.auth.exchangeGitHubOidc(input.oidcToken));
+    return;
+  }
+  if (method === 'POST' && url.pathname === '/v1/auth/review/exchange') {
+    const input = await body(request);
+    const redemption = await (options.review?.redeem(input.secret, clientKey(request)) ??
+      Promise.resolve({ status: 'refused' as const }));
+    if (redemption.status === 'redeemed') json(response, 200, redemption.tokens);
+    // A rate limit is the only thing a client is told; an unknown secret and an
+    // unconfigured server are the same ordinary 404, so neither is a hint.
+    else if (redemption.status === 'rate_limited')
+      json(response, 429, { error: 'too_many_requests' });
+    else json(response, 404, { error: 'not_found' });
     return;
   }
   if (method === 'POST' && url.pathname === '/v1/auth/refresh') {

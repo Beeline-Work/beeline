@@ -82,6 +82,12 @@ describe('production iOS capabilities', () => {
             host: 'usebeeline.app',
             pathPrefix: '/auth/github/mobile-callback',
           },
+          // The Google Play review link rides the same verified host.
+          {
+            scheme: 'https',
+            host: 'usebeeline.app',
+            pathPrefix: '/review/',
+          },
           {
             scheme: 'https',
             host: 'relay.buzzrouter.com',
@@ -108,6 +114,7 @@ describe('production iOS capabilities', () => {
     expect(relayAssociation.applinks?.details?.[0]?.paths).toEqual(
       expect.arrayContaining([
         '/join/*',
+        '/review/*',
         '/auth/github/mobile-callback',
         // The auth service keeps this recovery-compatible server endpoint even
         // though the mobile app no longer registers or routes it.

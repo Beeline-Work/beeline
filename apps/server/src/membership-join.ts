@@ -97,6 +97,10 @@ export async function joinRooms(
           name: context.display_name,
         },
         verb: 'joined',
+        // The one thing a producer says about who cares: the kind. A Room's
+        // subscribers are resolved inside `systemLine`, so an arrival wakes
+        // exactly the agents that asked to hear about arrivals in THIS Room.
+        kind: 'joined',
         cardType: 'member-joined',
         card: { identityId: input.identityId },
       });

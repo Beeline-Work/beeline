@@ -63,8 +63,10 @@ export function selectTurnProgressAgentPubkey(input: TurnProgressInput): string 
 }
 
 export type WorkingAgentsInput = {
-  /** The agent named by this channel's fresh server-indexed WORKING receipt. */
-  activeTurnPubkey?: string | null;
+  /** Every agent named by a fresh server-indexed WORKING receipt in this
+   * channel. Concurrent turns are ordinary: one message can address two
+   * agents, and both rings light. */
+  activeTurnPubkeys?: readonly string[];
   /** This corner's administering agent, only while the corner's canonical
    * lifecycle is `working` and live (`sessionState === 'working'`). */
   workingCornerAgentPubkey?: string | null;
@@ -82,7 +84,7 @@ export type WorkingAgentsInput = {
  */
 export function selectWorkingAgents(input: WorkingAgentsInput): Readonly<Record<string, true>> {
   const working: Record<string, true> = {};
-  if (input.activeTurnPubkey) working[input.activeTurnPubkey] = true;
+  for (const pubkey of input.activeTurnPubkeys ?? []) if (pubkey) working[pubkey] = true;
   if (input.workingCornerAgentPubkey) working[input.workingCornerAgentPubkey] = true;
   return working;
 }

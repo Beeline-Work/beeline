@@ -159,6 +159,8 @@ export async function stageMonolithAgentRuntime(input: {
   agentIdentity: Identity;
   bodyIdentity: Identity;
   supervisorRoot?: string;
+  /** Who may drive this agent. Defaults to the safe `creator`. */
+  accessPolicy?: AgentAccessPolicy;
 }): Promise<{ runtime: AgentRuntimeRecord; configPath: string }> {
   const supervisorRoot = input.supervisorRoot
     ? resolve(input.supervisorRoot)
@@ -202,7 +204,7 @@ export async function stageMonolithAgentRuntime(input: {
     supervisorRoot,
     transport: { kind: 'monolith', baseUrl, exchangeToken: input.daemonExchangeToken },
     ...(input.llmEnvFile ? { llmEnvFile: input.llmEnvFile } : {}),
-    accessPolicy: DEFAULT_ACCESS_POLICY,
+    accessPolicy: input.accessPolicy ?? DEFAULT_ACCESS_POLICY,
     agentBinary: input.agentBinary,
     agentKind: input.agentKind,
     agentCommand: input.agentCommand,

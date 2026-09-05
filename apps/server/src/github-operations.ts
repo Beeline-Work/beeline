@@ -676,6 +676,12 @@ export class GitHubOperations {
           {
             subject: GITHUB_SUBJECT,
             verb: `${label} a check`,
+            // A check that is still running is not yet a fact to react to.
+            ...(check.status === 'passed'
+              ? { kind: 'check-passed' as const }
+              : check.status === 'failed'
+                ? { kind: 'check-failed' as const }
+                : {}),
             object: { text: check.name, ...(check.url ? { url: check.url } : {}) },
             ...(check.status === 'failed' && check.conclusion && check.conclusion !== 'failure'
               ? { consequence: check.conclusion }
@@ -823,6 +829,7 @@ export class GitHubOperations {
           ? { kind: 'github', name: pullRequest.mergedBy }
           : GITHUB_SUBJECT,
         verb: 'merged',
+        kind: 'merged',
         object: { text: pullRequest.title, url: pullRequest.url },
       };
       await systemLine(database, {

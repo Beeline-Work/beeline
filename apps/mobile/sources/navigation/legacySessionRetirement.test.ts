@@ -33,6 +33,11 @@ describe('legacy session retirement', () => {
     expect(sidebar).toContain('http.chats(workspaceId)');
     expect(sidebar).toContain('surface.chats.map');
     expect(sidebar).toContain('router.push(`/beeline/chat/${encodeURIComponent(item.room.id)}`');
+    // The row's state mark reports the server's rollup of the Room turn and
+    // its corners' signed receipts. It used to be pinned to `idle`, which
+    // made the sidebar the one Room label that could never say working.
+    expect(sidebar).toContain("<HullDeckMark state={item.agentState ?? 'idle'} />");
+    expect(sidebar).not.toContain('<HullDeckMark state="idle" />');
     expect(sidebar).not.toMatch(/MainView|SessionsList|ActiveSessionsGroupCompact/);
     expect(sidebar).not.toContain("router.push('/settings')");
     expect(sidebar).not.toContain("router.navigate('/new')");

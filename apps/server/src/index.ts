@@ -10,6 +10,7 @@ import { createBeelineServer, DEFAULT_MEDIA_MAXIMUM_BYTES } from './server.js';
 import { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { GitHubOperations } from './github-operations.js';
 import { createMonolithAuth } from './monolith-auth.js';
+import { ReviewAccess } from './review-access.js';
 import type { MonolithAuthMount } from './monolith-auth.js';
 
 function required(name: string) {
@@ -109,12 +110,19 @@ async function main() {
     github ? (roomId) => github!.roomToken(roomId) : undefined,
     Number(process.env.MEDIA_MAX_BYTES ?? String(DEFAULT_MEDIA_MAXIMUM_BYTES)),
   );
+  // The Google Play review link. Absent secret = the endpoint refuses like any
+  // wrong secret; rotating the value revokes every future use of the link.
+  const review = new ReviewAccess({
+    ...(process.env.BEELINE_REVIEW_SECRET ? { secret: process.env.BEELINE_REVIEW_SECRET } : {}),
+    mint: () => auth.exchangeReviewIdentity(),
+  });
   const server = createBeelineServer({
     database,
     auth,
     phone,
     daemon,
     live,
+    review,
     mediaMaximumBytes: Number(process.env.MEDIA_MAX_BYTES ?? String(DEFAULT_MEDIA_MAXIMUM_BYTES)),
     authHandler: mountedAuth.handle,
     github: {

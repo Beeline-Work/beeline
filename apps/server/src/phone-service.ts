@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import {
   createAgentPairingCode,
+  isServerEventKind,
   ROOM_VIEW_AGENT_LIMIT,
   ROOM_VIEW_BRIEFING_LIMIT,
   ROOM_VIEW_MEMBER_LIMIT,
@@ -40,9 +41,11 @@ import {
   type AgentGrantStatus,
 } from '@beeline/api-contract/agent-grants';
 import type { SqlDatabase } from './database.js';
+import type { LiveEvent } from './live.js';
 import type { GitHubOperations } from './github-operations.js';
 import { collapsePermissionCards } from '@beeline/push-gateway/projection';
 import { joinRooms } from './membership-join.js';
+import { REVIEW_IDENTITY_ID } from './review-access.js';
 import { identitySubject, systemLine } from './system-line.js';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
 
@@ -316,6 +319,52 @@ export class PhoneService {
     return this.hasRoomAccess(roomId, identityId);
   }
 
+  /**
+   * The live draft a joining reader has already missed.
+   *
+   * `LiveHub` is publish-only: a socket receives what is written after it
+   * subscribes, and `live_outputs` — which holds the running text — was never
+   * offered to anyone who was not already listening. A top-level Room hides
+   * that, because its turn writes a fresh whole-answer snapshot every few
+   * hundred milliseconds and repaints a late reader almost immediately. A
+   * corner turn spends minutes inside tool calls between assistant runs, so
+   * the same reader sits in front of the collapsed tool group and the clock
+   * with no prose at all for as long as the tools run.
+   *
+   * Bounded by the turn receipt on exactly the rule the phone uses to call a
+   * turn active (`AGENT_TURN_FRESHNESS_MS`, 90s, kept inside itself by the
+   * daemon's 30s heartbeat and by every activity row it posts): a finished or
+   * abandoned turn never has its draft resurrected.
+   */
+  async liveDraftSnapshot(roomId: string): Promise<LiveEvent[]> {
+    const rows = await this.database.query<{
+      agent_id: string;
+      turn_id: string;
+      body: { text?: unknown } | null;
+    }>(
+      `SELECT o.agent_id, o.turn_id, o.body FROM live_outputs o
+       JOIN agent_turns t ON t.room_id=o.room_id AND t.request_id=o.turn_id AND t.agent_id=o.agent_id
+       WHERE o.room_id=$1 AND o.kind='draft'
+         AND t.status='working' AND t.created_at>now()-interval '90 seconds'
+       ORDER BY o.updated_at`,
+      [roomId],
+    );
+    return rows.rows.flatMap((row) => {
+      const text = typeof row.body?.text === 'string' ? row.body.text : '';
+      return text
+        ? [
+            {
+              type: 'draft' as const,
+              roomId,
+              agentId: row.agent_id,
+              turnId: row.turn_id,
+              text,
+            },
+          ]
+        : [];
+    });
+  }
+
   async readWorkspaces(viewerId: string): Promise<WorkspaceListView> {
     const rows = await this.database.query<{
       id: string;
@@ -443,7 +492,7 @@ export class PhoneService {
           lm_other.id<>mark.message_id AND
           (lm_other.created_at,lm_other.id)>(mark.message_created_at,mark.message_id)
         )) unread,
-        EXISTS(SELECT 1 FROM agent_turns t WHERE (t.room_id=r.id OR t.room_id IN (SELECT id FROM rooms WHERE parent_id=r.id)) AND t.status='working') working,
+        EXISTS(SELECT 1 FROM agent_turns t WHERE (t.room_id=r.id OR t.room_id IN (SELECT id FROM rooms WHERE parent_id=r.id AND archived_at IS NULL)) AND t.status='working') working,
         EXISTS(SELECT 1 FROM permission_authority p WHERE (p.room_id=r.id OR p.room_id IN (SELECT id FROM rooms WHERE parent_id=r.id)) AND p.status='pending') needs_you
       FROM rooms r
       JOIN memberships member ON member.room_id=r.id AND member.identity_id=$2 AND member.removed_at IS NULL
@@ -1043,6 +1092,7 @@ export class PhoneService {
     agentPubkey: string;
     model: string;
     avatarSeed?: string;
+    eventSubscriptions?: readonly string[];
   }): Promise<
     | {
         status: 'claimed';
@@ -1061,6 +1111,7 @@ export class PhoneService {
       agentPubkey: string;
       model: string;
       avatarSeed?: string;
+      eventSubscriptions?: readonly string[];
     },
     createDaemonExchange: (
       agentId: string,
@@ -1085,6 +1136,7 @@ export class PhoneService {
       agentPubkey: string;
       model: string;
       avatarSeed?: string;
+      eventSubscriptions?: readonly string[];
     },
     createDaemonExchange?: (
       agentId: string,
@@ -1187,12 +1239,23 @@ export class PhoneService {
          RETURNING id`,
         [pairing.workspace_id, input.agentPubkey],
       );
-      await joinRooms(database, {
+      const joined = await joinRooms(database, {
         workspaceId: pairing.workspace_id,
         identityId: input.agentPubkey,
         rooms: { type: 'inherited-live-top-level', identityId: pairing.created_by },
         workspaceJoined: workspaceMembership.rowCount > 0,
       });
+      // What this agent reacts to, in the Rooms it just joined. A subscription
+      // is per Room because an event happens in a Room; `usebeeline connect
+      // --subscribe joined` is what a greeter is set up with.
+      const subscriptions = [...new Set(input.eventSubscriptions ?? [])].filter(isServerEventKind);
+      if (subscriptions.length && joined.roomIds.length) {
+        await database.query(
+          `UPDATE memberships SET event_subscriptions=$3::jsonb
+           WHERE identity_id=$1 AND room_id=ANY($2::uuid[])`,
+          [input.agentPubkey, joined.roomIds, JSON.stringify(subscriptions)],
+        );
+      }
       const exchange = createDaemonExchange
         ? await createDaemonExchange(input.agentPubkey, database)
         : undefined;
@@ -1253,6 +1316,8 @@ export class PhoneService {
     input: Input<Name>,
     viewerId: string,
   ): Promise<Output<Name>> {
+    if (viewerId === REVIEW_IDENTITY_ID && REVIEW_LOCKED_OPERATIONS.has(name))
+      throw new Error(REVIEW_IDENTITY_MESSAGE);
     switch (name) {
       case 'sendRoomMessage':
         return (await this.sendMessage(
@@ -2258,6 +2323,9 @@ export class PhoneService {
         authorId: viewerId,
         subject: identitySubject({ id: decider.pubkey, kind: decider.kind, name: decider.name }),
         verb: decision === 'always' ? 'approved' : decision === 'once' ? 'approved once' : 'declined',
+        // A resume kind: it answers a turn already paused on the ask, and must
+        // never start a second one (`RESUME_KINDS`).
+        kind: 'grant-decided',
         object: `${grant.kind} ${grant.target}`,
         mentions: [grant.agent_id],
         cardType: 'grant-decision',
@@ -2986,6 +3054,24 @@ export class PhoneService {
 
 /** Plain refusal for a yolo flip by anyone but the agent owner or a Workspace manager. */
 export const YOLO_AUTHORITY_MESSAGE = "Only the agent's owner or a workspace admin can change this";
+
+/**
+ * The Google Play review identity signs in without GitHub, so it holds no
+ * GitHub token and must never acquire one: it cannot install the App, create or
+ * link a repository, or bind itself to a GitHub account. Read-only repository
+ * operations stay available and simply answer empty. This is the one place the
+ * review identity differs from an ordinary person.
+ */
+export const REVIEW_IDENTITY_MESSAGE = 'GitHub access denied for the review identity';
+export const REVIEW_LOCKED_OPERATIONS = new Set<keyof PhoneOperationMap>([
+  'setRoomRepository',
+  'beginGitHubInstallation',
+  'createGitHubRepository',
+  'beginGitHubIdentityBind',
+  'completeGitHubIdentityBind',
+  'recoverGitHubIdentity',
+  'adoptGitHubHandle',
+]);
 
 export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'sendRoomMessage',

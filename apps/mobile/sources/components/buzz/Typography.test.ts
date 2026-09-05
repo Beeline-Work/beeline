@@ -18,7 +18,7 @@ const sources = [
   './Ledger.tsx',
   './RoomDeckComposeMenu.tsx',
   './RoomRosterSheet.tsx',
-  './SettingsNavigationRow.tsx',
+  './SettingsRow.tsx',
 ];
 
 const monoStyles = new Set([

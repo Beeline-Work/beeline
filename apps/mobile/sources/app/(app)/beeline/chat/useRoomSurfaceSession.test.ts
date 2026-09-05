@@ -371,6 +371,136 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => renderer.unmount());
   });
 
+  it('streams a corner’s own draft into the corner, and settles it on the durable reply', async () => {
+    // A corner is the same route as a Room, so the whole streaming
+    // presentation is shared. What was never covered is the corner viewed as
+    // ITSELF: the server builds a corner's watch filters around the corner id
+    // and its parent, and the corner's live lane is the only place its prose
+    // exists before the answer lands.
+    const cornerFilters: RoomView['watchFilters'] = [
+      { kinds: [9], '#h': ['workspace', 'corner-a', 'room-a'] },
+      { kinds: [30078], '#d': ['agent-draft:corner-a', 'agent-thought:corner-a'] },
+    ];
+    controls.cached = { ...roomView('corner-a', cornerFilters), parent: roomView('room-a').room };
+    let current!: UseRoomSurfaceSessionResult;
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, {
+          channelId: 'corner-a',
+          capture: (result: UseRoomSurfaceSessionResult) => (current = result),
+        }),
+      );
+    });
+    await flushEffects();
+
+    // The corner's own id has to reach the live subscription, or nothing the
+    // turn writes can ever be delivered to the reader sitting in it.
+    expect(controls.subscriptions[0]!.filters).toEqual(cornerFilters);
+
+    const emit = (live: Record<string, unknown>) =>
+      controls.subscriptions[0]!.emit({ monolithLive: { roomId: 'corner-a', ...live } });
+    await act(async () => {
+      emit({ type: 'draft', agentId: 'agent-a', turnId: 'turn-c', text: "I'll trace the producer" });
+      emit({
+        type: 'draft',
+        agentId: 'agent-a',
+        turnId: 'turn-c',
+        text: "I'll trace the producer, then make the smallest correction",
+      });
+    });
+
+    expect(current.liveOverlays).toHaveLength(1);
+    expect(current.liveOverlays[0]).toMatchObject({
+      kind: 'draft',
+      // The author is half a draft row's identity (C107).
+      stableId: 'live-turn:agent-a:turn-c',
+      agentPubkey: 'agent-a',
+      requestId: 'turn-c',
+      closed: false,
+      text: "I'll trace the producer, then make the smallest correction",
+    });
+
+    // Exactly as a Room settles: the durable reply carries the turn's request
+    // id, and the provisional row stops being visible the moment it lands.
+    const reply = {
+      id: 'e'.repeat(64),
+      text: "I'll trace the producer, then make the smallest correction. Done.",
+      createdAt: 20,
+      author: { pubkey: 'agent-a', kind: 'agent' as const, name: 'Agent' },
+      presentation: 'message' as const,
+      requestId: 'turn-c',
+    };
+    await act(async () => {
+      emit({ type: 'retract', kind: 'draft', agentId: 'agent-a', turnId: 'turn-c' });
+      controls.schedulers[0]!.apply({
+        ...roomView('corner-a', cornerFilters),
+        parent: roomView('room-a').room,
+        messages: [reply],
+      });
+    });
+    expect(visibleLiveOverlays(current.liveOverlays, [reply])).toEqual([]);
+    await act(async () => renderer.unmount());
+  });
+
+  it('anchors a joining reader’s two snapshot drafts into two rows that stay put', async () => {
+    // The join of #920 and C107: `PhoneService.liveDraftSnapshot` hands a
+    // socket the drafts its turns are already writing — one row per agent —
+    // and each has to land as its OWN transcript entry that later deltas edit
+    // in place. Both agents were addressed by one message, so both turns
+    // carry that message's id: the request alone cannot tell the rows apart.
+    controls.cached = roomView('room-a');
+    let current!: UseRoomSurfaceSessionResult;
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, {
+          channelId: 'room-a',
+          capture: (result: UseRoomSurfaceSessionResult) => (current = result),
+        }),
+      );
+    });
+    await flushEffects();
+
+    const emit = (live: Record<string, unknown>) =>
+      controls.subscriptions[0]!.emit({ monolithLive: { roomId: 'room-a', ...live } });
+    await act(async () => {
+      // The subscribe-time burst, in the order the snapshot serves it.
+      emit({ type: 'draft', agentId: 'goosy', turnId: 'turn-x', text: 'goosy so far' });
+      emit({ type: 'draft', agentId: 'terra', turnId: 'turn-x', text: 'terra so far' });
+    });
+
+    expect(
+      current.liveOverlays.map((overlay) => [
+        overlay.kind === 'draft' ? overlay.stableId : '',
+        overlay.agentPubkey,
+      ]),
+    ).toEqual([
+      ['live-turn:goosy:turn-x', 'goosy'],
+      ['live-turn:terra:turn-x', 'terra'],
+    ]);
+    const anchors = current.liveOverlays.map((overlay) => overlay.createdAt);
+
+    await act(async () => {
+      emit({ type: 'draft', agentId: 'terra', turnId: 'turn-x', text: 'terra so far, and more' });
+      emit({ type: 'draft', agentId: 'goosy', turnId: 'turn-x', text: 'goosy so far, and more' });
+    });
+
+    // Two rows still, in the same order, each carrying its own newer text:
+    // neither agent took the other's row and neither stamp moved.
+    expect(
+      current.liveOverlays.map((overlay) => [
+        overlay.agentPubkey,
+        overlay.kind === 'draft' ? overlay.text : '',
+        overlay.createdAt,
+      ]),
+    ).toEqual([
+      ['goosy', 'goosy so far, and more', anchors[0]],
+      ['terra', 'terra so far, and more', anchors[1]],
+    ]);
+    await act(async () => renderer.unmount());
+  });
+
   it('settles a retracted corner draft in place instead of blanking streamed chunks', async () => {
     controls.cached = roomView('room-a');
     let current!: UseRoomSurfaceSessionResult;

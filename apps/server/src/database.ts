@@ -1,3 +1,4 @@
+import { SCHEDULE_RAN_VERB } from '@beeline/api-contract/scheduled-prompts';
 import { seedDefaultWorkspace } from './default-workspace.js';
 import { Pool, type PoolClient, type QueryResultRow } from 'pg';
 
@@ -285,6 +286,10 @@ CREATE TABLE IF NOT EXISTS memberships (
   removed_at timestamptz
 );
 ALTER TABLE memberships ADD COLUMN IF NOT EXISTS identity_profile jsonb;
+-- What this member reacts to in THIS Room. An event happens in a Room, so the
+-- subscription lives on the Room membership row and not on the identity: an
+-- agent in several Rooms would otherwise inherit one Room's job everywhere.
+ALTER TABLE memberships ADD COLUMN IF NOT EXISTS event_subscriptions jsonb NOT NULL DEFAULT '[]'::jsonb;
 CREATE INDEX IF NOT EXISTS memberships_identity_idx ON memberships(identity_id, removed_at);
 CREATE UNIQUE INDEX IF NOT EXISTS memberships_workspace_unique
   ON memberships(workspace_id, identity_id) WHERE room_id IS NULL;
@@ -705,7 +710,22 @@ CREATE TABLE IF NOT EXISTS import_items (
 export async function migrate(database: SqlDatabase): Promise<void> {
   await database.query(SCHEMA);
   await backfillCornerOwners(database);
+  await backfillSystemEventKinds(database);
   await seedDefaultWorkspace(database);
+}
+
+/**
+ * Scheduled-prompt lines predate the `kind` beside their verb. They are the one
+ * shape a live subscriber can already be waiting on, so they are stamped; older
+ * join/corner/check lines get nothing, because no subscriber can want an event
+ * that already happened. Idempotent through the `IS NULL` guard.
+ */
+export async function backfillSystemEventKinds(database: SqlDatabase): Promise<void> {
+  await database.query(
+    `UPDATE messages SET system_event = system_event || jsonb_build_object('kind','schedule-ran')
+     WHERE system_event->>'verb' = $1 AND system_event->>'kind' IS NULL`,
+    [SCHEDULE_RAN_VERB],
+  );
 }
 
 /**

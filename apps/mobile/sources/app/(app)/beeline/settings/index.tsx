@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useReducer, useRef, useState } from 'react';
-import { ActivityIndicator, Linking, Text, TouchableOpacity, View } from 'react-native';
+import { Linking, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { router, type Href } from 'expo-router';
 import * as Updates from 'expo-updates';
@@ -14,7 +14,8 @@ import {
 import { clearPendingGitHubSignInState } from '@/auth/github-auth-session';
 import { clearMobileSurfaceStorage } from '@/buzz/surface-storage';
 import { WORKSPACES_LABEL } from '@/buzz/vocabulary';
-import { PixelGateReveal } from '@/components/buzz/MonoHull';
+import { PixelGateReveal, PixelLoader } from '@/components/buzz/MonoHull';
+import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { Typography } from '@/constants/Typography';
 import { BuzzRigTransport } from '@/sync/transport';
 import { loadAppConfig } from '@/sync/appConfig';
@@ -32,9 +33,11 @@ import {
  * `settings/identity`, which left this screen, and the only sign-out in the
  * product, unreachable from the app's own chrome.
  *
- * It is built as an index, in the Room list's vocabulary: no row surfaces, one
- * hairline between rows, copy on the same three tones, and each row's mark
- * hanging in the right gutter.
+ * It is the Members page's sibling: one list of `SettingsRow`s, small-caps
+ * section heads, the three tones, and one trailing vocabulary per row — a
+ * chevron to leave for something, a value to state one, a single action word
+ * to act. Sign out is titled by its own verb in the danger tone, the shape the
+ * Members page removes a member with; it was a backspace glyph in a gutter.
  */
 export default function BuzzSettings() {
   const insets = useSafeAreaInsets();
@@ -49,6 +52,16 @@ export default function BuzzSettings() {
   const manualUpdateBusy = isManualUpdateBusy(manualUpdate);
   const manualUpdateStatus = manualUpdateMessage(manualUpdate);
   const release = loadAppConfig();
+  // The release is the value a person wants off this row; the channel and the
+  // running update id are machine detail and ride the one quiet line.
+  const releaseValue = `${release.releaseVersion ?? 'development'}${
+    release.releaseSha ? ` · ${release.releaseSha.slice(0, 12)}` : ''
+  }`;
+  // The update id is truncated the way the release sha already is: a machine
+  // identifier at the precision a phone can read, not a UUID down three lines.
+  const runningUpdateDetail = `${Updates.channel ?? 'not configured'} · ${
+    Updates.updateId?.slice(0, 8) ?? 'embedded bundle'
+  }`;
 
   useEffect(() => {
     let cancelled = false;
@@ -115,122 +128,90 @@ export default function BuzzSettings() {
           <Text style={styles.backText}>‹</Text>
         </TouchableOpacity>
         <View style={styles.headerCopy}>
+          <Text numberOfLines={1} style={styles.eyebrow}>
+            Account · all {WORKSPACES_LABEL.toLowerCase()}
+          </Text>
           <Text style={styles.title}>Settings</Text>
-          <Text style={styles.headerMeta}>ACCOUNT · ALL {WORKSPACES_LABEL.toUpperCase()}</Text>
         </View>
       </View>
 
       <View style={styles.content}>
-        <Text style={styles.sectionLabel}>IDENTITY</Text>
-        <TouchableOpacity
-          accessibilityLabel="Open My Settings"
-          accessibilityRole="button"
-          onPress={() => router.push('/beeline/settings/identity' as Href)}
-          style={styles.settingsRow}
-          testID="backup-key-setting"
-        >
-          <View style={styles.rowCopy}>
-            <Text style={styles.rowTitle}>My Settings</Text>
-            <Text style={styles.rowSubtitle}>Identity, notifications, sign-in, and key backup</Text>
-          </View>
-          <View style={styles.rowGutter}>
-            <Text style={styles.rowChevron}>›</Text>
-          </View>
-        </TouchableOpacity>
-
-        <Text style={styles.sectionLabel}>CONNECTED GITHUB ACCOUNTS</Text>
-        {githubInstallations.map((installation) => (
-          <TouchableOpacity
-            accessibilityLabel={`Manage ${installation.accountLogin} on GitHub`}
-            accessibilityRole="link"
-            key={installation.installationId}
-            onPress={() => void Linking.openURL(installation.manageUrl)}
-            style={styles.settingsRow}
-            testID={`github-installation-${installation.installationId}`}
-          >
-            <View style={styles.rowCopy}>
-              <Text style={styles.rowTitle}>{installation.accountLogin}</Text>
-              <Text style={styles.rowSubtitle}>
-                {installation.status === 'active'
-                  ? `${installation.repositoryCount} repositories`
-                  : `${installation.status} · reconnect required`}
-              </Text>
-            </View>
-            <View style={styles.rowGutter}>
-              <Text style={styles.manageText}>MANAGE ↗</Text>
-            </View>
-          </TouchableOpacity>
-        ))}
-        {!githubInstallations.length && (
-          <View style={styles.settingsRow} testID="github-installations-empty">
-            <View style={styles.rowCopy}>
-              <Text style={styles.rowSubtitle}>No GitHub accounts connected</Text>
-            </View>
-          </View>
-        )}
-
-        <Text style={styles.sectionLabel}>THIS DEVICE</Text>
-        <View style={styles.settingsRow} testID="ota-update-info">
-          <View style={styles.rowCopy}>
-            <Text style={styles.rowTitle}>OTA update</Text>
-            <Text style={styles.rowSubtitle} testID="ota-update-running-id">
-              Running update: {Updates.updateId ?? 'embedded bundle'}
-            </Text>
-            <Text style={styles.rowSubtitle} testID="ota-update-channel">
-              Channel: {Updates.channel ?? 'not configured'}
-            </Text>
-            <Text style={styles.rowSubtitle} testID="ota-release-version">
-              Release: {release.releaseVersion ?? 'development'}
-              {release.releaseSha ? ` · ${release.releaseSha.slice(0, 12)}` : ''}
-            </Text>
-            {manualUpdateStatus && (
-              <Text
-                accessibilityLiveRegion="polite"
-                style={styles.updateStatus}
-                testID="ota-update-status"
-              >
-                {manualUpdateStatus}
-              </Text>
-            )}
-          </View>
-          <TouchableOpacity
-            accessibilityLabel={manualUpdateButtonLabel(manualUpdate)}
-            accessibilityRole="button"
-            accessibilityState={{
-              disabled: !Updates.isEnabled || manualUpdateBusy,
-              busy: manualUpdateBusy,
-            }}
-            disabled={!Updates.isEnabled || manualUpdateBusy}
-            onPress={() => void handleManualUpdate()}
-            style={[
-              styles.updateAction,
-              (!Updates.isEnabled || manualUpdateBusy) && styles.updateActionDisabled,
-            ]}
-            testID="ota-update-check"
-          >
-            {manualUpdateBusy && <ActivityIndicator size="small" testID="ota-update-progress" />}
-            <Text style={styles.updateActionText}>{manualUpdateButtonLabel(manualUpdate)}</Text>
-          </TouchableOpacity>
+        <View style={styles.section}>
+          <Text style={styles.sectionLabel}>Identity</Text>
+          <SettingsRow
+            accessibilityLabel="Open My Settings"
+            chevron="right"
+            description="Identity, notifications, sign-in, and key backup"
+            onPress={() => router.push('/beeline/settings/identity' as Href)}
+            testID="backup-key-setting"
+            title="My Settings"
+          />
         </View>
-        <TouchableOpacity
-          accessibilityLabel={confirmForget ? 'Confirm sign out' : 'Sign out on this device'}
-          accessibilityRole="button"
-          onPress={() => void handleForget()}
-          style={styles.settingsRow}
-          testID="sign-out-setting"
-        >
-          <View style={styles.rowCopy}>
-            <Text style={styles.rowTitle}>{confirmForget ? '! Confirm sign out' : 'Sign out'}</Text>
-            <Text style={styles.rowSubtitle}>
-              {confirmForget
+
+        <View style={styles.section}>
+          <Text style={styles.sectionLabel}>Connected GitHub accounts</Text>
+          {githubInstallations.map((installation) => (
+            <SettingsRow
+              accessibilityLabel={`Manage ${installation.accountLogin} on GitHub`}
+              accessibilityRole="link"
+              action="Manage ↗"
+              description={
+                installation.status === 'active'
+                  ? `${installation.repositoryCount} repositories`
+                  : `${installation.status} · reconnect required`
+              }
+              key={installation.installationId}
+              onPress={() => void Linking.openURL(installation.manageUrl)}
+              testID={`github-installation-${installation.installationId}`}
+              title={installation.accountLogin}
+            />
+          ))}
+          {!githubInstallations.length && (
+            <SettingsRow
+              tone="quiet"
+              testID="github-installations-empty"
+              title="No GitHub accounts connected"
+            />
+          )}
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionLabel}>This device</Text>
+          <SettingsRow
+            description={runningUpdateDetail}
+            testID="ota-update-info"
+            title="OTA update"
+            value={releaseValue}
+          />
+          <SettingsRow
+            accessibilityLabel={manualUpdateButtonLabel(manualUpdate)}
+            description={manualUpdateStatus ?? undefined}
+            disabled={!Updates.isEnabled || manualUpdateBusy}
+            leading={
+              manualUpdateBusy ? (
+                <View testID="ota-update-progress">
+                  <PixelLoader compact />
+                </View>
+              ) : undefined
+            }
+            onPress={() => void handleManualUpdate()}
+            testID="ota-update-check"
+            title={manualUpdateButtonLabel(manualUpdate)}
+            tone="action"
+          />
+          <SettingsRow
+            accessibilityLabel={confirmForget ? 'Confirm sign out' : 'Sign out on this device'}
+            description={
+              confirmForget
                 ? 'Permanently erase this device’s identity key'
-                : 'Remove this identity from this device'}
-            </Text>
-          </View>
-          <View style={styles.rowGutter}>
-            <Text style={styles.forgetGlyph}>⌫</Text>
-          </View>
-        </TouchableOpacity>
+                : 'Remove this identity from this device'
+            }
+            tone="destructive"
+            onPress={() => void handleForget()}
+            testID="sign-out-setting"
+            title={confirmForget ? 'Confirm sign out' : 'Sign out'}
+          />
+        </View>
 
         {/* A destructive, non-repeating safety notice is one of the two things
             DESIGN.md still lets a box wrap. */}
@@ -266,153 +247,41 @@ export default function BuzzSettings() {
   );
 }
 
-const SCREEN_INSET = 16;
-/** The same marginalia column the Room list reserves, so a settings row and a
- * Room row hang their trailing marks off one edge. */
-const ROW_GUTTER_WIDTH = 46;
-
 const styles = StyleSheet.create((theme) => {
-  const groknight = theme.buzz;
+  const hull = theme.buzz;
   return {
-    container: { flex: 1, backgroundColor: groknight.bgTerminal },
+    container: { flex: 1, backgroundColor: hull.bgTerminal },
     header: {
-      minHeight: 64,
-      paddingRight: SCREEN_INSET,
-      paddingVertical: 8,
+      minHeight: 66,
       flexDirection: 'row',
       alignItems: 'center',
-      borderBottomWidth: 1,
-      borderBottomColor: groknight.border,
+      paddingHorizontal: hull.space.sm,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: hull.border,
     },
-    back: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-    backText: { ...Typography.default(), color: groknight.chrome, fontSize: 28, lineHeight: 32 },
+    back: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+    backText: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
     headerCopy: { flex: 1, minWidth: 0 },
-    title: {
-      ...Typography.default('semiBold'),
-      fontFamily: groknight.proseSemibold,
-      color: groknight.textPrimary,
-      fontSize: 17,
-      lineHeight: 22,
-    },
-    headerMeta: {
-      ...Typography.mono(),
-      marginTop: 2,
-      color: groknight.ledgerGhost,
-      fontSize: 9,
-      lineHeight: 12,
-      letterSpacing: 0.8,
-    },
-    content: { paddingBottom: 24 },
+    eyebrow: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
+    title: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
+    content: { padding: hull.space.md, gap: hull.layout.sectionGap },
+    section: {},
     sectionLabel: {
-      ...Typography.mono('semiBold'),
-      paddingHorizontal: SCREEN_INSET,
-      paddingTop: 18,
-      paddingBottom: 6,
-      color: groknight.textMuted,
-      fontSize: 10,
-      lineHeight: 14,
-      letterSpacing: 1.1,
-    },
-    /* An index row, not a card: no fill, no border, no radius — one hairline. */
-    settingsRow: {
-      minHeight: 64,
-      paddingLeft: SCREEN_INSET,
-      paddingRight: SCREEN_INSET,
-      paddingVertical: 12,
-      flexDirection: 'row',
-      alignItems: 'center',
-      borderBottomWidth: 1,
-      borderBottomColor: groknight.border,
-    },
-    rowCopy: { flex: 1, minWidth: 0 },
-    rowGutter: { width: ROW_GUTTER_WIDTH, alignItems: 'flex-end' },
-    /* The hub reads on the index's three tones: name brightest, its explanation
-     * a step down, the gutter's mark ghosted. */
-    rowTitle: {
       ...Typography.default(),
-      fontFamily: groknight.proseRegular,
-      color: groknight.textPrimary,
-      fontSize: 15,
-      lineHeight: 20,
-    },
-    rowSubtitle: {
-      ...Typography.default(),
-      fontFamily: groknight.proseRegular,
-      marginTop: 3,
-      color: groknight.ledgerQuiet,
-      fontSize: 12,
-      lineHeight: 16,
-    },
-    rowChevron: {
-      ...Typography.default(),
-      fontFamily: groknight.proseRegular,
-      color: groknight.ledgerGhost,
-      fontSize: 18,
-      lineHeight: 20,
-    },
-    manageText: {
-      ...Typography.mono(),
-      color: groknight.textSecondary,
-      fontSize: 9,
-    },
-    updateAction: {
-      minWidth: 126,
-      minHeight: 44,
-      marginLeft: 12,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'flex-end',
-      gap: 7,
-    },
-    updateActionDisabled: { opacity: 0.58 },
-    updateActionText: {
-      ...Typography.mono('semiBold'),
-      color: groknight.textSecondary,
-      fontSize: 9,
-      lineHeight: 13,
-      letterSpacing: 0.3,
-      textAlign: 'right',
-    },
-    updateStatus: {
-      ...Typography.default(),
-      fontFamily: groknight.proseRegular,
-      marginTop: 6,
-      color: groknight.textSecondary,
-      fontSize: 12,
-      lineHeight: 16,
-    },
-    forgetGlyph: {
-      ...Typography.default(),
-      color: groknight.ledgerGhost,
-      fontSize: 15,
-      lineHeight: 20,
+      ...hull.type.sectionHead,
+      paddingRight: hull.space.sm,
+      paddingBottom: hull.space.xs,
+      color: hull.textMuted,
     },
     confirmPanel: {
-      marginTop: 14,
-      marginHorizontal: SCREEN_INSET,
-      padding: 14,
-      borderRadius: 3,
-      borderWidth: 1,
-      borderColor: groknight.border,
+      padding: hull.space.md,
+      gap: hull.space.xs,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: hull.border,
+      borderRadius: hull.radius,
     },
-    confirmText: {
-      ...Typography.default(),
-      fontFamily: groknight.proseRegular,
-      color: groknight.textSecondary,
-      fontSize: 12,
-      lineHeight: 18,
-    },
-    cancelButton: {
-      minHeight: 44,
-      marginTop: 5,
-      alignSelf: 'flex-start',
-      justifyContent: 'center',
-    },
-    cancelText: {
-      ...Typography.default('semiBold'),
-      fontFamily: groknight.proseSemibold,
-      color: groknight.textSecondary,
-      fontSize: 12,
-    },
+    confirmText: { ...Typography.default(), ...hull.type.meta, color: hull.textSecondary },
+    cancelButton: { minHeight: 44, alignSelf: 'flex-start', justifyContent: 'center' },
+    cancelText: { ...Typography.default(), ...hull.type.body, color: hull.textSecondary },
   };
 });

@@ -5,6 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { stdin, stdout } from 'node:process';
 import * as clack from '@clack/prompts';
 import { normalizeAgentPairingCode } from '@beeline/api-contract/phone';
+import { isAgentAccessPolicy, type AgentAccessPolicy } from './access-policy.js';
 import {
   AUTO_DETECT_AGENT_KINDS,
   detectInstalledAgentCommands,
@@ -552,11 +553,27 @@ async function jsonRequest<T>(url: string, body: unknown, fetchImpl: typeof fetc
   return response.json() as Promise<T>;
 }
 
+/**
+ * The kinds `--subscribe` accepts. Parsed here only to keep an obvious typo out
+ * of the request; the monolith owns the registry and drops anything else.
+ */
+export function parseConnectSubscriptions(value: string | undefined): string[] {
+  return [
+    ...new Set(
+      (value ?? '')
+        .split(',')
+        .map((entry) => entry.trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  ];
+}
+
 export function requestConnectGrant(
   baseUrl: string,
   pairingCode: string,
   selection: ConnectWizardResult,
   fetchImpl: typeof fetch,
+  eventSubscriptions: readonly string[] = [],
 ): Promise<DeviceGrantResponse> {
   const normalizedPairingCode = normalizeAgentPairingCode(pairingCode);
   if (!normalizedPairingCode) throw new Error('invalid pairing code');
@@ -575,6 +592,7 @@ export function requestConnectGrant(
       ...(selection.provider ? { provider: selection.provider } : {}),
       model: selection.model,
       avatar_seed: avatarSeed,
+      ...(eventSubscriptions.length ? { event_subscriptions: [...eventSubscriptions] } : {}),
     },
     fetchImpl,
   );
@@ -721,14 +739,23 @@ export async function brassSpinner<T>(
 
 export async function runConnectCommand(
   code: string | undefined,
-  options: { fetchImpl?: typeof fetch } = {},
+  options: {
+    fetchImpl?: typeof fetch;
+    subscribe?: readonly string[];
+    accessPolicy?: AgentAccessPolicy;
+  } = {},
 ): Promise<void> {
   if (!stdin.isTTY || !stdout.isTTY) {
     throw new Error('`usebeeline connect` needs an interactive terminal');
   }
   const restoreRails = paintWizardBrass();
   try {
-    await runConnectWizard(code, options.fetchImpl ?? fetch);
+    await runConnectWizard(
+      code,
+      options.fetchImpl ?? fetch,
+      options.subscribe ?? [],
+      options.accessPolicy,
+    );
   } finally {
     restoreRails();
   }
@@ -737,6 +764,8 @@ export async function runConnectCommand(
 async function runConnectWizard(
   code: string | undefined,
   fetchImpl: typeof fetch,
+  eventSubscriptions: readonly string[],
+  accessPolicy: AgentAccessPolicy | undefined,
 ): Promise<void> {
   clack.intro(brass('Beeline connect'));
   const pairingCode =
@@ -759,7 +788,7 @@ async function runConnectWizard(
   );
   const claimed = await brassSpinner(
     'Connecting to your Beeline Workspace…',
-    () => requestConnectGrant(baseUrl, pairingCode, selection, fetchImpl),
+    () => requestConnectGrant(baseUrl, pairingCode, selection, fetchImpl, eventSubscriptions),
     (connectedGrant) => `Connected to ${connectedGrant.workspace_name}`,
   );
   // The server seeded this agent's animal, name and soul from its Workspace
@@ -791,6 +820,7 @@ async function runConnectWizard(
     monolithBaseUrl: baseUrl,
     daemonExchangeToken: grant.daemon_exchange_token,
     ...(llmEnvFile ? { llmEnvFile } : {}),
+    ...(accessPolicy ? { accessPolicy } : {}),
   } satisfies DevicePairingGrant);
   await brassSpinner(
     'Starting your agent…',
@@ -853,6 +883,7 @@ export async function confirmSeededName(
 function isDevicePairingGrant(value: unknown): value is DevicePairingGrant {
   if (!value || typeof value !== 'object') return false;
   const grant = value as Partial<DevicePairingGrant>;
+  if (grant.accessPolicy !== undefined && !isAgentAccessPolicy(grant.accessPolicy)) return false;
   let monolithOrigin = '';
   try {
     monolithOrigin = new URL(grant.monolithBaseUrl ?? '').origin;

@@ -31,9 +31,69 @@ export type SystemEvent = {
   readonly verb: string;
   readonly object?: SystemObject;
   readonly consequence?: string;
+  /** What this line IS, for subscribers and daemons. Absent on a line nobody reacts to. */
+  readonly kind?: SystemEventKind;
 };
 
 export const SYSTEM_LINE_SEPARATOR = ' · ';
+
+/**
+ * The event kinds — the machine half of a system line.
+ *
+ * `verb` is prose a person reads and an editor may reword; `kind` is the
+ * contract a subscriber and a daemon match on. They are separate for exactly
+ * that reason: `SCHEDULE_RAN_VERB` is display text, and a wording change must
+ * never silently unsubscribe anybody. `kind` is additive — every verb keeps
+ * the wording it already ships with.
+ *
+ * A server kind is a fact the SERVER authored, which is why a daemon may act
+ * on it without re-checking who the row's author happens to be. An `agent:`
+ * kind is a fact an agent emitted and stays gated on that agent's authority.
+ */
+export const SERVER_EVENT_KINDS = [
+  'joined',
+  'schedule-ran',
+  'corner-opened',
+  'check-passed',
+  'check-failed',
+  'merged',
+  'grant-decided',
+] as const;
+export type ServerEventKind = (typeof SERVER_EVENT_KINDS)[number];
+export type AgentEventKind = `agent:${string}`;
+export type SystemEventKind = ServerEventKind | AgentEventKind;
+
+const AGENT_KIND = /^agent:[a-z0-9-]{1,40}$/;
+
+export function isServerEventKind(value: unknown): value is ServerEventKind {
+  return (SERVER_EVENT_KINDS as readonly string[]).includes(value as string);
+}
+export function isAgentKind(value: unknown): value is AgentEventKind {
+  return typeof value === 'string' && AGENT_KIND.test(value);
+}
+export function isSystemEventKind(value: unknown): value is SystemEventKind {
+  return isServerEventKind(value) || isAgentKind(value);
+}
+
+/**
+ * Kinds that RESUME a turn instead of starting one. A grant decision is the
+ * answer to a turn already paused on the ask (`isGrantDecisionLine`); treating
+ * it as a new trigger would run the same work twice.
+ */
+export const RESUME_KINDS: readonly SystemEventKind[] = ['grant-decided'];
+export function isResumeKind(value: unknown): boolean {
+  return RESUME_KINDS.includes(value as SystemEventKind);
+}
+
+/**
+ * Bounds on an event cascade. The server derives depth and roots itself and
+ * counts the turns one root may wake; an agent-emitted event may name at most
+ * `MAX_MENTIONS_PER_EVENT` agents. Owned here so the server and the helper
+ * read one number.
+ */
+export const MAX_EVENT_DEPTH = 4;
+export const MAX_TURNS_PER_ROOT = 12;
+export const MAX_MENTIONS_PER_EVENT = 3;
 
 /** "Candy" · "Candy and Terra" · "Candy, Terra and Codex". */
 export function joinSystemNames(names: readonly string[]): string {
@@ -78,6 +138,7 @@ export function isSystemEvent(value: unknown): value is SystemEvent {
           typeof object.text === 'string' &&
           (object.id === undefined || typeof object.id === 'string') &&
           (object.url === undefined || typeof object.url === 'string'))) &&
-      (event.consequence === undefined || typeof event.consequence === 'string'),
+      (event.consequence === undefined || typeof event.consequence === 'string') &&
+      (event.kind === undefined || isSystemEventKind(event.kind)),
   );
 }

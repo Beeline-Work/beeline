@@ -107,14 +107,30 @@ export function registerServerAgentConnectRoutes(context: AuthRouteContext): voi
     const provider = typeof body.provider === 'string' ? body.provider.trim().toLowerCase() : '';
     const model = typeof body.model === 'string' ? body.model.trim().slice(0, 200) : '';
     const avatarSeed = normalizeAvatarSeed(body.avatar_seed);
+    // Opaque here: the monolith owns the kind registry and drops anything that
+    // is not a server kind, so a stale CLI can never write a made-up one.
+    const eventSubscriptions = Array.isArray(body.event_subscriptions)
+      ? body.event_subscriptions
+          .filter((value): value is string => typeof value === 'string')
+          .map((value) => value.trim().toLowerCase())
+          .filter(Boolean)
+          .slice(0, 16)
+      : [];
     if (!pairingCode) {
       throw new ProtocolError(400, 'invalid_pairing_code', 'pairing code is invalid');
     }
     if (!SUPPORTED_HARNESSES.has(harness)) {
       throw new ProtocolError(400, 'invalid_harness', 'unsupported agent harness');
     }
-    if (PROVIDER_REQUIRED.has(harness) && !SUPPORTED_PROVIDERS.has(provider)) {
-      throw new ProtocolError(400, 'invalid_provider', 'this harness requires a provider');
+    // A provider is a fact about the wizard's credential step, not something
+    // this service stores: the claim below never sees it. So the check is only
+    // that a NAMED provider is one we know, and that a harness which supplies
+    // its own is not handed one. A `goose` or `pi` the wizard found already
+    // authenticated names none (C96 skips provider, key and model for it), and
+    // refusing that claim made `usebeeline connect` fail for exactly the
+    // harnesses whose own setup was already good.
+    if (provider && !SUPPORTED_PROVIDERS.has(provider)) {
+      throw new ProtocolError(400, 'invalid_provider', 'unsupported provider');
     }
     if (!PROVIDER_REQUIRED.has(harness) && provider) {
       throw new ProtocolError(400, 'invalid_provider', 'this harness supplies its own provider');
@@ -135,6 +151,7 @@ export function registerServerAgentConnectRoutes(context: AuthRouteContext): voi
       agentPubkey: agent.publicKey,
       model,
       ...(avatarSeed ? { avatarSeed } : {}),
+      ...(eventSubscriptions.length ? { eventSubscriptions } : {}),
     });
     if (claim.status === 'not_found') {
       throw new ProtocolError(404, 'pairing_code_not_found', 'pairing code was not found');

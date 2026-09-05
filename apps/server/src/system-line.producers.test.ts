@@ -78,7 +78,14 @@ describe('system-line producers', () => {
           presentation: 'system',
           mention_ids: [],
           card_type: 'member-joined',
-          system_event: { subject: { kind: 'person', id: LATE, name: 'Candy' }, verb: 'joined' },
+          // The kind is additive: the TEXT above is byte-identical to what this
+          // producer wrote before events existed. Verbs are prose; kinds are
+          // the contract, and they never meet in the sentence.
+          system_event: {
+            subject: { kind: 'person', id: LATE, name: 'Candy' },
+            verb: 'joined',
+            kind: 'joined',
+          },
         },
         {
           author_id: MEMBER,

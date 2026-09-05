@@ -9,6 +9,7 @@ import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { parseCommunityInviteToken } from '@/buzz/community-invite';
 import { parseReviewSecret } from '@/buzz/review-link';
 import { isPersonNameOnboardingPending } from '@/buzz/person-name';
+import { markInitialLandingResolved } from '@/navigation/initial-landing';
 
 export default function Home() {
   const [buzzCheckDone, setBuzzCheckDone] = React.useState(false);
@@ -34,7 +35,14 @@ export default function Home() {
   }, []);
 
   React.useEffect(() => {
-    if (!buzzCheckDone || buzzStorageError) return;
+    if (!buzzCheckDone) return;
+    // Whichever way this resolves — including the storage-error screen below —
+    // the landing route is now settled, and a tapped push may open its Room on
+    // top of it instead of being replaced by this redirect.
+    if (buzzStorageError) {
+      markInitialLandingResolved();
+      return;
+    }
 
     // A cold start hands this route the launching URL as well, so an app link
     // that has its own destination must be honored here or the identity check
@@ -54,6 +62,7 @@ export default function Home() {
     } else {
       router.replace('/beeline/onboarding');
     }
+    markInitialLandingResolved();
   }, [
     buzzCheckDone,
     buzzStorageError,

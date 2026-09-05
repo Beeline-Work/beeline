@@ -116,6 +116,7 @@ Committed home for project-intrinsic agent knowledge: rule + authoritative file 
 
 ## Android push notifications
 
+- **A tapped push outranks the app's own startup redirect.** `sources/push/notification-response.ts` is the one tap-routing rule (route a response once, default action only, then navigate); it waits on `sources/navigation/initial-landing.ts`, which `(app)/index.tsx` settles the moment it picks the landing route — a push routed before that decision lands is replaced by it and the Room is lost. Coverage: `notification-response.test.ts`, `initial-landing.test.ts`.
 - Production mobile registration/test/unregister and OTA receipts use typed monolith phone operations at `server.usebeeline.app`; legacy `https://usebeeline.app/push` is only the non-monolith fallback. Successful void operations are HTTP 204 and clients must not JSON-decode them. **Attention-only defaults** (explicit `p` mentions, DMs, waiting-on-human transitions). **The toggle reflects REGISTRATION truth** (token fingerprints only in logs). Foreground policy suppresses when the Room is active/open; never unconditional `shouldShowAlert: true`. At-most-once delivery clears attention keys by idle/concluded/closed, not `working`. Coverage: `integration.test.ts`, `monolith-operation.test.ts`.
 
 ## Community model

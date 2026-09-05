@@ -6,6 +6,18 @@ export interface PushSender {
   send(token: string, message: { messageId: string; roomId: string; text: string }): Promise<void>;
 }
 
+function isUnregisteredPushToken(error: unknown): boolean {
+  const code =
+    error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+      ? error.code
+      : '';
+  return (
+    code === 'messaging/registration-token-not-registered' ||
+    code === 'messaging/invalid-registration-token' ||
+    (error instanceof Error && /\bNotRegistered\b/.test(error.message))
+  );
+}
+
 export class PushDeliveryLoop {
   constructor(
     private readonly database: SqlDatabase,
@@ -106,6 +118,8 @@ export class PushDeliveryLoop {
             error instanceof Error ? error.message : String(error),
           ],
         );
+        if (isUnregisteredPushToken(error))
+          await this.database.query(`DELETE FROM push_devices WHERE token=$1`, [candidate.token]);
       }
     }
     return delivered;

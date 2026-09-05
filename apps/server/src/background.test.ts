@@ -125,6 +125,49 @@ describe('background advisory-lock ownership', () => {
       await db.close();
     }
   });
+  it('removes an FCM-unregistered device after recording its failed delivery', async () => {
+    const db = new PgliteDatabase();
+    try {
+      await migrate(db);
+      const human = 'a'.repeat(64),
+        agent = 'b'.repeat(64),
+        workspace = '11111111-1111-4111-8111-111111111111',
+        room = '22222222-2222-4222-8222-222222222222',
+        token = 'unregistered-device-token-1234567890';
+      await db.query(
+        `INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner'),($2,'agent','Bee')`,
+        [human, agent],
+      );
+      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+      await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [room, workspace]);
+      await db.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`,
+        [workspace, room, human, agent],
+      );
+      await db.query(
+        `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES($1,$2,'ios','physical')`,
+        [token, human],
+      );
+      const loop = new PushDeliveryLoop(db, {
+        send: async () => {
+          const error = new Error('NotRegistered');
+          Object.assign(error, { code: 'messaging/registration-token-not-registered' });
+          throw error;
+        },
+      });
+      await loop.runOnce();
+      await db.query(`INSERT INTO messages(id,room_id,author_id,text,mention_ids) VALUES($1,$2,$3,'hello',$4::jsonb)`, [
+        '1'.repeat(64),
+        room,
+        agent,
+        JSON.stringify([human]),
+      ]);
+      expect(await loop.runOnce()).toBe(0);
+      expect((await db.query(`SELECT 1 FROM push_devices WHERE token=$1`, [token])).rowCount).toBe(0);
+    } finally {
+      await db.close();
+    }
+  });
   it('delivers only new attention events to the addressed human device', async () => {
     const db = new PgliteDatabase();
     try {

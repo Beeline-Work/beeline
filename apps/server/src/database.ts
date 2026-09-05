@@ -620,6 +620,7 @@ CREATE TABLE IF NOT EXISTS push_devices (
 );
 ALTER TABLE push_devices ADD COLUMN IF NOT EXISTS registered_at timestamptz;
 UPDATE push_devices SET registered_at=updated_at WHERE registered_at IS NULL;
+ALTER TABLE push_devices ALTER COLUMN registered_at SET DEFAULT now();
 ALTER TABLE push_devices ALTER COLUMN registered_at SET NOT NULL;
 CREATE INDEX IF NOT EXISTS push_devices_identity_idx ON push_devices(identity_id);
 

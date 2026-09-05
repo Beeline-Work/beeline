@@ -194,6 +194,54 @@ describe('monolith integration', () => {
     });
   };
 
+  it('upgrades legacy push registrations and preserves their first registration timestamp', async () => {
+    await database.query(`ALTER TABLE push_devices ALTER COLUMN registered_at DROP DEFAULT`);
+    await migrate(database);
+    const defaulted = await database.query<{ column_default: string | null }>(
+      `SELECT column_default FROM information_schema.columns
+       WHERE table_name='push_devices' AND column_name='registered_at'`,
+    );
+    expect(defaulted.rows).toEqual([expect.objectContaining({ column_default: expect.any(String) })]);
+
+    const token = 'new-device-token-registered-at-1234567890';
+    const registered = await operation('registerPushDevice', {
+      token,
+      platform: 'android',
+      environment: 'physical',
+    });
+    expect(registered.status).toBe(200);
+    expect(
+      (
+        await database.query<{ registered: boolean }>(
+          `SELECT registered_at IS NOT NULL registered FROM push_devices WHERE token=$1`,
+          [token],
+        )
+      ).rows,
+    ).toEqual([{ registered: true }]);
+
+    await database.query(
+      `UPDATE push_devices SET registered_at='2000-01-01T00:00:00.000Z' WHERE token=$1`,
+      [token],
+    );
+    expect(
+      (
+        await operation('registerPushDevice', {
+          token,
+          platform: 'ios',
+          environment: 'physical',
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await database.query<{ registered_at: Date }>(
+          `SELECT registered_at FROM push_devices WHERE token=$1`,
+          [token],
+        )
+      ).rows,
+    ).toEqual([expect.objectContaining({ registered_at: new Date('2000-01-01T00:00:00.000Z') })]);
+  });
+
   it('keeps workspace and Room mutations aligned with the phone HTTP contract', async () => {
     const aliceToken = await phoneToken('alice');
     const aliceId = createHash('sha256').update('github:alice').digest('hex');

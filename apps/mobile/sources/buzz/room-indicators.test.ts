@@ -291,7 +291,7 @@ describe('composer ack presentation', () => {
         now: NOW,
         conversationIdentities: new Map(),
       }),
-    ).toEqual({ label: 'Agent 54f4d261 thinking…' });
+    ).toEqual({ label: 'Agent thinking…' });
   });
 
   it('recognizes a terminal receipt for the sent message after the agent has replied', () => {

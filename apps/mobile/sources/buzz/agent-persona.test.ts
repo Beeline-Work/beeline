@@ -6,6 +6,6 @@ describe('mobile agent persona defaults', () => {
     expect(defaultAgentPersona('abcdef0123456789')).toEqual(
       defaultAgentPersona('abcdef0123456789'),
     );
-    expect(defaultAgentPersona('abcdef0123456789').name).toBe('Agent abcdef01');
+    expect(defaultAgentPersona('abcdef0123456789').name).toBe('Agent');
   });
 });

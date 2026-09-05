@@ -10,13 +10,13 @@ import {
 } from './agent-display';
 
 describe('agent display identity', () => {
-  it('creates a stable visibly synthetic fallback from the key prefix', () => {
+  it('uses a neutral fallback without exposing the key', () => {
     const pubkey = 'abcdef0123456789abcdef0123456789';
     const first = resolveAgentDisplayIdentity(pubkey);
 
     expect(first).toEqual(resolveAgentDisplayIdentity(pubkey));
-    expect(first.name).toBe('Agent abcdef01');
-    expect(first.handle).toBe('agentabcdef01');
+    expect(first.name).toBe('Agent');
+    expect(first.handle).toBe('agent');
     expect(first.avatarSeed).toBe(pubkey);
   });
 
@@ -40,7 +40,9 @@ describe('agent display identity', () => {
 
     expect(display).toMatchObject({
       name: fallbackAgentName(pubkey),
-      handle: fallbackAgentName(pubkey).toLowerCase().replace(/[^a-z0-9]/gu, ''),
+      handle: fallbackAgentName(pubkey)
+        .toLowerCase()
+        .replace(/[^a-z0-9]/gu, ''),
       personality: 'Keeps the suite green.',
       avatarSeed: 'chrome-warden-soul',
       avatarUrl: 'https://example.test/ada-soul.png',
@@ -65,13 +67,15 @@ describe('agent display identity', () => {
     });
     expect(display.name).toBe(fallbackAgentName(pubkey));
     expect(display.handle).toBe(
-      fallbackAgentName(pubkey).toLowerCase().replace(/[^a-z0-9]/gu, ''),
+      fallbackAgentName(pubkey)
+        .toLowerCase()
+        .replace(/[^a-z0-9]/gu, ''),
     );
     expect(display.hasSoul).toBe(true);
   });
 
-  it('produces different names across representative keys', () => {
-    expect(fallbackAgentName('agent-a')).not.toBe(fallbackAgentName('agent-b'));
+  it('does not derive fallback names from keys', () => {
+    expect(fallbackAgentName('agent-a')).toBe(fallbackAgentName('agent-b'));
   });
 
   it('uses the agent record displayName when there is no soul overlay', () => {
@@ -84,6 +88,15 @@ describe('agent display identity', () => {
     expect(display.name).toBe('Beebee');
     expect(display.handle).toBe('beebee');
     expect(display.hasSoul).toBe(false);
+  });
+
+  it('inserts underscores between words in an assigned agent name', () => {
+    const display = resolveAgentDisplayIdentity('internal-key', {
+      pubkey: 'internal-key',
+      displayName: 'Quiet Keeper',
+    });
+
+    expect(display.handle).toBe('quiet_keeper');
   });
 
   it('keeps the registered declaration name when a soul has a different name', () => {
@@ -106,7 +119,7 @@ describe('agent display identity', () => {
     expect(display.name).toBe('Beebee');
   });
 
-  it('falls back to the pubkey-derived name only when neither an overlay nor a displayName is known', () => {
+  it('falls back to a neutral name when neither an overlay nor a displayName is known', () => {
     const pubkey = 'no-name-known-pubkey';
     const display = resolveAgentDisplayIdentity(pubkey, { pubkey });
 
@@ -148,9 +161,9 @@ describe('corner card agent identity resolution', () => {
   const isRegisteredAgent = (pubkey: string) => registered.has(pubkey);
 
   it('uses the declared agent pubkey when it is a registered agent', () => {
-    expect(
-      resolveCornerCardAgentPubkey('beebee-pubkey', 'someone-else', isRegisteredAgent),
-    ).toBe('beebee-pubkey');
+    expect(resolveCornerCardAgentPubkey('beebee-pubkey', 'someone-else', isRegisteredAgent)).toBe(
+      'beebee-pubkey',
+    );
   });
 
   it('falls back to the message signer when the declared tag misses the roster', () => {
@@ -226,9 +239,7 @@ describe('the transcript’s agent roster', () => {
 
   it('merges rosters with the channel’s own Workspace winning', () => {
     const channelRoster = [{ ...rosterEntry, displayName: 'Beebee' }];
-    const otherRoster = [
-      { ...rosterEntry, displayName: 'Elsewhere', soulProfile: undefined },
-    ];
+    const otherRoster = [{ ...rosterEntry, displayName: 'Elsewhere', soulProfile: undefined }];
     const merged = mergeAgentRosters([channelRoster, otherRoster]);
     expect(resolveAgentDisplayIdentity(beebee, merged.get(beebee)).name).toBe('Beebee');
   });

@@ -101,8 +101,15 @@ import {
   type CornerStatus,
   type CornerSummary,
 } from '@/buzz/corners';
-import { personIdentityLabel, shortMemberNpub } from '@/buzz/member-display';
-import { createCommunityInviteUrl, resolveCommunityInvitePublicOrigin } from '@/buzz/community-invite';
+import {
+  fallbackMemberHandle,
+  fallbackMemberName,
+  personIdentityLabel,
+} from '@/buzz/member-display';
+import {
+  createCommunityInviteUrl,
+  resolveCommunityInvitePublicOrigin,
+} from '@/buzz/community-invite';
 import { MemberPickerSheet, type MemberPickerCandidate } from '@/components/buzz/MemberPickerSheet';
 import { useVerifiedNip05Status } from '@/buzz/nip05-verification';
 import {
@@ -219,7 +226,11 @@ import { EmptyLedgerState, type EmptyLedgerVariant } from '@/components/buzz/Emp
 import { HeaderIdentitySlot, HeaderMetaCaps, HeaderMetaRow } from '@/components/buzz/HeaderLadder';
 import { ChannelHeaderTitle } from '@/components/buzz/ChannelHeaderTitle';
 import type { ChannelHeaderKind } from '@/buzz/channel-header-title';
-import { LEDGER_MARGINALIA_WIDTH, LedgerRoomUpdate, LedgerSystemLine } from '@/components/buzz/Ledger';
+import {
+  LEDGER_MARGINALIA_WIDTH,
+  LedgerRoomUpdate,
+  LedgerSystemLine,
+} from '@/components/buzz/Ledger';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { RoomRosterSheet, type RoomRosterParticipant } from '@/components/buzz/RoomRosterSheet';
 import { RepoPicker } from '@/components/buzz/RepoPicker';
@@ -659,10 +670,7 @@ export default function BuzzChat() {
 
   const loadOlderTranscriptMessages = useCallback(() => {
     if (loadingOlderMessages) return;
-    const visibleRowCount = visibleTranscriptWindow(
-      foldedMessages,
-      Number.MAX_SAFE_INTEGER,
-    ).length;
+    const visibleRowCount = visibleTranscriptWindow(foldedMessages, Number.MAX_SAFE_INTEGER).length;
     if (visibleMessageCount < visibleRowCount) {
       setVisibleMessageCount((count) =>
         Math.min(visibleRowCount, count + OLDER_MESSAGES_PAGE_SIZE),
@@ -790,19 +798,19 @@ export default function BuzzChat() {
         name: 'You',
         handle: selfProfileName
           ? personHandle(selfProfileName, userPubkey)
-          : shortMemberNpub(userPubkey).replace(/[^a-zA-Z0-9_-]/g, ''),
+          : fallbackMemberHandle(userPubkey),
         kind: 'person',
       });
     }
     for (const person of availablePeople) {
-      const shortNpub = shortMemberNpub(person.pubkey);
+      const fallbackName = fallbackMemberName(person.pubkey);
       const profileName = personProfileByPubkey.get(person.pubkey)?.name;
       options.set(person.pubkey, {
         pubkey: person.pubkey,
-        name: person.pubkey === userPubkey ? 'You' : (profileName ?? shortNpub),
+        name: person.pubkey === userPubkey ? 'You' : (profileName ?? fallbackName),
         handle: profileName
           ? personHandle(profileName, person.pubkey)
-          : shortNpub.replace(/[^a-zA-Z0-9_-]/g, ''),
+          : fallbackMemberHandle(person.pubkey),
         kind: 'person',
         ...(person.identity.face ? { face: person.identity.face } : {}),
       });
@@ -823,14 +831,14 @@ export default function BuzzChat() {
     // a person-shaped identity instead of disappearing from the count.
     for (const member of roomMembers) {
       if (options.has(member.pubkey)) continue;
-      const shortNpub = shortMemberNpub(member.pubkey);
+      const fallbackName = fallbackMemberName(member.pubkey);
       const profileName = personProfileByPubkey.get(member.pubkey)?.name;
       options.set(member.pubkey, {
         pubkey: member.pubkey,
-        name: member.pubkey === userPubkey ? 'You' : (profileName ?? shortNpub),
+        name: member.pubkey === userPubkey ? 'You' : (profileName ?? fallbackName),
         handle: profileName
           ? personHandle(profileName, member.pubkey)
-          : shortNpub.replace(/[^a-zA-Z0-9_-]/g, ''),
+          : fallbackMemberHandle(member.pubkey),
         kind: 'person',
       });
     }
@@ -848,10 +856,8 @@ export default function BuzzChat() {
         const name = member.identity?.displayName ?? member.identity?.handle;
         return {
           pubkey: member.pubkey,
-          name: member.pubkey === userPubkey ? 'You' : (name ?? shortMemberNpub(member.pubkey)),
-          handle: name
-            ? personHandle(name, member.pubkey)
-            : shortMemberNpub(member.pubkey).replace(/[^a-zA-Z0-9_-]/g, ''),
+          name: member.pubkey === userPubkey ? 'You' : (name ?? fallbackMemberName(member.pubkey)),
+          handle: name ? personHandle(name, member.pubkey) : fallbackMemberHandle(member.pubkey),
           kind: member.kind === 'agent' ? 'agent' : 'person',
           ...(member.kind === 'agent' && agentByPubkey.get(member.pubkey)
             ? { agent: agentByPubkey.get(member.pubkey) }
@@ -904,7 +910,7 @@ export default function BuzzChat() {
         return {
           pubkey: identity.pubkey,
           name: identity.name,
-          handle: identity.handle ?? shortMemberNpub(identity.pubkey),
+          handle: identity.handle ?? fallbackMemberHandle(identity.pubkey),
           kind: 'person' as const,
           ...(identity.face ? { face: identity.face } : {}),
           ...(identity.avatar ? { avatarUrl: identity.avatar } : {}),
@@ -1681,7 +1687,7 @@ export default function BuzzChat() {
           : (message.authorIdentity?.name ??
             agentDisplay?.name ??
             personName ??
-            shortMemberNpub(message.pubkey ?? '')),
+            fallbackMemberName(message.pubkey ?? '')),
         ...(message.pubkey ? { authorPubkey: message.pubkey } : {}),
         isAgent,
         preview: message.text.trim() || attachmentPreview || 'Attachment',
@@ -3195,8 +3201,7 @@ export default function BuzzChat() {
           }}
           keyboardShouldPersistTaps="handled"
           onScroll={(event) => {
-            isPinnedToTailRef.current =
-              event.nativeEvent.contentOffset.y <= TAIL_PIN_THRESHOLD;
+            isPinnedToTailRef.current = event.nativeEvent.contentOffset.y <= TAIL_PIN_THRESHOLD;
           }}
           scrollEventThrottle={100}
           onScrollBeginDrag={() => {

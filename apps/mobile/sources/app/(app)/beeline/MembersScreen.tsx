@@ -25,7 +25,7 @@ import {
 } from '@/buzz/community-invite';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { defaultAgentPersona } from '@/buzz/agent-persona';
-import { shortMemberNpub } from '@/buzz/member-display';
+import { fallbackMemberHandle } from '@/buzz/member-display';
 import { canRemoveRoomParticipant } from '@/buzz/room-management';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
@@ -108,7 +108,7 @@ function memberMetaLine(
   role: WorkspaceRole,
   presence?: 'online' | 'offline',
 ): string {
-  const line = `@${identity.handle ?? shortMemberNpub(identity.pubkey)} · ${role}`;
+  const line = `@${identity.handle ?? fallbackMemberHandle(identity.pubkey)} · ${role}`;
   return presence ? `${line} · ${presence}` : line;
 }
 

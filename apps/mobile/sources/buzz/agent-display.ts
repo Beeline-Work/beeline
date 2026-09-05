@@ -28,10 +28,7 @@ export type AgentDisplayIdentity = {
 
 /** What a surface must know about an agent to present it. Its `face` is the
  *  server's assignment, carried on the Room/Workspace view identity. */
-export type DisplayableAgent = Pick<
-  Agent,
-  'pubkey' | 'displayName' | 'avatar' | 'soulProfile'
-> & {
+export type DisplayableAgent = Pick<Agent, 'pubkey' | 'displayName' | 'avatar' | 'soulProfile'> & {
   face?: string;
 };
 
@@ -52,7 +49,7 @@ export function resolveAgentDisplayIdentity(
   const face = agent?.face?.trim();
   return {
     name,
-    handle: agentHandle(name, pubkey),
+    handle: agentHandle(name),
     personality: overlayPersonality || 'Steady, practical, and ready to help.',
     avatarSeed: overlay?.avatarSeed.trim() || pubkey || 'unknown-agent',
     ...(avatarUrl ? { avatarUrl } : {}),
@@ -67,7 +64,7 @@ export function resolveAgentDisplayIdentity(
  * `resolveAgentDisplayIdentity` always resolves to *some* confident name —
  * that is correct once the roster has loaded and simply found nothing, but
  * calling it before the roster read has even completed shows the identical
- * pubkey-derived placeholder ("Alden") for a beat, then visibly snaps to the
+ * fallback placeholder for a beat, then visibly snaps to the
  * real registered/soul name ("Beebee") once hydration lands. A wrong name
  * that corrects itself reads worse than showing nothing: this returns `null`
  * until `hydrated` is true, so callers fall back to a neutral placeholder
@@ -97,7 +94,7 @@ export function resolvePendingAgentDisplay(
  * whatsoever. A Room whose kind:9007 predates the redundant `community` tag, a
  * local-only Room, a corner beneath either, or simply a Workspace other than
  * the one that authored the overlay all land there. That is why the transcript
- * showed a placeholder ("Alden") or a bare npub while the Members screen —
+ * showed a placeholder while the Members screen —
  * scoped to the viewer's own selected Workspace — showed the real soul name
  * ("Beebee") for the identical key.
  *

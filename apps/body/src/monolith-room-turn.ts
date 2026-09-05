@@ -28,6 +28,7 @@ import {
 } from './attachment-delivery.js';
 import { beelineCapabilityContextForHarness } from './beeline-skill.js';
 import { beelineAgentMcpServer, readOnlyMcpServer } from './room-session.js';
+import { sessionConfigFingerprint } from './session-config-fingerprint.js';
 import {
   isMountedMcpToolPermissionRequest,
   isSquireMcpPermissionRequest,
@@ -67,6 +68,7 @@ import { withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
 
 type WorkspaceRoster = DaemonOperationMap['getWorkspaceRoster']['output'];
+type RoomRepositoryState = DaemonOperationMap['getRoomRepositoryState']['output'];
 type RoomMessage = DaemonOperationMap['getRoomInbox']['output']['items'][number];
 type HumanMessage = Pick<
   RoomMessage,
@@ -251,6 +253,8 @@ export class MonolithRoomTurnLoop {
   private readonly agent: ReturnType<typeof runtimeIdentity>;
   private client?: AcpClient;
   private sessionId?: string;
+  /** The configuration the live session baked in; a change invalidates it. */
+  private sessionFingerprint?: string;
   /** The live session's environment, read back for pi's own turn record. */
   private agentEnv: Record<string, string> = {};
   /** OpenRouter providers this activation pinned, in order (C92). */
@@ -408,16 +412,70 @@ export class MonolithRoomTurnLoop {
     return delivered;
   }
 
-  private async activate(): Promise<string> {
+  private repositoryState(): Promise<RoomRepositoryState> {
+    return this.options.api.execute('getRoomRepositoryState', { roomId: this.options.roomId });
+  }
+
+  /**
+   * Drop this Room's live harness process. The next activation starts cold.
+   * A rotation is a fact about one live session, so the pin goes with it.
+   */
+  private async discardSession(): Promise<void> {
+    const client = this.client;
+    this.client = undefined;
+    this.sessionId = undefined;
+    this.sessionFingerprint = undefined;
+    this.pinnedProviderOverride = undefined;
+    if (client?.isAlive) await client.stop();
+  }
+
+  /**
+   * Whether the retained session still matches the agent's server-side
+   * configuration. Retention (C104) is a saving only while what it keeps is
+   * still current, and a session's persona and model pin are fixed when it
+   * opens: they cannot be corrected in place, so a changed one has to cost a
+   * respawn. The check is one round trip — the roster half of which the turn
+   * was going to fetch anyway — against a cold spawn measured in seconds.
+   */
+  private async sessionIsCurrent(): Promise<boolean> {
+    return (await this.currentSessionFingerprint()) === this.sessionFingerprint;
+  }
+
+  private async currentSessionFingerprint(): Promise<string> {
+    const [configuration, roster] = await Promise.all([
+      this.options.api.execute('getAgentConfiguration', {
+        agentId: this.agent.publicKey,
+        roomId: this.options.roomId,
+      }),
+      this.roster(),
+    ]);
+    const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
+    return sessionConfigFingerprint({
+      model: configuration.model ?? this.options.config.modelSelection?.model,
+      effort: configuration.effort ?? this.options.config.modelSelection?.effort,
+      soul: configuration.soul ?? self?.soul,
+      agentName: self?.name ?? this.agent.name,
+    });
+  }
+
+  private async activate(trace?: TurnTrace): Promise<string> {
     if (this.client?.isAlive && this.sessionId) return this.sessionId;
+    trace?.noteActivation('cold');
     const [configuration, roster, repositoryState] = await Promise.all([
       this.options.api.execute('getAgentConfiguration', {
         agentId: this.agent.publicKey,
         roomId: this.options.roomId,
       }),
       this.roster(),
-      this.options.api.execute('getRoomRepositoryState', { roomId: this.options.roomId }),
+      this.repositoryState(),
     ]);
+    const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
+    const fingerprint = sessionConfigFingerprint({
+      model: configuration.model ?? this.options.config.modelSelection?.model,
+      effort: configuration.effort ?? this.options.config.modelSelection?.effort,
+      soul: configuration.soul ?? self?.soul,
+      agentName: self?.name ?? this.agent.name,
+    });
     const directMessage =
       Array.isArray(repositoryState.directParticipants) &&
       repositoryState.directParticipants.length === 2;
@@ -430,6 +488,7 @@ export class MonolithRoomTurnLoop {
       ? await prepareRoomAgentHome({
           root: this.options.config.agentHomeRoot,
           sharedSkills: this.options.config.sharedSkills ?? [],
+          ...(this.options.config.agentKind ? { agentKind: this.options.config.agentKind } : {}),
           ...(this.options.config.operatorHome
             ? { operatorHome: this.options.config.operatorHome }
             : {}),
@@ -518,7 +577,6 @@ export class MonolithRoomTurnLoop {
       clientOptions,
     );
     await this.client.start();
-    const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
     const persona = configuration.soul ?? self?.soul;
     const identityInstructions = `Your Beeline Room identity is ${self?.name ?? this.agent.name}.`;
     // The house rule stands whether or not a soul does: a Workspace that has
@@ -560,6 +618,7 @@ export class MonolithRoomTurnLoop {
         .join('\n\n'),
     });
     this.sessionId = opened.sessionId;
+    this.sessionFingerprint = fingerprint;
     if (selection) {
       const options = filterAllowedModelConfigOptions(
         parseAdvertisedConfigOptions(opened.raw, selection.model),
@@ -579,21 +638,23 @@ export class MonolithRoomTurnLoop {
     return {
       activate: async () => {
         trace?.end('queue-wait');
-        trace?.noteActivation(this.client?.isAlive && this.sessionId ? 'warm' : 'cold');
-        return trace ? trace.measure('activation', () => this.activate()) : this.activate();
+        // `cold` is noted inside activate() rather than guessed here: the
+        // scheduler calls this for a fresh process AND after it retires a
+        // stale retained one, and the trace has to say what happened.
+        return trace ? trace.measure('activation', () => this.activate(trace)) : this.activate();
+      },
+      isCurrent: () => {
+        // The scheduler is about to hand back a retained process; this is the
+        // only moment its configuration can be re-checked, so the wait for a
+        // slot ends here exactly as it does for a spawn.
+        trace?.end('queue-wait');
+        const check = () => this.sessionIsCurrent();
+        return trace ? trace.measure('activation', check) : check();
       },
       onStateChange: (state) => {
         if (state === 'waiting-for-slot') trace?.noteCapacityWait();
       },
-      suspend: async () => {
-        const client = this.client;
-        this.client = undefined;
-        this.sessionId = undefined;
-        // A rotation is a fact about one live session; the next activation
-        // starts from the full probed set again.
-        this.pinnedProviderOverride = undefined;
-        if (client?.isAlive) await client.stop();
-      },
+      suspend: () => this.discardSession(),
     };
   }
 
@@ -629,12 +690,13 @@ export class MonolithRoomTurnLoop {
     // handshake included — belongs to attempt two, never to attempt one's
     // first-token time.
     trace?.retry({ provider: next, ...(reason ? { reason } : {}) });
-    this.pinnedProviderOverride = next;
     const client = this.client;
     this.client = undefined;
     this.sessionId = undefined;
+    this.sessionFingerprint = undefined;
     if (client?.isAlive) await client.stop();
-    await (trace ? trace.measure('activation', () => this.activate()) : this.activate());
+    this.pinnedProviderOverride = next;
+    await (trace ? trace.measure('activation', () => this.activate(trace)) : this.activate());
     return next;
   }
 
@@ -725,8 +787,8 @@ export class MonolithRoomTurnLoop {
             this.options.roomId,
             this.lifecycle(trace),
             async () => {
-              // Warm and already live: the scheduler admitted this turn without
-              // calling activate(), so the queue wait closes here instead.
+              // Belt and braces: `activate`/`isCurrent` already closed the
+              // queue wait, and `end` on a closed phase is a no-op.
               trace.end('queue-wait');
               trace.noteScheduler('admission', this.options.scheduler.snapshot());
               const [conversation, roster, delivered] = await trace.measure('context-fetch', () =>

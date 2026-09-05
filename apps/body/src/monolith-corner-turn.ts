@@ -19,6 +19,7 @@ import { isCornerStatusRestatement } from './reply-sanitizer.js';
 import { AgentTurnStream, durableReplyText } from './turn-stream.js';
 import { toolCallFailureLine } from './tool-call-failure.js';
 import { distillTurnFailureReason, redactToolDetail } from './turn-failure-reason.js';
+import { sessionConfigFingerprint } from './session-config-fingerprint.js';
 import { beelineAgentMcpServer } from './room-session.js';
 import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
 import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
@@ -258,6 +259,8 @@ export class MonolithCornerTurnLoop {
   private readonly agent: ReturnType<typeof runtimeIdentity>;
   private client?: AcpClient;
   private sessionId?: string;
+  /** The configuration the live session baked in; a change invalidates it. */
+  private sessionFingerprint?: string;
   /** The live session's environment, read back for pi's own turn record. */
   private agentEnv: Record<string, string> = {};
   /** OpenRouter providers this activation pinned, in order (C92). */
@@ -328,8 +331,26 @@ export class MonolithCornerTurnLoop {
     return roster;
   }
 
-  private async activate(): Promise<string> {
-    if (this.client?.isAlive && this.sessionId) return this.sessionId;
+  /**
+   * Drop this corner's live harness process. The next activation starts cold.
+   * A rotation is a fact about one live session, so the pin goes with it.
+   */
+  private async discardSession(): Promise<void> {
+    const client = this.client;
+    this.client = undefined;
+    this.sessionId = undefined;
+    this.sessionFingerprint = undefined;
+    this.pinnedProviderOverride = undefined;
+    if (client?.isAlive) await client.stop();
+  }
+
+  /** See `MonolithRoomTurnLoop.sessionIsCurrent`: retention never keeps a
+   *  session whose persona or model pin the operator has since changed. */
+  private async sessionIsCurrent(): Promise<boolean> {
+    return (await this.currentSessionFingerprint()) === this.sessionFingerprint;
+  }
+
+  private async currentSessionFingerprint(): Promise<string> {
     const [configuration, roster] = await Promise.all([
       this.options.api.execute('getAgentConfiguration', {
         agentId: this.agent.publicKey,
@@ -337,6 +358,32 @@ export class MonolithCornerTurnLoop {
       }),
       this.roster(),
     ]);
+    const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
+    return sessionConfigFingerprint({
+      model: configuration.model ?? this.options.config.modelSelection?.model,
+      effort: configuration.effort ?? this.options.config.modelSelection?.effort,
+      soul: configuration.soul ?? self?.soul,
+      agentName: self?.name ?? this.agent.name,
+    });
+  }
+
+  private async activate(trace?: TurnTrace): Promise<string> {
+    if (this.client?.isAlive && this.sessionId) return this.sessionId;
+    trace?.noteActivation('cold');
+    const [configuration, roster] = await Promise.all([
+      this.options.api.execute('getAgentConfiguration', {
+        agentId: this.agent.publicKey,
+        roomId: this.options.cornerId,
+      }),
+      this.roster(),
+    ]);
+    const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
+    const fingerprint = sessionConfigFingerprint({
+      model: configuration.model ?? this.options.config.modelSelection?.model,
+      effort: configuration.effort ?? this.options.config.modelSelection?.effort,
+      soul: configuration.soul ?? self?.soul,
+      agentName: self?.name ?? this.agent.name,
+    });
     await mkdir(this.options.worktreePath, { recursive: true });
     const selection =
       configuration.model || configuration.effort
@@ -346,6 +393,7 @@ export class MonolithCornerTurnLoop {
       ? await prepareRoomAgentHome({
           root: this.options.config.agentHomeRoot,
           sharedSkills: this.options.config.sharedSkills ?? [],
+          ...(this.options.config.agentKind ? { agentKind: this.options.config.agentKind } : {}),
           ...(this.options.config.operatorHome
             ? { operatorHome: this.options.config.operatorHome }
             : {}),
@@ -439,7 +487,6 @@ export class MonolithCornerTurnLoop {
           : {}),
       }),
     ];
-    const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
     const persona = configuration.soul ?? self?.soul;
     const identityInstructions = `Your Beeline identity is ${self?.name ?? this.agent.name}.`;
     // The house rule stands whether or not a soul does: a Workspace that has
@@ -475,6 +522,7 @@ export class MonolithCornerTurnLoop {
         .join('\n\n'),
     });
     this.sessionId = opened.sessionId;
+    this.sessionFingerprint = fingerprint;
     if (selection) {
       const options = filterAllowedModelConfigOptions(
         parseAdvertisedConfigOptions(opened.raw, selection.model),
@@ -489,19 +537,18 @@ export class MonolithCornerTurnLoop {
     return {
       activate: async () => {
         trace?.end('queue-wait');
-        trace?.noteActivation(this.client?.isAlive && this.sessionId ? 'warm' : 'cold');
-        return trace ? trace.measure('activation', () => this.activate()) : this.activate();
+        // `cold` is noted inside activate(): see MonolithRoomTurnLoop.
+        return trace ? trace.measure('activation', () => this.activate(trace)) : this.activate();
+      },
+      isCurrent: () => {
+        trace?.end('queue-wait');
+        const check = () => this.sessionIsCurrent();
+        return trace ? trace.measure('activation', check) : check();
       },
       onStateChange: (state) => {
         if (state === 'waiting-for-slot') trace?.noteCapacityWait();
       },
-      suspend: async () => {
-        const client = this.client;
-        this.client = undefined;
-        this.sessionId = undefined;
-        this.pinnedProviderOverride = undefined;
-        if (client?.isAlive) await client.stop();
-      },
+      suspend: () => this.discardSession(),
     };
   }
 
@@ -540,12 +587,13 @@ export class MonolithCornerTurnLoop {
     if (!next) return undefined;
     // The retry is its own timeline, fresh ACP handshake included.
     trace?.retry({ provider: next, ...(reason ? { reason } : {}) });
-    this.pinnedProviderOverride = next;
     const client = this.client;
     this.client = undefined;
     this.sessionId = undefined;
+    this.sessionFingerprint = undefined;
     if (client?.isAlive) await client.stop();
-    await (trace ? trace.measure('activation', () => this.activate()) : this.activate());
+    this.pinnedProviderOverride = next;
+    await (trace ? trace.measure('activation', () => this.activate(trace)) : this.activate());
     return next;
   }
 

@@ -1,4 +1,5 @@
 import { resolve } from 'node:path';
+import { agentSkillDir } from './agent-home.js';
 import type { McpServerWire } from './acp.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
@@ -71,13 +72,9 @@ export function readOnlyMcpServer(
       'read-only tools unavailable: beeline-readonly-mcp is required for Room sessions',
     );
   }
-  const skillDir =
-    config.agentKind === 'claude' ||
-    config.agentKind === 'codex' ||
-    config.agentKind === 'grok' ||
-    config.agentKind === 'pi'
-      ? config.agentKind
-      : 'codex';
+  // The one mapping, shared with the provisioner: a session can only be
+  // pointed at the tree that activation actually materialized.
+  const skillDir = agentSkillDir(config.agentKind);
   return {
     name: READ_ONLY_MCP_SERVER_NAME,
     command: config.readonlyMcpCommand,

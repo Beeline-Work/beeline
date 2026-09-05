@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  DEFAULT_MAX_WARM_SESSIONS,
   DEFAULT_PER_ROOM_LIVE_SESSIONS,
+  DEFAULT_SESSION_IDLE_MS,
+  resolveMaxWarmSessions,
   resolvePerRoomLiveSessions,
+  resolveSessionIdleMs,
   SessionScheduler,
   type SessionLifecycle,
 } from './session-scheduler.js';
@@ -73,6 +77,108 @@ describe('Workspace session scheduler', () => {
     } finally {
       await scheduler.dispose();
       vi.useRealTimers();
+    }
+  });
+
+  it('retains an idle session far past the five minutes that used to end it', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    // Half an hour by default: the whole point of retention is that a captain
+    // who steps away for a coffee does not pay a cold spawn on return.
+    expect(DEFAULT_SESSION_IDLE_MS).toBe(30 * 60_000);
+    const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
+    const suspend = vi.fn().mockResolvedValue(undefined);
+    try {
+      await scheduler.run('room', { activate: async () => 'physical', suspend }, async () => 1);
+
+      vi.setSystemTime(20 * 60_000);
+      await Reflect.get(scheduler, 'sweepIdle').call(scheduler);
+      expect(suspend).not.toHaveBeenCalled();
+      // The follow-up runs on the SAME physical process: no second generation.
+      await scheduler.run('room', { activate: async () => 'physical', suspend }, async () => 2);
+      expect(scheduler.generations('room')).toEqual(['physical']);
+
+      vi.setSystemTime(20 * 60_000 + DEFAULT_SESSION_IDLE_MS + 1);
+      await Reflect.get(scheduler, 'sweepIdle').call(scheduler);
+      expect(suspend).toHaveBeenCalledOnce();
+    } finally {
+      await scheduler.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it('caps the retained processes and retires the least recently used first', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    // Capacity stays wide — retention, not concurrency, is what this bounds.
+    const scheduler = new SessionScheduler({ maxLiveSessions: 10, maxWarmSessions: 2 });
+    const suspends = new Map<string, ReturnType<typeof vi.fn>>();
+    const lifecycle = (key: string): SessionLifecycle => {
+      const suspend = vi.fn().mockResolvedValue(undefined);
+      suspends.set(key, suspend);
+      return { activate: async () => `${key}-physical`, suspend };
+    };
+    try {
+      for (const [index, key] of ['oldest', 'middle', 'newest'].entries()) {
+        vi.setSystemTime(index * 1_000);
+        await scheduler.run(key, lifecycle(key), async () => undefined, { roomKey: key });
+      }
+      expect(scheduler.snapshot()).toMatchObject({ live: 3, warm: 3, maxWarm: 2, maxLive: 10 });
+
+      await Reflect.get(scheduler, 'sweepIdle').call(scheduler);
+      expect(suspends.get('oldest')!).toHaveBeenCalledOnce();
+      expect(suspends.get('middle')!).not.toHaveBeenCalled();
+      expect(suspends.get('newest')!).not.toHaveBeenCalled();
+      expect(scheduler.snapshot()).toMatchObject({ live: 2, warm: 2 });
+    } finally {
+      await scheduler.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it('never counts a running turn against the retained ceiling', async () => {
+    const scheduler = new SessionScheduler({ maxLiveSessions: 10, maxWarmSessions: 1 });
+    const release = deferred();
+    const busySuspend = vi.fn().mockResolvedValue(undefined);
+    const idleSuspend = vi.fn().mockResolvedValue(undefined);
+    try {
+      await scheduler.run(
+        'idle',
+        { activate: async () => 'idle-physical', suspend: idleSuspend },
+        async () => undefined,
+        { roomKey: 'idle' },
+      );
+      const busy = scheduler.run(
+        'busy',
+        { activate: async () => 'busy-physical', suspend: busySuspend },
+        () => release.promise,
+        { roomKey: 'busy' },
+      );
+      await vi.waitFor(() => expect(scheduler.snapshot().busy).toBe(1));
+      expect(scheduler.snapshot()).toMatchObject({ live: 2, warm: 1, maxWarm: 1 });
+
+      // One warm session, one running turn: the cap is already satisfied and
+      // the turn in flight must not be torn down to satisfy it again.
+      await Reflect.get(scheduler, 'sweepIdle').call(scheduler);
+      expect(busySuspend).not.toHaveBeenCalled();
+      expect(idleSuspend).not.toHaveBeenCalled();
+      release.resolve();
+      await busy;
+    } finally {
+      await scheduler.dispose();
+    }
+  });
+
+  it('reads both retention ceilings from env and ignores invalid values', () => {
+    expect(resolveMaxWarmSessions({ BUZZY_BODY_MAX_WARM_SESSIONS: '3' })).toBe(3);
+    expect(resolveSessionIdleMs({ BUZZY_BODY_SESSION_IDLE_MS: '90000' })).toBe(90_000);
+    for (const value of ['', '0', '-1', '1.5', 'nope', 'Infinity']) {
+      expect(resolveMaxWarmSessions({ BUZZY_BODY_MAX_WARM_SESSIONS: value })).toBe(
+        DEFAULT_MAX_WARM_SESSIONS,
+      );
+      expect(resolveSessionIdleMs({ BUZZY_BODY_SESSION_IDLE_MS: value })).toBe(
+        DEFAULT_SESSION_IDLE_MS,
+      );
     }
   });
 

@@ -271,6 +271,16 @@ export function agentReplyMentionIds(
       aliases.set(key, entry);
     }
   }
+  // Legacy imported membership profiles can carry `a_` ahead of a human
+  // handle. Prefer any real `a_<handle>` member above; otherwise route the
+  // old spelling to the one canonical handle it can unambiguously name.
+  for (const member of roster.members) {
+    if (member.identityId === authorId || !member.handle) continue;
+    const handle = member.handle.trim().replace(/^@/, '').toLocaleLowerCase();
+    const canonical = aliases.get(handle);
+    const legacy = `a_${handle}`;
+    if (canonical && !aliases.has(legacy)) aliases.set(legacy, { ...canonical, display: legacy });
+  }
   const mentioned: string[] = [];
   for (const { display, ids } of [...aliases.values()].sort(
     (left, right) => right.display.length - left.display.length,

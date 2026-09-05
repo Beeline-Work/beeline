@@ -11,12 +11,14 @@ import { GrantCommandRunner, GrantRunnerServer, type GrantRunnerEndpoint } from 
 import { MonolithCornerTurnLoop } from './monolith-corner-turn.js';
 import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
 import { openRouterRoutingCacheDir } from './openrouter-routing.js';
+import { turnTraceDirectory } from './turn-trace.js';
 import type { AgentRuntimeRecord, RoomRuntimeRecord } from './runtime.js';
 import { runtimeIdentity } from './runtime.js';
 import {
   DEFAULT_WORKSPACE_LIVE_SESSIONS_FLOOR,
   resolvePerRoomLiveSessions,
   SessionScheduler,
+  type SessionSchedulerSnapshot,
 } from './session-scheduler.js';
 
 export type WorkspaceMembershipStatus = 'member' | 'not-member' | 'unknown';
@@ -149,6 +151,16 @@ export class RoomRuntimeCoordinator {
 
   activeRoomCount(): number {
     return this.running.size;
+  }
+
+  /**
+   * The session scheduler's capacity, read-only, beside the turn traces
+   * (`turn-trace.ts` embeds the same snapshot in every record). A turn that
+   * sat in `queue-wait` while this was at its ceiling waited on capacity, not
+   * on a model.
+   */
+  schedulerSnapshot(): SessionSchedulerSnapshot {
+    return this.scheduler.snapshot();
   }
 
   needsFastReconcile(): boolean {
@@ -307,6 +319,7 @@ export class RoomRuntimeCoordinator {
       agentPrivateRoot: resolve(workspaceRoot, 'agent-private'),
       agentMemoryRoot: resolve(dirname(this.configPath), 'memory'),
       openRouterRoutingCacheDir: openRouterRoutingCacheDir(dirname(this.configPath)),
+      turnTraceDir: turnTraceDirectory(dirname(this.configPath)),
       ...(agentHomeRoot ? { agentHomeRoot } : {}),
     };
   }

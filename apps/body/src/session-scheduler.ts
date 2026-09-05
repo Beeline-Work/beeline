@@ -7,6 +7,16 @@ export interface SessionLifecycle {
 }
 export type SessionProcessState = 'live' | 'suspended' | 'waiting-for-slot';
 
+/** What the scheduler is holding right now: live processes, reservations, queues, ceilings. */
+export interface SessionSchedulerSnapshot {
+  live: number;
+  pending: number;
+  busy: number;
+  queuedChannels: number;
+  maxLive: number;
+  perRoom: number;
+}
+
 export type SessionRunPriority = 'interactive' | 'background';
 
 interface LiveSession {
@@ -235,14 +245,12 @@ export class SessionScheduler {
     return this.physicalHistory.get(key) ?? [];
   }
 
-  snapshot(): {
-    live: number;
-    pending: number;
-    busy: number;
-    queuedChannels: number;
-    maxLive: number;
-    perRoom: number;
-  } {
+  /**
+   * Read-only capacity diagnostic, exported beside the turn trace
+   * (`turn-trace.ts`) so a stalled turn can be attributed to a capacity wait
+   * rather than to a slow model. It reads state and changes none.
+   */
+  snapshot(): SessionSchedulerSnapshot {
     let pending = 0;
     for (const session of this.live.values()) if (session.pending) pending += 1;
     return {

@@ -197,7 +197,14 @@ describe('working agents (the gold ring)', () => {
   // Candy's helper renewed its lease every few seconds while every turn it
   // took ended `failed`, and the ring pulsed the whole time.
   it('lights the agent named by the fresh working receipt', () => {
-    expect(selectWorkingAgents({ activeTurnPubkey: 'candy' })).toEqual({ candy: true });
+    expect(selectWorkingAgents({ activeTurnPubkeys: ['candy'] })).toEqual({ candy: true });
+  });
+
+  it('lights every agent whose turn is running: two concurrent answers, two rings', () => {
+    expect(selectWorkingAgents({ activeTurnPubkeys: ['goosy', 'terra'] })).toEqual({
+      goosy: true,
+      terra: true,
+    });
   });
 
   it('lights the administering agent of a working corner', () => {
@@ -206,7 +213,7 @@ describe('working agents (the gold ring)', () => {
 
   it('lights nobody when no turn and no corner is live, whatever presence says', () => {
     expect(selectWorkingAgents({})).toEqual({});
-    expect(selectWorkingAgents({ activeTurnPubkey: null, workingCornerAgentPubkey: null })).toEqual(
+    expect(selectWorkingAgents({ activeTurnPubkeys: [], workingCornerAgentPubkey: null })).toEqual(
       {},
     );
   });
@@ -214,7 +221,7 @@ describe('working agents (the gold ring)', () => {
   it('never takes a presence lease as proof', () => {
     // The input shape has no presence field; a caller cannot feed one.
     const keys: (keyof Parameters<typeof selectWorkingAgents>[0])[] = [
-      'activeTurnPubkey',
+      'activeTurnPubkeys',
       'workingCornerAgentPubkey',
     ];
     expect(keys).toHaveLength(2);

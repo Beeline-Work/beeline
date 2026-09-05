@@ -199,7 +199,7 @@ describe('narrow live seam', () => {
     const overlay = {
       kind: 'draft' as const,
       key: `draft:${agent.publicKey}:corner-request`,
-      stableId: 'live-turn:corner-request',
+      stableId: `live-turn:${agent.publicKey}:corner-request`,
       agentPubkey: agent.publicKey,
       requestId: 'corner-request',
       text: 'Merging',
@@ -285,7 +285,7 @@ describe('narrow live seam', () => {
     const overlay: LiveOverlay = {
       kind: 'draft',
       key: 'draft:agent:request',
-      stableId: 'live-turn:request',
+      stableId: 'live-turn:agent:request',
       agentPubkey: 'agent',
       requestId: 'request',
       text: 'Updating only the ledger, then committing.',
@@ -313,6 +313,47 @@ describe('narrow live seam', () => {
     expect(visibleLiveOverlays(retracted, [])).toEqual(retracted);
     // A close with no streamed text behind it drops cleanly.
     expect(applyLiveOverlay([], { ...overlay, text: undefined, closed: true })).toEqual([]);
+  });
+
+  it('names a draft row by author and request, and holds it at its turn start', () => {
+    // Two agents answering one human message run two turns under ONE request
+    // id, so the request alone named both rows and the phone's id-keyed
+    // transcript kept only the last writer. Both agents' overlays live here
+    // side by side, and each keeps the stamp its own turn started at however
+    // many chunks arrive after it.
+    const first: LiveOverlay = {
+      kind: 'draft',
+      key: 'draft:goosy:request',
+      stableId: 'live-turn:goosy:request',
+      agentPubkey: 'goosy',
+      requestId: 'request',
+      text: 'first chunk',
+      closed: false,
+      createdAt: 10,
+    };
+    const second: LiveOverlay = { ...first, key: 'draft:terra:request', stableId: 'live-turn:terra:request', agentPubkey: 'terra', text: 'other chunk', createdAt: 11 };
+
+    let overlays = applyLiveOverlay([first], second);
+    overlays = applyLiveOverlay(overlays, { ...first, text: 'first chunk grew', createdAt: 12 });
+    overlays = applyLiveOverlay(overlays, { ...second, text: 'other chunk grew', createdAt: 13 });
+
+    // Edited in place in the LANE LIST too: an agent's newer chunk must not
+    // re-append its row behind the other agent's.
+
+    expect(overlays.map((item) => [item.key, (item as Extract<LiveOverlay, { kind: 'draft' }>).text, item.createdAt])).toEqual([
+      ['draft:goosy:request', 'first chunk grew', 10],
+      ['draft:terra:request', 'other chunk grew', 11],
+    ]);
+
+    // A NEW request from the same agent takes a new stamp rather than
+    // inheriting the finished turn's position — the anchor holds a TURN in
+    // place, not an agent forever. The row stays where it sits in the lane
+    // list; the transcript orders by the stamp.
+    const next = applyLiveOverlay(overlays, { ...first, key: 'draft:goosy:next', requestId: 'next', stableId: 'live-turn:goosy:next', text: 'a new turn', createdAt: 20 });
+    expect(next.map((item) => [item.key, item.createdAt])).toEqual([
+      ['draft:goosy:next', 20],
+      ['draft:terra:request', 11],
+    ]);
   });
 });
 

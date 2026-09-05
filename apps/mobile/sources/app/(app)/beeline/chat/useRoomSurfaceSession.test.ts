@@ -413,7 +413,8 @@ describe('useRoomSurfaceSession', () => {
     expect(current.liveOverlays).toHaveLength(1);
     expect(current.liveOverlays[0]).toMatchObject({
       kind: 'draft',
-      stableId: 'live-turn:turn-c',
+      // The author is half a draft row's identity (C107).
+      stableId: 'live-turn:agent-a:turn-c',
       agentPubkey: 'agent-a',
       requestId: 'turn-c',
       closed: false,
@@ -439,6 +440,64 @@ describe('useRoomSurfaceSession', () => {
       });
     });
     expect(visibleLiveOverlays(current.liveOverlays, [reply])).toEqual([]);
+    await act(async () => renderer.unmount());
+  });
+
+  it('anchors a joining reader’s two snapshot drafts into two rows that stay put', async () => {
+    // The join of #920 and C107: `PhoneService.liveDraftSnapshot` hands a
+    // socket the drafts its turns are already writing — one row per agent —
+    // and each has to land as its OWN transcript entry that later deltas edit
+    // in place. Both agents were addressed by one message, so both turns
+    // carry that message's id: the request alone cannot tell the rows apart.
+    controls.cached = roomView('room-a');
+    let current!: UseRoomSurfaceSessionResult;
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, {
+          channelId: 'room-a',
+          capture: (result: UseRoomSurfaceSessionResult) => (current = result),
+        }),
+      );
+    });
+    await flushEffects();
+
+    const emit = (live: Record<string, unknown>) =>
+      controls.subscriptions[0]!.emit({ monolithLive: { roomId: 'room-a', ...live } });
+    await act(async () => {
+      // The subscribe-time burst, in the order the snapshot serves it.
+      emit({ type: 'draft', agentId: 'goosy', turnId: 'turn-x', text: 'goosy so far' });
+      emit({ type: 'draft', agentId: 'terra', turnId: 'turn-x', text: 'terra so far' });
+    });
+
+    expect(
+      current.liveOverlays.map((overlay) => [
+        overlay.kind === 'draft' ? overlay.stableId : '',
+        overlay.agentPubkey,
+      ]),
+    ).toEqual([
+      ['live-turn:goosy:turn-x', 'goosy'],
+      ['live-turn:terra:turn-x', 'terra'],
+    ]);
+    const anchors = current.liveOverlays.map((overlay) => overlay.createdAt);
+
+    await act(async () => {
+      emit({ type: 'draft', agentId: 'terra', turnId: 'turn-x', text: 'terra so far, and more' });
+      emit({ type: 'draft', agentId: 'goosy', turnId: 'turn-x', text: 'goosy so far, and more' });
+    });
+
+    // Two rows still, in the same order, each carrying its own newer text:
+    // neither agent took the other's row and neither stamp moved.
+    expect(
+      current.liveOverlays.map((overlay) => [
+        overlay.agentPubkey,
+        overlay.kind === 'draft' ? overlay.text : '',
+        overlay.createdAt,
+      ]),
+    ).toEqual([
+      ['goosy', 'goosy so far, and more', anchors[0]],
+      ['terra', 'terra so far, and more', anchors[1]],
+    ]);
     await act(async () => renderer.unmount());
   });
 

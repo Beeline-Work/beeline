@@ -227,6 +227,30 @@ EOF
 chmod 0755 "$bin_dir/.beeline.new.$$"
 mv -f "$bin_dir/.beeline.new.$$" "$bin_dir/beeline"
 
+# The published npm package declares both bins (usebeeline + beeline -> one
+# entry), so the install must put both names on PATH. This forwarder is
+# byte-identical to the beeline one above — it derives <prefix> from its own
+# $0, so the different filename resolves the same way — and self-update's
+# activation/repair rewrites it like every other bin entry, so it survives
+# update swaps.
+cat > "$bin_dir/.usebeeline.new.$$" <<EOF
+#!/bin/sh
+set -eu
+case \$0 in
+  /*) script_path=\$0 ;;
+  *) script_path=\$(pwd -P)/\$0 ;;
+esac
+prefix_dir=\$(CDPATH= cd -- "\$(dirname -- "\$script_path")/.." && pwd -P)
+export BEELINE_LIB_DIR="\$prefix_dir/lib/beeline"
+: "\${BUZZ_AGENT_BIN:=\$prefix_dir/lib/beeline/bin/buzz-agent}"
+: "\${BUZZ_DEV_MCP_BIN:=\$prefix_dir/lib/beeline/bin/buzz-dev-mcp}"
+: "\${BEELINE_READONLY_MCP_BIN:=\$prefix_dir/lib/beeline/bin/beeline-readonly-mcp}"
+export BUZZ_AGENT_BIN BUZZ_DEV_MCP_BIN BEELINE_READONLY_MCP_BIN
+exec "\$prefix_dir/lib/beeline/bin/beeline" "\$@"
+EOF
+chmod 0755 "$bin_dir/.usebeeline.new.$$"
+mv -f "$bin_dir/.usebeeline.new.$$" "$bin_dir/usebeeline"
+
 active_link=$(readlink "$anchor" || true)
 if [ "$active_link" != "beeline-releases/$(basename "$target")" ]; then
   fail "failed to activate release $(basename "$target") (anchor reads: ${active_link:-nothing})"

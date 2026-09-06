@@ -523,6 +523,20 @@ export async function stageRelease(
 
 const FORWARDER_TOOLS = ['beeline', 'buzz-agent', 'buzz-dev-mcp', 'beeline-readonly-mcp'] as const;
 
+/**
+ * Bin-name aliases: installed wrapper name -> the bundle tool it execs. The
+ * published npm package declares BOTH bins (`packages/usebeeline/package.json`:
+ * `usebeeline` and `beeline` point at the same entry), but the install only
+ * laid down `beeline`, so an installed host had no `usebeeline` on PATH at
+ * all. The alias file is byte-identical to the target tool's forwarder — it
+ * derives <prefix> from its own $0, so the different filename resolves the
+ * same way — and is rewritten on every activation like any other bin entry,
+ * so it survives update swaps by construction.
+ */
+const FORWARDER_ALIASES: Readonly<Record<string, (typeof FORWARDER_TOOLS)[number]>> = {
+  usebeeline: 'beeline',
+};
+
 function forwarderScript(tool: string): string {
   // Must stay byte-identical with relay-stack/web/install.sh's forwarder
   // heredocs — repairInstallForwarders compares file content against this
@@ -664,14 +678,18 @@ async function writeBinForwarders(
   layout: BeelineInstallLayout,
   activeBundleRoot: string,
 ): Promise<void> {
-  for (const tool of FORWARDER_TOOLS) {
+  const entries: ReadonlyArray<readonly [string, (typeof FORWARDER_TOOLS)[number]]> = [
+    ...FORWARDER_TOOLS.map((tool) => [tool, tool] as const),
+    ...Object.entries(FORWARDER_ALIASES).map(([alias, tool]) => [alias, tool] as const),
+  ];
+  for (const [name, tool] of entries) {
     const target = join(activeBundleRoot, 'bin', tool);
     try {
       await access(target, fsConstants.X_OK);
     } catch {
       continue; // bundle does not ship this tool; leave any existing entry alone
     }
-    await replaceFile(join(layout.binDir, tool), forwarderScript(tool), 0o755);
+    await replaceFile(join(layout.binDir, name), forwarderScript(tool), 0o755);
   }
 }
 
@@ -682,24 +700,32 @@ async function writeBinForwarders(
  * and execs a path that is not there (the MODULE_NOT_FOUND regression). A
  * daemon that survived the drift can still start (it is launched by node
  * directly, not through the wrapper), so it repairs the shell entries at
- * startup and every later fresh-shell invocation works again. Only meaningful
- * once the install is release-based (anchor is a symlink); legacy real-dir
- * installs are consistent by construction. Idempotent: a matching forwarder
- * is left untouched.
+ * startup and every later fresh-shell invocation works again. Bin-name
+ * aliases (FORWARDER_ALIASES) are healed the same way, so a host installed
+ * before an alias existed gains it on the next daemon start without waiting
+ * for an update. Only meaningful once the install is release-based (anchor
+ * is a symlink); legacy real-dir installs are consistent by construction.
+ * Idempotent: a matching forwarder is left untouched.
  */
 export async function repairInstallForwarders(
   layout: BeelineInstallLayout,
   opts: { logger?: (line: string) => void } = {},
 ): Promise<boolean> {
   if ((await pathKind(layout.libDir)) !== 'symlink') return false;
-  const forwarderPath = join(layout.binDir, 'beeline');
-  let current: string | undefined;
-  try {
-    current = await readFile(forwarderPath, 'utf8');
-  } catch {
-    current = undefined;
+  const forwarderHealthy = async (name: string, tool: string): Promise<boolean> => {
+    let current: string | undefined;
+    try {
+      current = await readFile(join(layout.binDir, name), 'utf8');
+    } catch {
+      current = undefined;
+    }
+    return current === forwarderScript(tool);
+  };
+  let healthy = await forwarderHealthy('beeline', 'beeline');
+  for (const [alias, tool] of Object.entries(FORWARDER_ALIASES)) {
+    if (!(await forwarderHealthy(alias, tool))) healthy = false;
   }
-  if (current === forwarderScript('beeline')) return false;
+  if (healthy) return false;
   await mkdir(layout.binDir, { recursive: true });
   // The anchor itself is the active bundle root; access() follows the symlink.
   await writeBinForwarders(layout, layout.libDir);

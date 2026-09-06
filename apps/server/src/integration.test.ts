@@ -2818,52 +2818,120 @@ describe('monolith integration', () => {
     expect(githubApp.deleteBranch).toHaveBeenCalledWith(77, 101, 'owner/widgets', 'fm/widget');
   });
 
-  it('serves a corner only to its opening agent and rejects another member’s corner writes', async () => {
+  it('serves a corner to every member agent, keeps archive with the opener, and refuses a non-member', async () => {
     const peer = 'c'.repeat(64);
-    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Peer')`, [peer]);
-    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [peer, HUMAN]);
+    const stranger = 'd'.repeat(64);
+    for (const [id, name] of [
+      [peer, 'Peer'],
+      [stranger, 'Stranger'],
+    ] as const) {
+      await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent',$2)`, [id, name]);
+      await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [id, HUMAN]);
+    }
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-       VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
-      [WORKSPACE, peer, ROOM],
+       VALUES($1,NULL,$2,'member'),($1,$3,$2,'member'),($1,NULL,$4,'member'),($1,$3,$4,'member')`,
+      [WORKSPACE, peer, ROOM, stranger],
     );
-    const exchange = await auth.createDaemonExchange(peer);
-    const peerToken = (await auth.exchangeDaemonToken(exchange.exchangeToken))!.daemonToken;
+    const peerToken = (await auth.exchangeDaemonToken(
+      (await auth.createDaemonExchange(peer)).exchangeToken,
+    ))!.daemonToken;
+    const strangerToken = (await auth.exchangeDaemonToken(
+      (await auth.createDaemonExchange(stranger)).exchangeToken,
+    ))!.daemonToken;
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
-      requestId: 'single-owner-corner',
+      requestId: 'shared-corner',
       name: 'Bee corner',
-      objective: 'Only Bee serves this',
+      objective: 'Any member carries this',
     });
     expect(created.status).toBe(200);
     const { cornerId } = (await created.json()) as { cornerId: string };
+    // `createCorner` copies the parent Room's roster in; this one leaves again,
+    // which is the only way to be addressed in a corner you are not in.
+    await database.query(
+      `UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,
+      [cornerId, stranger],
+    );
 
-    const ownerCorners = await daemonOperation('listRoomCorners', { roomId: ROOM });
-    expect(await ownerCorners.json()).toEqual({
-      corners: [
-        expect.objectContaining({
-          cornerId,
-          parentRoomId: ROOM,
-          createdBy: AGENT,
-          archived: false,
-        }),
-      ],
+    // Both member agents list it, and both are told who opened it.
+    const listed = expect.objectContaining({
+      cornerId,
+      parentRoomId: ROOM,
+      createdBy: AGENT,
+      archived: false,
     });
-    const peerCorners = await daemonOperation('listRoomCorners', { roomId: ROOM }, peerToken);
-    expect(await peerCorners.json()).toEqual({ corners: [] });
+    expect(await (await daemonOperation('listRoomCorners', { roomId: ROOM })).json()).toEqual({
+      corners: [listed],
+    });
+    expect(
+      await (await daemonOperation('listRoomCorners', { roomId: ROOM }, peerToken)).json(),
+    ).toEqual({ corners: [listed] });
+    expect(
+      await (await daemonOperation('listRoomCorners', { roomId: ROOM }, strangerToken)).json(),
+    ).toEqual({ corners: [] });
 
-    const rejectedState = await daemonOperation(
-      'postCornerRemoteState',
-      { cornerId, branch: 'feature/peer', state: 'working', checks: 'unknown' },
-      peerToken,
+    // A human hands the work to the member that did not open it. The mention
+    // reaches that agent's corner inbox and its turn is accepted.
+    const handoff = '7'.repeat(64);
+    await operation('sendRoomMessage', {
+      roomId: cornerId,
+      messageId: handoff,
+      text: '@Peer can you pick up where Bee left off?',
+      mentions: [peer],
+    });
+    const peerInbox = (await (
+      await daemonOperation('getCornerCloseRequests', { cornerId }, peerToken)
+    ).json()) as { items: { id: string; mentionIds: string[] }[] };
+    expect(peerInbox.items.map((item) => item.id)).toContain(handoff);
+    expect(peerInbox.items.find((item) => item.id === handoff)?.mentionIds).toEqual([peer]);
+    expect(
+      (
+        await daemonOperation(
+          'postAgentTurnReceipt',
+          { roomId: cornerId, agentId: peer, requestId: handoff, status: 'working' },
+          peerToken,
+        )
+      ).status,
+    ).toBe(200);
+    // The branch is the shared artifact, so its lifecycle facts are a corner
+    // write any member may make.
+    expect(
+      (
+        await daemonOperation(
+          'postCornerRemoteState',
+          { cornerId, branch: 'feature/peer', state: 'working', checks: 'unknown' },
+          peerToken,
+        )
+      ).status,
+    ).toBe(200);
+    // Archiving is terminal for everyone's work, so it stays with the opener.
+    expect((await daemonOperation('archiveCorner', { cornerId }, peerToken)).status).toBe(403);
+    expect(
+      (
+        await daemonOperation(
+          'postCornerRemoteState',
+          { cornerId, branch: 'feature/stranger', state: 'working', checks: 'unknown' },
+          strangerToken,
+        )
+      ).status,
+    ).toBe(403);
+
+    // Addressing an agent that is not in the corner is never silent.
+    await operation('sendRoomMessage', {
+      roomId: cornerId,
+      messageId: '8'.repeat(64),
+      text: '@Stranger take a look',
+      mentions: [stranger],
+    });
+    const notes = await database.query<{ text: string; mention_ids: string[] }>(
+      `SELECT text,mention_ids FROM messages WHERE room_id=$1 AND presentation='system'`,
+      [cornerId],
     );
-    expect(rejectedState.status).toBe(403);
-    const rejectedTurn = await daemonOperation(
-      'postAgentTurnReceipt',
-      { roomId: cornerId, agentId: peer, requestId: 'peer-turn', status: 'working' },
-      peerToken,
+    expect(notes.rows.map((row) => row.text)).toContain(
+      'Stranger could not be reached · not a member of this corner',
     );
-    expect(rejectedTurn.status).toBe(403);
+    expect(notes.rows.find((row) => row.text.startsWith('Stranger'))?.mention_ids).toEqual([]);
 
     const phoneCorners = await request(`/v1/phone/rooms/${ROOM}/corners`);
     expect(await phoneCorners.json()).toEqual(

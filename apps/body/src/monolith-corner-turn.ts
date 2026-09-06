@@ -21,6 +21,7 @@ import { toolCallFailureLine } from './tool-call-failure.js';
 import { distillTurnFailureReason, redactToolDetail } from './turn-failure-reason.js';
 import { sessionConfigFingerprint } from './session-config-fingerprint.js';
 import { installPiMcpBridge } from './pi-mcp-bridge.js';
+import { syncCornerBranch } from './corner-branch-sync.js';
 import { beelineAgentMcpServer } from './room-session.js';
 import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
 import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
@@ -223,6 +224,13 @@ export interface MonolithCornerTurnOptions {
   cornerId: string;
   parentRoomId: string;
   workspaceId: string;
+  /**
+   * The agent that opened the corner. History and a default, never an access
+   * check: only the opener kicks the objective off unprompted, and an
+   * unaddressed message falls to whoever is carrying the corner — the opener
+   * until another member is addressed in it.
+   */
+  openedBy?: string;
   objective: string;
   featureBranch: string;
   targetBranch: string;
@@ -287,6 +295,10 @@ export class MonolithCornerTurnLoop {
   /** Operator-local turn traces; built once when the daemon configured a directory. */
   private turnTraceSink?: TurnTraceSink;
   private memberNames = new Map<string, string>();
+  /** Agent identities in this Workspace, so a mention can be told from a human's. */
+  private agentMembers = new Set<string>();
+  /** The member agent that answered in this corner last (`carriesCorner`). */
+  private carrier?: string;
   /** The last server check state that started a turn; the same state never starts another. */
   private lastChecksState?: CornerChecksState;
 
@@ -333,6 +345,9 @@ export class MonolithCornerTurnLoop {
       workspaceId: this.options.workspaceId,
     });
     this.memberNames = new Map(roster.members.map((member) => [member.identityId, member.name]));
+    this.agentMembers = new Set(
+      roster.members.filter((member) => member.kind === 'agent').map((member) => member.identityId),
+    );
     return roster;
   }
 
@@ -546,6 +561,7 @@ export class MonolithCornerTurnLoop {
         personaInstructions,
         `You are in an isolated git worktree on ${this.options.featureBranch}, targeting ${this.options.targetBranch}.`,
         'Work normally with the full coding tools. Commit and push only this feature branch. Use gh to open its pull request.',
+        `This corner is shared: any of its member agents may be addressed in it and work on ${this.options.featureBranch}. Run git pull --rebase origin ${this.options.featureBranch} before you push, and never force-push it.`,
         'PR-opening turn rule: as soon as a pull request exists, print its full GitHub URL as your final response and end the turn immediately. Do not call pr_checks_status in that same turn and do not wait for checks inside it. Then stay idle until a later corner fact or human message starts another turn.',
         'Never merge because local tests pass or because gh reports passing checks. On a later turn triggered by a server-posted checks-passed note, call beeline-agent pr_checks_status. Merge only when it returns checks="passed", held=false, and approvalPending=false.',
         'Merge the PR yourself only after the checks-passed event shows every check green; if any check failed or is still running, say exactly which and stop - never merge red.',
@@ -667,6 +683,7 @@ export class MonolithCornerTurnLoop {
         }
       : undefined;
     this.currentTurn = { requestId, ...(requester ? { requester } : {}) };
+    this.carrier = this.agent.publicKey;
     const trace = this.beginTurnTrace(requestId);
     try {
       await withTurnReceiptHeartbeat(
@@ -690,6 +707,7 @@ export class MonolithCornerTurnLoop {
               trace.noteScheduler('admission', this.options.scheduler.snapshot());
               if (this.forcedStop) throw new Error('corner turn stopped for daemon handoff');
               this.busy = true;
+              await this.syncBranch();
               const [conversation, roster, delivered] = await trace.measure('context-fetch', () =>
                 Promise.all([
                   api.execute('getRoomConversation', { roomId: cornerId, limit: 200 }),
@@ -881,6 +899,72 @@ export class MonolithCornerTurnLoop {
     }
   }
 
+  /** Whether this agent opened the corner. A corner with no recorded opener
+   *  behaves exactly as it did before members could carry it. */
+  private isOpener(): boolean {
+    return !this.options.openedBy || this.options.openedBy === this.agent.publicKey;
+  }
+
+  /**
+   * Whether this agent is the one carrying the corner right now.
+   *
+   * Every member agent polls the corner, but its lifecycle — a server check
+   * note, a close request answered with work — is ONE fact and must start ONE
+   * turn, not one per member (the "one check turn per changed server state"
+   * rule). The carrier is whoever answered in the corner last, which is the
+   * opener until a human hands the work to someone else.
+   */
+  private carriesCorner(): boolean {
+    return (this.carrier ?? this.options.openedBy ?? this.agent.publicKey) === this.agent.publicKey;
+  }
+
+  /** Notes an agent's durable message as the corner changing hands. */
+  private noteCarrier(authorId: string): void {
+    if (this.agentMembers.has(authorId)) this.carrier = authorId;
+  }
+
+  /**
+   * Whether a human message in this corner is addressed to THIS agent.
+   *
+   * A corner now runs like a Room — every member agent polls it — so an
+   * unrouted message would start one turn per member on one branch. A mention
+   * routes: the mentioned agent answers and nobody else. A message that names
+   * no agent at all keeps the old behaviour and falls to the opener, which is
+   * every single-agent corner ever opened.
+   */
+  private async addressesThisAgent(item: {
+    readonly mentionIds: readonly string[];
+  }): Promise<boolean> {
+    if (item.mentionIds.includes(this.agent.publicKey)) return true;
+    if (!item.mentionIds.length) return this.carriesCorner();
+    await this.roster().catch(() => undefined);
+    // Humans naming other humans is not a hand-off; the corner's carrier still
+    // answers it.
+    return item.mentionIds.some((id) => this.agentMembers.has(id)) ? false : this.carriesCorner();
+  }
+
+  /**
+   * Bring this worktree onto the corner's branch as GitHub currently has it,
+   * before any work is done on top of it.
+   *
+   * The branch is the shared artifact: another member agent may have pushed to
+   * it since this helper last looked, and a first touch of a corner this
+   * helper did not open starts from whatever `room-runtime.ts` restored. A
+   * divergence this cannot rebase away is raised, not pushed over — the turn
+   * fails with that sentence and the server inscribes it in the corner.
+   */
+  private async syncBranch(): Promise<void> {
+    const token = await this.options.api
+      .execute('getRoomGitHubToken', { roomId: this.options.parentRoomId })
+      .then((granted) => granted.token)
+      .catch(() => this.options.githubToken);
+    await syncCornerBranch({
+      worktreePath: this.options.worktreePath,
+      featureBranch: this.options.featureBranch,
+      env: { ...process.env, GH_TOKEN: token, GITHUB_TOKEN: token, GIT_TERMINAL_PROMPT: '0' },
+    });
+  }
+
   /** The server's check state for this head, or the notes' own verdict when the server carries none. */
   private async checksState(
     notes: readonly { readonly type: string; readonly body: string }[],
@@ -905,13 +989,20 @@ export class MonolithCornerTurnLoop {
     // work as it stands now. On a corner past one page the oldest rows say
     // nothing about whether the objective still needs kicking off.
     const history = await api.execute('getRoomConversation', { roomId: cornerId, limit: 200 });
+    // Who is carrying this corner: the member agent that answered in it last.
+    await this.roster().catch(() => undefined);
+    for (const item of history.items)
+      if (item.type === 'message') this.noteCarrier(item.authorId);
     const durableAgentReplies = history.items.filter(
       (item) =>
         item.type === 'message' &&
         item.authorId === this.agent.publicKey &&
         item.body.trim() !== this.options.objective.trim(),
     );
-    if (durableAgentReplies.length === 0) {
+    // Only the opener kicks the objective off. A helper addressed later has
+    // never replied here either, and starting it on the objective would run
+    // the same work twice against one branch.
+    if (durableAgentReplies.length === 0 && this.isOpener()) {
       await this.prompt(
         history.items.find((item) => item.requestId)?.requestId ?? cornerId.replaceAll('-', ''),
         this.options.objective,
@@ -936,7 +1027,9 @@ export class MonolithCornerTurnLoop {
           const checkNotes: (typeof inbox.items)[number][] = [];
           for (const item of inbox.items) {
             if (item.type === 'message') {
+              this.noteCarrier(item.authorId);
               if (item.authorId === this.agent.publicKey) continue;
+              if (!(await this.addressesThisAgent(item))) continue;
               const authority = await api.execute('getRoomAuthority', {
                 roomId: cornerId,
                 principalId: item.authorId,
@@ -969,7 +1062,7 @@ export class MonolithCornerTurnLoop {
             }
             if (completedCheckNote(item)) checkNotes.push(item);
           }
-          if (checkNotes.length) {
+          if (checkNotes.length && this.carriesCorner()) {
             const state = await this.checksState(checkNotes);
             if (state && state !== 'pending' && state !== this.lastChecksState) {
               this.lastChecksState = state;

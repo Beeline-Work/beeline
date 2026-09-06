@@ -456,7 +456,9 @@ export const DaemonFactCard = React.memo(function DaemonFactCard({
       : fact.type === 'checks-failing'
         ? `CHECKS FAILING${fact.pullRequest ? ` · PR #${fact.pullRequest.number ?? ''}` : ''}`
         : fact.type === 'corner-open'
-          ? fact.objective
+          ? // Opened by, not owned by: every member agent can be addressed in
+            // the corner and carry its branch on.
+            `${agent ? `OPENED BY ${agent}\n` : ''}${fact.objective}`
           : 'WORKTREE CLEANED';
   return (
     <RepositoryFactCard

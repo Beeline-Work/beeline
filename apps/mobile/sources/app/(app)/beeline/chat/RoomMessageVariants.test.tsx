@@ -360,6 +360,30 @@ describe('Room message variant components', () => {
     expect(onOpenCorner).toHaveBeenCalledWith('80a5a6f1-fb5a-493b-93eb-f3db33f696e6');
   });
 
+  it('names the agent that OPENED the corner, never one that owns it', () => {
+    // Any member agent can be addressed in a corner and carry its branch on,
+    // so the card records who started the work rather than who holds it.
+    const renderer = render(
+      <DaemonFactCard
+        message={message({
+          daemonFact: {
+            type: 'corner-open',
+            cornerId: '80a5a6f1-fb5a-493b-93eb-f3db33f696e6',
+            name: 'flaky auth',
+            objective: 'Fix the flaky auth test',
+          },
+          authorIdentity: { kind: 'agent', name: 'Beebee', pubkey: 'b'.repeat(64) },
+        })}
+        onOpenCorner={() => undefined}
+        onOpenUrl={() => undefined}
+      />,
+    );
+    const texts = renderer.root
+      .findAllByType('Text')
+      .map((node: ReactTestInstance) => node.props.children);
+    expect(texts).toContain('OPENED BY Beebee\nFix the flaky auth test');
+  });
+
   it('titles a legacy corner-open card by the first three words of its objective', () => {
     const renderer = render(
       <DaemonFactCard

@@ -3555,16 +3555,33 @@ describe('monolith integration', () => {
     );
   });
 
-  it('delivers at most one human mention per agent turn', async () => {
+  it('delivers every human an agent tags, with the push a human-authored tag gets', async () => {
+    // Signed in before any device is registered, so this newcomer's own
+    // welcome-join notification is not one of the pushes counted below.
+    const scribeToken = await phoneToken('scribe');
+    const scribe = createHash('sha256').update('github:scribe').digest('hex');
     const human2 = createHash('sha256').update('github:peer').digest('hex');
     await database.query(
-      `INSERT INTO identities(id,kind,name,github_subject) VALUES($1,'human','Peer','peer')`,
+      `INSERT INTO identities(id,kind,name,handle,github_subject)
+       VALUES($1,'human','Peer','bananaman614305','peer')`,
       [human2],
     );
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
-      [WORKSPACE, ROOM, human2],
-    );
+    for (const identity of [human2, scribe])
+      await database.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
+        [WORKSPACE, ROOM, identity],
+      );
+    for (const [token, identity] of [
+      ['owner-two-tag-device-token-1234567890', HUMAN],
+      ['peer-two-tag-device-token-12345678901', human2],
+    ] as const)
+      await database.query(
+        `INSERT INTO push_devices(token,identity_id,platform,environment)
+         VALUES($1,$2,'ios','physical')`,
+        [token, identity],
+      );
+    const floor = new PushDeliveryLoop(database, { send: vi.fn().mockResolvedValue(undefined) });
+    await floor.runOnce();
     const sent = await operation('sendRoomMessage', {
       roomId: ROOM,
       messageId: '5'.repeat(64),
@@ -3576,7 +3593,10 @@ describe('monolith integration', () => {
       roomId: ROOM,
       requestId: 'two-human-tags-turn',
       triggerMessageId: '5'.repeat(64),
-      text: '@Owner @Peer both need a decision, ideally just one of you.',
+      // The reply's resolution order, which is alias length descending: the
+      // legacy `a_` spelling of the owner's handle sorts ahead of the peer's
+      // correct one, so the peer was the tag the old per-turn cap threw away.
+      text: '@a_lunchboxfortwo here is where things stand.\n@bananaman614305 you are up next.',
       mentionIds: [HUMAN, human2],
     });
     expect(reply.status).toBe(200);
@@ -3587,8 +3607,35 @@ describe('monolith integration', () => {
       [ROOM, AGENT],
     );
     expect(stored.rows).toHaveLength(1);
-    // Only the first human tag is delivered; the second stays plain text.
-    expect(stored.rows[0]!.mention_ids).toEqual([HUMAN]);
+    // Both tags are stored, so both are what the phone highlights and what the
+    // push fan-out reads. A correct handle never becomes plain text in silence.
+    expect(stored.rows[0]!.mention_ids).toEqual([HUMAN, human2]);
+    const send = vi.fn().mockResolvedValue(undefined);
+    expect(await new PushDeliveryLoop(database, { send }).runOnce()).toBe(2);
+    expect(send.mock.calls.map(([token]) => token).sort()).toEqual([
+      'owner-two-tag-device-token-1234567890',
+      'peer-two-tag-device-token-12345678901',
+    ]);
+
+    // Parity: the same two tags written by a HUMAN reach exactly the same two
+    // devices. The author's kind is not an input to mention delivery.
+    const human = await operation(
+      'sendRoomMessage',
+      {
+        roomId: ROOM,
+        messageId: '6'.repeat(64),
+        text: '@lunchboxfortwo and @bananaman614305, same question.',
+        mentions: [HUMAN, human2],
+      },
+      scribeToken,
+    );
+    expect(human.status).toBe(200);
+    const humanSend = vi.fn().mockResolvedValue(undefined);
+    expect(await new PushDeliveryLoop(database, { send: humanSend }).runOnce()).toBe(2);
+    expect(humanSend.mock.calls.map(([token]) => token).sort()).toEqual([
+      'owner-two-tag-device-token-1234567890',
+      'peer-two-tag-device-token-12345678901',
+    ]);
   });
 
   it("reports a corner's working receipt on its parent Room row, and stops at archive", async () => {

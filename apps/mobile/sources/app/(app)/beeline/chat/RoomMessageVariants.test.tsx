@@ -736,6 +736,61 @@ describe('Room message variant components', () => {
       }),
     ).toEqual({ label: 'CODEX thinking…' });
   });
+  it('highlights every person an agent tagged, exactly as it does a human-authored tag', () => {
+    const rowProps = {
+      agent: { pubkey: 'agent', displayName: 'GREETER' },
+      participantsHydrated: true,
+      viewerPubkey: 'viewer',
+      speakerWorking: false,
+      continued: false,
+      participantHandles: [
+        { pubkey: 'captain', handle: 'lunchboxfortwo' },
+        { pubkey: 'peer', handle: 'bananaman614305' },
+      ],
+      channelIndex: { rooms: [], corners: [] },
+      deliveryFailed: false,
+      onChannelReference: vi.fn(),
+      onReply: vi.fn(),
+      onCopy: vi.fn(),
+      onRetry: vi.fn(),
+      onDismiss: vi.fn(),
+    } as const;
+    const text = '@lunchboxfortwo here is where things stand.\n@bananaman614305 you are up next.';
+
+    render(
+      <OrdinaryLedgerMessage
+        {...rowProps}
+        message={message({
+          id: 'agent-tags-two',
+          text,
+          pubkey: 'agent',
+          isAgentAuthor: true,
+          mentionPubkeys: ['captain', 'peer'],
+        })}
+      />,
+    );
+    const agentAuthored = ledgerEntryRender.mock.lastCall?.[0].mentionHandles;
+
+    render(
+      <OrdinaryLedgerMessage
+        {...rowProps}
+        message={message({
+          id: 'human-tags-two',
+          text,
+          pubkey: 'scribe',
+          mentionPubkeys: ['captain', 'peer'],
+        })}
+      />,
+    );
+
+    // The renderer reads mention_ids and nothing about the author, so a tag an
+    // agent wrote is highlighted exactly like one a person wrote — and BOTH
+    // tags survive, which is the whole point of dropping the server's
+    // one-human-mention cap.
+    expect(agentAuthored).toEqual(['lunchboxfortwo', 'bananaman614305']);
+    expect(ledgerEntryRender.mock.lastCall?.[0].mentionHandles).toEqual(agentAuthored);
+  });
+
   it('renders the grant card with ALWAYS / ONCE / NO only for the owner or a manager, and settles each line into its outcome', () => {
     const onDecision = vi.fn();
     const owner = { pubkey: 'owner', kind: 'human' as const, name: 'Charles' };

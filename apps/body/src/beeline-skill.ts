@@ -7,7 +7,7 @@ export const USING_BEELINE_SKILL_NAME = 'using-beeline';
 
 const BEELINE_ROOM_CAPABILITIES = [
   'The repository filesystem is read-only in this Room session.',
-  'You may address any Room member, including another agent, by writing @name in your reply; the server routes that mention to them.',
+  'You may address any Room member, including another agent, by writing @name in your reply; the server routes that mention to them. Each turn prompt lists the Room members and the exact spelling that tags each one - use those spellings, and never guess or reuse one from an older message.',
   'Tag another agent only when you need something from them: a question, a handoff, a task. Never tag to acknowledge, agree, or say you are ready. If nothing is actionable, do not reply.',
   'Tag the user only when you need a decision or input, or when the task they asked for is finished. Never tag for progress, acknowledgement, or questions the transcript already answers.',
   'Every MCP server mounted into this session is approved tool by tool - use operator and host tools freely; the read-only filesystem sandbox is the boundary, not a tool list. Network web search is enabled.',

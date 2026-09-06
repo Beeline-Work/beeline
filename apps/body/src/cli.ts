@@ -83,6 +83,7 @@ import {
 } from './current-release-probe.js';
 import { reportUpdateRollback, queueUpdateRollbackAlert } from './update-rollback-alert.js';
 import { writeDaemonReleaseStatus } from './release-status.js';
+import { runScratchSweep } from './scratch-sweep.js';
 
 function usage(exitCode = 1): void {
   console.error(`
@@ -114,6 +115,14 @@ All other config via env vars (see config.ts).
 }
 
 let daemonFailureRuntimeDir: string | undefined;
+
+const SCRATCH_SWEEP_INTERVAL_MS = 6 * 60 * 60_000;
+
+function runScratchSweepLogged(runtimeDir: string): void {
+  void runScratchSweep(runtimeDir).catch((error) =>
+    console.error('[body] scratch sweep failed:', error),
+  );
+}
 
 class DaemonExitError extends Error {
   constructor(
@@ -256,6 +265,16 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   console.log(`[body] agent binary: ${formatAgentCommand(agent)}`);
   console.log(`[body] ${sandbox.advisory}`);
 
+  // The attach scratch roots (`scratch-sweep.ts`) are settled the moment the
+  // per-agent runtime layout above is: swept once now, then on a fixed
+  // interval for the life of this process.
+  runScratchSweepLogged(runtimeDir);
+  const scratchSweepTimer = setInterval(
+    () => runScratchSweepLogged(runtimeDir),
+    SCRATCH_SWEEP_INTERVAL_MS,
+  );
+  scratchSweepTimer.unref();
+
   let ready = false;
   let stoppingStatus = 'daemon stopped';
   try {
@@ -391,6 +410,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
     }
     throw error;
   } finally {
+    clearInterval(scratchSweepTimer);
     await notifier.stopping(stoppingStatus).catch(() => undefined);
     // Only clear the pid file while it still names THIS process — a
     // self-update handover has already written the replacement's pid there.

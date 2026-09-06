@@ -212,8 +212,13 @@ const CODEX_ROOM_AGENT_LOCKDOWN_TOML = '[agents]\nenabled = false\n';
  */
 const CODEX_ROOM_WEB_SEARCH_TOML = '[features]\nstandalone_web_search = true\n';
 
-/** Subdirectories created under a room-instance's agent home. */
-const HOME_SUBDIRS = [
+/**
+ * Subdirectories created under a room-instance's agent home. Every one of
+ * these except `tmp` is a harness state/credential root (see
+ * `roomAgentHomeEnv`) — `scratch-sweep.ts` is the one other reader and treats
+ * all but `tmp` as never-touch.
+ */
+export const HOME_SUBDIRS = [
   'user',
   'claude',
   'codex',

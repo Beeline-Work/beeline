@@ -13,8 +13,11 @@ const OWNER = 'a'.repeat(64);
 const STRANGER = 'b'.repeat(64);
 
 describe('access policy — defaults', () => {
-  it('defaults a NEW pairing to owner-only', () => {
-    expect(DEFAULT_ACCESS_POLICY).toBe('creator');
+  it('defaults a NEW pairing to everyone, matching the server row', () => {
+    // An agent that silently ignores a Room member reads as broken. The server
+    // row (`agents.access_policy`) carries the same default and is the
+    // authority; this constant only seeds the runtime record.
+    expect(DEFAULT_ACCESS_POLICY).toBe('everyone');
   });
 
   it('freezes the pre-policy behaviour as everyone for existing agents', () => {

@@ -1,4 +1,5 @@
 import type { AgentGrantDecision, AgentGrantStatus } from './agent-grants.js';
+import type { AgentAccessPolicy } from './agent-access.js';
 import type {
   AgentModelSelection,
   AgentPairingClaimView,
@@ -35,6 +36,7 @@ export type PhoneOperationMap = {
   updateAgentSoul: { input: UpdateAgentSoulInput; output: void };
   updateAgentModelSelection: { input: UpdateAgentModelInput; output: void };
   updateAgentYolo: { input: UpdateAgentYoloInput; output: void };
+  updateAgentAccessPolicy: { input: UpdateAgentAccessPolicyInput; output: void };
   removeAgent: { input: WorkspaceAgentInput; output: void };
   updatePersonProfile: { input: UpdatePersonProfileInput; output: PersonProfileResult };
   updateIdentityFace: { input: UpdateIdentityFaceInput; output: void };
@@ -161,6 +163,12 @@ export type UpdateAgentSoulInput = WorkspaceAgentInput & {
 export type UpdateAgentModelInput = WorkspaceAgentInput &
   Omit<AgentModelSelection, 'effort'> & { readonly effort?: string | null };
 export type UpdateAgentYoloInput = WorkspaceAgentInput & { readonly enabled: boolean };
+/** The owner's answer to "who may address this agent" (`agent-access.ts`). */
+export type UpdateAgentAccessPolicyInput = WorkspaceAgentInput & {
+  readonly policy: AgentAccessPolicy;
+  /** Required by `allowlist`, ignored otherwise. */
+  readonly allow?: readonly string[];
+};
 export type UpdatePersonProfileInput = {
   readonly name?: string;
   readonly handle?: string;

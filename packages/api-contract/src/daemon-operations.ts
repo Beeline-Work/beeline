@@ -223,6 +223,14 @@ export type RoomAuthorityResult = {
   readonly member: boolean;
   readonly principalKind?: 'human' | 'agent';
   readonly archived: boolean;
+  /**
+   * Whether this principal may address the ASKING agent under the agent's
+   * server-side access policy (`agent-access.ts`). The server decides it, so an
+   * owner's change in the app reaches a helper that is already running on its
+   * next poll — no reconnect, no restart. Absent only from a server older than
+   * the policy move, where a helper falls back to its runtime record.
+   */
+  readonly mayAddressAgent?: boolean;
 };
 export type AuthorityDecisionResult = {
   readonly status: 'authorized' | 'denied' | 'unavailable';

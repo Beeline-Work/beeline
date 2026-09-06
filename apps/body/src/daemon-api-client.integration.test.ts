@@ -1909,6 +1909,161 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     }
   }, 30_000);
 
+  it('obeys the server access policy live, and lets the Room see the refusal', async () => {
+    // Greeter's production shape, exactly: the runtime record this helper was
+    // paired with says `creator`, and the SERVER is the authority for who may
+    // address the agent. A change there has to reach this already-running loop.
+    const OUTSIDER = getPublicKey(new Uint8Array(32).fill(13));
+    // Handles, because a system line names a person by @handle and never by the
+    // display name beside it.
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Bananaman','bananaman614305')`,
+      [OUTSIDER],
+    );
+    await database.query(`UPDATE identities SET handle='lunchboxfortwo' WHERE id=$1`, [HUMAN]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
+      [WORKSPACE, OUTSIDER, ROOM],
+    );
+    await database.query(
+      `UPDATE agents SET selected_model=NULL,selected_effort=NULL,
+         access_policy='{"type":"creator"}'::jsonb WHERE agent_id=$1`,
+      [AGENT],
+    );
+    const exchange = await auth.createDaemonExchange(AGENT);
+    const exchanged = await fetch(`${origin}/v1/auth/daemon/exchange`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ exchangeToken: exchange.exchangeToken }),
+    });
+    const token = (await exchanged.json()) as { daemonToken: string };
+    const client = new DaemonApiClient(origin, token.daemonToken, AGENT);
+
+    const acp = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
+    vi.spyOn(acp, 'start').mockResolvedValue(undefined);
+    vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: 'access-session', raw: {} });
+    const sessionPrompt = vi.spyOn(acp, 'sessionPrompt').mockResolvedValue({
+      stopReason: 'end_turn',
+      updates: [],
+      agentText: 'at your service',
+      toolCalls: [],
+    });
+    const polled = vi.fn();
+    const config = {
+      agentBinary: '/nonexistent/codex-acp',
+      agentCommand: '/nonexistent/codex-acp',
+      mcpBinary: '/nonexistent',
+      readonlyMcpCommand: '/nonexistent-readonly-mcp',
+      agentEnv: {},
+      workspaceRoot: join(supervisorRoot, 'access-room'),
+      autoApprovePermissions: true,
+      // Deliberately the record's own reading, and deliberately NOT what the
+      // server says. Nothing below restarts or re-pairs this helper.
+      accessPolicy: 'creator',
+      accessOwnerPubkey: HUMAN,
+      agentHomeRoot: join(supervisorRoot, 'access-agent-home'),
+    } as const;
+    const runtime: AgentRuntimeRecord = {
+      version: 2,
+      communityId: WORKSPACE,
+      pairedBy: HUMAN,
+      agent: {
+        name: 'Bee',
+        publicKey: AGENT,
+        secretKeyHex: Buffer.from(AGENT_SECRET).toString('hex'),
+      },
+      body: {
+        name: 'Body',
+        publicKey: getPublicKey(new Uint8Array(32).fill(22)),
+        secretKeyHex: Buffer.from(new Uint8Array(32).fill(22)).toString('hex'),
+      },
+      rooms: [],
+      supervisorRoot,
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      createdAt: new Date().toISOString(),
+      accessPolicy: 'creator',
+      transport: { kind: 'monolith', baseUrl: origin, daemonToken: token.daemonToken },
+    };
+    const abort = new AbortController();
+    const turnLoop = new MonolithRoomTurnLoop({
+      roomId: ROOM,
+      workspaceId: WORKSPACE,
+      cwd: config.workspaceRoot,
+      runtime,
+      config: config as never,
+      api: client,
+      scheduler: new SessionScheduler({ maxLiveSessions: 2 }),
+      health: { poll: polled, failure: vi.fn(), presence: vi.fn() },
+      signal: abort.signal,
+      pollMs: 10,
+      createAcpClient: () => acp,
+    });
+    const systemLines = async () =>
+      (
+        await database.query<{ text: string }>(
+          `SELECT text FROM messages WHERE room_id=$1 AND presentation='system' ORDER BY created_at,id`,
+          [ROOM],
+        )
+      ).rows.map((row) => row.text);
+    const turns = async () =>
+      (await database.query(`SELECT 1 FROM agent_turns WHERE room_id=$1`, [ROOM])).rows.length;
+
+    const loop = turnLoop.run();
+    try {
+      await vi.waitFor(() => expect(polled).toHaveBeenCalled(), { timeout: 5_000 });
+
+      // Refused: the Room says so once, and no turn is ever created.
+      await phone.execute(
+        'sendRoomMessage',
+        { roomId: ROOM, messageId: '1'.repeat(64), text: '@bee yo', mentions: [AGENT] },
+        OUTSIDER,
+      );
+      await vi.waitFor(
+        async () =>
+          expect(await systemLines()).toEqual([
+            'Bee did not answer @bananaman614305 · only @lunchboxfortwo may address Bee. ' +
+              'Ask the user for permission to access the agent in the members page',
+          ]),
+        { timeout: 5_000 },
+      );
+      // The refusal above is written by the SEND, so seeing it proves nothing
+      // about the loop yet. `health.poll()` fires once per completed intake
+      // cycle: two of them since the send means a cycle has read this message,
+      // decided, and moved its cursor past it.
+      const settled = polled.mock.calls.length + 2;
+      await vi.waitFor(() => expect(polled.mock.calls.length).toBeGreaterThanOrEqual(settled), {
+        timeout: 5_000,
+      });
+      expect(sessionPrompt).not.toHaveBeenCalled();
+      expect(await turns()).toBe(0);
+
+      // The owner flips the toggle in the members page. Nothing restarts.
+      await phone.execute(
+        'updateAgentAccessPolicy',
+        { workspaceId: WORKSPACE, agentId: AGENT, policy: 'everyone' },
+        HUMAN,
+      );
+      await phone.execute(
+        'sendRoomMessage',
+        { roomId: ROOM, messageId: '2'.repeat(64), text: '@bee yo again', mentions: [AGENT] },
+        OUTSIDER,
+      );
+      await vi.waitFor(() => expect(sessionPrompt).toHaveBeenCalled(), { timeout: 5_000 });
+      expect(sessionPrompt.mock.calls[0]![1]).toContain('yo again');
+      await vi.waitFor(async () => expect(await turns()).toBeGreaterThan(0), { timeout: 5_000 });
+      // The same helper, the same record, one more system line: the change.
+      expect(await systemLines()).toEqual([
+        expect.stringContaining('did not answer @bananaman614305'),
+        '@lunchboxfortwo changed who may address Bee · anyone may ask now',
+      ]);
+    } finally {
+      abort.abort();
+      await loop;
+    }
+  }, 30_000);
+
   it('gives agents canonical handles instead of stale membership profiles', async () => {
     await database.query(`UPDATE identities SET handle='lunchboxfortwo' WHERE id=$1`, [HUMAN]);
     await database.query(

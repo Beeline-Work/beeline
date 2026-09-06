@@ -105,15 +105,24 @@ export function roomMcpPermissionDecision(
   return isRoomMcpPermissionRequest(request, mountedServers) ? 'allow' : 'reject';
 }
 
-/** Agents are server-validated Room members; human turns additionally honor host access policy. */
+/**
+ * Whether this principal may start a turn. Agents are server-validated Room members
+ * and are never gated; a human answers to the agent's access policy.
+ *
+ * The policy lives on the SERVER (`agent-access.ts`) and its verdict rides on the
+ * authority round trip the intake loop already makes per candidate message — so an
+ * owner's change in the members page takes effect on a helper that is already
+ * running, on its next poll. `humanPermitted` is the runtime record's own reading,
+ * used only against a server too old to answer.
+ */
 export function roomPrincipalMayAddressAgent(
   authority: RoomAuthority,
   humanPermitted: boolean,
 ): boolean {
-  return (
-    authority.member &&
-    (authority.principalKind === 'agent' || (authority.principalKind === 'human' && humanPermitted))
-  );
+  if (!authority.member) return false;
+  if (authority.principalKind === 'agent') return true;
+  if (authority.principalKind !== 'human') return false;
+  return authority.mayAddressAgent ?? humanPermitted;
 }
 
 /** Server-authored scheduled prompts arrive as system lines (`Beeline Scheduler ran a

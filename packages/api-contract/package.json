@@ -19,6 +19,11 @@
       "import": "./dist/scheduled-prompts.js",
       "default": "./dist/scheduled-prompts.js"
     },
+    "./agent-access": {
+      "types": "./dist/agent-access.d.ts",
+      "import": "./dist/agent-access.js",
+      "default": "./dist/agent-access.js"
+    },
     "./agent-grants": {
       "types": "./dist/agent-grants.d.ts",
       "import": "./dist/agent-grants.js",

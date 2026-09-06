@@ -59,6 +59,7 @@ type MembersAction =
   | 'remove-agent'
   | 'model-config'
   | 'agent-yolo'
+  | 'agent-access'
   | 'revoke-grant';
 
 function first(value: string | string[] | undefined): string | undefined {
@@ -163,6 +164,18 @@ function operationMessage(reason: unknown): string {
   return reason instanceof Error ? reason.message : String(reason);
 }
 
+/**
+ * What the access switch means right now, naming the owner the way the Room's
+ * own system lines do — by @handle, never by a display name.
+ */
+function accessCaption(access: AgentDetailView['access']): string {
+  const change = 'Only the owner or a workspace admin can change this.';
+  if (access?.policy === 'everyone') return `Anyone in the Room may ask this agent. ${change}`;
+  if (access?.policy === 'allowlist') return `Only allowed members may ask this agent. ${change}`;
+  const owner = access?.owner?.handle ? `@${access.owner.handle}` : 'the owner';
+  return `Only ${owner} may ask this agent; everyone else is told to ask ${owner} here. ${change}`;
+}
+
 function yoloSetByLine(yolo: NonNullable<AgentDetailView['yolo']>): string | null {
   if (!yolo.enabled || !yolo.setBy) return null;
   const date =
@@ -225,6 +238,7 @@ export default function BuzzMembers() {
   const [working, setWorking] = useState<MembersAction | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [yoloError, setYoloError] = useState<string | null>(null);
+  const [accessError, setAccessError] = useState<string | null>(null);
   const [retryGeneration, setRetryGeneration] = useState(0);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pairCommand, setPairCommand] = useState<string | null>(null);
@@ -617,6 +631,35 @@ export default function BuzzMembers() {
     }
   };
 
+  const toggleAnswersEveryone = async (everyone: boolean) => {
+    const access = selectedAgent?.access;
+    if (!selectedAgent || !access?.canChange) return;
+    const previous = selectedAgent;
+    const pubkey = previous.agent.identity.pubkey;
+    const policy = everyone ? 'everyone' : 'creator';
+    // Optimistic like the yolo switch: the row settles now and the indexed read
+    // confirms, or the catch rolls it back with the server's own message inline.
+    setSelectedAgent({ ...previous, access: { ...access, policy } });
+    setWorking('agent-access');
+    setAccessError(null);
+    try {
+      await monolithPhoneOperation('updateAgentAccessPolicy', {
+        workspaceId: previous.workspaceId,
+        agentId: pubkey,
+        policy,
+      });
+      await waitForIndexedSurface(
+        () => readAgent(pubkey),
+        (value) => value.access?.policy === policy,
+      );
+    } catch (reason) {
+      setSelectedAgent(previous);
+      setAccessError(operationMessage(reason));
+    } finally {
+      setWorking(null);
+    }
+  };
+
   const revokeGrant = async (grantId: string) => {
     if (!selectedAgent?.canManageGrants) return;
     const pubkey = selectedAgent.agent.identity.pubkey;
@@ -945,6 +988,7 @@ export default function BuzzMembers() {
                     setSelectedAgent(null);
                     setEditingAgentSoul(false);
                     setYoloError(null);
+                    setAccessError(null);
                   }}
                   style={styles.glyphControl}
                   testID="close-agent-settings"
@@ -1110,10 +1154,34 @@ export default function BuzzMembers() {
                   ))
                 )}
               </View>
-              <View style={styles.yoloSection} testID="agent-yolo">
-                <View style={styles.yoloRow}>
+              <View style={styles.switchSection} testID="agent-access">
+                <View style={styles.switchRow}>
+                  <Text style={styles.sectionLabel} testID="agent-access-label">
+                    Answers everyone
+                  </Text>
+                  <Switch
+                    accessibilityLabel="Answers everyone"
+                    disabled={!selectedAgent.access?.canChange || busy}
+                    onValueChange={(everyone) => void toggleAnswersEveryone(everyone)}
+                    testID="agent-access-switch"
+                    thumbColor={theme.buzz.textPrimary}
+                    trackColor={{ false: theme.buzz.bgRaised, true: theme.buzz.accent }}
+                    value={selectedAgent.access?.policy === 'everyone'}
+                  />
+                </View>
+                <Text style={styles.detail} testID="agent-access-caption">
+                  {accessCaption(selectedAgent.access)}
+                </Text>
+                {accessError && (
+                  <Text style={styles.switchError} testID="agent-access-error">
+                    {accessError}
+                  </Text>
+                )}
+              </View>
+              <View style={styles.switchSection} testID="agent-yolo">
+                <View style={styles.switchRow}>
                   <Text
-                    style={[styles.sectionLabel, selectedAgent.yolo?.enabled && styles.yoloLabelOn]}
+                    style={[styles.sectionLabel, selectedAgent.yolo?.enabled && styles.switchLabelOn]}
                     testID="agent-yolo-label"
                   >
                     Yolo
@@ -1138,7 +1206,7 @@ export default function BuzzMembers() {
                   </Text>
                 )}
                 {yoloError && (
-                  <Text style={styles.yoloError} testID="agent-yolo-error">
+                  <Text style={styles.switchError} testID="agent-yolo-error">
                     {yoloError}
                   </Text>
                 )}
@@ -1330,16 +1398,16 @@ const styles = StyleSheet.create((theme) => {
       flex: 1,
       minWidth: 0,
     },
-    yoloSection: { gap: hull.space.xs },
-    yoloRow: {
+    switchSection: { gap: hull.space.xs },
+    switchRow: {
       minHeight: 40,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
       gap: hull.space.sm,
     },
-    yoloLabelOn: { color: hull.accent },
-    yoloError: { ...Typography.default(), ...hull.type.meta, color: hull.danger },
+    switchLabelOn: { color: hull.accent },
+    switchError: { ...Typography.default(), ...hull.type.meta, color: hull.danger },
     dangerZone: {
       gap: hull.space.sm,
       paddingTop: hull.space.md,

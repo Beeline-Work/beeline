@@ -78,6 +78,10 @@ const phoneOperation = vi.hoisted(() =>
       };
       return { grantId: input.grantId, status: 'revoked', roomId: 'room' };
     }
+    if (name === 'updateAgentAccessPolicy') {
+      state.agent = { ...state.agent, access: { ...state.agent.access, policy: input.policy } };
+      return;
+    }
     if (name !== 'updateAgentYolo') throw new Error(`unexpected operation ${name}`);
     state.agent = {
       ...state.agent,
@@ -307,6 +311,11 @@ function baseAgent() {
     ],
     selected: { model: 'sonnet', effort: 'low' },
     yolo: { enabled: false, canChange: true },
+    access: {
+      policy: 'creator',
+      owner: { id: OWNER, name: 'Captain', handle: 'lunchboxfortwo' },
+      canChange: true,
+    },
     watchFilters: [],
   };
 }
@@ -676,6 +685,61 @@ describe('Members workspace management', () => {
     expect(renderer.root.findAllByProps({ testID: 'rename-agent' })).toHaveLength(0);
     await press(renderer, 'close-agent-settings');
     expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-model-config` })).toHaveLength(0);
+  });
+
+  it('lets the owner open the agent to everyone, and names who to ask until they do', async () => {
+    const renderer = await render();
+    await press(renderer, `agent-${AGENT}-identity`);
+
+    const toggle = renderer.root.findByProps({ testID: 'agent-access-switch' });
+    expect(toggle.props.disabled).toBe(false);
+    expect(toggle.props.value).toBe(false);
+    // The owner is named by @handle here for the same reason the Room's system
+    // lines name them that way: a display name is not an address.
+    expect(renderer.root.findByProps({ testID: 'agent-access-caption' }).props.children).toBe(
+      'Only @lunchboxfortwo may ask this agent; everyone else is told to ask @lunchboxfortwo here. ' +
+        'Only the owner or a workspace admin can change this.',
+    );
+
+    await act(async () => {
+      await toggle.props.onValueChange(true);
+    });
+
+    expect(phoneOperation).toHaveBeenCalledWith('updateAgentAccessPolicy', {
+      workspaceId: WORKSPACE,
+      agentId: AGENT,
+      policy: 'everyone',
+    });
+    expect(renderer.root.findByProps({ testID: 'agent-access-switch' }).props.value).toBe(true);
+    expect(renderer.root.findByProps({ testID: 'agent-access-caption' }).props.children).toBe(
+      'Anyone in the Room may ask this agent. Only the owner or a workspace admin can change this.',
+    );
+    expect(renderer.root.findAllByProps({ testID: 'agent-access-error' })).toHaveLength(0);
+  });
+
+  it('shows a plain member the policy without the ability to change it', async () => {
+    state.workspace = {
+      ...baseWorkspace(),
+      viewer: {
+        ...baseWorkspace().viewer,
+        role: 'member',
+        permissions: { send: true, manage: false },
+      },
+    };
+    state.agent = {
+      ...baseAgent(),
+      access: {
+        policy: 'creator',
+        owner: { id: OWNER, name: 'Captain', handle: 'lunchboxfortwo' },
+        canChange: false,
+      },
+    };
+    const renderer = await render();
+    await press(renderer, `agent-${AGENT}-identity`);
+
+    const toggle = renderer.root.findByProps({ testID: 'agent-access-switch' });
+    expect(toggle.props.disabled).toBe(true);
+    expect(toggle.props.value).toBe(false);
   });
 
   it('lets the owner or a workspace admin flip yolo and shows who set it', async () => {

@@ -1,40 +1,48 @@
 /**
- * Per-agent access policy — who may drive a paired agent, and what a
- * non-permitted questioner hears instead of silence.
+ * Per-agent access policy as the HELPER holds it — the pairing-time seed and the
+ * one read-time fallback, no longer the authority.
  *
- * The policy is set by the inviter at pairing time and enforced by the daemon:
- * before an agent replies to an addressed Room/DM message it checks the message
- * *sender pubkey* against the policy. The check is fail-closed — an unknown or
- * unmatched sender is treated as NOT permitted.
+ * The vocabulary and the decision live in `@beeline/api-contract/agent-access`, and
+ * the live answer comes from the server on every candidate message
+ * (`getRoomAuthority`.`mayAddressAgent`), so an owner's change in the members page
+ * reaches a running helper with no reconnect and no restart. What stays here is
+ * what the connect wizard writes into the runtime record and what a helper reads
+ * when it is talking to a server too old to answer.
  *
- * `creator` is the primary cost/safety lever: only the inviting owner may
- * address the agent, so no one else spends the operator's subscription or
- * triggers the owner's commands. It is also the default for newly paired
- * agents (see DEFAULT_ACCESS_POLICY below). `allowlist` is the explicit
- * delegation policy: only the configured identities may assign work. The
- * creator is not implicitly included; authority is exactly the stored list.
+ * `creator` is the cost/safety lever: only the inviting owner may address the
+ * agent, so no one else spends the operator's subscription. `allowlist` is explicit
+ * delegation: authority is exactly the stored list, and the creator is not
+ * implicitly in it.
  */
 
-export type AgentAccessPolicy = 'everyone' | 'creator' | 'allowlist';
+import {
+  DEFAULT_AGENT_ACCESS_POLICY,
+  MAX_ACCESS_ALLOWLIST_ENTRIES,
+  type AgentAccessPolicy,
+} from '@beeline/api-contract/agent-access';
 
-/** Every access policy this build understands. */
-export const AGENT_ACCESS_POLICIES = ['everyone', 'creator', 'allowlist'] as const;
-export const MAX_ACCESS_ALLOWLIST_ENTRIES = 64;
+export {
+  AGENT_ACCESS_POLICIES,
+  MAX_ACCESS_ALLOWLIST_ENTRIES,
+  isAgentAccessPolicy,
+  type AgentAccessPolicy,
+} from '@beeline/api-contract/agent-access';
 
 /**
- * Default for a NEWLY PAIRED agent: only the inviting owner may address it,
- * so no other Room member can spend the operator's subscription or trigger
- * the owner's commands. The inviter opts out explicitly by choosing
- * `everyone` at pairing (`--access everyone` / the pairing prompt).
+ * Default for a NEWLY PAIRED agent: `everyone`. An agent that silently ignores a
+ * Room member is indistinguishable from a dead one, so the product default is that
+ * anyone in the Room may ask, and an owner who wants the narrow gate turns it off
+ * in the members page. The server row carries the same default
+ * (`agents.access_policy`); this constant only seeds the runtime record the connect
+ * wizard writes.
  *
  * This constant must NOT be used as a read-time fallback for a runtime record
- * carrying no policy: every pre-policy pairing ran as `everyone`, and falling
- * back to this constant would silently re-gate those agents. Read-time
- * fallbacks use LEGACY_ACCESS_POLICY instead, and the one-time migration in
- * `runtime.ts` (`migrateRuntimeRecordAccessPolicy`) stamps an explicit policy
- * onto pre-existing records so they stop depending on any constant at all.
+ * carrying no policy: read-time fallbacks use LEGACY_ACCESS_POLICY, and the
+ * one-time migration in `runtime.ts` (`migrateRuntimeRecordAccessPolicy`) stamps an
+ * explicit policy onto pre-existing records so they stop depending on any constant
+ * at all.
  */
-export const DEFAULT_ACCESS_POLICY: AgentAccessPolicy = 'creator';
+export const DEFAULT_ACCESS_POLICY: AgentAccessPolicy = DEFAULT_AGENT_ACCESS_POLICY;
 
 /**
  * The frozen pre-policy behaviour: `everyone`. Every agent paired before
@@ -44,10 +52,6 @@ export const DEFAULT_ACCESS_POLICY: AgentAccessPolicy = 'creator';
  * for records that carry no explicit policy — never for a new pairing.
  */
 export const LEGACY_ACCESS_POLICY: AgentAccessPolicy = 'everyone';
-
-export function isAgentAccessPolicy(value: unknown): value is AgentAccessPolicy {
-  return (AGENT_ACCESS_POLICIES as readonly string[]).includes(value as string);
-}
 
 /** Strict persisted form: unique lowercase hex pubkeys with a bounded cardinality. */
 export function isAgentAccessAllowlist(value: unknown): value is string[] {

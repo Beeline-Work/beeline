@@ -299,7 +299,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS memberships_room_unique
 CREATE TABLE IF NOT EXISTS agents (
   agent_id text PRIMARY KEY REFERENCES identities(id) ON DELETE CASCADE,
   owner_id text NOT NULL REFERENCES identities(id),
-  access_policy jsonb NOT NULL DEFAULT '{"type":"creator"}'::jsonb,
+  access_policy jsonb NOT NULL DEFAULT '{"type":"everyone"}'::jsonb,
   soul jsonb,
   selected_model text,
   selected_effort text,
@@ -315,6 +315,11 @@ ALTER TABLE agents ADD COLUMN IF NOT EXISTS schedule_ids jsonb NOT NULL DEFAULT 
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_mode boolean NOT NULL DEFAULT false;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_set_by text;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_set_at timestamptz;
+-- An agent nobody but its owner may address is indistinguishable from a dead one,
+-- so a newly connected agent now answers everyone (agent-access.ts). Only the
+-- DEFAULT moves: every existing row keeps the policy its owner is running with and
+-- changes it from the members page.
+ALTER TABLE agents ALTER COLUMN access_policy SET DEFAULT '{"type":"everyone"}'::jsonb;
 
 CREATE TABLE IF NOT EXISTS messages (
   id text PRIMARY KEY,

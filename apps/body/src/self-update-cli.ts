@@ -21,6 +21,7 @@ import {
   archiveUrlFor,
   beelineInstallLayout,
   describeIdentity,
+  discoveredBeelineInstallLayout,
   hostPlatformKey,
   readInstalledBundleIdentity,
   readUpdateAttempt,
@@ -55,15 +56,25 @@ automatic path off. \`beeline update\` always works.
 `);
 }
 
-function requireLayout(): BeelineInstallLayout {
+/**
+ * Almost always the installed wrapper already exported BEELINE_LIB_DIR. The
+ * one case it hasn't is `npx usebeeline update`: npx runs the CLI from a
+ * throwaway npm cache, never through `<prefix>/bin/beeline`, so there is no
+ * layout in the environment at all. Rather than refuse outright, locate the
+ * installed bundle the way the installer laid it out
+ * (`discoveredBeelineInstallLayout`) and delegate the update to IT — the
+ * same install `beeline update` would have found. Only when no bundle
+ * actually exists there does this still refuse, with the useful next step
+ * instead of an installer-layout error that means nothing to an `npx` caller.
+ */
+export async function requireLayout(): Promise<BeelineInstallLayout> {
   const layout = beelineInstallLayout(process.env);
-  if (!layout) {
-    throw new Error(
-      'beeline update needs a bundle install (the installer layout). ' +
-        'This command was started outside the bundled `beeline` wrapper; update a dev checkout with git instead.',
-    );
-  }
-  return layout;
+  if (layout) return layout;
+  const discovered = discoveredBeelineInstallLayout(process.env);
+  if ((await readInstalledBundleIdentity(discovered)) !== undefined) return discovered;
+  throw new Error(
+    'this host has no Beeline install; run `npx usebeeline connect` first.',
+  );
 }
 
 async function runningDaemonConfigPaths(): Promise<string[]> {
@@ -122,7 +133,7 @@ export async function runUpdateCommand(args: string[]): Promise<void> {
     return;
   }
 
-  const layout = requireLayout();
+  const layout = await requireLayout();
   const manifestUrlFlag = args.indexOf('--manifest-url');
   const manifestUrl =
     manifestUrlFlag >= 0 && args[manifestUrlFlag + 1]

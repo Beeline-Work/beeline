@@ -34,6 +34,14 @@ function required(value: string, field: string): string {
  * alone — nothing is asserted about a daemon nobody has ever observed). The
  * app section names ONLY the platform(s) this person's registered devices
  * actually use.
+ *
+ * The helper command is `beeline update` (the installed wrapper on PATH
+ * after `connect`), not `npx usebeeline update`: a collaborator ran the npx
+ * form on a real host and it refused (see self-update-cli.test.ts) — npx
+ * runs from a throwaway cache, never through the installed bundle. `beeline
+ * update` is what `npx usebeeline update` itself now falls back to when it
+ * finds no BEELINE_LIB_DIR, so both work, but the reader's own agent host
+ * already has `beeline` on PATH — no reason to make them wait on npx.
  */
 export function composeReleaseNotice(input: {
   readonly version: string;
@@ -46,7 +54,7 @@ export function composeReleaseNotice(input: {
   ];
   if (input.behind) {
     sections.push(
-      'In order to keep your agents current, go to the host machine for your agents, and run "npx usebeeline update"',
+      'In order to keep your agents current, go to the host machine for your agents, and run "beeline update"',
     );
   }
   if (input.platforms.has('android')) {

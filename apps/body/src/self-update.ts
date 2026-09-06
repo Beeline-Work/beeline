@@ -157,6 +157,28 @@ export function defaultBeelineInstallLayout(
   return anchorLayout(resolve(home, '.local', 'lib', 'beeline'));
 }
 
+/**
+ * Locate the installed bundle the way `relay-stack/web/install.sh` laid it
+ * out — used when `BEELINE_LIB_DIR` itself is absent, e.g. `npx usebeeline
+ * update` runs from a throwaway npm cache, never through the installed
+ * `beeline` wrapper that exports it. Honors the installer's own env var
+ * precedence rather than guessing: `BEELINE_INSTALL_LIB_DIR` overrides the
+ * anchor directly, `BEELINE_INSTALL_DIR` overrides the bin dir (the anchor
+ * follows its parent prefix), otherwise the installer's own default under
+ * `$HOME/.local`. This only LOCATES a candidate layout — it says nothing
+ * about whether a bundle actually exists there; call
+ * `readInstalledBundleIdentity` to find out.
+ */
+export function discoveredBeelineInstallLayout(
+  env: NodeJS.ProcessEnv = process.env,
+): BeelineInstallLayout {
+  const explicitAnchor = env.BEELINE_INSTALL_LIB_DIR?.trim();
+  if (explicitAnchor) return anchorLayout(explicitAnchor);
+  const explicitBinDir = env.BEELINE_INSTALL_DIR?.trim();
+  if (explicitBinDir) return anchorLayout(resolve(dirname(resolve(explicitBinDir)), 'lib', 'beeline'));
+  return defaultBeelineInstallLayout(env);
+}
+
 /** Platform key matching build-beeline-bundle.mjs's supported set. */
 export function hostPlatformKey(): string {
   const os = process.platform === 'linux' ? 'linux' : process.platform === 'darwin' ? 'darwin' : '';

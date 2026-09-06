@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import {
   assertAllArtifactsBuilt,
   assertDaemonFleetReady,
+  describeDaemonFleet,
   confirmPromotion,
   confirmDelivery,
   deliveryReport,
@@ -143,45 +144,27 @@ test('report subcommand requires and accepts the exact release identity', () => 
   }
 });
 
-test('a never-reported ghost agent does not block the release confirm, a silent one does', () => {
+test('a never-reported ghost agent does not block the release confirm; with no observed agents the run fails', () => {
   const ghost = 'd'.repeat(64);
-  assert.equal(
-    assertDaemonFleetReady(
-      {
-        daemons: [
-          {
-            agentPubkey: 'a'.repeat(64),
-            state: 'ready',
-            version: 'v0.0.1',
-            sha: SHA_1,
-          },
-          { agentPubkey: ghost, state: 'never-seen' },
-        ],
-        summary: { total: 2, ready: 1, neverSeen: 1 },
-      },
-      'v0.0.1',
-      SHA_1,
-    ).length,
-    2,
-  );
-  assert.throws(
-    () =>
-      assertDaemonFleetReady(
+  const result = assertDaemonFleetReady(
+    {
+      daemons: [
         {
-          daemons: [
-            { agentPubkey: 'a'.repeat(64), state: 'ready', version: 'v0.0.1', sha: SHA_1 },
-            { agentPubkey: 'e'.repeat(64), state: 'missing' },
-          ],
-          summary: { total: 2, ready: 1, neverSeen: 0 },
+          agentPubkey: 'a'.repeat(64),
+          state: 'ready',
+          version: 'v0.0.1',
+          sha: SHA_1,
         },
-        'v0.0.1',
-        SHA_1,
-      ),
-    (error) => {
-      assert.match(error.message, new RegExp(`agent ${'e'.repeat(64)} reported missing`));
-      return true;
+        { agentPubkey: ghost, state: 'never-seen' },
+      ],
+      summary: { total: 2, ready: 1, neverSeen: 1 },
     },
+    'v0.0.1',
+    SHA_1,
   );
+  assert.equal(result.daemons.length, 2);
+  assert.equal(result.converged.length, 1);
+  assert.equal(result.laggards.length, 0);
   assert.throws(
     () =>
       assertDaemonFleetReady(
@@ -193,24 +176,42 @@ test('a never-reported ghost agent does not block the release confirm, a silent 
   );
 });
 
-test('daemon fleet readiness identifies every agent that is not on the exact release', () => {
-  assert.equal(
-    assertDaemonFleetReady(
+test('one converged daemon proves the bundle and passes with every other daemon reported as an informational laggard', () => {
+  const result = assertDaemonFleetReady(
+    {
+      daemons: [
+        { agentPubkey: 'a'.repeat(64), state: 'ready', version: 'v0.0.1', sha: SHA_1 },
+        { agentPubkey: 'b'.repeat(64), state: 'ready', version: 'v0.0.0', sha: SHA_2 },
+      ],
+    },
+    'v0.0.1',
+    SHA_1,
+  );
+  assert.equal(result.converged.length, 1);
+  assert.equal(result.converged[0].agentPubkey, 'a'.repeat(64));
+  assert.equal(result.laggards.length, 1);
+  assert.equal(result.laggards[0].agentPubkey, 'b'.repeat(64));
+});
+
+test('a daemon reported missing/stale/offline on the exact new version is still just a laggard, not a block', () => {
+  for (const state of ['missing', 'stale', 'offline']) {
+    const result = assertDaemonFleetReady(
       {
         daemons: [
-          {
-            agentPubkey: 'a'.repeat(64),
-            state: 'ready',
-            version: 'v0.0.1',
-            sha: SHA_1,
-          },
+          { agentPubkey: 'a'.repeat(64), state: 'ready', version: 'v0.0.1', sha: SHA_1 },
+          { agentPubkey: 'c'.repeat(64), state, version: 'v0.0.1', sha: SHA_1 },
         ],
       },
       'v0.0.1',
       SHA_1,
-    ).length,
-    1,
-  );
+    );
+    assert.equal(result.converged.length, 1);
+    assert.equal(result.laggards.length, 1);
+    assert.equal(result.laggards[0].state, state);
+  }
+});
+
+test('zero converged daemons fail the release even when every observed daemon reported', () => {
   assert.throws(
     () =>
       assertDaemonFleetReady(
@@ -244,6 +245,30 @@ test('daemon fleet readiness identifies every agent that is not on the exact rel
       return true;
     },
   );
+});
+
+test('the fleet summary names laggards plainly and says they do not block', () => {
+  const result = assertDaemonFleetReady(
+    {
+      daemons: [
+        { agentPubkey: 'a'.repeat(64), state: 'ready', version: 'v0.0.55', sha: '7a63bdd2'.padEnd(40, '0') },
+        { agentPubkey: '83d9eb70'.padEnd(64, 'f'), state: 'ready', version: 'v0.0.54', sha: '09f84763'.padEnd(40, '1') },
+      ],
+    },
+    'v0.0.55',
+    '7a63bdd2'.padEnd(40, '0'),
+  );
+  const summary = describeDaemonFleet(result, 'v0.0.55', '7a63bdd2'.padEnd(40, '0'));
+  assert.equal(
+    summary,
+    'daemon fleet: 1/2 on v0.0.55 (7a63bdd2); not converged: 83d9eb70 v0.0.54@09f84763 - informational, does not block',
+  );
+  const clean = assertDaemonFleetReady(
+    { daemons: [{ agentPubkey: 'a'.repeat(64), state: 'ready', version: 'v0.0.1', sha: SHA_1 }] },
+    'v0.0.1',
+    SHA_1,
+  );
+  assert.equal(describeDaemonFleet(clean, 'v0.0.1', SHA_1), `daemon fleet: 1/1 on v0.0.1 (${SHA_1.slice(0, 8)})`);
 });
 
 test('one workflow owns parallel builds, ordered promotion, retry, and the final report', () => {

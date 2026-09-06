@@ -86,6 +86,43 @@ describe('sandbox mount plan', () => {
     expect(plan.readOnly).toEqual([]);
   });
 
+  it('gives a Room its attach-scratch root a writable bind too, not just harness state', () => {
+    // The attach scratch root (BEELINE_ATTACH_SCRATCH_ROOT, normally the
+    // per-Room agent-home dir) is where `write_scratch_file` writes so
+    // `attach_file` has something to send — it is not itself harness state,
+    // so it must be threaded through `additionalWritablePaths`.
+    const plan = sandboxMountPlan({
+      mode: 'readonly',
+      cwd: '/srv/beeline/repositories/abc',
+      harnessStateDirs: ['/srv/beeline/rooms/r1/agent-home/claude'],
+      additionalWritablePaths: ['/srv/beeline/agents/pk/rooms/r1/agent-home'],
+    });
+    expect(plan.writable).toEqual([
+      '/srv/beeline/agents/pk/rooms/r1/agent-home',
+      '/srv/beeline/rooms/r1/agent-home/claude',
+    ]);
+  });
+
+  it('binds the Room attach-scratch root read-write in the generated bwrap argv', () => {
+    const wrapped = wrapAgentCommand({
+      bwrapPath: '/usr/bin/bwrap',
+      spec: {
+        mode: 'readonly',
+        cwd: '/srv/beeline/repositories/abc',
+        additionalWritablePaths: ['/srv/beeline/agents/pk/rooms/r1/agent-home'],
+      },
+      command: '/fake-agent',
+      args: [],
+    });
+    const index = wrapped.args.findIndex(
+      (arg, i) =>
+        arg === '--bind-try' &&
+        wrapped.args[i + 1] === '/srv/beeline/agents/pk/rooms/r1/agent-home',
+    );
+    expect(index).toBeGreaterThanOrEqual(0);
+    expect(wrapped.args[index + 2]).toBe('/srv/beeline/agents/pk/rooms/r1/agent-home');
+  });
+
   it('gives a Room with no harness state nothing writable but the private /tmp', () => {
     expect(sandboxMountPlan({ mode: 'readonly', cwd: '/srv/repo' })).toEqual({
       readOnly: [],

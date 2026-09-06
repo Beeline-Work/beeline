@@ -454,6 +454,12 @@ export class MonolithCornerTurnLoop {
     this.sessionScratchDir = tmpDir;
     const homeStateDirs = harnessHomeStateDirs(command, agentEnv.HOME ?? operatorHome);
     await Promise.all(homeStateDirs.map((dir) => mkdir(dir, { recursive: true })));
+    // The same path handed to the MCP server as BEELINE_ATTACH_SCRATCH_ROOT
+    // (below): attach_file can only send what write_scratch_file could write,
+    // so the sandbox must leave this writable too. It sits under the
+    // protected supervisorRoot above, so it needs its own re-bind.
+    const attachScratchRoot = this.options.config.agentHomeRoot ?? tmpDir;
+    if (attachScratchRoot) await mkdir(attachScratchRoot, { recursive: true });
     const spawnCommand = wrapAgentCommand({
       bwrapPath: this.options.config.bwrapPath,
       spec: {
@@ -465,6 +471,7 @@ export class MonolithCornerTurnLoop {
         harnessStateDirs: stateDirs,
         harnessHomeStateDirs: homeStateDirs,
         ...(tmpDir ? { tmpDir } : {}),
+        ...(attachScratchRoot ? { additionalWritablePaths: [attachScratchRoot] } : {}),
         maskPaths: credentialMaskPaths(this.options.config.sandboxMaskPaths, operatorHome),
       },
       command,
@@ -504,7 +511,7 @@ export class MonolithCornerTurnLoop {
         attachRoot: this.options.worktreePath,
         // The whole per-session overlay, not an enumerated subset: see
         // `monolith-room-turn.ts`'s matching comment.
-        attachScratchRoot: this.options.config.agentHomeRoot ?? tmpDir,
+        attachScratchRoot,
         ...(this.options.grantRunnerEndpoint
           ? { grantRunner: this.options.grantRunnerEndpoint }
           : {}),

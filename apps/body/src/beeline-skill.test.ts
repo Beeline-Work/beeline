@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { SERVER_EVENT_KINDS } from '@beeline/api-contract/phone';
 import {
   beelineCapabilityContextForHarness,
   beelinePrimer,
@@ -38,6 +39,16 @@ describe('using-beeline Room guidance', () => {
     expect(primer).toContain('You do this yourself');
     expect(primer).toContain('beeline-agent emit_event');
     expect(usingBeelineSkillMarkdown('test-release')).toContain('subscribe_events');
+  });
+
+  it('derives the subscribable kinds from SERVER_EVENT_KINDS so the list cannot drift', () => {
+    const primer = beelinePrimer();
+    for (const kind of SERVER_EVENT_KINDS) {
+      expect(primer).toContain(kind);
+    }
+    expect(primer).toContain(
+      'grant-decided carries the grant id and status and resumes the turn that asked for the grant',
+    );
   });
 
   it('delivers strictly conversational guidance for a direct message', () => {

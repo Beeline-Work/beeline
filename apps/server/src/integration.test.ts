@@ -660,9 +660,13 @@ describe('monolith integration', () => {
       { roomId: ROOM },
       daemonToken,
     );
-    expect(
-      ((await conversation.json()) as { items: Array<{ body: string }> }).items.at(-1)?.body,
-    ).toBe('What is your soul?');
+    // The send writes the refusal for the offline helper right after the
+    // message that caused it, stamped strictly past its cause's second — so
+    // the conversation read ends with the consequence, never above its cause.
+    const conversationItems = ((await conversation.json()) as { items: Array<{ body: string }> })
+      .items;
+    expect(conversationItems.at(-1)?.body).toContain('Bee did not answer @owner');
+    expect(conversationItems.at(-2)?.body).toBe('What is your soul?');
     const invalidated = next(socket, 'invalidate');
     const reply = await request(
       '/v1/daemon/operations/postRoomMessage',

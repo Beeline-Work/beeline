@@ -1777,7 +1777,7 @@ export class PhoneService {
       if (!retry.rowCount) throw new Error('messageId is invalid');
       return { messageId: id };
     }
-    await this.noteUnansweredMentions(input.roomId, author, mentionIds);
+    await this.noteUnansweredMentions(input.roomId, author, mentionIds, id);
     return { messageId: id };
   }
   private async createRoomSchedule(input: Input<'createRoomSchedule'>, viewerId: string) {
@@ -1884,7 +1884,7 @@ export class PhoneService {
       if (!retry.rowCount) throw new Error('messageId is invalid');
       return { messageId: id };
     }
-    await this.noteUnansweredMentions(input.roomId, author, mentionIds);
+    await this.noteUnansweredMentions(input.roomId, author, mentionIds, id);
     return { messageId: id };
   }
   /**
@@ -1910,11 +1910,16 @@ export class PhoneService {
    *
    * Never throws: a notice is a courtesy on top of a message that is already
    * written, and must not fail the send.
+   *
+   * `afterMessageId` is the message the mentions rode in on: the line is its
+   * consequence, so it is stamped strictly past that message's second and can
+   * never render above it (see `orderingFloor` in `system-line.ts`).
    */
   private async noteUnansweredMentions(
     roomId: string,
     senderId: string,
     mentionIds: readonly string[],
+    afterMessageId?: string,
   ): Promise<void> {
     if (!mentionIds.length) return;
     try {
@@ -1974,6 +1979,7 @@ export class PhoneService {
           verb: phrase.verb,
           ...(phrase.object ? { object: phrase.object } : {}),
           consequence: phrase.consequence,
+          afterMessageId,
         });
       }
     } catch (error) {

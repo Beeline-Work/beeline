@@ -41,7 +41,6 @@ export type PinnedCornerInput = {
 export type TurnProgressInput = {
   /** Corners trust their own channel-local turn proof even if Room presence is stale. */
   isCorner: boolean;
-  agentsOffline: boolean;
   activeTurnPubkey?: string;
   /** Server receipt time (unix seconds) the elapsed counter ticks from. */
   activeTurnStartedAt?: number;
@@ -52,13 +51,16 @@ export type TurnProgressInput = {
 /**
  * The channel-local agent whose active turn should light the thinking line.
  *
- * The server-indexed latest WORKING receipt is the only proof. Draft streams
- * are content overlays, not lifecycle: they can start late and a lost retract
- * can leave one open forever. Room-wide offline state may hide a Room
- * indicator, but it cannot veto channel-local proof inside a Corner.
+ * The server-indexed latest WORKING receipt is the only proof, and the only
+ * vetoes are the receipt's own: the 90-second freshness horizon and — applied
+ * upstream, in `isAgentTurnActive` — an explicit offline marker or a different
+ * daemon generation. A stale or missing presence LEASE is never one of them
+ * (C77): a helper whose lease heartbeat lapsed while it was mid-turn claimed
+ * the message, and the claim receipt is better evidence than the lease. Draft
+ * streams are content overlays, not lifecycle: they can start late and a lost
+ * retract can leave one open forever.
  */
 export function selectTurnProgressAgentPubkey(input: TurnProgressInput): string | null {
-  if (!input.isCorner && input.agentsOffline) return null;
   return input.activeTurnPubkey ?? null;
 }
 
@@ -97,8 +99,8 @@ export type ComposerAckState = { kind: 'thinking'; agentPubkey: string } | { kin
 
 export type ComposerAckInput = TurnProgressInput & {
   /** Set the instant a message addressed to an agent is sent; cleared once
-   * the real receipt lands, a fresher send re-arms it, or nothing addressed
-   * an agent this turn. */
+   * the server accepts the write, the real receipt lands, a fresher send
+   * re-arms it, or nothing addressed an agent this turn. */
   pendingAckSentAt?: number;
   now: number;
 };
@@ -150,16 +152,18 @@ export function hasComposerAckReceipt(
 }
 
 /**
- * The composer's immediate answer to "did anything happen yet". A real
- * `#t=agent-turn` WORKING receipt is a relay round trip away — pickup,
- * publish, refetch — which reads as dead air for however long that takes.
- * `pendingAckSentAt` is a purely local fact (armed the instant the user sends
- * a message this client believes addresses an agent) and is *replaced* by the
- * real receipt the moment one exists, never raced against it: `thinking`
- * always wins once `selectTurnProgressAgentPubkey` has an answer. Past
- * `COMPOSER_ACK_BOUND_MS` with still no receipt, the local acknowledgement
- * expires. Silence cannot prove an agent is waiting or working; only the
- * server-indexed receipt may restore this line as `thinking`.
+ * The composer's immediate answer to "did anything happen yet", in three
+ * honest stages. While the send round trip is in the air there is nothing to
+ * show but the local bridge (`pendingAckSentAt` → `buzzing`, "sending…").
+ * Once the server accepts the write the bridge retires — the message is
+ * stored, and silence is now the truth between "sent" and "claimed". When the
+ * daemon CLAIMS the message it writes a WORKING receipt, which reaches the
+ * phone as `activeTurnPubkey` and lights `thinking` — long before the model's
+ * first token streams, which on a real host can be tens of seconds later.
+ * `thinking` always wins once `selectTurnProgressAgentPubkey` has an answer;
+ * past `COMPOSER_ACK_BOUND_MS` with still no receipt and no claim, the local
+ * acknowledgement expires. Silence cannot prove an agent is waiting or
+ * working; only the server-indexed receipt may show that.
  */
 export function selectComposerAckState(input: ComposerAckInput): ComposerAckState | null {
   const activePubkey = selectTurnProgressAgentPubkey(input);

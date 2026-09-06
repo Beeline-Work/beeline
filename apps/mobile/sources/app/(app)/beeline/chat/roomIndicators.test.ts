@@ -102,6 +102,31 @@ describe('the corner line and the turn indicator are independent', () => {
     expect(chatSource).not.toContain('waiting on agent');
   });
 
+  it('lets the claim receipt light the line without consulting the presence lease', () => {
+    // C77 for the composer line: the WORKING receipt the server writes at the
+    // CLAIM is the only proof, and its own bounds (freshness horizon,
+    // explicit offline marker, daemon generation) live upstream in
+    // `isAgentTurnActive`. A stale Room-wide lease must not veto it — that
+    // veto is what left the composer silent for a whole first-token wait.
+    expect(memoBody('composerAck')).not.toContain('agentsOffline');
+    expect(memoBody('composerAck')).toContain('activeTurnPubkey: activeAgentTurn.agentPubkey');
+  });
+
+  it('retires the local sending ack the moment the server accepts the write', () => {
+    // "sending…" used to outlive the write by up to the whole first-token
+    // wait or its own 15s bound. The publish ack IS the send's answer: once
+    // the server has stored the message the bridge retires, and the claimed
+    // turn's WORKING receipt lights `thinking` on its own.
+    const at = chatSource.indexOf('await sendTransport.publishPreparedMessage(preparedEvent);');
+    expect(at).toBeGreaterThan(0);
+    const settled = chatSource.indexOf('void roomClient?.markRead(decodedId, preparedEvent.id)', at);
+    expect(settled).toBeGreaterThan(at);
+    const bridge = chatSource.slice(at, settled);
+    expect(bridge).toContain('setPendingAck((current) =>');
+    expect(bridge).toContain('current.requestId === ackedRequestId');
+    expect(bridge).toContain('? null');
+  });
+
   it('keeps the Corner-only transcript policy out of Room rendering', () => {
     expect(chatSource).toContain('const messages = unprojectedMessages;');
     expect(chatSource).not.toContain('projectCornerTranscript');

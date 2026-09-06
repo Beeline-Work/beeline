@@ -311,7 +311,11 @@ function baseAgent() {
     ],
     selected: { model: 'sonnet', effort: 'low' },
     yolo: { enabled: false, canChange: true },
-    access: { policy: 'creator', owner: { id: OWNER, name: 'Captain' }, canChange: true },
+    access: {
+      policy: 'creator',
+      owner: { id: OWNER, name: 'Captain', handle: 'lunchboxfortwo' },
+      canChange: true,
+    },
     watchFilters: [],
   };
 }
@@ -690,8 +694,10 @@ describe('Members workspace management', () => {
     const toggle = renderer.root.findByProps({ testID: 'agent-access-switch' });
     expect(toggle.props.disabled).toBe(false);
     expect(toggle.props.value).toBe(false);
+    // The owner is named by @handle here for the same reason the Room's system
+    // lines name them that way: a display name is not an address.
     expect(renderer.root.findByProps({ testID: 'agent-access-caption' }).props.children).toBe(
-      'Only Captain may ask this agent; everyone else is told to ask Captain here. ' +
+      'Only @lunchboxfortwo may ask this agent; everyone else is told to ask @lunchboxfortwo here. ' +
         'Only the owner or a workspace admin can change this.',
     );
 
@@ -722,7 +728,11 @@ describe('Members workspace management', () => {
     };
     state.agent = {
       ...baseAgent(),
-      access: { policy: 'creator', owner: { id: OWNER, name: 'Captain' }, canChange: false },
+      access: {
+        policy: 'creator',
+        owner: { id: OWNER, name: 'Captain', handle: 'lunchboxfortwo' },
+        canChange: false,
+      },
     };
     const renderer = await render();
     await press(renderer, `agent-${AGENT}-identity`);

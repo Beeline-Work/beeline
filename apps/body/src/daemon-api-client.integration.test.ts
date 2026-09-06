@@ -1914,9 +1914,13 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     // paired with says `creator`, and the SERVER is the authority for who may
     // address the agent. A change there has to reach this already-running loop.
     const OUTSIDER = getPublicKey(new Uint8Array(32).fill(13));
-    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Bananaman')`, [
-      OUTSIDER,
-    ]);
+    // Handles, because a system line names a person by @handle and never by the
+    // display name beside it.
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Bananaman','bananaman614305')`,
+      [OUTSIDER],
+    );
+    await database.query(`UPDATE identities SET handle='lunchboxfortwo' WHERE id=$1`, [HUMAN]);
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
        VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
@@ -2019,7 +2023,8 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       await vi.waitFor(
         async () =>
           expect(await systemLines()).toEqual([
-            'Bee did not answer Bananaman · only Owner may address Bee, ask them for permission in the members page',
+            'Bee did not answer @bananaman614305 · only @lunchboxfortwo may address Bee. ' +
+              'Ask the user for permission to access the agent in the members page',
           ]),
         { timeout: 5_000 },
       );
@@ -2050,8 +2055,8 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       await vi.waitFor(async () => expect(await turns()).toBeGreaterThan(0), { timeout: 5_000 });
       // The same helper, the same record, one more system line: the change.
       expect(await systemLines()).toEqual([
-        expect.stringContaining('did not answer Bananaman'),
-        'Owner changed who may address Bee · anyone in the Room may ask now',
+        expect.stringContaining('did not answer @bananaman614305'),
+        '@lunchboxfortwo changed who may address Bee · anyone may ask now',
       ]);
     } finally {
       abort.abort();

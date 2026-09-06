@@ -164,14 +164,16 @@ function operationMessage(reason: unknown): string {
   return reason instanceof Error ? reason.message : String(reason);
 }
 
-/** What the access switch means right now, named so a reader knows who to ask. */
+/**
+ * What the access switch means right now, naming the owner the way the Room's
+ * own system lines do — by @handle, never by a display name.
+ */
 function accessCaption(access: AgentDetailView['access']): string {
-  if (access?.policy === 'everyone')
-    return 'Anyone in the Room may ask this agent. Only the owner or a workspace admin can change this.';
-  const owner = access?.owner?.name;
-  return access?.policy === 'allowlist'
-    ? 'Only allowed members may ask this agent. Only the owner or a workspace admin can change this.'
-    : `Only ${owner ?? 'the owner'} may ask this agent; everyone else is told to ask ${owner ?? 'the owner'} here. Only the owner or a workspace admin can change this.`;
+  const change = 'Only the owner or a workspace admin can change this.';
+  if (access?.policy === 'everyone') return `Anyone in the Room may ask this agent. ${change}`;
+  if (access?.policy === 'allowlist') return `Only allowed members may ask this agent. ${change}`;
+  const owner = access?.owner?.handle ? `@${access.owner.handle}` : 'the owner';
+  return `Only ${owner} may ask this agent; everyone else is told to ask ${owner} here. ${change}`;
 }
 
 function yoloSetByLine(yolo: NonNullable<AgentDetailView['yolo']>): string | null {

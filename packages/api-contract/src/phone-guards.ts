@@ -802,7 +802,10 @@ function agentAccess(value: unknown): boolean {
     isAgentAccessPolicy(item.policy) &&
     typeof item.canChange === 'boolean' &&
     (owner === undefined ||
-      (owner && typeof owner.id === 'string' && typeof owner.name === 'string')),
+      (owner &&
+        typeof owner.id === 'string' &&
+        typeof owner.name === 'string' &&
+        (owner.handle === undefined || typeof owner.handle === 'string'))),
   );
 }
 

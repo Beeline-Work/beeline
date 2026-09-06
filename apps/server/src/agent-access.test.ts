@@ -14,8 +14,12 @@ const ROOM = '22222222-2222-4222-8222-222222222222';
 async function fixture() {
   const database = new PgliteDatabase();
   await migrate(database);
+  // Handles, because a system line names a person by @handle and never by the
+  // display name beside it.
   await database.query(
-    `INSERT INTO identities(id,kind,name) VALUES($1,'human','Charles'),($2,'human','Bananaman'),($3,'agent','Greeter')`,
+    `INSERT INTO identities(id,kind,name,handle) VALUES
+      ($1,'human','Charles','lunchboxfortwo'),($2,'human','Bananaman','bananaman614305'),
+      ($3,'agent','Greeter',NULL)`,
     [OWNER, OUTSIDER, AGENT],
   );
   await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [WORKSPACE]);
@@ -116,8 +120,8 @@ describe('who may address an agent', () => {
           // No mention: the line wakes no daemon and pushes to nobody.
           mention_ids: [],
           text:
-            'Greeter did not answer Bananaman · only Charles may address Greeter, ' +
-            'ask them for permission in the members page',
+            'Greeter did not answer @bananaman614305 · only @lunchboxfortwo may address Greeter. ' +
+            'Ask the user for permission to access the agent in the members page',
         },
       ]);
 
@@ -135,6 +139,41 @@ describe('who may address an agent', () => {
     }
   });
 
+  it('leaves a person with no handle unnamed rather than naming them by display name', async () => {
+    const database = await fixture();
+    try {
+      const phone = new PhoneService(database, 'http://local.test');
+      // Every sign-in path stamps a handle; a row without one is legacy or
+      // imported. A display name is not an address and is not unique, so it must
+      // never stand in for one — the line drops the name instead.
+      await database.query(`UPDATE identities SET handle=NULL WHERE id IN ($1,$2)`, [
+        OWNER,
+        OUTSIDER,
+      ]);
+      await setPolicy(database, 'creator');
+      await send(phone, OUTSIDER, '1', '@greeter yo');
+
+      const [refusal] = await lines(database);
+      expect(refusal?.text).toBe(
+        'Greeter did not answer · only the owner may address Greeter. ' +
+          'Ask the user for permission to access the agent in the members page',
+      );
+      expect(refusal?.text).not.toContain('Bananaman');
+      expect(refusal?.text).not.toContain('Charles');
+
+      await phone.execute(
+        'updateAgentAccessPolicy',
+        { workspaceId: WORKSPACE, agentId: AGENT, policy: 'everyone' },
+        OWNER,
+      );
+      expect((await lines(database)).at(-1)?.text).toBe(
+        'Someone changed who may address Greeter · anyone may ask now',
+      );
+    } finally {
+      await database.close();
+    }
+  });
+
   it('says a mention went unread when the helper is not there', async () => {
     const database = await fixture();
     try {
@@ -145,7 +184,7 @@ describe('who may address an agent', () => {
       expect(await lines(database)).toEqual([
         expect.objectContaining({
           author_id: AGENT,
-          text: 'Greeter did not answer Bananaman · its helper is offline, so nothing was started',
+          text: 'Greeter did not answer @bananaman614305 · its helper is offline',
         }),
       ]);
 
@@ -206,14 +245,14 @@ describe('who may address an agent', () => {
       expect(await lines(database)).toEqual([
         expect.objectContaining({
           author_id: OWNER,
-          text: 'Charles changed who may address Greeter · only Charles may ask now',
+          text: '@lunchboxfortwo changed who may address Greeter · only @lunchboxfortwo may ask now',
         }),
       ]);
 
       // The profile reads the row, so the app and the running helper agree.
       expect((await phone.readAgent(WORKSPACE, AGENT, OWNER))?.access).toEqual({
         policy: 'creator',
-        owner: { id: OWNER, name: 'Charles' },
+        owner: { id: OWNER, name: 'Charles', handle: 'lunchboxfortwo' },
         canChange: true,
       });
 
@@ -223,7 +262,7 @@ describe('who may address an agent', () => {
         OWNER,
       );
       expect((await lines(database)).at(-1)?.text).toBe(
-        'Charles changed who may address Greeter · anyone in the Room may ask now',
+        '@lunchboxfortwo changed who may address Greeter · anyone may ask now',
       );
       // A member who cannot change it still sees the truth.
       expect((await phone.readAgent(WORKSPACE, AGENT, OUTSIDER))?.access).toMatchObject({

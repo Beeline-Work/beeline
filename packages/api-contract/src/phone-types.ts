@@ -443,7 +443,12 @@ export type AgentDetailView = {
  */
 export type AgentAccessView = {
   readonly policy: AgentAccessPolicy;
-  readonly owner?: { readonly id: string; readonly name: string };
+  /** `handle` is how a screen names them — an @handle, never the display name. */
+  readonly owner?: {
+    readonly id: string;
+    readonly name: string;
+    readonly handle?: string;
+  };
   readonly canChange: boolean;
 };
 

@@ -941,9 +941,11 @@ export class PhoneService {
         access_policy: unknown;
         owner_id: string | null;
         owner_name: string | null;
+        owner_handle: string | null;
       }>(
         `SELECT a.soul,a.model_catalog,a.selected_model,a.selected_effort,a.yolo_mode,a.yolo_set_at,
-                setter.name yolo_set_by_name,a.access_policy,a.owner_id,owner.name owner_name,
+                setter.name yolo_set_by_name,a.access_policy,a.owner_id,
+                owner.name owner_name,owner.handle owner_handle,
                 (a.owner_id=$3 OR EXISTS (
                   SELECT 1 FROM memberships m
                   WHERE m.workspace_id=$2 AND m.room_id IS NULL AND m.identity_id=$3
@@ -992,7 +994,13 @@ export class PhoneService {
       access: {
         policy: parseAgentAccessPolicy(config?.access_policy).type,
         ...(config?.owner_id && config.owner_name
-          ? { owner: { id: config.owner_id, name: config.owner_name } }
+          ? {
+              owner: {
+                id: config.owner_id,
+                name: config.owner_name,
+                ...(config.owner_handle ? { handle: config.owner_handle } : {}),
+              },
+            }
           : {}),
         canChange: config?.can_change_yolo ?? false,
       },
@@ -1903,8 +1911,8 @@ export class PhoneService {
     if (!mentionIds.length) return;
     try {
       const sender = (
-        await this.database.query<{ kind: 'human' | 'agent'; name: string }>(
-          `SELECT kind,name FROM identities WHERE id=$1`,
+        await this.database.query<{ kind: 'human' | 'agent'; handle: string | null }>(
+          `SELECT kind,handle FROM identities WHERE id=$1`,
           [senderId],
         )
       ).rows[0];
@@ -1914,7 +1922,7 @@ export class PhoneService {
         agent_name: string;
         access_policy: unknown;
         owner_id: string | null;
-        owner_name: string | null;
+        owner_handle: string | null;
         member: boolean;
         corner: boolean;
         reachable: boolean;
@@ -1924,7 +1932,7 @@ export class PhoneService {
         // corner has to see its agent's heartbeat from the Room the same daemon
         // serves. Hence no room filter on the presence lookup.
         `SELECT identity.id agent_id,COALESCE(NULLIF(identity.name,''),'The agent') agent_name,
-                a.access_policy,a.owner_id,owner.name owner_name,
+                a.access_policy,a.owner_id,owner.handle owner_handle,
                 EXISTS(SELECT 1 FROM rooms room WHERE room.id=$2 AND room.parent_id IS NOT NULL) corner,
                 EXISTS(
                   SELECT 1 FROM memberships membership
@@ -1972,12 +1980,12 @@ export class PhoneService {
       agent_name: string;
       access_policy: unknown;
       owner_id: string | null;
-      owner_name: string | null;
+      owner_handle: string | null;
       member: boolean;
       corner: boolean;
       reachable: boolean;
     },
-    sender: { kind: 'human' | 'agent'; name: string },
+    sender: { kind: 'human' | 'agent'; handle: string | null },
     senderId: string,
   ):
     | { reason: string; verb: string; consequence: string; object?: { text: string; id: string } }
@@ -2003,20 +2011,25 @@ export class PhoneService {
         senderId,
         agent.owner_id ?? undefined,
       );
+    // A person is named by their @handle, never by a display name: the handle is
+    // the address the reader can actually use, and it is unique where a display
+    // name is not. A person with no handle is left unnamed rather than described.
+    const asked = personMention(sender.handle);
+    const object = asked ? { text: asked, id: senderId } : undefined;
     if (!permitted) {
       return {
         reason: 'refused',
         verb: 'did not answer',
-        object: { text: sender.name, id: senderId },
-        consequence: `only ${agent.owner_name ?? 'its owner'} may address ${agent.agent_name}, ask them for permission in the members page`,
+        ...(object ? { object } : {}),
+        consequence: `only ${personMention(agent.owner_handle) ?? 'the owner'} may address ${agent.agent_name}. Ask the user for permission to access the agent in the members page`,
       };
     }
     if (agent.reachable) return undefined;
     return {
       reason: 'unreachable',
       verb: 'did not answer',
-      object: { text: sender.name, id: senderId },
-      consequence: 'its helper is offline, so nothing was started',
+      ...(object ? { object } : {}),
+      consequence: 'its helper is offline',
     };
   }
   private async resolveMessageMentions(
@@ -2789,10 +2802,10 @@ export class PhoneService {
       await this.database.query<{
         owner_id: string;
         agent_name: string;
-        viewer_name: string;
-        owner_name: string;
+        viewer_handle: string | null;
+        owner_handle: string | null;
       }>(
-        `SELECT a.owner_id,agent.name agent_name,viewer.name viewer_name,owner.name owner_name
+        `SELECT a.owner_id,agent.name agent_name,viewer.handle viewer_handle,owner.handle owner_handle
          FROM agents a
          JOIN identities agent ON agent.id=a.agent_id
          JOIN identities owner ON owner.id=a.owner_id
@@ -2827,14 +2840,20 @@ export class PhoneService {
       for (const room of rooms.rows)
         await systemLine(database, {
           roomId: room.room_id,
-          subject: { kind: 'person', id: viewerId, name: agent.viewer_name },
+          subject: {
+            kind: 'person',
+            id: viewerId,
+            // Named by @handle like every other person in a system line; a
+            // person with no handle is left unnamed rather than described.
+            name: personMention(agent.viewer_handle) ?? 'Someone',
+          },
           verb: 'changed who may address',
           object: { text: agent.agent_name, id: input.agentId },
           consequence:
             input.policy === 'everyone'
-              ? 'anyone in the Room may ask now'
+              ? 'anyone may ask now'
               : input.policy === 'creator'
-                ? `only ${agent.owner_name} may ask now`
+                ? `only ${personMention(agent.owner_handle) ?? 'the owner'} may ask now`
                 : 'only an allowed member may ask now',
         });
     });
@@ -3440,6 +3459,18 @@ export class PhoneService {
       ).rows[0]?.lifecycle ?? { lifecycle: 'unknown' as const, checks: 'unknown' as const }
     );
   }
+}
+
+/**
+ * How a system line names a person: their `@handle`, never a display name.
+ *
+ * A handle is the address a reader can actually use and it is unique; a display
+ * name is neither, and two people can wear the same one. A person with no handle
+ * is left unnamed by the caller rather than described by one.
+ */
+function personMention(handle: string | null | undefined): string | undefined {
+  const trimmed = handle?.trim().replace(/^@/, '');
+  return trimmed ? `@${trimmed}` : undefined;
 }
 
 /** Plain refusal for a yolo flip by anyone but the agent owner or a Workspace manager. */

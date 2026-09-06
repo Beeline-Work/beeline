@@ -11,7 +11,7 @@ import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { createBeelineServer, DEFAULT_MEDIA_MAXIMUM_BYTES } from './server.js';
-import { PushDeliveryLoop } from './background.js';
+import { MediaExpiryLoop, PushDeliveryLoop } from './background.js';
 import { GitHubOperations } from './github-operations.js';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import {
@@ -2012,6 +2012,93 @@ describe('monolith integration', () => {
       body: Buffer.alloc(1024 * 1024 + 1),
     });
     expect(tooLarge.status).toBe(400);
+  });
+
+  it('expires attachment bytes after the TTL and keeps the message that carried them', async () => {
+    const upload = await fetch(`${origin}/v1/phone/media`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        'content-type': 'text/plain',
+        'x-file-name': 'receipt.txt',
+      },
+      body: Buffer.from('receipt-bytes'),
+    });
+    expect(upload.status).toBe(201);
+    const attachment = (await upload.json()) as { url: string };
+    const sent = await request('/v1/phone/operations/sendRoomMessage', 'POST', {
+      roomId: ROOM,
+      text: 'the receipt',
+      attachments: [
+        { url: attachment.url, name: 'receipt.txt', mimeType: 'text/plain', size: 13 },
+      ],
+    });
+    expect(sent.status).toBe(200);
+
+    await database.query(`UPDATE media SET created_at=now()-interval '25 hours'`);
+    expect(await new MediaExpiryLoop(database).runOnce()).toBeGreaterThan(0);
+
+    // The bytes are gone for good, and the endpoint says so in one status.
+    const gone = await fetch(attachment.url, {
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    expect(gone.status).toBe(410);
+    expect(await gone.json()).toMatchObject({ error: 'media_expired', ttlHours: 24 });
+    // An id that never existed is still absent, not expired.
+    expect(
+      (
+        await fetch(`${origin}/v1/media/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa`, {
+          headers: { authorization: `Bearer ${accessToken}` },
+        })
+      ).status,
+    ).toBe(404);
+
+    // The message survives with its metadata, and the projection states the loss.
+    const roomView = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as RoomView;
+    expect(isRoomView(roomView)).toBe(true);
+    const carried = roomView.messages.find((message) => message.text === 'the receipt');
+    expect(carried?.attachments?.[0]).toMatchObject({
+      name: 'receipt.txt',
+      mimeType: 'text/plain',
+      size: 13,
+      expired: true,
+    });
+    const history = (await (
+      await request(`/v1/phone/rooms/${ROOM}/history`)
+    ).json()) as { messages: RoomView['messages'] };
+    expect(
+      history.messages.find((message) => message.text === 'the receipt')?.attachments?.[0],
+    ).toMatchObject({ expired: true });
+
+    // And an agent is told the bytes expired rather than handed a dead URL.
+    const inbox = (await (
+      await daemonOperation('getRoomConversation', { roomId: ROOM })
+    ).json()) as { items: { body: string; attachments: { expired?: boolean }[] }[] };
+    expect(
+      inbox.items.find((item) => item.body === 'the receipt')?.attachments[0],
+    ).toMatchObject({ expired: true });
+
+    // Posting a file again is an upload: identical bytes deduplicate, and the
+    // window restarts rather than the new message inheriting an old row's age.
+    const repost = async () =>
+      (await (
+        await fetch(`${origin}/v1/phone/media`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${accessToken}`,
+            'content-type': 'text/plain',
+            'x-file-name': 'receipt.txt',
+          },
+          body: Buffer.from('receipt-bytes'),
+        })
+      ).json()) as { url: string };
+    const reposted = await repost();
+    await database.query(`UPDATE media SET created_at=now()-interval '25 hours'`);
+    expect((await repost()).url).toBe(reposted.url);
+    expect(await new MediaExpiryLoop(database).runOnce()).toBe(0);
+    expect(
+      (await fetch(reposted.url, { headers: { authorization: `Bearer ${accessToken}` } })).status,
+    ).toBe(200);
   });
 
   it('delivers an agent attach_file attachment onto the final reply as a valid RoomView', async () => {

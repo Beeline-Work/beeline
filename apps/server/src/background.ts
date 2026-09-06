@@ -1,4 +1,5 @@
 import type { SqlDatabase } from './database.js';
+import { MEDIA_SWEEP_INTERVAL_MS, mediaTtlHours } from './media-ttl.js';
 
 const BACKGROUND_LOCK_KEY = 0x0bee11;
 
@@ -123,6 +124,42 @@ export class PushDeliveryLoop {
       }
     }
     return delivered;
+  }
+}
+
+/**
+ * The hourly media sweep. Attachment bytes are the one row class large enough
+ * that keeping them forever is a storage decision rather than a bookkeeping
+ * one, so they get a TTL (`media-ttl.ts`) and nothing else does: the messages
+ * that reference them are untouched and keep their attachment metadata.
+ *
+ * It rides the one-second background cycle like every other job and throttles
+ * itself, because a TTL measured in hours does not need a per-second DELETE
+ * over a bytea table. The interval is in memory only: a restart re-sweeps at
+ * most one extra time, and the sweep is idempotent.
+ */
+export class MediaExpiryLoop {
+  #lastSweep = Number.NEGATIVE_INFINITY;
+
+  constructor(
+    private readonly database: SqlDatabase,
+    private readonly ttlHours = mediaTtlHours(),
+    private readonly intervalMs = MEDIA_SWEEP_INTERVAL_MS,
+  ) {}
+
+  /** Rows deleted by this call; 0 when the sweep was throttled or found nothing. */
+  async runOnce(now = Date.now()): Promise<number> {
+    if (now - this.#lastSweep < this.intervalMs) return 0;
+    this.#lastSweep = now;
+    const expired = await this.database.query<{ id: string }>(
+      `WITH expired AS (
+         DELETE FROM media WHERE created_at < now() - ($1 || ' hours')::interval RETURNING id
+       )
+       INSERT INTO media_expirations(id) SELECT id FROM expired
+       ON CONFLICT(id) DO NOTHING RETURNING id`,
+      [String(this.ttlHours)],
+    );
+    return expired.rows.length;
   }
 }
 

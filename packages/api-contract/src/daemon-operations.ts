@@ -209,6 +209,8 @@ export type RoomInboxResult = {
 };
 export type DaemonAttachment = {
   readonly url: string;
+  /** The bytes are past the media TTL; the download will answer 410 Gone. */
+  readonly expired?: boolean;
   readonly name?: string;
   readonly mimeType?: string;
   readonly size?: number;

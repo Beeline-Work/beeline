@@ -11,6 +11,7 @@ import {
 import { DAEMON_OPERATION_NAMES, type DaemonService } from './daemon-service.js';
 import type { LiveEvent, LiveHub } from './live.js';
 import type { ReviewAccess } from './review-access.js';
+import { isMediaId, mediaTtlHours } from './media-ttl.js';
 
 export const DEFAULT_MEDIA_MAXIMUM_BYTES = 25 * 1024 * 1024;
 
@@ -368,6 +369,12 @@ async function route(
   const identityId = await phoneIdentity(request, options);
   if (method === 'GET' && url.pathname.startsWith('/v1/media/')) {
     const mediaId = url.pathname.slice('/v1/media/'.length);
+    // An id that is not a UUID never named a row, and must not reach the uuid
+    // cast below, where Postgres would answer a client typo with a 500.
+    if (!isMediaId(mediaId)) {
+      json(response, 404, { error: 'media_not_found' });
+      return;
+    }
     const media = (
       await options.database.query<{ bytes: Uint8Array; mime_type: string; name: string }>(
         `SELECT bytes,mime_type,name FROM media WHERE id=$1`,
@@ -375,7 +382,15 @@ async function route(
       )
     ).rows[0];
     if (!media) {
-      json(response, 404, { error: 'media_not_found' });
+      // Bytes past the media TTL are gone for good, and say so: a client that
+      // reads 410 renders "expired" instead of retrying a 404 forever.
+      const expired = (
+        await options.database.query(`SELECT 1 FROM media_expirations WHERE id=$1`, [mediaId])
+      ).rows.length;
+      json(response, expired ? 410 : 404, {
+        error: expired ? 'media_expired' : 'media_not_found',
+        ...(expired ? { ttlHours: mediaTtlHours() } : {}),
+      });
       return;
     }
     response.writeHead(200, {

@@ -3,7 +3,12 @@ import { TokenAuth, verifierFromEnvironment } from './auth.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
-import { BackgroundLeader, PushDeliveryLoop, runMaintenance } from './background.js';
+import {
+  BackgroundLeader,
+  MediaExpiryLoop,
+  PushDeliveryLoop,
+  runMaintenance,
+} from './background.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
 import { createFirebasePushSender } from './firebase-push.js';
 import { createBeelineServer, DEFAULT_MEDIA_MAXIMUM_BYTES } from './server.js';
@@ -89,6 +94,7 @@ async function main() {
   const schedules = new AgentScheduleLoop(database, (roomId) =>
     live.publish({ type: 'invalidate', roomId, reason: 'schedule' }),
   );
+  const mediaExpiry = new MediaExpiryLoop(database);
   const sendPushTest = pushSender
     ? async (identityId: string) => {
         const devices = await database.query<{ token: string }>(
@@ -142,6 +148,7 @@ async function main() {
     async () => {
       if (push) await push.runOnce();
       await schedules.runOnce();
+      await mediaExpiry.runOnce();
       await runMaintenance(database);
     },
     Number(process.env.BACKGROUND_INTERVAL_MS ?? '1000'),

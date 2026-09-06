@@ -48,6 +48,7 @@ import { joinRooms } from './membership-join.js';
 import { REVIEW_IDENTITY_ID } from './review-access.js';
 import { identitySubject, systemLine } from './system-line.js';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
+import { mediaIdFromUrl } from './media-ttl.js';
 
 const DURABLE_KINDS = [0, 9, 9000, 9001, 9002, 9007, 9008, 30078, 39000, 39001, 39002];
 
@@ -188,6 +189,29 @@ function roomHeader(row: RoomRow, publicOrigin: string) {
     createdAt: unix(row.created_at),
     updatedAt: unix(row.updated_at),
   };
+}
+
+/**
+ * Stamp `expired` on every attachment whose media id has a tombstone
+ * (`media-ttl.ts`). The message row is never edited: name, type and size stay
+ * exactly as they were posted, and the client renders the loss rather than
+ * guessing at a 410 it has not made yet.
+ */
+function withAttachmentExpiry<Message extends RoomViewMessage>(
+  messages: readonly Message[],
+  expired: ReadonlySet<string>,
+): Message[] {
+  if (!expired.size) return [...messages];
+  return messages.map((message) => {
+    if (!message.attachments?.length) return message;
+    const attachments = message.attachments.map((attachment) => {
+      const id = mediaIdFromUrl(attachment.url);
+      return id && expired.has(id) ? { ...attachment, expired: true } : attachment;
+    });
+    return attachments.some((attachment, index) => attachment !== message.attachments![index])
+      ? { ...message, attachments }
+      : message;
+  });
 }
 
 function projectedMessage(row: MessageRow, publicOrigin: string): RoomViewMessage {
@@ -676,13 +700,14 @@ export class PhoneService {
             ),
         )
       : [];
+    const expiredMedia = await this.expiredMediaIds(messages, toolRows, briefing);
     return {
       room:
         room.parent_id && !paintedRoom.about && facts?.objective
           ? { ...paintedRoom, about: facts.objective }
           : paintedRoom,
-      messages,
-      ...(toolRows.length ? { toolRows } : {}),
+      messages: withAttachmentExpiry(messages, expiredMedia),
+      ...(toolRows.length ? { toolRows: withAttachmentExpiry(toolRows, expiredMedia) } : {}),
       members,
       latestAgentTurns,
       viewer: {
@@ -698,7 +723,7 @@ export class PhoneService {
         ? { directMessage: { participants: room.direct_participants as [string, string] } }
         : {}),
       ...(parent ? { parent: roomHeader(parent, this.publicOrigin) } : {}),
-      briefing,
+      briefing: withAttachmentExpiry(briefing, expiredMedia),
       ...(room.parent_id && plan ? { cornerPlan: plan } : {}),
       ...((parent ?? room).repository_key && (parent ?? room).repository_remote
         ? {
@@ -744,9 +769,10 @@ export class PhoneService {
     const rows = await this.messageRows(roomId, before, 31);
     const page = rows.slice(0, 30);
     const tail = page.at(-1);
+    const messages = page.reverse().map((row) => projectedMessage(row, this.publicOrigin));
     return {
       roomId,
-      messages: page.reverse().map((row) => projectedMessage(row, this.publicOrigin)),
+      messages: withAttachmentExpiry(messages, await this.expiredMediaIds(messages)),
       ...(rows.length > 30 && tail
         ? { nextBefore: { createdAt: unix(tail.created_at), id: tail.id } }
         : {}),
@@ -1654,9 +1680,19 @@ export class PhoneService {
       throw new Error('media size is outside the allowed range');
     const digest = createHash('sha256').update(bytes).digest('hex');
     const id = randomUUID();
+    // Posting a file again is an upload: identical bytes deduplicate onto the
+    // existing row, and its TTL window restarts, so the second message never
+    // inherits the first one's remaining hours. The tombstone delete keeps the
+    // invariant a read depends on - a row in `media` is never also expired.
     const result = await this.database.query<{ id: string }>(
-      `INSERT INTO media(id,owner_id,bytes,mime_type,name,sha256) VALUES ($1,$2,$3,$4,$5,$6)
-      ON CONFLICT(owner_id,sha256) DO UPDATE SET name=EXCLUDED.name RETURNING id`,
+      `WITH stored AS (
+         INSERT INTO media(id,owner_id,bytes,mime_type,name,sha256) VALUES ($1,$2,$3,$4,$5,$6)
+         ON CONFLICT(owner_id,sha256) DO UPDATE SET name=EXCLUDED.name,created_at=now()
+         RETURNING id
+       ), revived AS (
+         DELETE FROM media_expirations WHERE id IN (SELECT id FROM stored)
+       )
+       SELECT id FROM stored`,
       [id, viewerId, Buffer.from(bytes), mimeType, name, digest],
     );
     const storedId = result.rows[0]!.id;
@@ -2995,6 +3031,29 @@ export class PhoneService {
         : {}),
     }));
   }
+  /**
+   * Which media ids referenced by these messages have expired. One query per
+   * read, over the tombstone table only: expiry is a fact the sweep wrote, so
+   * a read never has to reason about clocks.
+   */
+  private async expiredMediaIds(
+    ...groups: readonly (readonly RoomViewMessage[])[]
+  ): Promise<ReadonlySet<string>> {
+    const ids = new Set<string>();
+    for (const messages of groups)
+      for (const message of messages)
+        for (const attachment of message.attachments ?? []) {
+          const id = mediaIdFromUrl(attachment.url);
+          if (id) ids.add(id);
+        }
+    if (!ids.size) return ids;
+    const expired = await this.database.query<{ id: string }>(
+      `SELECT id::text id FROM media_expirations WHERE id=ANY($1::uuid[])`,
+      [[...ids]],
+    );
+    return new Set(expired.rows.map((row) => row.id));
+  }
+
   private async messageRows(
     roomId: string,
     before: { createdAt: number; id: string } | undefined,

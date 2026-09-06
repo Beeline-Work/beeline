@@ -8,6 +8,7 @@ import {
   deliverAttachments,
   MAX_ATTACHMENT_BYTES,
   MAX_INLINE_IMAGE_BYTES,
+  MEDIA_TTL_HOURS,
   promptWithImages,
   withoutImageData,
 } from './attachment-delivery.js';
@@ -108,6 +109,36 @@ describe('attachment delivery', () => {
     expect(lines[2]).toContain('download failed: connection refused');
     expect(lines[2]).toContain('(source https://server.example/v1/media/missing)');
     expect(attachmentImageBlocks(delivered, true)).toEqual([]);
+  });
+
+  // Attachment bytes are swept 24 hours after upload. "not found" reads like a
+  // bug the agent should retry; "expired" is what actually happened.
+  it('says an attachment expired rather than failed, from the flag and from 410 Gone', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'beeline-attachments-'));
+    roots.push(dir);
+    const flagged = { ...PDF, expired: true };
+    const goneOnFetch = { ...PHOTO, url: 'https://server.example/v1/media/swept' };
+    const fetchImpl = fakeFetch({
+      [goneOnFetch.url]: { bytes: Buffer.from(''), type: 'application/json', status: 410 },
+    });
+    const delivered = await deliverAttachments([flagged, goneOnFetch], dir, fetchImpl);
+
+    // The server already said so, so the daemon never asks for the bytes.
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(delivered[0]).toEqual({
+      attachment: flagged,
+      reason: expect.stringContaining(`expired: attachments are kept for ${MEDIA_TTL_HOURS} hours`),
+    });
+    expect(delivered[1]?.reason).toContain('expired: attachments are kept');
+    expect(delivered[1]?.path).toBeUndefined();
+
+    const lines = attachmentPromptLines([flagged, goneOnFetch], delivered);
+    expect(lines[1]).toContain('expired');
+    expect(lines[1]).not.toContain('download failed');
+    expect(lines[2]).toContain('expired');
+    expect(lines[2]).not.toContain('download failed');
+    // The metadata the message still carries survives beside the reason.
+    expect(lines[1]).toContain('spec.pdf');
   });
 
   it('renders a URL-only reference for attachments never delivered this session', () => {

@@ -39,6 +39,7 @@ import type { SqlDatabase } from './database.js';
 import type { LiveHub } from './live.js';
 import { CORNER_WAKE_MIN_INTERVAL_MS, CORNER_WAKE_TIMEOUT_MS, wakesCorner } from './corner-wake.js';
 import { restateSystemLine, systemLine, type SystemPhrase } from './system-line.js';
+import { mediaIdFromUrl } from './media-ttl.js';
 
 type Input<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['input'];
 type Output<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['output'];
@@ -79,6 +80,22 @@ async function settleTurnFailureLine(
 const seconds = (date: Date) => Math.floor(date.getTime() / 1_000);
 const AGENT_TO_AGENT_HOP_CAP = 3;
 export { CORNER_WAKE_TIMEOUT_MS } from './corner-wake.js';
+
+/**
+ * An expired attachment is named, not hidden: the agent is told the bytes are
+ * gone so it says so, instead of reporting a download that "failed".
+ */
+function markExpiredAttachments(
+  attachments: readonly DaemonAttachment[],
+  expired: ReadonlySet<string>,
+): DaemonAttachment[] {
+  if (!expired.size) return [...attachments];
+  return attachments.map((attachment) => {
+    const id = mediaIdFromUrl(attachment.url);
+    return id && expired.has(id) ? { ...attachment, expired: true } : attachment;
+  });
+}
+
 const MEDIA_URL_PATTERN = /\/v1\/media\/([0-9a-f-]{36})$/;
 const DEFAULT_MEDIA_MAXIMUM_BYTES = 25 * 1024 * 1024;
 
@@ -528,6 +545,9 @@ export class DaemonService {
               (row.author_id !== agentId && (row.mention_ids ?? []).includes(agentId)),
           )
         : page;
+    const expiredMedia = await this.expiredMediaIds(
+      visiblePage.flatMap((row) => row.attachments ?? []),
+    );
     return {
       items: visiblePage.map((row) => ({
         id: row.id,
@@ -539,12 +559,28 @@ export class DaemonService {
         ...(row.reply_to_message_id ? { replyToMessageId: row.reply_to_message_id } : {}),
         ...(row.root_message_id ? { rootMessageId: row.root_message_id } : {}),
         ...(row.request_id ? { requestId: row.request_id } : {}),
-        attachments: row.attachments ?? [],
+        attachments: markExpiredAttachments(row.attachments ?? [], expiredMedia),
         ...(row.system_event ? { systemEvent: row.system_event } : {}),
       })),
       ...(page.at(-1) ? { cursor: `${page.at(-1)!.cursor_ms},${page.at(-1)!.id}` } : {}),
       ...(closeRequested !== undefined ? { closeRequested } : {}),
     };
+  }
+  /** Media ids these attachments name whose bytes are past the TTL (`media-ttl.ts`). */
+  private async expiredMediaIds(
+    attachments: readonly DaemonAttachment[],
+  ): Promise<ReadonlySet<string>> {
+    const ids = new Set<string>();
+    for (const attachment of attachments) {
+      const id = mediaIdFromUrl(attachment.url);
+      if (id) ids.add(id);
+    }
+    if (!ids.size) return ids;
+    const expired = await this.database.query<{ id: string }>(
+      `SELECT id::text id FROM media_expirations WHERE id=ANY($1::uuid[])`,
+      [[...ids]],
+    );
+    return new Set(expired.rows.map((row) => row.id));
   }
   private async roomAuthority(input: Input<'getRoomAuthority'>) {
     const row = (

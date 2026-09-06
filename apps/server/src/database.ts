@@ -545,6 +545,15 @@ CREATE TABLE IF NOT EXISTS media (
   UNIQUE (owner_id, sha256)
 );
 CREATE INDEX IF NOT EXISTS media_sha_idx ON media(sha256);
+CREATE INDEX IF NOT EXISTS media_created_idx ON media(created_at);
+
+-- Bytes expire (media-ttl.ts); the fact that they existed does not. One row per
+-- swept media id, so the media endpoint answers 410 Gone instead of 404 and the
+-- attachment projection can state expiry as a fact rather than infer it.
+CREATE TABLE IF NOT EXISTS media_expirations (
+  id uuid PRIMARY KEY,
+  expired_at timestamptz NOT NULL DEFAULT now()
+);
 
 CREATE TABLE IF NOT EXISTS legacy_media_urls (
   legacy_url text PRIMARY KEY,

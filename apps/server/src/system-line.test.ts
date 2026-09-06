@@ -223,3 +223,96 @@ describe('the scheduled-prompt kind backfill', () => {
     ]);
   });
 });
+
+describe('a caused line sorts after its cause', () => {
+  let database: PgliteDatabase;
+  const CAUSE = 'd'.repeat(64);
+  const mentionsOf = async (id: string) =>
+    (
+      await database.query<{ mention_ids: string[] }>(
+        `SELECT mention_ids FROM messages WHERE id=$1`,
+        [id],
+      )
+    ).rows[0]!.mention_ids;
+  beforeEach(async () => {
+    database = new PgliteDatabase();
+    await migrate(database);
+    await database.query(
+      `INSERT INTO identities(id,kind,name) VALUES($1,'human','Ada'),($2,'agent','Lumen')`,
+      [HUMAN, GREETER],
+    );
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [WORKSPACE]);
+    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'welcome')`, [
+      ROOM,
+      WORKSPACE,
+    ]);
+    // The provoking message, pinned INSIDE the current second: any line written
+    // right after it would share its second, which is exactly the tie a
+    // whole-second transcript breaks on the random row id.
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,created_at)
+       VALUES($1,$2,$3,'@lumen sup','message',date_trunc('second', now()))`,
+      [CAUSE, ROOM, HUMAN],
+    );
+  });
+  afterEach(() => database.close());
+
+  const stampOf = async (id: string) =>
+    (
+      await database.query<{ created_at: Date; cause: string | null }>(
+        `SELECT created_at,event_cause_id cause FROM messages WHERE id=$1`,
+        [id],
+      )
+    ).rows[0]!;
+
+  it('stamps a kinded caused line strictly past the second of its cause, keeping the cascade', async () => {
+    const written = await systemLine(database, {
+      roomId: ROOM,
+      subject: { kind: 'agent', id: GREETER, name: 'Lumen' },
+      verb: 'could not answer',
+      consequence: 'the helper named no live model',
+      kind: 'joined',
+      causeId: CAUSE,
+    });
+    const cause = await stampOf(CAUSE);
+    const line = await stampOf(written.id);
+    expect(Math.floor(line.created_at.getTime() / 1000)).toBe(
+      Math.floor(cause.created_at.getTime() / 1000) + 1,
+    );
+    expect(line.cause).toBe(CAUSE);
+  });
+
+  it('stamps an unkinded ordering-only line past its cause without a cascade', async () => {
+    const written = await systemLine(database, {
+      roomId: ROOM,
+      subject: { kind: 'agent', id: GREETER, name: 'Lumen' },
+      verb: 'did not answer',
+      consequence: 'only the owner may address Lumen',
+      afterMessageId: CAUSE,
+    });
+    const cause = await stampOf(CAUSE);
+    const line = await stampOf(written.id);
+    expect(Math.floor(line.created_at.getTime() / 1000)).toBe(
+      Math.floor(cause.created_at.getTime() / 1000) + 1,
+    );
+    // Ordering only: the line cites nothing, wakes nobody, mentions nobody.
+    expect(line.cause).toBeNull();
+    expect(await mentionsOf(written.id)).toEqual([]);
+  });
+
+  it('keeps the natural time once the second has already passed', async () => {
+    await database.query(`UPDATE messages SET created_at=now() - interval '10 seconds' WHERE id=$1`, [
+      CAUSE,
+    ]);
+    const written = await systemLine(database, {
+      roomId: ROOM,
+      subject: { kind: 'agent', id: GREETER, name: 'Lumen' },
+      verb: 'did not answer',
+      consequence: 'only the owner may address Lumen',
+      afterMessageId: CAUSE,
+    });
+    const line = await stampOf(written.id);
+    // GREATEST keeps now(): the row is never pulled back toward its cause.
+    expect(line.created_at.getTime()).toBeGreaterThanOrEqual(Date.now() - 5_000);
+  });
+});

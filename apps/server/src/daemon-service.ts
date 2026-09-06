@@ -498,8 +498,14 @@ export class DaemonService {
         created_at: Date;
         cursor_ms: string;
       }>(
+        // A caused system line is stamped up to 1s into the future
+        // (`systemLine`'s ordering floor), so the newest row's stamp can sit
+        // ahead of the clock. A high-water mark must only ever name stamps the
+        // clock has reached: a future one swallows every real message written
+        // inside that window, and the daemon never sees them — no turn starts.
         `SELECT id,created_at,floor(extract(epoch FROM created_at)*1000)::bigint cursor_ms
-         FROM messages WHERE room_id=$1 ORDER BY cursor_ms DESC,id DESC LIMIT 1`,
+         FROM messages WHERE room_id=$1 AND created_at <= now()
+         ORDER BY cursor_ms DESC,id DESC LIMIT 1`,
         [roomId],
       );
       const highWater = latest.rows[0];
@@ -532,6 +538,7 @@ export class DaemonService {
       request_id: string | null;
       attachments: DaemonAttachment[];
       cursor_ms: string;
+      now_ms: string;
       system_event: SystemEvent | null;
     }>(
       // The newest page takes exactly `limit` rows from the tail and puts them
@@ -560,6 +567,12 @@ export class DaemonService {
     const expiredMedia = await this.expiredMediaIds(
       visiblePage.flatMap((row) => row.attachments ?? []),
     );
+    // Same future-stamp rule as the startAtLatest high-water: the returned
+    // cursor advances only onto rows the clock has reached. A not-yet-settled
+    // line is still DELIVERED (it mentions nobody whose daemon it could
+    // double-wake) and simply re-delivers on the next poll, at most until its
+    // stamp arrives — ≤1s.
+    const cursorRow = [...page].reverse().find((row) => row.cursor_ms <= row.now_ms);
     return {
       items: visiblePage.map((row) => ({
         id: row.id,
@@ -574,7 +587,7 @@ export class DaemonService {
         attachments: markExpiredAttachments(row.attachments ?? [], expiredMedia),
         ...(row.system_event ? { systemEvent: row.system_event } : {}),
       })),
-      ...(page.at(-1) ? { cursor: `${page.at(-1)!.cursor_ms},${page.at(-1)!.id}` } : {}),
+      ...(cursorRow ? { cursor: `${cursorRow.cursor_ms},${cursorRow.id}` } : {}),
       ...(closeRequested !== undefined ? { closeRequested } : {}),
     };
   }
@@ -2252,7 +2265,8 @@ function grantCardPhrase(
 /** The one projection an inbox or conversation row is read through. */
 const conversationColumns = `SELECT id,author_id,created_at,presentation,text,mention_ids,
         reply_to_message_id,root_message_id,request_id,attachments,system_event,
-        floor(extract(epoch FROM created_at)*1000)::bigint cursor_ms`;
+        floor(extract(epoch FROM created_at)*1000)::bigint cursor_ms,
+        floor(extract(epoch FROM now())*1000)::bigint now_ms`;
 
 /**
  * Every daemon operation the HTTP route serves, as an EXHAUSTIVE record so a

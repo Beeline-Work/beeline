@@ -729,7 +729,6 @@ describe('Room message variant components', () => {
     expect(
       selectComposerAckPresentation({
         isCorner: true,
-        agentsOffline: false,
         activeTurnPubkey: agentPubkey,
         now: 1,
         conversationIdentities: conversationIdentityByPubkey([], [currentIdentityMessage]),

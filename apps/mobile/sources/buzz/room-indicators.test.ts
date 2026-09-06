@@ -164,31 +164,28 @@ describe('turn-progress presentation', () => {
     expect(
       selectTurnProgressAgentPubkey({
         isCorner: true,
-        agentsOffline: true,
         activeTurnPubkey: 'corner-agent',
       }),
     ).toBe('corner-agent');
   });
 
-  it('uses only a working receipt and preserves the Room offline guard', () => {
-    expect(
-      selectTurnProgressAgentPubkey({
-        isCorner: true,
-        agentsOffline: false,
-        activeTurnPubkey: 'receipt-agent',
-      }),
-    ).toBe('receipt-agent');
+  it('lights a Room from the claim receipt even when the whole Room reads offline', () => {
+    // A stale presence lease is not a veto (C77): the helper renews its lease
+    // every 30s, so a Room whose every agent reads offline is one whose lease
+    // heartbeats lapsed — and the server-indexed WORKING receipt written at
+    // the CLAIM is better evidence than the lease. The receipt's own bounds
+    // (90s freshness, explicit offline marker, daemon generation) are the
+    // only vetoes, and they live upstream in `isAgentTurnActive`.
     expect(
       selectTurnProgressAgentPubkey({
         isCorner: false,
-        agentsOffline: true,
         activeTurnPubkey: 'room-agent',
       }),
-    ).toBeNull();
+    ).toBe('room-agent');
   });
 
   it('stays dark without a working receipt, regardless of draft-stream state', () => {
-    expect(selectTurnProgressAgentPubkey({ isCorner: true, agentsOffline: false })).toBeNull();
+    expect(selectTurnProgressAgentPubkey({ isCorner: true })).toBeNull();
   });
 });
 
@@ -232,14 +229,13 @@ describe('composer ack presentation', () => {
   const NOW = 1_000_000;
 
   it('renders nothing when nothing was sent and no turn is running', () => {
-    expect(selectComposerAckState({ isCorner: false, agentsOffline: false, now: NOW })).toBeNull();
+    expect(selectComposerAckState({ isCorner: false, now: NOW })).toBeNull();
   });
 
   it('buzzes immediately once a message is sent, before any receipt exists', () => {
     expect(
       selectComposerAckState({
         isCorner: false,
-        agentsOffline: false,
         pendingAckSentAt: NOW,
         now: NOW,
       }),
@@ -250,7 +246,6 @@ describe('composer ack presentation', () => {
     expect(
       selectComposerAckState({
         isCorner: false,
-        agentsOffline: false,
         pendingAckSentAt: NOW,
         now: NOW + COMPOSER_ACK_BOUND_MS - 1,
       }),
@@ -261,7 +256,6 @@ describe('composer ack presentation', () => {
     expect(
       selectComposerAckState({
         isCorner: false,
-        agentsOffline: false,
         pendingAckSentAt: NOW,
         now: NOW + COMPOSER_ACK_BOUND_MS,
       }),
@@ -272,7 +266,6 @@ describe('composer ack presentation', () => {
     expect(
       selectComposerAckState({
         isCorner: false,
-        agentsOffline: false,
         pendingAckSentAt: NOW,
         activeTurnPubkey: 'agent-1',
         now: NOW + COMPOSER_ACK_BOUND_MS + 5_000,
@@ -286,7 +279,6 @@ describe('composer ack presentation', () => {
     expect(
       selectComposerAckPresentation({
         isCorner: true,
-        agentsOffline: false,
         activeTurnPubkey: pubkey,
         now: NOW,
         conversationIdentities: new Map(),
@@ -335,13 +327,27 @@ describe('composer ack presentation', () => {
     expect(hasComposerAckReceipt('newer-message', turns)).toBe(false);
   });
 
-  it('a Room-offline guard still suppresses the real receipt but never a local buzz', () => {
+  it('a claimed turn reads as working even when Room presence reads all-offline', () => {
+    // The bug this pins: a helper mid-turn whose lease heartbeats lapsed read
+    // as Room-offline, and the composer hid the WORKING receipt written at
+    // the claim — the phone sat silent from the 15s ack bound until the
+    // reply. The claim receipt is the better evidence; presence never vetoes
+    // it (C77).
     expect(
       selectComposerAckState({
         isCorner: false,
-        agentsOffline: true,
         pendingAckSentAt: NOW,
         activeTurnPubkey: 'agent-1',
+        now: NOW,
+      }),
+    ).toEqual({ kind: 'thinking', agentPubkey: 'agent-1' });
+  });
+
+  it('buzzing alone still never implies an agent is thinking', () => {
+    expect(
+      selectComposerAckState({
+        isCorner: false,
+        pendingAckSentAt: NOW,
         now: NOW,
       }),
     ).toEqual({ kind: 'buzzing' });

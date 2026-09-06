@@ -84,7 +84,13 @@ describe('daemon API client against the local monolith', () => {
             updatedAt: 1,
           },
         },
-        { identityId: HUMAN, kind: 'human' as const, name: 'Owner', role: 'owner' as const },
+        {
+          identityId: HUMAN,
+          kind: 'human' as const,
+          name: 'Owner',
+          handle: 'lunchboxfortwo',
+          role: 'owner' as const,
+        },
       ],
     };
 
@@ -92,6 +98,7 @@ describe('daemon API client against the local monolith', () => {
     expect(agentReplyMentionIds('Please ask @Clockwork.', roster, AGENT)).toEqual([peer]);
     expect(agentReplyMentionIds('Mail codex@example.com', roster, AGENT)).toEqual([]);
     expect(agentReplyMentionIds('@Owner please review', roster, AGENT)).toEqual([HUMAN]);
+    expect(agentReplyMentionIds('@a_lunchboxfortwo please review', roster, AGENT)).toEqual([HUMAN]);
     expect(agentReplyMentionIds('Unknown @Stranger stays plain text', roster, AGENT)).toEqual([]);
     expect(
       roomPrincipalMayAddressAgent(
@@ -1901,6 +1908,40 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       await loop;
     }
   }, 30_000);
+
+  it('gives agents canonical handles instead of stale membership profiles', async () => {
+    await database.query(`UPDATE identities SET handle='lunchboxfortwo' WHERE id=$1`, [HUMAN]);
+    await database.query(
+      `UPDATE memberships
+       SET identity_profile=$3::jsonb
+       WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`,
+      [WORKSPACE, HUMAN, JSON.stringify({ name: 'a_lunchboxfortwo', handle: 'a_lunchboxfortwo' })],
+    );
+    const exchange = await auth.createDaemonExchange(AGENT);
+    const exchanged = await fetch(`${origin}/v1/auth/daemon/exchange`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ exchangeToken: exchange.exchangeToken }),
+    });
+    expect(exchanged.status).toBe(200);
+    const token = (await exchanged.json()) as { daemonToken: string; agentId: string };
+    const client = new DaemonApiClient(origin, token.daemonToken, AGENT);
+
+    await expect(
+      client.execute('getWorkspaceRoster', { agentId: AGENT, workspaceId: WORKSPACE }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        members: expect.arrayContaining([
+          expect.objectContaining({
+            identityId: HUMAN,
+            kind: 'human',
+            name: 'Owner',
+            handle: 'lunchboxfortwo',
+          }),
+        ]),
+      }),
+    );
+  });
 
   it('exchanges a token and round-trips inbox, receipts, authority, settings, presence, and corners', async () => {
     const exchange = await auth.createDaemonExchange(AGENT);

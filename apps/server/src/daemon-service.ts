@@ -409,9 +409,7 @@ export class DaemonService {
       agent_updated_at: Date | null;
     }>(
       `SELECT m.identity_id,
-         COALESCE(m.identity_profile->>'kind',i.kind) kind,
-         COALESCE(m.identity_profile->>'name',i.name) name,
-         CASE WHEN m.identity_profile IS NOT NULL THEN m.identity_profile->>'handle' ELSE i.handle END handle,
+         i.kind,i.name,i.handle,
          m.role,a.owner_id,a.soul,a.updated_at agent_updated_at
        FROM memberships m
        JOIN identities i ON i.id=m.identity_id

@@ -2054,10 +2054,17 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       expect(sessionPrompt.mock.calls[0]![1]).toContain('yo again');
       await vi.waitFor(async () => expect(await turns()).toBeGreaterThan(0), { timeout: 5_000 });
       // The same helper, the same record, one more system line: the change.
-      expect(await systemLines()).toEqual([
-        expect.stringContaining('did not answer @bananaman614305'),
-        '@lunchboxfortwo changed who may address Bee · anyone may ask now',
-      ]);
+      // The refusal is stamped up to 1s past its cause (system-line.ts's
+      // ordering floor), so which of these two lines the clock reached first
+      // is timing, not fact — assert the pair, never their order.
+      const lines = await systemLines();
+      expect(lines).toHaveLength(2);
+      expect(lines).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining('did not answer @bananaman614305'),
+          '@lunchboxfortwo changed who may address Bee · anyone may ask now',
+        ]),
+      );
     } finally {
       abort.abort();
       await loop;

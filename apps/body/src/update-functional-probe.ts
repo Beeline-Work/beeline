@@ -36,6 +36,56 @@ export interface ProviderRefusal {
 }
 
 /**
+ * An ACP-level failure of the probe turn that a provider outage produces just
+ * as readily as a bad bundle: the harness took the prompt and its own upstream
+ * then failed, so pi records no HTTP status the refusal path could read. Two
+ * shapes are named because the fleet has seen both (2026-09-06, v0.0.51): a
+ * JSON-RPC error carrying a server-internal code (codex out of credits answers
+ * `ACP error -32603: Internal error`), and the prompt's inactivity timeout
+ * (OpenRouter throttling z-ai/glm-5.3-flash streams nothing for the whole 45s).
+ */
+export type AcpTurnFailure =
+  | { kind: 'server-internal'; code: number }
+  | { kind: 'prompt-inactivity' };
+
+/** Why the successor is appealing to the release it would otherwise roll back to. */
+export type ProbeAppeal =
+  | { kind: 'provider-refusal'; reason: string; refusal: ProviderRefusal }
+  | { kind: 'acp-turn-failure'; reason: string; failure: AcpTurnFailure };
+
+const ACP_ERROR_CODE = /\bACP error (-\d+):/;
+const ACP_PROMPT_INACTIVITY = /\bACP session\/prompt timed out after \d+ms of inactivity\b/;
+
+/** JSON-RPC's own internal error, plus its implementation-defined server range. */
+function isServerInternalCode(code: number): boolean {
+  return code === -32603 || (code <= -32000 && code >= -32099);
+}
+
+/**
+ * Name a probe-turn failure that could be the provider's rather than the
+ * bundle's. Takes the thrown error on the successor's side and the current
+ * release's reported reason (one line of text) on the other, so both sides of
+ * the comparison are classified by the same rule.
+ */
+export function classifyAcpTurnFailure(error: unknown): AcpTurnFailure | undefined {
+  const message =
+    error instanceof Error ? error.message : typeof error === 'string' ? error : undefined;
+  if (!message) return undefined;
+  if (ACP_PROMPT_INACTIVITY.test(message)) return { kind: 'prompt-inactivity' };
+  const code = Number(ACP_ERROR_CODE.exec(message)?.[1]);
+  if (Number.isFinite(code) && isServerInternalCode(code)) return { kind: 'server-internal', code };
+  return undefined;
+}
+
+/** The successor is forgiven only when the current release fails the SAME way. */
+export function sameAcpTurnFailure(one: AcpTurnFailure, other: AcpTurnFailure): boolean {
+  if (one.kind === 'server-internal') {
+    return other.kind === 'server-internal' && one.code === other.code;
+  }
+  return other.kind === one.kind;
+}
+
+/**
  * What the CURRENT (previous, still-installed) release's own probe did when
  * asked to compare against a successor's provider refusal.
  */
@@ -91,7 +141,8 @@ export interface UpdateFunctionalProbeResult {
   harness: string;
   sandboxed: boolean;
   sessionStarted: true;
-  turnCompleted: true;
+  /** False only when the turn failed the way the current release fails it too. */
+  turnCompleted: boolean;
   nativeTools: readonly [];
   /**
    * `served`: the model answered through the bundle's ACP path. `unavailable`:
@@ -127,6 +178,15 @@ export interface UpdateFunctionalProbeResult {
  * parameters" from a routing pin both releases wrote), so rolling back would
  * change nothing; the probe passes as inconclusive, logged. A current release
  * that answers, fails differently, or cannot be compared keeps the failure.
+ *
+ * A probe turn that failed at the ACP boundary with no status to record gets
+ * the SAME court of appeal (`classifyAcpTurnFailure`): a JSON-RPC error with a
+ * server-internal code, and the prompt's inactivity timeout. Both are what a
+ * throttled or exhausted provider looks like from here (2026-09-06: codex
+ * helpers out of credits answered `-32603 Internal error` while pi/GLM helpers
+ * timed out on OpenRouter 429s, and the fleet rolled back a sound bundle). The
+ * successor is forgiven only when the current release fails the same way; a
+ * current release that serves the turn still convicts the successor.
  */
 export async function runUpdateFunctionalProbe(input: {
   config: BodyConfig;
@@ -146,10 +206,10 @@ export async function runUpdateFunctionalProbe(input: {
    */
   probeRoot?: string;
   /**
-   * Runs the same probe on the current (previous) release when this one is
-   * refused by the provider with a status that could still be a bundle fault.
+   * Runs the same probe on the current (previous) release when this one was
+   * refused, or failed its turn, in a way that could still be a bundle fault.
    */
-  compareWithCurrentRelease?: (refusal: ProviderRefusal) => Promise<CurrentReleaseProbeOutcome>;
+  compareWithCurrentRelease?: (appeal: ProbeAppeal) => Promise<CurrentReleaseProbeOutcome>;
 }): Promise<UpdateFunctionalProbeResult> {
   const command = input.config.agentCommand ?? input.config.agentBinary;
   const harness = input.config.agentKind ?? command;
@@ -196,6 +256,7 @@ export async function runUpdateFunctionalProbe(input: {
       args: agentArgsWithModelSelection(selectedAgent, input.config.modelSelection),
     };
     let modelAnswer: Pick<UpdateFunctionalProbeResult, 'modelAnswer' | 'modelAnswerReason'> = {};
+    let turnCompleted = true;
     if (input.config.bwrapPath) {
       const { stateDirs, tmpDir } = harnessStateDirsFromEnv(agentEnv);
       const operatorHome = input.config.operatorHome ?? homedir();
@@ -276,7 +337,11 @@ export async function runUpdateFunctionalProbe(input: {
                 ...(refusal ? { providerRefusal: refusal } : {}),
               });
             }
-            const current = await input.compareWithCurrentRelease(refusal);
+            const current = await input.compareWithCurrentRelease({
+              kind: 'provider-refusal',
+              reason: refusal.reason,
+              refusal,
+            });
             if (current.kind !== 'refused' || current.status !== refusal.status) {
               throw new UpdateFunctionalProbeError(
                 'turn-failed',
@@ -300,11 +365,34 @@ export async function runUpdateFunctionalProbe(input: {
         }
       } catch (error) {
         if (error instanceof UpdateFunctionalProbeError) throw error;
-        throw new UpdateFunctionalProbeError(
-          'turn-failed',
-          error instanceof Error ? error.message : String(error),
-          { cause: error },
+        const detail = error instanceof Error ? error.message : String(error);
+        const failure = classifyAcpTurnFailure(error);
+        if (!failure || !input.compareWithCurrentRelease) {
+          throw new UpdateFunctionalProbeError('turn-failed', detail, { cause: error });
+        }
+        const current = await input.compareWithCurrentRelease({
+          kind: 'acp-turn-failure',
+          reason: detail,
+          failure,
+        });
+        const currentFailure =
+          current.kind === 'unavailable' ? classifyAcpTurnFailure(current.reason) : undefined;
+        if (!currentFailure || !sameAcpTurnFailure(failure, currentFailure)) {
+          throw new UpdateFunctionalProbeError(
+            'turn-failed',
+            `${detail}; ${describeCurrentReleaseOutcome(current)}`,
+            { cause: error },
+          );
+        }
+        console.warn(
+          `[body] update probe: the probe turn failed the same way on this release and the current ` +
+            `release (${detail}); that failure is not this bundle's doing, so the probe passes as inconclusive`,
         );
+        turnCompleted = false;
+        modelAnswer = {
+          modelAnswer: 'unavailable',
+          modelAnswerReason: `${detail} (the current release fails the same way)`,
+        };
       }
     } catch (error) {
       if (error instanceof UpdateFunctionalProbeError) throw error;
@@ -318,7 +406,7 @@ export async function runUpdateFunctionalProbe(input: {
       harness,
       sandboxed: Boolean(input.config.bwrapPath),
       sessionStarted: true,
-      turnCompleted: true,
+      turnCompleted,
       nativeTools: [],
       ...modelAnswer,
     };

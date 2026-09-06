@@ -618,6 +618,41 @@ export type ManagedSuccessorGateResult =
   | { kind: 'passed'; proof: UpdateFunctionalProbeResult }
   | { kind: 'failed'; error: unknown; rolledBack: boolean };
 
+/**
+ * Every daemon on this host shares ONE update attempt, so the first sibling to
+ * prove a genuine successor fault reverts it for the fleet — and every other
+ * daemon's own proof is then refused. That coupling is deliberate; reporting it
+ * as this daemon's own probe failing is not (2026-09-06: helpers whose probes
+ * had passed logged `did not produce functional proof` and the release was read
+ * as a bad bundle). Name the sibling and its failure instead.
+ */
+function siblingRevertNote(
+  attempt: UpdateAttemptRecord | undefined,
+  loadedRelease: string | undefined,
+): string | undefined {
+  if (!loadedRelease || attempt?.releaseId !== loadedRelease || attempt.status !== 'reverted') {
+    return undefined;
+  }
+  return (
+    `shared update attempt reverted by sibling ${attempt.revertedBy ?? 'unknown'}: ` +
+    `${attempt.failure ?? 'no failure recorded'}`
+  );
+}
+
+/** What this daemon's own probe actually did, so the journal does not blame it. */
+function describeOwnProof(proof: UpdateFunctionalProbeResult): string {
+  return proof.modelAnswer === 'unavailable'
+    ? `this daemon's own probe reached the model boundary without an answer ` +
+        `(${proof.modelAnswerReason ?? 'no reason recorded'})`
+    : "this daemon's own probe passed";
+}
+
+/** One line of failure text for the shared attempt, so siblings can quote it. */
+export function attemptFailureText(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/\s+/g, ' ').trim().slice(0, 300);
+}
+
 /** One fail-closed transaction from an update attempt to a served ACP turn. */
 export async function gateManagedSuccessor(input: {
   layout: BeelineInstallLayout;
@@ -630,8 +665,11 @@ export async function gateManagedSuccessor(input: {
     const attempt = await readUpdateAttempt(input.layout);
     const desiredRelease = attempt?.status === 'pending' ? attempt.releaseId : undefined;
     if (!desiredRelease || !input.loadedRelease || desiredRelease !== input.loadedRelease) {
+      const reverted = siblingRevertNote(attempt, input.loadedRelease);
       throw new Error(
-        `successor loaded release ${input.loadedRelease ?? 'unknown'}, not the pending desired release`,
+        reverted
+          ? `successor release ${input.loadedRelease} was reverted before this daemon probed it: ${reverted}`
+          : `successor loaded release ${input.loadedRelease ?? 'unknown'}, not the pending desired release`,
       );
     }
     const proof = await input.probe();
@@ -641,14 +679,26 @@ export async function gateManagedSuccessor(input: {
         functionalProof: proof,
       }))
     ) {
-      throw new Error(`successor release ${input.loadedRelease} did not produce functional proof`);
+      const reverted = siblingRevertNote(
+        await readUpdateAttempt(input.layout),
+        input.loadedRelease,
+      );
+      throw new Error(
+        reverted
+          ? `successor release ${input.loadedRelease} lost its attempt while this daemon proved it: ` +
+              `${describeOwnProof(proof)}; ${reverted}`
+          : `successor release ${input.loadedRelease} did not produce functional proof`,
+      );
     }
     return { kind: 'passed', proof };
   } catch (error) {
     return {
       kind: 'failed',
       error,
-      rolledBack: await rollbackFailedSuccessor(input.layout, input.runtimeDir),
+      rolledBack: await rollbackFailedSuccessor(input.layout, input.runtimeDir, {
+        probeId: input.probeId,
+        failure: attemptFailureText(error),
+      }),
     };
   }
 }
@@ -657,15 +707,20 @@ export async function gateManagedSuccessor(input: {
 export async function rollbackFailedSuccessor(
   layout: BeelineInstallLayout,
   runtimeDir?: string,
+  /** Recorded on the shared attempt so a sibling's journal can quote the cause. */
+  cause: { probeId?: string; failure?: string } = {},
 ): Promise<boolean> {
   return withInstallLock(layout, async () => {
     const attempt = await readUpdateAttempt(layout);
     if (!attempt || attempt.status !== 'pending') return false;
+    const attribution = cause.probeId ? { revertedBy: cause.probeId } : {};
     if (!attempt.previousReleaseId) {
       await replaceUpdateAttempt(layout, {
         ...attempt,
         status: 'reverted',
-        failure: 'functional served-turn proof failed, but no previous release exists',
+        failure:
+          cause.failure ?? 'functional served-turn proof failed, but no previous release exists',
+        ...attribution,
       });
       return false;
     }
@@ -673,7 +728,8 @@ export async function rollbackFailedSuccessor(
     await replaceUpdateAttempt(layout, {
       ...attempt,
       status: 'reverted',
-      failure: 'functional served-turn proof failed before confirmation',
+      failure: cause.failure ?? 'functional served-turn proof failed before confirmation',
+      ...attribution,
     });
     if (runtimeDir) await queueUpdateRollbackAlert(runtimeDir, attempt.releaseId);
     return true;

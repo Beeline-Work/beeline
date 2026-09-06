@@ -33,6 +33,11 @@
       "types": "./dist/surface-capabilities.d.ts",
       "import": "./dist/surface-capabilities.js",
       "default": "./dist/surface-capabilities.js"
+    },
+    "./system-identity": {
+      "types": "./dist/system-identity.d.ts",
+      "import": "./dist/system-identity.js",
+      "default": "./dist/system-identity.js"
     }
   },
   "scripts": {

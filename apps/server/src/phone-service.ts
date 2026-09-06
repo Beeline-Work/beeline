@@ -58,6 +58,7 @@ import { REVIEW_IDENTITY_ID } from './review-access.js';
 import { identitySubject, systemLine } from './system-line.js';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
 import { mediaIdFromUrl } from './media-ttl.js';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 
 const DURABLE_KINDS = [0, 9, 9000, 9001, 9002, 9007, 9008, 30078, 39000, 39001, 39002];
 
@@ -329,7 +330,10 @@ function roomSchedule(row: RoomScheduleRow): Output<'createRoomSchedule'> {
   };
 }
 
-function directMessageRoomId(workspaceId: string, participants: readonly [string, string]): string {
+export function directMessageRoomId(
+  workspaceId: string,
+  participants: readonly [string, string],
+): string {
   const bytes = createHash('sha256')
     .update(`buzz-dm:v1:${workspaceId}:${participants.join(':')}`)
     .digest()
@@ -726,7 +730,10 @@ export class PhoneService {
           name: `Person ${viewerId.slice(0, 8)}`,
         },
         role: room.viewer_role,
-        permissions: { send: !room.archived_at, manage: room.viewer_role !== 'member' },
+        permissions: {
+          send: !room.archived_at && !room.direct_participants?.includes(SYSTEM_IDENTITY_ID),
+          manage: room.viewer_role !== 'member',
+        },
       },
       ...(room.direct_participants?.length === 2
         ? { directMessage: { participants: room.direct_participants as [string, string] } }
@@ -1743,6 +1750,7 @@ export class PhoneService {
 
   private async sendMessage(input: Input<'sendRoomMessage'>, author: string) {
     if (!(await this.hasRoomAccess(input.roomId, author))) throw new Error('room access denied');
+    await this.assertRoomIsWritable(input.roomId, author);
     const id = input.messageId ?? messageId();
     if (!/^[0-9a-f]{64}$/.test(id)) throw new Error('messageId is invalid');
     const attachments = JSON.stringify(input.attachments ?? []);
@@ -3242,6 +3250,24 @@ export class PhoneService {
         )
       ).rowCount > 0
     );
+  }
+  /**
+   * The `@system` release-announcement DM (release-notify.ts) is read-only:
+   * only `@system` may post into a direct-message Room it is a participant
+   * of. A person who IS a member of that Room (they must be, to read it)
+   * still cannot send — so this is a distinct check from `hasRoomAccess`.
+   */
+  private async assertRoomIsWritable(roomId: string, author: string): Promise<void> {
+    if (author === SYSTEM_IDENTITY_ID) return;
+    const room = await this.database.query<{ direct_participants: string[] | null }>(
+      `SELECT direct_participants FROM rooms WHERE id=$1`,
+      [roomId],
+    );
+    if (room.rows[0]?.direct_participants?.includes(SYSTEM_IDENTITY_ID)) {
+      throw new Error(
+        'this is a read-only system announcements channel; only @system may post here (access denied)',
+      );
+    }
   }
   private async requireManager(roomId: string, identityId: string) {
     const row = await this.database.query(

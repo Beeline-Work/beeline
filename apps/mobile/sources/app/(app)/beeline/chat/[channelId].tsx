@@ -1056,6 +1056,10 @@ export default function BuzzChat() {
   const activeAgentTurn = activeAgentTurns[0];
   const messages = unprojectedMessages;
   const isDirectMessage = Boolean(directMessage);
+  // The @system release-announcement DM: the server never lets anyone but
+  // @system post into it (viewer.permissions.send is false there and only
+  // there for a direct message, since a DM can never be archived).
+  const isReadOnlyDirectMessage = isDirectMessage && roomSurface?.viewer.permissions.send === false;
   const currentSlashQuery = useMemo(() => slashVerbQuery(inputText), [inputText]);
   // Mention-scoped palette: `@agent /query` addresses THAT agent's advertised
   // commands. Mutually exclusive with `currentSlashQuery` by shape — the plain
@@ -3291,6 +3295,10 @@ export default function BuzzChat() {
             <Text style={[styles.archivedInputText, isCorner && styles.cornerArchivedInputText]}>
               {parentChannelId ? 'Corner' : ROOM_LABEL} archived (read-only)
             </Text>
+          </View>
+        ) : isReadOnlyDirectMessage ? (
+          <View style={[styles.archivedInputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+            <Text style={styles.archivedInputText}>Announcements only · you can't reply here</Text>
           </View>
         ) : (
           <View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>

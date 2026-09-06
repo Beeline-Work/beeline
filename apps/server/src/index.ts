@@ -16,6 +16,7 @@ import { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { GitHubOperations } from './github-operations.js';
 import { createMonolithAuth } from './monolith-auth.js';
 import { ReviewAccess } from './review-access.js';
+import { ReleaseNotifier } from './release-notify.js';
 import type { MonolithAuthMount } from './monolith-auth.js';
 
 function required(name: string) {
@@ -122,6 +123,15 @@ async function main() {
     ...(process.env.BEELINE_REVIEW_SECRET ? { secret: process.env.BEELINE_REVIEW_SECRET } : {}),
     mint: () => auth.exchangeReviewIdentity(),
   });
+  // The release pipeline's one caller (unified-release.yml's delivery_report
+  // job) posts a release-announcement DM to every person once a release is
+  // confirmed delivered. Absent secret = the endpoint refuses like any wrong
+  // secret, same as the Play review link above.
+  const releaseNotify = new ReleaseNotifier(database, {
+    ...(process.env.BEELINE_RELEASE_NOTIFY_SECRET
+      ? { secret: process.env.BEELINE_RELEASE_NOTIFY_SECRET }
+      : {}),
+  });
   const server = createBeelineServer({
     database,
     auth,
@@ -129,6 +139,7 @@ async function main() {
     daemon,
     live,
     review,
+    releaseNotify,
     mediaMaximumBytes: Number(process.env.MEDIA_MAX_BYTES ?? String(DEFAULT_MEDIA_MAXIMUM_BYTES)),
     authHandler: mountedAuth.handle,
     github: {

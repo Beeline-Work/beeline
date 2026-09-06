@@ -90,4 +90,83 @@ describe('server readiness', () => {
     });
     expect(releaseReadiness).toHaveBeenCalledOnce();
   });
+
+  it('refuses a release notify call with no or the wrong bearer secret', async () => {
+    const notifyReleaseDelivered = vi.fn();
+    const server = createBeelineServer({
+      database: { query: vi.fn(), transaction: vi.fn() },
+      auth: {} as TokenAuth,
+      phone: {} as PhoneService,
+      daemon: {} as DaemonService,
+      live: {} as LiveHub,
+      mediaMaximumBytes: 1,
+      releaseNotify: { secret: 'correct-horse', notifyReleaseDelivered } as never,
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+    const body = JSON.stringify({ version: 'v0.0.42', sha: 'a'.repeat(40), changelogUrl: 'https://x.test' });
+
+    const noAuth = await fetch(`http://127.0.0.1:${port}/v1/releases/notify`, {
+      method: 'POST',
+      body,
+    });
+    expect(noAuth.status).toBe(403);
+
+    const wrongSecret = await fetch(`http://127.0.0.1:${port}/v1/releases/notify`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer wrong', 'content-type': 'application/json' },
+      body,
+    });
+    expect(wrongSecret.status).toBe(403);
+    expect(notifyReleaseDelivered).not.toHaveBeenCalled();
+  });
+
+  it('notifies with the right secret, and refuses when no secret is configured at all', async () => {
+    const notifyReleaseDelivered = vi.fn().mockResolvedValue({ notified: 3, skipped: 1 });
+    const server = createBeelineServer({
+      database: { query: vi.fn(), transaction: vi.fn() },
+      auth: {} as TokenAuth,
+      phone: {} as PhoneService,
+      daemon: {} as DaemonService,
+      live: {} as LiveHub,
+      mediaMaximumBytes: 1,
+      releaseNotify: { secret: 'correct-horse', notifyReleaseDelivered } as never,
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+
+    const response = await fetch(`http://127.0.0.1:${port}/v1/releases/notify`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer correct-horse', 'content-type': 'application/json' },
+      body: JSON.stringify({ version: 'v0.0.42', sha: 'a'.repeat(40), changelogUrl: 'https://x.test' }),
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ notified: 3, skipped: 1 });
+    expect(notifyReleaseDelivered).toHaveBeenCalledWith({
+      version: 'v0.0.42',
+      sha: 'a'.repeat(40),
+      changelogUrl: 'https://x.test',
+    });
+
+    // No secret configured at all (releaseNotify absent) refuses like any wrong secret.
+    const unconfigured = createBeelineServer({
+      database: { query: vi.fn(), transaction: vi.fn() },
+      auth: {} as TokenAuth,
+      phone: {} as PhoneService,
+      daemon: {} as DaemonService,
+      live: {} as LiveHub,
+      mediaMaximumBytes: 1,
+    });
+    servers.push(unconfigured);
+    await new Promise<void>((resolve) => unconfigured.listen(0, '127.0.0.1', resolve));
+    const unconfiguredPort = (unconfigured.address() as AddressInfo).port;
+    const refused = await fetch(`http://127.0.0.1:${unconfiguredPort}/v1/releases/notify`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer correct-horse', 'content-type': 'application/json' },
+      body: JSON.stringify({ version: 'v0.0.42', sha: 'a'.repeat(40), changelogUrl: 'https://x.test' }),
+    });
+    expect(refused.status).toBe(403);
+  });
 });

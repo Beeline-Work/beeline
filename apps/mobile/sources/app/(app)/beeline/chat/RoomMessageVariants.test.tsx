@@ -461,6 +461,71 @@ describe('Room message variant components', () => {
     }
   });
 
+  // Attachment bytes are swept 24 hours after upload; the message that carried
+  // them is kept. The row says what is gone instead of hanging on a dead URL.
+  it('renders an expired attachment as a named placeholder, not an image or a link', () => {
+    const cards = (expired: boolean) => {
+      ledgerEntryRender.mockClear();
+      render(
+        <OrdinaryLedgerMessage
+          message={message({
+            id: 'with-file',
+            pubkey: 'ada',
+            attachments: [
+              {
+                url: 'https://server.example/v1/media/11111111-1111-4111-8111-111111111111',
+                thumbnailUrl: 'https://server.example/v1/media/thumb',
+                name: 'receipt.png',
+                mimeType: 'image/png',
+                size: 13,
+                ...(expired ? { expired: true } : {}),
+              },
+            ],
+          })}
+          personName="Ada"
+          participantsHydrated
+          viewerPubkey="viewer"
+          speakerWorking={false}
+          continued={false}
+          participantHandles={[]}
+          channelIndex={{ rooms: [], corners: [] }}
+          deliveryFailed={false}
+          onChannelReference={vi.fn()}
+          onReply={vi.fn()}
+          onCopy={vi.fn()}
+          onRetry={vi.fn()}
+          onDismiss={vi.fn()}
+        />,
+      );
+      return render(
+        React.createElement(React.Fragment, null, ledgerEntryRender.mock.lastCall?.[0].attachments),
+      );
+    };
+
+    const live = cards(false);
+    expect(live.root.findAllByProps({ testID: 'chat-attachment-receipt.png' })).not.toHaveLength(0);
+    expect(live.root.findAllByType('Image')).not.toHaveLength(0);
+
+    const gone = cards(true);
+    // No live card, no thumbnail request, no open affordance.
+    expect(gone.root.findAllByProps({ testID: 'chat-attachment-receipt.png' })).toHaveLength(0);
+    expect(gone.root.findAllByType('Image')).toHaveLength(0);
+    expect(gone.root.findAllByProps({ accessibilityRole: 'link' })).toHaveLength(0);
+    const placeholder = gone.root.findByProps({
+      testID: 'chat-attachment-expired-receipt.png',
+    });
+    expect(placeholder.props.accessibilityLabel).toBe('Expired attachment receipt.png');
+    const text = placeholder
+      .findAllByType('Text')
+      .map((node: ReactTestInstance) => node.props.children)
+      .flat(Infinity)
+      .join('');
+    // The name survives, and so does the metadata the message still holds.
+    expect(text).toContain('receipt.png');
+    expect(text).toContain('EXPIRED');
+    expect(text).toContain('IMAGE/PNG');
+  });
+
   it("gives the live draft lane the settled row's identity mark", () => {
     // Captain report C42: while the agent streams, the draft row's byline is
     // the same byline component as a settled agent message — IdentityMark

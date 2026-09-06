@@ -483,8 +483,17 @@ export const DaemonFactCard = React.memo(function DaemonFactCard({
   );
 });
 
+/**
+ * Attachment bytes are kept for 24 hours (`apps/server/src/media-ttl.ts`); the
+ * message that carried them is kept forever. Past the window the server marks
+ * the attachment `expired`, and the row says so in the same metrics as a live
+ * one — the name, type and size the message still holds, inscribed rather than
+ * framed. Nothing is fetched and nothing opens: there is no longer a file
+ * behind the link, and a broken thumbnail or a spinner would say otherwise.
+ */
 function AttachmentCard({ attachment }: { attachment: AttachmentReference }) {
-  const image = attachment.mimeType.startsWith('image/') && attachment.thumbnailUrl;
+  const image =
+    !attachment.expired && attachment.mimeType.startsWith('image/') && attachment.thumbnailUrl;
   const [mediaAuthorization, setMediaAuthorization] = useState<string>();
   useEffect(() => {
     if (!image || !getBuzzRuntimeConfig().monolithEnabled) return;
@@ -504,6 +513,28 @@ function AttachmentCard({ attachment }: { attachment: AttachmentReference }) {
       Modal.alert('Could not open attachment', 'The file link could not be opened on this device.');
     });
   };
+  const metadata = `${attachment.mimeType.toUpperCase()} · ${formatAttachmentSize(attachment.size)}`;
+  if (attachment.expired) {
+    return (
+      <View
+        accessibilityLabel={`Expired attachment ${attachment.name}`}
+        style={styles.attachmentCard}
+        testID={`chat-attachment-expired-${attachment.name}`}
+      >
+        <View style={styles.attachmentFileGlyph}>
+          <Text style={[styles.attachmentFileGlyphText, styles.attachmentExpired]}>▧</Text>
+        </View>
+        <View style={styles.attachmentCopy}>
+          <Text numberOfLines={1} style={[styles.attachmentName, styles.attachmentExpired]}>
+            {attachment.name}
+          </Text>
+          <Text numberOfLines={1} style={styles.attachmentMeta}>
+            EXPIRED · {metadata}
+          </Text>
+        </View>
+      </View>
+    );
+  }
   return (
     <Pressable
       accessibilityLabel={`Open attachment ${attachment.name}`}
@@ -532,7 +563,7 @@ function AttachmentCard({ attachment }: { attachment: AttachmentReference }) {
           {attachment.name}
         </Text>
         <Text numberOfLines={1} style={styles.attachmentMeta}>
-          {attachment.mimeType.toUpperCase()} · {formatAttachmentSize(attachment.size)}
+          {metadata}
         </Text>
       </View>
       <Text style={styles.attachmentOpenGlyph}>↗</Text>
@@ -1048,6 +1079,7 @@ const styles = StyleSheet.create(() => ({
   attachmentFileGlyph: { width: 46, height: 46, alignItems: 'center', justifyContent: 'center' },
   attachmentFileGlyphText: { ...Typography.default(), color: groknight.steel, fontSize: 20 },
   attachmentCopy: { flex: 1, minWidth: 0 },
+  attachmentExpired: { color: groknight.textMuted },
   attachmentName: {
     ...Typography.default('semiBold'),
     color: groknight.textPrimary,

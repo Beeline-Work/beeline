@@ -24,6 +24,15 @@ import type { AcpPromptBlock } from './acp.js';
 
 /** Same ceiling as the server media store and attach_file (`read-only-mcp.ts`). */
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+/**
+ * Attachment bytes live 24 hours on the server (`apps/server/src/media-ttl.ts`).
+ * Past that the file is gone, not missing: the server marks the attachment
+ * `expired` and answers its media URL with 410 Gone. Either fact is reported in
+ * those words, so an agent asked about an old picture says it expired instead
+ * of "not found", which reads like a bug it should retry.
+ */
+export const MEDIA_TTL_HOURS = 24;
+const EXPIRED_REASON = `expired: attachments are kept for ${MEDIA_TTL_HOURS} hours and these bytes are past that window`;
 /** One download may not wedge a turn; a slow media read degrades to the URL line. */
 const FETCH_TIMEOUT_MS = 30_000;
 /**
@@ -85,10 +94,14 @@ export async function deliverAttachments(
       });
       if (attachment.size && attachment.size > MAX_ATTACHMENT_BYTES)
         return tooLarge(attachment.size);
+      if (attachment.expired) return { attachment, reason: EXPIRED_REASON };
       try {
         const response = await fetchImpl(attachment.url, {
           signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
         });
+        // 410 Gone is the server's own word for the TTL sweep, and the one
+        // status that is never worth a retry.
+        if (response.status === 410) return { attachment, reason: EXPIRED_REASON };
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const declared = Number(response.headers.get('content-length') ?? 0);
         if (declared > MAX_ATTACHMENT_BYTES) return tooLarge(declared);

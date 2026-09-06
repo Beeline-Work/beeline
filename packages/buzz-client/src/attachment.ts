@@ -4,6 +4,9 @@ export const ATTACHMENT_FILENAME_TAG = 'attachment';
 
 export interface AttachmentReference {
   url: string;
+  /** Server fact: the bytes are past the media TTL and gone. Name, type and
+   *  size survive on the message, so a client renders "expired", not a spinner. */
+  expired?: boolean;
   /** Isolated, cookie-less rendering URL for active/browser-rendered files. */
   previewUrl?: string;
   name: string;

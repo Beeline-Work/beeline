@@ -1729,7 +1729,39 @@ export class PhoneService {
       );
       if (!retry.rowCount) throw new Error('messageId is invalid');
     }
+    if (inserted.rowCount) await this.noteUnreachableMentions(input.roomId, JSON.parse(mentions));
     return { messageId: id };
+  }
+  /**
+   * An agent addressed where it cannot act is told so, in the Room, once.
+   *
+   * A corner is carried by its MEMBERS, so a mention of an agent that is not
+   * one resolves fine and then produces nothing at all — no turn, no message,
+   * no error. That silence is the whole failure this model removes, so the
+   * server inscribes the fact instead. The line carries no kind and no
+   * mention: it wakes nothing, it only says what did not happen.
+   */
+  private async noteUnreachableMentions(roomId: string, mentions: readonly string[]) {
+    if (!mentions.length) return;
+    const unreachable = await this.database.query<{ id: string; name: string }>(
+      `SELECT identity.id,COALESCE(NULLIF(identity.name,''),'The agent') name
+       FROM identities identity
+       WHERE identity.id=ANY($2::text[]) AND identity.kind='agent'
+         AND EXISTS(SELECT 1 FROM rooms room WHERE room.id=$1 AND room.parent_id IS NOT NULL)
+         AND NOT EXISTS(
+           SELECT 1 FROM memberships membership
+           WHERE membership.room_id=$1 AND membership.identity_id=identity.id
+             AND membership.removed_at IS NULL
+         )`,
+      [roomId, [...mentions]],
+    );
+    for (const agent of unreachable.rows)
+      await systemLine(this.database, {
+        roomId,
+        subject: { kind: 'agent', id: agent.id, name: agent.name },
+        verb: 'could not be reached',
+        consequence: 'not a member of this corner',
+      });
   }
   private async createRoomSchedule(input: Input<'createRoomSchedule'>, viewerId: string) {
     const target = await this.requireTopLevelRoom(input.roomId);
@@ -1835,6 +1867,8 @@ export class PhoneService {
       );
       if (!retry.rowCount) throw new Error('messageId is invalid');
     }
+    if (inserted.rowCount)
+      await this.noteUnreachableMentions(input.roomId, JSON.parse(values[5] as string));
     return { messageId: id };
   }
   private async resolveMessageMentions(

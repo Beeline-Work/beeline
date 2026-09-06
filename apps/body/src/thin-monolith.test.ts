@@ -221,11 +221,105 @@ describe('monolith-only thin daemon', () => {
     ).startCorner({ cornerId: 'corner', parentRoomId: 'room' });
     error.mockRestore();
 
-    expect(conversationReads).toEqual([{ roomId: 'corner', limit: 200, window: 'earliest' }]);
+    // The objective read is the one that asks for the OLDEST page. The second
+    // read is the start-failure report looking for the message that asked for
+    // this corner, so the agent says why it could not open it.
+    expect(conversationReads[0]).toEqual({ roomId: 'corner', limit: 200, window: 'earliest' });
+    expect(
+      conversationReads.filter((read) => (read as { window?: string }).window === 'earliest'),
+    ).toHaveLength(1);
     // The objective was found. The failure that did happen is the clone, not a
     // corner whose opening message fell off the far end of the page.
     expect(failures.join('\n')).not.toContain('corner has no durable objective post');
     expect(failures.join('\n')).toContain('failed to start corner corner');
+  });
+
+  it('says why it could not open a corner it was addressed in, instead of nothing', async () => {
+    // A corner is carried by its members, so a helper is now told to open one
+    // it has never touched. A restore that fails there used to be a daemon log
+    // line and total silence in the corner itself.
+    const root = await mkdtemp(resolve(tmpdir(), 'beeline-corner-restore-fail-'));
+    roots.push(root);
+    const staged = await stageMonolithAgentRuntime({
+      workspaceId: 'workspace',
+      pairedBy: 'human',
+      daemonExchangeToken: `bde_${'a'.repeat(43)}`,
+      agentBinary: '/nonexistent',
+      agentKind: 'codex',
+      agentCommand: '/nonexistent',
+      agentArgs: [],
+      mcpBinary: 'unused',
+      agentIdentity: identityFromKey('99'.repeat(32), 'Goosy'),
+      bodyIdentity: identityFromKey('aa'.repeat(32), 'Body'),
+      supervisorRoot: root,
+    });
+    const agentId = staged.runtime.agent.publicKey;
+    const receipts: Array<Record<string, unknown>> = [];
+    const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
+      if (name === 'getCornerRestoreState') return { cornerId: 'corner', lifecycle: {} };
+      if (name === 'getRoomGitHubToken') return { token: 'gh-token' };
+      if (name === 'getRoomRepositoryState') {
+        return {
+          resolution: 'repository' as const,
+          // Unreachable: standing in for the restore that cannot be done.
+          remote: 'https://github.example/x/y',
+          targetBranch: 'main',
+        };
+      }
+      if (name === 'getRoomConversation') {
+        return {
+          items: [
+            {
+              id: 'objective-row',
+              authorId: 'human',
+              createdAt: 1,
+              type: 'message',
+              body: 'Rip out the legacy path.',
+              mentionIds: [],
+              attachments: [],
+            },
+            {
+              id: 'handoff-row',
+              authorId: 'human',
+              createdAt: 2,
+              type: 'message',
+              body: '@Goosy can you pick up where Codex left off?',
+              mentionIds: [agentId],
+              attachments: [],
+            },
+          ],
+          cursor: 'c',
+        };
+      }
+      if (name === 'postAgentTurnReceipt') {
+        receipts.push(input);
+        return { id: 'receipt', createdAt: 1 };
+      }
+      throw new Error(`unexpected daemon operation: ${name}`);
+    });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const coordinator = new RoomRuntimeCoordinator(
+      staged.runtime,
+      staged.configPath,
+      { workspaceRoot: root } as BodyConfig,
+      { daemonApi: { execute } as unknown as DaemonApiClient },
+    );
+    const start = coordinator as unknown as {
+      startCorner(corner: { cornerId: string; parentRoomId: string }): Promise<void>;
+    };
+    await start.startCorner({ cornerId: 'corner', parentRoomId: 'room' });
+    error.mockRestore();
+
+    // The failed receipt carries the reason; the server turns it into
+    // `<agent> could not answer · <reason>` against the message that asked.
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0]).toMatchObject({
+      roomId: 'corner',
+      requestId: 'handoff-row',
+      status: 'failed',
+      agentId,
+    });
+    expect(String(receipts[0]!.reason)).not.toBe('');
   });
 
   it('materializes the server-bound repository as a Room inspection checkout', async () => {

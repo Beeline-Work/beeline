@@ -12,6 +12,7 @@ import { MonolithCornerTurnLoop } from './monolith-corner-turn.js';
 import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
 import { openRouterRoutingCacheDir } from './openrouter-routing.js';
 import { turnTraceDirectory } from './turn-trace.js';
+import { distillTurnFailureReason } from './turn-failure-reason.js';
 import type { AgentRuntimeRecord, RoomRuntimeRecord } from './runtime.js';
 import { runtimeIdentity } from './runtime.js';
 import {
@@ -30,9 +31,135 @@ export const DEFAULT_ROOM_WATCHDOG_STALE_MS = 90_000;
 export const DEFAULT_RECONCILE_HEARTBEAT_MS = 60_000;
 export const DEFAULT_DRAIN_DEADLINE_MS = 30 * 60_000;
 
-/** A restarted helper must not overwrite the server's GitHub-owned corner facts. */
-export function shouldPostInitialCornerWorkingState(restore: CornerRestoreResult): boolean {
-  return !restore.featureBranch && !restore.lifecycle?.branch && !restore.lifecycle?.pr;
+/**
+ * A restarted helper must not overwrite the server's GitHub-owned corner facts,
+ * and a helper joining a corner it did not open never announces the opening
+ * state at all — the lifecycle facts belong to the corner, and they already
+ * exist by the time a second agent is addressed in it.
+ */
+export function shouldPostInitialCornerWorkingState(
+  restore: CornerRestoreResult,
+  isOpener = true,
+): boolean {
+  return (
+    isOpener && !restore.featureBranch && !restore.lifecycle?.branch && !restore.lifecycle?.pr
+  );
+}
+
+/**
+ * The checkout a corner turn runs in, on the corner's own branch.
+ *
+ * A corner is carried by its MEMBERS, so this also serves an agent's first
+ * touch of work it did not open: the branch on GitHub is the corner, and the
+ * fresh worktree starts from `origin/<featureBranch>` whenever GitHub has one.
+ * Only a corner that has never pushed starts from the target branch, which is
+ * every corner's first moment and was the only case before helpers could join.
+ * An existing worktree is left where it is — the branch is caught up per turn
+ * by `syncCornerBranch`, never by re-cutting the checkout underneath it.
+ */
+export async function materializeCornerWorktree(input: {
+  cornerId: string;
+  remote: string;
+  targetBranch: string;
+  featureBranch: string;
+  token: string;
+  supervisorRoot: string;
+  committer: { name: string; publicKey: string };
+}): Promise<{ path: string; gitCommonDir: string }> {
+  // Same normalization the Room checkout uses: every real remote is held to
+  // the GitHub HTTPS identity, and a `file://` remote stays usable so the
+  // shared-branch behaviour can be proved against a real git remote.
+  const remote = roomCheckoutRemote(input.remote);
+  const repositoryHash = createHash('sha256').update(remote).digest('hex').slice(0, 24);
+  const gitCommonDir = resolve(
+    input.supervisorRoot,
+    'beeline',
+    'repositories',
+    `${repositoryHash}.git`,
+  );
+  const path = resolve(input.supervisorRoot, 'beeline', 'corners', input.cornerId);
+  await mkdir(dirname(gitCommonDir), { recursive: true, mode: 0o700 });
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  const authEnv = githubGitEnv(input.token);
+  if (!existsSync(resolve(gitCommonDir, 'HEAD'))) {
+    await execFileAsync('git', ['clone', '--bare', remote, gitCommonDir], {
+      env: authEnv,
+      maxBuffer: 4 * 1024 * 1024,
+    });
+  }
+  await execFileAsync(
+    'git',
+    [
+      `--git-dir=${gitCommonDir}`,
+      'fetch',
+      '--prune',
+      'origin',
+      `+refs/heads/${input.targetBranch}:refs/remotes/origin/${input.targetBranch}`,
+    ],
+    { env: authEnv, maxBuffer: 4 * 1024 * 1024 },
+  );
+  const restored = await execFileAsync(
+    'git',
+    [
+      `--git-dir=${gitCommonDir}`,
+      'fetch',
+      'origin',
+      `+refs/heads/${input.featureBranch}:refs/remotes/origin/${input.featureBranch}`,
+    ],
+    { env: authEnv, maxBuffer: 4 * 1024 * 1024 },
+  ).then(
+    () => true,
+    () => false,
+  );
+  if (!existsSync(resolve(path, '.git'))) {
+    await rm(path, { recursive: true, force: true });
+    await execFileAsync(
+      'git',
+      [
+        `--git-dir=${gitCommonDir}`,
+        'worktree',
+        'add',
+        '-B',
+        input.featureBranch,
+        path,
+        restored
+          ? `refs/remotes/origin/${input.featureBranch}`
+          : `refs/remotes/origin/${input.targetBranch}`,
+      ],
+      { env: authEnv, maxBuffer: 4 * 1024 * 1024 },
+    );
+  }
+  await execFileAsync('git', [
+    `--git-dir=${gitCommonDir}`,
+    'config',
+    'extensions.worktreeConfig',
+    'true',
+  ]);
+  // A linked worktree created from a bare canonical clone otherwise inherits
+  // core.bare=true and rejects ordinary `git -C <worktree>` commands.
+  await execFileAsync('git', ['-C', path, 'config', '--worktree', 'core.bare', 'false']);
+  await execFileAsync('git', [
+    '-C',
+    path,
+    'config',
+    '--worktree',
+    'credential.https://github.com.helper',
+    '!f() { echo username=x-access-token; echo password=$GH_TOKEN; }; f',
+  ]);
+  await execFileAsync('git', ['-C', path, 'config', '--worktree', 'user.name', input.committer.name]);
+  await execFileAsync('git', [
+    '-C',
+    path,
+    'config',
+    '--worktree',
+    'user.email',
+    `${input.committer.publicKey.slice(0, 16)}@users.noreply.github.com`,
+  ]);
+  const top = await execFileAsync('git', ['-C', path, 'rev-parse', '--show-toplevel']);
+  if (resolve(top.stdout.trim()) !== resolve(path)) {
+    throw new Error(`corner worktree escaped its isolated root: ${top.stdout.trim()}`);
+  }
+  return { path, gitCommonDir };
 }
 
 export function reconcileRetryMs(error: unknown, pollMs: number): number {
@@ -85,6 +212,8 @@ interface CornerWorktree {
 interface DesiredCorner {
   cornerId: string;
   parentRoomId: string;
+  /** The agent that opened it. History and a start rule, never an access check. */
+  openedBy?: string;
 }
 
 const execFileAsync = promisify(execFile);
@@ -94,6 +223,8 @@ export class RoomRuntimeCoordinator {
   private readonly runtime: AgentRuntimeRecord;
   private readonly running = new Map<string, RunningRoom>();
   private readonly startingCorners = new Set<string>();
+  /** Corners whose start failure has already been said out loud, once each. */
+  private readonly reportedCornerStartFailures = new Set<string>();
   private readonly scheduler: SessionScheduler;
   private readonly agent: ReturnType<typeof runtimeIdentity>;
   /** Parent ownership retained so a failed corner listing never authorizes removal. */
@@ -245,6 +376,7 @@ export class RoomRuntimeCoordinator {
             desiredCorners.set(corner.cornerId, {
               cornerId: corner.cornerId,
               parentRoomId: room.roomId,
+              ...(corner.createdBy ? { openedBy: corner.createdBy } : {}),
             });
           }
         }
@@ -465,7 +597,8 @@ export class RoomRuntimeCoordinator {
         featureBranch,
         token: granted.token,
       });
-      if (shouldPostInitialCornerWorkingState(restore)) {
+      const isOpener = !corner.openedBy || corner.openedBy === this.agent.publicKey;
+      if (shouldPostInitialCornerWorkingState(restore, isOpener)) {
         await this.options.daemonApi.execute('postCornerRemoteState', {
           cornerId: corner.cornerId,
           branch: featureBranch,
@@ -482,6 +615,7 @@ export class RoomRuntimeCoordinator {
         ...(grantRunnerEndpoint ? { grantRunnerEndpoint } : {}),
         parentRoomId: corner.parentRoomId,
         workspaceId: this.runtime.communityId,
+        ...(corner.openedBy ? { openedBy: corner.openedBy } : {}),
         objective,
         featureBranch,
         targetBranch,
@@ -527,13 +661,53 @@ export class RoomRuntimeCoordinator {
           branch: featureBranch,
         },
       });
+      this.reportedCornerStartFailures.delete(corner.cornerId);
       console.log(
         `[thin-core] serving corner ${corner.cornerId} on ${featureBranch} at ${worktree.path}`,
       );
     } catch (error) {
       console.error(`[thin-core] failed to start corner ${corner.cornerId}:`, error);
+      await this.reportCornerStartFailure(corner.cornerId, error);
     } finally {
       this.startingCorners.delete(corner.cornerId);
+    }
+  }
+
+  /**
+   * An agent addressed in a corner it then could not restore must not be
+   * silent about it.
+   *
+   * The corner never starts, so no turn ever runs and nothing else in the
+   * daemon has a Room to say it in. This posts a FAILED receipt against the
+   * message that asked, which the server inscribes as `<agent> could not
+   * answer · <reason>` in the corner itself. Once per corner per process: the
+   * reconciliation heartbeat retries the start for as long as it keeps
+   * failing, and the fact is worth saying once, not once a minute.
+   */
+  private async reportCornerStartFailure(cornerId: string, error: unknown): Promise<void> {
+    if (this.reportedCornerStartFailures.has(cornerId)) return;
+    this.reportedCornerStartFailures.add(cornerId);
+    try {
+      const conversation = await this.options.daemonApi.execute('getRoomConversation', {
+        roomId: cornerId,
+        limit: 50,
+      });
+      const asked = [...conversation.items]
+        .reverse()
+        .find(
+          (item) => item.type === 'message' && item.mentionIds.includes(this.agent.publicKey),
+        );
+      if (!asked) return;
+      await this.options.daemonApi.execute('postAgentTurnReceipt', {
+        agentId: this.agent.publicKey,
+        roomId: cornerId,
+        requestId: asked.id,
+        status: 'failed',
+        generationId: `${this.agent.publicKey}:${cornerId}`,
+        reason: distillTurnFailureReason(error),
+      });
+    } catch (reportError) {
+      console.error(`[thin-core] corner ${cornerId} start-failure report failed:`, reportError);
     }
   }
 
@@ -544,82 +718,11 @@ export class RoomRuntimeCoordinator {
     featureBranch: string;
     token: string;
   }): Promise<{ path: string; gitCommonDir: string }> {
-    const remote = githubHttpsRemote(input.remote);
-    const repositoryHash = createHash('sha256').update(remote).digest('hex').slice(0, 24);
-    const gitCommonDir = resolve(
-      this.runtime.supervisorRoot,
-      'beeline',
-      'repositories',
-      `${repositoryHash}.git`,
-    );
-    const path = resolve(this.runtime.supervisorRoot, 'beeline', 'corners', input.cornerId);
-    await mkdir(dirname(gitCommonDir), { recursive: true, mode: 0o700 });
-    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-    const authEnv = githubGitEnv(input.token);
-    if (!existsSync(resolve(gitCommonDir, 'HEAD'))) {
-      await execFileAsync('git', ['clone', '--bare', remote, gitCommonDir], {
-        env: authEnv,
-        maxBuffer: 4 * 1024 * 1024,
-      });
-    }
-    await execFileAsync(
-      'git',
-      [
-        `--git-dir=${gitCommonDir}`,
-        'fetch',
-        '--prune',
-        'origin',
-        `+refs/heads/${input.targetBranch}:refs/remotes/origin/${input.targetBranch}`,
-      ],
-      { env: authEnv, maxBuffer: 4 * 1024 * 1024 },
-    );
-    if (!existsSync(resolve(path, '.git'))) {
-      await rm(path, { recursive: true, force: true });
-      await execFileAsync(
-        'git',
-        [
-          `--git-dir=${gitCommonDir}`,
-          'worktree',
-          'add',
-          '-B',
-          input.featureBranch,
-          path,
-          `refs/remotes/origin/${input.targetBranch}`,
-        ],
-        { env: authEnv, maxBuffer: 4 * 1024 * 1024 },
-      );
-    }
-    await execFileAsync('git', [
-      `--git-dir=${gitCommonDir}`,
-      'config',
-      'extensions.worktreeConfig',
-      'true',
-    ]);
-    // A linked worktree created from a bare canonical clone otherwise inherits
-    // core.bare=true and rejects ordinary `git -C <worktree>` commands.
-    await execFileAsync('git', ['-C', path, 'config', '--worktree', 'core.bare', 'false']);
-    await execFileAsync('git', [
-      '-C',
-      path,
-      'config',
-      '--worktree',
-      'credential.https://github.com.helper',
-      '!f() { echo username=x-access-token; echo password=$GH_TOKEN; }; f',
-    ]);
-    await execFileAsync('git', ['-C', path, 'config', '--worktree', 'user.name', this.agent.name]);
-    await execFileAsync('git', [
-      '-C',
-      path,
-      'config',
-      '--worktree',
-      'user.email',
-      `${this.agent.publicKey.slice(0, 16)}@users.noreply.github.com`,
-    ]);
-    const top = await execFileAsync('git', ['-C', path, 'rev-parse', '--show-toplevel']);
-    if (resolve(top.stdout.trim()) !== resolve(path)) {
-      throw new Error(`corner worktree escaped its isolated root: ${top.stdout.trim()}`);
-    }
-    return { path, gitCommonDir };
+    return materializeCornerWorktree({
+      ...input,
+      supervisorRoot: this.runtime.supervisorRoot,
+      committer: { name: this.agent.name, publicKey: this.agent.publicKey },
+    });
   }
 
   private async reapCornerWorktree(worktree: CornerWorktree): Promise<void> {

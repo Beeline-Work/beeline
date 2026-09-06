@@ -77,6 +77,14 @@ async function settleTurnFailureLine(
       { ...row.card, state: 'recovered' },
     );
 }
+/**
+ * Corner operations that stay with the opener. Membership authorizes every
+ * other corner write (`DaemonService.assertCornerOpener` says why).
+ */
+const CORNER_OPENER_ONLY_OPERATIONS = new Set<keyof DaemonOperationMap>(['archiveCorner']);
+function isCornerOpenerOnly(name: keyof DaemonOperationMap): boolean {
+  return CORNER_OPENER_ONLY_OPERATIONS.has(name);
+}
 const seconds = (date: Date) => Math.floor(date.getTime() / 1_000);
 const AGENT_TO_AGENT_HOP_CAP = 3;
 export { CORNER_WAKE_TIMEOUT_MS } from './corner-wake.js';
@@ -128,8 +136,8 @@ export class DaemonService {
           : undefined;
     if (scopedRoom && name !== 'ensureAgentMembership')
       await this.access(scopedRoom, authenticatedAgentId);
-    if (scopedRoom && this.isCornerWrite(name))
-      await this.assertCornerOwner(scopedRoom, authenticatedAgentId);
+    if (scopedRoom && isCornerOpenerOnly(name))
+      await this.assertCornerOpener(scopedRoom, authenticatedAgentId);
     switch (name) {
       case 'getDaemonBootstrap':
         return (await this.bootstrap(authenticatedAgentId)) as Output<Name>;
@@ -688,6 +696,18 @@ export class DaemonService {
     );
     return { status: controller.rowCount ? ('authorized' as const) : ('denied' as const) };
   }
+  /**
+   * The corners of this Room that this agent may carry.
+   *
+   * A corner operates as a Room: the branch on GitHub is the shared artifact
+   * and MEMBERSHIP is the authority, so every member agent lists the corner
+   * and can be addressed in it. `corner_facts.owner_agent_id` survives as the
+   * historical "opened by" — it still names `createdBy` here, and the phone
+   * still shows it — but it no longer decides who may work. Listing on the
+   * opener alone is what made the motivating incident silent: a helper that
+   * never learns a corner exists never polls it, so a mention that resolved
+   * perfectly produced no turn and no error.
+   */
   private async corners(roomId: string, agentId: string) {
     await this.access(roomId, agentId);
     const rows = await this.database.query<{
@@ -698,7 +718,8 @@ export class DaemonService {
     }>(
       `SELECT r.id,r.parent_id,f.owner_agent_id created_by,r.archived_at IS NOT NULL archived
        FROM rooms r JOIN corner_facts f ON f.corner_id=r.id
-       WHERE r.parent_id=$1 AND f.owner_agent_id=$2`,
+       JOIN memberships m ON m.room_id=r.id AND m.identity_id=$2 AND m.removed_at IS NULL
+       WHERE r.parent_id=$1`,
       [roomId, agentId],
     );
     return {
@@ -2098,42 +2119,27 @@ export class DaemonService {
     );
     if (!result.rowCount) throw new Error('daemon room access denied');
   }
-  private isCornerWrite(name: keyof DaemonOperationMap): boolean {
-    return new Set<keyof DaemonOperationMap>([
-      'postRoomMessage',
-      'postAgentAttachment',
-      'postAgentDraft',
-      'postAgentThought',
-      'retractAgentLiveOutput',
-      'postAgentTurnReceipt',
-      'postAgentActivity',
-      'postPermissionRequest',
-      'postPermissionExecution',
-      'postWorkSchedule',
-      'postWorkScheduleReceipt',
-      'createAgentSchedule',
-      'deleteAgentSchedule',
-      'setEventSubscriptions',
-      'postRoomEvent',
-      'postAgentToolMandate',
-      'postAgentPresence',
-      'postCornerLifecycle',
-      'postCornerRemoteState',
-      'postCornerPlan',
-      'postTargetBranchProposal',
-      'requestAgentGrant',
-      'archiveCorner',
-    ]).has(name);
-  }
-  private async assertCornerOwner(roomId: string, agentId: string) {
+  /**
+   * The one operation a corner still reserves for the agent that opened it.
+   *
+   * Every other corner write is membership-gated by `access` above, because a
+   * corner works like a Room: whoever is addressed carries the branch on, and
+   * the PR/checks lifecycle facts belong to the CORNER, not to one agent.
+   * Archiving is the exception because it is terminal for the shared artifact
+   * — it stops every member's loop and reaps their worktrees — so a helper
+   * pulled in for one question cannot close someone else's work. It is not a
+   * dead end when the opener is gone: the merge webhook archives on landing,
+   * and a human can still request the close.
+   */
+  private async assertCornerOpener(roomId: string, agentId: string) {
     const corner = await this.database.query<{ owner_agent_id: string | null }>(
       `SELECT fact.owner_agent_id
        FROM rooms room JOIN corner_facts fact ON fact.corner_id=room.id
        WHERE room.id=$1 AND room.parent_id IS NOT NULL`,
       [roomId],
     );
-    const owner = corner.rows[0]?.owner_agent_id;
-    if (corner.rowCount && owner !== agentId) throw new Error('daemon corner access denied');
+    const opener = corner.rows[0]?.owner_agent_id;
+    if (corner.rowCount && opener !== agentId) throw new Error('daemon corner access denied');
   }
   private writeResult() {
     return { id: id(), createdAt: Math.floor(Date.now() / 1000) };

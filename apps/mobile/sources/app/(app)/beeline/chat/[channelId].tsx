@@ -3025,10 +3025,10 @@ export default function BuzzChat() {
             <Text style={[styles.backText, isCorner && styles.cornerBackText]}>‹</Text>
           </TouchableOpacity>
           {/*
-            A corner has exactly one administering agent, so its identity is
-            stated here once and never repeated on a message. The ledger below
-            renders the agent's turns as unattributed flowing text precisely
-            because this mark and name are always on screen above them.
+            The agent that OPENED this corner, stated here once and never
+            repeated on a message. It is history, not ownership: any member
+            agent can be addressed in a corner and carry the branch on, so
+            this mark says who started the work, not who owns it.
           */}
           {isCorner && cornerAgentPubkey && (
             <HeaderIdentitySlot testID="corner-header-agent">
@@ -3046,7 +3046,7 @@ export default function BuzzChat() {
           <TouchableOpacity
             accessibilityLabel={
               isCorner
-                ? `${cornerAgentDisplay?.name ?? 'Agent'}’s ${CORNER_LABEL}. View ${formatRoomParticipantTotal(roomParticipantTotal)}`
+                ? `${CORNER_LABEL} opened by ${cornerAgentDisplay?.name ?? 'Agent'}. View ${formatRoomParticipantTotal(roomParticipantTotal)}`
                 : `View ${formatRoomParticipantTotal(roomParticipantTotal)}`
             }
             accessibilityRole="button"

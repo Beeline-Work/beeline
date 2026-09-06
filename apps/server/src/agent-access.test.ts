@@ -166,7 +166,7 @@ describe('who may address an agent', () => {
         { workspaceId: WORKSPACE, agentId: AGENT, policy: 'everyone' },
         OWNER,
       );
-      expect((await lines(database)).at(-1)?.text).toBe(
+      expect((await lines(database)).map((line) => line.text)).toContain(
         'Someone changed who may address Greeter · anyone may ask now',
       );
     } finally {
@@ -197,6 +197,37 @@ describe('who may address an agent', () => {
       await reportPresence(database, 'online');
       await send(phone, OWNER, '3', '@greeter again');
       expect(await lines(database)).toHaveLength(2);
+    } finally {
+      await database.close();
+    }
+  });
+
+  it('sorts the refusal after its cause, and reading the Room clears the unread mark', async () => {
+    const database = await fixture();
+    try {
+      const phone = new PhoneService(database, 'http://local.test');
+      await setPolicy(database, 'creator');
+      const sent = await send(phone, OUTSIDER, '1', '@greeter sup');
+
+      // The phone reads the Room and marks its LAST row read. The refusal is
+      // the cause's consequence, so it must be that last row even though both
+      // stamps share a second — a tie a whole-second transcript would
+      // otherwise break on the random row id, pinning the read mark below the
+      // line forever and leaving the Room list dot lit no matter how often the
+      // Room is read.
+      const view = await phone.readRoom(ROOM, OUTSIDER);
+      expect(view).not.toBeNull();
+      const last = view!.messages.at(-1)!;
+      expect(last.id).not.toBe(sent.messageId);
+      expect(last.text).toContain('Greeter did not answer @bananaman614305');
+      expect(view!.messages.at(-2)!.id).toBe(sent.messageId);
+      await phone.markRead(ROOM, last.id, OUTSIDER);
+
+      // The room-list layer that actually computes unread: readChats counts a
+      // system line the mark covers as read, whatever the newest row is.
+      const chats = await phone.readChats(WORKSPACE, OUTSIDER);
+      const row = chats!.chats.find((chat) => chat.room.id === ROOM);
+      expect(row?.unread).toBe(false);
     } finally {
       await database.close();
     }

@@ -64,6 +64,17 @@ export interface SystemLineInput {
    * never refused — a join must not be lost to a guard meant for agents.
    */
   readonly causeId?: string;
+  /**
+   * The message this line is written BECAUSE OF, for a line with no kind.
+   *
+   * Ordering only — it is never stored as a cascade, so an unkinded line keeps
+   * waking nobody. The write stamps `created_at` strictly past this message's
+   * second, so a consequence can never sort above its cause on a surface that
+   * orders by whole seconds (`RoomViewMessage.createdAt` is floored): a
+   * second-resolution tie otherwise breaks on the random row id, which is how
+   * an access notice landed above the message that provoked it.
+   */
+  readonly afterMessageId?: string;
 }
 
 /**
@@ -158,6 +169,38 @@ async function subscribers(
 type Cascade = { causeId: string | null; rootCauseId: string; depth: number };
 
 /**
+ * The instant a caused line must not precede: its cause's second, exhausted.
+ *
+ * `RoomViewMessage.createdAt` reaches the phone floored to whole seconds, and
+ * every transcript sort tie-breaks on the row id — a random 64-hex string. A
+ * line written microseconds after the message that provoked it shares that
+ * message's second, so the tie could order the consequence ABOVE its cause.
+ * The write therefore stamps `created_at` at least one second past the cause's
+ * second, and only then: when `now()` has already moved on, `GREATEST` keeps
+ * the natural time and the row is never future-dated by more than that one
+ * second. A miss or a failed lookup writes the line unpinned — an ordering
+ * courtesy must never fail a write (the caller's transaction aside).
+ */
+async function orderingFloor(
+  database: SqlDatabase,
+  roomId: string,
+  causeId: string | undefined,
+): Promise<Date | null> {
+  if (!causeId) return null;
+  try {
+    const cause = await database.query<{ created_at: Date }>(
+      `SELECT created_at FROM messages WHERE id=$1 AND room_id=$2`,
+      [causeId, roomId],
+    );
+    const created = cause.rows[0]?.created_at;
+    return created ? new Date(created.getTime() + 1_000) : null;
+  } catch (error) {
+    console.error('[system-line] ordering lookup failed', roomId, causeId, error);
+    return null;
+  }
+}
+
+/**
  * Where this line sits in its cascade, and whether the cascade may grow.
  *
  * The depth and the root are DERIVED from the cause row the server reads here;
@@ -215,12 +258,15 @@ export async function systemLine(
   ];
   // Only an event carries a cascade. A line with no kind is one nothing reacts
   // to, so it has no root to belong to and no budget to spend.
-  const write = async (db: SqlDatabase, cascade: Cascade | undefined) => {
+  const write = async (db: SqlDatabase, cascade: Cascade | undefined, notBefore: Date | null) => {
     const result = await db.query(
       `INSERT INTO messages(
          id,room_id,author_id,text,presentation,mention_ids,request_id,durable_fact,
-         card_type,card,system_event,event_cause_id,event_root_cause_id,event_depth
-       ) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10::jsonb,$11::jsonb,$12,$13,$14)
+         card_type,card,system_event,event_cause_id,event_root_cause_id,event_depth,created_at
+       ) VALUES(
+         $1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10::jsonb,$11::jsonb,$12,$13,$14,
+         GREATEST(now(), COALESCE($15::timestamptz, now()))
+       )
        ON CONFLICT(id) DO NOTHING`,
       [
         id,
@@ -237,19 +283,27 @@ export async function systemLine(
         cascade?.causeId ?? null,
         cascade?.rootCauseId ?? null,
         cascade?.depth ?? null,
+        notBefore,
       ],
     );
     return { id, text, event, inserted: Boolean(result.rowCount) };
   };
-  if (!input.kind) return write(database, undefined);
+  if (!input.kind) {
+    const notBefore = await orderingFloor(database, input.roomId, input.afterMessageId);
+    return write(database, undefined, notBefore);
+  }
   if (input.causeId === undefined)
-    return write(database, { causeId: null, rootCauseId: id, depth: 0 });
+    return write(database, { causeId: null, rootCauseId: id, depth: 0 }, null);
   // One transaction holds the advisory lock through the insert. A caller that
   // already passed its own transaction handle gets that same handle back
   // (`PostgresDatabase.transaction` does not nest), so the lock lives exactly
   // as long as the write it protects.
   return database.transaction(async (tx) =>
-    write(tx, await resolveCascade(tx, input.causeId as string, mentions.length)),
+    write(
+      tx,
+      await resolveCascade(tx, input.causeId as string, mentions.length),
+      await orderingFloor(tx, input.roomId, input.causeId),
+    ),
   );
 }
 

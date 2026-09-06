@@ -1577,16 +1577,17 @@ export default function BuzzChat() {
    * canonical Corner lease still owns the pinned Corner bar, but cannot hide a
    * channel-local reply that is visibly streaming now.
    *
-   * Before that receipt exists, `pendingAck` (armed the instant a
-   * message addressed to an agent is sent — see `handleSend`) fills the dead
-   * air with an immediate local "sending…". Past `COMPOSER_ACK_BOUND_MS` with
-   * still no receipt it expires; only a genuine server-indexed WORKING receipt
-   * may show that an agent is thinking.
+   * `pendingAck` (armed the instant a message addressed to an agent is sent —
+   * see `handleSend`) bridges ONLY the send round trip: the moment the server
+   * accepts the write, the moment a failure surfaces, or at
+   * `COMPOSER_ACK_BOUND_MS` — whichever comes first — it retires, because the
+   * honest state between "stored" and "claimed" is silence. Only a genuine
+   * server-indexed WORKING receipt may show that an agent is thinking, and it
+   * does so from the CLAIM, long before the model's first token streams.
    */
   const composerAck = useMemo((): ComposerAckPresentation | null => {
     return selectComposerAckPresentation({
       isCorner,
-      agentsOffline,
       ...(activeAgentTurn?.agentPubkey ? { activeTurnPubkey: activeAgentTurn.agentPubkey } : {}),
       ...(activeAgentTurn
         ? {
@@ -1599,7 +1600,7 @@ export default function BuzzChat() {
       conversationIdentities,
       agentsByPubkey: agentByPubkey,
     });
-  }, [activeAgentTurn, agentByPubkey, agentsOffline, conversationIdentities, isCorner, pendingAck]);
+  }, [activeAgentTurn, agentByPubkey, conversationIdentities, isCorner, pendingAck]);
 
   /** The settled "<Past> for Ns · done h:MM" line a finished turn leaves briefly. */
   const [settledTurn, setSettledTurn] = useState<{
@@ -1848,6 +1849,18 @@ export default function BuzzChat() {
       setReplyTarget(null);
       await activeOutbox.attempted(preparedEvent.id);
       await sendTransport.publishPreparedMessage(preparedEvent);
+      // The write ack retires the local bridge: the server has STORED the
+      // message, so "sending…" has nothing left to bridge. It used to outlive
+      // the write by up to the whole first-token wait (tens of seconds) or
+      // its own 15s bound, whichever was longer. The claimed turn's WORKING
+      // receipt lights `thinking` on its own, and this ack must not sit
+      // between them.
+      const ackedRequestId = preparedEvent.id;
+      setPendingAck((current) =>
+        current && (current.requestId === undefined || current.requestId === ackedRequestId)
+          ? null
+          : current,
+      );
       // Advance the read mark to our own message immediately: a message we
       // wrote must never gold the Room list while the deck's working
       // indicator carries the live turn (room-list-row.ts: a working agent never lights the attention square).

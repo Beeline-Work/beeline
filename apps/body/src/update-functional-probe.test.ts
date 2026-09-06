@@ -33,7 +33,11 @@ const readline = require('node:readline');
 const fs = require('node:fs');
 const path = require('node:path');
 const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
-const behavior = process.env.FAKE_PI_BEHAVIOR;
+// A comma-separated behavior list steps forward on every session/prompt
+// call (a fresh session on retry), so a test can script "timeout, then
+// served" or "timeout, then timeout again". A single value repeats.
+const behaviors = process.env.FAKE_PI_BEHAVIOR.split(',');
+let promptCallCount = 0;
 const records = {
   'refused-402': { role: 'assistant', content: [], stopReason: 'error', errorMessage: '402: {"message":"This request requires more credits, or fewer max_tokens."}' },
   'refused-400': { role: 'assistant', content: [], stopReason: 'error', errorMessage: '400: {"message":"invalid provider routing"}' },
@@ -47,6 +51,8 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   } else if (message.method === 'session/new') {
     send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'probe-session' } });
   } else if (message.method === 'session/prompt') {
+    const behavior = behaviors[Math.min(promptCallCount, behaviors.length - 1)];
+    promptCallCount += 1;
     // Neither shape leaves pi a turn record: the failure is the ACP answer.
     if (behavior === 'rpc-internal' || behavior === 'rpc-invalid-params') {
       const code = behavior === 'rpc-internal' ? -32603 : -32602;
@@ -108,6 +114,8 @@ async function probe(
     sandboxRequired: false,
     sessionTimeoutMs: 10_000,
     turnTimeoutMs: 10_000,
+    // Tests never need the production pause before a retry.
+    retryDelayMs: 10,
     ...extra,
   });
 }
@@ -311,6 +319,58 @@ describe('runUpdateFunctionalProbe', () => {
     it('never appeals a JSON-RPC code only a bad bundle produces', async () => {
       const compare = vi.fn(async () => ({ kind: 'served' }) as const);
       const error = await probe('rpc-invalid-params', {
+        compareWithCurrentRelease: compare,
+      }).catch((caught: unknown) => caught);
+      expect((error as Error).message).toBe(
+        'functional update probe failed (turn-failed): ACP error -32602: Invalid params',
+      );
+      expect(compare).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * The other half of the 2026-09-06 incident: Greeter on pi/GLM timed out
+   * once, the current release happened to answer, and the fleet rolled back
+   * a sound bundle that then passed on the very next attempt. A single
+   * timeout or server-internal error now gets one fresh-session retry
+   * before any rollback verdict is even considered.
+   */
+  describe('retrying a transient ACP failure before condemning the successor', () => {
+    it('passes when the retry (a fresh session) is served', async () => {
+      const compare = vi.fn(async () => ({ kind: 'served' }) as const);
+      await expect(
+        probe('silent,served', { turnTimeoutMs: 300, compareWithCurrentRelease: compare }),
+      ).resolves.toEqual(
+        expect.objectContaining({ turnCompleted: true, modelAnswer: 'served' }),
+      );
+      // The retry alone settled it; no need to appeal to the current release.
+      expect(compare).not.toHaveBeenCalled();
+    });
+
+    it('rolls back when the retry fails the same way and the current release serves', async () => {
+      const error = await probe('silent,silent', {
+        turnTimeoutMs: 300,
+        compareWithCurrentRelease: async () => probeOutcome(() => probe('served')),
+      }).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(UpdateFunctionalProbeError);
+      expect((error as Error).message).toContain('the current release answered');
+    });
+
+    it('accepts as inconclusive when the retry and the current release both time out', async () => {
+      const result = await probe('silent,silent', {
+        turnTimeoutMs: 300,
+        compareWithCurrentRelease: async () =>
+          probeOutcome(() => probe('silent', { turnTimeoutMs: 300 })),
+      });
+      expect(result).toMatchObject({ turnCompleted: false, modelAnswer: 'unavailable' });
+      expect(result.modelAnswerReason).toContain('(the current release fails the same way)');
+    });
+
+    it('never retries a JSON-RPC code only a bad bundle produces', async () => {
+      // If a retry happened, the second scripted behavior ('served') would
+      // make the probe pass; it must still fail on the first attempt alone.
+      const compare = vi.fn(async () => ({ kind: 'served' }) as const);
+      const error = await probe('rpc-invalid-params,served', {
         compareWithCurrentRelease: compare,
       }).catch((caught: unknown) => caught);
       expect((error as Error).message).toBe(

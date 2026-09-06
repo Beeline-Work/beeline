@@ -22,6 +22,9 @@ import {
 export const UPDATE_PROBE_SESSION_TIMEOUT_MS = 10_000;
 export const UPDATE_PROBE_SESSION_OPEN_TIMEOUT_MS = 20_000;
 export const UPDATE_PROBE_TURN_TIMEOUT_MS = 45_000;
+// A short pause before the one retry of a timeout/server-internal ACP
+// failure, giving a throttled provider a moment to recover.
+export const UPDATE_PROBE_RETRY_DELAY_MS = 2_000;
 
 export type UpdateFunctionalProbeFailure =
   | 'model-unavailable'
@@ -199,6 +202,8 @@ export async function runUpdateFunctionalProbe(input: {
   /** Test seam for the separate cold session/new budget. */
   sessionOpenTimeoutMs?: number;
   turnTimeoutMs?: number;
+  /** Test seam for the pause before the one retry of a transient ACP failure. */
+  retryDelayMs?: number;
   /**
    * Scratch root for the checkout and agent home; defaults to
    * `<runtimeDir>/update-functional-probe`. The current-release comparison
@@ -288,9 +293,10 @@ export async function runUpdateFunctionalProbe(input: {
     const sessionTimeoutMs = input.sessionTimeoutMs ?? UPDATE_PROBE_SESSION_TIMEOUT_MS;
     const sessionOpenTimeoutMs =
       input.sessionOpenTimeoutMs ?? input.sessionTimeoutMs ?? UPDATE_PROBE_SESSION_OPEN_TIMEOUT_MS;
-    try {
-      await client.start(sessionTimeoutMs);
-      const opened = await client.sessionNew({
+    // A fresh session on the same running harness, used both for the first
+    // attempt and (for a transient-shaped ACP failure only) the one retry.
+    const openSessionAndPrompt = async () => {
+      const opened = await client!.sessionNew({
         cwd,
         mcpServers: [],
         systemPrompt: 'This is Beeline update validation. Answer only READY.',
@@ -299,7 +305,7 @@ export async function runUpdateFunctionalProbe(input: {
       });
       if (input.config.modelSelection) {
         await applyAgentModelSelection(
-          client,
+          client!,
           opened.sessionId,
           parseAdvertisedConfigOptions(
             opened.raw,
@@ -309,19 +315,26 @@ export async function runUpdateFunctionalProbe(input: {
           input.config.modelSelection,
         );
       }
-      try {
-        const served = await client.sessionPrompt(
+      return {
+        sessionId: opened.sessionId,
+        served: await client!.sessionPrompt(
           opened.sessionId,
           'Reply READY.',
           input.turnTimeoutMs ?? UPDATE_PROBE_TURN_TIMEOUT_MS,
-        );
+        ),
+      };
+    };
+    try {
+      await client.start(sessionTimeoutMs);
+      try {
+        const { sessionId, served } = await openSessionAndPrompt();
         if (served.agentText.trim()) {
           modelAnswer = { modelAnswer: 'served' };
         } else {
           const explained = await explainEmptyAgentTurn({
             agentLabel: command,
             agentEnv,
-            sessionId: opened.sessionId,
+            sessionId,
             result: served,
           });
           const modelSide =
@@ -363,36 +376,78 @@ export async function runUpdateFunctionalProbe(input: {
             modelAnswer = { modelAnswer: 'unavailable', modelAnswerReason: explained.reason };
           }
         }
-      } catch (error) {
-        if (error instanceof UpdateFunctionalProbeError) throw error;
-        const detail = error instanceof Error ? error.message : String(error);
-        const failure = classifyAcpTurnFailure(error);
-        if (!failure || !input.compareWithCurrentRelease) {
-          throw new UpdateFunctionalProbeError('turn-failed', detail, { cause: error });
-        }
-        const current = await input.compareWithCurrentRelease({
-          kind: 'acp-turn-failure',
-          reason: detail,
-          failure,
-        });
-        const currentFailure =
-          current.kind === 'unavailable' ? classifyAcpTurnFailure(current.reason) : undefined;
-        if (!currentFailure || !sameAcpTurnFailure(failure, currentFailure)) {
-          throw new UpdateFunctionalProbeError(
-            'turn-failed',
-            `${detail}; ${describeCurrentReleaseOutcome(current)}`,
-            { cause: error },
+      } catch (initialError) {
+        if (initialError instanceof UpdateFunctionalProbeError) throw initialError;
+        let error = initialError;
+        let detail = error instanceof Error ? error.message : String(error);
+        let failure = classifyAcpTurnFailure(error);
+        // A single ACP timeout or server-internal error is what a
+        // throttled/exhausted provider looks like from here just as readily
+        // as a bad bundle (2026-09-06: Greeter on pi/GLM timed out once,
+        // then passed on the very next attempt). Give the successor one
+        // more fresh session before condemning it; only a repeat of the
+        // SAME failure shape goes on to the current-release comparison.
+        // Genuine bundle faults (session/new failures, -32601/-32602/-32700,
+        // status-less failures) never classify here and so are never
+        // retried.
+        if (failure) {
+          await new Promise((resolveWait) =>
+            setTimeout(resolveWait, input.retryDelayMs ?? UPDATE_PROBE_RETRY_DELAY_MS),
           );
+          try {
+            const retried = await openSessionAndPrompt();
+            if (retried.served.agentText.trim()) {
+              turnCompleted = true;
+              modelAnswer = { modelAnswer: 'served' };
+              console.warn(
+                `[body] update probe: the probe turn failed once (${detail}) but a fresh retry ` +
+                  "answered; treating the first failure as the provider's, not this bundle's",
+              );
+              error = undefined;
+            }
+          } catch (retryError) {
+            const retryDetail =
+              retryError instanceof Error ? retryError.message : String(retryError);
+            const retryFailure = classifyAcpTurnFailure(retryError);
+            if (!retryFailure || !sameAcpTurnFailure(failure, retryFailure)) {
+              throw new UpdateFunctionalProbeError('turn-failed', retryDetail, {
+                cause: retryError,
+              });
+            }
+            error = retryError;
+            detail = retryDetail;
+            failure = retryFailure;
+          }
         }
-        console.warn(
-          `[body] update probe: the probe turn failed the same way on this release and the current ` +
-            `release (${detail}); that failure is not this bundle's doing, so the probe passes as inconclusive`,
-        );
-        turnCompleted = false;
-        modelAnswer = {
-          modelAnswer: 'unavailable',
-          modelAnswerReason: `${detail} (the current release fails the same way)`,
-        };
+        if (error === undefined) {
+          // The retry served the turn; fall through with modelAnswer already set.
+        } else if (!failure || !input.compareWithCurrentRelease) {
+          throw new UpdateFunctionalProbeError('turn-failed', detail, { cause: error });
+        } else {
+          const current = await input.compareWithCurrentRelease({
+            kind: 'acp-turn-failure',
+            reason: detail,
+            failure,
+          });
+          const currentFailure =
+            current.kind === 'unavailable' ? classifyAcpTurnFailure(current.reason) : undefined;
+          if (!currentFailure || !sameAcpTurnFailure(failure, currentFailure)) {
+            throw new UpdateFunctionalProbeError(
+              'turn-failed',
+              `${detail}; ${describeCurrentReleaseOutcome(current)}`,
+              { cause: error },
+            );
+          }
+          console.warn(
+            `[body] update probe: the probe turn failed the same way on this release and the current ` +
+              `release (${detail}); that failure is not this bundle's doing, so the probe passes as inconclusive`,
+          );
+          turnCompleted = false;
+          modelAnswer = {
+            modelAnswer: 'unavailable',
+            modelAnswerReason: `${detail} (the current release fails the same way)`,
+          };
+        }
       }
     } catch (error) {
       if (error instanceof UpdateFunctionalProbeError) throw error;

@@ -955,6 +955,14 @@ describe('monolith integration', () => {
   });
 
   it('never reports unread for the viewer’s own latest message', async () => {
+    // A live helper is the quiet case: with a fresh presence heartbeat the send
+    // writes no unread-mention notice, so the only rows here are the two the
+    // test is about (`agent-access.test.ts` owns the noisy case).
+    await database.query(
+      `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)
+       VALUES($1,$2,'presence','presence',$3::jsonb)`,
+      [ROOM, AGENT, JSON.stringify({ status: 'online', observedAt: Math.floor(Date.now() / 1000) })],
+    );
     const sent = await operation('sendRoomMessage', {
       roomId: ROOM,
       messageId: 'c'.repeat(64),
@@ -3572,8 +3580,10 @@ describe('monolith integration', () => {
       mentionIds: [HUMAN, human2],
     });
     expect(reply.status).toBe(200);
+    // The agent's own durable reply — a server-authored system line about the
+    // Room is not a turn's delivery and carries no mention of its own.
     const stored = await database.query<{ mention_ids: string[] }>(
-      `SELECT mention_ids FROM messages WHERE room_id=$1 AND author_id=$2`,
+      `SELECT mention_ids FROM messages WHERE room_id=$1 AND author_id=$2 AND presentation='message'`,
       [ROOM, AGENT],
     );
     expect(stored.rows).toHaveLength(1);

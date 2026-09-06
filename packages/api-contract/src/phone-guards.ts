@@ -1,4 +1,5 @@
 import { isSystemEvent } from './system-events.js';
+import { isAgentAccessPolicy } from './agent-access.js';
 import {
   ROOM_VIEW_AGENT_LIMIT,
   ROOM_VIEW_BRIEFING_LIMIT,
@@ -793,6 +794,18 @@ function agentYolo(value: unknown): boolean {
   );
 }
 
+function agentAccess(value: unknown): boolean {
+  const item = record(value);
+  const owner = item?.owner === undefined ? undefined : record(item.owner);
+  return Boolean(
+    item &&
+    isAgentAccessPolicy(item.policy) &&
+    typeof item.canChange === 'boolean' &&
+    (owner === undefined ||
+      (owner && typeof owner.id === 'string' && typeof owner.name === 'string')),
+  );
+}
+
 export function isAgentDetailView(value: unknown): value is AgentDetailView {
   const item = record(value);
   const soul = item?.soul === undefined ? undefined : record(item.soul);
@@ -819,6 +832,7 @@ export function isAgentDetailView(value: unknown): value is AgentDetailView {
     (item.runtimeSelection === undefined || modelSelection(item.runtimeSelection)) &&
     (item.selected === undefined || modelSelection(item.selected)) &&
     (item.yolo === undefined || agentYolo(item.yolo)) &&
+    (item.access === undefined || agentAccess(item.access)) &&
     (item.grants === undefined || (Array.isArray(item.grants) && item.grants.every(isAgentGrantView))) &&
     (item.canManageGrants === undefined || typeof item.canManageGrants === 'boolean') &&
     watchFilters(item.watchFilters),

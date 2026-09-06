@@ -56,8 +56,9 @@ describe('monolith-only thin daemon', () => {
     });
     expect(staged.runtime.transport).toMatchObject({ kind: 'monolith' });
     expect(staged.runtime.rooms).toEqual([]);
-    // Nobody but the person who paired it may drive it, unless they said so.
-    expect(staged.runtime.accessPolicy).toBe('creator');
+    // Anyone in the Room may drive it unless the owner narrows it in the members
+    // page; the server row is the authority either way (`agent-access.ts`).
+    expect(staged.runtime.accessPolicy).toBe('everyone');
   });
 
   it('stages the access policy connect was given, so a greeter can answer anyone', async () => {

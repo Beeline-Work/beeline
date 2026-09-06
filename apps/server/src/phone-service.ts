@@ -40,6 +40,15 @@ import {
   type AgentGrantDecision,
   type AgentGrantStatus,
 } from '@beeline/api-contract/agent-grants';
+import {
+  AGENT_REACHABLE_HORIZON_MS,
+  MAX_ACCESS_ALLOWLIST_ENTRIES,
+  agentAccessPolicyRecord,
+  accessNoticeBucket,
+  isAgentAccessPolicy,
+  parseAgentAccessPolicy,
+  senderMayAddressAgent,
+} from '@beeline/api-contract/agent-access';
 import type { SqlDatabase } from './database.js';
 import type { LiveEvent } from './live.js';
 import type { GitHubOperations } from './github-operations.js';
@@ -929,9 +938,12 @@ export class PhoneService {
         yolo_set_by_name: string | null;
         yolo_set_at: Date | null;
         can_change_yolo: boolean;
+        access_policy: unknown;
+        owner_id: string | null;
+        owner_name: string | null;
       }>(
         `SELECT a.soul,a.model_catalog,a.selected_model,a.selected_effort,a.yolo_mode,a.yolo_set_at,
-                setter.name yolo_set_by_name,
+                setter.name yolo_set_by_name,a.access_policy,a.owner_id,owner.name owner_name,
                 (a.owner_id=$3 OR EXISTS (
                   SELECT 1 FROM memberships m
                   WHERE m.workspace_id=$2 AND m.room_id IS NULL AND m.identity_id=$3
@@ -939,6 +951,7 @@ export class PhoneService {
                 )) can_change_yolo
          FROM agents a
          LEFT JOIN identities setter ON setter.id=a.yolo_set_by
+         LEFT JOIN identities owner ON owner.id=a.owner_id
          WHERE a.agent_id=$1`,
         [agentId, workspaceId, viewerId],
       )
@@ -972,6 +985,15 @@ export class PhoneService {
         enabled: config?.yolo_mode ?? false,
         ...(config?.yolo_set_by_name ? { setBy: { name: config.yolo_set_by_name } } : {}),
         ...(config?.yolo_set_at ? { setAt: unix(config.yolo_set_at) } : {}),
+        canChange: config?.can_change_yolo ?? false,
+      },
+      // Who may address this agent. Read from the server row, never from what a
+      // helper was paired with, so the row and the running behaviour are one fact.
+      access: {
+        policy: parseAgentAccessPolicy(config?.access_policy).type,
+        ...(config?.owner_id && config.owner_name
+          ? { owner: { id: config.owner_id, name: config.owner_name } }
+          : {}),
         canChange: config?.can_change_yolo ?? false,
       },
       grants: await this.agentGrants(workspaceId, agentId),
@@ -1254,7 +1276,7 @@ export class PhoneService {
            selected_model=EXCLUDED.selected_model,selected_effort=NULL,
            model_catalog='[]'::jsonb,commands='[]'::jsonb,schedule_ids='[]'::jsonb,
            yolo_mode=false,yolo_set_by=NULL,yolo_set_at=NULL,
-           access_policy='{"type":"creator"}'::jsonb,updated_at=now()`,
+           access_policy='{"type":"everyone"}'::jsonb,updated_at=now()`,
         [
           input.agentPubkey,
           pairing.created_by,
@@ -1526,6 +1548,12 @@ export class PhoneService {
       case 'updateAgentYolo':
         await this.updateAgentYolo(input as Input<'updateAgentYolo'>, viewerId);
         return undefined as Output<Name>;
+      case 'updateAgentAccessPolicy':
+        await this.updateAgentAccessPolicy(
+          input as Input<'updateAgentAccessPolicy'>,
+          viewerId,
+        );
+        return undefined as Output<Name>;
       case 'removeAgent':
         await this.removeAgent(input as Input<'removeAgent'>, viewerId);
         return undefined as Output<Name>;
@@ -1710,9 +1738,12 @@ export class PhoneService {
     const id = input.messageId ?? messageId();
     if (!/^[0-9a-f]{64}$/.test(id)) throw new Error('messageId is invalid');
     const attachments = JSON.stringify(input.attachments ?? []);
-    const mentions = JSON.stringify(
-      await this.resolveMessageMentions(input.roomId, author, input.mentions ?? []),
+    const mentionIds = await this.resolveMessageMentions(
+      input.roomId,
+      author,
+      input.mentions ?? [],
     );
+    const mentions = JSON.stringify(mentionIds);
     const values = [id, input.roomId, author, input.text, attachments, mentions];
     const inserted = await this.database.query(
       `INSERT INTO messages(id,room_id,author_id,text,attachments,mention_ids)
@@ -1728,40 +1759,10 @@ export class PhoneService {
         values,
       );
       if (!retry.rowCount) throw new Error('messageId is invalid');
+      return { messageId: id };
     }
-    if (inserted.rowCount) await this.noteUnreachableMentions(input.roomId, JSON.parse(mentions));
+    await this.noteUnansweredMentions(input.roomId, author, mentionIds);
     return { messageId: id };
-  }
-  /**
-   * An agent addressed where it cannot act is told so, in the Room, once.
-   *
-   * A corner is carried by its MEMBERS, so a mention of an agent that is not
-   * one resolves fine and then produces nothing at all — no turn, no message,
-   * no error. That silence is the whole failure this model removes, so the
-   * server inscribes the fact instead. The line carries no kind and no
-   * mention: it wakes nothing, it only says what did not happen.
-   */
-  private async noteUnreachableMentions(roomId: string, mentions: readonly string[]) {
-    if (!mentions.length) return;
-    const unreachable = await this.database.query<{ id: string; name: string }>(
-      `SELECT identity.id,COALESCE(NULLIF(identity.name,''),'The agent') name
-       FROM identities identity
-       WHERE identity.id=ANY($2::text[]) AND identity.kind='agent'
-         AND EXISTS(SELECT 1 FROM rooms room WHERE room.id=$1 AND room.parent_id IS NOT NULL)
-         AND NOT EXISTS(
-           SELECT 1 FROM memberships membership
-           WHERE membership.room_id=$1 AND membership.identity_id=identity.id
-             AND membership.removed_at IS NULL
-         )`,
-      [roomId, [...mentions]],
-    );
-    for (const agent of unreachable.rows)
-      await systemLine(this.database, {
-        roomId,
-        subject: { kind: 'agent', id: agent.id, name: agent.name },
-        verb: 'could not be reached',
-        consequence: 'not a member of this corner',
-      });
   }
   private async createRoomSchedule(input: Input<'createRoomSchedule'>, viewerId: string) {
     const target = await this.requireTopLevelRoom(input.roomId);
@@ -1835,20 +1836,19 @@ export class PhoneService {
       throw new Error('reply parent is not in this room');
     const id = input.messageId ?? messageId();
     if (!/^[0-9a-f]{64}$/.test(id)) throw new Error('messageId is invalid');
+    const mentionIds = await this.resolveMessageMentions(
+      input.roomId,
+      author,
+      input.mentions ?? [],
+      parent.rows[0].author_kind === 'agent' ? parent.rows[0].author_id : undefined,
+    );
     const values = [
       id,
       input.roomId,
       author,
       input.text,
       JSON.stringify(input.attachments ?? []),
-      JSON.stringify(
-        await this.resolveMessageMentions(
-          input.roomId,
-          author,
-          input.mentions ?? [],
-          parent.rows[0].author_kind === 'agent' ? parent.rows[0].author_id : undefined,
-        ),
-      ),
+      JSON.stringify(mentionIds),
       input.parentMessageId,
       parent.rows[0].root_message_id ?? input.parentMessageId,
     ];
@@ -1866,10 +1866,158 @@ export class PhoneService {
         values,
       );
       if (!retry.rowCount) throw new Error('messageId is invalid');
+      return { messageId: id };
     }
-    if (inserted.rowCount)
-      await this.noteUnreachableMentions(input.roomId, JSON.parse(values[5] as string));
+    await this.noteUnansweredMentions(input.roomId, author, mentionIds);
     return { messageId: id };
+  }
+  /**
+   * Say out loud why a mentioned agent will not answer. ONE producer for every
+   * reason a mention lands and nothing happens.
+   *
+   * Silence is the failure this exists to end. A mention dropped by the agent's
+   * access policy, a mention nobody is alive to read, and a mention of an agent
+   * that is not in this corner all look identical in a Room, and all three look
+   * like a broken product. So the SERVER — which owns the policy, sees the
+   * helper's presence and knows the roster — inscribes one ordinary system line
+   * (`presentation='system'`, the one grammar in `system-line.ts`). The line
+   * mentions nobody, so it wakes no daemon and reaches a phone only where every
+   * message already does — a DM, which is where the person who was refused most
+   * needs to hear it.
+   *
+   * The reasons are ordered, not summed: an agent that is not in the corner is
+   * told that and nothing else, because its policy and its heartbeat are beside
+   * the point. At most one line per (Room, agent, sender, reason) per
+   * `ACCESS_NOTICE_WINDOW_MS` — the id is derived from the window bucket, so a
+   * repeat inside it collides on the primary key and writes nothing. A chatty
+   * non-permitted member gets one explanation, not a storm.
+   *
+   * Never throws: a notice is a courtesy on top of a message that is already
+   * written, and must not fail the send.
+   */
+  private async noteUnansweredMentions(
+    roomId: string,
+    senderId: string,
+    mentionIds: readonly string[],
+  ): Promise<void> {
+    if (!mentionIds.length) return;
+    try {
+      const sender = (
+        await this.database.query<{ kind: 'human' | 'agent'; name: string }>(
+          `SELECT kind,name FROM identities WHERE id=$1`,
+          [senderId],
+        )
+      ).rows[0];
+      if (!sender) return;
+      const agents = await this.database.query<{
+        agent_id: string;
+        agent_name: string;
+        access_policy: unknown;
+        owner_id: string | null;
+        owner_name: string | null;
+        member: boolean;
+        corner: boolean;
+        reachable: boolean;
+      }>(
+        // Reachability is a fact about the HELPER, not about this Room: only the
+        // Room turn loop posts presence (a corner never does), so a mention in a
+        // corner has to see its agent's heartbeat from the Room the same daemon
+        // serves. Hence no room filter on the presence lookup.
+        `SELECT identity.id agent_id,COALESCE(NULLIF(identity.name,''),'The agent') agent_name,
+                a.access_policy,a.owner_id,owner.name owner_name,
+                EXISTS(SELECT 1 FROM rooms room WHERE room.id=$2 AND room.parent_id IS NOT NULL) corner,
+                EXISTS(
+                  SELECT 1 FROM memberships membership
+                  WHERE membership.room_id=$2 AND membership.identity_id=identity.id
+                    AND membership.removed_at IS NULL
+                ) member,
+                EXISTS(
+                  SELECT 1 FROM live_outputs lo
+                  WHERE lo.agent_id=identity.id AND lo.kind='presence'
+                    AND lo.body->>'status'='online'
+                    AND lo.updated_at >= now() - make_interval(secs => $3)
+                ) reachable
+         FROM identities identity
+         LEFT JOIN agents a ON a.agent_id=identity.id
+         LEFT JOIN identities owner ON owner.id=a.owner_id
+         WHERE identity.id=ANY($1::text[]) AND identity.kind='agent'`,
+        [[...mentionIds], roomId, AGENT_REACHABLE_HORIZON_MS / 1000],
+      );
+      const bucket = accessNoticeBucket(Date.now());
+      for (const agent of agents.rows) {
+        const phrase = this.unansweredMentionPhrase(agent, sender, senderId);
+        if (!phrase) continue;
+        await systemLine(this.database, {
+          roomId,
+          id: createHash('sha256')
+            .update(
+              `access-notice|${roomId}|${agent.agent_id}|${senderId}|${phrase.reason}|${bucket}`,
+            )
+            .digest('hex'),
+          subject: { kind: 'agent', id: agent.agent_id, name: agent.agent_name },
+          verb: phrase.verb,
+          ...(phrase.object ? { object: phrase.object } : {}),
+          consequence: phrase.consequence,
+        });
+      }
+    } catch (error) {
+      console.error('[server] could not inscribe an unanswered mention:', error);
+    }
+  }
+
+  /** The one reason this mention goes unanswered, or nothing when it will be. */
+  private unansweredMentionPhrase(
+    agent: {
+      agent_id: string;
+      agent_name: string;
+      access_policy: unknown;
+      owner_id: string | null;
+      owner_name: string | null;
+      member: boolean;
+      corner: boolean;
+      reachable: boolean;
+    },
+    sender: { kind: 'human' | 'agent'; name: string },
+    senderId: string,
+  ):
+    | { reason: string; verb: string; consequence: string; object?: { text: string; id: string } }
+    | undefined {
+    // A corner is carried by its MEMBERS, so a mention of an agent that is not
+    // one resolves fine and then produces nothing at all — no turn, no message,
+    // no error.
+    if (!agent.member) {
+      return agent.corner
+        ? {
+            reason: 'not-a-member',
+            verb: 'could not be reached',
+            consequence: 'not a member of this corner',
+          }
+        : undefined;
+    }
+    // An agent is a server-validated Room member; the owner's cost policy gates
+    // people, and an agent-to-agent hop is capped elsewhere.
+    const permitted =
+      sender.kind !== 'human' ||
+      senderMayAddressAgent(
+        parseAgentAccessPolicy(agent.access_policy),
+        senderId,
+        agent.owner_id ?? undefined,
+      );
+    if (!permitted) {
+      return {
+        reason: 'refused',
+        verb: 'did not answer',
+        object: { text: sender.name, id: senderId },
+        consequence: `only ${agent.owner_name ?? 'its owner'} may address ${agent.agent_name}, ask them for permission in the members page`,
+      };
+    }
+    if (agent.reachable) return undefined;
+    return {
+      reason: 'unreachable',
+      verb: 'did not answer',
+      object: { text: sender.name, id: senderId },
+      consequence: 'its helper is offline, so nothing was started',
+    };
   }
   private async resolveMessageMentions(
     roomId: string,
@@ -2615,6 +2763,83 @@ export class PhoneService {
     });
   }
   /**
+   * Who may address this agent. Authorization is the yolo axis: the agent's owner
+   * (the identity that connected it) or a Workspace manager. The row is the ONLY
+   * authority — a running helper reads it through `getRoomAuthority` on its next
+   * poll, so the change takes effect without a reconnect or a restart.
+   *
+   * A change posts one system line to every live Room the agent is in, so the
+   * people who were being refused can see that they no longer are. The line
+   * mentions nobody; like any message it reaches a phone only in a DM, where
+   * telling that one person they may now ask is the point.
+   */
+  private async updateAgentAccessPolicy(
+    input: Input<'updateAgentAccessPolicy'>,
+    viewerId: string,
+  ) {
+    if (!isAgentAccessPolicy(input.policy)) throw new Error('policy is invalid');
+    const allow = input.policy === 'allowlist' ? (input.allow ?? []) : [];
+    if (input.policy === 'allowlist') {
+      if (!allow.length || allow.length > MAX_ACCESS_ALLOWLIST_ENTRIES)
+        throw new Error('allowlist is invalid');
+      if (allow.some((entry) => typeof entry !== 'string' || !/^[0-9a-f]{64}$/.test(entry)))
+        throw new Error('allowlist is invalid');
+    }
+    const agent = (
+      await this.database.query<{
+        owner_id: string;
+        agent_name: string;
+        viewer_name: string;
+        owner_name: string;
+      }>(
+        `SELECT a.owner_id,agent.name agent_name,viewer.name viewer_name,owner.name owner_name
+         FROM agents a
+         JOIN identities agent ON agent.id=a.agent_id
+         JOIN identities owner ON owner.id=a.owner_id
+         JOIN memberships m ON m.identity_id=a.agent_id
+           AND m.workspace_id=$2 AND m.room_id IS NULL AND m.removed_at IS NULL
+         JOIN identities viewer ON viewer.id=$3
+         WHERE a.agent_id=$1`,
+        [input.agentId, input.workspaceId, viewerId],
+      )
+    ).rows[0];
+    if (!agent) throw new Error('agent not found in workspace');
+    const manager = await this.database.query(
+      `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND role IN ('owner','admin') AND removed_at IS NULL`,
+      [input.workspaceId, viewerId],
+    );
+    if (agent.owner_id !== viewerId && !manager.rowCount)
+      throw new Error(ACCESS_POLICY_AUTHORITY_MESSAGE);
+    await this.database.transaction(async (database) => {
+      const changed = await database.query(
+        `UPDATE agents SET access_policy=$2::jsonb,updated_at=now()
+         WHERE agent_id=$1 AND access_policy<>$2::jsonb`,
+        [input.agentId, JSON.stringify(agentAccessPolicyRecord(input.policy, allow))],
+      );
+      if (!changed.rowCount) return;
+      const rooms = await database.query<{ room_id: string }>(
+        `SELECT m.room_id FROM memberships m
+         JOIN rooms r ON r.id=m.room_id
+         WHERE m.identity_id=$1 AND m.room_id IS NOT NULL AND m.removed_at IS NULL
+           AND r.workspace_id=$2 AND r.archived_at IS NULL`,
+        [input.agentId, input.workspaceId],
+      );
+      for (const room of rooms.rows)
+        await systemLine(database, {
+          roomId: room.room_id,
+          subject: { kind: 'person', id: viewerId, name: agent.viewer_name },
+          verb: 'changed who may address',
+          object: { text: agent.agent_name, id: input.agentId },
+          consequence:
+            input.policy === 'everyone'
+              ? 'anyone in the Room may ask now'
+              : input.policy === 'creator'
+                ? `only ${agent.owner_name} may ask now`
+                : 'only an allowed member may ask now',
+        });
+    });
+  }
+  /**
    * Roll back an agent registration whose connect helper never came up. Only
    * an agent that has NEVER reported presence is unrealizable: anything else
    * is a real daemon and must be removed by a human through removeAgent.
@@ -2689,7 +2914,7 @@ export class PhoneService {
         `UPDATE agents SET soul=NULL,selected_model=NULL,selected_effort=NULL,
            model_catalog='[]'::jsonb,commands='[]'::jsonb,schedule_ids='[]'::jsonb,
            yolo_mode=false,yolo_set_by=NULL,yolo_set_at=NULL,
-           access_policy='{"type":"creator"}'::jsonb,updated_at=now()
+           access_policy='{"type":"everyone"}'::jsonb,updated_at=now()
          WHERE agent_id=$1`,
         [input.agentId],
       );
@@ -3220,6 +3445,9 @@ export class PhoneService {
 /** Plain refusal for a yolo flip by anyone but the agent owner or a Workspace manager. */
 export const YOLO_AUTHORITY_MESSAGE = "Only the agent's owner or a workspace admin can change this";
 
+/** The same authority axis, for who may address an agent. */
+export const ACCESS_POLICY_AUTHORITY_MESSAGE = YOLO_AUTHORITY_MESSAGE;
+
 /**
  * The Google Play review identity signs in without GitHub, so it holds no
  * GitHub token and must never acquire one: it cannot install the App, create or
@@ -3267,6 +3495,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'updateAgentSoul',
   'updateAgentModelSelection',
   'updateAgentYolo',
+  'updateAgentAccessPolicy',
   'removeAgent',
   'updatePersonProfile',
   'updateIdentityFace',

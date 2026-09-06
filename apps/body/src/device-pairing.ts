@@ -26,7 +26,7 @@ export interface DevicePairingGrant {
   monolithBaseUrl: string;
   daemonExchangeToken: string;
   llmEnvFile?: string;
-  /** `usebeeline connect --access everyone`; absent keeps the safe `creator`. */
+  /** `usebeeline connect --access creator`; absent keeps the `everyone` default. */
   accessPolicy?: AgentAccessPolicy;
 }
 

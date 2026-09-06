@@ -1,5 +1,6 @@
 import type { SystemEvent } from './system-events.js';
 import type { AgentGrantKind, AgentGrantStatus, CommandGrantScript } from './agent-grants.js';
+import type { AgentAccessPolicy } from './agent-access.js';
 
 export interface AttachmentReference {
   url: string;
@@ -422,11 +423,28 @@ export type AgentDetailView = {
    * workspace admin); the phone mirrors it, never decides it.
    */
   readonly yolo?: AgentYoloView;
+  /**
+   * Who may address this agent. The server is the authority — this is the value a
+   * running helper obeys, not a copy of what its runtime record was paired with.
+   */
+  readonly access?: AgentAccessView;
   /** The grant store: every non-pending grant, newest first. */
   readonly grants?: readonly AgentGrantView[];
   /** Server verdict: this viewer may decide and revoke this agent's grants. */
   readonly canManageGrants?: boolean;
   readonly watchFilters: readonly SurfaceWatchFilter[];
+};
+
+/**
+ * The agent's access policy as the profile shows it. `owner` names who to ask when
+ * the answer is "only the owner"; `canChange` is the server's verdict for this
+ * viewer (agent owner or a workspace admin), mirrored by the phone, never decided
+ * by it.
+ */
+export type AgentAccessView = {
+  readonly policy: AgentAccessPolicy;
+  readonly owner?: { readonly id: string; readonly name: string };
+  readonly canChange: boolean;
 };
 
 export type AgentYoloView = {

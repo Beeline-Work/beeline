@@ -40,6 +40,7 @@ import type { LiveHub } from './live.js';
 import { CORNER_WAKE_MIN_INTERVAL_MS, CORNER_WAKE_TIMEOUT_MS, wakesCorner } from './corner-wake.js';
 import { restateSystemLine, systemLine, type SystemPhrase } from './system-line.js';
 import { mediaIdFromUrl } from './media-ttl.js';
+import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-contract/agent-access';
 
 type Input<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['input'];
 type Output<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['output'];
@@ -160,7 +161,10 @@ export class DaemonService {
           authenticatedAgentId,
         )) as Output<Name>;
       case 'getRoomAuthority':
-        return (await this.roomAuthority(input as Input<'getRoomAuthority'>)) as Output<Name>;
+        return (await this.roomAuthority(
+          input as Input<'getRoomAuthority'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
       case 'getPermissionAuthority':
         return (await this.permissionAuthority(
           input as Input<'getPermissionAuthority'>,
@@ -590,16 +594,33 @@ export class DaemonService {
     );
     return new Set(expired.rows.map((row) => row.id));
   }
-  private async roomAuthority(input: Input<'getRoomAuthority'>) {
+  /**
+   * Who this principal is in the Room, and — the half a helper cannot decide for
+   * itself — whether the agent asking is allowed to answer them.
+   *
+   * The access policy lives on `agents.access_policy` and is read HERE, on the
+   * round trip the intake loop already makes per candidate message. That is what
+   * makes an owner's change in the members page effective on a helper that is
+   * already running: the next poll asks again and gets the new answer, with no
+   * reconnect, no restart, and nothing cached in the runtime record.
+   */
+  private async roomAuthority(input: Input<'getRoomAuthority'>, agentId: string) {
     const row = (
       await this.database.query<{
         workspace_id: string;
         role: 'owner' | 'admin' | 'member';
         kind: 'human' | 'agent';
         archived: boolean;
+        access_policy: unknown;
+        owner_id: string | null;
       }>(
-        `SELECT r.workspace_id,m.role,i.kind,r.archived_at IS NOT NULL archived FROM rooms r LEFT JOIN memberships m ON m.room_id=r.id AND m.identity_id=$2 AND m.removed_at IS NULL LEFT JOIN identities i ON i.id=$2 WHERE r.id=$1`,
-        [input.roomId, input.principalId],
+        `SELECT r.workspace_id,m.role,i.kind,r.archived_at IS NOT NULL archived,a.access_policy,a.owner_id
+         FROM rooms r
+         LEFT JOIN memberships m ON m.room_id=r.id AND m.identity_id=$2 AND m.removed_at IS NULL
+         LEFT JOIN identities i ON i.id=$2
+         LEFT JOIN agents a ON a.agent_id=$3
+         WHERE r.id=$1`,
+        [input.roomId, input.principalId, agentId],
       )
     ).rows[0];
     return row
@@ -609,6 +630,21 @@ export class DaemonService {
           ...(row.role ? { role: row.role } : {}),
           ...(row.kind ? { principalKind: row.kind } : {}),
           archived: row.archived,
+          // An agent is a server-validated Room member and is never gated by the
+          // owner's cost policy; only a human sender answers to it. With no
+          // `agents` row the server has nothing to say and says nothing: the
+          // field is absent and the helper keeps its own reading.
+          ...(row.access_policy === null
+            ? {}
+            : {
+                mayAddressAgent:
+                  row.kind === 'agent' ||
+                  senderMayAddressAgent(
+                    parseAgentAccessPolicy(row.access_policy),
+                    input.principalId,
+                    row.owner_id ?? undefined,
+                  ),
+              }),
         }
       : { workspaceId: input.roomId, member: false, archived: true };
   }

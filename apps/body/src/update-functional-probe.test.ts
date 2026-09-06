@@ -7,7 +7,7 @@ import {
   probeOutcome,
   runUpdateFunctionalProbe,
   UpdateFunctionalProbeError,
-  type ProviderRefusal,
+  type ProbeAppeal,
 } from './update-functional-probe.js';
 
 const roots: string[] = [];
@@ -47,6 +47,15 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   } else if (message.method === 'session/new') {
     send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'probe-session' } });
   } else if (message.method === 'session/prompt') {
+    // Neither shape leaves pi a turn record: the failure is the ACP answer.
+    if (behavior === 'rpc-internal' || behavior === 'rpc-invalid-params') {
+      const code = behavior === 'rpc-internal' ? -32603 : -32602;
+      const text = behavior === 'rpc-internal' ? 'Internal error' : 'Invalid params';
+      send({ jsonrpc: '2.0', id: message.id, error: { code, message: text } });
+      return;
+    }
+    // Never answers, and streams nothing: the prompt's inactivity timer fires.
+    if (behavior === 'silent') return;
     if (behavior === 'served') {
       send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'probe-session', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'READY' } } } });
     } else if (records[behavior]) {
@@ -152,12 +161,12 @@ describe('runUpdateFunctionalProbe', () => {
 
     it('passes, logged, when the current release gets the identical provider refusal', async () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-      const compared: ProviderRefusal[] = [];
+      const compared: ProbeAppeal[] = [];
       // The "current release" is the same fake harness refused with the same 404.
       await expect(
         probe('refused-404', {
-          compareWithCurrentRelease: async (refusal) => {
-            compared.push(refusal);
+          compareWithCurrentRelease: async (appeal) => {
+            compared.push(appeal);
             return probeOutcome(() => probe('refused-404'));
           },
         }),
@@ -168,7 +177,13 @@ describe('runUpdateFunctionalProbe', () => {
           modelAnswerReason: `${refusal404} (the current release gets the same 404)`,
         }),
       );
-      expect(compared).toEqual([{ status: 404, reason: refusal404 }]);
+      expect(compared).toEqual([
+        {
+          kind: 'provider-refusal',
+          reason: refusal404,
+          refusal: { status: 404, reason: refusal404 },
+        },
+      ]);
       expect(warn).toHaveBeenCalledWith(
         expect.stringContaining('the provider refused this release and the current release alike'),
       );
@@ -212,6 +227,94 @@ describe('runUpdateFunctionalProbe', () => {
       );
       await expect(probe('no-record', { compareWithCurrentRelease: compare })).rejects.toThrow(
         'pi left no readable turn record',
+      );
+      expect(compare).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * 2026-09-06 (v0.0.51): every helper rolled a sound bundle back. Codex-harness
+   * helpers logged `functional update probe failed (turn-failed): ACP error
+   * -32603: Internal error` with the account out of credits; pi/GLM helpers
+   * logged `functional update probe failed (turn-failed): ACP session/prompt
+   * timed out after 45000ms of inactivity` while OpenRouter threw 429s. Neither
+   * shape carries a status, so neither reached the refusal appeal above.
+   */
+  describe('an ACP-level failure of the probe turn', () => {
+    it('passes, logged, when the current release fails with the same internal error', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const compared: ProbeAppeal[] = [];
+      await expect(
+        probe('rpc-internal', {
+          compareWithCurrentRelease: async (appeal) => {
+            compared.push(appeal);
+            return probeOutcome(() => probe('rpc-internal'));
+          },
+        }),
+      ).resolves.toEqual(
+        expect.objectContaining({
+          sessionStarted: true,
+          turnCompleted: false,
+          modelAnswer: 'unavailable',
+          modelAnswerReason:
+            'ACP error -32603: Internal error (the current release fails the same way)',
+        }),
+      );
+      expect(compared).toEqual([
+        {
+          kind: 'acp-turn-failure',
+          reason: 'ACP error -32603: Internal error',
+          failure: { kind: 'server-internal', code: -32603 },
+        },
+      ]);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('the probe turn failed the same way on this release'),
+      );
+    });
+
+    it('still fails when the current release serves the same turn', async () => {
+      const error = await probe('rpc-internal', {
+        compareWithCurrentRelease: async () => probeOutcome(() => probe('served')),
+      }).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(UpdateFunctionalProbeError);
+      expect((error as UpdateFunctionalProbeError).reason).toBe('turn-failed');
+      expect((error as Error).message).toBe(
+        'functional update probe failed (turn-failed): ACP error -32603: Internal error; ' +
+          'the current release answered',
+      );
+    });
+
+    it('passes when the prompt times out on inactivity for the current release too', async () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const result = await probe('silent', {
+        turnTimeoutMs: 1_000,
+        compareWithCurrentRelease: async () =>
+          probeOutcome(() => probe('silent', { turnTimeoutMs: 1_000 })),
+      });
+      expect(result).toMatchObject({ turnCompleted: false, modelAnswer: 'unavailable' });
+      expect(result.modelAnswerReason).toContain(
+        'ACP session/prompt timed out after 1000ms of inactivity',
+      );
+      expect(result.modelAnswerReason).toContain('(the current release fails the same way)');
+    }, 30_000);
+
+    it('still fails when the current release fails some other way', async () => {
+      const error = await probe('silent', {
+        turnTimeoutMs: 1_000,
+        compareWithCurrentRelease: async () => probeOutcome(() => probe('refused-404')),
+      }).catch((caught: unknown) => caught);
+      expect((error as Error).message).toContain(
+        'the current release got a different refusal (provider error 404',
+      );
+    }, 30_000);
+
+    it('never appeals a JSON-RPC code only a bad bundle produces', async () => {
+      const compare = vi.fn(async () => ({ kind: 'served' }) as const);
+      const error = await probe('rpc-invalid-params', {
+        compareWithCurrentRelease: compare,
+      }).catch((caught: unknown) => caught);
+      expect((error as Error).message).toBe(
+        'functional update probe failed (turn-failed): ACP error -32602: Invalid params',
       );
       expect(compare).not.toHaveBeenCalled();
     });

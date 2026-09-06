@@ -3,14 +3,16 @@
  * release still installed beside it (`update-attempt.json`'s
  * `previousReleaseId`) and report what THAT bundle gets from the provider.
  *
- * A provider refusal with a 400/404/422 can be a bundle fault (a malformed
+ * A 400/404/422 refusal, an ACP error with a server-internal code, and the
+ * probe turn's inactivity timeout can each be a bundle fault (a malformed
  * request from a bad `models.json` override) or the provider's answer to a
  * request every release composes the same way (2026-09-03: OpenRouter's 404
  * "No endpoints found that can handle the requested parameters" from a routing
- * pin both v0.0.39 and v0.0.40 wrote; the successor rolled back six helpers
- * for a fault the restored release had too). Only the previous bundle's own
- * code can settle which: it is spawned as `beeline update-probe --config
- * <runtime.json>` from its own entrypoint, prints one JSON line, and exits.
+ * pin both v0.0.39 and v0.0.40 wrote; 2026-09-06: codex out of credits and
+ * OpenRouter throttling GLM rolled the whole v0.0.51 fleet back for a fault
+ * every release had). Only the previous bundle's own code can settle which:
+ * it is spawned as `beeline update-probe --config <runtime.json>` from its
+ * own entrypoint, prints one JSON line, and exits.
  * A release that predates the subcommand prints usage and exits 1, which
  * reads as `unavailable` — the successor then rolls back as before.
  */
@@ -31,8 +33,14 @@ import {
   type CurrentReleaseProbeOutcome,
 } from './update-functional-probe.js';
 
-/** The whole comparison, spawn to exit; the caller extends the systemd start budget by it. */
-export const CURRENT_RELEASE_PROBE_TIMEOUT_MS = 80_000;
+/**
+ * The whole comparison, spawn to exit; the caller extends the systemd start
+ * budget by it. It must exceed the probe's own worst case (10s initialize +
+ * 20s session/new + 45s turn) plus spawn and agent-home setup, because an
+ * inactivity timeout on the successor's turn is appealed by letting the
+ * current release spend that same 45s of silence.
+ */
+export const CURRENT_RELEASE_PROBE_TIMEOUT_MS = 120_000;
 
 export const UPDATE_PROBE_COMMAND = 'update-probe';
 

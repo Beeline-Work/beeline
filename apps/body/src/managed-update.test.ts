@@ -235,7 +235,111 @@ describe('managed update handoff', () => {
 
     expect(result).toMatchObject({ kind: 'failed', rolledBack: true });
     expect(await activeReleaseId(layout)).toBe('old');
-    expect(await readUpdateAttempt(layout)).toMatchObject({ releaseId: 'new', status: 'reverted' });
+    expect(await readUpdateAttempt(layout)).toMatchObject({
+      releaseId: 'new',
+      status: 'reverted',
+      revertedBy: 'agent-1',
+      failure: `functional update probe failed (${reason}): deliberate acceptance fault`,
+    });
+  });
+
+  /**
+   * Every daemon on the host shares one update attempt, so the first genuine
+   * fault reverts it for the fleet. 2026-09-06 (v0.0.51): helpers whose own
+   * probes had passed then logged `successor release 62c8fcb5 did not produce
+   * functional proof`, which reads as a bad bundle. The rollback stays; the
+   * sentence names the sibling that caused it.
+   */
+  describe('a sibling that already reverted the shared attempt', () => {
+    const siblingFailure = 'functional update probe failed (turn-failed): ACP error -32603';
+
+    it("names the sibling instead of blaming this daemon's own passing probe", async () => {
+      const { layout, runtimeDir } = await layoutFixture();
+      const update = await ManagedUpdateHandoff.create(layout, runtimeDir, () => 1_000, {
+        requiredProbeIds: ['agent-1', 'agent-2'],
+      });
+      await rm(layout.libDir);
+      await symlink('beeline-releases/new', layout.libDir);
+      await update.check();
+
+      const result = await gateManagedSuccessor({
+        layout,
+        runtimeDir,
+        loadedRelease: 'new',
+        probeId: 'agent-1',
+        // The sibling's rollback lands while this daemon is still probing.
+        probe: async () => {
+          await rollbackFailedSuccessor(layout, undefined, {
+            probeId: 'agent-2',
+            failure: siblingFailure,
+          });
+          return functionalProof;
+        },
+      });
+
+      expect(result).toMatchObject({ kind: 'failed', rolledBack: false });
+      expect((result as { error: Error }).error.message).toBe(
+        'successor release new lost its attempt while this daemon proved it: ' +
+          "this daemon's own probe passed; " +
+          `shared update attempt reverted by sibling agent-2: ${siblingFailure}`,
+      );
+      // The fleet-wide rollback stands: one sibling's genuine fault reverts all.
+      expect(await activeReleaseId(layout)).toBe('old');
+    });
+
+    it('says the same when the revert landed before this daemon probed at all', async () => {
+      const { layout, runtimeDir } = await layoutFixture();
+      const update = await ManagedUpdateHandoff.create(layout, runtimeDir, () => 1_000, {
+        requiredProbeIds: ['agent-1', 'agent-2'],
+      });
+      await rm(layout.libDir);
+      await symlink('beeline-releases/new', layout.libDir);
+      await update.check();
+      await rollbackFailedSuccessor(layout, undefined, {
+        probeId: 'agent-2',
+        failure: siblingFailure,
+      });
+
+      const probe = vi.fn();
+      const result = await gateManagedSuccessor({
+        layout,
+        runtimeDir,
+        loadedRelease: 'new',
+        probeId: 'agent-1',
+        probe,
+      });
+
+      expect(probe).not.toHaveBeenCalled();
+      expect((result as { error: Error }).error.message).toBe(
+        'successor release new was reverted before this daemon probed it: ' +
+          `shared update attempt reverted by sibling agent-2: ${siblingFailure}`,
+      );
+    });
+
+    it("keeps the plain sentence when nothing reverted this daemon's attempt", async () => {
+      const { layout, runtimeDir } = await layoutFixture();
+      const update = await ManagedUpdateHandoff.create(layout, runtimeDir, () => 1_000);
+      await rm(layout.libDir);
+      await symlink('beeline-releases/new', layout.libDir);
+      await update.check();
+      // Confirmed by this same probe id already: the proof is refused, no revert.
+      await proveLoadedReleaseReady(layout, runtimeDir, 'new', {
+        probeId: 'agent-1',
+        functionalProof,
+      });
+
+      const result = await gateManagedSuccessor({
+        layout,
+        runtimeDir,
+        loadedRelease: 'new',
+        probeId: 'agent-1',
+        probe: async () => functionalProof,
+      });
+
+      expect((result as { error: Error }).error.message).toBe(
+        'successor loaded release new, not the pending desired release',
+      );
+    });
   });
 
   it('keeps the journal until every required runtime proves a functional session', async () => {

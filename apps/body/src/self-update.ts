@@ -727,6 +727,8 @@ export interface UpdateAttemptRecord {
   confirmBy: number;
   status: 'pending' | 'confirmed' | 'reverted';
   failure?: string;
+  /** The probe id of the daemon whose own failure reverted this shared attempt. */
+  revertedBy?: string;
   /** Running agent identities that must each complete a functional probe. */
   requiredProbeIds?: string[];
   /** Successfully probed identities; updated atomically under the install lock. */

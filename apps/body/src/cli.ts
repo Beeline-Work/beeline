@@ -67,6 +67,7 @@ import {
 } from './systemd.js';
 import {
   ManagedUpdateDrain,
+  attemptFailureText,
   gateManagedSuccessor,
   ManagedUpdateHandoff,
   rollbackFailedSuccessor,
@@ -293,7 +294,8 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
         let functionalProof: Awaited<ReturnType<typeof runUpdateFunctionalProbe>> | undefined;
         if (layout && pendingSuccessor) {
           // The release this successor would roll back to; a provider refusal
-          // it shares with the successor is not the successor's fault.
+          // or ACP turn failure it shares with the successor is not the
+          // successor's fault.
           const currentReleaseId = (await readUpdateAttempt(layout))?.previousReleaseId;
           const gate = await gateManagedSuccessor({
             layout,
@@ -308,10 +310,11 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
                 sandboxRequired: runtime.sandbox !== 'off',
                 ...(currentReleaseId
                   ? {
-                      compareWithCurrentRelease: async (refusal) => {
+                      compareWithCurrentRelease: async (appeal) => {
                         console.warn(
-                          `[thin-core] successor probe refused by the provider (${refusal.reason}); ` +
-                            `probing the current release ${currentReleaseId} for the same refusal`,
+                          `[thin-core] successor probe got no answer from the provider ` +
+                            `(${appeal.reason}); probing the current release ${currentReleaseId} ` +
+                            `for the same outcome`,
                         );
                         await extendSystemdStartTimeout(CURRENT_RELEASE_PROBE_TIMEOUT_MS + 15_000);
                         return probeReleaseInSubprocess({
@@ -372,7 +375,15 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   } catch (error) {
     const rolledBack =
       successorRolledBack ||
-      (layout && pendingSuccessor && !ready && (await rollbackFailedSuccessor(layout, runtimeDir)));
+      (layout &&
+        pendingSuccessor &&
+        !ready &&
+        // Named, so a sibling daemon's journal can say whose failure reverted
+        // the attempt it shares with this one.
+        (await rollbackFailedSuccessor(layout, runtimeDir, {
+          probeId: runtime.agent.publicKey,
+          failure: attemptFailureText(error),
+        })));
     if (rolledBack) {
       console.error('[thin-core] successor failed before READY; previous release restored once');
       const alertRoom = runtime.rooms[0]?.channelId;

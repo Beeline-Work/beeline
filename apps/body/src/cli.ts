@@ -81,7 +81,12 @@ import {
   runUpdateProbeCommand,
   UPDATE_PROBE_COMMAND,
 } from './current-release-probe.js';
-import { reportUpdateRollback, queueUpdateRollbackAlert } from './update-rollback-alert.js';
+import {
+  reportUpdateRollback,
+  queueUpdateRollbackAlert,
+  clearUpdateRollbackAlert,
+  clearUpdateRollbackAlertIfConfirmed,
+} from './update-rollback-alert.js';
 import { writeDaemonReleaseStatus } from './release-status.js';
 import { runScratchSweep } from './scratch-sweep.js';
 
@@ -251,6 +256,12 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
       pendingSuccessor = true;
     }
     loadedRelease = await activeReleaseId(layout);
+    // A prior process may have queued a rollback alert that has since been
+    // overtaken by events (this exact release later confirmed active
+    // fleet-wide). Check before this process has any chance to queue an
+    // alert of its own for a failure of ITS OWN — that check happens later
+    // and must never observe this early clear.
+    await clearUpdateRollbackAlertIfConfirmed(runtimeDir, loadedRelease);
     loadedReleaseIdentity = await readInstalledBundleIdentity(layout);
     config.daemonReleaseVersion = loadedReleaseIdentity?.version;
     config.daemonSourceSha = loadedReleaseIdentity?.commit;
@@ -352,6 +363,10 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
           }
           functionalProof = gate.proof;
           pendingSuccessor = false;
+          // A fresh gate pass proves this update path is healthy right now,
+          // whichever release it names — it supersedes any stale rollback
+          // record from an earlier failed attempt.
+          await clearUpdateRollbackAlert(runtimeDir);
           console.log(
             `[thin-core] successor functional probe passed on exact release ${loadedRelease}: ` +
               `${functionalProof?.harness ?? 'unknown'} session/new + turn` +

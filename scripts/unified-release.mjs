@@ -203,29 +203,46 @@ export function assertDaemonFleetReady(status, version, sourceSha) {
   // An agent that has NEVER reported (no presence output at all) is a ghost
   // registration, not a daemon in trouble: it cannot confirm a release and it
   // must not block one. A daemon that reported before but has gone silent is
-  // 'missing'/'stale'/'offline' and still blocks — that is the real signal.
+  // 'missing'/'stale'/'offline' and still counts as observed below.
   const observed = daemons.filter((daemon) => daemon?.state !== 'never-seen');
   if (observed.length === 0) fail('daemon readiness reported no agents that ever reported');
-  const failures = observed.filter(
-    (daemon) =>
-      daemon?.state !== 'ready' ||
-      daemon?.version !== version ||
-      daemon?.sha !== sourceSha,
+  // A helper on someone else's machine is proof-of-runnability, not a veto: one
+  // exact-version convergence proves the bundle runs. Every other observed
+  // daemon is informational (named in the summary, never a release blocker) —
+  // unless NONE converged, which means the bundle itself is bad.
+  const converged = observed.filter(
+    (daemon) => daemon?.state === 'ready' && daemon?.version === version && daemon?.sha === sourceSha,
   );
-  if (failures.length > 0) {
+  const laggards = observed.filter((daemon) => !converged.includes(daemon));
+  if (converged.length === 0) {
     fail(
-      failures
-        .map(
-          (daemon) =>
-            `agent ${daemon?.agentPubkey ?? '<unknown>'} reported ` +
-            `${daemon?.state ?? '<missing-state>'} ` +
-            `${daemon?.version ?? '<missing-version>'}@${daemon?.sha ?? '<missing-sha>'}; ` +
-            `expected ready ${version}@${sourceSha}`,
-        )
-        .join('\n'),
+      `no daemon converged to ${version}@${sourceSha}; the bundle does not run:\n` +
+        laggards
+          .map(
+            (daemon) =>
+              `agent ${daemon?.agentPubkey ?? '<unknown>'} reported ` +
+              `${daemon?.state ?? '<missing-state>'} ` +
+              `${daemon?.version ?? '<missing-version>'}@${daemon?.sha ?? '<missing-sha>'}; ` +
+              `expected ready ${version}@${sourceSha}`,
+          )
+          .join('\n'),
     );
   }
-  return daemons;
+  return { daemons, observed, converged, laggards };
+}
+
+export function describeDaemonFleet({ converged, laggards }, version, sourceSha) {
+  const total = converged.length + laggards.length;
+  const summary = `daemon fleet: ${converged.length}/${total} on ${version} (${sourceSha.slice(0, 8)})`;
+  if (laggards.length === 0) return summary;
+  const laggardText = laggards
+    .map(
+      (daemon) =>
+        `${String(daemon?.agentPubkey ?? '<unknown>').slice(0, 8)} ` +
+        `${daemon?.version ?? '<missing-version>'}@${String(daemon?.sha ?? '<missing-sha>').slice(0, 8)}`,
+    )
+    .join(', ');
+  return `${summary}; not converged: ${laggardText} - informational, does not block`;
 }
 
 function options(argv) {
@@ -259,8 +276,8 @@ function main(argv) {
     return;
   }
   if (command === 'assert-daemons') {
-    assertDaemonFleetReady(readJson(args.status), args.version, args.sha);
-    console.log(`daemon fleet READY on ${args.version}@${args.sha}`);
+    const result = assertDaemonFleetReady(readJson(args.status), args.version, args.sha);
+    console.log(describeDaemonFleet(result, args.version, args.sha));
     return;
   }
   const state = readJson(args.state);

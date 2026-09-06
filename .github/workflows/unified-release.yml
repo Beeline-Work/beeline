@@ -429,8 +429,16 @@ jobs:
           const readiness = JSON.parse(fs.readFileSync(readinessPath, 'utf8'));
           const server = JSON.parse(fs.readFileSync(serverPath, 'utf8'));
           const mobile = JSON.parse(fs.readFileSync(mobilePath, 'utf8'));
-          const daemons = readiness.daemons;
-          const daemon = daemons[0];
+          const daemons = readiness.daemons ?? [];
+          // assert-daemons above only proved at least one daemon converged; a
+          // stale, merely-informational laggard may still sort first in the
+          // list, so pick the daemon that actually matches this exact release.
+          const daemon = daemons.find(
+            (candidate) =>
+              candidate.state === 'ready' &&
+              candidate.version === process.env.RELEASE_VERSION &&
+              candidate.sha === process.env.RELEASE_SHA,
+          );
           fs.writeFileSync(outputPath, JSON.stringify({
             server: { version: server.version, sourceSha: server.sourceSha },
             daemon: { version: daemon.version, sourceSha: daemon.sha },

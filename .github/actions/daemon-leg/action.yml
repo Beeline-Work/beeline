@@ -136,9 +136,12 @@ runs:
               --status "$RUNNER_TEMP/release-readiness.json" \
               --version "$RELEASE_VERSION" \
               --sha "$RELEASE_SHA" \
+              > "$RUNNER_TEMP/release-readiness-summary.txt" \
               2> "$RUNNER_TEMP/release-readiness-error.txt"
           then
             cat "$RUNNER_TEMP/release-readiness.json"
+            cat "$RUNNER_TEMP/release-readiness-summary.txt"
+            { echo "## Daemon fleet"; echo; cat "$RUNNER_TEMP/release-readiness-summary.txt"; } >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           # One readiness table per minute, so a helper stuck on the old

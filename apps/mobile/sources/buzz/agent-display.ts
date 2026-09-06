@@ -49,7 +49,9 @@ export function resolveAgentDisplayIdentity(
   const face = agent?.face?.trim();
   return {
     name,
-    handle: agentHandle(name),
+    // Keep the established call shape while a local mobile install may still
+    // expose the previous two-argument declaration bundle.
+    handle: agentHandle(name, pubkey),
     personality: overlayPersonality || 'Steady, practical, and ready to help.',
     avatarSeed: overlay?.avatarSeed.trim() || pubkey || 'unknown-agent',
     ...(avatarUrl ? { avatarUrl } : {}),

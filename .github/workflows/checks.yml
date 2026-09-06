@@ -257,6 +257,12 @@ jobs:
       # produced before its dependents — and before the mobile leg, which
       # resolves @beeline/* from those dists exactly as Metro does.
       - run: npm run typecheck
+      # Keep the primary gate aligned with the command a mobile developer runs
+      # from this directory. The root script also generates Expo route types;
+      # this second, literal invocation catches any drift in that wrapper.
+      - name: Typecheck the mobile app as developers do
+        working-directory: apps/mobile
+        run: npx tsc --noEmit
       # Cheapest possible rot check, and it belongs on the one gate no path
       # filter can skip: deleting a test that a workflow names touches no
       # workflow file, so a filtered lane would never see it.

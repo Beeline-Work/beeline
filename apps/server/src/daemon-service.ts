@@ -1019,17 +1019,20 @@ export class DaemonService {
     // Mentions are server-validated against the Room roster: a member mention
     // (human or agent) becomes a real mention; an unknown name stays plain text.
     const validatedMentions = mentions.filter((value) => memberIds.has(value));
-    // At most ONE human mention per agent turn is delivered; further human tags
-    // in the same message stay as plain text.
+    // A tag an agent writes reaches the person it names, exactly as a
+    // human-authored one does: the same stored mention id, the same push
+    // fan-out, the same highlight. There is no per-turn numeric cap. One kept
+    // only the FIRST human id in the reply's resolution order and dropped every
+    // other tag, so a correctly spelled handle vanished with nothing said to
+    // anybody — a laundered tag, which is worse than the over-tagging it was
+    // meant to stop. How often an agent should tag a human is a matter for its
+    // instructions (`beeline-skill.ts`), never for a silent truncation.
     let deliveredMentions = validatedMentions;
-    const firstHumanMention = validatedMentions.find((value) => humanIds.has(value));
-    if (firstHumanMention) {
-      deliveredMentions = validatedMentions.filter(
-        (value) => !humanIds.has(value) || value === firstHumanMention,
-      );
-      // A corner agent must not tag the user on completion: the merge summary
-      // card and its push already cover that. Turn-settling corner posts
-      // deliver no human mentions at all.
+    if (validatedMentions.some((value) => humanIds.has(value))) {
+      // The one human-tag rule that is not a cap: a corner agent must not tag
+      // the user on completion, because the merge summary card and its push
+      // already cover that. Turn-settling corner posts deliver no human
+      // mentions at all.
       const corner = (
         await this.database.query<{ corner: boolean }>(
           `SELECT EXISTS(SELECT 1 FROM corner_facts WHERE corner_id=rooms.id) corner

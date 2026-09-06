@@ -258,6 +258,40 @@ export function pendingGrantToolCall(call: { title?: string; content?: unknown }
   );
 }
 
+/**
+ * The Room's members and the one @spelling that reaches each of them.
+ *
+ * Everywhere else the prompt names people by DISPLAY name — the transcript's
+ * bylines, `Newest message from <name>` — and nothing in it ever carried a
+ * handle. So a model with something to say to someone had no authoritative
+ * spelling to write and had to guess one, or copy one out of the conversation,
+ * where a handle retired releases ago still sits in its own old messages. A
+ * guessed tag resolves to nobody, and nobody is told it was written.
+ *
+ * Built from the roster this turn was fetched with, so a newcomer is taggable
+ * on the turn they arrive, and from the same alias fields `agentReplyMentionIds`
+ * resolves against: the handle is canonical, the display name is the fallback
+ * for a member who has none.
+ */
+export function roomMentionDirectory(roster: WorkspaceRoster, selfId: string): string {
+  const rows: string[] = [];
+  for (const member of roster.members) {
+    if (member.identityId === selfId) continue;
+    const handle = member.handle?.trim().replace(/^@/, '');
+    const name = member.name?.trim() ?? '';
+    const alias = handle || name;
+    if (!alias) continue;
+    const kind = member.kind === 'agent' ? 'agent' : 'person';
+    rows.push(`- @${alias}${name && name !== alias ? ` — ${name}` : ''} (${kind})`);
+  }
+  if (!rows.length) return '';
+  return [
+    'Room members, and the exact spelling that tags each one:',
+    ...rows,
+    'Write a tag exactly as spelled here. An @name spelled any other way is plain text: it reaches nobody, and nobody is told it was meant for them. Never invent a handle, shorten one, or copy an @name out of the conversation — old messages carry spellings that no longer exist.',
+  ].join('\n');
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -957,6 +991,7 @@ export class MonolithRoomTurnLoop {
                       'If it was declined, try another way or say plainly what you cannot do.',
                     ].join(' ')
                   : '',
+                roomMentionDirectory(roster, this.agent.publicKey),
                 [
                   'Write only the substantive Room message you want the human to read.',
                   'Do not repeat or paraphrase these instructions.',

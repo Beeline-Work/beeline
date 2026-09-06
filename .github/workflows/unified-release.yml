@@ -397,10 +397,15 @@ jobs:
   delivery_report:
     needs: [initialize, confirm_app]
     runs-on: [self-hosted, beeline-prod-host]
+    permissions:
+      contents: write
+      actions: write
+      issues: write
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.initialize.outputs.release_sha }}
+          fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
           name: unified-release-app-${{ needs.initialize.outputs.release_sha }}
@@ -464,6 +469,59 @@ jobs:
             echo
             cat "$RUNNER_TEMP/delivery-report.txt"
           } >> "$GITHUB_STEP_SUMMARY"
+      # A GitHub Release is the changelog link the @system DM points to (no
+      # usebeeline.app/changelog exists today). Notes are generated from the
+      # exact sha range this release's ledger already recorded (`supersedes`
+      # in unified-release.json), not from `gh release create --generate-notes`,
+      # which needs a previous git TAG to diff against — one may not exist yet.
+      # `gh release create`/`notify` are both retried by a governor re-run of
+      # this same version+sha, so both are written to be no-ops on a repeat.
+      - name: Create the GitHub Release and DM each person that an update is out
+        env:
+          RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
+          RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BEELINE_RELEASE_NOTIFY_SECRET: ${{ secrets.BEELINE_RELEASE_NOTIFY_SECRET }}
+        run: |
+          set -euo pipefail
+          state="$RUNNER_TEMP/release/unified-release.json"
+          previous_sha=$(node -e "
+            const s = require(process.argv[1]);
+            process.stdout.write(s.supersedes?.sourceSha ?? '');
+          " "$state")
+          notes_file="$RUNNER_TEMP/release-notes.md"
+          if [ -n "$previous_sha" ] && git cat-file -e "${previous_sha}^{commit}" 2>/dev/null; then
+            git log --pretty='- %s (%h)' "${previous_sha}..${RELEASE_SHA}" > "$notes_file"
+          else
+            git log --pretty='- %s (%h)' -50 "${RELEASE_SHA}" > "$notes_file"
+          fi
+          [ -s "$notes_file" ] || echo '- No changes recorded for this range.' > "$notes_file"
+          if gh release view "$RELEASE_VERSION" >/dev/null 2>&1; then
+            echo "GitHub Release $RELEASE_VERSION already exists (governor retry); reusing it."
+          else
+            gh release create "$RELEASE_VERSION" \
+              --target "$RELEASE_SHA" --title "$RELEASE_VERSION" --notes-file "$notes_file"
+          fi
+          changelog_url="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${RELEASE_VERSION}"
+          echo "Changelog: $changelog_url" >> "$GITHUB_STEP_SUMMARY"
+          if [ -z "${BEELINE_RELEASE_NOTIFY_SECRET:-}" ]; then
+            echo "BEELINE_RELEASE_NOTIFY_SECRET is not configured; skipping the @system release DM." >&2
+          else
+            payload=$(node -e "
+              const [version, sha, changelogUrl] = process.argv.slice(1);
+              process.stdout.write(JSON.stringify({ version, sha, changelogUrl }));
+            " "$RELEASE_VERSION" "$RELEASE_SHA" "$changelog_url")
+            curl -fsS --max-time 60 -X POST https://server.usebeeline.app/v1/releases/notify \
+              -H "Authorization: Bearer $BEELINE_RELEASE_NOTIFY_SECRET" \
+              -H 'content-type: application/json' \
+              -d "$payload" -o "$RUNNER_TEMP/release-notify.json"
+            {
+              echo "@system release DM:"
+              echo '```json'
+              cat "$RUNNER_TEMP/release-notify.json"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
       # Receipt-only bookkeeping (was the 15-minute mobile-ota-reconcile.yml
       # cron). The delivery verdict above never depends on it: the owner
       # device fetches the update when the app is next opened, so this waits a

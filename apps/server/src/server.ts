@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { SqlDatabase } from './database.js';
@@ -11,6 +11,7 @@ import {
 import { DAEMON_OPERATION_NAMES, type DaemonService } from './daemon-service.js';
 import type { LiveEvent, LiveHub } from './live.js';
 import type { ReviewAccess } from './review-access.js';
+import type { ReleaseNotifier } from './release-notify.js';
 import { isMediaId, mediaTtlHours } from './media-ttl.js';
 
 export const DEFAULT_MEDIA_MAXIMUM_BYTES = 25 * 1024 * 1024;
@@ -34,6 +35,8 @@ export interface ServerOptions {
   github?: GitHubServerHooks;
   /** Absent when no review secret is configured; the endpoint then refuses like any wrong secret. */
   review?: ReviewAccess;
+  /** Absent when no release-notify secret is configured; the endpoint then refuses like any wrong secret. */
+  releaseNotify?: ReleaseNotifier;
   authHandler?: (request: IncomingMessage, response: ServerResponse) => void;
 }
 
@@ -89,6 +92,13 @@ function signatureMatches(secret: string, payload: Buffer, header: string | unde
   const a = Buffer.from(expected);
   const b = Buffer.from(header);
   return a.length === b.length && timingSafeEqual(a, b);
+}
+/** Constant time over fixed-width digests, so neither the secret nor its length leaks. */
+function bearerSecretMatches(secret: string, request: IncomingMessage): boolean {
+  const header = request.headers.authorization;
+  if (!header?.startsWith('Bearer ')) return false;
+  const digest = (value: string) => createHash('sha256').update(value, 'utf8').digest();
+  return timingSafeEqual(digest(header.slice('Bearer '.length)), digest(secret));
 }
 
 export function createBeelineServer(options: ServerOptions): Server {
@@ -285,6 +295,28 @@ async function route(
   }
   if (method === 'GET' && url.pathname === '/v1/releases/daemon-readiness') {
     json(response, 200, await options.daemon.releaseReadiness());
+    return;
+  }
+  if (method === 'POST' && url.pathname === '/v1/releases/notify') {
+    if (!options.releaseNotify?.secret || !bearerSecretMatches(options.releaseNotify.secret, request))
+      throw new Error('release notify access denied');
+    const input = await body(request);
+    if (
+      typeof input.version !== 'string' ||
+      typeof input.sha !== 'string' ||
+      typeof input.changelogUrl !== 'string'
+    ) {
+      throw new Error('version, sha and changelogUrl are required');
+    }
+    json(
+      response,
+      200,
+      await options.releaseNotify.notifyReleaseDelivered({
+        version: input.version,
+        sha: input.sha,
+        changelogUrl: input.changelogUrl,
+      }),
+    );
     return;
   }
   if (method === 'POST' && url.pathname === '/v1/auth/github/exchange') {

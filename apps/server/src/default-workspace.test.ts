@@ -84,6 +84,33 @@ describe('default Workspace seed', () => {
     expect((await db.query(`SELECT 1 FROM workspace_join_notifications`)).rowCount).toBe(0);
   });
 
+  it('never backfills a hidden_from_roster identity into the Workspace or #welcome', async () => {
+    const HIDDEN = 'e'.repeat(64);
+    await db.query(
+      `INSERT INTO identities(id,kind,name) VALUES($1,'human','Captain')`,
+      [CAPTAIN],
+    );
+    await db.query(
+      `INSERT INTO identities(id,kind,name,hidden_from_roster) VALUES($1,'human','System',true)`,
+      [HIDDEN],
+    );
+    await db.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner')`,
+      [DEFAULT_WORKSPACE_ID, CAPTAIN],
+    );
+    await seedDefaultWorkspace(db);
+    const workspaceMembership = await db.query(
+      `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`,
+      [DEFAULT_WORKSPACE_ID, HIDDEN],
+    );
+    const roomMembership = await db.query(
+      `SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2`,
+      [WELCOME_ROOM_ID, HIDDEN],
+    );
+    expect(workspaceMembership.rowCount).toBe(0);
+    expect(roomMembership.rowCount).toBe(0);
+  });
+
   it('joins a new sign-in to the Workspace and #welcome with the ordinary joined line', async () => {
     const auth = new TokenAuth(db, async () => ({ subject: 'new', login: 'newbie', name: 'New' }));
     const tokens = await auth.exchangeGitHubOidc('proof');

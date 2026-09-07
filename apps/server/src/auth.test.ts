@@ -1,7 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
-import { TokenAuth, verifierFromEnvironment } from './auth.js';
+import { TokenAuth, tokenHash, verifierFromEnvironment } from './auth.js';
 
 describe('opaque token ceremony', () => {
   let db: PgliteDatabase;
@@ -25,6 +25,63 @@ describe('opaque token ceremony', () => {
     expect(raw.rows[0]?.token_hash).not.toContain(first!.daemonToken);
     const afterRestart = new TokenAuth(db, verify);
     await expect(afterRestart.authenticateDaemon(first!.daemonToken)).resolves.toBe('b'.repeat(64));
+  });
+  it('rejects revoked and expired daemon tokens without writing their last-used timestamp', async () => {
+    const agent = 'b'.repeat(64);
+    const now = new Date('2026-09-06T12:00:00.000Z');
+    await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','bee')`, [agent]);
+    await db.query(
+      `INSERT INTO daemon_tokens(token_hash,agent_id,expires_at,revoked_at)
+       VALUES($1,$3,NULL,$4),($2,$3,$5,NULL)`,
+      [
+        tokenHash('revoked-token'),
+        tokenHash('expired-token'),
+        agent,
+        new Date('2026-09-06T11:59:59.000Z'),
+        new Date('2026-09-06T11:59:59.000Z'),
+      ],
+    );
+    const auth = new TokenAuth(
+      db,
+      async () => ({ subject: 'x', login: 'x', name: 'x' }),
+      () => now,
+    );
+
+    await expect(auth.authenticateDaemon('revoked-token')).resolves.toBeNull();
+    await expect(auth.authenticateDaemon('expired-token')).resolves.toBeNull();
+    const rows = await db.query<{ last_used_at: Date | null }>(
+      `SELECT last_used_at FROM daemon_tokens ORDER BY token_hash`,
+    );
+    expect(rows.rows).toEqual([{ last_used_at: null }, { last_used_at: null }]);
+  });
+  it('bounds a cached daemon authorization to ten seconds after revocation', async () => {
+    const agent = 'b'.repeat(64);
+    let now = new Date('2026-09-06T12:00:00.000Z');
+    await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','bee')`, [agent]);
+    await db.query(`INSERT INTO daemon_tokens(token_hash,agent_id) VALUES($1,$2)`, [
+      tokenHash('cached-token'),
+      agent,
+    ]);
+    const auth = new TokenAuth(
+      db,
+      async () => ({ subject: 'x', login: 'x', name: 'x' }),
+      () => now,
+    );
+
+    const query = vi.spyOn(db, 'query');
+    await expect(auth.authenticateDaemon('cached-token')).resolves.toBe(agent);
+    expect(query).toHaveBeenCalledTimes(1);
+    await db.query(`UPDATE daemon_tokens SET revoked_at=$2 WHERE token_hash=$1`, [
+      tokenHash('cached-token'),
+      now,
+    ]);
+    expect(query).toHaveBeenCalledTimes(2);
+    now = new Date(now.getTime() + 9_999);
+    await expect(auth.authenticateDaemon('cached-token')).resolves.toBe(agent);
+    expect(query).toHaveBeenCalledTimes(2);
+    now = new Date(now.getTime() + 1);
+    await expect(auth.authenticateDaemon('cached-token')).resolves.toBeNull();
+    expect(query).toHaveBeenCalledTimes(3);
   });
   it('preserves an imported legacy identity and adds Welcome on first monolith sign-in', async () => {
     const legacy = 'a'.repeat(64);

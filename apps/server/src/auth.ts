@@ -15,6 +15,7 @@ import {
 const ACCESS_LIFETIME_MS = 15 * 60_000;
 const REFRESH_LIFETIME_MS = 30 * 24 * 60 * 60_000;
 const DAEMON_EXCHANGE_LIFETIME_MS = 15 * 60_000;
+const DAEMON_AUTH_CACHE_TTL_MS = 10_000;
 
 export interface GitHubIdentityProof {
   subject: string;
@@ -75,6 +76,8 @@ export interface PhoneTokens {
 }
 
 export class TokenAuth {
+  readonly #daemonAuthCache = new Map<string, { agentId: string | null; expiresAt: number }>();
+
   constructor(
     private readonly database: SqlDatabase,
     private readonly verifyGitHubOidc: VerifyGitHubOidc,
@@ -252,14 +255,23 @@ export class TokenAuth {
 
   async authenticateDaemon(token: string): Promise<string | null> {
     const hash = tokenHash(token);
+    const now = this.now();
+    const cached = this.#daemonAuthCache.get(hash);
+    if (cached && cached.expiresAt > now.getTime()) return cached.agentId;
+    if (cached) this.#daemonAuthCache.delete(hash);
+
     const result = await this.database.query<{ agent_id: string; token_hash: string }>(
-      `UPDATE daemon_tokens SET last_used_at = $2
-       WHERE token_hash = $1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > $2)
-       RETURNING agent_id, token_hash`,
-      [hash, this.now()],
+      `SELECT agent_id, token_hash FROM daemon_tokens
+       WHERE token_hash = $1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > $2)`,
+      [hash, now],
     );
     const row = result.rows[0];
-    return row && sameHash(row.token_hash, hash) ? row.agent_id : null;
+    const agentId = row && sameHash(row.token_hash, hash) ? row.agent_id : null;
+    this.#daemonAuthCache.set(hash, {
+      agentId,
+      expiresAt: now.getTime() + DAEMON_AUTH_CACHE_TTL_MS,
+    });
+    return agentId;
   }
 
   /**

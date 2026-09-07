@@ -1,7 +1,12 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Pool } from 'pg';
-import { backfillYoloModeDefault, migrate, PostgresDatabase } from './database.js';
+import {
+  backfillYoloModeDefault,
+  MESSAGE_CURSOR_MS_SQL,
+  migrate,
+  PostgresDatabase,
+} from './database.js';
 import { PgliteDatabase } from './test-support.js';
 
 function result<Row>(rows: Row[]) {
@@ -74,6 +79,95 @@ describe('PostgresDatabase reconnects', () => {
     expect(client.listenerCount('error')).toBe(1);
     expect(() => dedicated.emit('error', error)).not.toThrow();
     expect(errorLog).toHaveBeenCalledWith('dedicated postgres client error', error);
+  });
+});
+
+describe('the message cursor index', () => {
+  const AUTHOR = 'a'.repeat(64);
+  const WORKSPACE = '11111111-1111-4111-8111-111111111111';
+  const ROOM = '22222222-2222-4222-8222-222222222222';
+  let database: PgliteDatabase;
+
+  beforeEach(async () => {
+    database = new PgliteDatabase();
+    await migrate(database);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Author')`, [
+      AUTHOR,
+    ]);
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Workspace')`, [WORKSPACE]);
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,created_by,name) VALUES($1,$2,$3,'Room')`,
+      [ROOM, WORKSPACE, AUTHOR],
+    );
+  });
+
+  afterEach(() => database.close());
+
+  it('uses the expression index for the seeded inbox query plan', async () => {
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       SELECT lpad(value::text,64,'0'),$1,$2,'message',
+              '2026-01-01T00:00:00Z'::timestamptz + value * interval '1 millisecond'
+       FROM generate_series(1,10000) value`,
+      [ROOM, AUTHOR],
+    );
+    await database.query(`ANALYZE messages`);
+
+    const explained = await database.query<Record<'QUERY PLAN', unknown>>(
+      `EXPLAIN (FORMAT JSON)
+       SELECT id,${MESSAGE_CURSOR_MS_SQL} cursor_ms FROM messages
+       WHERE room_id=$1 AND (${MESSAGE_CURSOR_MS_SQL},id)>($2::bigint,$3)
+       ORDER BY cursor_ms,id LIMIT 101`,
+      [ROOM, Date.parse('2026-01-01T00:00:05Z'), '0'.repeat(64)],
+    );
+    const plan = JSON.stringify(explained.rows[0]?.['QUERY PLAN']);
+    expect(plan).toContain('messages_room_cursor_idx');
+    expect(plan).not.toMatch(/"Node Type":"Seq Scan"[^}]*"Relation Name":"messages"/);
+  });
+
+  it('keeps same-millisecond order and cursor round-trips tied to the message id', async () => {
+    const lowerId = '1'.repeat(64);
+    const higherId = '2'.repeat(64);
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES
+       ($1,$3,$4,'later microsecond','2026-09-06T12:00:00.000900Z'),
+       ($2,$3,$4,'earlier microsecond','2026-09-06T12:00:00.000100Z')`,
+      [lowerId, higherId, ROOM, AUTHOR],
+    );
+
+    const first = await database.query<{ id: string; cursor_ms: number | string }>(
+      `SELECT id,${MESSAGE_CURSOR_MS_SQL} cursor_ms FROM messages
+       WHERE room_id=$1 ORDER BY cursor_ms,id LIMIT 1`,
+      [ROOM],
+    );
+    expect(first.rows).toEqual([{ id: lowerId, cursor_ms: 1_788_696_000_000 }]);
+    const cursor = first.rows[0]!;
+    const after = await database.query<{ id: string }>(
+      `SELECT id FROM messages WHERE room_id=$1
+       AND (${MESSAGE_CURSOR_MS_SQL},id)>($2::bigint,$3)
+       ORDER BY ${MESSAGE_CURSOR_MS_SQL},id`,
+      [ROOM, cursor.cursor_ms, cursor.id],
+    );
+    expect(after.rows).toEqual([{ id: higherId }]);
+  });
+
+  it('matches the persisted cursor expression across time-zone edge cases', async () => {
+    const timestamps = [
+      '1965-03-14T07:00:00.123456Z',
+      '2026-03-08T06:59:59.999999Z',
+      '2026-03-08T07:00:00.000001Z',
+      '2026-11-01T05:59:59.999999Z',
+      '2026-11-01T06:00:00.000001Z',
+      '2200-01-01T00:00:00.654321Z',
+    ];
+    const result = await database.query<{ old_cursor: string; indexed_cursor: string }>(
+      `SELECT floor(extract(epoch FROM created_at)*1000)::bigint old_cursor,
+              ${MESSAGE_CURSOR_MS_SQL} indexed_cursor
+       FROM unnest($1::timestamptz[]) created_at`,
+      [timestamps],
+    );
+
+    expect(result.rows.every((row) => row.old_cursor === row.indexed_cursor)).toBe(true);
   });
 });
 

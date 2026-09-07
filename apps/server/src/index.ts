@@ -10,6 +10,7 @@ import {
   runMaintenance,
 } from './background.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
+import { ConnectionPresence } from './connection-presence.js';
 import { createFirebasePushSender } from './firebase-push.js';
 import { createBeelineServer, DEFAULT_MEDIA_MAXIMUM_BYTES } from './server.js';
 import { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
@@ -102,6 +103,7 @@ async function main() {
   const schedules = new AgentScheduleLoop(database, (roomId) =>
     live.publish({ type: 'invalidate', roomId, reason: 'schedule' }),
   );
+  const connectionPresence = new ConnectionPresence(database, live);
   const mediaExpiry = new MediaExpiryLoop(database);
   const sendPushTest = pushSender
     ? async (identityId: string) => {
@@ -117,7 +119,7 @@ async function main() {
           });
       }
     : undefined;
-  const phone = new PhoneService(database, publicOrigin, github, sendPushTest);
+  const phone = new PhoneService(database, publicOrigin, github, sendPushTest, live);
   const daemon = new DaemonService(
     database,
     live,
@@ -145,6 +147,7 @@ async function main() {
     phone,
     daemon,
     live,
+    connectionPresence,
     review,
     releaseNotify,
     mediaMaximumBytes: Number(process.env.MEDIA_MAX_BYTES ?? String(DEFAULT_MEDIA_MAXIMUM_BYTES)),
@@ -161,16 +164,31 @@ async function main() {
         : {}),
     },
   });
+  let lastReconciliationAt = Number.NEGATIVE_INFINITY;
+  const reconciliationMs = Number(process.env.BACKGROUND_RECONCILIATION_MS ?? '60000');
   const leader = new BackgroundLeader(
     database,
     async () => {
       if (push) await push.runOnce();
       await schedules.runOnce();
-      await mediaExpiry.runOnce();
-      await runMaintenance(database);
+      const now = Date.now();
+      if (now - lastReconciliationAt >= reconciliationMs) {
+        lastReconciliationAt = now;
+        await mediaExpiry.runOnce(now);
+        await runMaintenance(database);
+      }
+      const nextDue = await schedules.nextDueAt();
+      return nextDue ? nextDue.getTime() - Date.now() : reconciliationMs;
     },
-    Number(process.env.BACKGROUND_INTERVAL_MS ?? '1000'),
+    reconciliationMs,
   );
+  const stopBackgroundWake = live.subscribeAll((event) => {
+    if (
+      event.type === 'invalidate' &&
+      (event.reason === 'postgres:messages' || event.reason === 'postgres:agent_schedules')
+    )
+      leader.wake();
+  });
   void leader.run();
   const port = Number(process.env.PORT ?? '8080');
   const host = process.env.HOST ?? '127.0.0.1';
@@ -184,6 +202,8 @@ async function main() {
   console.log(`[server] listening on ${host}:${port}; store=postgres; background=advisory-lock`);
   const stop = async () => {
     leader.stop();
+    stopBackgroundWake();
+    await connectionPresence.stop();
     await liveListener.stop();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     await mountedAuth.close();

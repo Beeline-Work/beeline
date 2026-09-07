@@ -216,11 +216,13 @@ export async function runMaintenance(database: SqlDatabase): Promise<void> {
 export class BackgroundLeader {
   #stopped = false;
   #client: LeaderConnection | undefined;
+  #wake: (() => void) | undefined;
+  #wakePending = false;
 
   constructor(
     private readonly database: { connectDedicated(): Promise<LeaderConnection> },
-    private readonly cycle: () => Promise<void>,
-    private readonly intervalMs = 1_000,
+    private readonly cycle: () => Promise<number | void>,
+    private readonly reconciliationMs = 60_000,
   ) {}
 
   async run(): Promise<void> {
@@ -239,9 +241,14 @@ export class BackgroundLeader {
           continue;
         }
         while (!this.#stopped) {
+          // Detect a dead lock-owning connection before any work can fire.
           await client.query('SELECT 1');
-          await this.cycle();
-          await this.wait();
+          const nextDelay = await this.cycle();
+          await this.wait(
+            typeof nextDelay === 'number'
+              ? Math.max(0, Math.min(nextDelay, this.reconciliationMs))
+              : this.reconciliationMs,
+          );
         }
       } catch {
         await this.wait();
@@ -254,12 +261,34 @@ export class BackgroundLeader {
 
   stop(): void {
     this.#stopped = true;
+    this.#wake?.();
     this.#client?.release(true);
     this.#client = undefined;
   }
 
-  private wait(): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, this.intervalMs));
+  /** Recompute background work after a committed database notification. */
+  wake(): void {
+    if (this.#wake) this.#wake();
+    else this.#wakePending = true;
+  }
+
+  private wait(milliseconds = this.reconciliationMs): Promise<void> {
+    if (this.#wakePending) {
+      this.#wakePending = false;
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      const timer = setTimeout(done, milliseconds);
+      timer.unref?.();
+      const self = this;
+      function done() {
+        clearTimeout(timer);
+        if (self.#wake === done) self.#wake = undefined;
+        self.#wakePending = false;
+        resolve();
+      }
+      this.#wake = done;
+    });
   }
 }
 

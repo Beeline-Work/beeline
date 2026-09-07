@@ -465,7 +465,11 @@ describe('corner close-request polling cadence', () => {
     );
   });
 
-  async function cornerHarness(execute: ReturnType<typeof vi.fn>, pollMs: number) {
+  async function cornerHarness(
+    execute: ReturnType<typeof vi.fn>,
+    pollMs: number,
+    liveSubscribe?: DaemonApiClient['liveSubscribe'],
+  ) {
     const root = await mkdtemp(join(tmpdir(), 'beeline-corner-wake-'));
     roots.push(root);
     await execFileAsync('git', ['init', root]);
@@ -503,6 +507,7 @@ describe('corner close-request polling cadence', () => {
         daemonToken: 'daemon-token',
         agentId: runtime.agent.publicKey,
       }),
+      ...(liveSubscribe ? { liveSubscribe } : {}),
     } as unknown as DaemonApiClient;
     const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
     vi.spyOn(acp, 'start').mockResolvedValue(undefined);
@@ -544,40 +549,53 @@ describe('corner close-request polling cadence', () => {
     };
   }
 
-  it('an arriving wake starts the next intake immediately, without waiting out the poll interval', async () => {
+  it('folds a corner wake into the live stream without the retired long-poll', async () => {
     let closeReads = 0;
-    let wakeCalls = 0;
     const execute = vi.fn(async (name: string) => {
       if (name === 'getAgentConfiguration') return { commands: [] };
       if (name === 'getWorkspaceRoster') return { members: [] };
       if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
       if (name === 'getRoomConversation')
         return { items: [{ type: 'message', authorId: '11'.repeat(32), requestId: 'r1' }] };
-      if (name === 'waitForCornerWake') {
-        wakeCalls += 1;
-        // The server has "just" published a new fact — this resolves almost
-        // instantly, far faster than the 60s poll interval below.
-        return { woken: true };
-      }
       if (name === 'getCornerCloseRequests') {
         closeReads += 1;
-        // Only the SECOND intake (after the wake) sees the close request —
-        // proving the wake, not the 60s interval, drove it.
         if (closeReads === 1) return { items: [], cursor: 'latest' };
         return { items: [], cursor: 'latest', closeRequested: true };
       }
       return { id: 'write-id', createdAt: 1 };
     });
-    const { loop, scheduler } = await cornerHarness(execute, 60_000);
+    const liveSubscribe = vi.fn((_roomId, _cursor, onItems, onState) => {
+      onState?.(true, { pushIntake: true, connectionPresence: true });
+      setTimeout(
+        () =>
+          onItems?.(
+            [
+              {
+                id: 'wake',
+                authorId: 'server',
+                createdAt: 1,
+                type: 'system',
+                body: '',
+                mentionIds: [],
+                attachments: [],
+              },
+            ],
+            'latest',
+          ),
+        10,
+      );
+      return () => undefined;
+    }) as unknown as DaemonApiClient['liveSubscribe'];
+    const { loop, scheduler } = await cornerHarness(execute, 60_000, liveSubscribe);
     const started = Date.now();
     await loop.run();
     await scheduler.dispose();
     expect(closeReads).toBe(2);
-    expect(wakeCalls).toBeGreaterThan(0);
+    expect(execute).not.toHaveBeenCalledWith('waitForCornerWake', expect.anything());
     expect(Date.now() - started).toBeLessThan(5_000);
   });
 
-  it('a failed or reconnecting wake never blocks intake — the timed poll is still the recovery path', async () => {
+  it('keeps the timed fallback against an older server without live subscriptions', async () => {
     let closeReads = 0;
     const execute = vi.fn(async (name: string) => {
       if (name === 'getAgentConfiguration') return { commands: [] };
@@ -585,7 +603,6 @@ describe('corner close-request polling cadence', () => {
       if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
       if (name === 'getRoomConversation')
         return { items: [{ type: 'message', authorId: '11'.repeat(32), requestId: 'r1' }] };
-      if (name === 'waitForCornerWake') throw new Error('wake connection refused');
       if (name === 'getCornerCloseRequests') {
         closeReads += 1;
         if (closeReads === 1) return { items: [], cursor: 'latest' };
@@ -601,44 +618,32 @@ describe('corner close-request polling cadence', () => {
     expect(closeReads).toBe(2);
   });
 
-  it('a failing wake never SHORTENS the poll interval — it loses the race instead of winning it', async () => {
-    // A wake that rejects instantly (a disconnect, or an operation the server
-    // build does not route) must not resolve the sleep-vs-wake race: doing so
-    // turns intake into one poll per network round-trip, which is how a
-    // corner came to hammer the server at ~18 requests a second in production.
+  it('does not poll a connected live stream before the slow reconciliation sweep', async () => {
     let closeReads = 0;
-    let wakeCalls = 0;
-    let stopEarly: (() => void) | undefined;
     const execute = vi.fn(async (name: string) => {
       if (name === 'getAgentConfiguration') return { commands: [] };
       if (name === 'getWorkspaceRoster') return { members: [] };
       if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
       if (name === 'getRoomConversation')
         return { items: [{ type: 'message', authorId: '11'.repeat(32), requestId: 'r1' }] };
-      if (name === 'waitForCornerWake') {
-        wakeCalls += 1;
-        throw new Error('unknown_daemon_operation');
-      }
       if (name === 'getCornerCloseRequests') {
         closeReads += 1;
-        // Stop a spinning loop the moment it proves itself, so a regression
-        // fails this test instead of running away with the machine.
-        if (closeReads > 4) stopEarly?.();
         return { items: [], cursor: 'latest' };
       }
       return { id: 'write-id', createdAt: 1 };
     });
-    const { loop, scheduler, abort } = await cornerHarness(execute, 300);
-    stopEarly = () => abort.abort();
+    const liveSubscribe = vi.fn((_roomId, _cursor, _onItems, onState) => {
+      onState?.(true, { pushIntake: true, connectionPresence: true });
+      return () => undefined;
+    }) as unknown as DaemonApiClient['liveSubscribe'];
+    const { loop, scheduler, abort } = await cornerHarness(execute, 300, liveSubscribe);
     const running = loop.run();
     await new Promise((resolve) => setTimeout(resolve, 900));
     abort.abort();
     await running;
     await scheduler.dispose();
-    expect(wakeCalls).toBeGreaterThan(0);
-    // 900ms of a 300ms interval is at most four intakes. Resolving the failure
-    // would make it hundreds.
-    expect(closeReads).toBeLessThanOrEqual(4);
+    expect(closeReads).toBe(1);
+    expect(execute).not.toHaveBeenCalledWith('waitForCornerWake', expect.anything());
   });
 });
 

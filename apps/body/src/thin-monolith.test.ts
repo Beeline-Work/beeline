@@ -238,7 +238,7 @@ describe('monolith-only thin daemon', () => {
     });
     await expect(result).resolves.toBe('aborted');
     expect(execute).toHaveBeenCalledWith('getDaemonBootstrap', expect.any(Object));
-    expect(execute).toHaveBeenCalledWith(
+    expect(execute).not.toHaveBeenCalledWith(
       'postAgentPresence',
       expect.objectContaining({ roomId: 'room' }),
     );

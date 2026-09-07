@@ -914,6 +914,8 @@ export class DaemonService {
     };
   }
   private async presence(input: Input<'getAgentPresence'>, agentId: string) {
+    const current = this.live.latestAgentPresence(agentId, input.roomId);
+    if (current) return { status: current.status, observedAt: current.observedAt };
     const row = (
       await this.database.query<{
         body: {
@@ -966,11 +968,13 @@ export class DaemonService {
     );
     const now = Date.now();
     const daemons = result.rows.map((row) => {
-      const observedAt = row.body?.observedAt;
+      const current = this.live.latestAgentPresence(row.agent_id);
+      const body = current ?? row.body;
+      const observedAt = body?.observedAt;
       const fresh = typeof observedAt === 'number' && Math.abs(now - observedAt * 1_000) <= 90_000;
-      const state = !row.body
+      const state = !body
         ? 'never-seen'
-        : row.body.status !== 'online'
+        : body.status !== 'online'
           ? 'offline'
           : fresh
             ? 'ready'

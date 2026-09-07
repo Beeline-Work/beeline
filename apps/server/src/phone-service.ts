@@ -50,7 +50,7 @@ import {
   senderMayAddressAgent,
 } from '@beeline/api-contract/agent-access';
 import type { SqlDatabase } from './database.js';
-import type { LiveEvent } from './live.js';
+import type { LiveEvent, LiveHub } from './live.js';
 import type { GitHubOperations } from './github-operations.js';
 import { collapsePermissionCards } from '@beeline/push-gateway/projection';
 import { joinRooms } from './membership-join.js';
@@ -354,6 +354,7 @@ export class PhoneService {
     private readonly publicOrigin: string,
     private readonly github?: GitHubOperations,
     private readonly sendPushTest?: (identityId: string) => Promise<void>,
+    private readonly live?: LiveHub,
   ) {}
 
   canReadRoom(roomId: string, identityId: string): Promise<boolean> {
@@ -1947,10 +1948,10 @@ export class PhoneService {
         corner: boolean;
         reachable: boolean;
       }>(
-        // Reachability is a fact about the HELPER, not about this Room: only the
-        // Room turn loop posts presence (a corner never does), so a mention in a
-        // corner has to see its agent's heartbeat from the Room the same daemon
-        // serves. Hence no room filter on the presence lookup.
+        // Reachability is a fact about the HELPER, not about this Room. A
+        // mention in a corner may rely on the same daemon's connection claim
+        // in a top-level Room, so the presence lookup intentionally has no
+        // room filter.
         `SELECT identity.id agent_id,COALESCE(NULLIF(identity.name,''),'The agent') agent_name,
                 a.access_policy,a.owner_id,owner.handle owner_handle,
                 EXISTS(SELECT 1 FROM rooms room WHERE room.id=$2 AND room.parent_id IS NOT NULL) corner,
@@ -1973,6 +1974,12 @@ export class PhoneService {
       );
       const bucket = accessNoticeBucket(Date.now());
       for (const agent of agents.rows) {
+        const livePresence = this.live?.latestAgentPresence(agent.agent_id);
+        if (
+          livePresence?.status === 'online' &&
+          Date.now() - livePresence.observedAt * 1_000 <= AGENT_REACHABLE_HORIZON_MS
+        )
+          agent.reachable = true;
         const phrase = this.unansweredMentionPhrase(agent, sender, senderId);
         if (!phrase) continue;
         await systemLine(this.database, {

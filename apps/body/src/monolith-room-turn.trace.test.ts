@@ -365,7 +365,6 @@ describe('Room turn phase trace', () => {
         'postRoomMessage',
         'retractAgentLiveOutput',
         'postAgentTurnReceipt',
-        'postAgentPresence',
       ]),
     );
     expect(traced.posted).toHaveLength(1);

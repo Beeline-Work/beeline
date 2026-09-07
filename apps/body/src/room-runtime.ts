@@ -193,6 +193,7 @@ type RoomLeaf = Pick<
   | 'currentPrincipalCanDrive'
   | 'isBusy'
   | 'prepareForForcedUpdateRestart'
+  | 'requestReconciliation'
   | 'refreshPersonaForSoulUpdate'
   | 'forceRecoverRoom'
 >;
@@ -444,6 +445,7 @@ export class RoomRuntimeCoordinator {
         if (!this.running.has(corner.cornerId)) await this.startCorner(corner);
       },
     );
+    for (const running of this.running.values()) running.body.requestReconciliation();
     return 'member';
   }
 

@@ -271,6 +271,15 @@ export function cornerClosePollMs(random: () => number = Math.random): number {
 /** One write-enabled corner session, driven only by monolith transcript facts. */
 export class MonolithCornerTurnLoop {
   private readonly agent: ReturnType<typeof runtimeIdentity>;
+  private reconciliationRequested = true;
+  private wakeIntake?: () => void;
+
+  /** Called by the daemon's one slow workspace reconciliation sweep. */
+  requestReconciliation(): void {
+    this.reconciliationRequested = true;
+    this.wakeIntake?.();
+    this.wakeIntake = undefined;
+  }
   private client?: AcpClient;
   private sessionId?: string;
   /** The configuration the live session baked in; a change invalidates it. */
@@ -1008,15 +1017,33 @@ export class MonolithCornerTurnLoop {
     const processedInboxIds = new Set<string>();
     const pushedInbox: InboxItem[] = [];
     let pendingPushedCursor: string | undefined;
-    let wakeForPush: (() => void) | undefined;
+    let liveConnected = false;
     const rewindSupported = Array.isArray(activation.rewindIds);
     for (const id of activation.rewindIds ?? []) processedInboxIds.add(id);
-    const stopLive = api.liveSubscribe?.(cornerId, cursor, (items, pushedCursor) => {
-      pushedInbox.push(...items);
-      pendingPushedCursor = laterInboxCursor(pendingPushedCursor, pushedCursor);
-      wakeForPush?.();
-      wakeForPush = undefined;
-    });
+    const stopLive = api.liveSubscribe?.(
+      cornerId,
+      cursor,
+      (items, pushedCursor) => {
+        pushedInbox.push(...items);
+        pendingPushedCursor = laterInboxCursor(pendingPushedCursor, pushedCursor);
+        this.wakeIntake?.();
+        this.wakeIntake = undefined;
+      },
+      (connected, capabilities) => {
+        liveConnected = connected && capabilities?.pushIntake === true;
+        this.wakeIntake?.();
+        this.wakeIntake = undefined;
+      },
+      {
+        ...(this.options.config.daemonReleaseVersion
+          ? { releaseVersion: this.options.config.daemonReleaseVersion }
+          : {}),
+        ...(this.options.config.daemonSourceSha
+          ? { sourceSha: this.options.config.daemonSourceSha }
+          : {}),
+        available: !this.options.config.modelUnavailable,
+      },
+    );
     // Newest page: "has this corner already answered?" is a question about the
     // work as it stands now. On a corner past one page the oldest rows say
     // nothing about whether the objective still needs kicking off.
@@ -1045,8 +1072,13 @@ export class MonolithCornerTurnLoop {
       let pollWithoutWait = false;
       while (!signal?.aborted) {
         try {
-          const pollNow = pushedInbox.length === 0;
-          const inbox = !pollNow
+          const pollNow: boolean =
+            pushedInbox.length > 0 || !liveConnected || this.reconciliationRequested;
+          const inbox: {
+            items: readonly InboxItem[];
+            cursor?: string;
+            closeRequested?: boolean;
+          } = !pollNow
             ? { items: [], cursor: undefined, closeRequested: false }
             : await api.execute('getCornerCloseRequests', {
                 cornerId,
@@ -1054,10 +1086,7 @@ export class MonolithCornerTurnLoop {
                 ...(rewindSupported ? { rewind: true } : {}),
               });
           if (pollNow) {
-            api.notePolled?.(
-              cornerId,
-              inbox.items.filter((item) => !processedInboxIds.has(item.id)),
-            );
+            this.reconciliationRequested = false;
           }
           if (inbox.closeRequested) {
             await this.options.onCloseRequested();
@@ -1065,7 +1094,7 @@ export class MonolithCornerTurnLoop {
           }
           // Server check notes arrive one per GitHub run; a poll's worth of them
           // is one fact, and only a changed server check state starts a turn.
-          const checkNotes: (typeof inbox.items)[number][] = [];
+          const checkNotes: InboxItem[] = [];
           const delivered = [...pushedInbox.splice(0), ...inbox.items];
           for (const item of delivered) {
             if (processedInboxIds.has(item.id)) continue;
@@ -1127,16 +1156,19 @@ export class MonolithCornerTurnLoop {
           pendingPushedCursor = undefined;
           api.updateLiveCursor?.(cornerId, cursor);
           if (pollNow) this.options.onPoll();
-          // The wake long-poll shortens the sleep when the server has
-          // something new; a failed or timed-out wake changes nothing — the
-          // timed wait below still runs and the next poll still catches up.
           await Promise.race([
-            wait(pollWithoutWait ? 0 : (this.options.pollMs ?? cornerClosePollMs()), signal),
-            waitForWake(api, cornerId, signal),
+            wait(
+              pollWithoutWait
+                ? 0
+                : liveConnected
+                  ? 2_147_483_647
+                  : (this.options.pollMs ?? cornerClosePollMs()),
+              signal,
+            ),
             pushedInbox.length
               ? Promise.resolve()
               : new Promise<void>((resolve) => {
-                  wakeForPush = resolve;
+                  this.wakeIntake = resolve;
                 }),
           ]);
           pollWithoutWait = false;
@@ -1149,39 +1181,11 @@ export class MonolithCornerTurnLoop {
       }
     } finally {
       stopLive?.();
+      this.wakeIntake = undefined;
       this.options.grantRunner?.unregister(cornerId);
       await this.options.scheduler.suspend(cornerId);
     }
   }
-}
-
-/**
- * Authenticated wake: races the corner's poll sleep against the server's
- * long-poll. A failure (disconnect, refused request, an operation this server
- * build does not route) never RESOLVES the race — it hands back a promise that
- * only the abort settles, so the timed `wait()` keeps its full interval and
- * stays the one recovery path. Resolving a failure instead turns the race into
- * a spin: one poll per network round-trip, for as long as the wake is broken.
- */
-async function waitForWake(
-  api: DaemonApiClient,
-  cornerId: string,
-  signal?: AbortSignal,
-): Promise<void> {
-  if (signal?.aborted) return;
-  try {
-    await api.execute('waitForCornerWake', { cornerId });
-  } catch {
-    await never(signal);
-  }
-}
-
-/** Settles only on abort — the loser of a race that must not shorten it. */
-async function never(signal?: AbortSignal): Promise<void> {
-  if (signal?.aborted) return;
-  await new Promise<void>((resolveNever) => {
-    signal?.addEventListener('abort', () => resolveNever(), { once: true });
-  });
 }
 
 async function wait(ms: number, signal?: AbortSignal): Promise<void> {

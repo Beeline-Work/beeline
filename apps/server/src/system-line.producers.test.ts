@@ -138,9 +138,18 @@ describe('system-line producers', () => {
   it('phrases a yolo change with the agent as a tappable object', async () => {
     const database = await fixture();
     try {
+      await database.query(`UPDATE agents SET yolo_mode=false WHERE agent_id=$1`, [AGENT]);
       const phone = new PhoneService(database, 'http://local.test');
-      await phone.execute('updateAgentYolo', { workspaceId: WORKSPACE, agentId: AGENT, enabled: true }, OWNER);
-      await phone.execute('updateAgentYolo', { workspaceId: WORKSPACE, agentId: AGENT, enabled: false }, OWNER);
+      await phone.execute(
+        'updateAgentYolo',
+        { workspaceId: WORKSPACE, agentId: AGENT, enabled: true },
+        OWNER,
+      );
+      await phone.execute(
+        'updateAgentYolo',
+        { workspaceId: WORKSPACE, agentId: AGENT, enabled: false },
+        OWNER,
+      );
       expect((await lines(database)).map((line) => [line.text, line.system_event])).toEqual([
         [
           'Owner turned yolo on for Bee · grant requests are now approved automatically',

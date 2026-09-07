@@ -87,6 +87,17 @@ export class AgentScheduleLoop {
     private readonly onPosted?: (roomId: string) => void,
   ) {}
 
+  async nextDueAt(): Promise<Date | undefined> {
+    const row = (
+      await this.database.query<{ next_run_at: Date | null }>(
+        `SELECT min(schedule.next_run_at) next_run_at
+         FROM agent_schedules schedule
+         JOIN rooms room ON room.id=schedule.room_id AND room.archived_at IS NULL`,
+      )
+    ).rows[0];
+    return row?.next_run_at ?? undefined;
+  }
+
   async runOnce(now = new Date()): Promise<number> {
     const due = await this.database.query<DueSchedule>(
       `SELECT schedule.id,schedule.room_id,schedule.agent_id,schedule.creator_id,

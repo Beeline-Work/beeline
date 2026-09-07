@@ -381,6 +381,15 @@ export interface MonolithRoomTurnOptions {
  */
 export class MonolithRoomTurnLoop {
   private readonly agent: ReturnType<typeof runtimeIdentity>;
+  private reconciliationRequested = true;
+  private wakeIntake?: () => void;
+
+  /** Called by the daemon's one slow workspace reconciliation sweep. */
+  requestReconciliation(): void {
+    this.reconciliationRequested = true;
+    this.wakeIntake?.();
+    this.wakeIntake = undefined;
+  }
   private client?: AcpClient;
   private sessionId?: string;
   /** The configuration the live session baked in; a change invalidates it. */
@@ -1184,7 +1193,10 @@ export class MonolithRoomTurnLoop {
   async run(): Promise<void> {
     const { api, roomId, signal } = this.options;
     const status = this.options.config.modelUnavailable ? 'offline' : 'online';
-    const postPresence = async (presence: 'online' | 'offline') => {
+    let legacyPresence = false;
+    let legacyPresenceHeartbeat: ReturnType<typeof setInterval> | undefined;
+    let legacyPresenceFallback: ReturnType<typeof setTimeout> | undefined;
+    const postLegacyPresence = async (presence: 'online' | 'offline') => {
       await api.execute('postAgentPresence', {
         agentId: this.agent.publicKey,
         roomId,
@@ -1196,40 +1208,81 @@ export class MonolithRoomTurnLoop {
           ? { sourceSha: this.options.config.daemonSourceSha }
           : {}),
       });
-      this.options.health.presence(presence);
     };
-    await postPresence(status);
-    const heartbeat = setInterval(
-      () =>
-        void postPresence(status).catch((error) =>
-          console.error(`[thin-core] monolith Room ${roomId} presence heartbeat failed:`, error),
-        ),
-      30_000,
-    );
-    heartbeat.unref?.();
+    const useLegacyPresence = () => {
+      if (legacyPresence) return;
+      legacyPresence = true;
+      void postLegacyPresence(status).catch((error) =>
+        console.error(`[thin-core] monolith Room ${roomId} presence fallback failed:`, error),
+      );
+      legacyPresenceHeartbeat = setInterval(
+        () =>
+          void postLegacyPresence(status).catch((error) =>
+            console.error(`[thin-core] monolith Room ${roomId} presence fallback failed:`, error),
+          ),
+        30_000,
+      );
+      legacyPresenceHeartbeat.unref?.();
+    };
+    const stopLegacyPresence = () => {
+      legacyPresence = false;
+      clearTimeout(legacyPresenceFallback);
+      legacyPresenceFallback = undefined;
+      clearInterval(legacyPresenceHeartbeat);
+      legacyPresenceHeartbeat = undefined;
+    };
     let cursor: string | undefined;
     const processedInboxIds = new Set<string>();
     const pushedInbox: InboxItem[] = [];
     let pendingPushedCursor: string | undefined;
-    let wakeForPush: (() => void) | undefined;
+    let liveConnected = false;
     let stopLive: (() => void) | undefined;
+    // An old server either acknowledges without the capability or never
+    // acknowledges. Give a Stage 4 server time to cancel the fallback before
+    // the client can race its connection-owned transition write.
+    legacyPresenceFallback = setTimeout(useLegacyPresence, 1_000);
+    legacyPresenceFallback.unref?.();
     try {
       const activation = await api.execute('getRoomInbox', { roomId, startAtLatest: true });
       cursor = activation.cursor;
       const rewindSupported = Array.isArray(activation.rewindIds);
       for (const id of activation.rewindIds ?? []) processedInboxIds.add(id);
-      stopLive = api.liveSubscribe?.(roomId, cursor, (items, pushedCursor) => {
-        pushedInbox.push(...items);
-        pendingPushedCursor = laterInboxCursor(pendingPushedCursor, pushedCursor);
-        wakeForPush?.();
-        wakeForPush = undefined;
-      });
+      stopLive = api.liveSubscribe?.(
+        roomId,
+        cursor,
+        (items, pushedCursor) => {
+          pushedInbox.push(...items);
+          pendingPushedCursor = laterInboxCursor(pendingPushedCursor, pushedCursor);
+          this.wakeIntake?.();
+          this.wakeIntake = undefined;
+        },
+        (connected, capabilities) => {
+          liveConnected = connected && capabilities?.pushIntake === true;
+          if (connected && capabilities?.connectionPresence !== true) useLegacyPresence();
+          else if (connected) stopLegacyPresence();
+          this.options.health.presence(
+            connected && !this.options.config.modelUnavailable ? 'online' : 'offline',
+          );
+          this.wakeIntake?.();
+          this.wakeIntake = undefined;
+        },
+        {
+          ...(this.options.config.daemonReleaseVersion
+            ? { releaseVersion: this.options.config.daemonReleaseVersion }
+            : {}),
+          ...(this.options.config.daemonSourceSha
+            ? { sourceSha: this.options.config.daemonSourceSha }
+            : {}),
+          available: !this.options.config.modelUnavailable,
+        },
+      );
       while (!signal?.aborted) {
         try {
           if (!this.activeTurn && this.queuedTurns.length) {
             this.startPrompt(this.queuedTurns.shift()!);
           }
-          const pollNow = pushedInbox.length === 0;
+          const pollNow =
+            pushedInbox.length === 0 && (!liveConnected || this.reconciliationRequested);
           const inbox = !pollNow
             ? { items: [], cursor: undefined }
             : await api.execute('getRoomInbox', {
@@ -1239,10 +1292,7 @@ export class MonolithRoomTurnLoop {
                 limit: 200,
               });
           if (pollNow) {
-            api.notePolled?.(
-              roomId,
-              inbox.items.filter((item) => !processedInboxIds.has(item.id)),
-            );
+            this.reconciliationRequested = false;
           }
           const delivered = [...pushedInbox.splice(0), ...inbox.items];
           for (const item of delivered) {
@@ -1276,9 +1326,9 @@ export class MonolithRoomTurnLoop {
           if (pollNow) this.options.health.poll();
           if (!pushedInbox.length) {
             await Promise.race([
-              wait(this.options.pollMs ?? 1_000, signal),
+              wait(liveConnected ? 2_147_483_647 : (this.options.pollMs ?? 1_000), signal),
               new Promise<void>((resolve) => {
-                wakeForPush = resolve;
+                this.wakeIntake = resolve;
               }),
             ]);
           }
@@ -1291,15 +1341,19 @@ export class MonolithRoomTurnLoop {
       }
     } finally {
       stopLive?.();
-      clearInterval(heartbeat);
+      this.wakeIntake = undefined;
       this.options.grantRunner?.unregister(roomId);
       if (this.activeTurn?.phase === 'prompting' && this.client && this.sessionId) {
         this.client.sessionCancel(this.sessionId);
       }
       await this.activeTurn?.promise;
-      await postPresence('offline').catch((error) =>
-        console.error(`[thin-core] monolith Room ${roomId} offline presence failed:`, error),
-      );
+      clearTimeout(legacyPresenceFallback);
+      clearInterval(legacyPresenceHeartbeat);
+      if (legacyPresence) {
+        await postLegacyPresence('offline').catch((error) =>
+          console.error(`[thin-core] monolith Room ${roomId} offline presence failed:`, error),
+        );
+      }
       await this.options.scheduler.suspend(roomId);
     }
   }

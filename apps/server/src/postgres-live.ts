@@ -132,6 +132,9 @@ interface LiveNotificationPayload {
   agentId?: string;
   turnId?: string;
   kind?: string;
+  observedAt?: number;
+  ownerEpoch?: string;
+  expiresAt?: number;
 }
 
 function decodePayload(value: string | undefined): LiveNotificationPayload | undefined {
@@ -151,6 +154,9 @@ function decodePayload(value: string | undefined): LiveNotificationPayload | und
       ...(typeof parsed.agentId === 'string' ? { agentId: parsed.agentId } : {}),
       ...(typeof parsed.turnId === 'string' ? { turnId: parsed.turnId } : {}),
       ...(typeof parsed.kind === 'string' ? { kind: parsed.kind } : {}),
+      ...(typeof parsed.observedAt === 'number' ? { observedAt: parsed.observedAt } : {}),
+      ...(typeof parsed.ownerEpoch === 'string' ? { ownerEpoch: parsed.ownerEpoch } : {}),
+      ...(typeof parsed.expiresAt === 'number' ? { expiresAt: parsed.expiresAt } : {}),
     };
   } catch {
     return undefined;
@@ -235,6 +241,22 @@ export class PostgresLiveListener {
   private async rebroadcast(raw: string | undefined): Promise<void> {
     const payload = decodePayload(raw);
     if (!payload) return;
+    if (
+      payload.table === 'connection_presence' &&
+      payload.agentId &&
+      typeof payload.observedAt === 'number'
+    ) {
+      this.live.publish({
+        type: 'presence',
+        roomId: payload.roomId,
+        agentId: payload.agentId,
+        status: 'online',
+        observedAt: payload.observedAt,
+        ...(payload.ownerEpoch ? { ownerEpoch: payload.ownerEpoch } : {}),
+        ...(payload.expiresAt ? { expiresAt: payload.expiresAt } : {}),
+      });
+      return;
+    }
     if (payload.table === 'live_outputs' && payload.agentId && payload.turnId) {
       if (payload.operation === 'DELETE') {
         if (payload.kind === 'draft' || payload.kind === 'thought') {
@@ -285,7 +307,7 @@ export class PostgresLiveListener {
     const event: LiveEvent = {
       type: 'invalidate',
       roomId: payload.roomId,
-      reason: 'postgres',
+      reason: `postgres:${payload.table}`,
       ...(payload.agentId ? { agentId: payload.agentId } : {}),
     };
     this.live.publish(event);

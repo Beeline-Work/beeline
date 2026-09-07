@@ -14,6 +14,7 @@ import type { ReviewAccess } from './review-access.js';
 import type { ReleaseNotifier } from './release-notify.js';
 import { isMediaId, mediaTtlHours } from './media-ttl.js';
 import { InvitePreviewAccess } from './invite-preview.js';
+import type { ConnectionPresence } from './connection-presence.js';
 
 export const DEFAULT_MEDIA_MAXIMUM_BYTES = 25 * 1024 * 1024;
 
@@ -32,6 +33,7 @@ export interface ServerOptions {
   phone: PhoneService;
   daemon: DaemonService;
   live: LiveHub;
+  connectionPresence?: ConnectionPresence;
   mediaMaximumBytes: number;
   github?: GitHubServerHooks;
   /** Absent when no review secret is configured; the endpoint then refuses like any wrong secret. */
@@ -249,9 +251,35 @@ export function createBeelineServer(options: ServerOptions): Server {
               };
               releases.set(
                 roomId,
-                options.live.subscribe(roomId, () => void replay()),
+                (() => {
+                  const releaseLive = options.live.subscribe(roomId, () => void replay());
+                  const releasePresence = options.connectionPresence?.connect(
+                    roomId,
+                    principal.identityId,
+                    {
+                      ...(typeof item.releaseVersion === 'string'
+                        ? { releaseVersion: item.releaseVersion }
+                        : {}),
+                      ...(typeof item.sourceSha === 'string' ? { sourceSha: item.sourceSha } : {}),
+                      ...(typeof item.available === 'boolean' ? { available: item.available } : {}),
+                    },
+                  );
+                  return () => {
+                    releaseLive();
+                    releasePresence?.();
+                  };
+                })(),
               );
-              client.send(JSON.stringify({ type: 'subscribed', roomId }));
+              client.send(
+                JSON.stringify({
+                  type: 'subscribed',
+                  roomId,
+                  capabilities: {
+                    pushIntake: true,
+                    connectionPresence: Boolean(options.connectionPresence),
+                  },
+                }),
+              );
               await replay();
               return;
             }
@@ -278,6 +306,9 @@ export function createBeelineServer(options: ServerOptions): Server {
               .catch(() => [] as LiveEvent[]);
             for (const event of snapshot) {
               if (event.type === 'draft' && streamed.has(event.agentId)) continue;
+              if (client.readyState === client.OPEN) client.send(JSON.stringify(event));
+            }
+            for (const event of options.live.presenceSnapshot(item.roomId)) {
               if (client.readyState === client.OPEN) client.send(JSON.stringify(event));
             }
           }

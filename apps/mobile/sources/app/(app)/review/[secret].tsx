@@ -8,10 +8,11 @@ import { signInWithReviewSecret } from '@/auth/review-sign-in';
 import { parseReviewSecret } from '@/buzz/review-link';
 
 /**
- * The Google Play review link's landing route (`https://usebeeline.app/review/<secret>`).
+ * The store-reviewer landing route. Both `https://usebeeline.app/review/<secret>`
+ * and the association-independent `beeline://review/<secret>` resolve here.
  *
- * Nothing links here. Android's verified app link is the only way in, so the
- * app gains no control and no ordinary user ever sees this screen. It signs the
+ * Nothing inside the app links here, so the app gains no control and no
+ * ordinary user ever sees this screen. It signs the
  * device in as the review identity and hands it to the Room deck; anything the
  * server refuses lands on the ordinary sign-in screen with no hint that a
  * review link exists.

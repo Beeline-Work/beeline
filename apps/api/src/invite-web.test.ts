@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { buildSync } from 'esbuild';
 
@@ -35,6 +36,33 @@ describe('relay invite web front', () => {
 
   it('publishes every production app-association dependency from the committed files', async () => {
     expect(validateRequiredAssociations(await readRepositoryAssociations())).toEqual([]);
+  });
+
+  it('offers a CSP-pinned custom-scheme fallback for either store review device', () => {
+    const page = repoFile('relay-stack/web/review/index.html');
+    const script = page.match(/<script>\n([\s\S]*?)\n    <\/script>/)?.[1];
+    expect(script).toBeTruthy();
+    const scriptHash = createHash('sha256').update(script!).digest('base64');
+
+    expect(page).toContain('iPhone, iPad, or Android');
+    expect(page).toContain('App Store or Google Play');
+    expect(page).toContain('id="open-beeline"');
+
+    const action = { href: '' };
+    vi.stubGlobal('window', {
+      location: { pathname: '/review/play-review-secret-value-0001' },
+    });
+    vi.stubGlobal('document', {
+      getElementById: vi.fn(() => action),
+    });
+    Function(script!)();
+    expect(action.href).toBe('beeline://review/play-review-secret-value-0001');
+
+    for (const path of ['relay-stack/nginx.conf', 'relay-stack/prod/nginx.conf']) {
+      const nginx = repoFile(path);
+      expect(nginx).toContain('^/review/[A-Za-z0-9_-]{24,128}/?$');
+      expect(nginx).toContain(`script-src 'sha256-${scriptHash}'`);
+    }
   });
 
   it('serves only valid invite paths and proxies the relay including upgrades', () => {

@@ -24,6 +24,21 @@ domain every six hours. It fails the workflow and prints every repository-only
 or live-only app ID/path and Android package/relation/fingerprint entry, so
 drift is visible well before the next store review.
 
+## Store reviewer entry
+
+Put the custom-scheme form in the App Store and Play submission review notes:
+
+```text
+beeline://review/<secret>
+```
+
+That is the durable reviewer entry because the `beeline` scheme is baked into
+the shipped app binary and needs no server association file. Keep the universal
+link too — `https://usebeeline.app/review/<secret>` remains the convenient
+verified-link form and its browser fallback offers the same custom-scheme open
+action when an OS association handoff fails. Both forms resolve to the same
+invisible review route and server redemption; neither adds a login control.
+
 ## Local RoomView proof
 
 `npm run stack:up` starts the local relay and its credential-free materializer;

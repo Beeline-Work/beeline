@@ -59,28 +59,46 @@
         font-size: 14px;
         line-height: 1.7;
       }
+
+      .open-app {
+        display: inline-block;
+        margin-top: 22px;
+        border: 1px solid #d7af5f;
+        border-radius: 3px;
+        padding: 11px 16px;
+        color: #f2e9d8;
+        font-size: 14px;
+        font-weight: 600;
+        text-decoration: none;
+      }
     </style>
   </head>
   <body>
     <!--
-      The browser fallback for the Google Play review link. On an Android device
-      with Beeline installed the OS never renders this page: the verified app
-      link opens the app, which signs in and lands in the Workspace. This page
-      is what a desktop browser, or a device without the app, sees instead. It
-      deliberately holds no control and echoes nothing back: the secret rides in
-      the address bar and only the app ever spends it.
+      The browser fallback for the store-reviewer link. A working OS association
+      opens Beeline before this page renders. When that handoff fails, the fixed
+      inline script turns the same bounded path into the binary-owned beeline
+      scheme; no network request carries the secret.
     -->
     <main>
       <h1>Open this link on the device</h1>
       <p>
-        This link signs the Beeline app in for app review. It only works inside the app on the
-        device where Beeline is installed.
+        This link signs the Beeline app in for app review on iPhone, iPad, or Android. Beeline must
+        already be installed on this device.
       </p>
       <ol>
-        <li>Install Beeline on the Android device.</li>
-        <li>Open this same link on that device.</li>
+        <li>Install Beeline from the App Store or Google Play.</li>
+        <li>Open this same link on the review device.</li>
         <li>Beeline opens signed in, with a Workspace and an agent already there.</li>
       </ol>
+      <a class="open-app" id="open-beeline">Open Beeline</a>
     </main>
+    <script>
+      (() => {
+        const match = window.location.pathname.match(/^\/review\/([A-Za-z0-9_-]{24,128})\/?$/);
+        const action = document.getElementById('open-beeline');
+        if (match && action) action.href = `beeline://review/${match[1]}`;
+      })();
+    </script>
   </body>
 </html>

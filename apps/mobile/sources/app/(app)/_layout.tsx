@@ -164,7 +164,7 @@ export default function RootLayout() {
             statusBarStyle: 'light',
           }}
         />
-        {/* The Google Play review link's landing route. No control opens it. */}
+        {/* The store-reviewer links' landing route. No in-app control opens it. */}
         <Stack.Screen
           name="review/[secret]"
           options={{

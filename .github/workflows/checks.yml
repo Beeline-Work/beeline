@@ -216,6 +216,8 @@ jobs:
             appLinkAssociations:
               - 'apps/api/**'
               - 'relay-stack/web/**'
+              - 'relay-stack/nginx.conf'
+              - 'relay-stack/prod/nginx.conf'
               - 'scripts/app-associations.mjs'
               - 'scripts/app-associations.test.mjs'
               - 'scripts/check-app-association-drift.mjs'

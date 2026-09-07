@@ -35,13 +35,13 @@ function required(value: string, field: string): string {
  * app section names ONLY the platform(s) this person's registered devices
  * actually use.
  *
- * The helper command is `beeline update` (the installed wrapper on PATH
- * after `connect`), not `npx usebeeline update`: a collaborator ran the npx
- * form on a real host and it refused (see self-update-cli.test.ts) — npx
- * runs from a throwaway cache, never through the installed bundle. `beeline
- * update` is what `npx usebeeline update` itself now falls back to when it
- * finds no BEELINE_LIB_DIR, so both work, but the reader's own agent host
- * already has `beeline` on PATH — no reason to make them wait on npx.
+ * The helper command is `npx usebeeline update`, never any `npx beeline ...`
+ * spelling: `beeline` is also an UNRELATED package on npm (a router
+ * library), so `npx beeline ...` would fetch a stranger's code — keeping our
+ * published package name in the instruction is the safe form. #949 made the
+ * npx path delegate to the installed bundle when one exists, so this works
+ * on an installed host exactly like the on-PATH `beeline` wrapper, and it
+ * still reaches hosts that only hold the npm package.
  */
 export function composeReleaseNotice(input: {
   readonly version: string;
@@ -54,7 +54,7 @@ export function composeReleaseNotice(input: {
   ];
   if (input.behind) {
     sections.push(
-      'In order to keep your agents current, go to the host machine for your agents, and run "beeline update"',
+      'In order to keep your agents current, go to the host machine for your agents, and run "npx usebeeline update"',
     );
   }
   if (input.platforms.has('android')) {

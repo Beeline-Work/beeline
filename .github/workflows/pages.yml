@@ -1,0 +1,60 @@
+name: Publish usebeeline.app
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write
+  pages: write
+
+concurrency:
+  group: usebeeline-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build static site
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.19'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci
+      - name: Build and verify the Pages helper bundle
+        run: npm run bundle:beeline -- --platform linux-x64
+        env:
+          BEELINE_BUNDLE_COMMIT: ${{ github.sha }}
+          BEELINE_BUNDLE_VERSION: 0.0.${{ github.run_number }}
+      - name: Assemble the Pages artifact
+        run: >-
+          node scripts/pages-site.mjs build
+          --bundle-dir relay-stack/web/dl
+          --output-dir "$RUNNER_TEMP/usebeeline-pages"
+      - name: Prove the Pages path and byte contract
+        run: npm run test:pages
+      - name: Upload the complete Pages artifact, including .well-known
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: ${{ runner.temp }}/usebeeline-pages
+          include-hidden-files: true
+
+  deploy:
+    name: Deploy static site
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

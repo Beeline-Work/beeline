@@ -211,8 +211,8 @@ jobs:
               - 'scripts/readme.test.mjs'
               - 'package.json'
               - '.github/workflows/checks.yml'
-            # This lane owns both the canonical relay-front files and the
-            # tests/scripts that validate, compare, and publish them.
+            # This lane owns the canonical static site, its host publisher,
+            # and the independent Pages build and byte contract.
             appLinkAssociations:
               - 'apps/api/**'
               - 'relay-stack/web/**'
@@ -223,6 +223,8 @@ jobs:
               - 'scripts/check-app-association-drift.mjs'
               - 'scripts/publish-relay-front.mjs'
               - 'scripts/publish-relay-front.test.mjs'
+              - 'scripts/pages-site.mjs'
+              - 'scripts/pages-site.test.mjs'
               - 'packages/nostr/**'
               - 'packages/api-contract/**'
               - 'packages/buzz-client/**'
@@ -232,6 +234,7 @@ jobs:
               - 'turbo.json'
               - '.github/workflows/checks.yml'
               - '.github/workflows/app-association-drift.yml'
+              - '.github/workflows/pages.yml'
             workflows:
               - '.github/workflows/*.yml'
               - '.github/workflows/*.yaml'
@@ -668,8 +671,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client
-      - name: Verify the committed app associations and publisher safety
-        run: node --test scripts/app-associations.test.mjs scripts/publish-relay-front.test.mjs
+      - name: Verify the committed app associations, publisher safety, and Pages build
+        run: node --test scripts/app-associations.test.mjs scripts/publish-relay-front.test.mjs scripts/pages-site.test.mjs
       - name: Run the relay-front contract test
         run: npm test -w @beeline/relay-front -- --run src/invite-web.test.ts
 

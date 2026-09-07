@@ -1,8 +1,8 @@
 # The one production release button. `gh workflow run unified-release.yml`
 # (no inputs) releases the current main head: one human version for one exact
-# SHA, every artifact built before the gate, then server -> Pages -> daemon ->
-# app promotion, each confirmed, then the delivery report, npm publish, and
-# the optional store leg. The three legs are composite actions under
+# SHA, every artifact built before the gate, then server -> daemon -> app
+# promotion, each confirmed, then the delivery report, npm publish, and the
+# optional store leg. The three legs are composite actions under
 # .github/actions/{server-leg,daemon-leg,mobile-ota-leg}, each called twice
 # (build, then promote). A merge to main never releases; the retry job
 # re-dispatches this same workflow with the same identity.
@@ -302,70 +302,8 @@ jobs:
           path: ${{ runner.temp }}/release/unified-release.json
           retention-days: 7
 
-  pages_artifact:
-    needs: [initialize, daemon_artifact, confirm_server]
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-      pages: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.initialize.outputs.release_sha }}
-      - uses: actions/configure-pages@v5
-      - uses: actions/download-artifact@v4
-        with:
-          name: daemon-artifact-${{ needs.initialize.outputs.release_sha }}
-          path: ${{ runner.temp }}/daemon-release
-      - uses: ./.github/actions/pages-site
-        with:
-          bundle_dir: ${{ runner.temp }}/daemon-release
-          output_dir: ${{ runner.temp }}/usebeeline-pages
-
-  publish_pages:
-    needs: [initialize, pages_artifact]
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      actions: read
-      contents: read
-      id-token: write
-      pages: write
-    concurrency:
-      group: usebeeline-pages
-      cancel-in-progress: false
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.initialize.outputs.release_sha }}
-      - uses: actions/download-artifact@v4
-        with:
-          name: daemon-artifact-${{ needs.initialize.outputs.release_sha }}
-          path: ${{ runner.temp }}/daemon-release
-      - name: Publish the release bundle and static site to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
-      - name: Verify the Pages origin serves exact bytes without redirects
-        env:
-          PAGES_ORIGIN: ${{ steps.deployment.outputs.page_url }}
-        run: |
-          for attempt in {1..12}; do
-            if node scripts/pages-site.mjs verify \
-              --bundle-dir "$RUNNER_TEMP/daemon-release" \
-              --origin "$PAGES_ORIGIN"; then
-              exit 0
-            fi
-            echo "Pages has not exposed the deployment yet (attempt $attempt/12)."
-            sleep 10
-          done
-          exit 1
-
   promote_daemon:
-    needs: [initialize, publish_pages]
+    needs: [initialize, confirm_server]
     runs-on: [self-hosted, beeline-prod-host]
     # The daemon leg's confirm step waits up to 35 minutes: a busy helper may
     # hold its restart for the whole drain deadline (`UPDATE_DRAIN_DEADLINE_MS`)
@@ -1026,8 +964,6 @@ jobs:
       !(
         needs.promote_server.result == 'success' &&
         needs.confirm_server.result == 'success' &&
-        needs.pages_artifact.result == 'success' &&
-        needs.publish_pages.result == 'success' &&
         needs.promote_daemon.result == 'success' &&
         needs.confirm_daemon.result == 'success' &&
         needs.promote_app.result == 'success' &&
@@ -1041,8 +977,6 @@ jobs:
       - artifact_gate
       - promote_server
       - confirm_server
-      - pages_artifact
-      - publish_pages
       - promote_daemon
       - confirm_daemon
       - promote_app

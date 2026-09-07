@@ -1,17 +1,28 @@
-# Static site assets
+# Relay front assets
 
-`relay-stack/web/` is the source of truth for usebeeline.app. The
-`Publish usebeeline.app` workflow deploys it to GitHub Pages on every push to
-`main`. Its Pages-shaped build adds the current verified helper artifact under
-`/dl`, copies `install.sh` to the extensionless `/install` path, and includes
-the hidden `.well-known` directory without Jekyll processing.
+The relay front serves invite links, app-association files, and the hosted
+Beeline installer from the read-only `web/` mount.
 
-The same Pages build runs inside the unified release before daemon promotion,
-so a helper never sees a manifest before its archive and checksum are live.
-`scripts/pages-site.mjs` validates the bundle identity, hashes, byte counts,
-association contents, and the absence of `/.well-known/nostr.json`.
-`.github/workflows/app-association-drift.yml` continues to compare the live
-custom domain with the repository every six hours.
+## Publish the relay-front web assets
+
+The repository's `relay-stack/web/` tree is the source of truth. On the
+production operator host, publish it and reload the front with one command
+from a clean checkout of the intended commit:
+
+```sh
+npm run publish:relay-front
+```
+
+The publisher updates tracked web assets without deleting host-only download
+artifacts, so it is safe to run repeatedly. Before changing anything, it
+compares both the live and on-host Apple and Android associations with the
+repository and refuses to remove an entry either currently carries. After
+reviewing an intentional removal, use `npm run publish:relay-front -- --force`.
+
+`.github/workflows/app-association-drift.yml` independently checks the live
+domain every six hours. It fails the workflow and prints every repository-only
+or live-only app ID/path and Android package/relation/fingerprint entry, so
+drift is visible well before the next store review.
 
 ## Store reviewer entry
 
@@ -70,25 +81,25 @@ npm run bundle:beeline -- --platform darwin-arm64
 
 Each local build writes `web/dl/manifest.json`, a tarball, and its checksum
 sidecar as ignored build outputs. CI (the daemon leg of
-`.github/workflows/unified-release.yml`, `.github/actions/daemon-leg/`) uploads
-the verified set as a 90-day Actions artifact. The Pages build copies that
-artifact into its deployment; Git carries none of those generated files.
-GitHub Pages serves these paths:
+`.github/workflows/unified-release.yml`, `.github/actions/daemon-leg/`)
+publishes the verified set directly to the production host's persistent
+`relay-front/web/dl/` store; Git carries none of those generated files. The
+Fly monolith server leg does not touch that store. nginx continues to serve:
 
-- `/install`
+- `/install` as `text/x-shellscript`
 - `/dl/beeline-<os>-<arch>.tar.gz` and its `.sha256` sidecar
 - `/dl/manifest.json` — the rolling "latest from main" manifest consumed by
   the daemon self-update flow (see `docs/cli-bundle-channel.md`)
 
-The Pages artifact is deployed as one immutable unit. A normal `main` publish
-reuses the newest artifact from a successful unified release; a unified
-release deploys its own exact artifact and verifies the public bytes before
-helpers are allowed to restart.
+The publisher stages under the store, renames files atomically with the
+manifest last, and retains five generations by default for rollback. The
+bundle workflow dispatches the production deploy only after publication, so
+the first checkout-without-tarballs deploy never empties `/dl/`.
 
-The invite landing page links the signed Android APK directly from the
-`apk-v27` GitHub Release. At roughly 294 MB it does not belong in the Pages
-artifact; changing that release requires updating `APK_DOWNLOAD_URL` in
-`web/join/invite-source.js` and rebuilding `invite.js`.
+The invite landing page also expects the latest signed Android release APK at
+`web/dl/beeline-android.apk`. This stable deployment alias is not committed;
+copy the same APK attached to the current GitHub release before deploying the
+relay front so new invitees can install Beeline without losing their invite URL.
 
 For local verification, override the install origin while using the same
 published script:

@@ -63,6 +63,9 @@ export type PhoneOperationMap = {
   registerPushDevice: { input: PushDeviceInput; output: PushRegistrationResult };
   unregisterPushDevice: { input: PushDeviceInput; output: void };
   sendPushTest: { input: EmptyInput; output: void };
+  /** Erases the signed-in account and its personal data. Idempotent: a second
+   *  call resolves without effect once the identity row is gone. */
+  deleteAccount: { input: EmptyInput; output: void };
   reportRunningUpdate: { input: RunningUpdateInput; output: void };
 };
 

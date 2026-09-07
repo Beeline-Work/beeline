@@ -18,3 +18,18 @@ export const SYSTEM_IDENTITY_ID = createHash('sha256')
   .digest('hex');
 export const SYSTEM_IDENTITY_NAME = 'System';
 export const SYSTEM_IDENTITY_HANDLE = 'system';
+
+/**
+ * The hidden author that remains after a person deletes their account
+ * (PhoneService.deleteAccount). Messages in shared Rooms and DMs stay
+ * readable as the conversation record (the privacy page's "Room content may
+ * remain available" rule), but every one of them — and every one authored by
+ * an agent the account owned — is re-attributed to this identity and stripped
+ * of its mention of the deleted ids. Like the other fixed hidden humans it
+ * is never a member of a shared Room and never taggable: `hidden_from_roster`
+ * keeps it out of rosters and out of the #welcome backfill.
+ */
+export const DELETED_ACCOUNT_IDENTITY_ID = createHash('sha256')
+  .update('beeline:deleted-account')
+  .digest('hex');
+export const DELETED_ACCOUNT_NAME = 'Deleted account';

@@ -58,7 +58,11 @@ import { REVIEW_IDENTITY_ID } from './review-access.js';
 import { identitySubject, systemLine } from './system-line.js';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
 import { mediaIdFromUrl } from './media-ttl.js';
-import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
+import {
+  DELETED_ACCOUNT_IDENTITY_ID,
+  DELETED_ACCOUNT_NAME,
+  SYSTEM_IDENTITY_ID,
+} from '@beeline/api-contract/system-identity';
 
 const DURABLE_KINDS = [0, 9, 9000, 9001, 9002, 9007, 9008, 30078, 39000, 39001, 39002];
 
@@ -1654,6 +1658,9 @@ export class PhoneService {
         if (!this.sendPushTest) throw new Error('push delivery is not configured');
         await this.sendPushTest(viewerId);
         return undefined as Output<Name>;
+      case 'deleteAccount':
+        await this.deleteAccount(viewerId);
+        return undefined as Output<Name>;
       case 'beginGitHubIdentityBind':
         return (await this.requireGitHub().beginIdentity(
           viewerId,
@@ -3002,6 +3009,202 @@ export class PhoneService {
         });
     });
   }
+  /**
+   * Deletes the signed-in person's account and personal data — a real
+   * `DELETE FROM identities`, not a flag — in one transaction:
+   *
+   *   - every agent the account owns is removed outright (its identity row
+   *     goes too); its daemon tokens, schedules and grants die with it, and
+   *     the corners it owns archive as `done`/`abandoned` like removeAgent;
+   *   - Workspace/Room ownership the account held alone passes to the
+   *     longest-serving remaining human (admin first), so shared surfaces
+   *     stay manageable;
+   *   - messages the account or its agents authored in Rooms, corners and
+   *     DMs that others still read remain as the conversation record (the
+   *     privacy page's "Room content may remain available" rule) but are
+   *     re-attributed to the hidden DELETED_ACCOUNT_IDENTITY_ID author and
+   *     stripped of their mentions of the deleted ids;
+   *   - DM Rooms whose only other participants were the account's own agents
+   *     are deleted outright — nobody else relies on them;
+   *   - sessions, access/refresh/daemon tokens, push devices, media bytes,
+   *     GitHub tokens/links/installations, invites, pairing codes, grants,
+   *     read marks and succession rows all go with the identity row's
+   *     cascades.
+   *
+   * Idempotent: once the identity row is gone the operation resolves without
+   * effect, so a retried or doubled call never errors. A fresh GitHub sign-in
+   * with the same subject afterwards creates a NEW account.
+   */
+  private async deleteAccount(viewerId: string) {
+    if (viewerId === SYSTEM_IDENTITY_ID) throw new Error('only a person may delete their account');
+    // Idempotency floor: an already-deleted account reads as an empty graph.
+    const held = await this.database.query(`SELECT 1 FROM identities WHERE id=$1`, [viewerId]);
+    if (!held.rowCount) return;
+    const account = await this.requireIdentity(viewerId);
+    if (account.kind !== 'human') throw new Error('only a person may delete their account');
+    await this.database.transaction(async (database) => {
+      await database.query(`SELECT 1 FROM identities WHERE id=$1 FOR UPDATE`, [viewerId]);
+      if (!(await database.query(`SELECT 1 FROM identities WHERE id=$1`, [viewerId])).rowCount)
+        return;
+      const owned = await database.query<{ agent_id: string }>(
+        `SELECT agent_id FROM agents WHERE owner_id=$1`,
+        [viewerId],
+      );
+      // Everything erased by this deletion: the person and each agent it owned.
+      const gone = [viewerId, ...owned.rows.map((row) => row.agent_id)];
+
+      // The agents are removed, not re-owned: tokens, schedules and grants die
+      // with them, and their corners archive as removeAgent archives them.
+      await database.query(`UPDATE daemon_tokens SET revoked_at=now() WHERE agent_id=ANY($1)`, [
+        gone,
+      ]);
+      await database.query(
+        `DELETE FROM agent_grants WHERE agent_id=ANY($1) OR requested_by=ANY($1)`,
+        [gone],
+      );
+      await database.query(`UPDATE agent_grants SET decided_by=NULL WHERE decided_by=ANY($1)`, [
+        gone,
+      ]);
+      await database.query(
+        `UPDATE rooms SET archived_at=now(),updated_at=now()
+         WHERE parent_id IS NOT NULL AND archived_at IS NULL
+           AND id IN (SELECT corner_id FROM corner_facts WHERE owner_agent_id=ANY($1))`,
+        [gone],
+      );
+      await database.query(
+        `UPDATE corner_facts SET close_requested=true,owner_agent_id=NULL,
+           lifecycle=lifecycle||$2::jsonb,updated_at=now()
+         WHERE owner_agent_id=ANY($1)`,
+        [gone, JSON.stringify({ lifecycle: 'done', outcome: 'abandoned', reason: `${account.name} deleted their account` })],
+      );
+      await database.query(
+        `DELETE FROM agent_schedules WHERE agent_id=ANY($1) OR creator_id=ANY($1)`,
+        [gone],
+      );
+
+      // Ownership the account held alone passes to the longest-serving
+      // remaining human (admin first), so the shared surfaces stay manageable.
+      await database.query(
+        `WITH lone AS (
+           SELECT m.workspace_id FROM memberships m
+           WHERE m.room_id IS NULL AND m.role='owner' AND m.removed_at IS NULL
+             AND m.identity_id=ANY($1)
+             AND NOT EXISTS (SELECT 1 FROM memberships o
+                             WHERE o.workspace_id=m.workspace_id AND o.room_id IS NULL
+                               AND o.role='owner' AND o.removed_at IS NULL
+                               AND o.identity_id <> ALL($1))
+         ), heir AS (
+           SELECT DISTINCT ON (l.workspace_id) l.workspace_id,h.identity_id
+           FROM lone l
+           JOIN memberships h ON h.workspace_id=l.workspace_id AND h.room_id IS NULL
+             AND h.role IN ('admin','member') AND h.removed_at IS NULL
+             AND h.identity_id <> ALL($1)
+           JOIN identities hi ON hi.id=h.identity_id AND hi.kind='human'
+           ORDER BY l.workspace_id,h.role,h.joined_at,h.identity_id
+         )
+         UPDATE memberships m SET role='owner' FROM heir
+         WHERE m.workspace_id=heir.workspace_id AND m.identity_id=heir.identity_id`,
+        [gone],
+      );
+      await database.query(
+        `WITH lone AS (
+           SELECT m.room_id FROM memberships m JOIN rooms r ON r.id=m.room_id
+           WHERE m.room_id IS NOT NULL AND r.parent_id IS NULL AND r.archived_at IS NULL
+             AND m.role='owner' AND m.removed_at IS NULL AND m.identity_id=ANY($1)
+             AND NOT EXISTS (SELECT 1 FROM memberships o
+                             WHERE o.room_id=m.room_id AND o.role='owner'
+                               AND o.removed_at IS NULL AND o.identity_id <> ALL($1))
+         ), heir AS (
+           SELECT DISTINCT ON (l.room_id) l.room_id,h.identity_id
+           FROM lone l
+           JOIN memberships h ON h.room_id=l.room_id AND h.role IN ('admin','member')
+             AND h.removed_at IS NULL AND h.identity_id <> ALL($1)
+           JOIN identities hi ON hi.id=h.identity_id AND hi.kind='human'
+           ORDER BY l.room_id,h.role,h.joined_at,h.identity_id
+         )
+         UPDATE memberships m SET role='owner' FROM heir
+         WHERE m.room_id=heir.room_id AND m.identity_id=heir.identity_id`,
+        [gone],
+      );
+
+      // Authored content survives as the shared record, anonymised to the one
+      // hidden tombstone author; mentions of the deleted ids are stripped.
+      await database.query(
+        `INSERT INTO identities(id,kind,name,hidden_from_roster,github_subject)
+         VALUES ($1,'human',$2,true,NULL) ON CONFLICT (id) DO NOTHING`,
+        [DELETED_ACCOUNT_IDENTITY_ID, DELETED_ACCOUNT_NAME],
+      );
+      await database.query(`UPDATE messages SET author_id=$2 WHERE author_id=ANY($1)`, [
+        gone,
+        DELETED_ACCOUNT_IDENTITY_ID,
+      ]);
+      await database.query(
+        `UPDATE messages SET mention_ids=mention_ids-$1::text[]
+         WHERE EXISTS (SELECT 1 FROM jsonb_array_elements_text(mention_ids) m WHERE m=ANY($1))`,
+        [gone],
+      );
+
+      // DM Rooms nobody else relies on (person↔own-agent) go with the account;
+      // the rest lose the deleted participant from their participant list.
+      await database.query(
+        `UPDATE rooms SET direct_participants=(
+           SELECT coalesce(jsonb_agg(p),'[]'::jsonb)
+           FROM jsonb_array_elements(direct_participants) p
+           WHERE p#>>'{}' <> ALL($1))
+         WHERE direct_participants IS NOT NULL`,
+        [gone],
+      );
+      await database.query(
+        `DELETE FROM rooms WHERE direct_participants IS NOT NULL AND NOT EXISTS (
+           SELECT 1 FROM memberships m JOIN identities i ON i.id=m.identity_id
+           WHERE m.room_id=rooms.id AND m.removed_at IS NULL
+             AND i.kind='human' AND i.id <> ALL($1))`,
+        [gone],
+      );
+
+      // Receipts, output streams and authority rows that point at the gone ids.
+      await database.query(`DELETE FROM live_outputs WHERE agent_id=ANY($1)`, [gone]);
+      await database.query(`DELETE FROM agent_turns WHERE agent_id=ANY($1)`, [gone]);
+      await database.query(`DELETE FROM work_schedules WHERE agent_id=ANY($1)`, [gone]);
+      await database.query(`DELETE FROM schedule_receipts WHERE agent_id=ANY($1)`, [gone]);
+      await database.query(`DELETE FROM agent_mandates WHERE agent_id=ANY($1)`, [gone]);
+      await database.query(`DELETE FROM permission_authority WHERE principal_id=ANY($1)`, [gone]);
+      await database.query(`DELETE FROM mission_authority WHERE principal_id=ANY($1)`, [gone]);
+      await database.query(`DELETE FROM corner_merge_approvals WHERE approved_by=ANY($1)`, [gone]);
+      await database.query(`DELETE FROM invites WHERE created_by=ANY($1)`, [gone]);
+      await database.query(
+        `DELETE FROM agent_pairing_codes WHERE created_by=ANY($1) OR claimed_by=ANY($1)`,
+        [gone],
+      );
+      await database.query(`DELETE FROM identity_successions
+         WHERE old_identity_id=ANY($1) OR new_identity_id=ANY($1)`, [gone]);
+
+      // Media bytes are personal data: the rows go, and a tombstone keeps the
+      // readers' story the one media-ttl.ts already tells (expired, not lost).
+      await database.query(
+        `WITH swept AS (DELETE FROM media WHERE owner_id=ANY($1) RETURNING id)
+         INSERT INTO media_expirations(id) SELECT id FROM swept`,
+        [gone],
+      );
+
+      // Rooms and GitHub connections the account created: the artifacts stay,
+      // the attribution goes.
+      await database.query(`UPDATE rooms SET created_by=NULL WHERE created_by=ANY($1)`, [gone]);
+      await database.query(`DELETE FROM github_installations WHERE owner_id=ANY($1)`, [gone]);
+      await database.query(
+        `DELETE FROM github_user_tokens WHERE subject IN (
+           SELECT github_subject FROM identities WHERE id=$1 AND github_subject IS NOT NULL)`,
+        [viewerId],
+      );
+
+      // The account itself. Sessions, access/refresh/daemon tokens, push
+      // devices, memberships, external links, read marks and the agent rows
+      // all follow through ON DELETE CASCADE. The agents go first so their
+      // rows' owner_id link dies before the owner's row does.
+      await database.query(`DELETE FROM identities WHERE id=ANY($1) AND kind='agent'`, [gone]);
+      await database.query(`DELETE FROM identities WHERE id=$1`, [viewerId]);
+    });
+  }
   private async updateProfile(input: Input<'updatePersonProfile'>, viewerId: string) {
     if (input.name !== undefined && (!input.name.trim() || input.name.trim().length > 60))
       throw new Error('invalid person name');
@@ -3527,6 +3730,7 @@ export const REVIEW_LOCKED_OPERATIONS = new Set<keyof PhoneOperationMap>([
   'completeGitHubIdentityBind',
   'recoverGitHubIdentity',
   'adoptGitHubHandle',
+  'deleteAccount',
 ]);
 
 export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
@@ -3583,4 +3787,5 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'unregisterPushDevice',
   'sendPushTest',
   'reportRunningUpdate',
+  'deleteAccount',
 ]);

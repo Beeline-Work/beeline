@@ -12,6 +12,7 @@ const identityStorage = vi.hoisted(() => ({
   getEffectiveRelayUrl: vi.fn(async () => 'https://relay.example'),
 }));
 const surfaceStorage = vi.hoisted(() => ({ clearMobileSurfaceStorage: vi.fn() }));
+const transport = vi.hoisted(() => ({ deleteCalls: 0, failDelete: false }));
 const authSession = vi.hoisted(() => ({
   clearPendingGitHubSignInState: vi.fn(async () => undefined),
 }));
@@ -44,6 +45,10 @@ vi.mock('@/sync/transport', () => ({
   BuzzRigTransport: class {
     async workspaceGitHubAccess() {
       return { installed: false, installations: [], candidates: [] };
+    }
+    async deleteAccount() {
+      if (transport.failDelete) throw new Error('offline');
+      transport.deleteCalls += 1;
     }
   },
 }));
@@ -95,6 +100,8 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 beforeEach(() => {
   vi.clearAllMocks();
+  transport.deleteCalls = 0;
+  transport.failDelete = false;
   updates.isEnabled = true;
   updates.checkForUpdateAsync.mockResolvedValue({ isAvailable: false });
   updates.fetchUpdateAsync.mockResolvedValue({
@@ -308,5 +315,89 @@ describe('Buzz global Settings', () => {
     expect(authSession.clearPendingGitHubSignInState).toHaveBeenCalledOnce();
     expect(surfaceStorage.clearMobileSurfaceStorage).toHaveBeenCalledOnce();
     expect(navigation.replace).toHaveBeenCalledWith('/beeline/onboarding');
+  });
+
+  describe('Delete account', () => {
+    const screenText = (renderer: ReactTestRenderer) =>
+      renderer.root
+        .findAllByType('Text' as any)
+        .flatMap((node) => node.props.children)
+        .join(' ');
+
+    it('asks first and names what is deleted and what remains', () => {
+      const renderer = render();
+      expect(renderer.root.findByProps({ testID: 'delete-account-setting' }).props.title).toBe(
+        'Delete account',
+      );
+      // One press only arms the confirmation.
+      act(() => renderer.root.findByProps({ testID: 'delete-account-setting' }).props.onPress());
+      expect(transport.deleteCalls).toBe(0);
+      expect(renderer.root.findByProps({ testID: 'delete-account-setting' }).props.title).toBe(
+        'Confirm delete account',
+      );
+      const warning = screenText(renderer);
+      expect(warning).toContain('permanently deletes your account');
+      // What goes.
+      expect(warning).toContain('sessions and push devices');
+      expect(warning).toContain('every agent you own');
+      expect(warning).toContain('uploaded media');
+      // What remains.
+      expect(warning).toContain('attributed to');
+      expect(warning).toContain('cannot be undone');
+    });
+
+    it('cancels without touching the account or the local identity', () => {
+      const renderer = render();
+      act(() => renderer.root.findByProps({ testID: 'delete-account-setting' }).props.onPress());
+      act(() => renderer.root.findByProps({ testID: 'cancel-delete-account' }).props.onPress());
+      expect(renderer.root.findAllByProps({ testID: 'cancel-delete-account' })).toHaveLength(0);
+      expect(renderer.root.findByProps({ testID: 'delete-account-setting' }).props.title).toBe(
+        'Delete account',
+      );
+      expect(transport.deleteCalls).toBe(0);
+      expect(identityStorage.clearBuzzIdentity).not.toHaveBeenCalled();
+      expect(navigation.replace).not.toHaveBeenCalled();
+    });
+
+    it('deletes the server account before clearing local state and landing on onboarding', async () => {
+      identityStorage.loadBuzzIdentity.mockResolvedValue({
+        secretKey: 'k'.repeat(64),
+        publicKey: 'a'.repeat(64),
+      });
+      const renderer = render();
+      await act(async () => {
+        await renderer.root.findByProps({ testID: 'delete-account-setting' }).props.onPress();
+      });
+      await act(async () => {
+        await renderer.root.findByProps({ testID: 'delete-account-setting' }).props.onPress();
+      });
+      // The server heard the deletion before any local state moved.
+      expect(transport.deleteCalls).toBe(1);
+      expect(identityStorage.clearBuzzIdentity).toHaveBeenCalledOnce();
+      expect(authSession.clearPendingGitHubSignInState).toHaveBeenCalledOnce();
+      expect(surfaceStorage.clearMobileSurfaceStorage).toHaveBeenCalledOnce();
+      expect(navigation.replace).toHaveBeenCalledWith('/beeline/onboarding');
+    });
+
+    it('explains itself and stays actionable when deletion fails', async () => {
+      transport.failDelete = true;
+      identityStorage.loadBuzzIdentity.mockResolvedValue({
+        secretKey: 'k'.repeat(64),
+        publicKey: 'a'.repeat(64),
+      });
+      const renderer = render();
+      await act(async () => {
+        await renderer.root.findByProps({ testID: 'delete-account-setting' }).props.onPress();
+      });
+      await act(async () => {
+        await renderer.root.findByProps({ testID: 'delete-account-setting' }).props.onPress();
+      });
+      const row = renderer.root.findByProps({ testID: 'delete-account-setting' }).props;
+      expect(row.description).toContain('Deletion failed');
+      expect(row.disabled).toBe(false);
+      // Nothing local was lost: the account still holds the data.
+      expect(identityStorage.clearBuzzIdentity).not.toHaveBeenCalled();
+      expect(navigation.replace).not.toHaveBeenCalled();
+    });
   });
 });

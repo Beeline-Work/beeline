@@ -205,7 +205,7 @@ test('refuses a corrupt bundle before producing a Pages tree', async () => {
   }
 });
 
-test('publishes Pages on main and keeps release promotion behind an exact public-byte proof', () => {
+test('publishes Pages on main without gating release promotion on public hosting', () => {
   const pagesWorkflow = fs.readFileSync(
     path.join(REPOSITORY_ROOT, '.github', 'workflows', 'pages.yml'),
     'utf8',
@@ -230,9 +230,9 @@ test('publishes Pages on main and keeps release promotion behind an exact public
   assert.match(pagesWorkflow, /pages-site\.mjs verify/);
   assert.match(pagesAction, /actions\/upload-pages-artifact@v5/);
   assert.match(pagesAction, /include-hidden-files: true/);
-  assert.ok(
-    unifiedRelease.indexOf('\n  publish_pages:') < unifiedRelease.indexOf('\n  promote_daemon:'),
-  );
-  assert.match(daemonLeg, /pages-site\.mjs verify/);
+  assert.match(unifiedRelease, /pages_artifact:[\s\S]*?continue-on-error: true/);
+  assert.match(unifiedRelease, /publish_pages:[\s\S]*?continue-on-error: true/);
+  assert.match(unifiedRelease, /promote_daemon:\s*\n\s*needs: \[initialize, confirm_server\]/);
+  assert.doesNotMatch(daemonLeg, /pages-site\.mjs verify|Confirm Pages serves/);
   assert.doesNotMatch(daemonLeg, /buzz-router-relay-prod|publish-beeline-dl/);
 });

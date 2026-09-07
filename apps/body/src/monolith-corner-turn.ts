@@ -232,11 +232,14 @@ export interface MonolithCornerTurnOptions {
    */
   openedBy?: string;
   objective: string;
-  featureBranch: string;
-  targetBranch: string;
   worktreePath: string;
-  gitCommonDir: string;
-  githubToken: string;
+  /** Present only when the parent Room is bound to a repository. */
+  repository?: {
+    featureBranch: string;
+    targetBranch: string;
+    gitCommonDir: string;
+    githubToken: string;
+  };
   runtime: AgentRuntimeRecord;
   config: BodyConfig;
   api: DaemonApiClient;
@@ -430,11 +433,11 @@ export class MonolithCornerTurnLoop {
         })
       : {};
     const command = this.options.config.agentCommand ?? this.options.config.agentBinary;
-    let githubEnv: Record<string, string> = {
-      GH_TOKEN: this.options.githubToken,
-      GITHUB_TOKEN: this.options.githubToken,
-    };
-    if (this.options.config.runtimeConfigPath && this.options.config.agentHomeRoot) {
+    const repository = this.options.repository;
+    let githubEnv: Record<string, string> = repository
+      ? { GH_TOKEN: repository.githubToken, GITHUB_TOKEN: repository.githubToken }
+      : {};
+    if (repository && this.options.config.runtimeConfigPath && this.options.config.agentHomeRoot) {
       const gitBinary = (await execFileAsync('which', ['git'])).stdout.trim();
       const ghBinary = await execFileAsync('which', ['gh'])
         .then((result) => result.stdout.trim())
@@ -481,7 +484,7 @@ export class MonolithCornerTurnLoop {
         mode: 'edit',
         cwd: this.options.worktreePath,
         worktreePath: this.options.worktreePath,
-        gitCommonDir: this.options.gitCommonDir,
+        ...(repository ? { gitCommonDir: repository.gitCommonDir } : {}),
         protectedPaths: [this.options.runtime.supervisorRoot],
         harnessStateDirs: stateDirs,
         harnessHomeStateDirs: homeStateDirs,
@@ -506,19 +509,23 @@ export class MonolithCornerTurnLoop {
     );
     await this.client.start();
     const servers: McpServerWire[] = [
-      {
-        name: 'buzz-dev-mcp',
-        command: this.options.config.mcpBinary,
-        args: [],
-        // ACP hosts launch stdio MCP servers with an explicit, sanitized env.
-        // This token is minted for this exact corner and is also the credential
-        // helper's password source, so its shell commands need the same scope as
-        // the corner harness without inheriting any host credentials.
-        env: [
-          { name: 'GH_TOKEN', value: this.options.githubToken },
-          { name: 'GITHUB_TOKEN', value: this.options.githubToken },
-        ],
-      },
+      ...(repository
+        ? [
+            {
+              name: 'buzz-dev-mcp',
+              command: this.options.config.mcpBinary,
+              args: [],
+              // ACP hosts launch stdio MCP servers with an explicit, sanitized env.
+              // This token is minted for this exact corner and is also the credential
+              // helper's password source, so its shell commands need the same scope as
+              // the corner harness without inheriting any host credentials.
+              env: [
+                { name: 'GH_TOKEN', value: repository.githubToken },
+                { name: 'GITHUB_TOKEN', value: repository.githubToken },
+              ],
+            },
+          ]
+        : []),
       beelineAgentMcpServer(this.options.config, this.options.api, {
         roomId: this.options.parentRoomId,
         workspaceId: this.options.workspaceId,
@@ -559,17 +566,25 @@ export class MonolithCornerTurnLoop {
       systemPrompt: [
         identityInstructions,
         personaInstructions,
-        `You are in an isolated git worktree on ${this.options.featureBranch}, targeting ${this.options.targetBranch}.`,
-        'Work normally with the full coding tools. Commit and push only this feature branch. Use gh to open its pull request.',
-        `This corner is shared: any of its member agents may be addressed in it and work on ${this.options.featureBranch}. Run git pull --rebase origin ${this.options.featureBranch} before you push, and never force-push it.`,
-        'PR-opening turn rule: as soon as a pull request exists, print its full GitHub URL as your final response and end the turn immediately. Do not call pr_checks_status in that same turn and do not wait for checks inside it. Then stay idle until a later corner fact or human message starts another turn.',
-        'Never merge because local tests pass or because gh reports passing checks. On a later turn triggered by a server-posted checks-passed note, call beeline-agent pr_checks_status. Merge only when it returns checks="passed", held=false, and approvalPending=false.',
-        'Merge the PR yourself only after the checks-passed event shows every check green; if any check failed or is still running, say exactly which and stop - never merge red.',
-        'If any human in this corner says hold or do not merge, do not merge until a later human explicitly resumes it.',
-        'Do not tag the user when a corner turn finishes: the server posts the merge summary card and its push already cover completion. Tag a human only mid-turn, and only when you need a decision or input.',
-        'GitHub check and merge notes are server lines already in the corner: never restate them (no "checks passed", "CI is green", "PR ready for review"). On a checks turn, say nothing unless you act - a merge or a pushed fix - and then one short line about that.',
-        'A human approval in the app asks the server to merge. When approval is pending, wait for the server close request instead of racing it with gh. If checks passed, no hold exists, and no approval is pending, merge the pull request yourself with gh.',
-        'Never push directly to the target branch. Never merge a different pull request.',
+        ...(repository
+          ? [
+              `You are in an isolated git worktree on ${repository.featureBranch}, targeting ${repository.targetBranch}.`,
+              'Work normally with the full coding tools. Commit and push only this feature branch. Use gh to open its pull request.',
+              `This corner is shared: any of its member agents may be addressed in it and work on ${repository.featureBranch}. Run git pull --rebase origin ${repository.featureBranch} before you push, and never force-push it.`,
+              'PR-opening turn rule: as soon as a pull request exists, print its full GitHub URL as your final response and end the turn immediately. Do not call pr_checks_status in that same turn and do not wait for checks inside it. Then stay idle until a later corner fact or human message starts another turn.',
+              'Never merge because local tests pass or because gh reports passing checks. On a later turn triggered by a server-posted checks-passed note, call beeline-agent pr_checks_status. Merge only when it returns checks="passed", held=false, and approvalPending=false.',
+              'Merge the PR yourself only after the checks-passed event shows every check green; if any check failed or is still running, say exactly which and stop - never merge red.',
+              'If any human in this corner says hold or do not merge, do not merge until a later human explicitly resumes it.',
+              'Do not tag the user when a corner turn finishes: the server posts the merge summary card and its push already cover completion. Tag a human only mid-turn, and only when you need a decision or input.',
+              'GitHub check and merge notes are server lines already in the corner: never restate them (no "checks passed", "CI is green", "PR ready for review"). On a checks turn, say nothing unless you act - a merge or a pushed fix - and then one short line about that.',
+              'A human approval in the app asks the server to merge. When approval is pending, wait for the server close request instead of racing it with gh. If checks passed, no hold exists, and no approval is pending, merge the pull request yourself with gh.',
+              'Never push directly to the target branch. Never merge a different pull request.',
+            ]
+          : [
+              'This is a chat-only corner with no repository or GitHub workflow.',
+              "Work in this corner's writable workspace. Use write_scratch_file or ordinary tools to create files, then attach_file to send them back to the corner.",
+              'Do not initialize a repository, create a branch, push, open a pull request, or wait for GitHub checks.',
+            ]),
       ]
         .filter(Boolean)
         .join('\n\n'),
@@ -632,10 +647,7 @@ export class MonolithCornerTurnLoop {
    * fresh session on it, so the retry of an empty completion is served — and
    * named — by exactly one provider (C92).
    */
-  private async repinNextProvider(
-    trace?: TurnTrace,
-    reason?: string,
-  ): Promise<string | undefined> {
+  private async repinNextProvider(trace?: TurnTrace, reason?: string): Promise<string | undefined> {
     const next = nextPinnedProvider(this.pinnedProviders, this.pinnedProviderOverride);
     if (!next) return undefined;
     // The retry is its own timeline, fresh ACP handshake included.
@@ -737,23 +749,26 @@ export class MonolithCornerTurnLoop {
               // same turn against a NEW session id that holds none of this
               // transcript. The objective is outside the window and always
               // renders, warm session or not.
-              const buildPrompt = (): string => [
-                this.turnIdentityInstructions,
-                `Corner objective:\n${this.options.objective}`,
-                WarmTranscript.render(
-                  this.warmTranscript.select(this.sessionId, transcriptRows),
-                  'Corner transcript:',
-                  'New in the corner since your last turn (the earlier transcript is already in this session):',
-                ),
+              const buildPrompt = (): string =>
                 [
-                  `Newest trigger:\n${trigger}`,
-                  ...attachmentPromptLines(attachments, delivered, this.acceptsImages()),
-                ].join('\n'),
-                'Continue the objective. Obey the PR checks and human hold rules in your session instructions.',
-                MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE,
-              ]
-                .filter(Boolean)
-                .join('\n\n');
+                  this.turnIdentityInstructions,
+                  `Corner objective:\n${this.options.objective}`,
+                  WarmTranscript.render(
+                    this.warmTranscript.select(this.sessionId, transcriptRows),
+                    'Corner transcript:',
+                    'New in the corner since your last turn (the earlier transcript is already in this session):',
+                  ),
+                  [
+                    `Newest trigger:\n${trigger}`,
+                    ...attachmentPromptLines(attachments, delivered, this.acceptsImages()),
+                  ].join('\n'),
+                  this.options.repository
+                    ? 'Continue the objective. Obey the PR checks and human hold rules in your session instructions.'
+                    : 'Continue the objective. Attach completed files before calling close_corner.',
+                  MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE,
+                ]
+                  .filter(Boolean)
+                  .join('\n\n');
               // Rooms and corners stream through ONE presentation (C100): the
               // provisional draft lane, the request-id handoff, and the single
               // durable reply that dissolves it all live in `turn-stream.ts`.
@@ -954,13 +969,15 @@ export class MonolithCornerTurnLoop {
    * fails with that sentence and the server inscribes it in the corner.
    */
   private async syncBranch(): Promise<void> {
+    const repository = this.options.repository;
+    if (!repository) return;
     const token = await this.options.api
       .execute('getRoomGitHubToken', { roomId: this.options.parentRoomId })
       .then((granted) => granted.token)
-      .catch(() => this.options.githubToken);
+      .catch(() => repository.githubToken);
     await syncCornerBranch({
       worktreePath: this.options.worktreePath,
-      featureBranch: this.options.featureBranch,
+      featureBranch: repository.featureBranch,
       env: { ...process.env, GH_TOKEN: token, GITHUB_TOKEN: token, GIT_TERMINAL_PROMPT: '0' },
     });
   }
@@ -1006,8 +1023,7 @@ export class MonolithCornerTurnLoop {
     const history = await api.execute('getRoomConversation', { roomId: cornerId, limit: 200 });
     // Who is carrying this corner: the member agent that answered in it last.
     await this.roster().catch(() => undefined);
-    for (const item of history.items)
-      if (item.type === 'message') this.noteCarrier(item.authorId);
+    for (const item of history.items) if (item.type === 'message') this.noteCarrier(item.authorId);
     const durableAgentReplies = history.items.filter(
       (item) =>
         item.type === 'message' &&

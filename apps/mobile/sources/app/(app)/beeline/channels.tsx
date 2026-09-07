@@ -39,12 +39,7 @@ import {
 } from '@/buzz/room-list-row';
 import { formatRoomCornerCount } from '@/buzz/vocabulary';
 import { runRoomDeckComposeAction } from '@/buzz/room-deck-compose-actions';
-import {
-  MEMBERS_LABEL,
-  ROOM_LABEL,
-  WORKSPACE_LABEL,
-  ROOMS_LABEL,
-} from '@/buzz/vocabulary';
+import { MEMBERS_LABEL, ROOM_LABEL, WORKSPACE_LABEL, ROOMS_LABEL } from '@/buzz/vocabulary';
 import { BuzzCommunityShell, CommunityDrawerTrigger } from '@/components/buzz/CommunityRail';
 import { DirectMessagePickerSheet } from '@/components/buzz/DirectMessagePickerSheet';
 import { HullDialog, HullDialogInput } from '@/components/buzz/HullDialog';
@@ -431,16 +426,22 @@ export default function BuzzChannels() {
     setRepoPickerError(null);
   }, []);
 
+  const handleSelectNoRepository = useCallback(() => {
+    setPendingRepo(null);
+    setShowRepoPicker(false);
+    setRepoPickerError(null);
+  }, []);
+
   const createRoom = useCallback(async () => {
     const name = roomName.trim();
-    if (!name || !transport || !activeCommunityId || !pendingRepo || creatingRoom) return;
+    if (!name || !transport || !activeCommunityId || creatingRoom) return;
     setCreatingRoom(true);
     setError(null);
     let publishAcknowledged = false;
     try {
       await transport.createRoom(name, {
         communityId: activeCommunityId,
-        repository: pendingRepo,
+        repository: pendingRepo ?? undefined,
         onPublished: () => {
           publishAcknowledged = true;
           setRoomName('');
@@ -552,9 +553,7 @@ export default function BuzzChannels() {
               style={styles.headerAction}
               testID="workspace-members"
             >
-              <Text style={styles.headerActionText}>
-                {MEMBERS_LABEL.toUpperCase()}
-              </Text>
+              <Text style={styles.headerActionText}>{MEMBERS_LABEL.toUpperCase()}</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -564,13 +563,13 @@ export default function BuzzChannels() {
             {
               label: creatingRoom ? 'Creating' : 'Create',
               onPress: () => void createRoom(),
-              disabled: !roomName.trim() || !pendingRepo || creatingRoom,
+              disabled: !roomName.trim() || creatingRoom,
               busy: creatingRoom,
               variant: 'primary',
               testID: 'create-room-submit',
             },
           ]}
-          body={`In ${activeCommunity?.name ?? WORKSPACE_LABEL}. One Room, one repo.`}
+          body={`In ${activeCommunity?.name ?? WORKSPACE_LABEL}. Repository optional.`}
           onRequestClose={() => setShowCreateRoom(false)}
           surfaceStyle={styles.createRoomDialog}
           testID="new-room-dialog"
@@ -587,19 +586,29 @@ export default function BuzzChannels() {
             >
               <Text style={styles.repoRowLabel}>REPO</Text>
               <Text numberOfLines={1} style={styles.repoRowValue}>
-                {pendingRepo ? `▢ ${pendingRepo.name}` : 'Choose a repository'}
+                {pendingRepo ? `▢ ${pendingRepo.name}` : 'No repository (chat only)'}
               </Text>
               <Text style={styles.repoRowChevron}>{showRepoPicker ? '⌄' : '›'}</Text>
             </TouchableOpacity>
             {showRepoPicker && (
-              <RepoPicker
-                candidates={repoCandidates}
-                currentKey={pendingRepo?.key ?? null}
-                error={repoPickerError}
-                installations={repoInstallations}
-                onSelect={handleSelectRepoCandidate}
-                testIDPrefix="create-room-repo-picker"
-              />
+              <>
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  onPress={handleSelectNoRepository}
+                  style={styles.noRepoRow}
+                  testID="create-room-no-repository"
+                >
+                  <Text style={styles.noRepoRowText}>No repository (chat only)</Text>
+                </TouchableOpacity>
+                <RepoPicker
+                  candidates={repoCandidates}
+                  currentKey={pendingRepo?.key ?? null}
+                  error={repoPickerError}
+                  installations={repoInstallations}
+                  onSelect={handleSelectRepoCandidate}
+                  testIDPrefix="create-room-repo-picker"
+                />
+              </>
             )}
             <HullDialogInput
               accessibilityLabel={`${ROOM_LABEL} name`}
@@ -885,6 +894,13 @@ const styles = StyleSheet.create((theme) => {
       fontSize: 12,
     },
     repoRowChevron: { ...Typography.default(), color: hull.chrome, fontSize: 18 },
+    noRepoRow: {
+      minHeight: 44,
+      justifyContent: 'center',
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: hull.border,
+    },
+    noRepoRowText: { ...Typography.mono(), color: hull.textSecondary, fontSize: 12 },
     errorBar: {
       paddingHorizontal: 16,
       paddingVertical: 8,

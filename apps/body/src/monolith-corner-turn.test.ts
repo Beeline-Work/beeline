@@ -14,6 +14,7 @@ import {
 } from './monolith-corner-turn.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 import { SOUL_HOUSE_RULE } from './response-directives.js';
+import { attachFile, writeScratchFile } from './read-only-mcp.js';
 import { SessionScheduler } from './session-scheduler.js';
 
 const roots: string[] = [];
@@ -38,6 +39,153 @@ describe('corner close-request polling cadence', () => {
     expect(cornerClosePollMs(() => 0.999)).toBeGreaterThanOrEqual(12_000);
     expect(cornerClosePollMs(() => 0.999)).toBeLessThanOrEqual(15_000);
     expect(cornerClosePollMs(() => 0.5)).not.toBe(cornerClosePollMs(() => 0.75));
+  });
+
+  it('runs a chat-only corner in scratch and attaches a generated file without git', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-chat-corner-'));
+    roots.push(root);
+    const workspace = join(root, 'rooms', 'corner-id', 'scratch');
+    const scratchRoot = join(workspace, 'agent-home');
+    await mkdir(scratchRoot, { recursive: true });
+    const runtime = {
+      agentId: '11'.repeat(32),
+      agent: stored('11'.repeat(32), 'Bee'),
+      rooms: [],
+      supervisorRoot: root,
+      transport: {
+        kind: 'monolith',
+        baseUrl: 'https://server.example',
+        daemonToken: 'daemon-token',
+      },
+      agentBinary: '/fake-agent',
+      agentKind: 'codex',
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+    } as unknown as AgentRuntimeRecord;
+    const config: BodyConfig = {
+      agentBinary: '/fake-agent',
+      agentKind: 'codex',
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+      readonlyMcpCommand: '/fake-beeline-mcp',
+      agentEnv: {},
+      agentHomeRoot: scratchRoot,
+      workspaceRoot: workspace,
+      autoApprovePermissions: true,
+    };
+    const calls: Array<{ name: string; input: Record<string, unknown> }> = [];
+    const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
+      if (name === 'getRoomGitHubToken') throw new Error('chat-only corner requested GitHub');
+      if (name === 'getAgentConfiguration') return { commands: [] };
+      if (name === 'getWorkspaceRoster') {
+        return {
+          members: [
+            { identityId: runtime.agent.publicKey, kind: 'agent', name: 'Bee', role: 'member' },
+          ],
+        };
+      }
+      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getCornerCloseRequests') {
+        return { items: [], cursor: 'latest', closeRequested: true };
+      }
+      calls.push({ name, input });
+      return { id: 'write-id', createdAt: 1 };
+    });
+    const api = {
+      execute,
+      connection: () => ({
+        baseUrl: 'https://server.example',
+        daemonToken: 'daemon-token',
+        agentId: runtime.agent.publicKey,
+      }),
+    } as unknown as DaemonApiClient;
+    const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
+    vi.spyOn(acp, 'start').mockResolvedValue(undefined);
+    let sessionInput: Parameters<AcpClient['sessionNew']>[0] | undefined;
+    vi.spyOn(acp, 'sessionNew').mockImplementation(async (input) => {
+      sessionInput = input;
+      return { sessionId: 'corner-session', raw: {} };
+    });
+    vi.spyOn(acp, 'sessionPrompt').mockImplementation(async () => {
+      const agentServer = sessionInput?.mcpServers.find(
+        (server) => server.name === 'beeline-agent',
+      );
+      const env = new Map(agentServer?.env.map((entry) => [entry.name, entry.value]));
+      const generated = await writeScratchFile(
+        {
+          path: 'clips/demo.mp4',
+          content: Buffer.from('video-bytes').toString('base64'),
+          encoding: 'base64',
+        },
+        { root: env.get('BEELINE_ATTACH_SCRATCH_ROOT')! },
+      );
+      expect(generated).toContain('demo.mp4');
+      await attachFile(
+        { path: 'clips/demo.mp4' },
+        {
+          roots: [env.get('BEELINE_ATTACH_ROOT')!, env.get('BEELINE_ATTACH_SCRATCH_ROOT')!],
+          baseUrl: 'https://server.example',
+          token: 'daemon-token',
+          roomId: 'corner-id',
+          upload: async (bytes, mimeType, name) => ({
+            url: 'https://server.example/v1/media/clip',
+            name,
+            mimeType,
+            size: bytes.length,
+          }),
+          queue: async (attachment) => {
+            await api.execute('postAgentAttachment', { roomId: 'corner-id', attachment });
+          },
+        },
+      );
+      return {
+        stopReason: 'end_turn',
+        updates: [],
+        agentText: 'Attached the clip.',
+        toolCalls: [],
+      };
+    });
+    const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
+    const onCloseRequested = vi.fn(async () => undefined);
+    await new MonolithCornerTurnLoop({
+      cornerId: 'corner-id',
+      parentRoomId: 'room-id',
+      workspaceId: 'workspace',
+      objective: 'Generate and attach a clip',
+      worktreePath: workspace,
+      runtime,
+      config,
+      api,
+      scheduler,
+      pollMs: 1,
+      onPoll: vi.fn(),
+      onFailure: vi.fn(),
+      onCloseRequested,
+      createAcpClient: () => acp,
+    }).run();
+    await scheduler.dispose();
+
+    expect(sessionInput).toMatchObject({
+      cwd: workspace,
+      mode: 'edit',
+      mcpServers: [expect.objectContaining({ name: 'beeline-agent' })],
+      systemPrompt: expect.stringContaining('chat-only corner with no repository'),
+    });
+    expect(sessionInput?.mcpServers.some((server) => server.name === 'buzz-dev-mcp')).toBe(false);
+    expect(execute).not.toHaveBeenCalledWith('getRoomGitHubToken', expect.anything());
+    expect(calls).toContainEqual(
+      expect.objectContaining({
+        name: 'postAgentAttachment',
+        input: expect.objectContaining({
+          roomId: 'corner-id',
+          attachment: expect.objectContaining({ name: 'demo.mp4', size: 11 }),
+        }),
+      }),
+    );
+    expect(onCloseRequested).toHaveBeenCalledOnce();
   });
 
   it('re-checks close requests immediately after a turn completes', async () => {
@@ -134,11 +282,13 @@ describe('corner close-request polling cadence', () => {
       parentRoomId: 'room-id',
       workspaceId: 'workspace',
       objective: 'Implement the widget',
-      featureBranch: 'feature/widget',
-      targetBranch: 'main',
       worktreePath: worktree,
-      gitCommonDir,
-      githubToken: 'token',
+      repository: {
+        featureBranch: 'feature/widget',
+        targetBranch: 'main',
+        gitCommonDir,
+        githubToken: 'token',
+      },
       runtime,
       config,
       api,
@@ -261,11 +411,13 @@ describe('corner close-request polling cadence', () => {
       parentRoomId: 'room-id',
       workspaceId: 'workspace',
       objective: 'Implement the widget',
-      featureBranch: 'feature/widget',
-      targetBranch: 'main',
       worktreePath: root,
-      gitCommonDir: join(root, '.git'),
-      githubToken: 'token',
+      repository: {
+        featureBranch: 'feature/widget',
+        targetBranch: 'main',
+        gitCommonDir: join(root, '.git'),
+        githubToken: 'token',
+      },
       runtime,
       config,
       api,
@@ -300,9 +452,7 @@ describe('corner close-request polling cadence', () => {
     // burst of four deltas the wire could not keep up with reaches the reader
     // as its first frame and its newest one — forward, never backwards.
     expect(
-      writes
-        .filter((write) => write.name === 'postAgentDraft')
-        .map((write) => write.input.text),
+      writes.filter((write) => write.name === 'postAgentDraft').map((write) => write.input.text),
     ).toEqual(['I inspected', 'I inspected the code.\n\nThe fix is ready.']);
     for (const draft of writes.filter((write) => write.name === 'postAgentDraft')) {
       expect(draft.input.turnId).toBe('cornerid');
@@ -372,11 +522,13 @@ describe('corner close-request polling cadence', () => {
         parentRoomId: 'room-id',
         workspaceId: 'workspace',
         objective: 'Implement the widget',
-        featureBranch: 'feature/widget',
-        targetBranch: 'main',
         worktreePath: root,
-        gitCommonDir: join(root, '.git'),
-        githubToken: 'token',
+        repository: {
+          featureBranch: 'feature/widget',
+          targetBranch: 'main',
+          gitCommonDir: join(root, '.git'),
+          githubToken: 'token',
+        },
         runtime,
         config,
         api,
@@ -734,11 +886,13 @@ describe('thin monolith corner turn', () => {
       parentRoomId: 'room-id',
       workspaceId: 'workspace',
       objective: 'Implement the widget',
-      featureBranch: 'feature/widget',
-      targetBranch: 'main',
       worktreePath: worktree,
-      gitCommonDir,
-      githubToken: 'room-installation-token',
+      repository: {
+        featureBranch: 'feature/widget',
+        targetBranch: 'main',
+        gitCommonDir,
+        githubToken: 'room-installation-token',
+      },
       runtime,
       config,
       api,
@@ -968,22 +1122,31 @@ describe('corner turn failure receipt', () => {
     const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
     vi.spyOn(acp, 'start').mockResolvedValue(undefined);
     vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: 'corner-session', raw: {} });
-    const failure = new Error('ACP session/prompt timed out after 120000ms of inactivity GH_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz');
+    const failure = new Error(
+      'ACP session/prompt timed out after 120000ms of inactivity GH_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz',
+    );
     failure.stack = `${failure.message}\n    at AcpClient.request (/opt/beeline/acp.js:984:20)`;
     vi.spyOn(acp, 'sessionPrompt')
       .mockRejectedValueOnce(failure)
-      .mockResolvedValue({ stopReason: 'end_turn', updates: [], agentText: 'Recovered.', toolCalls: [] });
+      .mockResolvedValue({
+        stopReason: 'end_turn',
+        updates: [],
+        agentText: 'Recovered.',
+        toolCalls: [],
+      });
     const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
     const running = new MonolithCornerTurnLoop({
       cornerId: 'corner-id',
       parentRoomId: 'room-id',
       workspaceId: 'workspace',
       objective: 'Implement the widget',
-      featureBranch: 'feature/widget',
-      targetBranch: 'main',
       worktreePath: root,
-      gitCommonDir: join(root, '.git'),
-      githubToken: 'token',
+      repository: {
+        featureBranch: 'feature/widget',
+        targetBranch: 'main',
+        gitCommonDir: join(root, '.git'),
+        githubToken: 'token',
+      },
       runtime,
       config,
       api,
@@ -1063,7 +1226,11 @@ describe('corner check notes', () => {
       }
       if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
       if (name === 'getCornerRestoreState') {
-        return { cornerId: 'corner-id', closeRequested: false, ...(checks ? { lifecycle: { lifecycle: 'in-review', checks } } : {}) };
+        return {
+          cornerId: 'corner-id',
+          closeRequested: false,
+          ...(checks ? { lifecycle: { lifecycle: 'in-review', checks } } : {}),
+        };
       }
       if (name === 'getCornerCloseRequests') {
         const poll = polls[closeReads];
@@ -1110,7 +1277,11 @@ describe('corner check notes', () => {
     });
     const api = {
       execute,
-      connection: () => ({ baseUrl: 'https://server.example', daemonToken: 'token', agentId: AGENT }),
+      connection: () => ({
+        baseUrl: 'https://server.example',
+        daemonToken: 'token',
+        agentId: AGENT,
+      }),
     } as unknown as DaemonApiClient;
     const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
     vi.spyOn(acp, 'start').mockResolvedValue(undefined);
@@ -1131,11 +1302,13 @@ describe('corner check notes', () => {
       parentRoomId: 'room-id',
       workspaceId: 'workspace',
       objective: 'Implement the widget',
-      featureBranch: 'feature/widget',
-      targetBranch: 'main',
       worktreePath: root,
-      gitCommonDir: join(root, '.git'),
-      githubToken: 'token',
+      repository: {
+        featureBranch: 'feature/widget',
+        targetBranch: 'main',
+        gitCommonDir: join(root, '.git'),
+        githubToken: 'token',
+      },
       runtime,
       config,
       api,
@@ -1154,17 +1327,36 @@ describe('corner check notes', () => {
     const receipts = writes
       .filter((write) => write.name === 'postAgentTurnReceipt')
       .map((write) => ({ requestId: write.input.requestId, status: write.input.status }));
-    return { prompts: sessionPrompt.mock.calls.map((call) => call[1] as string), messages, receipts };
+    return {
+      prompts: sessionPrompt.mock.calls.map((call) => call[1] as string),
+      messages,
+      receipts,
+    };
   }
 
   it('starts one turn per changed server check state, never per delivered note', async () => {
     const { prompts, messages, receipts } = await runChecksFlow(
       [
-        { notes: [{ id: 'ci-start', verb: 'started a check', object: 'Beeline CI' }], checks: 'pending' },
-        { notes: [{ id: 'ci-fail', verb: 'failed a check', object: 'Beeline CI' }], checks: 'failing' },
-        { notes: [{ id: 'ci-fail-again', verb: 'failed a check', object: 'Beeline CI' }], checks: 'failing' },
-        { notes: [{ id: 'ci-restart', verb: 'started a check', object: 'Beeline CI' }], checks: 'pending' },
-        { notes: [{ id: 'ci-pass', verb: 'passed a check', object: 'Beeline CI' }], checks: 'pending' },
+        {
+          notes: [{ id: 'ci-start', verb: 'started a check', object: 'Beeline CI' }],
+          checks: 'pending',
+        },
+        {
+          notes: [{ id: 'ci-fail', verb: 'failed a check', object: 'Beeline CI' }],
+          checks: 'failing',
+        },
+        {
+          notes: [{ id: 'ci-fail-again', verb: 'failed a check', object: 'Beeline CI' }],
+          checks: 'failing',
+        },
+        {
+          notes: [{ id: 'ci-restart', verb: 'started a check', object: 'Beeline CI' }],
+          checks: 'pending',
+        },
+        {
+          notes: [{ id: 'ci-pass', verb: 'passed a check', object: 'Beeline CI' }],
+          checks: 'pending',
+        },
         {
           notes: [
             { id: 'lint-pass', verb: 'passed a check', object: 'Lint' },
@@ -1172,7 +1364,10 @@ describe('corner check notes', () => {
           ],
           checks: 'passing',
         },
-        { notes: [{ id: 'lint-pass-again', verb: 'passed a check', object: 'Lint' }], checks: 'passing' },
+        {
+          notes: [{ id: 'lint-pass-again', verb: 'passed a check', object: 'Lint' }],
+          checks: 'passing',
+        },
       ],
       (prompt) =>
         prompt.includes('failed a check')
@@ -1212,7 +1407,12 @@ describe('corner check notes', () => {
 
   it('settles a silent green turn through its receipt instead of failing it', async () => {
     const { messages, receipts } = await runChecksFlow(
-      [{ notes: [{ id: 'ci-pass', verb: 'passed a check', object: 'Beeline CI' }], checks: 'passing' }],
+      [
+        {
+          notes: [{ id: 'ci-pass', verb: 'passed a check', object: 'Beeline CI' }],
+          checks: 'passing',
+        },
+      ],
       () => '',
     );
     expect(messages).toEqual([]);

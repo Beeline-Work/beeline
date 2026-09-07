@@ -27,16 +27,17 @@ function blockFrom(text: string, marker: string, label: string): string {
 }
 
 describe('Room creation — repository binding', () => {
-  it('passes the selected installed repository through the create operation', () => {
+  it('passes an optional installed repository through the create operation', () => {
     const handler = blockFrom(source, 'const createRoom = useCallback(async () => {', 'createRoom');
     const createIndex = handler.indexOf('transport.createRoom(');
     expect(createIndex, 'transport create must run for every Room').toBeGreaterThanOrEqual(0);
     const createCallArgs = handler.slice(createIndex, handler.indexOf(');', createIndex));
-    expect(createCallArgs).toContain('repository: pendingRepo');
+    expect(createCallArgs).toContain('repository: pendingRepo ?? undefined');
+    expect(handler).not.toContain('!pendingRepo');
     expect(handler).not.toContain('setRoomRepository');
   });
 
-  it('requires and renders the searchable repository picker in the create dialog', () => {
+  it('renders a skippable searchable repository picker in the create dialog', () => {
     const marker = source.indexOf('testID="new-room-dialog"');
     const start = source.lastIndexOf('<HullDialog', marker);
     const end = source.indexOf('</HullDialog>', marker);
@@ -47,7 +48,9 @@ describe('Room creation — repository binding', () => {
     expect(panel).toContain('<RepoPicker');
     expect(panel).toContain('currentKey={pendingRepo?.key ?? null}');
     expect(panel).toContain('installations={repoInstallations}');
-    expect(panel).toContain('disabled: !roomName.trim() || !pendingRepo || creatingRoom');
+    expect(panel).toContain('No repository (chat only)');
+    expect(panel).toContain('testID="create-room-no-repository"');
+    expect(panel).toContain('disabled: !roomName.trim() || creatingRoom');
   });
 
   it('forwards the production installation groups that own repository candidates', () => {
@@ -57,7 +60,7 @@ describe('Room creation — repository binding', () => {
     expect(loader).toContain('setRepoInstallations(access.installations)');
   });
 
-  it('keeps the required repo control visible above the keyboard-focused Room name at small heights', () => {
+  it('keeps the optional repo control visible above the keyboard-focused Room name at small heights', () => {
     expect(repoPickerSource).toContain('placeholder="Search or paste owner/repo"');
     expect(source).toContain('createRoomContent: { flexShrink: 1, maxHeight: 520 }');
     expect(hullDialogSource).toContain('dialogCopy: { flexShrink: 1,');

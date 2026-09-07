@@ -112,7 +112,7 @@ async function main() {
         for (const device of devices.rows)
           await pushSender.send(device.token, {
             messageId: 'test',
-            roomId: 'test',
+            type: 'test',
             text: 'Beeline notifications are ready.',
           });
       }

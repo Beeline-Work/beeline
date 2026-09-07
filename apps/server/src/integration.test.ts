@@ -576,7 +576,11 @@ describe('monolith integration', () => {
     expect(await loop.runOnce()).toBe(1);
     expect(send).toHaveBeenLastCalledWith(
       'owner-explicit-add-device-token-1234567890',
-      expect.objectContaining({ text: 'alice joined Tubing Crew' }),
+      expect.objectContaining({
+        workspaceId,
+        type: 'workspace-join',
+        text: 'alice joined Tubing Crew',
+      }),
     );
 
     expect(
@@ -1784,9 +1788,20 @@ describe('monolith integration', () => {
     );
 
     expect(await loop.runOnce()).toBe(1);
-    expect(send).toHaveBeenCalledWith(
-      'owner-person-join-device-token-1234567890',
-      expect.objectContaining({ text: 'recipient joined Hive' }),
+    const deliveredJoin = send.mock.calls[0]![1];
+    const routedJoin = (
+      await database.query<{ room_id: string }>(
+        `SELECT room_id FROM workspace_join_notifications WHERE id=$1`,
+        [deliveredJoin.messageId],
+      )
+    ).rows[0]!;
+    expect(deliveredJoin).toEqual(
+      expect.objectContaining({
+        workspaceId: WORKSPACE,
+        roomId: routedJoin.room_id,
+        type: 'workspace-join',
+        text: 'recipient joined Hive',
+      }),
     );
   });
 

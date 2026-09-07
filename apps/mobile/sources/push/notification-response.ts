@@ -90,7 +90,9 @@ export async function routeBuzzNotificationResponse(
 
     const buzzTarget = navigateToBuzzNotificationResponse(routing.router, response);
     if (buzzTarget) {
-      log(`[PUSH ROUTING] Navigating to Beeline ${buzzTarget.target}: ${buzzTarget.channelId}`);
+      log(
+        `[PUSH ROUTING] Navigating to Beeline ${buzzTarget.target}: ${buzzTarget.channelId ?? buzzTarget.workspaceId}`,
+      );
       return buzzTarget;
     }
     log('[PUSH ROUTING] No supported route found in notification.request.content.data');

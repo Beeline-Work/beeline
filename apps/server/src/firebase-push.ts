@@ -7,8 +7,10 @@ import {
   type Credential,
   type ServiceAccount,
 } from 'firebase-admin/app';
-import { getMessaging } from 'firebase-admin/messaging';
+import { getMessaging, type Message } from 'firebase-admin/messaging';
 import type { PushSender } from './background.js';
+
+type PushDeliveryMessage = Parameters<PushSender['send']>[1];
 
 interface FirebaseCredentialEnvironment {
   GOOGLE_APPLICATION_CREDENTIALS_JSON?: string;
@@ -65,6 +67,36 @@ export async function requirePushDeliveryCredentials(credential: Credential): Pr
   }
 }
 
+/** Serialize every monolith push into the routing contract consumed by the phone. */
+export function firebasePushMessage(token: string, message: PushDeliveryMessage): Message {
+  let data: Record<string, string>;
+  if (message.type === 'test') data = { type: 'test' };
+  else if (message.type === 'workspace-join' && !message.roomId)
+    data = {
+      type: 'workspace-join',
+      target: 'workspace',
+      workspaceId: message.workspaceId,
+    };
+  else {
+    const roomId = message.roomId;
+    if (!roomId) throw new Error('routable push is missing its Room');
+    data = {
+      type: message.type === 'workspace-join' ? 'workspace-join' : 'channel-activity',
+      target: 'message',
+      workspaceId: message.workspaceId,
+      roomId,
+      channelId: roomId,
+      ...(message.type === 'message' ? { messageId: message.messageId } : {}),
+    };
+  }
+  return {
+    token,
+    notification: { title: 'Beeline', body: message.text.slice(0, 200) },
+    data,
+    apns: { payload: { aps: { sound: 'default' } } },
+  };
+}
+
 export async function createFirebasePushSender(
   environment: FirebaseCredentialEnvironment = process.env,
 ): Promise<PushSender> {
@@ -74,12 +106,7 @@ export async function createFirebasePushSender(
   const messaging = getMessaging(app);
   return {
     async send(token, message) {
-      await messaging.send({
-        token,
-        notification: { title: 'Beeline', body: message.text.slice(0, 200) },
-        data: { messageId: message.messageId, roomId: message.roomId },
-        apns: { payload: { aps: { sound: 'default' } } },
-      });
+      await messaging.send(firebasePushMessage(token, message));
     },
   };
 }

@@ -64,6 +64,86 @@ describe('getBuzzNotificationTargetFromData', () => {
 });
 
 describe('navigateToBuzzNotificationResponse', () => {
+  it('opens a workspace join on the exact Workspace and Room from the server payload', () => {
+    const navigate = vi.fn();
+
+    const target = navigateToBuzzNotificationResponse(
+      { navigate },
+      {
+        notification: {
+          request: {
+            identifier: 'response-workspace-join',
+            content: {
+              data: {
+                type: 'workspace-join',
+                target: 'message',
+                workspaceId: 'workspace-default',
+                roomId: 'room-welcome',
+                channelId: 'room-welcome',
+              },
+            },
+          },
+        },
+      },
+    );
+
+    expect(target).toMatchObject({
+      workspaceId: 'workspace-default',
+      roomId: 'room-welcome',
+      channelId: 'room-welcome',
+    });
+    expect(navigate).toHaveBeenCalledWith(
+      {
+        pathname: '/beeline/chat/[channelId]',
+        params: {
+          channelId: 'room-welcome',
+          communityId: 'workspace-default',
+          notificationResponseId: 'response-workspace-join',
+          notificationTarget: 'message',
+        },
+      },
+      { dangerouslySingular: true },
+    );
+  });
+
+  it('opens a Workspace-only join on the Workspace rather than the last-open deck', () => {
+    const navigate = vi.fn();
+
+    const target = navigateToBuzzNotificationResponse(
+      { navigate },
+      {
+        notification: {
+          request: {
+            identifier: 'response-workspace-only',
+            content: {
+              data: {
+                type: 'workspace-join',
+                target: 'workspace',
+                workspaceId: 'workspace-default',
+              },
+            },
+          },
+        },
+      },
+    );
+
+    expect(target).toEqual({
+      type: 'workspace-join',
+      target: 'workspace',
+      workspaceId: 'workspace-default',
+    });
+    expect(navigate).toHaveBeenCalledWith(
+      {
+        pathname: '/beeline/channels',
+        params: {
+          communityId: 'workspace-default',
+          notificationResponseId: 'response-workspace-only',
+        },
+      },
+      { dangerouslySingular: true },
+    );
+  });
+
   it('opens a Room notification on exactly that Room, with no corner back-stack hints', () => {
     const navigate = vi.fn();
 

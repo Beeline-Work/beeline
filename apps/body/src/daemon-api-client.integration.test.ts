@@ -2156,7 +2156,11 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       roomId: ROOM,
       startAtLatest: true,
     });
-    expect(activation).toEqual({ items: [], cursor: expect.any(String) });
+    expect(activation).toEqual({
+      items: [],
+      cursor: expect.any(String),
+      rewindIds: expect.any(Array),
+    });
     const afterActivation = await client.execute('postRoomMessage', {
       roomId: ROOM,
       requestId: 'd'.repeat(64),

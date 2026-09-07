@@ -41,7 +41,7 @@ import {
 } from './read-only-policy.js';
 import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
 import type { BodyConfig } from './config.js';
-import type { DaemonApiClient } from './daemon-api-client.js';
+import { laterInboxCursor, type DaemonApiClient, type InboxItem } from './daemon-api-client.js';
 import {
   explainEmptyAgentTurn,
   nextPinnedProvider,
@@ -1208,19 +1208,48 @@ export class MonolithRoomTurnLoop {
     );
     heartbeat.unref?.();
     let cursor: string | undefined;
+    const processedInboxIds = new Set<string>();
+    const pushedInbox: InboxItem[] = [];
+    let pendingPushedCursor: string | undefined;
+    let wakeForPush: (() => void) | undefined;
+    let stopLive: (() => void) | undefined;
     try {
-      cursor = (await api.execute('getRoomInbox', { roomId, startAtLatest: true })).cursor;
+      const activation = await api.execute('getRoomInbox', { roomId, startAtLatest: true });
+      cursor = activation.cursor;
+      const rewindSupported = Array.isArray(activation.rewindIds);
+      for (const id of activation.rewindIds ?? []) processedInboxIds.add(id);
+      stopLive = api.liveSubscribe?.(roomId, cursor, (items, pushedCursor) => {
+        pushedInbox.push(...items);
+        pendingPushedCursor = laterInboxCursor(pendingPushedCursor, pushedCursor);
+        wakeForPush?.();
+        wakeForPush = undefined;
+      });
       while (!signal?.aborted) {
         try {
           if (!this.activeTurn && this.queuedTurns.length) {
             this.startPrompt(this.queuedTurns.shift()!);
           }
-          const inbox = await api.execute('getRoomInbox', {
-            roomId,
-            ...(cursor ? { after: cursor } : {}),
-            limit: 200,
-          });
-          for (const item of inbox.items) {
+          const pollNow = pushedInbox.length === 0;
+          const inbox = !pollNow
+            ? { items: [], cursor: undefined }
+            : await api.execute('getRoomInbox', {
+                roomId,
+                ...(cursor ? { after: cursor } : {}),
+                ...(rewindSupported ? { rewind: true } : {}),
+                limit: 200,
+              });
+          if (pollNow) {
+            api.notePolled?.(
+              roomId,
+              inbox.items.filter((item) => !processedInboxIds.has(item.id)),
+            );
+          }
+          const delivered = [...pushedInbox.splice(0), ...inbox.items];
+          for (const item of delivered) {
+            if (processedInboxIds.has(item.id)) continue;
+            processedInboxIds.add(item.id);
+            while (processedInboxIds.size > 10_000)
+              processedInboxIds.delete(processedInboxIds.values().next().value!);
             if (!inboxItemTriggersTurn(item, this.agent.publicKey)) continue;
             // A server-authored event was already authority-gated where the
             // fact was made (schedule creation; the owner's grant decision;
@@ -1241,9 +1270,18 @@ export class MonolithRoomTurnLoop {
             else if (active.phase === 'prompting') this.steer(active, item);
             else this.queuedTurns.push(item);
           }
-          cursor = inbox.cursor ?? cursor;
-          this.options.health.poll();
-          await wait(this.options.pollMs ?? 1_000, signal);
+          cursor = laterInboxCursor(cursor, laterInboxCursor(inbox.cursor, pendingPushedCursor));
+          pendingPushedCursor = undefined;
+          api.updateLiveCursor?.(roomId, cursor);
+          if (pollNow) this.options.health.poll();
+          if (!pushedInbox.length) {
+            await Promise.race([
+              wait(this.options.pollMs ?? 1_000, signal),
+              new Promise<void>((resolve) => {
+                wakeForPush = resolve;
+              }),
+            ]);
+          }
         } catch (error) {
           if (signal?.aborted) break;
           this.options.health.failure(1_000);
@@ -1252,6 +1290,7 @@ export class MonolithRoomTurnLoop {
         }
       }
     } finally {
+      stopLive?.();
       clearInterval(heartbeat);
       this.options.grantRunner?.unregister(roomId);
       if (this.activeTurn?.phase === 'prompting' && this.client && this.sessionId) {

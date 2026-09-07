@@ -26,7 +26,7 @@ import { beelineAgentMcpServer } from './room-session.js';
 import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
 import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
 import type { BodyConfig } from './config.js';
-import type { DaemonApiClient } from './daemon-api-client.js';
+import { laterInboxCursor, type DaemonApiClient, type InboxItem } from './daemon-api-client.js';
 import {
   explainEmptyAgentTurn,
   isAccountOrProviderRefusal,
@@ -983,8 +983,23 @@ export class MonolithCornerTurnLoop {
 
   async run(): Promise<void> {
     const { api, cornerId, signal } = this.options;
-    let cursor = (await api.execute('getRoomInbox', { roomId: cornerId, startAtLatest: true }))
-      .cursor;
+    const activation = await api.execute('getRoomInbox', {
+      roomId: cornerId,
+      startAtLatest: true,
+    });
+    let cursor = activation.cursor;
+    const processedInboxIds = new Set<string>();
+    const pushedInbox: InboxItem[] = [];
+    let pendingPushedCursor: string | undefined;
+    let wakeForPush: (() => void) | undefined;
+    const rewindSupported = Array.isArray(activation.rewindIds);
+    for (const id of activation.rewindIds ?? []) processedInboxIds.add(id);
+    const stopLive = api.liveSubscribe?.(cornerId, cursor, (items, pushedCursor) => {
+      pushedInbox.push(...items);
+      pendingPushedCursor = laterInboxCursor(pendingPushedCursor, pushedCursor);
+      wakeForPush?.();
+      wakeForPush = undefined;
+    });
     // Newest page: "has this corner already answered?" is a question about the
     // work as it stands now. On a corner past one page the oldest rows say
     // nothing about whether the objective still needs kicking off.
@@ -1014,10 +1029,20 @@ export class MonolithCornerTurnLoop {
       let pollWithoutWait = false;
       while (!signal?.aborted) {
         try {
-          const inbox = await api.execute('getCornerCloseRequests', {
-            cornerId,
-            ...(cursor ? { after: cursor } : {}),
-          });
+          const pollNow = pushedInbox.length === 0;
+          const inbox = !pollNow
+            ? { items: [], cursor: undefined, closeRequested: false }
+            : await api.execute('getCornerCloseRequests', {
+                cornerId,
+                ...(cursor ? { after: cursor } : {}),
+                ...(rewindSupported ? { rewind: true } : {}),
+              });
+          if (pollNow) {
+            api.notePolled?.(
+              cornerId,
+              inbox.items.filter((item) => !processedInboxIds.has(item.id)),
+            );
+          }
           if (inbox.closeRequested) {
             await this.options.onCloseRequested();
             return;
@@ -1025,7 +1050,12 @@ export class MonolithCornerTurnLoop {
           // Server check notes arrive one per GitHub run; a poll's worth of them
           // is one fact, and only a changed server check state starts a turn.
           const checkNotes: (typeof inbox.items)[number][] = [];
-          for (const item of inbox.items) {
+          const delivered = [...pushedInbox.splice(0), ...inbox.items];
+          for (const item of delivered) {
+            if (processedInboxIds.has(item.id)) continue;
+            processedInboxIds.add(item.id);
+            while (processedInboxIds.size > 10_000)
+              processedInboxIds.delete(processedInboxIds.values().next().value!);
             if (item.type === 'message') {
               this.noteCarrier(item.authorId);
               if (item.authorId === this.agent.publicKey) continue;
@@ -1077,14 +1107,21 @@ export class MonolithCornerTurnLoop {
               pollWithoutWait = true;
             }
           }
-          cursor = inbox.cursor ?? cursor;
-          this.options.onPoll();
+          cursor = laterInboxCursor(cursor, laterInboxCursor(inbox.cursor, pendingPushedCursor));
+          pendingPushedCursor = undefined;
+          api.updateLiveCursor?.(cornerId, cursor);
+          if (pollNow) this.options.onPoll();
           // The wake long-poll shortens the sleep when the server has
           // something new; a failed or timed-out wake changes nothing — the
           // timed wait below still runs and the next poll still catches up.
           await Promise.race([
             wait(pollWithoutWait ? 0 : (this.options.pollMs ?? cornerClosePollMs()), signal),
             waitForWake(api, cornerId, signal),
+            pushedInbox.length
+              ? Promise.resolve()
+              : new Promise<void>((resolve) => {
+                  wakeForPush = resolve;
+                }),
           ]);
           pollWithoutWait = false;
         } catch (error) {
@@ -1095,6 +1132,7 @@ export class MonolithCornerTurnLoop {
         }
       }
     } finally {
+      stopLive?.();
       this.options.grantRunner?.unregister(cornerId);
       await this.options.scheduler.suspend(cornerId);
     }

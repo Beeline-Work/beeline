@@ -1,5 +1,6 @@
 import { SCHEDULE_RAN_VERB } from '@beeline/api-contract/scheduled-prompts';
 import { seedDefaultWorkspace } from './default-workspace.js';
+import { POSTGRES_LIVE_SCHEMA } from './postgres-live.js';
 import { Pool, type PoolClient, type QueryResultRow } from 'pg';
 
 const TRANSIENT_CONNECTION_CODES = new Set(['57P01', '08006', '08003', '08000']);
@@ -749,6 +750,7 @@ export async function migrate(database: SqlDatabase): Promise<void> {
     `CREATE INDEX CONCURRENTLY IF NOT EXISTS messages_room_cursor_idx ON messages (room_id,
      (${MESSAGE_CURSOR_MS_SQL}), id)`,
   );
+  await database.query(POSTGRES_LIVE_SCHEMA);
   await backfillCornerOwners(database);
   await backfillSystemEventKinds(database);
   await backfillYoloModeDefault(database);

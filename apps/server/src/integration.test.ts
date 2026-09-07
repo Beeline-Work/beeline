@@ -745,6 +745,89 @@ describe('monolith integration', () => {
     socket.close();
   });
 
+  it('authenticates a daemon on the existing live socket and replays its cursor gap', async () => {
+    const activation = (await (
+      await daemonOperation('getRoomInbox', { roomId: ROOM, startAtLatest: true })
+    ).json()) as { cursor?: string; rewindIds?: string[] };
+    expect(activation.rewindIds).toEqual(expect.any(Array));
+    const connect = async () => {
+      const socket = new WebSocket(`${origin.replace('http', 'ws')}/v1/phone/live`, [
+        `bearer.${daemonToken}`,
+      ]);
+      await new Promise<void>((resolve, reject) => {
+        socket.once('open', resolve);
+        socket.once('error', reject);
+      });
+      return socket;
+    };
+
+    const first = await connect();
+    const firstReplay = next(first, 'inbox');
+    first.send(JSON.stringify({ type: 'subscribe', roomId: ROOM, cursor: activation.cursor }));
+    await next(first, 'subscribed');
+    const firstCursor = (await firstReplay).cursor as string | undefined;
+    first.close();
+    await new Promise<void>((resolve) => first.once('close', resolve));
+
+    const expectedIds = ['7'.repeat(64), '8'.repeat(64), '9'.repeat(64)];
+    for (const [index, messageId] of expectedIds.entries()) {
+      expect(
+        (
+          await operation('sendRoomMessage', {
+            roomId: ROOM,
+            messageId,
+            text: `while disconnected ${index + 1}`,
+            mentions: [AGENT],
+          })
+        ).status,
+      ).toBe(200);
+    }
+
+    const second = await connect();
+    const replayed = next(second, 'inbox');
+    second.send(JSON.stringify({ type: 'subscribe', roomId: ROOM, cursor: firstCursor }));
+    await next(second, 'subscribed');
+    const items = (await replayed).items as Array<{ id: string }>;
+    expect(items.filter((item) => expectedIds.includes(item.id)).map((item) => item.id)).toEqual(
+      expectedIds,
+    );
+    second.close();
+  });
+
+  it('rewinds replay far enough to recover a row committed behind its cursor', async () => {
+    const cursorId = 'a'.repeat(64);
+    const lateId = '1'.repeat(64);
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,mention_ids,created_at)
+       VALUES($1,$2,$3,'cursor row',$4::jsonb,now() - interval '1 second')`,
+      [cursorId, ROOM, HUMAN, JSON.stringify([AGENT])],
+    );
+    const activation = (await (
+      await daemonOperation('getRoomInbox', { roomId: ROOM, startAtLatest: true })
+    ).json()) as { cursor: string; rewindIds: string[] };
+    expect(activation.rewindIds).toContain(cursorId);
+
+    // This is the observable result of the T5b interleaving: transaction B's
+    // older-created row becomes visible only after the cursor has advanced.
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,mention_ids,created_at)
+       VALUES($1,$2,$3,'late commit',$4::jsonb,now() - interval '3 seconds')`,
+      [lateId, ROOM, HUMAN, JSON.stringify([AGENT])],
+    );
+    const strict = (await (
+      await daemonOperation('getRoomInbox', { roomId: ROOM, after: activation.cursor })
+    ).json()) as { items: Array<{ id: string }> };
+    expect(strict.items).not.toContainEqual(expect.objectContaining({ id: lateId }));
+    const replay = (await (
+      await daemonOperation('getRoomInbox', {
+        roomId: ROOM,
+        after: activation.cursor,
+        rewind: true,
+      })
+    ).json()) as { items: Array<{ id: string }> };
+    expect(replay.items).toContainEqual(expect.objectContaining({ id: lateId }));
+  });
+
   it('hands a corner reader the draft its turn is already writing when they subscribe', async () => {
     // The captain's report: a corner turn eight minutes into its tool work,
     // opened from the Room list. Everything the corner shows — the objective,

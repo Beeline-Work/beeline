@@ -48,6 +48,7 @@ const id = () => randomBytes(32).toString('hex');
 
 /** Server-side cap on the daemon's distilled failure reason (matches the daemon's own cap). */
 const TURN_FAILURE_REASON_MAX = 200;
+export const INBOX_REPLAY_REWIND_MS = 5_000;
 
 /** A durable success after a failed line settles that line in place. */
 async function settleTurnFailureLine(
@@ -509,9 +510,34 @@ export class DaemonService {
         [roomId],
       );
       const highWater = latest.rows[0];
+      // An empty Room still needs an activation position. Without one, a
+      // reconnect after its first messages calls startAtLatest again and
+      // silently declares those offline messages to be history.
+      const activationCursor = highWater
+        ? `${highWater.cursor_ms},${highWater.id}`
+        : `${
+            (
+              await this.database.query<{ now_ms: string }>(
+                `SELECT floor(extract(epoch FROM clock_timestamp())*1000)::bigint now_ms`,
+              )
+            ).rows[0]!.now_ms
+          },${'f'.repeat(64)}`;
+      const rewindIds = highWater
+        ? (
+            await this.database.query<{ id: string }>(
+              `SELECT id FROM messages
+               WHERE room_id=$1
+                 AND ${MESSAGE_CURSOR_MS_SQL} >= $2::bigint - ${INBOX_REPLAY_REWIND_MS}
+                 AND (${MESSAGE_CURSOR_MS_SQL},id) <= ($2::bigint,$3)
+               ORDER BY ${MESSAGE_CURSOR_MS_SQL},id`,
+              [roomId, highWater.cursor_ms, highWater.id],
+            )
+          ).rows.map((row) => row.id)
+        : [];
       return {
         items: [],
-        ...(highWater ? { cursor: `${highWater.cursor_ms},${highWater.id}` } : {}),
+        cursor: activationCursor,
+        rewindIds,
         ...(closeRequested !== undefined ? { closeRequested } : {}),
       };
     }
@@ -551,9 +577,15 @@ export class DaemonService {
            ORDER BY cursor_ms,id`
         : `${conversationColumns}
              FROM messages WHERE room_id=$1
-               ${after ? `AND (${MESSAGE_CURSOR_MS_SQL},id)>($2::bigint,$3)` : ''}
+               ${
+                 after
+                   ? input.rewind
+                     ? `AND ${MESSAGE_CURSOR_MS_SQL} >= $2::bigint - ${INBOX_REPLAY_REWIND_MS}`
+                     : `AND (${MESSAGE_CURSOR_MS_SQL},id) > ($2::bigint,$3)`
+                   : ''
+               }
              ORDER BY cursor_ms,id LIMIT ${limit + 1}`,
-      after ? [roomId, after[1], after[2]] : [roomId],
+      after ? (input.rewind ? [roomId, after[1]] : [roomId, after[1], after[2]]) : [roomId],
     );
     const page = newestPage ? rows.rows : rows.rows.slice(0, limit);
     const visiblePage =
@@ -573,6 +605,10 @@ export class DaemonService {
     // double-wake) and simply re-delivers on the next poll, at most until its
     // stamp arrives — ≤1s.
     const cursorRow = [...page].reverse().find((row) => row.cursor_ms <= row.now_ms);
+    const cursor = laterCursor(
+      cursorRow ? `${cursorRow.cursor_ms},${cursorRow.id}` : undefined,
+      input.after,
+    );
     return {
       items: visiblePage.map((row) => ({
         id: row.id,
@@ -587,7 +623,7 @@ export class DaemonService {
         attachments: markExpiredAttachments(row.attachments ?? [], expiredMedia),
         ...(row.system_event ? { systemEvent: row.system_event } : {}),
       })),
-      ...(cursorRow ? { cursor: `${cursorRow.cursor_ms},${cursorRow.id}` } : {}),
+      ...(cursor ? { cursor } : {}),
       ...(closeRequested !== undefined ? { closeRequested } : {}),
     };
   }
@@ -2267,6 +2303,20 @@ const conversationColumns = `SELECT id,author_id,created_at,presentation,text,me
         reply_to_message_id,root_message_id,request_id,attachments,system_event,
         ${MESSAGE_CURSOR_MS_SQL} cursor_ms,
         floor(extract(epoch FROM now())*1000)::bigint now_ms`;
+
+function laterCursor(
+  candidate: string | undefined,
+  previous: string | undefined,
+): string | undefined {
+  if (!candidate) return previous;
+  if (!previous) return candidate;
+  const [candidateMs, candidateId] = candidate.split(',') as [string, string];
+  const [previousMs, previousId] = previous.split(',') as [string, string];
+  const milliseconds = BigInt(candidateMs) - BigInt(previousMs);
+  return milliseconds > 0 || (milliseconds === 0n && candidateId > previousId)
+    ? candidate
+    : previous;
+}
 
 /**
  * Every daemon operation the HTTP route serves, as an EXHAUSTIVE record so a

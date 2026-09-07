@@ -18,6 +18,7 @@ import { createMonolithAuth } from './monolith-auth.js';
 import { ReviewAccess } from './review-access.js';
 import { ReleaseNotifier } from './release-notify.js';
 import type { MonolithAuthMount } from './monolith-auth.js';
+import { PostgresLiveListener } from './postgres-live.js';
 
 function required(name: string) {
   const value = process.env[name];
@@ -33,6 +34,12 @@ async function main() {
   const publicOrigin =
     process.env.PUBLIC_ORIGIN ?? `http://127.0.0.1:${process.env.PORT ?? '8080'}`;
   const live = new LiveHub();
+  const liveListener = PostgresLiveListener.forConnectionString(
+    process.env.DATABASE_LISTENER_URL ?? required('DATABASE_URL'),
+    database,
+    live,
+  );
+  void liveListener.run();
   const githubConfigured =
     process.env.GITHUB_CLIENT_ID &&
     process.env.GITHUB_CLIENT_SECRET &&
@@ -177,6 +184,7 @@ async function main() {
   console.log(`[server] listening on ${host}:${port}; store=postgres; background=advisory-lock`);
   const stop = async () => {
     leader.stop();
+    await liveListener.stop();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     await mountedAuth.close();
     await database.close();

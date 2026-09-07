@@ -13,7 +13,7 @@ Beeline's production monolith is one framework-free TypeScript process backed by
 - `/v1/github/webhook`: signature-checked, delivery-ID-deduplicated GitHub events.
 - `/healthz`: process health.
 
-All state shared by the two configured Fly Machines is in PostgreSQL. Each process has a five-connection maximum. One dedicated PostgreSQL advisory-lock connection elects the sole push/maintenance owner; its peer takes ownership when the connection dies.
+All state shared by the two configured Fly Machines is in PostgreSQL. Each process has a five-connection query pool. One dedicated PostgreSQL advisory-lock connection elects the sole push/maintenance owner; its peer takes ownership when the connection dies. A second dedicated, session-persistent connection runs `LISTEN` for cross-machine live fanout. Set `DATABASE_LISTENER_URL` when `DATABASE_URL` points through a transaction pooler; it must be a direct PostgreSQL connection string.
 
 ## Local development
 

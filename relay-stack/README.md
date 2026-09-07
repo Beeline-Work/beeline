@@ -3,6 +3,27 @@
 The relay front serves invite links, app-association files, and the hosted
 Beeline installer from the read-only `web/` mount.
 
+## Publish the relay-front web assets
+
+The repository's `relay-stack/web/` tree is the source of truth. On the
+production operator host, publish it and reload the front with one command
+from a clean checkout of the intended commit:
+
+```sh
+npm run publish:relay-front
+```
+
+The publisher updates tracked web assets without deleting host-only download
+artifacts, so it is safe to run repeatedly. Before changing anything, it
+compares both the live and on-host Apple and Android associations with the
+repository and refuses to remove an entry either currently carries. After
+reviewing an intentional removal, use `npm run publish:relay-front -- --force`.
+
+`.github/workflows/app-association-drift.yml` independently checks the live
+domain every six hours. It fails the workflow and prints every repository-only
+or live-only app ID/path and Android package/relation/fingerprint entry, so
+drift is visible well before the next store review.
+
 ## Local RoomView proof
 
 `npm run stack:up` starts the local relay and its credential-free materializer;

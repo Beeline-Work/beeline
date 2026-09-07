@@ -1,0 +1,27 @@
+name: Live app-association drift
+
+on:
+  schedule:
+    # Four checks a day keep detection comfortably inside the 24-hour limit.
+    - cron: '17 */6 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-app-association-drift
+  cancel-in-progress: false
+
+jobs:
+  compare:
+    name: Compare live app associations
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Fail on live Apple or Android association drift
+        run: npm run check:app-association-drift

@@ -10,5 +10,15 @@
         "DF:57:9B:3F:67:D7:5C:AE:45:2C:7A:D4:7D:D4:6C:EE:DE:24:ED:8B:4B:37:4D:46:1E:25:EB:34:26:B5:BE:A7"
       ]
     }
+  },
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "app.usebeeline.mobile",
+      "sha256_cert_fingerprints": [
+        "F1:0A:CD:08:4A:67:32:53:9D:3C:72:27:9C:8D:64:97:EB:3F:3A:3D:C4:EB:FF:74:F9:6C:57:76:D9:99:72:18"
+      ]
+    }
   }
 ]

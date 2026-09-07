@@ -38,7 +38,6 @@ import { Typography } from '@/constants/Typography';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
 import { filterAgentModelOptions } from '@/buzz/agent-model-picker';
-import { grantIsRevocable, grantProfileLine } from '@/buzz/agent-grant-copy';
 import { Modal } from '@/modal/ModalManager';
 
 const INDEX_CONFIRM_ATTEMPTS = 60;
@@ -59,8 +58,7 @@ type MembersAction =
   | 'remove-agent'
   | 'model-config'
   | 'agent-yolo'
-  | 'agent-access'
-  | 'revoke-grant';
+  | 'agent-access';
 
 function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -166,14 +164,28 @@ function operationMessage(reason: unknown): string {
 
 /**
  * What the access switch means right now, naming the owner the way the Room's
- * own system lines do — by @handle, never by a display name.
+ * own system lines do — by @handle, never by a display name. This is the ONLY
+ * gate before an agent acts on its owner's machine, so the "everyone" state
+ * says exactly what that grants, not just who may ask.
  */
-function accessCaption(access: AgentDetailView['access']): string {
+function accessCaption(access: AgentDetailView['access'], agentName: string): string {
   const change = 'Only the owner or a workspace admin can change this.';
-  if (access?.policy === 'everyone') return `Anyone in the Room may ask this agent. ${change}`;
+  if (access?.policy === 'everyone')
+    return (
+      `Anyone in the Room can have ${agentName} run commands, install software and change ` +
+      `configuration on your machine. Turn this off and only you may ask them.`
+    );
   if (access?.policy === 'allowlist') return `Only allowed members may ask this agent. ${change}`;
   const owner = access?.owner?.handle ? `@${access.owner.handle}` : 'the owner';
   return `Only ${owner} may ask this agent; everyone else is told to ask ${owner} here. ${change}`;
+}
+
+/** What yolo means for this agent specifically, and the two things that still ask. */
+function yoloCaption(agentName: string): string {
+  return (
+    `${agentName} acts without stopping to ask. Two things still ask you: anything that names ` +
+    `one of your credentials, and a script nobody has read.`
+  );
 }
 
 function yoloSetByLine(yolo: NonNullable<AgentDetailView['yolo']>): string | null {
@@ -660,24 +672,6 @@ export default function BuzzMembers() {
     }
   };
 
-  const revokeGrant = async (grantId: string) => {
-    if (!selectedAgent?.canManageGrants) return;
-    const pubkey = selectedAgent.agent.identity.pubkey;
-    setWorking('revoke-grant');
-    setError(null);
-    try {
-      await monolithPhoneOperation('revokeAgentGrant', { grantId });
-      await waitForIndexedSurface(
-        () => readAgent(pubkey),
-        (value) => value.grants?.find((grant) => grant.grantId === grantId)?.status === 'revoked',
-      );
-    } catch (reason) {
-      setError(`Could not revoke grant: ${operationMessage(reason)}`);
-    } finally {
-      setWorking(null);
-    }
-  };
-
   const removeSelectedAgent = async () => {
     if (!selectedAgent || !surface?.viewer.permissions.manage || !workspaceId) return;
     const pubkey = selectedAgent.agent.identity.pubkey;
@@ -1123,37 +1117,6 @@ export default function BuzzMembers() {
                   );
                 })}
               </View>
-              <View style={styles.grantSection} testID="agent-grants">
-                <Text style={styles.sectionLabel}>Grants</Text>
-                {(selectedAgent.grants ?? []).length === 0 ? (
-                  <Text style={styles.detail} testID="agent-grants-empty">
-                    Nothing granted yet. When this agent asks for reach outside its sandbox, the
-                    answers are listed here.
-                  </Text>
-                ) : (
-                  (selectedAgent.grants ?? []).map((grant) => (
-                    <View
-                      key={grant.grantId}
-                      style={styles.grantRow}
-                      testID={`agent-grant-${grant.grantId}`}
-                    >
-                      <Text style={styles.grantLine} testID={`agent-grant-${grant.grantId}-line`}>
-                        {grantProfileLine(grant)}
-                      </Text>
-                      {selectedAgent.canManageGrants && grantIsRevocable(grant) && (
-                        <MonoButton
-                          label="REVOKE"
-                          variant="secondary"
-                          disabled={busy}
-                          loading={working === 'revoke-grant'}
-                          onPress={() => void revokeGrant(grant.grantId)}
-                          testID={`agent-grant-${grant.grantId}-revoke`}
-                        />
-                      )}
-                    </View>
-                  ))
-                )}
-              </View>
               <View style={styles.switchSection} testID="agent-access">
                 <View style={styles.switchRow}>
                   <Text style={styles.sectionLabel} testID="agent-access-label">
@@ -1170,7 +1133,7 @@ export default function BuzzMembers() {
                   />
                 </View>
                 <Text style={styles.detail} testID="agent-access-caption">
-                  {accessCaption(selectedAgent.access)}
+                  {accessCaption(selectedAgent.access, selectedAgent.agent.identity.name)}
                 </Text>
                 {accessError && (
                   <Text style={styles.switchError} testID="agent-access-error">
@@ -1197,8 +1160,7 @@ export default function BuzzMembers() {
                   />
                 </View>
                 <Text style={styles.detail} testID="agent-yolo-caption">
-                  Grant requests are approved without asking. Only the owner or a workspace admin
-                  can change this.
+                  {yoloCaption(selectedAgent.agent.identity.name)}
                 </Text>
                 {selectedAgent.yolo && yoloSetByLine(selectedAgent.yolo) && (
                   <Text style={styles.detail} testID="agent-yolo-set-by">
@@ -1382,21 +1344,6 @@ const styles = StyleSheet.create((theme) => {
       flex: 1,
       minWidth: 0,
       textAlign: 'right',
-    },
-    grantSection: { gap: hull.space.sm },
-    grantRow: {
-      minHeight: 32,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: hull.space.sm,
-    },
-    grantLine: {
-      ...Typography.mono(),
-      ...hull.type.machine,
-      color: hull.textPrimary,
-      flex: 1,
-      minWidth: 0,
     },
     switchSection: { gap: hull.space.xs },
     switchRow: {

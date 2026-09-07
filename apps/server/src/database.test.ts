@@ -1,7 +1,8 @@
 import { EventEmitter } from 'node:events';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Pool } from 'pg';
-import { PostgresDatabase } from './database.js';
+import { backfillYoloModeDefault, migrate, PostgresDatabase } from './database.js';
+import { PgliteDatabase } from './test-support.js';
 
 function result<Row>(rows: Row[]) {
   return { rows, rowCount: rows.length };
@@ -73,5 +74,61 @@ describe('PostgresDatabase reconnects', () => {
     expect(client.listenerCount('error')).toBe(1);
     expect(() => dedicated.emit('error', error)).not.toThrow();
     expect(errorLog).toHaveBeenCalledWith('dedicated postgres client error', error);
+  });
+});
+
+describe('the yolo default migration', () => {
+  const OWNER = 'a'.repeat(64);
+  const ON_AGENT = '1'.repeat(64);
+  const OFF_AGENT = '2'.repeat(64);
+  const ALREADY_ON_AGENT = '3'.repeat(64);
+  const FRESH_AGENT = '4'.repeat(64);
+  let database: PgliteDatabase;
+  beforeEach(async () => {
+    database = new PgliteDatabase();
+    await migrate(database);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner')`, [
+      OWNER,
+    ]);
+  });
+  afterEach(() => database.close());
+
+  it('flips every existing agent, including one an owner had explicitly turned off, and reports the count', async () => {
+    await database.query(
+      `INSERT INTO identities(id,kind,name) VALUES($1,'agent','On'),($2,'agent','Off'),($3,'agent','AlreadyOn')`,
+      [ON_AGENT, OFF_AGENT, ALREADY_ON_AGENT],
+    );
+    // Simulates rows written before this migration: the pre-change default (false),
+    // an owner's explicit off, and an agent an owner had already turned on.
+    await database.query(
+      `INSERT INTO agents(agent_id,owner_id,yolo_mode) VALUES($1,$4,false),($2,$4,false),($3,$4,true)`,
+      [ON_AGENT, OFF_AGENT, ALREADY_ON_AGENT, OWNER],
+    );
+    await expect(backfillYoloModeDefault(database)).resolves.toBe(2);
+    const rows = await database.query<{ agent_id: string; yolo_mode: boolean }>(
+      `SELECT agent_id,yolo_mode FROM agents ORDER BY agent_id`,
+    );
+    expect(rows.rows).toEqual([
+      { agent_id: ON_AGENT, yolo_mode: true },
+      { agent_id: OFF_AGENT, yolo_mode: true },
+      { agent_id: ALREADY_ON_AGENT, yolo_mode: true },
+    ]);
+    // A second run is a no-op: nothing left to flip.
+    await expect(backfillYoloModeDefault(database)).resolves.toBe(0);
+  });
+
+  it('defaults a newly created agent to yolo on', async () => {
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Fresh')`, [
+      FRESH_AGENT,
+    ]);
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [
+      FRESH_AGENT,
+      OWNER,
+    ]);
+    const rows = await database.query<{ yolo_mode: boolean }>(
+      `SELECT yolo_mode FROM agents WHERE agent_id=$1`,
+      [FRESH_AGENT],
+    );
+    expect(rows.rows).toEqual([{ yolo_mode: true }]);
   });
 });

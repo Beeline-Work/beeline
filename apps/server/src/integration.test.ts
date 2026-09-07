@@ -3886,6 +3886,9 @@ describe('monolith integration', () => {
       `INSERT INTO push_delivery_floors(id,started_at) VALUES('message-delivery',now()-interval '1 hour')
        ON CONFLICT(id) DO UPDATE SET started_at=EXCLUDED.started_at`,
     );
+    // New agents default to yolo on; this test exercises the OFF-to-ON toggle,
+    // so it starts from an agent an owner had explicitly turned off.
+    await database.query(`UPDATE agents SET yolo_mode=false WHERE agent_id=$1`, [AGENT]);
 
     const before = (await (
       await request(`/v1/phone/workspaces/${WORKSPACE}/agents/${AGENT}`)
@@ -4027,6 +4030,9 @@ describe('monolith integration', () => {
     ]);
   });
   it('runs the grant loop: pending card with mention, coalescing, owner ALWAYS/ONCE/NO, gate refusals, listing, revoke', async () => {
+    // New agents default to yolo on; this test exercises the pending-card path
+    // an owner who has turned yolo off still goes through.
+    await database.query(`UPDATE agents SET yolo_mode=false WHERE agent_id=$1`, [AGENT]);
     const send = vi.fn(async () => undefined);
     const pushes = new PushDeliveryLoop(database, { send });
     await pushes.runOnce();

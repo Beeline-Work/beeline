@@ -1,10 +1,10 @@
 # Daemon leg of the unified release (was .github/workflows/beeline-bundle.yml).
 # unified-release.yml calls it twice from the self-hosted production host:
 # phase=build builds and install-verifies the exact linux-x64 bundle,
-# phase=promote publishes it into the host-local /dl/ store
-# (docs/cli-bundle-channel.md) and waits for every helper to restart READY on
-# the exact release. The caller checks out the release SHA first and owns
-# runner and timeout (promote needs 40 minutes, see the confirm step).
+# phase=promote verifies the GitHub Pages publication and waits for every
+# helper to restart READY on the exact release. The caller publishes Pages
+# before invoking promote and owns runner and timeout (promote needs 40
+# minutes, see the confirm step).
 name: Beeline daemon release leg
 description: Build the exact daemon artifact or publish it and await updater READY proof
 
@@ -84,21 +84,30 @@ runs:
         name: daemon-artifact-${{ inputs.release_sha }}
         path: ${{ runner.temp }}/daemon-release/
         if-no-files-found: error
-        retention-days: 7
+        # Main-branch Pages rebuilds reuse the latest delivered helper bytes.
+        retention-days: 90
 
     # ---- promote -----------------------------------------------------------
-    - if: inputs.phase == 'promote'
+    - name: Download daemon artifact for the public Pages proof
+      if: inputs.phase == 'promote'
       uses: actions/download-artifact@v4
       with:
         name: daemon-artifact-${{ inputs.release_sha }}
-        path: bundle/linux-x64
-    - name: Publish daemon artifact through the boring updater
+        path: ${{ runner.temp }}/daemon-release-pages-proof
+    - name: Confirm Pages serves the exact release before helpers update
       if: inputs.phase == 'promote'
       shell: bash
-      run: node scripts/publish-beeline-dl.mjs --dir bundle --output-dir "$BEELINE_DL_ROOT" --keep 5
-      env:
-        GITHUB_SHA: ${{ inputs.release_sha }}
-        BEELINE_DL_ROOT: /home/lunchbox/buzz-router-relay-prod/relay-front/web/dl
+      run: |
+        for attempt in {1..12}; do
+          if node scripts/pages-site.mjs verify \
+            --bundle-dir "$RUNNER_TEMP/daemon-release-pages-proof" \
+            --origin https://usebeeline.app; then
+            exit 0
+          fi
+          echo "Pages has not exposed the exact release yet (attempt $attempt/12)."
+          sleep 10
+        done
+        exit 1
     - name: Confirm every daemon restarted READY on the exact release
       if: inputs.phase == 'promote'
       shell: bash

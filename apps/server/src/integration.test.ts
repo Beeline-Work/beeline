@@ -7,7 +7,7 @@ import { FACE_NAMES, FACE_SOULS, isFaceId, type FaceId } from '@beeline/api-cont
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { TokenAuth, tokenHash } from './auth.js';
-import { PhoneService } from './phone-service.js';
+import { PhoneService, REVIEW_LOCKED_OPERATIONS } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { createBeelineServer, DEFAULT_MEDIA_MAXIMUM_BYTES } from './server.js';
@@ -900,6 +900,43 @@ describe('monolith integration', () => {
       text: "I'll trace the Room-join push producer and its existing coverage",
     });
     socket.close();
+  });
+
+  it('lets a late Room member open a corner card created before they joined', async () => {
+    const aliceToken = await phoneToken('alice');
+    const aliceId = createHash('sha256').update('github:alice').digest('hex');
+    await operation('addWorkspaceMember', {
+      workspaceId: WORKSPACE,
+      memberId: aliceId,
+      role: 'member',
+    });
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'corner-before-late-join',
+      name: 'Existing corner',
+      objective: 'Keep this corner readable from its durable parent Room card',
+    });
+    expect(created.status).toBe(200);
+    const { cornerId } = (await created.json()) as { cornerId: string };
+
+    expect((await request(`/v1/phone/rooms/${cornerId}`, 'GET', undefined, aliceToken)).status).toBe(
+      404,
+    );
+    expect(
+      await (await operation('addRoomMember', { roomId: ROOM, memberId: aliceId })).json(),
+    ).toEqual({ joined: true });
+    const parent = (await (
+      await request(`/v1/phone/rooms/${ROOM}`, 'GET', undefined, aliceToken)
+    ).json()) as RoomView;
+    expect(parent.messages).toContainEqual(
+      expect.objectContaining({
+        daemonFact: expect.objectContaining({ type: 'corner-open', cornerId }),
+      }),
+    );
+
+    const corner = await request(`/v1/phone/rooms/${cornerId}`, 'GET', undefined, aliceToken);
+    expect(corner.status).toBe(200);
+    expect(isRoomView(await corner.json())).toBe(true);
   });
 
   it('never resurrects the draft of a turn that has stopped working', async () => {
@@ -4691,13 +4728,17 @@ describe('monolith integration', () => {
 
   it('refuses the review identity every GitHub and repository write', async () => {
     const session = (await (await redeemReview(REVIEW_SECRET)).json()) as { accessToken: string };
-    for (const [name, payload] of [
+    const lockedOperations = [
       ['beginGitHubInstallation', {}],
       ['createGitHubRepository', { installationId: 1, name: 'demo' }],
       ['setRoomRepository', { roomId: ROOM, key: 'github:1', name: 'a/b', remote: 'git://github.com/a/b', targetBranch: 'main' }],
       ['beginGitHubIdentityBind', {}],
+      ['completeGitHubIdentityBind', {}],
+      ['recoverGitHubIdentity', {}],
       ['adoptGitHubHandle', {}],
-    ] as const) {
+    ] as const;
+    expect(REVIEW_LOCKED_OPERATIONS).toEqual(new Set(lockedOperations.map(([name]) => name)));
+    for (const [name, payload] of lockedOperations) {
       const refused = await operation(name, payload, session.accessToken);
       expect([refused.status, name]).toEqual([403, name]);
     }

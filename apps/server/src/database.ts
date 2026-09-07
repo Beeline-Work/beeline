@@ -1,5 +1,6 @@
 import { SCHEDULE_RAN_VERB } from '@beeline/api-contract/scheduled-prompts';
 import { seedDefaultWorkspace } from './default-workspace.js';
+import { backfillInheritedCornerMemberships } from './membership-join.js';
 import { POSTGRES_LIVE_SCHEMA } from './postgres-live.js';
 import { Pool, type PoolClient, type QueryResultRow } from 'pg';
 
@@ -752,6 +753,7 @@ export async function migrate(database: SqlDatabase): Promise<void> {
   );
   await database.query(POSTGRES_LIVE_SCHEMA);
   await backfillCornerOwners(database);
+  await backfillInheritedCornerMemberships(database);
   await backfillSystemEventKinds(database);
   await backfillYoloModeDefault(database);
   await seedDefaultWorkspace(database);

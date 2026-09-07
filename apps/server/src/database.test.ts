@@ -7,6 +7,7 @@ import {
   migrate,
   PostgresDatabase,
 } from './database.js';
+import { backfillInheritedCornerMemberships } from './membership-join.js';
 import { PgliteDatabase } from './test-support.js';
 
 function result<Row>(rows: Row[]) {
@@ -224,5 +225,61 @@ describe('the yolo default migration', () => {
       [FRESH_AGENT],
     );
     expect(rows.rows).toEqual([{ yolo_mode: true }]);
+  });
+});
+
+describe('the inherited corner membership migration', () => {
+  const OWNER = 'a'.repeat(64);
+  const LATE_MEMBER = 'b'.repeat(64);
+  const REMOVED_MEMBER = 'c'.repeat(64);
+  const WORKSPACE = '11111111-1111-4111-8111-111111111111';
+  const ROOM = '22222222-2222-4222-8222-222222222222';
+  const CORNER = '33333333-3333-4333-8333-333333333333';
+  let database: PgliteDatabase;
+
+  beforeEach(async () => {
+    database = new PgliteDatabase();
+    await migrate(database);
+    await database.query(
+      `INSERT INTO identities(id,kind,name) VALUES
+       ($1,'human','Owner'),($2,'human','Late'),($3,'agent','Removed')`,
+      [OWNER, LATE_MEMBER, REMOVED_MEMBER],
+    );
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Workspace')`, [WORKSPACE]);
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`,
+      [ROOM, WORKSPACE],
+    );
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Corner')`,
+      [CORNER, WORKSPACE, ROOM],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role,removed_at) VALUES
+       ($1,$2,$3,'owner',NULL),($1,$2,$4,'member',NULL),
+       ($1,$2,$5,'member',NULL),($1,$6,$5,'member',now())`,
+      [WORKSPACE, ROOM, OWNER, LATE_MEMBER, REMOVED_MEMBER, CORNER],
+    );
+  });
+
+  afterEach(() => database.close());
+
+  it('adds absent late joiners without restoring an explicitly removed corner member', async () => {
+    await expect(backfillInheritedCornerMemberships(database)).resolves.toBe(2);
+    const memberships = await database.query<{
+      identity_id: string;
+      role: string;
+      removed_at: Date | null;
+    }>(
+      `SELECT identity_id,role,removed_at FROM memberships
+       WHERE room_id=$1 ORDER BY identity_id`,
+      [CORNER],
+    );
+    expect(memberships.rows).toEqual([
+      { identity_id: OWNER, role: 'owner', removed_at: null },
+      { identity_id: LATE_MEMBER, role: 'member', removed_at: null },
+      { identity_id: REMOVED_MEMBER, role: 'member', removed_at: expect.any(Date) },
+    ]);
+    await expect(backfillInheritedCornerMemberships(database)).resolves.toBe(0);
   });
 });

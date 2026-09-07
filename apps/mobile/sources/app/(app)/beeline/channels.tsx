@@ -900,7 +900,11 @@ const styles = StyleSheet.create((theme) => {
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: hull.border,
     },
-    noRepoRowText: { ...Typography.mono(), color: hull.textSecondary, fontSize: 12 },
+    noRepoRowText: {
+      ...Typography.default(),
+      ...hull.type.body,
+      color: hull.textSecondary,
+    },
     errorBar: {
       paddingHorizontal: 16,
       paddingVertical: 8,

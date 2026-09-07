@@ -30,27 +30,6 @@ function builtRelease() {
   return state;
 }
 
-function workflowJob(workflow, name) {
-  const start = workflow.indexOf(`\n  ${name}:`);
-  assert.notEqual(start, -1, `workflow job ${name} must exist`);
-  const next = workflow.slice(start + 1).search(/\n  [a-zA-Z0-9_-]+:/);
-  return next === -1 ? workflow.slice(start) : workflow.slice(start, start + 1 + next);
-}
-
-function workflowJobNeeds(workflow, name) {
-  const match = workflowJob(workflow, name).match(/^    needs: \[([^\]]*)\]/m);
-  return match ? match[1].split(',').map((dependency) => dependency.trim()) : [];
-}
-
-function workflowJobAncestors(workflow, name, ancestors = new Set()) {
-  for (const dependency of workflowJobNeeds(workflow, name)) {
-    if (ancestors.has(dependency)) continue;
-    ancestors.add(dependency);
-    workflowJobAncestors(workflow, dependency, ancestors);
-  }
-  return ancestors;
-}
-
 test('human release semver starts at v0.0.1 and advances by patch', () => {
   assert.equal(nextReleaseVersion(undefined), 'v0.0.1');
   assert.equal(nextReleaseVersion('v0.0.1'), 'v0.0.2');
@@ -272,18 +251,8 @@ test('the fleet summary names laggards plainly and says they do not block', () =
   const result = assertDaemonFleetReady(
     {
       daemons: [
-        {
-          agentPubkey: 'a'.repeat(64),
-          state: 'ready',
-          version: 'v0.0.55',
-          sha: '7a63bdd2'.padEnd(40, '0'),
-        },
-        {
-          agentPubkey: '83d9eb70'.padEnd(64, 'f'),
-          state: 'ready',
-          version: 'v0.0.54',
-          sha: '09f84763'.padEnd(40, '1'),
-        },
+        { agentPubkey: 'a'.repeat(64), state: 'ready', version: 'v0.0.55', sha: '7a63bdd2'.padEnd(40, '0') },
+        { agentPubkey: '83d9eb70'.padEnd(64, 'f'), state: 'ready', version: 'v0.0.54', sha: '09f84763'.padEnd(40, '1') },
       ],
     },
     'v0.0.55',
@@ -299,43 +268,21 @@ test('the fleet summary names laggards plainly and says they do not block', () =
     'v0.0.1',
     SHA_1,
   );
-  assert.equal(
-    describeDaemonFleet(clean, 'v0.0.1', SHA_1),
-    `daemon fleet: 1/1 on v0.0.1 (${SHA_1.slice(0, 8)})`,
-  );
+  assert.equal(describeDaemonFleet(clean, 'v0.0.1', SHA_1), `daemon fleet: 1/1 on v0.0.1 (${SHA_1.slice(0, 8)})`);
 });
 
-test('one workflow owns parallel builds, ordered delivery promotion, retry, and the final report', () => {
-  const workflow = readFileSync(
-    new URL('../.github/workflows/unified-release.yml', import.meta.url),
-    'utf8',
-  );
+test('one workflow owns parallel builds, ordered promotion, retry, and the final report', () => {
+  const workflow = readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8');
   // The three release legs are composite actions, each called twice by the
   // workflow above (build, then promote).
-  const mobile = readFileSync(
-    new URL('../.github/actions/mobile-ota-leg/action.yml', import.meta.url),
-    'utf8',
-  );
-  const daemon = readFileSync(
-    new URL('../.github/actions/daemon-leg/action.yml', import.meta.url),
-    'utf8',
-  );
-  const server = readFileSync(
-    new URL('../.github/actions/server-leg/action.yml', import.meta.url),
-    'utf8',
-  );
-  const pages = readFileSync(
-    new URL('../.github/actions/pages-site/action.yml', import.meta.url),
-    'utf8',
-  );
+  const mobile = readFileSync(new URL('../.github/actions/mobile-ota-leg/action.yml', import.meta.url), 'utf8');
+  const daemon = readFileSync(new URL('../.github/actions/daemon-leg/action.yml', import.meta.url), 'utf8');
+  const server = readFileSync(new URL('../.github/actions/server-leg/action.yml', import.meta.url), 'utf8');
 
   assert.match(workflow, /group: unified-production-release\s+cancel-in-progress: true/);
   assert.match(workflow, /else\s+release_version=v0\.0\.1/);
   assert.match(workflow, /app_artifact:[\s\S]*daemon_artifact:[\s\S]*server_artifact:/);
-  assert.match(
-    workflow,
-    /retry_attempt:\s*\n\s*description: Governor-managed attempt number \(1-3\)\s*\n\s*type: string\s*\n\s*default: '1'/,
-  );
+  assert.match(workflow, /retry_attempt:\s*\n\s*description: Governor-managed attempt number \(1-3\)\s*\n\s*type: string\s*\n\s*default: '1'/);
   assert.match(workflow, /app_artifact:[\s\S]*retry_attempt: \$\{\{ inputs\.retry_attempt \}\}/);
   assert.match(mobile, /retry_attempt:\s*\n\s*default: '1'/);
   assert.match(workflow, /name: server-artifact-/);
@@ -383,10 +330,7 @@ test('one workflow owns parallel builds, ordered delivery promotion, retry, and 
   assert.match(server, /flyctl auth whoami/);
   assert.match(server, /name: Deploy the exact release SHA to the monolith/);
   assert.match(server, /test "\$\(git rev-parse HEAD\)" = "\$RELEASE_SHA"/);
-  assert.match(
-    server,
-    /flyctl deploy \. \\\n\s+--config fly\.beeline-server\.toml \\\n\s+--dockerfile apps\/server\/Dockerfile \\\n\s+--app beeline-server/,
-  );
+  assert.match(server, /flyctl deploy \. \\\n\s+--config fly\.beeline-server\.toml \\\n\s+--dockerfile apps\/server\/Dockerfile \\\n\s+--app beeline-server/);
   assert.match(server, /--build-arg "BEELINE_RELEASE_SHA=\$RELEASE_SHA"/);
   assert.doesNotMatch(server, /deploy-relay-host\.sh/);
   assert.match(workflow, /name: Confirm monolith readiness and exact deployed image/);
@@ -395,14 +339,6 @@ test('one workflow owns parallel builds, ordered delivery promotion, retry, and 
   assert.match(workflow, /deployed\.version !== version \|\| deployed\.sourceSha !== sourceSha/);
   assert.match(daemon, /https:\/\/server\.usebeeline\.app\/v1\/releases\/daemon-readiness/);
   assert.match(daemon, /unified-release\.mjs assert-daemons/);
-  assert.doesNotMatch(daemon, /pages-site\.mjs verify|Confirm Pages serves/);
-  assert.doesNotMatch(daemon, /--origin https:\/\/usebeeline\.app/);
-  assert.doesNotMatch(daemon, /buzz-router-relay-prod|publish-beeline-dl/);
-  assert.match(workflow, /pages_artifact:[\s\S]*uses: \.\/\.github\/actions\/pages-site/);
-  assert.match(pages, /actions\/upload-pages-artifact@v5/);
-  assert.match(pages, /include-hidden-files: true/);
-  assert.match(workflow, /publish_pages:[\s\S]*actions\/deploy-pages@v4/);
-  assert.deepEqual(workflowJobNeeds(workflow, 'promote_daemon'), ['initialize', 'confirm_server']);
   // A busy helper may hold its restart for the whole drain deadline, so the
   // confirm waits 35 minutes and prints one readiness table per minute.
   assert.match(daemon, /wait_minutes=35/);
@@ -418,10 +354,7 @@ test('one workflow owns parallel builds, ordered delivery promotion, retry, and 
   assert.match(workflow, /^on:\s*\n\s*workflow_dispatch:/m);
   const promoteSteps = mobile.slice(mobile.indexOf('# ---- promote'));
   assert.match(promoteSteps, /cache-dependency-path: apps\/mobile\/package-lock\.json/);
-  assert.match(
-    promoteSteps,
-    /Install mobile dependencies for EAS project context[\s\S]*working-directory: apps\/mobile[\s\S]*run: npm ci/,
-  );
+  assert.match(promoteSteps, /Install mobile dependencies for EAS project context[\s\S]*working-directory: apps\/mobile[\s\S]*run: npm ci/);
   assert.ok(
     promoteSteps.indexOf('Install mobile dependencies for EAS project context') <
       promoteSteps.indexOf('Promote the exact beta group to production'),
@@ -436,7 +369,10 @@ test('one workflow owns parallel builds, ordered delivery promotion, retry, and 
     [mobile, 'mobile-ota-candidate'],
   ]) {
     assert.match(leg, /Find a downloadable .* (artifact|candidate).*exact release SHA/);
-    assert.match(leg, new RegExp(`name = \\\`${artifact}-\\$\\{\\{ inputs\\.release_sha \\}\\}`));
+    assert.match(
+      leg,
+      new RegExp(`name = \\\`${artifact}-\\$\\{\\{ inputs\\.release_sha \\}\\}`),
+    );
     assert.match(leg, /github\.rest\.actions\.listArtifactsForRepo/);
     assert.match(leg, /github\.rest\.actions\.downloadArtifact/);
     assert.match(leg, /actions\/download-artifact@v4/);
@@ -446,50 +382,8 @@ test('one workflow owns parallel builds, ordered delivery promotion, retry, and 
   assert.match(mobile, /path: \$\{\{ runner\.temp \}\}/);
 });
 
-test('Pages failures cannot enter the app delivery dependency graph', () => {
-  const workflow = readFileSync(
-    new URL('../.github/workflows/unified-release.yml', import.meta.url),
-    'utf8',
-  );
-  const pageJobs = new Set(['pages_artifact', 'publish_pages']);
-  const deliveryJobs = [
-    'promote_server',
-    'confirm_server',
-    'promote_daemon',
-    'confirm_daemon',
-    'promote_app',
-    'confirm_app',
-    'delivery_report',
-    'store_android',
-    'store_ios',
-    'npm_publish',
-  ];
-
-  assert.deepEqual(workflowJobNeeds(workflow, 'pages_artifact'), ['initialize', 'daemon_artifact']);
-  assert.deepEqual(workflowJobNeeds(workflow, 'publish_pages'), ['initialize', 'pages_artifact']);
-  for (const pageJob of pageJobs) {
-    assert.match(workflowJob(workflow, pageJob), /^    continue-on-error: true$/m);
-  }
-  for (const deliveryJob of deliveryJobs) {
-    const pageAncestors = [...workflowJobAncestors(workflow, deliveryJob)].filter((dependency) =>
-      pageJobs.has(dependency),
-    );
-    assert.deepEqual(
-      pageAncestors,
-      [],
-      `${deliveryJob} must still run when every Pages job fails`,
-    );
-  }
-
-  const retryJob = workflowJob(workflow, 'retry');
-  assert.doesNotMatch(retryJob, /pages_artifact|publish_pages/);
-});
-
 test('the release publishes usebeeline to npm as its own final job, gated on delivery', () => {
-  const workflow = readFileSync(
-    new URL('../.github/workflows/unified-release.yml', import.meta.url),
-    'utf8',
-  );
+  const workflow = readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8');
   const npmJob = workflow.slice(workflow.indexOf('\n  npm_publish:'));
   // Gated on the delivery report, not on a workflow_run of a separate file.
   assert.match(npmJob, /needs: \[initialize, delivery_report\]/);
@@ -502,22 +396,13 @@ test('the release publishes usebeeline to npm as its own final job, gated on del
 });
 
 test('the store leg runs only on request, from the release sha, and never un-delivers a release', () => {
-  const workflow = readFileSync(
-    new URL('../.github/workflows/unified-release.yml', import.meta.url),
-    'utf8',
-  );
+  const workflow = readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8');
   assert.match(
     workflow,
     /store_track:[\s\S]*?type: choice[\s\S]*?default: none[\s\S]*?- none[\s\S]*?- internal[\s\S]*?- beta[\s\S]*?- production/,
   );
-  const android = workflow.slice(
-    workflow.indexOf('\n  store_android:'),
-    workflow.indexOf('\n  store_ios:'),
-  );
-  const ios = workflow.slice(
-    workflow.indexOf('\n  store_ios:'),
-    workflow.indexOf('\n  not_delivered:'),
-  );
+  const android = workflow.slice(workflow.indexOf('\n  store_android:'), workflow.indexOf('\n  store_ios:'));
+  const ios = workflow.slice(workflow.indexOf('\n  store_ios:'), workflow.indexOf('\n  not_delivered:'));
   for (const job of [android, ios]) {
     assert.match(job, /needs: \[initialize, confirm_app\]/);
     assert.match(
@@ -544,10 +429,7 @@ test('the store leg runs only on request, from the release sha, and never un-del
   );
   // Nothing depends on the store jobs, so a store failure cannot fail the
   // release: delivery_report and not_delivered never name them.
-  const deliveryJob = workflow.slice(
-    workflow.indexOf('\n  delivery_report:'),
-    workflow.indexOf('\n  npm_publish:'),
-  );
+  const deliveryJob = workflow.slice(workflow.indexOf('\n  delivery_report:'), workflow.indexOf('\n  npm_publish:'));
   assert.doesNotMatch(deliveryJob, /store_android|store_ios/);
   const retryJob = workflow.slice(workflow.indexOf('\n  retry:'));
   assert.doesNotMatch(retryJob, /needs\.store_android|needs\.store_ios/);
@@ -572,10 +454,7 @@ test('the five PR gates live in one file under their unchanged check names', () 
   }
   assert.match(checks, /^on:\s*\n\s*pull_request: \{\}/m);
   // TYPECHECK alone has no path filter (two green PRs can merge into a red main).
-  const typecheckJob = checks.slice(
-    checks.indexOf('\n  typecheck:'),
-    checks.indexOf('\n  body-suite:'),
-  );
+  const typecheckJob = checks.slice(checks.indexOf('\n  typecheck:'), checks.indexOf('\n  body-suite:'));
   assert.doesNotMatch(typecheckJob, /needs: changes/);
   assert.match(typecheckJob, /npx turbo run typecheck/);
   // Every other gate keeps a path filter through the one changes job.
@@ -590,10 +469,7 @@ test('the five PR gates live in one file under their unchanged check names', () 
     'workflows',
     'authImage',
   ]) {
-    assert.match(
-      checks,
-      new RegExp(`${output}: \\$\\{\\{ steps\\.filter\\.outputs\\.${output} \\}\\}`),
-    );
+    assert.match(checks, new RegExp(`${output}: \\$\\{\\{ steps\\.filter\\.outputs\\.${output} \\}\\}`));
   }
   assert.match(checks, /'\.github\/actions\/\*\*'/);
 });

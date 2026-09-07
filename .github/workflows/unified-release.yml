@@ -2,8 +2,7 @@
 # (no inputs) releases the current main head: one human version for one exact
 # SHA, every artifact built before the gate, then server -> daemon -> app
 # promotion, each confirmed, then the delivery report, npm publish, and the
-# optional store leg. Pages deploys independently as a non-gating side
-# artifact. The three release legs are composite actions under
+# optional store leg. The three legs are composite actions under
 # .github/actions/{server-leg,daemon-leg,mobile-ota-leg}, each called twice
 # (build, then promote). A merge to main never releases; the retry job
 # re-dispatches this same workflow with the same identity.
@@ -302,70 +301,6 @@ jobs:
           name: unified-release-server-${{ needs.initialize.outputs.release_sha }}
           path: ${{ runner.temp }}/release/unified-release.json
           retention-days: 7
-
-  pages_artifact:
-    needs: [initialize, daemon_artifact]
-    continue-on-error: true
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-      pages: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.initialize.outputs.release_sha }}
-      - uses: actions/configure-pages@v5
-      - uses: actions/download-artifact@v4
-        with:
-          name: daemon-artifact-${{ needs.initialize.outputs.release_sha }}
-          path: ${{ runner.temp }}/daemon-release
-      - uses: ./.github/actions/pages-site
-        with:
-          bundle_dir: ${{ runner.temp }}/daemon-release
-          output_dir: ${{ runner.temp }}/usebeeline-pages
-
-  publish_pages:
-    needs: [initialize, pages_artifact]
-    continue-on-error: true
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      actions: read
-      contents: read
-      id-token: write
-      pages: write
-    concurrency:
-      group: usebeeline-pages
-      cancel-in-progress: false
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.initialize.outputs.release_sha }}
-      - uses: actions/download-artifact@v4
-        with:
-          name: daemon-artifact-${{ needs.initialize.outputs.release_sha }}
-          path: ${{ runner.temp }}/daemon-release
-      - name: Publish the release bundle and static site to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
-      - name: Verify the Pages origin serves exact bytes without redirects
-        env:
-          PAGES_ORIGIN: ${{ steps.deployment.outputs.page_url }}
-        run: |
-          for attempt in {1..12}; do
-            if node scripts/pages-site.mjs verify \
-              --bundle-dir "$RUNNER_TEMP/daemon-release" \
-              --origin "$PAGES_ORIGIN"; then
-              exit 0
-            fi
-            echo "Pages has not exposed the deployment yet (attempt $attempt/12)."
-            sleep 10
-          done
-          exit 1
 
   promote_daemon:
     needs: [initialize, confirm_server]

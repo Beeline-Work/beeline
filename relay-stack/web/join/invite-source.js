@@ -1,8 +1,7 @@
 import { isCommunityInviteToken } from '@beeline/api-contract/phone';
 
 const TOKEN_PATH_PATTERN = /^\/join\/([^/]+)\/?$/;
-export const APK_DOWNLOAD_URL =
-  'https://github.com/Beeline-Work/beeline/releases/download/apk-v27/beeline-v27-loop-brass.apk';
+export const APK_DOWNLOAD_URL = '/dl/beeline-android.apk';
 export const MONOLITH_ORIGIN = 'https://server.usebeeline.app';
 export const RESOLVE_TIMEOUT_MS = 8_000;
 export const APP_OPEN_TIMEOUT_MS = 1_800;

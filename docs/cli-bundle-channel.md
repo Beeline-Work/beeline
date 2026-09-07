@@ -4,10 +4,13 @@ The daemon leg of the one release workflow
 (`.github/actions/daemon-leg/action.yml`, called by
 `.github/workflows/unified-release.yml` as `daemon_artifact` then
 `promote_daemon`) builds the CLI bundle natively for **linux-x64 on the
-self-hosted production-Linux runner**. The verified output is retained as a
-90-day GitHub Actions artifact and copied into the GitHub Pages deployment at
-`https://usebeeline.app/dl/`; the tarballs and manifest are not committed to
-Git. This is a rolling "latest" channel only.
+self-hosted production-Linux runner** (the same runner as the server leg —
+zero paid GitHub minutes) and publishes the bundle set directly to `/home/lunchbox/buzz-router-relay-prod/relay-front/web/dl/` on that
+host. nginx serves that host-local directory at `https://usebeeline.app/dl/`;
+the tarballs and manifest are not committed to Git. This is a rolling "latest"
+channel only; tagged releases (`v0.2.x`)
+and `scripts/install-beeline.sh` are untouched and remain the versioned
+install paths.
 
 The darwin-arm64 CI leg is **disabled** (captain decision, 2026-08): no Mac
 consumer ever downloaded the bundle and macOS runners bill 10x. The matrix
@@ -66,26 +69,36 @@ GET https://usebeeline.app/dl/<file named by the manifest>
 
 ## Publish safety properties
 
-1. **Verified, whole-site publication.** `scripts/pages-site.mjs` verifies every
-   tarball against its manifest SHA-256 and byte count before GitHub Pages
-   deploys the complete site as one immutable artifact. The manifest cannot
-   advertise a file omitted from the deployment.
+1. **Verified, manifest-last publication.** The publisher writes the complete
+   generation to a temporary directory inside the host store, verifies every
+   tarball against its manifest SHA-256 and byte count, atomically renames each
+   tarball and sidecar into place, then atomically renames `manifest.json`
+   last. The manifest cannot advertise a file that has not reached the store.
 2. **Stable filenames.** `beeline-<platform>.tar.gz` never changes, matching
    the URLs the installer and self-update flow already use.
-3. **Idempotent re-runs.** Rebuilding from the same daemon artifact produces
-   the same `/dl` bytes; deploying a Pages artifact replaces the site as a
-   unit.
-4. **Rollback generations.** GitHub Pages retains prior deployments, and the
-   release workflow retains the source daemon artifact for 90 days.
+3. **Idempotent re-runs.** When the live `dl/manifest.json` already names the
+   current `sourceCommit`, the publisher exits without touching anything.
+4. **Rollback generations.** Before replacement, the outgoing generation is
+   copied under `dl/.versions/<version>-<commit>`. The current generation plus
+   the latest four archives are retained by default (`BEELINE_DL_KEEP=5`). An
+   operator rollback copies one archived generation's files back to `dl/`,
+   with `manifest.json` copied last.
 
-## Deployment order
+## Deployment cutover
 
-Every push to `main` deploys repository static files with the newest daemon
-artifact from a successful unified release. During a unified release, Pages is
-rebuilt with that release's exact daemon artifact after server confirmation and
-before daemon promotion. The promote leg verifies the public association,
-installer, manifest, archive, and checksum bytes before waiting for helpers to
-restart.
+The daemon bundle workflow publishes only into the host-local
+`relay-front/web/dl/` store. Server promotion no longer synchronizes a checkout
+over the relay webroot, so the daemon store is outside the server release leg.
+
+The first post-merge cutover is ordered as follows:
+
+1. The existing production `/dl/` directory continues serving the last
+   checkout-published generation.
+2. The daemon leg builds and install-verifies the native bundle, then
+   publishes it into that same host-local directory.
+3. The release promotes server first and daemon second, each confirmed before
+   the next; the server promotion preserves `/dl/`.
+4. After this change lands, source checkouts no longer contain release bytes.
 
 The repository already contains historical tarball blobs. Removing those
 objects requires an owner-approved `git filter-repo` rewrite, coordinated
@@ -100,7 +113,7 @@ npm run bundle:beeline                       # host platform, self-verifies
 BEELINE_BUNDLE_COMMIT=$(git rev-parse HEAD) npm run bundle:beeline -- --platform linux-x64
 ```
 
-Local builds default `version` to the build date (`YYYY.MM.DD`); CI uses the
-unified release version. `scripts/pages-site.mjs build` requires an explicit
-bundle directory and output directory, refuses unverified or corrupt inputs,
-and never writes release bytes into `relay-stack/web/`.
+Local builds default `version` to the build date (`YYYY.MM.DD`); CI pins
+`0.0.<run_number>`. `scripts/publish-beeline-dl.mjs` is CI-facing, requires an
+explicit `--output-dir` (or `BEELINE_DL_ROOT`) so it cannot accidentally write
+release bytes into a checkout, and refuses platforms not verified natively.

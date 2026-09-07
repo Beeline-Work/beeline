@@ -1,13 +1,21 @@
 import { describe, expect, it } from 'vitest';
+import { extractExpoPathFromURL } from 'expo-router/build/fork/extractPathFromURL';
 import { isReviewLink, parseReviewSecret } from './review-link';
 
 const SECRET = 'play-review-secret-value-0001';
 
 describe('the Google Play review link', () => {
-  it('reads the secret out of the verified app link', () => {
-    expect(parseReviewSecret(`https://usebeeline.app/review/${SECRET}`)).toBe(SECRET);
+  it('resolves the custom-scheme and universal links to the same secret', () => {
+    const universalLink = `https://usebeeline.app/review/${SECRET}`;
+    const schemeLink = `beeline://review/${SECRET}`;
+    const universalSecret = parseReviewSecret(universalLink);
+    const schemeSecret = parseReviewSecret(schemeLink);
+
+    expect(extractExpoPathFromURL([], schemeLink)).toBe(extractExpoPathFromURL([], universalLink));
+    expect(extractExpoPathFromURL([], schemeLink)).toBe(`review/${SECRET}`);
+    expect(schemeSecret).toBe(universalSecret);
+    expect(schemeSecret).toBe(SECRET);
     expect(parseReviewSecret(`https://usebeeline.app/review/${SECRET}/`)).toBe(SECRET);
-    expect(parseReviewSecret(`beeline://review/${SECRET}`)).toBe(SECRET);
     expect(parseReviewSecret(SECRET)).toBe(SECRET);
     expect(parseReviewSecret([SECRET, 'ignored'])).toBe(SECRET);
     expect(isReviewLink(`https://usebeeline.app/review/${SECRET}`)).toBe(true);

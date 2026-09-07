@@ -3,7 +3,8 @@
 # the job `name:`s below and are unchanged: TYPECHECK, BODY SUITE,
 # PUSH-GATEWAY SUITE, MOBILE SUITE, MOBILE-EXPORT REACHABILITY,
 # PRODUCTION-CORPUS REPLAY, FRAME-BUDGET, STATE-UPGRADE, NATIVE FINGERPRINT,
-# README PARITY, ACTIONLINT, Build auth container, Detect changes.
+# README PARITY, APP LINK ASSOCIATIONS, ACTIONLINT, Build auth container,
+# Detect changes.
 #
 # One `changes` job maps the diff to the gates it can affect; a gate whose
 # paths are untouched is skipped, and a skipped job still posts a passing
@@ -46,6 +47,7 @@ on:
           - state-upgrade
           - native-fingerprint
           - readme-parity
+          - app-link-associations
           - actionlint
           - auth-image
 
@@ -69,6 +71,7 @@ jobs:
       stateUpgrade: ${{ steps.filter.outputs.stateUpgrade }}
       nativeFingerprint: ${{ steps.filter.outputs.nativeFingerprint }}
       readme: ${{ steps.filter.outputs.readme }}
+      appLinkAssociations: ${{ steps.filter.outputs.appLinkAssociations }}
       workflows: ${{ steps.filter.outputs.workflows }}
       authImage: ${{ steps.filter.outputs.authImage }}
     steps:
@@ -208,6 +211,27 @@ jobs:
               - 'scripts/readme.test.mjs'
               - 'package.json'
               - '.github/workflows/checks.yml'
+            # This lane owns both the canonical relay-front files and the
+            # tests/scripts that validate, compare, and publish them.
+            appLinkAssociations:
+              - 'apps/api/**'
+              - 'relay-stack/web/**'
+              - 'relay-stack/nginx.conf'
+              - 'relay-stack/prod/nginx.conf'
+              - 'scripts/app-associations.mjs'
+              - 'scripts/app-associations.test.mjs'
+              - 'scripts/check-app-association-drift.mjs'
+              - 'scripts/publish-relay-front.mjs'
+              - 'scripts/publish-relay-front.test.mjs'
+              - 'packages/nostr/**'
+              - 'packages/api-contract/**'
+              - 'packages/buzz-client/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'tsconfig.base.json'
+              - 'turbo.json'
+              - '.github/workflows/checks.yml'
+              - '.github/workflows/app-association-drift.yml'
             workflows:
               - '.github/workflows/*.yml'
               - '.github/workflows/*.yaml'
@@ -625,6 +649,29 @@ jobs:
       - run: npm run test:readme
       - name: Check every badge in the README renders
         run: npm run readme:badges
+
+  app-link-associations:
+    name: APP LINK ASSOCIATIONS
+    needs: changes
+    if: >-
+      !cancelled() && (
+        (github.event_name == 'pull_request' && needs.changes.outputs.appLinkAssociations == 'true') ||
+        (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'app-link-associations'))
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client
+      - name: Verify the committed app associations and publisher safety
+        run: node --test scripts/app-associations.test.mjs scripts/publish-relay-front.test.mjs
+      - name: Run the relay-front contract test
+        run: npm test -w @beeline/relay-front -- --run src/invite-web.test.ts
 
   actionlint:
     name: ACTIONLINT

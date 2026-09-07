@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { buildSync } from 'esbuild';
 
@@ -11,6 +12,10 @@ import {
   inviteTokenHash,
 } from '@beeline/buzz-client';
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
+import {
+  readRepositoryAssociations,
+  validateRequiredAssociations,
+} from '../../../scripts/app-associations.mjs';
 
 import {
   APK_DOWNLOAD_URL,
@@ -29,33 +34,35 @@ describe('relay invite web front', () => {
     vi.unstubAllGlobals();
   });
 
-  it('publishes the production app associations', () => {
-    const apple = JSON.parse(repoFile('relay-stack/web/.well-known/apple-app-site-association'));
-    const android = JSON.parse(repoFile('relay-stack/web/.well-known/assetlinks.json'));
+  it('publishes every production app-association dependency from the committed files', async () => {
+    expect(validateRequiredAssociations(await readRepositoryAssociations())).toEqual([]);
+  });
 
-    expect(apple).toEqual({
-      applinks: {
-        apps: [],
-        details: [
-          {
-            appID: '89KT3SWYAF.app.usebeeline.mobile',
-            paths: ['/join/*', '/auth/github/mobile-callback', '/auth/oidc/mobile-callback'],
-          },
-        ],
-      },
+  it('offers a CSP-pinned custom-scheme fallback for either store review device', () => {
+    const page = repoFile('relay-stack/web/review/index.html');
+    const script = page.match(/<script>\n([\s\S]*?)\n    <\/script>/)?.[1];
+    expect(script).toBeTruthy();
+    const scriptHash = createHash('sha256').update(script!).digest('base64');
+
+    expect(page).toContain('iPhone, iPad, or Android');
+    expect(page).toContain('App Store or Google Play');
+    expect(page).toContain('id="open-beeline"');
+
+    const action = { href: '' };
+    vi.stubGlobal('window', {
+      location: { pathname: '/review/play-review-secret-value-0001' },
     });
-    expect(android).toEqual([
-      {
-        relation: ['delegate_permission/common.handle_all_urls'],
-        target: {
-          namespace: 'android_app',
-          package_name: 'app.usebeeline',
-          sha256_cert_fingerprints: [
-            'F1:0A:CD:08:4A:67:32:53:9D:3C:72:27:9C:8D:64:97:EB:3F:3A:3D:C4:EB:FF:74:F9:6C:57:76:D9:99:72:18',
-          ],
-        },
-      },
-    ]);
+    vi.stubGlobal('document', {
+      getElementById: vi.fn(() => action),
+    });
+    Function(script!)();
+    expect(action.href).toBe('beeline://review/play-review-secret-value-0001');
+
+    for (const path of ['relay-stack/nginx.conf', 'relay-stack/prod/nginx.conf']) {
+      const nginx = repoFile(path);
+      expect(nginx).toContain('^/review/[A-Za-z0-9_-]{24,128}/?$');
+      expect(nginx).toContain(`script-src 'sha256-${scriptHash}'`);
+    }
   });
 
   it('serves only valid invite paths and proxies the relay including upgrades', () => {

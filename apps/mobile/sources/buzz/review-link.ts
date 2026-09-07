@@ -1,11 +1,12 @@
 /**
- * The Google Play review link: `https://usebeeline.app/review/<secret>`.
+ * The store-reviewer entry links:
+ * `https://usebeeline.app/review/<secret>` and `beeline://review/<secret>`.
  *
- * Android verifies that host already (`app.config.js` intentFilters), so the OS
- * hands the whole URL to the app and the secret never leaves the device except
- * in the one exchange request. This module only recognises the shape — the
- * server is the sole judge of whether a secret is real, and answers an unknown
- * one with an ordinary 404.
+ * The HTTPS form uses the OS association files; the custom scheme is registered
+ * in the shipped binary (`app.config.js`) and does not. Both reach the same
+ * Expo Router route and one exchange request. This module only recognises the
+ * shape — the server is the sole judge of whether a secret is real, and answers
+ * an unknown one with an ordinary 404.
  *
  * Deliberately self-contained: Metro resolves `@beeline/*` to built `dist/`, so
  * a screen that depended on a brand-new SDK export would fail closed on a stale

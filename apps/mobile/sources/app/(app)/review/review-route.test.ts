@@ -9,6 +9,7 @@ const read = (relative: string) =>
 const route = read('./[secret].tsx');
 const home = read('../index.tsx');
 const layout = read('../_layout.tsx');
+const appConfig = read('../../../../app.config.js');
 
 describe('the review link route', () => {
   it('signs in and lands in the app, with no control and no hint on refusal', () => {
@@ -25,11 +26,14 @@ describe('the review link route', () => {
     expect(route).toContain('parseReviewSecret(incomingUrl ?? undefined)');
   });
 
+  it('registers the custom scheme in the binary for the same file route', () => {
+    expect(appConfig).toContain('const scheme = "beeline"');
+    expect(appConfig).toContain('scheme,');
+    expect(layout).toContain('name="review/[secret]"');
+  });
+
   it('is honored on a cold start before the identity check redirects', () => {
-    const decision = home.slice(
-      home.indexOf('if (initialReviewSecret)'),
-      home.lastIndexOf('}, ['),
-    );
+    const decision = home.slice(home.indexOf('if (initialReviewSecret)'), home.lastIndexOf('}, ['));
     expect(decision).toContain("pathname: '/review/[secret]'");
     expect(decision.indexOf('initialReviewSecret')).toBeLessThan(
       decision.indexOf('hasBuzzIdentity'),
@@ -37,7 +41,7 @@ describe('the review link route', () => {
     expect(layout).toContain('name="review/[secret]"');
   });
 
-  it('is reachable only from the verified app link — nothing in the app links to it', () => {
+  it('is reachable only from external review links — nothing in the app links to it', () => {
     const referring = execFileSync(
       'git',
       ['grep', '-l', '--untracked', '-F', "'/review/[secret]'", '--', 'sources'],

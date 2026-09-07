@@ -17,7 +17,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
-import { createReadStream, existsSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync } from 'node:fs';
 import {
   lstat,
   mkdir,
@@ -284,6 +284,24 @@ function expectInstalledHelperForwarders(prefix: string, version: string): void 
     `fresh-shell beeline-readonly-mcp failed\nstderr:\n${readonlyMcp.stderr ?? ''}`,
   ).toMatchObject({ status: 0 });
 
+  // The npm package's OTHER bin name (`packages/usebeeline/package.json`
+  // declares usebeeline + beeline -> one entry) must resolve to the SAME
+  // bundle through the same anchor contract: same fresh-shell answer, and a
+  // forwarder byte-identical to the beeline one (same $0-derived prefix, so
+  // the different filename changes nothing).
+  const usebeeline = spawnSync(join(prefix, 'bin', 'usebeeline'), ['--version'], {
+    encoding: 'utf8',
+    timeout: 30_000,
+    env: { ...process.env, BEELINE_LIB_DIR: '' },
+  });
+  expect(
+    { status: usebeeline.status ?? -1, stdout: usebeeline.stdout ?? '' },
+    `fresh-shell usebeeline --version failed\nstderr:\n${usebeeline.stderr ?? ''}`,
+  ).toMatchObject({ status: 0, stdout: expect.stringContaining(`beeline-stub ${version}`) });
+  expect(readFileSync(join(prefix, 'bin', 'usebeeline'), 'utf8')).toBe(
+    readFileSync(join(prefix, 'bin', 'beeline'), 'utf8'),
+  );
+
   // Body gives buzz-agent the release wrapper path but an allowlisted env
   // without BEELINE_LIB_DIR. That direct launch must resolve the same entry.
   const directReadonlyMcp = spawnSync(
@@ -459,6 +477,20 @@ describe('<prefix>/lib/beeline anchor contract', () => {
       }
     });
 
+    it('heals a host installed before the usebeeline alias existed, without touching healthy beeline', async () => {
+      const { prefix, layout } = await makeReleaseBasedInstall();
+      // Seed the pre-alias state exactly: one healthy repair pass, then wipe
+      // ONLY the alias (what an install from before FORWARDER_ALIASES left).
+      expect(await repairInstallForwarders(layout)).toBe(true);
+      const healthyBeeline = await readFile(join(prefix, 'bin', 'beeline'), 'utf8');
+      await rm(join(prefix, 'bin', 'usebeeline'));
+      expect(await repairInstallForwarders(layout)).toBe(true);
+      // The alias came back byte-identical to the beeline forwarder, so
+      // `usebeeline update` resolves the same install anchor.
+      expect(await readFile(join(prefix, 'bin', 'usebeeline'), 'utf8')).toBe(healthyBeeline);
+      expect(await repairInstallForwarders(layout)).toBe(false);
+    });
+
     it('is a no-op when the forwarders already follow the contract', async () => {
       const { layout } = await makeReleaseBasedInstall();
       expect(await repairInstallForwarders(layout)).toBe(true); // seeds them
@@ -504,6 +536,10 @@ describe('<prefix>/lib/beeline anchor contract', () => {
       // the literal on-disk bytes.
       expect(installer).toContain('export BEELINE_LIB_DIR="\\$prefix_dir/lib/beeline"');
       expect(installer).toContain('exec "\\$prefix_dir/lib/beeline/bin/$tool" "\\$@"');
+      // The installer lays down BOTH published bin names (packages/
+      // usebeeline/package.json declares usebeeline + beeline -> one entry).
+      expect(installer).toContain('"$bin_dir/usebeeline"');
+      expect(installer).toContain('exec "\\$prefix_dir/lib/beeline/bin/beeline" "\\$@"');
     });
   });
 });

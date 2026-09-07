@@ -59,11 +59,12 @@ describe('composeReleaseNotice', () => {
       behind: true,
       platforms: new Set(['android', 'ios']),
     });
-    expect(text).toContain('"beeline update"');
-    // Regression: `npx usebeeline update` refuses on a real host (it never
-    // runs through the installed wrapper) — the DM must not tell anyone to
-    // run it.
-    expect(text).not.toContain('npx');
+    expect(text).toContain('"npx usebeeline update"');
+    // Regression: `beeline` is an UNRELATED package on npm (a router
+    // library), so the DM must never name an `npx beeline ...` spelling —
+    // that would fetch a stranger's code. The published name is the safe
+    // npx form, and #949 made it delegate to the installed bundle.
+    expect(text).not.toContain('npx beeline');
     expect(text).toContain('Google Play');
     expect(text).toContain('App Store');
   });
@@ -148,8 +149,8 @@ describe('notifyReleaseDelivered', () => {
        WHERE r.direct_participants::jsonb ? $1 AND r.direct_participants::jsonb ? $2`,
       [SYSTEM_IDENTITY_ID, OTHER_PERSON],
     );
-    expect(ownerMessage.rows[0]?.text).toContain('"beeline update"');
-    expect(otherMessage.rows[0]?.text).not.toContain('beeline update');
+    expect(ownerMessage.rows[0]?.text).toContain('"npx usebeeline update"');
+    expect(otherMessage.rows[0]?.text).not.toContain('npx usebeeline update');
   });
 
   it('omits the helper section once the owned daemon reports the matching version', async () => {
@@ -167,7 +168,7 @@ describe('notifyReleaseDelivered', () => {
        WHERE r.direct_participants::jsonb ? $1 AND r.direct_participants::jsonb ? $2`,
       [SYSTEM_IDENTITY_ID, OWNER],
     );
-    expect(ownerMessage.rows[0]?.text).not.toContain('beeline update');
+    expect(ownerMessage.rows[0]?.text).not.toContain('npx usebeeline update');
   });
 
   it('does not invent a helper section for an owned daemon that has never reported a version', async () => {
@@ -183,7 +184,7 @@ describe('notifyReleaseDelivered', () => {
        WHERE r.direct_participants::jsonb ? $1 AND r.direct_participants::jsonb ? $2`,
       [SYSTEM_IDENTITY_ID, OWNER],
     );
-    expect(ownerMessage.rows[0]?.text).not.toContain('beeline update');
+    expect(ownerMessage.rows[0]?.text).not.toContain('npx usebeeline update');
   });
 
   it('includes only the platform section matching the person\'s registered devices', async () => {

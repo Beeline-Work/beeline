@@ -375,6 +375,11 @@ export class MonolithRigTransport {
   leaveWorkspace(workspaceId: string) {
     return this.operation('leaveWorkspace', { workspaceId }).then(() => undefined);
   }
+  /** Erases the signed-in account server-side; the caller then clears local
+   *  identity state and lands on onboarding. */
+  deleteAccount() {
+    return this.operation('deleteAccount', {}).then(() => undefined);
+  }
   resolveDirectMessage(workspaceId: string, participantId: string) {
     return this.operation('resolveDirectMessage', { workspaceId, participantId }).then((value) => {
       const result = value as { id: string; created: boolean };

@@ -87,6 +87,33 @@ export default function BuzzSettings() {
     router.replace('/beeline/onboarding');
   }, [confirmForget]);
 
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteFailed, setDeleteFailed] = useState(false);
+  // Two-step like sign out, then the server erases the account before the
+  // local identity state is cleared and the launch surface takes over.
+  const handleDeleteAccount = useCallback(async () => {
+    if (!confirmDelete) {
+      setConfirmDelete(true);
+      setDeleteFailed(false);
+      return;
+    }
+    if (deleteBusy) return;
+    setDeleteBusy(true);
+    try {
+      const [identity, relayUrl] = await Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]);
+      if (identity) await new BuzzRigTransport(identity, relayUrl).deleteAccount();
+      await Promise.all([clearBuzzIdentity(), clearPendingGitHubSignInState()]);
+      clearMobileSurfaceStorage();
+      router.replace('/beeline/onboarding');
+    } catch {
+      // A visible control must act or explain itself: the row says it failed
+      // and stays pressable rather than dying silently.
+      setDeleteFailed(true);
+      setDeleteBusy(false);
+    }
+  }, [confirmDelete, deleteBusy]);
+
   const handleManualUpdate = useCallback(async () => {
     if (!Updates.isEnabled || manualUpdateRunning.current) return;
 
@@ -236,6 +263,52 @@ export default function BuzzSettings() {
                 accessibilityRole="button"
                 onPress={() => setConfirmForget(false)}
                 style={styles.cancelButton}
+              >
+                <Text style={styles.cancelText}>Cancel</Text>
+              </TouchableOpacity>
+            </PixelGateReveal>
+          </View>
+        )}
+
+        <View style={styles.section}>
+          <Text style={styles.sectionLabel}>Account</Text>
+          <SettingsRow
+            accessibilityLabel={confirmDelete ? 'Confirm delete account' : 'Delete account'}
+            description={
+              deleteFailed
+                ? 'Deletion failed — check your connection and try again.'
+                : confirmDelete
+                  ? 'Permanently erase this account and its data from the service'
+                  : 'Erase this account and its personal data from the service'
+            }
+            disabled={deleteBusy}
+            onPress={() => void handleDeleteAccount()}
+            testID="delete-account-setting"
+            title={
+              deleteBusy ? 'Deleting…' : confirmDelete ? 'Confirm delete account' : 'Delete account'
+            }
+            tone="destructive"
+          />
+        </View>
+
+        {/* A destructive, non-repeating safety notice is one of the two things
+            DESIGN.md still lets a box wrap; it reuses the sign-out panel's one
+            box so the hub keeps its single confirmation vocabulary. */}
+        {confirmDelete && (
+          <View accessibilityRole="alert">
+            <PixelGateReveal style={styles.confirmPanel}>
+              <Text style={styles.confirmText}>
+                This permanently deletes your account: your profile, sessions and push devices,
+                your GitHub connections, every agent you own and its paired hosts’ access, and
+                your uploaded media. Messages you wrote in shared Rooms and DMs stay readable to
+                the people they were shared with, attributed to “Deleted account”. This cannot be
+                undone.
+              </Text>
+              <TouchableOpacity
+                accessibilityRole="button"
+                onPress={() => setConfirmDelete(false)}
+                style={styles.cancelButton}
+                testID="cancel-delete-account"
               >
                 <Text style={styles.cancelText}>Cancel</Text>
               </TouchableOpacity>

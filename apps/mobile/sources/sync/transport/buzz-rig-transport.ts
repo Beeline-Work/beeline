@@ -198,6 +198,12 @@ class LegacyBuzzRigTransport {
     await (await this.getClient()).leaveWorkspace(communityId);
   }
 
+  /** The legacy relay surface has no account-deletion operation; the row
+   *  explains itself rather than pretending. */
+  async deleteAccount(): Promise<void> {
+    throw new Error('account deletion requires the managed service');
+  }
+
   async resolveDirectMessage(
     communityId: string,
     otherPubkey: string,
@@ -345,6 +351,7 @@ export class BuzzRigTransport {
   leaveRoom(channelId: string) { return this.implementation.leaveRoom(channelId); }
   deleteRoom(channelId: string) { return this.implementation.deleteRoom(channelId); }
   leaveWorkspace(communityId: string) { return this.implementation.leaveWorkspace(communityId); }
+  deleteAccount() { return this.implementation.deleteAccount(); }
   resolveDirectMessage(communityId: string, otherPubkey: string) { return this.implementation.resolveDirectMessage(communityId, otherPubkey); }
   closeCorner(subchannelId: string) { return this.implementation.closeCorner(subchannelId); }
   agentCommandsRead(channelId: string, agentPubkey: string, workspaceId?: string) { return this.implementation.agentCommandsRead(channelId, agentPubkey, workspaceId); }

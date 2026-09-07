@@ -20,6 +20,46 @@ export interface JoinRoomsResult {
   notificationId?: string;
 }
 
+async function inheritCornerMemberships(
+  database: SqlDatabase,
+  workspaceId: string,
+  identityId: string,
+  parentRoomIds: readonly string[],
+): Promise<void> {
+  if (!parentRoomIds.length) return;
+  await database.query(
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+     SELECT corner.workspace_id,corner.id,$2,'member'
+     FROM rooms corner
+     WHERE corner.workspace_id=$1 AND corner.parent_id=ANY($3::uuid[])
+     ON CONFLICT (room_id,identity_id) WHERE room_id IS NOT NULL
+     DO UPDATE SET role='member',removed_at=NULL
+       WHERE memberships.removed_at IS NOT NULL`,
+    [workspaceId, identityId, parentRoomIds],
+  );
+}
+
+/**
+ * Repairs the roster snapshot older corners took when they were created.
+ * Missing rows mean the person joined the parent later; an existing removed
+ * row is intentional corner-level authority and must stay removed.
+ */
+export async function backfillInheritedCornerMemberships(database: SqlDatabase): Promise<number> {
+  const result = await database.query(
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+     SELECT corner.workspace_id,corner.id,parent_member.identity_id,parent_member.role
+     FROM rooms corner
+     JOIN memberships parent_member ON parent_member.room_id=corner.parent_id
+       AND parent_member.removed_at IS NULL
+     WHERE corner.parent_id IS NOT NULL
+     ON CONFLICT DO NOTHING`,
+  );
+  console.log(
+    `backfillInheritedCornerMemberships: added ${result.rowCount} missing corner membership row(s)`,
+  );
+  return result.rowCount;
+}
+
 /**
  * The one write path for adding an existing identity to existing top-level Rooms.
  * It keeps membership, transcript notes, and the single join push event atomic.
@@ -66,6 +106,12 @@ export async function joinRooms(
           values,
         );
         roomIds = joined.rows.map((row) => row.room_id);
+        await inheritCornerMemberships(
+          transaction,
+          input.workspaceId,
+          input.identityId,
+          roomIds,
+        );
       }
     }
 

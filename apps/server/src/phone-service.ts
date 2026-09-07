@@ -3730,7 +3730,6 @@ export const REVIEW_LOCKED_OPERATIONS = new Set<keyof PhoneOperationMap>([
   'completeGitHubIdentityBind',
   'recoverGitHubIdentity',
   'adoptGitHubHandle',
-  'deleteAccount',
 ]);
 
 export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([

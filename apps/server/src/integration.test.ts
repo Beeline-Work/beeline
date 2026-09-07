@@ -7,7 +7,7 @@ import { FACE_NAMES, FACE_SOULS, isFaceId, type FaceId } from '@beeline/api-cont
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { TokenAuth, tokenHash } from './auth.js';
-import { PhoneService } from './phone-service.js';
+import { PhoneService, REVIEW_LOCKED_OPERATIONS } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { createBeelineServer, DEFAULT_MEDIA_MAXIMUM_BYTES } from './server.js';
@@ -4676,13 +4676,17 @@ describe('monolith integration', () => {
 
   it('refuses the review identity every GitHub and repository write', async () => {
     const session = (await (await redeemReview(REVIEW_SECRET)).json()) as { accessToken: string };
-    for (const [name, payload] of [
+    const lockedOperations = [
       ['beginGitHubInstallation', {}],
       ['createGitHubRepository', { installationId: 1, name: 'demo' }],
       ['setRoomRepository', { roomId: ROOM, key: 'github:1', name: 'a/b', remote: 'git://github.com/a/b', targetBranch: 'main' }],
       ['beginGitHubIdentityBind', {}],
+      ['completeGitHubIdentityBind', {}],
+      ['recoverGitHubIdentity', {}],
       ['adoptGitHubHandle', {}],
-    ] as const) {
+    ] as const;
+    expect(REVIEW_LOCKED_OPERATIONS).toEqual(new Set(lockedOperations.map(([name]) => name)));
+    for (const [name, payload] of lockedOperations) {
       const refused = await operation(name, payload, session.accessToken);
       expect([refused.status, name]).toEqual([403, name]);
     }

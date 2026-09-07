@@ -12,7 +12,8 @@ import {
   DELETED_ACCOUNT_IDENTITY_ID,
   DELETED_ACCOUNT_NAME,
 } from '@beeline/api-contract/system-identity';
-import { REVIEW_IDENTITY_ID } from './review-access.js';
+import { DEFAULT_WORKSPACE_ID, WELCOME_ROOM_ID } from '@beeline/api-contract/phone';
+import { REVIEW_IDENTITY_ID, ReviewAccess } from './review-access.js';
 
 // sha256('github:owner') — the same derivation TokenAuth.exchangeGitHubOidc
 // uses, so the fresh sign-in assertion below recreates the SAME id.
@@ -24,6 +25,7 @@ const ROOM = '22222222-2222-4222-8222-222222222222';
 const DM_HUMAN = '33333333-3333-4333-8333-333333333333';
 const DM_AGENT = '44444444-4444-4444-8444-444444444444';
 const CORNER = '55555555-5555-4555-8555-555555555555';
+const REVIEW_SECRET = 'play-review-secret-value-0001';
 
 describe('deleteAccount', () => {
   let database: PgliteDatabase;
@@ -174,6 +176,11 @@ describe('deleteAccount', () => {
         expiresAt: Date.now() + 60_000,
       })),
       live: new LiveHub(),
+      review: new ReviewAccess({
+        secret: REVIEW_SECRET,
+        mint: () => auth.exchangeReviewIdentity(),
+        log: () => undefined,
+      }),
       mediaMaximumBytes: 1024 * 1024,
     });
     await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve));
@@ -305,11 +312,53 @@ describe('deleteAccount', () => {
     );
   });
 
-  it('refuses the review identity and leaves it standing', async () => {
-    await auth.exchangeReviewIdentity();
-    await expect(phone.execute('deleteAccount', {}, REVIEW_IDENTITY_ID)).rejects.toThrow(
-      /review identity/,
+  it('deletes the review identity and restores it when the review link is redeemed again', async () => {
+    await startServer();
+    const redeem = async () => {
+      const response = await fetch(`${origin}/v1/auth/review/exchange`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ secret: REVIEW_SECRET }),
+      });
+      expect(response.status).toBe(200);
+      return (await response.json()) as { accessToken: string; identityId: string };
+    };
+
+    const first = await redeem();
+    expect(first.identityId).toBe(REVIEW_IDENTITY_ID);
+    const deleted = await fetch(`${origin}/v1/phone/operations/deleteAccount`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${first.accessToken}`, 'content-type': 'application/json' },
+      body: '{}',
+    });
+    expect(deleted.status).toBe(204);
+    await expectRowCount(`SELECT 1 FROM identities WHERE id=$1`, [REVIEW_IDENTITY_ID], 0);
+    await expectRowCount(`SELECT 1 FROM memberships WHERE identity_id=$1`, [REVIEW_IDENTITY_ID], 0);
+    await expectRowCount(
+      `SELECT 1 FROM phone_sessions WHERE identity_id=$1`,
+      [REVIEW_IDENTITY_ID],
+      0,
     );
+    await expectRowCount(
+      `SELECT 1 FROM phone_access_tokens WHERE identity_id=$1`,
+      [REVIEW_IDENTITY_ID],
+      0,
+    );
+
+    const restored = await redeem();
+    expect(restored.identityId).toBe(REVIEW_IDENTITY_ID);
     await expectRowCount(`SELECT 1 FROM identities WHERE id=$1`, [REVIEW_IDENTITY_ID], 1);
+    await expectRowCount(
+      `SELECT 1 FROM memberships
+       WHERE identity_id=$1 AND workspace_id=$2 AND room_id IS NULL AND removed_at IS NULL`,
+      [REVIEW_IDENTITY_ID, DEFAULT_WORKSPACE_ID],
+      1,
+    );
+    await expectRowCount(
+      `SELECT 1 FROM memberships
+       WHERE identity_id=$1 AND workspace_id=$2 AND room_id=$3 AND removed_at IS NULL`,
+      [REVIEW_IDENTITY_ID, DEFAULT_WORKSPACE_ID, WELCOME_ROOM_ID],
+      1,
+    );
   });
 });

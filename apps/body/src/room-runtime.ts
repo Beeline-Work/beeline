@@ -41,9 +41,7 @@ export function shouldPostInitialCornerWorkingState(
   restore: CornerRestoreResult,
   isOpener = true,
 ): boolean {
-  return (
-    isOpener && !restore.featureBranch && !restore.lifecycle?.branch && !restore.lifecycle?.pr
-  );
+  return isOpener && !restore.featureBranch && !restore.lifecycle?.branch && !restore.lifecycle?.pr;
 }
 
 /**
@@ -146,7 +144,14 @@ export async function materializeCornerWorktree(input: {
     'credential.https://github.com.helper',
     '!f() { echo username=x-access-token; echo password=$GH_TOKEN; }; f',
   ]);
-  await execFileAsync('git', ['-C', path, 'config', '--worktree', 'user.name', input.committer.name]);
+  await execFileAsync('git', [
+    '-C',
+    path,
+    'config',
+    '--worktree',
+    'user.name',
+    input.committer.name,
+  ]);
   await execFileAsync('git', [
     '-C',
     path,
@@ -201,6 +206,7 @@ interface RunningRoom {
   backoffUntil: number;
   recovering: boolean;
   worktree?: CornerWorktree;
+  scratch?: CornerScratch;
 }
 
 interface CornerWorktree {
@@ -208,6 +214,11 @@ interface CornerWorktree {
   gitCommonDir: string;
   cornerId: string;
   branch: string;
+}
+
+interface CornerScratch {
+  path: string;
+  cornerId: string;
 }
 
 interface DesiredCorner {
@@ -218,6 +229,19 @@ interface DesiredCorner {
 }
 
 const execFileAsync = promisify(execFile);
+
+/** Delete exactly one chat-only corner's dedicated scratch workspace. */
+export async function removeCornerScratchWorkspace(input: {
+  cornerId: string;
+  roomRoot: string;
+  scratchPath: string;
+}): Promise<void> {
+  const expected = resolve(input.roomRoot, 'scratch');
+  if (resolve(input.scratchPath) !== expected) {
+    throw new Error(`refusing to remove scratch outside corner ${input.cornerId}`);
+  }
+  await rm(expected, { recursive: true, force: true });
+}
 
 /** Monolith-only Room supervisor. Relay-backed discovery and turn serving are retired. */
 export class RoomRuntimeCoordinator {
@@ -409,6 +433,7 @@ export class RoomRuntimeCoordinator {
       running.controller.abort();
       await running.promise.catch(() => undefined);
       if (running.worktree) await this.reapCornerWorktree(running.worktree);
+      else if (running.scratch) await this.reapCornerScratch(running.scratch);
     }
     await mapWithConcurrency(desiredTopRooms, ROOM_JOIN_CONCURRENCY, async (roomId) => {
       if (!this.running.has(roomId)) await this.startRoom(roomId);
@@ -447,8 +472,7 @@ export class RoomRuntimeCoordinator {
     }
   }
 
-  private roomConfig(roomId: string): BodyConfig {
-    const workspaceRoot = this.roomRoot(roomId);
+  private roomConfig(roomId: string, workspaceRoot = this.roomRoot(roomId)): BodyConfig {
     const agentHomeRoot = this.roomAgentHomeRoot(workspaceRoot, true);
     return {
       ...this.baseConfig,
@@ -555,10 +579,14 @@ export class RoomRuntimeCoordinator {
       ],
       { env, maxBuffer: 4 * 1024 * 1024 },
     );
-    await execFileAsync('git', ['-C', path, 'checkout', '--detach', '--force', `origin/${targetBranch}`], {
-      env,
-      maxBuffer: 4 * 1024 * 1024,
-    });
+    await execFileAsync(
+      'git',
+      ['-C', path, 'checkout', '--detach', '--force', `origin/${targetBranch}`],
+      {
+        env,
+        maxBuffer: 4 * 1024 * 1024,
+      },
+    );
     return path;
   }
 
@@ -566,7 +594,7 @@ export class RoomRuntimeCoordinator {
     if (this.running.has(corner.cornerId) || this.startingCorners.has(corner.cornerId)) return;
     this.startingCorners.add(corner.cornerId);
     try {
-      const [restore, repository, conversation, granted] = await Promise.all([
+      const [restore, repository, conversation] = await Promise.all([
         this.options.daemonApi.execute('getCornerRestoreState', { cornerId: corner.cornerId }),
         this.options.daemonApi.execute('getRoomRepositoryState', {
           roomId: corner.parentRoomId,
@@ -579,31 +607,42 @@ export class RoomRuntimeCoordinator {
           limit: 200,
           window: 'earliest',
         }),
-        this.options.daemonApi.execute('getRoomGitHubToken', {
-          roomId: corner.parentRoomId,
-        }),
       ]);
-      if (repository.resolution !== 'repository' || !repository.remote || !repository.key) {
-        throw new Error('corner parent Room has no verified repository binding');
+      if (repository.resolution === 'unverified') {
+        throw new Error('corner parent Room repository state is not verified yet');
+      }
+      if (repository.resolution === 'repository' && (!repository.remote || !repository.key)) {
+        throw new Error('corner parent Room has an incomplete repository binding');
       }
       const objective = conversation.items.find((item) => item.type === 'message')?.body.trim();
       if (!objective) throw new Error('corner has no durable objective post');
-      const targetBranch = repository.targetBranch || 'main';
-      const featureBranch =
-        restore.featureBranch ??
-        `feature/corner-${corner.cornerId.replaceAll('-', '').slice(0, 12)}`;
-      const worktree = await this.materializeCornerWorktree({
-        cornerId: corner.cornerId,
-        remote: repository.remote,
-        targetBranch,
-        featureBranch,
-        token: granted.token,
-      });
+      const repositoryBacked = repository.resolution === 'repository';
+      const targetBranch = repositoryBacked ? repository.targetBranch || 'main' : undefined;
+      const featureBranch = repositoryBacked
+        ? (restore.featureBranch ??
+          `feature/corner-${corner.cornerId.replaceAll('-', '').slice(0, 12)}`)
+        : undefined;
+      const granted = repositoryBacked
+        ? await this.options.daemonApi.execute('getRoomGitHubToken', {
+            roomId: corner.parentRoomId,
+          })
+        : undefined;
+      const worktree = repositoryBacked
+        ? await this.materializeCornerWorktree({
+            cornerId: corner.cornerId,
+            remote: repository.remote!,
+            targetBranch: targetBranch!,
+            featureBranch: featureBranch!,
+            token: granted!.token,
+          })
+        : undefined;
+      const workspacePath = worktree?.path ?? resolve(this.roomRoot(corner.cornerId), 'scratch');
+      if (!worktree) await mkdir(workspacePath, { recursive: true, mode: 0o700 });
       const isOpener = !corner.openedBy || corner.openedBy === this.agent.publicKey;
-      if (shouldPostInitialCornerWorkingState(restore, isOpener)) {
+      if (worktree && shouldPostInitialCornerWorkingState(restore, isOpener)) {
         await this.options.daemonApi.execute('postCornerRemoteState', {
           cornerId: corner.cornerId,
-          branch: featureBranch,
+          branch: featureBranch!,
           state: 'working',
           checks: 'unknown',
         });
@@ -619,24 +658,32 @@ export class RoomRuntimeCoordinator {
         workspaceId: this.runtime.communityId,
         ...(corner.openedBy ? { openedBy: corner.openedBy } : {}),
         objective,
-        featureBranch,
-        targetBranch,
-        worktreePath: worktree.path,
-        gitCommonDir: worktree.gitCommonDir,
-        githubToken: granted.token,
+        worktreePath: workspacePath,
+        ...(worktree
+          ? {
+              repository: {
+                featureBranch: featureBranch!,
+                targetBranch: targetBranch!,
+                gitCommonDir: worktree.gitCommonDir,
+                githubToken: granted!.token,
+              },
+            }
+          : {}),
         runtime: this.runtime,
-        config: this.roomConfig(corner.cornerId),
+        config: this.roomConfig(corner.cornerId, worktree ? undefined : workspacePath),
         api: this.options.daemonApi,
         scheduler: this.scheduler,
         signal: controller.signal,
         onPoll: () => this.notePoll(corner.cornerId),
         onFailure: (retryInMs) => this.noteFailure(corner.cornerId, retryInMs),
         onCloseRequested: () =>
-          this.reapCornerWorktree({
-            ...worktree,
-            cornerId: corner.cornerId,
-            branch: featureBranch,
-          }),
+          worktree
+            ? this.reapCornerWorktree({
+                ...worktree,
+                cornerId: corner.cornerId,
+                branch: featureBranch!,
+              })
+            : this.reapCornerScratch({ path: workspacePath, cornerId: corner.cornerId }),
       });
       const promise = loop
         .run()
@@ -657,15 +704,22 @@ export class RoomRuntimeCoordinator {
         lastPollAt: startedAt,
         backoffUntil: 0,
         recovering: false,
-        worktree: {
-          ...worktree,
-          cornerId: corner.cornerId,
-          branch: featureBranch,
-        },
+        ...(worktree
+          ? {
+              worktree: {
+                ...worktree,
+                cornerId: corner.cornerId,
+                branch: featureBranch!,
+              },
+            }
+          : {}),
+        ...(!worktree ? { scratch: { path: workspacePath, cornerId: corner.cornerId } } : {}),
       });
       this.reportedCornerStartFailures.delete(corner.cornerId);
       console.log(
-        `[thin-core] serving corner ${corner.cornerId} on ${featureBranch} at ${worktree.path}`,
+        worktree
+          ? `[thin-core] serving corner ${corner.cornerId} on ${featureBranch} at ${workspacePath}`
+          : `[thin-core] serving chat-only corner ${corner.cornerId} at ${workspacePath}`,
       );
     } catch (error) {
       console.error(`[thin-core] failed to start corner ${corner.cornerId}:`, error);
@@ -696,9 +750,7 @@ export class RoomRuntimeCoordinator {
       });
       const asked = [...conversation.items]
         .reverse()
-        .find(
-          (item) => item.type === 'message' && item.mentionIds.includes(this.agent.publicKey),
-        );
+        .find((item) => item.type === 'message' && item.mentionIds.includes(this.agent.publicKey));
       if (!asked) return;
       await this.options.daemonApi.execute('postAgentTurnReceipt', {
         agentId: this.agent.publicKey,
@@ -742,6 +794,14 @@ export class RoomRuntimeCoordinator {
       branch: worktree.branch,
       state: 'gone',
       checks: 'unknown',
+    });
+  }
+
+  private async reapCornerScratch(scratch: CornerScratch): Promise<void> {
+    await removeCornerScratchWorkspace({
+      cornerId: scratch.cornerId,
+      roomRoot: this.roomRoot(scratch.cornerId),
+      scratchPath: scratch.path,
     });
   }
 

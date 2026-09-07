@@ -201,7 +201,9 @@ describe('monolith integration', () => {
       `SELECT column_default FROM information_schema.columns
        WHERE table_name='push_devices' AND column_name='registered_at'`,
     );
-    expect(defaulted.rows).toEqual([expect.objectContaining({ column_default: expect.any(String) })]);
+    expect(defaulted.rows).toEqual([
+      expect.objectContaining({ column_default: expect.any(String) }),
+    ]);
 
     const token = 'new-device-token-registered-at-1234567890';
     const registered = await operation('registerPushDevice', {
@@ -876,7 +878,13 @@ describe('monolith integration', () => {
           roomId: cornerId,
           requestId: turnId,
           activity: [
-            { kind: 'tool', title: 'Bash', operation: 'execute', command: 'rg push', status: 'exit 0' },
+            {
+              kind: 'tool',
+              title: 'Bash',
+              operation: 'execute',
+              command: 'rg push',
+              status: 'exit 0',
+            },
           ],
         })
       ).status,
@@ -919,9 +927,9 @@ describe('monolith integration', () => {
     expect(created.status).toBe(200);
     const { cornerId } = (await created.json()) as { cornerId: string };
 
-    expect((await request(`/v1/phone/rooms/${cornerId}`, 'GET', undefined, aliceToken)).status).toBe(
-      404,
-    );
+    expect(
+      (await request(`/v1/phone/rooms/${cornerId}`, 'GET', undefined, aliceToken)).status,
+    ).toBe(404);
     expect(
       await (await operation('addRoomMember', { roomId: ROOM, memberId: aliceId })).json(),
     ).toEqual({ joined: true });
@@ -998,8 +1006,7 @@ describe('monolith integration', () => {
     for (let index = 1; index <= 250; index += 1) {
       // Heavy activity rows and human decisions ride the same page as ordinary
       // conversation, exactly as a long working Room carries them.
-      const presentation =
-        index % 25 === 0 ? 'system' : index % 3 === 0 ? 'activity' : 'message';
+      const presentation = index % 25 === 0 ? 'system' : index % 3 === 0 ? 'activity' : 'message';
       await database.query(
         `INSERT INTO messages(id,room_id,author_id,text,presentation,mention_ids,activity,created_at)
          VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,to_timestamp($8::bigint/1000.0))`,
@@ -1011,7 +1018,9 @@ describe('monolith integration', () => {
           presentation,
           JSON.stringify(index % 2 === 0 ? [AGENT] : []),
           presentation === 'activity'
-            ? JSON.stringify({ calls: Array.from({ length: 12 }, (_, call) => ({ title: `call ${call}` })) })
+            ? JSON.stringify({
+                calls: Array.from({ length: 12 }, (_, call) => ({ title: `call ${call}` })),
+              })
             : null,
           base + index * 1000,
         ],
@@ -1019,9 +1028,9 @@ describe('monolith integration', () => {
     }
     const bodies = async (payload: unknown) =>
       (
-        (await (
-          await daemonOperation('getRoomConversation', payload)
-        ).json()) as { items: Array<{ body: string }> }
+        (await (await daemonOperation('getRoomConversation', payload)).json()) as {
+          items: Array<{ body: string }>;
+        }
       ).items.map((item) => item.body);
 
     // Before: the default read answered with rows 1..200 and the Room's final
@@ -1089,7 +1098,11 @@ describe('monolith integration', () => {
     await database.query(
       `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)
        VALUES($1,$2,'presence','presence',$3::jsonb)`,
-      [ROOM, AGENT, JSON.stringify({ status: 'online', observedAt: Math.floor(Date.now() / 1000) })],
+      [
+        ROOM,
+        AGENT,
+        JSON.stringify({ status: 'online', observedAt: Math.floor(Date.now() / 1000) }),
+      ],
     );
     const sent = await operation('sendRoomMessage', {
       roomId: ROOM,
@@ -1958,6 +1971,22 @@ describe('monolith integration', () => {
     expect(
       (await new PhoneService(database, origin).readRoom(plainId, HUMAN))?.repository,
     ).toBeUndefined();
+    expect(
+      (
+        await database.query<{
+          repository_key: string | null;
+          repository_remote: string | null;
+          github_installation_id: string | null;
+        }>(
+          `SELECT repository_key,repository_remote,github_installation_id FROM rooms WHERE id=$1`,
+          [plainId],
+        )
+      ).rows[0],
+    ).toEqual({
+      repository_key: null,
+      repository_remote: null,
+      github_installation_id: null,
+    });
 
     const bound = await request('/v1/phone/operations/createRoom', 'POST', {
       workspaceId: WORKSPACE,
@@ -2220,9 +2249,7 @@ describe('monolith integration', () => {
     const sent = await request('/v1/phone/operations/sendRoomMessage', 'POST', {
       roomId: ROOM,
       text: 'the receipt',
-      attachments: [
-        { url: attachment.url, name: 'receipt.txt', mimeType: 'text/plain', size: 13 },
-      ],
+      attachments: [{ url: attachment.url, name: 'receipt.txt', mimeType: 'text/plain', size: 13 }],
     });
     expect(sent.status).toBe(200);
 
@@ -2254,9 +2281,9 @@ describe('monolith integration', () => {
       size: 13,
       expired: true,
     });
-    const history = (await (
-      await request(`/v1/phone/rooms/${ROOM}/history`)
-    ).json()) as { messages: RoomView['messages'] };
+    const history = (await (await request(`/v1/phone/rooms/${ROOM}/history`)).json()) as {
+      messages: RoomView['messages'];
+    };
     expect(
       history.messages.find((message) => message.text === 'the receipt')?.attachments?.[0],
     ).toMatchObject({ expired: true });
@@ -2265,9 +2292,9 @@ describe('monolith integration', () => {
     const inbox = (await (
       await daemonOperation('getRoomConversation', { roomId: ROOM })
     ).json()) as { items: { body: string; attachments: { expired?: boolean }[] }[] };
-    expect(
-      inbox.items.find((item) => item.body === 'the receipt')?.attachments[0],
-    ).toMatchObject({ expired: true });
+    expect(inbox.items.find((item) => item.body === 'the receipt')?.attachments[0]).toMatchObject({
+      expired: true,
+    });
 
     // Posting a file again is an upload: identical bytes deduplicate, and the
     // window restarts rather than the new message inheriting an old row's age.
@@ -2381,6 +2408,69 @@ describe('monolith integration', () => {
       headers: { authorization: `Bearer ${accessToken}` },
     });
     expect(Buffer.from(await media.arrayBuffer()).toString()).toBe('agent-file-bytes');
+  });
+
+  it('archives a chat-only corner without invalidating its attached media', async () => {
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'chat-only-corner',
+      name: 'Render clip',
+      objective: 'Generate a clip and attach it',
+    });
+    expect(created.status).toBe(200);
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    const upload = await fetch(`${origin}/v1/daemon/media`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${daemonToken}`,
+        'content-type': 'video/mp4',
+        'x-file-name': 'clip.mp4',
+      },
+      body: Buffer.from('video-bytes'),
+    });
+    expect(upload.status).toBe(201);
+    const attachment = (await upload.json()) as {
+      url: string;
+      name: string;
+      mimeType: string;
+      size: number;
+    };
+    expect(
+      (await daemonOperation('postAgentAttachment', { roomId: cornerId, attachment })).status,
+    ).toBe(200);
+    expect(
+      (
+        await daemonOperation('postRoomMessage', {
+          roomId: cornerId,
+          requestId: 'e'.repeat(64),
+          text: 'Here is the clip.',
+        })
+      ).status,
+    ).toBe(200);
+
+    expect((await daemonOperation('archiveCorner', { cornerId })).status).toBe(200);
+    expect(
+      (
+        await database.query<{
+          archived: boolean;
+          close_requested: boolean;
+          lifecycle: Record<string, unknown>;
+        }>(
+          `SELECT room.archived_at IS NOT NULL archived,fact.close_requested,fact.lifecycle
+           FROM rooms room JOIN corner_facts fact ON fact.corner_id=room.id WHERE room.id=$1`,
+          [cornerId],
+        )
+      ).rows[0],
+    ).toMatchObject({
+      archived: true,
+      close_requested: true,
+      lifecycle: { lifecycle: 'done', checks: 'unknown' },
+    });
+    const media = await fetch(attachment.url, {
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    expect(media.status).toBe(200);
+    expect(Buffer.from(await media.arrayBuffer()).toString()).toBe('video-bytes');
   });
 
   it('deduplicates push delivery claims in Postgres', async () => {
@@ -2542,7 +2632,11 @@ describe('monolith integration', () => {
     const refused = await daemonOperation('getDaemonBootstrap', { agentId: AGENT });
     expect(refused.status).toBe(403);
     expect(await refused.json()).toEqual({ error: 'agent_removed' });
-    const unknownToken = await daemonOperation('getDaemonBootstrap', { agentId: AGENT }, 'bdt_nope');
+    const unknownToken = await daemonOperation(
+      'getDaemonBootstrap',
+      { agentId: AGENT },
+      'bdt_nope',
+    );
     expect(unknownToken.status).toBe(401);
     expect(await unknownToken.json()).toEqual({ error: 'daemon_token_required' });
   });
@@ -3016,7 +3110,10 @@ describe('monolith integration', () => {
       [peer, 'Peer'],
       [stranger, 'Stranger'],
     ] as const) {
-      await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent',$2)`, [id, name]);
+      await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent',$2)`, [
+        id,
+        name,
+      ]);
       await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [id, HUMAN]);
     }
     await database.query(
@@ -4407,9 +4504,9 @@ describe('monolith integration', () => {
     expect(
       settledRoom.messages.filter((message) => /\b(approved|declined)\b/.test(message.text)),
     ).toEqual([]);
-    const settledHistory = (await (
-      await request(`/v1/phone/rooms/${ROOM}/history`)
-    ).json()) as { messages: Array<{ text: string }> };
+    const settledHistory = (await (await request(`/v1/phone/rooms/${ROOM}/history`)).json()) as {
+      messages: Array<{ text: string }>;
+    };
     expect(
       settledHistory.messages.filter((message) => /\b(approved|declined)\b/.test(message.text)),
     ).toEqual([]);
@@ -4582,9 +4679,7 @@ describe('monolith integration', () => {
     // An ordinary command still rides on yolo, and the line now says what that
     // licensed: in a Room, nothing outside the agent's own scratch.
     const ordinary = await ask('npm test');
-    expect(ordinary).toEqual(
-      expect.objectContaining({ status: 'approved', auto: true }),
-    );
+    expect(ordinary).toEqual(expect.objectContaining({ status: 'approved', auto: true }));
     const autoLine = await database.query<{ text: string; system_event: { consequence: string } }>(
       `SELECT text,system_event FROM messages WHERE card_type='grant-auto' ORDER BY created_at DESC LIMIT 1`,
     );
@@ -4731,7 +4826,16 @@ describe('monolith integration', () => {
     const lockedOperations = [
       ['beginGitHubInstallation', {}],
       ['createGitHubRepository', { installationId: 1, name: 'demo' }],
-      ['setRoomRepository', { roomId: ROOM, key: 'github:1', name: 'a/b', remote: 'git://github.com/a/b', targetBranch: 'main' }],
+      [
+        'setRoomRepository',
+        {
+          roomId: ROOM,
+          key: 'github:1',
+          name: 'a/b',
+          remote: 'git://github.com/a/b',
+          targetBranch: 'main',
+        },
+      ],
       ['beginGitHubIdentityBind', {}],
       ['completeGitHubIdentityBind', {}],
       ['recoverGitHubIdentity', {}],
@@ -4745,10 +4849,9 @@ describe('monolith integration', () => {
   });
 
   it('wakes the agents that subscribed to arrivals in that Room, and no one else', async () => {
-    await database.query(
-      `INSERT INTO identities(id,kind,name) VALUES($1,'agent','Owl')`,
-      [WELCOME_AGENT],
-    );
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Owl')`, [
+      WELCOME_AGENT,
+    ]);
     // The greeter subscribed to `joined` in #welcome; the ordinary Room's agent
     // subscribed to nothing and must not spend a turn on a join it never asked for.
     await database.query(
@@ -4784,18 +4887,18 @@ describe('monolith integration', () => {
   it('lets an agent subscribe itself, and wakes it on the next arrival', async () => {
     // The captain's objection, answered: nobody edits a database row for the
     // agent. It calls the operation its own tool calls, in the Room it is in.
-    expect(await (await daemonOperation('listEventSubscriptions', { roomId: ROOM })).json()).toEqual(
-      { kinds: [] },
-    );
+    expect(
+      await (await daemonOperation('listEventSubscriptions', { roomId: ROOM })).json(),
+    ).toEqual({ kinds: [] });
     const set = await daemonOperation('setEventSubscriptions', {
       roomId: ROOM,
       kinds: ['joined', 'joined'],
     });
     expect(set.status).toBe(200);
     expect(await set.json()).toEqual({ kinds: ['joined'] });
-    expect(await (await daemonOperation('listEventSubscriptions', { roomId: ROOM })).json()).toEqual(
-      { kinds: ['joined'] },
-    );
+    expect(
+      await (await daemonOperation('listEventSubscriptions', { roomId: ROOM })).json(),
+    ).toEqual({ kinds: ['joined'] });
 
     // The very next join in that Room mentions it, which is what starts a turn.
     const newcomer = await phoneToken('newcomer');
@@ -4831,9 +4934,9 @@ describe('monolith integration', () => {
       );
     }
     // Nothing was written by any of the refusals.
-    expect(await (await daemonOperation('listEventSubscriptions', { roomId: ROOM })).json()).toEqual(
-      { kinds: [] },
-    );
+    expect(
+      await (await daemonOperation('listEventSubscriptions', { roomId: ROOM })).json(),
+    ).toEqual({ kinds: [] });
     const otherRoom = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
     await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'closed')`, [
       otherRoom,

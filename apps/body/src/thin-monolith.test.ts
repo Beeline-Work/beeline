@@ -5,16 +5,127 @@ import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ThinDaemonCore } from './thin-core.js';
-import { RoomRuntimeCoordinator, shouldPostInitialCornerWorkingState } from './room-runtime.js';
+import {
+  removeCornerScratchWorkspace,
+  RoomRuntimeCoordinator,
+  shouldPostInitialCornerWorkingState,
+} from './room-runtime.js';
 import { identityFromKey, stageMonolithAgentRuntime } from './runtime.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 
 const roots: string[] = [];
 const execFileAsync = promisify(execFile);
-afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
+afterEach(async () =>
+  Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))),
+);
 
 describe('monolith-only thin daemon', () => {
+  it('deletes only the closed chat-only corner scratch workspace', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'beeline-corner-scratch-close-'));
+    roots.push(root);
+    const roomRoot = join(root, 'rooms', 'corner-a');
+    const scratchPath = join(roomRoot, 'scratch');
+    const otherScratch = join(root, 'rooms', 'corner-b', 'scratch');
+    await mkdir(scratchPath, { recursive: true });
+    await mkdir(otherScratch, { recursive: true });
+    await writeFile(join(scratchPath, 'clip.mp4'), 'clip-a');
+    await writeFile(join(otherScratch, 'clip.mp4'), 'clip-b');
+
+    await removeCornerScratchWorkspace({ cornerId: 'corner-a', roomRoot, scratchPath });
+
+    await expect(readFile(join(scratchPath, 'clip.mp4'), 'utf8')).rejects.toThrow();
+    await expect(readFile(join(otherScratch, 'clip.mp4'), 'utf8')).resolves.toBe('clip-b');
+    await expect(
+      removeCornerScratchWorkspace({
+        cornerId: 'corner-a',
+        roomRoot,
+        scratchPath: otherScratch,
+      }),
+    ).rejects.toThrow(/refusing to remove scratch outside corner corner-a/);
+  });
+
+  it('starts and closes a repo-less corner without requesting a token or cloning', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'beeline-chat-corner-runtime-'));
+    roots.push(root);
+    const staged = await stageMonolithAgentRuntime({
+      workspaceId: 'workspace',
+      pairedBy: 'human',
+      daemonExchangeToken: `bde_${'c'.repeat(43)}`,
+      agentBinary: '/nonexistent',
+      agentKind: 'codex',
+      agentCommand: '/nonexistent',
+      agentArgs: [],
+      mcpBinary: 'unused',
+      agentIdentity: identityFromKey('55'.repeat(32), 'Bee'),
+      bodyIdentity: identityFromKey('66'.repeat(32), 'Body'),
+      supervisorRoot: root,
+    });
+    const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
+      if (name === 'getCornerRestoreState') return { cornerId: 'corner', lifecycle: {} };
+      if (name === 'getRoomRepositoryState') return { resolution: 'none' as const };
+      if (name === 'getRoomGitHubToken') throw new Error('repo-less corner requested GitHub');
+      if (name === 'getRoomConversation') {
+        return input.window === 'earliest'
+          ? {
+              items: [
+                {
+                  id: 'objective-row',
+                  authorId: 'human',
+                  createdAt: 1,
+                  type: 'message',
+                  body: 'Generate a video clip.',
+                  mentionIds: [],
+                  attachments: [],
+                },
+              ],
+              cursor: 'objective-row',
+            }
+          : { items: [], cursor: 'latest' };
+      }
+      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getWorkspaceRoster') {
+        return {
+          members: [
+            {
+              identityId: staged.runtime.agent.publicKey,
+              kind: 'agent',
+              name: 'Bee',
+              role: 'member',
+            },
+          ],
+        };
+      }
+      if (name === 'getCornerCloseRequests') {
+        return { items: [], cursor: 'latest', closeRequested: true };
+      }
+      throw new Error(`unexpected daemon operation: ${name}`);
+    });
+    const coordinator = new RoomRuntimeCoordinator(
+      staged.runtime,
+      staged.configPath,
+      { workspaceRoot: root } as BodyConfig,
+      { daemonApi: { execute } as unknown as DaemonApiClient },
+    );
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const start = coordinator as unknown as {
+      startCorner(corner: {
+        cornerId: string;
+        parentRoomId: string;
+        openedBy?: string;
+      }): Promise<void>;
+    };
+    await start.startCorner({ cornerId: 'corner', parentRoomId: 'room', openedBy: 'other-agent' });
+    await vi.waitFor(() => expect(coordinator.activeRoomIds()).not.toContain('corner'));
+    errors.mockRestore();
+    await coordinator.shutdown();
+
+    expect(execute).not.toHaveBeenCalledWith('getRoomGitHubToken', expect.anything());
+    expect(errors).not.toHaveBeenCalled();
+    const scratch = resolve(staged.configPath, '..', 'rooms', 'corner', 'scratch');
+    await expect(readFile(join(scratch, 'anything'), 'utf8')).rejects.toThrow();
+  });
+
   it('does not publish a fresh working state when restoring a corner with remote PR facts', () => {
     expect(
       shouldPostInitialCornerWorkingState({
@@ -100,7 +211,8 @@ describe('monolith-only thin daemon', () => {
       supervisorRoot: root,
     });
     const execute = vi.fn(async (name: string) => {
-      if (name === 'getDaemonBootstrap') return { workspaceIds: ['workspace'], rooms: [{ roomId: 'room', archived: false }] };
+      if (name === 'getDaemonBootstrap')
+        return { workspaceIds: ['workspace'], rooms: [{ roomId: 'room', archived: false }] };
       if (name === 'listRoomCorners') return { corners: [] };
       if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
       return { id: 'write', createdAt: 1 };
@@ -370,7 +482,9 @@ describe('monolith-only thin daemon', () => {
       coordinator as unknown as { materializeRoomCheckout(roomId: string): Promise<string> }
     ).materializeRoomCheckout('room');
 
-    await expect(readFile(join(checkout, 'ROOM_PROOF.md'), 'utf8')).resolves.toContain('searchable Room checkout');
+    await expect(readFile(join(checkout, 'ROOM_PROOF.md'), 'utf8')).resolves.toContain(
+      'searchable Room checkout',
+    );
     expect(execute).toHaveBeenCalledWith('getRoomRepositoryState', { roomId: 'room' });
   });
 });

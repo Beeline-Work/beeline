@@ -365,7 +365,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'open_corner',
     description:
-      'Open one write-enabled repository corner. Give it a name of AT MOST THREE WORDS - that name titles the corner in the Room list, the corner header and every card - and a fixed objective of no more than 24 words stating the work. Line breaks and extra spaces in either are flattened for you; only a text that is genuinely too long is refused.',
+      'Open one write-enabled corner. In a repository Room it gets an isolated git worktree; in a chat-only Room it gets a writable scratch workspace for non-repository work and attach_file delivery. Give it a name of AT MOST THREE WORDS - that name titles the corner in the Room list, the corner header and every card - and a fixed objective of no more than 24 words stating the work. Line breaks and extra spaces in either are flattened for you; only a text that is genuinely too long is refused.',
     inputSchema: {
       type: 'object',
       required: ['name', 'objective'],
@@ -385,6 +385,12 @@ const AGENT_TOOLS: ToolDefinition[] = [
       },
       additionalProperties: false,
     },
+  },
+  {
+    name: 'close_corner',
+    description:
+      'Close this chat-only corner after its task is complete. Attach every file you want to keep before closing: close archives the corner and its local scratch workspace is deleted as soon as this turn finishes. Already-attached files remain available from the Room.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
     name: 'pr_checks_status',
@@ -1034,12 +1040,11 @@ async function openCorner(args: JsonObject): Promise<string> {
   const { name, objective } = cornerCallText(args);
   const roomId = requiredEnv('BEELINE_DAEMON_ROOM_ID');
   const repository = await daemonExecute('getRoomRepositoryState', { roomId });
-  if (
-    repository.resolution !== 'repository' ||
-    typeof repository.key !== 'string' ||
-    !repository.key
-  ) {
-    throw new Error('open_corner requires a verified repository-bound Room');
+  if (repository.resolution === 'unverified') {
+    throw new Error('open_corner is waiting for the Room repository state to resolve');
+  }
+  if (repository.resolution === 'repository' && (!repository.key || !repository.remote)) {
+    throw new Error('open_corner requires a complete verified repository binding');
   }
   const requestId = randomBytes(32).toString('hex');
   const created = await daemonExecute('createCorner', {
@@ -1047,9 +1052,13 @@ async function openCorner(args: JsonObject): Promise<string> {
     requestId,
     name,
     objective,
-    repository: repository.key,
-    ...(typeof repository.targetBranch === 'string'
-      ? { targetBranch: repository.targetBranch }
+    ...(repository.resolution === 'repository'
+      ? {
+          repository: repository.key,
+          ...(typeof repository.targetBranch === 'string'
+            ? { targetBranch: repository.targetBranch }
+            : {}),
+        }
       : {}),
   });
   if (typeof created.cornerId !== 'string' || !created.cornerId) {
@@ -1067,6 +1076,17 @@ async function openCorner(args: JsonObject): Promise<string> {
     objective,
     status: 'starting',
   });
+}
+
+async function closeCorner(): Promise<string> {
+  const cornerId = requiredEnv('BEELINE_DAEMON_CORNER_ID');
+  const roomId = requiredEnv('BEELINE_DAEMON_ROOM_ID');
+  const repository = await daemonExecute('getRoomRepositoryState', { roomId });
+  if (repository.resolution !== 'none') {
+    throw new Error('close_corner is available only in a chat-only corner');
+  }
+  await daemonExecute('archiveCorner', { cornerId });
+  return JSON.stringify({ cornerId, status: 'closed' });
 }
 
 async function prChecksStatus(): Promise<string> {
@@ -1736,6 +1756,8 @@ async function callAgentTool(name: string, args: JsonObject): Promise<string> {
   switch (name) {
     case 'open_corner':
       return openCorner(args);
+    case 'close_corner':
+      return closeCorner();
     case 'pr_checks_status':
       return prChecksStatus();
     case 'write_scratch_file':

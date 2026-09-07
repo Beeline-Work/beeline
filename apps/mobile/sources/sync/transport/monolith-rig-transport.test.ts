@@ -322,6 +322,22 @@ describe('monolith Room send path', () => {
     );
   });
 
+  it('omits repositoryId when creating a chat-only Room', async () => {
+    controls.fetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ id: ROOM }), { status: 200 }),
+    );
+    const transport = new MonolithRigTransport(identity);
+
+    await transport.createRoom('Chat Room', { communityId: 'workspace-id' });
+
+    expect(controls.fetch).toHaveBeenCalledWith(
+      'https://server.example/v1/phone/operations/createRoom',
+      expect.objectContaining({
+        body: JSON.stringify({ workspaceId: 'workspace-id', name: 'Chat Room' }),
+      }),
+    );
+  });
+
   it('preserves the shared repository and installation shapes used by the repo picker', async () => {
     controls.fetch.mockImplementation(async (url: string, init: RequestInit) => {
       if (url.endsWith('/listGitHubRepositories')) {

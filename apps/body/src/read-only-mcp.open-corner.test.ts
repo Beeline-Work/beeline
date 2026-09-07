@@ -30,7 +30,14 @@ afterEach(async () => {
 });
 
 /** A stub daemon door that records what `createCorner` was actually sent. */
-async function daemonDoor(): Promise<{ origin: string; calls: Record<string, unknown>[] }> {
+async function daemonDoor(
+  repository: Record<string, unknown> = {
+    resolution: 'repository',
+    key: 'owner/widgets',
+    remote: 'https://github.com/owner/widgets.git',
+    targetBranch: 'main',
+  },
+): Promise<{ origin: string; calls: Record<string, unknown>[] }> {
   const calls: Record<string, unknown>[] = [];
   const server = createServer((request, response) => {
     const chunks: Buffer[] = [];
@@ -41,7 +48,7 @@ async function daemonDoor(): Promise<{ origin: string; calls: Record<string, unk
       calls.push({ operation, ...body });
       const payload =
         operation === 'getRoomRepositoryState'
-          ? { resolution: 'repository', key: 'owner/widgets', targetBranch: 'main' }
+          ? repository
           : operation === 'createCorner'
             ? { cornerId: CORNER }
             : { ok: true };
@@ -58,6 +65,7 @@ async function daemonDoor(): Promise<{ origin: string; calls: Record<string, unk
 async function callTool(
   origin: string,
   args: Record<string, unknown>,
+  options: { name?: string; cornerId?: string } = {},
 ): Promise<{ result?: ToolResult; error?: { code: number; message: string } }> {
   const entrypoint = fileURLToPath(new URL('./read-only-mcp.ts', import.meta.url));
   const child = spawn(process.execPath, ['--import', 'tsx', entrypoint], {
@@ -67,7 +75,7 @@ async function callTool(
       BEELINE_DAEMON_BASE_URL: origin,
       BEELINE_DAEMON_TOKEN: 'daemon-token',
       BEELINE_DAEMON_ROOM_ID: ROOM,
-      BEELINE_DAEMON_CORNER_ID: '',
+      BEELINE_DAEMON_CORNER_ID: options.cornerId ?? '',
       BEELINE_AGENT_DM: '0',
     },
     stdio: ['pipe', 'pipe', 'ignore'],
@@ -83,7 +91,10 @@ async function callTool(
         };
         if (message.id !== 2) return;
         clearTimeout(timer);
-        resolve({ ...(message.result ? { result: message.result } : {}), ...(message.error ? { error: message.error } : {}) });
+        resolve({
+          ...(message.result ? { result: message.result } : {}),
+          ...(message.error ? { error: message.error } : {}),
+        });
       });
     },
   );
@@ -106,7 +117,11 @@ async function callTool(
       jsonrpc: '2.0',
       id: 2,
       method: 'tools/call',
-      params: { _meta: { progressToken: 1 }, name: 'open_corner', arguments: args },
+      params: {
+        _meta: { progressToken: 1 },
+        name: options.name ?? 'open_corner',
+        arguments: args,
+      },
     })}\n`,
   );
   try {
@@ -147,6 +162,62 @@ describe('open_corner over the grok wire', () => {
     });
   }, 30_000);
 
+  it('opens a chat-only corner without inventing repository fields', async () => {
+    const door = await daemonDoor({ resolution: 'none' });
+    const { result, error } = await callTool(door.origin, {
+      name: 'Render clip',
+      objective: 'Generate a short video clip and attach it here',
+    });
+
+    expect(error).toBeUndefined();
+    expect(result?.isError).toBeUndefined();
+    expect(JSON.parse(result!.content[0]!.text)).toMatchObject({
+      cornerId: CORNER,
+      status: 'starting',
+    });
+    const created = door.calls.find((call) => call.operation === 'createCorner');
+    expect(created).toMatchObject({
+      roomId: ROOM,
+      name: 'Render clip',
+      objective: 'Generate a short video clip and attach it here',
+    });
+    expect(created).not.toHaveProperty('repository');
+    expect(created).not.toHaveProperty('targetBranch');
+  }, 30_000);
+
+  it('closes a chat-only corner through the existing archive operation', async () => {
+    const door = await daemonDoor({ resolution: 'none' });
+    const { result, error } = await callTool(
+      door.origin,
+      {},
+      {
+        name: 'close_corner',
+        cornerId: CORNER,
+      },
+    );
+
+    expect(error).toBeUndefined();
+    expect(result?.isError).toBeUndefined();
+    expect(JSON.parse(result!.content[0]!.text)).toEqual({ cornerId: CORNER, status: 'closed' });
+    expect(door.calls).toContainEqual({ operation: 'archiveCorner', cornerId: CORNER });
+  }, 30_000);
+
+  it('does not let close_corner bypass a repository corner merge', async () => {
+    const door = await daemonDoor();
+    const { result } = await callTool(
+      door.origin,
+      {},
+      {
+        name: 'close_corner',
+        cornerId: CORNER,
+      },
+    );
+
+    expect(result?.isError).toBe(true);
+    expect(result?.content[0]?.text).toContain('only in a chat-only corner');
+    expect(door.calls.some((call) => call.operation === 'archiveCorner')).toBe(false);
+  }, 30_000);
+
   it('answers a genuine refusal as a tool result the model reads, not a protocol error', async () => {
     const door = await daemonDoor();
     const { result, error } = await callTool(door.origin, {
@@ -163,8 +234,6 @@ describe('open_corner over the grok wire', () => {
     const door = await daemonDoor();
     const { result } = await callTool(door.origin, { objective: 'Ship the widget' });
     expect(result?.isError).toBe(true);
-    expect(result?.content[0]?.text).toBe(
-      'the name is required; give a title of at most 3 words',
-    );
+    expect(result?.content[0]?.text).toBe('the name is required; give a title of at most 3 words');
   }, 30_000);
 });

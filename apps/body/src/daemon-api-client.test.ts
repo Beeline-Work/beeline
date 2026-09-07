@@ -169,20 +169,30 @@ describe('DaemonApiClient', () => {
       ((url, protocols) => new FakeWebSocket(url, protocols)) as DaemonWebSocketFactory,
     );
     const delivered: string[] = [];
-    const release = client.liveSubscribe('room-1', '1000,' + 'a'.repeat(64), (items) =>
-      delivered.push(...items.map((item) => item.id)),
+    const states: Array<[boolean, { pushIntake: boolean; connectionPresence: boolean }?]> = [];
+    const release = client.liveSubscribe(
+      'room-1',
+      '1000,' + 'a'.repeat(64),
+      (items) => delivered.push(...items.map((item) => item.id)),
+      (connected, capabilities) => states.push([connected, capabilities]),
     );
     const first = FakeWebSocket.instances[0]!;
     first.open();
     expect(first.sent).toEqual([
       JSON.stringify({ type: 'subscribe', roomId: 'room-1', cursor: `1000,${'a'.repeat(64)}` }),
     ]);
+    first.message({ type: 'subscribed', roomId: 'room-1' });
 
     first.close();
     await vi.advanceTimersByTimeAsync(1_000);
     const second = FakeWebSocket.instances[1]!;
     second.open();
     expect(second.sent).toEqual(first.sent);
+    second.message({
+      type: 'subscribed',
+      roomId: 'room-1',
+      capabilities: { pushIntake: true, connectionPresence: true },
+    });
     const items = ['1', '2', '3'].map((id) => ({
       id,
       authorId: 'a',
@@ -196,48 +206,14 @@ describe('DaemonApiClient', () => {
     second.message({ type: 'inbox', roomId: 'room-1', cursor: `2000,${'b'.repeat(64)}`, items });
 
     expect(delivered).toEqual(['1', '2', '3']);
+    expect(states).toEqual([
+      [true, { pushIntake: false, connectionPresence: false }],
+      [false, undefined],
+      [true, { pushIntake: true, connectionPresence: true }],
+    ]);
     release();
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
-  it('counts poll-only deliveries per Room after the push grace window', async () => {
-    vi.useFakeTimers();
-    FakeWebSocket.instances.length = 0;
-    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
-    const client = new DaemonApiClient(
-      'http://127.0.0.1:43123',
-      `bdt_${'y'.repeat(43)}`,
-      'b'.repeat(64),
-      fetch,
-      ((url, protocols) => new FakeWebSocket(url, protocols)) as DaemonWebSocketFactory,
-    );
-    const release = client.liveSubscribe('room-1');
-    FakeWebSocket.instances[0]!.open();
-    const item = {
-      id: 'poll-only',
-      authorId: 'a',
-      createdAt: 1,
-      type: 'message',
-      body: 'hello',
-      mentionIds: [],
-      attachments: [],
-    };
-    client.notePolled('room-1', [item]);
-    await vi.advanceTimersByTimeAsync(5_000);
-
-    expect(client.pushParityMissCount('room-1')).toBe(1);
-    expect(info).toHaveBeenCalledWith('[thin-core] push parity room=room-1 poll_only=0');
-    expect(warning).toHaveBeenCalledWith('[thin-core] push parity miss room=room-1 count=1');
-    FakeWebSocket.instances[0]!.message({
-      type: 'inbox',
-      roomId: 'room-1',
-      items: [item],
-    });
-    expect(client.pushParityMissCount('room-1')).toBe(0);
-    release();
-    vi.useRealTimers();
-    vi.unstubAllGlobals();
-  });
 });

@@ -18,6 +18,7 @@ import { createBeelineServer } from '../../server/src/server.js';
 import { createMonolithAuth, type MonolithAuthMount } from '../../server/src/monolith-auth.js';
 import { AgentScheduleLoop } from '../../server/src/agent-schedules.js';
 import { GitHubOperations } from '../../server/src/github-operations.js';
+import { ConnectionPresence } from '../../server/src/connection-presence.js';
 import { DaemonApiClient } from './daemon-api-client.js';
 import { AcpClient } from './acp.js';
 import {
@@ -64,6 +65,8 @@ describe('daemon API client against the local monolith', () => {
   let origin: string;
   let supervisorRoot: string;
   let launchedDaemonConfig: string | undefined;
+  let live: LiveHub;
+  let connectionPresence: ConnectionPresence;
 
   it('routes model-written peer names through validated agent mention ids', () => {
     const peer = 'peer-agent';
@@ -371,7 +374,8 @@ describe('daemon API client against the local monolith', () => {
       login: 'owner',
       name: 'Owner',
     }));
-    phone = new PhoneService(database, 'http://placeholder');
+    live = new LiveHub();
+    phone = new PhoneService(database, 'http://placeholder', undefined, undefined, live);
     mountedAuth = await createMonolithAuth(database, 'https://server.usebeeline.app', undefined, {
       createDaemonExchange: (agentId, transaction) =>
         auth.createDaemonExchange(agentId, transaction),
@@ -392,7 +396,7 @@ describe('daemon API client against the local monolith', () => {
         BUZZY_AUTH_OIDC_CLIENT_ID: 'test-client',
       },
     });
-    const live = new LiveHub();
+    connectionPresence = new ConnectionPresence(database, live, 30_000, 10);
     const githubOperations = new GitHubOperations(
       database,
       {} as never,
@@ -408,6 +412,7 @@ describe('daemon API client against the local monolith', () => {
         expiresAt: Date.now() + 60 * 60_000,
       })),
       live,
+      connectionPresence,
       mediaMaximumBytes: 1024,
       authHandler: mountedAuth.handle,
       github: {
@@ -426,6 +431,7 @@ describe('daemon API client against the local monolith', () => {
       launchedDaemonConfig = undefined;
     }
     await new Promise<void>((resolve) => server.close(() => resolve()));
+    await connectionPresence.stop();
     await mountedAuth.close();
     await database.close();
     await rm(supervisorRoot, { recursive: true, force: true });
@@ -595,6 +601,9 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       },
       HUMAN,
     );
+    // PGlite does not run the production Postgres LISTEN/NOTIFY listener.
+    // Deliver the committed invalidation that listener would rebroadcast.
+    live.publish({ type: 'invalidate', roomId: ROOM, reason: 'test-commit' });
     await vi.waitFor(
       async () => {
         const room = await phone.readRoom(ROOM, HUMAN);
@@ -772,6 +781,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         },
         HUMAN,
       );
+      live.publish({ type: 'invalidate', roomId: ROOM, reason: 'test-commit' });
       await vi.waitFor(() => expect(sessionPrompt).toHaveBeenCalled(), { timeout: 3_000 });
       const systemPrompt = sessionNew.mock.calls[0]![0].systemPrompt ?? '';
       expect(systemPrompt).toContain(
@@ -815,6 +825,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         },
         HUMAN,
       );
+      live.publish({ type: 'invalidate', roomId: ROOM, reason: 'test-commit' });
       await vi.waitFor(() => expect(sessionSteer).toHaveBeenCalledTimes(1), { timeout: 3_000 });
       expect(sessionSteer.mock.calls[0]?.[1]).toContain(
         'Change course and focus only on this steer.',
@@ -829,6 +840,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         },
         HUMAN,
       );
+      live.publish({ type: 'invalidate', roomId: ROOM, reason: 'test-commit' });
       await vi.waitFor(() => expect(sessionSteer).toHaveBeenCalledTimes(2), { timeout: 3_000 });
       await vi.waitFor(() => expect(sessionPrompt).toHaveBeenCalledTimes(2), { timeout: 3_000 });
       expect(sessionCancel).toHaveBeenCalledTimes(1);
@@ -898,6 +910,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         },
         HUMAN,
       );
+      live.publish({ type: 'invalidate', roomId: ROOM, reason: 'test-commit' });
       // Each of the remaining messages is awaited to its OWN prompt before the
       // next one is sent. `sessionPrompt`'s count only ever climbs, so a target
       // the loop can run past is a target `vi.waitFor` can miss between polls
@@ -917,6 +930,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
           }),
         );
       });
+      await vi.waitFor(() => expect(turnLoop.isBusy()).toBe(false));
 
       const agentParent = (await phone.readRoom(ROOM, HUMAN))?.messages.find(
         (message) => message.requestId === followup.messageId,
@@ -932,7 +946,11 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         },
         HUMAN,
       );
-      await vi.waitFor(() => expect(sessionPrompt).toHaveBeenCalledTimes(4), { timeout: 3_000 });
+      live.publish({ type: 'invalidate', roomId: ROOM, reason: 'test-commit' });
+      // Exercise the slow safety net too: a racing push replay and
+      // reconciliation must still deliver this reply exactly once.
+      turnLoop.requestReconciliation();
+      await vi.waitFor(() => expect(sessionPrompt).toHaveBeenCalledTimes(4), { timeout: 5_000 });
       await vi.waitFor(async () => {
         const room = await phone.readRoom(ROOM, HUMAN);
         expect(room?.messages).toContainEqual(
@@ -980,11 +998,13 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       await scheduler.dispose();
     }
 
-    const visibleOffline = await phone.readRoom(ROOM, HUMAN);
-    expect(
-      visibleOffline?.members.find((member) => member.identity.pubkey === AGENT),
-    ).toMatchObject({ presence: { status: 'offline', roomId: ROOM } });
-  }, 15_000);
+    await vi.waitFor(async () => {
+      const visibleOffline = await phone.readRoom(ROOM, HUMAN);
+      expect(
+        visibleOffline?.members.find((member) => member.identity.pubkey === AGENT),
+      ).toMatchObject({ presence: { status: 'offline', roomId: ROOM } });
+    });
+  }, 20_000);
 
   it.skipIf(process.env.BEELINE_REAL_THIN_PROOF !== '1')(
     'proves live steering and clean update drain through a real thin daemon and harness',
@@ -1391,7 +1411,9 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       const core = new ThinDaemonCore(runtime, configPath, config as never, { daemonApi: api });
       const abort = new AbortController();
       const daemon = core.run({ pollMs: 100, signal: abort.signal });
-      const scheduleLoop = new AgentScheduleLoop(database);
+      const scheduleLoop = new AgentScheduleLoop(database, (roomId) =>
+        live.publish({ type: 'invalidate', roomId, reason: 'schedule' }),
+      );
       let tick = Promise.resolve();
       let tickError: unknown;
       const timer = setInterval(() => {
@@ -1883,6 +1905,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
           }),
         ],
       );
+      live.publish({ type: 'invalidate', roomId: ROOM, reason: 'test-commit' });
       await vi.waitFor(() => expect(sessionPrompt).toHaveBeenCalled(), { timeout: 5_000 });
       const wirePrompt = sessionPrompt.mock.calls[0]![1];
       expect(wirePrompt).toContain('Post exactly: hello');
@@ -1939,6 +1962,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     });
     const token = (await exchanged.json()) as { daemonToken: string };
     const client = new DaemonApiClient(origin, token.daemonToken, AGENT);
+    const daemonOperations = vi.spyOn(client, 'execute');
 
     const acp = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
     vi.spyOn(acp, 'start').mockResolvedValue(undefined);
@@ -2020,6 +2044,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         { roomId: ROOM, messageId: '1'.repeat(64), text: '@bee yo', mentions: [AGENT] },
         OUTSIDER,
       );
+      live.publish({ type: 'invalidate', roomId: ROOM, reason: 'test-commit' });
       await vi.waitFor(
         async () =>
           expect(await systemLines()).toEqual([
@@ -2028,14 +2053,14 @@ createInterface({ input: process.stdin }).on('line', (line) => {
           ]),
         { timeout: 5_000 },
       );
-      // The refusal above is written by the SEND, so seeing it proves nothing
-      // about the loop yet. `health.poll()` fires once per completed intake
-      // cycle: two of them since the send means a cycle has read this message,
-      // decided, and moved its cursor past it.
-      const settled = polled.mock.calls.length + 2;
-      await vi.waitFor(() => expect(polled.mock.calls.length).toBeGreaterThanOrEqual(settled), {
-        timeout: 5_000,
-      });
+      await vi.waitFor(
+        () =>
+          expect(daemonOperations).toHaveBeenCalledWith('getRoomAuthority', {
+            roomId: ROOM,
+            principalId: OUTSIDER,
+          }),
+        { timeout: 5_000 },
+      );
       expect(sessionPrompt).not.toHaveBeenCalled();
       expect(await turns()).toBe(0);
 
@@ -2050,6 +2075,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         { roomId: ROOM, messageId: '2'.repeat(64), text: '@bee yo again', mentions: [AGENT] },
         OUTSIDER,
       );
+      live.publish({ type: 'invalidate', roomId: ROOM, reason: 'test-commit' });
       await vi.waitFor(() => expect(sessionPrompt).toHaveBeenCalled(), { timeout: 5_000 });
       expect(sessionPrompt.mock.calls[0]![1]).toContain('yo again');
       await vi.waitFor(async () => expect(await turns()).toBeGreaterThan(0), { timeout: 5_000 });

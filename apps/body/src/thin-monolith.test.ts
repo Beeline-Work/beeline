@@ -126,7 +126,10 @@ describe('monolith-only thin daemon', () => {
     });
     await expect(result).resolves.toBe('aborted');
     expect(execute).toHaveBeenCalledWith('getDaemonBootstrap', expect.any(Object));
-    expect(execute).toHaveBeenCalledWith('postAgentPresence', expect.objectContaining({ roomId: 'room' }));
+    expect(execute).not.toHaveBeenCalledWith(
+      'postAgentPresence',
+      expect.objectContaining({ roomId: 'room' }),
+    );
   });
 
   it('recovers a corner objective from the OLDEST page, not the newest one', async () => {

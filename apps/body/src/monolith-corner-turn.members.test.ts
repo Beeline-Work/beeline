@@ -12,7 +12,7 @@ import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 import { SessionScheduler } from './session-scheduler.js';
 
 /**
- * A corner is carried by its MEMBERS, so more than one helper now polls one
+ * A corner is carried by its MEMBERS, so more than one helper now watches one
  * corner. These hold the two rules that keeps that from running the same work
  * twice on one branch: only the opener starts the objective unprompted, and a
  * message that names an agent is answered by that agent alone.
@@ -181,7 +181,9 @@ async function runCorner(input: {
     api,
     scheduler,
     signal: abort.signal,
-    pollMs: 60_000,
+    // Exercise the older-server polling fallback without making the unit test
+    // wait for its production interval.
+    pollMs: 0,
     onPoll: vi.fn(),
     onFailure: vi.fn(),
     onCloseRequested: vi.fn(async () => undefined),
@@ -237,7 +239,7 @@ describe('a corner carried by its members', () => {
   });
 
   it('starts one check turn for the member carrying the corner, not one per member', async () => {
-    // A check note is ONE server fact. Every member agent now polls the
+    // A check note is ONE server fact. Every member agent now watches the
     // corner, so without a carrier it would start a turn in each of them.
     const carrying = await runCorner({
       agentKey: HELPER_KEY,

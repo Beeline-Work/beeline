@@ -95,13 +95,14 @@ export class DaemonApiClient {
     {
       cursor?: string;
       pushedIds: Set<string>;
-      parityMissIds: Set<string>;
-      parityReportedAt?: number;
       onItems?: (items: readonly InboxItem[], cursor?: string) => void;
+      onState?: (
+        connected: boolean,
+        capabilities?: { pushIntake: boolean; connectionPresence: boolean },
+      ) => void;
+      presence?: { releaseVersion?: string; sourceSha?: string; available?: boolean };
     }
   >();
-  private readonly parityPending = new Map<string, Map<string, ReturnType<typeof setTimeout>>>();
-  private readonly parityMisses = new Map<string, number>();
 
   constructor(
     readonly baseUrl: string,
@@ -117,31 +118,36 @@ export class DaemonApiClient {
     return { baseUrl: this.baseUrl, daemonToken: this.daemonToken, agentId: this.agentId };
   }
 
-  /** Add one Room to this agent's shared live socket. Polling remains active in Phase 2. */
+  /** Add one Room to this agent's shared live socket. */
   liveSubscribe(
     roomId: string,
     cursor?: string,
     onItems?: (items: readonly InboxItem[], cursor?: string) => void,
+    onState?: (
+      connected: boolean,
+      capabilities?: { pushIntake: boolean; connectionPresence: boolean },
+    ) => void,
+    presence?: { releaseVersion?: string; sourceSha?: string; available?: boolean },
   ): () => void {
     const existing = this.liveRooms.get(roomId);
     if (existing) {
       existing.cursor = cursor ?? existing.cursor;
       existing.onItems = onItems ?? existing.onItems;
+      existing.onState = onState ?? existing.onState;
+      existing.presence = presence ?? existing.presence;
     } else {
       this.liveRooms.set(roomId, {
         ...(cursor ? { cursor } : {}),
         pushedIds: new Set(),
-        parityMissIds: new Set(),
         ...(onItems ? { onItems } : {}),
+        ...(onState ? { onState } : {}),
+        ...(presence ? { presence } : {}),
       });
     }
     this.ensureLiveSocket();
     if (this.liveSocket?.readyState === WebSocket.OPEN) this.sendLiveSubscription(roomId);
     return () => {
       this.liveRooms.delete(roomId);
-      const pending = this.parityPending.get(roomId);
-      if (pending) for (const timer of pending.values()) clearTimeout(timer);
-      this.parityPending.delete(roomId);
       if (this.liveSocket?.readyState === WebSocket.OPEN) {
         this.liveSocket.send(JSON.stringify({ type: 'unsubscribe', roomId }));
       }
@@ -156,41 +162,6 @@ export class DaemonApiClient {
   updateLiveCursor(roomId: string, cursor: string | undefined): void {
     const room = this.liveRooms.get(roomId);
     if (room && cursor) room.cursor = cursor;
-  }
-
-  /** Count a poll delivery only if push still has not produced its id after a grace window. */
-  notePolled(roomId: string, items: readonly InboxItem[]): void {
-    const room = this.liveRooms.get(roomId);
-    if (!room) return;
-    const now = Date.now();
-    if (room.parityReportedAt === undefined || now - room.parityReportedAt >= 60_000) {
-      room.parityReportedAt = now;
-      console.info(`[thin-core] push parity room=${roomId} poll_only=${room.parityMissIds.size}`);
-    }
-    let pending = this.parityPending.get(roomId);
-    if (!pending) {
-      pending = new Map();
-      this.parityPending.set(roomId, pending);
-    }
-    for (const item of items) {
-      if (room.pushedIds.has(item.id) || pending.has(item.id)) continue;
-      const timer = setTimeout(() => {
-        pending!.delete(item.id);
-        if (room.pushedIds.has(item.id) || room.parityMissIds.has(item.id)) return;
-        room.parityMissIds.add(item.id);
-        while (room.parityMissIds.size > 10_000)
-          room.parityMissIds.delete(room.parityMissIds.values().next().value!);
-        const count = room.parityMissIds.size;
-        this.parityMisses.set(roomId, count);
-        console.warn(`[thin-core] push parity miss room=${roomId} count=${count}`);
-      }, 5_000);
-      timer.unref?.();
-      pending.set(item.id, timer);
-    }
-  }
-
-  pushParityMissCount(roomId: string): number {
-    return this.parityMisses.get(roomId) ?? 0;
   }
 
   async execute<Name extends keyof DaemonOperationMap>(
@@ -236,6 +207,14 @@ export class DaemonApiClient {
       }
       if (!value || typeof value !== 'object') return;
       const event = value as Record<string, unknown>;
+      if (event.type === 'subscribed' && typeof event.roomId === 'string') {
+        const capabilities = event.capabilities as Record<string, unknown> | undefined;
+        this.liveRooms.get(event.roomId)?.onState?.(true, {
+          pushIntake: capabilities?.pushIntake === true,
+          connectionPresence: capabilities?.connectionPresence === true,
+        });
+        return;
+      }
       if (event.type !== 'inbox' || typeof event.roomId !== 'string' || !Array.isArray(event.items))
         return;
       const room = this.liveRooms.get(event.roomId);
@@ -247,15 +226,6 @@ export class DaemonApiClient {
         if (typeof id === 'string') {
           if (!room.pushedIds.has(id)) items.push(candidate as InboxItem);
           room.pushedIds.add(id);
-          if (room.parityMissIds.delete(id)) {
-            this.parityMisses.set(event.roomId, room.parityMissIds.size);
-            console.info(
-              `[thin-core] push parity room=${event.roomId} poll_only=${room.parityMissIds.size}`,
-            );
-          }
-          const pending = this.parityPending.get(event.roomId)?.get(id);
-          if (pending) clearTimeout(pending);
-          this.parityPending.get(event.roomId)?.delete(id);
         }
       }
       while (room.pushedIds.size > 10_000)
@@ -266,6 +236,7 @@ export class DaemonApiClient {
     const reconnect = () => {
       if (this.liveSocket !== socket) return;
       this.liveSocket = undefined;
+      for (const room of this.liveRooms.values()) room.onState?.(false);
       if (!this.liveRooms.size) return;
       const delay = this.liveReconnectDelayMs;
       this.liveReconnectDelayMs = Math.min(delay * 2, 30_000);
@@ -284,6 +255,7 @@ export class DaemonApiClient {
         type: 'subscribe',
         roomId,
         ...(room.cursor ? { cursor: room.cursor } : {}),
+        ...room.presence,
       }),
     );
   }

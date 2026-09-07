@@ -1,63 +1,33 @@
-import {
-  KIND_CREATE_GROUP,
-  TAG_COMMUNITY,
-  createIdentity,
-  findCommunityInvite,
-  inviteTokenHash,
-  queryEvents,
-} from '@beeline/buzz-client';
 import { isCommunityInviteToken } from '@beeline/api-contract/phone';
-import { verifyEvent } from '@beeline/nostr';
 
 const TOKEN_PATH_PATTERN = /^\/join\/([^/]+)\/?$/;
 export const APK_DOWNLOAD_URL = '/dl/beeline-android.apk';
+export const MONOLITH_ORIGIN = 'https://server.usebeeline.app';
 export const RESOLVE_TIMEOUT_MS = 8_000;
 export const APP_OPEN_TIMEOUT_MS = 1_800;
 
-let invitePreviewIdentity;
-
-function getInvitePreviewIdentity() {
-  // This reader exists only in page memory. It authenticates relay reads without
-  // creating or persisting a Beeline account for the visitor.
-  invitePreviewIdentity ??= createIdentity('beeline-anonymous-invite-preview');
-  return invitePreviewIdentity;
-}
-
-function tagValue(event, name) {
-  return event.tags.find((tag) => tag[0] === name)?.[1];
-}
-
-function parseWorkspaceName(event, communityId) {
-  if (event.kind !== KIND_CREATE_GROUP || !verifyEvent(event)) return null;
-  if (tagValue(event, 'h') !== communityId) return null;
-  if (tagValue(event, TAG_COMMUNITY) !== communityId) return null;
-  const name = tagValue(event, 'name')?.trim();
-  return name || null;
-}
-
-export async function resolveWorkspaceName(baseUrl, token) {
-  const identity = getInvitePreviewIdentity();
-  const relay = new URL(baseUrl);
-  const http = {
-    baseUrl: relay.origin,
-    host: relay.host,
-    identity,
-  };
-  const tokenHash = inviteTokenHash(token);
-  const invite = await findCommunityInvite(http, tokenHash, identity.publicKey);
-  if (!invite || invite.expiresAt <= Math.floor(Date.now() / 1000)) return null;
-
-  const communityEvents = await queryEvents(
-    http,
-    [{ kinds: [KIND_CREATE_GROUP], '#h': [invite.communityId], limit: 5 }],
-    identity.publicKey,
+export async function resolveInvitePreview(baseUrl, token) {
+  const response = await fetch(
+    `${baseUrl.replace(/\/$/, '')}/v1/public/invite-preview?token=${encodeURIComponent(token)}`,
+    { headers: { accept: 'application/json' } },
   );
-  return (
-    communityEvents
-      .sort((left, right) => left.created_at - right.created_at)
-      .map((event) => parseWorkspaceName(event, invite.communityId))
-      .find(Boolean) ?? null
-  );
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`Invite resolution failed: HTTP ${response.status}`);
+  const preview = await response.json();
+  if (
+    !preview ||
+    typeof preview !== 'object' ||
+    preview.valid !== true ||
+    typeof preview.workspaceName !== 'string' ||
+    typeof preview.inviterName !== 'string' ||
+    !Number.isSafeInteger(preview.expiresAt) ||
+    Object.keys(preview).some(
+      (key) => !['valid', 'workspaceName', 'inviterName', 'expiresAt'].includes(key),
+    )
+  ) {
+    throw new Error('Invite preview response was invalid');
+  }
+  return preview;
 }
 
 export function withTimeout(promise, timeoutMs) {
@@ -70,7 +40,7 @@ export function withTimeout(promise, timeoutMs) {
 }
 
 export function startInviteLanding({
-  resolveWorkspace = resolveWorkspaceName,
+  resolvePreview = resolveInvitePreview,
   openApp = (url) => window.location.assign(url),
   resolveTimeoutMs = RESOLVE_TIMEOUT_MS,
   appOpenTimeoutMs = APP_OPEN_TIMEOUT_MS,
@@ -142,15 +112,21 @@ export function startInviteLanding({
     status.textContent = 'Resolving signed invite…';
 
     try {
-      const workspaceName = await withTimeout(
-        resolveWorkspace(window.location.origin, token),
-        resolveTimeoutMs,
-      );
+      const preview = await withTimeout(resolvePreview(MONOLITH_ORIGIN, token), resolveTimeoutMs);
       if (attempt !== resolveAttempt) return;
-      if (!workspaceName) throw new Error('Invite record was not found');
+      if (!preview) {
+        status.textContent = 'This invite is invalid or expired.';
+        setAction('Retry', '#', (event) => {
+          event.preventDefault();
+          void resolveInvite();
+        });
+        return;
+      }
 
+      const { workspaceName, inviterName } = preview;
       join.textContent = `Join ${workspaceName}`;
       heading.textContent = `You're invited to ${workspaceName}`;
+      details.textContent = `${inviterName} invited you to join this Workspace. Open Beeline to preview it and become a member.`;
       document.title = `Join ${workspaceName} | Beeline`;
       status.textContent = 'Signed invite verified.';
       setAction(`Join ${workspaceName}`, deepLink, attemptAppOpen);

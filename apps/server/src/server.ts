@@ -13,6 +13,7 @@ import type { LiveEvent, LiveHub } from './live.js';
 import type { ReviewAccess } from './review-access.js';
 import type { ReleaseNotifier } from './release-notify.js';
 import { isMediaId, mediaTtlHours } from './media-ttl.js';
+import { InvitePreviewAccess } from './invite-preview.js';
 
 export const DEFAULT_MEDIA_MAXIMUM_BYTES = 25 * 1024 * 1024;
 
@@ -44,6 +45,16 @@ function json(response: ServerResponse, status: number, body: unknown): void {
   response.writeHead(status, {
     'content-type': 'application/json',
     'cache-control': 'private, no-store',
+  });
+  response.end(`${JSON.stringify(body)}\n`);
+}
+
+function publicJson(response: ServerResponse, status: number, body: unknown): void {
+  response.writeHead(status, {
+    'content-type': 'application/json',
+    'cache-control': 'no-store',
+    'access-control-allow-origin': '*',
+    'x-content-type-options': 'nosniff',
   });
   response.end(`${JSON.stringify(body)}\n`);
 }
@@ -106,11 +117,12 @@ function bearerSecretMatches(secret: string, request: IncomingMessage): boolean 
 
 export function createBeelineServer(options: ServerOptions): Server {
   const webSockets = new WebSocketServer({ noServer: true });
+  const invitePreview = new InvitePreviewAccess(options.database);
   const server = createServer((request, response) => {
     const url = exactPath(request.url);
     const method = request.method ?? 'GET';
     console.log('[req]', method, url.pathname);
-    void route(request, response, options).catch((error) => {
+    void route(request, response, options, invitePreview).catch((error) => {
       const message = error instanceof Error ? error.message : 'request failed';
       const status =
         message.includes('required') ||
@@ -319,6 +331,7 @@ async function route(
   request: IncomingMessage,
   response: ServerResponse,
   options: ServerOptions,
+  invitePreview: InvitePreviewAccess,
 ): Promise<void> {
   const url = exactPath(request.url);
   const method = request.method ?? 'GET';
@@ -345,6 +358,19 @@ async function route(
       version: process.env.BEELINE_RELEASE_VERSION ?? 'development',
       sourceSha: process.env.BEELINE_RELEASE_SHA ?? 'unknown',
     });
+    return;
+  }
+  if (method === 'GET' && url.pathname === '/v1/public/invite-preview') {
+    // The bearer invite stays in the query string because request logging records
+    // only the pathname; do not put it in a path segment that becomes log data.
+    const result = await invitePreview.resolve(
+      url.searchParams.get('token') ?? '',
+      clientKey(request),
+    );
+    if (result.status === 'found') publicJson(response, 200, result.preview);
+    else if (result.status === 'rate_limited')
+      publicJson(response, 429, { error: 'too_many_requests' });
+    else publicJson(response, 404, { valid: false });
     return;
   }
   if (method === 'POST' && url.pathname === '/v1/auth/daemon/rollback') {

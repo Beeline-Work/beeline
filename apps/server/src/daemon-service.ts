@@ -35,7 +35,7 @@ import {
   type AgentSurface,
 } from '@beeline/api-contract/surface-capabilities';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
-import type { SqlDatabase } from './database.js';
+import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
 import type { LiveHub } from './live.js';
 import { CORNER_WAKE_MIN_INTERVAL_MS, CORNER_WAKE_TIMEOUT_MS, wakesCorner } from './corner-wake.js';
 import { restateSystemLine, systemLine, type SystemPhrase } from './system-line.js';
@@ -503,7 +503,7 @@ export class DaemonService {
         // ahead of the clock. A high-water mark must only ever name stamps the
         // clock has reached: a future one swallows every real message written
         // inside that window, and the daemon never sees them — no turn starts.
-        `SELECT id,created_at,floor(extract(epoch FROM created_at)*1000)::bigint cursor_ms
+        `SELECT id,created_at,${MESSAGE_CURSOR_MS_SQL} cursor_ms
          FROM messages WHERE room_id=$1 AND created_at <= now()
          ORDER BY cursor_ms DESC,id DESC LIMIT 1`,
         [roomId],
@@ -551,7 +551,7 @@ export class DaemonService {
            ORDER BY cursor_ms,id`
         : `${conversationColumns}
              FROM messages WHERE room_id=$1
-               ${after ? 'AND (floor(extract(epoch FROM created_at)*1000)::bigint,id)>($2::bigint,$3)' : ''}
+               ${after ? `AND (${MESSAGE_CURSOR_MS_SQL},id)>($2::bigint,$3)` : ''}
              ORDER BY cursor_ms,id LIMIT ${limit + 1}`,
       after ? [roomId, after[1], after[2]] : [roomId],
     );
@@ -2265,7 +2265,7 @@ function grantCardPhrase(
 /** The one projection an inbox or conversation row is read through. */
 const conversationColumns = `SELECT id,author_id,created_at,presentation,text,mention_ids,
         reply_to_message_id,root_message_id,request_id,attachments,system_event,
-        floor(extract(epoch FROM created_at)*1000)::bigint cursor_ms,
+        ${MESSAGE_CURSOR_MS_SQL} cursor_ms,
         floor(extract(epoch FROM now())*1000)::bigint now_ms`;
 
 /**

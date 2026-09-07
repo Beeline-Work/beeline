@@ -43,6 +43,9 @@ export interface ClosableDatabase extends SqlDatabase {
   connectDedicated(): Promise<PoolClient>;
 }
 
+export const MESSAGE_CURSOR_MS_SQL =
+  "floor(extract(epoch FROM (created_at AT TIME ZONE 'UTC'))*1000)::bigint";
+
 export class PostgresDatabase implements ClosableDatabase {
   readonly #pool: Pool;
   readonly #pause: Pause;
@@ -742,6 +745,10 @@ CREATE TABLE IF NOT EXISTS import_items (
 
 export async function migrate(database: SqlDatabase): Promise<void> {
   await database.query(SCHEMA);
+  await database.query(
+    `CREATE INDEX CONCURRENTLY IF NOT EXISTS messages_room_cursor_idx ON messages (room_id,
+     (${MESSAGE_CURSOR_MS_SQL}), id)`,
+  );
   await backfillCornerOwners(database);
   await backfillSystemEventKinds(database);
   await backfillYoloModeDefault(database);

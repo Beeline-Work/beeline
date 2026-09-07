@@ -1,8 +1,9 @@
 # The one production release button. `gh workflow run unified-release.yml`
 # (no inputs) releases the current main head: one human version for one exact
-# SHA, every artifact built before the gate, then server -> Pages -> daemon ->
-# app promotion, each confirmed, then the delivery report, npm publish, and
-# the optional store leg. The three legs are composite actions under
+# SHA, every artifact built before the gate, then server -> daemon -> app
+# promotion, each confirmed, then the delivery report, npm publish, and the
+# optional store leg. Pages deploys independently as a non-gating side
+# artifact. The three release legs are composite actions under
 # .github/actions/{server-leg,daemon-leg,mobile-ota-leg}, each called twice
 # (build, then promote). A merge to main never releases; the retry job
 # re-dispatches this same workflow with the same identity.
@@ -303,7 +304,8 @@ jobs:
           retention-days: 7
 
   pages_artifact:
-    needs: [initialize, daemon_artifact, confirm_server]
+    needs: [initialize, daemon_artifact]
+    continue-on-error: true
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -325,6 +327,7 @@ jobs:
 
   publish_pages:
     needs: [initialize, pages_artifact]
+    continue-on-error: true
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -365,7 +368,7 @@ jobs:
           exit 1
 
   promote_daemon:
-    needs: [initialize, publish_pages]
+    needs: [initialize, confirm_server]
     runs-on: [self-hosted, beeline-prod-host]
     # The daemon leg's confirm step waits up to 35 minutes: a busy helper may
     # hold its restart for the whole drain deadline (`UPDATE_DRAIN_DEADLINE_MS`)
@@ -1026,8 +1029,6 @@ jobs:
       !(
         needs.promote_server.result == 'success' &&
         needs.confirm_server.result == 'success' &&
-        needs.pages_artifact.result == 'success' &&
-        needs.publish_pages.result == 'success' &&
         needs.promote_daemon.result == 'success' &&
         needs.confirm_daemon.result == 'success' &&
         needs.promote_app.result == 'success' &&
@@ -1041,8 +1042,6 @@ jobs:
       - artifact_gate
       - promote_server
       - confirm_server
-      - pages_artifact
-      - publish_pages
       - promote_daemon
       - confirm_daemon
       - promote_app

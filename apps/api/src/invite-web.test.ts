@@ -4,22 +4,14 @@ import { buildSync } from 'esbuild';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  KIND_COMMUNITY_INVITE,
-  KIND_CREATE_GROUP,
-  TAG_COMMUNITY,
-  TAG_COMMUNITY_INVITE,
-  createIdentity,
-  inviteTokenHash,
-} from '@beeline/buzz-client';
-import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
-import {
   readRepositoryAssociations,
   validateRequiredAssociations,
 } from '../../../scripts/app-associations.mjs';
 
 import {
   APK_DOWNLOAD_URL,
-  resolveWorkspaceName,
+  MONOLITH_ORIGIN,
+  resolveInvitePreview,
   startInviteLanding,
 } from '../../../relay-stack/web/join/invite-source.js';
 
@@ -86,6 +78,9 @@ describe('relay invite web front', () => {
     expect(landing).toContain('rel="icon"');
     expect(landing).toContain('data:image/svg+xml');
     expect(script).toContain('beeline://join/');
+    for (const path of ['relay-stack/nginx.conf', 'relay-stack/prod/nginx.conf']) {
+      expect(repoFile(path)).toContain('connect-src https://server.usebeeline.app');
+    }
   });
 
   it.each([`bzi_${'a'.repeat(64)}`, `bzi_${'A'.repeat(42)}_`])(
@@ -95,7 +90,9 @@ describe('relay invite web front', () => {
       vi.stubGlobal('window', page.window);
       vi.stubGlobal('document', page.document);
 
-      startInviteLanding({ resolveWorkspace: vi.fn().mockResolvedValue('Legacy Workspace') });
+      startInviteLanding({
+        resolvePreview: vi.fn().mockResolvedValue(preview('Legacy Workspace')),
+      });
       await vi.waitFor(() => expect(page.status.textContent).toBe('Signed invite verified.'));
       expect(page.join.href).toBe(`beeline://join/${token}`);
     },
@@ -154,73 +151,30 @@ describe('relay invite web front', () => {
     ).toBe(true);
   });
 
-  it('resolves an invite anonymously with an ephemeral NIP-98 identity', async () => {
-    const inviter = createIdentity('invite-web-test-owner');
-    const communityId = '49af6fcb-cd8e-4e07-8cfe-462d58185386';
-    const createdAt = Math.floor(Date.now() / 1000);
-    const invite = signEvent(
-      {
-        pubkey: inviter.publicKey,
-        created_at: createdAt,
-        kind: KIND_COMMUNITY_INVITE,
-        tags: [
-          ['d', inviteTokenHash(INVITE_TOKEN)],
-          ['h', communityId],
-          [TAG_COMMUNITY, communityId],
-          ['t', TAG_COMMUNITY_INVITE],
-          ['expiration', String(createdAt + 3_600)],
-        ],
-        content: '',
-      },
-      inviter.secretKey,
-    );
-    const workspace = signEvent(
-      {
-        pubkey: inviter.publicKey,
-        created_at: createdAt,
-        kind: KIND_CREATE_GROUP,
-        tags: [
-          ['h', communityId],
-          ['name', 'Test workspace 1'],
-          [TAG_COMMUNITY, communityId],
-        ],
-        content: '',
-      },
-      inviter.secretKey,
-    );
+  it('resolves the public preview from the monolith without a relay query', async () => {
     const requests: Array<{ input: string; init?: RequestInit }> = [];
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
         requests.push({ input: String(input), init });
-        const filters = JSON.parse(String(init?.body)) as Array<{ kinds?: number[] }>;
-        const events = filters.some((filter) => filter.kinds?.includes(KIND_COMMUNITY_INVITE))
-          ? [invite]
-          : filters.some((filter) => filter.kinds?.includes(KIND_CREATE_GROUP))
-            ? [workspace]
-            : [];
-        return new Response(JSON.stringify(events), { status: 200 });
+        return Response.json(preview('Test workspace 1'));
       }),
     );
 
-    await expect(resolveWorkspaceName('https://usebeeline.app', INVITE_TOKEN)).resolves.toBe(
-      'Test workspace 1',
+    await expect(resolveInvitePreview(MONOLITH_ORIGIN, INVITE_TOKEN)).resolves.toEqual(
+      preview('Test workspace 1'),
     );
 
-    expect(requests).toHaveLength(2);
-    const ephemeralPubkeys = requests.map(({ input, init }) => {
-      const headers = init?.headers as Record<string, string>;
-      const auth = decodeNip98Auth(headers.authorization);
-      expect(input).toBe('https://usebeeline.app/query');
-      expect(headers.authorization).toMatch(/^Nostr /);
-      expect(headers['x-pubkey']).toBe(auth.pubkey);
-      expect(auth.pubkey).not.toBe(inviter.publicKey);
-      expect(auth.tags).toContainEqual(['u', input]);
-      expect(auth.tags).toContainEqual(['method', 'POST']);
-      expect(verifyEvent(auth)).toBe(true);
-      return auth.pubkey;
-    });
-    expect(new Set(ephemeralPubkeys).size).toBe(1);
+    expect(requests).toEqual([
+      {
+        input: `${MONOLITH_ORIGIN}/v1/public/invite-preview?token=${INVITE_TOKEN}`,
+        init: { headers: { accept: 'application/json' } },
+      },
+    ]);
+    const source = repoFile('relay-stack/web/join/invite-source.js');
+    expect(source).not.toContain('/query');
+    expect(source).not.toContain('createIdentity');
+    expect(source).not.toContain('Nostr');
   });
 
   it('times out failed invite resolution and lets the visitor retry', async () => {
@@ -228,12 +182,12 @@ describe('relay invite web front', () => {
     const page = invitePage();
     vi.stubGlobal('window', page.window);
     vi.stubGlobal('document', page.document);
-    const resolveWorkspace = vi
-      .fn<() => Promise<string>>()
+    const resolvePreview = vi
+      .fn<() => Promise<ReturnType<typeof preview>>>()
       .mockImplementationOnce(() => new Promise(() => undefined))
-      .mockResolvedValueOnce('Retry Workspace');
+      .mockResolvedValueOnce(preview('Retry Workspace'));
 
-    startInviteLanding({ resolveWorkspace, resolveTimeoutMs: 50 });
+    startInviteLanding({ resolvePreview, resolveTimeoutMs: 50 });
     await vi.advanceTimersByTimeAsync(50);
 
     expect(page.status.textContent).toBe(
@@ -244,7 +198,7 @@ describe('relay invite web front', () => {
     page.join.onclick?.({ preventDefault: vi.fn() });
     await vi.runAllTimersAsync();
 
-    expect(resolveWorkspace).toHaveBeenCalledTimes(2);
+    expect(resolvePreview).toHaveBeenCalledTimes(2);
     expect(page.join.textContent).toBe('Join Retry Workspace');
     expect(page.status.textContent).toBe('Signed invite verified.');
   });
@@ -257,7 +211,7 @@ describe('relay invite web front', () => {
     const openApp = vi.fn();
 
     startInviteLanding({
-      resolveWorkspace: vi.fn().mockResolvedValue('New Friends'),
+      resolvePreview: vi.fn().mockResolvedValue(preview('New Friends')),
       openApp,
       appOpenTimeoutMs: 50,
     });
@@ -290,8 +244,6 @@ describe('relay invite web front', () => {
       target: ['es2022'],
       alias: {
         '@beeline/api-contract/phone': './packages/api-contract/src/phone.ts',
-        '@beeline/buzz-client': './packages/buzz-client/src/index.ts',
-        '@beeline/nostr': './packages/nostr/src/index.ts',
       },
       write: false,
     }).outputFiles[0]?.text;
@@ -334,12 +286,13 @@ function invitePage(token = INVITE_TOKEN) {
   };
 }
 
-function decodeNip98Auth(value: string): NostrEvent {
-  const encoded = value.slice('Nostr '.length);
-  const json = new TextDecoder().decode(
-    Uint8Array.from(atob(encoded), (character) => character.charCodeAt(0)),
-  );
-  return JSON.parse(json) as NostrEvent;
+function preview(workspaceName: string) {
+  return {
+    valid: true as const,
+    workspaceName,
+    inviterName: 'Alex',
+    expiresAt: 2_000_000_000,
+  };
 }
 
 function fakeElement() {

@@ -1633,6 +1633,18 @@ describe('monolith integration', () => {
     expect(isCommunityInviteToken(invite.token)).toBe(true);
     expect(invite.token).toMatch(/^inv_[0-9a-f]{64}$/);
 
+    const publicPreview = await fetch(
+      `${origin}/v1/public/invite-preview?token=${encodeURIComponent(invite.token)}`,
+    );
+    expect(publicPreview.status).toBe(200);
+    expect(publicPreview.headers.get('access-control-allow-origin')).toBe('*');
+    expect(await publicPreview.json()).toEqual({
+      valid: true,
+      workspaceName: 'Hive',
+      inviterName: 'Owner',
+      expiresAt: invite.expiresAt,
+    });
+
     const recipient = await auth.exchangeGitHubOidc('recipient-proof');
     const resolved = await request(
       '/v1/phone/operations/resolveInvite',
@@ -1659,6 +1671,38 @@ describe('monolith integration', () => {
       [WORKSPACE, recipient.identityId],
     );
     expect(membership.rows).toEqual([{ role: 'member' }]);
+  });
+
+  it('collapses unknown, expired, and malformed public invites without authentication', async () => {
+    const created = await request('/v1/phone/operations/createInvite', 'POST', {
+      workspaceId: WORKSPACE,
+    });
+    const invite = (await created.json()) as { token: string };
+    await database.query(
+      `UPDATE invites SET expires_at=now()-interval '1 second' WHERE token_hash=$1`,
+      [createHash('sha256').update(invite.token).digest('hex')],
+    );
+
+    const paths = [
+      `/v1/public/invite-preview?token=${invite.token}`,
+      `/v1/public/invite-preview?token=inv_${'f'.repeat(64)}`,
+      '/v1/public/invite-preview?token=not-an-invite',
+    ];
+    for (const path of paths) {
+      const response = await fetch(`${origin}${path}`);
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({ valid: false });
+    }
+  });
+
+  it('rate-limits anonymous public invite previews per client', async () => {
+    const path = `${origin}/v1/public/invite-preview?token=not-an-invite`;
+    for (let requestNumber = 0; requestNumber < 60; requestNumber += 1)
+      expect((await fetch(path)).status).toBe(404);
+
+    const limited = await fetch(path);
+    expect(limited.status).toBe(429);
+    expect(await limited.json()).toEqual({ error: 'too_many_requests' });
   });
 
   it('publishes one note per joined Room and one push when a person redeems an invite', async () => {

@@ -4,7 +4,22 @@ import { MEDIA_SWEEP_INTERVAL_MS, mediaTtlHours } from './media-ttl.js';
 const BACKGROUND_LOCK_KEY = 0x0bee11;
 
 export interface PushSender {
-  send(token: string, message: { messageId: string; roomId: string; text: string }): Promise<void>;
+  send(
+    token: string,
+    message: { messageId: string; text: string } & (
+      | { type: 'test' }
+      | {
+          workspaceId: string;
+          roomId?: string;
+          type: 'workspace-join';
+        }
+      | {
+          workspaceId: string;
+          roomId: string;
+          type: 'message';
+        }
+    ),
+  ): Promise<void>;
 }
 
 function isUnregisteredPushToken(error: unknown): boolean {
@@ -33,12 +48,15 @@ export class PushDeliveryLoop {
     );
     const candidates = await this.database.query<{
       message_id: string;
-      room_id: string;
+      workspace_id: string;
+      room_id: string | null;
+      notification_type: 'message' | 'workspace-join';
       text: string;
       token: string;
     }>(`
       WITH candidates AS (
-        SELECT m.id message_id,m.room_id::text room_id,
+        SELECT m.id message_id,room.workspace_id::text workspace_id,m.room_id::text room_id,
+          'message' notification_type,
           CASE
             -- A corner is named by its NAME on every surface, this one included.
             WHEN m.card_type='daemon-fact' AND m.card->>'type'='corner-open'
@@ -74,8 +92,9 @@ export class PushDeliveryLoop {
             OR (m.card_type='daemon-fact' AND m.card->>'type' IN ('corner-open','corner-complete'))
           )
         UNION ALL
-        SELECT notification.id message_id,
-          COALESCE(notification.room_id::text,notification.workspace_id::text) room_id,
+        SELECT notification.id message_id,notification.workspace_id::text workspace_id,
+          notification.room_id::text room_id,
+          'workspace-join' notification_type,
           btrim(notification.text) text,device.device_token token,notification.created_at
         FROM workspace_join_notifications notification
         JOIN workspace_join_notification_devices device ON device.notification_id=notification.id
@@ -85,7 +104,8 @@ export class PushDeliveryLoop {
           AND notification.created_at>=floor.started_at
           AND btrim(notification.text)<>''
       )
-      SELECT candidate.message_id,candidate.room_id,candidate.text,candidate.token
+      SELECT candidate.message_id,candidate.workspace_id,candidate.room_id,
+        candidate.notification_type,candidate.text,candidate.token
       FROM candidates candidate
       LEFT JOIN push_delivery_claims claim
         ON claim.message_id=candidate.message_id AND claim.device_token=candidate.token
@@ -100,11 +120,23 @@ export class PushDeliveryLoop {
       );
       if (!claim.rowCount) continue;
       try {
-        await this.sender.send(candidate.token, {
-          messageId: candidate.message_id,
-          roomId: candidate.room_id,
-          text: candidate.text,
-        });
+        const message =
+          candidate.notification_type === 'workspace-join'
+            ? {
+                messageId: candidate.message_id,
+                workspaceId: candidate.workspace_id,
+                ...(candidate.room_id ? { roomId: candidate.room_id } : {}),
+                type: 'workspace-join' as const,
+                text: candidate.text,
+              }
+            : {
+                messageId: candidate.message_id,
+                workspaceId: candidate.workspace_id,
+                roomId: candidate.room_id!,
+                type: 'message' as const,
+                text: candidate.text,
+              };
+        await this.sender.send(candidate.token, message);
         await this.database.query(
           `UPDATE push_delivery_claims SET status='delivered',completed_at=now() WHERE message_id=$1 AND device_token=$2`,
           [candidate.message_id, candidate.token],

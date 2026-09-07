@@ -26,15 +26,29 @@ function nonEmptyString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value : undefined;
 }
 
-export type BuzzNotificationTarget = {
+type BuzzNotificationTargetBase = {
   type: string;
-  target: 'message' | 'corner';
-  roomId: string;
-  channelId: string;
-  cornerId?: string;
   eventId?: string;
   messageId?: string;
 };
+
+export type BuzzNotificationTarget = BuzzNotificationTargetBase &
+  (
+    | {
+        target: 'workspace';
+        workspaceId: string;
+        roomId?: never;
+        channelId?: never;
+        cornerId?: never;
+      }
+    | {
+        target: 'message' | 'corner';
+        workspaceId?: string;
+        roomId: string;
+        channelId: string;
+        cornerId?: string;
+      }
+  );
 
 /** Parse the FCM string-only data contract without trusting arbitrary route input. */
 export function getBuzzNotificationTargetFromData(data: unknown): BuzzNotificationTarget | null {
@@ -44,10 +58,14 @@ export function getBuzzNotificationTargetFromData(data: unknown): BuzzNotificati
   }
   const type = nonEmptyString(getObjectValue(normalizedData, 'type'));
   const rawChannelId = nonEmptyString(getObjectValue(normalizedData, 'channelId'));
-  if (!type || !rawChannelId) return null;
+  if (!type) return null;
 
   const cornerId = nonEmptyString(getObjectValue(normalizedData, 'cornerId'));
   const targetValue = nonEmptyString(getObjectValue(normalizedData, 'target'));
+  const workspaceId = nonEmptyString(getObjectValue(normalizedData, 'workspaceId'));
+  if ((targetValue === 'workspace' || (type === 'workspace-join' && !rawChannelId)) && workspaceId)
+    return { type, target: 'workspace', workspaceId };
+  if (!rawChannelId) return null;
   const target: BuzzNotificationTarget['target'] =
     targetValue === 'message' || targetValue === 'corner'
       ? targetValue
@@ -63,6 +81,7 @@ export function getBuzzNotificationTargetFromData(data: unknown): BuzzNotificati
   return {
     type,
     target,
+    ...(workspaceId ? { workspaceId } : {}),
     roomId,
     channelId,
     ...(cornerId ? { cornerId } : {}),
@@ -101,6 +120,16 @@ export function navigateToBuzzTargetFromNotification(
   notificationResponseId: string,
   options: { targetExists?: boolean } = {},
 ): void {
+  if (target.target === 'workspace') {
+    router.navigate(
+      {
+        pathname: '/beeline/channels',
+        params: { communityId: target.workspaceId, notificationResponseId },
+      },
+      { dangerouslySingular: true },
+    );
+    return;
+  }
   const useFallback = options.targetExists === false && target.roomId !== target.channelId;
   const channelId = useFallback ? target.roomId : target.channelId;
   router.navigate(
@@ -108,6 +137,7 @@ export function navigateToBuzzTargetFromNotification(
       pathname: '/beeline/chat/[channelId]',
       params: {
         channelId,
+        ...(target.workspaceId ? { communityId: target.workspaceId } : {}),
         notificationResponseId,
         ...(!useFallback && target.roomId !== target.channelId
           ? {

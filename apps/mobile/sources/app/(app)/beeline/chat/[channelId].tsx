@@ -294,6 +294,7 @@ export default function BuzzChat() {
     notificationTarget,
     notificationMessageId,
     notificationFallbackChannelId,
+    communityId,
     parent,
     title,
     returnTo,
@@ -303,12 +304,14 @@ export default function BuzzChat() {
     notificationTarget?: string;
     notificationMessageId?: string;
     notificationFallbackChannelId?: string;
+    communityId?: string;
     parent?: string;
     title?: string;
     returnTo?: string;
   }>();
   const decodedId = channelId ? decodeURIComponent(channelId) : '';
   const routeParentChannelId = parent?.trim() || undefined;
+  const routeCommunityId = communityId?.trim() || undefined;
   const routeChannelTitle = title?.trim() || undefined;
   const cornerReturnTarget = returnTo === 'room-list' ? returnTo : undefined;
   const insets = useSafeAreaInsets();
@@ -463,7 +466,7 @@ export default function BuzzChat() {
       : 'unknown';
   const isCorner = Boolean(parentChannelId);
   const resolvedChannelName = roomSurface?.room.name ?? routeChannelTitle ?? null;
-  const activeCommunityId = roomSurface?.room.workspaceId ?? null;
+  const activeCommunityId = roomSurface?.room.workspaceId ?? routeCommunityId ?? null;
   const viewerIsAgent = roomSurface?.viewer.identity.kind === 'agent';
   const viewerChannelRole = roomSurface?.viewer.role ?? null;
   const canManageWorkspace = viewerChannelRole === 'owner' || viewerChannelRole === 'admin';

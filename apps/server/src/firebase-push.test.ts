@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Credential, ServiceAccount } from 'firebase-admin/app';
-import { firebaseAppOptions, requirePushDeliveryCredentials } from './firebase-push.js';
+import {
+  firebaseAppOptions,
+  firebasePushMessage,
+  requirePushDeliveryCredentials,
+} from './firebase-push.js';
 
 const fakeCredential = {} as Credential;
 
@@ -76,5 +80,43 @@ describe('Firebase push credentials', () => {
     } as unknown as Credential;
 
     await expect(requirePushDeliveryCredentials(credential)).resolves.toBeUndefined();
+  });
+});
+
+describe('Firebase push routing payload', () => {
+  it('carries a workspace join to its exact Workspace and Room', () => {
+    expect(
+      firebasePushMessage('device-token', {
+        messageId: 'workspace-join:notification-id',
+        workspaceId: 'workspace-default',
+        roomId: 'room-welcome',
+        type: 'workspace-join',
+        text: 'alice joined Beeline',
+      }),
+    ).toMatchObject({
+      token: 'device-token',
+      data: {
+        type: 'workspace-join',
+        target: 'message',
+        workspaceId: 'workspace-default',
+        roomId: 'room-welcome',
+        channelId: 'room-welcome',
+      },
+    });
+  });
+
+  it('routes a Workspace-only join to the exact Workspace without inventing a Room', () => {
+    expect(
+      firebasePushMessage('device-token', {
+        messageId: 'workspace-join:notification-id',
+        workspaceId: 'workspace-default',
+        type: 'workspace-join',
+        text: 'alice joined Beeline',
+      }).data,
+    ).toEqual({
+      type: 'workspace-join',
+      target: 'workspace',
+      workspaceId: 'workspace-default',
+    });
   });
 });

@@ -69,15 +69,6 @@ const client = vi.hoisted(() => ({
 
 const phoneOperation = vi.hoisted(() =>
   vi.fn(async (name: string, input: any) => {
-    if (name === 'revokeAgentGrant') {
-      state.agent = {
-        ...state.agent,
-        grants: state.agent.grants.map((grant: any) =>
-          grant.grantId === input.grantId ? { ...grant, status: 'revoked' } : grant,
-        ),
-      };
-      return { grantId: input.grantId, status: 'revoked', roomId: 'room' };
-    }
     if (name === 'updateAgentAccessPolicy') {
       state.agent = { ...state.agent, access: { ...state.agent.access, policy: input.policy } };
       return;
@@ -712,7 +703,8 @@ describe('Members workspace management', () => {
     });
     expect(renderer.root.findByProps({ testID: 'agent-access-switch' }).props.value).toBe(true);
     expect(renderer.root.findByProps({ testID: 'agent-access-caption' }).props.children).toBe(
-      'Anyone in the Room may ask this agent. Only the owner or a workspace admin can change this.',
+      'Anyone in the Room can have Clara run commands, install software and change configuration ' +
+        'on your machine. Turn this off and only you may ask them.',
     );
     expect(renderer.root.findAllByProps({ testID: 'agent-access-error' })).toHaveLength(0);
   });
@@ -751,7 +743,8 @@ describe('Members workspace management', () => {
     expect(toggle.props.value).toBe(false);
     expect(toggle.props.trackColor).toEqual({ false: '#111', true: '#d7af5f' });
     expect(renderer.root.findByProps({ testID: 'agent-yolo-caption' }).props.children).toBe(
-      'Grant requests are approved without asking. Only the owner or a workspace admin can change this.',
+      'Clara acts without stopping to ask. Two things still ask you: anything that names one of ' +
+        'your credentials, and a script nobody has read.',
     );
     expect(renderer.root.findAllByProps({ testID: 'agent-yolo-set-by' })).toHaveLength(0);
 
@@ -791,7 +784,8 @@ describe('Members workspace management', () => {
     expect(toggle.props.disabled).toBe(true);
     expect(toggle.props.value).toBe(true);
     expect(renderer.root.findByProps({ testID: 'agent-yolo-caption' }).props.children).toBe(
-      'Grant requests are approved without asking. Only the owner or a workspace admin can change this.',
+      'Clara acts without stopping to ask. Two things still ask you: anything that names one of ' +
+        'your credentials, and a script nobody has read.',
     );
     expect(renderer.root.findByProps({ testID: 'agent-yolo-set-by' }).props.children).toMatch(
       /^Set by Captain · /,
@@ -862,9 +856,11 @@ describe('Members workspace management', () => {
     ]);
     expect(renderer.root.findAllByProps({ testID: 'remove-agent' })).toHaveLength(0);
   });
-  it('lists the grant store on the agent profile and lets the owner revoke a live rule', async () => {
-    const owner = { pubkey: VIEWER, kind: 'human', name: 'Viewer' };
-    const alex = { pubkey: MEMBER, kind: 'human', name: 'Builder' };
+  // The grants block was removed from this page: under yolo it read as an
+  // approval queue, not the ledger it needed to be. Grants keep recording
+  // server-side (agent_grants, including the auto marker) — see database.ts
+  // and daemon-service.ts — but this page no longer surfaces them at all.
+  it('renders no grants surface, even when the server has grants for this agent', async () => {
     state.agent = {
       ...baseAgent(),
       canManageGrants: true,
@@ -875,75 +871,21 @@ describe('Members workspace management', () => {
           target: 'fly deploy -a preview --with FLY_TOKEN',
           reason: 'publish the preview',
           status: 'approved',
-          requestedBy: alex,
-          decidedBy: owner,
-          roomId: '22222222-2222-4222-8222-222222222222',
-          createdAt: 1_756_900_000,
-          decidedAt: 1_756_900_060,
-          auto: false,
-        },
-        {
-          grantId: 'g-denied',
-          kind: 'host',
-          target: 'api.fly.io',
-          reason: 'reach the API',
-          status: 'denied',
-          requestedBy: alex,
-          decidedBy: owner,
-          roomId: '22222222-2222-4222-8222-222222222222',
-          createdAt: 1_756_900_000,
-          decidedAt: 1_756_900_061,
-          auto: false,
-        },
-      ],
-    };
-    const renderer = await render();
-    await press(renderer, `agent-${AGENT}-identity`);
-
-    expect(renderer.root.findAllByProps({ testID: 'agent-grants-empty' })).toHaveLength(0);
-    expect(renderer.root.findByProps({ testID: 'agent-grant-g-live-line' }).props.children).toMatch(
-      /^command · fly deploy -a preview --with FLY_TOKEN · always by Viewer · /,
-    );
-    expect(renderer.root.findByProps({ testID: 'agent-grant-g-denied-line' }).props.children).toMatch(
-      /^host · api.fly.io · denied by Viewer · /,
-    );
-    // Only the live rule can be revoked.
-    expect(renderer.root.findAllByProps({ testID: 'agent-grant-g-denied-revoke' })).toHaveLength(0);
-    await press(renderer, 'agent-grant-g-live-revoke');
-    expect(phoneOperation).toHaveBeenCalledWith('revokeAgentGrant', { grantId: 'g-live' });
-    expect(renderer.root.findByProps({ testID: 'agent-grant-g-live-line' }).props.children).toContain(
-      '· revoked by Viewer ·',
-    );
-    expect(renderer.root.findAllByProps({ testID: 'agent-grant-g-live-revoke' })).toHaveLength(0);
-  });
-
-  it('shows the grant list without revoke controls to a viewer the server does not authorize', async () => {
-    state.agent = {
-      ...baseAgent(),
-      canManageGrants: false,
-      grants: [
-        {
-          grantId: 'g-live',
-          kind: 'command',
-          target: 'npm test',
-          reason: 'run the suite',
-          status: 'approved',
           requestedBy: { pubkey: MEMBER, kind: 'human', name: 'Builder' },
-          decidedBy: { pubkey: OWNER, kind: 'human', name: 'Captain' },
+          decidedBy: { pubkey: VIEWER, kind: 'human', name: 'Viewer' },
           roomId: '22222222-2222-4222-8222-222222222222',
           createdAt: 1_756_900_000,
           decidedAt: 1_756_900_060,
-          auto: false,
+          auto: true,
         },
       ],
     };
     const renderer = await render();
     await press(renderer, `agent-${AGENT}-identity`);
-    expect(renderer.root.findByProps({ testID: 'agent-grant-g-live-line' }).props.children).toContain(
-      'npm test · always by Captain',
-    );
-    expect(renderer.root.findAllByProps({ testID: 'agent-grant-g-live-revoke' })).toHaveLength(0);
-    expect(phoneOperation).not.toHaveBeenCalledWith('revokeAgentGrant', expect.anything());
-  });
 
+    expect(renderer.root.findAllByProps({ testID: 'agent-grants' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'agent-grants-empty' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'agent-grant-g-live-line' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'agent-grant-g-live-revoke' })).toHaveLength(0);
+  });
 });

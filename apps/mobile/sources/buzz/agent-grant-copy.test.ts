@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentGrantView } from '@beeline/api-contract/phone';
-import { grantAskLine, grantIsRevocable, grantOutcomeLine, grantProfileLine } from './agent-grant-copy';
+import { grantAskLine, grantOutcomeLine } from './agent-grant-copy';
 
 const OWNER = { pubkey: 'a'.repeat(64), kind: 'human' as const, name: 'Charles' };
 
@@ -38,20 +38,5 @@ describe('grant copy', () => {
     expect(grantOutcomeLine(grant({ status: 'denied' }))).toMatch(/^Charles declined · \d/);
     expect(grantOutcomeLine(grant({ status: 'revoked' }))).toMatch(/^Charles revoked · \d/);
     expect(grantOutcomeLine(grant({ auto: true, decidedBy: undefined }))).toMatch(/^yolo auto-approved · \d/);
-  });
-
-  it('lists a profile row as kind · target · decision · date and knows which rows can be revoked', () => {
-    expect(grantProfileLine(grant({}))).toMatch(
-      /^command · fly deploy -a beeline-preview --with FLY_TOKEN · always by Charles · /,
-    );
-    expect(grantProfileLine(grant({ status: 'once' }))).toContain('· once by Charles ·');
-    expect(grantProfileLine(grant({ status: 'once', expiresAt: 1 }))).toContain('· once · used by Charles ·');
-    expect(grantProfileLine(grant({ auto: true, decidedBy: undefined }))).toContain('· always auto under yolo ·');
-    expect(grantProfileLine(grant({ status: 'denied' }))).toContain('· denied by Charles ·');
-    expect(grantIsRevocable(grant({}), 2_000_000_000)).toBe(true);
-    expect(grantIsRevocable(grant({ status: 'once' }), 2_000_000_000)).toBe(true);
-    expect(grantIsRevocable(grant({ status: 'once', expiresAt: 1 }), 2_000_000_000)).toBe(false);
-    expect(grantIsRevocable(grant({ status: 'denied' }))).toBe(false);
-    expect(grantIsRevocable(grant({ status: 'revoked' }))).toBe(false);
   });
 });

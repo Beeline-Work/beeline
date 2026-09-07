@@ -306,13 +306,13 @@ CREATE TABLE IF NOT EXISTS agents (
   model_catalog jsonb NOT NULL DEFAULT '[]'::jsonb,
   commands jsonb NOT NULL DEFAULT '[]'::jsonb,
   schedule_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
-  yolo_mode boolean NOT NULL DEFAULT false,
+  yolo_mode boolean NOT NULL DEFAULT true,
   yolo_set_by text,
   yolo_set_at timestamptz,
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS schedule_ids jsonb NOT NULL DEFAULT '[]'::jsonb;
-ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_mode boolean NOT NULL DEFAULT false;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_mode boolean NOT NULL DEFAULT true;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_set_by text;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_set_at timestamptz;
 -- An agent nobody but its owner may address is indistinguishable from a dead one,
@@ -320,6 +320,14 @@ ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_set_at timestamptz;
 -- DEFAULT moves: every existing row keeps the policy its owner is running with and
 -- changes it from the members page.
 ALTER TABLE agents ALTER COLUMN access_policy SET DEFAULT '{"type":"everyone"}'::jsonb;
+-- Consent moved from a mid-conversation ask to one up-front owner choice, so yolo is
+-- now the default for a NEW agent. Unlike the access_policy default change above,
+-- existing rows are flipped too (backfillYoloModeDefault): leaving them behind after
+-- the last default change left agents refusing everyone for hours. The two hard
+-- stops (a command naming a credential file; a script nobody has read) are outside
+-- yolo's scope gate and are unaffected. An owner or workspace admin can still turn
+-- an agent's yolo back off from the members page.
+ALTER TABLE agents ALTER COLUMN yolo_mode SET DEFAULT true;
 
 CREATE TABLE IF NOT EXISTS messages (
   id text PRIMARY KEY,
@@ -736,7 +744,20 @@ export async function migrate(database: SqlDatabase): Promise<void> {
   await database.query(SCHEMA);
   await backfillCornerOwners(database);
   await backfillSystemEventKinds(database);
+  await backfillYoloModeDefault(database);
   await seedDefaultWorkspace(database);
+}
+
+/**
+ * Flips every existing agent to the new yolo default. Explicit and unconditional —
+ * the access_policy default change left old rows behind and the captain's agents
+ * spent hours silently refusing people; this time the migration itself moves them,
+ * and logs exactly how many rows it touched so a deploy's logs carry the count.
+ */
+export async function backfillYoloModeDefault(database: SqlDatabase): Promise<number> {
+  const result = await database.query(`UPDATE agents SET yolo_mode = true WHERE yolo_mode = false`);
+  console.log(`backfillYoloModeDefault: flipped ${result.rowCount} agent row(s) to yolo_mode=true`);
+  return result.rowCount;
 }
 
 /**

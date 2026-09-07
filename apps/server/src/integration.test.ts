@@ -898,6 +898,43 @@ describe('monolith integration', () => {
     socket.close();
   });
 
+  it('lets a late Room member open a corner card created before they joined', async () => {
+    const aliceToken = await phoneToken('alice');
+    const aliceId = createHash('sha256').update('github:alice').digest('hex');
+    await operation('addWorkspaceMember', {
+      workspaceId: WORKSPACE,
+      memberId: aliceId,
+      role: 'member',
+    });
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'corner-before-late-join',
+      name: 'Existing corner',
+      objective: 'Keep this corner readable from its durable parent Room card',
+    });
+    expect(created.status).toBe(200);
+    const { cornerId } = (await created.json()) as { cornerId: string };
+
+    expect((await request(`/v1/phone/rooms/${cornerId}`, 'GET', undefined, aliceToken)).status).toBe(
+      404,
+    );
+    expect(
+      await (await operation('addRoomMember', { roomId: ROOM, memberId: aliceId })).json(),
+    ).toEqual({ joined: true });
+    const parent = (await (
+      await request(`/v1/phone/rooms/${ROOM}`, 'GET', undefined, aliceToken)
+    ).json()) as RoomView;
+    expect(parent.messages).toContainEqual(
+      expect.objectContaining({
+        daemonFact: expect.objectContaining({ type: 'corner-open', cornerId }),
+      }),
+    );
+
+    const corner = await request(`/v1/phone/rooms/${cornerId}`, 'GET', undefined, aliceToken);
+    expect(corner.status).toBe(200);
+    expect(isRoomView(await corner.json())).toBe(true);
+  });
+
   it('never resurrects the draft of a turn that has stopped working', async () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,

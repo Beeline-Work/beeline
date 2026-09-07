@@ -79,6 +79,9 @@ function tokenFromProtocol(request: IncomingMessage): string | null {
     .find((item) => item.startsWith('bearer.'));
   return value ? value.slice('bearer.'.length) : null;
 }
+function isInboxCursor(value: unknown): value is string {
+  return typeof value === 'string' && /^\d+,[0-9a-f]{64}$/.test(value);
+}
 /** Who a rate limit counts against: the edge's client address, else the socket peer. */
 function clientKey(request: IncomingMessage): string {
   const forwarded = request.headers['fly-client-ip'] ?? request.headers['x-forwarded-for'];
@@ -149,20 +152,32 @@ export function createBeelineServer(options: ServerOptions): Server {
         return;
       }
       const raw = tokenFromProtocol(request);
-      const identityId = raw ? await options.auth.authenticatePhone(raw) : null;
+      // Daemon tokens have a distinct prefix. Avoid making every phone socket
+      // pay for a failed daemon-auth query before its ordinary session lookup.
+      const daemonId = raw?.startsWith('bdt_') ? await options.auth.authenticateDaemon(raw) : null;
+      const phoneId =
+        raw && !raw.startsWith('bdt_') ? await options.auth.authenticatePhone(raw) : null;
+      const identityId = daemonId ?? phoneId;
       if (!identityId) {
         socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
         socket.destroy();
         return;
       }
       webSockets.handleUpgrade(request, socket, head, (client) =>
-        webSockets.emit('connection', client, request, identityId),
+        webSockets.emit('connection', client, request, {
+          identityId,
+          kind: daemonId ? 'daemon' : 'phone',
+        }),
       );
     })().catch(() => socket.destroy());
   });
   webSockets.on(
     'connection',
-    (client: WebSocket, _request: IncomingMessage, identityId: string) => {
+    (
+      client: WebSocket,
+      _request: IncomingMessage,
+      principal: { identityId: string; kind: 'phone' | 'daemon' },
+    ) => {
       const releases = new Map<string, () => void>();
       client.on('message', (raw) => {
         void (async () => {
@@ -177,9 +192,57 @@ export function createBeelineServer(options: ServerOptions): Server {
           if (
             item.type === 'subscribe' &&
             typeof item.roomId === 'string' &&
-            (await options.phone.canReadRoom(item.roomId, identityId)) &&
+            (await options.phone.canReadRoom(item.roomId, principal.identityId)) &&
             !releases.has(item.roomId)
           ) {
+            if (principal.kind === 'daemon') {
+              const roomId = item.roomId;
+              let cursor = isInboxCursor(item.cursor) ? item.cursor : undefined;
+              let replaying = false;
+              let replayRequested = false;
+              const replay = async () => {
+                replayRequested = true;
+                if (replaying) return;
+                replaying = true;
+                try {
+                  while (replayRequested && client.readyState === client.OPEN) {
+                    replayRequested = false;
+                    const inbox = await options.daemon.execute(
+                      'getRoomInbox',
+                      {
+                        roomId,
+                        ...(cursor ? { after: cursor, rewind: true } : { startAtLatest: true }),
+                        limit: 200,
+                      },
+                      principal.identityId,
+                    );
+                    cursor = inbox.cursor ?? cursor;
+                    client.send(
+                      JSON.stringify({
+                        type: 'inbox',
+                        roomId,
+                        items: inbox.items,
+                        ...(cursor ? { cursor } : {}),
+                      }),
+                    );
+                  }
+                } catch (error) {
+                  console.error(
+                    '[live] daemon replay failed',
+                    error instanceof Error ? error.message : String(error),
+                  );
+                } finally {
+                  replaying = false;
+                }
+              };
+              releases.set(
+                roomId,
+                options.live.subscribe(roomId, () => void replay()),
+              );
+              client.send(JSON.stringify({ type: 'subscribed', roomId }));
+              await replay();
+              return;
+            }
             // Agents whose draft this socket has already been handed live.
             // The snapshot below is read asynchronously, so a delta can land
             // first; replacing it with the older row would show the reader the
@@ -298,7 +361,10 @@ async function route(
     return;
   }
   if (method === 'POST' && url.pathname === '/v1/releases/notify') {
-    if (!options.releaseNotify?.secret || !bearerSecretMatches(options.releaseNotify.secret, request))
+    if (
+      !options.releaseNotify?.secret ||
+      !bearerSecretMatches(options.releaseNotify.secret, request)
+    )
       throw new Error('release notify access denied');
     const input = await body(request);
     if (

@@ -22,7 +22,16 @@ export class LiveHub {
   }
 
   subscribe(roomId: string, listener: (event: LiveEvent) => void): () => void {
+    const resync = () => listener({ type: 'invalidate', roomId, reason: 'resync' });
     this.#events.on(roomId, listener);
-    return () => this.#events.off(roomId, listener);
+    this.#events.on('resync', resync);
+    return () => {
+      this.#events.off(roomId, listener);
+      this.#events.off('resync', resync);
+    };
+  }
+
+  resync(): void {
+    this.#events.emit('resync');
   }
 }

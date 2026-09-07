@@ -128,6 +128,8 @@ export type RequestInput = RoomInput & { readonly requestId: string };
 export type RoomCursorInput = RoomInput & {
   readonly after?: string;
   readonly limit?: number;
+  /** Re-read the five seconds before `after`; callers must de-duplicate by item id. */
+  readonly rewind?: boolean;
   /** Establish a high-water mark without replaying pre-activation history. */
   readonly startAtLatest?: boolean;
 };
@@ -145,7 +147,11 @@ export type RoomConversationInput = RoomCursorInput & {
   readonly window?: RoomConversationWindow;
 };
 export type RoomPrincipalInput = RoomInput & { readonly principalId: string };
-export type CornerCursorInput = CornerInput & { readonly after?: string };
+export type CornerCursorInput = CornerInput & {
+  readonly after?: string;
+  /** Re-read the five seconds before `after`; callers must de-duplicate by item id. */
+  readonly rewind?: boolean;
+};
 /** `woken` is false only when the timeout elapsed with nothing new. */
 export type CornerWakeResult = { readonly woken: boolean };
 export type PermissionAuthorityInput = RoomPrincipalInput & {
@@ -204,6 +210,8 @@ export type RoomInboxResult = {
     readonly systemEvent?: SystemEvent;
   }[];
   readonly cursor?: string;
+  /** IDs in the replay window at activation; absent on servers without rewind support. */
+  readonly rewindIds?: readonly string[];
   /** Present on getCornerCloseRequests so helpers can reap an archived worktree. */
   readonly closeRequested?: boolean;
 };

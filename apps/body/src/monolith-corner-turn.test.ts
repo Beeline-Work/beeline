@@ -520,8 +520,10 @@ describe('corner close-request polling cadence', () => {
     });
     const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
     const abort = new AbortController();
+    const onPoll = vi.fn();
     return {
       abort,
+      onPoll,
       loop: new MonolithCornerTurnLoop({
         cornerId: 'corner-id',
         parentRoomId: 'room-id',
@@ -540,7 +542,7 @@ describe('corner close-request polling cadence', () => {
         scheduler,
         signal: abort.signal,
         pollMs,
-        onPoll: vi.fn(),
+        onPoll,
         onFailure: vi.fn(),
         onCloseRequested: async () => undefined,
         createAcpClient: () => acp,
@@ -551,6 +553,7 @@ describe('corner close-request polling cadence', () => {
 
   it('folds a corner wake into the live stream without the retired long-poll', async () => {
     let closeReads = 0;
+    let publishWake: (() => void) | undefined;
     const execute = vi.fn(async (name: string) => {
       if (name === 'getAgentConfiguration') return { commands: [] };
       if (name === 'getWorkspaceRoster') return { members: [] };
@@ -566,29 +569,29 @@ describe('corner close-request polling cadence', () => {
     });
     const liveSubscribe = vi.fn((_roomId, _cursor, onItems, onState) => {
       onState?.(true, { pushIntake: true, connectionPresence: true });
-      setTimeout(
-        () =>
-          onItems?.(
-            [
-              {
-                id: 'wake',
-                authorId: 'server',
-                createdAt: 1,
-                type: 'system',
-                body: '',
-                mentionIds: [],
-                attachments: [],
-              },
-            ],
-            'latest',
-          ),
-        10,
-      );
+      publishWake = () =>
+        onItems?.(
+          [
+            {
+              id: 'wake',
+              authorId: 'server',
+              createdAt: 1,
+              type: 'system',
+              body: '',
+              mentionIds: [],
+              attachments: [],
+            },
+          ],
+          'latest',
+        );
       return () => undefined;
     }) as unknown as DaemonApiClient['liveSubscribe'];
-    const { loop, scheduler } = await cornerHarness(execute, 60_000, liveSubscribe);
+    const { loop, scheduler, onPoll } = await cornerHarness(execute, 60_000, liveSubscribe);
     const started = Date.now();
-    await loop.run();
+    const running = loop.run();
+    await vi.waitFor(() => expect(onPoll).toHaveBeenCalledTimes(1));
+    publishWake?.();
+    await running;
     await scheduler.dispose();
     expect(closeReads).toBe(2);
     expect(execute).not.toHaveBeenCalledWith('waitForCornerWake', expect.anything());

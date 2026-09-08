@@ -219,8 +219,8 @@ describe('agent turn stream', () => {
   });
 });
 
-describe('Room and corner streaming parity (C100)', () => {
-  it('produces the same presentation for the same turn on both surfaces', async () => {
+describe('Room and corner live/final streaming parity (C100)', () => {
+  it('keeps the shared lane to drafts plus one final on both surfaces', async () => {
     const agentId = 'a'.repeat(64);
     const run = async (roomId: string, label: string, fields = {}) => {
       const { api, writes } = recorder();
@@ -234,8 +234,9 @@ describe('Room and corner streaming parity (C100)', () => {
     };
     const room = await run('room-id', 'monolith Room room-id', { triggerMessageId: 'request-id' });
     const corner = await run('corner-id', 'corner corner-id');
-    // Identical shape: four provisional drafts, one durable reply under the
-    // turn's request id, one retract. The corner posts no extra durable row.
+    // Identical shared-lane shape: four provisional drafts, one durable reply
+    // under the turn's request id, one retract. Corner-only narration activity
+    // is posted by its loop at tool boundaries, never by AgentTurnStream.
     expect(corner.map((write) => write.name)).toEqual(room.map((write) => write.name));
     expect(corner.map((write) => write.name)).toEqual([
       ...Array(4).fill('postAgentDraft'),

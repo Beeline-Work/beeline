@@ -385,7 +385,7 @@ describe('corner close-request polling cadence', () => {
     vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: 'corner-session', raw: {} });
     let promptCalls = 0;
     vi.spyOn(acp, 'sessionPrompt').mockImplementation(
-      async (_id, _prompt, _timeout, draft, _activity, _toolActivity) => {
+      async (_id, _prompt, _timeout, draft, _activity, toolActivity) => {
         promptCalls += 1;
         if (promptCalls > 1) {
           return { stopReason: 'end_turn', updates: [], agentText: 'All done.', toolCalls: [] };
@@ -395,6 +395,16 @@ describe('corner close-request polling cadence', () => {
         // carries only the LAST run — two different strings.
         draft?.('I inspected', 'I inspected');
         draft?.(' the code.', 'I inspected the code.');
+        toolActivity?.([
+          {
+            id: 'read-package',
+            kind: 'read',
+            title: 'Read package.json',
+            rawInput: { path: 'package.json' },
+            status: 'completed',
+            content: 'package contents',
+          },
+        ]);
         draft?.('The fix', 'I inspected the code.\n\nThe fix');
         draft?.(' is ready.', 'I inspected the code.\n\nThe fix is ready.');
         return {
@@ -433,8 +443,7 @@ describe('corner close-request polling cadence', () => {
 
     const posts = writes.filter((write) => write.name === 'postRoomMessage');
     // The closing message lands WHOLE and under the turn's request id, so it
-    // settles the receipt. Nothing is cut by a stream offset, and no durable
-    // row is written without a request id (the retired narration segments).
+    // settles the receipt. Nothing is cut by a stream offset.
     expect(posts[0]).toEqual(
       expect.objectContaining({
         input: expect.objectContaining({
@@ -446,6 +455,27 @@ describe('corner close-request polling cadence', () => {
       }),
     );
     for (const post of posts) expect(post.input.requestId).toEqual(expect.any(String));
+    expect(posts.filter((post) => post.input.text === 'I inspected the code.')).toEqual([]);
+    expect(writes.filter((write) => write.name === 'postAgentActivity')).toEqual([
+      expect.objectContaining({
+        input: expect.objectContaining({
+          roomId: 'corner-id',
+          requestId: 'cornerid',
+          activity: [
+            {
+              kind: 'output',
+              title: 'Update',
+              text: 'I inspected the code.',
+            },
+            expect.objectContaining({
+              kind: 'tool',
+              operation: 'read',
+              title: 'Read package.json',
+            }),
+          ],
+        }),
+      }),
+    ]);
     // The pre-tool prose was shown provisionally on the draft lane, keyed by
     // the same request id so the durable reply settles it (#903). The lane
     // carries one write at a time and only the newest waiting snapshot, so a
@@ -1011,6 +1041,11 @@ describe('thin monolith corner turn', () => {
       expect.objectContaining({
         input: expect.objectContaining({
           activity: [
+            {
+              kind: 'output',
+              title: 'Update',
+              text: 'Opening PR',
+            },
             expect.objectContaining({
               kind: 'tool',
               operation: 'read',

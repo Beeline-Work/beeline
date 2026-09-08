@@ -221,15 +221,18 @@ describe('Room view presentation', () => {
     });
   });
 
-  it('interleaves an agent’s durable lines with tool rows by creation time', () => {
+  it('interleaves an agent’s durable narration activity with tool rows by creation time', () => {
     const agent = 'b'.repeat(64);
     const author = { pubkey: agent, kind: 'agent' as const, name: 'Bee' };
     const prose = (id: string, createdAt: number): RoomViewMessage => ({
       id,
-      text: `Step ${id}: updating only the ledger.`,
+      text: '',
       createdAt,
       author,
-      presentation: 'message',
+      presentation: 'activity',
+      activity: [
+        { kind: 'output', title: 'Update', text: `Step ${id}: updating only the ledger.` },
+      ],
     });
     const toolRow = (id: string, createdAt: number): RoomViewMessage => ({
       id,
@@ -240,8 +243,21 @@ describe('Room view presentation', () => {
       activity: [{ kind: 'tool', title: 'Bash', operation: 'execute', command: `npm test ${id}` }],
     });
     const transcript = roomViewTranscriptMessages({
-      messages: [prose('prose-1', 1), prose('prose-2', 3), prose('final', 5)],
-      toolRows: [toolRow('tool-1', 2), toolRow('tool-2', 4)],
+      messages: [
+        {
+          id: 'final',
+          text: 'Done.',
+          createdAt: 5,
+          author,
+          presentation: 'message',
+        },
+      ],
+      toolRows: [
+        prose('prose-1', 1),
+        toolRow('tool-1', 2),
+        prose('prose-2', 3),
+        toolRow('tool-2', 4),
+      ],
     });
 
     // Durable agent lines land between the collapsed tool-call groups in
@@ -253,13 +269,41 @@ describe('Room view presentation', () => {
       'tool-2',
       'final',
     ]);
-    // They render as ordinary agent lines, not activity rows.
+    // The transport keeps the narration text on its durable activity item.
     const displayed = displayRoomMessages(transcript, 'a'.repeat(64));
     const proseRow = displayed.find((row) => row.id === 'prose-1');
     expect(proseRow).toMatchObject({
-      text: 'Step prose-1: updating only the ledger.',
+      isAgentActivity: true,
+      activity: [
+        expect.objectContaining({
+          kind: 'output',
+          text: 'Step prose-1: updating only the ledger.',
+        }),
+      ],
     });
-    expect(proseRow).not.toHaveProperty('isAgentActivity');
+  });
+
+  it('keeps narration as a boundary between settled tool groups', () => {
+    const agent = 'b'.repeat(64);
+    const activity = (
+      id: string,
+      item: NonNullable<ChatDisplayMessage['activity']>[number],
+    ): ChatDisplayMessage => ({
+      id,
+      text: '',
+      timestamp: 1,
+      pubkey: agent,
+      isUser: false,
+      isAgentActivity: true,
+      activity: [item],
+    });
+    const folded = foldSettledActivityRuns([
+      activity('tool-1', { kind: 'tool', title: 'Read one' }),
+      activity('prose', { kind: 'output', title: 'Update', text: 'Between calls.' }),
+      activity('tool-2', { kind: 'tool', title: 'Read two' }),
+    ]);
+
+    expect(folded.map((message) => message.id)).toEqual(['tool-1', 'prose', 'tool-2']);
   });
 
   it('folds a settled run of per-call tool rows from one agent into one group (C55)', () => {

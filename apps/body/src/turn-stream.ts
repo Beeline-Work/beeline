@@ -5,22 +5,20 @@ import { sanitizeAgentReply } from './reply-sanitizer.js';
  * ONE streamed-turn presentation, shared by top-level Rooms and repository
  * corners (C100).
  *
- * A reader must see the same thing in both places: the answer arrives as a
- * provisional draft row while the harness is still writing, and settles by
- * dissolving into exactly one durable message carrying the turn's request id
- * (#903 renders that settle; this is its producer). Everything that decides
- * how a turn LOOKS lives here — the draft lane, the request-id handoff, what
- * becomes durable, and the retract that closes the lane. What a turn SAYS
- * (prompt, mentions, restatement and echo filters) stays with each loop.
+ * In both places the current answer arrives as a provisional draft row while
+ * the harness is writing, then dissolves into exactly one durable final
+ * message carrying the turn's request id (#903 renders that settle; this is
+ * its producer). A corner separately records completed pre-tool assistant runs
+ * as output activity; that durable work ledger stays outside this final-reply
+ * lane so it can never become an offset or duplicate here.
  *
- * Before C100 the corner ran a second implementation on top of this one: it
- * also posted completed mid-stream narration sentences as durable Room rows
- * and then cut the same character count off the final. The offset counted the
+ * Before C100 the corner posted completed mid-stream narration as ordinary
+ * Room messages and then cut the same character count off the final. The offset counted the
  * whole stream (every assistant run joined) while the cut was applied to
  * `PromptResult.agentText` (the LAST run only), so any turn that spoke, called
  * a tool and spoke again sliced past the end of a shorter string and lost its
- * closing message. There is no offset here: nothing is published durably while
- * the turn runs, so the durable reply is always the whole reply.
+ * closing message. There is no offset here: corner narration is an independent
+ * activity item, and the durable final reply is always the whole last run.
  */
 export interface AgentTurnStreamOptions {
   api: DaemonApiClient;
@@ -46,8 +44,8 @@ export interface DurableReplyFields {
  * What a streamed turn leaves behind in the transcript.
  *
  * Only the harness's LAST assistant run is the answer — an earlier run is
- * progress narration around tool work and stays draft-only (the rule
- * `finalAgentMessageText` in `acp.ts` already states). It is returned whole:
+ * progress narration around tool work and never becomes part of this final
+ * (the rule `finalAgentMessageText` in `acp.ts` already states). It is returned whole:
  * never a slice, so a turn that narrated before a tool call still posts its
  * closing message in full.
  */
@@ -112,7 +110,8 @@ export class AgentTurnStream {
   /**
    * Everything the delta hook has seen this turn: every assistant run joined,
    * which is a LONGER string than `PromptResult.agentText` whenever the turn
-   * spoke before a tool call. Nothing durable is derived from it.
+   * spoke before a tool call. This final-reply lane derives nothing durable
+   * from it; a corner records its current normalized run independently.
    */
   get streamedText(): string {
     return this.latest;

@@ -9,7 +9,13 @@ import {
   type ToolCallRow,
 } from '@/buzz/tool-call-row';
 import { Typography } from '@/constants/Typography';
-import { LedgerBylineView, provisionalProseStyle, type LedgerBylineMark } from './Ledger';
+import {
+  LedgerBylineView,
+  provisionalProseStyle,
+  settledAgentProseStyle,
+  type LedgerBylineMark,
+} from './Ledger';
+import { MonoMarkdown } from './MonoMarkdown';
 import { StreamingProse } from './StreamingProse';
 
 type ActivityTimelineProps = {
@@ -166,7 +172,7 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
   // lane stops being live but the words the reader was reading stay on the
   // page, provisional, with the server's failure line beneath them — text a
   // person was mid-way through must never evaporate on its own.
-  if (!rows.length && !messageDraft) return null;
+  if (!turn.narration.length && !rows.length && !messageDraft) return null;
 
   return (
     <View style={styles.timeline} testID={testID}>
@@ -175,6 +181,14 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
           byline={{ name: handle, role: 'agent', stamp: stamp ?? '', mark }}
         />
       ) : null}
+      {turn.narration.map((narration, index) => (
+        <MonoMarkdown
+          key={`${index}:${narration}`}
+          markdown={narration}
+          textStyle={settledAgentProseStyle()}
+          testID={`activity-narration-${index}`}
+        />
+      ))}
       {rows.length ? (
         <>
           <Pressable

@@ -1489,15 +1489,22 @@ describe('monolith integration', () => {
           })
         ).status,
       ).toBe(200);
-      // Colloquial narration segments land BETWEEN tool rows as durable
-      // messages with no request id, so they never settle the turn receipt.
+      // Corner narration lands beside the tool rows as durable output
+      // activity under the same turn request id.
       if (tool === 5 || tool === 10) {
         expect(
           (
-            await daemonOperation('postRoomMessage', {
+            await daemonOperation('postAgentActivity', {
+              agentId: AGENT,
               roomId: cornerId,
-              text: `Narration after tool ${tool}: updating only the ledger, then committing.`,
-              presentation: 'message',
+              requestId: 'corner-turn-1',
+              activity: [
+                {
+                  kind: 'output',
+                  title: 'Update',
+                  text: `Narration after tool ${tool}: updating only the ledger, then committing.`,
+                },
+              ],
             })
           ).status,
         ).toBe(200);
@@ -1536,7 +1543,7 @@ describe('monolith integration', () => {
     const corner = (await (await request(`/v1/phone/rooms/${cornerId}`)).json()) as RoomView;
     expect(isRoomView(corner)).toBe(true);
     expect(corner.messages).toHaveLength(ROOM_VIEW_MESSAGE_LIMIT);
-    expect(corner.toolRows).toHaveLength(15);
+    expect(corner.toolRows).toHaveLength(17);
     expect(corner.toolRows).toContainEqual(
       expect.objectContaining({
         presentation: 'activity',
@@ -1559,18 +1566,18 @@ describe('monolith integration', () => {
     expect(corner.messages).toContainEqual(
       expect.objectContaining({ text: 'Corner done.', presentation: 'message' }),
     );
-    // Narration ledger lines survive the turn as ordinary indexed messages
-    // (no request id of their own), interleavable with the collapsed tool
-    // rows by creation time.
-    const narration = corner.messages.filter((message) =>
-      message.text.startsWith('Narration after tool'),
+    // Narration activity survives the settled turn and is returned through
+    // the additive corner activity payload on every reopen.
+    const narration = corner.toolRows!.filter(
+      (message) => message.activity?.[0]?.kind === 'output',
     );
     expect(narration).toHaveLength(2);
     for (const line of narration) {
-      expect(line.presentation).toBe('message');
-      expect(line.requestId).toBeUndefined();
+      expect(line.presentation).toBe('activity');
+      expect(line.requestId).toBe('corner-turn-1');
+      expect(line.activity?.[0]?.text).toMatch(/^Narration after tool/);
     }
-    expect(corner.toolRows).toHaveLength(15);
+    expect(corner.toolRows).toHaveLength(17);
 
     const parent = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as RoomView;
     expect(

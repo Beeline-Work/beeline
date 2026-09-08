@@ -145,11 +145,16 @@ describe('live streaming turn', () => {
     ).toHaveLength(0);
   });
 
-  it('renders nothing when the lane holds neither tool rows nor a draft', () => {
-    expect(
-      render(<ActivityTimeline active={false} items={[{ kind: 'output', title: 'Done', text: 'Done' }]} />)
-        .toJSON(),
-    ).toBeNull();
+  it('renders durable corner narration after the live draft is gone', () => {
+    const renderer = render(
+      <ActivityTimeline
+        active={false}
+        items={[{ kind: 'output', title: 'Update', text: 'Found the boundary.' }]}
+      />,
+    );
+    expect(renderer.root.findByProps({ testID: 'activity-narration-0' }).props.markdown).toBe(
+      'Found the boundary.',
+    );
   });
 
   it('renders one collapsed row per tool and the accumulating conversational draft', () => {

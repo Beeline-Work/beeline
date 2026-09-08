@@ -231,7 +231,12 @@ export type AcpPermissionHandler = (
 export type AcpPermissionAllowlist = (request: AcpPermissionRequest) => boolean;
 
 /** Invoked once per incremental `agent_message_chunk` delta during a live prompt. */
-export type AcpTextChunkHandler = (delta: string, fullTextSoFar: string) => void;
+export type AcpTextChunkHandler = (
+  delta: string,
+  fullTextSoFar: string,
+  /** The normalized assistant-message run currently accumulating. */
+  currentRun?: string,
+) => void;
 
 export type AcpStreamSnapshot = {
   /** The one currently accumulating durable answer run. */
@@ -329,11 +334,6 @@ export function agentMessageRuns(updates: readonly SessionUpdate[], agentLabel?:
   });
 }
 
-/** Accumulated non-chat draft text shown while the turn is still running. */
-function joinAgentMessageChunks(updates: readonly SessionUpdate[], agentLabel?: string): string {
-  return agentMessageRuns(updates, agentLabel).join('\n\n');
-}
-
 /**
  * Harness retry/backoff narration (pi flaking mid-turn is the live case:
  * `Retrying (attempt 1/3, waiting 2s)...Retrying...Retry finished, resuming.`)
@@ -372,7 +372,8 @@ export function isPureRetryNarration(text: string): boolean {
 }
 
 /** Only the LAST assistant-message run is the turn's durable final output;
- *  earlier runs are progress narration around tool work and stay draft-only.
+ *  earlier runs are progress narration around tool work and never join it
+ *  (a corner may record those runs independently as durable output activity).
  *  Retry/backoff narration can never be the answer either: classify that last
  *  run and return empty when it is pure narration, so a flaked turn selects
  *  nothing (the caller treats the turn as failed and stays retryable) while
@@ -916,7 +917,10 @@ export class AcpClient extends EventEmitter {
       onToolCalls?.(toolCallEntries(updates));
       if (onChunk) {
         const delta = agentMessageChunkText(u.update);
-        if (delta) onChunk(delta, joinAgentMessageChunks(updates, this.agentLabel));
+        if (delta) {
+          const runs = agentMessageRuns(updates, this.agentLabel);
+          onChunk(delta, runs.join('\n\n'), runs.at(-1));
+        }
       }
     };
     this.on('session/update', onUpdate);

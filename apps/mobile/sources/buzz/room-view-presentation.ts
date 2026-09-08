@@ -225,6 +225,7 @@ function activityItems(message: RoomViewMessage): AgentActivityItem[] | undefine
     kind: activity.kind,
     title: activity.title,
     id: `${message.id}:${index}`,
+    ...(activity.text ? { text: activity.text } : {}),
     ...(activity.operation ? { toolKind: activity.operation } : {}),
     ...(activity.rollup ? { rollup: { ...activity.rollup } } : {}),
     ...(activity.observed ? { observed: activity.observed.map((item) => ({ ...item })) } : {}),
@@ -405,6 +406,14 @@ export function foldSettledActivityRuns(
   for (const message of messages) {
     if (run && message.isAgentDraft && message.pubkey === run.pubkey) {
       run.drafts.push(message);
+      continue;
+    }
+    // Durable narration is a transcript boundary, not another tool to fold.
+    // A producer may put the narration and the tool it precedes in one row;
+    // keeping that row intact preserves their order on a reopened corner.
+    if (message.activity?.some((item) => item.kind === 'output')) {
+      close();
+      folded.push(message);
       continue;
     }
     const settledActivity =

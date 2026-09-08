@@ -1235,18 +1235,23 @@ describe('AcpClient live steering', () => {
     try {
       const { sessionId } = await client.sessionNew({ cwd: tmpdir() });
       const drafts: string[] = [];
+      const currentRuns: string[] = [];
       const snapshots: Array<{ messageText: string; thoughtText?: string }> = [];
       const result = await client.sessionPrompt(
         sessionId,
         'go',
         5_000,
-        (_delta, fullText) => drafts.push(fullText),
+        (_delta, fullText, currentRun) => {
+          drafts.push(fullText);
+          if (currentRun) currentRuns.push(currentRun);
+        },
         (snapshot) => {
           if (snapshot) snapshots.push(snapshot);
         },
       );
 
       expect(drafts.at(-1)).toBe('No beeline skill in pi docs.');
+      expect(currentRuns.at(-1)).toBe('No beeline skill in pi docs.');
       expect(snapshots.at(-1)).toEqual({ messageText: 'No beeline skill in pi docs.' });
       expect(result.agentText).toBe('No beeline skill in pi docs.');
     } finally {

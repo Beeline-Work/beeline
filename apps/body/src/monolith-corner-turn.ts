@@ -778,9 +778,9 @@ export class MonolithCornerTurnLoop {
                 ]
                   .filter(Boolean)
                   .join('\n\n');
-              // Rooms and corners stream through ONE presentation (C100): the
-              // provisional draft lane, the request-id handoff, and the single
-              // durable reply that dissolves it all live in `turn-stream.ts`.
+              // Rooms and corners share the provisional draft lane, request-id
+              // handoff, and single durable final reply in `turn-stream.ts`.
+              // The corner-only work ledger below is independent of that lane.
               const stream = new AgentTurnStream({
                 api,
                 agentId: this.agent.publicKey,
@@ -788,6 +788,16 @@ export class MonolithCornerTurnLoop {
                 requestId,
                 label: `corner ${cornerId}`,
               });
+              // Unlike a Room, a corner keeps the completed assistant run that
+              // preceded a tool call. Track only this run's deltas, never the
+              // stream's joined `full` text: the latter also contains earlier
+              // runs and is the source of the retired offset/duplicate bug.
+              let currentNarrationRun = '';
+              const takeInterimNarration = (): string => {
+                const narration = spoken(durableReplyText(currentNarrationRun));
+                currentNarrationRun = '';
+                return narration;
+              };
               const publishedToolCalls = new Set<string>();
               const publishToolCalls = (calls: readonly ToolCallEntry[], settledOnly: boolean) => {
                 calls.forEach((call, index) => {
@@ -795,6 +805,11 @@ export class MonolithCornerTurnLoop {
                   if (publishedToolCalls.has(key) || (settledOnly && !toolCallSettled(call)))
                     return;
                   publishedToolCalls.add(key);
+                  // A live settled tool update is the structural boundary that
+                  // proves the current assistant run is interim narration. The
+                  // end-of-prompt fallback still publishes missed tool rows but
+                  // cannot safely classify the last run, so it never consumes it.
+                  const narration = settledOnly ? takeInterimNarration() : '';
                   this.activityTail = this.activityTail
                     .catch(() => undefined)
                     .then(async () => {
@@ -807,7 +822,19 @@ export class MonolithCornerTurnLoop {
                         agentId: this.agent.publicKey,
                         roomId: cornerId,
                         requestId,
-                        activity: [activity],
+                        activity: [
+                          ...(narration
+                            ? [
+                                {
+                                  kind: 'output' as const,
+                                  title: 'Update',
+                                  text: narration,
+                                  ...(requestedBy ? { requestedBy } : {}),
+                                },
+                              ]
+                            : []),
+                          activity,
+                        ],
                       });
                     })
                     .then(() => undefined)
@@ -822,6 +849,7 @@ export class MonolithCornerTurnLoop {
               // (C92) — against the NEW client and session id.
               const runPrompt = async (): Promise<PromptResult> => {
                 stream.beginRun();
+                currentNarrationRun = '';
                 trace.promptSent();
                 return this.client!.sessionPrompt(
                   this.sessionId!,
@@ -830,8 +858,12 @@ export class MonolithCornerTurnLoop {
                     attachmentImageBlocks(delivered, this.acceptsImages()),
                   ),
                   120_000,
-                  (delta, full) => {
+                  (delta, full, currentRun) => {
                     trace.firstModelOutput();
+                    // ACP supplies the normalized run (not Pi's newline-framed
+                    // wire delta). The fallback keeps test/older adapters that
+                    // invoke the callback's original two arguments compatible.
+                    currentNarrationRun = currentRun ?? currentNarrationRun + delta;
                     stream.onChunk(delta, full);
                   },
                   undefined,

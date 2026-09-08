@@ -613,7 +613,7 @@ describe('GitHub phone operations', () => {
 
     it('degrades to stored installations with a reconnect flag when refresh is impossible', async () => {
       const operations = operationsFor(database);
-      await bindIdentity(database);
+      const { fetchMock } = await bindIdentity(database);
       await operations.beginIdentity(HUMAN, {
         redirectUri: 'beeline://callback',
         state: 'degrade-state',
@@ -634,6 +634,15 @@ describe('GitHub phone operations', () => {
       );
       await database.query(
         `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch) VALUES(101,77,'owner/widgets','main')`,
+      );
+      const originalFetch = fetchMock.getMockImplementation()!;
+      fetchMock.mockImplementation(async (input, init) =>
+        String(input) === 'https://api.github.test/app/installations/77'
+          ? new Response(JSON.stringify({ message: 'unavailable' }), {
+              status: 503,
+              headers: { 'content-type': 'application/json' },
+            })
+          : originalFetch(input, init),
       );
       await expect(operations.refresh(HUMAN)).resolves.toEqual({ githubReconnectNeeded: true });
       // The stored installation and repositories are still recorded — the picker answers.

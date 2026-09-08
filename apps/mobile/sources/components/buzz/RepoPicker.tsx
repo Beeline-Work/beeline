@@ -25,6 +25,7 @@ export type RepoPickerProps = {
   currentKey?: string | null;
   busy?: boolean;
   error?: string | null;
+  listMaxHeight?: number;
   notice?: string | null;
   /**
    * A typed pending state: the chosen repository is not covered by the App
@@ -62,6 +63,7 @@ export const RepoPicker = memo(function RepoPicker({
   currentKey,
   busy = false,
   error,
+  listMaxHeight,
   notice,
   ownerGrant,
   onSelect,
@@ -109,9 +111,13 @@ export const RepoPicker = memo(function RepoPicker({
   );
   // An empty search keeps showing every account header (including 0-repo or
   // suspended installations); a non-empty query drops groups with no hits.
-  const listMaxHeight = Math.round(
+  const windowListMaxHeight = Math.round(
     Math.min(Math.max(windowHeight * MAX_LIST_HEIGHT_FRACTION, MIN_LIST_HEIGHT), MAX_LIST_HEIGHT_CAP),
   );
+  const candidateListMaxHeight =
+    listMaxHeight === undefined
+      ? windowListMaxHeight
+      : Math.min(windowListMaxHeight, Math.max(0, listMaxHeight));
   const pastedFullName = githubFullNameFromInput(query);
   const exactCandidate = pastedFullName
     ? candidates.find((candidate) => candidate.name.toLowerCase() === pastedFullName.toLowerCase())
@@ -175,7 +181,7 @@ export const RepoPicker = memo(function RepoPicker({
           ) : null
         }
         sections={sections}
-        style={[styles.candidateScroll, { maxHeight: listMaxHeight }]}
+        style={[styles.candidateScroll, { maxHeight: candidateListMaxHeight }]}
         testID={`${testIDPrefix}-list`}
       />
       {pastedFullName && !exactCandidate && (

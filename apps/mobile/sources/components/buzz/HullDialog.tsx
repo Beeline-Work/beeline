@@ -284,6 +284,7 @@ type HullDialogProps = Omit<HullModalProps, 'children' | 'placement'> & {
   actions: readonly HullDialogAction[];
   body?: string;
   children?: React.ReactNode;
+  onContentLayout?: (height: number) => void;
   surfaceStyle?: StyleProp<ViewStyle>;
   title: string;
 };
@@ -293,6 +294,7 @@ export function HullDialog({
   actions,
   body,
   children,
+  onContentLayout,
   surfaceStyle,
   title,
   testID,
@@ -307,7 +309,15 @@ export function HullDialog({
             {title}
           </Text>
           {body ? <Text style={styles.dialogBody}>{body}</Text> : null}
-          {children}
+          {children ? (
+            <View
+              onLayout={(event) => onContentLayout?.(event.nativeEvent.layout.height)}
+              style={styles.dialogContent}
+              testID={testID ? `${testID}-content` : undefined}
+            >
+              {children}
+            </View>
+          ) : null}
         </View>
         <View style={styles.dialogActions}>
           {actions.map((action, index) => {
@@ -396,6 +406,7 @@ const styles = StyleSheet.create((theme) => {
     },
     dialogSurface: { width: '100%' },
     dialogCopy: { flexShrink: 1, paddingHorizontal: 22, paddingTop: 22, paddingBottom: 16 },
+    dialogContent: { flexShrink: 1, minHeight: 0, overflow: 'hidden' },
     dialogTitle: {
       ...Typography.default('semiBold'),
       fontFamily: hull.proseSemibold,

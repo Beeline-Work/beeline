@@ -329,7 +329,11 @@ export class GitHubOperations {
       }
     }
     for (const installationId of installationIds) {
-      await this.syncInstallation(viewerId, installationId);
+      try {
+        await this.syncInstallation(viewerId, installationId);
+      } catch (error) {
+        if (!githubReconnectNeeded) throw error;
+      }
     }
     return { ...(githubReconnectNeeded ? { githubReconnectNeeded } : {}) };
   }

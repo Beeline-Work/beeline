@@ -286,6 +286,41 @@ describe('RoomIndexer', () => {
     ]);
   });
 
+  it('keeps attachment metadata on the latest chat message for cold-open previews', async () => {
+    const imageId = 'f'.repeat(64);
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
+       VALUES ($1, $2, $3, to_timestamp(30), 9, $4, '', $5)`,
+      [
+        TENANT,
+        bytes(imageId),
+        bytes(AGENT),
+        JSON.stringify([
+          ['h', ROOM],
+          ['t', 'buzz-attachment'],
+          [
+            'imeta',
+            'url https://media.test/IMG_3027.png',
+            'm image/png',
+            'size 42',
+          ],
+          ['attachment', 'https://media.test/IMG_3027.png', 'IMG_3027.png'],
+        ]),
+        ROOM,
+      ],
+    );
+
+    const chat = (await indexer.readChats(WORKSPACE, VIEWER))?.chats.find(
+      (candidate) => candidate.room.id === ROOM,
+    );
+    expect(chat?.latestMessage).toMatchObject({
+      id: imageId,
+      text: '',
+      attachments: [{ name: 'IMG_3027.png', mimeType: 'image/png' }],
+    });
+  });
+
   it('lists corners newest-first regardless of insertion order', async () => {
     // Owner order (2026-08-31): the corner dropdown must show the newest
     // corner on top. `corners` has no natural order from the underlying

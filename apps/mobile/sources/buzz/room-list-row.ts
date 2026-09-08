@@ -233,9 +233,20 @@ export function roomRowPreview(
 ): RoomRowPreview {
   const latest = item.latestMessage;
   const text = latest?.text.trim();
-  if (!latest || !text) return { attribution: 'none', text: NO_ACTIVITY_PREVIEW };
-  if (viewerPubkey && latest.author.pubkey === viewerPubkey) return { attribution: 'self', text };
-  return { attribution: 'other', handle: previewHandle(latest.author), text };
+  if (!latest) return { attribution: 'none', text: NO_ACTIVITY_PREVIEW };
+  const preview = text || attachmentPreview(latest.attachments);
+  if (!preview) return { attribution: 'none', text: NO_ACTIVITY_PREVIEW };
+  if (viewerPubkey && latest.author.pubkey === viewerPubkey)
+    return { attribution: 'self', text: preview };
+  return { attribution: 'other', handle: previewHandle(latest.author), text: preview };
+}
+
+function attachmentPreview(
+  attachments: readonly { readonly mimeType: string }[] | undefined,
+): string | undefined {
+  const attachment = attachments?.[0];
+  if (!attachment) return undefined;
+  return attachment.mimeType.toLowerCase().startsWith('image/') ? 'Image' : 'Attachment';
 }
 
 /**

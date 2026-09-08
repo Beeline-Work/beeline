@@ -333,6 +333,8 @@ export type ChatListItem = {
     readonly text: string;
     readonly createdAt: number;
     readonly author: RoomViewIdentity;
+    /** Present so attachment-only latest messages remain visible in compact previews. */
+    readonly attachments?: readonly AttachmentReference[];
   };
   readonly memberCount: number;
   readonly cornerCount: number;

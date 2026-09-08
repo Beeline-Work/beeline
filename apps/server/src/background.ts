@@ -1,5 +1,6 @@
 import type { SqlDatabase } from './database.js';
 import { MEDIA_SWEEP_INTERVAL_MS, mediaTtlHours } from './media-ttl.js';
+import { RELEASE_CATCHUP_CANDIDATES_SQL } from './release-push-catchup.js';
 
 const BACKGROUND_LOCK_KEY = 0x0bee11;
 
@@ -103,6 +104,8 @@ export class PushDeliveryLoop {
         WHERE notification.created_at>=push_device.registered_at
           AND notification.created_at>=floor.started_at
           AND btrim(notification.text)<>''
+        UNION
+        ${RELEASE_CATCHUP_CANDIDATES_SQL}
       )
       SELECT candidate.message_id,candidate.workspace_id,candidate.room_id,
         candidate.notification_type,candidate.text,candidate.token

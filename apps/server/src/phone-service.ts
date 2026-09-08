@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { storeWorkspaceAvatar } from './durable-avatar.js';
+import { queueLatestReleasePush } from './release-push-catchup.js';
 import {
   createAgentPairingCode,
   isServerEventKind,
@@ -3438,10 +3439,13 @@ export class PhoneService {
     };
   }
   private async registerPush(input: Input<'registerPushDevice'>, viewerId: string) {
-    await this.database.query(
-      `INSERT INTO push_devices(token,identity_id,platform,environment,registered_at) VALUES($1,$2,$3,$4,now()) ON CONFLICT(token) DO UPDATE SET identity_id=EXCLUDED.identity_id,platform=EXCLUDED.platform,environment=EXCLUDED.environment,updated_at=now()`,
-      [input.token, viewerId, input.platform, input.environment],
-    );
+    await this.database.transaction(async (database) => {
+      await database.query(
+        `INSERT INTO push_devices(token,identity_id,platform,environment,registered_at) VALUES($1,$2,$3,$4,now()) ON CONFLICT(token) DO UPDATE SET identity_id=EXCLUDED.identity_id,platform=EXCLUDED.platform,environment=EXCLUDED.environment,updated_at=now()`,
+        [input.token, viewerId, input.platform, input.environment],
+      );
+      await queueLatestReleasePush(database, viewerId, input.token);
+    });
     return { accepted: true };
   }
   private async reportUpdate(input: Input<'reportRunningUpdate'>, viewerId: string) {

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { DEFAULT_WORKSPACE_ID } from '@beeline/api-contract/phone';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
@@ -23,11 +24,10 @@ async function fixture() {
     [OWNER, OTHER_PERSON, AGENT],
   );
   await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Workspace')`, [WORKSPACE]);
-  await database.query(`INSERT INTO rooms(id,workspace_id,created_by,name) VALUES($1,$2,$3,'Room')`, [
-    ROOM,
-    WORKSPACE,
-    OWNER,
-  ]);
+  await database.query(
+    `INSERT INTO rooms(id,workspace_id,created_by,name) VALUES($1,$2,$3,'Room')`,
+    [ROOM, WORKSPACE, OWNER],
+  );
   await database.query(
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
       ($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,NULL,$4,'member'),
@@ -35,6 +35,12 @@ async function fixture() {
     [WORKSPACE, OWNER, OTHER_PERSON, AGENT, ROOM],
   );
   await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [AGENT, OWNER]);
+  // A real sign-in lands the human in Welcome. Room reads now enforce that
+  // Workspace membership, so the announcement fixture must carry it too.
+  await database.query(
+    `INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'member'),($1,$3,'member')`,
+    [DEFAULT_WORKSPACE_ID, OWNER, OTHER_PERSON],
+  );
   return database;
 }
 
@@ -132,7 +138,15 @@ describe('notifyReleaseDelivered', () => {
   it('includes the helper section only for the owner of a daemon reporting a different version', async () => {
     await database.query(
       `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body) VALUES($1,$2,'t','presence',$3::jsonb)`,
-      [ROOM, AGENT, JSON.stringify({ status: 'online', observedAt: Date.now() / 1000, releaseVersion: 'v0.0.41' })],
+      [
+        ROOM,
+        AGENT,
+        JSON.stringify({
+          status: 'online',
+          observedAt: Date.now() / 1000,
+          releaseVersion: 'v0.0.41',
+        }),
+      ],
     );
     await notifyReleaseDelivered(database, {
       version: 'v0.0.42',
@@ -156,7 +170,15 @@ describe('notifyReleaseDelivered', () => {
   it('omits the helper section once the owned daemon reports the matching version', async () => {
     await database.query(
       `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body) VALUES($1,$2,'t','presence',$3::jsonb)`,
-      [ROOM, AGENT, JSON.stringify({ status: 'online', observedAt: Date.now() / 1000, releaseVersion: 'v0.0.42' })],
+      [
+        ROOM,
+        AGENT,
+        JSON.stringify({
+          status: 'online',
+          observedAt: Date.now() / 1000,
+          releaseVersion: 'v0.0.42',
+        }),
+      ],
     );
     await notifyReleaseDelivered(database, {
       version: 'v0.0.42',
@@ -187,7 +209,7 @@ describe('notifyReleaseDelivered', () => {
     expect(ownerMessage.rows[0]?.text).not.toContain('npx usebeeline update');
   });
 
-  it('includes only the platform section matching the person\'s registered devices', async () => {
+  it("includes only the platform section matching the person's registered devices", async () => {
     await database.query(
       `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES($1,$2,'android','physical')`,
       ['owner-device-token-12345678901234567890', OWNER],

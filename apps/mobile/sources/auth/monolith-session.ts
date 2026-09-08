@@ -29,6 +29,7 @@ export class GitHubAccountMismatchError extends Error {
 }
 
 export class MonolithSession {
+  private readonly identityListeners = new Set<() => void>();
   private access?: { token: string; expiresAt: number; identityId: string };
   private refreshInFlight?: Promise<string>;
 
@@ -45,7 +46,7 @@ export class MonolithSession {
     });
     if (!response.ok) throw new MonolithSessionRequiredError();
     const tokens = (await response.json()) as MonolithTokens;
-    await this.accept(tokens);
+    await this.accept(tokens, true);
     return tokens.identityId;
   }
 
@@ -76,12 +77,30 @@ export class MonolithSession {
     });
     if (!response.ok) throw new MonolithSessionRequiredError();
     const tokens = (await response.json()) as MonolithTokens;
-    await this.accept(tokens);
+    await this.accept(tokens, true);
     return tokens.identityId;
   }
 
   async identityId(): Promise<string | null> {
     return this.access?.identityId ?? (await secureStore()).getItemAsync(IDENTITY_KEY);
+  }
+
+  /** Session consumers must observe sign-in after the root layout has mounted. */
+  subscribeIdentityChange(listener: () => void): () => void {
+    this.identityListeners.add(listener);
+    return () => {
+      this.identityListeners.delete(listener);
+    };
+  }
+
+  private identityChanged(): void {
+    for (const listener of this.identityListeners) {
+      try {
+        listener();
+      } catch {
+        // Optional consumers cannot turn an accepted sign-in into a failure.
+      }
+    }
   }
 
   async clear(): Promise<void> {
@@ -91,6 +110,7 @@ export class MonolithSession {
       storage.deleteItemAsync(REFRESH_KEY),
       storage.deleteItemAsync(IDENTITY_KEY),
     ]);
+    this.identityChanged();
   }
 
   async authorization(): Promise<string> {
@@ -138,10 +158,11 @@ export class MonolithSession {
     return tokens.accessToken;
   }
 
-  private async accept(tokens: MonolithTokens): Promise<void> {
+  private async accept(tokens: MonolithTokens, signedIn = false): Promise<void> {
     if (!tokens.accessToken || !tokens.refreshToken || !tokens.identityId)
       throw new Error('Invalid monolith session response');
     const storage = await secureStore();
+    const previousId = this.access?.identityId ?? (await storage.getItemAsync(IDENTITY_KEY));
     await Promise.all([
       storage.setItemAsync(REFRESH_KEY, tokens.refreshToken),
       storage.setItemAsync(IDENTITY_KEY, tokens.identityId),
@@ -151,6 +172,9 @@ export class MonolithSession {
       expiresAt: tokens.accessExpiresAt,
       identityId: tokens.identityId,
     };
+    // A new sign-in may repair an expired session for the same identity.
+    // Token refresh alone must not start another registration/refresh loop.
+    if (signedIn || previousId !== tokens.identityId) this.identityChanged();
   }
 }
 

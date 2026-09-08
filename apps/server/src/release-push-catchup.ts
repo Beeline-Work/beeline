@@ -1,0 +1,59 @@
+import { DEFAULT_WORKSPACE_ID } from '@beeline/api-contract/phone';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
+import type { SqlDatabase } from './database.js';
+
+/** Registration is a new delivery opportunity, not permission to replay chat.
+ * Queue only the latest unread release in the person's existing announcement
+ * DM. Its Room and message are unchanged. The normal worker owns delivery.
+ */
+export async function queueLatestReleasePush(
+  database: SqlDatabase,
+  identityId: string,
+  token: string,
+) {
+  await database.query('DELETE FROM push_release_catchups WHERE device_token=$1', [token]);
+  await database.query(
+    `WITH latest AS (
+       SELECT m.id,m.room_id,m.created_at FROM messages m
+       JOIN rooms r ON r.id=m.room_id
+       JOIN memberships member ON member.room_id=r.id AND member.identity_id=$1
+         AND member.removed_at IS NULL
+       WHERE m.author_id=$3 AND r.workspace_id=$4
+         AND r.direct_participants @> jsonb_build_array($1::text,$3::text)
+       ORDER BY m.created_at DESC,m.id DESC LIMIT 1
+     )
+     INSERT INTO push_release_catchups(device_token,identity_id,message_id)
+     SELECT $2,$1,m.id FROM latest m
+     LEFT JOIN room_read_marks read ON read.room_id=m.room_id AND read.identity_id=$1
+     WHERE read.message_id IS NULL OR (m.created_at,m.id)>(read.message_created_at,read.message_id)`,
+    [identityId, token, SYSTEM_IDENTITY_ID, DEFAULT_WORKSPACE_ID],
+  );
+  // A confirmed failed send may retry on an explicit registration opportunity.
+  // Never clear delivered or in-flight claims, including a racing worker's.
+  await database.query(
+    `DELETE FROM push_delivery_claims claim USING push_release_catchups catchup
+     WHERE catchup.device_token=$1 AND claim.device_token=catchup.device_token
+       AND claim.message_id=catchup.message_id AND claim.status='failed'`,
+    [token],
+  );
+}
+
+/** One extra candidate lane; only this lane bypasses the registration floor.
+ * Re-check readership, identity and latest-message status at dispatch time.
+ */
+export const RELEASE_CATCHUP_CANDIDATES_SQL = `
+  SELECT m.id message_id,r.workspace_id::text workspace_id,m.room_id::text room_id,
+    'message' notification_type,concat_ws(': ',author.name,btrim(m.text)) text,
+    d.token,m.created_at
+  FROM push_release_catchups catchup
+  JOIN push_devices d ON d.token=catchup.device_token AND d.identity_id=catchup.identity_id
+  JOIN messages m ON m.id=catchup.message_id
+  JOIN rooms r ON r.id=m.room_id
+  JOIN identities author ON author.id=m.author_id
+  JOIN memberships member ON member.room_id=r.id AND member.identity_id=d.identity_id
+    AND member.removed_at IS NULL
+  LEFT JOIN room_read_marks read ON read.room_id=r.id AND read.identity_id=d.identity_id
+  WHERE (read.message_id IS NULL OR (m.created_at,m.id)>(read.message_created_at,read.message_id))
+    AND NOT EXISTS (SELECT 1 FROM messages newer WHERE newer.room_id=m.room_id
+      AND newer.author_id=m.author_id AND (newer.created_at,newer.id)>(m.created_at,m.id))
+`;

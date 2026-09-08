@@ -691,6 +691,13 @@ CREATE TABLE IF NOT EXISTS push_delivery_claims (
   PRIMARY KEY (message_id, device_token)
 );
 
+-- At most one latest unseen release candidate per device registration.
+CREATE TABLE IF NOT EXISTS push_release_catchups (
+  device_token text PRIMARY KEY REFERENCES push_devices(token) ON DELETE CASCADE,
+  identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  message_id text NOT NULL REFERENCES messages(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS device_update_receipts (
   identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
   device_id text NOT NULL,

@@ -591,14 +591,18 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     // The server cursor is second-granular; cross the pairing join-note second
     // before creating the human request so this exercises a fresh inbox row.
     await new Promise((resolveWait) => setTimeout(resolveWait, 1_100));
+    const pairedAgent = (await phone.readRoom(ROOM, HUMAN))?.members.find(
+      (member) => member.identity.pubkey === result.runtime.agent.publicKey,
+    );
+    const pairedHandle = pairedAgent?.identity.handle;
+    if (!pairedHandle) throw new Error('paired agent is missing its canonical handle');
 
     const sent = await phone.execute(
       'sendRoomMessage',
       {
         roomId: ROOM,
         messageId: 'd'.repeat(64),
-        text: '@scout prove the thin daemon path',
-        mentions: [result.runtime.agent.publicKey],
+        text: `@${pairedHandle} prove the thin daemon path`,
       },
       HUMAN,
     );
@@ -665,11 +669,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         (member) => member.identity.pubkey === AGENT,
       )?.presence?.status;
     const attempt = async () => {
-      await phone.execute(
-        'sendRoomMessage',
-        { roomId: ROOM, text: 'Hello', mentions: [AGENT] },
-        HUMAN,
-      );
+      await phone.execute('sendRoomMessage', { roomId: ROOM, text: '@bee Hello' }, HUMAN);
       // PGlite has no separate LISTEN connection; deliver the committed notification.
       live.publish({ type: 'invalidate', roomId: ROOM, reason: 'postgres:messages' });
     };
@@ -715,7 +715,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     }
   });
 
-  it('answers persisted implicit targets in a repo-less Room and keeps monolith presence current', async () => {
+  it('answers canonical targets in a repo-less Room and keeps monolith presence current', async () => {
     await database.query(
       `UPDATE agents SET selected_model=NULL,selected_effort=NULL WHERE agent_id=$1`,
       [AGENT],
@@ -862,10 +862,10 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         {
           roomId: ROOM,
           // IDs break same-millisecond transcript timestamps deterministically. Keep the
-          // original request before its two live steers while exercising main's implicit
-          // agent target resolution (no client-supplied mention).
+          // original request before its two live steers while addressing the
+          // server-authoritative canonical agent handle (no client-supplied id).
           messageId: '1'.repeat(64),
-          text: 'Introduce yourself',
+          text: '@bee Introduce yourself',
           attachments: [
             {
               url: `${origin}/v1/media/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa`,
@@ -916,8 +916,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         {
           roomId: ROOM,
           messageId: '2'.repeat(64),
-          text: 'Change course and focus only on this steer.',
-          mentions: [],
+          text: '@bee Change course and focus only on this steer.',
         },
         HUMAN,
       );
@@ -931,8 +930,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         {
           roomId: ROOM,
           messageId: '3'.repeat(64),
-          text: 'Ignore the introduction and report only the steering result.',
-          mentions: [],
+          text: '@bee Ignore the introduction and report only the steering result.',
         },
         HUMAN,
       );
@@ -979,11 +977,11 @@ createInterface({ input: process.stdin }).on('line', (line) => {
           )
           .map((message) => ({ id: message.id, text: message.text })),
       ).toEqual([
-        { id: sent.messageId, text: 'Introduce yourself' },
-        { id: steer.messageId, text: 'Change course and focus only on this steer.' },
+        { id: sent.messageId, text: '@bee Introduce yourself' },
+        { id: steer.messageId, text: '@bee Change course and focus only on this steer.' },
         {
           id: fallbackSteer.messageId,
-          text: 'Ignore the introduction and report only the steering result.',
+          text: '@bee Ignore the introduction and report only the steering result.',
         },
       ]);
       await vi.waitFor(async () => {
@@ -1002,7 +1000,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         {
           roomId: ROOM,
           messageId: '8'.repeat(64),
-          text: 'Who are you?',
+          text: '@bee Who are you?',
         },
         HUMAN,
       );
@@ -1104,8 +1102,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       'sendRoomMessage',
       {
         roomId: ROOM,
-        text: 'Attempt delivery to the stopped daemon',
-        mentions: [AGENT],
+        text: '@bee Attempt delivery to the stopped daemon',
       },
       HUMAN,
     );

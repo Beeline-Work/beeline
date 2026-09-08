@@ -371,6 +371,194 @@ describe('who an agent can tag, and how it is spelled', () => {
     await scheduler.dispose();
   });
 
+  it('does not continue a tag the server rejected before its target joined', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-room-unpersisted-tag-'));
+    roots.push(root);
+    const identity = identityFromKey(AGENT_HEX, 'Greeter');
+    const agent = {
+      name: 'Greeter',
+      publicKey: identity.publicKey,
+      secretKeyHex: Buffer.from(identity.secretKey).toString('hex'),
+    };
+    const runtime = {
+      agent,
+      rooms: [],
+      supervisorRoot: root,
+      transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'token' },
+      agentBinary: '/fake-agent',
+      agentKind: 'codex',
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+    } as unknown as AgentRuntimeRecord;
+    const roster = {
+      members: [
+        { identityId: agent.publicKey, kind: 'agent' as const, name: 'Greeter', role: 'member' as const },
+        { identityId: OTHER_AGENT, kind: 'agent' as const, name: 'Peer', role: 'member' as const },
+        { identityId: CAPTAIN, kind: 'human' as const, name: 'Captain', role: 'owner' as const },
+      ],
+    };
+    const config: BodyConfig = {
+      agentBinary: '/fake-agent',
+      agentKind: 'codex',
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+      readonlyMcpCommand: '/fake-beeline-mcp',
+      agentEnv: {},
+      workspaceRoot: root,
+      autoApprovePermissions: true,
+    };
+    let inboxReads = 0;
+    let settledPosts = 0;
+    let peerJoined = false;
+    let peerExplicit = false;
+    let peerFollowedUp = false;
+    const posts: Array<{ mentionIds?: readonly string[] }> = [];
+    const execute = vi.fn(async (name: string, input?: unknown) => {
+      if (name === 'getAgentConfiguration') return { commands: [], yoloMode: false };
+      if (name === 'getRoomRepositoryState') return { resolution: 'none' };
+      if (name === 'getWorkspaceRoster') return roster;
+      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomInbox') {
+        inboxReads += 1;
+        if (inboxReads === 1) return { items: [], cursor: 'activation', rewindIds: [] };
+        if (inboxReads === 2) {
+          return {
+            items: [
+              {
+                id: 'captain-request',
+                authorId: CAPTAIN,
+                createdAt: 1,
+                type: 'message',
+                body: '@Greeter ask @Peer to help.',
+                mentionIds: [agent.publicKey],
+                agentMentionIds: [agent.publicKey],
+                attachments: [],
+              },
+            ],
+            cursor: 'captain-request',
+          };
+        }
+        if (settledPosts >= 1 && !peerJoined) {
+          peerJoined = true;
+          return {
+            items: [
+              {
+                id: 'peer-follow-up',
+                authorId: OTHER_AGENT,
+                createdAt: 2,
+                type: 'message',
+                body: 'I just joined this Room.',
+                mentionIds: [],
+                agentMentionIds: [],
+                attachments: [],
+              },
+            ],
+            cursor: 'peer-follow-up',
+          };
+        }
+        if (peerJoined && !peerExplicit) {
+          peerExplicit = true;
+          return {
+            items: [
+              {
+                id: 'peer-explicit-request',
+                authorId: OTHER_AGENT,
+                createdAt: 3,
+                type: 'message',
+                body: '@Greeter, please respond.',
+                mentionIds: [agent.publicKey],
+                agentMentionIds: [agent.publicKey],
+                attachments: [],
+              },
+            ],
+            cursor: 'peer-explicit-request',
+          };
+        }
+        if (peerExplicit && settledPosts >= 2 && !peerFollowedUp) {
+          peerFollowedUp = true;
+          return {
+            items: [
+              {
+                id: 'peer-durable-follow-up',
+                authorId: OTHER_AGENT,
+                createdAt: 4,
+                type: 'message',
+                body: 'Thank you.',
+                mentionIds: [],
+                agentMentionIds: [],
+                attachments: [],
+              },
+            ],
+            cursor: 'peer-durable-follow-up',
+          };
+        }
+        return { items: [], cursor: 'latest' };
+      }
+      if (name === 'getRoomAuthority') {
+        return {
+          member: true,
+          principalKind:
+            (input as { principalId?: string } | undefined)?.principalId === OTHER_AGENT
+              ? 'agent'
+              : 'human',
+        };
+      }
+      if (name === 'postRoomMessage') {
+        posts.push(input as { mentionIds?: readonly string[] });
+        return { id: 'reply', createdAt: 1, mentionIds: [] };
+      }
+      if (name === 'retractAgentLiveOutput') {
+        settledPosts += 1;
+        return { id: 'retract', createdAt: 1 };
+      }
+      return { id: 'write-id', createdAt: 1 };
+    });
+    const api = {
+      execute,
+      connection: () => ({
+        baseUrl: 'https://server.example',
+        daemonToken: 'daemon-token',
+        agentId: agent.publicKey,
+      }),
+    } as unknown as DaemonApiClient;
+    const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
+    const prompts: string[] = [];
+    vi.spyOn(acp, 'start').mockResolvedValue(undefined);
+    vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: 'room-session', raw: {} });
+    vi.spyOn(acp, 'canPromptWithImages').mockReturnValue(false);
+    vi.spyOn(acp, 'isAlive', 'get').mockReturnValue(true);
+    vi.spyOn(acp, 'sessionPrompt').mockImplementation(async (_session, prompt) => {
+      prompts.push(String(prompt));
+      return { stopReason: 'end_turn', updates: [], agentText: '@Peer, please take over.', toolCalls: [] };
+    });
+    const scheduler = new SessionScheduler({ maxLiveSessions: 1 });
+    const abort = new AbortController();
+    const running = new MonolithRoomTurnLoop({
+      roomId: 'room-id',
+      workspaceId: 'workspace',
+      cwd: root,
+      runtime,
+      config,
+      api,
+      scheduler,
+      health: { poll: vi.fn(), failure: vi.fn(), presence: vi.fn() },
+      signal: abort.signal,
+      pollMs: 0,
+      createAcpClient: () => acp,
+    }).run();
+
+    await vi.waitFor(() => expect(peerFollowedUp).toBe(true));
+    await vi.waitFor(() => expect(prompts).toHaveLength(3));
+    expect(posts[0]).toEqual(expect.objectContaining({ mentionIds: [OTHER_AGENT] }));
+    expect(execute.mock.calls.filter(([name]) => name === 'postAgentTurnReceipt')).toHaveLength(6);
+
+    abort.abort();
+    await running.catch(() => undefined);
+    await scheduler.dispose();
+  });
+
   /**
    * Defect 2, the daemon half. The resolver is NOT what dropped the correct
    * handle: it returns both ids for the exact shape the Room saw. It does fix

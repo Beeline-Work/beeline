@@ -142,19 +142,19 @@ export class AgentTurnStream {
   async settle(
     reply: string,
     fields: DurableReplyFields = {},
-    onReplyPosted?: () => void,
+    onReplyPosted?: (result: { readonly mentionIds?: readonly string[] }) => void,
   ): Promise<void> {
     this.close();
     const { api, agentId, roomId, requestId } = this.options;
     if (reply) {
-      await api.execute('postRoomMessage', {
+      const posted = await api.execute('postRoomMessage', {
         roomId,
         requestId,
         text: reply,
         presentation: 'message',
         ...fields,
       });
-      onReplyPosted?.();
+      onReplyPosted?.(posted);
     }
     // A draft write already on the wire can land after the durable reply. The
     // retract has to be the last word on this lane, or that late write puts an

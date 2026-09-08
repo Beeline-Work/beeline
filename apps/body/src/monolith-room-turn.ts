@@ -1192,8 +1192,11 @@ export class MonolithRoomTurnLoop {
                       }
                     : {},
                   reply
-                    ? () => {
-                        this.responseRule.noteReply(this.agent.publicKey, continuitySenders);
+                    ? (posted) => {
+                        this.responseRule.noteReply(this.agent.publicKey, [
+                          item.authorId,
+                          ...(posted.mentionIds ?? []),
+                        ]);
                         active.rebuildContinuity = false;
                       }
                     : undefined,

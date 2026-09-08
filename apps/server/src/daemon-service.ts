@@ -1191,6 +1191,9 @@ export class DaemonService {
     // fresh chain at zero.
     const hopCount = trigger?.author_kind === 'agent' ? trigger.agent_hop_count + 1 : 0;
     const capped = agentMentionIds.size > 0 && hopCount >= AGENT_TO_AGENT_HOP_CAP;
+    const persistedMentions = capped
+      ? deliveredMentions.filter((value) => !agentMentionIds.has(value))
+      : deliveredMentions;
     await this.database.transaction(async (database) => {
       // Attachments queued this turn by beeline-agent attach_file ride on this
       // final reply; they are drained exactly once, here.
@@ -1221,11 +1224,7 @@ export class DaemonService {
           input.presentation === 'card' ? 'card' : 'message',
           input.requestId ?? null,
           JSON.stringify(input.tags ?? {}),
-          JSON.stringify(
-            capped
-              ? deliveredMentions.filter((value) => !agentMentionIds.has(value))
-              : deliveredMentions,
-          ),
+          JSON.stringify(persistedMentions),
           input.replyToMessageId ?? null,
           rootMessageId,
           hopCount,
@@ -1259,7 +1258,11 @@ export class DaemonService {
       }
     });
     this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'message', agentId });
-    return { id: messageId, createdAt: Math.floor(Date.now() / 1000) };
+    return {
+      id: messageId,
+      createdAt: Math.floor(Date.now() / 1000),
+      mentionIds: persistedMentions,
+    };
   }
   /** An agent-claimed attachment queued by attach_file; stamped onto the agent's
    *  next final Room reply. Only media this agent uploaded through the daemon

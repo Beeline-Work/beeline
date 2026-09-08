@@ -69,6 +69,21 @@ describe('daemon API client against the local monolith', () => {
   let live: LiveHub;
   let connectionPresence: ConnectionPresence;
 
+  it('returns only persisted Room mention ids from an agent reply', async () => {
+    const exchange = await auth.createDaemonExchange(AGENT);
+    const daemonToken = (await auth.exchangeDaemonToken(exchange.exchangeToken))!.daemonToken;
+    const client = new DaemonApiClient(origin, daemonToken, AGENT);
+
+    await expect(
+      client.execute('postRoomMessage', {
+        roomId: ROOM,
+        requestId: 'c'.repeat(64),
+        text: 'Please review this.',
+        mentionIds: [HUMAN, 'missing-member'],
+      }),
+    ).resolves.toMatchObject({ mentionIds: [HUMAN] });
+  });
+
   it('routes model-written peer names through validated agent mention ids', () => {
     const peer = 'peer-agent';
     const roster = {

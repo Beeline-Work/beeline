@@ -93,7 +93,7 @@ export type DaemonOperationMap = {
   getAgentConfiguration: Operation<AgentConfigurationInput, AgentConfigurationResult>;
   getAgentPresence: Operation<AgentRoomInput, AgentPresenceResult>;
   getRequestCompletion: Operation<RequestInput, RequestCompletionResult>;
-  postRoomMessage: Operation<PostRoomMessageInput, WriteResult>;
+  postRoomMessage: Operation<PostRoomMessageInput, PostRoomMessageResult>;
   postAgentAttachment: Operation<PostAgentAttachmentInput, WriteResult>;
   postAgentDraft: Operation<PostLiveOutputInput, WriteResult>;
   postAgentThought: Operation<PostLiveOutputInput, WriteResult>;
@@ -321,6 +321,7 @@ export type RequestCompletionResult = {
   readonly completed: boolean;
 };
 export type WriteResult = { readonly id: string; readonly createdAt: number };
+export type PostRoomMessageResult = WriteResult & { readonly mentionIds: readonly string[] };
 export type PostRoomMessageInput = RoomInput & {
   readonly requestId?: string;
   readonly text: string;

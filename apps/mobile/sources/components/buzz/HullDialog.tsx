@@ -307,9 +307,7 @@ export function HullDialog({
             {title}
           </Text>
           {body ? <Text style={styles.dialogBody}>{body}</Text> : null}
-          {children ? (
-            <View style={styles.dialogContent}>{children}</View>
-          ) : null}
+          {children ? <View style={styles.dialogContent}>{children}</View> : null}
         </View>
         <View style={styles.dialogActions}>
           {actions.map((action, index) => {

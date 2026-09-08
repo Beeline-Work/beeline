@@ -16,12 +16,12 @@ vi.mock('react-native', async () => {
   };
 });
 vi.mock('react-native-unistyles', () => {
-  const value = new Proxy(
-    {},
-    { get: () => value },
-  );
+  const value = new Proxy({}, { get: () => value });
   return {
-    StyleSheet: { create: (factory: (theme: unknown) => unknown) => factory({ buzz: value }), hairlineWidth: 1 },
+    StyleSheet: {
+      create: (factory: (theme: unknown) => unknown) => factory({ buzz: value }),
+      hairlineWidth: 1,
+    },
     useUnistyles: () => ({ theme: { buzz: value } }),
   };
 });

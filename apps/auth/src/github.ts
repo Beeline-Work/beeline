@@ -25,7 +25,10 @@ export class GitHubHttpError extends Error {
 
 export class GitHubCredentialRejectedError extends Error {}
 
-async function jsonResponseObject(response: Response, label: string): Promise<Record<string, unknown>> {
+async function jsonResponseObject(
+  response: Response,
+  label: string,
+): Promise<Record<string, unknown>> {
   let body: unknown;
   try {
     body = await response.json();

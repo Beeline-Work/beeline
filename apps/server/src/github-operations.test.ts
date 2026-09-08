@@ -595,7 +595,11 @@ describe('GitHub phone operations', () => {
         redirectUri: 'beeline://callback',
         state: 'rejected-outage',
       });
-      await operations.completeIdentity(HUMAN, { challenge: 'code', proof: 'rejected-outage' }, false);
+      await operations.completeIdentity(
+        HUMAN,
+        { challenge: 'code', proof: 'rejected-outage' },
+        false,
+      );
       await database.query(
         `UPDATE github_user_tokens SET encrypted_refresh_token=NULL,stale_at=now() WHERE subject='42'`,
       );
@@ -619,7 +623,11 @@ describe('GitHub phone operations', () => {
         redirectUri: 'beeline://callback',
         state: 'historical-stale',
       });
-      await operations.completeIdentity(HUMAN, { challenge: 'code', proof: 'historical-stale' }, false);
+      await operations.completeIdentity(
+        HUMAN,
+        { challenge: 'code', proof: 'historical-stale' },
+        false,
+      );
       await database.query(
         `UPDATE github_user_tokens SET stale_at=now(),expires_at=now()-interval '1 minute' WHERE subject='42'`,
       );
@@ -682,7 +690,7 @@ describe('GitHub phone operations', () => {
           await database.query<{ full_name: string }>(
             `SELECT full_name FROM github_repositories WHERE repository_id=101`,
           )
-      ).rows[0]?.full_name,
+        ).rows[0]?.full_name,
       ).toBe('owner/widgets');
     });
 
@@ -693,7 +701,11 @@ describe('GitHub phone operations', () => {
         redirectUri: 'beeline://callback',
         state: 'catalog-outage',
       });
-      await operations.completeIdentity(HUMAN, { challenge: 'code', proof: 'catalog-outage' }, false);
+      await operations.completeIdentity(
+        HUMAN,
+        { challenge: 'code', proof: 'catalog-outage' },
+        false,
+      );
       await database.query(
         `UPDATE github_user_tokens SET encrypted_refresh_token=NULL,expires_at=now()-interval '1 minute' WHERE subject='42'`,
       );

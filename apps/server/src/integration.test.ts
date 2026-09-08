@@ -715,7 +715,7 @@ describe('monolith integration', () => {
     expect(repositoryState.resolution).toBe('none');
     expect([...(repositoryState.directParticipants ?? [])].sort()).toEqual([AGENT, HUMAN].sort());
 
-    // A DM still requires an explicit mention: membership is not authorship intent.
+    // A bootstrapped DM still requires an explicit mention: membership is not authorship intent.
     const sent = await operation('sendRoomMessage', {
       roomId: dm.id,
       messageId: 'c'.repeat(64),
@@ -731,7 +731,7 @@ describe('monolith integration', () => {
     const bootstrap = (await (await daemonOperation('getDaemonBootstrap', {})).json()) as {
       rooms: Array<{ roomId: string }>;
     };
-    expect(bootstrap.rooms).not.toContainEqual(expect.objectContaining({ roomId: dm.id }));
+    expect(bootstrap.rooms).toContainEqual(expect.objectContaining({ roomId: dm.id }));
     const unaddressedInbox = (await (
       await daemonOperation('getRoomInbox', { roomId: dm.id })
     ).json()) as { items: Array<{ id: string }> };

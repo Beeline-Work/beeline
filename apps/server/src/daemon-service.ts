@@ -418,8 +418,7 @@ export class DaemonService {
     const rooms = await this.database.query<{ room_id: string; archived: boolean }>(
       `SELECT m.room_id, r.archived_at IS NOT NULL archived FROM memberships m
        JOIN rooms r ON r.id=m.room_id
-       WHERE m.identity_id=$1 AND m.removed_at IS NULL AND r.parent_id IS NULL
-         AND r.direct_participants IS NULL`,
+       WHERE m.identity_id=$1 AND m.removed_at IS NULL AND r.parent_id IS NULL`,
       [agentId],
     );
     return {

@@ -8,6 +8,7 @@ Beeline's production monolith is one framework-free TypeScript process backed by
 - `/v1/auth/github/reconnect`: authenticated replacement of the current
   identity's server-side GitHub credential from a fresh, same-subject GitHub
   ticket; an account mismatch returns `409` and leaves the phone session intact.
+- `/v1/avatars/:id`: authenticated reads of immutable, durable Workspace-avatar WebP bytes.
 - `/v1/auth/daemon/exchange`: one-use exchange into an opaque daemon token.
 - `/v1/phone/*`: the complete indexed phone read surface, named writes from `@beeline/api-contract/phone`, read marks, media, GitHub room tokens, push registration, and OTA receipts.
 - `/v1/phone/live`: authenticated WebSocket invalidation plus draft, thought, and presence overlays.

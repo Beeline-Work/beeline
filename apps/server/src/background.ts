@@ -1,9 +1,6 @@
 import type { SqlDatabase } from './database.js';
 import { MEDIA_SWEEP_INTERVAL_MS, mediaTtlHours } from './media-ttl.js';
-import {
-  claimReleaseCatchup,
-  RELEASE_CATCHUP_CANDIDATES_SQL,
-} from './release-push-catchup.js';
+import { claimReleaseCatchup, RELEASE_CATCHUP_CANDIDATES_SQL } from './release-push-catchup.js';
 
 const BACKGROUND_LOCK_KEY = 0x0bee11;
 

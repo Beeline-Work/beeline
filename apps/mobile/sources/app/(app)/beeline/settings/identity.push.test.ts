@@ -238,7 +238,7 @@ describe('identity settings push row honesty', () => {
 
     expect(pushModule.registerBuzzPushNotifications).toHaveBeenCalledTimes(1);
     expect(toggle(renderer).value).toBe(true);
-    expect(subtitleText(renderer)).toContain('OS permission: allowed');
+    expect(subtitleText(renderer)).toContain('Registered');
   });
 
   it('shows the switch on only when the stored state says registered', async () => {
@@ -253,7 +253,7 @@ describe('identity settings push row honesty', () => {
     const renderer = await renderScreen();
 
     expect(toggle(renderer).value).toBe(true);
-    expect(subtitleText(renderer)).toContain('OS permission: allowed');
+    expect(subtitleText(renderer)).toContain('Registered');
     expect(renderer.root.findAllByProps({ testID: 'push-retry-registration' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'push-send-test-notification' })).toHaveLength(0);
   });

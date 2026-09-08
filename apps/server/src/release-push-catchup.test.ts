@@ -108,8 +108,11 @@ describe('release push catch-up at device registration', () => {
     const latest = await release('v1', 2);
     await register();
     expect(
-      (await database.query('SELECT 1 FROM push_release_catchups WHERE device_token=$1', ['device']))
-        .rowCount,
+      (
+        await database.query('SELECT 1 FROM push_release_catchups WHERE device_token=$1', [
+          'device',
+        ])
+      ).rowCount,
     ).toBe(1);
     await markRead(latest);
     await expect(claimReleaseCatchup(database, latest.id, 'device', PERSON)).resolves.toBe(false);

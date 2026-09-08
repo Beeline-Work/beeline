@@ -10,6 +10,16 @@ import {
 } from './agent-display';
 
 describe('agent display identity', () => {
+  it('keeps the current server handle when a display-name collision has a suffix', () => {
+    expect(
+      resolveAgentDisplayIdentity('agent-key', {
+        pubkey: 'agent-key',
+        displayName: 'Lumen',
+        handle: 'lumen_2',
+      }),
+    ).toMatchObject({ name: 'Lumen', handle: 'lumen_2' });
+  });
+
   it('uses a neutral fallback without exposing the key', () => {
     const pubkey = 'abcdef0123456789abcdef0123456789';
     const first = resolveAgentDisplayIdentity(pubkey);

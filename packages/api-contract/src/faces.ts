@@ -175,7 +175,6 @@ export function seededAgentName(face: FaceId, takenNames: Iterable<string>): str
 export interface SeededAgentIdentity {
   readonly face: FaceId;
   readonly name: string;
-  readonly handle: string;
   readonly soul: string;
 }
 
@@ -226,7 +225,6 @@ export function assignSeededAgentIdentity(input: {
   seed: string;
   takenFaces: Iterable<string>;
   takenNames: Iterable<string>;
-  takenHandles?: Iterable<string>;
 }): SeededAgentIdentity {
   const taken = new Set(input.takenFaces);
   const face =
@@ -236,7 +234,6 @@ export function assignSeededAgentIdentity(input: {
   return {
     face,
     name,
-    handle: uniqueAgentHandle(name, input.takenHandles ?? []),
     soul: FACE_SOULS[face],
   };
 }

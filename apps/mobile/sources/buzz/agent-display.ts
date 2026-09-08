@@ -30,6 +30,7 @@ export type AgentDisplayIdentity = {
  *  server's assignment, carried on the Room/Workspace view identity. */
 export type DisplayableAgent = Pick<Agent, 'pubkey' | 'displayName' | 'avatar' | 'soulProfile'> & {
   face?: string;
+  handle?: string;
 };
 
 /**
@@ -51,7 +52,7 @@ export function resolveAgentDisplayIdentity(
     name,
     // Keep the established call shape while a local mobile install may still
     // expose the previous two-argument declaration bundle.
-    handle: agentHandle(name, pubkey),
+    handle: agent?.handle?.trim() || agentHandle(name, pubkey),
     personality: overlayPersonality || 'Steady, practical, and ready to help.',
     avatarSeed: overlay?.avatarSeed.trim() || pubkey || 'unknown-agent',
     ...(avatarUrl ? { avatarUrl } : {}),

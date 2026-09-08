@@ -1637,6 +1637,38 @@ describe('monolith integration', () => {
     }
   });
 
+  it('does not persist a typed agent outside the Room as a mention', async () => {
+    const outsideAgent = 'd'.repeat(64);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Outside','outside')`,
+      [outsideAgent],
+    );
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [
+      outsideAgent,
+      HUMAN,
+    ]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member')`,
+      [WORKSPACE, outsideAgent],
+    );
+
+    const sent = await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: '3'.repeat(64),
+      text: '@outside please inspect this.',
+      mentions: [outsideAgent],
+    });
+    expect(sent.status).toBe(200);
+    expect(
+      (
+        await database.query<{ mention_ids: string[] }>(
+          `SELECT mention_ids FROM messages WHERE id=$1`,
+          ['3'.repeat(64)],
+        )
+      ).rows[0]?.mention_ids,
+    ).toEqual([]);
+  });
+
   it('implicitly addresses a threaded human reply to the parent agent regardless of position', async () => {
     const parent = await daemonOperation('postRoomMessage', {
       roomId: ROOM,

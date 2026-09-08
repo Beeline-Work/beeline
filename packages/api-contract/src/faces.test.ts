@@ -47,17 +47,14 @@ describe('the seeded animal vocabulary', () => {
 });
 
 describe('assignSeededAgentIdentity', () => {
-  function joinWorkspace(
-    count: number,
-  ): Array<{ face: FaceId; name: string; handle: string; soul: string }> {
-    const assigned: Array<{ face: FaceId; name: string; handle: string; soul: string }> = [];
+  function joinWorkspace(count: number): Array<{ face: FaceId; name: string; soul: string }> {
+    const assigned: Array<{ face: FaceId; name: string; soul: string }> = [];
     for (let index = 0; index < count; index++) {
       assigned.push(
         assignSeededAgentIdentity({
           seed: key(index),
           takenFaces: assigned.map((entry) => entry.face),
           takenNames: assigned.map((entry) => entry.name),
-          takenHandles: assigned.map((entry) => entry.handle),
         }),
       );
     }
@@ -76,7 +73,6 @@ describe('assignSeededAgentIdentity', () => {
       seed: key(12),
       takenFaces: twelve.map((entry) => entry.face),
       takenNames: twelve.map((entry) => entry.name),
-      takenHandles: twelve.map((entry) => entry.handle),
     });
     expect(thirteenth.face).toBe(defaultFaceForSeed(key(12)));
     expect(FACE_IDS).toContain(thirteenth.face);

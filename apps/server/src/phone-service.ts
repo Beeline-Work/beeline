@@ -1161,14 +1161,13 @@ export class PhoneService {
     database: SqlDatabase,
     workspaceId: string,
     exceptIdentityId: string,
-  ): Promise<{ faces: string[]; names: string[]; handles: string[] }> {
+  ): Promise<{ faces: string[]; names: string[] }> {
     const rows = await database.query<{
       id: string;
       name: string;
-      handle: string | null;
       face_id: string | null;
     }>(
-      `SELECT i.id,i.name,i.handle,i.face_id
+      `SELECT i.id,i.name,i.face_id
        FROM memberships m
        JOIN identities i ON i.id=m.identity_id
        WHERE m.workspace_id=$1 AND m.room_id IS NULL AND m.removed_at IS NULL
@@ -1180,7 +1179,6 @@ export class PhoneService {
       // tile draws. Both count as taken, people and agents alike.
       faces: rows.rows.map((row) => resolveFace(row.face_id, row.id)),
       names: rows.rows.map((row) => row.name),
-      handles: rows.rows.flatMap((row) => (row.handle ? [row.handle] : [])),
     };
   }
 
@@ -1344,7 +1342,6 @@ export class PhoneService {
         seed: input.agentPubkey,
         takenFaces: worn.faces,
         takenNames: worn.names,
-        takenHandles: worn.handles,
       });
       const handle = await this.availableAgentHandle(
         database,
@@ -1848,13 +1845,13 @@ export class PhoneService {
     const id = input.messageId ?? messageId();
     if (!/^[0-9a-f]{64}$/.test(id)) throw new Error('messageId is invalid');
     const attachments = JSON.stringify(input.attachments ?? []);
-    const mentionIds = await this.resolveMessageMentions(
+    const mentionResolution = await this.resolveMessageMentions(
       input.roomId,
       author,
       input.text,
       input.mentions ?? [],
     );
-    const mentions = JSON.stringify(mentionIds);
+    const mentions = JSON.stringify(mentionResolution.mentionIds);
     const values = [id, input.roomId, author, input.text, attachments, mentions];
     const inserted = await this.database.query(
       `INSERT INTO messages(id,room_id,author_id,text,attachments,mention_ids)
@@ -1872,7 +1869,7 @@ export class PhoneService {
       if (!retry.rowCount) throw new Error('messageId is invalid');
       return { messageId: id };
     }
-    await this.noteUnansweredMentions(input.roomId, author, mentionIds, id);
+    await this.noteUnansweredMentions(input.roomId, author, mentionResolution.noticeAgentIds, id);
     return { messageId: id };
   }
   private async createRoomSchedule(input: Input<'createRoomSchedule'>, viewerId: string) {
@@ -1949,7 +1946,7 @@ export class PhoneService {
       throw new Error('reply parent is not in this room');
     const id = input.messageId ?? messageId();
     if (!/^[0-9a-f]{64}$/.test(id)) throw new Error('messageId is invalid');
-    const mentionIds = await this.resolveMessageMentions(
+    const mentionResolution = await this.resolveMessageMentions(
       input.roomId,
       author,
       input.text,
@@ -1962,7 +1959,7 @@ export class PhoneService {
       author,
       input.text,
       JSON.stringify(input.attachments ?? []),
-      JSON.stringify(mentionIds),
+      JSON.stringify(mentionResolution.mentionIds),
       input.parentMessageId,
       parent.rows[0].root_message_id ?? input.parentMessageId,
     ];
@@ -1982,7 +1979,7 @@ export class PhoneService {
       if (!retry.rowCount) throw new Error('messageId is invalid');
       return { messageId: id };
     }
-    await this.noteUnansweredMentions(input.roomId, author, mentionIds, id);
+    await this.noteUnansweredMentions(input.roomId, author, mentionResolution.noticeAgentIds, id);
     return { messageId: id };
   }
   /**
@@ -2149,24 +2146,14 @@ export class PhoneService {
     text: string,
     explicitMentions: readonly string[],
     replyAgentId?: string | null,
-  ): Promise<readonly string[]> {
+  ): Promise<{ mentionIds: readonly string[]; noticeAgentIds: readonly string[] }> {
     const authorKind = (
       await this.database.query<{ kind: 'human' | 'agent' }>(
         `SELECT kind FROM identities WHERE id=$1`,
         [author],
       )
     ).rows[0]?.kind;
-    if (authorKind !== 'human') return [];
-    const agents = await this.database.query<{ id: string; handle: string }>(
-      `SELECT identity.id,identity.handle
-       FROM rooms room
-       JOIN memberships membership ON membership.workspace_id=room.workspace_id
-         AND membership.room_id IS NULL AND membership.removed_at IS NULL
-       JOIN identities identity ON identity.id=membership.identity_id
-         AND identity.kind='agent' AND identity.handle IS NOT NULL
-       WHERE room.id=$1`,
-      [roomId],
-    );
+    if (authorKind !== 'human') return { mentionIds: [], noticeAgentIds: [] };
     const explicitAgentIds = new Set(
       (
         await this.database.query<{ id: string }>(
@@ -2186,11 +2173,36 @@ export class PhoneService {
       const before = offset > 0 ? normalizedText[offset - 1]! : '';
       if (!before || !tokenCharacter.test(before)) typedHandles.add(match[1] ?? '');
     }
+    const agents = await this.database.query<{ id: string; handle: string }>(
+      `SELECT identity.id,identity.handle
+       FROM memberships membership
+       JOIN identities identity ON identity.id=membership.identity_id
+         AND identity.kind='agent' AND identity.handle IS NOT NULL
+       WHERE membership.room_id=$1 AND membership.removed_at IS NULL`,
+      [roomId],
+    );
     for (const agent of agents.rows)
       if (typedHandles.has(agent.handle.normalize('NFKC').toLocaleLowerCase()))
         mentions.add(agent.id);
+    const noticeAgentIds = new Set(mentions);
+    const absentCornerAgents = await this.database.query<{ id: string; handle: string }>(
+      `SELECT identity.id,identity.handle
+       FROM rooms room
+       JOIN memberships workspace_membership ON workspace_membership.workspace_id=room.workspace_id
+         AND workspace_membership.room_id IS NULL AND workspace_membership.removed_at IS NULL
+       JOIN identities identity ON identity.id=workspace_membership.identity_id
+         AND identity.kind='agent' AND identity.handle IS NOT NULL
+       LEFT JOIN memberships room_membership ON room_membership.room_id=room.id
+         AND room_membership.identity_id=identity.id AND room_membership.removed_at IS NULL
+       WHERE room.id=$1 AND room.parent_id IS NOT NULL AND room_membership.identity_id IS NULL`,
+      [roomId],
+    );
+    for (const agent of absentCornerAgents.rows)
+      if (typedHandles.has(agent.handle.normalize('NFKC').toLocaleLowerCase()))
+        noticeAgentIds.add(agent.id);
     if (replyAgentId) mentions.add(replyAgentId);
-    return [...mentions];
+    if (replyAgentId) noticeAgentIds.add(replyAgentId);
+    return { mentionIds: [...mentions], noticeAgentIds: [...noticeAgentIds] };
   }
   private async decidePermission(input: Input<'decideWritePermission'>, viewerId: string) {
     const pending = (

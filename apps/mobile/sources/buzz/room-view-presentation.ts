@@ -502,6 +502,7 @@ export function memberAgent(member: RoomViewMember, _workspaceId: string): Agent
   return {
     displayName: member.identity.name,
     pubkey: member.identity.pubkey,
+    ...(member.identity.handle ? { handle: member.identity.handle } : {}),
     ...(member.identity.avatar ? { avatar: member.identity.avatar } : {}),
     // The server's own assignment travels with the name: an agent's animal
     // decides its name and its soul too, so a tile that redraws it from the

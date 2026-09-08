@@ -132,6 +132,7 @@ function agentFromConversationIdentity(
   return {
     pubkey: identity.pubkey,
     displayName: identity.name,
+    ...(identity.handle ? { handle: identity.handle } : {}),
     ...(identity.avatar ? { avatar: identity.avatar } : {}),
   };
 }

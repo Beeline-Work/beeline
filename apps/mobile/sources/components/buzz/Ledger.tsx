@@ -19,19 +19,18 @@ import type { SystemEvent, SystemSubject } from '@beeline/api-contract/phone';
  * prose — never from size. Turns separate by a hairline divider plus generous
  * vertical padding; there are no speaker rails, bubbles, or boxes.
  *
- * Identity lives in the byline above each prose turn: the speaker's
+ * Identity lives in the byline above every agent prose message and the first
+ * message in a human run: the speaker's
  * 26px face tile, then the name in the identity's own hue at body size, a
  * quiet mono `agent` tag where applicable, and the mono HH:MM stamp pinned
  * right. A human message is plain body text — regular weight, primary tone,
  * same size as everything — so nothing but the brass byline name marks it as
  * the viewer's own.
  *
- * The surfaces differ in exactly one place, and it tracks a real difference
- * between them. A Corner has one administering agent (`openSubchannel` in
- * `apps/body/src/body.ts` signs every corner with a single identity), named
- * once in the top bar — so a Corner's turns carry no byline name at all. A
- * Room can hold several agents and several people, so each message states its
- * author in its byline. Same component, one prop.
+ * A Corner's top bar complements the message author; it never replaces the
+ * author byline. A Room can hold several agents and several people. In either
+ * surface, consecutive human messages may share a byline, while each agent
+ * message states its own author. Same component, one prop.
  */
 
 /** The right margin the ghosted stamp hangs in, clear of the flowing column. */
@@ -56,9 +55,9 @@ export type LedgerBylineMark = {
   alive?: boolean;
 };
 
-/** The byline above a run's opening turn. */
+/** The author byline; human continuations may omit it. */
 export type LedgerByline = {
-  /** The voice's display name. Omitted in a Corner (named in the top bar). */
+  /** The voice's display name. */
   name?: string;
   /** A quiet role tag, e.g. `agent`. */
   role?: string;
@@ -75,8 +74,7 @@ type LedgerBodyProps = {
   bodyText: string | undefined;
   bodyTestID: string;
   /**
-   * The message byline. The name may be omitted in a Corner whose administering
-   * agent is already named in the top bar.
+   * The message byline. Omitted only for a human continuation in the same run.
    */
   byline?: LedgerByline;
   /** A run's opening entry gets air above it; a continuation keeps flowing. */

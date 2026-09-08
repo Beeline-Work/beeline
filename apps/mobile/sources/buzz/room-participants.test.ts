@@ -103,7 +103,11 @@ describe('Room participant presentation', () => {
       { pubkey: 'agent-goosy', name: 'Goosy', handle: 'goosy' },
       { pubkey: 'human-goosy', name: 'Goosy', handle: 'goosy_2' },
     ];
-    const inserted = replaceActiveMention('Ask @goo', { start: 4, end: 8, query: 'goo' }, 'goosy_2');
+    const inserted = replaceActiveMention(
+      'Ask @goo',
+      { start: 4, end: 8, query: 'goo' },
+      'goosy_2',
+    );
 
     expect(inserted.text).toBe('Ask @goosy_2');
     expect(resolveComposerMentions(inserted.text, participants, new Map())).toEqual({

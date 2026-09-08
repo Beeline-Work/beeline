@@ -861,8 +861,7 @@ export default function BuzzChat() {
       options.set(member.pubkey, {
         pubkey: member.pubkey,
         name: member.pubkey === userPubkey ? 'You' : (profile?.name ?? fallbackName),
-        handle:
-          member.identity?.handle ?? profile?.handle ?? fallbackMemberHandle(member.pubkey),
+        handle: member.identity?.handle ?? profile?.handle ?? fallbackMemberHandle(member.pubkey),
         kind: 'person',
       });
     }

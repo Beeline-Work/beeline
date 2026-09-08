@@ -1622,7 +1622,7 @@ describe('monolith integration', () => {
       ['@beeline, please inspect this.', []],
     ] as const;
     for (const [index, [text, expected]] of cases.entries()) {
-      const messageId = (index + 8).toString(16).repeat(64);
+      const messageId = (index + 8).toString(16).padStart(64, '0');
       const sent = await operation('sendRoomMessage', {
         roomId: ROOM,
         messageId,

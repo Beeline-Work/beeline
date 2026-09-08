@@ -9,6 +9,7 @@ export interface ResponseRuleMessage {
   readonly type: string;
   readonly mentionIds: readonly string[];
   readonly agentMentionIds?: readonly string[];
+  readonly agentAuthor?: boolean;
   readonly replyToMessageId?: string;
   readonly replyToAuthorId?: string;
   readonly requestAuthorId?: string;
@@ -56,7 +57,7 @@ export class AgentResponseRule {
   private rebuildLastAgentBySender(): void {
     this.lastAgentBySender.clear();
     for (const recent of this.recentMessages) {
-      if (!this.agentIds.has(recent.authorId)) continue;
+      if (!recent.agentAuthor && !this.agentIds.has(recent.authorId)) continue;
       const addressed = new Set(recent.mentionIds);
       if (recent.requestAuthorId) addressed.add(recent.requestAuthorId);
       if (recent.replyToAuthorId) addressed.add(recent.replyToAuthorId);
@@ -72,12 +73,14 @@ export class AgentResponseRule {
       authorId: agentId,
       type: 'message',
       mentionIds: [...senderIds],
+      agentAuthor: true,
     });
   }
 
   /** Whether trigger 2 applies. Explicit mention handling stays with each intake loop. */
   continues(item: ResponseRuleMessage, agentId: string): boolean {
     if (item.type !== 'message' || item.authorId === agentId) return false;
+    if (!this.agentIds.has(agentId)) return false;
     if (this.agentIds.has(item.authorId) && (item.agentHopCount ?? 0) >= AGENT_TO_AGENT_HOP_CAP)
       return false;
     if (

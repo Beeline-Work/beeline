@@ -681,6 +681,33 @@ describe('the per-sender Room response rule', () => {
     expect(responseRule.continues(followUp, OTHER_AGENT)).toBe(true);
   });
 
+  it('does not revive an older responder after the latest agent has left the Room', () => {
+    const responseRule = new AgentResponseRule();
+    responseRule.setAgents([AGENT_HEX]);
+    responseRule.observeAll([
+      message({ id: 'older-live-answer', authorId: AGENT_HEX, requestAuthorId: CAPTAIN }),
+      message({
+        id: 'latest-retired-answer',
+        authorId: OTHER_AGENT,
+        requestAuthorId: CAPTAIN,
+        agentAuthor: true,
+      }),
+    ]);
+
+    expect(responseRule.continues(message({ id: 'unaddressed-follow-up' }), AGENT_HEX)).toBe(false);
+    expect(responseRule.continues(message({ id: 'retired-follow-up' }), OTHER_AGENT)).toBe(false);
+    expect(
+      inboxItemTriggersTurn(
+        message({
+          id: 'explicit-live-agent',
+          mentionIds: [AGENT_HEX],
+          agentMentionIds: [AGENT_HEX],
+        }),
+        AGENT_HEX,
+      ),
+    ).toBe(true);
+  });
+
   it('gives an explicit agent mention precedence over parentless continuity', () => {
     const responseRule = rule();
     responseRule.noteReply(AGENT_HEX, [CAPTAIN]);

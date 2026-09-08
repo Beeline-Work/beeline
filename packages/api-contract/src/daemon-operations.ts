@@ -208,6 +208,7 @@ export type RoomInboxResult = {
     /** Server-validated addressing and reply metadata needed by Room intake. */
     readonly mentionIds: readonly string[];
     readonly agentMentionIds?: readonly string[];
+    readonly agentAuthor?: boolean;
     readonly replyToMessageId?: string;
     /** Current author of the reply parent, projected by the server. */
     readonly replyToAuthorId?: string;

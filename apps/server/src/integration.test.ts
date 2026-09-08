@@ -2075,6 +2075,91 @@ describe('monolith integration', () => {
     expect(duplicate.status).toBe(400);
   });
 
+  it('voids parentless continuity when its latest responder is retired', async () => {
+    const peer = 'e'.repeat(64);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Peer','peer')`,
+      [peer],
+    );
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [peer, HUMAN]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
+      [WORKSPACE, peer, ROOM],
+    );
+    const peerExchange = await auth.createDaemonExchange(peer);
+    const peerToken = (await auth.exchangeDaemonToken(peerExchange.exchangeToken))!.daemonToken;
+    const first = '6'.repeat(64);
+    await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: first,
+      text: '@bee Start this exchange.',
+      mentions: [AGENT],
+    });
+    expect(
+      (
+        await daemonOperation('postRoomMessage', {
+          roomId: ROOM,
+          requestId: first,
+          triggerMessageId: first,
+          text: 'Older live answer.',
+        })
+      ).status,
+    ).toBe(200);
+    const handoff = '7'.repeat(64);
+    await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: handoff,
+      text: '@peer Take over this exchange.',
+      mentions: [peer],
+    });
+    expect(
+      (
+        await daemonOperation(
+          'postRoomMessage',
+          { roomId: ROOM, requestId: handoff, triggerMessageId: handoff, text: 'Latest answer.' },
+          peerToken,
+        )
+      ).status,
+    ).toBe(200);
+
+    expect(
+      (await operation('removeAgent', { workspaceId: WORKSPACE, agentId: peer })).status,
+    ).toBe(204);
+    const followUp = '8'.repeat(64);
+    await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: followUp,
+      text: 'Please continue.',
+    });
+    const revived = await daemonOperation('postRoomMessage', {
+      roomId: ROOM,
+      requestId: followUp,
+      triggerMessageId: followUp,
+      text: 'The older agent must remain silent.',
+    });
+    expect(revived.status).toBe(400);
+    await expect(revived.json()).resolves.toEqual({ error: 'turn trigger is invalid for agent' });
+
+    const explicit = '9'.repeat(64);
+    await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: explicit,
+      text: '@bee Please take over.',
+      mentions: [AGENT],
+    });
+    expect(
+      (
+        await daemonOperation('postRoomMessage', {
+          roomId: ROOM,
+          requestId: explicit,
+          triggerMessageId: explicit,
+          text: 'The live agent may answer an explicit request.',
+        })
+      ).status,
+    ).toBe(200);
+  });
+
   it('notifies the direct parent agent even after a later agent answer', async () => {
     const peer = 'd'.repeat(64);
     const parentId = 'e'.repeat(64);

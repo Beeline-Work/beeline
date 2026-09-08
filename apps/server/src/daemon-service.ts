@@ -583,6 +583,7 @@ export class DaemonService {
       text: string;
       mention_ids: string[];
       agent_mention_ids: string[];
+      agent_author: boolean;
       reply_to_message_id: string | null;
       reply_to_author_id: string | null;
       root_message_id: string | null;
@@ -653,6 +654,7 @@ export class DaemonService {
         body: row.text,
         mentionIds: row.mention_ids ?? [],
         agentMentionIds: row.agent_mention_ids ?? [],
+        ...(row.agent_author ? { agentAuthor: true } : {}),
         ...(row.reply_to_message_id ? { replyToMessageId: row.reply_to_message_id } : {}),
         ...(row.reply_to_author_id ? { replyToAuthorId: row.reply_to_author_id } : {}),
         ...(row.root_message_id ? { rootMessageId: row.root_message_id } : {}),
@@ -1092,25 +1094,34 @@ export class DaemonService {
                  AND (
                    (message.reply_to_message_id IS NOT NULL AND reply_parent.author_id=$4) OR
                    (message.reply_to_message_id IS NULL AND $4=(
-                     SELECT answer.author_id
+                     SELECT selected_answer.author_id
                      FROM (
-                       SELECT id,author_id,presentation,mention_ids,request_id,reply_to_message_id,created_at
-                       FROM messages
-                       WHERE room_id=message.room_id AND presentation='message'
-                         AND (${MESSAGE_CURSOR_MS_SQL},id)<(${MESSAGE_CURSOR_MS_SQL.replaceAll('created_at', 'message.created_at')},message.id)
-                       ORDER BY ${MESSAGE_CURSOR_MS_SQL} DESC,id DESC LIMIT 200
-                     ) answer
-                     JOIN identities answer_identity ON answer_identity.id=answer.author_id
-                     LEFT JOIN messages request ON request.id=answer.request_id
-                     LEFT JOIN messages answer_parent ON answer_parent.id=answer.reply_to_message_id
-                     WHERE answer_identity.kind='agent'
-                       AND (
-                         request.author_id=message.author_id OR
-                         answer.mention_ids @> jsonb_build_array(message.author_id) OR
-                         answer_parent.author_id=message.author_id
-                       )
-                       AND (${MESSAGE_CURSOR_MS_SQL.replaceAll('created_at', 'answer.created_at')},answer.id)<(${MESSAGE_CURSOR_MS_SQL.replaceAll('created_at', 'message.created_at')},message.id)
-                     ORDER BY ${MESSAGE_CURSOR_MS_SQL.replaceAll('created_at', 'answer.created_at')} DESC,answer.id DESC LIMIT 1
+                       SELECT answer.author_id
+                       FROM (
+                         SELECT id,author_id,presentation,mention_ids,request_id,reply_to_message_id,created_at
+                         FROM messages
+                         WHERE room_id=message.room_id AND presentation='message'
+                           AND (${MESSAGE_CURSOR_MS_SQL},id)<(${MESSAGE_CURSOR_MS_SQL.replaceAll('created_at', 'message.created_at')},message.id)
+                         ORDER BY ${MESSAGE_CURSOR_MS_SQL} DESC,id DESC LIMIT 200
+                       ) answer
+                       JOIN identities answer_identity ON answer_identity.id=answer.author_id
+                       LEFT JOIN messages request ON request.id=answer.request_id
+                       LEFT JOIN messages answer_parent ON answer_parent.id=answer.reply_to_message_id
+                       WHERE answer_identity.kind='agent'
+                         AND (
+                           request.author_id=message.author_id OR
+                           answer.mention_ids @> jsonb_build_array(message.author_id) OR
+                           answer_parent.author_id=message.author_id
+                         )
+                         AND (${MESSAGE_CURSOR_MS_SQL.replaceAll('created_at', 'answer.created_at')},answer.id)<(${MESSAGE_CURSOR_MS_SQL.replaceAll('created_at', 'message.created_at')},message.id)
+                       ORDER BY ${MESSAGE_CURSOR_MS_SQL.replaceAll('created_at', 'answer.created_at')} DESC,answer.id DESC LIMIT 1
+                     ) selected_answer
+                     WHERE EXISTS(
+                       SELECT 1 FROM memberships selected_membership
+                       WHERE selected_membership.room_id=message.room_id
+                         AND selected_membership.identity_id=selected_answer.author_id
+                         AND selected_membership.removed_at IS NULL
+                     )
                    ))
                  )
                )
@@ -2434,6 +2445,8 @@ const conversationColumns = `SELECT id,author_id,created_at,presentation,text,me
               FROM jsonb_array_elements_text(messages.mention_ids) mention(id)
               JOIN identities mentioned ON mentioned.id=mention.id
               WHERE mentioned.kind='agent') agent_mention_ids,
+        EXISTS(SELECT 1 FROM identities author
+               WHERE author.id=messages.author_id AND author.kind='agent') agent_author,
         reply_to_message_id,
         (SELECT parent.author_id FROM messages parent WHERE parent.id=messages.reply_to_message_id) reply_to_author_id,
         root_message_id,request_id,

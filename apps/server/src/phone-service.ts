@@ -3891,8 +3891,17 @@ export class PhoneService {
     return (
       (
         await this.database.query(
-          `SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
-          [roomId, identityId],
+          `SELECT 1 FROM memberships room_member
+           JOIN rooms room ON room.id=room_member.room_id
+           WHERE room_member.room_id=$1 AND room_member.identity_id=$2
+             AND room_member.removed_at IS NULL
+             AND ($2=$3 OR EXISTS(
+               SELECT 1 FROM memberships workspace_member
+               WHERE workspace_member.workspace_id=room.workspace_id
+                 AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
+                 AND workspace_member.removed_at IS NULL
+             ))`,
+          [roomId, identityId, SYSTEM_IDENTITY_ID],
         )
       ).rowCount > 0
     );

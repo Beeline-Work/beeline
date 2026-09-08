@@ -482,7 +482,6 @@ export async function workspaceSystemLine(
         ...line,
         roomId,
         authorId: SYSTEM_IDENTITY_ID,
-        ...(line.card ? { card: { ...line.card, scope: 'workspace' } } : {}),
       }),
     );
   }

@@ -3,6 +3,7 @@ import { parseGrantDecisionLine } from '@beeline/api-contract/agent-grants';
 import { SCHEDULE_RAN_VERB } from '@beeline/api-contract/scheduled-prompts';
 import type { SystemEvent } from '@beeline/api-contract/phone';
 import { backfillSystemEventKinds, migrate, type SqlDatabase } from './database.js';
+import { PhoneService } from './phone-service.js';
 import { PgliteDatabase } from './test-support.js';
 import { composeSystemLine, systemLine, workspaceSystemLine } from './system-line.js';
 
@@ -228,6 +229,11 @@ describe('workspace system lines', () => {
       HUMAN,
     ]);
     await database.query(
+      `UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`,
+      [roomId, HUMAN],
+    );
+    expect(await new PhoneService(database, 'http://local.test').canReadRoom(roomId, HUMAN)).toBe(false);
+    await database.query(
       `UPDATE memberships SET removed_at=NULL WHERE workspace_id=$1 AND identity_id=$2 AND room_id IS NULL`,
       [WORKSPACE, HUMAN],
     );
@@ -244,6 +250,7 @@ describe('workspace system lines', () => {
       [roomId, HUMAN],
     );
     expect(restored.rows).toEqual([{ removed_at: null }]);
+    expect(await new PhoneService(database, 'http://local.test').canReadRoom(roomId, HUMAN)).toBe(true);
     expect(
       (
         await database.query(`SELECT 1 FROM messages WHERE room_id=$1`, [roomId])

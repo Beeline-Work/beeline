@@ -240,6 +240,37 @@ describe('the per-sender Room response rule', () => {
     ).toBe(true);
   });
 
+  it('rebuilds in-window continuity after restart, while an aged-out exchange needs a tag or reply', () => {
+    const restarted = rule();
+    restarted.observeAll([
+      message({ id: 'agent-answer', authorId: AGENT_HEX, requestAuthorId: CAPTAIN }),
+      ...Array.from({ length: 199 }, (_, index) =>
+        message({ id: `interjection-${index}`, authorId: PEER }),
+      ),
+    ]);
+    expect(restarted.continues(message({ id: 'within-window' }), AGENT_HEX)).toBe(true);
+
+    const agedOut = rule();
+    agedOut.observeAll(
+      Array.from({ length: 200 }, (_, index) => message({ id: `later-${index}`, authorId: PEER })),
+    );
+    const unaddressed = message({ id: 'aged-out' });
+    expect(agedOut.continues(unaddressed, AGENT_HEX)).toBe(false);
+    expect(inboxItemTriggersTurn(message({ id: 'tagged', mentionIds: [AGENT_HEX] }), AGENT_HEX)).toBe(
+      true,
+    );
+    expect(
+      agedOut.continues(
+        message({
+          id: 'reply',
+          replyToMessageId: 'aged-out-agent-answer',
+          replyToAuthorId: AGENT_HEX,
+        }),
+        AGENT_HEX,
+      ),
+    ).toBe(true);
+  });
+
   it('keeps an unaddressed new exchange silent and selects at most one prior responder', () => {
     const responseRule = rule();
     const first = message({ id: 'first' });
@@ -255,7 +286,6 @@ describe('the per-sender Room response rule', () => {
 
   it('uses the reply parent when present and stops agent continuity at the hop cap', () => {
     const responseRule = rule();
-    responseRule.noteReply(AGENT_HEX, CAPTAIN);
     expect(
       responseRule.continues(
         message({ id: 'threaded', replyToMessageId: 'parent', replyToAuthorId: AGENT_HEX }),

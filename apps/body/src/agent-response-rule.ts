@@ -1,5 +1,7 @@
 import { AGENT_TO_AGENT_HOP_CAP } from '@beeline/api-contract/daemon';
 
+export const INBOX_DEDUPLICATION_LIMIT = 10_000;
+
 export interface ResponseRuleMessage {
   readonly id: string;
   readonly authorId: string;
@@ -28,6 +30,8 @@ export class AgentResponseRule {
   observe(item: ResponseRuleMessage): void {
     if (this.observedIds.has(item.id)) return;
     this.observedIds.add(item.id);
+    while (this.observedIds.size > INBOX_DEDUPLICATION_LIMIT)
+      this.observedIds.delete(this.observedIds.values().next().value!);
     if (item.type !== 'message' || !this.agentIds.has(item.authorId)) return;
 
     const addressed = new Set(item.mentionIds);
@@ -46,10 +50,10 @@ export class AgentResponseRule {
   /** Whether trigger 2 applies. Explicit mention handling stays with each intake loop. */
   continues(item: ResponseRuleMessage, agentId: string): boolean {
     if (item.type !== 'message' || item.authorId === agentId) return false;
-    if (this.lastAgentBySender.get(item.authorId) !== agentId) return false;
-    if (item.replyToMessageId) return item.replyToAuthorId === agentId;
     if (this.agentIds.has(item.authorId) && (item.agentHopCount ?? 0) >= AGENT_TO_AGENT_HOP_CAP)
       return false;
+    if (item.replyToMessageId) return item.replyToAuthorId === agentId;
+    if (this.lastAgentBySender.get(item.authorId) !== agentId) return false;
     return true;
   }
 }

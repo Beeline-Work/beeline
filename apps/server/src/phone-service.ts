@@ -53,7 +53,7 @@ import {
   parseAgentAccessPolicy,
   senderMayAddressAgent,
 } from '@beeline/api-contract/agent-access';
-import type { SqlDatabase } from './database.js';
+import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
 import type { LiveEvent, LiveHub } from './live.js';
 import type { GitHubOperations } from './github-operations.js';
 import { collapsePermissionCards } from '@beeline/push-gateway/projection';
@@ -2325,7 +2325,7 @@ export class PhoneService {
                request.author_id=$2 OR answer.mention_ids @> jsonb_build_array($2::text) OR
                answer_parent.author_id=$2
              )
-           ORDER BY answer.created_at DESC,answer.id DESC LIMIT 1`,
+           ORDER BY ${MESSAGE_CURSOR_MS_SQL.replaceAll('created_at', 'answer.created_at')} DESC,answer.id DESC LIMIT 1`,
           [roomId, author],
         )
       ).rows[0]?.author_id;

@@ -15,7 +15,7 @@ import {
   type McpServerWire,
   type PromptResult,
 } from './acp.js';
-import { AgentResponseRule } from './agent-response-rule.js';
+import { AgentResponseRule, INBOX_DEDUPLICATION_LIMIT } from './agent-response-rule.js';
 import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
 import { isSenderPermitted, LEGACY_ACCESS_POLICY } from './access-policy.js';
@@ -1277,7 +1277,7 @@ export class MonolithRoomTurnLoop {
           for (const item of delivered) {
             if (processedInboxIds.has(item.id)) continue;
             processedInboxIds.add(item.id);
-            while (processedInboxIds.size > 10_000)
+            while (processedInboxIds.size > INBOX_DEDUPLICATION_LIMIT)
               processedInboxIds.delete(processedInboxIds.values().next().value!);
             const triggers = inboxItemTriggersTurn(
               item,

@@ -13,7 +13,7 @@ import {
   type PromptResult,
   type ToolCallEntry,
 } from './acp.js';
-import { AgentResponseRule } from './agent-response-rule.js';
+import { AgentResponseRule, INBOX_DEDUPLICATION_LIMIT } from './agent-response-rule.js';
 import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
 import {
@@ -1194,7 +1194,7 @@ export class MonolithCornerTurnLoop {
           for (const item of delivered) {
             if (processedInboxIds.has(item.id)) continue;
             processedInboxIds.add(item.id);
-            while (processedInboxIds.size > 10_000)
+            while (processedInboxIds.size > INBOX_DEDUPLICATION_LIMIT)
               processedInboxIds.delete(processedInboxIds.values().next().value!);
             if (item.type === 'message') {
               this.noteCarrier(item.authorId);

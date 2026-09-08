@@ -1072,8 +1072,8 @@ export class DaemonService {
                        answer.mention_ids @> jsonb_build_array(message.author_id) OR
                        answer_parent.author_id=message.author_id
                      )
-                     AND (answer.created_at,answer.id)<(message.created_at,message.id)
-                   ORDER BY answer.created_at DESC,answer.id DESC LIMIT 1
+                     AND (${MESSAGE_CURSOR_MS_SQL.replaceAll('created_at', 'answer.created_at')},answer.id)<(${MESSAGE_CURSOR_MS_SQL.replaceAll('created_at', 'message.created_at')},message.id)
+                   ORDER BY ${MESSAGE_CURSOR_MS_SQL.replaceAll('created_at', 'answer.created_at')} DESC,answer.id DESC LIMIT 1
                  )
                )
              )`,

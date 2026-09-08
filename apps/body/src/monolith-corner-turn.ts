@@ -172,9 +172,7 @@ function toolArguments(call: ToolCallEntry): { command?: string; input?: string 
 }
 
 function toolCallKey(call: ToolCallEntry, index: number): string {
-  return call.id
-    ? `id-${createHash('sha256').update(call.id).digest('hex')}`
-    : `tool-${index}`;
+  return call.id ? `id-${createHash('sha256').update(call.id).digest('hex')}` : `tool-${index}`;
 }
 
 function toolCallSettled(call: ToolCallEntry): boolean {

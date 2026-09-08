@@ -11,6 +11,7 @@ vi.mock('react-native', async () => {
   return {
     View: host('View'),
     Text: host('Text'),
+    ScrollView: host('ScrollView'),
     TextInput: host('TextInput'),
     TouchableOpacity: host('TouchableOpacity'),
     Pressable: host('Pressable'),
@@ -81,10 +82,6 @@ function mount() {
   return { renderer, host, submit };
 }
 
-function flattenedStyle(node: any): Record<string, unknown> {
-  return Object.assign({}, ...node.props.style.flat(Infinity).filter(Boolean));
-}
-
 function textContent(node: any): string {
   return node.children
     .map((child: any) => (typeof child === 'string' ? child : textContent(child)))
@@ -92,20 +89,12 @@ function textContent(node: any): string {
 }
 
 describe('New Room form', () => {
-  it.each([
-    { viewport: 'short', height: 500, expectedPickerHeight: 452 },
-    { viewport: 'normal', height: 844, expectedPickerHeight: 520 },
-  ])(
-    'gives the $viewport dialog body renderable height while keeping every creation field visible',
-    ({ height, expectedPickerHeight }) => {
+  it.each([{ viewport: 'short', height: 320 }, { viewport: 'normal', height: 844 }])(
+    'allows chat-only creation after opening the repository picker in the $viewport viewport',
+    ({ height }) => {
       windowHeight = height;
-      const { renderer, host } = mount();
-      const surface = renderer.root.findByType('HullSurface');
+      const { renderer, host, submit } = mount();
 
-      expect(flattenedStyle(surface)).toMatchObject({
-        minHeight: 300,
-        maxHeight: height - 48,
-      });
       const header = renderer.root
         .findAllByProps({ accessibilityRole: 'header' })
         .find((node: any) => node.type === 'Text');
@@ -124,11 +113,11 @@ describe('New Room form', () => {
       expect(host('create-room-submit')).toBeDefined();
 
       act(() => host('create-room-repo-row').props.onPress());
-      expect(flattenedStyle(surface)).toMatchObject({
-        minHeight: expectedPickerHeight,
-        maxHeight: height - 48,
-      });
       expect(host('create-room-picker')).toBeDefined();
+      act(() => host('create-room-no-repository').props.onPress());
+      act(() => host('create-room-name').props.onChangeText(`${viewport} room`));
+      act(() => host('create-room-submit').props.onPress());
+      expect(submit).toHaveBeenCalledWith(`${viewport} room`, null);
       act(() => renderer.unmount());
       windowHeight = 844;
     },

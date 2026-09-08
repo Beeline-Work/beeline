@@ -342,7 +342,7 @@ describe('daemon API client against the local monolith', () => {
     database = new PgliteDatabase();
     await migrate(database);
     await database.query(
-      `INSERT INTO identities(id,kind,name,github_subject) VALUES($1,'human','Owner','owner'),($2,'agent','Bee',NULL)`,
+      `INSERT INTO identities(id,kind,name,github_subject,handle) VALUES($1,'human','Owner','owner',NULL),($2,'agent','Bee',NULL,'bee')`,
       [HUMAN, AGENT],
     );
     await database.query(
@@ -830,7 +830,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       {
         roomId: ROOM,
         messageId: 'f'.repeat(64),
-        text: 'Who are you?',
+        text: '@bee Who are you?',
         mentions: [],
       },
       HUMAN,

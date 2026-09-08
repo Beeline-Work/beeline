@@ -86,7 +86,9 @@ describe('live streaming turn', () => {
       pubkey: agent,
       isAgentAuthor: true,
       isAgentActivity: true,
-      activity: [{ kind: 'tool' as const, title: 'Bash', toolKind: 'execute', command: id, status }],
+      activity: [
+        { kind: 'tool' as const, title: 'Bash', toolKind: 'execute', command: id, status },
+      ],
     });
     const [group, ...rest] = foldSettledActivityRuns([
       call('t1', 'completed'),
@@ -115,9 +117,9 @@ describe('live streaming turn', () => {
   it('keeps settled tool rows collapsed and expandable after the turn completes (#804)', () => {
     const renderer = render(<ActivityTimeline active={false} items={TOOLS} />);
     // Collapsed by default: one compact activity row, no individual calls.
-    expect(renderer.root.findByProps({ testID: 'corner-tool-summary' }).props.children[0].props.children).toBe(
-      '2 TOOL CALLS · 1 FAILED',
-    );
+    expect(
+      renderer.root.findByProps({ testID: 'corner-tool-summary' }).props.children[0].props.children,
+    ).toBe('2 TOOL CALLS · 1 FAILED');
     expect(renderer.root.findAllByProps({ testID: 'corner-tool-row-read' })).toHaveLength(0);
     expect(
       renderer.root.findAll((node: { props: { testID?: string } }) =>
@@ -170,7 +172,9 @@ describe('live streaming turn', () => {
     expect(renderer.root.findByProps({ testID: 'activity-message-draft' }).props.markdown).toBe(
       'The answer is arriving.',
     );
-    expect(renderer.root.findByProps({ testID: 'corner-tool-summary' }).props.accessibilityState).toEqual({
+    expect(
+      renderer.root.findByProps({ testID: 'corner-tool-summary' }).props.accessibilityState,
+    ).toEqual({
       busy: true,
       expanded: false,
     });
@@ -193,7 +197,9 @@ describe('live streaming turn', () => {
 
     act(() => renderer.root.findByProps({ testID: 'corner-tool-summary' }).props.onPress());
     expect(JSON.stringify(renderer.toJSON())).toContain('project task');
-    expect(renderer.root.findByProps({ testID: 'corner-tool-row-old' }).props.onPress).toBeUndefined();
+    expect(
+      renderer.root.findByProps({ testID: 'corner-tool-row-old' }).props.onPress,
+    ).toBeUndefined();
     expect(
       renderer.root.findAll((node: { props: { testID?: string } }) =>
         node.props.testID?.startsWith('corner-tool-row-detail-'),
@@ -310,13 +316,23 @@ describe('live streaming turn', () => {
     const live = render(
       <ActivityTimeline
         active
-        items={[{ kind: 'tool', id: 'live', title: 'Bash', toolKind: 'execute', command: 'npm run build' }]}
+        items={[
+          {
+            kind: 'tool',
+            id: 'live',
+            title: 'Bash',
+            toolKind: 'execute',
+            command: 'npm run build',
+          },
+        ]}
       />,
     );
     act(() => live.root.findByProps({ testID: 'corner-tool-summary' }).props.onPress());
     const running = live.root.findByProps({ testID: 'activity-verdict-live' });
     expect(running.props.children).toBe('running');
-    expect(running.props.style).toContainEqual(expect.objectContaining({ color: groknight.accent }));
+    expect(running.props.style).toContainEqual(
+      expect.objectContaining({ color: groknight.accent }),
+    );
   });
 
   it('prints one line per call — a verb, the command, and no restatement (C88)', () => {
@@ -340,10 +356,12 @@ describe('live streaming turn', () => {
     expect(rendered).toContain('ls -la node_modules/.bin');
     // A narrow screen cuts where the data cap does: the middle.
     expect(
-      renderer.root.findByProps({ testID: 'corner-tool-row-shell' }).findAll(
-        (node: { type: unknown; props: { ellipsizeMode?: string } }) =>
-          node.type === 'Text' && node.props.ellipsizeMode === 'middle',
-      ),
+      renderer.root
+        .findByProps({ testID: 'corner-tool-row-shell' })
+        .findAll(
+          (node: { type: unknown; props: { ellipsizeMode?: string } }) =>
+            node.type === 'Text' && node.props.ellipsizeMode === 'middle',
+        ),
     ).toHaveLength(1);
     // No `Tool:` / `Result:` / `Command:` stack, and the harness title never
     // stands over a command it does not describe.
@@ -352,7 +370,9 @@ describe('live streaming turn', () => {
     expect(rendered).not.toContain('Command:');
     // A transport envelope is not output: the row has nothing to open onto.
     expect(rendered).not.toContain('terminalId');
-    expect(renderer.root.findByProps({ testID: 'corner-tool-row-shell' }).props.onPress).toBeUndefined();
+    expect(
+      renderer.root.findByProps({ testID: 'corner-tool-row-shell' }).props.onPress,
+    ).toBeUndefined();
   });
 
   it('opens a failed call by itself and counts it in the fold (C88)', () => {
@@ -362,13 +382,11 @@ describe('live streaming turn', () => {
     ).toBe('2 TOOL CALLS · 1 FAILED');
     act(() => renderer.root.findByProps({ testID: 'corner-tool-summary' }).props.onPress());
     expect(renderer.root.findByProps({ testID: 'corner-tool-row-detail-failure' })).toBeTruthy();
-    expect(
-      renderer.root.findAllByProps({ testID: 'corner-tool-row-detail-read' }),
-    ).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'corner-tool-row-detail-read' })).toHaveLength(0);
     expect(JSON.stringify(renderer.toJSON())).toContain('command not found: pnpm');
   });
 
-  it('caps an opened call\'s output and keeps the rest one tap away (C88)', () => {
+  it("caps an opened call's output and keeps the rest one tap away (C88)", () => {
     const renderer = render(
       <ActivityTimeline
         items={[
@@ -391,7 +409,7 @@ describe('live streaming turn', () => {
     expect(JSON.stringify(renderer.toJSON())).toContain('line 9');
   });
 
-  it('renders the settled row\'s byline — IdentityMark + name + kind + stamp — on the live draft', () => {
+  it("renders the settled row's byline — IdentityMark + name + kind + stamp — on the live draft", () => {
     // Captain report C42: the streamed draft lane's byline must be exactly
     // the settled message byline (`Ledger.LedgerBylineView`), so the agent
     // triangle is present and nothing changes visually when the draft
@@ -458,5 +476,4 @@ describe('live streaming turn', () => {
     act(() => renderer.root.findByProps({ testID: 'corner-tool-row-deploy' }).props.onPress());
     expect(JSON.stringify(renderer.toJSON())).toContain("at Alex's request");
   });
-
 });

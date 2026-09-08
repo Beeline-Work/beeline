@@ -1392,13 +1392,7 @@ export class DaemonService {
             `SELECT id,created_at FROM messages
              WHERE id=$1 AND room_id=$2 AND author_id=$3 AND request_id=$4
                AND presentation='activity' AND activity=$5::jsonb`,
-            [
-              messageId,
-              input.roomId,
-              agentId,
-              input.requestId,
-              JSON.stringify(input.activity),
-            ],
+            [messageId, input.roomId, agentId, input.requestId, JSON.stringify(input.activity)],
           )
         ).rows[0];
       if (!row) throw new Error('corner activity ID conflicts with another message');

@@ -709,7 +709,13 @@ describe('corner close-request polling cadence', () => {
       }
       if (name === 'getRoomConversation') {
         return {
-          items: [{ type: 'message', authorId: stored('11'.repeat(32), 'Bee').publicKey, body: 'Already working.' }],
+          items: [
+            {
+              type: 'message',
+              authorId: stored('11'.repeat(32), 'Bee').publicKey,
+              body: 'Already working.',
+            },
+          ],
           cursor: 'latest',
         };
       }
@@ -859,7 +865,13 @@ describe('corner close-request polling cadence', () => {
       }
       if (name === 'getRoomConversation') {
         return {
-          items: [{ type: 'message', authorId: stored('11'.repeat(32), 'Bee').publicKey, body: 'Already working.' }],
+          items: [
+            {
+              type: 'message',
+              authorId: stored('11'.repeat(32), 'Bee').publicKey,
+              body: 'Already working.',
+            },
+          ],
           cursor: 'latest',
         };
       }
@@ -1015,7 +1027,13 @@ describe('corner close-request polling cadence', () => {
       }
       if (name === 'getRoomConversation') {
         return {
-          items: [{ type: 'message', authorId: stored('11'.repeat(32), 'Bee').publicKey, body: 'Already working.' }],
+          items: [
+            {
+              type: 'message',
+              authorId: stored('11'.repeat(32), 'Bee').publicKey,
+              body: 'Already working.',
+            },
+          ],
           cursor: 'latest',
         };
       }
@@ -1653,14 +1671,12 @@ describe('corner turn failure receipt', () => {
       'ACP session/prompt timed out after 120000ms of inactivity GH_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz',
     );
     failure.stack = `${failure.message}\n    at AcpClient.request (/opt/beeline/acp.js:984:20)`;
-    vi.spyOn(acp, 'sessionPrompt')
-      .mockRejectedValueOnce(failure)
-      .mockResolvedValue({
-        stopReason: 'end_turn',
-        updates: [],
-        agentText: 'Recovered.',
-        toolCalls: [],
-      });
+    vi.spyOn(acp, 'sessionPrompt').mockRejectedValueOnce(failure).mockResolvedValue({
+      stopReason: 'end_turn',
+      updates: [],
+      agentText: 'Recovered.',
+      toolCalls: [],
+    });
     const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
     const running = new MonolithCornerTurnLoop({
       cornerId: 'corner-id',

@@ -868,7 +868,10 @@ export class MonolithCornerTurnLoop {
                 finalReply: string,
               ): Promise<void> => {
                 await this.activityTail;
-                if (lastNarratedToolCall && pendingToolNarrations.get(lastNarratedToolCall) === finalReply)
+                if (
+                  lastNarratedToolCall &&
+                  pendingToolNarrations.get(lastNarratedToolCall) === finalReply
+                )
                   pendingToolNarrations.delete(lastNarratedToolCall);
                 publishToolCalls(calls, false);
                 await this.activityTail;
@@ -940,7 +943,8 @@ export class MonolithCornerTurnLoop {
                 }
               }
               let reply = durableReplyText(result.agentText);
-              if (!reply && explained?.recoveredText) reply = durableReplyText(explained.recoveredText);
+              if (!reply && explained?.recoveredText)
+                reply = durableReplyText(explained.recoveredText);
               await flushToolCalls(result.toolCalls, reply);
               // A refusal the operator cannot read is a refusal that happens twice.
               for (const call of result.toolCalls) {

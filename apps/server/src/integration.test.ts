@@ -1675,9 +1675,7 @@ describe('monolith integration', () => {
           roomId: cornerId,
           requestId: 'tool-only-turn',
           cornerActivityKey: '1:tool-0',
-          activity: [
-            { kind: 'tool', title: 'Read package.json', operation: 'read', status: 'ok' },
-          ],
+          activity: [{ kind: 'tool', title: 'Read package.json', operation: 'read', status: 'ok' }],
         })
       ).status,
     ).toBe(200);
@@ -1698,8 +1696,9 @@ describe('monolith integration', () => {
         .filter((message) => message.presentation === 'message')
         .map((message) => message.text),
       ...(reopened.toolRows ?? []).flatMap((message) =>
-        (message.activity ?? [])
-          .flatMap((activity) => (activity.kind === 'output' ? [activity.text] : [])),
+        (message.activity ?? []).flatMap((activity) =>
+          activity.kind === 'output' ? [activity.text] : [],
+        ),
       ),
     ];
     expect(durableTexts).toEqual(['Inspecting']);

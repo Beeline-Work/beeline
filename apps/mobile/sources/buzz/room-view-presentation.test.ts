@@ -336,7 +336,14 @@ describe('Room view presentation', () => {
     const one = foldSettledActivityRuns(display(six));
     expect(one).toHaveLength(1);
     expect(one[0]).toMatchObject({ id: 't1', timestamp: 1, isAgentActivity: true, pubkey: agent });
-    expect(one[0].activity?.map((item) => item.command)).toEqual(['t1', 't2', 't3', 't4', 't5', 't6']);
+    expect(one[0].activity?.map((item) => item.command)).toEqual([
+      't1',
+      't2',
+      't3',
+      't4',
+      't5',
+      't6',
+    ]);
     expect(one[0].activity?.filter((item) => item.status === 'failed')).toHaveLength(4);
 
     const steer: RoomViewMessage = {
@@ -346,9 +353,7 @@ describe('Room view presentation', () => {
       author: { pubkey: human, kind: 'human', name: 'Ann' },
       presentation: 'message',
     };
-    const split = foldSettledActivityRuns(
-      display([...six.slice(0, 3), steer, ...six.slice(3)]),
-    );
+    const split = foldSettledActivityRuns(display([...six.slice(0, 3), steer, ...six.slice(3)]));
     expect(split.map((row) => [row.id, row.activity?.length ?? 0])).toEqual([
       ['t1', 3],
       ['steer', 0],
@@ -377,7 +382,11 @@ describe('Room view presentation', () => {
       agentMessageDraft: 'Drafting…',
     };
     const displayed = display(six);
-    const withDraft = foldSettledActivityRuns([...displayed.slice(0, 3), draft, ...displayed.slice(3)]);
+    const withDraft = foldSettledActivityRuns([
+      ...displayed.slice(0, 3),
+      draft,
+      ...displayed.slice(3),
+    ]);
     expect(withDraft.map((row) => [row.id, row.activity?.length ?? 0])).toEqual([
       ['t1', 6],
       ['live-turn:req', 0],

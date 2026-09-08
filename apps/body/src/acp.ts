@@ -1289,13 +1289,7 @@ export class AcpClient extends EventEmitter {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(
-          new AcpRequestTimeoutError(
-            method,
-            timeoutMs,
-            this.stderrTail,
-            Boolean(onStart),
-            detail,
-          ),
+          new AcpRequestTimeoutError(method, timeoutMs, this.stderrTail, Boolean(onStart), detail),
         );
       }, timeoutMs);
       this.pending.set(id, {

@@ -1536,7 +1536,7 @@ describe('meaningfulHarnessStderr', () => {
   it('names an inline image payload in the timeout, and nothing extra for a text turn', () => {
     expect(promptPayloadNote('just text')).toBe('');
     expect(promptPayloadNote([{ type: 'text', text: 'hi' }])).toBe('');
-    const oneMegabyte = 'A'.repeat(4 * 1024 * 1024 / 3 * 3);
+    const oneMegabyte = 'A'.repeat(((4 * 1024 * 1024) / 3) * 3);
     expect(
       promptPayloadNote([
         { type: 'text', text: 'hi' },

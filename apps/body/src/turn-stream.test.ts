@@ -31,9 +31,7 @@ function gatedRecorder() {
       writes.push({ name, input });
       if (name !== 'postAgentDraft') return Promise.resolve({ id: 'write-id', createdAt: 1 });
       return new Promise((resolve, reject) => {
-        gates.push((error) =>
-          error ? reject(error) : resolve({ id: 'write-id', createdAt: 1 }),
-        );
+        gates.push((error) => (error ? reject(error) : resolve({ id: 'write-id', createdAt: 1 })));
       });
     }),
   } as unknown as DaemonApiClient;

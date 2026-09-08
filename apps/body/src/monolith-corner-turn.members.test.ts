@@ -22,6 +22,7 @@ const HELPER_KEY = '33'.repeat(32);
 const OPENER = identityFromKey(OPENER_KEY, 'Codex').publicKey;
 const HELPER = identityFromKey(HELPER_KEY, 'Goosy').publicKey;
 const HUMAN = '22'.repeat(32);
+const OTHER_HUMAN = '44'.repeat(32);
 
 const roots: string[] = [];
 const execFileAsync = promisify(execFile);
@@ -42,11 +43,24 @@ async function runCorner(input: {
   agentKey: string;
   agentName: string;
   isOpener: boolean;
-  message?: { body: string; mentionIds: string[] };
+  message?: {
+    body: string;
+    mentionIds: string[];
+    replyToMessageId?: string;
+    replyToAuthorId?: string;
+    agentHopCount?: number;
+  };
   /** A server check note in the same poll, to prove one turn per check state. */
   checkNote?: boolean;
   /** Durable replies already in the corner, by author. */
-  history?: { authorId: string; body: string }[];
+  history?: {
+    authorId: string;
+    body: string;
+    mentionIds?: string[];
+    requestAuthorId?: string;
+    replyToMessageId?: string;
+    replyToAuthorId?: string;
+  }[];
 }): Promise<{ prompts: string[] }> {
   const root = await mkdtemp(join(tmpdir(), 'beeline-corner-members-'));
   roots.push(root);
@@ -89,6 +103,7 @@ async function runCorner(input: {
           { identityId: OPENER, kind: 'agent', name: 'Codex', role: 'member' },
           { identityId: HELPER, kind: 'agent', name: 'Goosy', role: 'member' },
           { identityId: HUMAN, kind: 'human', name: 'Captain', role: 'owner' },
+          { identityId: OTHER_HUMAN, kind: 'human', name: 'Observer', role: 'member' },
         ],
       };
     }
@@ -101,7 +116,10 @@ async function runCorner(input: {
           createdAt: 1,
           type: 'message',
           body: entry.body,
-          mentionIds: [],
+          mentionIds: entry.mentionIds ?? [],
+          ...(entry.requestAuthorId ? { requestAuthorId: entry.requestAuthorId } : {}),
+          ...(entry.replyToMessageId ? { replyToMessageId: entry.replyToMessageId } : {}),
+          ...(entry.replyToAuthorId ? { replyToAuthorId: entry.replyToAuthorId } : {}),
           attachments: [],
         })),
         cursor: 'latest',
@@ -121,6 +139,15 @@ async function runCorner(input: {
                     type: 'message',
                     body: input.message.body,
                     mentionIds: input.message.mentionIds,
+                    ...(input.message.replyToMessageId
+                      ? { replyToMessageId: input.message.replyToMessageId }
+                      : {}),
+                    ...(input.message.replyToAuthorId
+                      ? { replyToAuthorId: input.message.replyToAuthorId }
+                      : {}),
+                    ...(input.message.agentHopCount !== undefined
+                      ? { agentHopCount: input.message.agentHopCount }
+                      : {}),
                     attachments: [],
                   },
                 ]
@@ -269,15 +296,43 @@ describe('a corner carried by its members', () => {
     expect(handedOver.prompts).toEqual([]);
   });
 
-  it('leaves an unaddressed message to the opener, as every single-agent corner has', async () => {
+  it('continues only the agent already conversing with this sender', async () => {
     const opener = await runCorner({
       agentKey: OPENER_KEY,
       agentName: 'Codex',
       isOpener: true,
       message: { body: 'please continue', mentionIds: [] },
-      history: [{ authorId: OPENER, body: 'Started on it.' }],
+      history: [
+        { authorId: OPENER, body: 'Started on it.', requestAuthorId: HUMAN },
+        { authorId: OTHER_HUMAN, body: 'One side observation.' },
+      ],
     });
     expect(opener.prompts).toHaveLength(1);
     expect(opener.prompts[0]).toContain('please continue');
+
+    const helper = await runCorner({
+      agentKey: HELPER_KEY,
+      agentName: 'Goosy',
+      isOpener: false,
+      message: { body: 'please continue', mentionIds: [] },
+      history: [
+        { authorId: OPENER, body: 'Started on it.', requestAuthorId: HUMAN },
+        { authorId: OTHER_HUMAN, body: 'One side observation.' },
+      ],
+    });
+    expect(helper.prompts).toEqual([]);
+  });
+
+  it('keeps an unaddressed message silent when its sender has no active exchange', async () => {
+    const opener = await runCorner({
+      agentKey: OPENER_KEY,
+      agentName: 'Codex',
+      isOpener: true,
+      message: { body: 'anyone around?', mentionIds: [] },
+      history: [
+        { authorId: OPENER, body: 'Answered somebody else.', requestAuthorId: OTHER_HUMAN },
+      ],
+    });
+    expect(opener.prompts).toEqual([]);
   });
 });

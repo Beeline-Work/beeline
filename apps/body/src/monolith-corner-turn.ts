@@ -13,6 +13,7 @@ import {
   type PromptResult,
   type ToolCallEntry,
 } from './acp.js';
+import { AgentResponseRule } from './agent-response-rule.js';
 import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
 import {
@@ -58,6 +59,7 @@ import {
 import type { AgentRuntimeRecord } from './runtime.js';
 import { runtimeIdentity } from './runtime.js';
 import { MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE, SOUL_HOUSE_RULE } from './response-directives.js';
+import { roomPrincipalMayAddressAgent } from './monolith-room-turn.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
 import { WarmTranscript } from './warm-transcript.js';
 import { withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
@@ -317,7 +319,9 @@ export class MonolithCornerTurnLoop {
   private memberNames = new Map<string, string>();
   /** Agent identities in this Workspace, so a mention can be told from a human's. */
   private agentMembers = new Set<string>();
-  /** The member agent that answered in this corner last (`carriesCorner`). */
+  /** Per-sender continuity, shared in shape with top-level Room intake. */
+  private readonly responseRule = new AgentResponseRule();
+  /** The member agent that owns corner-wide lifecycle facts such as checks. */
   private carrier?: string;
   /** The last server check state that started a turn; the same state never starts another. */
   private lastChecksState?: CornerChecksState;
@@ -368,6 +372,7 @@ export class MonolithCornerTurnLoop {
     this.agentMembers = new Set(
       roster.members.filter((member) => member.kind === 'agent').map((member) => member.identityId),
     );
+    this.responseRule.setAgents(this.agentMembers);
     return roster;
   }
 
@@ -979,7 +984,12 @@ export class MonolithCornerTurnLoop {
               // before a tool call still lands its closing message. A reply that
               // only restates the server's own check notes says nothing new, and
               // that turn settles through its receipt instead.
-              await trace.measure('publish', () => stream.settle(spoken(reply)));
+              const durableReply = spoken(reply);
+              await trace.measure('publish', () =>
+                stream.settle(durableReply, requestedById ? { triggerMessageId: requestId } : {}),
+              );
+              if (durableReply && requestedById)
+                this.responseRule.noteReply(this.agent.publicKey, requestedById);
             },
             { priority: 'interactive', roomKey: cornerId },
           );
@@ -1039,23 +1049,16 @@ export class MonolithCornerTurnLoop {
   }
 
   /**
-   * Whether a human message in this corner is addressed to THIS agent.
+   * Whether a message in this corner is addressed to THIS agent.
    *
    * A corner now runs like a Room — every member agent polls it — so an
-   * unrouted message would start one turn per member on one branch. A mention
-   * routes: the mentioned agent answers and nobody else. A message that names
-   * no agent at all keeps the old behaviour and falls to the opener, which is
-   * every single-agent corner ever opened.
+   * A server-resolved mention always routes to its agent. Otherwise the one
+   * agent already exchanging messages with this exact sender continues; the
+   * lifecycle carrier is deliberately not a conversational fallback.
    */
-  private async addressesThisAgent(item: {
-    readonly mentionIds: readonly string[];
-  }): Promise<boolean> {
+  private addressesThisAgent(item: InboxItem): boolean {
     if (item.mentionIds.includes(this.agent.publicKey)) return true;
-    if (!item.mentionIds.length) return this.carriesCorner();
-    await this.roster().catch(() => undefined);
-    // Humans naming other humans is not a hand-off; the corner's carrier still
-    // answers it.
-    return item.mentionIds.some((id) => this.agentMembers.has(id)) ? false : this.carriesCorner();
+    return this.responseRule.continues(item, this.agent.publicKey);
   }
 
   /**
@@ -1141,6 +1144,7 @@ export class MonolithCornerTurnLoop {
     const history = await api.execute('getRoomConversation', { roomId: cornerId, limit: 200 });
     // Who is carrying this corner: the member agent that answered in it last.
     await this.roster().catch(() => undefined);
+    this.responseRule.observeAll(history.items);
     for (const item of history.items) if (item.type === 'message') this.noteCarrier(item.authorId);
     const durableAgentReplies = history.items.filter(
       (item) =>
@@ -1195,12 +1199,18 @@ export class MonolithCornerTurnLoop {
             if (item.type === 'message') {
               this.noteCarrier(item.authorId);
               if (item.authorId === this.agent.publicKey) continue;
-              if (!(await this.addressesThisAgent(item))) continue;
+              const addressed = this.addressesThisAgent(item);
+              this.responseRule.observe(item);
+              if (!addressed) continue;
               const authority = await api.execute('getRoomAuthority', {
                 roomId: cornerId,
                 principalId: item.authorId,
               });
-              if (!authority.member || authority.principalKind !== 'human') continue;
+              const humanPermitted =
+                authority.principalKind === 'human'
+                  ? await this.currentPrincipalCanDrive(this.options.workspaceId, item.authorId)
+                  : false;
+              if (!roomPrincipalMayAddressAgent(authority, humanPermitted)) continue;
               await this.prompt(item.id, item.body, item.attachments, item.authorId);
               pollWithoutWait = true;
               continue;

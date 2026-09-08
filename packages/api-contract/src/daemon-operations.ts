@@ -8,6 +8,9 @@ import type {
 import type { CornerLifecycleView } from './phone-types.js';
 import type { RoomScheduleCadence } from './phone-operations.js';
 
+/** Maximum number of consecutive agent-authored turns in one Room exchange. */
+export const AGENT_TO_AGENT_HOP_CAP = 3;
+
 export type CreateAgentScheduleInput = AgentRoomInput & {
   /** Delivered as a creator-authored Room mention to this agent on every run. */
   readonly prompt: string;
@@ -203,8 +206,14 @@ export type RoomInboxResult = {
     /** Server-validated addressing and reply metadata needed by Room intake. */
     readonly mentionIds: readonly string[];
     readonly replyToMessageId?: string;
+    /** Current author of the reply parent, projected by the server. */
+    readonly replyToAuthorId?: string;
     readonly rootMessageId?: string;
     readonly requestId?: string;
+    /** Author of the message this agent reply answered, even outside this page. */
+    readonly requestAuthorId?: string;
+    /** Server-owned agent-to-agent chain depth. */
+    readonly agentHopCount?: number;
     readonly attachments: readonly DaemonAttachment[];
     /** Present on a server-phrased system line; the daemon reads the structured event, never the text. */
     readonly systemEvent?: SystemEvent;

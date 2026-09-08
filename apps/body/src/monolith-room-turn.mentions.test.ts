@@ -3,10 +3,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AcpClient } from './acp.js';
+import { AgentResponseRule } from './agent-response-rule.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import {
   agentReplyMentionIds,
+  inboxItemTriggersTurn,
   MonolithRoomTurnLoop,
   roomMentionDirectory,
 } from './monolith-room-turn.js';
@@ -21,6 +23,7 @@ afterEach(async () => {
 const AGENT_HEX = '33'.repeat(32);
 const CAPTAIN = '44'.repeat(32);
 const PEER = '55'.repeat(32);
+const OTHER_AGENT = '66'.repeat(32);
 
 /** The Room roster as the server answers it: display name AND canonical handle. */
 const ROSTER = (selfId: string) => ({
@@ -194,5 +197,92 @@ describe('who an agent can tag, and how it is spelled', () => {
     ].join('\n');
     expect(text.indexOf('@bananaman614305')).toBeGreaterThan(0);
     expect(agentReplyMentionIds(text, ROSTER(AGENT_HEX), AGENT_HEX)).toEqual([CAPTAIN, PEER]);
+  });
+});
+
+describe('the per-sender Room response rule', () => {
+  const message = (overrides: Record<string, unknown> = {}) => ({
+    id: 'message',
+    authorId: CAPTAIN,
+    createdAt: 1,
+    type: 'message',
+    body: 'Continue.',
+    mentionIds: [] as string[],
+    attachments: [],
+    ...overrides,
+  });
+
+  function rule(): AgentResponseRule {
+    const responseRule = new AgentResponseRule();
+    responseRule.setAgents([AGENT_HEX, OTHER_AGENT]);
+    return responseRule;
+  }
+
+  it('always accepts a server-resolved explicit mention', () => {
+    const tagged = message({ mentionIds: [AGENT_HEX] });
+    expect(inboxItemTriggersTurn(tagged, AGENT_HEX)).toBe(true);
+  });
+
+  it('continues the same sender exchange across a third-party interjection', () => {
+    const responseRule = rule();
+    responseRule.observe(
+      message({
+        id: 'agent-answer',
+        authorId: AGENT_HEX,
+        requestAuthorId: CAPTAIN,
+      }),
+    );
+    responseRule.observe(message({ id: 'interjection', authorId: PEER }));
+    const followUp = message({ id: 'follow-up' });
+    expect(responseRule.continues(followUp, AGENT_HEX)).toBe(true);
+    expect(
+      inboxItemTriggersTurn(followUp, AGENT_HEX, responseRule.continues(followUp, AGENT_HEX)),
+    ).toBe(true);
+  });
+
+  it('keeps an unaddressed new exchange silent and selects at most one prior responder', () => {
+    const responseRule = rule();
+    const first = message({ id: 'first' });
+    expect(responseRule.continues(first, AGENT_HEX)).toBe(false);
+    expect(responseRule.continues(first, OTHER_AGENT)).toBe(false);
+
+    responseRule.noteReply(AGENT_HEX, CAPTAIN);
+    responseRule.noteReply(OTHER_AGENT, CAPTAIN);
+    const followUp = message({ id: 'follow-up' });
+    expect(responseRule.continues(followUp, AGENT_HEX)).toBe(false);
+    expect(responseRule.continues(followUp, OTHER_AGENT)).toBe(true);
+  });
+
+  it('uses the reply parent when present and stops agent continuity at the hop cap', () => {
+    const responseRule = rule();
+    responseRule.noteReply(AGENT_HEX, CAPTAIN);
+    expect(
+      responseRule.continues(
+        message({ id: 'threaded', replyToMessageId: 'parent', replyToAuthorId: AGENT_HEX }),
+        AGENT_HEX,
+      ),
+    ).toBe(true);
+    expect(
+      responseRule.continues(
+        message({ id: 'other-thread', replyToMessageId: 'parent', replyToAuthorId: OTHER_AGENT }),
+        AGENT_HEX,
+      ),
+    ).toBe(false);
+
+    responseRule.observe(
+      message({ id: 'agent-address', authorId: AGENT_HEX, mentionIds: [OTHER_AGENT] }),
+    );
+    expect(
+      responseRule.continues(
+        message({ id: 'hop-2', authorId: OTHER_AGENT, agentHopCount: 2 }),
+        AGENT_HEX,
+      ),
+    ).toBe(true);
+    expect(
+      responseRule.continues(
+        message({ id: 'hop-3', authorId: OTHER_AGENT, agentHopCount: 3 }),
+        AGENT_HEX,
+      ),
+    ).toBe(false);
   });
 });

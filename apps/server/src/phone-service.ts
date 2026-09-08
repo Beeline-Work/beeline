@@ -2309,8 +2309,33 @@ export class PhoneService {
       if (candidate.member) mentions.add(candidate.id);
       if (candidate.kind === 'agent') noticeAgentIds.add(candidate.id);
     }
-    if (replyAgentId) mentions.add(replyAgentId);
-    if (replyAgentId) noticeAgentIds.add(replyAgentId);
+    // Continuity is not an @mention and is never persisted as one. It still
+    // participates in the existing unanswered-address notice when the target
+    // agent is unavailable or refuses this sender.
+    if (replyAgentId !== null) {
+      const lastResponder = (
+        await this.database.query<{ author_id: string }>(
+          `SELECT answer.author_id
+           FROM messages answer
+           JOIN identities answer_identity ON answer_identity.id=answer.author_id
+           LEFT JOIN messages request ON request.id=answer.request_id
+           LEFT JOIN messages answer_parent ON answer_parent.id=answer.reply_to_message_id
+           WHERE answer.room_id=$1 AND answer_identity.kind='agent'
+             AND (
+               request.author_id=$2 OR answer.mention_ids @> jsonb_build_array($2::text) OR
+               answer_parent.author_id=$2
+             )
+           ORDER BY answer.created_at DESC,answer.id DESC LIMIT 1`,
+          [roomId, author],
+        )
+      ).rows[0]?.author_id;
+      const continuityAgent = replyAgentId
+        ? replyAgentId === lastResponder
+          ? replyAgentId
+          : undefined
+        : lastResponder;
+      if (continuityAgent) noticeAgentIds.add(continuityAgent);
+    }
     return { mentionIds: [...mentions], noticeAgentIds: [...noticeAgentIds] };
   }
   private async decidePermission(input: Input<'decideWritePermission'>, viewerId: string) {

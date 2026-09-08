@@ -15,6 +15,7 @@ import {
   type McpServerWire,
   type PromptResult,
 } from './acp.js';
+import { AgentResponseRule } from './agent-response-rule.js';
 import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
 import { isSenderPermitted, LEGACY_ACCESS_POLICY } from './access-policy.js';
@@ -70,7 +71,17 @@ type RoomRepositoryState = DaemonOperationMap['getRoomRepositoryState']['output'
 type RoomMessage = DaemonOperationMap['getRoomInbox']['output']['items'][number];
 type HumanMessage = Pick<
   RoomMessage,
-  'id' | 'authorId' | 'body' | 'createdAt' | 'attachments' | 'type' | 'mentionIds'
+  | 'id'
+  | 'authorId'
+  | 'body'
+  | 'createdAt'
+  | 'attachments'
+  | 'type'
+  | 'mentionIds'
+  | 'replyToMessageId'
+  | 'replyToAuthorId'
+  | 'requestAuthorId'
+  | 'agentHopCount'
 >;
 type RoomAuthority = DaemonOperationMap['getRoomAuthority']['output'];
 
@@ -228,7 +239,7 @@ export function isGrantDecisionLine(
 }
 
 /** Which inbox items may start or steer a turn: ordinary messages from others that
- *  mention the agent, mentioned event lines (plus the one-release verb fallback for
+ *  explicitly mention the agent or continue its per-sender exchange, mentioned event lines (plus the one-release verb fallback for
  *  a scheduled prompt written before the server stamped kinds), and the grant
  *  decision that resumes a turn paused on the ask. Never a plain system line and
  *  never the agent's own rows.
@@ -237,8 +248,13 @@ export function isGrantDecisionLine(
  *  path, which prompts the paused turn's session with the decision and the
  *  resume instruction. `isSubscribedEvent` excludes it so it cannot ALSO be
  *  handled as an ordinary event and prompt the granted work a second time. */
-export function inboxItemTriggersTurn(item: RoomMessage, agentId: string): boolean {
+export function inboxItemTriggersTurn(
+  item: RoomMessage,
+  agentId: string,
+  continuesExchange = false,
+): boolean {
   if (item.authorId === agentId) return false;
+  if (item.type === 'message' && continuesExchange) return true;
   if (!item.mentionIds.includes(agentId)) return false;
   return (
     item.type === 'message' ||
@@ -420,6 +436,8 @@ export class MonolithRoomTurnLoop {
   private pausedOnGrantRequestId?: string;
   /** Operator-local turn traces; built once when the daemon configured a directory. */
   private turnTraceSink?: TurnTraceSink;
+  /** Per-sender continuity, shared in shape with corner intake. */
+  private readonly responseRule = new AgentResponseRule();
 
   constructor(private readonly options: MonolithRoomTurnOptions) {
     this.agent = runtimeIdentity(options.runtime.agent);
@@ -522,6 +540,9 @@ export class MonolithRoomTurnLoop {
       workspaceId: this.options.workspaceId,
     });
     this.memberNames = new Map(roster.members.map((member) => [member.identityId, member.name]));
+    this.responseRule.setAgents(
+      roster.members.filter((member) => member.kind === 'agent').map((member) => member.identityId),
+    );
     return roster;
   }
 
@@ -1151,6 +1172,7 @@ export class MonolithRoomTurnLoop {
                     : {},
                 ),
               );
+              if (reply) this.responseRule.noteReply(this.agent.publicKey, item.authorId);
             },
             { priority: 'interactive', roomKey: this.options.roomId },
           );
@@ -1201,6 +1223,11 @@ export class MonolithRoomTurnLoop {
       cursor = activation.cursor;
       const rewindSupported = Array.isArray(activation.rewindIds);
       for (const id of activation.rewindIds ?? []) processedInboxIds.add(id);
+      const [history] = await Promise.all([
+        api.execute('getRoomConversation', { roomId, limit: 200 }),
+        this.roster(),
+      ]);
+      this.responseRule.observeAll(history.items);
       stopLive = api.liveSubscribe?.(
         roomId,
         cursor,
@@ -1252,7 +1279,13 @@ export class MonolithRoomTurnLoop {
             processedInboxIds.add(item.id);
             while (processedInboxIds.size > 10_000)
               processedInboxIds.delete(processedInboxIds.values().next().value!);
-            if (!inboxItemTriggersTurn(item, this.agent.publicKey)) continue;
+            const triggers = inboxItemTriggersTurn(
+              item,
+              this.agent.publicKey,
+              this.responseRule.continues(item, this.agent.publicKey),
+            );
+            this.responseRule.observe(item);
+            if (!triggers) continue;
             // A server-authored event was already authority-gated where the
             // fact was made (schedule creation; the owner's grant decision;
             // membership). Everything else answers to the per-sender policy.

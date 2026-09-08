@@ -4,7 +4,11 @@ import type {
   DaemonOperationMap,
   SystemEvent,
 } from '@beeline/api-contract/daemon';
-import { cornerTextRefusal, normalizeCornerText } from '@beeline/api-contract/daemon';
+import {
+  AGENT_TO_AGENT_HOP_CAP,
+  cornerTextRefusal,
+  normalizeCornerText,
+} from '@beeline/api-contract/daemon';
 import {
   MAX_EVENT_CONSEQUENCE_LENGTH,
   MAX_MENTIONS_PER_EVENT,
@@ -97,7 +101,6 @@ function isCornerOpenerOnly(name: keyof DaemonOperationMap): boolean {
   return CORNER_OPENER_ONLY_OPERATIONS.has(name);
 }
 const seconds = (date: Date) => Math.floor(date.getTime() / 1_000);
-const AGENT_TO_AGENT_HOP_CAP = 3;
 export { CORNER_WAKE_TIMEOUT_MS } from './corner-wake.js';
 
 /**
@@ -567,8 +570,11 @@ export class DaemonService {
       text: string;
       mention_ids: string[];
       reply_to_message_id: string | null;
+      reply_to_author_id: string | null;
       root_message_id: string | null;
       request_id: string | null;
+      request_author_id: string | null;
+      agent_hop_count: number;
       attachments: DaemonAttachment[];
       cursor_ms: string;
       now_ms: string;
@@ -600,7 +606,8 @@ export class DaemonService {
         ? page.filter(
             (row) =>
               row.presentation === 'system' ||
-              (row.author_id !== agentId && (row.mention_ids ?? []).includes(agentId)),
+              (row.author_id !== agentId &&
+                (row.presentation === 'message' || (row.mention_ids ?? []).includes(agentId))),
           )
         : page;
     const expiredMedia = await this.expiredMediaIds(
@@ -625,8 +632,11 @@ export class DaemonService {
         body: row.text,
         mentionIds: row.mention_ids ?? [],
         ...(row.reply_to_message_id ? { replyToMessageId: row.reply_to_message_id } : {}),
+        ...(row.reply_to_author_id ? { replyToAuthorId: row.reply_to_author_id } : {}),
         ...(row.root_message_id ? { rootMessageId: row.root_message_id } : {}),
         ...(row.request_id ? { requestId: row.request_id } : {}),
+        ...(row.request_author_id ? { requestAuthorId: row.request_author_id } : {}),
+        ...(row.agent_hop_count ? { agentHopCount: row.agent_hop_count } : {}),
         attachments: markExpiredAttachments(row.attachments ?? [], expiredMedia),
         ...(row.system_event ? { systemEvent: row.system_event } : {}),
       })),
@@ -1043,8 +1053,37 @@ export class DaemonService {
           }>(
             `SELECT message.agent_hop_count,identity.kind author_kind
              FROM messages message JOIN identities identity ON identity.id=message.author_id
-             WHERE message.id=$1 AND message.room_id=$2 AND message.mention_ids @> $3::jsonb`,
-            [input.triggerMessageId, input.roomId, JSON.stringify([agentId])],
+             LEFT JOIN messages reply_parent ON reply_parent.id=message.reply_to_message_id
+             WHERE message.id=$1 AND message.room_id=$2 AND (
+               message.mention_ids @> $3::jsonb OR (
+                 message.presentation='message'
+                 AND (identity.kind<>'agent' OR message.agent_hop_count<$5)
+                 AND (message.reply_to_message_id IS NULL OR reply_parent.author_id=$4)
+                 AND $4=(
+                   SELECT answer.author_id
+                   FROM messages answer
+                   JOIN identities answer_identity ON answer_identity.id=answer.author_id
+                   LEFT JOIN messages request ON request.id=answer.request_id
+                   LEFT JOIN messages answer_parent ON answer_parent.id=answer.reply_to_message_id
+                   WHERE answer.room_id=message.room_id
+                     AND answer_identity.kind='agent'
+                     AND (
+                       request.author_id=message.author_id OR
+                       answer.mention_ids @> jsonb_build_array(message.author_id) OR
+                       answer_parent.author_id=message.author_id
+                     )
+                     AND (answer.created_at,answer.id)<(message.created_at,message.id)
+                   ORDER BY answer.created_at DESC,answer.id DESC LIMIT 1
+                 )
+               )
+             )`,
+            [
+              input.triggerMessageId,
+              input.roomId,
+              JSON.stringify([agentId]),
+              agentId,
+              AGENT_TO_AGENT_HOP_CAP,
+            ],
           )
         ).rows[0]
       : (
@@ -2350,7 +2389,11 @@ function grantCardPhrase(
 
 /** The one projection an inbox or conversation row is read through. */
 const conversationColumns = `SELECT id,author_id,created_at,presentation,text,mention_ids,
-        reply_to_message_id,root_message_id,request_id,attachments,system_event,
+        reply_to_message_id,
+        (SELECT parent.author_id FROM messages parent WHERE parent.id=messages.reply_to_message_id) reply_to_author_id,
+        root_message_id,request_id,
+        (SELECT request.author_id FROM messages request WHERE request.id=messages.request_id) request_author_id,
+        agent_hop_count,attachments,system_event,
         ${MESSAGE_CURSOR_MS_SQL} cursor_ms,
         floor(extract(epoch FROM now())*1000)::bigint now_ms`;
 

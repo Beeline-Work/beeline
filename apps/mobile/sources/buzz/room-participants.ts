@@ -142,6 +142,19 @@ export function selectedMentionPubkeys(
 const COMPOSER_MENTION_PATTERN = /@([\p{L}\p{M}\p{N}_]+(?:[.-][\p{L}\p{M}\p{N}_]+)*)/gu;
 const MENTION_HANDLE_CHARACTER = /[\p{L}\p{M}\p{N}_.-]/u;
 
+function mentionCodePointBefore(text: string, offset: number): string | undefined {
+  if (!offset) return undefined;
+  const last = text.charCodeAt(offset - 1);
+  const start = last >= 0xdc00 && last <= 0xdfff ? offset - 2 : offset - 1;
+  const codePoint = text.codePointAt(start);
+  return codePoint === undefined ? undefined : String.fromCodePoint(codePoint);
+}
+
+function mentionCodePointAt(text: string, offset: number): string | undefined {
+  const codePoint = text.codePointAt(offset);
+  return codePoint === undefined ? undefined : String.fromCodePoint(codePoint);
+}
+
 /**
  * Resolve every live mention in composer order.
  *
@@ -174,11 +187,11 @@ export function resolveComposerMentions(
   const seenHandles = new Set<string>();
   for (const match of normalized.matchAll(COMPOSER_MENTION_PATTERN)) {
     const offset = match.index ?? 0;
-    const before = offset > 0 ? normalized[offset - 1]! : '';
+    const before = mentionCodePointBefore(normalized, offset);
     if (before && MENTION_HANDLE_CHARACTER.test(before)) continue;
     const punctuation = normalized.slice(offset + match[0].length).match(/^[.-]+/u)?.[0];
     const afterPunctuation = punctuation
-      ? normalized[offset + match[0].length + punctuation.length]
+      ? mentionCodePointAt(normalized, offset + match[0].length + punctuation.length)
       : undefined;
     if (afterPunctuation && MENTION_HANDLE_CHARACTER.test(afterPunctuation)) continue;
 

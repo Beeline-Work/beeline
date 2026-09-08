@@ -77,6 +77,19 @@ const DURABLE_KINDS = [0, 9, 9000, 9001, 9002, 9007, 9008, 30078, 39000, 39001, 
  */
 const CONNECT_RENAME_WINDOW_MS = 15 * 60 * 1_000;
 
+function mentionCodePointBefore(text: string, offset: number): string | undefined {
+  if (!offset) return undefined;
+  const last = text.charCodeAt(offset - 1);
+  const start = last >= 0xdc00 && last <= 0xdfff ? offset - 2 : offset - 1;
+  const codePoint = text.codePointAt(start);
+  return codePoint === undefined ? undefined : String.fromCodePoint(codePoint);
+}
+
+function mentionCodePointAt(text: string, offset: number): string | undefined {
+  const codePoint = text.codePointAt(offset);
+  return codePoint === undefined ? undefined : String.fromCodePoint(codePoint);
+}
+
 function normalizeAgentName(value: string): string {
   const name = value.trim().replace(/\s+/g, ' ');
   if (!name || name.length > 32 || !/^\p{L}[\p{L}\p{M}'’ -]*$/u.test(name))
@@ -2179,10 +2192,10 @@ export class PhoneService {
       /@([\p{L}\p{M}\p{N}_]+(?:[.-][\p{L}\p{M}\p{N}_]+)*)/gu,
     )) {
       const offset = match.index ?? 0;
-      const before = offset > 0 ? normalizedText[offset - 1]! : '';
+      const before = mentionCodePointBefore(normalizedText, offset);
       const punctuation = normalizedText.slice(offset + match[0].length).match(/^[.-]+/u)?.[0];
       const afterPunctuation = punctuation
-        ? normalizedText[offset + match[0].length + punctuation.length]
+        ? mentionCodePointAt(normalizedText, offset + match[0].length + punctuation.length)
         : undefined;
       if (
         (!before || !tokenCharacter.test(before)) &&

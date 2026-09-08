@@ -117,6 +117,14 @@ describe('Room participant presentation', () => {
       pubkeys: [],
       handles: [],
     });
+    expect(resolveComposerMentions('𐐀@goosy', participants, new Map())).toEqual({
+      pubkeys: [],
+      handles: [],
+    });
+    expect(resolveComposerMentions('@goosy-𐐀', participants, new Map())).toEqual({
+      pubkeys: [],
+      handles: [],
+    });
   });
 
   it('resolves a multi-word agent name through its underscored handle', () => {

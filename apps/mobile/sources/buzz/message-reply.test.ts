@@ -1,43 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { replyMessageText, type MessageReplyDisplayTarget } from './message-reply';
-
-const personTarget: MessageReplyDisplayTarget = {
-  messageId: 'person-message',
-  authorName: 'Mira',
-  authorPubkey: 'person',
-  isAgent: false,
-  preview: 'A human note',
-};
-
-const agentTarget: MessageReplyDisplayTarget = {
-  messageId: 'agent-message',
-  authorName: 'Brisk Pilot',
-  authorPubkey: 'agent',
-  isAgent: true,
-  preview: 'An agent answer',
-};
+import { replyMessageText } from './message-reply';
 
 describe('message replies', () => {
-  it('keeps a person reply body unchanged', () => {
-    expect(replyMessageText('  I agree  ', personTarget)).toBe('I agree');
-  });
-
-  it('addresses an Agent at the beginning of a reply', () => {
-    expect(replyMessageText('Can you expand on that?', agentTarget)).toBe(
-      '@Brisk Pilot Can you expand on that?',
-    );
-  });
-
-  it('does not duplicate an Agent mention already placed first', () => {
-    expect(replyMessageText('@brisk pilot please continue', agentTarget)).toBe(
-      '@brisk pilot please continue',
-    );
-  });
-
-  it('does not mistake a longer handle for the replied-to Agent', () => {
-    expect(replyMessageText('@Brisk Pilotfish check this', agentTarget)).toBe(
-      '@Brisk Pilot @Brisk Pilotfish check this',
-    );
+  it('keeps agent reply text free of a synthesized display-name mention', () => {
+    expect(replyMessageText('  Can you expand on that?  ')).toBe('Can you expand on that?');
   });
 });

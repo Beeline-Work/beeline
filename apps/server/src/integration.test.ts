@@ -1616,6 +1616,8 @@ describe('monolith integration', () => {
       ['@bee-urgent, please inspect this.', []],
       ['@bee--urgent, please inspect this.', []],
       ['@bee..urgent, please inspect this.', []],
+      ['𐐀@bee please inspect this.', []],
+      ['@bee-𐐀 please inspect this.', []],
       ['Bee, please inspect this.', []],
       ['@beeline, please inspect this.', []],
     ] as const;

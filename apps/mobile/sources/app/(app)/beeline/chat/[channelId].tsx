@@ -1774,7 +1774,7 @@ export default function BuzzChat() {
       }
       return;
     }
-    const text = replyTarget ? replyMessageText(rawText, replyTarget) : rawText;
+    const text = replyTarget ? replyMessageText(rawText) : rawText;
     const mentionedPubkeys = resolveComposerMentions(
       text,
       roomParticipants,

@@ -484,7 +484,7 @@ WITH candidates AS (
   ORDER BY e.community_id, target.agent_pubkey, e.created_at DESC, e.id DESC
 ), agent_owners AS MATERIALIZED (
   SELECT DISTINCT ON (claim.workspace_id, claim.agent_pubkey)
-    claim.community_id, claim.workspace_id, claim.agent_pubkey, claim.owner_pubkey
+    a.community_id, claim.workspace_id, claim.agent_pubkey, claim.owner_pubkey
   FROM beeline_agent_pairing_claims claim JOIN authorized a
     ON a.id = claim.workspace_id
     AND (claim.community_id = a.community_id OR claim.community_id IS NULL)

@@ -803,8 +803,32 @@ export async function migrate(database: SqlDatabase): Promise<void> {
   console.log(`syncTopLevelSharedRoomRoles: updated ${syncedRoomRoles} stale Room role(s)`);
   await backfillSystemEventKinds(database);
   await seedDefaultWorkspace(database);
+  const stampedOwners = await backfillAgentOwnerStamps(database);
+  console.log(`backfillAgentOwnerStamps: stamped ${stampedOwners} existing agent owner(s)`);
   await backfillAgentHandles(database);
   await backfillYoloModeDefault(database);
+}
+
+export async function backfillAgentOwnerStamps(database: SqlDatabase): Promise<number> {
+  const result = await database.query(
+    `INSERT INTO beeline_agent_pairing_claims
+      (token_hash,community_id,workspace_id,minter_pubkey,owner_pubkey,agent_pubkey)
+     SELECT md5('owner-stamp:' || member.workspace_id::text || ':' || agent.agent_id) ||
+              md5('owner-stamp-v2:' || member.workspace_id::text || ':' || agent.agent_id),
+            NULL,member.workspace_id,decode(agent.owner_id,'hex'),decode(agent.owner_id,'hex'),
+            decode(agent.agent_id,'hex')
+     FROM agents agent
+     JOIN memberships member ON member.identity_id=agent.agent_id
+       AND member.room_id IS NULL AND member.removed_at IS NULL
+     WHERE NOT EXISTS (
+       SELECT 1 FROM beeline_agent_pairing_claims claim
+       WHERE claim.workspace_id=member.workspace_id
+         AND claim.agent_pubkey=decode(agent.agent_id,'hex')
+     )
+     ON CONFLICT (token_hash) DO NOTHING
+     RETURNING token_hash`,
+  );
+  return result.rowCount;
 }
 
 /**

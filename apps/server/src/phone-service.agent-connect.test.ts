@@ -165,6 +165,43 @@ describe('PhoneService agent connect pairing claim', () => {
     ).toBeNull();
   });
 
+  it('backfills a pre-existing connected agent owner stamp', async () => {
+    await database.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Bee','bee')`, [
+      AGENT,
+    ]);
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [AGENT, OWNER]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member')`,
+      [WORKSPACE, AGENT],
+    );
+
+    await migrate(database);
+
+    await expect(
+      database.query<{
+        community_id: string | null;
+        workspace_id: string;
+        owner_pubkey: string;
+        agent_pubkey: string;
+      }>(
+        `SELECT community_id::text,workspace_id::text,encode(owner_pubkey,'hex') AS owner_pubkey,
+                encode(agent_pubkey,'hex') AS agent_pubkey
+         FROM beeline_agent_pairing_claims
+         WHERE workspace_id=$1 AND agent_pubkey=decode($2,'hex')`,
+        [WORKSPACE, AGENT],
+      ),
+    ).resolves.toMatchObject({
+      rows: [
+        {
+          community_id: null,
+          workspace_id: WORKSPACE,
+          owner_pubkey: OWNER,
+          agent_pubkey: AGENT,
+        },
+      ],
+    });
+  });
+
   it('keeps an active agent handle unique when it pairs into another Workspace', async () => {
     await insertCode(new Date(Date.now() + 60_000));
     const first = await phone.claimAgentConnectPairing({

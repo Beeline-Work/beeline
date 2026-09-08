@@ -1068,6 +1068,14 @@ export class MonolithCornerTurnLoop {
     if (this.agentMembers.has(authorId)) this.carrier = authorId;
   }
 
+  private async noteIncomingCarrier(
+    item: Pick<InboxItem, 'authorId' | 'agentAuthor'>,
+  ): Promise<void> {
+    if (item.agentAuthor && !this.agentMembers.has(item.authorId))
+      await this.roster().catch(() => undefined);
+    this.noteCarrier(item.authorId);
+  }
+
   /**
    * Whether a message in this corner is addressed to THIS agent.
    *
@@ -1169,7 +1177,9 @@ export class MonolithCornerTurnLoop {
     // Who is carrying this corner: the member agent that answered in it last.
     await this.roster().catch(() => undefined);
     this.responseRule.observeAll(history.items);
-    for (const item of history.items) if (item.type === 'message') this.noteCarrier(item.authorId);
+    for (const item of history.items) {
+      if (item.type === 'message') await this.noteIncomingCarrier(item);
+    }
     const durableAgentReplies = history.items.filter(
       (item) =>
         item.type === 'message' &&
@@ -1200,7 +1210,7 @@ export class MonolithCornerTurnLoop {
             this.responseRule.replaceHistory(reconciled.items);
             this.carrier = undefined;
             for (const item of reconciled.items) {
-              if (item.type === 'message') this.noteCarrier(item.authorId);
+              if (item.type === 'message') await this.noteIncomingCarrier(item);
             }
             this.continuityRebuildRequested = false;
           }
@@ -1235,7 +1245,7 @@ export class MonolithCornerTurnLoop {
               processedInboxIds.delete(processedInboxIds.values().next().value!);
             if (item.type === 'message') {
               if (item.authorId !== this.agent.publicKey) await this.reconcileRoster();
-              this.noteCarrier(item.authorId);
+              await this.noteIncomingCarrier(item);
               if (item.authorId === this.agent.publicKey) continue;
               const addressed = this.addressesThisAgent(item);
               this.responseRule.observe(item);

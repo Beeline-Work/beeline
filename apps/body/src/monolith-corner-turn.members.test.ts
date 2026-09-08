@@ -23,7 +23,22 @@ const OPENER = identityFromKey(OPENER_KEY, 'Codex').publicKey;
 const HELPER = identityFromKey(HELPER_KEY, 'Goosy').publicKey;
 const HUMAN = '22'.repeat(32);
 const OTHER_HUMAN = '44'.repeat(32);
-const NEW_AGENT = '55'.repeat(32);
+const NEW_AGENT_KEY = '55'.repeat(32);
+const NEW_AGENT = identityFromKey(NEW_AGENT_KEY, 'Momo').publicKey;
+
+type RosterMember = {
+  identityId: string;
+  kind: 'human' | 'agent';
+  name: string;
+  role: 'owner' | 'member';
+};
+
+const defaultMembers: readonly RosterMember[] = [
+  { identityId: OPENER, kind: 'agent', name: 'Codex', role: 'member' },
+  { identityId: HELPER, kind: 'agent', name: 'Goosy', role: 'member' },
+  { identityId: HUMAN, kind: 'human', name: 'Captain', role: 'owner' },
+  { identityId: OTHER_HUMAN, kind: 'human', name: 'Observer', role: 'member' },
+];
 
 const roots: string[] = [];
 const execFileAsync = promisify(execFile);
@@ -56,6 +71,19 @@ async function runCorner(input: {
   checkNote?: boolean;
   initialRosterFailure?: boolean;
   lostPostResponse?: boolean;
+  initialMembers?: readonly RosterMember[];
+  refreshedMembers?: readonly RosterMember[];
+  inboxItems?: readonly {
+    id: string;
+    authorId: string;
+    createdAt: number;
+    type: 'message' | 'system';
+    body: string;
+    mentionIds: string[];
+    agentMentionIds?: string[];
+    agentAuthor?: boolean;
+    systemEvent?: { verb: string };
+  }[];
   /** Durable replies already in the corner, by author. */
   history?: {
     authorId: string;
@@ -65,7 +93,7 @@ async function runCorner(input: {
     replyToMessageId?: string;
     replyToAuthorId?: string;
   }[];
-}): Promise<{ prompts: string[] }> {
+}): Promise<{ prompts: string[]; posts: number }> {
   const root = await mkdtemp(join(tmpdir(), 'beeline-corner-members-'));
   roots.push(root);
   await execFileAsync('git', ['init', root]);
@@ -108,12 +136,10 @@ async function runCorner(input: {
       rosterReads += 1;
       if (input.initialRosterFailure && rosterReads === 1) throw new Error('roster unavailable');
       return {
-        members: [
-          { identityId: OPENER, kind: 'agent', name: 'Codex', role: 'member' },
-          { identityId: HELPER, kind: 'agent', name: 'Goosy', role: 'member' },
-          { identityId: HUMAN, kind: 'human', name: 'Captain', role: 'owner' },
-          { identityId: OTHER_HUMAN, kind: 'human', name: 'Observer', role: 'member' },
-        ],
+        members:
+          rosterReads > 1
+            ? (input.refreshedMembers ?? input.initialMembers ?? defaultMembers)
+            : (input.initialMembers ?? defaultMembers),
       };
     }
     if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
@@ -154,7 +180,9 @@ async function runCorner(input: {
       if (closeReads === 1) {
         return {
           items: [
-            ...(input.message
+            ...(input.inboxItems
+              ? input.inboxItems.map((item) => ({ ...item, attachments: [] }))
+              : input.message
               ? [
                   {
                     id: 'human-msg',
@@ -265,7 +293,10 @@ async function runCorner(input: {
     createAcpClient: () => acp,
   }).run();
   await scheduler.dispose();
-  return { prompts };
+  return {
+    prompts,
+    posts: execute.mock.calls.filter(([name]) => name === 'postRoomMessage').length,
+  };
 }
 
 describe('a corner carried by its members', () => {
@@ -424,5 +455,71 @@ describe('a corner carried by its members', () => {
     });
 
     expect(opener.prompts).toEqual([]);
+  });
+
+  it('hands a check turn to a newly joined replying member', async () => {
+    const joinedMembers = [
+      ...defaultMembers,
+      { identityId: NEW_AGENT, kind: 'agent' as const, name: 'Momo', role: 'member' as const },
+    ];
+    const check = {
+      id: 'check-note',
+      authorId: HUMAN,
+      createdAt: 4,
+      type: 'system' as const,
+      body: 'GitHub passed a check · unit',
+      mentionIds: [],
+      systemEvent: { verb: 'passed a check' },
+    };
+    const [opener, joined] = await Promise.all([
+      runCorner({
+        agentKey: OPENER_KEY,
+        agentName: 'Codex',
+        isOpener: true,
+        initialMembers: defaultMembers,
+        refreshedMembers: joinedMembers,
+        history: [{ authorId: OPENER, body: 'Started on it.' }],
+        inboxItems: [
+          {
+            id: 'joined-reply',
+            authorId: NEW_AGENT,
+            createdAt: 3,
+            type: 'message',
+            body: 'I picked this up.',
+            mentionIds: [],
+            agentAuthor: true,
+          },
+          check,
+        ],
+      }),
+      runCorner({
+        agentKey: NEW_AGENT_KEY,
+        agentName: 'Momo',
+        isOpener: false,
+        initialMembers: joinedMembers,
+        history: [
+          { authorId: OPENER, body: 'Started on it.' },
+          { authorId: NEW_AGENT, body: 'I picked this up.' },
+        ],
+        inboxItems: [
+          {
+            id: 'addressed-joiner',
+            authorId: HUMAN,
+            createdAt: 2,
+            type: 'message',
+            body: '@Momo please take this.',
+            mentionIds: [NEW_AGENT],
+            agentMentionIds: [NEW_AGENT],
+          },
+          check,
+        ],
+      }),
+    ]);
+
+    expect(opener.prompts).toEqual([]);
+    expect(joined.prompts).toHaveLength(2);
+    expect(joined.prompts[0]).toContain('please take this');
+    expect(joined.posts).toBeGreaterThan(0);
+    expect(joined.prompts[1]).toContain('passed a check');
   });
 });

@@ -4441,6 +4441,76 @@ describe('monolith integration', () => {
     );
   });
 
+  it('keeps an unaddressed corner follow-up silent after its responder retires', async () => {
+    const peer = 'c'.repeat(64);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Peer','peer')`,
+      [peer],
+    );
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [peer, HUMAN]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
+      [WORKSPACE, peer, ROOM],
+    );
+    const peerToken = (await auth.exchangeDaemonToken(
+      (await auth.createDaemonExchange(peer)).exchangeToken,
+    ))!.daemonToken;
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'retired-corner-responder',
+      name: 'Retired responder',
+      objective: 'Keep continuity local to active corner members',
+    });
+    expect(created.status).toBe(200);
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    expect(
+      (
+        await daemonOperation(
+          'postRoomMessage',
+          { roomId: cornerId, text: 'I last answered this person.', mentionIds: [HUMAN] },
+          peerToken,
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      (await operation('removeAgent', { workspaceId: WORKSPACE, agentId: peer })).status,
+    ).toBe(204);
+
+    const followUp = 'e'.repeat(64);
+    expect(
+      (
+        await operation('sendRoomMessage', {
+          roomId: cornerId,
+          messageId: followUp,
+          text: 'Please continue.',
+        })
+      ).status,
+    ).toBe(200);
+    const inbox = (await (
+      await daemonOperation('getCornerCloseRequests', { cornerId })
+    ).json()) as { items: Array<{ id: string; mentionIds: string[] }> };
+    expect(inbox.items).toContainEqual(expect.objectContaining({ id: followUp, mentionIds: [] }));
+    expect(
+      (
+        await database.query<{ count: string }>(
+          `SELECT count(*)::text count FROM agent_turns WHERE room_id=$1 AND request_id=$2`,
+          [cornerId, followUp],
+        )
+      ).rows[0],
+    ).toEqual({ count: '0' });
+    expect(
+      (
+        await database.query<{ count: string }>(
+          `SELECT count(*)::text count FROM messages
+           WHERE room_id=$1 AND presentation='system'
+             AND text='Peer could not be reached · not a member of this corner'`,
+          [cornerId],
+        )
+      ).rows[0],
+    ).toEqual({ count: '0' });
+  });
+
   it('derives an owner for a legacy corner from its first agent-authored message', async () => {
     const legacyCornerId = '33333333-3333-4333-8333-333333333333';
     await database.query(

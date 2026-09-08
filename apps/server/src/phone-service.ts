@@ -2325,23 +2325,32 @@ export class PhoneService {
     } else if (replyAgentId !== null && noticeAgentIds.size === 0) {
       const lastResponder = (
         await this.database.query<{ author_id: string }>(
-          `SELECT answer.author_id
+          `SELECT selected_answer.author_id
            FROM rooms room
            JOIN (
-             SELECT id,room_id,author_id,presentation,mention_ids,request_id,reply_to_message_id,created_at
-             FROM messages WHERE room_id=$1 AND presentation='message'
-             ORDER BY ${MESSAGE_CURSOR_MS_SQL} DESC,id DESC LIMIT 200
-           ) answer ON room.id=$1 AND room.direct_participants IS NULL
-           JOIN identities answer_identity ON answer_identity.id=answer.author_id
-           LEFT JOIN messages request ON request.id=answer.request_id
-           LEFT JOIN messages answer_parent ON answer_parent.id=answer.reply_to_message_id
-           WHERE answer.room_id=$1 AND answer.presentation='message'
-             AND answer_identity.kind='agent'
-             AND (
-               request.author_id=$2 OR answer.mention_ids @> jsonb_build_array($2::text) OR
-               answer_parent.author_id=$2
-             )
-           ORDER BY ${MESSAGE_CURSOR_MS_SQL.replaceAll('created_at', 'answer.created_at')} DESC,answer.id DESC LIMIT 1`,
+             SELECT answer.author_id
+             FROM (
+               SELECT id,room_id,author_id,presentation,mention_ids,request_id,reply_to_message_id,created_at
+               FROM messages WHERE room_id=$1 AND presentation='message'
+               ORDER BY ${MESSAGE_CURSOR_MS_SQL} DESC,id DESC LIMIT 200
+             ) answer
+             JOIN identities answer_identity ON answer_identity.id=answer.author_id
+             LEFT JOIN messages request ON request.id=answer.request_id
+             LEFT JOIN messages answer_parent ON answer_parent.id=answer.reply_to_message_id
+             WHERE answer.room_id=$1 AND answer.presentation='message'
+               AND answer_identity.kind='agent'
+               AND (
+                 request.author_id=$2 OR answer.mention_ids @> jsonb_build_array($2::text) OR
+                 answer_parent.author_id=$2
+               )
+             ORDER BY ${MESSAGE_CURSOR_MS_SQL.replaceAll('created_at', 'answer.created_at')} DESC,answer.id DESC LIMIT 1
+           ) selected_answer ON room.id=$1 AND room.direct_participants IS NULL
+           WHERE EXISTS(
+             SELECT 1 FROM memberships selected_membership
+             WHERE selected_membership.room_id=$1
+               AND selected_membership.identity_id=selected_answer.author_id
+               AND selected_membership.removed_at IS NULL
+           )`,
           [roomId, author],
         )
       ).rows[0]?.author_id;

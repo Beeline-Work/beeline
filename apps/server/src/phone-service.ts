@@ -57,6 +57,7 @@ import type { LiveEvent, LiveHub } from './live.js';
 import type { GitHubOperations } from './github-operations.js';
 import { collapsePermissionCards } from '@beeline/push-gateway/projection';
 import { joinRooms, syncTopLevelSharedRoomRoles } from './membership-join.js';
+import { lockIdentityHandleWorkspaces, workspaceHandleAvailable } from './workspace-handles.js';
 import { REVIEW_IDENTITY_ID } from './review-access.js';
 import { identitySubject, systemLine } from './system-line.js';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
@@ -1182,39 +1183,12 @@ export class PhoneService {
     };
   }
 
-  private async handleWorkspaces(
-    database: SqlDatabase,
-    identityId: string,
-    workspaceId?: string,
-  ): Promise<readonly string[]> {
-    await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
-      `identity-handle:${identityId}`,
-    ]);
-    const memberships = await database.query<{ workspace_id: string }>(
-      `SELECT workspace_id FROM memberships
-       WHERE identity_id=$1 AND room_id IS NULL AND removed_at IS NULL`,
-      [identityId],
-    );
-    const workspaceIds = [
-      ...new Set([
-        ...(workspaceId ? [workspaceId] : []),
-        ...memberships.rows.map((row) => row.workspace_id),
-      ]),
-    ].sort();
-    if (workspaceIds.length)
-      await database.query(
-        `SELECT id FROM workspaces WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE`,
-        [workspaceIds],
-      );
-    return workspaceIds;
-  }
-
   private async availableAgentHandle(
     database: SqlDatabase,
     workspaceId: string,
     exceptIdentityId: string,
     name: string,
-    lockedWorkspaces = this.handleWorkspaces(database, exceptIdentityId, workspaceId),
+    lockedWorkspaces = lockIdentityHandleWorkspaces(database, exceptIdentityId, [workspaceId]),
   ): Promise<string> {
     const workspaceIds = await lockedWorkspaces;
     const rows = await database.query<{ handle: string }>(
@@ -1335,11 +1309,9 @@ export class PhoneService {
       if (pairing.expires_at.getTime() <= Date.now()) return { status: 'expired' };
       if (pairing.claimed_by) return { status: 'already_claimed' };
 
-      const lockedWorkspaces = this.handleWorkspaces(
-        database,
-        input.agentPubkey,
+      const lockedWorkspaces = lockIdentityHandleWorkspaces(database, input.agentPubkey, [
         pairing.workspace_id,
-      );
+      ]);
       await lockedWorkspaces;
       const worn = await this.wornSeededIdentity(database, pairing.workspace_id, input.agentPubkey);
       const seeded = assignSeededAgentIdentity({
@@ -2509,7 +2481,20 @@ export class PhoneService {
     if (input.memberId === viewerId) throw new Error('workspace managers cannot change themselves');
     await this.requireIdentity(input.memberId);
     return this.database.transaction(async (database) => {
-      await database.query(`SELECT 1 FROM workspaces WHERE id=$1 FOR UPDATE`, [input.workspaceId]);
+      await lockIdentityHandleWorkspaces(database, input.memberId, [input.workspaceId]);
+      const targetIdentity = (
+        await database.query<{ handle: string | null }>(
+          `SELECT handle FROM identities WHERE id=$1 FOR UPDATE`,
+          [input.memberId],
+        )
+      ).rows[0];
+      if (
+        !targetIdentity ||
+        !(await workspaceHandleAvailable(database, input.memberId, targetIdentity.handle, [
+          input.workspaceId,
+        ]))
+      )
+        throw new Error('handle conflict in workspace');
       const roles = await database.query<{
         identity_id: string;
         role: 'owner' | 'admin' | 'member';
@@ -2670,6 +2655,18 @@ export class PhoneService {
     const row = result.rows[0];
     if (!row) throw new Error('invite not found');
     return this.database.transaction(async (database) => {
+      await lockIdentityHandleWorkspaces(database, viewerId, [row.workspace_id]);
+      const identity = (
+        await database.query<{ handle: string | null }>(
+          `SELECT handle FROM identities WHERE id=$1 FOR UPDATE`,
+          [viewerId],
+        )
+      ).rows[0];
+      if (
+        !identity ||
+        !(await workspaceHandleAvailable(database, viewerId, identity.handle, [row.workspace_id]))
+      )
+        throw new Error('handle conflict in workspace');
       const joined = await database.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member')
          ON CONFLICT (workspace_id,identity_id) WHERE room_id IS NULL
@@ -3357,18 +3354,9 @@ export class PhoneService {
       throw new Error('invalid person handle');
     return this.database.transaction(async (database) => {
       if (input.handle !== undefined) {
-        const workspaceIds = await this.handleWorkspaces(database, viewerId);
-        const conflict = await database.query(
-          `SELECT 1
-           FROM memberships membership
-           JOIN identities identity ON identity.id=membership.identity_id
-           WHERE membership.workspace_id=ANY($1::uuid[]) AND membership.room_id IS NULL
-             AND membership.removed_at IS NULL AND identity.hidden_from_roster=false
-             AND identity.id<>$2 AND lower(identity.handle)=lower($3)
-           LIMIT 1`,
-          [workspaceIds, viewerId, input.handle],
-        );
-        if (conflict.rowCount) throw new Error('handle conflict in workspace');
+        const workspaceIds = await lockIdentityHandleWorkspaces(database, viewerId);
+        if (!(await workspaceHandleAvailable(database, viewerId, input.handle, workspaceIds)))
+          throw new Error('handle conflict in workspace');
       }
       const updated = await database.query<IdentityRow>(
         `UPDATE identities
@@ -3476,15 +3464,18 @@ export class PhoneService {
     };
   }
   private async claimManagedHandle(viewerId: string, handle: string) {
-    const claimed = await this.database.query(
-      `UPDATE identities AS identity SET handle=$2,updated_at=now()
-       WHERE identity.id=$1 AND NOT EXISTS(
-         SELECT 1 FROM identities AS other
-         WHERE other.id<>$1 AND lower(other.handle)=lower($2)
-       )`,
-      [viewerId, handle],
-    );
-    if (claimed.rowCount === 0) throw new Error('managed handle is already claimed');
+    await this.database.transaction(async (database) => {
+      await lockIdentityHandleWorkspaces(database, viewerId);
+      const claimed = await database.query(
+        `UPDATE identities AS identity SET handle=$2,updated_at=now()
+         WHERE identity.id=$1 AND NOT EXISTS(
+           SELECT 1 FROM identities AS other
+           WHERE other.id<>$1 AND lower(other.handle)=lower($2)
+         )`,
+        [viewerId, handle],
+      );
+      if (claimed.rowCount === 0) throw new Error('managed handle is already claimed');
+    });
   }
   private async adoptGitHubHandle(viewerId: string) {
     const link = (

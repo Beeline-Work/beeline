@@ -2490,6 +2490,57 @@ describe('monolith integration', () => {
     expect(link.rows[0]?.audience).toBe('github');
   });
 
+  it('keeps agent handles unique across member joins and GitHub identity refreshes', async () => {
+    const directMember = 'd'.repeat(64);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Direct member','bee')`,
+      [directMember],
+    );
+    expect(
+      (
+        await operation('addWorkspaceMember', {
+          workspaceId: WORKSPACE,
+          memberId: directMember,
+          role: 'member',
+        })
+      ).status,
+    ).toBe(409);
+
+    const invite = (await (await operation('createInvite', { workspaceId: WORKSPACE })).json()) as {
+      token: string;
+    };
+    const collisionAuth = new TokenAuth(database, async () => ({
+      subject: 'collision-member',
+      login: 'bee',
+      name: 'Collision member',
+    }));
+    const invitee = await collisionAuth.exchangeGitHubOidc('collision-proof');
+    expect(
+      (
+        await request(
+          '/v1/phone/operations/redeemInvite',
+          'POST',
+          { token: invite.token },
+          invitee.accessToken,
+        )
+      ).status,
+    ).toBe(409);
+
+    const renamedLogin = new TokenAuth(database, async () => ({
+      subject: 'owner',
+      login: 'bee',
+      name: 'Owner',
+    }));
+    await renamedLogin.exchangeGitHubOidc('owner-renamed-login');
+    expect(
+      (
+        await database.query<{ handle: string }>(`SELECT handle FROM identities WHERE id=$1`, [
+          HUMAN,
+        ])
+      ).rows[0]?.handle,
+    ).toBe('owner');
+  });
+
   it('recovers a GitHub identity conflict and exposes the predecessor over HTTP', async () => {
     const predecessor = 'c'.repeat(64);
     await database.query(`UPDATE identities SET github_subject=NULL WHERE id=$1`, [HUMAN]);

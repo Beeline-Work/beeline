@@ -9,6 +9,7 @@ import {
 import type { CornerLifecycleView, PhoneOperationMap } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { GITHUB_SUBJECT, systemLine, type SystemPhrase } from './system-line.js';
+import { lockIdentityHandleWorkspaces, workspaceHandleAvailable } from './workspace-handles.js';
 
 type Input<Name extends keyof PhoneOperationMap> = PhoneOperationMap[Name]['input'];
 
@@ -239,9 +240,18 @@ export class GitHubOperations {
            provider_login=EXCLUDED.provider_login`,
         [github!.subject, viewerId, github!.issuer, GITHUB_IDENTITY_AUDIENCE, github!.login],
       );
+      const workspaceIds = await lockIdentityHandleWorkspaces(database, viewerId);
+      const handleAvailable = await workspaceHandleAvailable(
+        database,
+        viewerId,
+        github!.login,
+        workspaceIds,
+      );
       await database.query(
-        `UPDATE identities SET name=COALESCE(NULLIF($2,''),name),handle=$3,github_subject=$4,updated_at=now() WHERE id=$1`,
-        [viewerId, github!.name, github!.login, github!.subject],
+        `UPDATE identities SET name=COALESCE(NULLIF($2,''),name),
+           handle=CASE WHEN $3 THEN $4 ELSE handle END,
+           github_subject=$5,updated_at=now() WHERE id=$1`,
+        [viewerId, github!.name, handleAvailable, github!.login, github!.subject],
       );
       await database.query(
         `INSERT INTO github_user_tokens(subject,encrypted_token,encrypted_refresh_token,expires_at) VALUES($1,$2,$3,$4) ON CONFLICT(subject) DO UPDATE SET encrypted_token=EXCLUDED.encrypted_token,encrypted_refresh_token=EXCLUDED.encrypted_refresh_token,expires_at=EXCLUDED.expires_at,stale_at=NULL,updated_at=now()`,

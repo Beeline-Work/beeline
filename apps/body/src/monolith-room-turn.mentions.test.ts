@@ -121,7 +121,30 @@ describe('who an agent can tag, and how it is spelled', () => {
       if (name === 'getRoomRepositoryState') return { resolution: 'none' };
       if (name === 'getWorkspaceRoster') return ROSTER(agent.publicKey);
       if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
-      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomConversation') {
+        const committed = writes.some(
+          (write) =>
+            typeof write === 'object' &&
+            write !== null &&
+            (write as { triggerMessageId?: string }).triggerMessageId === 'ask-1',
+        );
+        return {
+          items: committed
+            ? [
+                {
+                  id: 'server-committed-answer',
+                  authorId: agent.publicKey,
+                  createdAt: 902,
+                  type: 'message',
+                  body: 'hello',
+                  mentionIds: [CAPTAIN],
+                  attachments: [],
+                },
+              ]
+            : [],
+          cursor: 'latest',
+        };
+      }
       if (name === 'getRoomInbox') {
         inboxReads += 1;
         if (inboxReads === 2)
@@ -172,7 +195,9 @@ describe('who an agent can tag, and how it is spelled', () => {
         writes.push(input);
         if (firstPostPending) {
           firstPostPending = false;
-          return firstPost;
+          return firstPost.then(() => {
+            throw new Error('post response lost');
+          });
         }
       }
       return { id: 'write-id', createdAt: 1 };
@@ -268,6 +293,16 @@ describe('the per-sender Room response rule', () => {
     responseRule.setAgents([AGENT_HEX, OTHER_AGENT]);
     return responseRule;
   }
+
+  it('drops failed local continuity after an empty authoritative rebuild', () => {
+    const responseRule = rule();
+    responseRule.noteReply(AGENT_HEX, [CAPTAIN]);
+    expect(responseRule.continues(message(), AGENT_HEX)).toBe(true);
+
+    responseRule.replaceHistory([]);
+
+    expect(responseRule.continues(message(), AGENT_HEX)).toBe(false);
+  });
 
   it('always accepts a server-resolved explicit mention', () => {
     const tagged = message({ mentionIds: [AGENT_HEX] });

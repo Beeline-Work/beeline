@@ -30,6 +30,12 @@ export class AgentResponseRule {
     for (const item of items) this.observe(item);
   }
 
+  replaceHistory(items: readonly ResponseRuleMessage[]): void {
+    this.recentMessages.length = 0;
+    this.lastAgentBySender.clear();
+    for (const item of items) this.record(item);
+  }
+
   observe(item: ResponseRuleMessage): void {
     if (this.observedIds.has(item.id)) return;
     this.observedIds.add(item.id);

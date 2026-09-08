@@ -362,6 +362,8 @@ interface ActiveTurn {
   steerTail: Promise<void>;
   resumeRequested: boolean;
   phase: 'prompting' | 'finishing';
+  continuitySenders?: ReadonlySet<string>;
+  rebuildContinuity?: boolean;
   promise: Promise<void>;
 }
 
@@ -423,6 +425,7 @@ export class MonolithRoomTurnLoop {
   private turnInstructionPrefix = '';
   private activeTurn?: ActiveTurn;
   private readonly queuedTurns: HumanMessage[] = [];
+  private continuityRebuildRequested = false;
   /** Session scratch directory attachments are downloaded into (`TMPDIR/beeline-attachments`). */
   private attachmentDir?: string;
   /** Whether the pinned model takes images; `undefined` when the pin did not say. */
@@ -894,6 +897,7 @@ export class MonolithRoomTurnLoop {
       .finally(() => {
         if (this.activeTurn === active) {
           this.activeTurn = undefined;
+          if (active.rebuildContinuity) this.continuityRebuildRequested = true;
           this.wakeIntake?.();
           this.wakeIntake = undefined;
         }
@@ -1173,6 +1177,20 @@ export class MonolithRoomTurnLoop {
               const mentionIds = reply
                 ? agentReplyMentionIds(reply, roster, this.agent.publicKey)
                 : [];
+              const continuitySenders = reply
+                ? [
+                    item.authorId,
+                    ...mentionIds.filter((id) =>
+                      roster.members.some(
+                        (member) => member.identityId === id && member.kind === 'agent',
+                      ),
+                    ),
+                  ]
+                : [];
+              if (continuitySenders.length) {
+                active.continuitySenders = new Set(continuitySenders);
+                active.rebuildContinuity = true;
+              }
               await trace.measure('publish', () =>
                 stream.settle(
                   reply,
@@ -1183,15 +1201,10 @@ export class MonolithRoomTurnLoop {
                       }
                     : {},
                   reply
-                    ? () =>
-                        this.responseRule.noteReply(this.agent.publicKey, [
-                          item.authorId,
-                          ...mentionIds.filter((id) =>
-                            roster.members.some(
-                              (member) => member.identityId === id && member.kind === 'agent',
-                            ),
-                          ),
-                        ])
+                    ? () => {
+                        this.responseRule.noteReply(this.agent.publicKey, continuitySenders);
+                        active.rebuildContinuity = false;
+                      }
                     : undefined,
                 ),
               );
@@ -1280,7 +1293,16 @@ export class MonolithRoomTurnLoop {
       );
       while (!signal?.aborted) {
         try {
-          if (!this.activeTurn && this.queuedTurns.length) {
+          if (!this.activeTurn && this.continuityRebuildRequested) {
+            const history = await api.execute('getRoomConversation', {
+              roomId,
+              limit: 200,
+              window: 'continuity',
+            });
+            this.responseRule.replaceHistory(history.items);
+            this.continuityRebuildRequested = false;
+          }
+          if (!this.activeTurn && deferredContinuity.size === 0 && this.queuedTurns.length) {
             this.startPrompt(this.queuedTurns.shift()!);
           }
           const pollNow =
@@ -1306,9 +1328,11 @@ export class MonolithRoomTurnLoop {
               this.agent.publicKey,
               this.responseRule.continues(item, this.agent.publicKey),
             );
+            const finishing = this.activeTurn;
             if (
               !triggers &&
-              this.activeTurn?.phase === 'finishing' &&
+              finishing?.phase === 'finishing' &&
+              finishing.continuitySenders?.has(item.authorId) &&
               item.type === 'message' &&
               !item.replyToMessageId
             ) {

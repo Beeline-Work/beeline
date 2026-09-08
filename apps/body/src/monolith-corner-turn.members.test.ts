@@ -23,6 +23,7 @@ const OPENER = identityFromKey(OPENER_KEY, 'Codex').publicKey;
 const HELPER = identityFromKey(HELPER_KEY, 'Goosy').publicKey;
 const HUMAN = '22'.repeat(32);
 const OTHER_HUMAN = '44'.repeat(32);
+const NEW_AGENT = '55'.repeat(32);
 
 const roots: string[] = [];
 const execFileAsync = promisify(execFile);
@@ -46,6 +47,7 @@ async function runCorner(input: {
   message?: {
     body: string;
     mentionIds: string[];
+    agentMentionIds?: string[];
     replyToMessageId?: string;
     replyToAuthorId?: string;
     agentHopCount?: number;
@@ -161,6 +163,7 @@ async function runCorner(input: {
                     type: 'message',
                     body: input.message.body,
                     mentionIds: input.message.mentionIds,
+                    agentMentionIds: input.message.agentMentionIds ?? [],
                     ...(input.message.replyToMessageId
                       ? { replyToMessageId: input.message.replyToMessageId }
                       : {}),
@@ -404,6 +407,22 @@ describe('a corner carried by its members', () => {
         { authorId: OPENER, body: 'Answered somebody else.', requestAuthorId: OTHER_HUMAN },
       ],
     });
+    expect(opener.prompts).toEqual([]);
+  });
+
+  it('does not continue when a newly joined agent is explicitly addressed', async () => {
+    const opener = await runCorner({
+      agentKey: OPENER_KEY,
+      agentName: 'Codex',
+      isOpener: true,
+      message: {
+        body: '@new helper, please take this.',
+        mentionIds: [NEW_AGENT],
+        agentMentionIds: [NEW_AGENT],
+      },
+      history: [{ authorId: OPENER, body: 'Started on it.', requestAuthorId: HUMAN }],
+    });
+
     expect(opener.prompts).toEqual([]);
   });
 });

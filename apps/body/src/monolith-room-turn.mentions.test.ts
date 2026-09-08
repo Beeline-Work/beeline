@@ -257,6 +257,120 @@ describe('who an agent can tag, and how it is spelled', () => {
     expect(writes).toContainEqual(expect.objectContaining({ triggerMessageId: 'ask-2' }));
   }, 20_000);
 
+  it('does not continue after a newly joined agent is explicitly addressed', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-room-stale-roster-'));
+    roots.push(root);
+    const identity = identityFromKey(AGENT_HEX, 'Greeter');
+    const agent = {
+      name: 'Greeter',
+      publicKey: identity.publicKey,
+      secretKeyHex: Buffer.from(identity.secretKey).toString('hex'),
+    };
+    const runtime = {
+      agent,
+      rooms: [],
+      supervisorRoot: root,
+      transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'token' },
+      agentBinary: '/fake-agent',
+      agentKind: 'codex',
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+    } as unknown as AgentRuntimeRecord;
+    const config: BodyConfig = {
+      agentBinary: '/fake-agent',
+      agentKind: 'codex',
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+      readonlyMcpCommand: '/fake-beeline-mcp',
+      agentEnv: {},
+      workspaceRoot: root,
+      autoApprovePermissions: true,
+    };
+    let inboxReads = 0;
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getWorkspaceRoster') return ROSTER(agent.publicKey);
+      if (name === 'getRoomConversation') {
+        return {
+          items: [
+            {
+              id: 'prior-answer',
+              authorId: agent.publicKey,
+              createdAt: 1,
+              type: 'message',
+              body: 'I can help.',
+              mentionIds: [],
+              requestAuthorId: CAPTAIN,
+              attachments: [],
+            },
+          ],
+          cursor: 'prior-answer',
+        };
+      }
+      if (name === 'getRoomInbox') {
+        inboxReads += 1;
+        if (inboxReads === 1) return { items: [], cursor: 'activation', rewindIds: [] };
+        if (inboxReads === 2) {
+          return {
+            items: [
+              {
+                id: 'new-agent-handoff',
+                authorId: CAPTAIN,
+                createdAt: 2,
+                type: 'message',
+                body: '@new helper, please take this.',
+                mentionIds: [OTHER_AGENT],
+                agentMentionIds: [OTHER_AGENT],
+                attachments: [],
+              },
+            ],
+            cursor: 'new-agent-handoff',
+          };
+        }
+        return { items: [], cursor: 'latest' };
+      }
+      return { id: 'write-id', createdAt: 1 };
+    });
+    const api = {
+      execute,
+      connection: () => ({
+        baseUrl: 'https://server.example',
+        daemonToken: 'daemon-token',
+        agentId: agent.publicKey,
+      }),
+    } as unknown as DaemonApiClient;
+    const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
+    const prompts: string[] = [];
+    vi.spyOn(acp, 'sessionPrompt').mockImplementation(async (_session, prompt) => {
+      prompts.push(String(prompt));
+      return { stopReason: 'end_turn', updates: [], agentText: '', toolCalls: [] };
+    });
+    const scheduler = new SessionScheduler({ maxLiveSessions: 1 });
+    const abort = new AbortController();
+    const running = new MonolithRoomTurnLoop({
+      roomId: 'room-id',
+      workspaceId: 'workspace',
+      cwd: root,
+      runtime,
+      config,
+      api,
+      scheduler,
+      health: { poll: vi.fn(), failure: vi.fn(), presence: vi.fn() },
+      signal: abort.signal,
+      pollMs: 0,
+      createAcpClient: () => acp,
+    }).run();
+
+    await vi.waitFor(() => expect(inboxReads).toBeGreaterThanOrEqual(3));
+    expect(prompts).toEqual([]);
+    expect(execute.mock.calls.filter(([name]) => name === 'postAgentTurnReceipt')).toEqual([]);
+
+    abort.abort();
+    await running.catch(() => undefined);
+    await scheduler.dispose();
+  });
+
   /**
    * Defect 2, the daemon half. The resolver is NOT what dropped the correct
    * handle: it returns both ids for the exact shape the Room saw. It does fix
@@ -384,6 +498,19 @@ describe('the per-sender Room response rule', () => {
     });
     expect(responseRule.continues(directReply, AGENT_HEX)).toBe(false);
     expect(inboxItemTriggersTurn(directReply, OTHER_AGENT)).toBe(true);
+  });
+
+  it('uses server-projected agent mentions when the local roster is stale', () => {
+    const responseRule = new AgentResponseRule();
+    responseRule.setAgents([AGENT_HEX]);
+    responseRule.noteReply(AGENT_HEX, [CAPTAIN]);
+
+    expect(
+      responseRule.continues(
+        message({ id: 'new-agent-address', mentionIds: [OTHER_AGENT], agentMentionIds: [OTHER_AGENT] }),
+        AGENT_HEX,
+      ),
+    ).toBe(false);
   });
 
   it('retains outgoing agent targets for the return exchange until the hop cap', () => {

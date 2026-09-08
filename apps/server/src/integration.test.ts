@@ -4296,9 +4296,10 @@ describe('monolith integration', () => {
     });
     const peerInbox = (await (
       await daemonOperation('getCornerCloseRequests', { cornerId }, peerToken)
-    ).json()) as { items: { id: string; mentionIds: string[] }[] };
+    ).json()) as { items: { id: string; mentionIds: string[]; agentMentionIds: string[] }[] };
     expect(peerInbox.items.map((item) => item.id)).toContain(handoff);
     expect(peerInbox.items.find((item) => item.id === handoff)?.mentionIds).toEqual([peer]);
+    expect(peerInbox.items.find((item) => item.id === handoff)?.agentMentionIds).toEqual([peer]);
     expect(
       (
         await daemonOperation(

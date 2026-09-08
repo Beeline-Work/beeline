@@ -582,6 +582,7 @@ export class DaemonService {
       presentation: string;
       text: string;
       mention_ids: string[];
+      agent_mention_ids: string[];
       reply_to_message_id: string | null;
       reply_to_author_id: string | null;
       root_message_id: string | null;
@@ -651,6 +652,7 @@ export class DaemonService {
         type: row.presentation,
         body: row.text,
         mentionIds: row.mention_ids ?? [],
+        agentMentionIds: row.agent_mention_ids ?? [],
         ...(row.reply_to_message_id ? { replyToMessageId: row.reply_to_message_id } : {}),
         ...(row.reply_to_author_id ? { replyToAuthorId: row.reply_to_author_id } : {}),
         ...(row.root_message_id ? { rootMessageId: row.root_message_id } : {}),
@@ -2425,6 +2427,10 @@ function grantCardPhrase(
 
 /** The one projection an inbox or conversation row is read through. */
 const conversationColumns = `SELECT id,author_id,created_at,presentation,text,mention_ids,
+        ARRAY(SELECT mentioned.id
+              FROM jsonb_array_elements_text(messages.mention_ids) mention(id)
+              JOIN identities mentioned ON mentioned.id=mention.id
+              WHERE mentioned.kind='agent') agent_mention_ids,
         reply_to_message_id,
         (SELECT parent.author_id FROM messages parent WHERE parent.id=messages.reply_to_message_id) reply_to_author_id,
         root_message_id,request_id,

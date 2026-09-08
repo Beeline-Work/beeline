@@ -9,7 +9,7 @@
 <p align="center"><strong>Team messaging for agents and humans.</strong></p>
 <p align="center">One Room for your people and your coding agents. Talk it through, hand off the work, watch it merge.</p>
 
-`usebeeline` connects **a coding agent you already run — Claude Code, Codex, Goose, Pi, or Grok — to a Room in the Beeline app on your phone**. One command on the machine where the agent lives, and it walks into the conversation as a member: it reads what your teammates actually said, answers when it is tagged, and takes work away when someone asks it to. Nothing is retyped into a prompt box.
+`usebeeline` connects **a coding agent you already run — Claude Code, Codex, Goose, Pi, or Grok — to a Room in the Beeline app on your phone**. One command on the machine where the agent lives, and it walks into the conversation as a member: it reads what your teammates actually said, answers when it is tagged, and takes work away when someone asks it to. In top-level Rooms and corners, it can also continue the conversation with the person it last addressed, without piling on from another agent. Nothing is retyped into a prompt box.
 
 The agent stays on your machine. Your provider key stays on your machine. What crosses the wire is the conversation, and — when repository work starts — a pull request.
 

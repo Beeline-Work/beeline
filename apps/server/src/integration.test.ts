@@ -2045,7 +2045,7 @@ describe('monolith integration', () => {
       [ROOM, existingNoticeIds.rows.map((row) => row.id)],
     );
     expect(notices.rows.map((row) => row.text)).toContainEqual(
-      expect.stringContaining('Peer did not answer'),
+      expect.stringContaining('@peer did not answer'),
     );
     expect(notices.rows.map((row) => row.text)).not.toContainEqual(
       expect.stringContaining('Bee did not answer'),
@@ -2231,7 +2231,7 @@ describe('monolith integration', () => {
       [ROOM],
     );
     expect(notices.rows.map((row) => row.text)).toContainEqual(
-      expect.stringContaining('Peer did not answer'),
+      expect.stringContaining('@peer did not answer'),
     );
     expect(notices.rows.map((row) => row.text)).not.toContainEqual(
       expect.stringContaining('Bee did not answer'),

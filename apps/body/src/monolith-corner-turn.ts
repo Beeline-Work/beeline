@@ -854,6 +854,8 @@ export class MonolithCornerTurnLoop {
                   pendingToolNarrations.delete(lastNarratedToolCall);
                 publishToolCalls(calls, false);
                 await this.activityTail;
+                publishToolCalls(calls, false);
+                await this.activityTail;
               };
               // One prompt run. It is a closure because an empty completion
               // re-pins the session to another provider and runs it again

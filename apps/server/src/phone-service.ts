@@ -2018,9 +2018,13 @@ export class PhoneService {
       root_message_id: string | null;
       author_id: string;
       author_kind: 'human' | 'agent';
+      direct: boolean;
     }>(
-      `SELECT message.root_message_id,message.author_id,identity.kind author_kind
-       FROM messages message JOIN identities identity ON identity.id=message.author_id
+      `SELECT message.root_message_id,message.author_id,identity.kind author_kind,
+              room.direct_participants IS NOT NULL direct
+       FROM messages message
+       JOIN identities identity ON identity.id=message.author_id
+       JOIN rooms room ON room.id=message.room_id
        WHERE message.id=$1 AND message.room_id=$2`,
       [input.parentMessageId, input.roomId],
     );
@@ -2034,13 +2038,17 @@ export class PhoneService {
       input.text,
       parent.rows[0].author_kind === 'agent' ? parent.rows[0].author_id : null,
     );
+    const mentionIds = new Set(mentionResolution.mentionIds);
+    if (parent.rows[0].direct && parent.rows[0].author_kind === 'agent') {
+      mentionIds.add(parent.rows[0].author_id);
+    }
     const values = [
       id,
       input.roomId,
       author,
       input.text,
       JSON.stringify(input.attachments ?? []),
-      JSON.stringify(mentionResolution.mentionIds),
+      JSON.stringify([...mentionIds]),
       input.parentMessageId,
       parent.rows[0].root_message_id ?? input.parentMessageId,
     ];

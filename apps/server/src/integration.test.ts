@@ -748,6 +748,38 @@ describe('monolith integration', () => {
     ).json()) as { items: Array<{ id: string }> };
     expect(addressedInbox.items).toContainEqual(expect.objectContaining({ id: 'd'.repeat(64) }));
 
+    const agentReply = (await (
+      await daemonOperation('postRoomMessage', {
+        roomId: dm.id,
+        requestId: 'd'.repeat(64),
+        triggerMessageId: 'd'.repeat(64),
+        text: 'I am here.',
+      })
+    ).json()) as { id: string };
+    const directReplyId = 'e'.repeat(64);
+    expect(
+      (
+        await operation('sendRoomReply', {
+          roomId: dm.id,
+          messageId: directReplyId,
+          parentMessageId: agentReply.id,
+          text: 'Thanks.',
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await database.query<{ mention_ids: string[] }>(
+          `SELECT mention_ids FROM messages WHERE id=$1`,
+          [directReplyId],
+        )
+      ).rows[0]?.mention_ids,
+    ).toEqual([AGENT]);
+    const directReplyInbox = (await (
+      await daemonOperation('getRoomInbox', { roomId: dm.id })
+    ).json()) as { items: Array<{ id: string }> };
+    expect(directReplyInbox.items).toContainEqual(expect.objectContaining({ id: directReplyId }));
+
     // The chat list names a DM row by its peer, so it carries the one other
     // participant's identity instead of leaving the client the stored name.
     const chats = (await (await request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {

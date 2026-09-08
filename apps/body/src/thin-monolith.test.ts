@@ -245,7 +245,7 @@ describe('monolith-only thin daemon', () => {
     );
   });
 
-  it('answers only an explicit mention in a bootstrapped direct message', async () => {
+  it('answers an untagged direct reply in a bootstrapped direct message', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'beeline-dm-runtime-'));
     roots.push(root);
     const staged = await stageMonolithAgentRuntime({
@@ -314,8 +314,10 @@ describe('monolith-only thin daemon', () => {
                 authorId: humanId,
                 createdAt: 2,
                 type: 'message',
-                body: '@Bee are you there?',
+                body: 'Are you there?',
                 mentionIds: [staged.runtime.agent.publicKey],
+                replyToMessageId: 'agent-parent',
+                replyToAuthorId: staged.runtime.agent.publicKey,
                 attachments: [],
               },
             ],

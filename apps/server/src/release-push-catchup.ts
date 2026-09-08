@@ -38,13 +38,41 @@ export async function queueLatestReleasePush(
   );
 }
 
+export async function claimReleaseCatchup(
+  database: SqlDatabase,
+  messageId: string,
+  token: string,
+  identityId: string,
+): Promise<boolean> {
+  const claim = await database.query(
+    `INSERT INTO push_delivery_claims(message_id,device_token,status)
+     SELECT $1,$2,'claimed'
+     WHERE EXISTS (
+       SELECT 1
+       FROM push_release_catchups catchup
+       JOIN push_devices d ON d.token=catchup.device_token AND d.identity_id=catchup.identity_id
+       JOIN messages m ON m.id=catchup.message_id
+       JOIN rooms r ON r.id=m.room_id
+       JOIN memberships member ON member.room_id=r.id AND member.identity_id=d.identity_id
+         AND member.removed_at IS NULL
+       LEFT JOIN room_read_marks read ON read.room_id=r.id AND read.identity_id=d.identity_id
+       WHERE catchup.device_token=$2 AND catchup.identity_id=$3 AND catchup.message_id=$1
+         AND (read.message_id IS NULL OR (m.created_at,m.id)>(read.message_created_at,read.message_id))
+         AND NOT EXISTS (SELECT 1 FROM messages newer WHERE newer.room_id=m.room_id
+           AND newer.author_id=m.author_id AND (newer.created_at,newer.id)>(m.created_at,m.id))
+     ) ON CONFLICT DO NOTHING`,
+    [messageId, token, identityId],
+  );
+  return Boolean(claim.rowCount);
+}
+
 /** One extra candidate lane; only this lane bypasses the registration floor.
  * Re-check readership, identity and latest-message status at dispatch time.
  */
 export const RELEASE_CATCHUP_CANDIDATES_SQL = `
   SELECT m.id message_id,r.workspace_id::text workspace_id,m.room_id::text room_id,
     'message' notification_type,concat_ws(': ',author.name,btrim(m.text)) text,
-    d.token,m.created_at
+    d.token,catchup.identity_id,true is_release_catchup,m.created_at
   FROM push_release_catchups catchup
   JOIN push_devices d ON d.token=catchup.device_token AND d.identity_id=catchup.identity_id
   JOIN messages m ON m.id=catchup.message_id

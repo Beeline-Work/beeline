@@ -5,6 +5,7 @@ import { PgliteDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { PushDeliveryLoop } from './background.js';
 import { notifyReleaseDelivered, SYSTEM_IDENTITY_ID } from './release-notify.js';
+import { claimReleaseCatchup } from './release-push-catchup.js';
 
 const PERSON = 'a'.repeat(64);
 const OTHER = 'b'.repeat(64);
@@ -101,6 +102,21 @@ describe('release push catch-up at device registration', () => {
       ).rowCount,
     ).toBe(0);
     expect(await loop.runOnce()).toBe(0);
+  });
+
+  it('does not claim a queued notice that became read before dispatch', async () => {
+    const latest = await release('v1', 2);
+    await register();
+    expect(
+      (await database.query('SELECT 1 FROM push_release_catchups WHERE device_token=$1', ['device']))
+        .rowCount,
+    ).toBe(1);
+    await markRead(latest);
+    await expect(claimReleaseCatchup(database, latest.id, 'device', PERSON)).resolves.toBe(false);
+    expect(
+      (await database.query('SELECT 1 FROM push_delivery_claims WHERE message_id=$1', [latest.id]))
+        .rowCount,
+    ).toBe(0);
   });
 
   it('catches up after reinstall with a new token and avoids a duplicate normal delivery', async () => {

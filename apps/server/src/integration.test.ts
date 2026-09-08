@@ -245,6 +245,55 @@ describe('monolith integration', () => {
     ).toEqual([expect.objectContaining({ registered_at: new Date('2000-01-01T00:00:00.000Z') })]);
   });
 
+  it('resets a reassigned device registration floor', async () => {
+    const otherId = createHash('sha256').update('github:other-push-owner').digest('hex');
+    await database.query(
+      `INSERT INTO identities(id,kind,name) VALUES($1,'human','Other push owner')`,
+      [otherId],
+    );
+    const roomId = 'b1111111-1111-4111-8111-111111111111';
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,created_by,name) VALUES($1,$2,$3,'Push test')`,
+      [roomId, DEFAULT_WORKSPACE_ID, otherId],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+        ($1,$2,$3,'member'),($1,$2,$4,'member')`,
+      [DEFAULT_WORKSPACE_ID, roomId, HUMAN, otherId],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,mention_ids,created_at)
+       VALUES($1,$2,$3,'old mention',$4::jsonb,now()-interval '1 hour')`,
+      ['d'.repeat(64), roomId, HUMAN, JSON.stringify([otherId])],
+    );
+    const token = 'reassigned-device-token-1234567890';
+    expect(
+      (
+        await operation('registerPushDevice', {
+          token,
+          platform: 'android',
+          environment: 'physical',
+        })
+      ).status,
+    ).toBe(200);
+    await database.query(
+      `UPDATE push_devices SET registered_at=now()-interval '2 hours' WHERE token=$1`,
+      [token],
+    );
+    await database.query(
+      `INSERT INTO push_delivery_floors(id,started_at) VALUES('message-delivery',now()-interval '2 hours')
+       ON CONFLICT(id) DO UPDATE SET started_at=EXCLUDED.started_at`,
+    );
+    await phone.execute(
+      'registerPushDevice',
+      { token, platform: 'android', environment: 'physical' },
+      otherId,
+    );
+    const send = vi.fn(async () => undefined);
+    await expect(new PushDeliveryLoop(database, { send }).runOnce()).resolves.toBe(0);
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it('keeps workspace and Room mutations aligned with the phone HTTP contract', async () => {
     const aliceToken = await phoneToken('alice');
     const aliceId = createHash('sha256').update('github:alice').digest('hex');

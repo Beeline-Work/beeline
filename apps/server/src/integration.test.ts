@@ -4711,6 +4711,9 @@ describe('monolith integration', () => {
       `UPDATE agents SET soul=$2::jsonb,selected_model='gpt-5.6' WHERE agent_id=$1`,
       [AGENT, JSON.stringify({ name: 'Scout', instructions: 'Be brisk and kind.' })],
     );
+    await database.query(`UPDATE identities SET avatar='avatars/owner.png',face_id='fox' WHERE id=$1`, [
+      HUMAN,
+    ]);
     const phone = new PhoneService(database, 'http://placeholder');
     const view = await phone.readAgent(WORKSPACE, AGENT, HUMAN);
     expect(view?.soul).toEqual({
@@ -4722,12 +4725,12 @@ describe('monolith integration', () => {
     // catalog: the MODEL / EFFORT rows show the current value regardless.
     expect(view?.catalog).toEqual([]);
     expect(view?.selected).toEqual({ model: 'gpt-5.6' });
-    expect(view?.owner).toMatchObject({ pubkey: HUMAN, kind: 'human', handle: 'owner' });
+    expect(view?.owner).toEqual({ pubkey: HUMAN, kind: 'human', name: 'Owner', handle: 'owner' });
     const workspace = await phone.readWorkspace(WORKSPACE, HUMAN);
     expect(workspace?.agents).toEqual([
       expect.objectContaining({
         model: 'gpt-5.6',
-        owner: expect.objectContaining({ pubkey: HUMAN, handle: 'owner' }),
+        owner: { pubkey: HUMAN, kind: 'human', name: 'Owner', handle: 'owner' },
       }),
     ]);
     // The phone build's surface guard must accept the readAgent output as-is.

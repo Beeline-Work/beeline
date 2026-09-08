@@ -105,8 +105,8 @@ describe('RoomIndexer', () => {
     );
     for (const channelId of [WORKSPACE, ROOM, CORNER]) {
       await postgres.query(
-        `INSERT INTO channel_members (community_id, channel_id, pubkey, role)
-         VALUES ($1, $2, $3, 'owner'), ($1, $2, $4, 'member')`,
+        `INSERT INTO channel_members (community_id, channel_id, pubkey, role, invited_by)
+         VALUES ($1, $2, $3, 'owner', NULL), ($1, $2, $4, 'member', $3)`,
         [TENANT, channelId, bytes(VIEWER), bytes(AGENT)],
       );
     }
@@ -2160,6 +2160,7 @@ describe('RoomIndexer', () => {
 
     await expect(indexer.readAgent(WORKSPACE, AGENT, VIEWER)).resolves.toMatchObject({
       agent: { identity: { name: 'Milo' } },
+      owner: { pubkey: VIEWER, kind: 'human', handle: 'ada@example.test' },
       soul: {
         name: 'Clara',
         instructions: 'Keep the tests green.',
@@ -2180,9 +2181,27 @@ describe('RoomIndexer', () => {
       selected: { model: 'opus', effort: 'high' },
     });
     await expect(indexer.readWorkspace(WORKSPACE, VIEWER)).resolves.toMatchObject({
-      agents: [{ identity: { name: 'Milo' } }],
+      agents: [
+        {
+          identity: { name: 'Milo' },
+          model: 'Opus',
+          owner: { pubkey: VIEWER, kind: 'human', handle: 'ada@example.test' },
+        },
+      ],
     });
     const detail = await indexer.readAgent(WORKSPACE, AGENT, VIEWER);
+    expect(detail?.owner).toEqual({
+      pubkey: VIEWER,
+      kind: 'human',
+      name: 'Ada',
+      handle: 'ada@example.test',
+    });
+    expect((await indexer.readWorkspace(WORKSPACE, VIEWER))?.agents[0]?.owner).toEqual({
+      pubkey: VIEWER,
+      kind: 'human',
+      name: 'Ada',
+      handle: 'ada@example.test',
+    });
     expect(detail?.watchFilters).toContainEqual({
       kinds: [30078],
       '#d': [modelKey],

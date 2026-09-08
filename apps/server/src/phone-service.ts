@@ -503,12 +503,9 @@ export class PhoneService {
           owner_id: string;
           owner_name: string;
           owner_handle: string | null;
-          owner_avatar: string | null;
-          owner_face: string | null;
         }>(
           `SELECT agent.agent_id,agent.selected_model,agent.model_catalog,
-                  owner.id owner_id,owner.name owner_name,owner.handle owner_handle,
-                  owner.avatar owner_avatar,owner.face_id owner_face
+                  owner.id owner_id,owner.name owner_name,owner.handle owner_handle
            FROM agents agent JOIN identities owner ON owner.id=agent.owner_id
            WHERE agent.agent_id=ANY($1::text[])`,
           [agentMembers.map((member) => member.identity.pubkey)],
@@ -530,10 +527,6 @@ export class PhoneService {
                 kind: 'human' as const,
                 name: config.owner_name,
                 ...(config.owner_handle ? { handle: config.owner_handle } : {}),
-                ...(config.owner_avatar
-                  ? { avatar: assetUrl(config.owner_avatar, this.publicOrigin) }
-                  : {}),
-                ...(config.owner_face ? { face: config.owner_face } : {}),
               },
             }
           : {}),
@@ -1049,15 +1042,12 @@ export class PhoneService {
         owner_id: string | null;
         owner_name: string | null;
         owner_handle: string | null;
-        owner_avatar: string | null;
-        owner_face: string | null;
       }>(
         `SELECT a.soul,a.model_catalog,a.selected_model,a.selected_effort,
                 CASE WHEN workspace.visibility='public' THEN false ELSE a.yolo_mode END yolo_mode,
                 workspace.visibility='public' yolo_forced_off,a.yolo_set_at,
                 setter.name yolo_set_by_name,a.access_policy,a.owner_id,
-                owner.name owner_name,owner.handle owner_handle,owner.avatar owner_avatar,
-                owner.face_id owner_face,
+                owner.name owner_name,owner.handle owner_handle,
                 a.owner_id=$3 can_change_yolo,
                 (a.owner_id=$3 OR viewer_membership.role IN ('owner','admin')) can_manage_grants
          FROM agents a
@@ -1097,10 +1087,6 @@ export class PhoneService {
               kind: 'human' as const,
               name: config.owner_name,
               ...(config.owner_handle ? { handle: config.owner_handle } : {}),
-              ...(config.owner_avatar
-                ? { avatar: assetUrl(config.owner_avatar, this.publicOrigin) }
-                : {}),
-              ...(config.owner_face ? { face: config.owner_face } : {}),
             },
           }
         : {}),

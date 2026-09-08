@@ -464,9 +464,14 @@ WITH candidates AS (
       WHERE d->>0 = 'd' AND d->>1 = a.id::text || ':' || encode(e.pubkey, 'hex'))
   ORDER BY e.community_id, e.pubkey, e.created_at DESC, e.id DESC
 ), agent_model_configs AS MATERIALIZED (
-  SELECT DISTINCT ON (e.community_id, e.pubkey) e.community_id, e.pubkey, e.content
+  SELECT DISTINCT ON (e.community_id, target.agent_pubkey)
+    e.community_id, target.agent_pubkey, e.content
   FROM authorized a JOIN events e ON e.community_id = a.community_id
     AND e.kind = 30078 AND e.deleted_at IS NULL
+  JOIN LATERAL (
+    SELECT t->>1 AS agent_pubkey FROM jsonb_array_elements(e.tags) t
+    WHERE t->>0 = 'p' LIMIT 1
+  ) target ON target.agent_pubkey ~* '^[0-9a-f]{64}$'
   JOIN channel_members author ON author.community_id = e.community_id
     AND author.channel_id = a.id AND author.pubkey = e.pubkey AND author.removed_at IS NULL
   LEFT JOIN agent_declarations author_agent ON author_agent.community_id = e.community_id
@@ -475,8 +480,8 @@ WITH candidates AS (
     AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
       WHERE t->>0 = 't' AND t->>1 = 'buzz-agent-model-config')
     AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) d
-      WHERE d->>0 = 'd' AND d->>1 = a.id::text || ':' || encode(e.pubkey, 'hex'))
-  ORDER BY e.community_id, e.pubkey, e.created_at DESC, e.id DESC
+      WHERE d->>0 = 'd' AND d->>1 = a.id::text || ':' || target.agent_pubkey)
+  ORDER BY e.community_id, target.agent_pubkey, e.created_at DESC, e.id DESC
 ), ${agentSoulsCteSql('authorized', 'a', 'a.id::text')}, roster_resolved AS (
   SELECT a.community_id, a.id AS workspace_id, cm.pubkey, cm.role::text,
     NULLIF(u.display_name, '') AS human_name, u.nip05_handle, u.avatar_url,
@@ -494,7 +499,7 @@ WITH candidates AS (
   LEFT JOIN agent_model_catalogs catalog ON catalog.community_id = cm.community_id
     AND catalog.pubkey = cm.pubkey
   LEFT JOIN agent_model_configs config ON config.community_id = cm.community_id
-    AND config.pubkey = cm.pubkey
+    AND config.agent_pubkey = encode(cm.pubkey, 'hex')
   LEFT JOIN agent_souls soul ON soul.community_id = cm.community_id
     AND soul.d_tag = a.id::text || ':' || encode(cm.pubkey, 'hex')
   LEFT JOIN users owner ON owner.community_id = cm.community_id AND owner.pubkey = cm.invited_by

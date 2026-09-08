@@ -2157,6 +2157,24 @@ describe('RoomIndexer', () => {
         }),
       ],
     );
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id, d_tag)
+       VALUES ($1, $2, $3, to_timestamp(23), 30078, $4, $5, NULL, $6)`,
+      [
+        TENANT,
+        bytes('f'.repeat(64)),
+        bytes(OUTSIDER),
+        JSON.stringify([
+          ['h', WORKSPACE],
+          ['p', AGENT],
+          ['d', modelKey],
+          ['t', 'buzz-agent-model-config'],
+        ]),
+        JSON.stringify({ model: 'sonnet' }),
+        modelKey,
+      ],
+    );
 
     await expect(indexer.readAgent(WORKSPACE, AGENT, VIEWER)).resolves.toMatchObject({
       agent: { identity: { name: 'Milo' } },

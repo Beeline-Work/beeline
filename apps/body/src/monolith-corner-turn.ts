@@ -800,6 +800,7 @@ export class MonolithCornerTurnLoop {
                 return narration;
               };
               const publishedToolCalls = new Set<string>();
+              const pendingToolNarrations = new Map<string, string>();
               const publishToolCalls = (calls: readonly ToolCallEntry[], settledOnly: boolean) => {
                 calls.forEach((call, index) => {
                   const key = toolCallKey(call, index);
@@ -810,7 +811,9 @@ export class MonolithCornerTurnLoop {
                   // proves the current assistant run is interim narration. The
                   // end-of-prompt fallback still publishes missed tool rows but
                   // cannot safely classify the last run, so it never consumes it.
-                  const narration = settledOnly ? takeInterimNarration() : '';
+                  const narration =
+                    pendingToolNarrations.get(key) ?? (settledOnly ? takeInterimNarration() : '');
+                  if (narration) pendingToolNarrations.set(key, narration);
                   this.activityTail = this.activityTail
                     .catch(() => undefined)
                     .then(async () => {
@@ -837,6 +840,7 @@ export class MonolithCornerTurnLoop {
                           activity,
                         ],
                       });
+                      pendingToolNarrations.delete(key);
                     })
                     .then(() => undefined)
                     .catch((error) => {

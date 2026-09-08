@@ -114,23 +114,6 @@ describe('PhoneService agent connect pairing claim', () => {
         soul: { name: claim.agentName, instructions: claim.soul, avatarSeed: AGENT },
       },
     ]);
-    expect(
-      (
-        await database.query<{
-          community_id: string | null;
-          workspace_id: string;
-          owner_pubkey: string;
-          agent_pubkey: string;
-        }>(
-          `SELECT community_id::text,workspace_id::text,encode(owner_pubkey,'hex') AS owner_pubkey,
-                  encode(agent_pubkey,'hex') AS agent_pubkey
-           FROM beeline_agent_pairing_claims WHERE token_hash=$1`,
-          [createHash('sha256').update(CODE).digest('hex')],
-        )
-      ).rows,
-    ).toEqual([
-      { community_id: null, workspace_id: WORKSPACE, owner_pubkey: OWNER, agent_pubkey: AGENT },
-    ]);
     // The owner already wears a face; the agent never takes it.
     expect(claim.face).not.toBe(defaultFaceForSeed(OWNER));
     // No `deferJoin` (every already-installed CLI): the claim itself joins
@@ -140,6 +123,28 @@ describe('PhoneService agent connect pairing claim', () => {
       [AGENT],
     );
     expect(memberships.rows).toEqual([{ room_id: null }, { room_id: ROOM }]);
+  });
+
+  it('returns a normally connected agent owner from server workspace and profile reads', async () => {
+    await insertCode(new Date(Date.now() + 60_000));
+    const claim = await phone.claimAgentConnectPairing({
+      code: CODE,
+      agentPubkey: AGENT,
+      model: 'gpt-5.4',
+    });
+    if (claim.status !== 'claimed') throw new Error('claim failed');
+
+    await expect(phone.readWorkspace(WORKSPACE, OWNER)).resolves.toMatchObject({
+      agents: [
+        {
+          identity: { pubkey: AGENT },
+          owner: { pubkey: OWNER, kind: 'human', handle: 'owner' },
+        },
+      ],
+    });
+    await expect(phone.readAgent(WORKSPACE, AGENT, OWNER)).resolves.toMatchObject({
+      owner: { pubkey: OWNER, kind: 'human', handle: 'owner' },
+    });
   });
 
   it('rolls the agent claim back when its daemon exchange cannot be minted', async () => {
@@ -163,43 +168,6 @@ describe('PhoneService agent connect pairing claim', () => {
         )
       ).rows[0]?.claimed_by,
     ).toBeNull();
-  });
-
-  it('backfills a pre-existing connected agent owner stamp', async () => {
-    await database.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Bee','bee')`, [
-      AGENT,
-    ]);
-    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [AGENT, OWNER]);
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member')`,
-      [WORKSPACE, AGENT],
-    );
-
-    await migrate(database);
-
-    await expect(
-      database.query<{
-        community_id: string | null;
-        workspace_id: string;
-        owner_pubkey: string;
-        agent_pubkey: string;
-      }>(
-        `SELECT community_id::text,workspace_id::text,encode(owner_pubkey,'hex') AS owner_pubkey,
-                encode(agent_pubkey,'hex') AS agent_pubkey
-         FROM beeline_agent_pairing_claims
-         WHERE workspace_id=$1 AND agent_pubkey=decode($2,'hex')`,
-        [WORKSPACE, AGENT],
-      ),
-    ).resolves.toMatchObject({
-      rows: [
-        {
-          community_id: null,
-          workspace_id: WORKSPACE,
-          owner_pubkey: OWNER,
-          agent_pubkey: AGENT,
-        },
-      ],
-    });
   });
 
   it('keeps an active agent handle unique when it pairs into another Workspace', async () => {

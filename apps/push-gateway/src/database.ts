@@ -76,7 +76,7 @@ export async function migrateRoomReadMarks(database: DatabaseQueryable): Promise
 const AGENT_PAIRING_CLAIM_SQL = `
 CREATE TABLE IF NOT EXISTS beeline_agent_pairing_claims (
   token_hash text PRIMARY KEY CHECK (token_hash ~ '^[0-9a-f]{64}$'),
-  community_id uuid,
+  community_id uuid NOT NULL,
   workspace_id uuid NOT NULL,
   minter_pubkey bytea NOT NULL,
   owner_pubkey bytea NOT NULL,
@@ -88,8 +88,6 @@ CREATE TABLE IF NOT EXISTS beeline_agent_pairing_claims (
 const AGENT_PAIRING_CLAIM_OWNER_SQL = `
 ALTER TABLE IF EXISTS beeline_agent_pairing_claims
   ADD COLUMN IF NOT EXISTS owner_pubkey bytea;
-ALTER TABLE IF EXISTS beeline_agent_pairing_claims
-  ALTER COLUMN community_id DROP NOT NULL;
 UPDATE beeline_agent_pairing_claims
   SET owner_pubkey=minter_pubkey
   WHERE owner_pubkey IS NULL;

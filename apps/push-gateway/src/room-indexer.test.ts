@@ -2238,6 +2238,57 @@ describe('RoomIndexer', () => {
     ).toBe(false);
   });
 
+  it('keeps the latest valid human-selected model when a newer config is malformed', async () => {
+    const modelKey = `${WORKSPACE}:${AGENT}`;
+    await postgres.query(
+      `INSERT INTO events
+        (community_id,id,pubkey,created_at,kind,tags,content,channel_id,d_tag)
+       VALUES
+        ($1,$2,$3,to_timestamp(40),30078,$4,$5,NULL,$6),
+        ($1,$7,$8,to_timestamp(41),30078,$9,$10,NULL,$6),
+        ($1,$11,$8,to_timestamp(42),30078,$9,'not json',NULL,$6)`,
+      [
+        TENANT,
+        bytes('1'.repeat(64)),
+        bytes(AGENT),
+        JSON.stringify([
+          ['h', WORKSPACE],
+          ['p', AGENT],
+          ['d', modelKey],
+          ['t', 'buzz-agent-model-catalog'],
+        ]),
+        JSON.stringify({
+          options: [
+            {
+              id: 'model',
+              category: 'model',
+              currentValue: 'sonnet',
+              options: [
+                { id: 'sonnet', name: 'Sonnet' },
+                { id: 'opus', name: 'Opus' },
+              ],
+            },
+          ],
+        }),
+        modelKey,
+        bytes('2'.repeat(64)),
+        bytes(VIEWER),
+        JSON.stringify([
+          ['h', WORKSPACE],
+          ['p', AGENT],
+          ['d', modelKey],
+          ['t', 'buzz-agent-model-config'],
+        ]),
+        JSON.stringify({ model: 'opus' }),
+        bytes('3'.repeat(64)),
+      ],
+    );
+
+    await expect(indexer.readWorkspace(WORKSPACE, VIEWER)).resolves.toMatchObject({
+      agents: [{ identity: { pubkey: AGENT }, model: 'Opus' }],
+    });
+  });
+
   it('reads the connected agent owner from the materializer claim rather than membership attribution', async () => {
     await postgres.query(
       `INSERT INTO users (community_id,pubkey,display_name,nip05_handle)
@@ -2264,32 +2315,6 @@ describe('RoomIndexer', () => {
     });
     await expect(indexer.readAgent(WORKSPACE, AGENT, VIEWER)).resolves.toMatchObject({
       owner: { pubkey: CONNECTED_OWNER, handle: 'owner@example.test' },
-    });
-  });
-
-  it('reads a normally connected agent owner from its server stamp', async () => {
-    await postgres.query(
-      `INSERT INTO users (community_id,pubkey,display_name,nip05_handle)
-       VALUES ($1,$2,'Connected owner','connected@example.test')`,
-      [TENANT, bytes(CONNECTED_OWNER)],
-    );
-    await postgres.query(
-      `INSERT INTO beeline_agent_pairing_claims
-        (token_hash,community_id,workspace_id,minter_pubkey,owner_pubkey,agent_pubkey,claimed_at)
-       VALUES($1,NULL,$2,$3,$3,$4,to_timestamp(2))`,
-      ['e'.repeat(64), WORKSPACE, bytes(CONNECTED_OWNER), bytes(AGENT)],
-    );
-
-    await expect(indexer.readWorkspace(WORKSPACE, VIEWER)).resolves.toMatchObject({
-      agents: [
-        {
-          identity: { pubkey: AGENT },
-          owner: { pubkey: CONNECTED_OWNER, handle: 'connected@example.test' },
-        },
-      ],
-    });
-    await expect(indexer.readAgent(WORKSPACE, AGENT, VIEWER)).resolves.toMatchObject({
-      owner: { pubkey: CONNECTED_OWNER, handle: 'connected@example.test' },
     });
   });
 

@@ -1473,13 +1473,6 @@ export class PhoneService {
         ],
       );
       await database.query(
-        `INSERT INTO beeline_agent_pairing_claims
-          (token_hash,community_id,workspace_id,minter_pubkey,owner_pubkey,agent_pubkey)
-         VALUES($1,NULL,$2,decode($3,'hex'),decode($3,'hex'),decode($4,'hex'))
-         ON CONFLICT (token_hash) DO NOTHING`,
-        [hash(input.code), pairing.workspace_id, pairing.created_by, input.agentPubkey],
-      );
-      await database.query(
         `UPDATE agent_pairing_codes SET claimed_by=$2,claimed_at=now() WHERE code_hash=$1`,
         [hash(input.code), input.agentPubkey],
       );

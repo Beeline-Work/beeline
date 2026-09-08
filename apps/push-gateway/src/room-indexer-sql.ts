@@ -476,20 +476,20 @@ WITH candidates AS (
     AND author.channel_id = a.id AND author.pubkey = e.pubkey AND author.removed_at IS NULL
   LEFT JOIN agent_declarations author_agent ON author_agent.community_id = e.community_id
     AND author_agent.pubkey = e.pubkey
-  WHERE author_agent.pubkey IS NULL
+  WHERE pg_input_is_valid(e.content, 'jsonb')
+    AND author_agent.pubkey IS NULL
     AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
       WHERE t->>0 = 't' AND t->>1 = 'buzz-agent-model-config')
     AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) d
       WHERE d->>0 = 'd' AND d->>1 = a.id::text || ':' || target.agent_pubkey)
   ORDER BY e.community_id, target.agent_pubkey, e.created_at DESC, e.id DESC
 ), agent_owners AS MATERIALIZED (
-  SELECT DISTINCT ON (claim.workspace_id, claim.agent_pubkey)
-    a.community_id, claim.workspace_id, claim.agent_pubkey, claim.owner_pubkey
-  FROM beeline_agent_pairing_claims claim JOIN authorized a
-    ON a.id = claim.workspace_id
-    AND (claim.community_id = a.community_id OR claim.community_id IS NULL)
-  ORDER BY claim.workspace_id, claim.agent_pubkey, claim.claimed_at DESC,
-    (claim.community_id IS NULL), claim.token_hash DESC
+  SELECT DISTINCT ON (claim.community_id, claim.workspace_id, claim.agent_pubkey)
+    claim.community_id, claim.workspace_id, claim.agent_pubkey, claim.owner_pubkey
+  FROM beeline_agent_pairing_claims claim
+  JOIN authorized a ON a.community_id = claim.community_id AND a.id = claim.workspace_id
+  ORDER BY claim.community_id, claim.workspace_id, claim.agent_pubkey,
+    claim.claimed_at DESC, claim.token_hash DESC
 ), ${agentSoulsCteSql('authorized', 'a', 'a.id::text')}, roster_resolved AS (
   SELECT a.community_id, a.id AS workspace_id, cm.pubkey, cm.role::text,
     NULLIF(u.display_name, '') AS human_name, u.nip05_handle, u.avatar_url,
@@ -891,10 +891,9 @@ WITH authorized AS (
   LEFT JOIN LATERAL (
     SELECT claim.owner_pubkey
     FROM beeline_agent_pairing_claims claim
-    WHERE (claim.community_id = a.community_id OR claim.community_id IS NULL)
-      AND claim.workspace_id = a.id
+    WHERE claim.community_id = a.community_id AND claim.workspace_id = a.id
       AND claim.agent_pubkey = cm.pubkey
-    ORDER BY claim.claimed_at DESC, (claim.community_id IS NULL), claim.token_hash DESC
+    ORDER BY claim.claimed_at DESC, claim.token_hash DESC
     LIMIT 1
   ) connected ON true
 ), catalog AS (

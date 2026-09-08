@@ -23,9 +23,9 @@ describe('push status presentation', () => {
     expect(pushSwitchValue(false, state({ registered: true, phase: 'registered' }))).toBe(false);
     expect(pushSwitchValue(null, null)).toBe(false);
     // Platforms without this registration path keep the preference.
-    expect(
-      pushSwitchValue(true, state({ phase: 'unsupported-platform', retryable: false })),
-    ).toBe(true);
+    expect(pushSwitchValue(true, state({ phase: 'unsupported-platform', retryable: false }))).toBe(
+      true,
+    );
   });
 
   it('surfaces each failure phase as a named, honest status', () => {
@@ -33,11 +33,7 @@ describe('push status presentation', () => {
       'device token timed out — will retry',
     );
     expect(
-      pushStatusLabel(
-        'OS permission: allowed',
-        true,
-        state({ phase: 'gateway-rejected' }),
-      ),
+      pushStatusLabel('OS permission: allowed', true, state({ phase: 'gateway-rejected' })),
     ).toBe('push gateway refused registration — will retry');
     expect(
       pushStatusLabel(
@@ -55,14 +51,14 @@ describe('push status presentation', () => {
     ).toBe('network error reaching the push gateway — will retry');
   });
 
-  it('falls back to the OS permission label when enabled and registered', () => {
+  it('explicitly names successful registration and keeps unknown registration distinct', () => {
     expect(
       pushStatusLabel(
         'OS permission: allowed',
         true,
         state({ registered: true, retryable: false, phase: 'registered' }),
       ),
-    ).toBe('OS permission: allowed');
+    ).toBe('Registered');
     expect(pushStatusLabel('OS permission: allowed', true, null)).toBe('OS permission: allowed');
   });
 

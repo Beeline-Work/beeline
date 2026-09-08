@@ -555,6 +555,13 @@ CREATE TABLE IF NOT EXISTS agent_pairing_codes (
   claimed_at timestamptz
 );
 
+-- Workspace-owned bytes, independent of expiring Room attachments.
+CREATE TABLE IF NOT EXISTS avatars (
+  id uuid PRIMARY KEY,
+  workspace_id uuid NOT NULL UNIQUE REFERENCES workspaces(id) ON DELETE CASCADE,
+  bytes bytea NOT NULL CHECK (octet_length(bytes) BETWEEN 1 AND 131072)
+);
+
 CREATE TABLE IF NOT EXISTS media (
   id uuid PRIMARY KEY,
   owner_id text NOT NULL REFERENCES identities(id),

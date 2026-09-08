@@ -1,4 +1,7 @@
-import type { BuzzPushRegistrationPhase, BuzzPushRegistrationState } from './buzz-push-registration';
+import type {
+  BuzzPushRegistrationPhase,
+  BuzzPushRegistrationState,
+} from './buzz-push-registration';
 
 /**
  * Pure presentation rules for the settings push row: the switch reflects whether
@@ -58,6 +61,7 @@ export function pushStatusLabel(
 ): string {
   if (enabled === null) return osPermissionLabel;
   if (!enabled) return 'Off';
+  if (state?.registered && state.phase === 'registered') return 'Registered';
   if (state && !state.registered) {
     const detail = buzzPushPhaseDetail(state.phase);
     if (detail) {

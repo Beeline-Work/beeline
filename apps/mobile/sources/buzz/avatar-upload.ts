@@ -5,9 +5,10 @@ import type { BuzzClient } from '@beeline/buzz-client';
 import { canonicalizeAvatarPng } from '@/buzz/avatar-png';
 import { readFileBytes } from '@/utils/readFileBytes';
 
-const AVATAR_EDGE = 512;
+const AVATAR_EDGE = 256;
 const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
-/** Pick, square-crop, compress, and upload a cosmetic avatar through Buzz media. */
+/** Pick and crop an avatar. The workspace setter promotes the upload into
+ * durable server-owned avatar storage before acknowledging the change. */
 export async function pickAndUploadAvatar(client: BuzzClient): Promise<string | null> {
   // Android's system photo picker grants access to the selected URI without a
   // broad media-library permission. The app intentionally blocks READ_MEDIA_*.

@@ -5,7 +5,6 @@
  * assertions cover subscription delivery rather than preloaded transcript UI.
  */
 import {
-  AGENT_PRESENCE_HEARTBEAT_MS,
   CORNER_REMOTE_STATE_KIND,
   CORNER_REMOTE_STATE_TAG,
   KIND_AGENT_DRAFT,
@@ -102,8 +101,6 @@ async function main(agentNsec: string, roomId: string, cornerId: string) {
     identity,
   });
   await client.connect();
-  let heartbeatTimer: ReturnType<typeof setTimeout> | undefined;
-  let stopped = false;
   const publishPresence = () =>
     client.publish(
       signEvent(
@@ -217,19 +214,8 @@ async function main(agentNsec: string, roomId: string, cornerId: string) {
       ),
     );
   };
-  const schedulePresenceHeartbeat = () => {
-    if (stopped) return;
-    heartbeatTimer = setTimeout(() => {
-      void publishPresence()
-        .catch((error) => console.warn('Smoke presence heartbeat failed:', error))
-        .finally(schedulePresenceHeartbeat);
-    }, AGENT_PRESENCE_HEARTBEAT_MS);
-    heartbeatTimer.unref?.();
-  };
-
   try {
     await publishPresence();
-    schedulePresenceHeartbeat();
     // Relay observation is the action boundary. Navigation time before a send
     // cannot consume its latency budget; only relay -> authoritative RoomView
     // materialization is measured.
@@ -372,8 +358,6 @@ async function main(agentNsec: string, roomId: string, cornerId: string) {
       'corner-worktree-cleaned',
     );
   } finally {
-    stopped = true;
-    if (heartbeatTimer) clearTimeout(heartbeatTimer);
     client.disconnect();
   }
 }

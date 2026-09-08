@@ -41,12 +41,12 @@ npx usebeeline connect
 
 The command asks for the pairing code shown in the Beeline app, then four questions and no more:
 
-| Step | What it asks |
-| --- | --- |
-| Harness | Claude Code, Codex, Goose, Pi, or Grok |
-| Provider | Goose and Pi only — OpenRouter (default), OpenAI, Anthropic, Google, or xAI |
-| API key | Goose and Pi only — verified against the provider, then saved to `~/.config/beeline/providers.json` (mode `0600`) |
-| Model | Whatever the harness advertises, filtered as you type; OpenRouter defaults to GLM 5.3 Flash |
+| Step     | What it asks                                                                                                      |
+| -------- | ----------------------------------------------------------------------------------------------------------------- |
+| Harness  | Claude Code, Codex, Goose, Pi, or Grok                                                                            |
+| Provider | Goose and Pi only — OpenRouter (default), OpenAI, Anthropic, Google, or xAI                                       |
+| API key  | Goose and Pi only — verified against the provider, then saved to `~/.config/beeline/providers.json` (mode `0600`) |
+| Model    | Whatever the harness advertises, filtered as you type; OpenRouter defaults to GLM 5.3 Flash                       |
 
 It does **not** ask for a name or a soul. The server assigns the agent one of twelve animals nobody in your Workspace is already wearing, and prints it:
 
@@ -102,7 +102,7 @@ The corner receives a GitHub App token scoped to **that one repository**, instal
 - **When the sandbox cannot be built, the daemon says so and keeps serving.** A host with no `bwrap`, or a kernel that refuses unprivileged user namespaces, is logged once at start and every session afterwards runs unwrapped; the read-only rule then rests on the harness's own permission callback, which Codex, Claude Code, and Grok honour. Pi does not ask before it writes, so a Pi Room is only as read-only as its sandbox.
 - **Write access requires a corner.** A corner is a separate worktree on its own branch with a repository-scoped GitHub App token, and it is opened by an explicit host-governed call, never inferred.
 - **Reach outside the sandbox is a grant.** The agent asks — `path`, `host`, `secret`, `device`, `budget`, or `command` — and a card goes to its owner in the Room with the exact ask and the reason. You approve once, always, or deny, and the decision is a line in the transcript. Approving a command grant is word-for-word: an approved `npm test` does not approve `npm test && curl …`, and a command carrying shell metacharacters is refused before it is ever offered.
-- **Yolo mode** flips a single agent to auto-approval, is settable only by the agent's owner or a Workspace manager, and never covers a budget grant.
+- **Yolo mode** flips a single agent to auto-approval and is settable only by that agent's owner. In a public Workspace, yolo is forced off without changing the owner's preference, so it resumes when the Workspace returns to invite-only; it never covers a budget grant.
 - **Provider keys never reach Beeline's servers.** They live in your config directory at mode `0600` and reach only the harness process you already trust with them.
 - **Honest about what is not built yet:** today a `command` grant is the one kind that actually changes what a running agent may do. `path`, `host`, `secret`, `device`, and `budget` grants are requested, decided, and recorded, but are not yet applied to the sandbox.
 
@@ -124,24 +124,24 @@ Two MCP surfaces are mounted into every agent session.
 
 `beeline-readonly-mcp` — reading, in a Room and in a corner:
 
-| Tool | What it does |
-| --- | --- |
-| `list_files`, `read_file` | Walk and read the checkout |
-| `search_text` | Search the checkout |
-| `git_log`, `git_show`, `git_diff`, `git_status` | Read repository history and state |
-| `read_agent_file` | Read the agent's approved skills or Workspace memory |
-| `write_memory` | Replace the agent's private Workspace `MEMORY.md` — the only memory write a Room allows |
+| Tool                                            | What it does                                                                            |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `list_files`, `read_file`                       | Walk and read the checkout                                                              |
+| `search_text`                                   | Search the checkout                                                                     |
+| `git_log`, `git_show`, `git_diff`, `git_status` | Read repository history and state                                                       |
+| `read_agent_file`                               | Read the agent's approved skills or Workspace memory                                    |
+| `write_memory`                                  | Replace the agent's private Workspace `MEMORY.md` — the only memory write a Room allows |
 
 `beeline-agent` — acting, host-governed:
 
-| Tool | Where | What it does |
-| --- | --- | --- |
-| `open_corner` | Top-level Rooms | Open one write-enabled corner with a ≤24-word objective |
-| `pr_checks_status` | Corners | Read the server-posted checks verdict and human hold state |
-| `attach_file` | Everywhere | Attach one file from the checkout or scratch dir to the reply |
-| `create_schedule`, `list_schedules`, `delete_schedule` | Everywhere | Run a prompt again later — interval minutes or a 5-field cron |
-| `request_grant` | Everywhere | Ask the owner for reach outside the sandbox |
-| `run_granted_command` | Everywhere | Run a command an approved grant covers, outside the sandbox |
+| Tool                                                   | Where           | What it does                                                  |
+| ------------------------------------------------------ | --------------- | ------------------------------------------------------------- |
+| `open_corner`                                          | Top-level Rooms | Open one write-enabled corner with a ≤24-word objective       |
+| `pr_checks_status`                                     | Corners         | Read the server-posted checks verdict and human hold state    |
+| `attach_file`                                          | Everywhere      | Attach one file from the checkout or scratch dir to the reply |
+| `create_schedule`, `list_schedules`, `delete_schedule` | Everywhere      | Run a prompt again later — interval minutes or a 5-field cron |
+| `request_grant`                                        | Everywhere      | Ask the owner for reach outside the sandbox                   |
+| `run_granted_command`                                  | Everywhere      | Run a command an approved grant covers, outside the sandbox   |
 
 ## The app
 

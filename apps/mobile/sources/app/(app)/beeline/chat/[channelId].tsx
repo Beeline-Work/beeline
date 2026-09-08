@@ -4573,7 +4573,10 @@ const styles = StyleSheet.create((theme) => {
       ...Typography.default(),
       flex: 1,
       fontSize: 14,
-      lineHeight: 20,
+      // React Native's iOS text view can truncate long values when an explicit
+      // line height is applied. Let iOS use the font's native metrics while
+      // preserving the established Android and web composer rhythm.
+      ...Platform.select({ ios: {}, default: { lineHeight: 20 } }),
       color: groknight.textSecondary,
       minHeight: 40,
       maxHeight: 120,

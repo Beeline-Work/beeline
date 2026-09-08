@@ -5,6 +5,18 @@ const source = readFileSync(new URL('./chat/[channelId].tsx', import.meta.url), 
 const variants = readFileSync(new URL('./chat/RoomMessageVariants.tsx', import.meta.url), 'utf8');
 
 describe('Room composer status layout', () => {
+  it('lets iOS use native line metrics so long composer text is not truncated', () => {
+    const inputStyle = source.slice(
+      source.indexOf('    input: {'),
+      source.indexOf('    sendButton: {'),
+    );
+
+    expect(inputStyle).toContain(
+      "...Platform.select({ ios: {}, default: { lineHeight: 20 } })",
+    );
+    expect(inputStyle).not.toMatch(/^\s*lineHeight:\s*20,/m);
+  });
+
   it('keeps turn progress inside the growing composer stack, above the field', () => {
     const inputBar = source.slice(source.indexOf('<View style={[styles.inputBar'));
     const progress = inputBar.indexOf('<TurnProgressLine');

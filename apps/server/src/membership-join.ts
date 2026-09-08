@@ -190,14 +190,22 @@ export async function joinRooms(
           name: joiningMention,
         },
         verb: 'joined',
-        ...(context.inviter_id && context.inviter_kind && context.inviter_handle
+        ...(context.inviter_id &&
+        context.inviter_kind &&
+        context.inviter_name &&
+        context.inviter_handle
           ? {
               attribution: {
                 verb: 'invited by',
                 actor: {
                   kind: context.inviter_kind === 'agent' ? ('agent' as const) : ('person' as const),
                   id: context.inviter_id,
-                  name: context.inviter_name,
+                  name: systemIdentityMention({
+                    id: context.inviter_id,
+                    kind: context.inviter_kind,
+                    name: context.inviter_name,
+                    handle: context.inviter_handle,
+                  }),
                 },
               },
             }

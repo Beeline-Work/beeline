@@ -2550,11 +2550,17 @@ export class PhoneService {
     const room = await this.requireTopLevelRoom(input.roomId);
     await this.requireWorkspaceManager(room.workspace_id, viewerId);
     await this.database.transaction(async (database) => {
+      const current = (
+        await database.query<{ visibility: 'public' | 'invite-only' }>(
+          'SELECT visibility FROM rooms WHERE id=$1 FOR UPDATE',
+          [input.roomId],
+        )
+      ).rows[0];
       await database.query(
         `UPDATE rooms SET name=COALESCE($2,name),visibility=COALESCE($3,visibility),updated_at=now() WHERE id=$1`,
         [input.roomId, input.name ?? null, input.visibility ?? null],
       );
-      if (input.visibility && input.visibility !== room.visibility) {
+      if (input.visibility && input.visibility !== current?.visibility) {
         const actor = await this.requireIdentity(viewerId, database);
         await systemLine(database, {
           roomId: input.roomId,

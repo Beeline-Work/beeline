@@ -457,6 +457,25 @@ describe('Members workspace management', () => {
     expect(renderer.root.findByProps({ testID: 'agent-owner' }).props.children).toBe('by @viewer');
   });
 
+  it('omits a handleless owner from the agent row and profile', async () => {
+    const owner = { pubkey: VIEWER, kind: 'human' as const, name: 'Viewer' };
+    state.workspace = {
+      ...baseWorkspace(),
+      agents: [{ ...baseWorkspace().agents[0], owner }],
+    };
+    state.agent = { ...baseAgent(), owner };
+    const renderer = await render();
+    const agentRow = renderer.root.findByProps({ testID: `agent-${AGENT}-identity` });
+    expect(agentRow.findAllByType('Text' as any).map((node: any) => node.props.children)).toEqual([
+      'Clara',
+      '@clara · Sonnet',
+      '›',
+    ]);
+
+    await press(renderer, `agent-${AGENT}-identity`);
+    expect(renderer.root.findAllByProps({ testID: 'agent-owner' })).toHaveLength(0);
+  });
+
   it('keeps removal on the row detail and removes a person from the Workspace through it', async () => {
     const renderer = await render();
     expect(renderer.root.findAllByProps({ testID: `remove-person-${MEMBER}` })).toHaveLength(0);

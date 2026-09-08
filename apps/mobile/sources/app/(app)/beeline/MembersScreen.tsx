@@ -103,16 +103,18 @@ function memberMetaLine(
   return `@${identity.handle ?? fallbackMemberHandle(identity.pubkey)} · ${role}`;
 }
 
-function ownerByline(owner: NonNullable<WorkspaceView['agents'][number]['owner']>): string {
-  return `by @${owner.handle ?? fallbackMemberHandle(owner.pubkey)}`;
+function ownerByline(
+  owner: NonNullable<WorkspaceView['agents'][number]['owner']>,
+): string | undefined {
+  return owner.handle ? `by @${owner.handle}` : undefined;
 }
 
 /** Agent rows spend their three metadata slots on identity, runtime, and ownership. */
 function agentMetaLine(agent: WorkspaceView['agents'][number]): string {
   const name = `@${agent.identity.handle ?? fallbackMemberHandle(agent.identity.pubkey)}`;
   const model = agent.model ?? UNSET_VALUE;
-  const owner = agent.owner ? ownerByline(agent.owner) : 'by —';
-  return `${name} · ${model} · ${owner}`;
+  const owner = agent.owner ? ownerByline(agent.owner) : undefined;
+  return [name, model, owner].filter((part): part is string => part !== undefined).join(' · ');
 }
 
 const ROLE_LABELS: Record<WorkspaceRole, string> = {
@@ -264,6 +266,9 @@ export default function BuzzMembers() {
   const requestedActionHandledRef = useRef(false);
   const ownsSelectedAgent = selectedAgent?.access?.owner?.id === identity?.publicKey;
   const canRemoveSelectedAgent = ownsSelectedAgent || Boolean(surface?.viewer.permissions.manage);
+  const selectedAgentOwnerByline = selectedAgent?.owner
+    ? ownerByline(selectedAgent.owner)
+    : undefined;
 
   const workspaceAddress = (nextIdentity = identity, nextRelayUrl = relayUrl) =>
     nextIdentity && nextRelayUrl && workspaceId
@@ -978,9 +983,9 @@ export default function BuzzMembers() {
                       </TouchableOpacity>
                     )}
                   </View>
-                  {selectedAgent.owner && (
+                  {selectedAgentOwnerByline && (
                     <Text style={styles.detail} testID="agent-owner">
-                      {ownerByline(selectedAgent.owner)}
+                      {selectedAgentOwnerByline}
                     </Text>
                   )}
                 </View>

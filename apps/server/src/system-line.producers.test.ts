@@ -289,6 +289,22 @@ describe('system-line producers', () => {
     }
   });
 
+  it('writes one Room visibility line for concurrent identical updates', async () => {
+    const database = await fixture();
+    try {
+      const phone = new PhoneService(database, 'http://local.test');
+      await Promise.all([
+        phone.execute('updateRoom', { roomId: ROOM, visibility: 'public' }, OWNER),
+        phone.execute('updateRoom', { roomId: ROOM, visibility: 'public' }, OWNER),
+      ]);
+      expect((await lines(database)).map((line) => line.text)).toEqual([
+        '@owner changed room visibility to public',
+      ]);
+    } finally {
+      await database.close();
+    }
+  });
+
   it('phrases a failed turn, restates a retry in place, and settles it after success', async () => {
     const database = await fixture();
     try {

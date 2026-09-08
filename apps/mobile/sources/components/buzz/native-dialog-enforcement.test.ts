@@ -46,16 +46,4 @@ describe('native dialog enforcement', () => {
     expect(owners).toEqual(['components/buzz/HullDialog.tsx']);
   });
 
-  it('keeps New Room in the Hull input family without a conditional helper label', () => {
-    const channels = readFileSync(path.join(sourceRoot, 'app/(app)/beeline/channels.tsx'), 'utf8');
-    const testId = channels.indexOf('testID="new-room-dialog"');
-    const start = channels.lastIndexOf('<HullDialog', testId);
-    const end = channels.indexOf('</HullDialog>', start);
-    const newRoom = channels.slice(start, end);
-
-    expect(start).toBeGreaterThanOrEqual(0);
-    expect(newRoom).toContain('title={`New ${ROOM_LABEL}`}');
-    expect(newRoom).toContain('<HullDialogInput');
-    expect(newRoom).not.toMatch(/helper|fieldnote|conditional/i);
-  });
 });

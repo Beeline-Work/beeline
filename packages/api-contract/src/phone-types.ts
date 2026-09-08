@@ -123,6 +123,8 @@ export type RoomViewHeader = {
 export type RoomViewActivity = {
   readonly kind: 'thinking' | 'tool' | 'output' | 'summary';
   readonly title: string;
+  /** Durable corner narration when `kind='output'`; never private thought text. */
+  readonly text?: string;
   readonly operation?: string;
   readonly status?: string;
   /** Bounded, redacted tool argument summaries for the corner ledger. */

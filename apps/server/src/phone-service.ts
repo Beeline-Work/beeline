@@ -3904,10 +3904,11 @@ export class PhoneService {
           (workingByAgent.get(message.author.pubkey) ?? Number.POSITIVE_INFINITY),
       )
       .slice(0, ROOM_VIEW_MESSAGE_LIMIT);
-    // Settled corner tool rows survive the turn (#804): the corner read keeps
-    // its collapsed "Used tool" ledger rows under the turn they belong to,
-    // under their own cap so they never crowd out the message window.
-    const cornerToolMessages = isCorner
+    // Settled corner work rows survive the turn (#804): tools and the agent's
+    // own interim prose share the additive activity payload, under its own cap
+    // so neither crowds out the message window. The wire field keeps its
+    // historical `toolRows` name for compatibility with shipped phones.
+    const cornerActivityMessages = isCorner
       ? (
           await this.database.query<MessageRow>(
             `SELECT m.*,
@@ -3915,7 +3916,10 @@ export class PhoneService {
                i.avatar author_avatar,i.face_id author_face
              FROM messages m JOIN identities i ON i.id=m.author_id
              WHERE m.room_id=$1 AND m.presentation='activity' AND m.durable_fact IS NULL
-               AND EXISTS(SELECT 1 FROM jsonb_array_elements(m.activity) item WHERE item->>'kind'='tool')
+               AND EXISTS(
+                 SELECT 1 FROM jsonb_array_elements(m.activity) item
+                 WHERE item->>'kind' IN ('tool','output')
+               )
              ORDER BY m.created_at DESC,m.id DESC LIMIT ${ROOM_VIEW_TOOL_ROW_LIMIT}`,
             [roomId],
           )
@@ -3940,7 +3944,7 @@ export class PhoneService {
             message.presentation !== 'activity' || message.durableFact || liveIds.has(message.id),
         )
         .slice(-ROOM_VIEW_MESSAGE_LIMIT),
-      toolRows: cornerToolMessages,
+      toolRows: cornerActivityMessages,
     };
   }
   private async cornerLifecycle(roomId: string) {

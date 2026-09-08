@@ -902,3 +902,8 @@ const styles = StyleSheet.create((theme) => ({
 export function provisionalProseStyle(): TextStyle {
   return styles.ledgerProvisional as TextStyle;
 }
+
+/** The settled agent-prose tone shared by final replies and durable narration. */
+export function settledAgentProseStyle(): TextStyle {
+  return styles.ledgerTextLuminous as TextStyle;
+}

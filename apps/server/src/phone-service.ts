@@ -41,7 +41,6 @@ import {
   type AgentGrantStatus,
 } from '@beeline/api-contract/agent-grants';
 import {
-  AGENT_REACHABLE_HORIZON_MS,
   MAX_ACCESS_ALLOWLIST_ENTRIES,
   agentAccessPolicyRecord,
   accessNoticeBucket,
@@ -1264,11 +1263,7 @@ export class PhoneService {
       await database.query(`SELECT 1 FROM workspaces WHERE id=$1 FOR UPDATE`, [
         pairing.workspace_id,
       ]);
-      const worn = await this.wornSeededIdentity(
-        database,
-        pairing.workspace_id,
-        input.agentPubkey,
-      );
+      const worn = await this.wornSeededIdentity(database, pairing.workspace_id, input.agentPubkey);
       const seeded = assignSeededAgentIdentity({
         seed: input.agentPubkey,
         takenFaces: worn.faces,
@@ -1569,10 +1564,7 @@ export class PhoneService {
         await this.updateAgentYolo(input as Input<'updateAgentYolo'>, viewerId);
         return undefined as Output<Name>;
       case 'updateAgentAccessPolicy':
-        await this.updateAgentAccessPolicy(
-          input as Input<'updateAgentAccessPolicy'>,
-          viewerId,
-        );
+        await this.updateAgentAccessPolicy(input as Input<'updateAgentAccessPolicy'>, viewerId);
         return undefined as Output<Name>;
       case 'removeAgent':
         await this.removeAgent(input as Input<'removeAgent'>, viewerId);
@@ -1910,7 +1902,7 @@ export class PhoneService {
    * needs to hear it.
    *
    * The reasons are ordered, not summed: an agent that is not in the corner is
-   * told that and nothing else, because its policy and its heartbeat are beside
+   * told that and nothing else, because its policy and its availability are beside
    * the point. At most one line per (Room, agent, sender, reason) per
    * `ACCESS_NOTICE_WINDOW_MS` — the id is derived from the window bucket, so a
    * repeat inside it collides on the primary key and writes nothing. A chatty
@@ -1949,7 +1941,7 @@ export class PhoneService {
         reachable: boolean;
       }>(
         // Reachability is a fact about the HELPER, not about this Room. A
-        // mention in a corner may rely on the same daemon's connection claim
+        // mention in a corner may rely on the same daemon's lifecycle fact
         // in a top-level Room, so the presence lookup intentionally has no
         // room filter.
         `SELECT identity.id agent_id,COALESCE(NULLIF(identity.name,''),'The agent') agent_name,
@@ -1960,26 +1952,17 @@ export class PhoneService {
                   WHERE membership.room_id=$2 AND membership.identity_id=identity.id
                     AND membership.removed_at IS NULL
                 ) member,
-                EXISTS(
-                  SELECT 1 FROM live_outputs lo
+                COALESCE((SELECT lo.body->>'status'='online' FROM live_outputs lo
                   WHERE lo.agent_id=identity.id AND lo.kind='presence'
-                    AND lo.body->>'status'='online'
-                    AND lo.updated_at >= now() - make_interval(secs => $3)
-                ) reachable
+                  ORDER BY lo.updated_at DESC LIMIT 1),false) reachable
          FROM identities identity
          LEFT JOIN agents a ON a.agent_id=identity.id
          LEFT JOIN identities owner ON owner.id=a.owner_id
          WHERE identity.id=ANY($1::text[]) AND identity.kind='agent'`,
-        [[...mentionIds], roomId, AGENT_REACHABLE_HORIZON_MS / 1000],
+        [[...mentionIds], roomId],
       );
       const bucket = accessNoticeBucket(Date.now());
       for (const agent of agents.rows) {
-        const livePresence = this.live?.latestAgentPresence(agent.agent_id);
-        if (
-          livePresence?.status === 'online' &&
-          Date.now() - livePresence.observedAt * 1_000 <= AGENT_REACHABLE_HORIZON_MS
-        )
-          agent.reachable = true;
         const phrase = this.unansweredMentionPhrase(agent, sender, senderId);
         if (!phrase) continue;
         await systemLine(this.database, {
@@ -2446,15 +2429,13 @@ export class PhoneService {
    * Workspace one and each of those Rooms carries the removal line. Agents
    * are not people — their removal is the removeAgent host teardown.
    */
-  private async removeWorkspaceMember(
-    input: Input<'removeWorkspaceMember'>,
-    viewerId: string,
-  ) {
+  private async removeWorkspaceMember(input: Input<'removeWorkspaceMember'>, viewerId: string) {
     await this.requireWorkspaceManager(input.workspaceId, viewerId);
     if (input.memberId === viewerId) throw new Error('workspace managers cannot remove themselves');
     const remover = await this.requireIdentity(viewerId);
     const removed = await this.requireIdentity(input.memberId);
-    if (removed.kind !== 'human') throw new Error('invalid member: agents are removed through removeAgent');
+    if (removed.kind !== 'human')
+      throw new Error('invalid member: agents are removed through removeAgent');
     await this.database.transaction(async (database) => {
       await database.query(`SELECT 1 FROM workspaces WHERE id=$1 FOR UPDATE`, [input.workspaceId]);
       const roles = await database.query<{
@@ -2653,7 +2634,8 @@ export class PhoneService {
         roomId: grant.room_id,
         authorId: viewerId,
         subject: identitySubject({ id: decider.pubkey, kind: decider.kind, name: decider.name }),
-        verb: decision === 'always' ? 'approved' : decision === 'once' ? 'approved once' : 'declined',
+        verb:
+          decision === 'always' ? 'approved' : decision === 'once' ? 'approved once' : 'declined',
         // A resume kind: it answers a turn already paused on the ask, and must
         // never start a second one (`RESUME_KINDS`).
         kind: 'grant-decided',
@@ -2716,10 +2698,10 @@ export class PhoneService {
           }
         : entry,
     );
-    await database.query(`UPDATE messages SET card=jsonb_set(card,'{grants}',$2::jsonb) WHERE id=$1`, [
-      card.id,
-      JSON.stringify(grants),
-    ]);
+    await database.query(
+      `UPDATE messages SET card=jsonb_set(card,'{grants}',$2::jsonb) WHERE id=$1`,
+      [card.id, JSON.stringify(grants)],
+    );
   }
   private async requireGrantAuthority(grantId: unknown, viewerId: string) {
     if (typeof grantId !== 'string' || !grantId) throw new Error('grantId is required');
@@ -2814,10 +2796,7 @@ export class PhoneService {
    * mentions nobody; like any message it reaches a phone only in a DM, where
    * telling that one person they may now ask is the point.
    */
-  private async updateAgentAccessPolicy(
-    input: Input<'updateAgentAccessPolicy'>,
-    viewerId: string,
-  ) {
+  private async updateAgentAccessPolicy(input: Input<'updateAgentAccessPolicy'>, viewerId: string) {
     if (!isAgentAccessPolicy(input.policy)) throw new Error('policy is invalid');
     const allow = input.policy === 'allowlist' ? (input.allow ?? []) : [];
     if (input.policy === 'allowlist') {
@@ -3082,7 +3061,14 @@ export class PhoneService {
         `UPDATE corner_facts SET close_requested=true,owner_agent_id=NULL,
            lifecycle=lifecycle||$2::jsonb,updated_at=now()
          WHERE owner_agent_id=ANY($1)`,
-        [gone, JSON.stringify({ lifecycle: 'done', outcome: 'abandoned', reason: `${account.name} deleted their account` })],
+        [
+          gone,
+          JSON.stringify({
+            lifecycle: 'done',
+            outcome: 'abandoned',
+            reason: `${account.name} deleted their account`,
+          }),
+        ],
       );
       await database.query(
         `DELETE FROM agent_schedules WHERE agent_id=ANY($1) OR creator_id=ANY($1)`,
@@ -3183,8 +3169,11 @@ export class PhoneService {
         `DELETE FROM agent_pairing_codes WHERE created_by=ANY($1) OR claimed_by=ANY($1)`,
         [gone],
       );
-      await database.query(`DELETE FROM identity_successions
-         WHERE old_identity_id=ANY($1) OR new_identity_id=ANY($1)`, [gone]);
+      await database.query(
+        `DELETE FROM identity_successions
+         WHERE old_identity_id=ANY($1) OR new_identity_id=ANY($1)`,
+        [gone],
+      );
 
       // Media bytes are personal data: the rows go, and a tombstone keeps the
       // readers' story the one media-ttl.ts already tells (expired, not lost).
@@ -3532,7 +3521,7 @@ export class PhoneService {
          i.face_id,
          m.role,lo.body presence_body,lo.updated_at presence_updated_at
        FROM memberships m JOIN identities i ON i.id=m.identity_id
-       LEFT JOIN LATERAL(SELECT body,updated_at FROM live_outputs WHERE agent_id=i.id AND kind='presence' ${roomId ? 'AND room_id=$2' : ''} ORDER BY updated_at DESC LIMIT 1)lo ON true
+       LEFT JOIN LATERAL(SELECT body,updated_at FROM live_outputs WHERE agent_id=i.id AND kind='presence' ORDER BY updated_at DESC LIMIT 1)lo ON true
        WHERE m.workspace_id=$1 AND ${roomId ? 'm.room_id=$2' : 'm.room_id IS NULL'}
          AND m.removed_at IS NULL AND i.hidden_from_roster=false`,
       roomId ? [workspaceId, roomId] : [workspaceId],

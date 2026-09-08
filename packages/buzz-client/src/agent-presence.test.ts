@@ -15,10 +15,10 @@ const online: AgentPresence = {
   observedAt: 1_000,
 };
 
-describe('agent presence lease', () => {
-  it('expires online state at the lease boundary and tolerates ordinary clock skew', () => {
+describe('durable agent presence', () => {
+  it('keeps online state across idle time and clock skew', () => {
     expect(isAgentPresenceOnline(online, 1_000 + AGENT_PRESENCE_STALE_MS)).toBe(true);
-    expect(isAgentPresenceOnline(online, 1_001 + AGENT_PRESENCE_STALE_MS)).toBe(false);
+    expect(isAgentPresenceOnline(online, 1_001 + AGENT_PRESENCE_STALE_MS)).toBe(true);
     expect(isAgentPresenceOnline(online, 999)).toBe(true);
     expect(isAgentPresenceOnline({ ...online, status: 'offline' }, 1_000)).toBe(false);
   });
@@ -29,8 +29,15 @@ describe('agent presence lease', () => {
   });
 
   it('becomes dormant only after sustained absence', () => {
-    expect(resolveAgentPresenceTier(online, 1_000 + AGENT_PRESENCE_DORMANT_MS - 1)).toBe('offline');
-    expect(resolveAgentPresenceTier(online, 1_000 + AGENT_PRESENCE_DORMANT_MS)).toBe('dormant');
+    expect(
+      resolveAgentPresenceTier(
+        { ...online, status: 'offline' },
+        1_000 + AGENT_PRESENCE_DORMANT_MS - 1,
+      ),
+    ).toBe('offline');
+    expect(
+      resolveAgentPresenceTier({ ...online, status: 'offline' }, 1_000 + AGENT_PRESENCE_DORMANT_MS),
+    ).toBe('dormant');
   });
 });
 
@@ -42,7 +49,7 @@ describe('agent roster standing', () => {
         membership: 'member',
         now: 1_000 + AGENT_PRESENCE_DORMANT_MS * 30,
       }),
-    ).toEqual({ tier: 'dormant', lastSeenAt: 1_000 });
+    ).toEqual({ tier: 'online', lastSeenAt: 1_000 });
     expect(
       resolveAgentRosterStanding({ presence: online, membership: 'not-member', now: 1_000 }),
     ).toEqual({ tier: 'evicted' });

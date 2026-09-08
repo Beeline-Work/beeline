@@ -158,7 +158,7 @@ async function main() {
   console.log('Room created:', channelId);
 
   // A genuine registered agent participant gives the UI flow a mention target
-  // and a current presence lease.
+  // and a durable availability record.
   const agentIdentity = createIdentity('buzzy-smoke-agent');
   const agentClient = createBuzzClient({
     baseUrl: RELAY,

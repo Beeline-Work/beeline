@@ -135,7 +135,7 @@ The turn's model attribution records `trigger='agent'`, `commissionedByAgentPubk
 ## Failure and timeout behavior
 
 - Unknown or non-member handle: the source host posts one visible refusal; no target turn.
-- Offline member: the source host checks the existing presence lease and posts one visible offline line; no target turn. A race after publication is safe because the durable event remains pending for the target daemon after restart.
+- Offline member: the source host checks the durable delivery-availability fact and posts one visible offline line; no target turn. A race after publication is safe because the durable event remains pending for the target daemon after restart.
 - Policy refusal: the target posts one visible refusal carrying the root tags; no model session starts.
 - Session activation or model-turn failure: existing Room failure handling posts one visible reply, tagged with the delegation root, and does not automatically retry without a new human message.
 - Model timeout: the existing idle-window/hard-timeout path settles the receipt as failed and publishes the same visible failure behavior.
@@ -187,16 +187,16 @@ CODE PATHS                                              USER FLOWS
 
 ### Production failure audit
 
-| Path                     | Realistic failure                                | Test | Handling                                                                                                                  |                        User-visible |
-| ------------------------ | ------------------------------------------------ | ---: | ------------------------------------------------------------------------------------------------------------------------- | ----------------------------------: |
-| Source roster/presence   | relay read fails or lease expires                |  yes | fail closed; visible unavailable line when truth is known, publication failure logged/retried by normal request lifecycle |                  yes when decidable |
-| Envelope/root validation | forged or missing root                           |  yes | ignore without model spend                                                                                                | no, deliberately avoids spam oracle |
-| Policy lookup            | current config read unavailable                  |  yes | fail closed and visible policy refusal for an otherwise valid envelope                                                    |                                 yes |
-| Target activation        | harness missing or read-only session unavailable |  yes | existing failed receipt and one rooted failure reply                                                                      |                                 yes |
-| Model turn               | idle/hard timeout                                |  yes | existing bounded timeout path; no automatic agent retry                                                                   |                                 yes |
-| Reply publish            | transient relay outage                           |  yes | durable reserved reply replays after restart                                                                              |                          eventually |
-| Budget/dedupe lookup     | daemon restart loses memory                      |  yes | query relay-authored thread facts before admission                                                                        |              yes; no repeated spend |
-| Projection               | new typed marker omitted from allowlist          |  yes | indexer regression test fails                                                                                             |   otherwise silent, so P1 test gate |
+| Path                     | Realistic failure                                           | Test | Handling                                                                                                                  |                        User-visible |
+| ------------------------ | ----------------------------------------------------------- | ---: | ------------------------------------------------------------------------------------------------------------------------- | ----------------------------------: |
+| Source roster/presence   | availability read fails or an explicit offline fact arrives |  yes | fail closed; visible unavailable line when truth is known, publication failure logged/retried by normal request lifecycle |                  yes when decidable |
+| Envelope/root validation | forged or missing root                                      |  yes | ignore without model spend                                                                                                | no, deliberately avoids spam oracle |
+| Policy lookup            | current config read unavailable                             |  yes | fail closed and visible policy refusal for an otherwise valid envelope                                                    |                                 yes |
+| Target activation        | harness missing or read-only session unavailable            |  yes | existing failed receipt and one rooted failure reply                                                                      |                                 yes |
+| Model turn               | idle/hard timeout                                           |  yes | existing bounded timeout path; no automatic agent retry                                                                   |                                 yes |
+| Reply publish            | transient relay outage                                      |  yes | durable reserved reply replays after restart                                                                              |                          eventually |
+| Budget/dedupe lookup     | daemon restart loses memory                                 |  yes | query relay-authored thread facts before admission                                                                        |              yes; no repeated spend |
+| Projection               | new typed marker omitted from allowlist                     |  yes | indexer regression test fails                                                                                             |   otherwise silent, so P1 test gate |
 
 No failure path combines no test, no handling, and silent user impact.
 

@@ -38,9 +38,9 @@ type FaceProps = {
 
 // Gold means ONE thing product-wide: an agent WORKING right now — a fresh
 // working receipt or a live corner (`selectWorkingAgents`, the proofs the
-// thinking line reads). It is never the presence lease: a helper whose every
-// turn fails keeps renewing its lease, and a ring that meant "process alive"
-// pulsed on an agent that could not answer (C77). The discriminated union is
+// thinking line reads). It is never delivery availability: a daemon can be
+// online before it has claimed work, and a ring that meant "process alive"
+// would not say the agent is working (C77). The discriminated union is
 // that rule enforced at the type level — no human or Workspace mark can carry
 // `alive`, so a future boolean pass cannot redefine gold without a type error.
 export type AgentIdentityMarkProps = IdentityMarkBaseProps &

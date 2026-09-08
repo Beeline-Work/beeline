@@ -7,11 +7,7 @@ import {
   SCHEDULE_RAN_VERB,
   SCHEDULE_SCHEDULER_NAME,
 } from '@beeline/api-contract/scheduled-prompts';
-import {
-  isResumeKind,
-  isServerEventKind,
-  type SystemEvent,
-} from '@beeline/api-contract/daemon';
+import { isResumeKind, isServerEventKind, type SystemEvent } from '@beeline/api-contract/daemon';
 import {
   AcpClient,
   type AcpPermissionDecision,
@@ -49,11 +45,7 @@ import {
   turnFailureReasonWithProvider,
   type EmptyTurnExplanation,
 } from './empty-turn.js';
-import type {
-  GrantCommandRunner,
-  GrantRunnerEndpoint,
-  GrantWritePolicy,
-} from './grant-runner.js';
+import type { GrantCommandRunner, GrantRunnerEndpoint, GrantWritePolicy } from './grant-runner.js';
 import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
 import {
   agentArgsWithModelSelection,
@@ -152,7 +144,13 @@ export function isScheduledPrompt(
  * out addressed to a truncated public key instead of a name.
  */
 export function inboxItemAuthorName(
-  item: { type: string; authorId: string; mentionIds: readonly string[]; body: string; systemEvent?: SystemEvent },
+  item: {
+    type: string;
+    authorId: string;
+    mentionIds: readonly string[];
+    body: string;
+    systemEvent?: SystemEvent;
+  },
   agentId: string,
   names: ReadonlyMap<string, string>,
 ): string {
@@ -835,10 +833,7 @@ export class MonolithRoomTurnLoop {
    * named — by exactly one provider. Undefined when the pin has nowhere left
    * to go.
    */
-  private async repinNextProvider(
-    trace?: TurnTrace,
-    reason?: string,
-  ): Promise<string | undefined> {
+  private async repinNextProvider(trace?: TurnTrace, reason?: string): Promise<string | undefined> {
     const next = nextPinnedProvider(this.pinnedProviders, this.pinnedProviderOverride);
     if (!next) return undefined;
     // The retry is its own timeline: everything from here — the fresh ACP
@@ -953,7 +948,9 @@ export class MonolithRoomTurnLoop {
                   this.deliver(item),
                 ]),
               );
-              const names = new Map(roster.members.map((member) => [member.identityId, member.name]));
+              const names = new Map(
+                roster.members.map((member) => [member.identityId, member.name]),
+              );
               const transcriptRows = conversation.items
                 .filter(
                   (message) =>
@@ -978,38 +975,39 @@ export class MonolithRoomTurnLoop {
               // Built per ATTEMPT, never once per turn: a C92 re-pin runs the
               // same turn against a NEW session id that holds none of this
               // conversation, so it has to render the whole window again.
-              const buildPrompt = (): string => [
-                this.turnInstructionPrefix,
-                WarmTranscript.render(
-                  this.warmTranscript.select(this.sessionId, transcriptRows),
-                  'Room conversation so far:',
-                  'New in the Room since your last turn (the earlier conversation is already in this session):',
-                ),
-                `Newest message from ${inboxItemAuthorName(item, this.agent.publicKey, names)}:`,
-                roomMessagePrompt(
-                  '',
-                  inboxItemPromptBody(item, this.agent.publicKey),
-                  item.attachments,
-                  delivered,
-                  this.acceptsImages(),
-                ),
-                grantDecision
-                  ? [
-                      'This is the answer to your grant request; your paused work resumes now.',
-                      'If it was approved and it is a command grant, run it with run_granted_command and the exact argv.',
-                      'If it was declined, try another way or say plainly what you cannot do.',
-                    ].join(' ')
-                  : '',
-                roomMentionDirectory(roster, this.agent.publicKey),
+              const buildPrompt = (): string =>
                 [
-                  'Write only the substantive Room message you want the human to read.',
-                  'Do not repeat or paraphrase these instructions.',
-                  'If the newest message is only a nudge to respond, answer the most recent unanswered human message in the conversation instead of echoing the nudge.',
-                  MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE,
-                ].join(' '),
-              ]
-                .filter(Boolean)
-                .join('\n\n');
+                  this.turnInstructionPrefix,
+                  WarmTranscript.render(
+                    this.warmTranscript.select(this.sessionId, transcriptRows),
+                    'Room conversation so far:',
+                    'New in the Room since your last turn (the earlier conversation is already in this session):',
+                  ),
+                  `Newest message from ${inboxItemAuthorName(item, this.agent.publicKey, names)}:`,
+                  roomMessagePrompt(
+                    '',
+                    inboxItemPromptBody(item, this.agent.publicKey),
+                    item.attachments,
+                    delivered,
+                    this.acceptsImages(),
+                  ),
+                  grantDecision
+                    ? [
+                        'This is the answer to your grant request; your paused work resumes now.',
+                        'If it was approved and it is a command grant, run it with run_granted_command and the exact argv.',
+                        'If it was declined, try another way or say plainly what you cannot do.',
+                      ].join(' ')
+                    : '',
+                  roomMentionDirectory(roster, this.agent.publicKey),
+                  [
+                    'Write only the substantive Room message you want the human to read.',
+                    'Do not repeat or paraphrase these instructions.',
+                    'If the newest message is only a nudge to respond, answer the most recent unanswered human message in the conversation instead of echoing the nudge.',
+                    MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE,
+                  ].join(' '),
+                ]
+                  .filter(Boolean)
+                  .join('\n\n');
               // Rooms and corners stream through ONE presentation (C100): the
               // provisional draft lane, the request-id handoff, and the single
               // durable reply that dissolves it all live in `turn-stream.ts`.
@@ -1192,56 +1190,12 @@ export class MonolithRoomTurnLoop {
 
   async run(): Promise<void> {
     const { api, roomId, signal } = this.options;
-    const status = this.options.config.modelUnavailable ? 'offline' : 'online';
-    let legacyPresence = false;
-    let legacyPresenceHeartbeat: ReturnType<typeof setInterval> | undefined;
-    let legacyPresenceFallback: ReturnType<typeof setTimeout> | undefined;
-    const postLegacyPresence = async (presence: 'online' | 'offline') => {
-      await api.execute('postAgentPresence', {
-        agentId: this.agent.publicKey,
-        roomId,
-        status: presence,
-        ...(this.options.config.daemonReleaseVersion
-          ? { releaseVersion: this.options.config.daemonReleaseVersion }
-          : {}),
-        ...(this.options.config.daemonSourceSha
-          ? { sourceSha: this.options.config.daemonSourceSha }
-          : {}),
-      });
-    };
-    const useLegacyPresence = () => {
-      if (legacyPresence) return;
-      legacyPresence = true;
-      void postLegacyPresence(status).catch((error) =>
-        console.error(`[thin-core] monolith Room ${roomId} presence fallback failed:`, error),
-      );
-      legacyPresenceHeartbeat = setInterval(
-        () =>
-          void postLegacyPresence(status).catch((error) =>
-            console.error(`[thin-core] monolith Room ${roomId} presence fallback failed:`, error),
-          ),
-        30_000,
-      );
-      legacyPresenceHeartbeat.unref?.();
-    };
-    const stopLegacyPresence = () => {
-      legacyPresence = false;
-      clearTimeout(legacyPresenceFallback);
-      legacyPresenceFallback = undefined;
-      clearInterval(legacyPresenceHeartbeat);
-      legacyPresenceHeartbeat = undefined;
-    };
     let cursor: string | undefined;
     const processedInboxIds = new Set<string>();
     const pushedInbox: InboxItem[] = [];
     let pendingPushedCursor: string | undefined;
     let liveConnected = false;
     let stopLive: (() => void) | undefined;
-    // An old server either acknowledges without the capability or never
-    // acknowledges. Give a Stage 4 server time to cancel the fallback before
-    // the client can race its connection-owned transition write.
-    legacyPresenceFallback = setTimeout(useLegacyPresence, 1_000);
-    legacyPresenceFallback.unref?.();
     try {
       const activation = await api.execute('getRoomInbox', { roomId, startAtLatest: true });
       cursor = activation.cursor;
@@ -1258,8 +1212,6 @@ export class MonolithRoomTurnLoop {
         },
         (connected, capabilities) => {
           liveConnected = connected && capabilities?.pushIntake === true;
-          if (connected && capabilities?.connectionPresence !== true) useLegacyPresence();
-          else if (connected) stopLegacyPresence();
           this.options.health.presence(
             connected && !this.options.config.modelUnavailable ? 'online' : 'offline',
           );
@@ -1347,13 +1299,6 @@ export class MonolithRoomTurnLoop {
         this.client.sessionCancel(this.sessionId);
       }
       await this.activeTurn?.promise;
-      clearTimeout(legacyPresenceFallback);
-      clearInterval(legacyPresenceHeartbeat);
-      if (legacyPresence) {
-        await postLegacyPresence('offline').catch((error) =>
-          console.error(`[thin-core] monolith Room ${roomId} offline presence failed:`, error),
-        );
-      }
       await this.options.scheduler.suspend(roomId);
     }
   }

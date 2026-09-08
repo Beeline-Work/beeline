@@ -331,9 +331,7 @@ esac
       }),
     );
     const target = runRelease(['delivery-target', '--index', indexPath]);
-    expect(target.stdout.split('\n')[0]).toBe(
-      'group_id=production-android,production-ios',
-    );
+    expect(target.stdout.split('\n')[0]).toBe('group_id=production-android,production-ios');
     expect(
       runRelease([
         'confirm',
@@ -351,7 +349,10 @@ esac
     ).toBe(0);
     expect(JSON.parse(readFileSync(indexPath, 'utf8')).merges.at(-1)).toMatchObject({
       state: 'confirmed',
-      confirmed: { groupId: 'production-android', groupIds: ['production-android', 'production-ios'] },
+      confirmed: {
+        groupId: 'production-android',
+        groupIds: ['production-android', 'production-ios'],
+      },
     });
   }, 60_000);
 
@@ -1313,9 +1314,9 @@ esac
     expect(deliveryJob).toContain('continue-on-error: true');
     expect(deliveryJob).toContain('mobile-ota-delivery-index');
     expect(deliveryJob).not.toContain('ota-release.mjs promote');
-    expect(
-      deliveryJob.indexOf('unified-release.mjs report'),
-    ).toBeLessThan(deliveryJob.indexOf('Record the owner device receipt'));
+    expect(deliveryJob.indexOf('unified-release.mjs report')).toBeLessThan(
+      deliveryJob.indexOf('Record the owner device receipt'),
+    );
     // No cron survives anywhere in the release path.
     expect(unifiedWorkflow).not.toContain("cron: '*/15 * * * *'");
     expect(unifiedWorkflow).not.toContain('schedule:');
@@ -2241,13 +2242,6 @@ esac
     expect(pickerCheckpoint).toBeGreaterThan(-1);
     expect(exactMentionWait).toBeGreaterThan(pickerCheckpoint);
     expect(exactMentionCount).toBeGreaterThan(exactMentionWait);
-    expect(replyFixture).toContain('AGENT_PRESENCE_HEARTBEAT_MS');
-    expect(replyFixture).toContain('KIND_AGENT_PRESENCE');
-    expect(replyFixture).toContain('TAG_AGENT_PRESENCE');
-    expect(replyFixture).toMatch(
-      /setTimeout\([\s\S]*?AGENT_PRESENCE_HEARTBEAT_MS[\s\S]*?clearTimeout/,
-    );
-
     const smoke = readFileSync(join(mobileRoot, 'e2e', 'smoke.yaml'), 'utf8');
     expect(smoke).toMatch(/visible: SMOKE AGENT ROOM REPLY\.\*[\s\S]*?timeout: 10000/);
     expect(smoke).toMatch(/visible: SMOKE AGENT CORNER REPLY\.\*[\s\S]*?timeout: 30000/);

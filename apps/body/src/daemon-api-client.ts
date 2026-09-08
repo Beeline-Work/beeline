@@ -1,5 +1,6 @@
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
 import { resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import WebSocket from 'ws';
 import {
   readRuntimeRecord,
@@ -87,6 +88,7 @@ async function responseError(response: Response): Promise<DaemonApiError> {
 
 /** Typed client for the complete named daemon operation contract. */
 export class DaemonApiClient {
+  private readonly presenceLifecycleId = randomUUID();
   private liveSocket?: WebSocket;
   private liveReconnect?: ReturnType<typeof setTimeout>;
   private liveReconnectDelayMs = 1_000;
@@ -189,10 +191,9 @@ export class DaemonApiClient {
 
   private ensureLiveSocket(): void {
     if (this.liveSocket || !this.liveRooms.size) return;
-    const socket = this.webSocketFactory(
-      this.baseUrl.replace(/^http/, 'ws') + '/v1/phone/live',
-      [`bearer.${this.daemonToken}`],
-    );
+    const socket = this.webSocketFactory(this.baseUrl.replace(/^http/, 'ws') + '/v1/phone/live', [
+      `bearer.${this.daemonToken}`,
+    ]);
     this.liveSocket = socket;
     socket.onopen = () => {
       this.liveReconnectDelayMs = 1_000;
@@ -254,6 +255,7 @@ export class DaemonApiClient {
       JSON.stringify({
         type: 'subscribe',
         roomId,
+        lifecycleId: this.presenceLifecycleId,
         ...(room.cursor ? { cursor: room.cursor } : {}),
         ...room.presence,
       }),

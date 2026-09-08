@@ -46,11 +46,6 @@ describe('Buzz keyboard avoidance', () => {
     expect(chatSource.indexOf('<CornerLiveBar')).toBeLessThan(inputBar);
   });
 
-  it('does not rerender the transcript on a fixed presence clock', () => {
-    expect(chatSource).not.toContain('setInterval(() => setPresenceNow(Date.now()), 5_000)');
-    expect(chatSource).toContain('Presence only changes at a lease/dormancy deadline');
-  });
-
   it('keeps focused Agent fields visible in keyboard-aware scroll content', () => {
     expect(membersSource).toContain(
       "import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';",

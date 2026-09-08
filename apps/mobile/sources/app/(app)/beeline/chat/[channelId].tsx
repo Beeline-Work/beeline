@@ -943,8 +943,8 @@ export default function BuzzChat() {
     () => roomParticipants.filter((participant) => participant.kind === 'agent'),
     [roomParticipants],
   );
-  // kind:30078 is the sole liveness truth. Transcript/activity events can
-  // describe work, but they never mint or renew a presence lease.
+  // kind:30078 is the sole delivery-availability truth. Transcript/activity
+  // events can describe work, but they never mint or renew availability.
   const agentPresences = heartbeatPresences;
   const onlineAgentCount = roomAgents.filter((agent) =>
     isAgentPresenceOnlineWithReconnectGrace(
@@ -955,7 +955,7 @@ export default function BuzzChat() {
   ).length;
   // One flat liveness verdict per agent pubkey for the transcript's byline
   // rings. renderItem previously read the three raw inputs directly, so every
-  // heartbeat and every streamed batch recreated the callback and rebuilt
+  // presence update and every streamed batch recreated the callback and rebuilt
   // every visible ledger row; a boolean record only changes identity through
   // `useStable` when a verdict genuinely flips.
   const speakerPresenceKeys = useMemo(
@@ -1654,9 +1654,9 @@ export default function BuzzChat() {
   }, [settledTurn]);
 
   useEffect(() => {
-    // Presence only changes at a lease/dormancy deadline. A five-second clock here
-    // recreated FlatList's renderItem (and every visible message) while someone
-    // was typing, which made the foreground intermittently unresponsive.
+    // Only an explicit offline fact can age into dormancy. A five-second clock
+    // here recreated FlatList's renderItem (and every visible message) while
+    // someone was typing, which made the foreground intermittently unresponsive.
     const now = Date.now();
     const presenceDeadline = nextAgentPresenceTransitionAt(agentPresences, now);
     const turnDeadline = nextAgentTurnExpiryAt(agentTurnMarkers, now);

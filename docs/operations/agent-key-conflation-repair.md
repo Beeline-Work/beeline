@@ -37,7 +37,7 @@ agent marker on the same key.
 
 1. Record the Workspace id, the exact top-level Rooms served by the old
    runtime, and every open corner. Finish and archive open corners first. ACP
-   sessions, feature worktrees, signatures, and presence leases cannot be
+   sessions, feature worktrees, signatures, and availability records cannot be
    transferred safely to a different Nostr key.
 2. Upgrade Beeline. In Members, create one new pairing code. On the machine
    that will run the agent, pair once with the displayed command and record the
@@ -51,8 +51,9 @@ agent marker on the same key.
    step 1 and manually attach any that didn't (the explicit per-Room attach
    API remains available for that). Do not bulk-copy the old pubkey's
    `channel_members` rows: those include the human's own Rooms and roles.
-5. Wait for the new pubkey to publish an online presence lease in every served
-   Room. Send one addressed test message and confirm the new daemon replies.
+5. Wait for the new daemon's startup availability announcement to read online
+   in every served Room. Send one addressed test message and confirm the new
+   daemon replies.
 6. Stop the old daemon and recoverably archive its local runtime directory.
    Do not remove the old pubkey through the Members "Remove Agent" action:
    for a conflated key that would also remove the human's memberships.

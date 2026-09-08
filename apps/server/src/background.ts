@@ -200,7 +200,7 @@ export async function runMaintenance(database: SqlDatabase): Promise<void> {
   await database.query(`DELETE FROM phone_sessions WHERE expires_at<now()`);
   await database.query(
     `DELETE FROM live_outputs WHERE updated_at<now()-interval '2 hours'
-       AND NOT (kind='presence' AND turn_id='legacy')`,
+       AND kind<>'presence'`,
   );
   await database.query(`DELETE FROM github_auth_flows WHERE expires_at<now()-interval '1 day'`);
   await database.query(

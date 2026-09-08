@@ -3,7 +3,7 @@
 The phone is a single slab of obsidian. Beeline's output is logged across it.
 
 That is the whole idea; everything below is what it costs to hold it. The
-interface recedes to almost nothing, so the agent's output *is* the screen. No
+interface recedes to almost nothing, so the agent's output _is_ the screen. No
 cards, no bubbles, no per-message frames, no rules between turns — on any
 surface. One shape family, one voice, one accent used twice on purpose.
 
@@ -24,7 +24,7 @@ are the only luminance steps above the slab; every elevation stop keeps its
 pre-canvas offset from the base, so contrast relationships are unchanged.
 
 A lifted surface (`HullSurface`, with its faint scratch texture) is reserved for
-something that genuinely floats *over* the slab and does not repeat: a modal
+something that genuinely floats _over_ the slab and does not repeat: a modal
 sheet, the merge-approval panel, the write-permission card. Persistent chrome
 never qualifies — if two adjacent regions of a screen are both permanent, they
 are one slab.
@@ -41,7 +41,7 @@ remains the one domain-color exception.
 ## Shape
 
 One corner radius, `groknight.radius = 3`, everywhere a box appears. No other
-radius value ships. No *box* renders as a circle or a soft pill.
+radius value ships. No _box_ renders as a circle or a soft pill.
 
 The identity tiles are the one place a box holds a drawing: a person or an
 agent is one of Speakeasy's twelve creatures on a square plate at the house
@@ -49,6 +49,7 @@ radius, and the plate's polarity — coloured creature on ink, ink creature on
 colour — is what states the type. See "Identity" below.
 
 A box (border + fill + radius) appears only around:
+
 - something the user must find and act on (an input, a button), or
 - a small number of genuinely distinct, non-repeating regions of a screen
   (the merge-approval panel, a safety/policy notice).
@@ -59,7 +60,7 @@ tone, and a leading glyph. **Per-message cards are retired.** They were the last
 chat-app convention left in the product and they are gone from Rooms and Corners
 alike.
 
-A rule is not a box: one edge, no fill, no radius. It divides an *index* — the
+A rule is not a box: one edge, no fill, no radius. It divides an _index_ — the
 Room list, the member list — and nothing else. **Turns separate by one hairline
 divider** (`turnDivider`, `#0e0e12`) at the top of each opening turn, plus
 generous vertical padding; continuations of the same voice flow with no divider.
@@ -106,8 +107,8 @@ The two surfaces differ here, and only here, because they genuinely differ:
 
 - **A Corner carries no byline name at all** — the tile-and-stamp rhythm only. Its
   identity is already in the top bar. This is derived from the surface, never
-  from a lookup: a Corner is one administering agent plus you, so *anything that
-  is not your own steer is that agent*. Deriving it any other way is a real bug,
+  from a lookup: a Corner is one administering agent plus you, so _anything that
+  is not your own steer is that agent_. Deriving it any other way is a real bug,
   not a style choice — `isAgent` depends on the roster, and a Corner that trusted
   it printed the signer's bare npub as a handle and dropped the agent's own words
   to the ordinary grey tier the moment the roster was empty or still loading.
@@ -133,14 +134,14 @@ above it did not. A call's line is a **verb** in a fixed narrow column (mono,
 dim chrome: `ran`, `read`, `wrote`, `found`, `git`, or an MCP tool's own short
 name), the **object** it acted on at the content tone, a **duration** only once
 it passes a second (mono, tabular), and an **outcome** pinned right that is
-*nothing at all* when the call succeeded — absence reads faster than a tick —
+_nothing at all_ when the call succeeded — absence reads faster than a tick —
 `failed` in the diff red, or `running` in brass. The object comes from the
 command; the harness's own title is a last resort, because a harness will
 happily label a directory listing "Reviewed the current changes". A long
 command truncates in the MIDDLE: the flags at the end are the half that says
 which command this was. Opening one call shows its real output, capped to a few
 lines with the rest one tap away, mono at the dim tone — and if all the wire
-handed us was a transport envelope with a terminal id, it shows *nothing*,
+handed us was a transport envelope with a terminal id, it shows _nothing_,
 because a machine identifier is not a result. A failed call arrives already
 open, and the fold counts it. Nothing is coloured by tool kind, the command is
 never printed twice, and there are no tool counters, file-count badges,
@@ -316,8 +317,8 @@ section labels.
 The Workspace rail is the same slab with one hairline edge. Selection reads
 three redundant ways and none of them is a box or a fill: an edge bar (never a
 floating bracket), the mark's own heavier frame, and tone — the Workspaces you
-are *not* in recede a step rather than the one you are in lighting up. Every
-rail command is *named* by a mono micro-label rather than framed in a box — the
+are _not_ in recede a step rather than the one you are in lighting up. Every
+rail command is _named_ by a mono micro-label rather than framed in a box — the
 affordance is named, not outlined — and its glyph sits on the chrome's quiet
 tier, because the label already carries the meaning.
 
@@ -351,7 +352,7 @@ twelve, so every device draws the same animal for the same key. Because that
 assignment names the agent too, the face travels with the name through
 `resolveAgentDisplayIdentity` to every tile: a surface that redraws it from
 the seed puts a whale beside the name Foxy and un-does the dedup that kept two
-agents apart. The old rule that *shape is the type* (△ agent, ○ human) is
+agents apart. The old rule that _shape is the type_ (△ agent, ○ human) is
 retired: at the 8px it actually shipped in the transcript no shape ever
 resolved, and a creature is a memory hook in a way a triangle never was.
 
@@ -397,14 +398,14 @@ nothing under its ink ones. The shipped themes are all dark; the light
 treatment exists so the same tile is correct anywhere a light ground appears.
 
 **5 · A gold ring means working.** An agent with a live turn or a live corner
-right now takes a gold ring plus a wider low-alpha halo drawn *around* its
+right now takes a gold ring plus a wider low-alpha halo drawn _around_ its
 plate, breathing on the shared live clock (`HullLivePulse`). Its proof is the
 server-indexed working receipt or the corner's canonical `working` state
 (`selectWorkingAgents`), the same signal as the thinking line — never the
-presence lease: a helper whose every turn fails still renews its lease, so
-"alive" said nothing about whether the agent could answer (C77). It never touches the identity colour or the
+delivery-availability fact: a daemon can be available before it has claimed
+work, so availability says nothing about whether it is working (C77). It never touches the identity colour or the
 creature: who this is and what it is doing stay two separate reads, and a
-gold *fill* would have destroyed the first to say the second. It is mounted
+gold _fill_ would have destroyed the first to say the second. It is mounted
 only where something is genuinely live, so a quiet row pays for no clock.
 
 **Workspace exception — the house brass plate.** A Workspace is not someone to
@@ -433,7 +434,7 @@ empty-state entry, the screen's own title (`MEMBERS_GLYPH`,
 lifecycle glyphs (`◆ ◇ ▲ ✕ ✓ □`, `buzz/corners.ts`), because a diamond on any
 Buzz surface means live corner work, never people.
 
-An agent's *name* is human-authored and never guessed twice. Every surface
+An agent's _name_ is human-authored and never guessed twice. Every surface
 resolves it through `resolveAgentDisplayIdentity` — validated soul overlay, then
 the agent's own registered `displayName`, then the seed-derived placeholder —
 and that resolution is only as good as the roster it is handed. An empty or
@@ -472,14 +473,14 @@ Four sizes, one mono role, held by a lint. The roles live in
 `theme.buzz.type`); each carries family, size, line height (1.45×, rounded)
 and tracking. A screen spreads a role; it never sets a raw size.
 
-| role          | face                     | size | use                                              |
-| ------------- | ------------------------ | ---- | ------------------------------------------------ |
-| `hero`        | Space Grotesk Medium     | 22   | a screen's one big line, index row names (-0.3)  |
-| `body`        | Space Grotesk Regular    | 16   | body text, row titles, buttons (sentence case)   |
-| `bodyStrong`  | Space Grotesk SemiBold   | 16   | the emphasised cut of `body`                     |
-| `meta`        | Space Grotesk Regular    | 13   | everything secondary: previews, captions, stamps, counts |
-| `sectionHead` | Space Grotesk Medium     | 10   | section heads ONLY (tracking 2, uppercase)       |
-| `machine`     | IBM Plex Mono            | 13   | literal machine output: commands, paths, hashes, code, tool rows |
+| role          | face                   | size | use                                                              |
+| ------------- | ---------------------- | ---- | ---------------------------------------------------------------- |
+| `hero`        | Space Grotesk Medium   | 22   | a screen's one big line, index row names (-0.3)                  |
+| `body`        | Space Grotesk Regular  | 16   | body text, row titles, buttons (sentence case)                   |
+| `bodyStrong`  | Space Grotesk SemiBold | 16   | the emphasised cut of `body`                                     |
+| `meta`        | Space Grotesk Regular  | 13   | everything secondary: previews, captions, stamps, counts         |
+| `sectionHead` | Space Grotesk Medium   | 10   | section heads ONLY (tracking 2, uppercase)                       |
+| `machine`     | IBM Plex Mono          | 13   | literal machine output: commands, paths, hashes, code, tool rows |
 
 Space Grotesk is the one reading face: names, rows, buttons, labels, bylines,
 stamps. Mono is for strings a machine produced, never for a byline or a label.
@@ -511,7 +512,7 @@ loops, which share one clock (`motionTokens.liveCycle`).
 
 At most two of `PixelLoader` / `HullWaveSignal` run on-screen at once.
 `HullLivePulse` is deliberately outside that count: it is a single opacity
-breath — no geometry, no layout, one animated style — mounted *only* where
+breath — no geometry, no layout, one animated style — mounted _only_ where
 something is genuinely live, so its instance count is bounded by real concurrent
 agent work rather than by decoration. On the Room list that means one per live
 Room, and if several Rooms are working at once the index is supposed to look
@@ -526,7 +527,7 @@ skipped outright under reduced motion — the provisional style stays either way
 
 It is also **the only motion "live" is allowed to have.** The pinned corner line
 and a working agent's gold ring both breathe on it — a calm heartbeat, on the
-one clock. Live state must never be reported by something that *travels*: a
+one clock. Live state must never be reported by something that _travels_: a
 sweeping band, a moving crest, a progress bar, or a row of dashes all read as
 "something is filling up towards a finish", which is a claim the product cannot
 make about an agent's turn, and at rest they read as broken chrome. Breathing
@@ -548,9 +549,9 @@ backgrounded app, and the settled row all show the same completed static mark.
    mark (working means a live turn or corner, never presence alone), live work
    elsewhere (the Corner's LIVE wave, the pinned corner line, and a Room on
    the index with a live corner), owner role,
-   and the merge-approval action. It is never the *only* signal for any of
+   and the merge-approval action. It is never the _only_ signal for any of
    these — each is redundantly encoded by shape, glyph, or copy. Note what brass
-   is *not*: identity itself. An agent's plate carries its own signature colour,
+   is _not_: identity itself. An agent's plate carries its own signature colour,
    and brass only rings it — a brass-filled plate would spend the one accent on
    something that is true of every agent all the time, which is how an accent
    stops meaning anything. Do not add a second hue; do not let a further meaning

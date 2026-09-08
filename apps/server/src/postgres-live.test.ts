@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { LiveHub, type LiveEvent } from './live.js';
+import { announceAgentLifecycle, ConnectionPresence } from './connection-presence.js';
 import { POSTGRES_LIVE_CHANNEL, PostgresLiveListener, type LivePgClient } from './postgres-live.js';
 import { PgliteDatabase } from './test-support.js';
 
@@ -39,12 +40,12 @@ class PgliteListenClient extends EventEmitter implements LivePgClient {
   }
 }
 
-async function eventually(predicate: () => boolean): Promise<void> {
+async function eventually(predicate: () => boolean | Promise<boolean>): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (predicate()) return;
+    if (await predicate()) return;
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
-  expect(predicate()).toBe(true);
+  expect(await predicate()).toBe(true);
 }
 
 describe('Postgres live fanout', () => {
@@ -103,6 +104,13 @@ describe('Postgres live fanout', () => {
 
     const received: LiveEvent[] = [];
     liveB.subscribe(ROOM, (event) => received.push(event));
+    // Every successful LISTEN (including its first) now resyncs to recover a
+    // delivery written before the listener was ready. Let that connection
+    // establishment event settle before verifying the next committed write.
+    await eventually(() =>
+      received.some((event) => event.type === 'invalidate' && event.reason === 'resync'),
+    );
+    received.length = 0;
     await database.transaction(async (transaction) => {
       await transaction.query(
         `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'hello')`,
@@ -124,6 +132,71 @@ describe('Postgres live fanout', () => {
       agentId: AUTHOR,
     });
     expect(clientsB[0]!.payloads[0]).not.toContain('hello');
+  });
+
+  it('fans the durable presence fact to every Room on another server without refresh notifications', async () => {
+    const otherRoom = '33333333-3333-4333-8333-333333333333';
+    const agent = 'b'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Bee')`, [agent]);
+    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Other')`, [
+      otherRoom,
+      WORKSPACE,
+    ]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+      VALUES($1,$2,$4,'member'),($1,$3,$4,'member')`,
+      [WORKSPACE, ROOM, otherRoom, agent],
+    );
+    const liveB = new LiveHub();
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, liveB, () => client, 1);
+    listeners.push(listener);
+    void listener.run();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await announceAgentLifecycle(database, new LiveHub(), ROOM, agent, { lifecycleId: 'boot' });
+    await eventually(() => liveB.latestAgentPresence(agent, otherRoom)?.status === 'online');
+    await database.query(
+      `UPDATE live_outputs SET body=body || jsonb_build_object(
+      'status','offline','observedAt',(body->>'observedAt')::bigint+1) WHERE agent_id=$1`,
+      [agent],
+    );
+    await eventually(() => liveB.latestAgentPresence(agent, otherRoom)?.status === 'offline');
+    expect(liveB.latestAgentPresence(agent, ROOM)?.status).toBe('offline');
+  });
+
+  it('rehydrates a missed delivery deadline when its first LISTEN connection opens', async () => {
+    const agent = 'b'.repeat(64);
+    const live = new LiveHub();
+    const presence = new ConnectionPresence(database, live, 50);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Bee')`, [agent]);
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [agent, AUTHOR]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+      VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`,
+      [WORKSPACE, ROOM, AUTHOR, agent],
+    );
+    try {
+      await presence.start();
+      await presence.announce(ROOM, agent, { lifecycleId: 'boot' });
+      await database.query(
+        `INSERT INTO messages(id,room_id,author_id,text,mention_ids)
+         VALUES($1,$2,$3,'Are you there?',$4::jsonb)`,
+        ['2'.repeat(64), ROOM, AUTHOR, JSON.stringify([agent])],
+      );
+      const client = new PgliteListenClient(database);
+      const listener = new PostgresLiveListener(database, live, () => client, 1);
+      listeners.push(listener);
+      void listener.run();
+      await eventually(async () => {
+        const row = await database.query<{ body: { status: string } }>(
+          `SELECT body FROM live_outputs WHERE agent_id=$1 AND kind='presence'`,
+          [agent],
+        );
+        return row.rows[0]?.body.status === 'offline';
+      });
+    } finally {
+      await presence.stop();
+    }
   });
 
   it('broadcasts resync after its listener connection is restored', async () => {

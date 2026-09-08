@@ -32,7 +32,7 @@ type RoomRosterSections = {
  * as one: "Members" over two counted section heads, a 64pt row per identity
  * with its name at body size and one quiet `@handle · role` line that ends
  * in the agent's presence word. The gold ring on the tile means WORKING
- * (`workingByPubkey`, C77), never a presence lease, and there is no status
+ * (`workingByPubkey`, C77), never delivery availability, and there is no status
  * square beside the name (C76). A row whose viewer may remove it carries a
  * chevron and opens its one control in place; the list itself shows no
  * remove text.
@@ -75,7 +75,7 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
   onAddPeople: () => void;
   onClose: () => void;
   onRemove: (participant: RoomRosterParticipant) => void;
-  /** Presence lease verdicts: the row's online/offline word only. */
+  /** Delivery-availability verdicts: the row's online/offline word only. */
   onlineByPubkey: Readonly<Record<string, boolean>>;
   /** Agents working right now (`selectWorkingAgents`): the gold ring only. */
   workingByPubkey: Readonly<Record<string, boolean>>;

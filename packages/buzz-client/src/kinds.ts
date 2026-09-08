@@ -62,7 +62,7 @@ export const KIND_AUTH = 22242;
 /** Marker tag value for agent-activity body projection (session/update bus). */
 export const TAG_AGENT_ACTIVITY = 'agent-activity';
 
-/** Marker tag value for a Room-scoped agent daemon heartbeat. */
+/** Marker tag value for a Room-scoped durable agent availability record. */
 export const TAG_AGENT_PRESENCE = 'agent-presence';
 
 /** Marker tag value for a Room-scoped live in-flight agent reply draft (streaming text). */

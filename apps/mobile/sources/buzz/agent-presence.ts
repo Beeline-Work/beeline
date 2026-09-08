@@ -11,7 +11,7 @@ import {
 
 export type RoomAgentPresence = AgentPresence & { generationId?: string };
 
-/** Maximum lifetime of reconnect bookkeeping; it never extends the lease verdict. */
+/** Maximum lifetime of reconnect bookkeeping; it never changes availability. */
 export const AGENT_PRESENCE_BACKGROUND_GRACE_MS = AGENT_PRESENCE_STALE_MS;
 /** A missing terminal receipt must never leave a dead daemon visibly working forever. */
 export const AGENT_TURN_FRESHNESS_MS = 90_000;
@@ -50,7 +50,7 @@ export function activeMentionCandidates<T extends { pubkey: string }>(
   });
 }
 
-/** Preserve the existing call shape while resolving liveness strictly from the lease. */
+/** Preserve the existing call shape while reading durable availability. */
 export function isAgentPresenceOnlineWithReconnectGrace(
   presence: RoomAgentPresence | undefined,
   now = Date.now(),
@@ -67,8 +67,7 @@ export function nextAgentPresenceTransitionAt(
   let next: number | undefined;
   for (const presence of Object.values(presences)) {
     const deadlines = [
-      ...(presence.status === 'online' ? [presence.observedAt + AGENT_PRESENCE_STALE_MS] : []),
-      presence.observedAt + AGENT_PRESENCE_DORMANT_MS,
+      ...(presence.status === 'offline' ? [presence.observedAt + AGENT_PRESENCE_DORMANT_MS] : []),
     ];
     for (const deadline of deadlines) {
       if (!Number.isFinite(deadline) || deadline <= now) continue;
@@ -94,7 +93,7 @@ export function nextAgentTurnExpiryAt(
 
 /**
  * An empty presence map during bootstrap is unknown, not an offline verdict.
- * Only a completed snapshot with a real lease for every Room agent may mark a
+ * Only a completed snapshot with a known fact for every Room agent may mark a
  * steer as deferred.
  */
 export function isAgentOfflineAfterPresenceResolved(
@@ -123,9 +122,9 @@ export function isAgentTurnActive(
   const age = now - turn.createdAt * 1_000;
   if (age < -AGENT_TURN_FRESHNESS_MS || age >= AGENT_TURN_FRESHNESS_MS) return false;
 
-  // Turn lifecycle and liveness are independent relay streams. A signed
-  // working event is enough to render the Room progress row while the
-  // replaceable presence lease is still loading or briefly quota-delayed.
+  // Turn lifecycle and availability are independent relay streams. A signed
+  // working event is enough to render the Room progress row while the durable
+  // availability record is still loading.
   // An explicit offline marker, or a different current daemon generation,
   // is the only evidence that may close it before complete/failed arrives.
   if (presence?.status === 'offline') return false;
@@ -142,7 +141,7 @@ export function mergeAgentPresence(
   return { ...current, [incoming.agentPubkey]: next };
 }
 
-/** A server refetch may race a newer live heartbeat; newest relay time wins. */
+/** A server refetch may race a newer availability transition; newest time wins. */
 export function mergeAgentPresenceBatch(
   current: Readonly<Record<string, RoomAgentPresence>>,
   incoming: readonly RoomAgentPresence[],
@@ -154,7 +153,7 @@ export function mergeAgentPresenceBatch(
  * One online/offline verdict per agent pubkey, resolved once per render.
  *
  * The transcript's renderItem needs each speaker's liveness for the byline
- * ring, but reading the three raw inputs (heartbeat map, wall clock,
+ * ring, but reading the three raw inputs (presence map, wall clock,
  * reconnect grace) directly recreated the callback on EVERY heartbeat and on
  * every streamed batch, rebuilding every visible ledger row for no visible
  * change. Collapsing them to a flat boolean record lets the screen preserve

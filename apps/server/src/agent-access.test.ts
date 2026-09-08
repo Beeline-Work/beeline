@@ -188,15 +188,15 @@ describe('who may address an agent', () => {
         }),
       ]);
 
-      // A stale heartbeat is not a live helper either.
+      // Idle time never revokes an online lifecycle announcement.
       await reportPresence(database, 'online', 600);
       await send(phone, OWNER, '2', '@greeter status');
-      expect(await lines(database)).toHaveLength(2);
+      expect(await lines(database)).toHaveLength(1);
 
-      // A fresh heartbeat says nothing at all.
+      // Re-announcing online also emits no unreachable notice.
       await reportPresence(database, 'online');
       await send(phone, OWNER, '3', '@greeter again');
-      expect(await lines(database)).toHaveLength(2);
+      expect(await lines(database)).toHaveLength(1);
     } finally {
       await database.close();
     }

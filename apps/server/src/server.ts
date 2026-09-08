@@ -251,25 +251,28 @@ export function createBeelineServer(options: ServerOptions): Server {
               };
               releases.set(
                 roomId,
-                (() => {
-                  const releaseLive = options.live.subscribe(roomId, () => void replay());
-                  const releasePresence = options.connectionPresence?.connect(
-                    roomId,
-                    principal.identityId,
-                    {
-                      ...(typeof item.releaseVersion === 'string'
-                        ? { releaseVersion: item.releaseVersion }
-                        : {}),
-                      ...(typeof item.sourceSha === 'string' ? { sourceSha: item.sourceSha } : {}),
-                      ...(typeof item.available === 'boolean' ? { available: item.available } : {}),
-                    },
-                  );
-                  return () => {
-                    releaseLive();
-                    releasePresence?.();
-                  };
-                })(),
+                options.live.subscribe(roomId, () => void replay()),
               );
+              const lifecycleId =
+                typeof item.lifecycleId === 'string' && item.lifecycleId.length <= 128
+                  ? item.lifecycleId
+                  : undefined;
+              if (lifecycleId)
+                try {
+                  await options.connectionPresence?.announce(roomId, principal.identityId, {
+                    lifecycleId,
+                    ...(typeof item.releaseVersion === 'string'
+                      ? { releaseVersion: item.releaseVersion }
+                      : {}),
+                    ...(typeof item.sourceSha === 'string' ? { sourceSha: item.sourceSha } : {}),
+                    ...(typeof item.available === 'boolean' ? { available: item.available } : {}),
+                  });
+                } catch (error) {
+                  console.error('[presence] startup announcement failed', error);
+                  client.close(1011, 'startup announcement failed');
+                  return;
+                }
+              if (client.readyState !== client.OPEN) return;
               client.send(
                 JSON.stringify({
                   type: 'subscribed',

@@ -147,6 +147,56 @@ describe('PhoneService agent connect pairing claim', () => {
     ).toBeNull();
   });
 
+  it('keeps an active agent handle unique when it pairs into another Workspace', async () => {
+    await insertCode(new Date(Date.now() + 60_000));
+    const first = await phone.claimAgentConnectPairing({
+      code: CODE,
+      agentPubkey: AGENT,
+      model: 'gpt-5.4',
+    });
+    if (first.status !== 'claimed') throw new Error('first claim failed');
+
+    const secondWorkspace = '33333333-3333-4333-8333-333333333333';
+    const competingAgent = 'c'.repeat(64);
+    const secondCode = 'BUZZ-SECOND-PAIRING';
+    const handle = agentHandleFromName(first.agentName);
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Second')`, [secondWorkspace]);
+    await database.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent',$2,$3)`, [
+      competingAgent,
+      first.agentName,
+      handle,
+    ]);
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [
+      competingAgent,
+      OWNER,
+    ]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+       ($1,NULL,$2,'member'),($3,NULL,$4,'owner')`,
+      [WORKSPACE, competingAgent, secondWorkspace, OWNER],
+    );
+    await database.query(
+      `INSERT INTO agent_pairing_codes(code_hash,workspace_id,created_by,expires_at)
+       VALUES($1,$2,$3,$4)`,
+      [
+        createHash('sha256').update(secondCode).digest('hex'),
+        secondWorkspace,
+        OWNER,
+        new Date(Date.now() + 60_000),
+      ],
+    );
+
+    const second = await phone.claimAgentConnectPairing({
+      code: secondCode,
+      agentPubkey: AGENT,
+      model: 'gpt-5.4',
+    });
+    expect(second).toMatchObject({ status: 'claimed', agentName: first.agentName });
+    expect(
+      (await database.query(`SELECT handle FROM identities WHERE id=$1`, [AGENT])).rows,
+    ).toEqual([{ handle: `${handle}_2` }]);
+  });
+
   it.each([
     [new Date(Date.now() - 1_000), undefined, 'expired'],
     [new Date(Date.now() + 60_000), OWNER, 'already_claimed'],

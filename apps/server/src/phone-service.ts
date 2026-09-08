@@ -1184,16 +1184,15 @@ export class PhoneService {
     };
   }
 
-  private async availableAgentHandle(
+  private async agentHandleWorkspaces(
     database: SqlDatabase,
     workspaceId: string,
-    exceptIdentityId: string,
-    name: string,
-  ): Promise<string> {
+    identityId: string,
+  ): Promise<readonly string[]> {
     const memberships = await database.query<{ workspace_id: string }>(
       `SELECT workspace_id FROM memberships
        WHERE identity_id=$1 AND room_id IS NULL AND removed_at IS NULL`,
-      [exceptIdentityId],
+      [identityId],
     );
     const workspaceIds = [
       ...new Set([workspaceId, ...memberships.rows.map((row) => row.workspace_id)]),
@@ -1202,6 +1201,17 @@ export class PhoneService {
       `SELECT id FROM workspaces WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE`,
       [workspaceIds],
     );
+    return workspaceIds;
+  }
+
+  private async availableAgentHandle(
+    database: SqlDatabase,
+    workspaceId: string,
+    exceptIdentityId: string,
+    name: string,
+    lockedWorkspaces = this.agentHandleWorkspaces(database, workspaceId, exceptIdentityId),
+  ): Promise<string> {
+    const workspaceIds = await lockedWorkspaces;
     const rows = await database.query<{ handle: string }>(
       `SELECT identity.handle
        FROM memberships membership
@@ -1320,12 +1330,12 @@ export class PhoneService {
       if (pairing.expires_at.getTime() <= Date.now()) return { status: 'expired' };
       if (pairing.claimed_by) return { status: 'already_claimed' };
 
-      // Serialize seeded-identity assignment across the Workspace: the pairing
-      // row lock above only orders retries of THIS code. Taken after the
-      // pairing lock by every caller, so the order never deadlocks.
-      await database.query(`SELECT 1 FROM workspaces WHERE id=$1 FOR UPDATE`, [
+      const lockedWorkspaces = this.agentHandleWorkspaces(
+        database,
         pairing.workspace_id,
-      ]);
+        input.agentPubkey,
+      );
+      await lockedWorkspaces;
       const worn = await this.wornSeededIdentity(database, pairing.workspace_id, input.agentPubkey);
       const seeded = assignSeededAgentIdentity({
         seed: input.agentPubkey,
@@ -1333,6 +1343,13 @@ export class PhoneService {
         takenNames: worn.names,
         takenHandles: worn.handles,
       });
+      const handle = await this.availableAgentHandle(
+        database,
+        pairing.workspace_id,
+        input.agentPubkey,
+        seeded.name,
+        lockedWorkspaces,
+      );
 
       // Pairing a key whose agent was removed starts it over rather than
       // resurrecting it: the seeded name, animal and soul are assigned afresh
@@ -1345,7 +1362,7 @@ export class PhoneService {
            avatar=NULL,hidden_from_roster=false,updated_at=now()
          WHERE identities.kind='agent'
          RETURNING id`,
-        [input.agentPubkey, seeded.name, seeded.handle, seeded.face],
+        [input.agentPubkey, seeded.name, handle, seeded.face],
       );
       if (!identityRow.rowCount) throw new Error('pairing key belongs to a person');
       await database.query(

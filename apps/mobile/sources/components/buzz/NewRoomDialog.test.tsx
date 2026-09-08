@@ -117,6 +117,11 @@ describe('New Room form', () => {
       expect(host('create-room-content').type).toBe('ScrollView');
       expect(host('create-room-content').parent).not.toBe(host('create-room-submit').parent);
       expect(renderer.root.findByType('RepoPicker').props.fillAvailableHeight).toBe(true);
+      expect(
+        renderer.root
+          .findAllByType('Text')
+          .some((node: any) => textContent(node).includes('Repository optional')),
+      ).toBe(true);
       act(() => host('create-room-no-repository').props.onPress());
       act(() => host('create-room-name').props.onChangeText(`${viewport} room`));
       act(() => host('create-room-submit').props.onPress());

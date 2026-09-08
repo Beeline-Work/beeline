@@ -26,7 +26,9 @@ export type HullDialogAction = {
 };
 
 export const HULL_DIALOG_LAYOUT = {
-  actionMinHeight: 58,
+  actionBorderTopWidth: StyleSheet.hairlineWidth,
+  actionButtonMinHeight: 44,
+  actionPaddingVertical: 8,
   bodyLineHeight: 21,
   bodyMarginTop: 8,
   copyPaddingBottom: 16,
@@ -36,9 +38,17 @@ export const HULL_DIALOG_LAYOUT = {
   titleLineHeight: 22,
 } as const;
 
+export function hullDialogActionsMinimumHeight() {
+  return (
+    HULL_DIALOG_LAYOUT.actionButtonMinHeight +
+    HULL_DIALOG_LAYOUT.actionPaddingVertical * 2 +
+    HULL_DIALOG_LAYOUT.actionBorderTopWidth
+  );
+}
+
 export function hullDialogMinimumHeight(contentHeight: number, includesBody: boolean) {
   return (
-    HULL_DIALOG_LAYOUT.actionMinHeight +
+    hullDialogActionsMinimumHeight() +
     HULL_DIALOG_LAYOUT.copyPaddingTop +
     HULL_DIALOG_LAYOUT.copyPaddingBottom +
     HULL_DIALOG_LAYOUT.titleLineHeight +
@@ -446,19 +456,19 @@ const styles = StyleSheet.create((theme) => {
     },
     dialogActions: {
       flexShrink: 0,
-      minHeight: HULL_DIALOG_LAYOUT.actionMinHeight,
+      minHeight: hullDialogActionsMinimumHeight(),
       paddingHorizontal: 12,
-      paddingVertical: 8,
+      paddingVertical: HULL_DIALOG_LAYOUT.actionPaddingVertical,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'flex-end',
       gap: 4,
-      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopWidth: HULL_DIALOG_LAYOUT.actionBorderTopWidth,
       borderTopColor: hull.border,
     },
     dialogAction: {
       minWidth: 44,
-      minHeight: 44,
+      minHeight: HULL_DIALOG_LAYOUT.actionButtonMinHeight,
       paddingHorizontal: 14,
       alignItems: 'center',
       justifyContent: 'center',

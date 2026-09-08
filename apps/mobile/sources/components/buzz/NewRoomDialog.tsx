@@ -127,7 +127,7 @@ export function NewRoomDialog({
           testID: 'create-room-submit',
         },
       ]}
-      body={showRepoPicker ? undefined : `In ${workspaceName}. Repository optional.`}
+      body={`In ${workspaceName}. Repository optional.`}
       onRequestClose={onClose}
       surfaceStyle={{ minHeight: dialogMinHeight, maxHeight: availableDialogHeight }}
       testID="new-room-dialog"

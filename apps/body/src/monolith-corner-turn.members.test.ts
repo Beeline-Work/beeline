@@ -183,28 +183,28 @@ async function runCorner(input: {
             ...(input.inboxItems
               ? input.inboxItems.map((item) => ({ ...item, attachments: [] }))
               : input.message
-              ? [
-                  {
-                    id: 'human-msg',
-                    authorId: HUMAN,
-                    createdAt: 2,
-                    type: 'message',
-                    body: input.message.body,
-                    mentionIds: input.message.mentionIds,
-                    agentMentionIds: input.message.agentMentionIds ?? [],
-                    ...(input.message.replyToMessageId
-                      ? { replyToMessageId: input.message.replyToMessageId }
-                      : {}),
-                    ...(input.message.replyToAuthorId
-                      ? { replyToAuthorId: input.message.replyToAuthorId }
-                      : {}),
-                    ...(input.message.agentHopCount !== undefined
-                      ? { agentHopCount: input.message.agentHopCount }
-                      : {}),
-                    attachments: [],
-                  },
-                ]
-              : []),
+                ? [
+                    {
+                      id: 'human-msg',
+                      authorId: HUMAN,
+                      createdAt: 2,
+                      type: 'message',
+                      body: input.message.body,
+                      mentionIds: input.message.mentionIds,
+                      agentMentionIds: input.message.agentMentionIds ?? [],
+                      ...(input.message.replyToMessageId
+                        ? { replyToMessageId: input.message.replyToMessageId }
+                        : {}),
+                      ...(input.message.replyToAuthorId
+                        ? { replyToAuthorId: input.message.replyToAuthorId }
+                        : {}),
+                      ...(input.message.agentHopCount !== undefined
+                        ? { agentHopCount: input.message.agentHopCount }
+                        : {}),
+                      attachments: [],
+                    },
+                  ]
+                : []),
             ...(input.checkNote
               ? [
                   {

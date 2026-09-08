@@ -2123,9 +2123,9 @@ describe('monolith integration', () => {
       ).status,
     ).toBe(200);
 
-    expect(
-      (await operation('removeAgent', { workspaceId: WORKSPACE, agentId: peer })).status,
-    ).toBe(204);
+    expect((await operation('removeAgent', { workspaceId: WORKSPACE, agentId: peer })).status).toBe(
+      204,
+    );
     const followUp = '8'.repeat(64);
     await operation('sendRoomMessage', {
       roomId: ROOM,
@@ -4473,9 +4473,9 @@ describe('monolith integration', () => {
         )
       ).status,
     ).toBe(200);
-    expect(
-      (await operation('removeAgent', { workspaceId: WORKSPACE, agentId: peer })).status,
-    ).toBe(204);
+    expect((await operation('removeAgent', { workspaceId: WORKSPACE, agentId: peer })).status).toBe(
+      204,
+    );
 
     const followUp = 'e'.repeat(64);
     expect(
@@ -6379,7 +6379,10 @@ describe('monolith integration', () => {
     };
     expect(inbox.items.map((item) => item.id)).not.toContain(ordinaryLine);
     expect(inbox.items).toContainEqual(
-      expect.objectContaining({ mentionIds: expect.arrayContaining([AGENT]), systemEvent: { kind: 'joined' } }),
+      expect.objectContaining({
+        mentionIds: expect.arrayContaining([AGENT]),
+        systemEvent: { kind: 'joined' },
+      }),
     );
   });
 

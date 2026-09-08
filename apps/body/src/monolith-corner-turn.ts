@@ -168,13 +168,6 @@ function toolCallKey(call: ToolCallEntry, index: number): string {
   return call.id ?? `tool-${index}`;
 }
 
-function toolCallSettled(call: ToolCallEntry): boolean {
-  if (call.resultReceived) return true;
-  return /^(?:completed|complete|failed|error|succeeded|success|passed|done)$/i.test(
-    call.status ?? '',
-  );
-}
-
 function isSuccessfulCommit(call: ToolCallEntry): boolean {
   if (/failed|error|denied/i.test(call.status ?? '')) return false;
   return /\bgit\s+commit\b|\bcommit(?:ted)?\s+(?:changes|files?)\b/i.test(
@@ -802,21 +795,19 @@ export class MonolithCornerTurnLoop {
               const publishedToolCalls = new Set<string>();
               const observedToolCalls = new Set<string>();
               const pendingToolNarrations = new Map<string, string>();
+              let lastNarratedToolCall: string | undefined;
               let activityAttempt = 0;
               const publishToolCalls = (calls: readonly ToolCallEntry[], settledOnly: boolean) => {
                 calls.forEach((call, index) => {
                   const key = `${activityAttempt}:${toolCallKey(call, index)}`;
                   if (settledOnly && !observedToolCalls.has(key)) {
                     observedToolCalls.add(key);
-                    pendingToolNarrations.set(key, takeInterimNarration());
+                    const narration = takeInterimNarration();
+                    pendingToolNarrations.set(key, narration);
+                    if (narration) lastNarratedToolCall = key;
                   }
-                  if (publishedToolCalls.has(key) || (settledOnly && !toolCallSettled(call)))
-                    return;
+                  if (settledOnly || publishedToolCalls.has(key)) return;
                   publishedToolCalls.add(key);
-                  // A live settled tool update is the structural boundary that
-                  // proves the current assistant run is interim narration. The
-                  // end-of-prompt fallback still publishes missed tool rows but
-                  // cannot safely classify the last run, so it never consumes it.
                   const narration = pendingToolNarrations.get(key) ?? '';
                   this.activityTail = this.activityTail
                     .catch(() => undefined)
@@ -854,8 +845,13 @@ export class MonolithCornerTurnLoop {
                     });
                 });
               };
-              const flushToolCalls = async (calls: readonly ToolCallEntry[]): Promise<void> => {
+              const flushToolCalls = async (
+                calls: readonly ToolCallEntry[],
+                finalReply: string,
+              ): Promise<void> => {
                 await this.activityTail;
+                if (lastNarratedToolCall && pendingToolNarrations.get(lastNarratedToolCall) === finalReply)
+                  pendingToolNarrations.delete(lastNarratedToolCall);
                 publishToolCalls(calls, false);
                 await this.activityTail;
               };
@@ -867,6 +863,7 @@ export class MonolithCornerTurnLoop {
                 publishedToolCalls.clear();
                 observedToolCalls.clear();
                 pendingToolNarrations.clear();
+                lastNarratedToolCall = undefined;
                 stream.beginRun();
                 currentNarrationRun = '';
                 trace.promptSent();
@@ -898,7 +895,7 @@ export class MonolithCornerTurnLoop {
               // A checks turn is told to say nothing when nothing changed; its
               // silence is not a routing failure and must not buy a retry.
               if (explained && !restates && shouldRetryEmptyTurn(explained)) {
-                await flushToolCalls(result.toolCalls);
+                await flushToolCalls(result.toolCalls, '');
                 const silent = this.servingProviders();
                 const next = await this.repinNextProvider(trace, explained.reason);
                 if (next) {
@@ -911,7 +908,9 @@ export class MonolithCornerTurnLoop {
                   explained = await this.explainEmpty(result);
                 }
               }
-              await flushToolCalls(result.toolCalls);
+              let reply = durableReplyText(result.agentText);
+              if (!reply && explained?.recoveredText) reply = durableReplyText(explained.recoveredText);
+              await flushToolCalls(result.toolCalls, reply);
               // A refusal the operator cannot read is a refusal that happens twice.
               for (const call of result.toolCalls) {
                 const failure = toolCallFailureLine(call);
@@ -920,9 +919,7 @@ export class MonolithCornerTurnLoop {
               // Close the draft lane before the answer is published: the finished
               // reply must never queue behind a draft nobody will read.
               stream.close();
-              let reply = durableReplyText(result.agentText);
               if (!reply && explained) {
-                reply = explained.recoveredText ? durableReplyText(explained.recoveredText) : '';
                 // A checks turn is told to say nothing when nothing changed; only a
                 // provider refusal makes that silence a failure.
                 if (!reply && !(restates && !isAccountOrProviderRefusal(explained.record))) {

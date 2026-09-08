@@ -1644,6 +1644,52 @@ describe('monolith integration', () => {
     });
   });
 
+  it('returns a tool-only corner reply as one durable prose row after reopening', async () => {
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'tool-only-corner',
+      name: 'Tool-only ledger',
+      objective: 'Keep one final reply',
+    });
+    expect(created.status).toBe(200);
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    expect(
+      (
+        await daemonOperation('postAgentActivity', {
+          agentId: AGENT,
+          roomId: cornerId,
+          requestId: 'tool-only-turn',
+          cornerActivityKey: '1:tool-0',
+          activity: [
+            { kind: 'tool', title: 'Read package.json', operation: 'read', status: 'ok' },
+          ],
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await daemonOperation('postRoomMessage', {
+          agentId: AGENT,
+          roomId: cornerId,
+          requestId: 'tool-only-turn',
+          text: 'Inspecting',
+        })
+      ).status,
+    ).toBe(200);
+
+    const reopened = (await (await request(`/v1/phone/rooms/${cornerId}`)).json()) as RoomView;
+    const durableTexts = [
+      ...reopened.messages
+        .filter((message) => message.presentation === 'message')
+        .map((message) => message.text),
+      ...(reopened.toolRows ?? []).flatMap((message) =>
+        (message.activity ?? [])
+          .flatMap((activity) => (activity.kind === 'output' ? [activity.text] : [])),
+      ),
+    ];
+    expect(durableTexts).toEqual(['Inspecting']);
+  });
+
   it('never turns a bare agent name into a mention of the agent that just replied', async () => {
     const peer = 'e'.repeat(64);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Peer')`, [peer]);

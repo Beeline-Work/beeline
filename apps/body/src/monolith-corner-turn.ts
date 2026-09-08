@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -171,7 +172,9 @@ function toolArguments(call: ToolCallEntry): { command?: string; input?: string 
 }
 
 function toolCallKey(call: ToolCallEntry, index: number): string {
-  return call.id ?? `tool-${index}`;
+  return call.id
+    ? `id-${createHash('sha256').update(call.id).digest('hex')}`
+    : `tool-${index}`;
 }
 
 function toolCallSettled(call: ToolCallEntry): boolean {

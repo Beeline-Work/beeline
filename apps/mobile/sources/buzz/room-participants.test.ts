@@ -92,6 +92,20 @@ describe('Room participant presentation', () => {
     });
   });
 
+  it('keeps a selected person on their canonical handle when it collides with an agent name', () => {
+    const participants = [
+      { pubkey: 'agent-goosy', name: 'Goosy', handle: 'goosy' },
+      { pubkey: 'human-goosy', name: 'Goosy', handle: 'goosy_2' },
+    ];
+    const inserted = replaceActiveMention('Ask @goo', { start: 4, end: 8, query: 'goo' }, 'goosy_2');
+
+    expect(inserted.text).toBe('Ask @goosy_2');
+    expect(resolveComposerMentions(inserted.text, participants, new Map())).toEqual({
+      pubkeys: ['human-goosy'],
+      handles: ['goosy_2'],
+    });
+  });
+
   it('stops an exact handle at trailing punctuation and never treats a bare agent name as a mention', () => {
     const participants = [
       { pubkey: 'agent-goosy', name: 'Goosy', handle: 'goosy' },

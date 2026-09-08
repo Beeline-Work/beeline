@@ -1613,11 +1613,12 @@ describe('monolith integration', () => {
     const cases = [
       ['@bee, please inspect this.', [AGENT]],
       ['@bee- please inspect this.', [AGENT]],
+      ['@bee-urgent, please inspect this.', []],
       ['Bee, please inspect this.', []],
       ['@beeline, please inspect this.', []],
     ] as const;
     for (const [index, [text, expected]] of cases.entries()) {
-      const messageId = `${index + 8}`.repeat(64);
+      const messageId = (index + 8).toString(16).repeat(64);
       const sent = await operation('sendRoomMessage', {
         roomId: ROOM,
         messageId,

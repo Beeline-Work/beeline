@@ -1189,6 +1189,9 @@ export class PhoneService {
     workspaceId: string,
     identityId: string,
   ): Promise<readonly string[]> {
+    await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+      `agent-handle:${identityId}`,
+    ]);
     const memberships = await database.query<{ workspace_id: string }>(
       `SELECT workspace_id FROM memberships
        WHERE identity_id=$1 AND room_id IS NULL AND removed_at IS NULL`,
@@ -2173,11 +2176,19 @@ export class PhoneService {
       ).rows.map((row) => row.id),
     );
     const mentions = new Set(explicitMentions.filter((id) => !explicitAgentIds.has(id)));
-    for (const agent of agents.rows) {
-      const handle = agent.handle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      if (new RegExp(`(^|[^\\p{L}\\p{N}_])@${handle}(?=$|[^\\p{L}\\p{N}_])`, 'iu').test(text))
-        mentions.add(agent.id);
+    const tokenCharacter = /[\p{L}\p{M}\p{N}_.-]/u;
+    const typedHandles = new Set<string>();
+    const normalizedText = text.normalize('NFKC').toLocaleLowerCase();
+    for (const match of normalizedText.matchAll(
+      /@([\p{L}\p{M}\p{N}_]+(?:[.-][\p{L}\p{M}\p{N}_]+)*)/gu,
+    )) {
+      const offset = match.index ?? 0;
+      const before = offset > 0 ? normalizedText[offset - 1]! : '';
+      if (!before || !tokenCharacter.test(before)) typedHandles.add(match[1] ?? '');
     }
+    for (const agent of agents.rows)
+      if (typedHandles.has(agent.handle.normalize('NFKC').toLocaleLowerCase()))
+        mentions.add(agent.id);
     if (replyAgentId) mentions.add(replyAgentId);
     return [...mentions];
   }

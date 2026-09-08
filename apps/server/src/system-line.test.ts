@@ -4,7 +4,7 @@ import { SCHEDULE_RAN_VERB } from '@beeline/api-contract/scheduled-prompts';
 import type { SystemEvent } from '@beeline/api-contract/phone';
 import { backfillSystemEventKinds, migrate, type SqlDatabase } from './database.js';
 import { PgliteDatabase } from './test-support.js';
-import { composeSystemLine, systemLine } from './system-line.js';
+import { composeSystemLine, systemLine, workspaceSystemLine } from './system-line.js';
 
 describe('composeSystemLine', () => {
   it('keeps a join subject while naming its inviter in the attribution slot', () => {
@@ -193,6 +193,62 @@ describe('who an event line mentions', () => {
     });
     expect(written.inserted).toBe(true);
     expect(await mentionsOf(written.id)).toEqual([QUIET_AGENT]);
+  });
+});
+
+describe('workspace system lines', () => {
+  let database: PgliteDatabase;
+  beforeEach(async () => {
+    database = new PgliteDatabase();
+    await migrate(database);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Ada')`, [HUMAN]);
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [WORKSPACE]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'member')`,
+      [WORKSPACE, HUMAN],
+    );
+  });
+  afterEach(() => database.close());
+
+  it('restores a rejoined recipient to their existing @system DM', async () => {
+    await workspaceSystemLine(database, {
+      workspaceId: WORKSPACE,
+      subject: { kind: 'person', id: HUMAN, name: 'Ada' },
+      verb: 'changed workspace visibility to',
+      object: 'public',
+    });
+    const room = await database.query<{ room_id: string }>(
+      `SELECT room_id FROM memberships
+       WHERE workspace_id=$1 AND identity_id=$2 AND room_id IS NOT NULL`,
+      [WORKSPACE, HUMAN],
+    );
+    const roomId = room.rows[0]!.room_id;
+    await database.query(`UPDATE memberships SET removed_at=now() WHERE workspace_id=$1 AND identity_id=$2`, [
+      WORKSPACE,
+      HUMAN,
+    ]);
+    await database.query(
+      `UPDATE memberships SET removed_at=NULL WHERE workspace_id=$1 AND identity_id=$2 AND room_id IS NULL`,
+      [WORKSPACE, HUMAN],
+    );
+
+    await workspaceSystemLine(database, {
+      workspaceId: WORKSPACE,
+      subject: { kind: 'person', id: HUMAN, name: 'Ada' },
+      verb: 'changed workspace visibility to',
+      object: 'invite-only',
+    });
+
+    const restored = await database.query<{ removed_at: Date | null }>(
+      `SELECT removed_at FROM memberships WHERE room_id=$1 AND identity_id=$2`,
+      [roomId, HUMAN],
+    );
+    expect(restored.rows).toEqual([{ removed_at: null }]);
+    expect(
+      (
+        await database.query(`SELECT 1 FROM messages WHERE room_id=$1`, [roomId])
+      ).rowCount,
+    ).toBe(2);
   });
 });
 

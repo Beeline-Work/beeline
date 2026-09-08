@@ -110,16 +110,20 @@ export function directMessageRoomId(
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-async function ensureSystemDirectMessageRoom(
-  database: SqlDatabase,
-  workspaceId: string,
-  personId: string,
-): Promise<string> {
+export async function ensureSystemIdentity(database: SqlDatabase): Promise<void> {
   await database.query(
     `INSERT INTO identities(id,kind,name,handle,hidden_from_roster)
      VALUES ($1,'human',$2,$3,true) ON CONFLICT(id) DO NOTHING`,
     [SYSTEM_IDENTITY_ID, SYSTEM_IDENTITY_NAME, SYSTEM_IDENTITY_HANDLE],
   );
+}
+
+export async function ensureSystemDirectMessageRoom(
+  database: SqlDatabase,
+  workspaceId: string,
+  personId: string,
+): Promise<string> {
+  await ensureSystemIdentity(database);
   const participants = [SYSTEM_IDENTITY_ID, personId].sort() as [string, string];
   const roomId = directMessageRoomId(workspaceId, participants);
   await database.query(
@@ -131,7 +135,8 @@ async function ensureSystemDirectMessageRoom(
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
        VALUES ($1,$2,$3,'member')
-       ON CONFLICT (room_id,identity_id) WHERE room_id IS NOT NULL DO NOTHING`,
+       ON CONFLICT (room_id,identity_id) WHERE room_id IS NOT NULL
+       DO UPDATE SET removed_at=NULL`,
       [workspaceId, roomId, memberId],
     );
   return roomId;

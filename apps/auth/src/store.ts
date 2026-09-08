@@ -294,6 +294,8 @@ const MIGRATIONS = [
     PRIMARY KEY (community, subject)
   )`,
   `ALTER TABLE beeline_github_user_tokens ADD COLUMN IF NOT EXISTS stale_at TIMESTAMPTZ`,
+  `ALTER TABLE beeline_github_user_tokens ADD COLUMN IF NOT EXISTS encrypted_refresh_token TEXT`,
+  `ALTER TABLE beeline_github_user_tokens ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ`,
   `CREATE TABLE IF NOT EXISTS beeline_github_installation_reconciliations (
     community TEXT NOT NULL,
     subject TEXT NOT NULL,
@@ -1879,15 +1881,40 @@ export class AuthStore {
     subject: string,
     encryptedToken: string,
     now: Date,
+    credential: { encryptedRefreshToken?: string; expiresAt?: Date } = {},
   ): Promise<void> {
     await this.database.query(
-      `INSERT INTO beeline_github_user_tokens (community, subject, encrypted_token, updated_at, stale_at)
-       VALUES ($1, $2, $3, $4, NULL)
+      `INSERT INTO beeline_github_user_tokens (community, subject, encrypted_token, updated_at, stale_at, encrypted_refresh_token, expires_at)
+       VALUES ($1, $2, $3, $4, NULL, $5, $6)
        ON CONFLICT (community, subject) DO UPDATE SET
          encrypted_token = EXCLUDED.encrypted_token, updated_at = EXCLUDED.updated_at,
+         encrypted_refresh_token = EXCLUDED.encrypted_refresh_token, expires_at = EXCLUDED.expires_at,
          stale_at = NULL`,
-      [community, subject, encryptedToken, now],
+      [
+        community,
+        subject,
+        encryptedToken,
+        now,
+        credential.encryptedRefreshToken ?? null,
+        credential.expiresAt ?? null,
+      ],
     );
+  }
+
+  async githubUserCredential(community: string, subject: string) {
+    const result = await this.database.query<
+      QueryResultRow & {
+        encryptedToken: string;
+        encryptedRefreshToken: string | null;
+        expiresAt: Date | null;
+      }
+    >(
+      `SELECT encrypted_token AS "encryptedToken", encrypted_refresh_token AS "encryptedRefreshToken",
+              expires_at AS "expiresAt" FROM beeline_github_user_tokens
+       WHERE community=$1 AND subject=$2 AND stale_at IS NULL`,
+      [community, subject],
+    );
+    return result.rows[0];
   }
 
   async githubUserToken(community: string, subject: string): Promise<string | null> {

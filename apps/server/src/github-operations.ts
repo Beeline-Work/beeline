@@ -1,5 +1,11 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
-import { GITHUB_IDENTITY_AUDIENCE, GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
+import {
+  GITHUB_IDENTITY_AUDIENCE,
+  GitHubAppClient,
+  GitHubOAuthClient,
+  GitHubHttpError,
+  GitHubCredentialRejectedError,
+} from '@beeline/auth/github';
 import type { CornerLifecycleView, PhoneOperationMap } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { GITHUB_SUBJECT, systemLine, type SystemPhrase } from './system-line.js';
@@ -288,13 +294,13 @@ export class GitHubOperations {
     const credential = await this.userCredential(viewerId, this.database);
     let githubReconnectNeeded: boolean | undefined;
     if (credential) {
-      const installations = await this.app.listInstallations();
       let administered: Set<number> | undefined;
       try {
         administered = credential.token
           ? new Set(await this.app.listUserInstallationIds(credential.token))
           : new Set<number>();
-      } catch {
+      } catch (error) {
+        if (!(error instanceof GitHubHttpError) || error.status !== 401) throw error;
         // User-to-server tokens expire after 8 hours; rotate once before giving up.
         const rotated = credential.refreshToken
           ? await this.rotateUserCredential(credential, this.database)
@@ -308,20 +314,30 @@ export class GitHubOperations {
           githubReconnectNeeded = true;
         }
       }
-      if (administered) {
-        for (const installation of installations) {
-          if (
-            installation.account.type === 'User'
-              ? installation.account.id === credential.subject
-              : administered.has(installation.installationId)
-          ) {
-            installationIds.add(installation.installationId);
+      if (!credential.token) githubReconnectNeeded = true;
+      try {
+        const installations = await this.app.listInstallations();
+        if (administered) {
+          for (const installation of installations) {
+            if (
+              installation.account.type === 'User'
+                ? installation.account.id === credential.subject
+                : administered.has(installation.installationId)
+            ) {
+              installationIds.add(installation.installationId);
+            }
           }
         }
+      } catch (error) {
+        if (!githubReconnectNeeded) throw error;
       }
     }
     for (const installationId of installationIds) {
-      await this.syncInstallation(viewerId, installationId);
+      try {
+        await this.syncInstallation(viewerId, installationId);
+      } catch (error) {
+        if (!githubReconnectNeeded) throw error;
+      }
     }
     return { ...(githubReconnectNeeded ? { githubReconnectNeeded } : {}) };
   }
@@ -748,12 +764,7 @@ export class GitHubOperations {
     };
   }
 
-  private async systemNote(
-    roomId: string,
-    authorId: string,
-    phrase: SystemPhrase,
-    dedupe: string,
-  ) {
+  private async systemNote(roomId: string, authorId: string, phrase: SystemPhrase, dedupe: string) {
     const note = await systemLine(this.database, {
       id: hash(`beeline:${roomId}:${dedupe}`),
       roomId,
@@ -924,7 +935,9 @@ export class GitHubOperations {
         const rotated = await this.rotateUserCredential(credential, database);
         if (rotated) {
           token = rotated;
-          accessible = await this.app.userCanAccessInstallation(rotated, installationId).catch(() => false);
+          accessible = await this.app
+            .userCanAccessInstallation(rotated, installationId)
+            .catch(() => false);
         }
       }
       if (accessible) return;
@@ -938,11 +951,12 @@ export class GitHubOperations {
     const credential = (
       await database.query<{
         subject: string;
+        stale_at: string | Date | null;
         encrypted_token: string | null;
         encrypted_refresh_token: string | null;
         expires_at: string | Date | null;
       }>(
-        `SELECT l.subject,t.encrypted_token,t.encrypted_refresh_token,t.expires_at FROM identity_external_links l LEFT JOIN github_user_tokens t ON t.subject=l.subject AND t.stale_at IS NULL WHERE l.provider='github' AND l.identity_id=$1`,
+        `SELECT l.subject,t.encrypted_token,t.encrypted_refresh_token,t.expires_at,t.stale_at FROM identity_external_links l LEFT JOIN github_user_tokens t ON t.subject=l.subject WHERE l.provider='github' AND l.identity_id=$1`,
         [viewerId],
       )
     ).rows[0];
@@ -953,50 +967,76 @@ export class GitHubOperations {
     const refreshToken = credential.encrypted_refresh_token
       ? this.open(credential.encrypted_refresh_token)
       : undefined;
-    let token = this.open(sealed);
+    if (credential.stale_at && !refreshToken) return { subject: credential.subject };
+    const token = this.open(sealed);
     const expiresAt = credential.expires_at ? new Date(credential.expires_at).getTime() : undefined;
     if (
       refreshToken &&
-      expiresAt !== undefined &&
-      expiresAt - Date.now() < 60_000
+      (credential.stale_at || (expiresAt !== undefined && expiresAt - Date.now() < 60_000))
     ) {
       const rotated = await this.rotateUserCredential(
         { subject: credential.subject, refreshToken },
         database,
       );
-      if (rotated) token = rotated;
+      // Do not reuse the consumed refresh grant after proactive rotation.
+      return rotated
+        ? { subject: credential.subject, token: rotated }
+        : { subject: credential.subject };
     }
+    // A legacy expired token without a refresh grant can lose this reconnect signal on a user-installations 503; beeline-reconnect-flag-503-edge owns that follow-up.
     return {
       subject: credential.subject,
       token,
       ...(refreshToken ? { refreshToken } : {}),
     };
   }
-  /** Exchanges the stored refresh grant for a fresh user token; marks it stale on failure. */
   private async rotateUserCredential(
     credential: { subject: string; refreshToken?: string },
     database: SqlDatabase,
   ): Promise<string | undefined> {
     if (!credential.refreshToken) return undefined;
-    try {
-      const refreshed = await this.oauth.refreshUserToken(credential.refreshToken);
-      await database.query(
-        `UPDATE github_user_tokens SET encrypted_token=$2,encrypted_refresh_token=$3,expires_at=$4,stale_at=NULL,updated_at=now() WHERE subject=$1`,
-        [
-          credential.subject,
-          this.seal(refreshed.accessToken),
-          refreshed.refreshToken ? this.seal(refreshed.refreshToken) : null,
-          refreshed.tokenExpiresIn ? new Date(Date.now() + refreshed.tokenExpiresIn * 1000) : null,
-        ],
-      );
-      return refreshed.accessToken;
-    } catch {
-      await database.query(
-        `UPDATE github_user_tokens SET stale_at=now(),updated_at=now() WHERE subject=$1`,
-        [credential.subject],
-      );
-      return undefined;
-    }
+    return database.transaction(async (database) => {
+      // Serialize one-use refresh grants with each other and fresh reconnects.
+      const row = (
+        await database.query<{
+          encrypted_token: string;
+          encrypted_refresh_token: string | null;
+          stale_at: Date | null;
+        }>(
+          `SELECT encrypted_token,encrypted_refresh_token,stale_at FROM github_user_tokens WHERE subject=$1 FOR UPDATE`,
+          [credential.subject],
+        )
+      ).rows[0];
+      if (!row) return undefined;
+      if (
+        !row.encrypted_refresh_token ||
+        this.open(row.encrypted_refresh_token) !== credential.refreshToken
+      ) {
+        return this.open(row.encrypted_token);
+      }
+      try {
+        const refreshed = await this.oauth.refreshUserToken(credential.refreshToken);
+        await database.query(
+          `UPDATE github_user_tokens SET encrypted_token=$2,encrypted_refresh_token=$3,expires_at=$4,stale_at=NULL,updated_at=now() WHERE subject=$1`,
+          [
+            credential.subject,
+            this.seal(refreshed.accessToken),
+            refreshed.refreshToken ? this.seal(refreshed.refreshToken) : null,
+            refreshed.tokenExpiresIn
+              ? new Date(Date.now() + refreshed.tokenExpiresIn * 1000)
+              : null,
+          ],
+        );
+        return refreshed.accessToken;
+      } catch (error) {
+        if (!(error instanceof GitHubCredentialRejectedError)) throw error;
+        await database.query(
+          `UPDATE github_user_tokens SET encrypted_refresh_token=NULL,stale_at=now(),updated_at=now() WHERE subject=$1`,
+          [credential.subject],
+        );
+        return undefined;
+      }
+    });
   }
   private async storeRepository(
     repository: { id: number; installationId: number; fullName: string; defaultBranch: string },

@@ -14,17 +14,39 @@ function githubHeaders(token?: string): Record<string, string> {
   };
 }
 
-async function jsonObject(response: Response, label: string): Promise<Record<string, unknown>> {
+export class GitHubHttpError extends Error {
+  constructor(
+    label: string,
+    readonly status: number,
+  ) {
+    super(`${label} failed: HTTP ${status}`);
+  }
+}
+
+export class GitHubCredentialRejectedError extends Error {}
+
+async function jsonResponseObject(
+  response: Response,
+  label: string,
+): Promise<Record<string, unknown>> {
   let body: unknown;
   try {
     body = await response.json();
   } catch {
+    if (!response.ok) throw new GitHubHttpError(label, response.status);
     throw new Error(`${label} returned invalid JSON`);
   }
-  if (!response.ok || !body || typeof body !== 'object' || Array.isArray(body)) {
-    throw new Error(`${label} failed: HTTP ${response.status}`);
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    if (!response.ok) throw new GitHubHttpError(label, response.status);
+    throw new Error(`${label} returned invalid JSON`);
   }
   return body as Record<string, unknown>;
+}
+
+async function jsonObject(response: Response, label: string): Promise<Record<string, unknown>> {
+  const body = await jsonResponseObject(response, label);
+  if (!response.ok) throw new GitHubHttpError(label, response.status);
+  return body;
 }
 
 /** Some App endpoints (e.g. GET /app/installations) answer a bare JSON array, not an envelope. */
@@ -36,7 +58,7 @@ async function jsonArray(response: Response, label: string): Promise<Record<stri
     throw new Error(`${label} returned invalid JSON`);
   }
   if (!response.ok || !Array.isArray(body)) {
-    throw new Error(`${label} failed: HTTP ${response.status}`);
+    throw new GitHubHttpError(label, response.status);
   }
   for (const entry of body) {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
@@ -158,7 +180,15 @@ export class GitHubOAuthClient {
         refresh_token: refreshToken,
       }),
     });
-    const tokenBody = await jsonObject(tokenResponse, 'GitHub OAuth refresh');
+    const tokenBody = await jsonResponseObject(tokenResponse, 'GitHub OAuth refresh');
+    if (
+      tokenBody.error === 'bad_refresh_token' ||
+      tokenBody.error === 'invalid_grant' ||
+      tokenBody.error === 'expired_token'
+    ) {
+      throw new GitHubCredentialRejectedError('GitHub refresh grant rejected');
+    }
+    if (!tokenResponse.ok) throw new GitHubHttpError('GitHub OAuth refresh', tokenResponse.status);
     const accessToken = typeof tokenBody.access_token === 'string' ? tokenBody.access_token : '';
     if (!accessToken) throw new Error('GitHub OAuth refresh response is missing access_token');
     const nextRefreshToken =

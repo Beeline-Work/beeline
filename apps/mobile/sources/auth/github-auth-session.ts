@@ -10,6 +10,12 @@ import {
 import { getBuzzRuntimeConfig, type BuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { waitForAuthCallbackResult } from './onboarding-state';
 
+const PENDING_GITHUB_PURPOSE_KEY = 'buzzy.github-purpose.v1';
+
+export async function isPendingGitHubReconnect(): Promise<boolean> {
+  return (await AsyncStorage.getItem(PENDING_GITHUB_PURPOSE_KEY)) === 'reconnect';
+}
+
 const PENDING_SIGN_IN_STATE_KEY = 'buzzy.github-sign-in-state.v1';
 const PENDING_SIGN_IN_CALLBACK_KEY = 'buzzy.github-sign-in-callback.v1';
 const PENDING_INSTALLATION_RETURN_KEY = 'buzzy.github-installation-return.v1';
@@ -142,11 +148,15 @@ function validInstallationReturnPath(value: unknown): value is string {
   );
 }
 
-export async function persistGitHubSignInState(state: string): Promise<void> {
+export async function persistGitHubSignInState(
+  state: string,
+  purpose: 'signin' | 'reconnect' = 'signin',
+): Promise<void> {
   if (!STATE_RE.test(state)) {
     throw new OidcBindError('invalid_state', 'GitHub app state must be 32 random bytes');
   }
   await Promise.all([
+    AsyncStorage.setItem(PENDING_GITHUB_PURPOSE_KEY, purpose),
     AsyncStorage.setItem(PENDING_SIGN_IN_STATE_KEY, state),
     AsyncStorage.removeItem(PENDING_SIGN_IN_CALLBACK_KEY),
   ]);
@@ -154,6 +164,7 @@ export async function persistGitHubSignInState(state: string): Promise<void> {
 
 export async function clearPendingGitHubSignInState(): Promise<void> {
   await Promise.all([
+    AsyncStorage.removeItem(PENDING_GITHUB_PURPOSE_KEY),
     AsyncStorage.removeItem(PENDING_SIGN_IN_STATE_KEY),
     AsyncStorage.removeItem(PENDING_SIGN_IN_CALLBACK_KEY),
   ]);

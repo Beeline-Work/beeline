@@ -16,7 +16,7 @@ import * as Haptics from 'expo-haptics';
 import * as Linking from 'expo-linking';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as WebBrowser from 'expo-web-browser';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as QRCode from 'qrcode';
 import Svg, { Path, Rect } from 'react-native-svg';
@@ -72,10 +72,12 @@ import { authSessionOptions } from '@/auth/auth-session';
 import {
   clearPendingGitHubSignInState,
   githubSignInRedirectUri,
+  startGitHubSignInWebFlow,
   persistGitHubSignInState,
   resumeGitHubSignInCallback,
 } from '@/auth/github-auth-session';
-import { waitForAuthCallback } from '@/auth/onboarding-state';
+import { GitHubAccountMismatchError, monolithSession } from '@/auth/monolith-session';
+import { markSignInInFlight, waitForAuthCallback } from '@/auth/onboarding-state';
 import { t } from '@/text';
 
 const TYPED_CONFIRMATION = 'EXPORT';
@@ -131,6 +133,7 @@ function QrCode({ value }: { value: string }) {
 }
 
 export default function BuzzIdentitySettings() {
+  const { githubReconnect } = useLocalSearchParams<{ githubReconnect?: string }>();
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const [confirmationMethod, setConfirmationMethod] = useState<ConfirmationMethod>('checking');
@@ -167,6 +170,13 @@ export default function BuzzIdentitySettings() {
   const [facePickerOpen, setFacePickerOpen] = useState(false);
   const [githubWorking, setGitHubWorking] = useState(false);
   const [githubNotice, setGitHubNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (githubReconnect === 'success') setGitHubNotice('GitHub reconnected.');
+    else if (githubReconnect === 'mismatch')
+      setGitHubNotice('Reconnect the GitHub account already linked to this identity.');
+    else if (githubReconnect === 'failed')
+      setGitHubNotice('Could not reconnect GitHub. Try again.');
+  }, [githubReconnect]);
   const monolithEnabled = getBuzzRuntimeConfig().monolithEnabled;
 
   useEffect(() => {
@@ -358,11 +368,15 @@ export default function BuzzIdentitySettings() {
     setGitHubWorking(true);
     setGitHubNotice(null);
     setError(null);
+    markSignInInFlight(true);
     try {
       const state = randomState();
       const redirectUri = githubSignInRedirectUri();
-      const start = startGitHubBind(getBuzzRuntimeConfig().relayUrl, { redirectUri, state });
-      await persistGitHubSignInState(state);
+      const monolith = getBuzzRuntimeConfig().monolithEnabled;
+      const start = monolith
+        ? startGitHubSignInWebFlow(state)
+        : startGitHubBind(getBuzzRuntimeConfig().relayUrl, { redirectUri, state });
+      await persistGitHubSignInState(state, monolith ? 'reconnect' : 'signin');
       const callbackUrl = await waitForAuthCallback({
         redirectUri: start.redirectUri,
         openAuthSession: () =>
@@ -374,6 +388,16 @@ export default function BuzzIdentitySettings() {
         subscribeToUrls: (listener) => Linking.addEventListener('url', ({ url }) => listener(url)),
       });
       const challenge = await resumeGitHubSignInCallback(callbackUrl);
+      if (monolith) {
+        await monolithSession.reconnectGitHubTicket(challenge.ticket);
+        await clearPendingGitHubSignInState();
+        setGitHubNotice('GitHub reconnected.');
+        router.replace({
+          pathname: '/beeline/settings/identity',
+          params: { githubReconnect: 'success' },
+        });
+        return;
+      }
       const event = buildOidcBindEvent(challenge, profileIdentity);
       const result = await finishOidcBind(getBuzzRuntimeConfig().relayUrl, challenge, event);
       await clearPendingGitHubSignInState();
@@ -386,10 +410,20 @@ export default function BuzzIdentitySettings() {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (caught) {
       await clearPendingGitHubSignInState().catch(() => undefined);
+      if (getBuzzRuntimeConfig().monolithEnabled) {
+        router.replace({
+          pathname: '/beeline/settings/identity',
+          params: {
+            githubReconnect: caught instanceof GitHubAccountMismatchError ? 'mismatch' : 'failed',
+          },
+        });
+        return;
+      }
       setError(
         `Could not link GitHub: ${caught instanceof Error ? caught.message : String(caught)}`,
       );
     } finally {
+      markSignInInFlight(false);
       setGitHubWorking(false);
     }
   }, [applyHostedIdentity, githubWorking, profileIdentity]);

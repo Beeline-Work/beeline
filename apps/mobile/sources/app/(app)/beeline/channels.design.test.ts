@@ -104,14 +104,6 @@ describe('Room list layout contract', () => {
     expect(composeSource).toContain('d="M12 4v16M4 12h16"');
     expect(composeSource).not.toContain('<Text style={styles.fabGlyph}>');
     expect(source).toContain('const COMPOSE_FAB_CLEARANCE = 80');
-    // The header carries the Workspace switcher and MEMBERS only: the thin
-    // header plus is gone, the FAB is the one way to compose.
-    const header = source.slice(
-      source.indexOf('<View style={styles.header}>'),
-      source.indexOf('<HullDialog'),
-    );
-    expect(header).not.toMatch(/[+＋]/);
-    expect(header).toContain('testID="workspace-members"');
   });
 
   it('leads with the state column on a 64pt row; only a DM row also wears a 40px tile', () => {

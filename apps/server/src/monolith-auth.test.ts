@@ -54,6 +54,8 @@ describe('mounted monolith auth', () => {
         login: 'octocat',
         displayName: 'The Octocat',
         accessToken: 'github-user-token',
+        refreshToken: 'github-refresh-token',
+        tokenExpiresIn: 28800,
       }),
     } as unknown as GitHubOAuthClient;
     const githubApp = {
@@ -268,6 +270,62 @@ describe('mounted monolith auth', () => {
       `SELECT audience FROM identity_external_links WHERE provider='github' AND subject='42'`,
     );
     expect(audiences.rows).toEqual([{ audience: 'github' }]);
+  });
+
+  it('reconnects through the mounted browser callback, replaces stale credentials and rejects another account', async () => {
+    const sessionResponse = await fetch(`${origin}/v1/auth/github/exchange`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ oidcToken: await issueTicket() }),
+    });
+    const session = (await sessionResponse.json()) as { accessToken: string; identityId: string };
+    await database.query(`INSERT INTO github_user_tokens(subject,encrypted_token,stale_at,updated_at)
+      VALUES('42','old',now(),now()-interval '7 days')`);
+    const start = await mountedRequest(
+      `/auth/github/start?app_redirect=${encodeURIComponent('beeline://beeline/github-callback')}&app_state=${'r'.repeat(43)}`,
+    );
+    const authorization = new URL(String(start.headers.location));
+    const callback = await mountedRequest(
+      `/auth/github/callback?code=fresh-code&state=${authorization.searchParams.get('state')}`,
+      { cookie: String(start.headers['set-cookie']).split(';', 1)[0]! },
+    );
+    expect(callback.status).toBe(302);
+    const completion = new URL(String(callback.headers.location));
+    const saved = await store.githubUserCredential(tenant.community, '42');
+    expect(saved?.encryptedRefreshToken).toBeTruthy();
+    expect(saved?.encryptedRefreshToken).not.toBe('github-refresh-token');
+    expect(new Date(saved!.expiresAt!).getTime()).toBeGreaterThan(Date.now());
+    const reconnect = (ticket: string) =>
+      fetch(`${origin}/v1/auth/github/reconnect`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${session.accessToken}`,
+        },
+        body: JSON.stringify({ oidcToken: ticket }),
+      });
+    expect((await reconnect(completion.searchParams.get('ticket')!)).status).toBe(204);
+    const stored = (await database.query(`SELECT * FROM github_user_tokens WHERE subject='42'`))
+      .rows[0]!;
+    expect(stored.encrypted_token).toBe(saved!.encryptedToken);
+    expect(stored.encrypted_refresh_token).toBe(saved!.encryptedRefreshToken);
+    expect(stored.stale_at).toBeNull();
+    expect(new Date(stored.updated_at as string).getTime()).toBeGreaterThan(Date.now() - 5000);
+    expect(new Date(stored.expires_at as string).getTime()).toBeGreaterThan(Date.now());
+    const mismatch = await reconnect(await issueTicket('99', 'other'));
+    expect(mismatch.status).toBe(409);
+    expect(await mismatch.json()).toEqual({ error: 'github_account_mismatch' });
+    expect(
+      (
+        await database.query(`SELECT subject FROM identity_external_links WHERE identity_id=$1`, [
+          session.identityId,
+        ])
+      ).rows,
+    ).toEqual([{ subject: '42' }]);
+    expect(
+      (await database.query(`SELECT * FROM github_user_tokens WHERE subject='42'`)).rows[0],
+    ).toEqual(stored);
+    expect((await reconnect(completion.searchParams.get('ticket')!)).status).not.toBe(204);
   });
 
   it('reconciles the monolith GitHub catalog from a signed mounted auth webhook', async () => {

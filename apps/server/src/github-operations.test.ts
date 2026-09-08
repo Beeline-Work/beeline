@@ -293,13 +293,7 @@ describe('GitHub phone operations', () => {
       )
     ).rows[0]?.encrypted_token;
     const resolveSealedUserToken = vi.fn(async () => sealedUserToken);
-    const reconciler = new GitHubOperations(
-      database,
-      oauth,
-      app,
-      'secret',
-      resolveSealedUserToken,
-    );
+    const reconciler = new GitHubOperations(database, oauth, app, 'secret', resolveSealedUserToken);
 
     await reconciler.refresh(HUMAN);
 
@@ -339,12 +333,7 @@ describe('GitHub phone operations', () => {
       })),
       listRepositories: vi.fn(async () => []),
     } as unknown as GitHubAppClient;
-    const operations = new GitHubOperations(
-      database,
-      {} as GitHubOAuthClient,
-      app,
-      'secret',
-    );
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app, 'secret');
 
     await operations.processWebhook('installation_repositories', {
       action: 'removed',
@@ -359,9 +348,7 @@ describe('GitHub phone operations', () => {
       ).rows[0]?.active,
     ).toBe(false);
 
-    await database.query(
-      `UPDATE github_repositories SET active=true WHERE repository_id=101`,
-    );
+    await database.query(`UPDATE github_repositories SET active=true WHERE repository_id=101`);
     await operations.processWebhook('installation', {
       action: 'deleted',
       installation: { id: 77 },
@@ -496,7 +483,11 @@ describe('GitHub phone operations', () => {
         state: 'rotation-state',
       });
       await expect(
-        operations.completeIdentity(HUMAN, { challenge: 'oauth-code', proof: 'rotation-state' }, false),
+        operations.completeIdentity(
+          HUMAN,
+          { challenge: 'oauth-code', proof: 'rotation-state' },
+          false,
+        ),
       ).resolves.toEqual({ personId: HUMAN, recovered: false });
       // The 8-hour expiry has passed: the next refresh must rotate first.
       await database.query(
@@ -510,35 +501,160 @@ describe('GitHub phone operations', () => {
         await database.query<{
           expires_at: string | Date;
           expires_in: number;
-        }>(
-          `SELECT encrypted_refresh_token, expires_at FROM github_user_tokens WHERE subject='42'`,
-        )
+        }>(`SELECT encrypted_refresh_token, expires_at FROM github_user_tokens WHERE subject='42'`)
       ).rows[0];
       expect(stored?.encrypted_refresh_token).toBeDefined();
       expect(new Date(stored!.expires_at).getTime()).toBeGreaterThan(Date.now());
       expect(
-        (await database.query<{ installation_id: number | string }>(
-          `SELECT installation_id FROM github_installations WHERE owner_id=$1`,
-          [HUMAN],
-        )).rows[0]?.installation_id,
+        (
+          await database.query<{ installation_id: number | string }>(
+            `SELECT installation_id FROM github_installations WHERE owner_id=$1`,
+            [HUMAN],
+          )
+        ).rows[0]?.installation_id,
       ).toEqual(77);
       // The installation listing must use the rotated token, not the expired one.
       const userInstallations = fetchMock.mock.calls.find(([input]) =>
         String(input).includes('/user/installations'),
       );
+      expect((userInstallations?.[1]?.headers as Record<string, string>).authorization).toBe(
+        'Bearer fresh-user-token',
+      );
+    });
+
+    it('preserves a refresh credential after a temporary rotation failure and recovers next time', async () => {
+      const operations = operationsFor(database);
+      const { fetchMock } = await bindIdentity(database);
+      await operations.beginIdentity(HUMAN, {
+        redirectUri: 'beeline://callback',
+        state: 'transient',
+      });
+      await operations.completeIdentity(HUMAN, { challenge: 'code', proof: 'transient' }, false);
+      await database.query(
+        `UPDATE github_user_tokens SET expires_at=now()-interval '1 minute' WHERE subject='42'`,
+      );
+      fetchMock.mockRejectedValueOnce(new Error('connection reset'));
+      await expect(operations.refresh(HUMAN)).rejects.toThrow('connection reset');
       expect(
-        (userInstallations?.[1]?.headers as Record<string, string>).authorization,
-      ).toBe('Bearer fresh-user-token');
+        (await database.query(`SELECT stale_at FROM github_user_tokens WHERE subject='42'`)).rows[0]
+          ?.stale_at,
+      ).toBeNull();
+      await expect(operations.refresh(HUMAN)).resolves.toEqual({});
+    });
+
+    it('does not mistake an installation-list outage for an expired sign-in without a refresh grant', async () => {
+      const operations = operationsFor(database);
+      const { fetchMock } = await bindIdentity(database);
+      await operations.beginIdentity(HUMAN, { redirectUri: 'beeline://callback', state: 'outage' });
+      await operations.completeIdentity(HUMAN, { challenge: 'code', proof: 'outage' }, false);
+      await database.query(
+        `UPDATE github_user_tokens SET encrypted_refresh_token=NULL WHERE subject='42'`,
+      );
+      const original = fetchMock.getMockImplementation()!;
+      fetchMock.mockImplementation(async (input, init) =>
+        String(input).includes('/user/installations')
+          ? new Response('{}', { status: 503 })
+          : original(input, init),
+      );
+      await expect(operations.refresh(HUMAN)).rejects.toThrow('HTTP 503');
+      expect(
+        (await database.query(`SELECT stale_at FROM github_user_tokens WHERE subject='42'`)).rows[0]
+          ?.stale_at,
+      ).toBeNull();
+    });
+
+    it('keeps reconnect required after GitHub permanently rejects the refresh grant', async () => {
+      const operations = operationsFor(database);
+      const { fetchMock } = await bindIdentity(database);
+      await operations.beginIdentity(HUMAN, {
+        redirectUri: 'beeline://callback',
+        state: 'rejected',
+      });
+      await operations.completeIdentity(HUMAN, { challenge: 'code', proof: 'rejected' }, false);
+      await database.query(
+        `UPDATE github_user_tokens SET expires_at=now()-interval '1 minute' WHERE subject='42'`,
+      );
+      fetchMock.mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: 'invalid_grant' }), { status: 400 }),
+      );
+      await expect(operations.refresh(HUMAN)).resolves.toEqual({ githubReconnectNeeded: true });
+      await expect(operations.refresh(HUMAN)).resolves.toEqual({ githubReconnectNeeded: true });
+      expect(
+        (
+          await database.query<{ encrypted_refresh_token: string | null }>(
+            `SELECT encrypted_refresh_token FROM github_user_tokens WHERE subject='42'`,
+          )
+        ).rows[0]?.encrypted_refresh_token,
+      ).toBeNull();
+    });
+
+    it('keeps reconnect required when a rejected grant meets a user-installations outage', async () => {
+      const operations = operationsFor(database);
+      const { fetchMock } = await bindIdentity(database);
+      await operations.beginIdentity(HUMAN, {
+        redirectUri: 'beeline://callback',
+        state: 'rejected-outage',
+      });
+      await operations.completeIdentity(
+        HUMAN,
+        { challenge: 'code', proof: 'rejected-outage' },
+        false,
+      );
+      await database.query(
+        `UPDATE github_user_tokens SET encrypted_refresh_token=NULL,stale_at=now() WHERE subject='42'`,
+      );
+      const originalFetch = fetchMock.getMockImplementation()!;
+      fetchMock.mockImplementation(async (input, init) =>
+        String(input).includes('/user/installations')
+          ? new Response(JSON.stringify({ message: 'unavailable' }), {
+              status: 503,
+              headers: { 'content-type': 'application/json' },
+            })
+          : originalFetch(input, init),
+      );
+
+      await expect(operations.refresh(HUMAN)).resolves.toEqual({ githubReconnectNeeded: true });
+    });
+
+    it('recovers a historically stale credential that still has a refresh grant', async () => {
+      const operations = operationsFor(database);
+      const { tokenBodies } = await bindIdentity(database);
+      await operations.beginIdentity(HUMAN, {
+        redirectUri: 'beeline://callback',
+        state: 'historical-stale',
+      });
+      await operations.completeIdentity(
+        HUMAN,
+        { challenge: 'code', proof: 'historical-stale' },
+        false,
+      );
+      await database.query(
+        `UPDATE github_user_tokens SET stale_at=now(),expires_at=now()-interval '1 minute' WHERE subject='42'`,
+      );
+      tokenBodies.length = 0;
+
+      await expect(operations.refresh(HUMAN)).resolves.toEqual({});
+      expect(tokenBodies).toEqual([
+        expect.objectContaining({ grant_type: 'refresh_token', refresh_token: 'refresh-1' }),
+      ]);
+      expect(
+        (await database.query(`SELECT stale_at FROM github_user_tokens WHERE subject='42'`)).rows[0]
+          ?.stale_at,
+      ).toBeNull();
     });
 
     it('degrades to stored installations with a reconnect flag when refresh is impossible', async () => {
       const operations = operationsFor(database);
-      await bindIdentity(database);
+      const { fetchMock } = await bindIdentity(database);
       await operations.beginIdentity(HUMAN, {
         redirectUri: 'beeline://callback',
         state: 'degrade-state',
       });
-      await operations.completeIdentity(HUMAN, { challenge: 'oauth-code', proof: 'degrade-state' }, false);
+      await operations.completeIdentity(
+        HUMAN,
+        { challenge: 'oauth-code', proof: 'degrade-state' },
+        false,
+      );
       // The stored token expired and no refresh grant was persisted (legacy row).
       await database.query(
         `UPDATE github_user_tokens SET encrypted_refresh_token = NULL, expires_at = now() - interval '1 minute' WHERE subject='42'`,
@@ -551,18 +667,63 @@ describe('GitHub phone operations', () => {
       await database.query(
         `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch) VALUES(101,77,'owner/widgets','main')`,
       );
+      const originalFetch = fetchMock.getMockImplementation()!;
+      fetchMock.mockImplementation(async (input, init) =>
+        String(input) === 'https://api.github.test/app/installations/77'
+          ? new Response(JSON.stringify({ message: 'unavailable' }), {
+              status: 503,
+              headers: { 'content-type': 'application/json' },
+            })
+          : originalFetch(input, init),
+      );
       await expect(operations.refresh(HUMAN)).resolves.toEqual({ githubReconnectNeeded: true });
       // The stored installation and repositories are still recorded — the picker answers.
       expect(
-        (await database.query<{ installation_id: string }>(
-          `SELECT installation_id FROM github_installations WHERE installation_id=77`,
-        )).rows[0]?.installation_id,
+        (
+          await database.query<{ installation_id: string }>(
+            `SELECT installation_id FROM github_installations WHERE installation_id=77`,
+          )
+        ).rows[0]?.installation_id,
       ).toBe(77);
       expect(
-        (await database.query<{ full_name: string }>(
-          `SELECT full_name FROM github_repositories WHERE repository_id=101`,
-        )).rows[0]?.full_name,
+        (
+          await database.query<{ full_name: string }>(
+            `SELECT full_name FROM github_repositories WHERE repository_id=101`,
+          )
+        ).rows[0]?.full_name,
       ).toBe('owner/widgets');
+    });
+
+    it('keeps reconnect required when the App catalog is unavailable after credential rejection', async () => {
+      const operations = operationsFor(database);
+      const { fetchMock } = await bindIdentity(database);
+      await operations.beginIdentity(HUMAN, {
+        redirectUri: 'beeline://callback',
+        state: 'catalog-outage',
+      });
+      await operations.completeIdentity(
+        HUMAN,
+        { challenge: 'code', proof: 'catalog-outage' },
+        false,
+      );
+      await database.query(
+        `UPDATE github_user_tokens SET encrypted_refresh_token=NULL,expires_at=now()-interval '1 minute' WHERE subject='42'`,
+      );
+      await database.query(
+        `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status) VALUES(77,$1,'42','owner','User','selected','active')`,
+        [HUMAN],
+      );
+      const originalFetch = fetchMock.getMockImplementation()!;
+      fetchMock.mockImplementation(async (input, init) =>
+        String(input) === 'https://api.github.test/app/installations?per_page=100&page=1'
+          ? new Response(JSON.stringify({ message: 'unavailable' }), {
+              status: 503,
+              headers: { 'content-type': 'application/json' },
+            })
+          : originalFetch(input, init),
+      );
+
+      await expect(operations.refresh(HUMAN)).resolves.toEqual({ githubReconnectNeeded: true });
     });
 
     it('retries once with a rotated token when the stored token is answered 401', async () => {
@@ -572,7 +733,11 @@ describe('GitHub phone operations', () => {
         redirectUri: 'beeline://callback',
         state: 'retry-state',
       });
-      await operations.completeIdentity(HUMAN, { challenge: 'oauth-code', proof: 'retry-state' }, false);
+      await operations.completeIdentity(
+        HUMAN,
+        { challenge: 'oauth-code', proof: 'retry-state' },
+        false,
+      );
       // The stored token is not yet expired by GitHub's clock but is dead server-side.
       const userInstallationsCalls: number[] = [];
       const originalFetch = fetchMock.getMockImplementation()!;
@@ -595,9 +760,9 @@ describe('GitHub phone operations', () => {
       });
       await expect(operations.refresh(HUMAN)).resolves.toEqual({});
       expect(userInstallationsCalls.length).toBe(1);
-      const successfulUserInstallationsCall = fetchMock.mock.calls.filter(([input]) =>
-        String(input).includes('/user/installations'),
-      ).at(-1);
+      const successfulUserInstallationsCall = fetchMock.mock.calls
+        .filter(([input]) => String(input).includes('/user/installations'))
+        .at(-1);
       expect(
         (successfulUserInstallationsCall?.[1]?.headers as Record<string, string>).authorization,
       ).toBe('Bearer fresh-user-token');

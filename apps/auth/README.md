@@ -149,11 +149,20 @@ on demand at `/auth/github/app-drift?token=<BUZZY_AUTH_SETUP_TOKEN>`. The
 check is best-effort — an unreachable api.github.com logs one line and never
 crashes the service.
 
+### GitHub user-token rotation
+
 The GitHub App requests user authorization during installation, so its User
 authorization callback is `https://<tenant>/auth/github/callback` and GitHub's
 Setup URL field is intentionally unavailable. Keep **Redirect on update**
 enabled: the same callback dispatches `installation_id`/`setup_action` returns
 from installs and repository-selection updates before deep-linking to Beeline.
+Enable the GitHub App dashboard's **Expiring user authorization tokens** setting.
+It is a GitHub App setting, not an OAuth scope: when GitHub returns a refresh
+token and expiry, Beeline seals them in server-side credential storage and uses
+the refresh grant to rotate an expiring user token. Without a usable refresh
+grant, an expired or rejected credential requires the person to reconnect
+GitHub; temporary GitHub API failures do not make that determination. This
+repository cannot verify the production App setting.
 The webhook URL is `https://<tenant>/auth/github/webhook` with the `installation`
 and `installation_repositories` events enabled. The older
 `/auth/github/installed` and `/auth/github/install/callback` routes remain only

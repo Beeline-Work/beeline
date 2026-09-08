@@ -58,6 +58,7 @@ import {
 import { authSessionOptions } from '@/auth/auth-session';
 import {
   clearPendingGitHubSignInState,
+  isPendingGitHubReconnect,
   loadPendingGitHubBindChallenge,
   persistGitHubSignInState,
   resumeGitHubSignInCallback,
@@ -79,7 +80,7 @@ import { HullSurface, MonoButton, PixelGateReveal } from '@/components/buzz/Mono
 import { registerBuzzPushNotifications } from '@/push/buzz-push-registration';
 import { BuzzRigTransport } from '@/sync/transport';
 import { Typography } from '@/constants/Typography';
-import { monolithSession } from '@/auth/monolith-session';
+import { GitHubAccountMismatchError, monolithSession } from '@/auth/monolith-session';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { FaceCeremonyStep } from '@/components/buzz/FaceCeremonyStep';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
@@ -338,6 +339,21 @@ export default function BuzzOnboarding() {
           (await resumeInitialGitHubSignIn(() => Promise.resolve(initialUrl))) ??
           (await loadPendingGitHubBindChallenge());
         if (challenge) {
+          if (await isPendingGitHubReconnect()) {
+            let result = 'success';
+            try {
+              await monolithSession.reconnectGitHubTicket(challenge.ticket);
+            } catch (error) {
+              result = error instanceof GitHubAccountMismatchError ? 'mismatch' : 'failed';
+            }
+            await clearPendingGitHubSignInState();
+            if (alive)
+              router.replace({
+                pathname: '/beeline/settings/identity',
+                params: { githubReconnect: result },
+              });
+            return;
+          }
           const identityId = await monolithSession.exchangeGitHubTicket(challenge.ticket);
           await clearPendingGitHubSignInState();
           if (alive) await enterAfterMonolithSignIn(identityId);

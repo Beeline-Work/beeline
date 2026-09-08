@@ -21,6 +21,7 @@ const runtime = vi.hoisted(() => ({
 const MONOLITH_IDENTITY = 'm'.repeat(64);
 const monolith = vi.hoisted(() => ({
   exchangeGitHubTicket: vi.fn(async () => 'm'.repeat(64)),
+  reconnectGitHubTicket: vi.fn(async () => undefined),
   identityId: vi.fn(async () => 'm'.repeat(64)),
 }));
 const phoneOperation = vi.hoisted(() => vi.fn(async (_name: string, _input: unknown) => ({})));
@@ -115,7 +116,10 @@ vi.mock('@/buzz/person-name', () => ({
 vi.mock('@/buzz/runtime-config', () => ({
   getBuzzRuntimeConfig: () => runtime.current,
 }));
-vi.mock('@/auth/monolith-session', () => ({ monolithSession: monolith }));
+vi.mock('@/auth/monolith-session', () => ({
+  monolithSession: monolith,
+  GitHubAccountMismatchError: class extends Error {},
+}));
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));
 vi.mock('@/components/buzz/FaceCeremonyStep', async () => {
   const ReactModule = await import('react');
@@ -175,9 +179,8 @@ vi.mock('@/constants/Typography', () => ({
 
 const { persistGitHubSignInState } = await import('@/auth/github-auth-session');
 const { OidcBindError } = await import('@beeline/buzz-client');
-const { clearOnboardingFaceStep, clearOnboardingNotice, markSignInInFlight } = await import(
-  '@/auth/onboarding-state'
-);
+const { clearOnboardingFaceStep, clearOnboardingNotice, markSignInInFlight } =
+  await import('@/auth/onboarding-state');
 const { default: BuzzOnboarding } = await import('./onboarding');
 
 (
@@ -488,6 +491,25 @@ describe('GitHub callback delivery into onboarding', () => {
     expect(sdk.finish).not.toHaveBeenCalled();
     expect(noticeText(tree)).not.toContain('IDENTITY_CONFLICT');
   });
+
+  it.each([false, true])(
+    'cold reconnect preserves the session and returns to Settings (failure=%s)',
+    async (fails) => {
+      runtime.current.monolithEnabled = true;
+      await persistGitHubSignInState(STATE, 'reconnect');
+      linking.initialUrl = callbackUrl();
+      if (fails) monolith.reconnectGitHubTicket.mockRejectedValueOnce(new Error('offline'));
+      await render();
+      expect(monolith.reconnectGitHubTicket).toHaveBeenCalledWith('t'.repeat(43));
+      expect(monolith.exchangeGitHubTicket).not.toHaveBeenCalled();
+      expect(sdk.finish).not.toHaveBeenCalled();
+      expect(sdk.recover).not.toHaveBeenCalled();
+      expect(navigation.replace).toHaveBeenCalledWith({
+        pathname: '/beeline/settings/identity',
+        params: { githubReconnect: fails ? 'failed' : 'success' },
+      });
+    },
+  );
 
   it('cold-starts, binds the proof, saves the identity, and enters the workspace', async () => {
     await persistGitHubSignInState(STATE);

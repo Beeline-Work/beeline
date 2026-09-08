@@ -20,6 +20,33 @@ export interface JoinRoomsResult {
   notificationId?: string;
 }
 
+/**
+ * Top-level shared Room roles are projections of the active Workspace role.
+ * Corners and DMs keep their own authority and are deliberately excluded.
+ */
+export async function syncTopLevelSharedRoomRoles(
+  database: SqlDatabase,
+  workspaceId?: string,
+  identityId?: string,
+): Promise<number> {
+  const result = await database.query(
+    `UPDATE memberships room_member SET role=workspace_member.role
+     FROM rooms room,memberships workspace_member
+     WHERE room_member.room_id=room.id
+       AND workspace_member.workspace_id=room.workspace_id
+       AND workspace_member.room_id IS NULL
+       AND workspace_member.identity_id=room_member.identity_id
+       AND workspace_member.removed_at IS NULL
+       AND room_member.removed_at IS NULL
+       AND room.parent_id IS NULL AND room.direct_participants IS NULL
+       AND room_member.role<>workspace_member.role
+       AND ($1::uuid IS NULL OR room.workspace_id=$1)
+       AND ($2::text IS NULL OR room_member.identity_id=$2)`,
+    [workspaceId ?? null, identityId ?? null],
+  );
+  return result.rowCount;
+}
+
 async function inheritCornerMemberships(
   database: SqlDatabase,
   workspaceId: string,
@@ -94,8 +121,11 @@ export async function joinRooms(
       if (roomPredicate) {
         const joined = await transaction.query<{ room_id: string }>(
           `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-           SELECT room.workspace_id,room.id,$2,'member'
+           SELECT room.workspace_id,room.id,$2,workspace_member.role
            FROM rooms room
+           JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
+             AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
+             AND workspace_member.removed_at IS NULL
            WHERE room.workspace_id=$1 AND room.parent_id IS NULL
              AND room.direct_participants IS NULL AND room.archived_at IS NULL
              AND ${roomPredicate}
@@ -106,12 +136,7 @@ export async function joinRooms(
           values,
         );
         roomIds = joined.rows.map((row) => row.room_id);
-        await inheritCornerMemberships(
-          transaction,
-          input.workspaceId,
-          input.identityId,
-          roomIds,
-        );
+        await inheritCornerMemberships(transaction, input.workspaceId, input.identityId, roomIds);
       }
     }
 

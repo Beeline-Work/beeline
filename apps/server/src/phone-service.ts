@@ -54,7 +54,7 @@ import type { SqlDatabase } from './database.js';
 import type { LiveEvent, LiveHub } from './live.js';
 import type { GitHubOperations } from './github-operations.js';
 import { collapsePermissionCards } from '@beeline/push-gateway/projection';
-import { joinRooms } from './membership-join.js';
+import { joinRooms, syncTopLevelSharedRoomRoles } from './membership-join.js';
 import { REVIEW_IDENTITY_ID } from './review-access.js';
 import { identitySubject, systemLine } from './system-line.js';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
@@ -2304,7 +2304,9 @@ export class PhoneService {
         ],
       );
       await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`,
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+         SELECT $1,$2,$3,role FROM memberships
+         WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$3 AND removed_at IS NULL`,
         [input.workspaceId, id, viewerId],
       );
     });
@@ -2426,6 +2428,7 @@ export class PhoneService {
            WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`,
           [input.workspaceId, input.memberId, input.role],
         );
+        await syncTopLevelSharedRoomRoles(database, input.workspaceId, input.memberId);
         if (target.removed_at)
           await joinRooms(database, {
             workspaceId: input.workspaceId,

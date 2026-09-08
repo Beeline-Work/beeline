@@ -380,6 +380,25 @@ describe('monolith integration', () => {
     expect((await request(`/v1/phone/workspaces/${workspaceId}`)).status).toBe(404);
   });
 
+  it('propagates Workspace role changes to existing top-level shared Room memberships', async () => {
+    const memberId = createHash('sha256').update('github:role-projection-member').digest('hex');
+    await phoneToken('role-projection-member');
+    await operation('addWorkspaceMember', { workspaceId: WORKSPACE, memberId, role: 'admin' });
+    await operation('addRoomMember', { roomId: ROOM, memberId });
+    await operation('addWorkspaceMember', { workspaceId: WORKSPACE, memberId, role: 'member' });
+
+    const roles = await database.query<{ room_id: string | null; role: string }>(
+      `SELECT room_id,role FROM memberships
+       WHERE workspace_id=$1 AND identity_id=$2 AND (room_id IS NULL OR room_id=$3)
+       ORDER BY room_id NULLS FIRST`,
+      [WORKSPACE, memberId, ROOM],
+    );
+    expect(roles.rows).toEqual([
+      { room_id: null, role: 'member' },
+      { room_id: ROOM, role: 'member' },
+    ]);
+  });
+
   it('reserves workspace and Room management for workspace owners and admins', async () => {
     const memberToken = await phoneToken('room-member');
     const memberId = createHash('sha256').update('github:room-member').digest('hex');
@@ -419,6 +438,14 @@ describe('monolith integration', () => {
     const adminRoom = (await (
       await operation('createRoom', { workspaceId: WORKSPACE, name: 'Admin room' }, adminToken)
     ).json()) as { id: string };
+    expect(
+      (
+        await database.query<{ role: string }>(
+          `SELECT role FROM memberships WHERE room_id=$1 AND identity_id=$2`,
+          [adminRoom.id, adminId],
+        )
+      ).rows,
+    ).toEqual([{ role: 'admin' }]);
     expect(
       (
         await operation(

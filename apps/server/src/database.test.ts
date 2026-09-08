@@ -283,3 +283,44 @@ describe('the inherited corner membership migration', () => {
     await expect(backfillInheritedCornerMemberships(database)).resolves.toBe(0);
   });
 });
+
+describe('the top-level shared Room role migration', () => {
+  it('repairs shared Room roles without changing corner or DM authority', async () => {
+    const database = new PgliteDatabase();
+    await migrate(database);
+    const workspace = '41111111-1111-4111-8111-111111111111';
+    const room = '42222222-2222-4222-8222-222222222222';
+    const corner = '43333333-3333-4333-8333-333333333333';
+    const dm = '44444444-4444-4444-8444-444444444444';
+    const member = 'd'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Admin')`, [
+      member,
+    ]);
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Workspace')`, [workspace]);
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,name,direct_participants) VALUES
+       ($1,$4,NULL,'Room',NULL),($2,$4,$1,'Corner',NULL),($3,$4,NULL,'DM',$5::jsonb)`,
+      [room, corner, dm, workspace, JSON.stringify([member])],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+       ($1,NULL,$2,'admin'),($1,$3,$2,'member'),($1,$4,$2,'owner'),($1,$5,$2,'owner')`,
+      [workspace, member, room, corner, dm],
+    );
+
+    await migrate(database);
+
+    const roles = await database.query<{ room_id: string | null; role: string }>(
+      `SELECT room_id,role FROM memberships WHERE workspace_id=$1 AND identity_id=$2
+       ORDER BY room_id NULLS FIRST`,
+      [workspace, member],
+    );
+    expect(roles.rows).toEqual([
+      { room_id: null, role: 'admin' },
+      { room_id: room, role: 'admin' },
+      { room_id: corner, role: 'owner' },
+      { room_id: dm, role: 'owner' },
+    ]);
+    database.close();
+  });
+});

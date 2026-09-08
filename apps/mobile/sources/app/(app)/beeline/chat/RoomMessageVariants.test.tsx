@@ -790,6 +790,62 @@ describe('Room message variant components', () => {
     expect(ledgerEntryRender.mock.lastCall?.[0].mentionHandles).toEqual(agentAuthored);
   });
 
+  it('maps a pressed resolved mention back to the tagged member identity', () => {
+    const onMention = vi.fn();
+    render(
+      <OrdinaryLedgerMessage
+        message={message({
+          text: 'Ask @BeeBee for the result',
+          pubkey: 'speaker',
+          mentionPubkeys: ['member-id'],
+        })}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[{ pubkey: 'member-id', handle: 'beebee' }]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onMention={onMention}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+
+    act(() => ledgerEntryRender.mock.lastCall?.[0].onMention('beebee'));
+    expect(onMention).toHaveBeenCalledWith('member-id');
+  });
+
+  it('leaves a self-mention inert because a direct message requires two members', () => {
+    render(
+      <OrdinaryLedgerMessage
+        message={message({
+          text: 'Note to @viewer',
+          pubkey: 'speaker',
+          mentionPubkeys: ['viewer'],
+        })}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[{ pubkey: 'viewer', handle: 'viewer' }]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onMention={vi.fn()}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+
+    expect(ledgerEntryRender.mock.lastCall?.[0].mentionHandles).toEqual([]);
+  });
+
   it('renders the grant card with ALWAYS / ONCE / NO only for the owner or a manager, and settles each line into its outcome', () => {
     const onDecision = vi.fn();
     const owner = { pubkey: 'owner', kind: 'human' as const, name: 'Charles' };

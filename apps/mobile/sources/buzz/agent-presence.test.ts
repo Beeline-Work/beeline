@@ -17,10 +17,11 @@ const agent = 'b'.repeat(64);
 const presence: RoomAgentPresence = { agentPubkey: agent, status: 'online', observedAt: 0 };
 
 describe('mobile live presence overlay', () => {
-  it('never schedules an online expiry and keeps idle agents online', () => {
-    expect(nextAgentPresenceTransitionAt({ [agent]: presence }, 0)).toBeUndefined();
-    expect(agentPresenceTier(presence, AGENT_PRESENCE_STALE_MS + 1)).toBe('online');
-    expect(agentPresenceTier(presence, AGENT_PRESENCE_DORMANT_MS)).toBe('online');
+  it('schedules and applies authenticated-evidence expiry', () => {
+    expect(nextAgentPresenceTransitionAt({ [agent]: presence }, 0)).toBe(AGENT_PRESENCE_STALE_MS);
+    expect(agentPresenceTier(presence, AGENT_PRESENCE_STALE_MS - 1)).toBe('online');
+    expect(agentPresenceTier(presence, AGENT_PRESENCE_STALE_MS)).toBe('offline');
+    expect(agentPresenceTier(presence, AGENT_PRESENCE_DORMANT_MS)).toBe('dormant');
   });
 
   it('keeps offline agents addressable but excludes dormant agents', () => {

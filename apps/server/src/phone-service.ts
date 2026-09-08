@@ -43,6 +43,7 @@ import {
   type AgentGrantStatus,
 } from '@beeline/api-contract/agent-grants';
 import {
+  AGENT_REACHABLE_HORIZON_MS,
   MAX_ACCESS_ALLOWLIST_ENTRIES,
   agentAccessPolicyRecord,
   accessNoticeBucket,
@@ -1883,7 +1884,7 @@ export class PhoneService {
       input.roomId,
       author,
       input.mentions ?? [],
-      parent.rows[0].author_kind === 'agent' ? parent.rows[0].author_id : undefined,
+      parent.rows[0].author_kind === 'agent' ? parent.rows[0].author_id : null,
     );
     const values = [
       id,
@@ -1979,14 +1980,16 @@ export class PhoneService {
                   WHERE membership.room_id=$2 AND membership.identity_id=identity.id
                     AND membership.removed_at IS NULL
                 ) member,
-                COALESCE((SELECT lo.body->>'status'='online' FROM live_outputs lo
+                COALESCE((SELECT lo.body->>'status'='online'
+                    AND lo.updated_at >= now()-make_interval(secs => $3::double precision / 1000)
+                  FROM live_outputs lo
                   WHERE lo.agent_id=identity.id AND lo.kind='presence'
                   ORDER BY lo.updated_at DESC LIMIT 1),false) reachable
          FROM identities identity
          LEFT JOIN agents a ON a.agent_id=identity.id
          LEFT JOIN identities owner ON owner.id=a.owner_id
          WHERE identity.id=ANY($1::text[]) AND identity.kind='agent'`,
-        [[...mentionIds], roomId],
+        [[...mentionIds], roomId, AGENT_REACHABLE_HORIZON_MS],
       );
       const bucket = accessNoticeBucket(Date.now());
       for (const agent of agents.rows) {
@@ -2074,7 +2077,7 @@ export class PhoneService {
     roomId: string,
     author: string,
     explicitMentions: readonly string[],
-    replyAgentId?: string,
+    replyAgentId?: string | null,
   ): Promise<readonly string[]> {
     if (explicitMentions.length) return explicitMentions;
     const authorKind = (
@@ -2085,6 +2088,9 @@ export class PhoneService {
     ).rows[0]?.kind;
     if (authorKind !== 'human') return [];
     if (replyAgentId) return [replyAgentId];
+    // A reply to a human is addressed to that human. Do not let the ordinary
+    // unthreaded-message fallbacks redirect it to the last or only agent.
+    if (replyAgentId === null) return [];
 
     const previousAgent = (
       await this.database.query<{ author_id: string }>(
@@ -3612,7 +3618,11 @@ export class PhoneService {
       ...(row.presence_body && row.presence_updated_at
         ? {
             presence: {
-              status: row.presence_body.status,
+              status:
+                row.presence_body.status === 'online' &&
+                Date.now() - row.presence_updated_at.getTime() < AGENT_REACHABLE_HORIZON_MS
+                  ? 'online'
+                  : 'offline',
               observedAt: row.presence_body.observedAt,
               ...(roomId ? { roomId } : {}),
             },

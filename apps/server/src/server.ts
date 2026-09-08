@@ -722,6 +722,7 @@ async function route(
       await refuseDaemon(request, response, options);
       return;
     }
+    await options.connectionPresence?.evidence(undefined, agentId);
     const raw = await bytes(request, options.mediaMaximumBytes + 1);
     const mime =
       typeof request.headers['content-type'] === 'string'
@@ -750,11 +751,15 @@ async function route(
       json(response, 404, { error: 'unknown_daemon_operation' });
       return;
     }
-    json(
-      response,
-      200,
-      await options.daemon.execute(name as never, (await body(request)) as never, agentId),
-    );
+    const input = await body(request);
+    const evidenceRoom =
+      typeof input.roomId === 'string'
+        ? input.roomId
+        : typeof input.cornerId === 'string'
+          ? input.cornerId
+          : undefined;
+    await options.connectionPresence?.evidence(evidenceRoom, agentId);
+    json(response, 200, await options.daemon.execute(name as never, input as never, agentId));
     return;
   }
   json(response, 404, { error: 'not_found' });

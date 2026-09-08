@@ -40,7 +40,11 @@ import type { LiveHub } from './live.js';
 import { CORNER_WAKE_MIN_INTERVAL_MS, CORNER_WAKE_TIMEOUT_MS, wakesCorner } from './corner-wake.js';
 import { restateSystemLine, systemLine, type SystemPhrase } from './system-line.js';
 import { mediaIdFromUrl } from './media-ttl.js';
-import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-contract/agent-access';
+import {
+  AGENT_REACHABLE_HORIZON_MS,
+  parseAgentAccessPolicy,
+  senderMayAddressAgent,
+} from '@beeline/api-contract/agent-access';
 
 type Input<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['input'];
 type Output<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['output'];
@@ -932,7 +936,11 @@ export class DaemonService {
     ).rows[0];
     return row
       ? {
-          status: row.body.status,
+          status:
+            row.body.status === 'online' &&
+            Date.now() - row.updated_at.getTime() < AGENT_REACHABLE_HORIZON_MS
+              ? 'online'
+              : 'offline',
           observedAt: row.body.observedAt,
           ...(row.body.releaseVersion ? { releaseVersion: row.body.releaseVersion } : {}),
           ...(row.body.sourceSha ? { sourceSha: row.body.sourceSha } : {}),
@@ -944,6 +952,7 @@ export class DaemonService {
   async releaseReadiness() {
     const result = await this.database.query<{
       agent_id: string;
+      updated_at: Date | null;
       body: {
         status?: string;
         observedAt?: number;
@@ -951,10 +960,10 @@ export class DaemonService {
         sourceSha?: string;
       } | null;
     }>(
-      `SELECT a.agent_id,lo.body
+      `SELECT a.agent_id,lo.body,lo.updated_at
        FROM agents a
        LEFT JOIN LATERAL(
-         SELECT body FROM live_outputs
+         SELECT body,updated_at FROM live_outputs
          WHERE agent_id=a.agent_id AND kind='presence'
          ORDER BY updated_at DESC LIMIT 1
        )lo ON true
@@ -967,7 +976,13 @@ export class DaemonService {
     const daemons = result.rows.map((row) => {
       const body = row.body;
       const observedAt = body?.observedAt;
-      const state = !body ? 'never-seen' : body.status !== 'online' ? 'offline' : 'ready';
+      const state = !body
+        ? 'never-seen'
+        : body.status !== 'online' ||
+            !row.updated_at ||
+            Date.now() - row.updated_at.getTime() >= AGENT_REACHABLE_HORIZON_MS
+          ? 'offline'
+          : 'ready';
       return {
         agentPubkey: row.agent_id,
         state,

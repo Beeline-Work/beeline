@@ -98,6 +98,8 @@ type LedgerBodyProps = {
   settleFrom?: string;
   /** Handles backed by this message's real p-tags and current Room members. */
   mentionHandles?: readonly string[];
+  /** Invoked when a resolved member mention is pressed. */
+  onMention?: (handle: string) => void;
   /** Known rooms/corners of THIS workspace; omitted → no `#` reference links. */
   channelIndex?: ChannelReferenceIndex;
   /** Invoked when a recognized `#room`/`#room/corner` reference is pressed. */
@@ -135,6 +137,7 @@ function TypewriterMarkdown({
   testID,
   revealId,
   mentionHandles,
+  onMention,
   channelIndex,
   onChannelReference,
 }: {
@@ -149,6 +152,7 @@ function TypewriterMarkdown({
    */
   revealId?: string;
   mentionHandles?: readonly string[];
+  onMention?: (handle: string) => void;
   channelIndex?: ChannelReferenceIndex;
   onChannelReference?: (target: ChannelReferenceTarget, text: string) => void;
 }) {
@@ -194,6 +198,7 @@ function TypewriterMarkdown({
     <MonoMarkdown
       markdown={typewriterFrame(markdown, visibleCharacters)}
       mentionHandles={mentionHandles}
+      onMention={onMention}
       channelIndex={channelIndex}
       onChannelReference={onChannelReference}
       testID={testID}
@@ -375,6 +380,7 @@ export function LedgerEntry({
   typewriter = false,
   settleFrom,
   mentionHandles,
+  onMention,
   channelIndex,
   onChannelReference,
 }: Omit<LedgerBodyProps, 'marginalia'> & { luminous?: boolean }) {
@@ -390,6 +396,7 @@ export function LedgerEntry({
         <MonoMarkdown
           markdown={leadText}
           mentionHandles={mentionHandles}
+          onMention={onMention}
           channelIndex={channelIndex}
           onChannelReference={onChannelReference}
           testID={remainingText ? `${bodyTestID}-lead` : bodyTestID}
@@ -404,6 +411,7 @@ export function LedgerEntry({
             textStyle={bodyTextStyle}
             revealId={itemId}
             mentionHandles={mentionHandles}
+            onMention={onMention}
             channelIndex={channelIndex}
             onChannelReference={onChannelReference}
           />
@@ -411,6 +419,7 @@ export function LedgerEntry({
           <MonoMarkdown
             markdown={remainingText}
             mentionHandles={mentionHandles}
+            onMention={onMention}
             channelIndex={channelIndex}
             onChannelReference={onChannelReference}
             testID={bodyTestID}
@@ -456,6 +465,7 @@ export function LedgerSteer({
   replyReference,
   attachments,
   mentionHandles,
+  onMention,
   channelIndex,
   onChannelReference,
 }: Omit<LedgerBodyProps, 'marginalia' | 'machineNoise' | 'typewriter' | 'settleFrom'>) {
@@ -473,6 +483,7 @@ export function LedgerSteer({
         <MonoMarkdown
           markdown={bodyText}
           mentionHandles={mentionHandles}
+          onMention={onMention}
           channelIndex={channelIndex}
           onChannelReference={onChannelReference}
           textStyle={styles.steerText}

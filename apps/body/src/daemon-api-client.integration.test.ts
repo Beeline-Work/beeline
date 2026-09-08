@@ -620,7 +620,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     );
   }, 30_000);
 
-  it('keeps lifecycle presence across a real socket drop and resumes answering through push without polling', async () => {
+  it('refreshes authenticated evidence across a socket drop and resumes through push without polling', async () => {
     const exchange = await auth.createDaemonExchange(AGENT);
     const exchanged = await fetch(`${origin}/v1/auth/daemon/exchange`, {
       method: 'POST',
@@ -700,14 +700,14 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       await vi.waitFor(() => expect(answered).toBe(2));
       await replies;
       expect(await state()).toBe('online');
-      expect(
-        (
-          await database.query<{ updated_at: Date }>(
-            `SELECT updated_at FROM live_outputs WHERE agent_id=$1 AND kind='presence'`,
-            [AGENT],
-          )
-        ).rows,
-      ).toEqual(before);
+      const after = (
+        await database.query<{ updated_at: Date }>(
+          `SELECT updated_at FROM live_outputs WHERE agent_id=$1 AND kind='presence'`,
+          [AGENT],
+        )
+      ).rows;
+      expect(after).toHaveLength(before.length);
+      expect(after[0]!.updated_at.getTime()).toBeGreaterThan(before[0]!.updated_at.getTime());
       expect(operations.mock.calls.filter(([name]) => name === 'getRoomInbox')).toHaveLength(1);
     } finally {
       disconnect();

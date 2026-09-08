@@ -28,6 +28,16 @@ function integer(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isSafeInteger(value) ? value : undefined;
 }
 
+function githubUrl(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && url.hostname === 'github.com' ? url.toString() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function repositoryName(body: GitHubRecord): string | undefined {
   return text(record(body.repository)?.full_name);
 }
@@ -463,11 +473,13 @@ export class GitHubOperations {
     if (typeof install.id !== 'number') return;
     if (
       event === 'push' ||
+      event === 'issues' ||
       event === 'pull_request' ||
       event === 'check_run' ||
       event === 'check_suite' ||
       event === 'status'
     ) {
+      await this.processRepositoryEvent(event, body, install.id);
       await this.processCornerEvent(event, body, install.id);
       return;
     }
@@ -527,6 +539,67 @@ export class GitHubOperations {
       }
     }
     await this.syncInstallation(owner, install.id);
+  }
+
+  private async processRepositoryEvent(event: string, body: GitHubRecord, installationId: number) {
+    if (event !== 'issues' && event !== 'pull_request') return;
+    const action = text(body.action);
+    if (action !== 'opened' && action !== 'closed') return;
+    const subject = record(body[event === 'issues' ? 'issue' : 'pull_request']);
+    const repository = repositoryName(body);
+    const title = text(subject?.title)?.trim();
+    const url = githubUrl(subject?.html_url);
+    const actor = text(record(body.sender)?.login);
+    if (!repository || !title || !url || !actor) return;
+
+    const merged = event === 'pull_request' && action === 'closed' && subject?.merged === true;
+    const cardAction = merged ? 'merged' : action;
+    const branch = event === 'pull_request' ? text(record(subject?.head)?.ref) : undefined;
+    const targetBranch = event === 'pull_request' ? text(record(subject?.base)?.ref) : undefined;
+    const rooms = await this.database.query<{ room_id: string; author_id: string }>(
+      `SELECT room.id room_id,COALESCE(room.created_by,author.identity_id) author_id
+       FROM rooms room
+       LEFT JOIN LATERAL(
+         SELECT membership.identity_id FROM memberships membership
+         WHERE membership.room_id=room.id AND membership.removed_at IS NULL
+         ORDER BY membership.joined_at LIMIT 1
+       )author ON true
+       WHERE room.parent_id IS NULL AND room.archived_at IS NULL
+         AND room.github_events_enabled AND room.github_installation_id=$1
+         AND COALESCE(room.created_by,author.identity_id) IS NOT NULL
+         AND lower(regexp_replace(regexp_replace(
+           COALESCE(room.repository_remote,room.repository_key,''),
+           '^(git://|https://)github.com/','','i'), '\\.git$','','i'))=lower($2)
+         AND ($3::text IS NULL OR NOT EXISTS(
+           SELECT 1 FROM rooms corner
+           JOIN corner_facts fact ON fact.corner_id=corner.id
+           WHERE corner.parent_id=room.id AND corner.archived_at IS NULL
+             AND fact.feature_branch=$3
+         ))`,
+      [installationId, repository, branch ?? null],
+    );
+    for (const room of rooms.rows) {
+      const note = await systemLine(this.database, {
+        id: hash(`beeline:${room.room_id}:github-event:${event}:${cardAction}:${url}`),
+        roomId: room.room_id,
+        authorId: room.author_id,
+        subject: { kind: 'github', name: actor },
+        verb: cardAction,
+        object: { text: title, url },
+        presentation: 'card',
+        cardType: 'github-event',
+        card: {
+          type: event === 'issues' ? 'issue' : 'pull-request',
+          action: cardAction,
+          actor,
+          title,
+          url,
+          ...(branch ? { branch } : {}),
+          ...(targetBranch ? { targetBranch } : {}),
+        },
+      });
+      if (note.inserted) this.onRoomChanged?.(room.room_id);
+    }
   }
 
   private async processCornerEvent(event: string, body: GitHubRecord, installationId: number) {

@@ -161,6 +161,7 @@ import {
   chatBackAction,
   cornerOpenAction,
   cornerHref,
+  resolveMentionDirectMessageAction,
   roomHref,
   type ChatStackRoute,
 } from '@/buzz/corner-navigation';
@@ -572,6 +573,37 @@ export default function BuzzChat() {
       else router.push(roomHref(target.channelId));
     },
     [decodedId],
+  );
+  const openingMentionRef = useRef<string | null>(null);
+  const handleOpenMention = useCallback(
+    async (participantId: string) => {
+      if (participantId === cacheViewerPubkey || openingMentionRef.current) return;
+      if (!transport || !activeCommunityId) {
+        Modal.alert(
+          'Could not open direct message',
+          'Beeline is still connecting. Try the mention again in a moment.',
+        );
+        return;
+      }
+      openingMentionRef.current = participantId;
+      try {
+        const action = await resolveMentionDirectMessageAction(
+          (workspaceId, memberId) => transport.resolveDirectMessage(workspaceId, memberId),
+          activeCommunityId,
+          participantId,
+          decodedId,
+        );
+        if (action.type === 'open-room') router.push(roomHref(action.channelId));
+      } catch (reason) {
+        Modal.alert(
+          'Could not open direct message',
+          reason instanceof Error ? reason.message : String(reason),
+        );
+      } finally {
+        openingMentionRef.current = null;
+      }
+    },
+    [activeCommunityId, cacheViewerPubkey, decodedId, transport],
   );
   // The cold-open deadline bounds the single authenticated Room request.
   // A rejected request surfaces through `onStepFailed('transcript')` below.
@@ -2914,6 +2946,7 @@ export default function BuzzChat() {
           channelIndex={channelReferenceIndex}
           deliveryFailed={failedOutboxIds.has(item.id)}
           onChannelReference={handleOpenChannelReference}
+          onMention={handleOpenMention}
           onReply={beginReply}
           onCopy={handleCopyLedgerMessage}
           onRetry={retryOutboxMessage}
@@ -2947,6 +2980,7 @@ export default function BuzzChat() {
       retryOutboxMessage,
       channelReferenceIndex,
       handleOpenChannelReference,
+      handleOpenMention,
       handleOpenGitHubEvent,
       handleCopyLedgerMessage,
     ],

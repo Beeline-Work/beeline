@@ -143,9 +143,15 @@ describe('monolith Room turn context', () => {
     await running.catch(() => undefined);
     await scheduler.dispose();
 
-    // The conversation read takes the server default, which is the newest page.
-    expect(conversationReads[0]).toEqual({ roomId: 'room-id', limit: 200 });
-    expect(conversationReads[0]).not.toHaveProperty('window');
+    // Startup reconstructs continuity from its dedicated bounded projection,
+    // while prompt context still takes the server-default newest page.
+    expect(conversationReads).toContainEqual({
+      roomId: 'room-id',
+      limit: 200,
+      window: 'continuity',
+    });
+    const promptConversationRead = conversationReads.find((read) => !('window' in read));
+    expect(promptConversationRead).toEqual({ roomId: 'room-id', limit: 200 });
 
     // Turn one on a cold session carries the whole final-80 window the Room
     // turn renders, which now ends on the newest row instead of row 200.

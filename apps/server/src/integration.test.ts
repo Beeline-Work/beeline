@@ -380,6 +380,25 @@ describe('monolith integration', () => {
     expect((await request(`/v1/phone/workspaces/${workspaceId}`)).status).toBe(404);
   });
 
+  it('propagates Workspace role changes to existing top-level shared Room memberships', async () => {
+    const memberId = createHash('sha256').update('github:role-projection-member').digest('hex');
+    await phoneToken('role-projection-member');
+    await operation('addWorkspaceMember', { workspaceId: WORKSPACE, memberId, role: 'admin' });
+    await operation('addRoomMember', { roomId: ROOM, memberId });
+    await operation('addWorkspaceMember', { workspaceId: WORKSPACE, memberId, role: 'member' });
+
+    const roles = await database.query<{ room_id: string | null; role: string }>(
+      `SELECT room_id,role FROM memberships
+       WHERE workspace_id=$1 AND identity_id=$2 AND (room_id IS NULL OR room_id=$3)
+       ORDER BY room_id NULLS FIRST`,
+      [WORKSPACE, memberId, ROOM],
+    );
+    expect(roles.rows).toEqual([
+      { room_id: null, role: 'member' },
+      { room_id: ROOM, role: 'member' },
+    ]);
+  });
+
   it('reserves workspace and Room management for workspace owners and admins', async () => {
     const memberToken = await phoneToken('room-member');
     const memberId = createHash('sha256').update('github:room-member').digest('hex');
@@ -419,6 +438,14 @@ describe('monolith integration', () => {
     const adminRoom = (await (
       await operation('createRoom', { workspaceId: WORKSPACE, name: 'Admin room' }, adminToken)
     ).json()) as { id: string };
+    expect(
+      (
+        await database.query<{ role: string }>(
+          `SELECT role FROM memberships WHERE room_id=$1 AND identity_id=$2`,
+          [adminRoom.id, adminId],
+        )
+      ).rows,
+    ).toEqual([{ role: 'admin' }]);
     expect(
       (
         await operation(
@@ -1607,6 +1634,59 @@ describe('monolith integration', () => {
       ['5'.repeat(64)],
     );
     expect(stored.rows[0]).toEqual({ mention_ids: [AGENT], reply_to_message_id: parentId });
+  });
+
+  it('does not address an agent when an untagged reply targets a human', async () => {
+    const parentId = '8'.repeat(64);
+    await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: parentId,
+      text: 'Human thread parent.',
+      mentions: [AGENT],
+    });
+    await daemonOperation('postRoomMessage', {
+      roomId: ROOM,
+      requestId: parentId,
+      text: 'An agent replied most recently.',
+    });
+
+    const replyId = '9'.repeat(64);
+    const sent = await operation('sendRoomReply', {
+      roomId: ROOM,
+      messageId: replyId,
+      parentMessageId: parentId,
+      text: 'This is for the human.',
+    });
+    expect(sent.status).toBe(200);
+    const stored = await database.query<{ mention_ids: string[]; reply_to_message_id: string }>(
+      `SELECT mention_ids,reply_to_message_id FROM messages WHERE id=$1`,
+      [replyId],
+    );
+    expect(stored.rows[0]).toEqual({ mention_ids: [], reply_to_message_id: parentId });
+  });
+
+  it('keeps explicit agent mentions on replies to humans', async () => {
+    const parentId = 'a'.repeat(64);
+    await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: parentId,
+      text: 'Another human thread parent.',
+    });
+
+    const replyId = 'b'.repeat(64);
+    const sent = await operation('sendRoomReply', {
+      roomId: ROOM,
+      messageId: replyId,
+      parentMessageId: parentId,
+      text: 'This one is explicitly for the agent.',
+      mentions: [AGENT],
+    });
+    expect(sent.status).toBe(200);
+    const stored = await database.query<{ mention_ids: string[] }>(
+      `SELECT mention_ids FROM messages WHERE id=$1`,
+      [replyId],
+    );
+    expect(stored.rows[0]?.mention_ids).toEqual([AGENT]);
   });
 
   it('implicitly addresses an untagged human message to the only agent in the Room', async () => {
@@ -2930,6 +3010,37 @@ describe('monolith integration', () => {
       installation: { id: 77 },
       repository: { id: 101, full_name: 'owner/widgets' },
     };
+    const issuePayload = {
+      ...base,
+      action: 'opened',
+      issue: {
+        number: 17,
+        title: 'Handle narrow screens',
+        html_url: 'https://github.com/owner/widgets/issues/17',
+      },
+      sender: { login: 'octocat' },
+    };
+    expect((await webhook('issues', 'room-issue-open', issuePayload)).status).toBe(202);
+    expect((await webhook('issues', 'room-issue-open', issuePayload)).status).toBe(200);
+    await webhook('pull_request', 'room-pr-open', {
+      ...base,
+      action: 'opened',
+      pull_request: {
+        number: 18,
+        title: 'Improve documentation',
+        html_url: 'https://github.com/owner/widgets/pull/18',
+        head: { ref: 'docs/readme', sha: '2'.repeat(40) },
+        base: { ref: 'main' },
+        merged: false,
+      },
+      sender: { login: 'octocat' },
+    });
+    await database.query(`UPDATE rooms SET github_events_enabled=false WHERE id=$1`, [ROOM]);
+    await webhook('issues', 'room-issue-closed-disabled', {
+      ...issuePayload,
+      action: 'closed',
+    });
+    await database.query(`UPDATE rooms SET github_events_enabled=true WHERE id=$1`, [ROOM]);
     expect(
       (
         await webhook('pull_request', 'corner-pr-open', {
@@ -2944,9 +3055,30 @@ describe('monolith integration', () => {
             mergeable_state: 'clean',
             merged: false,
           },
+          sender: { login: 'octocat' },
         })
       ).status,
     ).toBe(202);
+    const repositoryCards = await database.query<{ card: Record<string, unknown> }>(
+      `SELECT card FROM messages WHERE room_id=$1 AND card_type='github-event' ORDER BY created_at`,
+      [ROOM],
+    );
+    expect(repositoryCards.rows.map((row) => row.card)).toEqual([
+      expect.objectContaining({
+        type: 'issue',
+        action: 'opened',
+        actor: 'octocat',
+        title: 'Handle narrow screens',
+      }),
+      expect.objectContaining({
+        type: 'pull-request',
+        action: 'opened',
+        actor: 'octocat',
+        title: 'Improve documentation',
+        branch: 'docs/readme',
+        targetBranch: 'main',
+      }),
+    ]);
     await webhook('push', 'corner-push', {
       ...base,
       ref: 'refs/heads/fm/widget',
@@ -3037,9 +3169,9 @@ describe('monolith integration', () => {
       expect.arrayContaining([
         expect.objectContaining({
           presentation: 'system',
-          text: 'GitHub opened a pull request Ship the widget',
+          text: 'octocat opened a pull request Ship the widget',
           systemEvent: {
-            subject: { kind: 'github', name: 'GitHub' },
+            subject: { kind: 'github', name: 'octocat' },
             verb: 'opened a pull request',
             object: { text: 'Ship the widget', url: 'https://github.com/owner/widgets/pull/42' },
           },

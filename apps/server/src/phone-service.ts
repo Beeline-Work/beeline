@@ -54,7 +54,7 @@ import type { SqlDatabase } from './database.js';
 import type { LiveEvent, LiveHub } from './live.js';
 import type { GitHubOperations } from './github-operations.js';
 import { collapsePermissionCards } from '@beeline/push-gateway/projection';
-import { joinRooms } from './membership-join.js';
+import { joinRooms, syncTopLevelSharedRoomRoles } from './membership-join.js';
 import { REVIEW_IDENTITY_ID } from './review-access.js';
 import { identitySubject, systemLine } from './system-line.js';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
@@ -1883,7 +1883,7 @@ export class PhoneService {
       input.roomId,
       author,
       input.mentions ?? [],
-      parent.rows[0].author_kind === 'agent' ? parent.rows[0].author_id : undefined,
+      parent.rows[0].author_kind === 'agent' ? parent.rows[0].author_id : null,
     );
     const values = [
       id,
@@ -2074,7 +2074,7 @@ export class PhoneService {
     roomId: string,
     author: string,
     explicitMentions: readonly string[],
-    replyAgentId?: string,
+    replyAgentId?: string | null,
   ): Promise<readonly string[]> {
     if (explicitMentions.length) return explicitMentions;
     const authorKind = (
@@ -2085,6 +2085,9 @@ export class PhoneService {
     ).rows[0]?.kind;
     if (authorKind !== 'human') return [];
     if (replyAgentId) return [replyAgentId];
+    // A reply to a human is addressed to that human. Do not let the ordinary
+    // unthreaded-message fallbacks redirect it to the last or only agent.
+    if (replyAgentId === null) return [];
 
     const previousAgent = (
       await this.database.query<{ author_id: string }>(
@@ -2304,7 +2307,9 @@ export class PhoneService {
         ],
       );
       await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`,
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+         SELECT $1,$2,$3,role FROM memberships
+         WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$3 AND removed_at IS NULL`,
         [input.workspaceId, id, viewerId],
       );
     });
@@ -2426,6 +2431,7 @@ export class PhoneService {
            WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`,
           [input.workspaceId, input.memberId, input.role],
         );
+        await syncTopLevelSharedRoomRoles(database, input.workspaceId, input.memberId);
         if (target.removed_at)
           await joinRooms(database, {
             workspaceId: input.workspaceId,

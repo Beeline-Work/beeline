@@ -61,8 +61,7 @@ export async function seedDefaultWorkspace(database: SqlDatabase): Promise<void>
          AND identity.kind='human' AND identity.hidden_from_roster=false
        ON CONFLICT (room_id,identity_id) WHERE room_id IS NOT NULL
        DO UPDATE SET role=EXCLUDED.role
-         WHERE memberships.removed_at IS NULL
-           AND memberships.role='member' AND EXCLUDED.role<>'member'`,
+         WHERE memberships.removed_at IS NULL AND memberships.role<>EXCLUDED.role`,
       [DEFAULT_WORKSPACE_ID, WELCOME_ROOM_ID],
     );
   });

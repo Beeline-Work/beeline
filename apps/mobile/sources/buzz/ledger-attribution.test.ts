@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { continuedSpeakerIds } from './ledger-attribution';
+import { continuedSpeakerIds, ledgerSpeakerKey } from './ledger-attribution';
 
 const agent = (id: string, pubkey = 'beebee') => ({ id, speaker: `agent:${pubkey}` });
 const other = (id: string) => ({ id, speaker: null });
@@ -32,6 +32,53 @@ describe('ledger attribution runs', () => {
     // the other, and neither may swallow the next agent's announcement.
     const continued = continuedSpeakerIds([other('card-1'), other('card-2'), agent('a1')]);
     expect(continued.size).toBe(0);
+  });
+
+  it('breaks an agent run at a merged corner or PR summary card', () => {
+    const pubkey = 'hoots';
+    const cards = [
+      { daemonFact: { type: 'corner-complete', outcome: 'landed' } },
+      { durableFact: { kind: 'merge' } },
+      { grantRequest: { id: 'grant' } },
+    ];
+
+    for (const [index, card] of cards.entries()) {
+      const prose = { id: `answer-${index}`, speaker: `agent:${pubkey}` };
+      const continued = continuedSpeakerIds([
+        {
+          id: `card-${index}`,
+          speaker: ledgerSpeakerKey(
+            { id: `card-${index}`, pubkey, isAgentActivity: true, ...card },
+            new Set([pubkey]),
+          ),
+        },
+        prose,
+      ]);
+
+      expect(continued.has(prose.id)).toBe(false);
+    }
+  });
+
+  it('always announces the first message from a new speaker', () => {
+    const knownAgents = new Set(['hoots', 'lumen']);
+    const continued = continuedSpeakerIds([
+      {
+        id: 'hoots-1',
+        speaker: ledgerSpeakerKey(
+          { id: 'hoots-1', pubkey: 'hoots', isAgentAuthor: true },
+          knownAgents,
+        ),
+      },
+      {
+        id: 'lumen-1',
+        speaker: ledgerSpeakerKey(
+          { id: 'lumen-1', pubkey: 'lumen', isAgentAuthor: true },
+          knownAgents,
+        ),
+      },
+    ]);
+
+    expect(continued.has('lumen-1')).toBe(false);
   });
 
   it('re-announces the voice when prose follows a collapsed tool run', () => {

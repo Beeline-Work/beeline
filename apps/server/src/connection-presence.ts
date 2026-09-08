@@ -1,4 +1,5 @@
 import { isServerEventKind } from '@beeline/api-contract/phone';
+import { randomUUID } from 'node:crypto';
 import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-contract/agent-access';
 import type { SqlDatabase } from './database.js';
 import type { LiveHub } from './live.js';
@@ -17,6 +18,7 @@ interface Delivery {
   message_id: string;
   created_at: Date;
   lifecycle: string | null;
+  evidence_token: string;
   author_id: string;
   author_kind: string;
   access_policy: unknown;
@@ -24,8 +26,8 @@ interface Delivery {
   system_kind: string | null;
 }
 
-/** Online is a durable lifecycle announcement, revoked only by failed delivery.
- * Socket ownership and elapsed idle time say nothing about delivery capability.
+/** Presence is the helper's newest authenticated evidence. Mention deadlines may
+ * demote only the exact evidence version they observed when they were armed.
  */
 export class ConnectionPresence {
   readonly #timers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -64,6 +66,11 @@ export class ConnectionPresence {
     });
   }
 
+  /** Record a request accepted under this agent's daemon credential. */
+  async evidence(roomId: string | undefined, agentId: string): Promise<void> {
+    await recordAgentEvidence(this.database, this.live, roomId, agentId);
+  }
+
   async stop(): Promise<void> {
     this.#stopped = true;
     this.#release();
@@ -82,7 +89,9 @@ export class ConnectionPresence {
     if (this.#stopped) return;
     const deliveries = await this.database.query<Delivery>(
       `SELECT m.room_id,m.id message_id,m.created_at,m.author_id,author.kind author_kind,
-         a.agent_id,a.access_policy,a.owner_id,p.body->>'lifecycleId' lifecycle,m.system_event->>'kind' system_kind
+         a.agent_id,a.access_policy,a.owner_id,p.body->>'lifecycleId' lifecycle,
+         COALESCE(p.body->>'evidenceNonce',p.body->>'lifecycleId',p.body->>'observedAt') evidence_token,
+         m.system_event->>'kind' system_kind
        FROM messages m
        JOIN identities author ON author.id=m.author_id
        JOIN memberships member ON member.room_id=m.room_id AND member.removed_at IS NULL
@@ -156,6 +165,7 @@ export class ConnectionPresence {
          'status','offline','observedAt',GREATEST($4::bigint,(p.body->>'observedAt')::bigint+1)),updated_at=now()
        WHERE p.agent_id=$1 AND p.kind='presence' AND p.body->>'status'='online'
          AND (p.body->>'lifecycleId') IS NOT DISTINCT FROM $2::text
+         AND COALESCE(p.body->>'evidenceNonce',p.body->>'lifecycleId',p.body->>'observedAt')=$7
          AND EXISTS(SELECT 1 FROM memberships WHERE identity_id=$1 AND room_id=$5 AND removed_at IS NULL)
          AND NOT EXISTS(SELECT 1 FROM agent_turns t WHERE t.agent_id=$1 AND t.room_id=$5
            AND (t.request_id=$3 OR t.created_at >= $6::timestamptz))`,
@@ -166,6 +176,7 @@ export class ConnectionPresence {
         Math.floor(Date.now() / 1000),
         delivery.room_id,
         delivery.created_at,
+        delivery.evidence_token,
       ],
     );
     if (changed.rowCount) await broadcastAgentPresence(this.database, this.live, delivery.agent_id);
@@ -189,9 +200,6 @@ export async function announceAgentLifecycle(
         [agentId],
       )
     ).rows[0]?.body;
-    // Re-subscription, including after a server deploy, cannot revive a failed
-    // lifecycle. Only a new daemon instance may clear sticky offline.
-    if (previous?.lifecycleId === lifecycle) return false;
     const observedAt = Math.max(
       Math.floor(Date.now() / 1000),
       Number(previous?.observedAt ?? 0) + 1,
@@ -199,6 +207,7 @@ export async function announceAgentLifecycle(
     const body = {
       status: metadata.available === false ? 'offline' : 'online',
       observedAt,
+      evidenceNonce: randomUUID(),
       lifecycleId: lifecycle,
       ...(metadata.releaseVersion ? { releaseVersion: metadata.releaseVersion } : {}),
       ...(metadata.sourceSha ? { sourceSha: metadata.sourceSha } : {}),
@@ -213,6 +222,59 @@ export async function announceAgentLifecycle(
     await db.query(
       `UPDATE live_outputs SET body=$2::jsonb,updated_at=now()
          WHERE agent_id=$1 AND kind='presence' AND body IS DISTINCT FROM $2::jsonb`,
+      [agentId, JSON.stringify(body)],
+    );
+    return true;
+  });
+  if (changed) await broadcastAgentPresence(database, live, agentId);
+}
+
+export async function recordAgentEvidence(
+  database: SqlDatabase,
+  live: LiveHub,
+  roomId: string | undefined,
+  agentId: string,
+): Promise<void> {
+  const changed = await database.transaction(async (db) => {
+    await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`presence:${agentId}`]);
+    const previous = (
+      await db.query<{ room_id: string; body: Record<string, unknown> }>(
+        `SELECT room_id,body FROM live_outputs WHERE agent_id=$1 AND kind='presence'
+         ORDER BY updated_at DESC LIMIT 1`,
+        [agentId],
+      )
+    ).rows[0];
+    const requestedRoom = roomId ?? previous?.room_id;
+    const targetRoom = requestedRoom
+      ? (
+          await db.query<{ room_id: string }>(
+            `SELECT room_id FROM memberships
+             WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
+            [requestedRoom, agentId],
+          )
+        ).rows[0]?.room_id
+      : undefined;
+    if (!targetRoom) return false;
+    const now = Math.floor(Date.now() / 1000);
+    const observedAt =
+      previous?.body.status === 'offline'
+        ? Math.max(now, Number(previous.body.observedAt ?? 0) + 1)
+        : now;
+    const body = {
+      ...(previous?.body ?? {}),
+      status: 'online',
+      observedAt,
+      evidenceNonce: randomUUID(),
+    };
+    await db.query(
+      `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)
+       VALUES($1,$2,'presence','presence',$3::jsonb)
+       ON CONFLICT(room_id,agent_id,turn_id,kind) DO UPDATE SET body=EXCLUDED.body,updated_at=now()`,
+      [targetRoom, agentId, JSON.stringify(body)],
+    );
+    await db.query(
+      `UPDATE live_outputs SET body=$2::jsonb,updated_at=now()
+       WHERE agent_id=$1 AND kind='presence' AND body IS DISTINCT FROM $2::jsonb`,
       [agentId, JSON.stringify(body)],
     );
     return true;

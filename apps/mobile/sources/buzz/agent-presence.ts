@@ -11,7 +11,7 @@ import {
 
 export type RoomAgentPresence = AgentPresence & { generationId?: string };
 
-/** Maximum lifetime of reconnect bookkeeping; it never changes availability. */
+/** Maximum lifetime of reconnect bookkeeping and authenticated online evidence. */
 export const AGENT_PRESENCE_BACKGROUND_GRACE_MS = AGENT_PRESENCE_STALE_MS;
 /** A missing terminal receipt must never leave a dead daemon visibly working forever. */
 export const AGENT_TURN_FRESHNESS_MS = 90_000;
@@ -50,7 +50,7 @@ export function activeMentionCandidates<T extends { pubkey: string }>(
   });
 }
 
-/** Preserve the existing call shape while reading durable availability. */
+/** Preserve the existing call shape while reading last-evidence availability. */
 export function isAgentPresenceOnlineWithReconnectGrace(
   presence: RoomAgentPresence | undefined,
   now = Date.now(),
@@ -66,8 +66,10 @@ export function nextAgentPresenceTransitionAt(
 ): number | undefined {
   let next: number | undefined;
   for (const presence of Object.values(presences)) {
+    const observedAt = presence.observedAt * 1_000;
     const deadlines = [
-      ...(presence.status === 'offline' ? [presence.observedAt + AGENT_PRESENCE_DORMANT_MS] : []),
+      ...(presence.status === 'online' ? [observedAt + AGENT_PRESENCE_STALE_MS] : []),
+      observedAt + AGENT_PRESENCE_DORMANT_MS,
     ];
     for (const deadline of deadlines) {
       if (!Number.isFinite(deadline) || deadline <= now) continue;

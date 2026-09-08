@@ -1,9 +1,9 @@
-/** Durable agent availability; elapsed idle time never revokes online. */
+/** Agent availability derived from the newest authenticated server evidence. */
 import { TAG_AGENT_PRESENCE } from './kinds.js';
 
 /** @deprecated Presence is event-driven; no publisher schedules a heartbeat. */
 export const AGENT_PRESENCE_HEARTBEAT_MS = 45_000;
-export const AGENT_PRESENCE_STALE_MS = 120_000;
+export const AGENT_PRESENCE_STALE_MS = 90_000;
 
 /** An explicit offline fact ages into dormancy after a day. */
 export const AGENT_PRESENCE_DORMANT_MS = 24 * 60 * 60_000;
@@ -35,13 +35,16 @@ export type AgentPresence = {
   observedAt: number;
 };
 
-/** Presence changes only on lifecycle announcements and failed deliveries. */
+const observedAtMs = (presence: AgentPresence): number => presence.observedAt * 1_000;
+
+/** Online evidence expires unless another authenticated helper contact refreshes it. */
 export function isAgentPresenceOnline(
   presence: AgentPresence | undefined,
   now = Date.now(),
 ): boolean {
-  void now;
-  return presence?.status === 'online';
+  return Boolean(
+    presence?.status === 'online' && now - observedAtMs(presence) < AGENT_PRESENCE_STALE_MS,
+  );
 }
 
 export function resolveAgentPresenceTier(
@@ -49,8 +52,8 @@ export function resolveAgentPresenceTier(
   now = Date.now(),
 ): AgentPresenceTier {
   if (!presence) return 'offline';
-  if (presence.status === 'online') return 'online';
-  return now - presence.observedAt >= AGENT_PRESENCE_DORMANT_MS ? 'dormant' : 'offline';
+  if (isAgentPresenceOnline(presence, now)) return 'online';
+  return now - observedAtMs(presence) >= AGENT_PRESENCE_DORMANT_MS ? 'dormant' : 'offline';
 }
 
 /**
@@ -83,9 +86,7 @@ export type AgentRosterStanding =
  * consumer sees.
  *
  * Why transient flakes can never satisfy eviction:
- * - Elapsed absence is not evidence. A daemon restart, relay outage, and
- *   death are indistinguishable by time alone, so only an explicit offline
- *   fact may age into `dormant`; online never does.
+ * - Elapsed absence lowers stale evidence to offline/dormant, but never evicts.
  * - A failed membership read is `unknown`, which degrades DOWNWARD to the
  *   presence tiers, never upward to evicted. Only a successful read saying
  *   `not-member` — signed kind:9001 removal authority — evicts.

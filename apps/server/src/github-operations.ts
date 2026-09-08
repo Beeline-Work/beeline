@@ -983,6 +983,7 @@ export class GitHubOperations {
         ? { subject: credential.subject, token: rotated }
         : { subject: credential.subject };
     }
+    // A legacy expired token without a refresh grant can lose this reconnect signal on a user-installations 503; beeline-reconnect-flag-503-edge owns that follow-up.
     return {
       subject: credential.subject,
       token,

@@ -8,7 +8,7 @@ production release APK, versionCode 17.
 - The owner selected `apps/mobile/logo.png` through Android's system photo
   picker. The app reused `pickAndUploadAvatar`, including the critical-chunk-only
   PNG canonicalization, and uploaded the 512px square result.
-- The durable media URL immediately rendered in the Workspace header:
+- The selected Workspace-picture URL immediately rendered in the Workspace header:
   [custom header](02-admin-custom-header.png).
 - The same projected URL rendered in the Workspace rail:
   [custom rail](03-admin-custom-rail.png).

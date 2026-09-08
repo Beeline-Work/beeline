@@ -1,4 +1,6 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { storeWorkspaceAvatar } from './durable-avatar.js';
+import { queueLatestReleasePush } from './release-push-catchup.js';
 import {
   createAgentPairingCode,
   isServerEventKind,
@@ -2198,11 +2200,24 @@ export class PhoneService {
     return { id };
   }
   private async updateWorkspace(input: Input<'updateWorkspace'>, viewerId: string) {
-    await this.requireWorkspaceManager(input.workspaceId, viewerId);
-    await this.database.query(
-      `UPDATE workspaces SET name=COALESCE($2,name),avatar=COALESCE($3,avatar),visibility=COALESCE($4,visibility),updated_at=now() WHERE id=$1`,
-      [input.workspaceId, input.name ?? null, input.avatar ?? null, input.visibility ?? null],
-    );
+    await this.database.transaction(async (database) => {
+      await this.requireWorkspaceManager(input.workspaceId, viewerId, database);
+      await database.query('SELECT id FROM workspaces WHERE id=$1 FOR UPDATE', [input.workspaceId]);
+      const avatar =
+        input.avatar === undefined
+          ? null
+          : await storeWorkspaceAvatar(
+              database,
+              input.workspaceId,
+              viewerId,
+              input.avatar,
+              this.publicOrigin,
+            );
+      await database.query(
+        `UPDATE workspaces SET name=COALESCE($2,name),avatar=COALESCE($3,avatar),visibility=COALESCE($4,visibility),updated_at=now() WHERE id=$1`,
+        [input.workspaceId, input.name ?? null, avatar, input.visibility ?? null],
+      );
+    });
   }
   private async leaveWorkspace(input: Input<'leaveWorkspace'>, viewerId: string) {
     const leaver = await this.requireIdentity(viewerId);
@@ -3424,10 +3439,13 @@ export class PhoneService {
     };
   }
   private async registerPush(input: Input<'registerPushDevice'>, viewerId: string) {
-    await this.database.query(
-      `INSERT INTO push_devices(token,identity_id,platform,environment,registered_at) VALUES($1,$2,$3,$4,now()) ON CONFLICT(token) DO UPDATE SET identity_id=EXCLUDED.identity_id,platform=EXCLUDED.platform,environment=EXCLUDED.environment,updated_at=now()`,
-      [input.token, viewerId, input.platform, input.environment],
-    );
+    await this.database.transaction(async (database) => {
+      await database.query(
+        `INSERT INTO push_devices(token,identity_id,platform,environment,registered_at) VALUES($1,$2,$3,$4,now()) ON CONFLICT(token) DO UPDATE SET identity_id=EXCLUDED.identity_id,platform=EXCLUDED.platform,environment=EXCLUDED.environment,registered_at=CASE WHEN push_devices.identity_id IS DISTINCT FROM EXCLUDED.identity_id THEN now() ELSE push_devices.registered_at END,updated_at=now()`,
+        [input.token, viewerId, input.platform, input.environment],
+      );
+      await queueLatestReleasePush(database, viewerId, input.token);
+    });
     return { accepted: true };
   }
   private async reportUpdate(input: Input<'reportRunningUpdate'>, viewerId: string) {
@@ -3553,8 +3571,12 @@ export class PhoneService {
     if (room.archived_at) throw new Error('room is archived');
     return room;
   }
-  private async requireWorkspaceManager(workspaceId: string, identityId: string) {
-    const row = await this.database.query(
+  private async requireWorkspaceManager(
+    workspaceId: string,
+    identityId: string,
+    database = this.database,
+  ) {
+    const row = await database.query(
       `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND role IN ('owner','admin') AND removed_at IS NULL`,
       [workspaceId, identityId],
     );

@@ -1,5 +1,10 @@
 import type { SqlDatabase } from './database.js';
 import { MEDIA_SWEEP_INTERVAL_MS, mediaTtlHours } from './media-ttl.js';
+import {
+  claimReleaseCatchup,
+  RELEASE_CATCHUP_CANDIDATES_SQL,
+  retireTerminalReleaseCatchups,
+} from './release-push-catchup.js';
 
 const BACKGROUND_LOCK_KEY = 0x0bee11;
 
@@ -46,6 +51,7 @@ export class PushDeliveryLoop {
     await this.database.query(
       `INSERT INTO push_delivery_floors(id) VALUES('message-delivery') ON CONFLICT(id) DO NOTHING`,
     );
+    await retireTerminalReleaseCatchups(this.database);
     const candidates = await this.database.query<{
       message_id: string;
       workspace_id: string;
@@ -53,6 +59,8 @@ export class PushDeliveryLoop {
       notification_type: 'message' | 'workspace-join';
       text: string;
       token: string;
+      identity_id: string;
+      is_release_catchup: boolean;
     }>(`
       WITH candidates AS (
         SELECT m.id message_id,room.workspace_id::text workspace_id,m.room_id::text room_id,
@@ -69,7 +77,7 @@ export class PushDeliveryLoop {
             WHEN m.card_type='grant-request' THEN btrim(m.text)
             ELSE concat_ws(': ',COALESCE(NULLIF(author.name,''),'Someone'),btrim(m.text))
           END text,
-          d.token,m.created_at
+          d.token,member.identity_id,false is_release_catchup,m.created_at
         FROM messages m
         JOIN rooms room ON room.id=m.room_id
         JOIN memberships member ON member.room_id=m.room_id AND member.removed_at IS NULL
@@ -95,7 +103,8 @@ export class PushDeliveryLoop {
         SELECT notification.id message_id,notification.workspace_id::text workspace_id,
           notification.room_id::text room_id,
           'workspace-join' notification_type,
-          btrim(notification.text) text,device.device_token token,notification.created_at
+          btrim(notification.text) text,device.device_token token,push_device.identity_id,
+          false is_release_catchup,notification.created_at
         FROM workspace_join_notifications notification
         JOIN workspace_join_notification_devices device ON device.notification_id=notification.id
         JOIN push_devices push_device ON push_device.token=device.device_token
@@ -103,22 +112,43 @@ export class PushDeliveryLoop {
         WHERE notification.created_at>=push_device.registered_at
           AND notification.created_at>=floor.started_at
           AND btrim(notification.text)<>''
+        UNION ALL
+        ${RELEASE_CATCHUP_CANDIDATES_SQL}
+      ), unclaimed AS (
+        SELECT DISTINCT ON (candidate.message_id,candidate.token)
+          candidate.message_id,candidate.workspace_id,candidate.room_id,
+          candidate.notification_type,candidate.text,candidate.token,candidate.identity_id,
+          candidate.is_release_catchup,candidate.created_at
+        FROM candidates candidate
+        LEFT JOIN push_delivery_claims claim
+          ON claim.message_id=candidate.message_id AND claim.device_token=candidate.token
+        WHERE claim.message_id IS NULL
+        ORDER BY candidate.message_id,candidate.token,candidate.is_release_catchup DESC
       )
-      SELECT candidate.message_id,candidate.workspace_id,candidate.room_id,
-        candidate.notification_type,candidate.text,candidate.token
-      FROM candidates candidate
-      LEFT JOIN push_delivery_claims claim
-        ON claim.message_id=candidate.message_id AND claim.device_token=candidate.token
-      WHERE claim.message_id IS NULL
-      ORDER BY candidate.created_at,candidate.message_id LIMIT 100
+      SELECT message_id,workspace_id,room_id,notification_type,text,token,identity_id,is_release_catchup
+      FROM unclaimed ORDER BY created_at,message_id LIMIT 100
     `);
     let delivered = 0;
     for (const candidate of candidates.rows) {
-      const claim = await this.database.query(
-        `INSERT INTO push_delivery_claims(message_id,device_token,status) VALUES($1,$2,'claimed') ON CONFLICT DO NOTHING`,
-        [candidate.message_id, candidate.token],
-      );
-      if (!claim.rowCount) continue;
+      const claimed = candidate.is_release_catchup
+        ? await claimReleaseCatchup(
+            this.database,
+            candidate.message_id,
+            candidate.token,
+            candidate.identity_id,
+          )
+        : Boolean(
+            (
+              await this.database.query(
+                `INSERT INTO push_delivery_claims(message_id,device_token,status)
+                 SELECT $1,$2,'claimed'
+                 WHERE EXISTS (SELECT 1 FROM push_devices WHERE token=$2 AND identity_id=$3)
+                 ON CONFLICT DO NOTHING`,
+                [candidate.message_id, candidate.token, candidate.identity_id],
+              )
+            ).rowCount,
+          );
+      if (!claimed) continue;
       try {
         const message =
           candidate.notification_type === 'workspace-join'
@@ -141,6 +171,11 @@ export class PushDeliveryLoop {
           `UPDATE push_delivery_claims SET status='delivered',completed_at=now() WHERE message_id=$1 AND device_token=$2`,
           [candidate.message_id, candidate.token],
         );
+        if (candidate.is_release_catchup)
+          await this.database.query(
+            `DELETE FROM push_release_catchups WHERE device_token=$1 AND message_id=$2`,
+            [candidate.token, candidate.message_id],
+          );
         delivered += 1;
       } catch (error) {
         await this.database.query(

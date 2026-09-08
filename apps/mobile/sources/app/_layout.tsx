@@ -37,7 +37,8 @@ import {
   registerBuzzPushNotifications,
   retryBuzzPushRegistration,
 } from '@/push/buzz-push-registration';
-import type { Identity } from '@beeline/buzz-client';
+import { monolithSession } from '@/auth/monolith-session';
+import { startPushRegistrationLifecycle } from '@/push/push-registration-lifecycle';
 import { reportRunningUpdateReceipt } from '@/push/update-receipt';
 import { getOpenBuzzChannelId } from '@/buzz/open-room-tracker';
 import { decideForegroundNotificationDisplay } from '@/push/foreground-policy';
@@ -215,69 +216,28 @@ export default function RootLayout() {
     };
   }, []);
 
-  const pushIdentityRef = React.useRef<Identity | null>(null);
-  React.useEffect(() => {
-    // Refresh the FCM binding on every cold start. Firebase can rotate the
-    // device token long after onboarding, so registration cannot be a
-    // one-time side effect of importing or creating an identity.
-    void loadBuzzIdentity()
-      .then((identity) => {
-        if (!identity) return null;
-        pushIdentityRef.current = identity;
-        void reportRunningUpdateReceipt(identity).catch((error: unknown) => {
+  React.useEffect(
+    () =>
+      startPushRegistrationLifecycle({
+        loadIdentity: loadBuzzIdentity,
+        subscribeIdentityChange: (listener) => monolithSession.subscribeIdentityChange(listener),
+        subscribeForeground: (listener) => {
+          const subscription = AppState.addEventListener('change', (state) => {
+            if (state === 'active') listener();
+          });
+          return () => subscription.remove();
+        },
+        register: registerBuzzPushNotifications,
+        retry: retryBuzzPushRegistration,
+        reportUpdate: reportRunningUpdateReceipt,
+        reportFailure: (error) =>
           console.warn(
-            '[beeline-ota] startup update receipt unavailable:',
+            '[beeline-push] lifecycle:',
             error instanceof Error ? error.message : String(error),
-          );
-        });
-        return registerBuzzPushNotifications(identity);
-      })
-      .then((result) => {
-        if (result && !result.registered) {
-          console.warn(
-            `[beeline-push] startup registration not completed: phase=${result.phase}${result.message ? ` (${result.message})` : ''}`,
-          );
-        }
-      })
-      .catch((error: unknown) => {
-        console.warn(
-          '[beeline-push] startup registration unavailable:',
-          error instanceof Error ? error.message : String(error),
-        );
-      });
-    // A failed token acquisition or gateway POST retries with backoff when
-    // the app next reaches the foreground, instead of staying dead until a
-    // manual toggle. retryBuzzPushRegistration no-ops when the last attempt
-    // succeeded or its backoff window has not elapsed.
-    const subscription = AppState.addEventListener('change', (state) => {
-      if (state !== 'active') return;
-      const identity = pushIdentityRef.current;
-      if (!identity) return;
-      void reportRunningUpdateReceipt(identity).catch((error: unknown) => {
-        console.warn(
-          '[beeline-ota] foreground update receipt unavailable:',
-          error instanceof Error ? error.message : String(error),
-        );
-      });
-      void retryBuzzPushRegistration(identity)
-        .then((result) => {
-          if (result && !result.registered) {
-            console.warn(
-              `[beeline-push] foreground retry did not register: phase=${result.phase}${result.message ? ` (${result.message})` : ''}`,
-            );
-          }
-        })
-        .catch((error: unknown) => {
-          console.warn(
-            '[beeline-push] foreground retry unavailable:',
-            error instanceof Error ? error.message : String(error),
-          );
-        });
-    });
-    return () => {
-      subscription.remove();
-    };
-  }, []);
+          ),
+      }),
+    [],
+  );
 
   useTauriZoom();
   useTauriDrag();

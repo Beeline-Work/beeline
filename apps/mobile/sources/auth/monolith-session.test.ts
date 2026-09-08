@@ -55,6 +55,34 @@ describe('monolith phone session', () => {
     expect(secure.get('buzzy.monolith.refresh.v1')).toBe('refresh-1');
   });
 
+  it('announces a ready identity for GitHub and review sign-in, changes and sign-out, but not refresh', async () => {
+    let next = tokens(1);
+    const fetcher = vi.fn(async () => new Response(JSON.stringify(next), { status: 200 }));
+    const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
+    const changed = vi.fn();
+    const unsubscribe = session.subscribeIdentityChange(changed);
+    await session.exchangeGitHubTicket('ticket');
+    expect(changed).toHaveBeenCalledOnce();
+    expect(await session.identityId()).toBe(next.identityId);
+    // Refreshing credentials for the same account is not another sign-in.
+    next = { ...next, accessExpiresAt: Date.now() - 1 };
+    await session.exchangeGitHubTicket('another-ticket');
+    expect(changed).toHaveBeenCalledTimes(2);
+    next = tokens(2);
+    await session.authorization();
+    expect(changed).toHaveBeenCalledTimes(2);
+    next = { ...tokens(2), identityId: 'b'.repeat(64) };
+    await session.exchangeReviewSecret('review');
+    expect(changed).toHaveBeenCalledTimes(3);
+    expect(await session.identityId()).toBe(next.identityId);
+    await session.clear();
+    expect(changed).toHaveBeenCalledTimes(4);
+    expect(await session.identityId()).toBeNull();
+    unsubscribe();
+    await session.exchangeGitHubTicket('last-ticket');
+    expect(changed).toHaveBeenCalledTimes(4);
+  });
+
   it('rotates a persisted refresh token once across concurrent callers', async () => {
     secure.set('buzzy.monolith.refresh.v1', 'refresh-old');
     const fetcher = vi.fn(async () => new Response(JSON.stringify(tokens(2)), { status: 200 }));

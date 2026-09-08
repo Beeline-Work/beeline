@@ -544,6 +544,29 @@ async function route(
   }
 
   const identityId = await phoneIdentity(request, options);
+  if (method === 'GET' && url.pathname.startsWith('/v1/avatars/')) {
+    const id = url.pathname.slice('/v1/avatars/'.length);
+    const avatar = isMediaId(id)
+      ? (
+          await options.database.query<{ bytes: Uint8Array }>(
+            'SELECT bytes FROM avatars WHERE id=$1',
+            [id],
+          )
+        ).rows[0]
+      : undefined;
+    if (!avatar) {
+      json(response, 404, { error: 'avatar_not_found' });
+      return;
+    }
+    response.writeHead(200, {
+      'content-type': 'image/webp',
+      'content-length': String(avatar.bytes.length),
+      'cache-control': 'public, max-age=31536000, immutable',
+      'x-content-type-options': 'nosniff',
+    });
+    response.end(Buffer.from(avatar.bytes));
+    return;
+  }
   if (method === 'GET' && url.pathname.startsWith('/v1/media/')) {
     const mediaId = url.pathname.slice('/v1/media/'.length);
     // An id that is not a UUID never named a row, and must not reach the uuid

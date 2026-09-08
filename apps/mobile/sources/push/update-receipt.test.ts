@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { startPushRegistrationLifecycle } from './push-registration-lifecycle';
 
 const storage = vi.hoisted(() => ({ getItem: vi.fn(), setItem: vi.fn() }));
 const updates = vi.hoisted(() => ({
@@ -67,18 +67,50 @@ describe('mobile OTA device receipt', () => {
   });
 
   it('reads current and fallback EAS group metadata without inventing a group', () => {
-    expect(runningUpdateGroup({ metadata: { updateGroup: 'group-current' } })).toBe('group-current');
-    expect(runningUpdateGroup({ extra: { eas: { updateGroup: 'group-fallback' } } })).toBe('group-fallback');
+    expect(runningUpdateGroup({ metadata: { updateGroup: 'group-current' } })).toBe(
+      'group-current',
+    );
+    expect(runningUpdateGroup({ extra: { eas: { updateGroup: 'group-fallback' } } })).toBe(
+      'group-fallback',
+    );
     expect(runningUpdateGroup({})).toBeNull();
   });
 
-  it('is invoked at both the root cold-launch and foreground doors', () => {
-    const layout = readFileSync(new URL('../app/_layout.tsx', import.meta.url), 'utf8');
-    expect(layout.match(/reportRunningUpdateReceipt\(identity\)/g)).toHaveLength(2);
-    expect(layout.indexOf('reportRunningUpdateReceipt(identity)')).toBeLessThan(
-      layout.indexOf('registerBuzzPushNotifications(identity)'),
-    );
-    const foreground = layout.slice(layout.indexOf("if (state !== 'active') return;"));
-    expect(foreground).toContain('reportRunningUpdateReceipt(identity)');
+  it('reports on cold launch and foreground independently of push registration success', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 201 }));
+    vi.stubGlobal('fetch', fetchMock);
+    let foreground = () => {};
+    const reportFailure = vi.fn();
+    const failed = { registered: false, retryable: true, phase: 'token-failed' as const };
+    const register = vi.fn(async () => failed);
+    const retry = vi.fn(async () => failed);
+    const dispose = startPushRegistrationLifecycle({
+      loadIdentity: async () => identity,
+      subscribeIdentityChange: () => () => {},
+      subscribeForeground: (listener) => {
+        foreground = listener;
+        return () => {};
+      },
+      register,
+      retry,
+      reportUpdate: reportRunningUpdateReceipt,
+      reportFailure,
+    });
+    try {
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+      expect(register).toHaveBeenCalledWith(identity);
+      foreground();
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+      expect(retry).toHaveBeenCalledWith(identity);
+      for (const [, request] of fetchMock.mock.calls) {
+        expect(JSON.parse(request.body)).toMatchObject({
+          pubkey: identity.publicKey,
+          updateId: updates.updateId,
+        });
+      }
+      expect(reportFailure).toHaveBeenCalledTimes(2);
+    } finally {
+      dispose();
+    }
   });
 });

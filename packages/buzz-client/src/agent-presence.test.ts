@@ -16,11 +16,11 @@ const online: AgentPresence = {
 };
 
 describe('durable agent presence', () => {
-  it('keeps online state across idle time and clock skew', () => {
-    expect(isAgentPresenceOnline(online, 1_000 + AGENT_PRESENCE_STALE_MS)).toBe(true);
-    expect(isAgentPresenceOnline(online, 1_001 + AGENT_PRESENCE_STALE_MS)).toBe(true);
-    expect(isAgentPresenceOnline(online, 999)).toBe(true);
-    expect(isAgentPresenceOnline({ ...online, status: 'offline' }, 1_000)).toBe(false);
+  it('expires online state at the authenticated-evidence horizon', () => {
+    expect(isAgentPresenceOnline(online, 1_000_000 + AGENT_PRESENCE_STALE_MS - 1)).toBe(true);
+    expect(isAgentPresenceOnline(online, 1_000_000 + AGENT_PRESENCE_STALE_MS)).toBe(false);
+    expect(isAgentPresenceOnline(online, 999_000)).toBe(true);
+    expect(isAgentPresenceOnline({ ...online, status: 'offline' }, 1_000_000)).toBe(false);
   });
 
   it('lets explicit offline win a same-second tie and rejects stale replay', () => {
@@ -32,24 +32,27 @@ describe('durable agent presence', () => {
     expect(
       resolveAgentPresenceTier(
         { ...online, status: 'offline' },
-        1_000 + AGENT_PRESENCE_DORMANT_MS - 1,
+        1_000_000 + AGENT_PRESENCE_DORMANT_MS - 1,
       ),
     ).toBe('offline');
     expect(
-      resolveAgentPresenceTier({ ...online, status: 'offline' }, 1_000 + AGENT_PRESENCE_DORMANT_MS),
+      resolveAgentPresenceTier(
+        { ...online, status: 'offline' },
+        1_000_000 + AGENT_PRESENCE_DORMANT_MS,
+      ),
     ).toBe('dormant');
   });
 });
 
 describe('agent roster standing', () => {
-  it('evicts only from server membership truth, never from a lapsed presence lease', () => {
+  it('evicts only from server membership truth', () => {
     expect(
       resolveAgentRosterStanding({
         presence: online,
         membership: 'member',
-        now: 1_000 + AGENT_PRESENCE_DORMANT_MS * 30,
+        now: 1_000_000 + AGENT_PRESENCE_DORMANT_MS * 30,
       }),
-    ).toEqual({ tier: 'online', lastSeenAt: 1_000 });
+    ).toEqual({ tier: 'dormant', lastSeenAt: 1_000 });
     expect(
       resolveAgentRosterStanding({ presence: online, membership: 'not-member', now: 1_000 }),
     ).toEqual({ tier: 'evicted' });

@@ -61,14 +61,14 @@ describe('delivery-driven presence', () => {
   async function elapsed() {
     await vi.advanceTimersByTimeAsync(100);
   }
-  it('keeps the persisted startup announcement online after its socket is released and idle time passes', async () => {
+  it('keeps the stored evidence unchanged while readers age it out', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     await presence.announce(ROOM, AGENT, { lifecycleId: 'boot-1' });
     await vi.advanceTimersByTimeAsync(180_000);
     expect(await body()).toMatchObject({ status: 'online', lifecycleId: 'boot-1' });
     expect((await body()).expiresAt).toBeUndefined();
   });
-  it('uses a turn as delivery proof, then marks an unanswered attempt offline for every viewer until a NEW startup', async () => {
+  it('uses a turn as delivery proof, then marks an unanswered attempt offline for every viewer', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     await presence.announce(ROOM, AGENT, { lifecycleId: 'boot-1' });
     await message();
@@ -91,8 +91,6 @@ describe('delivery-driven presence', () => {
     expect(live.latestAgentPresence(AGENT, ROOM)?.status).toBe('offline');
     expect(live.latestAgentPresence(AGENT, OTHER)?.status).toBe('offline');
     await presence.announce(ROOM, AGENT, { lifecycleId: 'boot-1' });
-    expect((await body()).status).toBe('offline');
-    await presence.announce(ROOM, AGENT, { lifecycleId: 'boot-2' });
     expect((await body()).status).toBe('online');
     expect(live.latestAgentPresence(AGENT, OTHER)?.status).toBe('online');
   });
@@ -150,7 +148,7 @@ describe('delivery-driven presence', () => {
     await elapsed();
     expect((await body()).status).toBe('online');
   });
-  it('keeps a failed lifecycle offline across a server restart and re-subscription', async () => {
+  it('lets authenticated evidence revive a failed lifecycle after a server restart', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     await presence.announce(ROOM, AGENT, { lifecycleId: 'boot-1' });
     await message();
@@ -158,12 +156,10 @@ describe('delivery-driven presence', () => {
     await presence.stop();
     presence = new ConnectionPresence(database, new LiveHub(), 50);
     await presence.announce(ROOM, AGENT, { lifecycleId: 'boot-1' });
-    expect((await body()).status).toBe('offline');
-    await presence.announce(ROOM, AGENT, { lifecycleId: 'boot-2' });
     expect((await body()).status).toBe('online');
   });
 
-  it('does not let a lifecycle-less legacy re-subscription revive a failed delivery', async () => {
+  it('requires authenticated evidence instead of accepting a lifecycle-less announcement', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     await presence.announce(ROOM, AGENT, { lifecycleId: 'boot-1' });
     await message();
@@ -172,6 +168,15 @@ describe('delivery-driven presence', () => {
     presence = new ConnectionPresence(database, new LiveHub(), 50);
     await presence.announce(ROOM, AGENT);
     expect(await body()).toMatchObject({ status: 'offline', lifecycleId: 'boot-1' });
+  });
+
+  it('cannot let a deadline overwrite authenticated evidence that arrived after the mention', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    await presence.announce(ROOM, AGENT, { lifecycleId: 'boot-1' });
+    await message();
+    await presence.evidence(ROOM, AGENT);
+    await elapsed();
+    expect((await body()).status).toBe('online');
   });
 
   it('retains lifecycle facts through maintenance and makes no idle writes', async () => {

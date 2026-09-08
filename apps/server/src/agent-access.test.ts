@@ -188,15 +188,15 @@ describe('who may address an agent', () => {
         }),
       ]);
 
-      // Idle time never revokes an online lifecycle announcement.
+      // Old evidence is no longer enough to claim the helper can read this mention.
       await reportPresence(database, 'online', 600);
       await send(phone, OWNER, '2', '@greeter status');
-      expect(await lines(database)).toHaveLength(1);
+      expect(await lines(database)).toHaveLength(2);
 
       // Re-announcing online also emits no unreachable notice.
       await reportPresence(database, 'online');
       await send(phone, OWNER, '3', '@greeter again');
-      expect(await lines(database)).toHaveLength(1);
+      expect(await lines(database)).toHaveLength(2);
     } finally {
       await database.close();
     }

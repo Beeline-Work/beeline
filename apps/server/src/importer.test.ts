@@ -506,6 +506,18 @@ describe('direct snapshot importer and RoomView parity', () => {
       ).rowCount,
     ).toBe(2);
   });
+
+  it('reassigns imported agent handles from their display names', async () => {
+    const source = snapshot();
+    source.identities.find((identity) => identity.id === AGENT)!.handle = 'nora';
+
+    await new SnapshotImporter(db).import(source);
+
+    expect(
+      (await db.query(`SELECT name,handle FROM identities WHERE id=$1`, [AGENT])).rows,
+    ).toEqual([{ name: 'Bee', handle: 'bee' }]);
+  });
+
   it('skips every legacy media object by default while retaining transcript references', async () => {
     const source = snapshot();
     const report = await new SnapshotImporter(db).import(source);

@@ -77,6 +77,13 @@ const DURABLE_KINDS = [0, 9, 9000, 9001, 9002, 9007, 9008, 30078, 39000, 39001, 
  */
 const CONNECT_RENAME_WINDOW_MS = 15 * 60 * 1_000;
 
+function normalizeAgentName(value: string): string {
+  const name = value.trim().replace(/\s+/g, ' ');
+  if (!name || name.length > 32 || !/^\p{L}[\p{L}\p{M}'’ -]*$/u.test(name))
+    throw new Error('agent name must be a short spoken name');
+  return name;
+}
+
 /**
  * Settled corner tool rows kept in the corner transcript after the turn
  * completes (#804). Own cap: they must never crowd out the 30-message
@@ -1127,6 +1134,35 @@ export class PhoneService {
       );
       const pairing = result.rows[0];
       if (!pairing || (pairing.claimed_by && pairing.claimed_by !== agentId)) return null;
+      const existingMembership = await database.query(
+        `SELECT 1 FROM memberships
+         WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND removed_at IS NULL`,
+        [pairing.workspace_id, agentId],
+      );
+      if (!existingMembership.rowCount) {
+        const lockedWorkspaces = lockIdentityHandleWorkspaces(database, agentId, [
+          pairing.workspace_id,
+        ]);
+        await lockedWorkspaces;
+        const agent = (
+          await database.query<{ name: string }>(
+            `SELECT name FROM identities WHERE id=$1 AND kind='agent'`,
+            [agentId],
+          )
+        ).rows[0];
+        if (!agent) return null;
+        const handle = await this.availableAgentHandle(
+          database,
+          pairing.workspace_id,
+          agentId,
+          agent.name,
+          lockedWorkspaces,
+        );
+        await database.query(`UPDATE identities SET handle=$2,updated_at=now() WHERE id=$1`, [
+          agentId,
+          handle,
+        ]);
+      }
       const joined = !pairing.claimed_by;
       if (joined)
         await database.query(
@@ -1426,10 +1462,7 @@ export class PhoneService {
     code: string;
     name: string;
   }): Promise<{ status: 'renamed'; agentName: string } | { status: 'not_found' | 'expired' }> {
-    const name = input.name.trim().replace(/\s+/g, ' ');
-    if (!name || name.length > 32 || !/^\p{L}[\p{L}\p{M}'’ -]*$/u.test(name)) {
-      throw new Error('agent name must be a short spoken name');
-    }
+    const name = normalizeAgentName(input.name);
     return this.database.transaction(async (database) => {
       const pairing = (
         await database.query<{
@@ -2694,17 +2727,18 @@ export class PhoneService {
   }
   private async updateAgentSoul(input: Input<'updateAgentSoul'>, viewerId: string) {
     await this.requireWorkspaceAgent(input.workspaceId, input.agentId, viewerId);
+    const name = normalizeAgentName(input.name);
     await this.database.transaction(async (database) => {
       const handle = await this.availableAgentHandle(
         database,
         input.workspaceId,
         input.agentId,
-        input.name,
+        name,
       );
       await database.query(`UPDATE agents SET soul=$2::jsonb,updated_at=now() WHERE agent_id=$1`, [
         input.agentId,
         JSON.stringify({
-          name: input.name,
+          name,
           instructions: input.instructions,
           avatarSeed: input.avatarSeed,
           ...(input.avatar ? { avatar: input.avatar } : {}),
@@ -2712,7 +2746,7 @@ export class PhoneService {
       ]);
       await database.query(
         `UPDATE identities SET name=$2,handle=$3,avatar=COALESCE($4,avatar),updated_at=now() WHERE id=$1`,
-        [input.agentId, input.name, handle, input.avatar ?? null],
+        [input.agentId, name, handle, input.avatar ?? null],
       );
     });
   }

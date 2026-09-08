@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Pool } from 'pg';
+import { DEFAULT_WORKSPACE_ID } from '@beeline/api-contract/phone';
 import {
   backfillAgentHandles,
   backfillYoloModeDefault,
@@ -271,6 +272,31 @@ describe('the agent handle migration', () => {
       { name: 'Lumen', handle: 'lumen_2' },
     ]);
     await expect(backfillAgentHandles(database)).resolves.toBe(0);
+  });
+
+  it('allocates after the welcome membership backfill', async () => {
+    const human = 'e'.repeat(64);
+    const agent = 'f'.repeat(64);
+    const otherWorkspace = '22222222-2222-4222-8222-222222222222';
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES
+       ($1,'human','Lumen','lumen'),($2,'agent','Lumen','nora')`,
+      [human, agent],
+    );
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Elsewhere')`, [
+      otherWorkspace,
+    ]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+       ($1,NULL,$2,'member'),($3,NULL,$4,'member')`,
+      [DEFAULT_WORKSPACE_ID, agent, otherWorkspace, human],
+    );
+
+    await migrate(database);
+
+    expect(
+      (await database.query(`SELECT handle FROM identities WHERE id=$1`, [agent])).rows,
+    ).toEqual([{ handle: 'lumen_2' }]);
   });
 });
 

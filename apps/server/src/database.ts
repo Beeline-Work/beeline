@@ -778,9 +778,9 @@ export async function migrate(database: SqlDatabase): Promise<void> {
   const syncedRoomRoles = await syncTopLevelSharedRoomRoles(database);
   console.log(`syncTopLevelSharedRoomRoles: updated ${syncedRoomRoles} stale Room role(s)`);
   await backfillSystemEventKinds(database);
+  await seedDefaultWorkspace(database);
   await backfillAgentHandles(database);
   await backfillYoloModeDefault(database);
-  await seedDefaultWorkspace(database);
 }
 
 /**

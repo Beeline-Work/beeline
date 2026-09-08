@@ -3026,6 +3026,60 @@ describe('monolith integration', () => {
     expect(await unknownToken.json()).toEqual({ error: 'daemon_token_required' });
   });
 
+  it('assigns a unique handle when a legacy pairing joins another Workspace', async () => {
+    const secondWorkspace = '66666666-6666-4666-8666-666666666666';
+    const lumen = 'f'.repeat(64);
+    const agentAccessToken = 'bat_agent_handle_pairing';
+    await database.query(`UPDATE identities SET name='Lumen',handle='nora' WHERE id=$1`, [AGENT]);
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Second')`, [secondWorkspace]);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Lumen','lumen')`,
+      [lumen],
+    );
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [lumen, HUMAN]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+       ($1,NULL,$2,'owner'),($1,NULL,$3,'member')`,
+      [secondWorkspace, HUMAN, lumen],
+    );
+    await database.query(
+      `INSERT INTO phone_access_tokens(token_hash,identity_id,family_id,expires_at)
+       VALUES($1,$2,$3,now()+interval '15 minutes')`,
+      [tokenHash(agentAccessToken), AGENT, '44444444-4444-4444-8444-444444444444'],
+    );
+    const pairing = await request('/v1/phone/operations/createAgentPairingCode', 'POST', {
+      workspaceId: secondWorkspace,
+    });
+    const { code } = (await pairing.json()) as { code: string };
+
+    const claimed = await request(
+      '/v1/phone/operations/claimAgentPairing',
+      'POST',
+      { code },
+      agentAccessToken,
+    );
+
+    expect(claimed.status).toBe(200);
+    expect(
+      (await database.query(`SELECT handle FROM identities WHERE id=$1`, [AGENT])).rows,
+    ).toEqual([{ handle: 'lumen_2' }]);
+  });
+
+  it('rejects agent names without an addressable handle', async () => {
+    const response = await request('/v1/phone/operations/updateAgentSoul', 'POST', {
+      workspaceId: WORKSPACE,
+      agentId: AGENT,
+      name: '!!!',
+      instructions: 'No address.',
+      avatarSeed: 'invalid-name',
+    });
+
+    expect(response.status).toBe(400);
+    expect(
+      (await database.query(`SELECT name,handle FROM identities WHERE id=$1`, [AGENT])).rows,
+    ).toEqual([{ name: 'Bee', handle: 'bee' }]);
+  });
+
   it('does not let a workspace manager mutate or revoke another workspace agent', async () => {
     const otherWorkspace = '55555555-5555-4555-8555-555555555555';
     const otherAgent = 'e'.repeat(64);

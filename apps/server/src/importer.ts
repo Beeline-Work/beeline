@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { cornerLifecycle, projectEvent } from '@beeline/push-gateway/projection';
 import type { RoomViewMessage } from '@beeline/api-contract/phone';
-import { backfillCornerOwners, type SqlDatabase } from './database.js';
+import { backfillAgentHandles, backfillCornerOwners, type SqlDatabase } from './database.js';
 
 export interface LegacyIdentity {
   id: string;
@@ -678,6 +678,7 @@ export class SnapshotImporter {
             [receipt.pubkey, receipt.deviceId, JSON.stringify(receipt)],
           );
         });
+      await backfillAgentHandles(this.target);
       await this.target.query(
         `UPDATE import_runs SET state='complete',completed_at=now(),checkpoint=$2::jsonb WHERE import_id=$1`,
         [importId, JSON.stringify({ imported, skipped, mediaBytes })],

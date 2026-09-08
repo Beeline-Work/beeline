@@ -658,8 +658,36 @@ describe('GitHub phone operations', () => {
           await database.query<{ full_name: string }>(
             `SELECT full_name FROM github_repositories WHERE repository_id=101`,
           )
-        ).rows[0]?.full_name,
+      ).rows[0]?.full_name,
       ).toBe('owner/widgets');
+    });
+
+    it('keeps reconnect required when the App catalog is unavailable after credential rejection', async () => {
+      const operations = operationsFor(database);
+      const { fetchMock } = await bindIdentity(database);
+      await operations.beginIdentity(HUMAN, {
+        redirectUri: 'beeline://callback',
+        state: 'catalog-outage',
+      });
+      await operations.completeIdentity(HUMAN, { challenge: 'code', proof: 'catalog-outage' }, false);
+      await database.query(
+        `UPDATE github_user_tokens SET encrypted_refresh_token=NULL,expires_at=now()-interval '1 minute' WHERE subject='42'`,
+      );
+      await database.query(
+        `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status) VALUES(77,$1,'42','owner','User','selected','active')`,
+        [HUMAN],
+      );
+      const originalFetch = fetchMock.getMockImplementation()!;
+      fetchMock.mockImplementation(async (input, init) =>
+        String(input) === 'https://api.github.test/app/installations?per_page=100&page=1'
+          ? new Response(JSON.stringify({ message: 'unavailable' }), {
+              status: 503,
+              headers: { 'content-type': 'application/json' },
+            })
+          : originalFetch(input, init),
+      );
+
+      await expect(operations.refresh(HUMAN)).resolves.toEqual({ githubReconnectNeeded: true });
     });
 
     it('retries once with a rotated token when the stored token is answered 401', async () => {

@@ -294,7 +294,6 @@ export class GitHubOperations {
     const credential = await this.userCredential(viewerId, this.database);
     let githubReconnectNeeded: boolean | undefined;
     if (credential) {
-      const installations = await this.app.listInstallations();
       let administered: Set<number> | undefined;
       try {
         administered = credential.token
@@ -316,16 +315,21 @@ export class GitHubOperations {
         }
       }
       if (!credential.token) githubReconnectNeeded = true;
-      if (administered) {
-        for (const installation of installations) {
-          if (
-            installation.account.type === 'User'
-              ? installation.account.id === credential.subject
-              : administered.has(installation.installationId)
-          ) {
-            installationIds.add(installation.installationId);
+      try {
+        const installations = await this.app.listInstallations();
+        if (administered) {
+          for (const installation of installations) {
+            if (
+              installation.account.type === 'User'
+                ? installation.account.id === credential.subject
+                : administered.has(installation.installationId)
+            ) {
+              installationIds.add(installation.installationId);
+            }
           }
         }
+      } catch (error) {
+        if (!githubReconnectNeeded) throw error;
       }
     }
     for (const installationId of installationIds) {

@@ -813,9 +813,17 @@ export class PhoneService {
     roomViewFamilyOrder = false,
   ): Promise<CornerListView | null> {
     const parent = await this.database.query<
-      RoomRow & { viewer_role: 'owner' | 'admin' | 'member' }
+      RoomRow & {
+        viewer_role: 'owner' | 'admin' | 'member';
+        workspace_role: 'owner' | 'admin' | 'member';
+      }
     >(
-      `SELECT r.*,m.role viewer_role FROM rooms r JOIN memberships m ON m.room_id=r.id WHERE r.id=$1 AND m.identity_id=$2 AND m.removed_at IS NULL`,
+      `SELECT r.*,m.role viewer_role,workspace_member.role workspace_role
+       FROM rooms r JOIN memberships m ON m.room_id=r.id
+       JOIN memberships workspace_member ON workspace_member.workspace_id=r.workspace_id
+         AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
+         AND workspace_member.removed_at IS NULL
+       WHERE r.id=$1 AND m.identity_id=$2 AND m.removed_at IS NULL`,
       [roomId, viewerId],
     );
     const room = parent.rows[0];
@@ -927,7 +935,7 @@ export class PhoneService {
       viewer: {
         identity: viewerIdentity,
         role: room.viewer_role,
-        permissions: { send: !room.archived_at, manage: room.viewer_role !== 'member' },
+        permissions: { send: !room.archived_at, manage: room.workspace_role !== 'member' },
       },
       watchFilters: [],
     };
@@ -2359,21 +2367,12 @@ export class PhoneService {
   private async removeRoomMember(input: Input<'removeRoomMember'>, viewerId: string) {
     const room = await this.requireTopLevelRoom(input.roomId);
     await this.requireWorkspaceManager(room.workspace_id, viewerId);
-    const roles = await this.database.query<{
-      identity_id: string;
-      role: 'owner' | 'admin' | 'member';
-    }>(
-      `SELECT identity_id,role FROM memberships
-       WHERE room_id=$1 AND identity_id IN ($2,$3) AND removed_at IS NULL`,
-      [input.roomId, viewerId, input.memberId],
+    const target = await this.database.query(
+      `SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
+      [input.roomId, input.memberId],
     );
-    const actor = roles.rows.find((row) => row.identity_id === viewerId);
-    const target = roles.rows.find((row) => row.identity_id === input.memberId);
-    if (!target) throw new Error('room membership required');
+    if (!target.rowCount) throw new Error('room membership required');
     if (input.memberId === viewerId) throw new Error('room managers cannot remove themselves');
-    if (target.role === 'owner' || (actor?.role === 'admin' && target.role === 'admin')) {
-      throw new Error('room manager cannot remove a member with equal or greater authority');
-    }
     const remover = await this.requireIdentity(viewerId);
     const removed = await this.requireIdentity(input.memberId);
     await this.database.transaction(async (database) => {

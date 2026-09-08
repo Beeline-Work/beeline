@@ -391,6 +391,74 @@ describe('monolith integration', () => {
     expect((await operation('deleteRoom', { roomId: adminRoom.id }, adminToken)).status).toBe(204);
   });
 
+  it('derives Room and corner management from the active Workspace role', async () => {
+    const staleToken = await phoneToken('stale-room-owner');
+    const staleId = createHash('sha256').update('github:stale-room-owner').digest('hex');
+    await operation('addWorkspaceMember', {
+      workspaceId: WORKSPACE,
+      memberId: staleId,
+      role: 'admin',
+    });
+    const room = (await (
+      await operation(
+        'createRoom',
+        { workspaceId: WORKSPACE, name: 'Stale owner room' },
+        staleToken,
+      )
+    ).json()) as { id: string };
+    await database.query(
+      `UPDATE memberships SET role='member' WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`,
+      [WORKSPACE, staleId],
+    );
+    expect(
+      (
+        (await (
+          await request(`/v1/phone/rooms/${room.id}`, 'GET', undefined, staleToken)
+        ).json()) as RoomView
+      ).viewer.permissions.manage,
+    ).toBe(false);
+    expect(
+      (
+        (await (
+          await request(`/v1/phone/rooms/${room.id}/corners`, 'GET', undefined, staleToken)
+        ).json()) as { viewer: { permissions: { manage: boolean } } }
+      ).viewer.permissions.manage,
+    ).toBe(false);
+  });
+
+  it('lets a Workspace manager remove a stale Room owner', async () => {
+    const staleToken = await phoneToken('stale-room-owner-removal');
+    const staleId = createHash('sha256').update('github:stale-room-owner-removal').digest('hex');
+    const adminToken = await phoneToken('room-removal-admin');
+    const adminId = createHash('sha256').update('github:room-removal-admin').digest('hex');
+    await operation('addWorkspaceMember', {
+      workspaceId: WORKSPACE,
+      memberId: staleId,
+      role: 'admin',
+    });
+    const room = (await (
+      await operation(
+        'createRoom',
+        { workspaceId: WORKSPACE, name: 'Stale owner removal' },
+        staleToken,
+      )
+    ).json()) as { id: string };
+    await operation('addWorkspaceMember', {
+      workspaceId: WORKSPACE,
+      memberId: adminId,
+      role: 'admin',
+    });
+    await operation('addRoomMember', { roomId: room.id, memberId: adminId });
+    await database.query(
+      `UPDATE memberships SET role='member' WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`,
+      [WORKSPACE, staleId],
+    );
+    expect(
+      (await operation('removeRoomMember', { roomId: room.id, memberId: staleId }, adminToken))
+        .status,
+    ).toBe(204);
+  });
+
   it('serves Welcome and makes person invites reusable, retry-safe, and Room-complete', async () => {
     const aliceToken = await phoneToken('alice');
     const bobToken = await phoneToken('bob');

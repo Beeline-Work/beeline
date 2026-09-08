@@ -210,7 +210,7 @@ describe('Room message variant components', () => {
     expect(onOpenCorner).toHaveBeenCalledWith('corner');
   });
 
-  it('renders target-branch applied, owner-confirm, and denied states', () => {
+  it('renders target-branch applied, manager-confirm, and denied states', () => {
     const proposal = message({
       targetBranchProposal: { proposalId: 'proposal', from: 'main', to: 'release' },
     });
@@ -218,8 +218,8 @@ describe('Room message variant components', () => {
     const owner = render(
       <TargetBranchProposalCard
         message={proposal}
+        canManageWorkspace
         viewerIsAgent={false}
-        viewerRole="owner"
         actionId={null}
         notice={null}
         onConfirm={onConfirm}
@@ -232,8 +232,8 @@ describe('Room message variant components', () => {
         <TargetBranchProposalCard
           message={proposal}
           currentTargetBranch="release"
+          canManageWorkspace
           viewerIsAgent={false}
-          viewerRole="owner"
           actionId={null}
           notice={null}
           onConfirm={onConfirm}
@@ -244,8 +244,8 @@ describe('Room message variant components', () => {
       render(
         <TargetBranchProposalCard
           message={proposal}
+          canManageWorkspace={false}
           viewerIsAgent={false}
-          viewerRole="admin"
           actionId={null}
           notice="Waiting"
           onConfirm={onConfirm}
@@ -969,7 +969,9 @@ describe('Room message variant components', () => {
       />,
     );
     const body = card.root.findByProps({ testID: 'grant-g-1-script' });
-    const texts = body.findAllByType('Text').map((node: { props: { children: unknown } }) => node.props.children);
+    const texts = body
+      .findAllByType('Text')
+      .map((node: { props: { children: unknown } }) => node.props.children);
     expect(texts).toContain('fix_serve_prod.py');
     expect(texts).toContain(script);
   });

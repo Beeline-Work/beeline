@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import type { ChannelMember, ChannelRole } from '@beeline/buzz-client';
+import type { ChannelMember } from '@beeline/buzz-client';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
 import { fallbackMemberHandle } from '@/buzz/member-display';
-import { canRemoveRoomParticipant, normalizedRoomRole } from '@/buzz/room-management';
+import { normalizedRoomRole } from '@/buzz/room-management';
 import type { AgentPresentation } from '@/buzz/room-view-presentation';
 import { MEMBERS_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { Typography } from '@/constants/Typography';
@@ -59,7 +59,6 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
   rosterSections,
   total,
   userPubkey,
-  viewerRole,
   visible,
 }: {
   bottomInset: number;
@@ -84,7 +83,6 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
   rosterSections: RoomRosterSections;
   total: number;
   userPubkey: string;
-  viewerRole: ChannelRole | null;
   visible: boolean;
 }) {
   const [openPubkey, setOpenPubkey] = useState<string | null>(null);
@@ -174,11 +172,7 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
                     canManage &&
                     !parentChannelId &&
                     !isDirectMessage &&
-                    canRemoveRoomParticipant(
-                      viewerRole,
-                      targetRole,
-                      participant.pubkey === userPubkey,
-                    );
+                    participant.pubkey !== userPubkey;
                   const open = openPubkey === participant.pubkey;
                   const removing = membershipActionPubkey === participant.pubkey;
                   const agentOnline =

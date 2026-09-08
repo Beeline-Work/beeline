@@ -112,11 +112,7 @@ import {
 } from '@/buzz/community-invite';
 import { MemberPickerSheet, type MemberPickerCandidate } from '@/components/buzz/MemberPickerSheet';
 import { useVerifiedNip05Status } from '@/buzz/nip05-verification';
-import {
-  canRemoveRoomParticipant,
-  confirmRoomRepositoryLink,
-  normalizedRoomRole,
-} from '@/buzz/room-management';
+import { confirmRoomRepositoryLink } from '@/buzz/room-management';
 import {
   looksLikeCornerOpenIntent,
   GITHUB_REPOSITORY_SELECTION_INSTRUCTION,
@@ -986,7 +982,6 @@ export default function BuzzChat() {
       ),
     [roomMembers],
   );
-  const viewerRoomRole = normalizedRoomRole(roomMemberByPubkey.get(userPubkey));
   const lifecycleAction = canManageWorkspace ? ('delete' as const) : null;
   const mentionableAgents = useMemo(
     () =>
@@ -2088,10 +2083,10 @@ export default function BuzzChat() {
     async (message: ChatDisplayMessage) => {
       const proposal = message.targetBranchProposal;
       if (!transport || !proposal || targetBranchActionId) return;
-      if (viewerIsAgent || viewerChannelRole !== 'owner') {
+      if (viewerIsAgent || !canManageWorkspace) {
         setTargetBranchNotice({
           proposalId: proposal.proposalId,
-          text: `Only the ${ROOM_LABEL} owner can change the target branch.`,
+          text: 'Only a workspace manager can change the target branch.',
         });
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
         return;
@@ -2112,7 +2107,7 @@ export default function BuzzChat() {
         setTargetBranchActionId(null);
       }
     },
-    [decodedId, targetBranchActionId, transport, viewerChannelRole, viewerIsAgent],
+    [canManageWorkspace, decodedId, targetBranchActionId, transport, viewerIsAgent],
   );
 
   const handleAddRoomMembers = useCallback(
@@ -2160,13 +2155,7 @@ export default function BuzzChat() {
 
   const handleRemoveRoomMember = useCallback(
     async (participant: RoomMemberOption) => {
-      const targetRole = normalizedRoomRole(roomMemberByPubkey.get(participant.pubkey));
-      if (
-        !transport ||
-        !canManageWorkspace ||
-        !canRemoveRoomParticipant(viewerRoomRole, targetRole, participant.pubkey === userPubkey)
-      )
-        return;
+      if (!transport || !canManageWorkspace || participant.pubkey === userPubkey) return;
       const confirmed = await Modal.confirm(
         `Remove ${participant.name}?`,
         `Their membership will be removed and this ${ROOM_LABEL} will disappear from their workspace list.`,
@@ -2185,7 +2174,7 @@ export default function BuzzChat() {
         })
         .finally(() => setMembershipActionPubkey(null));
     },
-    [canManageWorkspace, decodedId, roomMemberByPubkey, transport, userPubkey, viewerRoomRole],
+    [canManageWorkspace, decodedId, transport, userPubkey],
   );
 
   // The picker's workspace-level rows. A one-person workspace has nobody to
@@ -2844,8 +2833,8 @@ export default function BuzzChat() {
           <TargetBranchProposalCard
             message={item}
             currentTargetBranch={roomRepository?.targetBranch}
+            canManageWorkspace={canManageWorkspace}
             viewerIsAgent={viewerIsAgent}
-            viewerRole={viewerChannelRole}
             actionId={targetBranchActionId}
             notice={notice}
             onConfirm={handleConfirmTargetBranch}
@@ -3671,7 +3660,6 @@ export default function BuzzChat() {
         rosterSections={visibleRosterSections}
         total={roomParticipantTotal}
         userPubkey={userPubkey}
-        viewerRole={viewerRoomRole}
         visible={rosterVisible}
       />
 

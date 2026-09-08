@@ -19,7 +19,7 @@ import type { SystemEvent, SystemSubject } from '@beeline/api-contract/phone';
  * prose — never from size. Turns separate by a hairline divider plus generous
  * vertical padding; there are no speaker rails, bubbles, or boxes.
  *
- * Identity lives in the byline above each run's first turn: the speaker's
+ * Identity lives in the byline above each prose turn: the speaker's
  * 26px face tile, then the name in the identity's own hue at body size, a
  * quiet mono `agent` tag where applicable, and the mono HH:MM stamp pinned
  * right. A human message is plain body text — regular weight, primary tone,
@@ -30,8 +30,8 @@ import type { SystemEvent, SystemSubject } from '@beeline/api-contract/phone';
  * between them. A Corner has one administering agent (`openSubchannel` in
  * `apps/body/src/body.ts` signs every corner with a single identity), named
  * once in the top bar — so a Corner's turns carry no byline name at all. A
- * Room can hold several agents and several people, so each voice states its
- * name in its opening byline. Same component, one prop.
+ * Room can hold several agents and several people, so each message states its
+ * author in its byline. Same component, one prop.
  */
 
 /** The right margin the ghosted stamp hangs in, clear of the flowing column. */
@@ -75,9 +75,8 @@ type LedgerBodyProps = {
   bodyText: string | undefined;
   bodyTestID: string;
   /**
-   * The run's opening byline. Omitted on a continuation of the same voice,
-   * and the name is omitted entirely in a Corner, whose single agent is named
-   * in the top bar.
+   * The message byline. The name may be omitted in a Corner whose administering
+   * agent is already named in the top bar.
    */
   byline?: LedgerByline;
   /** A run's opening entry gets air above it; a continuation keeps flowing. */

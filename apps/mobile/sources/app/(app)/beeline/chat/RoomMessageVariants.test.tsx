@@ -735,6 +735,45 @@ describe('Room message variant components', () => {
       }),
     ).toEqual({ label: 'CODEX thinking…' });
   });
+
+  it('keeps an agent avatar and name byline on a consecutive message', () => {
+    const consecutive = message({
+      id: 'lumen-second-message',
+      text: 'Yeah, exactly-we gotta open a corner before touching the repo...',
+      pubkey: 'agent-lumen',
+      isAgentAuthor: true,
+      authorIdentity: {
+        pubkey: 'agent-lumen',
+        kind: 'agent',
+        name: 'Lumen',
+        handle: 'lumen',
+      },
+    });
+
+    render(
+      <OrdinaryLedgerMessage
+        message={consecutive}
+        agent={{ pubkey: 'agent-lumen', displayName: 'Lumen' }}
+        continued
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        participantHandles={[{ pubkey: 'agent-lumen', handle: 'lumen' }]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+
+    expect(ledgerEntryRender.mock.lastCall?.[0].byline).toMatchObject({
+      name: 'Lumen',
+      mark: { seed: 'agent-lumen', kind: 'agent' },
+    });
+  });
   it('highlights every person an agent tagged, exactly as it does a human-authored tag', () => {
     const rowProps = {
       agent: { pubkey: 'agent', displayName: 'GREETER' },

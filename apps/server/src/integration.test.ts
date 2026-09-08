@@ -715,7 +715,7 @@ describe('monolith integration', () => {
     expect(repositoryState.resolution).toBe('none');
     expect([...(repositoryState.directParticipants ?? [])].sort()).toEqual([AGENT, HUMAN].sort());
 
-    // A human message in the DM implicitly addresses its one agent.
+    // A DM still requires an explicit mention: membership is not authorship intent.
     const sent = await operation('sendRoomMessage', {
       roomId: dm.id,
       messageId: 'c'.repeat(64),
@@ -726,7 +726,7 @@ describe('monolith integration', () => {
       `SELECT mention_ids FROM messages WHERE id=$1`,
       ['c'.repeat(64)],
     );
-    expect(stored.rows[0]?.mention_ids).toEqual([AGENT]);
+    expect(stored.rows[0]?.mention_ids).toEqual([]);
 
     // The chat list names a DM row by its peer, so it carries the one other
     // participant's identity instead of leaving the client the stored name.
@@ -1580,7 +1580,7 @@ describe('monolith integration', () => {
     ).toEqual([]);
   });
 
-  it('implicitly addresses an untagged human follow-up to the agent that just replied', async () => {
+  it('never turns a bare agent name into a mention of the agent that just replied', async () => {
     const peer = 'e'.repeat(64);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Peer')`, [peer]);
     await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [peer, HUMAN]);
@@ -1599,13 +1599,14 @@ describe('monolith integration', () => {
     const sent = await operation('sendRoomMessage', {
       roomId: ROOM,
       messageId: '2'.repeat(64),
-      text: 'Who are you?',
+      text: 'Lumen seems to think we need a corner.',
     });
     expect(sent.status).toBe(200);
-    const inbox = await daemonOperation('getRoomInbox', { roomId: ROOM });
-    expect(
-      ((await inbox.json()) as { items: Array<{ id: string; mentionIds: string[] }> }).items,
-    ).toContainEqual(expect.objectContaining({ id: '2'.repeat(64), mentionIds: [AGENT] }));
+    const stored = await database.query<{ mention_ids: string[] }>(
+      `SELECT mention_ids FROM messages WHERE id=$1`,
+      ['2'.repeat(64)],
+    );
+    expect(stored.rows[0]?.mention_ids).toEqual([]);
   });
 
   it('implicitly addresses a threaded human reply to the parent agent regardless of position', async () => {
@@ -1689,7 +1690,7 @@ describe('monolith integration', () => {
     expect(stored.rows[0]?.mention_ids).toEqual([AGENT]);
   });
 
-  it('implicitly addresses an untagged human message to the only agent in the Room', async () => {
+  it('does not add the only Room agent when the human did not mention it', async () => {
     const sent = await operation('sendRoomMessage', {
       roomId: ROOM,
       messageId: '6'.repeat(64),
@@ -1700,7 +1701,7 @@ describe('monolith integration', () => {
       `SELECT mention_ids FROM messages WHERE id=$1`,
       ['6'.repeat(64)],
     );
-    expect(stored.rows[0]?.mention_ids).toEqual([AGENT]);
+    expect(stored.rows[0]?.mention_ids).toEqual([]);
   });
 
   it('leaves an untagged human message unaddressed with two agents and no prior agent message', async () => {
@@ -2330,6 +2331,28 @@ describe('monolith integration', () => {
     expect(cleared.viewer.identity).not.toHaveProperty('face');
   });
 
+  it('projects every agent message with the current author name, handle, and face', async () => {
+    await database.query(
+      `UPDATE identities SET name='Lumen',handle='lumen',face_id='owl' WHERE id=$1`,
+      [AGENT],
+    );
+    const id = '9'.repeat(64);
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,legacy_event)
+       VALUES($1,$2,$3,'Actually dont we need to go to a corner before actually starting work?','{}'::jsonb)`,
+      [id, ROOM, AGENT],
+    );
+
+    const room = (await new PhoneService(database, origin).readRoom(ROOM, HUMAN))!;
+    expect(room.messages.find((message) => message.id === id)?.author).toEqual({
+      pubkey: AGENT,
+      kind: 'agent',
+      name: 'Lumen',
+      handle: 'lumen',
+      face: 'owl',
+    });
+  });
+
   it('proves every auth identity phone operation through bearer-authenticated HTTP', async () => {
     const operation = (name: string, payload: unknown = {}) =>
       request(`/v1/phone/operations/${name}`, 'POST', payload);
@@ -2769,6 +2792,9 @@ describe('monolith integration', () => {
     });
     expect(soul.status).toBe(204);
     expect(await soul.text()).toBe('');
+    expect(
+      (await database.query(`SELECT name,handle FROM identities WHERE id=$1`, [AGENT])).rows,
+    ).toEqual([{ name: 'Honeybee', handle: 'honeybee' }]);
 
     const model = await request('/v1/phone/operations/updateAgentModelSelection', 'POST', {
       workspaceId: WORKSPACE,

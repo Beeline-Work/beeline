@@ -28,17 +28,6 @@ function normalizeMentionSearch(value: string): string {
   return value.normalize('NFKC').toLocaleLowerCase();
 }
 
-/** Match the handle derivation used by visible human and agent identities. */
-function mentionHandleFromName(value: string): string {
-  return value
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .trim()
-    .toLocaleLowerCase()
-    .replace(/\s+/g, '_')
-    .replace(/[^a-z0-9_]/g, '');
-}
-
 /** Find the mention fragment ending at a collapsed composer cursor. */
 export function activeMentionAtCursor(text: string, cursor: number): ActiveMention | null {
   if (!Number.isInteger(cursor) || cursor < 0 || cursor > text.length) return null;
@@ -139,16 +128,7 @@ export function selectedMentionAgentPubkey(
   text: string,
   selections: ReadonlyMap<string, string>,
 ): string | undefined {
-  const normalized = text.normalize('NFKC').toLocaleLowerCase();
-  return [...selections.entries()]
-    .sort(([left], [right]) => right.length - left.length)
-    .find(([handle]) => {
-      const mention = `@${handle.normalize('NFKC').toLocaleLowerCase()}`;
-      const offset = normalized.indexOf(mention);
-      if (offset < 0) return false;
-      const trailing = normalized[offset + mention.length];
-      return trailing === undefined || /[\s,.:;!?)}\]]/.test(trailing);
-    })?.[1];
+  return resolveComposerMentions(text, [], selections).pubkeys[0];
 }
 
 /** Resolve every picker-selected mention whose handle is still present in the sent text. */
@@ -159,7 +139,7 @@ export function selectedMentionPubkeys(
   return resolveComposerMentions(text, [], selections).pubkeys;
 }
 
-const COMPOSER_MENTION_PATTERN = /@([\p{L}\p{M}\p{N}_-]+)/gu;
+const COMPOSER_MENTION_PATTERN = /@([\p{L}\p{M}\p{N}_]+(?:[.-][\p{L}\p{M}\p{N}_]+)*)/gu;
 const MENTION_HANDLE_CHARACTER = /[\p{L}\p{M}\p{N}_.-]/u;
 
 /**
@@ -180,16 +160,11 @@ export function resolveComposerMentions(
   );
   const participantsByHandle = new Map<string, Set<string>>();
   for (const participant of participants) {
-    const aliases = new Set([
-      normalizeMentionSearch(participant.handle.replace(/^@/, '')),
-      mentionHandleFromName(participant.name),
-    ]);
-    for (const alias of aliases) {
-      if (!alias) continue;
-      const pubkeys = participantsByHandle.get(alias) ?? new Set<string>();
-      pubkeys.add(participant.pubkey);
-      participantsByHandle.set(alias, pubkeys);
-    }
+    const handle = normalizeMentionSearch(participant.handle.replace(/^@/, ''));
+    if (!handle) continue;
+    const pubkeys = participantsByHandle.get(handle) ?? new Set<string>();
+    pubkeys.add(participant.pubkey);
+    participantsByHandle.set(handle, pubkeys);
   }
 
   const normalized = text.normalize('NFKC').toLocaleLowerCase();
@@ -220,24 +195,10 @@ export function resolveComposerMentions(
   return { pubkeys, handles };
 }
 
-/** Resolve the first visible @Agent name into the member pubkey written to the Nostr p-tag. */
+/** Resolve the first exact visible agent @handle into the member pubkey written to the Nostr p-tag. */
 export function mentionedAgentPubkey(text: string, agents: MentionableAgent[]): string | undefined {
-  const normalized = text.normalize('NFKC').toLocaleLowerCase();
-  const candidates = [...agents]
-    .flatMap((agent) =>
-      [agent.name, agent.handle]
-        .filter((value): value is string => Boolean(value))
-        .map((mention) => ({ agent, mention })),
-    )
-    .sort((a, b) => b.mention.length - a.mention.length);
-  for (const agent of candidates) {
-    const mention = `@${agent.mention.normalize('NFKC').toLocaleLowerCase()}`;
-    let offset = normalized.indexOf(mention);
-    while (offset >= 0) {
-      const trailing = normalized[offset + mention.length];
-      if (trailing === undefined || /[\s,.:;!?)}\]]/.test(trailing)) return agent.agent.pubkey;
-      offset = normalized.indexOf(mention, offset + mention.length);
-    }
-  }
-  return undefined;
+  const participants = agents.flatMap((agent) =>
+    agent.handle ? [{ pubkey: agent.pubkey, name: agent.name, handle: agent.handle }] : [],
+  );
+  return resolveComposerMentions(text, participants, new Map()).pubkeys[0];
 }

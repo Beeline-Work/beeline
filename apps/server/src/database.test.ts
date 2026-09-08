@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Pool } from 'pg';
 import {
+  backfillAgentHandles,
   backfillYoloModeDefault,
   MESSAGE_CURSOR_MS_SQL,
   migrate,
@@ -47,7 +48,9 @@ describe('PostgresDatabase reconnects', () => {
     };
     const connect = vi
       .fn()
-      .mockRejectedValueOnce(Object.assign(new Error('server closed the connection'), { code: '08006' }))
+      .mockRejectedValueOnce(
+        Object.assign(new Error('server closed the connection'), { code: '08006' }),
+      )
       .mockResolvedValueOnce(client);
     const pool = { query: vi.fn(), on: vi.fn(), connect, end: vi.fn() } as unknown as Pool;
     const database = new PostgresDatabase('', 5, { pool, pause: async () => {} });
@@ -228,6 +231,49 @@ describe('the yolo default migration', () => {
   });
 });
 
+describe('the agent handle migration', () => {
+  let database: PgliteDatabase;
+  beforeEach(async () => {
+    database = new PgliteDatabase();
+    await migrate(database);
+  });
+  afterEach(() => database.close());
+
+  it('replaces unrelated and duplicate legacy handles with unique name-derived addresses', async () => {
+    const human = 'a'.repeat(64);
+    const goosy = 'b'.repeat(64);
+    const lumen = 'c'.repeat(64);
+    const secondLumen = 'd'.repeat(64);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES
+       ($1,'human','Alice','alice'),
+       ($2,'agent','Goosy','nora'),
+       ($3,'agent','Lumen','una'),
+       ($4,'agent','Lumen','nora')`,
+      [human, goosy, lumen, secondLumen],
+    );
+    const workspace = '11111111-1111-4111-8111-111111111111';
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Tubing Crew')`, [workspace]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+       ($1,NULL,$2,'owner'),($1,NULL,$3,'member'),
+       ($1,NULL,$4,'member'),($1,NULL,$5,'member')`,
+      [workspace, human, goosy, lumen, secondLumen],
+    );
+
+    await expect(backfillAgentHandles(database)).resolves.toBe(3);
+    const rows = await database.query<{ name: string; handle: string }>(
+      `SELECT name,handle FROM identities WHERE kind='agent' ORDER BY id`,
+    );
+    expect(rows.rows).toEqual([
+      { name: 'Goosy', handle: 'goosy' },
+      { name: 'Lumen', handle: 'lumen' },
+      { name: 'Lumen', handle: 'lumen_2' },
+    ]);
+    await expect(backfillAgentHandles(database)).resolves.toBe(0);
+  });
+});
+
 describe('the inherited corner membership migration', () => {
   const OWNER = 'a'.repeat(64);
   const LATE_MEMBER = 'b'.repeat(64);
@@ -246,10 +292,10 @@ describe('the inherited corner membership migration', () => {
       [OWNER, LATE_MEMBER, REMOVED_MEMBER],
     );
     await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Workspace')`, [WORKSPACE]);
-    await database.query(
-      `INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`,
-      [ROOM, WORKSPACE],
-    );
+    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
+      ROOM,
+      WORKSPACE,
+    ]);
     await database.query(
       `INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Corner')`,
       [CORNER, WORKSPACE, ROOM],

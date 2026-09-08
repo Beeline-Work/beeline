@@ -175,7 +175,41 @@ export function seededAgentName(face: FaceId, takenNames: Iterable<string>): str
 export interface SeededAgentIdentity {
   readonly face: FaceId;
   readonly name: string;
+  readonly handle: string;
   readonly soul: string;
+}
+
+const AGENT_HANDLE_MAX_LENGTH = 30;
+
+/** The canonical address stem for an agent name. */
+export function agentHandleFromName(name: string): string {
+  const handle = name
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '_')
+    .replace(/[^a-z0-9_]/g, '')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, AGENT_HANDLE_MAX_LENGTH)
+    .replace(/_+$/g, '');
+  return handle || 'agent';
+}
+
+/** A name-derived handle that does not collide with any supplied address. */
+export function uniqueAgentHandle(name: string, takenHandles: Iterable<string>): string {
+  const taken = new Set(
+    [...takenHandles].map((handle) => handle.trim().replace(/^@+/, '').toLowerCase()),
+  );
+  const base = agentHandleFromName(name);
+  if (!taken.has(base)) return base;
+  for (let generation = 2; generation <= taken.size + 2; generation++) {
+    const suffix = `_${generation}`;
+    const stem = base.slice(0, AGENT_HANDLE_MAX_LENGTH - suffix.length).replace(/_+$/g, '');
+    const candidate = `${stem}${suffix}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+  throw new Error('unreachable agent handle allocation');
 }
 
 /**
@@ -192,10 +226,17 @@ export function assignSeededAgentIdentity(input: {
   seed: string;
   takenFaces: Iterable<string>;
   takenNames: Iterable<string>;
+  takenHandles?: Iterable<string>;
 }): SeededAgentIdentity {
   const taken = new Set(input.takenFaces);
   const face =
     seededFaceOrder(input.seed).find((candidate) => !taken.has(candidate)) ??
     defaultFaceForSeed(input.seed);
-  return { face, name: seededAgentName(face, input.takenNames), soul: FACE_SOULS[face] };
+  const name = seededAgentName(face, input.takenNames);
+  return {
+    face,
+    name,
+    handle: uniqueAgentHandle(name, input.takenHandles ?? []),
+    soul: FACE_SOULS[face],
+  };
 }

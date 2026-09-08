@@ -1358,10 +1358,9 @@ export default function BuzzChat() {
     () => projectActiveTurnStream(messages, activeAgentTurns, isArchived),
     [activeAgentTurns, isArchived, messages],
   );
-  // Attribution is per run, not per entry: only the first entry of a voice's
-  // run carries its mark and name (see `buzz/ledger-attribution.ts`). Corners
-  // attribute exactly like Rooms — several people can sit in one corner, so
-  // bare turns are indistinguishable there too.
+  // Run boundaries still control compact continuation spacing and machine-row
+  // folding. Ordinary prose always renders its own byline, even inside a run,
+  // so every message remains independently attributable.
   const rawContinuedAttributionIds = useMemo(
     () =>
       new Set(

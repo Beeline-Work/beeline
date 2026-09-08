@@ -1,3 +1,5 @@
+import { agentHandleFromName } from '@beeline/api-contract/phone';
+
 /** Stable friendly fallback names for human identities. Presentation only; never authority. */
 const FIRST_NAMES = [
   'Ada',
@@ -201,14 +203,7 @@ export function deriveAgentDisplayName(value: string | undefined | null, pubkey:
  * shape must remain type-safe.
  */
 export function agentHandle(name: string, _pubkey?: string): string {
-  const handle = name
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, '_')
-    .replace(/[^a-z0-9_]/g, '');
-  return handle || 'agent';
+  return agentHandleFromName(name);
 }
 
 export function personHandle(name: string, pubkey: string): string {

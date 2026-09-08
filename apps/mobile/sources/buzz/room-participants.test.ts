@@ -65,6 +65,12 @@ describe('Room participant presentation', () => {
     expect(mentionedAgentPubkey('hello @brisk!', agents)).toBe('agent-b');
     expect(mentionedAgentPubkey('hello @brisk-pilot!', agents)).toBe('agent-a');
     expect(mentionedAgentPubkey('email @briskness later', agents)).toBeUndefined();
+    expect(
+      mentionedAgentPubkey('@goosy', [
+        { pubkey: 'agent-goosy-suffixed', name: 'Goosy', handle: 'goosy_2' },
+        { pubkey: 'agent-goosy', name: 'Goosy', handle: 'goosy' },
+      ]),
+    ).toBe('agent-goosy');
   });
 
   it('keeps every selected person or agent mention that remains in the sent text', () => {

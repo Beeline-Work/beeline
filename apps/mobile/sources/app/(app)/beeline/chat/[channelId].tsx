@@ -1097,11 +1097,7 @@ export default function BuzzChat() {
   const mentionSlash = useMemo(() => agentMentionSlashQuery(inputText), [inputText]);
   const mentionSlashAgentPubkey = useMemo(() => {
     if (!mentionSlash) return null;
-    const needle = mentionSlash.mention.toLowerCase();
-    const match = mentionableAgents.find(
-      (agent) => agent.handle?.toLowerCase() === needle || agent.name.toLowerCase() === needle,
-    );
-    return match?.pubkey ?? null;
+    return mentionedAgentPubkey(`@${mentionSlash.mention}`, mentionableAgents) ?? null;
   }, [mentionSlash, mentionableAgents]);
   const mentionAgentCommandScope = mentionSlashAgentPubkey
     ? `${decodedId}:${mentionSlashAgentPubkey}`

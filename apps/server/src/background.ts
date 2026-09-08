@@ -1,6 +1,10 @@
 import type { SqlDatabase } from './database.js';
 import { MEDIA_SWEEP_INTERVAL_MS, mediaTtlHours } from './media-ttl.js';
-import { claimReleaseCatchup, RELEASE_CATCHUP_CANDIDATES_SQL } from './release-push-catchup.js';
+import {
+  claimReleaseCatchup,
+  RELEASE_CATCHUP_CANDIDATES_SQL,
+  retireTerminalReleaseCatchups,
+} from './release-push-catchup.js';
 
 const BACKGROUND_LOCK_KEY = 0x0bee11;
 
@@ -47,6 +51,7 @@ export class PushDeliveryLoop {
     await this.database.query(
       `INSERT INTO push_delivery_floors(id) VALUES('message-delivery') ON CONFLICT(id) DO NOTHING`,
     );
+    await retireTerminalReleaseCatchups(this.database);
     const candidates = await this.database.query<{
       message_id: string;
       workspace_id: string;
@@ -166,6 +171,11 @@ export class PushDeliveryLoop {
           `UPDATE push_delivery_claims SET status='delivered',completed_at=now() WHERE message_id=$1 AND device_token=$2`,
           [candidate.message_id, candidate.token],
         );
+        if (candidate.is_release_catchup)
+          await this.database.query(
+            `DELETE FROM push_release_catchups WHERE device_token=$1 AND message_id=$2`,
+            [candidate.token, candidate.message_id],
+          );
         delivered += 1;
       } catch (error) {
         await this.database.query(

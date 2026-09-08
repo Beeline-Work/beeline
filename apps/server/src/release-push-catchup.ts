@@ -66,6 +66,37 @@ export async function claimReleaseCatchup(
   return Boolean(claim.rowCount);
 }
 
+export async function retireTerminalReleaseCatchups(database: SqlDatabase) {
+  await database.query(
+    `DELETE FROM push_release_catchups catchup
+     WHERE NOT EXISTS (
+       SELECT 1 FROM push_delivery_claims claim
+       WHERE claim.device_token=catchup.device_token AND claim.message_id=catchup.message_id
+         AND claim.status IN ('claimed','failed')
+     )
+     AND (
+       EXISTS (
+         SELECT 1 FROM push_delivery_claims claim
+         WHERE claim.device_token=catchup.device_token AND claim.message_id=catchup.message_id
+           AND claim.status='delivered'
+       )
+       OR NOT EXISTS (
+         SELECT 1
+         FROM push_devices d
+         JOIN messages m ON m.id=catchup.message_id
+         JOIN rooms r ON r.id=m.room_id
+         JOIN memberships member ON member.room_id=r.id AND member.identity_id=d.identity_id
+           AND member.removed_at IS NULL
+         LEFT JOIN room_read_marks read ON read.room_id=r.id AND read.identity_id=d.identity_id
+         WHERE d.token=catchup.device_token AND d.identity_id=catchup.identity_id
+           AND (read.message_id IS NULL OR (m.created_at,m.id)>(read.message_created_at,read.message_id))
+           AND NOT EXISTS (SELECT 1 FROM messages newer WHERE newer.room_id=m.room_id
+             AND newer.author_id=m.author_id AND (newer.created_at,newer.id)>(m.created_at,m.id))
+       )
+     )`,
+  );
+}
+
 /** One extra candidate lane; only this lane bypasses the registration floor.
  * Re-check readership, identity and latest-message status at dispatch time.
  */

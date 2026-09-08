@@ -1,10 +1,10 @@
 # Daemon leg of the unified release (was .github/workflows/beeline-bundle.yml).
 # unified-release.yml calls it twice from the self-hosted production host:
 # phase=build builds and install-verifies the exact linux-x64 bundle,
-# phase=promote publishes it into the host-local /dl/ store
+# phase=promote publishes it to Pages plus a temporary legacy-origin mirror
 # (docs/cli-bundle-channel.md) and waits for every helper to restart READY on
 # the exact release. The caller checks out the release SHA first and owns
-# runner and timeout (promote needs 40 minutes, see the confirm step).
+# runner and timeout (promote needs 55 minutes, see the confirm step).
 name: Beeline daemon release leg
 description: Build the exact daemon artifact or publish it and await updater READY proof
 
@@ -16,6 +16,11 @@ inputs:
     required: true
   release_version:
     required: true
+  legacy_mirror:
+    description: Keep the old origin current until DNS cutover is verified; then set false
+    default: 'true'
+  pages_manifest_url:
+    default: https://beeline-work.github.io/beeline/dl/manifest.json
 
 runs:
   using: composite
@@ -92,8 +97,16 @@ runs:
       with:
         name: daemon-artifact-${{ inputs.release_sha }}
         path: bundle/linux-x64
-    - name: Publish daemon artifact through the boring updater
+    - name: Publish the daemon artifact to durable Pages hosting
       if: inputs.phase == 'promote'
+      uses: ./.github/actions/pages-leg
+      with:
+        bundle_dir: bundle/linux-x64
+        release_sha: ${{ inputs.release_sha }}
+        release_version: ${{ inputs.release_version }}
+        manifest_url: ${{ inputs.pages_manifest_url }}
+    - name: Mirror the exact bundle to the old origin during DNS migration
+      if: inputs.phase == 'promote' && inputs.legacy_mirror != 'false'
       shell: bash
       run: node scripts/publish-beeline-dl.mjs --dir bundle --output-dir "$BEELINE_DL_ROOT" --keep 5
       env:

@@ -29,7 +29,7 @@
     "prove:private-pairing": "npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client && node --import tsx scripts/prove-private-pairing.ts",
     "smoke": "node --import tsx scripts/smoke.ts",
     "test:deploy": "node --test scripts/unified-release.test.mjs scripts/landing-page.test.mjs scripts/publish-beeline-dl.test.mjs scripts/pages-site.test.mjs",
-    "test:pages": "node --test scripts/pages-site.test.mjs",
+    "test:pages": "node --test scripts/pages-site.test.mjs scripts/pages-channel.test.mjs scripts/verify-pages-update.test.mjs",
     "check:app-association-drift": "node scripts/check-app-association-drift.mjs",
     "publish:relay-front": "node scripts/publish-relay-front.mjs",
     "test:play": "node --test scripts/sync-play-metadata.test.mjs scripts/play-scripts.test.mjs scripts/play-token.test.mjs",
@@ -50,7 +50,8 @@
     "esbuild": "^0.28.1",
     "prettier": "^3.3.3",
     "turbo": "^2.3.0",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "yaml": "2.9.0"
   },
   "engines": {
     "node": ">=20.11.0"

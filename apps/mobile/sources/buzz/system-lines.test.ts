@@ -29,9 +29,7 @@ describe('system lines on the phone', () => {
     expect(joinSystemNames([])).toBe('');
     expect(joinSystemNames(['@candy'])).toBe('@candy');
     expect(joinSystemNames(['@candy', '@terra'])).toBe('@candy and @terra');
-    expect(joinSystemNames(['@candy', '@terra', '@codex'])).toBe(
-      '@candy, @terra and @codex',
-    );
+    expect(joinSystemNames(['@candy', '@terra', '@codex'])).toBe('@candy, @terra and @codex');
   });
 
   it('folds consecutive lines with the same verb into one, oldest subject first', () => {

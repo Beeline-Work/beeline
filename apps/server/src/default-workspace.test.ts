@@ -86,10 +86,7 @@ describe('default Workspace seed', () => {
 
   it('never backfills a hidden_from_roster identity into the Workspace or #welcome', async () => {
     const HIDDEN = 'e'.repeat(64);
-    await db.query(
-      `INSERT INTO identities(id,kind,name) VALUES($1,'human','Captain')`,
-      [CAPTAIN],
-    );
+    await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Captain')`, [CAPTAIN]);
     await db.query(
       `INSERT INTO identities(id,kind,name,hidden_from_roster) VALUES($1,'human','System',true)`,
       [HIDDEN],

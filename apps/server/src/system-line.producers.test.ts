@@ -161,9 +161,10 @@ describe('system-line producers', () => {
       ]);
       expect(
         (
-          await database.query<{ owner_id: string }>(`SELECT owner_id FROM agents WHERE agent_id=$1`, [
-            ADDED_AGENT,
-          ])
+          await database.query<{ owner_id: string }>(
+            `SELECT owner_id FROM agents WHERE agent_id=$1`,
+            [ADDED_AGENT],
+          )
         ).rows,
       ).toEqual([{ owner_id: OWNER }]);
     } finally {
@@ -180,7 +181,9 @@ describe('system-line producers', () => {
         { workspaceId: WORKSPACE, memberId: HANDLELESS, role: 'admin' },
         OWNER,
       );
-      expect((await lines(database)).map((line) => line.text)).toEqual(['@owner changed role to admin']);
+      expect((await lines(database)).map((line) => line.text)).toEqual([
+        '@owner changed role to admin',
+      ]);
     } finally {
       await database.close();
     }

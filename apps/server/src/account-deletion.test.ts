@@ -50,7 +50,13 @@ describe('deleteAccount', () => {
     await database.query(
       `INSERT INTO rooms(id,workspace_id,name,direct_participants) VALUES($1,$2,'Direct message',$4::jsonb),
          ($3,$2,'Direct message',$5::jsonb)`,
-      [DM_HUMAN, WORKSPACE, DM_AGENT, JSON.stringify([OWNER, PARTNER]), JSON.stringify([OWNER, AGENT])],
+      [
+        DM_HUMAN,
+        WORKSPACE,
+        DM_AGENT,
+        JSON.stringify([OWNER, PARTNER]),
+        JSON.stringify([OWNER, AGENT]),
+      ],
     );
     await database.query(
       `INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Corner')`,
@@ -255,7 +261,10 @@ describe('deleteAccount', () => {
       [`SELECT 1 FROM live_outputs WHERE agent_id=ANY($1)`, [[OWNER, AGENT]]],
       [`SELECT 1 FROM work_schedules WHERE agent_id=ANY($1)`, [[OWNER, AGENT]]],
       [`SELECT 1 FROM schedule_receipts WHERE agent_id=ANY($1)`, [[OWNER, AGENT]]],
-      [`SELECT 1 FROM agent_schedules WHERE creator_id=ANY($1) OR agent_id=ANY($1)`, [[OWNER, AGENT]]],
+      [
+        `SELECT 1 FROM agent_schedules WHERE creator_id=ANY($1) OR agent_id=ANY($1)`,
+        [[OWNER, AGENT]],
+      ],
       [`SELECT 1 FROM agent_mandates WHERE agent_id=ANY($1)`, [[OWNER, AGENT]]],
       [`SELECT 1 FROM agent_grants WHERE requested_by=ANY($1)`, [[OWNER, AGENT]]],
       [`SELECT 1 FROM permission_authority WHERE principal_id=ANY($1)`, [[OWNER, AGENT]]],

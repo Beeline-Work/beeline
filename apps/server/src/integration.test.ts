@@ -4711,9 +4711,10 @@ describe('monolith integration', () => {
       `UPDATE agents SET soul=$2::jsonb,selected_model='gpt-5.6' WHERE agent_id=$1`,
       [AGENT, JSON.stringify({ name: 'Scout', instructions: 'Be brisk and kind.' })],
     );
-    await database.query(`UPDATE identities SET avatar='avatars/owner.png',face_id='fox' WHERE id=$1`, [
-      HUMAN,
-    ]);
+    await database.query(
+      `UPDATE identities SET avatar='avatars/owner.png',face_id='fox' WHERE id=$1`,
+      [HUMAN],
+    );
     const phone = new PhoneService(database, 'http://placeholder');
     const view = await phone.readAgent(WORKSPACE, AGENT, HUMAN);
     expect(view?.soul).toEqual({

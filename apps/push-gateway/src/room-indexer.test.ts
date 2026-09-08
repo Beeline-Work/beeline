@@ -306,12 +306,7 @@ describe('RoomIndexer', () => {
         JSON.stringify([
           ['h', ROOM],
           ['t', 'buzz-attachment'],
-          [
-            'imeta',
-            'url https://media.test/IMG_3027.png',
-            'm image/png',
-            'size 42',
-          ],
+          ['imeta', 'url https://media.test/IMG_3027.png', 'm image/png', 'size 42'],
           ['attachment', 'https://media.test/IMG_3027.png', 'IMG_3027.png'],
         ]),
         ROOM,

@@ -117,7 +117,7 @@ export function roomPrincipalMayAddressAgent(
   return authority.mayAddressAgent ?? humanPermitted;
 }
 
-/** Server-authored scheduled prompts arrive as system lines (`Beeline Scheduler ran a
+/** Server-authored scheduled prompts arrive as system lines (`@scheduler ran a
  *  schedule for <agent> · <message>`) mentioning this agent and carrying the structured
  *  event; the scheduler is not a Room principal, so its lines skip the per-author
  *  authority check (schedule creation was already authority-gated). Recognised by

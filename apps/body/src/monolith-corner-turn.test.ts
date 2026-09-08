@@ -373,7 +373,7 @@ describe('corner close-request polling cadence', () => {
       if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
       if (name === 'postAgentActivity') {
         activityAttempts.push(input);
-        if (++activityWrites === 2) throw new Error('temporary activity failure');
+        if (++activityWrites === 1) throw new Error('temporary activity failure');
       }
       writes.push({ name, input });
       return { id: 'write-id', createdAt: 1 };
@@ -394,15 +394,41 @@ describe('corner close-request polling cadence', () => {
       async (_id, _prompt, _timeout, draft, _activity, toolActivity) => {
         promptCalls += 1;
         if (promptCalls === 1) {
+          draft?.('Inspecting', 'Inspecting');
           toolActivity?.([
             {
               kind: 'read',
               title: 'Read first provider',
               rawInput: { path: 'first.json' },
-              status: 'completed',
+              status: 'in_progress',
             },
           ]);
-          return { stopReason: 'end_turn', updates: [], agentText: '', toolCalls: [] };
+          draft?.(' while waiting.', 'Inspecting while waiting.');
+          toolActivity?.([
+            {
+              kind: 'read',
+              title: 'Read first provider',
+              rawInput: { path: 'first.json' },
+              status: 'in_progress',
+              resultReceived: true,
+              content: 'first provider contents',
+            },
+          ]);
+          return {
+            stopReason: 'end_turn',
+            updates: [],
+            agentText: '',
+            toolCalls: [
+              {
+                kind: 'read',
+                title: 'Read first provider',
+                rawInput: { path: 'first.json' },
+                status: 'in_progress',
+                resultReceived: true,
+                content: 'first provider contents',
+              },
+            ],
+          };
         }
         // The reported shape: prose, a tool call, then the closing prose. The
         // ACP delta hook is handed EVERY assistant run joined, while the result
@@ -478,9 +504,9 @@ describe('corner close-request polling cadence', () => {
     const posts = writes.filter((write) => write.name === 'postRoomMessage');
     expect(activityWrites).toBe(3);
     expect(activityAttempts).toHaveLength(3);
-    expect(activityAttempts[2]).toEqual(activityAttempts[1]);
+    expect(activityAttempts[1]).toEqual(activityAttempts[0]);
     expect(activityAttempts[0]?.cornerActivityKey).toBe('1:tool-0');
-    expect(activityAttempts[1]?.cornerActivityKey).toBe('2:tool-0');
+    expect(activityAttempts[2]?.cornerActivityKey).toBe('2:tool-0');
     // The closing message lands WHOLE and under the turn's request id, so it
     // settles the receipt. Nothing is cut by a stream offset.
     expect(posts[0]).toEqual(
@@ -502,6 +528,11 @@ describe('corner close-request polling cadence', () => {
           requestId: 'cornerid',
           cornerActivityKey: '1:tool-0',
           activity: [
+            {
+              kind: 'output',
+              title: 'Update',
+              text: 'Inspecting',
+            },
             expect.objectContaining({
               kind: 'tool',
               operation: 'read',
@@ -535,9 +566,11 @@ describe('corner close-request polling cadence', () => {
     // carries one write at a time and only the newest waiting snapshot, so a
     // burst of four deltas the wire could not keep up with reaches the reader
     // as its first frame and its newest one — forward, never backwards.
-    expect(
-      writes.filter((write) => write.name === 'postAgentDraft').map((write) => write.input.text),
-    ).toEqual(['I inspected', 'I inspected the code.\n\nThe fix is ready.']);
+    const draftTexts = writes
+      .filter((write) => write.name === 'postAgentDraft')
+      .map((write) => write.input.text);
+    expect(draftTexts).toContain('Inspecting');
+    expect(draftTexts.at(-1)).toBe('I inspected the code.\n\nThe fix is ready.');
     for (const draft of writes.filter((write) => write.name === 'postAgentDraft')) {
       expect(draft.input.turnId).toBe('cornerid');
     }

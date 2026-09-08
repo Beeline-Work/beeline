@@ -1366,9 +1366,9 @@ export class DaemonService {
       if (!corner.rowCount) throw new Error('corner activity key requires a corner');
     }
     const messageId = key
-      ? createHash('sha256')
+      ? `corner-activity:${createHash('sha256')`
           .update(JSON.stringify(['corner-activity', input.roomId, agentId, input.requestId, key]))
-          .digest('hex')
+          .digest('hex')}`
       : id();
     const activity = await this.database.transaction(async (database) => {
       const inserted = await database.query<{ id: string; created_at: Date }>(

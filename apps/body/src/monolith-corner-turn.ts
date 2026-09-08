@@ -800,11 +800,16 @@ export class MonolithCornerTurnLoop {
                 return narration;
               };
               const publishedToolCalls = new Set<string>();
+              const observedToolCalls = new Set<string>();
               const pendingToolNarrations = new Map<string, string>();
               let activityAttempt = 0;
               const publishToolCalls = (calls: readonly ToolCallEntry[], settledOnly: boolean) => {
                 calls.forEach((call, index) => {
                   const key = `${activityAttempt}:${toolCallKey(call, index)}`;
+                  if (settledOnly && !observedToolCalls.has(key)) {
+                    observedToolCalls.add(key);
+                    pendingToolNarrations.set(key, takeInterimNarration());
+                  }
                   if (publishedToolCalls.has(key) || (settledOnly && !toolCallSettled(call)))
                     return;
                   publishedToolCalls.add(key);
@@ -812,9 +817,7 @@ export class MonolithCornerTurnLoop {
                   // proves the current assistant run is interim narration. The
                   // end-of-prompt fallback still publishes missed tool rows but
                   // cannot safely classify the last run, so it never consumes it.
-                  const narration =
-                    pendingToolNarrations.get(key) ?? (settledOnly ? takeInterimNarration() : '');
-                  if (narration) pendingToolNarrations.set(key, narration);
+                  const narration = pendingToolNarrations.get(key) ?? '';
                   this.activityTail = this.activityTail
                     .catch(() => undefined)
                     .then(async () => {
@@ -851,12 +854,18 @@ export class MonolithCornerTurnLoop {
                     });
                 });
               };
+              const flushToolCalls = async (calls: readonly ToolCallEntry[]): Promise<void> => {
+                await this.activityTail;
+                publishToolCalls(calls, false);
+                await this.activityTail;
+              };
               // One prompt run. It is a closure because an empty completion
               // re-pins the session to another provider and runs it again
               // (C92) — against the NEW client and session id.
               const runPrompt = async (): Promise<PromptResult> => {
                 activityAttempt += 1;
                 publishedToolCalls.clear();
+                observedToolCalls.clear();
                 pendingToolNarrations.clear();
                 stream.beginRun();
                 currentNarrationRun = '';
@@ -889,6 +898,7 @@ export class MonolithCornerTurnLoop {
               // A checks turn is told to say nothing when nothing changed; its
               // silence is not a routing failure and must not buy a retry.
               if (explained && !restates && shouldRetryEmptyTurn(explained)) {
+                await flushToolCalls(result.toolCalls);
                 const silent = this.servingProviders();
                 const next = await this.repinNextProvider(trace, explained.reason);
                 if (next) {
@@ -901,14 +911,12 @@ export class MonolithCornerTurnLoop {
                   explained = await this.explainEmpty(result);
                 }
               }
-              await this.activityTail;
-              publishToolCalls(result.toolCalls, false);
+              await flushToolCalls(result.toolCalls);
               // A refusal the operator cannot read is a refusal that happens twice.
               for (const call of result.toolCalls) {
                 const failure = toolCallFailureLine(call);
                 if (failure) console.warn(`[thin-core] corner ${cornerId} ${failure}`);
               }
-              await this.activityTail;
               // Close the draft lane before the answer is published: the finished
               // reply must never queue behind a draft nobody will read.
               stream.close();

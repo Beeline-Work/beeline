@@ -1606,6 +1606,26 @@ describe('monolith integration', () => {
         { kind: 'tool' as const, title: 'Read package.json', operation: 'read', status: 'ok' },
       ],
     };
+    const activityId = `corner-activity:${createHash('sha256')
+      .update(
+        JSON.stringify([
+          'corner-activity',
+          input.roomId,
+          input.agentId,
+          input.requestId,
+          input.cornerActivityKey,
+        ]),
+      )
+      .digest('hex')}`;
+    expect(
+      (
+        await operation('sendRoomMessage', {
+          roomId: cornerId,
+          messageId: activityId,
+          text: 'Claim the activity row.',
+        })
+      ).status,
+    ).toBe(400);
     expect((await daemonOperation('postAgentActivity', input)).status).toBe(200);
     expect((await daemonOperation('postAgentActivity', input)).status).toBe(200);
 

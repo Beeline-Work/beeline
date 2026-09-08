@@ -2957,6 +2957,37 @@ describe('monolith integration', () => {
       installation: { id: 77 },
       repository: { id: 101, full_name: 'owner/widgets' },
     };
+    const issuePayload = {
+      ...base,
+      action: 'opened',
+      issue: {
+        number: 17,
+        title: 'Handle narrow screens',
+        html_url: 'https://github.com/owner/widgets/issues/17',
+      },
+      sender: { login: 'octocat' },
+    };
+    expect((await webhook('issues', 'room-issue-open', issuePayload)).status).toBe(202);
+    expect((await webhook('issues', 'room-issue-open', issuePayload)).status).toBe(200);
+    await webhook('pull_request', 'room-pr-open', {
+      ...base,
+      action: 'opened',
+      pull_request: {
+        number: 18,
+        title: 'Improve documentation',
+        html_url: 'https://github.com/owner/widgets/pull/18',
+        head: { ref: 'docs/readme', sha: '2'.repeat(40) },
+        base: { ref: 'main' },
+        merged: false,
+      },
+      sender: { login: 'octocat' },
+    });
+    await database.query(`UPDATE rooms SET github_events_enabled=false WHERE id=$1`, [ROOM]);
+    await webhook('issues', 'room-issue-closed-disabled', {
+      ...issuePayload,
+      action: 'closed',
+    });
+    await database.query(`UPDATE rooms SET github_events_enabled=true WHERE id=$1`, [ROOM]);
     expect(
       (
         await webhook('pull_request', 'corner-pr-open', {
@@ -2971,9 +3002,30 @@ describe('monolith integration', () => {
             mergeable_state: 'clean',
             merged: false,
           },
+          sender: { login: 'octocat' },
         })
       ).status,
     ).toBe(202);
+    const repositoryCards = await database.query<{ card: Record<string, unknown> }>(
+      `SELECT card FROM messages WHERE room_id=$1 AND card_type='github-event' ORDER BY created_at`,
+      [ROOM],
+    );
+    expect(repositoryCards.rows.map((row) => row.card)).toEqual([
+      expect.objectContaining({
+        type: 'issue',
+        action: 'opened',
+        actor: 'octocat',
+        title: 'Handle narrow screens',
+      }),
+      expect.objectContaining({
+        type: 'pull-request',
+        action: 'opened',
+        actor: 'octocat',
+        title: 'Improve documentation',
+        branch: 'docs/readme',
+        targetBranch: 'main',
+      }),
+    ]);
     await webhook('push', 'corner-push', {
       ...base,
       ref: 'refs/heads/fm/widget',
@@ -3064,9 +3116,9 @@ describe('monolith integration', () => {
       expect.arrayContaining([
         expect.objectContaining({
           presentation: 'system',
-          text: 'GitHub opened a pull request Ship the widget',
+          text: 'octocat opened a pull request Ship the widget',
           systemEvent: {
-            subject: { kind: 'github', name: 'GitHub' },
+            subject: { kind: 'github', name: 'octocat' },
             verb: 'opened a pull request',
             object: { text: 'Ship the widget', url: 'https://github.com/owner/widgets/pull/42' },
           },

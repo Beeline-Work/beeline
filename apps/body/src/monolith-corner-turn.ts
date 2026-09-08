@@ -5,7 +5,13 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { parseGrantDecisionLine } from '@beeline/api-contract/agent-grants';
 import type { DaemonAttachment, DaemonOperationMap } from '@beeline/api-contract/daemon';
-import { AcpClient, type McpServerWire, type PromptResult, type ToolCallEntry } from './acp.js';
+import {
+  AcpClient,
+  isPureRetryNarration,
+  type McpServerWire,
+  type PromptResult,
+  type ToolCallEntry,
+} from './acp.js';
 import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
 import {
@@ -797,7 +803,7 @@ export class MonolithCornerTurnLoop {
               const takeInterimNarration = (): string => {
                 const narration = spoken(durableReplyText(currentNarrationRun));
                 currentNarrationRun = '';
-                return narration;
+                return isPureRetryNarration(narration) ? '' : narration;
               };
               const publishedToolCalls = new Set<string>();
               const observedToolCalls = new Set<string>();

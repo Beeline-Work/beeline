@@ -173,7 +173,6 @@ const wait = (milliseconds: number) =>
 export class PostgresLiveListener {
   private stopped = false;
   private active?: LivePgClient;
-  private connectedOnce = false;
 
   constructor(
     private readonly database: SqlDatabase,
@@ -217,8 +216,7 @@ export class PostgresLiveListener {
         await client.connect();
         await client.query(`LISTEN ${POSTGRES_LIVE_CHANNEL}`);
         console.log('[live-listener] connected');
-        if (this.connectedOnce) this.live.resync();
-        this.connectedOnce = true;
+        this.live.resync();
         await disconnected;
       } catch (error) {
         console.error(

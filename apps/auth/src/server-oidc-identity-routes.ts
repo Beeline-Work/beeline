@@ -297,6 +297,14 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
       identity.subject,
       encryptGitHubToken(identity.accessToken),
       now(),
+      {
+        encryptedRefreshToken: identity.refreshToken
+          ? encryptGitHubToken(identity.refreshToken)
+          : undefined,
+        expiresAt: identity.tokenExpiresIn
+          ? new Date(now().getTime() + identity.tokenExpiresIn * 1000)
+          : undefined,
+      },
     );
     if (flow.deviceCodeHash) {
       await completeAgentConnectApproval(tenant, flow, identity);

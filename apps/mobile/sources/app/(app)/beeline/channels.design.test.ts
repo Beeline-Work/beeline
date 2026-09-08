@@ -108,7 +108,7 @@ describe('Room list layout contract', () => {
     // header plus is gone, the FAB is the one way to compose.
     const header = source.slice(
       source.indexOf('<View style={styles.header}>'),
-      source.indexOf('<HullDialog'),
+      source.indexOf('<NewRoomDialog'),
     );
     expect(header).not.toMatch(/[+＋]/);
     expect(header).toContain('testID="workspace-members"');

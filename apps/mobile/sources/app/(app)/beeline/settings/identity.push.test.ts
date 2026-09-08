@@ -22,7 +22,7 @@ const permissionInfo = vi.hoisted(() => ({
   })),
 }));
 
-vi.mock('expo-router', () => ({ router: navigation }));
+vi.mock('expo-router', () => ({ router: navigation, useLocalSearchParams: () => ({}) }));
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn() }));
 vi.mock('expo-crypto', () => ({ getRandomBytes: (n: number) => new Uint8Array(n) }));
 vi.mock('expo-linking', () => ({

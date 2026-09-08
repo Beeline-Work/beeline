@@ -448,6 +448,22 @@ async function route(
     );
     return;
   }
+  if (method === 'POST' && url.pathname === '/v1/auth/github/reconnect') {
+    const viewerId = await phoneIdentity(request, options);
+    if (!viewerId) {
+      json(response, 401, { error: 'unauthorized' });
+      return;
+    }
+    const input = await body(request);
+    if (typeof input.oidcToken !== 'string') throw new Error('oidcToken is required');
+    const matched = await options.auth.reconnectGitHub(viewerId, input.oidcToken);
+    if (!matched) json(response, 409, { error: 'github_account_mismatch' });
+    else {
+      response.writeHead(204);
+      response.end();
+    }
+    return;
+  }
   if (method === 'POST' && url.pathname === '/v1/auth/github/exchange') {
     const input = await body(request);
     if (typeof input.oidcToken !== 'string') throw new Error('oidcToken is required');

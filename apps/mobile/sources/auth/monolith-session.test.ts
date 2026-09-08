@@ -36,6 +36,25 @@ describe('monolith phone session', () => {
     expect(secure.get('buzzy.monolith.refresh.v1')).toBe('refresh-1');
   });
 
+  it('reconnects using the existing session without replacing it, including on account mismatch', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify(tokens(1)), { status: 200 }));
+    const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
+    await session.exchangeGitHubTicket('sign-in');
+    fetcher.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    await session.reconnectGitHubTicket('fresh');
+    expect(fetcher).toHaveBeenLastCalledWith(
+      'https://server.example/v1/auth/github/reconnect',
+      expect.objectContaining({
+        headers: expect.objectContaining({ authorization: 'Bearer access-1' }),
+        body: JSON.stringify({ oidcToken: 'fresh' }),
+      }),
+    );
+    fetcher.mockResolvedValueOnce(new Response('{}', { status: 409 }));
+    await expect(session.reconnectGitHubTicket('other')).rejects.toThrow('already linked');
+    expect(await session.authorization()).toBe('access-1');
+    expect(secure.get('buzzy.monolith.refresh.v1')).toBe('refresh-1');
+  });
+
   it('rotates a persisted refresh token once across concurrent callers', async () => {
     secure.set('buzzy.monolith.refresh.v1', 'refresh-old');
     const fetcher = vi.fn(async () => new Response(JSON.stringify(tokens(2)), { status: 200 }));

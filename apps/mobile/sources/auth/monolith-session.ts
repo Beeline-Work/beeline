@@ -22,6 +22,12 @@ export class MonolithSessionRequiredError extends Error {
   }
 }
 
+export class GitHubAccountMismatchError extends Error {
+  constructor() {
+    super('Reconnect the GitHub account already linked to this identity.');
+  }
+}
+
 export class MonolithSession {
   private access?: { token: string; expiresAt: number; identityId: string };
   private refreshInFlight?: Promise<string>;
@@ -41,6 +47,19 @@ export class MonolithSession {
     const tokens = (await response.json()) as MonolithTokens;
     await this.accept(tokens);
     return tokens.identityId;
+  }
+
+  async reconnectGitHubTicket(ticket: string): Promise<void> {
+    const response = await this.fetchImpl(`${this.baseUrl}/v1/auth/github/reconnect`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${await this.authorization()}`,
+      },
+      body: JSON.stringify({ oidcToken: ticket }),
+    });
+    if (response.status === 409) throw new GitHubAccountMismatchError();
+    if (!response.ok) throw new Error('Could not reconnect GitHub. Try again.');
   }
 
   /**

@@ -142,7 +142,7 @@ export const RepoPicker = memo(function RepoPicker({
   );
 
   return (
-    <View testID={testIDPrefix}>
+    <View style={styles.container} testID={testIDPrefix}>
       <TextInput
         accessibilityLabel="Search repositories or paste a GitHub URL"
         autoCapitalize="none"
@@ -339,6 +339,7 @@ const styles = StyleSheet.create((theme) => {
     fontSize: 12,
     paddingHorizontal: 0,
   },
+  container: { flexShrink: 1, minHeight: 0 },
   candidateScroll: {
     // Height-bounded so a 100+ repo account scrolls instead of rendering past
     // the fold; the bound scales with the window and is clamped (see the

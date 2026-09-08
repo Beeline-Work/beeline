@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, Text, TouchableOpacity, View } from 'react-native';
+import { FlatList, Keyboard, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
@@ -42,10 +42,9 @@ import { runRoomDeckComposeAction } from '@/buzz/room-deck-compose-actions';
 import { MEMBERS_LABEL, ROOM_LABEL, WORKSPACE_LABEL, ROOMS_LABEL } from '@/buzz/vocabulary';
 import { BuzzCommunityShell, CommunityDrawerTrigger } from '@/components/buzz/CommunityRail';
 import { DirectMessagePickerSheet } from '@/components/buzz/DirectMessagePickerSheet';
-import { HullDialog, HullDialogInput } from '@/components/buzz/HullDialog';
+import { NewRoomDialog } from '@/components/buzz/NewRoomDialog';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
-import { RepoPicker } from '@/components/buzz/RepoPicker';
 import {
   RoomDeckComposeMenu,
   type RoomDeckComposeAction,
@@ -410,6 +409,7 @@ export default function BuzzChannels() {
   );
 
   const handleToggleRepoPicker = useCallback(async () => {
+    Keyboard.dismiss();
     setShowRepoPicker((value) => !value);
     if (showRepoPicker || !transport || !activeCommunityId) return;
     setRepoPickerError(null);
@@ -558,71 +558,23 @@ export default function BuzzChannels() {
             </TouchableOpacity>
           )}
         </View>
-        <HullDialog
-          actions={[
-            { label: 'Cancel', onPress: () => setShowCreateRoom(false), variant: 'quiet' },
-            {
-              label: creatingRoom ? 'Creating' : 'Create',
-              onPress: () => void createRoom(),
-              disabled: !roomName.trim() || creatingRoom,
-              busy: creatingRoom,
-              variant: 'primary',
-              testID: 'create-room-submit',
-            },
-          ]}
-          body={`In ${activeCommunity?.name ?? WORKSPACE_LABEL}. Repository optional.`}
-          onRequestClose={() => setShowCreateRoom(false)}
-          surfaceStyle={styles.createRoomDialog}
-          testID="new-room-dialog"
-          title={`New ${ROOM_LABEL}`}
+        <NewRoomDialog
           visible={showCreateRoom}
-        >
-          <View style={styles.createRoomContent}>
-            <TouchableOpacity
-              accessibilityRole="button"
-              disabled={creatingRoom}
-              onPress={() => void handleToggleRepoPicker()}
-              style={styles.repoRow}
-              testID="create-room-repo-row"
-            >
-              <Text style={styles.repoRowLabel}>REPO</Text>
-              <Text numberOfLines={1} style={styles.repoRowValue}>
-                {pendingRepo ? `▢ ${pendingRepo.name}` : 'No repository (chat only)'}
-              </Text>
-              <Text style={styles.repoRowChevron}>{showRepoPicker ? '⌄' : '›'}</Text>
-            </TouchableOpacity>
-            {showRepoPicker && (
-              <>
-                <TouchableOpacity
-                  accessibilityRole="button"
-                  onPress={handleSelectNoRepository}
-                  style={styles.noRepoRow}
-                  testID="create-room-no-repository"
-                >
-                  <Text style={styles.noRepoRowText}>No repository (chat only)</Text>
-                </TouchableOpacity>
-                <RepoPicker
-                  candidates={repoCandidates}
-                  currentKey={pendingRepo?.key ?? null}
-                  error={repoPickerError}
-                  installations={repoInstallations}
-                  onSelect={handleSelectRepoCandidate}
-                  testIDPrefix="create-room-repo-picker"
-                />
-              </>
-            )}
-            <HullDialogInput
-              accessibilityLabel={`${ROOM_LABEL} name`}
-              autoFocus
-              editable={!creatingRoom}
-              onChangeText={setRoomName}
-              onSubmitEditing={() => void createRoom()}
-              placeholder="#room-name"
-              testID="create-room-name"
-              value={roomName}
-            />
-          </View>
-        </HullDialog>
+          workspaceName={activeCommunity?.name ?? WORKSPACE_LABEL}
+          roomName={roomName}
+          setRoomName={setRoomName}
+          creatingRoom={creatingRoom}
+          createRoom={createRoom}
+          onClose={() => setShowCreateRoom(false)}
+          pendingRepo={pendingRepo}
+          showRepoPicker={showRepoPicker}
+          handleToggleRepoPicker={handleToggleRepoPicker}
+          handleSelectNoRepository={handleSelectNoRepository}
+          handleSelectRepoCandidate={handleSelectRepoCandidate}
+          repoCandidates={repoCandidates}
+          repoInstallations={repoInstallations}
+          repoPickerError={repoPickerError}
+        />
         {!!error && (
           <TouchableOpacity onPress={refreshNow} style={styles.errorBar}>
             <Text style={styles.error}>{error}</Text>
@@ -876,37 +828,6 @@ const styles = StyleSheet.create((theme) => {
       color: hull.textMuted,
       fontSize: 9,
       letterSpacing: 0.6,
-    },
-    createRoomDialog: { maxHeight: '88%' },
-    createRoomContent: { flexShrink: 1, maxHeight: 520 },
-    repoRow: {
-      marginTop: 10,
-      // A fixed height: on some devices a minimum height collapses until first tap.
-      height: 44,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-    },
-    repoRowLabel: { ...Typography.mono(), color: hull.textMuted, fontSize: 11 },
-    repoRowValue: {
-      ...Typography.mono(),
-      flex: 1,
-      minWidth: 0,
-      textAlign: 'right',
-      color: hull.textSecondary,
-      fontSize: 12,
-    },
-    repoRowChevron: { ...Typography.default(), color: hull.chrome, fontSize: 18 },
-    noRepoRow: {
-      minHeight: 44,
-      justifyContent: 'center',
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: hull.border,
-    },
-    noRepoRowText: {
-      ...Typography.default(),
-      ...hull.type.body,
-      color: hull.textSecondary,
     },
     errorBar: {
       paddingHorizontal: 16,

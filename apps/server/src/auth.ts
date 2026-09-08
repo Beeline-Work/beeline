@@ -22,6 +22,12 @@ export interface GitHubIdentityProof {
   login: string;
   name: string;
   avatar?: string;
+  /** Trusted server-side credential; never serialized into phone responses. */
+  githubCredential?: {
+    encryptedToken: string;
+    encryptedRefreshToken: string | null;
+    expiresAt: Date | null;
+  };
 }
 
 export type VerifyGitHubOidc = (token: string) => Promise<GitHubIdentityProof>;
@@ -50,10 +56,10 @@ function sameHash(left: string, right: string): boolean {
  * sign-in cannot drift apart.
  */
 async function landInWelcomeWorkspace(database: SqlDatabase, id: string): Promise<void> {
-  await database.query(
-    `INSERT INTO workspaces(id,name) VALUES($1,$2) ON CONFLICT(id) DO NOTHING`,
-    [WELCOME_WORKSPACE_ID, WELCOME_WORKSPACE_NAME],
-  );
+  await database.query(`INSERT INTO workspaces(id,name) VALUES($1,$2) ON CONFLICT(id) DO NOTHING`, [
+    WELCOME_WORKSPACE_ID,
+    WELCOME_WORKSPACE_NAME,
+  ]);
   const membership = await database.query(
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
      VALUES($1,NULL,$2,'member') ON CONFLICT DO NOTHING`,
@@ -115,9 +121,41 @@ export class TokenAuth {
            provider_login=EXCLUDED.provider_login`,
         [github.subject, id, GITHUB_IDENTITY_AUDIENCE, github.login],
       );
+      await this.persistGitHubCredential(database, github);
       await landInWelcomeWorkspace(database, id);
     });
     return this.issuePhoneTokens(id, randomUUID());
+  }
+
+  async reconnectGitHub(viewerId: string, ticket: string): Promise<boolean> {
+    const github = await this.verifyGitHubOidc(ticket);
+    return this.database.transaction(async (database) => {
+      const linked = await database.query(
+        `SELECT 1 FROM identity_external_links WHERE provider='github' AND identity_id=$1 AND subject=$2 FOR UPDATE`,
+        [viewerId, github.subject],
+      );
+      if (!linked.rowCount) return false;
+      if (!github.githubCredential) throw new Error('GitHub credential missing; reconnect again');
+      await this.persistGitHubCredential(database, github);
+      return true;
+    });
+  }
+
+  private async persistGitHubCredential(database: SqlDatabase, github: GitHubIdentityProof) {
+    const credential = github.githubCredential;
+    if (!credential) return;
+    await database.query(
+      `INSERT INTO github_user_tokens(subject,encrypted_token,encrypted_refresh_token,expires_at)
+       VALUES($1,$2,$3,$4) ON CONFLICT(subject) DO UPDATE SET
+       encrypted_token=EXCLUDED.encrypted_token,encrypted_refresh_token=EXCLUDED.encrypted_refresh_token,
+       expires_at=EXCLUDED.expires_at,stale_at=NULL,updated_at=now()`,
+      [
+        github.subject,
+        credential.encryptedToken,
+        credential.encryptedRefreshToken,
+        credential.expiresAt,
+      ],
+    );
   }
 
   /**

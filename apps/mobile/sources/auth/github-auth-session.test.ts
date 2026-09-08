@@ -15,6 +15,8 @@ vi.mock('@react-native-async-storage/async-storage', () => ({
 }));
 
 const {
+  isPendingGitHubReconnect,
+  clearPendingGitHubSignInState,
   githubInstallationRedirectUri,
   githubRepositoryRefreshFeedback,
   githubInstallationReturnPath,
@@ -284,4 +286,15 @@ describe('GitHub auth session redirects', () => {
     ).resolves.toBe(true);
     await expect(githubInstallationReturnPath()).resolves.toBeNull();
   });
+});
+
+it('retains reconnect intent across callback recovery and clears it with the one-use state', async () => {
+  await persistGitHubSignInState(STATE, 'reconnect');
+  expect(await isPendingGitHubReconnect()).toBe(true);
+  await resumeInitialGitHubSignIn(async () => bindCallback());
+  expect(await isPendingGitHubReconnect()).toBe(true);
+  await clearPendingGitHubSignInState();
+  expect(await isPendingGitHubReconnect()).toBe(false);
+  await persistGitHubSignInState(STATE);
+  expect(await isPendingGitHubReconnect()).toBe(false);
 });

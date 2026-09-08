@@ -14,6 +14,17 @@ function githubHeaders(token?: string): Record<string, string> {
   };
 }
 
+export class GitHubHttpError extends Error {
+  constructor(
+    label: string,
+    readonly status: number,
+  ) {
+    super(`${label} failed: HTTP ${status}`);
+  }
+}
+
+export class GitHubCredentialRejectedError extends Error {}
+
 async function jsonObject(response: Response, label: string): Promise<Record<string, unknown>> {
   let body: unknown;
   try {
@@ -22,7 +33,7 @@ async function jsonObject(response: Response, label: string): Promise<Record<str
     throw new Error(`${label} returned invalid JSON`);
   }
   if (!response.ok || !body || typeof body !== 'object' || Array.isArray(body)) {
-    throw new Error(`${label} failed: HTTP ${response.status}`);
+    throw new GitHubHttpError(label, response.status);
   }
   return body as Record<string, unknown>;
 }
@@ -36,7 +47,7 @@ async function jsonArray(response: Response, label: string): Promise<Record<stri
     throw new Error(`${label} returned invalid JSON`);
   }
   if (!response.ok || !Array.isArray(body)) {
-    throw new Error(`${label} failed: HTTP ${response.status}`);
+    throw new GitHubHttpError(label, response.status);
   }
   for (const entry of body) {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
@@ -158,7 +169,16 @@ export class GitHubOAuthClient {
         refresh_token: refreshToken,
       }),
     });
+    // Only an explicit rejected refresh grant is permanent. Network failures,
+    // rate limits, malformed responses and server errors remain retryable.
     const tokenBody = await jsonObject(tokenResponse, 'GitHub OAuth refresh');
+    if (
+      tokenBody.error === 'bad_refresh_token' ||
+      tokenBody.error === 'invalid_grant' ||
+      tokenBody.error === 'expired_token'
+    ) {
+      throw new GitHubCredentialRejectedError('GitHub refresh grant rejected');
+    }
     const accessToken = typeof tokenBody.access_token === 'string' ? tokenBody.access_token : '';
     if (!accessToken) throw new Error('GitHub OAuth refresh response is missing access_token');
     const nextRefreshToken =

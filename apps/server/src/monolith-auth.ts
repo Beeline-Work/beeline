@@ -68,7 +68,13 @@ export async function createMonolithAuth(
     verifyGitHubTicket: async (ticket) => {
       const result = await verifyPhoneGitHubTicket(store, tenant.community, ticket);
       if (result.status !== 'verified') throw new Error('GitHub identity exchange failed');
-      return result.identity;
+      return {
+        ...result.identity,
+        githubCredential: await store.githubUserCredential(
+          tenant.community,
+          result.identity.subject,
+        ),
+      };
     },
     sealedGitHubUserToken: async (subject) => {
       if (await store.githubUserTokenStaleAt(tenant.community, subject)) return undefined;

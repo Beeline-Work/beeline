@@ -1373,9 +1373,9 @@ export class DaemonService {
         );
     }
     const messageId = key
-      ? `corner-activity:${createHash('sha256')
+      ? createHash('sha256')
           .update(JSON.stringify(['corner-activity', input.roomId, agentId, input.requestId, key]))
-          .digest('hex')}`
+          .digest('hex')
       : id();
     const activity = await this.database.transaction(async (database) => {
       const inserted = await database.query<{ id: string; created_at: Date }>(
@@ -1389,11 +1389,19 @@ export class DaemonService {
         inserted.rows[0] ??
         (
           await database.query<{ id: string; created_at: Date }>(
-            `SELECT id,created_at FROM messages WHERE id=$1`,
-            [messageId],
+            `SELECT id,created_at FROM messages
+             WHERE id=$1 AND room_id=$2 AND author_id=$3 AND request_id=$4
+               AND presentation='activity' AND activity=$5::jsonb`,
+            [
+              messageId,
+              input.roomId,
+              agentId,
+              input.requestId,
+              JSON.stringify(input.activity),
+            ],
           )
         ).rows[0];
-      if (!row) throw new Error('activity write did not return a message');
+      if (!row) throw new Error('corner activity ID conflicts with another message');
       if (inserted.rowCount) {
         await database.query(
           `UPDATE agent_turns SET created_at=now()

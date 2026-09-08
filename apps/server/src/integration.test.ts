@@ -1619,7 +1619,7 @@ describe('monolith integration', () => {
         { kind: 'tool' as const, title: 'Read package.json', operation: 'read', status: 'ok' },
       ],
     };
-    const activityId = `corner-activity:${createHash('sha256')
+    const activityId = createHash('sha256')
       .update(
         JSON.stringify([
           'corner-activity',
@@ -1629,7 +1629,7 @@ describe('monolith integration', () => {
           input.cornerActivityKey,
         ]),
       )
-      .digest('hex')}`;
+      .digest('hex');
     expect(
       (
         await operation('sendRoomMessage', {
@@ -1638,9 +1638,11 @@ describe('monolith integration', () => {
           text: 'Claim the activity row.',
         })
       ).status,
-    ).toBe(400);
-    expect((await daemonOperation('postAgentActivity', input)).status).toBe(200);
-    expect((await daemonOperation('postAgentActivity', input)).status).toBe(200);
+    ).toBe(200);
+    expect((await daemonOperation('postAgentActivity', input)).status).toBe(409);
+    const replayInput = { ...input, cornerActivityKey: 'read-package-replay' };
+    expect((await daemonOperation('postAgentActivity', replayInput)).status).toBe(200);
+    expect((await daemonOperation('postAgentActivity', replayInput)).status).toBe(200);
 
     const reopened = (await (await request(`/v1/phone/rooms/${cornerId}`)).json()) as RoomView;
     expect(isRoomView(reopened)).toBe(true);

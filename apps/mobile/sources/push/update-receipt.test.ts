@@ -67,8 +67,12 @@ describe('mobile OTA device receipt', () => {
   });
 
   it('reads current and fallback EAS group metadata without inventing a group', () => {
-    expect(runningUpdateGroup({ metadata: { updateGroup: 'group-current' } })).toBe('group-current');
-    expect(runningUpdateGroup({ extra: { eas: { updateGroup: 'group-fallback' } } })).toBe('group-fallback');
+    expect(runningUpdateGroup({ metadata: { updateGroup: 'group-current' } })).toBe(
+      'group-current',
+    );
+    expect(runningUpdateGroup({ extra: { eas: { updateGroup: 'group-fallback' } } })).toBe(
+      'group-fallback',
+    );
     expect(runningUpdateGroup({})).toBeNull();
   });
 

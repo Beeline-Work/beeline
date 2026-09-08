@@ -127,8 +127,11 @@ describe('release push catch-up at device registration', () => {
     await register();
     expect(await loop.runOnce()).toBe(1);
     expect(
-      (await database.query('SELECT 1 FROM push_release_catchups WHERE device_token=$1', ['device']))
-        .rowCount,
+      (
+        await database.query('SELECT 1 FROM push_release_catchups WHERE device_token=$1', [
+          'device',
+        ])
+      ).rowCount,
     ).toBe(0);
 
     const read = await release('v2', 2);
@@ -173,8 +176,11 @@ describe('release push catch-up at device registration', () => {
     await release('v2', 2);
     expect(await loop.runOnce()).toBe(0); // v1 is no longer the latest.
     expect(
-      (await database.query('SELECT 1 FROM push_release_catchups WHERE device_token=$1', ['device']))
-        .rowCount,
+      (
+        await database.query('SELECT 1 FROM push_release_catchups WHERE device_token=$1', [
+          'device',
+        ])
+      ).rowCount,
     ).toBe(0);
     await register('device', OTHER);
     expect(await loop.runOnce()).toBe(1);
@@ -189,14 +195,20 @@ describe('release push catch-up at device registration', () => {
     expect(await loop.runOnce()).toBe(0);
     expect(await loop.runOnce()).toBe(0);
     expect(
-      (await database.query('SELECT 1 FROM push_release_catchups WHERE device_token=$1', ['device']))
-        .rowCount,
+      (
+        await database.query('SELECT 1 FROM push_release_catchups WHERE device_token=$1', [
+          'device',
+        ])
+      ).rowCount,
     ).toBe(1);
     await register();
     expect(await loop.runOnce()).toBe(1);
     expect(
-      (await database.query('SELECT 1 FROM push_release_catchups WHERE device_token=$1', ['device']))
-        .rowCount,
+      (
+        await database.query('SELECT 1 FROM push_release_catchups WHERE device_token=$1', [
+          'device',
+        ])
+      ).rowCount,
     ).toBe(0);
     await register();
     expect(await loop.runOnce()).toBe(0);

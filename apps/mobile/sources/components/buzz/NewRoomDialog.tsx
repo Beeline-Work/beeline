@@ -134,9 +134,13 @@ export function NewRoomDialog({
       title={`New ${ROOM_LABEL}`}
       visible={visible}
     >
-      {showRepoPicker ? (
-        <View style={styles.createRoomContent}>
-          {roomControls}
+      <ScrollView
+        contentContainerStyle={styles.formScrollContent}
+        style={styles.formScroll}
+        testID="create-room-content"
+      >
+        {roomControls}
+        {showRepoPicker && (
           <View style={styles.picker} testID="create-room-picker">
             <TouchableOpacity
               accessibilityRole="button"
@@ -156,16 +160,8 @@ export function NewRoomDialog({
               testIDPrefix="create-room-repo-picker"
             />
           </View>
-        </View>
-      ) : (
-        <ScrollView
-          contentContainerStyle={styles.formScrollContent}
-          style={styles.formScroll}
-          testID="create-room-form"
-        >
-          {roomControls}
-        </ScrollView>
-      )}
+        )}
+      </ScrollView>
     </HullDialog>
   );
 }
@@ -173,13 +169,6 @@ export function NewRoomDialog({
 const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
-    createRoomContent: {
-      flex: 1,
-      flexShrink: 1,
-      minHeight: 0,
-      overflow: 'hidden',
-      paddingTop: NEW_ROOM_FORM_LAYOUT.contentPaddingTop,
-    },
     formScroll: { flex: 1, flexShrink: 1, minHeight: 0 },
     formScrollContent: {
       minHeight: NEW_ROOM_FORM_CONTENT_HEIGHT,
@@ -226,6 +215,6 @@ const styles = StyleSheet.create((theme) => {
       lineHeight: NEW_ROOM_FORM_LAYOUT.hintLineHeight,
       color: hull.textMuted,
     },
-    picker: { flex: 1, flexShrink: 1, minHeight: 0, marginTop: 8, overflow: 'hidden' },
+    picker: { marginTop: 8 },
   };
 });

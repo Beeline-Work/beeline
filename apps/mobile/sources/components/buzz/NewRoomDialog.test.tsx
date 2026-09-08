@@ -114,6 +114,9 @@ describe('New Room form', () => {
 
       act(() => host('create-room-repo-row').props.onPress());
       expect(host('create-room-picker')).toBeDefined();
+      expect(host('create-room-content').type).toBe('ScrollView');
+      expect(host('create-room-content').parent).not.toBe(host('create-room-submit').parent);
+      expect(renderer.root.findByType('RepoPicker').props.fillAvailableHeight).toBe(true);
       act(() => host('create-room-no-repository').props.onPress());
       act(() => host('create-room-name').props.onChangeText(`${viewport} room`));
       act(() => host('create-room-submit').props.onPress());
@@ -166,10 +169,14 @@ describe('New Room form', () => {
     act(() => renderer.unmount());
   });
 
-  it('keeps the repository picker in the shrinking dialog body on a short viewport', () => {
+  it('keeps the bounded repository picker in the scrollable dialog body on a short viewport', () => {
+    windowHeight = 320;
     const { renderer, host } = mount();
     act(() => host('create-room-repo-row').props.onPress());
     expect(renderer.root.findByType('RepoPicker').props.fillAvailableHeight).toBe(true);
+    expect(host('create-room-content').type).toBe('ScrollView');
+    expect(host('create-room-content').parent).not.toBe(host('create-room-submit').parent);
     act(() => renderer.unmount());
+    windowHeight = 844;
   });
 });

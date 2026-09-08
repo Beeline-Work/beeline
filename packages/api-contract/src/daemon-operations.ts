@@ -344,6 +344,7 @@ export type PostTurnReceiptInput = AgentRoomInput & {
 };
 export type PostAgentActivityInput = AgentRoomInput & {
   readonly requestId: string;
+  readonly cornerActivityKey?: string;
   readonly activity: readonly DaemonActivityItem[];
 };
 export type PostPermissionRequestInput = RoomPrincipalInput & {
@@ -459,6 +460,8 @@ export type ConsumeAgentGrantInput = { readonly grantId: string };
 export type DaemonActivityItem = {
   readonly kind: 'thinking' | 'tool' | 'output' | 'summary';
   readonly title: string;
+  /** Durable corner narration when `kind='output'`; never private thought text. */
+  readonly text?: string;
   readonly operation?: string;
   readonly status?: string;
   /** Bounded, redacted tool argument summaries for the corner ledger. */

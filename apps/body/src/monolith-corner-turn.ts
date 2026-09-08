@@ -1,11 +1,18 @@
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { parseGrantDecisionLine } from '@beeline/api-contract/agent-grants';
 import type { DaemonAttachment, DaemonOperationMap } from '@beeline/api-contract/daemon';
-import { AcpClient, type McpServerWire, type PromptResult, type ToolCallEntry } from './acp.js';
+import {
+  AcpClient,
+  isPureRetryNarration,
+  type McpServerWire,
+  type PromptResult,
+  type ToolCallEntry,
+} from './acp.js';
 import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
 import {
@@ -165,10 +172,11 @@ function toolArguments(call: ToolCallEntry): { command?: string; input?: string 
 }
 
 function toolCallKey(call: ToolCallEntry, index: number): string {
-  return call.id ?? `tool-${index}`;
+  return call.id ? `id-${createHash('sha256').update(call.id).digest('hex')}` : `tool-${index}`;
 }
 
 function toolCallSettled(call: ToolCallEntry): boolean {
+  if (call.resultReceived) return true;
   return /^(?:completed|complete|failed|error|succeeded|success|passed|done)$/i.test(
     call.status ?? '',
   );
@@ -778,9 +786,9 @@ export class MonolithCornerTurnLoop {
                 ]
                   .filter(Boolean)
                   .join('\n\n');
-              // Rooms and corners stream through ONE presentation (C100): the
-              // provisional draft lane, the request-id handoff, and the single
-              // durable reply that dissolves it all live in `turn-stream.ts`.
+              // Rooms and corners share the provisional draft lane, request-id
+              // handoff, and single durable final reply in `turn-stream.ts`.
+              // The corner-only work ledger below is independent of that lane.
               const stream = new AgentTurnStream({
                 api,
                 agentId: this.agent.publicKey,
@@ -788,27 +796,73 @@ export class MonolithCornerTurnLoop {
                 requestId,
                 label: `corner ${cornerId}`,
               });
+              let currentNarrationRun = '';
+              let completedNarrationRuns: string[] = [];
+              let narrationRunBoundary = 0;
+              const takeInterimNarration = (): string => {
+                const narration = spoken(
+                  [...completedNarrationRuns, currentNarrationRun]
+                    .map((run) => spoken(durableReplyText(run)))
+                    .filter((run) => run && !isPureRetryNarration(run))
+                    .join('\n\n'),
+                );
+                narrationRunBoundary += completedNarrationRuns.length;
+                completedNarrationRuns = [];
+                currentNarrationRun = '';
+                return narration;
+              };
               const publishedToolCalls = new Set<string>();
+              const observedToolCalls = new Set<string>();
+              const pendingToolNarrations = new Map<string, string>();
+              const pendingToolActivities = new Map<string, DaemonActivity[]>();
+              let lastNarratedToolCall: string | undefined;
+              let activityAttempt = 0;
               const publishToolCalls = (calls: readonly ToolCallEntry[], settledOnly: boolean) => {
                 calls.forEach((call, index) => {
-                  const key = toolCallKey(call, index);
-                  if (publishedToolCalls.has(key) || (settledOnly && !toolCallSettled(call)))
-                    return;
+                  const key = `${activityAttempt}:${toolCallKey(call, index)}`;
+                  if (settledOnly && !observedToolCalls.has(key)) {
+                    observedToolCalls.add(key);
+                    const narration = takeInterimNarration();
+                    pendingToolNarrations.set(key, narration);
+                    if (narration) lastNarratedToolCall = key;
+                  }
+                  if (settledOnly || publishedToolCalls.has(key) || !toolCallSettled(call)) return;
                   publishedToolCalls.add(key);
+                  const narration = pendingToolNarrations.get(key) ?? '';
                   this.activityTail = this.activityTail
                     .catch(() => undefined)
                     .then(async () => {
-                      const activity = await cornerToolActivity(
-                        call,
-                        this.options.worktreePath,
-                        requestedBy,
-                      );
+                      let activity = pendingToolActivities.get(key);
+                      if (!activity) {
+                        const toolActivity = await cornerToolActivity(
+                          call,
+                          this.options.worktreePath,
+                          requestedBy,
+                        );
+                        activity = [
+                          ...(narration
+                            ? [
+                                {
+                                  kind: 'output' as const,
+                                  title: 'Update',
+                                  text: narration,
+                                  ...(requestedBy ? { requestedBy } : {}),
+                                },
+                              ]
+                            : []),
+                          toolActivity,
+                        ];
+                        pendingToolActivities.set(key, activity);
+                      }
                       await api.execute('postAgentActivity', {
                         agentId: this.agent.publicKey,
                         roomId: cornerId,
                         requestId,
-                        activity: [activity],
+                        cornerActivityKey: key,
+                        activity,
                       });
+                      pendingToolNarrations.delete(key);
+                      pendingToolActivities.delete(key);
                     })
                     .then(() => undefined)
                     .catch((error) => {
@@ -817,11 +871,35 @@ export class MonolithCornerTurnLoop {
                     });
                 });
               };
+              const flushToolCalls = async (
+                calls: readonly ToolCallEntry[],
+                finalReply: string,
+              ): Promise<void> => {
+                await this.activityTail;
+                if (
+                  lastNarratedToolCall &&
+                  pendingToolNarrations.get(lastNarratedToolCall) === finalReply
+                )
+                  pendingToolNarrations.delete(lastNarratedToolCall);
+                publishToolCalls(calls, false);
+                await this.activityTail;
+                publishToolCalls(calls, false);
+                await this.activityTail;
+              };
               // One prompt run. It is a closure because an empty completion
               // re-pins the session to another provider and runs it again
               // (C92) — against the NEW client and session id.
               const runPrompt = async (): Promise<PromptResult> => {
+                activityAttempt += 1;
+                publishedToolCalls.clear();
+                observedToolCalls.clear();
+                pendingToolNarrations.clear();
+                pendingToolActivities.clear();
+                lastNarratedToolCall = undefined;
                 stream.beginRun();
+                completedNarrationRuns = [];
+                narrationRunBoundary = 0;
+                currentNarrationRun = '';
                 trace.promptSent();
                 return this.client!.sessionPrompt(
                   this.sessionId!,
@@ -830,8 +908,21 @@ export class MonolithCornerTurnLoop {
                     attachmentImageBlocks(delivered, this.acceptsImages()),
                   ),
                   120_000,
-                  (delta, full) => {
+                  (delta, full, currentRun, runs) => {
                     trace.firstModelOutput();
+                    if (runs) {
+                      completedNarrationRuns = runs.slice(narrationRunBoundary);
+                      currentNarrationRun = '';
+                    } else if (currentRun === undefined) currentNarrationRun += delta;
+                    else {
+                      if (
+                        currentNarrationRun &&
+                        currentNarrationRun !== currentRun &&
+                        !currentRun.startsWith(currentNarrationRun)
+                      )
+                        completedNarrationRuns.push(currentNarrationRun);
+                      currentNarrationRun = currentRun;
+                    }
                     stream.onChunk(delta, full);
                   },
                   undefined,
@@ -847,6 +938,7 @@ export class MonolithCornerTurnLoop {
               // A checks turn is told to say nothing when nothing changed; its
               // silence is not a routing failure and must not buy a retry.
               if (explained && !restates && shouldRetryEmptyTurn(explained)) {
+                await flushToolCalls(result.toolCalls, '');
                 const silent = this.servingProviders();
                 const next = await this.repinNextProvider(trace, explained.reason);
                 if (next) {
@@ -859,20 +951,19 @@ export class MonolithCornerTurnLoop {
                   explained = await this.explainEmpty(result);
                 }
               }
-              await this.activityTail;
-              publishToolCalls(result.toolCalls, false);
+              let reply = durableReplyText(result.agentText);
+              if (!reply && explained?.recoveredText)
+                reply = durableReplyText(explained.recoveredText);
+              await flushToolCalls(result.toolCalls, reply);
               // A refusal the operator cannot read is a refusal that happens twice.
               for (const call of result.toolCalls) {
                 const failure = toolCallFailureLine(call);
                 if (failure) console.warn(`[thin-core] corner ${cornerId} ${failure}`);
               }
-              await this.activityTail;
               // Close the draft lane before the answer is published: the finished
               // reply must never queue behind a draft nobody will read.
               stream.close();
-              let reply = durableReplyText(result.agentText);
               if (!reply && explained) {
-                reply = explained.recoveredText ? durableReplyText(explained.recoveredText) : '';
                 // A checks turn is told to say nothing when nothing changed; only a
                 // provider refusal makes that silence a failure.
                 if (!reply && !(restates && !isAccountOrProviderRefusal(explained.record))) {

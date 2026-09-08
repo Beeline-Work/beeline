@@ -45,7 +45,31 @@ describe('ACP streaming lane classifier', () => {
         title: 'Run tests',
         rawInput: { command: 'npm test' },
         status: 'completed',
+        resultReceived: true,
         content: '12 passed',
+      },
+    ]);
+  });
+
+  it('preserves a status-less terminal result without changing its in-progress activity status', () => {
+    expect(
+      toolCallEntries([
+        update('tool_call', {
+          toolCallId: 'tool-1',
+          kind: 'read',
+          title: 'Read package.json',
+          status: 'in_progress',
+        }),
+        update('tool_result', { toolCallId: 'tool-1', content: 'package contents' }),
+      ]),
+    ).toEqual([
+      {
+        id: 'tool-1',
+        kind: 'read',
+        title: 'Read package.json',
+        status: 'in_progress',
+        resultReceived: true,
+        content: 'package contents',
       },
     ]);
   });
@@ -563,7 +587,10 @@ lines.on('line', (line) => {
 /** Narrates, gets interrupted by a tool call, then resumes narrating with no
  *  separating whitespace of its own — matching how a real harness's deltas
  *  behave when the model treats a resumed reply as a fresh thought. */
-async function fakeInterruptedNarrationAgent(): Promise<string> {
+async function fakeInterruptedNarrationAgent(
+  beforeTool = '...existing test and typecheck patterns',
+  afterTool = 'Now I have the full picture.',
+): Promise<string> {
   const directory = await mkdtemp(resolve(tmpdir(), 'buzzy-acp-interrupted-'));
   temporaryDirectories.push(directory);
   const binary = resolve(directory, 'fake-interrupted-narration-agent.mjs');
@@ -594,9 +621,9 @@ lines.on('line', (line) => {
   } else if (message.method === 'session/new') {
     send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'interrupted-session' } });
   } else if (message.method === 'session/prompt') {
-    chunk('...existing test and typecheck patterns');
+    chunk(${JSON.stringify(beforeTool)});
     toolCall();
-    chunk('Now I have the full picture.');
+    chunk(${JSON.stringify(afterTool)});
     send({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn' } });
   } else if (message.method === 'shutdown') {
     process.exit(0);
@@ -1235,18 +1262,23 @@ describe('AcpClient live steering', () => {
     try {
       const { sessionId } = await client.sessionNew({ cwd: tmpdir() });
       const drafts: string[] = [];
+      const currentRuns: string[] = [];
       const snapshots: Array<{ messageText: string; thoughtText?: string }> = [];
       const result = await client.sessionPrompt(
         sessionId,
         'go',
         5_000,
-        (_delta, fullText) => drafts.push(fullText),
+        (_delta, fullText, currentRun) => {
+          drafts.push(fullText);
+          if (currentRun) currentRuns.push(currentRun);
+        },
         (snapshot) => {
           if (snapshot) snapshots.push(snapshot);
         },
       );
 
       expect(drafts.at(-1)).toBe('No beeline skill in pi docs.');
+      expect(currentRuns.at(-1)).toBe('No beeline skill in pi docs.');
       expect(snapshots.at(-1)).toEqual({ messageText: 'No beeline skill in pi docs.' });
       expect(result.agentText).toBe('No beeline skill in pi docs.');
     } finally {
@@ -1287,6 +1319,31 @@ describe('AcpClient live steering', () => {
         messageText: 'Now I have the full picture.',
         thoughtText: '...existing test and typecheck patterns',
       });
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it('ends a whitespace-terminated run at an ACP tool call', async () => {
+    const client = new AcpClient({
+      agentBinary: await fakeInterruptedNarrationAgent('Inspecting ', 'done.'),
+      agentEnv: {},
+    });
+    await client.start();
+    try {
+      const { sessionId } = await client.sessionNew({ cwd: tmpdir() });
+      const runs: string[][] = [];
+      const result = await client.sessionPrompt(
+        sessionId,
+        'go',
+        5_000,
+        (_delta, _fullText, _currentRun, currentRuns) => {
+          if (currentRuns) runs.push([...currentRuns]);
+        },
+      );
+
+      expect(runs.at(-1)).toEqual(['Inspecting ', 'done.']);
+      expect(result.agentText).toBe('done.');
     } finally {
       await client.stop();
     }
@@ -1479,7 +1536,7 @@ describe('meaningfulHarnessStderr', () => {
   it('names an inline image payload in the timeout, and nothing extra for a text turn', () => {
     expect(promptPayloadNote('just text')).toBe('');
     expect(promptPayloadNote([{ type: 'text', text: 'hi' }])).toBe('');
-    const oneMegabyte = 'A'.repeat(4 * 1024 * 1024 / 3 * 3);
+    const oneMegabyte = 'A'.repeat(((4 * 1024 * 1024) / 3) * 3);
     expect(
       promptPayloadNote([
         { type: 'text', text: 'hi' },

@@ -305,7 +305,7 @@ describe('corner close-request polling cadence', () => {
     expect(onCloseRequested).toHaveBeenCalledOnce();
   });
 
-  it('lands the closing message whole after a tool call, and streams only drafts (C100)', async () => {
+  it('keeps anonymous tool narration distinct after a provider re-pin', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-corner-stream-'));
     roots.push(root);
     await execFileAsync('git', ['init', root]);
@@ -338,6 +338,8 @@ describe('corner close-request polling cadence', () => {
     };
     const abort = new AbortController();
     let inboxReads = 0;
+    let activityWrites = 0;
+    const activityAttempts: Record<string, unknown>[] = [];
     const writes: Array<{ name: string; input: Record<string, unknown> }> = [];
     const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
       if (name === 'getAgentConfiguration') return { commands: [] };
@@ -367,8 +369,17 @@ describe('corner close-request polling cadence', () => {
         }
         return { items: [], cursor: 'latest', closeRequested: true };
       }
-      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomConversation') {
+        return {
+          items: [{ type: 'message', authorId: runtime.agent.publicKey, body: 'Already working.' }],
+          cursor: 'latest',
+        };
+      }
       if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
+      if (name === 'postAgentActivity') {
+        activityAttempts.push(input);
+        if (++activityWrites === 1) throw new Error('temporary activity failure');
+      }
       writes.push({ name, input });
       return { id: 'write-id', createdAt: 1 };
     });
@@ -385,28 +396,89 @@ describe('corner close-request polling cadence', () => {
     vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: 'corner-session', raw: {} });
     let promptCalls = 0;
     vi.spyOn(acp, 'sessionPrompt').mockImplementation(
-      async (_id, _prompt, _timeout, draft, _activity, _toolActivity) => {
+      async (_id, _prompt, _timeout, draft, _activity, toolActivity) => {
         promptCalls += 1;
-        if (promptCalls > 1) {
-          return { stopReason: 'end_turn', updates: [], agentText: 'All done.', toolCalls: [] };
+        if (promptCalls === 1) {
+          draft?.('Inspecting', 'Inspecting');
+          toolActivity?.([
+            {
+              kind: 'read',
+              title: 'Read first provider',
+              rawInput: { path: 'first.json' },
+              status: 'in_progress',
+            },
+          ]);
+          draft?.(' while waiting.', 'Inspecting while waiting.');
+          toolActivity?.([
+            {
+              kind: 'read',
+              title: 'Read first provider',
+              rawInput: { path: 'first.json' },
+              status: 'in_progress',
+              resultReceived: true,
+              content: 'first provider contents',
+            },
+          ]);
+          return {
+            stopReason: 'end_turn',
+            updates: [],
+            agentText: '',
+            toolCalls: [
+              {
+                kind: 'read',
+                title: 'Read first provider',
+                rawInput: { path: 'first.json' },
+                status: 'in_progress',
+                resultReceived: true,
+                content: 'first provider contents',
+              },
+            ],
+          };
         }
         // The reported shape: prose, a tool call, then the closing prose. The
         // ACP delta hook is handed EVERY assistant run joined, while the result
         // carries only the LAST run — two different strings.
         draft?.('I inspected', 'I inspected');
         draft?.(' the code.', 'I inspected the code.');
+        toolActivity?.([
+          {
+            kind: 'read',
+            title: 'Read package.json',
+            rawInput: { path: 'package.json' },
+            status: 'in_progress',
+          },
+        ]);
+        toolActivity?.([
+          {
+            kind: 'read',
+            title: 'Read package.json',
+            rawInput: { path: 'package.json' },
+            status: 'in_progress',
+            resultReceived: true,
+            content: 'package contents',
+          },
+        ]);
         draft?.('The fix', 'I inspected the code.\n\nThe fix');
         draft?.(' is ready.', 'I inspected the code.\n\nThe fix is ready.');
         return {
           stopReason: 'end_turn',
           updates: [],
           agentText: 'The fix is ready.',
-          toolCalls: [],
+          toolCalls: [
+            {
+              kind: 'read',
+              title: 'Read package.json',
+              rawInput: { path: 'package.json' },
+              status: 'in_progress',
+              resultReceived: true,
+              content: 'package contents',
+            },
+          ],
         };
       },
     );
     const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
-    await new MonolithCornerTurnLoop({
+    const loop = new MonolithCornerTurnLoop({
       cornerId: 'corner-id',
       parentRoomId: 'room-id',
       workspaceId: 'workspace',
@@ -428,39 +500,91 @@ describe('corner close-request polling cadence', () => {
       onFailure: vi.fn(),
       onCloseRequested: vi.fn(async () => undefined),
       createAcpClient: () => acp,
-    }).run();
+    });
+    (loop as unknown as { pinnedProviders: string[] }).pinnedProviders = ['first', 'second'];
+    await loop.run();
     await scheduler.dispose();
 
+    expect(promptCalls).toBe(2);
     const posts = writes.filter((write) => write.name === 'postRoomMessage');
+    expect(activityWrites).toBe(3);
+    expect(activityAttempts).toHaveLength(3);
+    expect(activityAttempts[1]).toEqual(activityAttempts[0]);
+    expect(activityAttempts[0]?.cornerActivityKey).toBe('1:tool-0');
+    expect(activityAttempts[2]?.cornerActivityKey).toBe('2:tool-0');
     // The closing message lands WHOLE and under the turn's request id, so it
-    // settles the receipt. Nothing is cut by a stream offset, and no durable
-    // row is written without a request id (the retired narration segments).
+    // settles the receipt. Nothing is cut by a stream offset.
     expect(posts[0]).toEqual(
       expect.objectContaining({
         input: expect.objectContaining({
           roomId: 'corner-id',
-          requestId: 'cornerid',
+          requestId: 'human-msg',
           text: 'The fix is ready.',
           presentation: 'message',
         }),
       }),
     );
     for (const post of posts) expect(post.input.requestId).toEqual(expect.any(String));
+    expect(posts.filter((post) => post.input.text === 'I inspected the code.')).toEqual([]);
+    expect(writes.filter((write) => write.name === 'postAgentActivity')).toEqual([
+      expect.objectContaining({
+        input: expect.objectContaining({
+          roomId: 'corner-id',
+          requestId: 'human-msg',
+          cornerActivityKey: '1:tool-0',
+          activity: [
+            {
+              kind: 'output',
+              title: 'Update',
+              text: 'Inspecting',
+              requestedBy: { pubkey: '22'.repeat(32) },
+            },
+            expect.objectContaining({
+              kind: 'tool',
+              operation: 'read',
+              title: 'Read first provider',
+            }),
+          ],
+        }),
+      }),
+      expect.objectContaining({
+        input: expect.objectContaining({
+          roomId: 'corner-id',
+          requestId: 'human-msg',
+          cornerActivityKey: '2:tool-0',
+          activity: [
+            {
+              kind: 'output',
+              title: 'Update',
+              text: 'I inspected the code.',
+              requestedBy: { pubkey: '22'.repeat(32) },
+            },
+            expect.objectContaining({
+              kind: 'tool',
+              operation: 'read',
+              title: 'Read package.json',
+            }),
+          ],
+        }),
+      }),
+    ]);
     // The pre-tool prose was shown provisionally on the draft lane, keyed by
     // the same request id so the durable reply settles it (#903). The lane
     // carries one write at a time and only the newest waiting snapshot, so a
     // burst of four deltas the wire could not keep up with reaches the reader
     // as its first frame and its newest one — forward, never backwards.
-    expect(
-      writes.filter((write) => write.name === 'postAgentDraft').map((write) => write.input.text),
-    ).toEqual(['I inspected', 'I inspected the code.\n\nThe fix is ready.']);
+    const draftTexts = writes
+      .filter((write) => write.name === 'postAgentDraft')
+      .map((write) => write.input.text);
+    expect(draftTexts).toContain('Inspecting');
+    expect(draftTexts.at(-1)).toBe('I inspected the code.\n\nThe fix is ready.');
     for (const draft of writes.filter((write) => write.name === 'postAgentDraft')) {
-      expect(draft.input.turnId).toBe('cornerid');
+      expect(draft.input.turnId).toBe('human-msg');
     }
     expect(writes).toContainEqual(
       expect.objectContaining({
         name: 'retractAgentLiveOutput',
-        input: expect.objectContaining({ turnId: 'cornerid', kind: 'draft' }),
+        input: expect.objectContaining({ turnId: 'human-msg', kind: 'draft' }),
       }),
     );
   });
@@ -522,8 +646,10 @@ describe('corner close-request polling cadence', () => {
     const abort = new AbortController();
     const onPoll = vi.fn();
     return {
+      acp,
       abort,
       onPoll,
+      root,
       loop: new MonolithCornerTurnLoop({
         cornerId: 'corner-id',
         parentRoomId: 'room-id',
@@ -550,6 +676,582 @@ describe('corner close-request polling cadence', () => {
       scheduler,
     };
   }
+
+  it('keeps a tool-only narration in the final reply once', async () => {
+    let closeReads = 0;
+    const writes: Array<{ name: string; input: Record<string, unknown> }> = [];
+    const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
+      if (name === 'getAgentConfiguration') return { commands: [] };
+      if (name === 'getWorkspaceRoster') {
+        return {
+          members: [{ identityId: '11'.repeat(32), kind: 'agent', name: 'Bee', role: 'member' }],
+        };
+      }
+      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getCornerCloseRequests') {
+        closeReads += 1;
+        if (closeReads === 1) {
+          return {
+            items: [
+              {
+                id: 'human-msg',
+                authorId: '22'.repeat(32),
+                createdAt: 1,
+                type: 'message',
+                body: 'Please continue',
+                mentionIds: [],
+                attachments: [],
+              },
+            ],
+            cursor: 'human-msg',
+          };
+        }
+        return { items: [], cursor: 'latest', closeRequested: true };
+      }
+      if (name === 'getRoomConversation') {
+        return {
+          items: [
+            {
+              type: 'message',
+              authorId: stored('11'.repeat(32), 'Bee').publicKey,
+              body: 'Already working.',
+            },
+          ],
+          cursor: 'latest',
+        };
+      }
+      if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
+      writes.push({ name, input });
+      return { id: 'write-id', createdAt: 1 };
+    });
+    const { acp, loop, scheduler } = await cornerHarness(execute, 60_000);
+    vi.spyOn(acp, 'sessionPrompt').mockImplementation(
+      async (_id, _prompt, _timeout, draft, _activity, toolActivity) => {
+        draft?.('Inspecting', 'Inspecting');
+        toolActivity?.([
+          {
+            kind: 'read',
+            title: 'Read package.json',
+            rawInput: { path: 'package.json' },
+            status: 'in_progress',
+          },
+        ]);
+        const tool = {
+          kind: 'read' as const,
+          title: 'Read package.json',
+          rawInput: { path: 'package.json' },
+          status: 'completed' as const,
+        };
+        toolActivity?.([tool]);
+        return { stopReason: 'end_turn', updates: [], agentText: 'Inspecting', toolCalls: [tool] };
+      },
+    );
+    await loop.run();
+    await scheduler.dispose();
+
+    const durableTexts = [
+      ...writes
+        .filter((write) => write.name === 'postAgentActivity')
+        .flatMap((write) =>
+          (write.input.activity as Array<{ kind: string; text?: string }>)
+            .filter((activity) => activity.kind === 'output')
+            .map((activity) => activity.text),
+        ),
+      ...writes
+        .filter((write) => write.name === 'postRoomMessage')
+        .map((write) => write.input.text),
+    ];
+    expect(durableTexts).toEqual(['Inspecting']);
+    expect(writes.filter((write) => write.name === 'postAgentActivity')).toEqual([
+      expect.objectContaining({
+        input: expect.objectContaining({
+          activity: [expect.objectContaining({ kind: 'tool', title: 'Read package.json' })],
+        }),
+      }),
+    ]);
+  });
+
+  it('does not publish an unfinished corner tool as successful activity', async () => {
+    let closeReads = 0;
+    const writes: Array<{ name: string; input: Record<string, unknown> }> = [];
+    const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
+      if (name === 'getAgentConfiguration') return { commands: [] };
+      if (name === 'getWorkspaceRoster') {
+        return {
+          members: [{ identityId: '11'.repeat(32), kind: 'agent', name: 'Bee', role: 'member' }],
+        };
+      }
+      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getCornerCloseRequests') {
+        closeReads += 1;
+        if (closeReads === 1) {
+          return {
+            items: [
+              {
+                id: 'human-msg',
+                authorId: '22'.repeat(32),
+                createdAt: 1,
+                type: 'message',
+                body: 'Please continue',
+                mentionIds: [],
+                attachments: [],
+              },
+            ],
+            cursor: 'human-msg',
+          };
+        }
+        return { items: [], cursor: 'latest', closeRequested: true };
+      }
+      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
+      writes.push({ name, input });
+      return { id: 'write-id', createdAt: 1 };
+    });
+    const { acp, loop, scheduler } = await cornerHarness(execute, 60_000);
+    vi.spyOn(acp, 'sessionPrompt').mockImplementation(
+      async (_id, _prompt, _timeout, draft, _activity, toolActivity) => {
+        draft?.('Inspecting', 'Inspecting');
+        const tool = {
+          kind: 'read' as const,
+          title: 'Read package.json',
+          rawInput: { path: 'package.json' },
+          status: 'in_progress' as const,
+        };
+        toolActivity?.([tool]);
+        return { stopReason: 'end_turn', updates: [], agentText: 'Done.', toolCalls: [tool] };
+      },
+    );
+    await loop.run();
+    await scheduler.dispose();
+
+    expect(writes.filter((write) => write.name === 'postAgentActivity')).toEqual([]);
+    expect(writes).toContainEqual(
+      expect.objectContaining({
+        name: 'postRoomMessage',
+        input: expect.objectContaining({ text: 'Done.' }),
+      }),
+    );
+  });
+
+  it('does not persist pure harness retry narration', async () => {
+    let closeReads = 0;
+    const writes: Array<{ name: string; input: Record<string, unknown> }> = [];
+    const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
+      if (name === 'getAgentConfiguration') return { commands: [] };
+      if (name === 'getWorkspaceRoster') {
+        return {
+          members: [{ identityId: '11'.repeat(32), kind: 'agent', name: 'Bee', role: 'member' }],
+        };
+      }
+      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getCornerCloseRequests') {
+        closeReads += 1;
+        if (closeReads === 1) {
+          return {
+            items: [
+              {
+                id: 'human-msg',
+                authorId: '22'.repeat(32),
+                createdAt: 1,
+                type: 'message',
+                body: 'Please continue',
+                mentionIds: [],
+                attachments: [],
+              },
+            ],
+            cursor: 'human-msg',
+          };
+        }
+        return { items: [], cursor: 'latest', closeRequested: true };
+      }
+      if (name === 'getRoomConversation') {
+        return {
+          items: [
+            {
+              type: 'message',
+              authorId: stored('11'.repeat(32), 'Bee').publicKey,
+              body: 'Already working.',
+            },
+          ],
+          cursor: 'latest',
+        };
+      }
+      if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
+      writes.push({ name, input });
+      return { id: 'write-id', createdAt: 1 };
+    });
+    const { acp, loop, scheduler } = await cornerHarness(execute, 60_000);
+    vi.spyOn(acp, 'sessionPrompt').mockImplementation(
+      async (_id, _prompt, _timeout, draft, _activity, toolActivity) => {
+        draft?.('Retrying (attempt 1/3, waiting 2s)...', 'Retrying (attempt 1/3, waiting 2s)...');
+        toolActivity?.([
+          {
+            kind: 'read',
+            title: 'Read package.json',
+            rawInput: { path: 'package.json' },
+            status: 'in_progress',
+          },
+        ]);
+        const tool = {
+          kind: 'read' as const,
+          title: 'Read package.json',
+          rawInput: { path: 'package.json' },
+          status: 'completed' as const,
+        };
+        toolActivity?.([tool]);
+        return { stopReason: 'end_turn', updates: [], agentText: 'Done.', toolCalls: [tool] };
+      },
+    );
+    await loop.run();
+    await scheduler.dispose();
+
+    expect(writes.filter((write) => write.name === 'postAgentActivity')).toEqual([
+      expect.objectContaining({
+        input: expect.objectContaining({
+          activity: [expect.objectContaining({ kind: 'tool', title: 'Read package.json' })],
+        }),
+      }),
+    ]);
+  });
+
+  it('replays a committed corner activity with its original git metadata', async () => {
+    let closeReads = 0;
+    let activityWrites = 0;
+    const activityAttempts: Record<string, unknown>[] = [];
+    let root = '';
+    const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
+      if (name === 'getAgentConfiguration') return { commands: [] };
+      if (name === 'getWorkspaceRoster') {
+        return {
+          members: [{ identityId: '11'.repeat(32), kind: 'agent', name: 'Bee', role: 'member' }],
+        };
+      }
+      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getCornerCloseRequests') {
+        closeReads += 1;
+        if (closeReads === 1) {
+          return {
+            items: [
+              {
+                id: 'human-msg',
+                authorId: '22'.repeat(32),
+                createdAt: 1,
+                type: 'message',
+                body: 'Please continue',
+                mentionIds: [],
+                attachments: [],
+              },
+            ],
+            cursor: 'human-msg',
+          };
+        }
+        return { items: [], cursor: 'latest', closeRequested: true };
+      }
+      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
+      if (name === 'postAgentActivity') {
+        activityAttempts.push(input);
+        if (++activityWrites === 1) {
+          await writeFile(join(root, 'second.txt'), 'second\n');
+          await execFileAsync('git', ['-C', root, 'add', 'second.txt']);
+          await execFileAsync('git', ['-C', root, 'commit', '-m', 'Second commit']);
+          throw new Error('activity response lost');
+        }
+      }
+      return { id: 'write-id', createdAt: 1 };
+    });
+    const harness = await cornerHarness(execute, 60_000);
+    root = harness.root;
+    await execFileAsync('git', ['-C', root, 'config', 'user.name', 'Bee']);
+    await execFileAsync('git', ['-C', root, 'config', 'user.email', 'bee@example.test']);
+    await writeFile(join(root, 'first.txt'), 'first\n');
+    await execFileAsync('git', ['-C', root, 'add', 'first.txt']);
+    await execFileAsync('git', ['-C', root, 'commit', '-m', 'First commit']);
+    vi.spyOn(harness.acp, 'sessionPrompt').mockImplementation(
+      async (_id, _prompt, _timeout, draft, _activity, toolActivity) => {
+        draft?.('Inspecting', 'Inspecting');
+        toolActivity?.([
+          {
+            kind: 'execute',
+            title: 'Run git commit',
+            rawInput: { command: 'git commit -m "First commit"' },
+            status: 'in_progress',
+          },
+        ]);
+        const tool = {
+          kind: 'execute' as const,
+          title: 'Run git commit',
+          rawInput: { command: 'git commit -m "First commit"' },
+          status: 'completed' as const,
+        };
+        toolActivity?.([tool]);
+        return { stopReason: 'end_turn', updates: [], agentText: 'Done.', toolCalls: [tool] };
+      },
+    );
+    await harness.loop.run();
+    await harness.scheduler.dispose();
+
+    const retries = activityAttempts.filter((activity) => activity.requestId === 'cornerid');
+    expect(retries.length).toBeGreaterThanOrEqual(2);
+    for (const activity of retries.slice(1)) expect(activity).toEqual(retries[0]);
+    expect(retries[0]).toMatchObject({
+      activity: [
+        expect.objectContaining({ kind: 'output', text: 'Inspecting' }),
+        expect.objectContaining({ title: 'committed 1 files: First commit' }),
+      ],
+    });
+  });
+
+  it('persists a long-ID corner tool within the activity key limit', async () => {
+    let closeReads = 0;
+    const persisted: Record<string, unknown>[] = [];
+    const longToolId = 'tool-'.padEnd(500, 'x');
+    const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
+      if (name === 'getAgentConfiguration') return { commands: [] };
+      if (name === 'getWorkspaceRoster') {
+        return {
+          members: [{ identityId: '11'.repeat(32), kind: 'agent', name: 'Bee', role: 'member' }],
+        };
+      }
+      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getCornerCloseRequests') {
+        closeReads += 1;
+        if (closeReads === 1) {
+          return {
+            items: [
+              {
+                id: 'human-msg',
+                authorId: '22'.repeat(32),
+                createdAt: 1,
+                type: 'message',
+                body: 'Please continue',
+                mentionIds: [],
+                attachments: [],
+              },
+            ],
+            cursor: 'human-msg',
+          };
+        }
+        return { items: [], cursor: 'latest', closeRequested: true };
+      }
+      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
+      if (name === 'postAgentActivity') {
+        if (String(input.cornerActivityKey).length > 200) {
+          throw new Error('corner activity key exceeds 200 characters');
+        }
+        persisted.push(input);
+      }
+      return { id: 'write-id', createdAt: 1 };
+    });
+    const { acp, loop, scheduler } = await cornerHarness(execute, 60_000);
+    vi.spyOn(acp, 'sessionPrompt').mockImplementation(
+      async (_id, _prompt, _timeout, draft, _activity, toolActivity) => {
+        draft?.('Inspecting', 'Inspecting');
+        toolActivity?.([
+          {
+            id: longToolId,
+            kind: 'read',
+            title: 'Read package.json',
+            rawInput: { path: 'package.json' },
+            status: 'in_progress',
+          },
+        ]);
+        const tool = {
+          id: longToolId,
+          kind: 'read' as const,
+          title: 'Read package.json',
+          rawInput: { path: 'package.json' },
+          status: 'completed' as const,
+        };
+        toolActivity?.([tool]);
+        return { stopReason: 'end_turn', updates: [], agentText: 'Done.', toolCalls: [tool] };
+      },
+    );
+    await loop.run();
+    await scheduler.dispose();
+
+    const activities = persisted.filter((activity) => activity.requestId === 'cornerid');
+    expect(activities).toEqual([
+      expect.objectContaining({
+        cornerActivityKey: expect.stringMatching(/^1:id-[a-f0-9]{64}$/),
+        activity: [
+          expect.objectContaining({ kind: 'output', text: 'Inspecting' }),
+          expect.objectContaining({ kind: 'tool', title: 'Read package.json' }),
+        ],
+      }),
+    ]);
+  });
+
+  it('persists ordered assistant runs before a corner tool', async () => {
+    let closeReads = 0;
+    const writes: Array<{ name: string; input: Record<string, unknown> }> = [];
+    const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
+      if (name === 'getAgentConfiguration') return { commands: [] };
+      if (name === 'getWorkspaceRoster') {
+        return {
+          members: [{ identityId: '11'.repeat(32), kind: 'agent', name: 'Bee', role: 'member' }],
+        };
+      }
+      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getCornerCloseRequests') {
+        closeReads += 1;
+        if (closeReads === 1) {
+          return {
+            items: [
+              {
+                id: 'human-msg',
+                authorId: '22'.repeat(32),
+                createdAt: 1,
+                type: 'message',
+                body: 'Please continue',
+                mentionIds: [],
+                attachments: [],
+              },
+            ],
+            cursor: 'human-msg',
+          };
+        }
+        return { items: [], cursor: 'latest', closeRequested: true };
+      }
+      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
+      writes.push({ name, input });
+      return { id: 'write-id', createdAt: 1 };
+    });
+    const { acp, loop, scheduler } = await cornerHarness(execute, 60_000);
+    vi.spyOn(acp, 'sessionPrompt').mockImplementation(
+      async (_id, _prompt, _timeout, draft, _activity, toolActivity) => {
+        draft?.('First', 'First', 'First', ['First']);
+        draft?.('Second', 'First\n\nSecond', 'Second', ['First', 'Second']);
+        toolActivity?.([
+          {
+            kind: 'read',
+            title: 'Read package.json',
+            rawInput: { path: 'package.json' },
+            status: 'in_progress',
+          },
+        ]);
+        const tool = {
+          kind: 'read' as const,
+          title: 'Read package.json',
+          rawInput: { path: 'package.json' },
+          status: 'completed' as const,
+        };
+        toolActivity?.([tool]);
+        return { stopReason: 'end_turn', updates: [], agentText: 'Done.', toolCalls: [tool] };
+      },
+    );
+    await loop.run();
+    await scheduler.dispose();
+
+    expect(writes).toContainEqual(
+      expect.objectContaining({
+        name: 'postAgentActivity',
+        input: expect.objectContaining({
+          activity: [
+            expect.objectContaining({ kind: 'output', text: 'First\n\nSecond' }),
+            expect.objectContaining({ kind: 'tool', title: 'Read package.json' }),
+          ],
+        }),
+      }),
+    );
+    expect(writes).toContainEqual(
+      expect.objectContaining({
+        name: 'postRoomMessage',
+        input: expect.objectContaining({ text: 'Done.' }),
+      }),
+    );
+  });
+
+  it('keeps a whitespace-terminated narration separate from the final corner reply', async () => {
+    let closeReads = 0;
+    const writes: Array<{ name: string; input: Record<string, unknown> }> = [];
+    const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
+      if (name === 'getAgentConfiguration') return { commands: [] };
+      if (name === 'getWorkspaceRoster') {
+        return {
+          members: [{ identityId: '11'.repeat(32), kind: 'agent', name: 'Bee', role: 'member' }],
+        };
+      }
+      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getCornerCloseRequests') {
+        closeReads += 1;
+        if (closeReads === 1) {
+          return {
+            items: [
+              {
+                id: 'human-msg',
+                authorId: '22'.repeat(32),
+                createdAt: 1,
+                type: 'message',
+                body: 'Please continue',
+                mentionIds: [],
+                attachments: [],
+              },
+            ],
+            cursor: 'human-msg',
+          };
+        }
+        return { items: [], cursor: 'latest', closeRequested: true };
+      }
+      if (name === 'getRoomConversation') {
+        return {
+          items: [
+            {
+              type: 'message',
+              authorId: stored('11'.repeat(32), 'Bee').publicKey,
+              body: 'Already working.',
+            },
+          ],
+          cursor: 'latest',
+        };
+      }
+      if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
+      writes.push({ name, input });
+      return { id: 'write-id', createdAt: 1 };
+    });
+    const { acp, loop, scheduler } = await cornerHarness(execute, 60_000);
+    vi.spyOn(acp, 'sessionPrompt').mockImplementation(
+      async (_id, _prompt, _timeout, draft, _activity, toolActivity) => {
+        draft?.('Inspecting ', 'Inspecting ', 'Inspecting ', ['Inspecting ']);
+        toolActivity?.([
+          {
+            kind: 'read',
+            title: 'Read package.json',
+            rawInput: { path: 'package.json' },
+            status: 'in_progress',
+          },
+        ]);
+        draft?.('done.', 'Inspecting \n\ndone.', 'done.', ['Inspecting ', 'done.']);
+        const tool = {
+          kind: 'read' as const,
+          title: 'Read package.json',
+          rawInput: { path: 'package.json' },
+          status: 'completed' as const,
+        };
+        toolActivity?.([tool]);
+        return { stopReason: 'end_turn', updates: [], agentText: 'done.', toolCalls: [tool] };
+      },
+    );
+    await loop.run();
+    await scheduler.dispose();
+
+    const durableTexts = [
+      ...writes
+        .filter((write) => write.name === 'postAgentActivity')
+        .flatMap((write) =>
+          (write.input.activity as Array<{ kind: string; text?: string }>)
+            .filter((activity) => activity.kind === 'output')
+            .map((activity) => activity.text),
+        ),
+      ...writes
+        .filter((write) => write.name === 'postRoomMessage')
+        .map((write) => write.input.text),
+    ];
+    expect(durableTexts).toEqual(['Inspecting', 'done.']);
+    expect(durableTexts).not.toContain('Inspecting done.');
+  });
 
   it('folds a corner wake into the live stream without the retired long-poll', async () => {
     let closeReads = 0;
@@ -1011,6 +1713,11 @@ describe('thin monolith corner turn', () => {
       expect.objectContaining({
         input: expect.objectContaining({
           activity: [
+            {
+              kind: 'output',
+              title: 'Update',
+              text: 'Opening PR',
+            },
             expect.objectContaining({
               kind: 'tool',
               operation: 'read',
@@ -1134,14 +1841,12 @@ describe('corner turn failure receipt', () => {
       'ACP session/prompt timed out after 120000ms of inactivity GH_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz',
     );
     failure.stack = `${failure.message}\n    at AcpClient.request (/opt/beeline/acp.js:984:20)`;
-    vi.spyOn(acp, 'sessionPrompt')
-      .mockRejectedValueOnce(failure)
-      .mockResolvedValue({
-        stopReason: 'end_turn',
-        updates: [],
-        agentText: 'Recovered.',
-        toolCalls: [],
-      });
+    vi.spyOn(acp, 'sessionPrompt').mockRejectedValueOnce(failure).mockResolvedValue({
+      stopReason: 'end_turn',
+      updates: [],
+      agentText: 'Recovered.',
+      toolCalls: [],
+    });
     const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
     const running = new MonolithCornerTurnLoop({
       cornerId: 'corner-id',

@@ -1448,6 +1448,19 @@ describe('monolith integration', () => {
     expect(roomView.messages.map((message) => message.id)).not.toContain('0'.repeat(63) + '1');
   });
 
+  it('rejects durable output activity in a top-level Room', async () => {
+    expect(
+      (
+        await daemonOperation('postAgentActivity', {
+          agentId: AGENT,
+          roomId: ROOM,
+          requestId: 'top-level-output',
+          activity: [{ kind: 'output', title: 'Update', text: 'Inspecting the request.' }],
+        })
+      ).status,
+    ).toBe(400);
+  });
+
   it('keeps settled corner tool rows in the corner read but never in the parent Room', async () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
@@ -1492,15 +1505,22 @@ describe('monolith integration', () => {
           })
         ).status,
       ).toBe(200);
-      // Colloquial narration segments land BETWEEN tool rows as durable
-      // messages with no request id, so they never settle the turn receipt.
+      // Corner narration lands beside the tool rows as durable output
+      // activity under the same turn request id.
       if (tool === 5 || tool === 10) {
         expect(
           (
-            await daemonOperation('postRoomMessage', {
+            await daemonOperation('postAgentActivity', {
+              agentId: AGENT,
               roomId: cornerId,
-              text: `Narration after tool ${tool}: updating only the ledger, then committing.`,
-              presentation: 'message',
+              requestId: 'corner-turn-1',
+              activity: [
+                {
+                  kind: 'output',
+                  title: 'Update',
+                  text: `Narration after tool ${tool}: updating only the ledger, then committing.`,
+                },
+              ],
             })
           ).status,
         ).toBe(200);
@@ -1539,7 +1559,7 @@ describe('monolith integration', () => {
     const corner = (await (await request(`/v1/phone/rooms/${cornerId}`)).json()) as RoomView;
     expect(isRoomView(corner)).toBe(true);
     expect(corner.messages).toHaveLength(ROOM_VIEW_MESSAGE_LIMIT);
-    expect(corner.toolRows).toHaveLength(15);
+    expect(corner.toolRows).toHaveLength(17);
     expect(corner.toolRows).toContainEqual(
       expect.objectContaining({
         presentation: 'activity',
@@ -1562,18 +1582,18 @@ describe('monolith integration', () => {
     expect(corner.messages).toContainEqual(
       expect.objectContaining({ text: 'Corner done.', presentation: 'message' }),
     );
-    // Narration ledger lines survive the turn as ordinary indexed messages
-    // (no request id of their own), interleavable with the collapsed tool
-    // rows by creation time.
-    const narration = corner.messages.filter((message) =>
-      message.text.startsWith('Narration after tool'),
+    // Narration activity survives the settled turn and is returned through
+    // the additive corner activity payload on every reopen.
+    const narration = corner.toolRows!.filter(
+      (message) => message.activity?.[0]?.kind === 'output',
     );
     expect(narration).toHaveLength(2);
     for (const line of narration) {
-      expect(line.presentation).toBe('message');
-      expect(line.requestId).toBeUndefined();
+      expect(line.presentation).toBe('activity');
+      expect(line.requestId).toBe('corner-turn-1');
+      expect(line.activity?.[0]?.text).toMatch(/^Narration after tool/);
     }
-    expect(corner.toolRows).toHaveLength(15);
+    expect(corner.toolRows).toHaveLength(17);
 
     const parent = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as RoomView;
     expect(
@@ -1581,6 +1601,110 @@ describe('monolith integration', () => {
         (message) => message.presentation === 'activity' && !message.durableFact,
       ),
     ).toEqual([]);
+  });
+
+  it('keeps a replayed corner narration activity singular after reopening', async () => {
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'replayed-narration-corner',
+      name: 'Replay ledger',
+      objective: 'Keep one narrated tool row',
+    });
+    expect(created.status).toBe(200);
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    const input = {
+      agentId: AGENT,
+      roomId: cornerId,
+      requestId: 'replayed-narration-turn',
+      cornerActivityKey: 'read-package',
+      activity: [
+        { kind: 'output' as const, title: 'Update', text: 'I inspected the package.' },
+        { kind: 'tool' as const, title: 'Read package.json', operation: 'read', status: 'ok' },
+      ],
+    };
+    const activityId = createHash('sha256')
+      .update(
+        JSON.stringify([
+          'corner-activity',
+          input.roomId,
+          input.agentId,
+          input.requestId,
+          input.cornerActivityKey,
+        ]),
+      )
+      .digest('hex');
+    expect(
+      (
+        await operation('sendRoomMessage', {
+          roomId: cornerId,
+          messageId: activityId,
+          text: 'Claim the activity row.',
+        })
+      ).status,
+    ).toBe(200);
+    expect((await daemonOperation('postAgentActivity', input)).status).toBe(409);
+    const replayInput = { ...input, cornerActivityKey: 'read-package-replay' };
+    expect((await daemonOperation('postAgentActivity', replayInput)).status).toBe(200);
+    expect((await daemonOperation('postAgentActivity', replayInput)).status).toBe(200);
+
+    const reopened = (await (await request(`/v1/phone/rooms/${cornerId}`)).json()) as RoomView;
+    expect(isRoomView(reopened)).toBe(true);
+    const replayed = reopened.toolRows?.filter(
+      (message) => message.requestId === 'replayed-narration-turn',
+    );
+    expect(replayed).toHaveLength(1);
+    expect(replayed?.[0]).toMatchObject({
+      presentation: 'activity',
+      activity: [
+        { kind: 'output', title: 'Update', text: 'I inspected the package.' },
+        { kind: 'tool', title: 'Read package.json', operation: 'read', status: 'ok' },
+      ],
+    });
+  });
+
+  it('returns a tool-only corner reply as one durable prose row after reopening', async () => {
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'tool-only-corner',
+      name: 'Tool-only ledger',
+      objective: 'Keep one final reply',
+    });
+    expect(created.status).toBe(200);
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    expect(
+      (
+        await daemonOperation('postAgentActivity', {
+          agentId: AGENT,
+          roomId: cornerId,
+          requestId: 'tool-only-turn',
+          cornerActivityKey: '1:tool-0',
+          activity: [{ kind: 'tool', title: 'Read package.json', operation: 'read', status: 'ok' }],
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await daemonOperation('postRoomMessage', {
+          agentId: AGENT,
+          roomId: cornerId,
+          requestId: 'tool-only-turn',
+          text: 'Inspecting',
+        })
+      ).status,
+    ).toBe(200);
+
+    const reopened = (await (await request(`/v1/phone/rooms/${cornerId}`)).json()) as RoomView;
+    const durableTexts = [
+      ...reopened.messages
+        .filter((message) => message.presentation === 'message')
+        .map((message) => message.text),
+      ...(reopened.toolRows ?? []).flatMap((message) =>
+        (message.activity ?? []).flatMap((activity) =>
+          activity.kind === 'output' ? [activity.text] : [],
+        ),
+      ),
+    ];
+    expect(durableTexts).toEqual(['Inspecting']);
   });
 
   it('never turns a bare agent name into a mention of the agent that just replied', async () => {

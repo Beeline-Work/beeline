@@ -136,6 +136,7 @@ function activity(value: unknown): boolean {
       item.kind === 'output' ||
       item.kind === 'summary') &&
     typeof item.title === 'string' &&
+    optionalString(item.text) &&
     optionalString(item.operation) &&
     optionalString(item.status) &&
     optionalString(item.command) &&

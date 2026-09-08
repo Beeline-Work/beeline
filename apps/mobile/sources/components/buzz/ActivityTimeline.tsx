@@ -3,13 +3,15 @@ import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { AgentActivityItem } from '@/sync/transport/rig-transport';
 import { buildTurnActivity, type TurnActivityAction } from '@/buzz/activity-timeline';
-import {
-  toolCallRow,
-  TOOL_CALL_OUTPUT_LINES,
-  type ToolCallRow,
-} from '@/buzz/tool-call-row';
+import { toolCallRow, TOOL_CALL_OUTPUT_LINES, type ToolCallRow } from '@/buzz/tool-call-row';
 import { Typography } from '@/constants/Typography';
-import { LedgerBylineView, provisionalProseStyle, type LedgerBylineMark } from './Ledger';
+import {
+  LedgerBylineView,
+  provisionalProseStyle,
+  settledAgentProseStyle,
+  type LedgerBylineMark,
+} from './Ledger';
+import { MonoMarkdown } from './MonoMarkdown';
 import { StreamingProse } from './StreamingProse';
 
 type ActivityTimelineProps = {
@@ -79,7 +81,9 @@ function ToolCallLine({ row }: { row: ToolCallRow }) {
       </View>
       {expanded && hasDetail ? (
         <View style={styles.callDetail} testID={`corner-tool-row-detail-${row.id}`}>
-          {row.reason ? <Text style={[styles.detailLine, styles.detailFailed]}>{row.reason}</Text> : null}
+          {row.reason ? (
+            <Text style={[styles.detailLine, styles.detailFailed]}>{row.reason}</Text>
+          ) : null}
           {row.files.map((file) => (
             <Text key={`${row.id}:file:${file.path}`} style={styles.detailLine}>
               {file.status ? `${file.status} ${file.path}` : file.path}
@@ -166,19 +170,27 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
   // lane stops being live but the words the reader was reading stay on the
   // page, provisional, with the server's failure line beneath them — text a
   // person was mid-way through must never evaporate on its own.
-  if (!rows.length && !messageDraft) return null;
+  if (!turn.narration.length && !rows.length && !messageDraft) return null;
 
   return (
     <View style={styles.timeline} testID={testID}>
       {handle ? (
-        <LedgerBylineView
-          byline={{ name: handle, role: 'agent', stamp: stamp ?? '', mark }}
-        />
+        <LedgerBylineView byline={{ name: handle, role: 'agent', stamp: stamp ?? '', mark }} />
       ) : null}
+      {turn.narration.map((narration, index) => (
+        <MonoMarkdown
+          key={`${index}:${narration}`}
+          markdown={narration}
+          textStyle={settledAgentProseStyle()}
+          testID={`activity-narration-${index}`}
+        />
+      ))}
       {rows.length ? (
         <>
           <Pressable
-            accessibilityHint={expanded ? 'Hides individual tool calls' : 'Shows individual tool calls'}
+            accessibilityHint={
+              expanded ? 'Hides individual tool calls' : 'Shows individual tool calls'
+            }
             accessibilityLabel={activitySummary(rows, active)}
             accessibilityRole="button"
             accessibilityState={{ busy: active, expanded }}
@@ -187,7 +199,9 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
             testID="corner-tool-summary"
           >
             <Text style={styles.summaryLabel}>{activitySummary(rows, active)}</Text>
-            <Text accessibilityElementsHidden style={styles.disclosureGlyph}>{expanded ? '⌃' : '⌄'}</Text>
+            <Text accessibilityElementsHidden style={styles.disclosureGlyph}>
+              {expanded ? '⌃' : '⌄'}
+            </Text>
           </Pressable>
           {expanded ? rows.map((row) => <ToolCallLine key={row.id} row={row} />) : null}
         </>

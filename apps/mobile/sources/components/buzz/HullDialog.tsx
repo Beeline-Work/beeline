@@ -25,6 +25,38 @@ export type HullDialogAction = {
   variant?: 'quiet' | 'primary' | 'destructive';
 };
 
+export const HULL_DIALOG_LAYOUT = {
+  actionBorderTopWidth: StyleSheet.hairlineWidth,
+  actionButtonMinHeight: 44,
+  actionPaddingVertical: 8,
+  bodyLineHeight: 21,
+  bodyMarginTop: 8,
+  copyPaddingBottom: 16,
+  copyPaddingTop: 22,
+  inputMarginTop: 14,
+  inputMinHeight: 44,
+  titleLineHeight: 22,
+} as const;
+
+export function hullDialogActionsMinimumHeight() {
+  return (
+    HULL_DIALOG_LAYOUT.actionButtonMinHeight +
+    HULL_DIALOG_LAYOUT.actionPaddingVertical * 2 +
+    HULL_DIALOG_LAYOUT.actionBorderTopWidth
+  );
+}
+
+export function hullDialogMinimumHeight(contentHeight: number, includesBody: boolean) {
+  return (
+    hullDialogActionsMinimumHeight() +
+    HULL_DIALOG_LAYOUT.copyPaddingTop +
+    HULL_DIALOG_LAYOUT.copyPaddingBottom +
+    HULL_DIALOG_LAYOUT.titleLineHeight +
+    contentHeight +
+    (includesBody ? HULL_DIALOG_LAYOUT.bodyMarginTop + HULL_DIALOG_LAYOUT.bodyLineHeight : 0)
+  );
+}
+
 type HullFloatingSurfaceProps = Omit<React.ComponentProps<typeof HullSurface>, 'strength'>;
 
 /** The single tokenized surface base for every app-owned floating region. */
@@ -401,8 +433,8 @@ const styles = StyleSheet.create((theme) => {
       minHeight: 0,
       overflow: 'hidden',
       paddingHorizontal: 22,
-      paddingTop: 22,
-      paddingBottom: 16,
+      paddingTop: HULL_DIALOG_LAYOUT.copyPaddingTop,
+      paddingBottom: HULL_DIALOG_LAYOUT.copyPaddingBottom,
     },
     dialogContent: { flex: 1, flexShrink: 1, minHeight: 0 },
     dialogTitle: {
@@ -410,31 +442,31 @@ const styles = StyleSheet.create((theme) => {
       fontFamily: hull.proseSemibold,
       color: hull.textPrimary,
       fontSize: 16,
-      lineHeight: 22,
+      lineHeight: HULL_DIALOG_LAYOUT.titleLineHeight,
     },
     dialogBody: {
       ...Typography.default(),
       fontFamily: hull.proseRegular,
-      marginTop: 8,
+      marginTop: HULL_DIALOG_LAYOUT.bodyMarginTop,
       color: hull.textSecondary,
       fontSize: 14,
-      lineHeight: 21,
+      lineHeight: HULL_DIALOG_LAYOUT.bodyLineHeight,
     },
     dialogActions: {
       flexShrink: 0,
-      minHeight: 58,
+      minHeight: hullDialogActionsMinimumHeight(),
       paddingHorizontal: 12,
-      paddingVertical: 8,
+      paddingVertical: HULL_DIALOG_LAYOUT.actionPaddingVertical,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'flex-end',
       gap: 4,
-      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopWidth: HULL_DIALOG_LAYOUT.actionBorderTopWidth,
       borderTopColor: hull.border,
     },
     dialogAction: {
       minWidth: 44,
-      minHeight: 44,
+      minHeight: HULL_DIALOG_LAYOUT.actionButtonMinHeight,
       paddingHorizontal: 14,
       alignItems: 'center',
       justifyContent: 'center',
@@ -456,14 +488,14 @@ const styles = StyleSheet.create((theme) => {
     dialogActionDisabledText: { color: hull.textDisabled },
     inputRule: {
       width: '100%',
-      marginTop: 14,
+      marginTop: HULL_DIALOG_LAYOUT.inputMarginTop,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: hull.borderStrong,
     },
     input: {
       ...Typography.default(),
       fontFamily: hull.proseRegular,
-      minHeight: 44,
+      minHeight: HULL_DIALOG_LAYOUT.inputMinHeight,
       paddingHorizontal: 0,
       paddingVertical: 8,
       color: hull.textPrimary,

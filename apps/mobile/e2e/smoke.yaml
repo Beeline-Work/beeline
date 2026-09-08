@@ -54,6 +54,21 @@ env:
     id: room-deck-compose-fab
 - tapOn:
     id: room-deck-compose-room
+- assertVisible: New Room
+- assertVisible: In Buzzy Maestro Smoke Workspace. Repository optional.
+- assertVisible:
+    id: create-room-name
+- assertVisible: No repository (chat only)
+- assertVisible:
+    id: create-room-repo-row
+- assertVisible:
+    id: create-room-submit
+- tapOn:
+    id: create-room-repo-row
+- assertVisible:
+    id: create-room-no-repository
+- tapOn:
+    id: create-room-no-repository
 - tapOn:
     id: create-room-name
 - inputText: 'SMOKE CREATE ONE'

@@ -3,18 +3,21 @@ import React, { useState } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
+let windowHeight = 844;
+
 vi.mock('react-native', async () => {
   const React = await import('react');
   const host = (name: string) => (props: any) => React.createElement(name, props, props.children);
   return {
     View: host('View'),
     Text: host('Text'),
+    ScrollView: host('ScrollView'),
     TextInput: host('TextInput'),
     TouchableOpacity: host('TouchableOpacity'),
     Pressable: host('Pressable'),
     Modal: host('Modal'),
     Platform: { OS: 'android' },
-    useWindowDimensions: () => ({ width: 390, height: 844 }),
+    useWindowDimensions: () => ({ width: 390, height: windowHeight }),
   };
 });
 vi.mock('react-native-keyboard-controller', () => ({
@@ -79,7 +82,58 @@ function mount() {
   return { renderer, host, submit };
 }
 
+function textContent(node: any): string {
+  return node.children
+    .map((child: any) => (typeof child === 'string' ? child : textContent(child)))
+    .join('');
+}
+
 describe('New Room form', () => {
+  it.each([
+    { viewport: 'short', height: 320 },
+    { viewport: 'normal', height: 844 },
+  ])(
+    'allows chat-only creation after opening the repository picker in the $viewport viewport',
+    ({ viewport, height }) => {
+      windowHeight = height;
+      const { renderer, host, submit } = mount();
+
+      const header = renderer.root
+        .findAllByProps({ accessibilityRole: 'header' })
+        .find((node: any) => node.type === 'Text');
+      expect(textContent(header)).toBe('New Room');
+      expect(
+        renderer.root
+          .findAllByType('Text')
+          .some((node: any) => textContent(node).includes('Repository optional')),
+      ).toBe(true);
+      expect(host('create-room-name')).toBeDefined();
+      expect(
+        host('create-room-repo-row')
+          .findAllByType('Text')
+          .some((node: any) => textContent(node) === 'No repository (chat only)'),
+      ).toBe(true);
+      expect(host('create-room-submit')).toBeDefined();
+
+      act(() => host('create-room-repo-row').props.onPress());
+      expect(host('create-room-picker')).toBeDefined();
+      expect(host('create-room-content').type).toBe('ScrollView');
+      expect(host('create-room-content').parent).not.toBe(host('create-room-submit').parent);
+      expect(renderer.root.findByType('RepoPicker').props.fillAvailableHeight).toBeUndefined();
+      expect(
+        renderer.root
+          .findAllByType('Text')
+          .some((node: any) => textContent(node).includes('Repository optional')),
+      ).toBe(true);
+      act(() => host('create-room-no-repository').props.onPress());
+      act(() => host('create-room-name').props.onChangeText(`${viewport} room`));
+      act(() => host('create-room-submit').props.onPress());
+      expect(submit).toHaveBeenCalledWith(`${viewport} room`, null);
+      act(() => renderer.unmount());
+      windowHeight = 844;
+    },
+  );
+
   it('makes name primary, keeps the footer separate, and explains name gating for chat-only creation', () => {
     const { renderer, host, submit } = mount();
     expect(host('create-room-name').props.accessibilityLabel).toBe('Room name');
@@ -104,6 +158,7 @@ describe('New Room form', () => {
   });
 
   it('shows one chat-only choice while expanded and repo selection does not satisfy the name requirement', () => {
+    windowHeight = 320;
     const { renderer, host, submit } = mount();
     act(() => host('create-room-repo-row').props.onPress());
     const labels = renderer.root.findAll(
@@ -121,12 +176,6 @@ describe('New Room form', () => {
     act(() => host('create-room-submit').props.onPress());
     expect(submit).toHaveBeenLastCalledWith('work', null);
     act(() => renderer.unmount());
-  });
-
-  it('keeps the repository picker in the shrinking dialog body on a short viewport', () => {
-    const { renderer, host } = mount();
-    act(() => host('create-room-repo-row').props.onPress());
-    expect(renderer.root.findByType('RepoPicker').props.fillAvailableHeight).toBe(true);
-    act(() => renderer.unmount());
+    windowHeight = 844;
   });
 });

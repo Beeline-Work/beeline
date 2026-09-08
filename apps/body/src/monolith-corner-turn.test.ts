@@ -649,6 +649,7 @@ describe('corner close-request polling cadence', () => {
       acp,
       abort,
       onPoll,
+      root,
       loop: new MonolithCornerTurnLoop({
         cornerId: 'corner-id',
         parentRoomId: 'room-id',
@@ -911,6 +912,94 @@ describe('corner close-request polling cadence', () => {
         }),
       }),
     ]);
+  });
+
+  it('replays a committed corner activity with its original git metadata', async () => {
+    let closeReads = 0;
+    let activityWrites = 0;
+    const activityAttempts: Record<string, unknown>[] = [];
+    let root = '';
+    const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
+      if (name === 'getAgentConfiguration') return { commands: [] };
+      if (name === 'getWorkspaceRoster') {
+        return {
+          members: [{ identityId: '11'.repeat(32), kind: 'agent', name: 'Bee', role: 'member' }],
+        };
+      }
+      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getCornerCloseRequests') {
+        closeReads += 1;
+        if (closeReads === 1) {
+          return {
+            items: [
+              {
+                id: 'human-msg',
+                authorId: '22'.repeat(32),
+                createdAt: 1,
+                type: 'message',
+                body: 'Please continue',
+                mentionIds: [],
+                attachments: [],
+              },
+            ],
+            cursor: 'human-msg',
+          };
+        }
+        return { items: [], cursor: 'latest', closeRequested: true };
+      }
+      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
+      if (name === 'postAgentActivity') {
+        activityAttempts.push(input);
+        if (++activityWrites === 1) {
+          await writeFile(join(root, 'second.txt'), 'second\n');
+          await execFileAsync('git', ['-C', root, 'add', 'second.txt']);
+          await execFileAsync('git', ['-C', root, 'commit', '-m', 'Second commit']);
+          throw new Error('activity response lost');
+        }
+      }
+      return { id: 'write-id', createdAt: 1 };
+    });
+    const harness = await cornerHarness(execute, 60_000);
+    root = harness.root;
+    await execFileAsync('git', ['-C', root, 'config', 'user.name', 'Bee']);
+    await execFileAsync('git', ['-C', root, 'config', 'user.email', 'bee@example.test']);
+    await writeFile(join(root, 'first.txt'), 'first\n');
+    await execFileAsync('git', ['-C', root, 'add', 'first.txt']);
+    await execFileAsync('git', ['-C', root, 'commit', '-m', 'First commit']);
+    vi.spyOn(harness.acp, 'sessionPrompt').mockImplementation(
+      async (_id, _prompt, _timeout, draft, _activity, toolActivity) => {
+        draft?.('Inspecting', 'Inspecting');
+        toolActivity?.([
+          {
+            kind: 'execute',
+            title: 'Run git commit',
+            rawInput: { command: 'git commit -m "First commit"' },
+            status: 'in_progress',
+          },
+        ]);
+        const tool = {
+          kind: 'execute' as const,
+          title: 'Run git commit',
+          rawInput: { command: 'git commit -m "First commit"' },
+          status: 'completed' as const,
+        };
+        toolActivity?.([tool]);
+        return { stopReason: 'end_turn', updates: [], agentText: 'Done.', toolCalls: [tool] };
+      },
+    );
+    await harness.loop.run();
+    await harness.scheduler.dispose();
+
+    const retries = activityAttempts.filter((activity) => activity.requestId === 'cornerid');
+    expect(retries.length).toBeGreaterThanOrEqual(2);
+    for (const activity of retries.slice(1)) expect(activity).toEqual(retries[0]);
+    expect(retries[0]).toMatchObject({
+      activity: [
+        expect.objectContaining({ kind: 'output', text: 'Inspecting' }),
+        expect.objectContaining({ title: 'committed 1 files: First commit' }),
+      ],
+    });
   });
 
   it('persists ordered assistant runs before a corner tool', async () => {

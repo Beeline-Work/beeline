@@ -813,6 +813,7 @@ export class MonolithCornerTurnLoop {
               const publishedToolCalls = new Set<string>();
               const observedToolCalls = new Set<string>();
               const pendingToolNarrations = new Map<string, string>();
+              const pendingToolActivities = new Map<string, DaemonActivity[]>();
               let lastNarratedToolCall: string | undefined;
               let activityAttempt = 0;
               const publishToolCalls = (calls: readonly ToolCallEntry[], settledOnly: boolean) => {
@@ -830,17 +831,14 @@ export class MonolithCornerTurnLoop {
                   this.activityTail = this.activityTail
                     .catch(() => undefined)
                     .then(async () => {
-                      const activity = await cornerToolActivity(
-                        call,
-                        this.options.worktreePath,
-                        requestedBy,
-                      );
-                      await api.execute('postAgentActivity', {
-                        agentId: this.agent.publicKey,
-                        roomId: cornerId,
-                        requestId,
-                        cornerActivityKey: key,
-                        activity: [
+                      let activity = pendingToolActivities.get(key);
+                      if (!activity) {
+                        const toolActivity = await cornerToolActivity(
+                          call,
+                          this.options.worktreePath,
+                          requestedBy,
+                        );
+                        activity = [
                           ...(narration
                             ? [
                                 {
@@ -851,10 +849,19 @@ export class MonolithCornerTurnLoop {
                                 },
                               ]
                             : []),
-                          activity,
-                        ],
+                          toolActivity,
+                        ];
+                        pendingToolActivities.set(key, activity);
+                      }
+                      await api.execute('postAgentActivity', {
+                        agentId: this.agent.publicKey,
+                        roomId: cornerId,
+                        requestId,
+                        cornerActivityKey: key,
+                        activity,
                       });
                       pendingToolNarrations.delete(key);
+                      pendingToolActivities.delete(key);
                     })
                     .then(() => undefined)
                     .catch((error) => {
@@ -886,6 +893,7 @@ export class MonolithCornerTurnLoop {
                 publishedToolCalls.clear();
                 observedToolCalls.clear();
                 pendingToolNarrations.clear();
+                pendingToolActivities.clear();
                 lastNarratedToolCall = undefined;
                 stream.beginRun();
                 completedNarrationRuns = [];

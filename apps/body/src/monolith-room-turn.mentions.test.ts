@@ -257,7 +257,7 @@ describe('who an agent can tag, and how it is spelled', () => {
     expect(writes).toContainEqual(expect.objectContaining({ triggerMessageId: 'ask-2' }));
   }, 20_000);
 
-  it('does not continue after a newly joined agent is explicitly addressed', async () => {
+  it('does not continue after a newly joined agent is addressed or capped', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-room-stale-roster-'));
     roots.push(root);
     const identity = identityFromKey(AGENT_HEX, 'Greeter');
@@ -300,7 +300,7 @@ describe('who an agent can tag, and how it is spelled', () => {
               createdAt: 1,
               type: 'message',
               body: 'I can help.',
-              mentionIds: [],
+              mentionIds: [OTHER_AGENT],
               requestAuthorId: CAPTAIN,
               attachments: [],
             },
@@ -326,6 +326,25 @@ describe('who an agent can tag, and how it is spelled', () => {
               },
             ],
             cursor: 'new-agent-handoff',
+          };
+        }
+        if (inboxReads === 3) {
+          return {
+            items: [
+              {
+                id: 'capped-new-agent-return',
+                authorId: OTHER_AGENT,
+                createdAt: 3,
+                type: 'message',
+                body: 'I have reached the handoff limit.',
+                mentionIds: [],
+                agentMentionIds: [],
+                agentAuthor: true,
+                agentHopCount: 3,
+                attachments: [],
+              },
+            ],
+            cursor: 'capped-new-agent-return',
           };
         }
         return { items: [], cursor: 'latest' };
@@ -362,7 +381,7 @@ describe('who an agent can tag, and how it is spelled', () => {
       createAcpClient: () => acp,
     }).run();
 
-    await vi.waitFor(() => expect(inboxReads).toBeGreaterThanOrEqual(3));
+    await vi.waitFor(() => expect(inboxReads).toBeGreaterThanOrEqual(4));
     expect(prompts).toEqual([]);
     expect(execute.mock.calls.filter(([name]) => name === 'postAgentTurnReceipt')).toEqual([]);
 

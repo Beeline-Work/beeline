@@ -1263,11 +1263,7 @@ export class PhoneService {
       await database.query(`SELECT 1 FROM workspaces WHERE id=$1 FOR UPDATE`, [
         pairing.workspace_id,
       ]);
-      const worn = await this.wornSeededIdentity(
-        database,
-        pairing.workspace_id,
-        input.agentPubkey,
-      );
+      const worn = await this.wornSeededIdentity(database, pairing.workspace_id, input.agentPubkey);
       const seeded = assignSeededAgentIdentity({
         seed: input.agentPubkey,
         takenFaces: worn.faces,
@@ -1568,10 +1564,7 @@ export class PhoneService {
         await this.updateAgentYolo(input as Input<'updateAgentYolo'>, viewerId);
         return undefined as Output<Name>;
       case 'updateAgentAccessPolicy':
-        await this.updateAgentAccessPolicy(
-          input as Input<'updateAgentAccessPolicy'>,
-          viewerId,
-        );
+        await this.updateAgentAccessPolicy(input as Input<'updateAgentAccessPolicy'>, viewerId);
         return undefined as Output<Name>;
       case 'removeAgent':
         await this.removeAgent(input as Input<'removeAgent'>, viewerId);
@@ -2436,15 +2429,13 @@ export class PhoneService {
    * Workspace one and each of those Rooms carries the removal line. Agents
    * are not people — their removal is the removeAgent host teardown.
    */
-  private async removeWorkspaceMember(
-    input: Input<'removeWorkspaceMember'>,
-    viewerId: string,
-  ) {
+  private async removeWorkspaceMember(input: Input<'removeWorkspaceMember'>, viewerId: string) {
     await this.requireWorkspaceManager(input.workspaceId, viewerId);
     if (input.memberId === viewerId) throw new Error('workspace managers cannot remove themselves');
     const remover = await this.requireIdentity(viewerId);
     const removed = await this.requireIdentity(input.memberId);
-    if (removed.kind !== 'human') throw new Error('invalid member: agents are removed through removeAgent');
+    if (removed.kind !== 'human')
+      throw new Error('invalid member: agents are removed through removeAgent');
     await this.database.transaction(async (database) => {
       await database.query(`SELECT 1 FROM workspaces WHERE id=$1 FOR UPDATE`, [input.workspaceId]);
       const roles = await database.query<{
@@ -2643,7 +2634,8 @@ export class PhoneService {
         roomId: grant.room_id,
         authorId: viewerId,
         subject: identitySubject({ id: decider.pubkey, kind: decider.kind, name: decider.name }),
-        verb: decision === 'always' ? 'approved' : decision === 'once' ? 'approved once' : 'declined',
+        verb:
+          decision === 'always' ? 'approved' : decision === 'once' ? 'approved once' : 'declined',
         // A resume kind: it answers a turn already paused on the ask, and must
         // never start a second one (`RESUME_KINDS`).
         kind: 'grant-decided',
@@ -2706,10 +2698,10 @@ export class PhoneService {
           }
         : entry,
     );
-    await database.query(`UPDATE messages SET card=jsonb_set(card,'{grants}',$2::jsonb) WHERE id=$1`, [
-      card.id,
-      JSON.stringify(grants),
-    ]);
+    await database.query(
+      `UPDATE messages SET card=jsonb_set(card,'{grants}',$2::jsonb) WHERE id=$1`,
+      [card.id, JSON.stringify(grants)],
+    );
   }
   private async requireGrantAuthority(grantId: unknown, viewerId: string) {
     if (typeof grantId !== 'string' || !grantId) throw new Error('grantId is required');
@@ -2804,10 +2796,7 @@ export class PhoneService {
    * mentions nobody; like any message it reaches a phone only in a DM, where
    * telling that one person they may now ask is the point.
    */
-  private async updateAgentAccessPolicy(
-    input: Input<'updateAgentAccessPolicy'>,
-    viewerId: string,
-  ) {
+  private async updateAgentAccessPolicy(input: Input<'updateAgentAccessPolicy'>, viewerId: string) {
     if (!isAgentAccessPolicy(input.policy)) throw new Error('policy is invalid');
     const allow = input.policy === 'allowlist' ? (input.allow ?? []) : [];
     if (input.policy === 'allowlist') {
@@ -3072,7 +3061,14 @@ export class PhoneService {
         `UPDATE corner_facts SET close_requested=true,owner_agent_id=NULL,
            lifecycle=lifecycle||$2::jsonb,updated_at=now()
          WHERE owner_agent_id=ANY($1)`,
-        [gone, JSON.stringify({ lifecycle: 'done', outcome: 'abandoned', reason: `${account.name} deleted their account` })],
+        [
+          gone,
+          JSON.stringify({
+            lifecycle: 'done',
+            outcome: 'abandoned',
+            reason: `${account.name} deleted their account`,
+          }),
+        ],
       );
       await database.query(
         `DELETE FROM agent_schedules WHERE agent_id=ANY($1) OR creator_id=ANY($1)`,
@@ -3173,8 +3169,11 @@ export class PhoneService {
         `DELETE FROM agent_pairing_codes WHERE created_by=ANY($1) OR claimed_by=ANY($1)`,
         [gone],
       );
-      await database.query(`DELETE FROM identity_successions
-         WHERE old_identity_id=ANY($1) OR new_identity_id=ANY($1)`, [gone]);
+      await database.query(
+        `DELETE FROM identity_successions
+         WHERE old_identity_id=ANY($1) OR new_identity_id=ANY($1)`,
+        [gone],
+      );
 
       // Media bytes are personal data: the rows go, and a tombstone keeps the
       // readers' story the one media-ttl.ts already tells (expired, not lost).

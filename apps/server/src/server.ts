@@ -249,7 +249,10 @@ export function createBeelineServer(options: ServerOptions): Server {
                   replaying = false;
                 }
               };
-              releases.set(roomId, options.live.subscribe(roomId, () => void replay()));
+              releases.set(
+                roomId,
+                options.live.subscribe(roomId, () => void replay()),
+              );
               const lifecycleId =
                 typeof item.lifecycleId === 'string' && item.lifecycleId.length <= 128
                   ? item.lifecycleId

@@ -278,15 +278,17 @@ export class PostgresLiveListener {
       ) {
         const rooms = await this.database.query<{ room_id: string }>(
           `SELECT room_id FROM memberships WHERE identity_id=$1
-             AND room_id IS NOT NULL AND removed_at IS NULL`, [payload.agentId],
+             AND room_id IS NOT NULL AND removed_at IS NULL`,
+          [payload.agentId],
         );
-        for (const room of rooms.rows) this.live.publish({
-          type: 'presence',
-          roomId: room.room_id,
-          agentId: payload.agentId,
-          status: row.body.status,
-          observedAt: row.body.observedAt,
-        });
+        for (const room of rooms.rows)
+          this.live.publish({
+            type: 'presence',
+            roomId: room.room_id,
+            agentId: payload.agentId,
+            status: row.body.status,
+            observedAt: row.body.observedAt,
+          });
       }
       return;
     }

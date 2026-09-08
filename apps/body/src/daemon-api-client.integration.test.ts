@@ -623,10 +623,11 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   it('keeps lifecycle presence across a real socket drop and resumes answering through push without polling', async () => {
     const exchange = await auth.createDaemonExchange(AGENT);
     const exchanged = await fetch(`${origin}/v1/auth/daemon/exchange`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ exchangeToken: exchange.exchangeToken }),
     });
-    const { daemonToken } = await exchanged.json() as { daemonToken: string };
+    const { daemonToken } = (await exchanged.json()) as { daemonToken: string };
     const sockets: WebSocket[] = [];
     const client = new DaemonApiClient(origin, daemonToken, AGENT, fetch, (url, protocols) => {
       const socket = new WebSocket(url, protocols);
@@ -638,44 +639,80 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     let connected = false;
     let replies = Promise.resolve();
     let answered = 0;
-    const disconnect = client.liveSubscribe(ROOM, activation.cursor, (items, cursor) => {
-      client.updateLiveCursor(ROOM, cursor);
-      for (const item of items) {
-        if (!item.mentionIds.includes(AGENT)) continue;
-        replies = replies.then(async () => {
-          await client.execute('postRoomMessage', { roomId: ROOM, requestId: item.id, text: 'Answered through push' });
-          answered += 1;
-        });
-      }
-    }, (value) => { connected = value; });
-    const state = async () => (await phone.readRoom(ROOM, HUMAN))?.members.find(
-      (member) => member.identity.pubkey === AGENT,
-    )?.presence?.status;
+    const disconnect = client.liveSubscribe(
+      ROOM,
+      activation.cursor,
+      (items, cursor) => {
+        client.updateLiveCursor(ROOM, cursor);
+        for (const item of items) {
+          if (!item.mentionIds.includes(AGENT)) continue;
+          replies = replies.then(async () => {
+            await client.execute('postRoomMessage', {
+              roomId: ROOM,
+              requestId: item.id,
+              text: 'Answered through push',
+            });
+            answered += 1;
+          });
+        }
+      },
+      (value) => {
+        connected = value;
+      },
+    );
+    const state = async () =>
+      (await phone.readRoom(ROOM, HUMAN))?.members.find(
+        (member) => member.identity.pubkey === AGENT,
+      )?.presence?.status;
     const attempt = async () => {
-      await phone.execute('sendRoomMessage', { roomId: ROOM, text: 'Hello', mentions: [AGENT] }, HUMAN);
+      await phone.execute(
+        'sendRoomMessage',
+        { roomId: ROOM, text: 'Hello', mentions: [AGENT] },
+        HUMAN,
+      );
       // PGlite has no separate LISTEN connection; deliver the committed notification.
       live.publish({ type: 'invalidate', roomId: ROOM, reason: 'postgres:messages' });
     };
     try {
-      await vi.waitFor(async () => { expect(connected).toBe(true); expect(await state()).toBe('online'); });
+      await vi.waitFor(async () => {
+        expect(connected).toBe(true);
+        expect(await state()).toBe('online');
+      });
       await attempt();
       await vi.waitFor(() => expect(answered).toBe(1));
-      const before = (await database.query<{ updated_at: Date }>(
-        `SELECT updated_at FROM live_outputs WHERE agent_id=$1 AND kind='presence'`, [AGENT],
-      )).rows;
+      const before = (
+        await database.query<{ updated_at: Date }>(
+          `SELECT updated_at FROM live_outputs WHERE agent_id=$1 AND kind='presence'`,
+          [AGENT],
+        )
+      ).rows;
       sockets[0]!.close();
       await vi.waitFor(() => expect(connected).toBe(false));
       expect(await state()).toBe('online');
-      await vi.waitFor(() => { expect(sockets).toHaveLength(2); expect(connected).toBe(true); }, { timeout: 3_000 });
+      await vi.waitFor(
+        () => {
+          expect(sockets).toHaveLength(2);
+          expect(connected).toBe(true);
+        },
+        { timeout: 3_000 },
+      );
       await attempt();
       await vi.waitFor(() => expect(answered).toBe(2));
       await replies;
       expect(await state()).toBe('online');
-      expect((await database.query<{ updated_at: Date }>(
-        `SELECT updated_at FROM live_outputs WHERE agent_id=$1 AND kind='presence'`, [AGENT],
-      )).rows).toEqual(before);
+      expect(
+        (
+          await database.query<{ updated_at: Date }>(
+            `SELECT updated_at FROM live_outputs WHERE agent_id=$1 AND kind='presence'`,
+            [AGENT],
+          )
+        ).rows,
+      ).toEqual(before);
       expect(operations.mock.calls.filter(([name]) => name === 'getRoomInbox')).toHaveLength(1);
-    } finally { disconnect(); await replies; }
+    } finally {
+      disconnect();
+      await replies;
+    }
   });
 
   it('answers persisted implicit targets in a repo-less Room and keeps monolith presence current', async () => {
@@ -1058,29 +1095,45 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     }
 
     // A stopped socket leaves presence online until an actual delivery fails.
-    expect((await phone.readRoom(ROOM, HUMAN))?.members.find(
-      (member) => member.identity.pubkey === AGENT,
-    )?.presence?.status).toBe('online');
-    await phone.execute('sendRoomMessage', {
-      roomId: ROOM, text: 'Attempt delivery to the stopped daemon', mentions: [AGENT],
-    }, HUMAN);
-    await connectionPresence.observe(ROOM);
-    await vi.waitFor(async () => {
-      expect((await phone.readRoom(ROOM, HUMAN))?.members.find(
+    expect(
+      (await phone.readRoom(ROOM, HUMAN))?.members.find(
         (member) => member.identity.pubkey === AGENT,
-      )?.presence?.status).toBe('offline');
-    }, { timeout: 3_000 });
+      )?.presence?.status,
+    ).toBe('online');
+    await phone.execute(
+      'sendRoomMessage',
+      {
+        roomId: ROOM,
+        text: 'Attempt delivery to the stopped daemon',
+        mentions: [AGENT],
+      },
+      HUMAN,
+    );
+    await connectionPresence.observe(ROOM);
+    await vi.waitFor(
+      async () => {
+        expect(
+          (await phone.readRoom(ROOM, HUMAN))?.members.find(
+            (member) => member.identity.pubkey === AGENT,
+          )?.presence?.status,
+        ).toBe('offline');
+      },
+      { timeout: 3_000 },
+    );
     // A NEW daemon client announces a new lifecycle through the actual WS path.
     const recovered = new DaemonApiClient(origin, token.daemonToken, AGENT);
     const disconnect = recovered.liveSubscribe(ROOM);
     try {
       await vi.waitFor(async () => {
-        expect((await phone.readRoom(ROOM, HUMAN))?.members.find(
-          (member) => member.identity.pubkey === AGENT,
-        )?.presence?.status).toBe('online');
+        expect(
+          (await phone.readRoom(ROOM, HUMAN))?.members.find(
+            (member) => member.identity.pubkey === AGENT,
+          )?.presence?.status,
+        ).toBe('online');
       });
-    } finally { disconnect(); }
-
+    } finally {
+      disconnect();
+    }
   }, 20_000);
 
   it.skipIf(process.env.BEELINE_REAL_THIN_PROOF !== '1')(
@@ -2305,9 +2358,9 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     const disconnect = client.liveSubscribe(ROOM);
     try {
       await vi.waitFor(async () =>
-        expect(
-          await client.execute('getAgentPresence', { agentId: AGENT, roomId: ROOM }),
-        ).toEqual(expect.objectContaining({ status: 'online' })),
+        expect(await client.execute('getAgentPresence', { agentId: AGENT, roomId: ROOM })).toEqual(
+          expect.objectContaining({ status: 'online' }),
+        ),
       );
     } finally {
       disconnect();

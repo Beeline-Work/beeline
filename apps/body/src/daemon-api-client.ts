@@ -191,10 +191,9 @@ export class DaemonApiClient {
 
   private ensureLiveSocket(): void {
     if (this.liveSocket || !this.liveRooms.size) return;
-    const socket = this.webSocketFactory(
-      this.baseUrl.replace(/^http/, 'ws') + '/v1/phone/live',
-      [`bearer.${this.daemonToken}`],
-    );
+    const socket = this.webSocketFactory(this.baseUrl.replace(/^http/, 'ws') + '/v1/phone/live', [
+      `bearer.${this.daemonToken}`,
+    ]);
     this.liveSocket = socket;
     socket.onopen = () => {
       this.liveReconnectDelayMs = 1_000;

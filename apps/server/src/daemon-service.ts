@@ -960,11 +960,7 @@ export class DaemonService {
     const daemons = result.rows.map((row) => {
       const body = row.body;
       const observedAt = body?.observedAt;
-      const state = !body
-        ? 'never-seen'
-        : body.status !== 'online'
-          ? 'offline'
-          : 'ready';
+      const state = !body ? 'never-seen' : body.status !== 'online' ? 'offline' : 'ready';
       return {
         agentPubkey: row.agent_id,
         state,

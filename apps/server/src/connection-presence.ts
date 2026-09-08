@@ -56,8 +56,12 @@ export class ConnectionPresence {
   }
 
   async announce(roomId: string, agentId: string, metadata: PresenceMetadata = {}): Promise<void> {
-    if (!metadata.lifecycleId) return;
-    await announceAgentLifecycle(this.database, this.live, roomId, agentId, metadata);
+    const lifecycleId = metadata.lifecycleId;
+    if (!lifecycleId) return;
+    await announceAgentLifecycle(this.database, this.live, roomId, agentId, {
+      ...metadata,
+      lifecycleId,
+    });
   }
 
   async stop(): Promise<void> {

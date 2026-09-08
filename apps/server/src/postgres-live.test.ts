@@ -107,7 +107,9 @@ describe('Postgres live fanout', () => {
     // Every successful LISTEN (including its first) now resyncs to recover a
     // delivery written before the listener was ready. Let that connection
     // establishment event settle before verifying the next committed write.
-    await eventually(() => received.some((event) => event.type === 'invalidate' && event.reason === 'resync'));
+    await eventually(() =>
+      received.some((event) => event.type === 'invalidate' && event.reason === 'resync'),
+    );
     received.length = 0;
     await database.transaction(async (transaction) => {
       await transaction.query(
@@ -136,9 +138,15 @@ describe('Postgres live fanout', () => {
     const otherRoom = '33333333-3333-4333-8333-333333333333';
     const agent = 'b'.repeat(64);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Bee')`, [agent]);
-    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Other')`, [otherRoom, WORKSPACE]);
-    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-      VALUES($1,$2,$4,'member'),($1,$3,$4,'member')`, [WORKSPACE, ROOM, otherRoom, agent]);
+    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Other')`, [
+      otherRoom,
+      WORKSPACE,
+    ]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+      VALUES($1,$2,$4,'member'),($1,$3,$4,'member')`,
+      [WORKSPACE, ROOM, otherRoom, agent],
+    );
     const liveB = new LiveHub();
     const client = new PgliteListenClient(database);
     const listener = new PostgresLiveListener(database, liveB, () => client, 1);
@@ -147,8 +155,11 @@ describe('Postgres live fanout', () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
     await announceAgentLifecycle(database, new LiveHub(), ROOM, agent, { lifecycleId: 'boot' });
     await eventually(() => liveB.latestAgentPresence(agent, otherRoom)?.status === 'online');
-    await database.query(`UPDATE live_outputs SET body=body || jsonb_build_object(
-      'status','offline','observedAt',(body->>'observedAt')::bigint+1) WHERE agent_id=$1`, [agent]);
+    await database.query(
+      `UPDATE live_outputs SET body=body || jsonb_build_object(
+      'status','offline','observedAt',(body->>'observedAt')::bigint+1) WHERE agent_id=$1`,
+      [agent],
+    );
     await eventually(() => liveB.latestAgentPresence(agent, otherRoom)?.status === 'offline');
     expect(liveB.latestAgentPresence(agent, ROOM)?.status).toBe('offline');
   });
@@ -159,8 +170,11 @@ describe('Postgres live fanout', () => {
     const presence = new ConnectionPresence(database, live, 50);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Bee')`, [agent]);
     await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [agent, AUTHOR]);
-    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-      VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`, [WORKSPACE, ROOM, AUTHOR, agent]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+      VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`,
+      [WORKSPACE, ROOM, AUTHOR, agent],
+    );
     try {
       await presence.start();
       await presence.announce(ROOM, agent, { lifecycleId: 'boot' });

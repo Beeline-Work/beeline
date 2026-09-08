@@ -1636,6 +1636,59 @@ describe('monolith integration', () => {
     expect(stored.rows[0]).toEqual({ mention_ids: [AGENT], reply_to_message_id: parentId });
   });
 
+  it('does not address an agent when an untagged reply targets a human', async () => {
+    const parentId = '8'.repeat(64);
+    await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: parentId,
+      text: 'Human thread parent.',
+      mentions: [AGENT],
+    });
+    await daemonOperation('postRoomMessage', {
+      roomId: ROOM,
+      requestId: parentId,
+      text: 'An agent replied most recently.',
+    });
+
+    const replyId = '9'.repeat(64);
+    const sent = await operation('sendRoomReply', {
+      roomId: ROOM,
+      messageId: replyId,
+      parentMessageId: parentId,
+      text: 'This is for the human.',
+    });
+    expect(sent.status).toBe(200);
+    const stored = await database.query<{ mention_ids: string[]; reply_to_message_id: string }>(
+      `SELECT mention_ids,reply_to_message_id FROM messages WHERE id=$1`,
+      [replyId],
+    );
+    expect(stored.rows[0]).toEqual({ mention_ids: [], reply_to_message_id: parentId });
+  });
+
+  it('keeps explicit agent mentions on replies to humans', async () => {
+    const parentId = 'a'.repeat(64);
+    await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: parentId,
+      text: 'Another human thread parent.',
+    });
+
+    const replyId = 'b'.repeat(64);
+    const sent = await operation('sendRoomReply', {
+      roomId: ROOM,
+      messageId: replyId,
+      parentMessageId: parentId,
+      text: 'This one is explicitly for the agent.',
+      mentions: [AGENT],
+    });
+    expect(sent.status).toBe(200);
+    const stored = await database.query<{ mention_ids: string[] }>(
+      `SELECT mention_ids FROM messages WHERE id=$1`,
+      [replyId],
+    );
+    expect(stored.rows[0]?.mention_ids).toEqual([AGENT]);
+  });
+
   it('implicitly addresses an untagged human message to the only agent in the Room', async () => {
     const sent = await operation('sendRoomMessage', {
       roomId: ROOM,

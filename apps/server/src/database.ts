@@ -791,6 +791,7 @@ export async function migrate(database: SqlDatabase): Promise<void> {
  */
 export async function backfillAgentHandles(database: SqlDatabase): Promise<number> {
   return database.transaction(async (transaction) => {
+    await transaction.query(`SELECT id FROM workspaces ORDER BY id FOR UPDATE`);
     const rows = await transaction.query<{
       id: string;
       kind: 'human' | 'agent';

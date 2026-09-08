@@ -774,6 +774,29 @@ describe('Room message variant components', () => {
       mark: { seed: 'agent-lumen', kind: 'agent' },
     });
   });
+
+  it('keeps a human continuation compact', () => {
+    render(
+      <OrdinaryLedgerMessage
+        message={message({ id: 'ada-second-message', pubkey: 'ada' })}
+        continued
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+
+    expect(ledgerEntryRender.mock.lastCall?.[0].byline).toBeUndefined();
+  });
+
   it('highlights every person an agent tagged, exactly as it does a human-authored tag', () => {
     const rowProps = {
       agent: { pubkey: 'agent', displayName: 'GREETER' },

@@ -715,18 +715,21 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
       personName ??
       (message.pubkey ? fallbackMemberName(message.pubkey) : 'SOMEONE'));
   const markSeed = message.pubkey ?? (isSelfSteer ? viewerPubkey || 'self' : 'unknown-person');
-  const byline: LedgerByline = {
-    name: isSelfSteer ? 'You' : voiceName,
-    role: isAgent ? 'agent' : undefined,
-    stamp: ledgerStamp(message.timestamp),
-    isViewer: isSelfSteer,
-    mark: {
-      seed: markSeed,
-      kind: isAgent ? 'agent' : 'human',
-      ...(speakerFace ? { face: speakerFace } : {}),
-      ...(isAgent ? { alive: speakerWorking } : {}),
-    },
-  };
+  const byline: LedgerByline | undefined =
+    continued && !isAgent
+      ? undefined
+      : {
+          name: isSelfSteer ? 'You' : voiceName,
+          role: isAgent ? 'agent' : undefined,
+          stamp: ledgerStamp(message.timestamp),
+          isViewer: isSelfSteer,
+          mark: {
+            seed: markSeed,
+            kind: isAgent ? 'agent' : 'human',
+            ...(speakerFace ? { face: speakerFace } : {}),
+            ...(isAgent ? { alive: speakerWorking } : {}),
+          },
+        };
   const activity = useMemo(
     () =>
       message.activity?.length

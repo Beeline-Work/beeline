@@ -1184,21 +1184,32 @@ export class PhoneService {
     };
   }
 
-  /** Derive the agent's address from its displayed name and unique it within this Workspace. */
   private async availableAgentHandle(
     database: SqlDatabase,
     workspaceId: string,
     exceptIdentityId: string,
     name: string,
   ): Promise<string> {
+    const memberships = await database.query<{ workspace_id: string }>(
+      `SELECT workspace_id FROM memberships
+       WHERE identity_id=$1 AND room_id IS NULL AND removed_at IS NULL`,
+      [exceptIdentityId],
+    );
+    const workspaceIds = [
+      ...new Set([workspaceId, ...memberships.rows.map((row) => row.workspace_id)]),
+    ].sort();
+    await database.query(
+      `SELECT id FROM workspaces WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE`,
+      [workspaceIds],
+    );
     const rows = await database.query<{ handle: string }>(
       `SELECT identity.handle
        FROM memberships membership
        JOIN identities identity ON identity.id=membership.identity_id
-       WHERE membership.workspace_id=$1 AND membership.room_id IS NULL
+       WHERE membership.workspace_id=ANY($1::uuid[]) AND membership.room_id IS NULL
          AND membership.removed_at IS NULL AND identity.hidden_from_roster=false
          AND identity.id<>$2 AND identity.handle IS NOT NULL`,
-      [workspaceId, exceptIdentityId],
+      [workspaceIds, exceptIdentityId],
     );
     return uniqueAgentHandle(
       name,
@@ -1440,9 +1451,6 @@ export class PhoneService {
       if (!pairing?.claimed_by || !pairing.claimed_at) return { status: 'not_found' };
       if (Date.now() - pairing.claimed_at.getTime() > CONNECT_RENAME_WINDOW_MS)
         return { status: 'expired' };
-      await database.query(`SELECT 1 FROM workspaces WHERE id=$1 FOR UPDATE`, [
-        pairing.workspace_id,
-      ]);
       const handle = await this.availableAgentHandle(
         database,
         pairing.workspace_id,
@@ -1823,6 +1831,7 @@ export class PhoneService {
     const mentionIds = await this.resolveMessageMentions(
       input.roomId,
       author,
+      input.text,
       input.mentions ?? [],
     );
     const mentions = JSON.stringify(mentionIds);
@@ -1923,6 +1932,7 @@ export class PhoneService {
     const mentionIds = await this.resolveMessageMentions(
       input.roomId,
       author,
+      input.text,
       input.mentions ?? [],
       parent.rows[0].author_kind === 'agent' ? parent.rows[0].author_id : null,
     );
@@ -2114,12 +2124,12 @@ export class PhoneService {
     };
   }
   private async resolveMessageMentions(
-    _roomId: string,
+    roomId: string,
     author: string,
+    text: string,
     explicitMentions: readonly string[],
     replyAgentId?: string | null,
   ): Promise<readonly string[]> {
-    if (explicitMentions.length) return explicitMentions;
     const authorKind = (
       await this.database.query<{ kind: 'human' | 'agent' }>(
         `SELECT kind FROM identities WHERE id=$1`,
@@ -2127,8 +2137,32 @@ export class PhoneService {
       )
     ).rows[0]?.kind;
     if (authorKind !== 'human') return [];
-    if (replyAgentId) return [replyAgentId];
-    return [];
+    const agents = await this.database.query<{ id: string; handle: string }>(
+      `SELECT identity.id,identity.handle
+       FROM rooms room
+       JOIN memberships membership ON membership.workspace_id=room.workspace_id
+         AND membership.room_id IS NULL AND membership.removed_at IS NULL
+       JOIN identities identity ON identity.id=membership.identity_id
+         AND identity.kind='agent' AND identity.handle IS NOT NULL
+       WHERE room.id=$1`,
+      [roomId],
+    );
+    const explicitAgentIds = new Set(
+      (
+        await this.database.query<{ id: string }>(
+          `SELECT id FROM identities WHERE id=ANY($1::text[]) AND kind='agent'`,
+          [[...explicitMentions]],
+        )
+      ).rows.map((row) => row.id),
+    );
+    const mentions = new Set(explicitMentions.filter((id) => !explicitAgentIds.has(id)));
+    for (const agent of agents.rows) {
+      const handle = agent.handle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (new RegExp(`(^|[^\\p{L}\\p{N}_])@${handle}(?=$|[^\\p{L}\\p{N}_])`, 'iu').test(text))
+        mentions.add(agent.id);
+    }
+    if (replyAgentId) mentions.add(replyAgentId);
+    return [...mentions];
   }
   private async decidePermission(input: Input<'decideWritePermission'>, viewerId: string) {
     const pending = (
@@ -2612,7 +2646,6 @@ export class PhoneService {
   private async updateAgentSoul(input: Input<'updateAgentSoul'>, viewerId: string) {
     await this.requireWorkspaceAgent(input.workspaceId, input.agentId, viewerId);
     await this.database.transaction(async (database) => {
-      await database.query(`SELECT 1 FROM workspaces WHERE id=$1 FOR UPDATE`, [input.workspaceId]);
       const handle = await this.availableAgentHandle(
         database,
         input.workspaceId,

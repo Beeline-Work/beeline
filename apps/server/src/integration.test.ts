@@ -56,7 +56,7 @@ describe('monolith integration', () => {
     database = new PgliteDatabase();
     await migrate(database);
     await database.query(
-      `INSERT INTO identities(id,kind,name,github_subject) VALUES($1,'human','Owner','owner'),($2,'agent','Bee',NULL)`,
+      `INSERT INTO identities(id,kind,name,handle,github_subject) VALUES($1,'human','Owner','owner','owner'),($2,'agent','Bee','bee',NULL)`,
       [HUMAN, AGENT],
     );
     await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [AGENT, HUMAN]);
@@ -846,7 +846,7 @@ describe('monolith integration', () => {
       roomId: ROOM,
       messageId: 'd'.repeat(64),
       parentMessageId: messageId,
-      text: 'What is your soul?',
+      text: '@bee What is your soul?',
       mentions: [AGENT],
     });
     expect(threaded.status).toBe(200);
@@ -988,7 +988,7 @@ describe('monolith integration', () => {
           await operation('sendRoomMessage', {
             roomId: ROOM,
             messageId,
-            text: `while disconnected ${index + 1}`,
+            text: `@bee while disconnected ${index + 1}`,
             mentions: [AGENT],
           })
         ).status,
@@ -1609,6 +1609,33 @@ describe('monolith integration', () => {
     expect(stored.rows[0]?.mention_ids).toEqual([]);
   });
 
+  it('derives agent mentions only from their exact typed handle', async () => {
+    const cases = [
+      ['@bee, please inspect this.', [AGENT]],
+      ['@bee- please inspect this.', [AGENT]],
+      ['Bee, please inspect this.', []],
+      ['@beeline, please inspect this.', []],
+    ] as const;
+    for (const [index, [text, expected]] of cases.entries()) {
+      const messageId = `${index + 8}`.repeat(64);
+      const sent = await operation('sendRoomMessage', {
+        roomId: ROOM,
+        messageId,
+        text,
+        mentions: [AGENT],
+      });
+      expect(sent.status).toBe(200);
+      expect(
+        (
+          await database.query<{ mention_ids: string[] }>(
+            `SELECT mention_ids FROM messages WHERE id=$1`,
+            [messageId],
+          )
+        ).rows[0]?.mention_ids,
+      ).toEqual(expected);
+    }
+  });
+
   it('implicitly addresses a threaded human reply to the parent agent regardless of position', async () => {
     const parent = await daemonOperation('postRoomMessage', {
       roomId: ROOM,
@@ -1619,7 +1646,7 @@ describe('monolith integration', () => {
     await operation('sendRoomMessage', {
       roomId: ROOM,
       messageId: '4'.repeat(64),
-      text: 'An intervening human message.',
+      text: '@bee An intervening human message.',
       mentions: [AGENT],
     });
 
@@ -1894,7 +1921,7 @@ describe('monolith integration', () => {
     const payload = {
       roomId: ROOM,
       messageId: 'd'.repeat(64),
-      text: 'Send this once',
+      text: '@bee Send this once',
       mentions: [AGENT],
     };
 
@@ -2946,6 +2973,34 @@ describe('monolith integration', () => {
     }
   });
 
+  it('keeps a renamed agent handle unique in every Workspace it belongs to', async () => {
+    const secondWorkspace = '66666666-6666-4666-8666-666666666666';
+    const goosy = 'f'.repeat(64);
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Second')`, [secondWorkspace]);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Goosy','goosy')`,
+      [goosy],
+    );
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [goosy, HUMAN]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+       ($1,NULL,$2,'member'),($3,NULL,$4,'owner'),($3,NULL,$5,'member')`,
+      [WORKSPACE, goosy, secondWorkspace, HUMAN, AGENT],
+    );
+
+    const renamed = await request('/v1/phone/operations/updateAgentSoul', 'POST', {
+      workspaceId: secondWorkspace,
+      agentId: AGENT,
+      name: 'Goosy',
+      instructions: 'Keep handles unambiguous.',
+      avatarSeed: 'goosy-seed',
+    });
+    expect(renamed.status).toBe(204);
+    expect(
+      (await database.query(`SELECT handle FROM identities WHERE id=$1`, [AGENT])).rows,
+    ).toEqual([{ handle: 'goosy_2' }]);
+  });
+
   it('serves bounded GitHub room tokens and deduplicates signed webhooks', async () => {
     const roomToken = await request(`/v1/phone/github/room-token/${ROOM}`);
     expect(roomToken.status).toBe(200);
@@ -3424,13 +3479,14 @@ describe('monolith integration', () => {
   it('serves a corner to every member agent, keeps archive with the opener, and refuses a non-member', async () => {
     const peer = 'c'.repeat(64);
     const stranger = 'd'.repeat(64);
-    for (const [id, name] of [
-      [peer, 'Peer'],
-      [stranger, 'Stranger'],
+    for (const [id, name, handle] of [
+      [peer, 'Peer', 'peer'],
+      [stranger, 'Stranger', 'stranger'],
     ] as const) {
-      await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent',$2)`, [
+      await database.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent',$2,$3)`, [
         id,
         name,
+        handle,
       ]);
       await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [id, HUMAN]);
     }
@@ -3599,7 +3655,7 @@ describe('monolith integration', () => {
     await operation('sendRoomMessage', {
       roomId: ROOM,
       messageId: humanMessage,
-      text: 'Agents, work this through.',
+      text: '@bee work this through.',
       mentions: [AGENT],
     });
     let previous = humanMessage;
@@ -3681,7 +3737,7 @@ describe('monolith integration', () => {
     await operation('sendRoomMessage', {
       roomId: ROOM,
       messageId: resetMessage,
-      text: 'New human direction.',
+      text: '@bee New human direction.',
       mentions: [AGENT],
     });
     const reset = await daemonOperation(
@@ -3716,7 +3772,7 @@ describe('monolith integration', () => {
     await operation('sendRoomMessage', {
       roomId: ROOM,
       messageId: requestId,
-      text: 'Please answer.',
+      text: '@bee Please answer.',
       mentions: [AGENT],
     });
     await daemonOperation('postAgentTurnReceipt', {
@@ -4124,7 +4180,7 @@ describe('monolith integration', () => {
     const sent = await operation('sendRoomMessage', {
       roomId: ROOM,
       messageId: '5'.repeat(64),
-      text: 'Proofbot, list the root files.',
+      text: '@bee list the root files.',
       mentions: [AGENT],
     });
     expect(sent.status).toBe(200);
@@ -4184,7 +4240,7 @@ describe('monolith integration', () => {
     const sent = await operation('sendRoomMessage', {
       roomId: ROOM,
       messageId: '5'.repeat(64),
-      text: 'Bee, loop in whoever else decides.',
+      text: '@bee loop in whoever else decides.',
       mentions: [AGENT],
     });
     expect(sent.status).toBe(200);

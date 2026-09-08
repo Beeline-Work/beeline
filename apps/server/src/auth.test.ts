@@ -227,7 +227,7 @@ describe('opaque token ceremony', () => {
           [roomId, second.identityId],
         )
       ).rows,
-    ).toEqual([{ text: 'second joined', presentation: 'system' }]);
+    ).toEqual([{ text: '@second joined · invited by @first', presentation: 'system' }]);
     expect(
       (
         await db.query(

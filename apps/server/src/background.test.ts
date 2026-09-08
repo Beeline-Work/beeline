@@ -109,12 +109,10 @@ describe('background advisory-lock ownership', () => {
         },
       });
       await loop.runOnce();
-      await db.query(`INSERT INTO messages(id,room_id,author_id,text,mention_ids) VALUES($1,$2,$3,'hello',$4::jsonb)`, [
-        '1'.repeat(64),
-        room,
-        agent,
-        JSON.stringify([human]),
-      ]);
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text,mention_ids) VALUES($1,$2,$3,'hello',$4::jsonb)`,
+        ['1'.repeat(64), room, agent, JSON.stringify([human])],
+      );
       expect(await loop.runOnce()).toBe(0);
       expect(
         (
@@ -141,7 +139,10 @@ describe('background advisory-lock ownership', () => {
         [human, agent],
       );
       await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
-      await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [room, workspace]);
+      await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
+        room,
+        workspace,
+      ]);
       await db.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`,
         [workspace, room, human, agent],
@@ -158,14 +159,14 @@ describe('background advisory-lock ownership', () => {
         },
       });
       await loop.runOnce();
-      await db.query(`INSERT INTO messages(id,room_id,author_id,text,mention_ids) VALUES($1,$2,$3,'hello',$4::jsonb)`, [
-        '1'.repeat(64),
-        room,
-        agent,
-        JSON.stringify([human]),
-      ]);
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text,mention_ids) VALUES($1,$2,$3,'hello',$4::jsonb)`,
+        ['1'.repeat(64), room, agent, JSON.stringify([human])],
+      );
       expect(await loop.runOnce()).toBe(0);
-      expect((await db.query(`SELECT 1 FROM push_devices WHERE token=$1`, [token])).rowCount).toBe(0);
+      expect((await db.query(`SELECT 1 FROM push_devices WHERE token=$1`, [token])).rowCount).toBe(
+        0,
+      );
     } finally {
       await db.close();
     }
@@ -216,16 +217,33 @@ describe('background advisory-lock ownership', () => {
          ($5,$2,$3,'Untargeted', '[]'::jsonb,'message',NULL,NULL),
          ($6,$2,$7,'My own mention',$4::jsonb,'message',NULL,NULL),
          ($8,$2,$3,'', $4::jsonb,'activity',NULL,NULL),
-         ($9,$2,$3,'', '[]'::jsonb,'card','daemon-fact',$10::jsonb),
-         ($11,$2,$3,'', '[]'::jsonb,'card','daemon-fact',$12::jsonb),
+         ($9,$2,$3,'@bee opened a corner Ship push policy', '[]'::jsonb,'card','daemon-fact',$10::jsonb),
+         ($11,$2,$3,'@bee merged Ship push policy', '[]'::jsonb,'card','daemon-fact',$12::jsonb),
          ($13,$14,$3,'A direct message','[]'::jsonb,'message',NULL,NULL)`,
         [
-          '1'.repeat(64), room, agent, JSON.stringify([human]),
-          '2'.repeat(64), '3'.repeat(64), human, '4'.repeat(64), '5'.repeat(64),
-          JSON.stringify({ type: 'corner-open', cornerId: directRoom, objective: 'Ship push policy' }),
+          '1'.repeat(64),
+          room,
+          agent,
+          JSON.stringify([human]),
+          '2'.repeat(64),
+          '3'.repeat(64),
+          human,
+          '4'.repeat(64),
+          '5'.repeat(64),
+          JSON.stringify({
+            type: 'corner-open',
+            cornerId: directRoom,
+            objective: 'Ship push policy',
+          }),
           '6'.repeat(64),
-          JSON.stringify({ type: 'corner-complete', cornerId: directRoom, objective: 'Ship push policy', outcome: 'landed' }),
-          '7'.repeat(64), directRoom,
+          JSON.stringify({
+            type: 'corner-complete',
+            cornerId: directRoom,
+            objective: 'Ship push policy',
+            outcome: 'landed',
+          }),
+          '7'.repeat(64),
+          directRoom,
         ],
       );
       expect(await loop.runOnce()).toBe(6);
@@ -236,11 +254,11 @@ describe('background advisory-lock ownership', () => {
       );
       expect(send).toHaveBeenCalledWith(
         'owner-device-token-12345678901234567890',
-        expect.objectContaining({ text: 'Bee opened a corner: Ship push policy' }),
+        expect.objectContaining({ text: '@bee opened a corner Ship push policy' }),
       );
       expect(send).toHaveBeenCalledWith(
         'owner-device-token-12345678901234567890',
-        expect.objectContaining({ text: 'Bee merged: Ship push policy' }),
+        expect.objectContaining({ text: '@bee merged Ship push policy' }),
       );
       expect(send).toHaveBeenCalledWith(
         'owner-device-token-12345678901234567890',

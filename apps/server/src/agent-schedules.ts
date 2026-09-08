@@ -3,6 +3,7 @@ import { CronExpressionParser } from 'cron-parser';
 import type { RoomScheduleCadence } from '@beeline/api-contract/phone';
 import {
   SCHEDULE_RAN_VERB,
+  SCHEDULE_SCHEDULER_HANDLE,
   SCHEDULE_SCHEDULER_ID,
   SCHEDULE_SCHEDULER_NAME,
 } from '@beeline/api-contract/scheduled-prompts';
@@ -153,9 +154,10 @@ export class AgentScheduleLoop {
         const selfCreated = current.creator_id === current.agent_id;
         if (selfCreated) {
           await database.query(
-            `INSERT INTO identities(id,kind,name,hidden_from_roster) VALUES($1,'human',$2,true)
-             ON CONFLICT(id) DO NOTHING`,
-            [SCHEDULE_SCHEDULER_ID, SCHEDULE_SCHEDULER_NAME],
+            `INSERT INTO identities(id,kind,name,handle,hidden_from_roster)
+             VALUES($1,'human',$2,$3,true)
+             ON CONFLICT(id) DO UPDATE SET handle=EXCLUDED.handle`,
+            [SCHEDULE_SCHEDULER_ID, SCHEDULE_SCHEDULER_NAME, SCHEDULE_SCHEDULER_HANDLE],
           );
         }
         if (selfCreated) {

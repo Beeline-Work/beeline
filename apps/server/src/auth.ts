@@ -72,14 +72,23 @@ async function landInWelcomeWorkspace(database: SqlDatabase, id: string): Promis
   ).rows[0];
   if (!identity) throw new Error('identity not found');
   await reassignCollidingAgentHandles(database, id, identity.handle, workspaceIds);
+  const inviter = (
+    await database.query<{ created_by: string }>(
+      `SELECT created_by FROM rooms
+       WHERE workspace_id=$1 AND parent_id IS NULL AND created_by IS NOT NULL
+       ORDER BY created_at,id LIMIT 1`,
+      [WELCOME_WORKSPACE_ID],
+    )
+  ).rows[0]?.created_by;
   const membership = await database.query(
-    `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-     VALUES($1,NULL,$2,'member') ON CONFLICT DO NOTHING`,
-    [WELCOME_WORKSPACE_ID, id],
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role,invited_by)
+     VALUES($1,NULL,$2,'member',$3) ON CONFLICT DO NOTHING`,
+    [WELCOME_WORKSPACE_ID, id, inviter ?? null],
   );
   await joinRooms(database, {
     workspaceId: WELCOME_WORKSPACE_ID,
     identityId: id,
+    ...(inviter ? { invitedById: inviter } : {}),
     rooms: { type: 'all-live-top-level' },
     workspaceJoined: membership.rowCount > 0,
   });

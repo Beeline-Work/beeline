@@ -18,7 +18,7 @@ async function fixture() {
   await migrate(database);
   await database.query(
     `INSERT INTO identities(id,kind,name,handle) VALUES
-      ($1,'human','Owner',NULL),($2,'human','Member','member'),($3,'agent','Bee',NULL),($4,'human','Candy',NULL)`,
+      ($1,'human','Owner','owner'),($2,'human','Member','member'),($3,'agent','Bee','bee'),($4,'human','Candy','candy')`,
     [OWNER, MEMBER, AGENT, LATE],
   );
   await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Workspace')`, [WORKSPACE]);
@@ -66,6 +66,7 @@ describe('system-line producers', () => {
       await joinRooms(database, {
         workspaceId: WORKSPACE,
         identityId: LATE,
+        invitedById: OWNER,
         rooms: { type: 'rooms', roomIds: [ROOM] },
       });
       const phone = new PhoneService(database, 'http://local.test');
@@ -74,7 +75,7 @@ describe('system-line producers', () => {
       expect(await lines(database)).toEqual([
         {
           author_id: LATE,
-          text: 'Candy joined',
+          text: '@candy joined · invited by @owner',
           presentation: 'system',
           mention_ids: [],
           card_type: 'member-joined',
@@ -82,29 +83,30 @@ describe('system-line producers', () => {
           // producer wrote before events existed. Verbs are prose; kinds are
           // the contract, and they never meet in the sentence.
           system_event: {
-            subject: { kind: 'person', id: LATE, name: 'Candy' },
+            subject: { kind: 'person', id: LATE, name: '@candy' },
             verb: 'joined',
+            consequence: 'invited by @owner',
             kind: 'joined',
           },
         },
         {
           author_id: MEMBER,
-          text: 'Member left',
+          text: '@member left',
           presentation: 'system',
           mention_ids: [],
           card_type: 'member-left',
-          system_event: { subject: { kind: 'person', id: MEMBER, name: 'Member' }, verb: 'left' },
+          system_event: { subject: { kind: 'person', id: MEMBER, name: '@member' }, verb: 'left' },
         },
         {
           author_id: OWNER,
-          text: 'Owner removed Candy',
+          text: '@owner removed @candy',
           presentation: 'system',
           mention_ids: [],
           card_type: 'member-removed',
           system_event: {
-            subject: { kind: 'person', id: OWNER, name: 'Owner' },
+            subject: { kind: 'person', id: OWNER, name: '@owner' },
             verb: 'removed',
-            object: { text: 'Candy', id: LATE },
+            object: { text: '@candy', id: LATE },
           },
         },
       ]);
@@ -121,12 +123,12 @@ describe('system-line producers', () => {
       expect(await lines(database)).toEqual([
         expect.objectContaining({
           author_id: OWNER,
-          text: 'Owner removed Bee',
+          text: '@owner removed @bee',
           card_type: 'member-removed',
           system_event: {
-            subject: { kind: 'person', id: OWNER, name: 'Owner' },
+            subject: { kind: 'person', id: OWNER, name: '@owner' },
             verb: 'removed',
-            object: { text: 'Bee', id: AGENT },
+            object: { text: '@bee', id: AGENT },
           },
         }),
       ]);
@@ -152,18 +154,64 @@ describe('system-line producers', () => {
       );
       expect((await lines(database)).map((line) => [line.text, line.system_event])).toEqual([
         [
-          'Owner turned yolo on for Bee · grant requests are now approved automatically',
+          '@owner turned yolo on for @bee · grant requests are now approved automatically',
           {
-            subject: { kind: 'person', id: OWNER, name: 'Owner' },
+            subject: { kind: 'person', id: OWNER, name: '@owner' },
             verb: 'turned yolo on for',
-            object: { text: 'Bee', id: AGENT },
+            object: { text: '@bee', id: AGENT },
             consequence: 'grant requests are now approved automatically',
           },
         ],
         [
-          'Owner turned yolo off for Bee · grant requests now ask before running',
+          '@owner turned yolo off for @bee · grant requests now ask before running',
           expect.objectContaining({ verb: 'turned yolo off for' }),
         ],
+      ]);
+    } finally {
+      await database.close();
+    }
+  });
+
+  it('names the acting human on model, role, and visibility changes', async () => {
+    const database = await fixture();
+    try {
+      await database.query(
+        `UPDATE agents SET selected_model='sonnet',model_catalog=$2::jsonb WHERE agent_id=$1`,
+        [
+          AGENT,
+          JSON.stringify([
+            {
+              id: 'model',
+              category: 'model',
+              currentValue: 'sonnet',
+              options: [
+                { id: 'sonnet', name: 'Sonnet' },
+                { id: 'codex', name: 'Codex' },
+              ],
+            },
+          ]),
+        ],
+      );
+      const phone = new PhoneService(database, 'http://local.test');
+      await phone.execute(
+        'updateAgentModelSelection',
+        { workspaceId: WORKSPACE, agentId: AGENT, model: 'codex' },
+        OWNER,
+      );
+      await phone.execute(
+        'addWorkspaceMember',
+        { workspaceId: WORKSPACE, memberId: MEMBER, role: 'admin' },
+        OWNER,
+      );
+      await phone.execute(
+        'updateWorkspace',
+        { workspaceId: WORKSPACE, visibility: 'public' },
+        OWNER,
+      );
+      expect((await lines(database)).map((line) => line.text)).toEqual([
+        "@owner changed @bee's model to Codex",
+        "@owner changed @member's role to admin",
+        '@owner changed workspace visibility to public',
       ]);
     } finally {
       await database.close();
@@ -186,19 +234,25 @@ describe('system-line producers', () => {
       );
       await daemon.execute(
         'postAgentTurnReceipt',
-        { agentId: AGENT, roomId: ROOM, requestId, status: 'failed', reason: 'timed out: after 120s' },
+        {
+          agentId: AGENT,
+          roomId: ROOM,
+          requestId,
+          status: 'failed',
+          reason: 'timed out: after 120s',
+        },
         AGENT,
       );
       const failed = await lines(database);
       expect(failed).toEqual([
         {
           author_id: AGENT,
-          text: 'Bee could not answer · timed out: after 120s',
+          text: '@bee could not answer · timed out: after 120s',
           presentation: 'system',
           mention_ids: [],
           card_type: 'turn-failed',
           system_event: {
-            subject: { kind: 'agent', id: AGENT, name: 'Bee' },
+            subject: { kind: 'agent', id: AGENT, name: '@bee' },
             verb: 'could not answer',
             consequence: 'timed out: after 120s',
           },
@@ -211,9 +265,9 @@ describe('system-line producers', () => {
       );
       expect(await lines(database)).toEqual([
         expect.objectContaining({
-          text: 'Bee answered after a retry',
+          text: '@bee answered after a retry',
           system_event: {
-            subject: { kind: 'agent', id: AGENT, name: 'Bee' },
+            subject: { kind: 'agent', id: AGENT, name: '@bee' },
             verb: 'answered after a retry',
           },
         }),

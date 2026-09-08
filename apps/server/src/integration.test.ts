@@ -787,7 +787,7 @@ describe('monolith integration', () => {
       expect.objectContaining({
         workspaceId,
         type: 'workspace-join',
-        text: 'alice joined Tubing Crew',
+        text: '@alice joined Tubing Crew',
       }),
     );
 
@@ -798,13 +798,16 @@ describe('monolith integration', () => {
     expect(send).toHaveBeenCalledTimes(2);
     expect(send).toHaveBeenLastCalledWith(
       'owner-explicit-add-device-token-1234567890',
-      expect.objectContaining({ text: 'alice joined Planning' }),
+      expect.objectContaining({ text: '@alice joined Planning' }),
     );
     const roomView = (await (
       await request(`/v1/phone/rooms/${room.id}`, 'GET', undefined, aliceToken)
     ).json()) as { messages: Array<{ text: string; presentation: string }> };
     expect(roomView.messages).toContainEqual(
-      expect.objectContaining({ text: 'alice joined', presentation: 'system' }),
+      expect.objectContaining({
+        text: '@alice joined · invited by @owner',
+        presentation: 'system',
+      }),
     );
     const chats = (await (await request(`/v1/phone/workspaces/${workspaceId}/chats`)).json()) as {
       chats: Array<{ room: { id: string }; latestMessage?: { text: string }; unread: boolean }>;
@@ -812,7 +815,7 @@ describe('monolith integration', () => {
     expect(chats.chats).toContainEqual(
       expect.objectContaining({
         room: expect.objectContaining({ id: room.id }),
-        latestMessage: expect.objectContaining({ text: 'alice joined' }),
+        latestMessage: expect.objectContaining({ text: '@alice joined · invited by @owner' }),
         unread: true,
       }),
     );
@@ -877,7 +880,7 @@ describe('monolith integration', () => {
     // the conversation read ends with the consequence, never above its cause.
     const conversationItems = ((await conversation.json()) as { items: Array<{ body: string }> })
       .items;
-    expect(conversationItems.at(-1)?.body).toContain('Bee did not answer @owner');
+    expect(conversationItems.at(-1)?.body).toContain('@bee did not answer @owner');
     expect(conversationItems.at(-2)?.body).toBe('What is your soul?');
     const invalidated = next(socket, 'invalidate');
     const reply = await request(
@@ -2158,9 +2161,11 @@ describe('monolith integration', () => {
       [recipient.identityId, [ROOM, secondRoom.id]],
     );
     expect(notes.rows).toEqual(
-      [ROOM, secondRoom.id]
-        .sort()
-        .map((room_id) => ({ room_id, text: 'recipient joined', presentation: 'system' })),
+      [ROOM, secondRoom.id].sort().map((room_id) => ({
+        room_id,
+        text: '@recipient joined · invited by @owner',
+        presentation: 'system',
+      })),
     );
 
     expect(await loop.runOnce()).toBe(1);
@@ -2176,7 +2181,7 @@ describe('monolith integration', () => {
         workspaceId: WORKSPACE,
         roomId: routedJoin.room_id,
         type: 'workspace-join',
-        text: 'recipient joined Hive',
+        text: '@recipient joined Hive',
       }),
     );
   });
@@ -2278,7 +2283,7 @@ describe('monolith integration', () => {
     expect(notes.rows).toEqual(
       [ROOM, secondRoom.id].sort().map((room_id) => ({
         room_id,
-        text: `${grant.agent_name} joined`,
+        text: `@${grant.agent_name.toLowerCase()} joined · invited by @owner`,
         presentation: 'system',
       })),
     );
@@ -2286,7 +2291,7 @@ describe('monolith integration', () => {
     expect(await loop.runOnce()).toBe(1);
     expect(send).toHaveBeenCalledWith(
       'owner-agent-join-device-token-1234567890',
-      expect.objectContaining({ text: `${grant.agent_name} joined Hive` }),
+      expect.objectContaining({ text: `@${grant.agent_name.toLowerCase()} joined Hive` }),
     );
   });
 
@@ -3473,23 +3478,23 @@ describe('monolith integration', () => {
       expect.arrayContaining([
         expect.objectContaining({
           presentation: 'system',
-          text: 'octocat opened a pull request Ship the widget',
+          text: '@octocat opened a pull request Ship the widget',
           systemEvent: {
-            subject: { kind: 'github', name: 'octocat' },
+            subject: { kind: 'github', name: '@octocat' },
             verb: 'opened a pull request',
             object: { text: 'Ship the widget', url: 'https://github.com/owner/widgets/pull/42' },
           },
         }),
         expect.objectContaining({
-          text: expect.stringMatching(/^GitHub pushed 2 commits to fm\/widget · at [0-9a-f]{12}$/),
+          text: expect.stringMatching(/^@GitHub pushed 2 commits to fm\/widget · at [0-9a-f]{12}$/),
         }),
         expect.objectContaining({
-          text: 'GitHub started a check typecheck',
+          text: '@GitHub started a check typecheck',
           systemEvent: expect.objectContaining({ verb: 'started a check' }),
         }),
-        expect.objectContaining({ text: 'GitHub failed a check Beeline CI check suite' }),
+        expect.objectContaining({ text: '@GitHub failed a check Beeline CI check suite' }),
         expect.objectContaining({
-          text: 'GitHub passed a check Beeline CI check suite',
+          text: '@GitHub passed a check Beeline CI check suite',
           systemEvent: expect.objectContaining({
             verb: 'passed a check',
             object: expect.objectContaining({ text: 'Beeline CI check suite' }),
@@ -3579,7 +3584,7 @@ describe('monolith integration', () => {
         items: expect.arrayContaining([
           expect.objectContaining({
             type: 'system',
-            body: 'GitHub passed a check Beeline CI check suite',
+            body: '@GitHub passed a check Beeline CI check suite',
           }),
         ]),
       }),
@@ -3621,9 +3626,9 @@ describe('monolith integration', () => {
         closeRequested: true,
         items: expect.arrayContaining([
           expect.objectContaining({
-            body: 'owner merged Ship the widget',
+            body: '@owner merged Ship the widget',
             systemEvent: expect.objectContaining({
-              subject: { kind: 'github', name: 'owner' },
+              subject: { kind: 'github', name: '@owner' },
               verb: 'merged',
               object: { text: 'Ship the widget', url: 'https://github.com/owner/widgets/pull/42' },
             }),
@@ -3650,9 +3655,9 @@ describe('monolith integration', () => {
       expect.objectContaining({
         presentation: 'card',
         // The card keeps its component; its header sentence is the one grammar.
-        text: 'owner merged Ship the widget',
+        text: '@owner merged Ship the widget',
         systemEvent: {
-          subject: { kind: 'github', name: 'owner' },
+          subject: { kind: 'github', name: '@owner' },
           verb: 'merged',
           kind: 'merged',
           object: { text: 'Ship the widget', url: 'https://github.com/owner/widgets/pull/42' },
@@ -3814,9 +3819,9 @@ describe('monolith integration', () => {
       [cornerId],
     );
     expect(notes.rows.map((row) => row.text)).toContain(
-      'Stranger could not be reached · not a member of this corner',
+      '@stranger could not be reached · not a member of this corner',
     );
-    expect(notes.rows.find((row) => row.text.startsWith('Stranger'))?.mention_ids).toEqual([]);
+    expect(notes.rows.find((row) => row.text.startsWith('@stranger'))?.mention_ids).toEqual([]);
 
     const phoneCorners = await request(`/v1/phone/rooms/${ROOM}/corners`);
     expect(await phoneCorners.json()).toEqual(
@@ -4169,7 +4174,7 @@ describe('monolith integration', () => {
     expect(first).toEqual([
       expect.objectContaining({
         author_id: AGENT,
-        text: 'Bee could not answer · provider error 429 concurrency_limit',
+        text: '@bee could not answer · provider error 429 concurrency_limit',
         mention_ids: [],
         card: { requestId, agentId: AGENT, state: 'failed' },
       }),
@@ -4188,10 +4193,10 @@ describe('monolith integration', () => {
     expect(retried[0]!.id).toBe(first[0]!.id);
     expect(
       retried[0]!.text.startsWith(
-        'Bee could not answer · ACP session timed out after 120s at AcpClient.request',
+        '@bee could not answer · ACP session timed out after 120s at AcpClient.request',
       ),
     ).toBe(true);
-    expect(retried[0]!.text.length).toBeLessThanOrEqual('Bee could not answer · '.length + 200);
+    expect(retried[0]!.text.length).toBeLessThanOrEqual('@bee could not answer · '.length + 200);
     // A later durable reply settles the line instead of leaving a stale failure stamped in the transcript.
     await daemonOperation('postRoomMessage', {
       roomId: ROOM,
@@ -4203,7 +4208,7 @@ describe('monolith integration', () => {
     expect((await lines()).rows).toEqual([
       expect.objectContaining({
         id: first[0]!.id,
-        text: 'Bee answered after a retry',
+        text: '@bee answered after a retry',
         card: { requestId, agentId: AGENT, state: 'recovered' },
       }),
     ]);
@@ -4212,7 +4217,7 @@ describe('monolith integration', () => {
       expect.objectContaining({
         id: first[0]!.id,
         presentation: 'system',
-        text: 'Bee answered after a retry',
+        text: '@bee answered after a retry',
       }),
     );
     expect(room.latestAgentTurns).toContainEqual(
@@ -4615,7 +4620,7 @@ describe('monolith integration', () => {
     expect(await loop.runOnce()).toBe(1);
     expect(send).toHaveBeenCalledWith(
       'owner-device-token-12345678901234567890',
-      expect.objectContaining({ text: 'Bee opened a corner: Ship the widget' }),
+      expect.objectContaining({ text: '@bee opened a corner Ship the widget' }),
     );
   });
 
@@ -4717,6 +4722,14 @@ describe('monolith integration', () => {
     // catalog: the MODEL / EFFORT rows show the current value regardless.
     expect(view?.catalog).toEqual([]);
     expect(view?.selected).toEqual({ model: 'gpt-5.6' });
+    expect(view?.owner).toMatchObject({ pubkey: HUMAN, kind: 'human', handle: 'owner' });
+    const workspace = await phone.readWorkspace(WORKSPACE, HUMAN);
+    expect(workspace?.agents).toEqual([
+      expect.objectContaining({
+        model: 'gpt-5.6',
+        owner: expect.objectContaining({ pubkey: HUMAN, handle: 'owner' }),
+      }),
+    ]);
     // The phone build's surface guard must accept the readAgent output as-is.
     expect(isAgentDetailView(view)).toBe(true);
   });
@@ -4975,7 +4988,7 @@ describe('monolith integration', () => {
     for (const row of onLines.rows) {
       expect(row).toEqual(
         expect.objectContaining({
-          text: 'Owner turned yolo on for Bee · grant requests are now approved automatically',
+          text: '@owner turned yolo on for @bee · grant requests are now approved automatically',
           presentation: 'system',
           mention_ids: [],
           author_id: HUMAN,
@@ -4988,7 +5001,7 @@ describe('monolith integration', () => {
     };
     expect(room.messages).toContainEqual(
       expect.objectContaining({
-        text: 'Owner turned yolo on for Bee · grant requests are now approved automatically',
+        text: '@owner turned yolo on for @bee · grant requests are now approved automatically',
         presentation: 'system',
       }),
     );
@@ -5045,7 +5058,7 @@ describe('monolith integration', () => {
           [ROOM],
         )
       ).rows.map((row) => row.text),
-    ).toEqual(['Owner turned yolo on for Bee · grant requests are now approved automatically']);
+    ).toEqual(['@owner turned yolo on for @bee · grant requests are now approved automatically']);
   });
   it('runs the grant loop: pending card with mention, coalescing, owner ALWAYS/ONCE/NO, gate refusals, listing, revoke', async () => {
     // New agents default to yolo on; this test exercises the pending-card path
@@ -5129,7 +5142,7 @@ describe('monolith integration', () => {
     expect(card.presentation).toBe('card');
     expect(card.mention_ids).toEqual([HUMAN]);
     expect(card.text).toBe(
-      'Bee asked Owner for command fly deploy -a beeline-preview --with FLY_TOKEN and host api.fly.io',
+      '@bee asked @owner for command fly deploy -a beeline-preview --with FLY_TOKEN and host api.fly.io',
     );
     expect(card.card.owner.pubkey).toBe(HUMAN);
     expect(card.card.requester.pubkey).toBe(memberId);
@@ -5140,7 +5153,7 @@ describe('monolith integration', () => {
     expect(send).toHaveBeenCalledWith(
       'grant-owner-device-1234567890123456789012',
       expect.objectContaining({
-        text: 'Bee asked Owner for command fly deploy -a beeline-preview --with FLY_TOKEN and host api.fly.io',
+        text: '@bee asked @owner for command fly deploy -a beeline-preview --with FLY_TOKEN and host api.fly.io',
       }),
     );
     // The phone reads the card as a validated grantRequest message.
@@ -5214,20 +5227,20 @@ describe('monolith integration', () => {
       (item) => item.type === 'system' && /\b(approved|declined)\b/.test(item.body),
     );
     expect(decisions.map((item) => item.body)).toEqual([
-      'Owner approved once command fly deploy -a beeline-preview --with FLY_TOKEN',
-      'Owner declined host api.fly.io',
+      '@owner approved once command fly deploy -a beeline-preview --with FLY_TOKEN',
+      '@owner declined host api.fly.io',
     ]);
     // The decision carries a RESUME kind: it answers the turn already paused on
     // the ask, and the helper must not start a second turn on it.
     expect(decisions.map((item) => item.systemEvent)).toEqual([
       {
-        subject: { kind: 'person', id: HUMAN, name: 'Owner' },
+        subject: { kind: 'person', id: HUMAN, name: '@owner' },
         verb: 'approved once',
         kind: 'grant-decided',
         object: { text: 'command fly deploy -a beeline-preview --with FLY_TOKEN' },
       },
       {
-        subject: { kind: 'person', id: HUMAN, name: 'Owner' },
+        subject: { kind: 'person', id: HUMAN, name: '@owner' },
         verb: 'declined',
         kind: 'grant-decided',
         object: { text: 'host api.fly.io' },
@@ -5367,12 +5380,12 @@ describe('monolith integration', () => {
     );
     expect(lines.rows).toEqual([
       {
-        text: 'Bee was granted secret FLY_TOKEN · auto-approved under yolo',
+        text: '@bee was granted secret FLY_TOKEN · auto-approved under yolo',
         presentation: 'system',
         mention_ids: [],
         author_id: AGENT,
         system_event: {
-          subject: { kind: 'agent', id: AGENT, name: 'Bee' },
+          subject: { kind: 'agent', id: AGENT, name: '@bee' },
           verb: 'was granted',
           object: { text: 'secret FLY_TOKEN' },
           consequence: 'auto-approved under yolo',
@@ -5426,7 +5439,7 @@ describe('monolith integration', () => {
       `SELECT text,system_event FROM messages WHERE card_type='grant-auto' ORDER BY created_at DESC LIMIT 1`,
     );
     expect(autoLine.rows[0]!.text).toBe(
-      'Bee was granted command npm test · auto-approved under yolo, reads only outside its scratch',
+      '@bee was granted command npm test · auto-approved under yolo, reads only outside its scratch',
     );
 
     // An interpreter and a credential file each ask a person, under yolo.
@@ -5531,7 +5544,7 @@ describe('monolith integration', () => {
       [cornerId],
     );
     expect(cornerLine.rows[0]!.text).toBe(
-      'Bee was granted command npm test · auto-approved under yolo, free to write the worktree and act on the host',
+      '@bee was granted command npm test · auto-approved under yolo, free to write the worktree and act on the host',
     );
   });
 
@@ -5616,7 +5629,7 @@ describe('monolith integration', () => {
     expect(joined.rows[0]!.system_event.kind).toBe('joined');
     // The sentence a person reads is unchanged by the kind, and it names the
     // newcomer by handle exactly as every other join line does.
-    expect(joined.rows[0]!.text).toBe('play-review joined');
+    expect(joined.rows[0]!.text).toBe('@play-review joined');
     expect(joined.rows[0]!.mention_ids).toEqual([WELCOME_AGENT]);
 
     const otherRoom = await database.query<{ mention_ids: string[] }>(
@@ -5748,7 +5761,7 @@ describe('monolith integration', () => {
     const line = row.rows[0]!;
     // The sentence names the agent that said it, per A6: a receiving model must
     // see WHO, not a bare clause.
-    expect(line.text).toBe('Bee emitted handoff · the branch is ready');
+    expect(line.text).toBe('@bee emitted handoff · the branch is ready');
     expect(line.system_event.kind).toBe('agent:handoff');
     expect(line.system_event.subject.id).toBe(AGENT);
     expect(line.mention_ids).toEqual([peer]);

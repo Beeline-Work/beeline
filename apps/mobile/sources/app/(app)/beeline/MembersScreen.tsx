@@ -96,19 +96,23 @@ function canAssignRole(viewerRole: WorkspaceRole, role: WorkspaceRole): boolean 
   return viewerRole === 'owner' || (viewerRole === 'admin' && role !== 'owner');
 }
 
-/**
- * The one quiet line under a name: `@handle · role`, ending in an agent's
- * lowercase presence word. That word is the Members page's presence fact —
- * the tile's gold ring means WORKING (C77), and the Workspace view carries no
- * turn or corner state, so no agent wears a ring here.
- */
 function memberMetaLine(
   identity: { handle?: string; pubkey: string },
   role: WorkspaceRole,
-  presence?: 'online' | 'offline',
 ): string {
-  const line = `@${identity.handle ?? fallbackMemberHandle(identity.pubkey)} · ${role}`;
-  return presence ? `${line} · ${presence}` : line;
+  return `@${identity.handle ?? fallbackMemberHandle(identity.pubkey)} · ${role}`;
+}
+
+function ownerByline(owner: NonNullable<WorkspaceView['agents'][number]['owner']>): string {
+  return `by @${owner.handle ?? fallbackMemberHandle(owner.pubkey)}`;
+}
+
+/** Agent rows spend their three metadata slots on identity, runtime, and ownership. */
+function agentMetaLine(agent: WorkspaceView['agents'][number]): string {
+  const name = `@${agent.identity.handle ?? fallbackMemberHandle(agent.identity.pubkey)}`;
+  const model = agent.model ?? UNSET_VALUE;
+  const owner = agent.owner ? ownerByline(agent.owner) : 'by —';
+  return `${name} · ${model} · ${owner}`;
 }
 
 const ROLE_LABELS: Record<WorkspaceRole, string> = {
@@ -942,11 +946,7 @@ export default function BuzzMembers() {
                     {member.identity.name}
                   </Text>
                   <Text numberOfLines={1} style={styles.detail}>
-                    {memberMetaLine(
-                      member.identity,
-                      member.role,
-                      member.presence?.status === 'online' ? 'online' : 'offline',
-                    )}
+                    {agentMetaLine(member)}
                   </Text>
                 </View>
                 <Text style={styles.chevron}>›</Text>
@@ -978,6 +978,11 @@ export default function BuzzMembers() {
                       </TouchableOpacity>
                     )}
                   </View>
+                  {selectedAgent.owner && (
+                    <Text style={styles.detail} testID="agent-owner">
+                      {ownerByline(selectedAgent.owner)}
+                    </Text>
+                  )}
                 </View>
                 <TouchableOpacity
                   accessibilityLabel="Close agent settings"

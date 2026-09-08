@@ -291,10 +291,12 @@ CREATE TABLE IF NOT EXISTS memberships (
   role text NOT NULL CHECK (role IN ('owner', 'admin', 'member')),
   generation bigint NOT NULL DEFAULT 1,
   identity_profile jsonb,
+  invited_by text REFERENCES identities(id),
   joined_at timestamptz NOT NULL DEFAULT now(),
   removed_at timestamptz
 );
 ALTER TABLE memberships ADD COLUMN IF NOT EXISTS identity_profile jsonb;
+ALTER TABLE memberships ADD COLUMN IF NOT EXISTS invited_by text REFERENCES identities(id);
 -- What this member reacts to in THIS Room. An event happens in a Room, so the
 -- subscription lives on the Room membership row and not on the identity: an
 -- agent in several Rooms would otherwise inherit one Room's job everywhere.

@@ -127,7 +127,7 @@ describe('default Workspace seed', () => {
       `SELECT text,presentation FROM messages WHERE room_id=$1`,
       [WELCOME_ROOM_ID],
     );
-    expect(lines.rows).toEqual([{ text: 'newbie joined', presentation: 'system' }]);
+    expect(lines.rows).toEqual([{ text: '@newbie joined', presentation: 'system' }]);
   });
 
   it('lets a person leave #welcome like any Room, and the deck lists Beeline Welcome', async () => {

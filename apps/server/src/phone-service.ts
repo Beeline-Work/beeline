@@ -2204,12 +2204,6 @@ export class PhoneService {
          AND identity.handle IS NOT NULL`,
       [roomId],
     );
-    const noticeAgentIds = new Set<string>();
-    for (const member of members.rows)
-      if (typedHandles.has(member.handle.normalize('NFKC').toLocaleLowerCase())) {
-        mentions.add(member.id);
-        if (member.kind === 'agent') noticeAgentIds.add(member.id);
-      }
     const absentCornerAgents = await this.database.query<{ id: string; handle: string }>(
       `SELECT identity.id,identity.handle
        FROM rooms room
@@ -2222,9 +2216,29 @@ export class PhoneService {
        WHERE room.id=$1 AND room.parent_id IS NOT NULL AND room_membership.identity_id IS NULL`,
       [roomId],
     );
-    for (const agent of absentCornerAgents.rows)
-      if (typedHandles.has(agent.handle.normalize('NFKC').toLocaleLowerCase()))
-        noticeAgentIds.add(agent.id);
+    const candidatesByHandle = new Map<
+      string,
+      { id: string; kind: 'human' | 'agent'; member: boolean }[]
+    >();
+    for (const member of members.rows) {
+      const handle = member.handle.normalize('NFKC').toLocaleLowerCase();
+      const candidates = candidatesByHandle.get(handle) ?? [];
+      candidates.push({ id: member.id, kind: member.kind, member: true });
+      candidatesByHandle.set(handle, candidates);
+    }
+    for (const agent of absentCornerAgents.rows) {
+      const handle = agent.handle.normalize('NFKC').toLocaleLowerCase();
+      const candidates = candidatesByHandle.get(handle) ?? [];
+      candidates.push({ id: agent.id, kind: 'agent', member: false });
+      candidatesByHandle.set(handle, candidates);
+    }
+    const noticeAgentIds = new Set<string>();
+    for (const handle of typedHandles) {
+      const [candidate] = candidatesByHandle.get(handle) ?? [];
+      if ((candidatesByHandle.get(handle)?.length ?? 0) !== 1 || !candidate) continue;
+      if (candidate.member) mentions.add(candidate.id);
+      if (candidate.kind === 'agent') noticeAgentIds.add(candidate.id);
+    }
     if (replyAgentId) mentions.add(replyAgentId);
     if (replyAgentId) noticeAgentIds.add(replyAgentId);
     return { mentionIds: [...mentions], noticeAgentIds: [...noticeAgentIds] };

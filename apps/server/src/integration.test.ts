@@ -1672,6 +1672,31 @@ describe('monolith integration', () => {
         ).rows[0]?.mention_ids,
       ).toEqual(expected);
     }
+    const duplicatePeer = '0'.repeat(64);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Another peer','peer')`,
+      [duplicatePeer],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
+      [WORKSPACE, duplicatePeer, ROOM],
+    );
+    const ambiguous = await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: '1'.repeat(64),
+      text: '@peer, hello.',
+      mentions: [peer, duplicatePeer],
+    });
+    expect(ambiguous.status).toBe(200);
+    expect(
+      (
+        await database.query<{ mention_ids: string[] }>(
+          `SELECT mention_ids FROM messages WHERE id=$1`,
+          ['1'.repeat(64)],
+        )
+      ).rows[0]?.mention_ids,
+    ).toEqual([]);
   });
 
   it('does not persist a typed agent outside the Room as a mention', async () => {

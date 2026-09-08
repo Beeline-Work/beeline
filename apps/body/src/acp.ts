@@ -127,6 +127,7 @@ export interface ToolCallEntry {
   title?: string;
   kind?: string;
   status?: string;
+  resultReceived?: boolean;
   rawInput?: unknown;
   content?: unknown;
   /** Some harnesses (grok) put a failed call's reason here and nowhere else. */
@@ -509,6 +510,7 @@ export function toolCallEntries(updates: readonly SessionUpdate[]): ToolCallEntr
       ...(typeof update.title === 'string' ? { title: update.title } : {}),
       ...(typeof update.kind === 'string' ? { kind: update.kind } : {}),
       ...(typeof update.status === 'string' ? { status: update.status } : {}),
+      ...(sessionUpdate === 'tool_result' ? { resultReceived: true } : {}),
       ...('rawInput' in update ? { rawInput: update.rawInput } : {}),
       ...('content' in update ? { content: update.content } : {}),
       ...('rawOutput' in update ? { rawOutput: update.rawOutput } : {}),

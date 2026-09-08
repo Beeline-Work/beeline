@@ -45,7 +45,31 @@ describe('ACP streaming lane classifier', () => {
         title: 'Run tests',
         rawInput: { command: 'npm test' },
         status: 'completed',
+        resultReceived: true,
         content: '12 passed',
+      },
+    ]);
+  });
+
+  it('preserves a status-less terminal result without changing its in-progress activity status', () => {
+    expect(
+      toolCallEntries([
+        update('tool_call', {
+          toolCallId: 'tool-1',
+          kind: 'read',
+          title: 'Read package.json',
+          status: 'in_progress',
+        }),
+        update('tool_result', { toolCallId: 'tool-1', content: 'package contents' }),
+      ]),
+    ).toEqual([
+      {
+        id: 'tool-1',
+        kind: 'read',
+        title: 'Read package.json',
+        status: 'in_progress',
+        resultReceived: true,
+        content: 'package contents',
       },
     ]);
   });

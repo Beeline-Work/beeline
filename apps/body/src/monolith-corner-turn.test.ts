@@ -401,7 +401,17 @@ describe('corner close-request polling cadence', () => {
             kind: 'read',
             title: 'Read package.json',
             rawInput: { path: 'package.json' },
-            status: 'completed',
+            status: 'in_progress',
+          },
+        ]);
+        toolActivity?.([
+          {
+            id: 'read-package',
+            kind: 'read',
+            title: 'Read package.json',
+            rawInput: { path: 'package.json' },
+            status: 'in_progress',
+            resultReceived: true,
             content: 'package contents',
           },
         ]);

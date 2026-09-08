@@ -169,6 +169,7 @@ function toolCallKey(call: ToolCallEntry, index: number): string {
 }
 
 function toolCallSettled(call: ToolCallEntry): boolean {
+  if (call.resultReceived) return true;
   return /^(?:completed|complete|failed|error|succeeded|success|passed|done)$/i.test(
     call.status ?? '',
   );

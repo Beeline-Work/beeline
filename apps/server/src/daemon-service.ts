@@ -1360,10 +1360,13 @@ export class DaemonService {
     if (key !== undefined) {
       if (typeof key !== 'string' || !key || key.length > 200)
         throw new Error('invalid corner activity key');
+    }
+    if (key !== undefined || input.activity.some((item) => item.kind === 'output')) {
       const corner = await this.database.query(`SELECT 1 FROM corner_facts WHERE corner_id=$1`, [
         input.roomId,
       ]);
-      if (!corner.rowCount) throw new Error('corner activity key requires a corner');
+      if (!corner.rowCount)
+        throw new Error(key !== undefined ? 'corner activity key requires a corner' : 'output activity requires a corner');
     }
     const messageId = key
       ? `corner-activity:${createHash('sha256')`

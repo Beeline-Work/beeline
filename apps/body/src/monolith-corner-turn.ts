@@ -795,15 +795,20 @@ export class MonolithCornerTurnLoop {
                 requestId,
                 label: `corner ${cornerId}`,
               });
-              // Unlike a Room, a corner keeps the completed assistant run that
-              // preceded a tool call. Track only this run's deltas, never the
-              // stream's joined `full` text: the latter also contains earlier
-              // runs and is the source of the retired offset/duplicate bug.
               let currentNarrationRun = '';
+              let completedNarrationRuns: string[] = [];
+              let narrationRunBoundary = 0;
               const takeInterimNarration = (): string => {
-                const narration = spoken(durableReplyText(currentNarrationRun));
+                const narration = spoken(
+                  [...completedNarrationRuns, currentNarrationRun]
+                    .map((run) => spoken(durableReplyText(run)))
+                    .filter((run) => run && !isPureRetryNarration(run))
+                    .join('\n\n'),
+                );
+                narrationRunBoundary += completedNarrationRuns.length;
+                completedNarrationRuns = [];
                 currentNarrationRun = '';
-                return isPureRetryNarration(narration) ? '' : narration;
+                return narration;
               };
               const publishedToolCalls = new Set<string>();
               const observedToolCalls = new Set<string>();
@@ -880,6 +885,8 @@ export class MonolithCornerTurnLoop {
                 pendingToolNarrations.clear();
                 lastNarratedToolCall = undefined;
                 stream.beginRun();
+                completedNarrationRuns = [];
+                narrationRunBoundary = 0;
                 currentNarrationRun = '';
                 trace.promptSent();
                 return this.client!.sessionPrompt(
@@ -889,12 +896,21 @@ export class MonolithCornerTurnLoop {
                     attachmentImageBlocks(delivered, this.acceptsImages()),
                   ),
                   120_000,
-                  (delta, full, currentRun) => {
+                  (delta, full, currentRun, runs) => {
                     trace.firstModelOutput();
-                    // ACP supplies the normalized run (not Pi's newline-framed
-                    // wire delta). The fallback keeps test/older adapters that
-                    // invoke the callback's original two arguments compatible.
-                    currentNarrationRun = currentRun ?? currentNarrationRun + delta;
+                    if (runs) {
+                      completedNarrationRuns = runs.slice(narrationRunBoundary);
+                      currentNarrationRun = '';
+                    } else if (currentRun === undefined) currentNarrationRun += delta;
+                    else {
+                      if (
+                        currentNarrationRun &&
+                        currentNarrationRun !== currentRun &&
+                        !currentRun.startsWith(currentNarrationRun)
+                      )
+                        completedNarrationRuns.push(currentNarrationRun);
+                      currentNarrationRun = currentRun;
+                    }
                     stream.onChunk(delta, full);
                   },
                   undefined,

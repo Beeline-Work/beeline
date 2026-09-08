@@ -237,6 +237,7 @@ export type AcpTextChunkHandler = (
   fullTextSoFar: string,
   /** The normalized assistant-message run currently accumulating. */
   currentRun?: string,
+  runs?: readonly string[],
 ) => void;
 
 export type AcpStreamSnapshot = {
@@ -921,7 +922,7 @@ export class AcpClient extends EventEmitter {
         const delta = agentMessageChunkText(u.update);
         if (delta) {
           const runs = agentMessageRuns(updates, this.agentLabel);
-          onChunk(delta, runs.join('\n\n'), runs.at(-1));
+          onChunk(delta, runs.join('\n\n'), runs.at(-1), runs);
         }
       }
     };

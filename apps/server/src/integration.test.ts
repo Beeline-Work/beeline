@@ -1445,6 +1445,19 @@ describe('monolith integration', () => {
     expect(roomView.messages.map((message) => message.id)).not.toContain('0'.repeat(63) + '1');
   });
 
+  it('rejects durable output activity in a top-level Room', async () => {
+    expect(
+      (
+        await daemonOperation('postAgentActivity', {
+          agentId: AGENT,
+          roomId: ROOM,
+          requestId: 'top-level-output',
+          activity: [{ kind: 'output', title: 'Update', text: 'Inspecting the request.' }],
+        })
+      ).status,
+    ).toBe(400);
+  });
+
   it('keeps settled corner tool rows in the corner read but never in the parent Room', async () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,

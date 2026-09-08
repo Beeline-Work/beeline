@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mentionKeyboardAction } from './composer-keyboard';
+import { mentionKeyboardAction, transcriptKeyboardDismissMode } from './composer-keyboard';
 
 describe('composer mention keyboard handling', () => {
   it('consumes only picker controls', () => {
@@ -13,5 +13,13 @@ describe('composer mention keyboard handling', () => {
     expect(mentionKeyboardAction('>')).toBeNull();
     expect(mentionKeyboardAction('<')).toBeNull();
     expect(mentionKeyboardAction('/')).toBeNull();
+  });
+});
+
+describe('transcript drag dismissal', () => {
+  it('follows the finger on iOS and drops on the first drag elsewhere', () => {
+    expect(transcriptKeyboardDismissMode('ios')).toBe('interactive');
+    expect(transcriptKeyboardDismissMode('android')).toBe('on-drag');
+    expect(transcriptKeyboardDismissMode('web')).toBe('on-drag');
   });
 });

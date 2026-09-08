@@ -21,3 +21,15 @@ export function mentionKeyboardAction(key: string): MentionKeyboardAction | null
       return null;
   }
 }
+
+/**
+ * How a drag on the transcript treats the composer keyboard. iOS users expect
+ * the keyboard to track the finger and stay dismissible mid-drag, which is
+ * what `interactive` gives; every other platform has no such gesture and drops
+ * the keyboard as soon as the drag begins.
+ */
+export type TranscriptKeyboardDismissMode = 'interactive' | 'on-drag';
+
+export function transcriptKeyboardDismissMode(os: string): TranscriptKeyboardDismissMode {
+  return os === 'ios' ? 'interactive' : 'on-drag';
+}

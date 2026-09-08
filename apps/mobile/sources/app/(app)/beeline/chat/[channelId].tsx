@@ -5,6 +5,7 @@ import {
   View,
   Text,
   FlatList,
+  Keyboard,
   Linking,
   Pressable,
   ScrollView,
@@ -170,7 +171,7 @@ import {
   type MessageReplyDisplayTarget,
   type MessageReplyTarget,
 } from '@/buzz/message-reply';
-import { mentionKeyboardAction } from '@/buzz/composer-keyboard';
+import { mentionKeyboardAction, transcriptKeyboardDismissMode } from '@/buzz/composer-keyboard';
 import { copyEntireTurn } from '@/buzz/message-copy';
 import { useRoomMessageRenderItem } from '@/buzz/room-message-cell';
 import { useRoomSurfaceSession, type RoomSurfaceSessionBindings } from './useRoomSurfaceSession';
@@ -1277,6 +1278,13 @@ export default function BuzzChat() {
       : `Start this ${ROOM_LABEL}…`;
   const focusComposer = useCallback(() => {
     requestAnimationFrame(() => composerRef.current?.focus());
+  }, []);
+  // The transcript is the composer's "outside": a tap on it puts the keyboard
+  // away, the same as a drag (keyboardDismissMode on the list below). Kept
+  // dependency-free so it never re-creates renderItem — see the memo note on
+  // renderMessage.
+  const dismissComposerKeyboard = useCallback(() => {
+    Keyboard.dismiss();
   }, []);
   const canonicalCorner = isCorner
     ? cornerLifecycle.find((corner) => corner.id === decodedId)
@@ -2943,6 +2951,7 @@ export default function BuzzChat() {
           deliveryFailed={failedOutboxIds.has(item.id)}
           onChannelReference={handleOpenChannelReference}
           onMention={handleOpenMention}
+          onTapOutsideComposer={dismissComposerKeyboard}
           onReply={beginReply}
           onCopy={handleCopyLedgerMessage}
           onRetry={retryOutboxMessage}
@@ -2975,6 +2984,7 @@ export default function BuzzChat() {
       replyTargetForMessage,
       retryOutboxMessage,
       channelReferenceIndex,
+      dismissComposerKeyboard,
       handleOpenChannelReference,
       handleOpenMention,
       handleOpenGitHubEvent,
@@ -3250,6 +3260,7 @@ export default function BuzzChat() {
             autoscrollToTopThreshold: 50,
           }}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode={transcriptKeyboardDismissMode(Platform.OS)}
           onScroll={(event) => {
             isPinnedToTailRef.current = event.nativeEvent.contentOffset.y <= TAIL_PIN_THRESHOLD;
           }}

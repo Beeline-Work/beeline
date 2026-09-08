@@ -83,19 +83,19 @@ describe('shared materializer reservation store', () => {
       const table = await database.query<{
         name: string | null;
         joined_at: string | null;
-        owner_pubkey: string | null;
+        owner_column: string | null;
       }>(
         `SELECT to_regclass('beeline_agent_pairing_claim_memberships')::text AS name,
           (SELECT data_type FROM information_schema.columns
            WHERE table_name = 'beeline_agent_pairing_claim_memberships'
              AND column_name = 'joined_at') AS joined_at,
-          (SELECT encode(owner_pubkey,'hex') FROM beeline_agent_pairing_claims
-             WHERE token_hash=$1) AS owner_pubkey`,
-        ['d'.repeat(64)],
+          (SELECT column_name FROM information_schema.columns
+           WHERE table_name = 'beeline_agent_pairing_claims'
+             AND column_name = 'owner_pubkey') AS owner_column`,
       );
       expect(table.rows[0]?.name).toBe('beeline_agent_pairing_claim_memberships');
       expect(table.rows[0]?.joined_at).toBe('timestamp with time zone');
-      expect(table.rows[0]?.owner_pubkey).toBe(MEMBER);
+      expect(table.rows[0]?.owner_column).toBeNull();
     } finally {
       await postgres.close();
     }

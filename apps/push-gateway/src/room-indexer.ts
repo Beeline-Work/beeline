@@ -102,18 +102,6 @@ function modelLabel(catalog: Json, config: Json): string | undefined {
   return axis?.options.find((choice) => choice.id === selected)?.name ?? selected;
 }
 
-function agentOwner(data: Json) {
-  const pubkey = text(data.ownerPubkey);
-  return pubkey
-    ? identity({
-        pubkey,
-        agent: false,
-        name: data.ownerName,
-        handle: data.ownerHandle,
-      })
-    : undefined;
-}
-
 function paintRoom(rows: readonly IndexRow[], roomId: string): RoomView | null {
   const roomData = rowData(rows, 'room');
   if (!roomData) return null;
@@ -272,7 +260,6 @@ export class RoomIndexer {
         const presenceStatus = text(data.presenceStatus);
         const catalog = safeJson(text(data.modelCatalog) ?? '') ?? {};
         const config = safeJson(text(data.modelConfig) ?? '') ?? {};
-        const owner = agentOwner(data);
         const model = memberIdentity.kind === 'agent' ? modelLabel(catalog, config) : undefined;
         return {
           identity: memberIdentity,
@@ -280,7 +267,6 @@ export class RoomIndexer {
           ...(memberIdentity.kind === 'agent'
             ? {
                 ...(model ? { model } : {}),
-                ...(owner ? { owner } : {}),
               }
             : {}),
           ...(memberIdentity.kind === 'agent' &&

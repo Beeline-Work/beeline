@@ -21,8 +21,6 @@ const MISSING = '3f37b271-1a12-4d2a-b002-202b3f3582b9';
 const VIEWER = 'a'.repeat(64);
 const AGENT = 'b'.repeat(64);
 const OUTSIDER = 'c'.repeat(64);
-const CONNECTED_OWNER = 'd'.repeat(64);
-const ADDING_MANAGER = 'e'.repeat(64);
 const PAIRING_CLAIM = 'f'.repeat(64);
 
 function bytes(hex: string): Uint8Array {
@@ -120,8 +118,8 @@ describe('RoomIndexer', () => {
     );
     await postgres.query(
       `INSERT INTO beeline_agent_pairing_claims
-        (token_hash,community_id,workspace_id,minter_pubkey,owner_pubkey,agent_pubkey,claimed_at)
-       VALUES($1,$2,$3,$4,$4,$5,to_timestamp(1))`,
+        (token_hash,community_id,workspace_id,minter_pubkey,agent_pubkey,claimed_at)
+       VALUES($1,$2,$3,$4,$5,to_timestamp(1))`,
       [PAIRING_CLAIM, TENANT, WORKSPACE, bytes(VIEWER), bytes(AGENT)],
     );
 
@@ -2187,7 +2185,6 @@ describe('RoomIndexer', () => {
 
     await expect(indexer.readAgent(WORKSPACE, AGENT, VIEWER)).resolves.toMatchObject({
       agent: { identity: { name: 'Milo' } },
-      owner: { pubkey: VIEWER, kind: 'human', handle: 'ada@example.test' },
       soul: {
         name: 'Clara',
         instructions: 'Keep the tests green.',
@@ -2212,23 +2209,12 @@ describe('RoomIndexer', () => {
         {
           identity: { name: 'Milo' },
           model: 'Opus',
-          owner: { pubkey: VIEWER, kind: 'human', handle: 'ada@example.test' },
         },
       ],
     });
     const detail = await indexer.readAgent(WORKSPACE, AGENT, VIEWER);
-    expect(detail?.owner).toEqual({
-      pubkey: VIEWER,
-      kind: 'human',
-      name: 'Ada',
-      handle: 'ada@example.test',
-    });
-    expect((await indexer.readWorkspace(WORKSPACE, VIEWER))?.agents[0]?.owner).toEqual({
-      pubkey: VIEWER,
-      kind: 'human',
-      name: 'Ada',
-      handle: 'ada@example.test',
-    });
+    expect(detail).not.toHaveProperty('owner');
+    expect((await indexer.readWorkspace(WORKSPACE, VIEWER))?.agents[0]).not.toHaveProperty('owner');
     expect(detail?.watchFilters).toContainEqual({
       kinds: [30078],
       '#d': [modelKey],
@@ -2286,35 +2272,6 @@ describe('RoomIndexer', () => {
 
     await expect(indexer.readWorkspace(WORKSPACE, VIEWER)).resolves.toMatchObject({
       agents: [{ identity: { pubkey: AGENT }, model: 'Opus' }],
-    });
-  });
-
-  it('reads the connected agent owner from the materializer claim rather than membership attribution', async () => {
-    await postgres.query(
-      `INSERT INTO users (community_id,pubkey,display_name,nip05_handle)
-       VALUES ($1,$2,'Owner','owner@example.test'),($1,$3,'Manager','manager@example.test')`,
-      [TENANT, bytes(CONNECTED_OWNER), bytes(ADDING_MANAGER)],
-    );
-    await postgres.query(
-      `UPDATE beeline_agent_pairing_claims SET minter_pubkey=$2,owner_pubkey=$2 WHERE token_hash=$1`,
-      [PAIRING_CLAIM, bytes(CONNECTED_OWNER)],
-    );
-    await postgres.query(
-      `UPDATE channel_members SET invited_by=$3
-       WHERE community_id=$1 AND channel_id=$4 AND pubkey=decode($2,'hex')`,
-      [TENANT, AGENT, bytes(ADDING_MANAGER), WORKSPACE],
-    );
-
-    await expect(indexer.readWorkspace(WORKSPACE, VIEWER)).resolves.toMatchObject({
-      agents: [
-        {
-          identity: { pubkey: AGENT },
-          owner: { pubkey: CONNECTED_OWNER, handle: 'owner@example.test' },
-        },
-      ],
-    });
-    await expect(indexer.readAgent(WORKSPACE, AGENT, VIEWER)).resolves.toMatchObject({
-      owner: { pubkey: CONNECTED_OWNER, handle: 'owner@example.test' },
     });
   });
 

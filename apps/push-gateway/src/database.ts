@@ -79,9 +79,20 @@ CREATE TABLE IF NOT EXISTS beeline_agent_pairing_claims (
   community_id uuid NOT NULL,
   workspace_id uuid NOT NULL,
   minter_pubkey bytea NOT NULL,
+  owner_pubkey bytea NOT NULL,
   agent_pubkey bytea NOT NULL,
   claimed_at timestamptz NOT NULL DEFAULT now()
 );
+`;
+
+const AGENT_PAIRING_CLAIM_OWNER_SQL = `
+ALTER TABLE IF EXISTS beeline_agent_pairing_claims
+  ADD COLUMN IF NOT EXISTS owner_pubkey bytea;
+UPDATE beeline_agent_pairing_claims
+  SET owner_pubkey=minter_pubkey
+  WHERE owner_pubkey IS NULL;
+ALTER TABLE beeline_agent_pairing_claims
+  ALTER COLUMN owner_pubkey SET NOT NULL;
 `;
 
 const AGENT_PAIRING_CLAIM_MEMBERSHIP_SQL = `
@@ -115,6 +126,7 @@ CREATE TABLE IF NOT EXISTS beeline_agent_connect_grants (
 /** Durable single-use reservation for private-Workspace agent pairing codes. */
 export async function migrateAgentPairingClaims(database: DatabaseQueryable): Promise<void> {
   await database.query(AGENT_PAIRING_CLAIM_SQL);
+  await database.query(AGENT_PAIRING_CLAIM_OWNER_SQL);
   await database.query(AGENT_PAIRING_CLAIM_MEMBERSHIP_SQL);
   await database.query(AGENT_PAIRING_CLAIM_MEMBERSHIP_GENERATION_SQL);
   await database.query(AGENT_CONNECT_GRANT_SQL);

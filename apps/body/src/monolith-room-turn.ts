@@ -892,7 +892,11 @@ export class MonolithRoomTurnLoop {
         console.error(`[thin-core] monolith Room ${this.options.roomId} turn failed:`, error);
       })
       .finally(() => {
-        if (this.activeTurn === active) this.activeTurn = undefined;
+        if (this.activeTurn === active) {
+          this.activeTurn = undefined;
+          this.wakeIntake?.();
+          this.wakeIntake = undefined;
+        }
       });
   }
 
@@ -1232,6 +1236,7 @@ export class MonolithRoomTurnLoop {
     const { api, roomId, signal } = this.options;
     let cursor: string | undefined;
     const processedInboxIds = new Set<string>();
+    const deferredContinuity = new Map<string, InboxItem>();
     const pushedInbox: InboxItem[] = [];
     let pendingPushedCursor: string | undefined;
     let liveConnected = false;
@@ -1291,17 +1296,28 @@ export class MonolithRoomTurnLoop {
           if (pollNow) {
             this.reconciliationRequested = false;
           }
-          const delivered = orderInboxItems([...pushedInbox.splice(0), ...inbox.items]);
+          const deferred = this.activeTurn ? [] : [...deferredContinuity.values()];
+          if (!this.activeTurn) deferredContinuity.clear();
+          const delivered = orderInboxItems([...deferred, ...pushedInbox.splice(0), ...inbox.items]);
           for (const item of delivered) {
-            if (processedInboxIds.has(item.id)) continue;
-            processedInboxIds.add(item.id);
-            while (processedInboxIds.size > INBOX_DEDUPLICATION_LIMIT)
-              processedInboxIds.delete(processedInboxIds.values().next().value!);
+            if (processedInboxIds.has(item.id) || deferredContinuity.has(item.id)) continue;
             const triggers = inboxItemTriggersTurn(
               item,
               this.agent.publicKey,
               this.responseRule.continues(item, this.agent.publicKey),
             );
+            if (
+              !triggers &&
+              this.activeTurn?.phase === 'finishing' &&
+              item.type === 'message' &&
+              !item.replyToMessageId
+            ) {
+              deferredContinuity.set(item.id, item);
+              continue;
+            }
+            processedInboxIds.add(item.id);
+            while (processedInboxIds.size > INBOX_DEDUPLICATION_LIMIT)
+              processedInboxIds.delete(processedInboxIds.values().next().value!);
             this.responseRule.observe(item);
             if (!triggers) continue;
             // A server-authored event was already authority-gated where the

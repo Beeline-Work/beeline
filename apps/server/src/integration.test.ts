@@ -1993,7 +1993,7 @@ describe('monolith integration', () => {
 
     await database.query(
       `UPDATE agents SET access_policy=$2::jsonb WHERE agent_id=$1`,
-      [AGENT, JSON.stringify({ type: 'allowlist', identityIds: [] })],
+      [AGENT, JSON.stringify({ type: 'allowlist', allow: [] })],
     );
     const addressedPeer = await operation('sendRoomMessage', {
       roomId: ROOM,
@@ -2066,6 +2066,48 @@ describe('monolith integration', () => {
     );
     expect(notices.rows).toContainEqual(
       expect.objectContaining({ author_id: AGENT, text: expect.stringContaining('did not answer') }),
+    );
+  });
+
+  it('notifies only an explicitly addressed agent on a direct reply', async () => {
+    const peer = 'd'.repeat(64);
+    const parentId = 'e'.repeat(64);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Peer','peer')`,
+      [peer],
+    );
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [peer, HUMAN]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
+      [WORKSPACE, peer, ROOM],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,mention_ids)
+       VALUES($1,$2,$3,'Direct parent answer.','[]'::jsonb)`,
+      [parentId, ROOM, AGENT],
+    );
+    await database.query(
+      `UPDATE agents SET access_policy=$2::jsonb WHERE agent_id=$1`,
+      [AGENT, JSON.stringify({ type: 'allowlist', allow: [] })],
+    );
+
+    const sent = await operation('sendRoomReply', {
+      roomId: ROOM,
+      messageId: 'a'.repeat(64),
+      parentMessageId: parentId,
+      text: '@peer Please take over.',
+    });
+    expect(sent.status).toBe(200);
+    const notices = await database.query<{ text: string }>(
+      `SELECT text FROM messages WHERE room_id=$1 AND presentation='system'`,
+      [ROOM],
+    );
+    expect(notices.rows.map((row) => row.text)).toContainEqual(
+      expect.stringContaining('Peer did not answer'),
+    );
+    expect(notices.rows.map((row) => row.text)).not.toContainEqual(
+      expect.stringContaining('Bee did not answer'),
     );
   });
 

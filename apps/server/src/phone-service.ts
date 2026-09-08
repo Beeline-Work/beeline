@@ -2312,7 +2312,7 @@ export class PhoneService {
     // Continuity is not an @mention and is never persisted as one. It still
     // participates in the existing unanswered-address notice when the target
     // agent is unavailable or refuses this sender.
-    if (replyAgentId) {
+    if (replyAgentId && noticeAgentIds.size === 0) {
       noticeAgentIds.add(replyAgentId);
     } else if (replyAgentId !== null && noticeAgentIds.size === 0) {
       const lastResponder = (

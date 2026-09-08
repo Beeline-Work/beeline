@@ -110,11 +110,11 @@ describe('who an agent can tag, and how it is spelled', () => {
     } as BodyConfig;
     let inboxReads = 0;
     let followUpDelivered = false;
-    let releaseFirstRetract: (() => void) | undefined;
-    const firstRetract = new Promise<void>((resolve) => {
-      releaseFirstRetract = () => resolve();
+    let releaseFirstPost: (() => void) | undefined;
+    const firstPost = new Promise<void>((resolve) => {
+      releaseFirstPost = () => resolve();
     });
-    let firstRetractPending = true;
+    let firstPostPending = true;
     const writes: unknown[] = [];
     const execute = vi.fn(async (name: string, input?: unknown) => {
       if (name === 'getAgentConfiguration') return { commands: [], yoloMode: false };
@@ -168,10 +168,12 @@ describe('who an agent can tag, and how it is spelled', () => {
         }
         return { items: [], cursor: 'latest' };
       }
-      if (name === 'postRoomMessage') writes.push(input);
-      if (name === 'retractAgentLiveOutput' && firstRetractPending) {
-        firstRetractPending = false;
-        return firstRetract;
+      if (name === 'postRoomMessage') {
+        writes.push(input);
+        if (firstPostPending) {
+          firstPostPending = false;
+          return firstPost;
+        }
       }
       return { id: 'write-id', createdAt: 1 };
     });
@@ -218,7 +220,7 @@ describe('who an agent can tag, and how it is spelled', () => {
       { timeout: 10_000 },
     );
     await vi.waitFor(() => expect(followUpDelivered).toBe(true), { timeout: 10_000 });
-    releaseFirstRetract?.();
+    releaseFirstPost?.();
     await vi.waitFor(() => expect(prompts).toHaveLength(2), { timeout: 10_000 });
     abort.abort();
     await running.catch(() => undefined);

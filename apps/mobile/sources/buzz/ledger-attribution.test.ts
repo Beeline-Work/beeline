@@ -36,26 +36,46 @@ describe('ledger attribution runs', () => {
 
   it('breaks an agent run at a merged corner or PR summary card', () => {
     const pubkey = 'hoots';
-    const mergedCard = {
-      id: 'merged-card',
-      pubkey,
-      isAgentActivity: true,
-      daemonFact: { type: 'corner-complete', outcome: 'landed' },
-    };
-    const prose = { id: 'answer', speaker: `agent:${pubkey}` };
+    const cards = [
+      { daemonFact: { type: 'corner-complete', outcome: 'landed' } },
+      { durableFact: { kind: 'merge' } },
+      { grantRequest: { id: 'grant' } },
+    ];
 
-    const continued = continuedSpeakerIds([
-      { id: mergedCard.id, speaker: ledgerSpeakerKey(mergedCard, new Set([pubkey])) },
-      prose,
-    ]);
+    for (const [index, card] of cards.entries()) {
+      const prose = { id: `answer-${index}`, speaker: `agent:${pubkey}` };
+      const continued = continuedSpeakerIds([
+        {
+          id: `card-${index}`,
+          speaker: ledgerSpeakerKey(
+            { id: `card-${index}`, pubkey, isAgentActivity: true, ...card },
+            new Set([pubkey]),
+          ),
+        },
+        prose,
+      ]);
 
-    expect(continued.has(prose.id)).toBe(false);
+      expect(continued.has(prose.id)).toBe(false);
+    }
   });
 
   it('always announces the first message from a new speaker', () => {
+    const knownAgents = new Set(['hoots', 'lumen']);
     const continued = continuedSpeakerIds([
-      agent('hoots-1', 'hoots'),
-      agent('lumen-1', 'lumen'),
+      {
+        id: 'hoots-1',
+        speaker: ledgerSpeakerKey(
+          { id: 'hoots-1', pubkey: 'hoots', isAgentAuthor: true },
+          knownAgents,
+        ),
+      },
+      {
+        id: 'lumen-1',
+        speaker: ledgerSpeakerKey(
+          { id: 'lumen-1', pubkey: 'lumen', isAgentAuthor: true },
+          knownAgents,
+        ),
+      },
     ]);
 
     expect(continued.has('lumen-1')).toBe(false);

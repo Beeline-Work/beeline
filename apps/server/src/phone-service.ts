@@ -2314,15 +2314,16 @@ export class PhoneService {
     // agent is unavailable or refuses this sender.
     if (replyAgentId) {
       noticeAgentIds.add(replyAgentId);
-    } else if (replyAgentId !== null) {
+    } else if (replyAgentId !== null && noticeAgentIds.size === 0) {
       const lastResponder = (
         await this.database.query<{ author_id: string }>(
           `SELECT answer.author_id
-           FROM (
-             SELECT id,author_id,presentation,mention_ids,request_id,reply_to_message_id,created_at
+           FROM rooms room
+           JOIN (
+             SELECT id,room_id,author_id,presentation,mention_ids,request_id,reply_to_message_id,created_at
              FROM messages WHERE room_id=$1 AND presentation='message'
              ORDER BY ${MESSAGE_CURSOR_MS_SQL} DESC,id DESC LIMIT 200
-           ) answer
+           ) answer ON room.id=$1 AND room.direct_participants IS NULL
            JOIN identities answer_identity ON answer_identity.id=answer.author_id
            LEFT JOIN messages request ON request.id=answer.request_id
            LEFT JOIN messages answer_parent ON answer_parent.id=answer.reply_to_message_id

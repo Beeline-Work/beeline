@@ -991,10 +991,14 @@ export class MonolithCornerTurnLoop {
               // that turn settles through its receipt instead.
               const durableReply = spoken(reply);
               await trace.measure('publish', () =>
-                stream.settle(durableReply, requestedById ? { triggerMessageId: requestId } : {}),
+                stream.settle(
+                  durableReply,
+                  requestedById ? { triggerMessageId: requestId } : {},
+                  durableReply && requestedById
+                    ? () => this.responseRule.noteReply(this.agent.publicKey, [requestedById])
+                    : undefined,
+                ),
               );
-              if (durableReply && requestedById)
-                this.responseRule.noteReply(this.agent.publicKey, [requestedById]);
             },
             { priority: 'interactive', roomKey: cornerId },
           );

@@ -1178,15 +1178,19 @@ export class MonolithRoomTurnLoop {
                         mentionIds,
                       }
                     : {},
+                  reply
+                    ? () =>
+                        this.responseRule.noteReply(this.agent.publicKey, [
+                          item.authorId,
+                          ...mentionIds.filter((id) =>
+                            roster.members.some(
+                              (member) => member.identityId === id && member.kind === 'agent',
+                            ),
+                          ),
+                        ])
+                    : undefined,
                 ),
               );
-              if (reply)
-                this.responseRule.noteReply(this.agent.publicKey, [
-                  item.authorId,
-                  ...mentionIds.filter((id) =>
-                    roster.members.some((member) => member.identityId === id && member.kind === 'agent'),
-                  ),
-                ]);
             },
             { priority: 'interactive', roomKey: this.options.roomId },
           );

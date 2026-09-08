@@ -139,7 +139,11 @@ export class AgentTurnStream {
    * An empty reply settles through the turn receipt instead, and the lane is
    * retracted either way.
    */
-  async settle(reply: string, fields: DurableReplyFields = {}): Promise<void> {
+  async settle(
+    reply: string,
+    fields: DurableReplyFields = {},
+    onReplyPosted?: () => void,
+  ): Promise<void> {
     this.close();
     const { api, agentId, roomId, requestId } = this.options;
     if (reply) {
@@ -150,6 +154,7 @@ export class AgentTurnStream {
         presentation: 'message',
         ...fields,
       });
+      onReplyPosted?.();
     }
     // A draft write already on the wire can land after the durable reply. The
     // retract has to be the last word on this lane, or that late write puts an

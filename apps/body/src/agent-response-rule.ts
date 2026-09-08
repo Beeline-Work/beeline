@@ -68,8 +68,8 @@ export class AgentResponseRule {
     if (item.type !== 'message' || item.authorId === agentId) return false;
     if (this.agentIds.has(item.authorId) && (item.agentHopCount ?? 0) >= AGENT_TO_AGENT_HOP_CAP)
       return false;
-    if (item.replyToMessageId) return item.replyToAuthorId === agentId;
     if (item.mentionIds.some((mentioned) => this.agentIds.has(mentioned))) return false;
+    if (item.replyToMessageId) return item.replyToAuthorId === agentId;
     if (this.lastAgentBySender.get(item.authorId) !== agentId) return false;
     return true;
   }

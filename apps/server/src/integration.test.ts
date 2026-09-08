@@ -728,6 +728,26 @@ describe('monolith integration', () => {
     );
     expect(stored.rows[0]?.mention_ids).toEqual([]);
 
+    const bootstrap = (await (await daemonOperation('getDaemonBootstrap', {})).json()) as {
+      rooms: Array<{ roomId: string }>;
+    };
+    expect(bootstrap.rooms).not.toContainEqual(expect.objectContaining({ roomId: dm.id }));
+    const unaddressedInbox = (await (
+      await daemonOperation('getRoomInbox', { roomId: dm.id })
+    ).json()) as { items: Array<{ id: string }> };
+    expect(unaddressedInbox.items).not.toContainEqual(expect.objectContaining({ id: 'c'.repeat(64) }));
+
+    const addressed = await operation('sendRoomMessage', {
+      roomId: dm.id,
+      messageId: 'd'.repeat(64),
+      text: '@bee Are you there?',
+    });
+    expect(addressed.status).toBe(200);
+    const addressedInbox = (await (
+      await daemonOperation('getRoomInbox', { roomId: dm.id })
+    ).json()) as { items: Array<{ id: string }> };
+    expect(addressedInbox.items).toContainEqual(expect.objectContaining({ id: 'd'.repeat(64) }));
+
     // The chat list names a DM row by its peer, so it carries the one other
     // participant's identity instead of leaving the client the stored name.
     const chats = (await (await request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
@@ -1971,6 +1991,27 @@ describe('monolith integration', () => {
     expect(pileOn.status).toBe(400);
     await expect(pileOn.json()).resolves.toEqual({ error: 'turn trigger is invalid for agent' });
 
+    await database.query(
+      `UPDATE agents SET access_policy=$2::jsonb WHERE agent_id=$1`,
+      [AGENT, JSON.stringify({ type: 'allowlist', identityIds: [] })],
+    );
+    const addressedPeer = await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: '9'.repeat(64),
+      text: '@peer Please take over.',
+    });
+    expect(addressedPeer.status).toBe(200);
+    const notices = await database.query<{ text: string }>(
+      `SELECT text FROM messages WHERE room_id=$1 AND presentation='system'`,
+      [ROOM],
+    );
+    expect(notices.rows.map((row) => row.text)).toContainEqual(
+      expect.stringContaining('Peer did not answer'),
+    );
+    expect(notices.rows.map((row) => row.text)).not.toContainEqual(
+      expect.stringContaining('Bee did not answer'),
+    );
+
     const handoff = 'a'.repeat(64);
     await operation('sendRoomMessage', {
       roomId: ROOM,
@@ -2141,8 +2182,22 @@ describe('monolith integration', () => {
           roomId: ROOM,
           requestId: taggedReply,
           triggerMessageId: taggedReply,
-          text: 'Continuing the tagged direct reply.',
+          text: 'The parent agent should stay silent.',
         })
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await daemonOperation(
+          'postRoomMessage',
+          {
+            roomId: ROOM,
+            requestId: taggedReply,
+            triggerMessageId: taggedReply,
+            text: 'The explicitly addressed agent answers.',
+          },
+          peerToken,
+        )
       ).status,
     ).toBe(200);
   });

@@ -109,6 +109,12 @@ describe('who an agent can tag, and how it is spelled', () => {
       accessPolicy: 'everyone',
     } as BodyConfig;
     let inboxReads = 0;
+    let followUpDelivered = false;
+    let releaseFirstRetract: (() => void) | undefined;
+    const firstRetract = new Promise<void>((resolve) => {
+      releaseFirstRetract = () => resolve();
+    });
+    let firstRetractPending = true;
     const writes: unknown[] = [];
     const execute = vi.fn(async (name: string, input?: unknown) => {
       if (name === 'getAgentConfiguration') return { commands: [], yoloMode: false };
@@ -135,9 +141,38 @@ describe('who an agent can tag, and how it is spelled', () => {
             ],
             cursor: 'ask-1',
           };
+        if (
+          !followUpDelivered &&
+          writes.some(
+            (write) =>
+              typeof write === 'object' &&
+              write !== null &&
+              (write as { triggerMessageId?: string }).triggerMessageId === 'ask-1',
+          )
+        ) {
+          followUpDelivered = true;
+          return {
+            items: [
+              {
+                id: 'ask-2',
+                authorId: CAPTAIN,
+                createdAt: 901,
+                type: 'message',
+                body: 'and please keep going',
+                mentionIds: [],
+                attachments: [],
+              },
+            ],
+            cursor: 'ask-2',
+          };
+        }
         return { items: [], cursor: 'latest' };
       }
       if (name === 'postRoomMessage') writes.push(input);
+      if (name === 'retractAgentLiveOutput' && firstRetractPending) {
+        firstRetractPending = false;
+        return firstRetract;
+      }
       return { id: 'write-id', createdAt: 1 };
     });
     const api = {
@@ -177,6 +212,14 @@ describe('who an agent can tag, and how it is spelled', () => {
     });
     const running = loop.run();
     await vi.waitFor(() => expect(prompts).toHaveLength(1), { timeout: 10_000 });
+    await vi.waitFor(
+      () =>
+        expect(writes).toContainEqual(expect.objectContaining({ triggerMessageId: 'ask-1' })),
+      { timeout: 10_000 },
+    );
+    await vi.waitFor(() => expect(followUpDelivered).toBe(true), { timeout: 10_000 });
+    releaseFirstRetract?.();
+    await vi.waitFor(() => expect(prompts).toHaveLength(2), { timeout: 10_000 });
     abort.abort();
     await running.catch(() => undefined);
     await scheduler.dispose();
@@ -185,6 +228,7 @@ describe('who an agent can tag, and how it is spelled', () => {
     expect(prompts[0]).toContain('- @lunchboxfortwo — Captain (person)');
     expect(prompts[0]).toContain('- @bananaman614305 (person)');
     expect(writes).toContainEqual(expect.objectContaining({ triggerMessageId: 'ask-1' }));
+    expect(writes).toContainEqual(expect.objectContaining({ triggerMessageId: 'ask-2' }));
   }, 20_000);
 
   /**
@@ -302,7 +346,8 @@ describe('the per-sender Room response rule', () => {
       replyToMessageId: 'prior-agent-answer',
       replyToAuthorId: AGENT_HEX,
     });
-    expect(responseRule.continues(directReply, AGENT_HEX)).toBe(true);
+    expect(responseRule.continues(directReply, AGENT_HEX)).toBe(false);
+    expect(inboxItemTriggersTurn(directReply, OTHER_AGENT)).toBe(true);
   });
 
   it('retains outgoing agent targets for the return exchange until the hop cap', () => {

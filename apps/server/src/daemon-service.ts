@@ -418,7 +418,8 @@ export class DaemonService {
     const rooms = await this.database.query<{ room_id: string; archived: boolean }>(
       `SELECT m.room_id, r.archived_at IS NOT NULL archived FROM memberships m
        JOIN rooms r ON r.id=m.room_id
-       WHERE m.identity_id=$1 AND m.removed_at IS NULL AND r.parent_id IS NULL`,
+       WHERE m.identity_id=$1 AND m.removed_at IS NULL AND r.parent_id IS NULL
+         AND r.direct_participants IS NULL`,
       [agentId],
     );
     return {
@@ -502,6 +503,17 @@ export class DaemonService {
             ).rows[0]?.close_requested,
           )
         : undefined;
+    const directMessage =
+      name === 'getRoomInbox'
+        ? Boolean(
+            (
+              await this.database.query<{ direct: boolean }>(
+                `SELECT direct_participants IS NOT NULL direct FROM rooms WHERE id=$1`,
+                [roomId],
+              )
+            ).rows[0]?.direct,
+          )
+        : false;
     if (input.startAtLatest) {
       if (input.after) throw new Error('startAtLatest cannot be combined with after');
       const latest = await this.database.query<{
@@ -613,7 +625,8 @@ export class DaemonService {
             (row) =>
               row.presentation === 'system' ||
               (row.author_id !== agentId &&
-                (row.presentation === 'message' || (row.mention_ids ?? []).includes(agentId))),
+                ((!directMessage && row.presentation === 'message') ||
+                  (row.mention_ids ?? []).includes(agentId))),
           )
         : page;
     const expiredMedia = await this.expiredMediaIds(
@@ -1063,17 +1076,20 @@ export class DaemonService {
              LEFT JOIN messages reply_parent ON reply_parent.id=message.reply_to_message_id
              WHERE message.id=$1 AND message.room_id=$2 AND (
                message.mention_ids @> $3::jsonb OR (
-                 message.presentation='message'
-                 AND (identity.kind<>'agent' OR message.agent_hop_count<$5)
+               message.presentation='message'
+               AND (identity.kind<>'agent' OR message.agent_hop_count<$5)
+                 AND EXISTS(
+                   SELECT 1 FROM rooms room
+                   WHERE room.id=message.room_id AND room.direct_participants IS NULL
+                 )
+                 AND NOT EXISTS(
+                   SELECT 1 FROM jsonb_array_elements_text(message.mention_ids) mentioned
+                   JOIN identities mentioned_identity ON mentioned_identity.id=mentioned
+                   WHERE mentioned_identity.kind='agent'
+                 )
                  AND (
                    (message.reply_to_message_id IS NOT NULL AND reply_parent.author_id=$4) OR
-                   (message.reply_to_message_id IS NULL
-                    AND NOT EXISTS(
-                      SELECT 1 FROM jsonb_array_elements_text(message.mention_ids) mentioned
-                      JOIN identities mentioned_identity ON mentioned_identity.id=mentioned
-                      WHERE mentioned_identity.kind='agent'
-                    )
-                    AND $4=(
+                   (message.reply_to_message_id IS NULL AND $4=(
                      SELECT answer.author_id
                      FROM (
                        SELECT id,author_id,presentation,mention_ids,request_id,reply_to_message_id,created_at

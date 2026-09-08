@@ -625,10 +625,9 @@ export class DaemonService {
       name === 'getRoomInbox'
         ? page.filter(
             (row) =>
-              row.presentation === 'system' ||
-              (row.author_id !== agentId &&
-                ((!directMessage && row.presentation === 'message') ||
-                  (row.mention_ids ?? []).includes(agentId))),
+              row.author_id !== agentId &&
+              ((!directMessage && row.presentation === 'message') ||
+                (row.mention_ids ?? []).includes(agentId)),
           )
         : page;
     const expiredMedia = await this.expiredMediaIds(

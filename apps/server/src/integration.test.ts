@@ -6364,6 +6364,23 @@ describe('monolith integration', () => {
       [ROOM, newcomerId],
     );
     expect(joins.rows.some((row) => row.mention_ids.includes(AGENT))).toBe(true);
+    const ordinaryLine = 'd'.repeat(64);
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation)
+       VALUES($1,$2,$3,'Owner noted the weather.','system')`,
+      [ordinaryLine, ROOM, HUMAN],
+    );
+    const inbox = (await (await daemonOperation('getRoomInbox', { roomId: ROOM })).json()) as {
+      items: Array<{
+        id: string;
+        mentionIds: string[];
+        systemEvent?: { kind?: string };
+      }>;
+    };
+    expect(inbox.items.map((item) => item.id)).not.toContain(ordinaryLine);
+    expect(inbox.items).toContainEqual(
+      expect.objectContaining({ mentionIds: expect.arrayContaining([AGENT]), systemEvent: { kind: 'joined' } }),
+    );
   });
 
   it('refuses a subscription an agent may not hold, and a Room it is not in', async () => {

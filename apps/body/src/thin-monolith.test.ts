@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ThinDaemonCore } from './thin-core.js';
+import { AcpClient } from './acp.js';
 import {
   removeCornerScratchWorkspace,
   RoomRuntimeCoordinator,
@@ -242,6 +243,132 @@ describe('monolith-only thin daemon', () => {
       'postAgentPresence',
       expect.objectContaining({ roomId: 'room' }),
     );
+  });
+
+  it('answers only an explicit mention in a bootstrapped direct message', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'beeline-dm-runtime-'));
+    roots.push(root);
+    const staged = await stageMonolithAgentRuntime({
+      workspaceId: 'workspace',
+      pairedBy: 'human',
+      daemonExchangeToken: `bde_${'d'.repeat(43)}`,
+      agentBinary: '/fake-agent',
+      agentKind: 'codex',
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: 'unused',
+      agentIdentity: identityFromKey('77'.repeat(32), 'Bee'),
+      bodyIdentity: identityFromKey('88'.repeat(32), 'Body'),
+      supervisorRoot: root,
+    });
+    const roomId = 'dm-room';
+    const humanId = '99'.repeat(32);
+    const unmentionedId = 'a'.repeat(64);
+    const mentionedId = 'b'.repeat(64);
+    const posts: Array<Record<string, unknown>> = [];
+    let inboxReads = 0;
+    const execute = vi.fn(async (name: string, input?: Record<string, unknown>) => {
+      if (name === 'getDaemonBootstrap') {
+        return { workspaceIds: ['workspace'], rooms: [{ roomId, archived: false }] };
+      }
+      if (name === 'listRoomCorners') return { corners: [] };
+      if (name === 'getRoomRepositoryState') {
+        return {
+          resolution: 'none' as const,
+          directParticipants: [staged.runtime.agent.publicKey, humanId],
+        };
+      }
+      if (name === 'getAgentConfiguration') return { commands: [], yoloMode: false };
+      if (name === 'getWorkspaceRoster') {
+        return {
+          members: [
+            {
+              identityId: staged.runtime.agent.publicKey,
+              kind: 'agent' as const,
+              name: 'Bee',
+              role: 'member' as const,
+            },
+            { identityId: humanId, kind: 'human' as const, name: 'Human', role: 'member' as const },
+          ],
+        };
+      }
+      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' as const };
+      if (name === 'getRoomInbox') {
+        if (input?.startAtLatest) return { items: [], cursor: 'latest', rewindIds: [] };
+        inboxReads += 1;
+        if (inboxReads === 1) {
+          return {
+            items: [
+              {
+                id: unmentionedId,
+                authorId: humanId,
+                createdAt: 1,
+                type: 'message',
+                body: 'Are you there?',
+                mentionIds: [],
+                attachments: [],
+              },
+              {
+                id: mentionedId,
+                authorId: humanId,
+                createdAt: 2,
+                type: 'message',
+                body: '@Bee are you there?',
+                mentionIds: [staged.runtime.agent.publicKey],
+                attachments: [],
+              },
+            ],
+            cursor: mentionedId,
+          };
+        }
+        return { items: [], cursor: 'latest' };
+      }
+      if (name === 'postRoomMessage') {
+        posts.push(input ?? {});
+        return { id: 'answer', createdAt: 3 };
+      }
+      return { id: 'event', createdAt: 1 };
+    });
+    const acpStart = vi.spyOn(AcpClient.prototype, 'start').mockResolvedValue(undefined);
+    const acpSession = vi
+      .spyOn(AcpClient.prototype, 'sessionNew')
+      .mockResolvedValue({ sessionId: 'dm-session', raw: {} });
+    const acpPrompt = vi.spyOn(AcpClient.prototype, 'sessionPrompt').mockResolvedValue({
+      stopReason: 'end_turn',
+      updates: [],
+      agentText: 'I am here.',
+      toolCalls: [],
+    });
+    const acpImages = vi.spyOn(AcpClient.prototype, 'canPromptWithImages').mockReturnValue(false);
+    const acpAlive = vi.spyOn(AcpClient.prototype, 'isAlive', 'get').mockReturnValue(true);
+    const config: BodyConfig = {
+      agentBinary: '/fake-agent',
+      agentKind: 'codex',
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: 'unused',
+      readonlyMcpCommand: '/fake-beeline-mcp',
+      agentEnv: {},
+      workspaceRoot: root,
+      autoApprovePermissions: false,
+    };
+    const coordinator = new RoomRuntimeCoordinator(staged.runtime, staged.configPath, config, {
+      daemonApi: { execute } as unknown as DaemonApiClient,
+    });
+    try {
+      await coordinator.reconcile();
+      await vi.waitFor(() => expect(posts).toHaveLength(1));
+      expect(posts[0]).toMatchObject({ roomId, triggerMessageId: mentionedId });
+      expect(posts).not.toContainEqual(expect.objectContaining({ triggerMessageId: unmentionedId }));
+    } finally {
+      await coordinator.shutdown();
+      acpAlive.mockRestore();
+      acpImages.mockRestore();
+      acpPrompt.mockRestore();
+      acpSession.mockRestore();
+      acpStart.mockRestore();
+    }
   });
 
   it('recovers a corner objective from the OLDEST page, not the newest one', async () => {

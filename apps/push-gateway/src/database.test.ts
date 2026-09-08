@@ -71,17 +71,31 @@ describe('shared materializer reservation store', () => {
           PRIMARY KEY (token_hash, community_id, channel_id, agent_pubkey)
         );
       `);
+      await postgres.query(
+        `INSERT INTO beeline_agent_pairing_claims
+          (token_hash,community_id,workspace_id,minter_pubkey,agent_pubkey)
+         VALUES($1,$2,$3,$4,$5)`,
+        ['d'.repeat(64), COMMUNITY, MEMBER_ROOM, bytes(MEMBER), bytes(AUTHOR)],
+      );
 
       await migrateAgentPairingClaims(database);
       await migrateAgentPairingClaims(database);
-      const table = await database.query<{ name: string | null; joined_at: string | null }>(
+      const table = await database.query<{
+        name: string | null;
+        joined_at: string | null;
+        owner_column: string | null;
+      }>(
         `SELECT to_regclass('beeline_agent_pairing_claim_memberships')::text AS name,
           (SELECT data_type FROM information_schema.columns
            WHERE table_name = 'beeline_agent_pairing_claim_memberships'
-             AND column_name = 'joined_at') AS joined_at`,
+             AND column_name = 'joined_at') AS joined_at,
+          (SELECT column_name FROM information_schema.columns
+           WHERE table_name = 'beeline_agent_pairing_claims'
+             AND column_name = 'owner_pubkey') AS owner_column`,
       );
       expect(table.rows[0]?.name).toBe('beeline_agent_pairing_claim_memberships');
       expect(table.rows[0]?.joined_at).toBe('timestamp with time zone');
+      expect(table.rows[0]?.owner_column).toBeNull();
     } finally {
       await postgres.close();
     }

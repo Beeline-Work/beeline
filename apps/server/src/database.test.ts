@@ -176,6 +176,50 @@ describe('the message cursor index', () => {
   });
 });
 
+describe('the membership inviter migration', () => {
+  const OWNER = 'a'.repeat(64);
+  const MEMBER = 'b'.repeat(64);
+  const WORKSPACE = '11111111-1111-4111-8111-111111111111';
+  let database: PgliteDatabase;
+
+  beforeEach(async () => {
+    database = new PgliteDatabase();
+    await migrate(database);
+  });
+
+  afterEach(() => database.close());
+
+  it('upgrades legacy inviter references so deleting an inviter preserves the member', async () => {
+    await database.query(`ALTER TABLE memberships DROP CONSTRAINT memberships_invited_by_fkey`);
+    await database.query(
+      `ALTER TABLE memberships ADD CONSTRAINT memberships_invited_by_fkey
+       FOREIGN KEY (invited_by) REFERENCES identities(id)`,
+    );
+    await database.query(
+      `INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner'),($2,'human','Member')`,
+      [OWNER, MEMBER],
+    );
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Workspace')`, [WORKSPACE]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role,invited_by)
+       VALUES($1,NULL,$2,'member',$3)`,
+      [WORKSPACE, MEMBER, OWNER],
+    );
+
+    await migrate(database);
+    await database.query(`DELETE FROM identities WHERE id=$1`, [OWNER]);
+
+    expect(
+      (
+        await database.query<{ invited_by: string | null }>(
+          `SELECT invited_by FROM memberships WHERE workspace_id=$1 AND identity_id=$2`,
+          [WORKSPACE, MEMBER],
+        )
+      ).rows,
+    ).toEqual([{ invited_by: null }]);
+  });
+});
+
 describe('the yolo default migration', () => {
   const OWNER = 'a'.repeat(64);
   const ON_AGENT = '1'.repeat(64);

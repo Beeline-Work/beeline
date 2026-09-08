@@ -4,7 +4,8 @@
 export const SCHEDULE_SCHEDULER_ID =
   '7218ea1ccc85c23065e08efd8fc7dd50f6ffd7bcc91b0a3d5a037853f2de1721';
 export const SCHEDULE_SCHEDULER_NAME = 'Beeline Scheduler';
-/** The verb of the scheduler's system line (`Beeline Scheduler ran a schedule for
+export const SCHEDULE_SCHEDULER_HANDLE = 'scheduler';
+/** The verb of the scheduler's system line (`@scheduler ran a schedule for
  *  Candy · <message>`). The thin daemon turn loop treats only a system line whose
  *  structured event carries this verb as an addressable scheduled prompt; plain
  *  system lines never trigger turns. */

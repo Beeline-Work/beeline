@@ -86,10 +86,7 @@ describe('default Workspace seed', () => {
 
   it('never backfills a hidden_from_roster identity into the Workspace or #welcome', async () => {
     const HIDDEN = 'e'.repeat(64);
-    await db.query(
-      `INSERT INTO identities(id,kind,name) VALUES($1,'human','Captain')`,
-      [CAPTAIN],
-    );
+    await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Captain')`, [CAPTAIN]);
     await db.query(
       `INSERT INTO identities(id,kind,name,hidden_from_roster) VALUES($1,'human','System',true)`,
       [HIDDEN],
@@ -127,7 +124,7 @@ describe('default Workspace seed', () => {
       `SELECT text,presentation FROM messages WHERE room_id=$1`,
       [WELCOME_ROOM_ID],
     );
-    expect(lines.rows).toEqual([{ text: 'newbie joined', presentation: 'system' }]);
+    expect(lines.rows).toEqual([{ text: '@newbie joined', presentation: 'system' }]);
   });
 
   it('lets a person leave #welcome like any Room, and the deck lists Beeline Welcome', async () => {

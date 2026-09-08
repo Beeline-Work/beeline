@@ -50,7 +50,13 @@ describe('deleteAccount', () => {
     await database.query(
       `INSERT INTO rooms(id,workspace_id,name,direct_participants) VALUES($1,$2,'Direct message',$4::jsonb),
          ($3,$2,'Direct message',$5::jsonb)`,
-      [DM_HUMAN, WORKSPACE, DM_AGENT, JSON.stringify([OWNER, PARTNER]), JSON.stringify([OWNER, AGENT])],
+      [
+        DM_HUMAN,
+        WORKSPACE,
+        DM_AGENT,
+        JSON.stringify([OWNER, PARTNER]),
+        JSON.stringify([OWNER, AGENT]),
+      ],
     );
     await database.query(
       `INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Corner')`,
@@ -63,6 +69,11 @@ describe('deleteAccount', () => {
          ($1,$6,$2,'member'),($1,$6,$3,'member'),
          ($1,$7,$2,'member'),($1,$7,$5,'member')`,
       [WORKSPACE, OWNER, PARTNER, ROOM, AGENT, DM_HUMAN, DM_AGENT],
+    );
+    await database.query(
+      `UPDATE memberships SET invited_by=$1
+       WHERE workspace_id=$2 AND room_id IS NULL AND identity_id=$3`,
+      [OWNER, WORKSPACE, PARTNER],
     );
     await database.query(
       `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lifecycle) VALUES($1,$2,'ship it','{"lifecycle":"working"}'::jsonb)`,
@@ -250,7 +261,10 @@ describe('deleteAccount', () => {
       [`SELECT 1 FROM live_outputs WHERE agent_id=ANY($1)`, [[OWNER, AGENT]]],
       [`SELECT 1 FROM work_schedules WHERE agent_id=ANY($1)`, [[OWNER, AGENT]]],
       [`SELECT 1 FROM schedule_receipts WHERE agent_id=ANY($1)`, [[OWNER, AGENT]]],
-      [`SELECT 1 FROM agent_schedules WHERE creator_id=ANY($1) OR agent_id=ANY($1)`, [[OWNER, AGENT]]],
+      [
+        `SELECT 1 FROM agent_schedules WHERE creator_id=ANY($1) OR agent_id=ANY($1)`,
+        [[OWNER, AGENT]],
+      ],
       [`SELECT 1 FROM agent_mandates WHERE agent_id=ANY($1)`, [[OWNER, AGENT]]],
       [`SELECT 1 FROM agent_grants WHERE requested_by=ANY($1)`, [[OWNER, AGENT]]],
       [`SELECT 1 FROM permission_authority WHERE principal_id=ANY($1)`, [[OWNER, AGENT]]],
@@ -278,6 +292,12 @@ describe('deleteAccount', () => {
 
     // Attribution the account created is lifted off the shared artifacts.
     await expectRowCount(`SELECT 1 FROM rooms WHERE id=$1 AND created_by IS NULL`, [ROOM], 1);
+    await expectRowCount(
+      `SELECT 1 FROM memberships
+       WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND invited_by IS NULL`,
+      [WORKSPACE, PARTNER],
+      1,
+    );
 
     // Sole surviving owner succession: the partner now owns the Workspace.
     await expectRowCount(

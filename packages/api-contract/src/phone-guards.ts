@@ -231,6 +231,17 @@ function member(value: unknown): value is RoomViewMember {
   );
 }
 
+function workspaceAgent(value: unknown): boolean {
+  const item = record(value);
+  return Boolean(
+    item &&
+    member(value) &&
+    record(item.identity)?.kind === 'agent' &&
+    optionalString(item.model) &&
+    (item.owner === undefined || (identity(item.owner) && item.owner.kind === 'human')),
+  );
+}
+
 function messageCorner(value: unknown): boolean {
   const item = record(value);
   return Boolean(
@@ -749,7 +760,7 @@ export function isWorkspaceView(value: unknown): value is WorkspaceView {
     item.members.every(member) &&
     Array.isArray(item.agents) &&
     item.agents.length <= ROOM_VIEW_AGENT_LIMIT &&
-    item.agents.every(member) &&
+    item.agents.every(workspaceAgent) &&
     typeof item.membersTruncated === 'boolean' &&
     typeof item.agentsTruncated === 'boolean' &&
     viewer(item.viewer) &&
@@ -820,6 +831,7 @@ export function isAgentDetailView(value: unknown): value is AgentDetailView {
     UUID.test(item.workspaceId) &&
     member(item.agent) &&
     item.agent.identity.kind === 'agent' &&
+    (item.owner === undefined || (identity(item.owner) && item.owner.kind === 'human')) &&
     Array.isArray(item.catalog) &&
     item.catalog.length <= 100 &&
     item.catalog.every(modelOption) &&

@@ -7,7 +7,7 @@ import type { SystemEvent, SystemSubject } from '@beeline/api-contract/phone';
  * as `<subject> <verb>[ <object>][ · <consequence>]` and stores the structured
  * event beside the text. The phone renders the event (names in brass, the
  * object linked by its URL) and folds consecutive lines that share a verb,
- * object and consequence into one: "Candy, Terra and Codex joined". A row from
+ * object and consequence into one: "@candy, @terra and @codex joined". A row from
  * before the grammar has no event and renders its text verbatim.
  */
 export type SystemLineMessage = {
@@ -22,7 +22,7 @@ export type SystemLineMessage = {
   foldedIds?: string[];
 };
 
-/** "Candy" · "Candy and Terra" · "Candy, Terra and Codex". */
+/** "@candy" · "@candy and @terra" · "@candy, @terra and @codex". */
 export function joinSystemNames(names: readonly string[]): string {
   if (names.length <= 1) return names[0] ?? '';
   return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;

@@ -217,22 +217,24 @@ describe('agent schedule background posting', () => {
         presentation: string;
         mention_ids: string[];
         system_event: unknown;
-      }>(`SELECT author_id,text,presentation,mention_ids,system_event FROM messages ORDER BY created_at`);
+      }>(
+        `SELECT author_id,text,presentation,mention_ids,system_event FROM messages ORDER BY created_at`,
+      );
       expect(messages.rowCount).toBe(2);
       // Never authored by the agent itself: the scheduler identity posts a
       // system-presentation line mentioning the agent.
       expect(messages.rows[0]).toEqual({
         author_id: SCHEDULE_SCHEDULER_ID,
-        text: 'Beeline Scheduler ran a schedule for Worker · Post exactly: hello @methoxine-debug',
+        text: '@scheduler ran a schedule for @worker · Post exactly: hello @methoxine-debug',
         presentation: 'system',
         mention_ids: [AGENT],
         system_event: {
-          subject: { kind: 'system', id: SCHEDULE_SCHEDULER_ID, name: 'Beeline Scheduler' },
+          subject: { kind: 'system', id: SCHEDULE_SCHEDULER_ID, name: '@scheduler' },
           verb: SCHEDULE_RAN_VERB,
           // The machine half beside the prose: the daemon matches this, never
           // the verb, and the text above is unchanged by its presence.
           kind: 'schedule-ran',
-          object: { text: 'Worker', id: AGENT },
+          object: { text: '@worker', id: AGENT },
           consequence: 'Post exactly: hello @methoxine-debug',
         },
       });
@@ -248,11 +250,7 @@ describe('agent schedule background posting', () => {
       ).toEqual({ hidden_from_roster: true });
       // The agent's daemon inbox contains the scheduled prompt (the own-author
       // drop would have hidden a self-authored row) and a simulated turn reply.
-      const inbox = await daemon.execute(
-        'getRoomInbox',
-        { roomId: ROOM, limit: 50 },
-        AGENT,
-      );
+      const inbox = await daemon.execute('getRoomInbox', { roomId: ROOM, limit: 50 }, AGENT);
       const scheduledItems = inbox.items.filter(
         (item) =>
           item.type === 'system' &&

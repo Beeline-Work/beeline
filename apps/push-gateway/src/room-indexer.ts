@@ -67,6 +67,41 @@ import {
 export { CHAT_LIST_SQL, ROOM_PAINT_SQL } from './room-indexer-sql.js';
 export { collapsePermissionCards } from './room-indexer-projection.js';
 
+function modelCatalogOptions(catalog: Json): AgentDetailView['catalog'] {
+  return Array.isArray(catalog.options)
+    ? catalog.options.flatMap((candidate) => {
+        const option = json(candidate);
+        const id = text(option.id);
+        const category = text(option.category);
+        if (!id || !category || !isAllowedAgentModelConfigCategory(category)) return [];
+        const choices = Array.isArray(option.options)
+          ? option.options.flatMap((raw) => {
+              const choice = json(raw);
+              const choiceId = text(choice.id);
+              return choiceId
+                ? [{ id: choiceId, ...(text(choice.name) ? { name: text(choice.name) } : {}) }]
+                : [];
+            })
+          : [];
+        return [
+          {
+            id,
+            category,
+            ...(text(option.currentValue) ? { currentValue: text(option.currentValue) } : {}),
+            options: choices,
+          },
+        ];
+      })
+    : [];
+}
+
+function modelLabel(catalog: Json, config: Json): string | undefined {
+  const axis = modelCatalogOptions(catalog).find((candidate) => candidate.category === 'model');
+  const selected = text(config.model) ?? text(json(catalog.selection).model) ?? axis?.currentValue;
+  if (!selected) return undefined;
+  return axis?.options.find((choice) => choice.id === selected)?.name ?? selected;
+}
+
 function paintRoom(rows: readonly IndexRow[], roomId: string): RoomView | null {
   const roomData = rowData(rows, 'room');
   if (!roomData) return null;
@@ -223,9 +258,17 @@ export class RoomIndexer {
         const data = json(row.data);
         const memberIdentity = identity(data);
         const presenceStatus = text(data.presenceStatus);
+        const catalog = safeJson(text(data.modelCatalog) ?? '') ?? {};
+        const config = safeJson(text(data.modelConfig) ?? '') ?? {};
+        const model = memberIdentity.kind === 'agent' ? modelLabel(catalog, config) : undefined;
         return {
           identity: memberIdentity,
           role: data.role as RoomViewMember['role'],
+          ...(memberIdentity.kind === 'agent'
+            ? {
+                ...(model ? { model } : {}),
+              }
+            : {}),
           ...(memberIdentity.kind === 'agent' &&
           (presenceStatus === 'online' || presenceStatus === 'offline')
             ? {
@@ -310,31 +353,7 @@ export class RoomIndexer {
             ...(safeSoulAvatar ? { avatar: safeSoulAvatar } : {}),
           }
         : undefined;
-    const options = Array.isArray(catalog.options)
-      ? catalog.options.flatMap((candidate) => {
-          const option = json(candidate);
-          const id = text(option.id);
-          const category = text(option.category);
-          if (!id || !category || !isAllowedAgentModelConfigCategory(category)) return [];
-          const choices = Array.isArray(option.options)
-            ? option.options.flatMap((raw) => {
-                const choice = json(raw);
-                const choiceId = text(choice.id);
-                return choiceId
-                  ? [{ id: choiceId, ...(text(choice.name) ? { name: text(choice.name) } : {}) }]
-                  : [];
-              })
-            : [];
-          return [
-            {
-              id,
-              category,
-              ...(text(option.currentValue) ? { currentValue: text(option.currentValue) } : {}),
-              options: choices,
-            },
-          ];
-        })
-      : [];
+    const options = modelCatalogOptions(catalog);
     const runtime = json(catalog.selection);
     const selected = config;
     const runtimeSelection = {
@@ -354,6 +373,7 @@ export class RoomIndexer {
         }),
         role: agentData.role === 'owner' || agentData.role === 'admin' ? agentData.role : 'member',
       },
+      ...(rowData(rows, 'owner') ? { owner: identity(rowData(rows, 'owner')!) } : {}),
       ...(soul ? { soul } : {}),
       catalog: options,
       ...(Object.keys(runtimeSelection).length ? { runtimeSelection } : {}),

@@ -25,9 +25,10 @@ describe('PhoneService agent connect pairing claim', () => {
   beforeEach(async () => {
     database = new PgliteDatabase();
     await migrate(database);
-    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner')`, [
-      OWNER,
-    ]);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner')`,
+      [OWNER],
+    );
     await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Builders')`, [WORKSPACE]);
     await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'General')`, [
       ROOM,
@@ -122,6 +123,28 @@ describe('PhoneService agent connect pairing claim', () => {
       [AGENT],
     );
     expect(memberships.rows).toEqual([{ room_id: null }, { room_id: ROOM }]);
+  });
+
+  it('returns a normally connected agent owner from server workspace and profile reads', async () => {
+    await insertCode(new Date(Date.now() + 60_000));
+    const claim = await phone.claimAgentConnectPairing({
+      code: CODE,
+      agentPubkey: AGENT,
+      model: 'gpt-5.4',
+    });
+    if (claim.status !== 'claimed') throw new Error('claim failed');
+
+    await expect(phone.readWorkspace(WORKSPACE, OWNER)).resolves.toMatchObject({
+      agents: [
+        {
+          identity: { pubkey: AGENT },
+          owner: { pubkey: OWNER, kind: 'human', handle: 'owner' },
+        },
+      ],
+    });
+    await expect(phone.readAgent(WORKSPACE, AGENT, OWNER)).resolves.toMatchObject({
+      owner: { pubkey: OWNER, kind: 'human', handle: 'owner' },
+    });
   });
 
   it('rolls the agent claim back when its daemon exchange cannot be minted', async () => {
@@ -353,7 +376,6 @@ describe('PhoneService agent connect pairing claim', () => {
         status: 'renamed',
         agentName: 'greeter',
       });
-
       expect(
         (await database.query(`SELECT handle FROM identities WHERE id=$1`, [AGENT])).rows,
       ).toEqual([{ handle: 'greeter' }]);
@@ -361,8 +383,8 @@ describe('PhoneService agent connect pairing claim', () => {
       await phone.finishAgentConnectPairing({ code: CODE, workspaceJoined: true });
 
       const joinLine = await readJoinLine();
-      expect(joinLine?.subjectName).toBe('greeter');
-      expect(joinLine?.text).toBe('greeter joined');
+      expect(joinLine?.subjectName).toBe('@greeter');
+      expect(joinLine?.text).toBe('@greeter joined · invited by @owner');
       expect(joinLine?.subjectName).not.toBe(seededName);
     });
 
@@ -420,9 +442,10 @@ describe('PhoneService agent connect pairing claim', () => {
       );
       expect(memberships.rows).toEqual([{ room_id: null }, { room_id: ROOM }]);
       const joinLine = await readJoinLine();
+      const mention = `@${claimed.agentName.toLowerCase()}`;
       expect(joinLine).toEqual({
-        text: `${claimed.agentName} joined`,
-        subjectName: claimed.agentName,
+        text: `${mention} joined · invited by @owner`,
+        subjectName: mention,
       });
 
       // Calling finish afterward (an old CLI never does, but a mixed rollout
@@ -458,7 +481,7 @@ describe('PhoneService agent connect pairing claim', () => {
       });
 
       const joinLine = await readJoinLine();
-      expect(joinLine?.subjectName).toBe(seededName);
+      expect(joinLine?.subjectName).toBe(`@${seededName.toLowerCase()}`);
       expect(joinLine?.subjectName).not.toBe('greeter');
     });
   });

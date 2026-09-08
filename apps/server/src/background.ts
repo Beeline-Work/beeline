@@ -66,15 +66,8 @@ export class PushDeliveryLoop {
         SELECT m.id message_id,room.workspace_id::text workspace_id,m.room_id::text room_id,
           'message' notification_type,
           CASE
-            -- A corner is named by its NAME on every surface, this one included.
-            WHEN m.card_type='daemon-fact' AND m.card->>'type'='corner-open'
-              THEN concat_ws(' ',COALESCE(NULLIF(author.name,''),'An agent'),'opened a corner:',
-                COALESCE(NULLIF(m.card->>'name',''),m.card->>'objective'))
-            WHEN m.card_type='daemon-fact' AND m.card->>'type'='corner-complete'
-              THEN concat_ws(' ',COALESCE(NULLIF(author.name,''),'An agent'),
-                CASE WHEN m.card->>'outcome'='landed' THEN 'merged:' ELSE 'closed:' END,
-                COALESCE(NULLIF(m.card->>'name',''),m.card->>'objective'))
-            WHEN m.card_type='grant-request' THEN btrim(m.text)
+            -- System/card text already came from the one lifecycle grammar.
+            WHEN m.presentation IN ('system','card') THEN btrim(m.text)
             ELSE concat_ws(': ',COALESCE(NULLIF(author.name,''),'Someone'),btrim(m.text))
           END text,
           d.token,member.identity_id,false is_release_catchup,m.created_at

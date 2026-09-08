@@ -84,6 +84,11 @@ CREATE TABLE IF NOT EXISTS beeline_agent_pairing_claims (
 );
 `;
 
+const AGENT_PAIRING_CLAIM_OWNER_CLEANUP_SQL = `
+ALTER TABLE IF EXISTS beeline_agent_pairing_claims
+  DROP COLUMN IF EXISTS owner_pubkey;
+`;
+
 const AGENT_PAIRING_CLAIM_MEMBERSHIP_SQL = `
 CREATE TABLE IF NOT EXISTS beeline_agent_pairing_claim_memberships (
   token_hash text NOT NULL CHECK (token_hash ~ '^[0-9a-f]{64}$'),
@@ -115,6 +120,7 @@ CREATE TABLE IF NOT EXISTS beeline_agent_connect_grants (
 /** Durable single-use reservation for private-Workspace agent pairing codes. */
 export async function migrateAgentPairingClaims(database: DatabaseQueryable): Promise<void> {
   await database.query(AGENT_PAIRING_CLAIM_SQL);
+  await database.query(AGENT_PAIRING_CLAIM_OWNER_CLEANUP_SQL);
   await database.query(AGENT_PAIRING_CLAIM_MEMBERSHIP_SQL);
   await database.query(AGENT_PAIRING_CLAIM_MEMBERSHIP_GENERATION_SQL);
   await database.query(AGENT_CONNECT_GRANT_SQL);

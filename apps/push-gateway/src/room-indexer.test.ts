@@ -21,6 +21,7 @@ const MISSING = '3f37b271-1a12-4d2a-b002-202b3f3582b9';
 const VIEWER = 'a'.repeat(64);
 const AGENT = 'b'.repeat(64);
 const OUTSIDER = 'c'.repeat(64);
+const PAIRING_CLAIM = 'f'.repeat(64);
 
 function bytes(hex: string): Uint8Array {
   return Uint8Array.from(Buffer.from(hex, 'hex'));
@@ -105,8 +106,8 @@ describe('RoomIndexer', () => {
     );
     for (const channelId of [WORKSPACE, ROOM, CORNER]) {
       await postgres.query(
-        `INSERT INTO channel_members (community_id, channel_id, pubkey, role)
-         VALUES ($1, $2, $3, 'owner'), ($1, $2, $4, 'member')`,
+        `INSERT INTO channel_members (community_id, channel_id, pubkey, role, invited_by)
+         VALUES ($1, $2, $3, 'owner', NULL), ($1, $2, $4, 'member', $3)`,
         [TENANT, channelId, bytes(VIEWER), bytes(AGENT)],
       );
     }
@@ -114,6 +115,12 @@ describe('RoomIndexer', () => {
       `INSERT INTO users (community_id, pubkey, display_name, nip05_handle, avatar_url)
        VALUES ($1, $2, 'Ada', 'ada@example.test', 'https://media.test/ada.png')`,
       [TENANT, bytes(VIEWER)],
+    );
+    await postgres.query(
+      `INSERT INTO beeline_agent_pairing_claims
+        (token_hash,community_id,workspace_id,minter_pubkey,agent_pubkey,claimed_at)
+       VALUES($1,$2,$3,$4,$5,to_timestamp(1))`,
+      [PAIRING_CLAIM, TENANT, WORKSPACE, bytes(VIEWER), bytes(AGENT)],
     );
 
     let eventNumber = 1;
@@ -299,12 +306,7 @@ describe('RoomIndexer', () => {
         JSON.stringify([
           ['h', ROOM],
           ['t', 'buzz-attachment'],
-          [
-            'imeta',
-            'url https://media.test/IMG_3027.png',
-            'm image/png',
-            'size 42',
-          ],
+          ['imeta', 'url https://media.test/IMG_3027.png', 'm image/png', 'size 42'],
           ['attachment', 'https://media.test/IMG_3027.png', 'IMG_3027.png'],
         ]),
         ROOM,
@@ -2157,6 +2159,24 @@ describe('RoomIndexer', () => {
         }),
       ],
     );
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id, d_tag)
+       VALUES ($1, $2, $3, to_timestamp(23), 30078, $4, $5, NULL, $6)`,
+      [
+        TENANT,
+        bytes('f'.repeat(64)),
+        bytes(OUTSIDER),
+        JSON.stringify([
+          ['h', WORKSPACE],
+          ['p', AGENT],
+          ['d', modelKey],
+          ['t', 'buzz-agent-model-config'],
+        ]),
+        JSON.stringify({ model: 'sonnet' }),
+        modelKey,
+      ],
+    );
 
     await expect(indexer.readAgent(WORKSPACE, AGENT, VIEWER)).resolves.toMatchObject({
       agent: { identity: { name: 'Milo' } },
@@ -2180,9 +2200,16 @@ describe('RoomIndexer', () => {
       selected: { model: 'opus', effort: 'high' },
     });
     await expect(indexer.readWorkspace(WORKSPACE, VIEWER)).resolves.toMatchObject({
-      agents: [{ identity: { name: 'Milo' } }],
+      agents: [
+        {
+          identity: { name: 'Milo' },
+          model: 'Opus',
+        },
+      ],
     });
     const detail = await indexer.readAgent(WORKSPACE, AGENT, VIEWER);
+    expect(detail).not.toHaveProperty('owner');
+    expect((await indexer.readWorkspace(WORKSPACE, VIEWER))?.agents[0]).not.toHaveProperty('owner');
     expect(detail?.watchFilters).toContainEqual({
       kinds: [30078],
       '#d': [modelKey],
@@ -2190,6 +2217,57 @@ describe('RoomIndexer', () => {
     expect(
       detail?.watchFilters.some((filter) => filter.kinds?.includes(30078) && filter['#h']),
     ).toBe(false);
+  });
+
+  it('keeps the latest valid human-selected model when a newer config is malformed', async () => {
+    const modelKey = `${WORKSPACE}:${AGENT}`;
+    await postgres.query(
+      `INSERT INTO events
+        (community_id,id,pubkey,created_at,kind,tags,content,channel_id,d_tag)
+       VALUES
+        ($1,$2,$3,to_timestamp(40),30078,$4,$5,NULL,$6),
+        ($1,$7,$8,to_timestamp(41),30078,$9,$10,NULL,$6),
+        ($1,$11,$8,to_timestamp(42),30078,$9,'not json',NULL,$6)`,
+      [
+        TENANT,
+        bytes('1'.repeat(64)),
+        bytes(AGENT),
+        JSON.stringify([
+          ['h', WORKSPACE],
+          ['p', AGENT],
+          ['d', modelKey],
+          ['t', 'buzz-agent-model-catalog'],
+        ]),
+        JSON.stringify({
+          options: [
+            {
+              id: 'model',
+              category: 'model',
+              currentValue: 'sonnet',
+              options: [
+                { id: 'sonnet', name: 'Sonnet' },
+                { id: 'opus', name: 'Opus' },
+              ],
+            },
+          ],
+        }),
+        modelKey,
+        bytes('2'.repeat(64)),
+        bytes(VIEWER),
+        JSON.stringify([
+          ['h', WORKSPACE],
+          ['p', AGENT],
+          ['d', modelKey],
+          ['t', 'buzz-agent-model-config'],
+        ]),
+        JSON.stringify({ model: 'opus' }),
+        bytes('3'.repeat(64)),
+      ],
+    );
+
+    await expect(indexer.readWorkspace(WORKSPACE, VIEWER)).resolves.toMatchObject({
+      agents: [{ identity: { pubkey: AGENT }, model: 'Opus' }],
+    });
   });
 
   it('keeps the scoped chat query to one physical statement at 1, 47, and 200 Rooms', async () => {

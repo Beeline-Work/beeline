@@ -46,6 +46,11 @@ export interface SystemLineInput {
   readonly kind?: SystemEventKind;
   readonly object?: string | SystemObject;
   readonly consequence?: string;
+  /** A second named actor in the consequence slot (currently the inviter on a join). */
+  readonly attribution?: {
+    readonly verb: string;
+    readonly actor: SystemSubject;
+  };
   /** Identities to mention: the only thing that makes a line push or wake a daemon. */
   readonly mentions?: readonly string[];
   readonly presentation?: 'system' | 'card';
@@ -96,7 +101,7 @@ export interface SystemLineResult {
 
 export type SystemPhrase = Pick<
   SystemLineInput,
-  'subject' | 'verb' | 'object' | 'consequence' | 'kind'
+  'subject' | 'verb' | 'object' | 'consequence' | 'attribution' | 'kind'
 >;
 
 const CLEAN = /[\s ]+/g;
@@ -113,7 +118,12 @@ export function composeSystemLine(phrase: SystemPhrase): { text: string; event: 
       : typeof phrase.object === 'string'
         ? { text: clause(phrase.object) }
         : { ...phrase.object, text: clause(phrase.object.text) };
-  const consequence = phrase.consequence ? clause(phrase.consequence) : undefined;
+  const attribution = phrase.attribution
+    ? [clause(phrase.attribution.verb), clause(phrase.attribution.actor.name)]
+        .filter(Boolean)
+        .join(' ')
+    : undefined;
+  const consequence = phrase.consequence ? clause(phrase.consequence) : attribution || undefined;
   const event: SystemEvent = {
     subject: { ...phrase.subject, name: clause(phrase.subject.name) },
     verb: clause(phrase.verb),
@@ -125,6 +135,78 @@ export function composeSystemLine(phrase: SystemPhrase): { text: string; event: 
   // object and consequence, so a line's wording is exactly what it was before
   // it carried a kind.
   return { text: formatSystemLine(event), event };
+}
+
+type IdentityLabelRow = {
+  id: string;
+  kind: 'human' | 'agent';
+  name: string;
+  handle: string | null;
+};
+
+function agentHandle(name: string): string {
+  return (
+    name
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, '_')
+      .replace(/[^a-z0-9_]/g, '') || 'agent'
+  );
+}
+
+/** Identities in system lines are addresses: @handle, never a display name. */
+export function systemIdentityMention(row: IdentityLabelRow): string {
+  if (row.kind === 'human') return row.handle ? `@${row.handle}` : '';
+  return `@${row.handle ?? agentHandle(row.name)}`;
+}
+
+async function canonicalPhrase(database: SqlDatabase, phrase: SystemPhrase): Promise<SystemPhrase> {
+  const ids = [
+    phrase.subject.id,
+    typeof phrase.object === 'string' ? undefined : phrase.object?.id,
+    phrase.attribution?.actor.id,
+  ].filter((id): id is string => Boolean(id));
+  const rows = ids.length
+    ? await database.query<IdentityLabelRow>(
+        `SELECT id,kind,name,handle FROM identities WHERE id=ANY($1::text[])`,
+        [[...new Set(ids)]],
+      )
+    : { rows: [] };
+  const identities = new Map(rows.rows.map((row) => [row.id, row]));
+  const subjectRow = phrase.subject.id ? identities.get(phrase.subject.id) : undefined;
+  const object = typeof phrase.object === 'string' ? undefined : phrase.object;
+  const objectRow = object?.id ? identities.get(object.id) : undefined;
+  const attributionRow = phrase.attribution?.actor.id
+    ? identities.get(phrase.attribution.actor.id)
+    : undefined;
+  const fallbackSubjectName =
+    phrase.subject.kind === 'agent'
+      ? `@${agentHandle(phrase.subject.name)}`
+      : phrase.subject.kind === 'github'
+        ? `@${clause(phrase.subject.name).replace(/^@/, '')}`
+        : phrase.subject.name;
+  return {
+    ...phrase,
+    subject: subjectRow
+      ? { ...phrase.subject, name: systemIdentityMention(subjectRow) }
+      : { ...phrase.subject, name: fallbackSubjectName },
+    ...(objectRow && object && clause(object.text) === clause(objectRow.name)
+      ? { object: { ...object, text: systemIdentityMention(objectRow) } }
+      : {}),
+    ...(phrase.attribution && attributionRow
+      ? {
+          attribution: {
+            ...phrase.attribution,
+            actor: {
+              ...phrase.attribution.actor,
+              name: systemIdentityMention(attributionRow),
+            },
+          },
+        }
+      : {}),
+  };
 }
 
 /**
@@ -246,7 +328,7 @@ export async function systemLine(
   database: SqlDatabase,
   input: SystemLineInput,
 ): Promise<SystemLineResult> {
-  const { text, event } = composeSystemLine(input);
+  const { text, event } = composeSystemLine(await canonicalPhrase(database, input));
   const id = input.id ?? randomBytes(32).toString('hex');
   const authorId = input.authorId ?? input.subject.id;
   if (!authorId) throw new Error('system line needs an author identity');
@@ -318,7 +400,7 @@ export async function restateSystemLine(
   phrase: SystemPhrase,
   card?: Record<string, unknown>,
 ): Promise<{ text: string; event: SystemEvent; updated: boolean }> {
-  const { text, event } = composeSystemLine(phrase);
+  const { text, event } = composeSystemLine(await canonicalPhrase(database, phrase));
   const result = await database.query(
     `UPDATE messages SET text=$2,system_event=$3::jsonb,card=COALESCE($4::jsonb,card) WHERE id=$1`,
     [messageId, text, JSON.stringify(event), card ? JSON.stringify(card) : null],

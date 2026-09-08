@@ -261,6 +261,8 @@ function baseWorkspace(viewerRole: 'owner' | 'admin' = 'owner') {
       {
         identity: { pubkey: AGENT, kind: 'agent', name: 'Clara', handle: 'clara' },
         role: 'member',
+        model: 'Sonnet',
+        owner: { pubkey: VIEWER, kind: 'human', name: 'Viewer', handle: 'viewer' },
         presence: { status: 'online', observedAt: 1 },
       },
     ],
@@ -280,6 +282,7 @@ function baseAgent() {
   return {
     workspaceId: WORKSPACE,
     agent: { identity: { pubkey: AGENT, kind: 'agent', name: 'Clara' }, role: 'member' },
+    owner: { pubkey: VIEWER, kind: 'human', name: 'Viewer', handle: 'viewer' },
     soul: { name: 'Clara', instructions: 'Keep the tests green.', avatarSeed: AGENT },
     seededSoul: 'You are a fox. You are a hustler who has already found the angle.',
     catalog: [
@@ -340,18 +343,21 @@ function sheet(renderer: ReactTestRenderer) {
 }
 
 describe('Members workspace management', () => {
-  it('draws no gold ring on an agent whose only fact is a live presence lease', async () => {
-    // C77: the ring means WORKING (a live turn or corner). The Workspace view
-    // carries presence only, so an online-but-idle agent wears no ring; the
-    // lowercase presence word ending the meta line is the presence fact.
+  it('shows model and owner on the agent row without spending the row on presence', async () => {
     const renderer = await render();
     const agentRow = renderer.root.findByProps({ testID: `agent-${AGENT}-identity` });
     const mark = agentRow.findByType('IdentityMark' as any);
     expect(mark.props.kind).toBe('agent');
     expect(mark.props.alive).toBeFalsy();
     expect(agentRow.findAllByType('Text' as any)[1].props.children).toBe(
-      '@clara · member · online',
+      '@clara · Sonnet · by @viewer',
     );
+    expect(
+      agentRow
+        .findAllByType('Text' as any)
+        .flatMap((node: any) => node.props.children)
+        .join(' '),
+    ).not.toMatch(/online|offline/i);
   });
 
   it('shares a real Workspace invite directly from the PEOPLE section head +', async () => {
@@ -422,13 +428,13 @@ describe('Members workspace management', () => {
     expect(texts.flat().join(' ')).not.toMatch(/⌬|ONLINE|OFFLINE|MEMBER\b/);
   });
 
-  it('gives every row a name and one quiet @handle · role line; the ring is the only agent state', async () => {
+  it('gives people a role line and agents a model/owner line', async () => {
     const renderer = await render();
     const agentRow = renderer.root.findByProps({ testID: `agent-${AGENT}-identity` });
     const agentTexts = agentRow
       .findAllByType('Text' as any)
       .map((node: any) => node.props.children);
-    expect(agentTexts).toEqual(['Clara', '@clara · member · online', '›']);
+    expect(agentTexts).toEqual(['Clara', '@clara · Sonnet · by @viewer', '›']);
     expect(agentRow.findByType('IdentityMark' as any).props.alive).toBeFalsy();
     const personRow = renderer.root.findByProps({ testID: `member-${MEMBER}-identity` });
     expect(personRow.findAllByType('Text' as any).map((node: any) => node.props.children)).toEqual([
@@ -443,6 +449,31 @@ describe('Members workspace management', () => {
       'Viewer',
       '@viewer · owner',
     ]);
+  });
+
+  it('shows the connected owner on the agent profile', async () => {
+    const renderer = await render();
+    await press(renderer, `agent-${AGENT}-identity`);
+    expect(renderer.root.findByProps({ testID: 'agent-owner' }).props.children).toBe('by @viewer');
+  });
+
+  it('omits a handleless owner from the agent row and profile', async () => {
+    const owner = { pubkey: VIEWER, kind: 'human' as const, name: 'Viewer' };
+    state.workspace = {
+      ...baseWorkspace(),
+      agents: [{ ...baseWorkspace().agents[0], owner }],
+    };
+    state.agent = { ...baseAgent(), owner };
+    const renderer = await render();
+    const agentRow = renderer.root.findByProps({ testID: `agent-${AGENT}-identity` });
+    expect(agentRow.findAllByType('Text' as any).map((node: any) => node.props.children)).toEqual([
+      'Clara',
+      '@clara · Sonnet',
+      '›',
+    ]);
+
+    await press(renderer, `agent-${AGENT}-identity`);
+    expect(renderer.root.findAllByProps({ testID: 'agent-owner' })).toHaveLength(0);
   });
 
   it('keeps removal on the row detail and removes a person from the Workspace through it', async () => {

@@ -107,6 +107,14 @@ export type RoomViewMember = {
   };
 };
 
+/** Paint-ready agent metadata for the Workspace Members row. */
+export type WorkspaceAgentView = RoomViewMember & {
+  /** Selected model label, resolved from the latest catalog when available. */
+  readonly model?: string;
+  /** The person who connected and owns this agent's configuration. */
+  readonly owner?: RoomViewIdentity;
+};
+
 export type RoomViewHeader = {
   readonly id: string;
   readonly workspaceId: string;
@@ -392,7 +400,7 @@ export type WorkspaceView = {
     readonly visibility: 'public' | 'invite-only';
   };
   readonly members: readonly RoomViewMember[];
-  readonly agents: readonly RoomViewMember[];
+  readonly agents: readonly WorkspaceAgentView[];
   readonly membersTruncated: boolean;
   readonly agentsTruncated: boolean;
   readonly viewer: RoomViewer;
@@ -402,6 +410,8 @@ export type WorkspaceView = {
 export type AgentDetailView = {
   readonly workspaceId: string;
   readonly agent: RoomViewMember;
+  /** The person who connected and owns this agent's configuration. */
+  readonly owner?: RoomViewIdentity;
   /**
    * Latest valid human-authored soul overlay. The indexed read exposes this so
    * a name-only edit can preserve the agent's existing instructions exactly.

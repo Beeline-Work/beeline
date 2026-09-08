@@ -38,7 +38,12 @@ import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedul
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
 import type { LiveHub } from './live.js';
 import { CORNER_WAKE_MIN_INTERVAL_MS, CORNER_WAKE_TIMEOUT_MS, wakesCorner } from './corner-wake.js';
-import { restateSystemLine, systemLine, type SystemPhrase } from './system-line.js';
+import {
+  restateSystemLine,
+  systemIdentityMention,
+  systemLine,
+  type SystemPhrase,
+} from './system-line.js';
 import { mediaIdFromUrl } from './media-ttl.js';
 import {
   AGENT_REACHABLE_HORIZON_MS,
@@ -1482,7 +1487,7 @@ export class DaemonService {
         id: created,
         roomId: input.roomId,
         subject: { kind: 'agent', id: agentId, name: agent.name },
-        verb: `asked ${requester.name} to`,
+        verb: `asked ${requester.handle ? `@${requester.handle}` : ''} to`,
         object: tool,
         presentation: 'card',
         requestId: input.requestId,
@@ -2327,12 +2332,17 @@ function validateGrantScript(
 /** The grant card's header sentence: `Bee asked Owner for command npm test · run the tests`. */
 function grantCardPhrase(
   agent: { pubkey: string; name: string },
-  owner: { name: string },
+  owner: { pubkey: string; kind: 'human'; name: string; handle?: string },
   grants: readonly { kind: AgentGrantKind; target: string; reason: string }[],
 ): SystemPhrase {
   return {
     subject: { kind: 'agent', id: agent.pubkey, name: agent.name },
-    verb: `asked ${owner.name} for`,
+    verb: `asked ${systemIdentityMention({
+      id: owner.pubkey,
+      kind: owner.kind,
+      name: owner.name,
+      handle: owner.handle ?? null,
+    })} for`,
     object: grants.map((grant) => `${grant.kind} ${grant.target}`).join(' and '),
     ...(grants.length === 1 && grants[0]!.reason ? { consequence: grants[0]!.reason } : {}),
   };

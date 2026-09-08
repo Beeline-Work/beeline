@@ -120,7 +120,7 @@ describe('who may address an agent', () => {
           // No mention: the line wakes no daemon and pushes to nobody.
           mention_ids: [],
           text:
-            'Greeter did not answer @bananaman614305 · only @lunchboxfortwo may address Greeter. ' +
+            '@greeter did not answer @bananaman614305 · only @lunchboxfortwo may address @greeter. ' +
             'Ask the user for permission to access the agent in the members page',
         },
       ]);
@@ -155,7 +155,7 @@ describe('who may address an agent', () => {
 
       const [refusal] = await lines(database);
       expect(refusal?.text).toBe(
-        'Greeter did not answer · only the owner may address Greeter. ' +
+        '@greeter did not answer · only the owner may address @greeter. ' +
           'Ask the user for permission to access the agent in the members page',
       );
       expect(refusal?.text).not.toContain('Bananaman');
@@ -167,7 +167,7 @@ describe('who may address an agent', () => {
         OWNER,
       );
       expect((await lines(database)).map((line) => line.text)).toContain(
-        'Someone changed who may address Greeter · anyone may ask now',
+        'changed who may address @greeter · anyone may ask now',
       );
     } finally {
       await database.close();
@@ -184,7 +184,7 @@ describe('who may address an agent', () => {
       expect(await lines(database)).toEqual([
         expect.objectContaining({
           author_id: AGENT,
-          text: 'Greeter did not answer @bananaman614305 · its helper is offline',
+          text: '@greeter did not answer @bananaman614305 · its helper is offline',
         }),
       ]);
 
@@ -219,7 +219,7 @@ describe('who may address an agent', () => {
       expect(view).not.toBeNull();
       const last = view!.messages.at(-1)!;
       expect(last.id).not.toBe(sent.messageId);
-      expect(last.text).toContain('Greeter did not answer @bananaman614305');
+      expect(last.text).toContain('@greeter did not answer @bananaman614305');
       expect(view!.messages.at(-2)!.id).toBe(sent.messageId);
       await phone.markRead(ROOM, last.id, OUTSIDER);
 
@@ -276,7 +276,7 @@ describe('who may address an agent', () => {
       expect(await lines(database)).toEqual([
         expect.objectContaining({
           author_id: OWNER,
-          text: '@lunchboxfortwo changed who may address Greeter · only @lunchboxfortwo may ask now',
+          text: '@lunchboxfortwo changed who may address @greeter · only @lunchboxfortwo may ask now',
         }),
       ]);
 
@@ -293,7 +293,7 @@ describe('who may address an agent', () => {
         OWNER,
       );
       expect((await lines(database)).at(-1)?.text).toBe(
-        '@lunchboxfortwo changed who may address Greeter · anyone may ask now',
+        '@lunchboxfortwo changed who may address @greeter · anyone may ask now',
       );
       // A member who cannot change it still sees the truth.
       expect((await phone.readAgent(WORKSPACE, AGENT, OUTSIDER))?.access).toMatchObject({

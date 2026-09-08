@@ -7,6 +7,26 @@ import { PgliteDatabase } from './test-support.js';
 import { composeSystemLine, systemLine } from './system-line.js';
 
 describe('composeSystemLine', () => {
+  it('keeps a join subject while naming its inviter in the attribution slot', () => {
+    expect(
+      composeSystemLine({
+        subject: { kind: 'agent', id: 'foxy', name: '@foxy' },
+        verb: 'joined',
+        attribution: {
+          verb: 'invited by',
+          actor: { kind: 'person', id: 'moon', name: '@moonscannerai' },
+        },
+      }),
+    ).toEqual({
+      text: '@foxy joined · invited by @moonscannerai',
+      event: {
+        subject: { kind: 'agent', id: 'foxy', name: '@foxy' },
+        verb: 'joined',
+        consequence: 'invited by @moonscannerai',
+      },
+    });
+  });
+
   it('phrases subject verb object · consequence and returns the structured event', () => {
     expect(
       composeSystemLine({
@@ -33,7 +53,10 @@ describe('composeSystemLine', () => {
       object: { text: 'Beeline CI', url: 'https://github.com/acme/w/runs/1' },
     });
     expect(line.text).toBe('GitHub passed a check Beeline CI');
-    expect(line.event.object).toEqual({ text: 'Beeline CI', url: 'https://github.com/acme/w/runs/1' });
+    expect(line.event.object).toEqual({
+      text: 'Beeline CI',
+      url: 'https://github.com/acme/w/runs/1',
+    });
   });
 
   it('collapses whitespace and drops an empty object or consequence', () => {
@@ -301,9 +324,10 @@ describe('a caused line sorts after its cause', () => {
   });
 
   it('keeps the natural time once the second has already passed', async () => {
-    await database.query(`UPDATE messages SET created_at=now() - interval '10 seconds' WHERE id=$1`, [
-      CAUSE,
-    ]);
+    await database.query(
+      `UPDATE messages SET created_at=now() - interval '10 seconds' WHERE id=$1`,
+      [CAUSE],
+    );
     const written = await systemLine(database, {
       roomId: ROOM,
       subject: { kind: 'agent', id: GREETER, name: 'Lumen' },

@@ -24,6 +24,7 @@ import type {
   RoomViewMessage,
   SystemEvent,
   WorkspaceListView,
+  WorkspaceAgentView,
   WorkspaceView,
 } from '@beeline/api-contract/phone';
 import {
@@ -62,7 +63,7 @@ import {
   reassignCollidingAgentHandles,
 } from './workspace-handles.js';
 import { REVIEW_IDENTITY_ID } from './review-access.js';
-import { identitySubject, systemLine } from './system-line.js';
+import { identitySubject, systemIdentityMention, systemLine } from './system-line.js';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
 import { mediaIdFromUrl } from './media-ttl.js';
 import {
@@ -216,6 +217,16 @@ function identity(row: IdentityRow, publicOrigin: string): RoomViewIdentity {
     ...(row.avatar ? { avatar: assetUrl(row.avatar, publicOrigin) } : {}),
     ...(row.face_id ? { face: row.face_id } : {}),
   };
+}
+
+function selectedModelLabel(
+  selected: string | null,
+  catalog: AgentDetailView['catalog'],
+): string | undefined {
+  const axis = catalog.find((candidate) => candidate.category === 'model');
+  const value = selected ?? axis?.currentValue;
+  if (!value) return undefined;
+  return axis?.options?.find((option) => option.id === value)?.name ?? value;
 }
 function roomHeader(row: RoomRow, publicOrigin: string) {
   return {
@@ -483,7 +494,44 @@ export class PhoneService {
     if (!row) return null;
     const members = await this.members(workspaceId, null);
     const humans = members.filter((member) => member.identity.kind === 'human');
-    const agents = members.filter((member) => member.identity.kind === 'agent');
+    const agentMembers = members.filter((member) => member.identity.kind === 'agent');
+    const configs = agentMembers.length
+      ? await this.database.query<{
+          agent_id: string;
+          selected_model: string | null;
+          model_catalog: AgentDetailView['catalog'];
+          owner_id: string;
+          owner_name: string;
+          owner_handle: string | null;
+        }>(
+          `SELECT agent.agent_id,agent.selected_model,agent.model_catalog,
+                  owner.id owner_id,owner.name owner_name,owner.handle owner_handle
+           FROM agents agent JOIN identities owner ON owner.id=agent.owner_id
+           WHERE agent.agent_id=ANY($1::text[])`,
+          [agentMembers.map((member) => member.identity.pubkey)],
+        )
+      : { rows: [] };
+    const configByAgent = new Map(configs.rows.map((config) => [config.agent_id, config]));
+    const agents: WorkspaceAgentView[] = agentMembers.map((member) => {
+      const config = configByAgent.get(member.identity.pubkey);
+      const model = config
+        ? selectedModelLabel(config.selected_model, config.model_catalog ?? [])
+        : undefined;
+      return {
+        ...member,
+        ...(model ? { model } : {}),
+        ...(config
+          ? {
+              owner: {
+                pubkey: config.owner_id,
+                kind: 'human' as const,
+                name: config.owner_name,
+                ...(config.owner_handle ? { handle: config.owner_handle } : {}),
+              },
+            }
+          : {}),
+      };
+    });
     const viewerIdentity = await this.requireIdentity(viewerId);
     return {
       workspace: {
@@ -1032,6 +1080,16 @@ export class PhoneService {
       // The soul this agent's animal carries: what an edited soul restores to.
       // Derived from the face it wears, so name, avatar and soul stay one animal.
       seededSoul: FACE_SOULS[resolveFace(member.identity.face, agentId)],
+      ...(config?.owner_id && config.owner_name
+        ? {
+            owner: {
+              pubkey: config.owner_id,
+              kind: 'human' as const,
+              name: config.owner_name,
+              ...(config.owner_handle ? { handle: config.owner_handle } : {}),
+            },
+          }
+        : {}),
       catalog: config?.model_catalog ?? [],
       ...(config?.selected_model || config?.selected_effort
         ? {
@@ -1186,12 +1244,14 @@ export class PhoneService {
           [hash(code), agentId],
         );
       const workspaceMembership = await database.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES ($1,NULL,$2,'member') ON CONFLICT DO NOTHING`,
-        [pairing.workspace_id, agentId],
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role,invited_by)
+         VALUES ($1,NULL,$2,'member',$3) ON CONFLICT DO NOTHING`,
+        [pairing.workspace_id, agentId, pairing.created_by],
       );
       const rooms = await joinRooms(database, {
         workspaceId: pairing.workspace_id,
         identityId: agentId,
+        invitedById: pairing.created_by,
         rooms: { type: 'inherited-live-top-level', identityId: pairing.created_by },
         workspaceJoined: workspaceMembership.rowCount > 0,
       });
@@ -1417,13 +1477,13 @@ export class PhoneService {
         [hash(input.code), input.agentPubkey],
       );
       const workspaceMembership = await database.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-         VALUES ($1,NULL,$2,'member')
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role,invited_by)
+         VALUES ($1,NULL,$2,'member',$3)
          ON CONFLICT (workspace_id,identity_id) WHERE room_id IS NULL
-         DO UPDATE SET role='member',removed_at=NULL,joined_at=now()
+         DO UPDATE SET role='member',removed_at=NULL,joined_at=now(),invited_by=EXCLUDED.invited_by
            WHERE memberships.removed_at IS NOT NULL
          RETURNING id`,
-        [pairing.workspace_id, input.agentPubkey],
+        [pairing.workspace_id, input.agentPubkey, pairing.created_by],
       );
       // A deferring CLI joins Rooms itself through `finishAgentConnectPairing`
       // once its rename decision settles — a system line is a fact written
@@ -1435,6 +1495,7 @@ export class PhoneService {
         const joined = await joinRooms(database, {
           workspaceId: pairing.workspace_id,
           identityId: input.agentPubkey,
+          invitedById: pairing.created_by,
           rooms: { type: 'inherited-live-top-level', identityId: pairing.created_by },
           workspaceJoined: workspaceMembership.rowCount > 0,
         });
@@ -1545,6 +1606,7 @@ export class PhoneService {
       const joined = await joinRooms(database, {
         workspaceId: pairing.workspace_id,
         identityId: pairing.claimed_by,
+        invitedById: pairing.created_by,
         rooms: { type: 'inherited-live-top-level', identityId: pairing.created_by },
         workspaceJoined: input.workspaceJoined,
       });
@@ -1895,7 +1957,7 @@ export class PhoneService {
   private async createRoomSchedule(input: Input<'createRoomSchedule'>, viewerId: string) {
     const target = await this.requireTopLevelRoom(input.roomId);
     if (target.workspace_id !== input.workspaceId) throw new Error('room is not in workspace');
-    await this.requireWorkspaceManager(target.workspace_id, viewerId);
+    await this.requireRoomWorkspaceManager(input.roomId, viewerId);
     if (typeof input.message !== 'string' || !input.message.trim())
       throw new Error('schedule message is required');
     if (!input.cadence || typeof input.cadence !== 'object')
@@ -1930,8 +1992,8 @@ export class PhoneService {
     return roomSchedule(inserted.rows[0]!);
   }
   private async listRoomSchedules(roomId: string, viewerId: string) {
-    const room = await this.requireTopLevelRoom(roomId);
-    await this.requireWorkspaceManager(room.workspace_id, viewerId);
+    await this.requireTopLevelRoom(roomId);
+    await this.requireRoomWorkspaceManager(roomId, viewerId);
     const schedules = await this.database.query<RoomScheduleRow>(
       `SELECT id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at,created_at
        FROM agent_schedules WHERE room_id=$1 ORDER BY created_at,id`,
@@ -1943,8 +2005,8 @@ export class PhoneService {
     input: Input<'deleteRoomSchedule'>,
     viewerId: string,
   ): Promise<void> {
-    const room = await this.requireTopLevelRoom(input.roomId);
-    await this.requireWorkspaceManager(room.workspace_id, viewerId);
+    await this.requireTopLevelRoom(input.roomId);
+    await this.requireRoomWorkspaceManager(input.roomId, viewerId);
     const deleted = await this.database.query(
       `DELETE FROM agent_schedules WHERE id=$1 AND room_id=$2`,
       [input.scheduleId, input.roomId],
@@ -2047,6 +2109,7 @@ export class PhoneService {
       const agents = await this.database.query<{
         agent_id: string;
         agent_name: string;
+        agent_handle: string | null;
         access_policy: unknown;
         owner_id: string | null;
         owner_handle: string | null;
@@ -2059,6 +2122,7 @@ export class PhoneService {
         // in a top-level Room, so the presence lookup intentionally has no
         // room filter.
         `SELECT identity.id agent_id,COALESCE(NULLIF(identity.name,''),'The agent') agent_name,
+                identity.handle agent_handle,
                 a.access_policy,a.owner_id,owner.handle owner_handle,
                 EXISTS(SELECT 1 FROM rooms room WHERE room.id=$2 AND room.parent_id IS NOT NULL) corner,
                 EXISTS(
@@ -2105,6 +2169,7 @@ export class PhoneService {
     agent: {
       agent_id: string;
       agent_name: string;
+      agent_handle: string | null;
       access_policy: unknown;
       owner_id: string | null;
       owner_handle: string | null;
@@ -2143,12 +2208,18 @@ export class PhoneService {
     // name is not. A person with no handle is left unnamed rather than described.
     const asked = personMention(sender.handle);
     const object = asked ? { text: asked, id: senderId } : undefined;
+    const agentMention = systemIdentityMention({
+      id: agent.agent_id,
+      kind: 'agent',
+      name: agent.agent_name,
+      handle: agent.agent_handle,
+    });
     if (!permitted) {
       return {
         reason: 'refused',
         verb: 'did not answer',
         ...(object ? { object } : {}),
-        consequence: `only ${personMention(agent.owner_handle) ?? 'the owner'} may address ${agent.agent_name}. Ask the user for permission to access the agent in the members page`,
+        consequence: `only ${personMention(agent.owner_handle) ?? 'the owner'} may address ${agentMention}. Ask the user for permission to access the agent in the members page`,
       };
     }
     if (agent.reachable) return undefined;
@@ -2292,7 +2363,15 @@ export class PhoneService {
         authorId: viewerId,
         subject: identitySubject({ id: decider.pubkey, kind: decider.kind, name: decider.name }),
         verb: input.decision === 'allow' ? 'allowed' : 'denied',
-        object: { text: `${agent.name} to ${tool}`, id: agent.pubkey },
+        object: {
+          text: `${systemIdentityMention({
+            id: agent.pubkey,
+            kind: agent.kind,
+            name: agent.name,
+            handle: agent.handle ?? null,
+          })} to ${tool}`,
+          id: agent.pubkey,
+        },
         presentation: 'card',
         cardType: 'permission',
         card: {
@@ -2336,7 +2415,12 @@ export class PhoneService {
   private async updateWorkspace(input: Input<'updateWorkspace'>, viewerId: string) {
     await this.database.transaction(async (database) => {
       await this.requireWorkspaceManager(input.workspaceId, viewerId, database);
-      await database.query('SELECT id FROM workspaces WHERE id=$1 FOR UPDATE', [input.workspaceId]);
+      const current = (
+        await database.query<{ visibility: 'public' | 'invite-only' }>(
+          'SELECT visibility FROM workspaces WHERE id=$1 FOR UPDATE',
+          [input.workspaceId],
+        )
+      ).rows[0];
       const avatar =
         input.avatar === undefined
           ? null
@@ -2351,6 +2435,22 @@ export class PhoneService {
         `UPDATE workspaces SET name=COALESCE($2,name),avatar=COALESCE($3,avatar),visibility=COALESCE($4,visibility),updated_at=now() WHERE id=$1`,
         [input.workspaceId, input.name ?? null, avatar, input.visibility ?? null],
       );
+      if (input.visibility && input.visibility !== current?.visibility) {
+        const actor = await this.requireIdentity(viewerId, database);
+        const rooms = await database.query<{ id: string }>(
+          `SELECT id FROM rooms WHERE workspace_id=$1 AND archived_at IS NULL`,
+          [input.workspaceId],
+        );
+        for (const room of rooms.rows)
+          await systemLine(database, {
+            roomId: room.id,
+            subject: identitySubject({ id: actor.pubkey, kind: actor.kind, name: actor.name }),
+            verb: 'changed workspace visibility to',
+            object: input.visibility,
+            cardType: 'workspace-visibility',
+            card: { visibility: input.visibility },
+          });
+      }
     });
   }
   private async leaveWorkspace(input: Input<'leaveWorkspace'>, viewerId: string) {
@@ -2449,10 +2549,29 @@ export class PhoneService {
   private async updateRoom(input: Input<'updateRoom'>, viewerId: string) {
     const room = await this.requireTopLevelRoom(input.roomId);
     await this.requireWorkspaceManager(room.workspace_id, viewerId);
-    await this.database.query(
-      `UPDATE rooms SET name=COALESCE($2,name),visibility=COALESCE($3,visibility),updated_at=now() WHERE id=$1`,
-      [input.roomId, input.name ?? null, input.visibility ?? null],
-    );
+    await this.database.transaction(async (database) => {
+      const current = (
+        await database.query<{ visibility: 'public' | 'invite-only' }>(
+          'SELECT visibility FROM rooms WHERE id=$1 FOR UPDATE',
+          [input.roomId],
+        )
+      ).rows[0];
+      await database.query(
+        `UPDATE rooms SET name=COALESCE($2,name),visibility=COALESCE($3,visibility),updated_at=now() WHERE id=$1`,
+        [input.roomId, input.name ?? null, input.visibility ?? null],
+      );
+      if (input.visibility && input.visibility !== current?.visibility) {
+        const actor = await this.requireIdentity(viewerId, database);
+        await systemLine(database, {
+          roomId: input.roomId,
+          subject: identitySubject({ id: actor.pubkey, kind: actor.kind, name: actor.name }),
+          verb: 'changed room visibility to',
+          object: input.visibility,
+          cardType: 'room-visibility',
+          card: { visibility: input.visibility },
+        });
+      }
+    });
   }
   private async deleteRoom(roomId: string, viewerId: string) {
     const room = await this.requireTopLevelRoom(roomId);
@@ -2500,6 +2619,7 @@ export class PhoneService {
     const result = await joinRooms(this.database, {
       workspaceId: room.workspace_id,
       identityId: input.memberId,
+      invitedById: viewerId,
       rooms: { type: 'rooms', roomIds: [input.roomId] },
     });
     return { joined: result.roomIds.length > 0 };
@@ -2533,7 +2653,8 @@ export class PhoneService {
   private async addWorkspaceMember(input: Input<'addWorkspaceMember'>, viewerId: string) {
     await this.requireWorkspaceManager(input.workspaceId, viewerId);
     if (input.memberId === viewerId) throw new Error('workspace managers cannot change themselves');
-    await this.requireIdentity(input.memberId);
+    const changedMember = await this.requireIdentity(input.memberId);
+    const changingMember = await this.requireIdentity(viewerId);
     return this.database.transaction(async (database) => {
       const workspaceIds = await lockIdentityHandleWorkspaces(database, input.memberId, [
         input.workspaceId,
@@ -2587,29 +2708,61 @@ export class PhoneService {
       }
       if (target) {
         await database.query(
-          `UPDATE memberships SET role=$3,removed_at=NULL
+          `UPDATE memberships SET role=$3,removed_at=NULL,invited_by=CASE WHEN removed_at IS NOT NULL THEN $4 ELSE invited_by END
            WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`,
-          [input.workspaceId, input.memberId, input.role],
+          [input.workspaceId, input.memberId, input.role, viewerId],
         );
         await syncTopLevelSharedRoomRoles(database, input.workspaceId, input.memberId);
+        if (!target.removed_at && target.role !== input.role) {
+          const rooms = await database.query<{ room_id: string }>(
+            `SELECT membership.room_id FROM memberships membership
+             JOIN rooms room ON room.id=membership.room_id
+             WHERE membership.workspace_id=$1 AND membership.identity_id=$2
+               AND membership.removed_at IS NULL AND room.archived_at IS NULL`,
+            [input.workspaceId, input.memberId],
+          );
+          const targetMention = systemIdentityMention({
+            id: changedMember.pubkey,
+            kind: changedMember.kind,
+            name: changedMember.name,
+            handle: changedMember.handle ?? null,
+          });
+          for (const room of rooms.rows)
+            await systemLine(database, {
+              roomId: room.room_id,
+              subject: identitySubject({
+                id: changingMember.pubkey,
+                kind: changingMember.kind,
+                name: changingMember.name,
+              }),
+              verb: 'changed',
+              object: targetMention
+                ? `${targetMention}'s role to ${input.role}`
+                : `role to ${input.role}`,
+              cardType: 'member-role',
+              card: { identityId: input.memberId, role: input.role },
+            });
+        }
         if (target.removed_at)
           await joinRooms(database, {
             workspaceId: input.workspaceId,
             identityId: input.memberId,
+            invitedById: viewerId,
             rooms: { type: 'none' },
             workspaceJoined: true,
           });
         return { joined: target.removed_at !== null };
       }
       const inserted = await database.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-         VALUES($1,NULL,$2,$3) ON CONFLICT DO NOTHING`,
-        [input.workspaceId, input.memberId, input.role],
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role,invited_by)
+         VALUES($1,NULL,$2,$3,$4) ON CONFLICT DO NOTHING`,
+        [input.workspaceId, input.memberId, input.role, viewerId],
       );
       if (inserted.rowCount)
         await joinRooms(database, {
           workspaceId: input.workspaceId,
           identityId: input.memberId,
+          invitedById: viewerId,
           rooms: { type: 'none' },
           workspaceJoined: true,
         });
@@ -2715,8 +2868,8 @@ export class PhoneService {
   }
   private async redeemInvite(input: Input<'redeemInvite'>, viewerId: string) {
     if (!isCommunityInviteToken(input.token)) throw new Error('invalid invite token');
-    const result = await this.database.query<{ workspace_id: string }>(
-      `SELECT i.workspace_id FROM invites i
+    const result = await this.database.query<{ workspace_id: string; created_by: string }>(
+      `SELECT i.workspace_id,i.created_by FROM invites i
        JOIN memberships creator ON creator.workspace_id=i.workspace_id AND creator.room_id IS NULL
          AND creator.identity_id=i.created_by AND creator.removed_at IS NULL
        WHERE i.token_hash=$1 AND i.expires_at>now()`,
@@ -2737,14 +2890,16 @@ export class PhoneService {
       if (!identity) throw new Error('identity not found');
       await reassignCollidingAgentHandles(database, viewerId, identity.handle, workspaceIds);
       const joined = await database.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member')
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role,invited_by) VALUES($1,NULL,$2,'member',$3)
          ON CONFLICT (workspace_id,identity_id) WHERE room_id IS NULL
-         DO UPDATE SET role='member',removed_at=NULL WHERE memberships.removed_at IS NOT NULL`,
-        [row.workspace_id, viewerId],
+         DO UPDATE SET role='member',removed_at=NULL,invited_by=EXCLUDED.invited_by
+           WHERE memberships.removed_at IS NOT NULL`,
+        [row.workspace_id, viewerId, row.created_by],
       );
       await joinRooms(database, {
         workspaceId: row.workspace_id,
         identityId: viewerId,
+        invitedById: row.created_by,
         rooms: { type: 'all-live-top-level' },
         workspaceJoined: joined.rowCount > 0,
       });
@@ -2790,14 +2945,79 @@ export class PhoneService {
     await this.requireWorkspaceAgent(input.workspaceId, input.agentId, viewerId);
     const hasModel = Object.prototype.hasOwnProperty.call(input, 'model');
     const hasEffort = Object.prototype.hasOwnProperty.call(input, 'effort');
-    await this.database.query(
-      `UPDATE agents
-       SET selected_model=CASE WHEN $2 THEN $3 ELSE selected_model END,
-           selected_effort=CASE WHEN $4 THEN $5 ELSE selected_effort END,
-           updated_at=now()
-       WHERE agent_id=$1`,
-      [input.agentId, hasModel, input.model ?? null, hasEffort, input.effort ?? null],
-    );
+    await this.database.transaction(async (database) => {
+      const context = (
+        await database.query<{
+          selected_model: string | null;
+          selected_effort: string | null;
+          model_catalog: AgentDetailView['catalog'];
+          agent_id: string;
+          agent_kind: 'human' | 'agent';
+          agent_name: string;
+          agent_handle: string | null;
+          actor_id: string;
+          actor_kind: 'human' | 'agent';
+          actor_name: string;
+          actor_handle: string | null;
+        }>(
+          `SELECT config.selected_model,config.selected_effort,config.model_catalog,
+                  agent.id agent_id,agent.kind agent_kind,agent.name agent_name,agent.handle agent_handle,
+                  actor.id actor_id,actor.kind actor_kind,actor.name actor_name,actor.handle actor_handle
+           FROM agents config JOIN identities agent ON agent.id=config.agent_id
+           JOIN identities actor ON actor.id=$2 WHERE config.agent_id=$1 FOR UPDATE`,
+          [input.agentId, viewerId],
+        )
+      ).rows[0];
+      if (!context) throw new Error('agent not found');
+      await database.query(
+        `UPDATE agents
+         SET selected_model=CASE WHEN $2 THEN $3 ELSE selected_model END,
+             selected_effort=CASE WHEN $4 THEN $5 ELSE selected_effort END,
+             updated_at=now()
+         WHERE agent_id=$1`,
+        [input.agentId, hasModel, input.model ?? null, hasEffort, input.effort ?? null],
+      );
+      const changes: Array<{ axis: 'model' | 'effort'; value: string | null }> = [];
+      if (hasModel && (input.model ?? null) !== context.selected_model)
+        changes.push({ axis: 'model', value: input.model ?? null });
+      if (hasEffort && (input.effort ?? null) !== context.selected_effort)
+        changes.push({ axis: 'effort', value: input.effort ?? null });
+      if (!changes.length) return;
+      const rooms = await database.query<{ room_id: string }>(
+        `SELECT membership.room_id FROM memberships membership
+         JOIN rooms room ON room.id=membership.room_id
+         WHERE membership.identity_id=$1 AND membership.workspace_id=$2
+           AND membership.removed_at IS NULL AND room.archived_at IS NULL`,
+        [input.agentId, input.workspaceId],
+      );
+      const actor = {
+        id: context.actor_id,
+        kind: context.actor_kind,
+        name: context.actor_name,
+        handle: context.actor_handle,
+      };
+      const agentMention = systemIdentityMention({
+        id: context.agent_id,
+        kind: context.agent_kind,
+        name: context.agent_name,
+        handle: context.agent_handle,
+      });
+      for (const change of changes) {
+        const value =
+          change.axis === 'model' && change.value
+            ? selectedModelLabel(change.value, context.model_catalog ?? [])
+            : change.value;
+        for (const room of rooms.rows)
+          await systemLine(database, {
+            roomId: room.room_id,
+            subject: identitySubject(actor),
+            verb: 'changed',
+            object: `${agentMention}'s ${change.axis} to ${value ?? 'default'}`,
+            cardType: 'agent-model',
+            card: { agentId: input.agentId, axis: change.axis, value },
+          });
+      }
+    });
   }
   /**
    * The owner's tap on a grant card. Authorization is the yolo axis: the agent's
@@ -3651,9 +3871,9 @@ export class PhoneService {
     if (!this.github) throw new Error('GitHub service is not configured');
     return this.github;
   }
-  private async requireIdentity(id: string) {
+  private async requireIdentity(id: string, database: SqlDatabase = this.database) {
     const row = (
-      await this.database.query<IdentityRow>(
+      await database.query<IdentityRow>(
         `SELECT id,kind,name,handle,avatar,face_id FROM identities WHERE id=$1`,
         [id],
       )
@@ -3745,7 +3965,7 @@ export class PhoneService {
        WHERE room.id=$1`,
       [roomId, identityId],
     );
-    if (!row.rowCount) throw new Error('workspace manager required');
+    if (!row.rowCount) throw new Error('room manager required');
   }
   private async requireTopLevelRoom(roomId: string) {
     const room = (
@@ -3754,9 +3974,11 @@ export class PhoneService {
         parent_id: string | null;
         direct_participants: string[] | null;
         archived_at: Date | null;
-      }>(`SELECT workspace_id,parent_id,direct_participants,archived_at FROM rooms WHERE id=$1`, [
-        roomId,
-      ])
+        visibility: 'public' | 'invite-only';
+      }>(
+        `SELECT workspace_id,parent_id,direct_participants,archived_at,visibility FROM rooms WHERE id=$1`,
+        [roomId],
+      )
     ).rows[0];
     if (!room) throw new Error('room not found');
     if (room.parent_id) throw new Error('room lifecycle cannot target a corner');

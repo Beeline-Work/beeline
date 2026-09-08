@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { SqlDatabase } from './database.js';
-import { systemLine } from './system-line.js';
+import { systemIdentityMention, systemLine } from './system-line.js';
 
 type RoomSelection =
   | { type: 'none' }
@@ -11,6 +11,8 @@ type RoomSelection =
 export interface JoinRoomsInput {
   workspaceId: string;
   identityId: string;
+  /** The identity whose action created/restored this membership. */
+  invitedById?: string;
   rooms: RoomSelection;
   workspaceJoined?: boolean;
 }
@@ -136,6 +138,12 @@ export async function joinRooms(
           values,
         );
         roomIds = joined.rows.map((row) => row.room_id);
+        if (input.invitedById && roomIds.length)
+          await transaction.query(
+            `UPDATE memberships SET invited_by=$3
+             WHERE identity_id=$1 AND room_id=ANY($2::uuid[])`,
+            [input.identityId, roomIds, input.invitedById],
+          );
         await inheritCornerMemberships(transaction, input.workspaceId, input.identityId, roomIds);
       }
     }
@@ -144,22 +152,34 @@ export async function joinRooms(
 
     const context = (
       await transaction.query<{
-        display_name: string;
+        identity_name: string;
+        identity_handle: string | null;
         kind: 'human' | 'agent';
         workspace_name: string;
         room_name: string | null;
+        inviter_id: string | null;
+        inviter_kind: 'human' | 'agent' | null;
+        inviter_name: string | null;
+        inviter_handle: string | null;
       }>(
-        `SELECT CASE WHEN identity.kind='agent' THEN identity.name
-                     ELSE COALESCE(NULLIF(identity.handle,''),identity.name) END display_name,
-                identity.kind,
+        `SELECT identity.name identity_name,identity.handle identity_handle,identity.kind,
                 workspace.name workspace_name,
-                (SELECT name FROM rooms WHERE id=$3) room_name
+                (SELECT name FROM rooms WHERE id=$3) room_name,
+                inviter.id inviter_id,inviter.kind inviter_kind,inviter.name inviter_name,
+                inviter.handle inviter_handle
          FROM identities identity CROSS JOIN workspaces workspace
+         LEFT JOIN identities inviter ON inviter.id=$4
          WHERE identity.id=$1 AND workspace.id=$2`,
-        [input.identityId, input.workspaceId, roomIds[0] ?? null],
+        [input.identityId, input.workspaceId, roomIds[0] ?? null, input.invitedById ?? null],
       )
     ).rows[0];
     if (!context) throw new Error('join context not found');
+    const joiningMention = systemIdentityMention({
+      id: input.identityId,
+      kind: context.kind,
+      name: context.identity_name,
+      handle: context.identity_handle,
+    });
 
     for (const roomId of roomIds) {
       await systemLine(transaction, {
@@ -167,9 +187,29 @@ export async function joinRooms(
         subject: {
           kind: context.kind === 'agent' ? 'agent' : 'person',
           id: input.identityId,
-          name: context.display_name,
+          name: joiningMention,
         },
         verb: 'joined',
+        ...(context.inviter_id &&
+        context.inviter_kind &&
+        context.inviter_name &&
+        context.inviter_handle
+          ? {
+              attribution: {
+                verb: 'invited by',
+                actor: {
+                  kind: context.inviter_kind === 'agent' ? ('agent' as const) : ('person' as const),
+                  id: context.inviter_id,
+                  name: systemIdentityMention({
+                    id: context.inviter_id,
+                    kind: context.inviter_kind,
+                    name: context.inviter_name,
+                    handle: context.inviter_handle,
+                  }),
+                },
+              },
+            }
+          : {}),
         // The one thing a producer says about who cares: the kind. A Room's
         // subscribers are resolved inside `systemLine`, so an arrival wakes
         // exactly the agents that asked to hear about arrivals in THIS Room.
@@ -189,7 +229,7 @@ export async function joinRooms(
         input.workspaceId,
         roomIds[0] ?? null,
         input.identityId,
-        `${context.display_name} joined ${input.workspaceJoined ? context.workspace_name : context.room_name}`,
+        `${joiningMention} joined ${input.workspaceJoined ? context.workspace_name : context.room_name}`,
       ],
     );
     await transaction.query(

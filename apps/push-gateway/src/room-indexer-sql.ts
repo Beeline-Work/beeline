@@ -454,10 +454,40 @@ WITH candidates AS (
   WHERE e.tags @> '[["t", "buzz-agent"]]'::jsonb
     AND e.tags @> jsonb_build_array(jsonb_build_array('h', a.id::text))
   ORDER BY e.community_id, e.pubkey, e.created_at DESC, e.id DESC
+), agent_model_catalogs AS MATERIALIZED (
+  SELECT DISTINCT ON (e.community_id, e.pubkey) e.community_id, e.pubkey, e.content
+  FROM authorized a JOIN events e ON e.community_id = a.community_id
+    AND e.kind = 30078 AND e.deleted_at IS NULL
+  WHERE EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
+    WHERE t->>0 = 't' AND t->>1 = 'buzz-agent-model-catalog')
+    AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) d
+      WHERE d->>0 = 'd' AND d->>1 = a.id::text || ':' || encode(e.pubkey, 'hex'))
+  ORDER BY e.community_id, e.pubkey, e.created_at DESC, e.id DESC
+), agent_model_configs AS MATERIALIZED (
+  SELECT DISTINCT ON (e.community_id, target.agent_pubkey)
+    e.community_id, target.agent_pubkey, e.content
+  FROM authorized a JOIN events e ON e.community_id = a.community_id
+    AND e.kind = 30078 AND e.deleted_at IS NULL
+  JOIN LATERAL (
+    SELECT t->>1 AS agent_pubkey FROM jsonb_array_elements(e.tags) t
+    WHERE t->>0 = 'p' LIMIT 1
+  ) target ON target.agent_pubkey ~* '^[0-9a-f]{64}$'
+  JOIN channel_members author ON author.community_id = e.community_id
+    AND author.channel_id = a.id AND author.pubkey = e.pubkey AND author.removed_at IS NULL
+  LEFT JOIN agent_declarations author_agent ON author_agent.community_id = e.community_id
+    AND author_agent.pubkey = e.pubkey
+  WHERE pg_input_is_valid(e.content, 'jsonb')
+    AND author_agent.pubkey IS NULL
+    AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
+      WHERE t->>0 = 't' AND t->>1 = 'buzz-agent-model-config')
+    AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) d
+      WHERE d->>0 = 'd' AND d->>1 = a.id::text || ':' || target.agent_pubkey)
+  ORDER BY e.community_id, target.agent_pubkey, e.created_at DESC, e.id DESC
 ), ${agentSoulsCteSql('authorized', 'a', 'a.id::text')}, roster_resolved AS (
   SELECT a.community_id, a.id AS workspace_id, cm.pubkey, cm.role::text,
     NULLIF(u.display_name, '') AS human_name, u.nip05_handle, u.avatar_url,
     agent.content AS agent_content, soul.content AS soul_content,
+    catalog.content AS model_catalog, config.content AS model_config,
     presence.status AS presence_status, presence.observed_at, presence.room_id
   FROM authorized a
   JOIN channel_members cm ON cm.community_id = a.community_id AND cm.channel_id = a.id
@@ -466,6 +496,10 @@ WITH candidates AS (
     AND u.deactivated_at IS NULL
   LEFT JOIN agent_declarations agent ON agent.community_id = cm.community_id
     AND agent.pubkey = cm.pubkey
+  LEFT JOIN agent_model_catalogs catalog ON catalog.community_id = cm.community_id
+    AND catalog.pubkey = cm.pubkey
+  LEFT JOIN agent_model_configs config ON config.community_id = cm.community_id
+    AND config.agent_pubkey = encode(cm.pubkey, 'hex')
   LEFT JOIN agent_souls soul ON soul.community_id = cm.community_id
     AND soul.d_tag = a.id::text || ':' || encode(cm.pubkey, 'hex')
   LEFT JOIN LATERAL (
@@ -509,6 +543,7 @@ SELECT 'member', jsonb_build_object(
   'handle', r.nip05_handle, 'avatar', COALESCE(r.soul_content::jsonb->>'avatar',
     r.agent_content::jsonb->>'avatar', r.avatar_url),
   'agent', r.agent_content IS NOT NULL,
+  'modelCatalog', r.model_catalog, 'modelConfig', r.model_config,
   'presenceStatus', r.presence_status, 'presenceObservedAt', r.observed_at,
   'presenceRoomId', r.room_id, 'kindTotal', r.kind_total
 ) FROM roster r

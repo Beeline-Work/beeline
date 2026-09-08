@@ -1587,6 +1587,43 @@ describe('monolith integration', () => {
     ).toEqual([]);
   });
 
+  it('keeps a replayed corner narration activity singular after reopening', async () => {
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'replayed-narration-corner',
+      name: 'Replay ledger',
+      objective: 'Keep one narrated tool row',
+    });
+    expect(created.status).toBe(200);
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    const input = {
+      agentId: AGENT,
+      roomId: cornerId,
+      requestId: 'replayed-narration-turn',
+      cornerActivityKey: 'read-package',
+      activity: [
+        { kind: 'output' as const, title: 'Update', text: 'I inspected the package.' },
+        { kind: 'tool' as const, title: 'Read package.json', operation: 'read', status: 'ok' },
+      ],
+    };
+    expect((await daemonOperation('postAgentActivity', input)).status).toBe(200);
+    expect((await daemonOperation('postAgentActivity', input)).status).toBe(200);
+
+    const reopened = (await (await request(`/v1/phone/rooms/${cornerId}`)).json()) as RoomView;
+    expect(isRoomView(reopened)).toBe(true);
+    const replayed = reopened.toolRows?.filter(
+      (message) => message.requestId === 'replayed-narration-turn',
+    );
+    expect(replayed).toHaveLength(1);
+    expect(replayed?.[0]).toMatchObject({
+      presentation: 'activity',
+      activity: [
+        { kind: 'output', title: 'Update', text: 'I inspected the package.' },
+        { kind: 'tool', title: 'Read package.json', operation: 'read', status: 'ok' },
+      ],
+    });
+  });
+
   it('never turns a bare agent name into a mention of the agent that just replied', async () => {
     const peer = 'e'.repeat(64);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Peer')`, [peer]);

@@ -339,6 +339,7 @@ describe('corner close-request polling cadence', () => {
     const abort = new AbortController();
     let inboxReads = 0;
     let activityWrites = 0;
+    const activityAttempts: Record<string, unknown>[] = [];
     const writes: Array<{ name: string; input: Record<string, unknown> }> = [];
     const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
       if (name === 'getAgentConfiguration') return { commands: [] };
@@ -370,8 +371,9 @@ describe('corner close-request polling cadence', () => {
       }
       if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
       if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
-      if (name === 'postAgentActivity' && ++activityWrites === 1) {
-        throw new Error('temporary activity failure');
+      if (name === 'postAgentActivity') {
+        activityAttempts.push(input);
+        if (++activityWrites === 1) throw new Error('temporary activity failure');
       }
       writes.push({ name, input });
       return { id: 'write-id', createdAt: 1 };
@@ -467,6 +469,8 @@ describe('corner close-request polling cadence', () => {
 
     const posts = writes.filter((write) => write.name === 'postRoomMessage');
     expect(activityWrites).toBe(2);
+    expect(activityAttempts).toHaveLength(2);
+    expect(activityAttempts[1]).toEqual(activityAttempts[0]);
     // The closing message lands WHOLE and under the turn's request id, so it
     // settles the receipt. Nothing is cut by a stream offset.
     expect(posts[0]).toEqual(
@@ -486,6 +490,7 @@ describe('corner close-request polling cadence', () => {
         input: expect.objectContaining({
           roomId: 'corner-id',
           requestId: 'cornerid',
+          cornerActivityKey: 'read-package',
           activity: [
             {
               kind: 'output',

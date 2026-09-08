@@ -344,6 +344,7 @@ export type PostTurnReceiptInput = AgentRoomInput & {
 };
 export type PostAgentActivityInput = AgentRoomInput & {
   readonly requestId: string;
+  readonly cornerActivityKey?: string;
   readonly activity: readonly DaemonActivityItem[];
 };
 export type PostPermissionRequestInput = RoomPrincipalInput & {

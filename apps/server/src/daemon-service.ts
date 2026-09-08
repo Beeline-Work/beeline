@@ -1356,20 +1356,49 @@ export class DaemonService {
   }
   private async activity(input: Input<'postAgentActivity'>, agentId: string) {
     await this.access(input.roomId, agentId);
-    const messageId = id();
-    await this.database.transaction(async (database) => {
-      await database.query(
-        `INSERT INTO messages(id,room_id,author_id,text,presentation,request_id,activity) VALUES($1,$2,$3,'','activity',$4,$5::jsonb)`,
+    const key = input.cornerActivityKey;
+    if (key !== undefined) {
+      if (typeof key !== 'string' || !key || key.length > 200)
+        throw new Error('invalid corner activity key');
+      const corner = await this.database.query(`SELECT 1 FROM corner_facts WHERE corner_id=$1`, [
+        input.roomId,
+      ]);
+      if (!corner.rowCount) throw new Error('corner activity key requires a corner');
+    }
+    const messageId = key
+      ? createHash('sha256')
+          .update(JSON.stringify(['corner-activity', input.roomId, agentId, input.requestId, key]))
+          .digest('hex')
+      : id();
+    const activity = await this.database.transaction(async (database) => {
+      const inserted = await database.query<{ id: string; created_at: Date }>(
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,request_id,activity)
+         VALUES($1,$2,$3,'','activity',$4,$5::jsonb)
+         ON CONFLICT(id) DO NOTHING
+         RETURNING id,created_at`,
         [messageId, input.roomId, agentId, input.requestId, JSON.stringify(input.activity)],
       );
-      await database.query(
-        `UPDATE agent_turns SET created_at=now()
-         WHERE room_id=$1 AND request_id=$2 AND agent_id=$3 AND status='working'`,
-        [input.roomId, input.requestId, agentId],
-      );
+      const row =
+        inserted.rows[0] ??
+        (
+          await database.query<{ id: string; created_at: Date }>(
+            `SELECT id,created_at FROM messages WHERE id=$1`,
+            [messageId],
+          )
+        ).rows[0];
+      if (!row) throw new Error('activity write did not return a message');
+      if (inserted.rowCount) {
+        await database.query(
+          `UPDATE agent_turns SET created_at=now()
+           WHERE room_id=$1 AND request_id=$2 AND agent_id=$3 AND status='working'`,
+          [input.roomId, input.requestId, agentId],
+        );
+      }
+      return { ...row, inserted: Boolean(inserted.rowCount) };
     });
-    this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'activity', agentId });
-    return { id: messageId, createdAt: Math.floor(Date.now() / 1000) };
+    if (activity.inserted)
+      this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'activity', agentId });
+    return { id: activity.id, createdAt: seconds(activity.created_at) };
   }
   private async permissionRequest(input: Input<'postPermissionRequest'>, agentId: string) {
     await this.access(input.roomId, agentId);

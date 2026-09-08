@@ -826,6 +826,7 @@ export class MonolithCornerTurnLoop {
                         agentId: this.agent.publicKey,
                         roomId: cornerId,
                         requestId,
+                        cornerActivityKey: key,
                         activity: [
                           ...(narration
                             ? [

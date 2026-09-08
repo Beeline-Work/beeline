@@ -3,10 +3,12 @@ import {
   FACE_IDS,
   FACE_NAMES,
   FACE_SOULS,
+  agentHandleFromName,
   assignSeededAgentIdentity,
   defaultFaceForSeed,
   seededAgentName,
   seededFaceOrder,
+  uniqueAgentHandle,
   type FaceId,
 } from './faces.js';
 
@@ -103,6 +105,19 @@ describe('assignSeededAgentIdentity', () => {
   it('re-derives the same identity for the same roster, so a retry costs no animal', () => {
     const input = { seed: key(3), takenFaces: ['fox', 'owl'], takenNames: ['Foxy', 'Hoots'] };
     expect(assignSeededAgentIdentity(input)).toEqual(assignSeededAgentIdentity(input));
+  });
+});
+
+describe('agent handles', () => {
+  it('derives the address from the displayed name', () => {
+    expect(agentHandleFromName('Goosy')).toBe('goosy');
+    expect(agentHandleFromName('Quiet Keeper')).toBe('quiet_keeper');
+    expect(agentHandleFromName('Élan O’Fox')).toBe('elan_ofox');
+  });
+
+  it('adds a stable numeric suffix when the name-derived address is taken', () => {
+    expect(uniqueAgentHandle('Goosy', ['goosy'])).toBe('goosy_2');
+    expect(uniqueAgentHandle('Goosy', ['GOOSY', 'goosy_2'])).toBe('goosy_3');
   });
 });
 

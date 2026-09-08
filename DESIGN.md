@@ -98,22 +98,20 @@ weight, size, or geometry. There is no "YOU" caption and no dim-content trick.
 Tighter space within paragraphs and more space between turns make the
 transcript scannable without weakening the words.
 
-**A voice states its name once per run, above the words.** A run's opening turn
-carries the byline; consecutive entries by the same voice inherit it, and
-anything else (another person, a merge summary) ends the run
-(`buzz/ledger-attribution.ts`).
+**A human voice states its name once per run, above the words.** A human run's
+opening turn carries the byline; consecutive human entries inherit it, and
+anything else (another person, an agent message, a merge summary) ends the run
+(`buzz/ledger-attribution.ts`). Every agent prose message instead carries its
+own full byline and face tile, including consecutive and legacy-projected
+messages: the top bar is context, never a substitute for the actual author.
 
 The two surfaces differ here, and only here, because they genuinely differ:
 
-- **A Corner carries no byline name at all** — the tile-and-stamp rhythm only. Its
-  identity is already in the top bar. This is derived from the surface, never
-  from a lookup: a Corner is one administering agent plus you, so _anything that
-  is not your own steer is that agent_. Deriving it any other way is a real bug,
-  not a style choice — `isAgent` depends on the roster, and a Corner that trusted
-  it printed the signer's bare npub as a handle and dropped the agent's own words
-  to the ordinary grey tier the moment the roster was empty or still loading.
-- **A Room holds several voices, so each run opens with its full byline** —
-  name, quiet `agent` role tag where applicable, stamp.
+- **A Corner's top bar complements, but never replaces, a message byline.** Its
+  own agent messages keep their full author identity even while roster data is
+  loading; a row must never fall back to a bare signer key or ordinary-grey prose.
+- **A Room holds several voices, so each human run opens with its full byline;
+  every agent message does** — name, quiet `agent` role tag, face tile, stamp.
 
 **Prose turns carry their stamp inside the byline.** A folded machine run keeps
 its fixed-width 24h stamp in the same row as its labels, pinned to the right edge

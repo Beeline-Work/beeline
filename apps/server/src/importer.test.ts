@@ -362,7 +362,7 @@ describe('direct snapshot importer and RoomView parity', () => {
     await migrate(db);
   });
   afterEach(() => db.close());
-  it('covers the production-shaped fixture and matches old RoomView JSON after intentional URL normalization', async () => {
+  it('covers the production-shaped fixture and projects current RoomView identities after import', async () => {
     const source = snapshot();
     const report = await new SnapshotImporter(db).import(source, undefined, undefined, {
       includeMedia: true,
@@ -415,17 +415,26 @@ describe('direct snapshot importer and RoomView parity', () => {
         );
         return projected ? [projected] : [];
       });
-    expect(normalize(actual!.messages)).toEqual(normalize(oldMessages));
+    // RoomView projects a message author from the current identity record, not
+    // the stale identity profile captured beside a historical membership/event.
+    // Imported agents also receive their current, name-derived handle.
+    const expectedMessages = oldMessages.map((message) => ({
+      ...message,
+      author:
+        message.author.pubkey === OWNER
+          ? { ...message.author, name: 'Owner' }
+          : message.author.pubkey === AGENT
+            ? { ...message.author, name: 'Bee', handle: 'bee' }
+            : message.author,
+    }));
+    expect(normalize(actual!.messages)).toEqual(normalize(expectedMessages));
     expect(actual!.room.archived).toBe(false);
     expect(actual!.members.map((member) => member.identity.pubkey)).toEqual([OWNER, AGENT]);
     expect(actual!.viewer.identity).toMatchObject({
       pubkey: OWNER,
-      name: 'Workspace Owner',
-      handle: 'owner@hive.test',
+      name: 'Owner',
     });
-    expect(actual!.messages.find((message) => message.id === MESSAGE)?.author.name).toBe(
-      'Workspace Owner',
-    );
+    expect(actual!.messages.find((message) => message.id === MESSAGE)?.author.name).toBe('Owner');
     expect(actual!.members.find((member) => member.identity.pubkey === AGENT)?.presence).toEqual({
       status: 'online',
       observedAt: BASE + 9,
@@ -506,6 +515,18 @@ describe('direct snapshot importer and RoomView parity', () => {
       ).rowCount,
     ).toBe(2);
   });
+
+  it('reassigns imported agent handles from their display names', async () => {
+    const source = snapshot();
+    source.identities.find((identity) => identity.id === AGENT)!.handle = 'nora';
+
+    await new SnapshotImporter(db).import(source);
+
+    expect(
+      (await db.query(`SELECT name,handle FROM identities WHERE id=$1`, [AGENT])).rows,
+    ).toEqual([{ name: 'Bee', handle: 'bee' }]);
+  });
+
   it('skips every legacy media object by default while retaining transcript references', async () => {
     const source = snapshot();
     const report = await new SnapshotImporter(db).import(source);

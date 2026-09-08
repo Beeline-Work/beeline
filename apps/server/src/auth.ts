@@ -7,6 +7,10 @@ import {
 import type { SqlDatabase } from './database.js';
 import { joinRooms } from './membership-join.js';
 import {
+  lockIdentityHandleWorkspaces,
+  reassignCollidingAgentHandles,
+} from './workspace-handles.js';
+import {
   REVIEW_IDENTITY_HANDLE,
   REVIEW_IDENTITY_ID,
   REVIEW_IDENTITY_NAME,
@@ -60,6 +64,14 @@ async function landInWelcomeWorkspace(database: SqlDatabase, id: string): Promis
     WELCOME_WORKSPACE_ID,
     WELCOME_WORKSPACE_NAME,
   ]);
+  const workspaceIds = await lockIdentityHandleWorkspaces(database, id, [WELCOME_WORKSPACE_ID]);
+  const identity = (
+    await database.query<{ handle: string | null }>(`SELECT handle FROM identities WHERE id=$1`, [
+      id,
+    ])
+  ).rows[0];
+  if (!identity) throw new Error('identity not found');
+  await reassignCollidingAgentHandles(database, id, identity.handle, workspaceIds);
   const membership = await database.query(
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
      VALUES($1,NULL,$2,'member') ON CONFLICT DO NOTHING`,
@@ -101,13 +113,16 @@ export class TokenAuth {
     const id = linked.rows[0]?.identity_id ?? identityId(github.subject);
     await this.database.transaction(async (database) => {
       await database.query(
-        `INSERT INTO identities(id, kind, name, handle, avatar, github_subject, updated_at)
-       VALUES ($1, 'human', $2, $3, $4, $5, $6)
+        `INSERT INTO identities(id, kind, name, avatar, github_subject, updated_at)
+       VALUES ($1, 'human', $2, $3, $4, $5)
        ON CONFLICT (id) DO NOTHING`,
-        [id, github.name, github.login, github.avatar ?? null, github.subject, this.now()],
+        [id, github.name, github.avatar ?? null, github.subject, this.now()],
       );
+      const workspaceIds = await lockIdentityHandleWorkspaces(database, id, [WELCOME_WORKSPACE_ID]);
+      await reassignCollidingAgentHandles(database, id, github.login, workspaceIds);
       await database.query(
-        `UPDATE identities SET name=$2,handle=$3,avatar=$4,github_subject=$5,updated_at=$6
+        `UPDATE identities SET name=$2,
+           handle=$3,avatar=$4,github_subject=$5,updated_at=$6
          WHERE id=$1`,
         [id, github.name, github.login, github.avatar ?? null, github.subject, this.now()],
       );

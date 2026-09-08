@@ -9,6 +9,10 @@ import {
 import type { CornerLifecycleView, PhoneOperationMap } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { GITHUB_SUBJECT, systemLine, type SystemPhrase } from './system-line.js';
+import {
+  lockIdentityHandleWorkspaces,
+  reassignCollidingAgentHandles,
+} from './workspace-handles.js';
 
 type Input<Name extends keyof PhoneOperationMap> = PhoneOperationMap[Name]['input'];
 
@@ -239,8 +243,11 @@ export class GitHubOperations {
            provider_login=EXCLUDED.provider_login`,
         [github!.subject, viewerId, github!.issuer, GITHUB_IDENTITY_AUDIENCE, github!.login],
       );
+      const workspaceIds = await lockIdentityHandleWorkspaces(database, viewerId);
+      await reassignCollidingAgentHandles(database, viewerId, github!.login, workspaceIds);
       await database.query(
-        `UPDATE identities SET name=COALESCE(NULLIF($2,''),name),handle=$3,github_subject=$4,updated_at=now() WHERE id=$1`,
+        `UPDATE identities SET name=COALESCE(NULLIF($2,''),name),
+           handle=$3,github_subject=$4,updated_at=now() WHERE id=$1`,
         [viewerId, github!.name, github!.login, github!.subject],
       );
       await database.query(

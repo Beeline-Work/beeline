@@ -1,4 +1,5 @@
 import { SCHEDULE_RAN_VERB } from '@beeline/api-contract/scheduled-prompts';
+import { uniqueAgentHandle } from '@beeline/api-contract/phone';
 import { seedDefaultWorkspace } from './default-workspace.js';
 import {
   backfillInheritedCornerMemberships,
@@ -777,8 +778,76 @@ export async function migrate(database: SqlDatabase): Promise<void> {
   const syncedRoomRoles = await syncTopLevelSharedRoomRoles(database);
   console.log(`syncTopLevelSharedRoomRoles: updated ${syncedRoomRoles} stale Room role(s)`);
   await backfillSystemEventKinds(database);
-  await backfillYoloModeDefault(database);
   await seedDefaultWorkspace(database);
+  await backfillAgentHandles(database);
+  await backfillYoloModeDefault(database);
+}
+
+/**
+ * Replaces legacy/random agent addresses with deterministic name-derived ones.
+ * Each candidate is reserved in every Workspace the agent currently belongs
+ * to, so two unrelated Workspaces may use the same address while duplicates
+ * inside either roster receive deterministic numeric suffixes.
+ */
+export async function backfillAgentHandles(database: SqlDatabase): Promise<number> {
+  return database.transaction(async (transaction) => {
+    await transaction.query(`SELECT id FROM workspaces ORDER BY id FOR UPDATE`);
+    const rows = await transaction.query<{
+      id: string;
+      kind: 'human' | 'agent';
+      name: string;
+      handle: string | null;
+    }>(
+      `SELECT id,kind,name,handle FROM identities
+       ORDER BY CASE kind WHEN 'human' THEN 0 ELSE 1 END,created_at,id`,
+    );
+    const memberships = await transaction.query<{ workspace_id: string; identity_id: string }>(
+      `SELECT workspace_id,identity_id FROM memberships
+       WHERE room_id IS NULL AND removed_at IS NULL ORDER BY workspace_id,identity_id`,
+    );
+    const workspacesByIdentity = new Map<string, string[]>();
+    for (const membership of memberships.rows) {
+      const workspaces = workspacesByIdentity.get(membership.identity_id) ?? [];
+      workspaces.push(membership.workspace_id);
+      workspacesByIdentity.set(membership.identity_id, workspaces);
+    }
+    const takenByWorkspace = new Map<string, Set<string>>();
+    const unscopedTaken = new Set<string>();
+    for (const row of rows.rows) {
+      if (row.kind !== 'human' || !row.handle) continue;
+      for (const workspaceId of workspacesByIdentity.get(row.id) ?? []) {
+        const taken = takenByWorkspace.get(workspaceId) ?? new Set<string>();
+        taken.add(row.handle.toLowerCase());
+        takenByWorkspace.set(workspaceId, taken);
+      }
+    }
+    let changed = 0;
+    for (const row of rows.rows) {
+      if (row.kind !== 'agent') continue;
+      const workspaceIds = workspacesByIdentity.get(row.id) ?? [];
+      const taken = workspaceIds.length
+        ? workspaceIds.flatMap((workspaceId) => [...(takenByWorkspace.get(workspaceId) ?? [])])
+        : [...unscopedTaken];
+      const handle = uniqueAgentHandle(row.name, taken);
+      if (workspaceIds.length) {
+        for (const workspaceId of workspaceIds) {
+          const workspaceTaken = takenByWorkspace.get(workspaceId) ?? new Set<string>();
+          workspaceTaken.add(handle.toLowerCase());
+          takenByWorkspace.set(workspaceId, workspaceTaken);
+        }
+      } else {
+        unscopedTaken.add(handle.toLowerCase());
+      }
+      if (row.handle === handle) continue;
+      const updated = await transaction.query(
+        `UPDATE identities SET handle=$2,updated_at=now() WHERE id=$1 AND handle IS DISTINCT FROM $2`,
+        [row.id, handle],
+      );
+      changed += updated.rowCount;
+    }
+    console.log(`backfillAgentHandles: assigned ${changed} name-derived agent handle(s)`);
+    return changed;
+  });
 }
 
 /**

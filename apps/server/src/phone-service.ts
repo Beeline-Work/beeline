@@ -28,6 +28,7 @@ import type {
 } from '@beeline/api-contract/phone';
 import {
   assignSeededAgentIdentity,
+  uniqueAgentHandle,
   cornerDisplayName,
   createCommunityInviteToken,
   defaultFaceForSeed,
@@ -56,6 +57,10 @@ import type { LiveEvent, LiveHub } from './live.js';
 import type { GitHubOperations } from './github-operations.js';
 import { collapsePermissionCards } from '@beeline/push-gateway/projection';
 import { joinRooms, syncTopLevelSharedRoomRoles } from './membership-join.js';
+import {
+  lockIdentityHandleWorkspaces,
+  reassignCollidingAgentHandles,
+} from './workspace-handles.js';
 import { REVIEW_IDENTITY_ID } from './review-access.js';
 import { identitySubject, systemLine } from './system-line.js';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
@@ -74,6 +79,26 @@ const DURABLE_KINDS = [0, 9, 9000, 9001, 9002, 9007, 9008, 30078, 39000, 39001, 
  * line; short enough that a leaked pairing code is not a standing handle.
  */
 const CONNECT_RENAME_WINDOW_MS = 15 * 60 * 1_000;
+
+function mentionCodePointBefore(text: string, offset: number): string | undefined {
+  if (!offset) return undefined;
+  const last = text.charCodeAt(offset - 1);
+  const start = last >= 0xdc00 && last <= 0xdfff ? offset - 2 : offset - 1;
+  const codePoint = text.codePointAt(start);
+  return codePoint === undefined ? undefined : String.fromCodePoint(codePoint);
+}
+
+function mentionCodePointAt(text: string, offset: number): string | undefined {
+  const codePoint = text.codePointAt(offset);
+  return codePoint === undefined ? undefined : String.fromCodePoint(codePoint);
+}
+
+function normalizeAgentName(value: string): string {
+  const name = value.trim().replace(/\s+/g, ' ');
+  if (!name || name.length > 32 || !/^\p{L}[\p{L}\p{M}'’ -]*$/u.test(name))
+    throw new Error('agent name must be a short spoken name');
+  return name;
+}
 
 /**
  * Settled corner tool rows kept in the corner transcript after the turn
@@ -702,10 +727,8 @@ export class PhoneService {
               }
             >(
               `SELECT m.*,
-               COALESCE(m.legacy_event->>'authorKind',i.kind) author_kind,
-               COALESCE(m.legacy_event->>'authorName',i.name) author_name,
-               CASE WHEN m.legacy_event IS NOT NULL THEN m.legacy_event->>'authorHandle' ELSE i.handle END author_handle,
-               CASE WHEN m.legacy_event IS NOT NULL THEN m.legacy_event->>'authorAvatar' ELSE i.avatar END author_avatar,i.face_id author_face
+               i.kind author_kind,i.name author_name,i.handle author_handle,
+               i.avatar author_avatar,i.face_id author_face
              FROM messages m JOIN identities i ON i.id=m.author_id
              WHERE m.room_id=$1 AND m.created_at<=$2
                AND (
@@ -858,14 +881,12 @@ export class PhoneService {
       LEFT JOIN identities li ON li.id=lm.author_id
       LEFT JOIN LATERAL (
         SELECT i.id identity_id,
-          COALESCE(member.identity_profile->>'name',i.name) name,
-          CASE WHEN member.identity_profile IS NOT NULL THEN member.identity_profile->>'handle' ELSE i.handle END handle,
-          CASE WHEN member.identity_profile IS NOT NULL THEN member.identity_profile->>'avatar' ELSE i.avatar END avatar
+          i.name,i.handle,i.avatar
         FROM identities i
         LEFT JOIN memberships member ON member.room_id=c.id AND member.identity_id=i.id
           AND member.removed_at IS NULL
         WHERE i.id=f.owner_agent_id
-          AND COALESCE(member.identity_profile->>'kind',i.kind)='agent' LIMIT 1
+          AND i.kind='agent' LIMIT 1
       ) agent ON true
       LEFT JOIN LATERAL (
         SELECT status,created_at FROM agent_turns WHERE room_id=c.id
@@ -1129,6 +1150,35 @@ export class PhoneService {
       );
       const pairing = result.rows[0];
       if (!pairing || (pairing.claimed_by && pairing.claimed_by !== agentId)) return null;
+      const existingMembership = await database.query(
+        `SELECT 1 FROM memberships
+         WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND removed_at IS NULL`,
+        [pairing.workspace_id, agentId],
+      );
+      if (!existingMembership.rowCount) {
+        const lockedWorkspaces = lockIdentityHandleWorkspaces(database, agentId, [
+          pairing.workspace_id,
+        ]);
+        await lockedWorkspaces;
+        const agent = (
+          await database.query<{ name: string }>(
+            `SELECT name FROM identities WHERE id=$1 AND kind='agent'`,
+            [agentId],
+          )
+        ).rows[0];
+        if (!agent) return null;
+        const handle = await this.availableAgentHandle(
+          database,
+          pairing.workspace_id,
+          agentId,
+          agent.name,
+          lockedWorkspaces,
+        );
+        await database.query(`UPDATE identities SET handle=$2,updated_at=now() WHERE id=$1`, [
+          agentId,
+          handle,
+        ]);
+      }
       const joined = !pairing.claimed_by;
       if (joined)
         await database.query(
@@ -1165,7 +1215,11 @@ export class PhoneService {
     workspaceId: string,
     exceptIdentityId: string,
   ): Promise<{ faces: string[]; names: string[] }> {
-    const rows = await database.query<{ id: string; name: string; face_id: string | null }>(
+    const rows = await database.query<{
+      id: string;
+      name: string;
+      face_id: string | null;
+    }>(
       `SELECT i.id,i.name,i.face_id
        FROM memberships m
        JOIN identities i ON i.id=m.identity_id
@@ -1179,6 +1233,29 @@ export class PhoneService {
       faces: rows.rows.map((row) => resolveFace(row.face_id, row.id)),
       names: rows.rows.map((row) => row.name),
     };
+  }
+
+  private async availableAgentHandle(
+    database: SqlDatabase,
+    workspaceId: string,
+    exceptIdentityId: string,
+    name: string,
+    lockedWorkspaces = lockIdentityHandleWorkspaces(database, exceptIdentityId, [workspaceId]),
+  ): Promise<string> {
+    const workspaceIds = await lockedWorkspaces;
+    const rows = await database.query<{ handle: string }>(
+      `SELECT identity.handle
+       FROM memberships membership
+       JOIN identities identity ON identity.id=membership.identity_id
+       WHERE membership.workspace_id=ANY($1::uuid[]) AND membership.room_id IS NULL
+         AND membership.removed_at IS NULL AND identity.hidden_from_roster=false
+         AND identity.id<>$2 AND identity.handle IS NOT NULL`,
+      [workspaceIds, exceptIdentityId],
+    );
+    return uniqueAgentHandle(
+      name,
+      rows.rows.map((row) => row.handle),
+    );
   }
 
   async claimAgentConnectPairing(input: {
@@ -1284,18 +1361,23 @@ export class PhoneService {
       if (pairing.expires_at.getTime() <= Date.now()) return { status: 'expired' };
       if (pairing.claimed_by) return { status: 'already_claimed' };
 
-      // Serialize seeded-identity assignment across the Workspace: the pairing
-      // row lock above only orders retries of THIS code. Taken after the
-      // pairing lock by every caller, so the order never deadlocks.
-      await database.query(`SELECT 1 FROM workspaces WHERE id=$1 FOR UPDATE`, [
+      const lockedWorkspaces = lockIdentityHandleWorkspaces(database, input.agentPubkey, [
         pairing.workspace_id,
       ]);
+      await lockedWorkspaces;
       const worn = await this.wornSeededIdentity(database, pairing.workspace_id, input.agentPubkey);
       const seeded = assignSeededAgentIdentity({
         seed: input.agentPubkey,
         takenFaces: worn.faces,
         takenNames: worn.names,
       });
+      const handle = await this.availableAgentHandle(
+        database,
+        pairing.workspace_id,
+        input.agentPubkey,
+        seeded.name,
+        lockedWorkspaces,
+      );
 
       // Pairing a key whose agent was removed starts it over rather than
       // resurrecting it: the seeded name, animal and soul are assigned afresh
@@ -1303,12 +1385,12 @@ export class PhoneService {
       // freshly-paired value. A key that belongs to a person is never
       // overwritten into an agent.
       const identityRow = await database.query(
-        `INSERT INTO identities(id,kind,name,face_id) VALUES($1,'agent',$2,$3)
-         ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name,face_id=EXCLUDED.face_id,
+        `INSERT INTO identities(id,kind,name,handle,face_id) VALUES($1,'agent',$2,$3,$4)
+         ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name,handle=EXCLUDED.handle,face_id=EXCLUDED.face_id,
            avatar=NULL,hidden_from_roster=false,updated_at=now()
          WHERE identities.kind='agent'
          RETURNING id`,
-        [input.agentPubkey, seeded.name, seeded.face],
+        [input.agentPubkey, seeded.name, handle, seeded.face],
       );
       if (!identityRow.rowCount) throw new Error('pairing key belongs to a person');
       await database.query(
@@ -1396,23 +1478,31 @@ export class PhoneService {
     code: string;
     name: string;
   }): Promise<{ status: 'renamed'; agentName: string } | { status: 'not_found' | 'expired' }> {
-    const name = input.name.trim().replace(/\s+/g, ' ');
-    if (!name || name.length > 32 || !/^\p{L}[\p{L}\p{M}'’ -]*$/u.test(name)) {
-      throw new Error('agent name must be a short spoken name');
-    }
+    const name = normalizeAgentName(input.name);
     return this.database.transaction(async (database) => {
       const pairing = (
-        await database.query<{ claimed_by: string | null; claimed_at: Date | null }>(
-          `SELECT claimed_by,claimed_at FROM agent_pairing_codes WHERE code_hash=$1 FOR UPDATE`,
+        await database.query<{
+          claimed_by: string | null;
+          claimed_at: Date | null;
+          workspace_id: string;
+        }>(
+          `SELECT claimed_by,claimed_at,workspace_id FROM agent_pairing_codes WHERE code_hash=$1 FOR UPDATE`,
           [hash(input.code)],
         )
       ).rows[0];
       if (!pairing?.claimed_by || !pairing.claimed_at) return { status: 'not_found' };
       if (Date.now() - pairing.claimed_at.getTime() > CONNECT_RENAME_WINDOW_MS)
         return { status: 'expired' };
-      await database.query(`UPDATE identities SET name=$2,updated_at=now() WHERE id=$1`, [
+      const handle = await this.availableAgentHandle(
+        database,
+        pairing.workspace_id,
         pairing.claimed_by,
         name,
+      );
+      await database.query(`UPDATE identities SET name=$2,handle=$3,updated_at=now() WHERE id=$1`, [
+        pairing.claimed_by,
+        name,
+        handle,
       ]);
       await database.query(
         `UPDATE agents SET soul=jsonb_set(soul,'{name}',to_jsonb($2::text)),updated_at=now()
@@ -1780,12 +1870,8 @@ export class PhoneService {
     const id = input.messageId ?? messageId();
     if (!/^[0-9a-f]{64}$/.test(id)) throw new Error('messageId is invalid');
     const attachments = JSON.stringify(input.attachments ?? []);
-    const mentionIds = await this.resolveMessageMentions(
-      input.roomId,
-      author,
-      input.mentions ?? [],
-    );
-    const mentions = JSON.stringify(mentionIds);
+    const mentionResolution = await this.resolveMessageMentions(input.roomId, author, input.text);
+    const mentions = JSON.stringify(mentionResolution.mentionIds);
     const values = [id, input.roomId, author, input.text, attachments, mentions];
     const inserted = await this.database.query(
       `INSERT INTO messages(id,room_id,author_id,text,attachments,mention_ids)
@@ -1803,7 +1889,7 @@ export class PhoneService {
       if (!retry.rowCount) throw new Error('messageId is invalid');
       return { messageId: id };
     }
-    await this.noteUnansweredMentions(input.roomId, author, mentionIds, id);
+    await this.noteUnansweredMentions(input.roomId, author, mentionResolution.noticeAgentIds, id);
     return { messageId: id };
   }
   private async createRoomSchedule(input: Input<'createRoomSchedule'>, viewerId: string) {
@@ -1880,10 +1966,10 @@ export class PhoneService {
       throw new Error('reply parent is not in this room');
     const id = input.messageId ?? messageId();
     if (!/^[0-9a-f]{64}$/.test(id)) throw new Error('messageId is invalid');
-    const mentionIds = await this.resolveMessageMentions(
+    const mentionResolution = await this.resolveMessageMentions(
       input.roomId,
       author,
-      input.mentions ?? [],
+      input.text,
       parent.rows[0].author_kind === 'agent' ? parent.rows[0].author_id : null,
     );
     const values = [
@@ -1892,7 +1978,7 @@ export class PhoneService {
       author,
       input.text,
       JSON.stringify(input.attachments ?? []),
-      JSON.stringify(mentionIds),
+      JSON.stringify(mentionResolution.mentionIds),
       input.parentMessageId,
       parent.rows[0].root_message_id ?? input.parentMessageId,
     ];
@@ -1912,7 +1998,7 @@ export class PhoneService {
       if (!retry.rowCount) throw new Error('messageId is invalid');
       return { messageId: id };
     }
-    await this.noteUnansweredMentions(input.roomId, author, mentionIds, id);
+    await this.noteUnansweredMentions(input.roomId, author, mentionResolution.noticeAgentIds, id);
     return { messageId: id };
   }
   /**
@@ -2076,43 +2162,85 @@ export class PhoneService {
   private async resolveMessageMentions(
     roomId: string,
     author: string,
-    explicitMentions: readonly string[],
+    text: string,
     replyAgentId?: string | null,
-  ): Promise<readonly string[]> {
-    if (explicitMentions.length) return explicitMentions;
+  ): Promise<{ mentionIds: readonly string[]; noticeAgentIds: readonly string[] }> {
     const authorKind = (
       await this.database.query<{ kind: 'human' | 'agent' }>(
         `SELECT kind FROM identities WHERE id=$1`,
         [author],
       )
     ).rows[0]?.kind;
-    if (authorKind !== 'human') return [];
-    if (replyAgentId) return [replyAgentId];
-    // A reply to a human is addressed to that human. Do not let the ordinary
-    // unthreaded-message fallbacks redirect it to the last or only agent.
-    if (replyAgentId === null) return [];
-
-    const previousAgent = (
-      await this.database.query<{ author_id: string }>(
-        `SELECT latest.author_id FROM (
-           SELECT message.author_id,identity.kind author_kind
-           FROM messages message JOIN identities identity ON identity.id=message.author_id
-           WHERE message.room_id=$1 AND message.presentation='message'
-           ORDER BY message.created_at DESC,message.id DESC LIMIT 1
-         ) latest WHERE latest.author_kind='agent'`,
-        [roomId],
+    if (authorKind !== 'human') return { mentionIds: [], noticeAgentIds: [] };
+    const mentions = new Set<string>();
+    const tokenCharacter = /[\p{L}\p{M}\p{N}_.-]/u;
+    const typedHandles = new Set<string>();
+    const normalizedText = text.normalize('NFKC').toLocaleLowerCase();
+    for (const match of normalizedText.matchAll(
+      /@([\p{L}\p{M}\p{N}_]+(?:[.-][\p{L}\p{M}\p{N}_]+)*)/gu,
+    )) {
+      const offset = match.index ?? 0;
+      const before = mentionCodePointBefore(normalizedText, offset);
+      const punctuation = normalizedText.slice(offset + match[0].length).match(/^[.-]+/u)?.[0];
+      const afterPunctuation = punctuation
+        ? mentionCodePointAt(normalizedText, offset + match[0].length + punctuation.length)
+        : undefined;
+      if (
+        (!before || !tokenCharacter.test(before)) &&
+        (!afterPunctuation || !tokenCharacter.test(afterPunctuation))
       )
-    ).rows[0]?.author_id;
-    if (previousAgent) return [previousAgent];
-
-    const agents = await this.database.query<{ identity_id: string }>(
-      `SELECT membership.identity_id FROM memberships membership
-       JOIN identities identity ON identity.id=membership.identity_id AND identity.kind='agent'
+        typedHandles.add(match[1] ?? '');
+    }
+    const members = await this.database.query<{
+      id: string;
+      handle: string;
+      kind: 'human' | 'agent';
+    }>(
+      `SELECT identity.id,identity.handle,identity.kind
+       FROM memberships membership
+       JOIN identities identity ON identity.id=membership.identity_id
        WHERE membership.room_id=$1 AND membership.removed_at IS NULL
-       ORDER BY membership.identity_id LIMIT 2`,
+         AND identity.handle IS NOT NULL`,
       [roomId],
     );
-    return agents.rows.length === 1 ? [agents.rows[0]!.identity_id] : [];
+    const absentCornerAgents = await this.database.query<{ id: string; handle: string }>(
+      `SELECT identity.id,identity.handle
+       FROM rooms room
+       JOIN memberships workspace_membership ON workspace_membership.workspace_id=room.workspace_id
+         AND workspace_membership.room_id IS NULL AND workspace_membership.removed_at IS NULL
+       JOIN identities identity ON identity.id=workspace_membership.identity_id
+         AND identity.kind='agent' AND identity.handle IS NOT NULL
+       LEFT JOIN memberships room_membership ON room_membership.room_id=room.id
+         AND room_membership.identity_id=identity.id AND room_membership.removed_at IS NULL
+       WHERE room.id=$1 AND room.parent_id IS NOT NULL AND room_membership.identity_id IS NULL`,
+      [roomId],
+    );
+    const candidatesByHandle = new Map<
+      string,
+      { id: string; kind: 'human' | 'agent'; member: boolean }[]
+    >();
+    for (const member of members.rows) {
+      const handle = member.handle.normalize('NFKC').toLocaleLowerCase();
+      const candidates = candidatesByHandle.get(handle) ?? [];
+      candidates.push({ id: member.id, kind: member.kind, member: true });
+      candidatesByHandle.set(handle, candidates);
+    }
+    for (const agent of absentCornerAgents.rows) {
+      const handle = agent.handle.normalize('NFKC').toLocaleLowerCase();
+      const candidates = candidatesByHandle.get(handle) ?? [];
+      candidates.push({ id: agent.id, kind: 'agent', member: false });
+      candidatesByHandle.set(handle, candidates);
+    }
+    const noticeAgentIds = new Set<string>();
+    for (const handle of typedHandles) {
+      const [candidate] = candidatesByHandle.get(handle) ?? [];
+      if ((candidatesByHandle.get(handle)?.length ?? 0) !== 1 || !candidate) continue;
+      if (candidate.member) mentions.add(candidate.id);
+      if (candidate.kind === 'agent') noticeAgentIds.add(candidate.id);
+    }
+    if (replyAgentId) mentions.add(replyAgentId);
+    if (replyAgentId) noticeAgentIds.add(replyAgentId);
+    return { mentionIds: [...mentions], noticeAgentIds: [...noticeAgentIds] };
   }
   private async decidePermission(input: Input<'decideWritePermission'>, viewerId: string) {
     const pending = (
@@ -2407,7 +2535,16 @@ export class PhoneService {
     if (input.memberId === viewerId) throw new Error('workspace managers cannot change themselves');
     await this.requireIdentity(input.memberId);
     return this.database.transaction(async (database) => {
-      await database.query(`SELECT 1 FROM workspaces WHERE id=$1 FOR UPDATE`, [input.workspaceId]);
+      const workspaceIds = await lockIdentityHandleWorkspaces(database, input.memberId, [
+        input.workspaceId,
+      ]);
+      const targetIdentity = (
+        await database.query<{ handle: string | null; kind: 'human' | 'agent'; name: string }>(
+          `SELECT handle,kind,name FROM identities WHERE id=$1 FOR UPDATE`,
+          [input.memberId],
+        )
+      ).rows[0];
+      if (!targetIdentity) throw new Error('identity not found');
       const roles = await database.query<{
         identity_id: string;
         role: 'owner' | 'admin' | 'member';
@@ -2427,6 +2564,26 @@ export class PhoneService {
         (input.role === 'owner' || target?.role === 'owner' || target?.role === 'admin')
       ) {
         throw new Error('workspace manager cannot change a member with equal or greater authority');
+      }
+      if (targetIdentity.kind === 'human')
+        await reassignCollidingAgentHandles(
+          database,
+          input.memberId,
+          targetIdentity.handle,
+          workspaceIds,
+        );
+      else {
+        const handle = await this.availableAgentHandle(
+          database,
+          input.workspaceId,
+          input.memberId,
+          targetIdentity.name,
+          Promise.resolve(workspaceIds),
+        );
+        await database.query(`UPDATE identities SET handle=$2,updated_at=now() WHERE id=$1`, [
+          input.memberId,
+          handle,
+        ]);
       }
       if (target) {
         await database.query(
@@ -2568,6 +2725,17 @@ export class PhoneService {
     const row = result.rows[0];
     if (!row) throw new Error('invite not found');
     return this.database.transaction(async (database) => {
+      const workspaceIds = await lockIdentityHandleWorkspaces(database, viewerId, [
+        row.workspace_id,
+      ]);
+      const identity = (
+        await database.query<{ handle: string | null }>(
+          `SELECT handle FROM identities WHERE id=$1 FOR UPDATE`,
+          [viewerId],
+        )
+      ).rows[0];
+      if (!identity) throw new Error('identity not found');
+      await reassignCollidingAgentHandles(database, viewerId, identity.handle, workspaceIds);
       const joined = await database.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member')
          ON CONFLICT (workspace_id,identity_id) WHERE room_id IS NULL
@@ -2595,22 +2763,28 @@ export class PhoneService {
   }
   private async updateAgentSoul(input: Input<'updateAgentSoul'>, viewerId: string) {
     await this.requireWorkspaceAgent(input.workspaceId, input.agentId, viewerId);
-    await this.database.query(
-      `UPDATE agents SET soul=$2::jsonb,updated_at=now() WHERE agent_id=$1`,
-      [
+    const name = normalizeAgentName(input.name);
+    await this.database.transaction(async (database) => {
+      const handle = await this.availableAgentHandle(
+        database,
+        input.workspaceId,
+        input.agentId,
+        name,
+      );
+      await database.query(`UPDATE agents SET soul=$2::jsonb,updated_at=now() WHERE agent_id=$1`, [
         input.agentId,
         JSON.stringify({
-          name: input.name,
+          name,
           instructions: input.instructions,
           avatarSeed: input.avatarSeed,
           ...(input.avatar ? { avatar: input.avatar } : {}),
         }),
-      ],
-    );
-    await this.database.query(
-      `UPDATE identities SET name=$2,avatar=COALESCE($3,avatar),updated_at=now() WHERE id=$1`,
-      [input.agentId, input.name, input.avatar ?? null],
-    );
+      ]);
+      await database.query(
+        `UPDATE identities SET name=$2,handle=$3,avatar=COALESCE($4,avatar),updated_at=now() WHERE id=$1`,
+        [input.agentId, name, handle, input.avatar ?? null],
+      );
+    });
   }
   private async updateAgentModel(input: Input<'updateAgentModelSelection'>, viewerId: string) {
     await this.requireWorkspaceAgent(input.workspaceId, input.agentId, viewerId);
@@ -3248,24 +3422,30 @@ export class PhoneService {
       !/^[a-z0-9](?:[a-z0-9._-]{0,28}[a-z0-9])?$/.test(input.handle)
     )
       throw new Error('invalid person handle');
-    const updated = await this.database.query<IdentityRow>(
-      `UPDATE identities
-       SET name=CASE WHEN $2::text IS NULL THEN name ELSE $2 END,
-           handle=CASE WHEN $3::text IS NULL THEN handle ELSE $3 END,
-           avatar=CASE WHEN $4::text IS NULL THEN avatar ELSE NULLIF($4,'') END,
-           updated_at=now()
-       WHERE id=$1
-       RETURNING id,kind,name,handle,avatar`,
-      [viewerId, input.name ?? null, input.handle ?? null, input.avatar ?? null],
-    );
-    const profile = updated.rows[0];
-    if (!profile) throw new Error('identity not found');
-    return {
-      personId: profile.id,
-      name: profile.name,
-      ...(profile.handle ? { handle: profile.handle } : {}),
-      ...(profile.avatar ? { avatar: profile.avatar } : {}),
-    };
+    return this.database.transaction(async (database) => {
+      if (input.handle !== undefined) {
+        const workspaceIds = await lockIdentityHandleWorkspaces(database, viewerId);
+        await reassignCollidingAgentHandles(database, viewerId, input.handle, workspaceIds);
+      }
+      const updated = await database.query<IdentityRow>(
+        `UPDATE identities
+         SET name=CASE WHEN $2::text IS NULL THEN name ELSE $2 END,
+             handle=CASE WHEN $3::text IS NULL THEN handle ELSE $3 END,
+             avatar=CASE WHEN $4::text IS NULL THEN avatar ELSE NULLIF($4,'') END,
+             updated_at=now()
+         WHERE id=$1
+         RETURNING id,kind,name,handle,avatar`,
+        [viewerId, input.name ?? null, input.handle ?? null, input.avatar ?? null],
+      );
+      const profile = updated.rows[0];
+      if (!profile) throw new Error('identity not found');
+      return {
+        personId: profile.id,
+        name: profile.name,
+        ...(profile.handle ? { handle: profile.handle } : {}),
+        ...(profile.avatar ? { avatar: profile.avatar } : {}),
+      };
+    });
   }
   /** The face ceremony: one of `FACE_IDS` for the viewer's own identity, or null to clear. */
   private async updateFace(input: Input<'updateIdentityFace'>, viewerId: string) {
@@ -3353,15 +3533,19 @@ export class PhoneService {
     };
   }
   private async claimManagedHandle(viewerId: string, handle: string) {
-    const claimed = await this.database.query(
-      `UPDATE identities AS identity SET handle=$2,updated_at=now()
-       WHERE identity.id=$1 AND NOT EXISTS(
-         SELECT 1 FROM identities AS other
-         WHERE other.id<>$1 AND lower(other.handle)=lower($2)
-       )`,
-      [viewerId, handle],
-    );
-    if (claimed.rowCount === 0) throw new Error('managed handle is already claimed');
+    await this.database.transaction(async (database) => {
+      const workspaceIds = await lockIdentityHandleWorkspaces(database, viewerId);
+      await reassignCollidingAgentHandles(database, viewerId, handle, workspaceIds);
+      const claimed = await database.query(
+        `UPDATE identities AS identity SET handle=$2,updated_at=now()
+         WHERE identity.id=$1 AND NOT EXISTS(
+           SELECT 1 FROM identities AS other
+           WHERE other.id<>$1 AND other.kind='human' AND lower(other.handle)=lower($2)
+         )`,
+        [viewerId, handle],
+      );
+      if (claimed.rowCount === 0) throw new Error('managed handle is already claimed');
+    });
   }
   private async adoptGitHubHandle(viewerId: string) {
     const link = (
@@ -3600,10 +3784,7 @@ export class PhoneService {
       }
     >(
       `SELECT i.id,
-         COALESCE(m.identity_profile->>'kind',i.kind) kind,
-         COALESCE(m.identity_profile->>'name',i.name) name,
-         CASE WHEN m.identity_profile IS NOT NULL THEN m.identity_profile->>'handle' ELSE i.handle END handle,
-         CASE WHEN m.identity_profile IS NOT NULL THEN m.identity_profile->>'avatar' ELSE i.avatar END avatar,
+         i.kind,i.name,i.handle,i.avatar,
          i.face_id,
          m.role,lo.body presence_body,lo.updated_at presence_updated_at
        FROM memberships m JOIN identities i ON i.id=m.identity_id
@@ -3661,10 +3842,8 @@ export class PhoneService {
     return (
       await this.database.query<MessageRow>(
         `SELECT m.*,
-           COALESCE(m.legacy_event->>'authorKind',i.kind) author_kind,
-           COALESCE(m.legacy_event->>'authorName',i.name) author_name,
-           CASE WHEN m.legacy_event IS NOT NULL THEN m.legacy_event->>'authorHandle' ELSE i.handle END author_handle,
-           CASE WHEN m.legacy_event IS NOT NULL THEN m.legacy_event->>'authorAvatar' ELSE i.avatar END author_avatar,i.face_id author_face
+           i.kind author_kind,i.name author_name,i.handle author_handle,
+           i.avatar author_avatar,i.face_id author_face
          FROM messages m JOIN identities i ON i.id=m.author_id
          WHERE m.room_id=$1 AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
            AND m.card_type IS DISTINCT FROM 'grant-decision'
@@ -3692,10 +3871,8 @@ export class PhoneService {
     )`;
     const transcriptRows = await this.database.query<MessageRow>(
       `SELECT m.*,
-         COALESCE(m.legacy_event->>'authorKind',i.kind) author_kind,
-         COALESCE(m.legacy_event->>'authorName',i.name) author_name,
-         CASE WHEN m.legacy_event IS NOT NULL THEN m.legacy_event->>'authorHandle' ELSE i.handle END author_handle,
-         CASE WHEN m.legacy_event IS NOT NULL THEN m.legacy_event->>'authorAvatar' ELSE i.avatar END author_avatar,i.face_id author_face
+         i.kind author_kind,i.name author_name,i.handle author_handle,
+         i.avatar author_avatar,i.face_id author_face
        FROM messages m JOIN identities i ON i.id=m.author_id
        WHERE m.room_id=$1 AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
          AND m.card_type IS DISTINCT FROM 'grant-decision'
@@ -3711,10 +3888,8 @@ export class PhoneService {
     );
     const liveRows = await this.database.query<MessageRow>(
       `SELECT m.*,
-         COALESCE(m.legacy_event->>'authorKind',i.kind) author_kind,
-         COALESCE(m.legacy_event->>'authorName',i.name) author_name,
-         CASE WHEN m.legacy_event IS NOT NULL THEN m.legacy_event->>'authorHandle' ELSE i.handle END author_handle,
-         CASE WHEN m.legacy_event IS NOT NULL THEN m.legacy_event->>'authorAvatar' ELSE i.avatar END author_avatar,i.face_id author_face
+         i.kind author_kind,i.name author_name,i.handle author_handle,
+         i.avatar author_avatar,i.face_id author_face
        FROM messages m JOIN identities i ON i.id=m.author_id
        WHERE m.room_id=$1 AND m.presentation='activity' AND m.durable_fact IS NULL
          AND (NOT EXISTS(SELECT 1 FROM legacy_room_events any_legacy WHERE any_legacy.room_id=$1) OR ${eligible})
@@ -3736,10 +3911,8 @@ export class PhoneService {
       ? (
           await this.database.query<MessageRow>(
             `SELECT m.*,
-               COALESCE(m.legacy_event->>'authorKind',i.kind) author_kind,
-               COALESCE(m.legacy_event->>'authorName',i.name) author_name,
-               CASE WHEN m.legacy_event IS NOT NULL THEN m.legacy_event->>'authorHandle' ELSE i.handle END author_handle,
-               CASE WHEN m.legacy_event IS NOT NULL THEN m.legacy_event->>'authorAvatar' ELSE i.avatar END author_avatar,i.face_id author_face
+               i.kind author_kind,i.name author_name,i.handle author_handle,
+               i.avatar author_avatar,i.face_id author_face
              FROM messages m JOIN identities i ON i.id=m.author_id
              WHERE m.room_id=$1 AND m.presentation='activity' AND m.durable_fact IS NULL
                AND EXISTS(SELECT 1 FROM jsonb_array_elements(m.activity) item WHERE item->>'kind'='tool')

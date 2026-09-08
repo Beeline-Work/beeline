@@ -42,7 +42,6 @@ import {
   addRoomPage,
   type RoomViewMessage,
   AGENT_PRESENCE_STALE_MS,
-  personHandle,
 } from '@beeline/buzz-client';
 import {
   createRoomMessageProjector,
@@ -799,6 +798,7 @@ export default function BuzzChat() {
           return {
             pubkey: identity.pubkey,
             name: identity.name,
+            ...(identity.handle ? { handle: identity.handle } : {}),
             ...(identity.avatar ? { avatar: identity.avatar } : {}),
             ...(identity.face ? { face: identity.face } : {}),
           };
@@ -821,25 +821,21 @@ export default function BuzzChat() {
     // from their own Room's participant list, because a roster entry is what
     // the list is built from. A later real entry overwrites this one.
     if (userPubkey) {
-      const selfProfileName = personProfileByPubkey.get(userPubkey)?.name;
+      const selfProfile = personProfileByPubkey.get(userPubkey);
       options.set(userPubkey, {
         pubkey: userPubkey,
         name: 'You',
-        handle: selfProfileName
-          ? personHandle(selfProfileName, userPubkey)
-          : fallbackMemberHandle(userPubkey),
+        handle: selfProfile?.handle ?? fallbackMemberHandle(userPubkey),
         kind: 'person',
       });
     }
     for (const person of availablePeople) {
       const fallbackName = fallbackMemberName(person.pubkey);
-      const profileName = personProfileByPubkey.get(person.pubkey)?.name;
+      const profile = personProfileByPubkey.get(person.pubkey);
       options.set(person.pubkey, {
         pubkey: person.pubkey,
-        name: person.pubkey === userPubkey ? 'You' : (profileName ?? fallbackName),
-        handle: profileName
-          ? personHandle(profileName, person.pubkey)
-          : fallbackMemberHandle(person.pubkey),
+        name: person.pubkey === userPubkey ? 'You' : (profile?.name ?? fallbackName),
+        handle: person.identity.handle ?? profile?.handle ?? fallbackMemberHandle(person.pubkey),
         kind: 'person',
         ...(person.identity.face ? { face: person.identity.face } : {}),
       });
@@ -858,16 +854,14 @@ export default function BuzzChat() {
     // People and Agent reads only enrich/classify those keys, and can be partial
     // or stale. Any member absent from both secondary reads remains visible as
     // a person-shaped identity instead of disappearing from the count.
-    for (const member of roomMembers) {
+    for (const member of selectedMembers) {
       if (options.has(member.pubkey)) continue;
       const fallbackName = fallbackMemberName(member.pubkey);
-      const profileName = personProfileByPubkey.get(member.pubkey)?.name;
+      const profile = personProfileByPubkey.get(member.pubkey);
       options.set(member.pubkey, {
         pubkey: member.pubkey,
-        name: member.pubkey === userPubkey ? 'You' : (profileName ?? fallbackName),
-        handle: profileName
-          ? personHandle(profileName, member.pubkey)
-          : fallbackMemberHandle(member.pubkey),
+        name: member.pubkey === userPubkey ? 'You' : (profile?.name ?? fallbackName),
+        handle: member.identity?.handle ?? profile?.handle ?? fallbackMemberHandle(member.pubkey),
         kind: 'person',
       });
     }
@@ -876,7 +870,14 @@ export default function BuzzChat() {
       if (b.pubkey === userPubkey) return 1;
       return a.name.localeCompare(b.name);
     });
-  }, [availableAgents, availablePeople, personProfileByPubkey, roomMembers, userPubkey]);
+  }, [
+    availableAgents,
+    availablePeople,
+    personProfileByPubkey,
+    roomMembers,
+    selectedMembers,
+    userPubkey,
+  ]);
   const roomParticipants = useMemo(
     () =>
       selectedMembers.map((member) => {
@@ -886,7 +887,7 @@ export default function BuzzChat() {
         return {
           pubkey: member.pubkey,
           name: member.pubkey === userPubkey ? 'You' : (name ?? fallbackMemberName(member.pubkey)),
-          handle: name ? personHandle(name, member.pubkey) : fallbackMemberHandle(member.pubkey),
+          handle: member.identity?.handle ?? fallbackMemberHandle(member.pubkey),
           kind: member.kind === 'agent' ? 'agent' : 'person',
           ...(member.kind === 'agent' && agentByPubkey.get(member.pubkey)
             ? { agent: agentByPubkey.get(member.pubkey) }
@@ -1095,11 +1096,7 @@ export default function BuzzChat() {
   const mentionSlash = useMemo(() => agentMentionSlashQuery(inputText), [inputText]);
   const mentionSlashAgentPubkey = useMemo(() => {
     if (!mentionSlash) return null;
-    const needle = mentionSlash.mention.toLowerCase();
-    const match = mentionableAgents.find(
-      (agent) => agent.handle?.toLowerCase() === needle || agent.name.toLowerCase() === needle,
-    );
-    return match?.pubkey ?? null;
+    return mentionedAgentPubkey(`@${mentionSlash.mention}`, mentionableAgents) ?? null;
   }, [mentionSlash, mentionableAgents]);
   const mentionAgentCommandScope = mentionSlashAgentPubkey
     ? `${decodedId}:${mentionSlashAgentPubkey}`
@@ -1358,10 +1355,9 @@ export default function BuzzChat() {
     () => projectActiveTurnStream(messages, activeAgentTurns, isArchived),
     [activeAgentTurns, isArchived, messages],
   );
-  // Attribution is per run, not per entry: only the first entry of a voice's
-  // run carries its mark and name (see `buzz/ledger-attribution.ts`). Corners
-  // attribute exactly like Rooms — several people can sit in one corner, so
-  // bare turns are indistinguishable there too.
+  // Run boundaries still control compact continuation spacing and machine-row
+  // folding. Ordinary prose always renders its own byline, even inside a run,
+  // so every message remains independently attributable.
   const rawContinuedAttributionIds = useMemo(
     () =>
       new Set(
@@ -1775,7 +1771,7 @@ export default function BuzzChat() {
       }
       return;
     }
-    const text = replyTarget ? replyMessageText(rawText, replyTarget) : rawText;
+    const text = replyTarget ? replyMessageText(rawText) : rawText;
     const mentionedPubkeys = resolveComposerMentions(
       text,
       roomParticipants,

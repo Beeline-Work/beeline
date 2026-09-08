@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   FACE_NAMES,
   FACE_SOULS,
+  agentHandleFromName,
   defaultFaceForSeed,
   isFaceId,
   type FaceId,
@@ -91,12 +92,13 @@ describe('PhoneService agent connect pairing claim', () => {
     expect(FACE_NAMES[claim.face as FaceId]).toContain(claim.agentName);
     const identity = await database.query<{
       name: string;
+      handle: string;
       face_id: string;
       owner_id: string;
       selected_model: string;
       soul: { name: string; instructions: string };
     }>(
-      `SELECT identity.name,identity.face_id,agent.owner_id,agent.selected_model,agent.soul
+      `SELECT identity.name,identity.handle,identity.face_id,agent.owner_id,agent.selected_model,agent.soul
        FROM identities identity JOIN agents agent ON agent.agent_id=identity.id
        WHERE identity.id=$1`,
       [AGENT],
@@ -104,6 +106,7 @@ describe('PhoneService agent connect pairing claim', () => {
     expect(identity.rows).toEqual([
       {
         name: claim.agentName,
+        handle: agentHandleFromName(claim.agentName),
         face_id: claim.face,
         owner_id: OWNER,
         selected_model: 'gpt-5.4',
@@ -142,6 +145,56 @@ describe('PhoneService agent connect pairing claim', () => {
         )
       ).rows[0]?.claimed_by,
     ).toBeNull();
+  });
+
+  it('keeps an active agent handle unique when it pairs into another Workspace', async () => {
+    await insertCode(new Date(Date.now() + 60_000));
+    const first = await phone.claimAgentConnectPairing({
+      code: CODE,
+      agentPubkey: AGENT,
+      model: 'gpt-5.4',
+    });
+    if (first.status !== 'claimed') throw new Error('first claim failed');
+
+    const secondWorkspace = '33333333-3333-4333-8333-333333333333';
+    const competingAgent = 'c'.repeat(64);
+    const secondCode = 'BUZZ-SECOND-PAIRING';
+    const handle = agentHandleFromName(first.agentName);
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Second')`, [secondWorkspace]);
+    await database.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent',$2,$3)`, [
+      competingAgent,
+      first.agentName,
+      handle,
+    ]);
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [
+      competingAgent,
+      OWNER,
+    ]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+       ($1,NULL,$2,'member'),($3,NULL,$4,'owner')`,
+      [WORKSPACE, competingAgent, secondWorkspace, OWNER],
+    );
+    await database.query(
+      `INSERT INTO agent_pairing_codes(code_hash,workspace_id,created_by,expires_at)
+       VALUES($1,$2,$3,$4)`,
+      [
+        createHash('sha256').update(secondCode).digest('hex'),
+        secondWorkspace,
+        OWNER,
+        new Date(Date.now() + 60_000),
+      ],
+    );
+
+    const second = await phone.claimAgentConnectPairing({
+      code: secondCode,
+      agentPubkey: AGENT,
+      model: 'gpt-5.4',
+    });
+    expect(second).toMatchObject({ status: 'claimed', agentName: first.agentName });
+    expect(
+      (await database.query(`SELECT handle FROM identities WHERE id=$1`, [AGENT])).rows,
+    ).toEqual([{ handle: `${handle}_2` }]);
   });
 
   it.each([
@@ -249,10 +302,12 @@ describe('PhoneService agent connect pairing claim', () => {
 
   describe('finishAgentConnectPairing', () => {
     async function readJoinLine(): Promise<{ text: string; subjectName: string } | undefined> {
-      const rows = await database.query<{ text: string; system_event: { subject: { name: string } } }>(
-        `SELECT text,system_event FROM messages WHERE room_id=$1 AND card_type='member-joined'`,
-        [ROOM],
-      );
+      const rows = await database.query<{
+        text: string;
+        system_event: { subject: { name: string } };
+      }>(`SELECT text,system_event FROM messages WHERE room_id=$1 AND card_type='member-joined'`, [
+        ROOM,
+      ]);
       const row = rows.rows[0];
       return row ? { text: row.text, subjectName: row.system_event.subject.name } : undefined;
     }
@@ -294,9 +349,14 @@ describe('PhoneService agent connect pairing claim', () => {
       if (claimed.status !== 'claimed') throw new Error('claim failed');
       const seededName = claimed.agentName;
 
-      await expect(
-        phone.renameConnectedAgent({ code: CODE, name: 'greeter' }),
-      ).resolves.toEqual({ status: 'renamed', agentName: 'greeter' });
+      await expect(phone.renameConnectedAgent({ code: CODE, name: 'greeter' })).resolves.toEqual({
+        status: 'renamed',
+        agentName: 'greeter',
+      });
+
+      expect(
+        (await database.query(`SELECT handle FROM identities WHERE id=$1`, [AGENT])).rows,
+      ).toEqual([{ handle: 'greeter' }]);
 
       await phone.finishAgentConnectPairing({ code: CODE, workspaceJoined: true });
 
@@ -330,10 +390,12 @@ describe('PhoneService agent connect pairing claim', () => {
 
   describe('backward compatibility: a CLI that never sends deferJoin', () => {
     async function readJoinLine(): Promise<{ text: string; subjectName: string } | undefined> {
-      const rows = await database.query<{ text: string; system_event: { subject: { name: string } } }>(
-        `SELECT text,system_event FROM messages WHERE room_id=$1 AND card_type='member-joined'`,
-        [ROOM],
-      );
+      const rows = await database.query<{
+        text: string;
+        system_event: { subject: { name: string } };
+      }>(`SELECT text,system_event FROM messages WHERE room_id=$1 AND card_type='member-joined'`, [
+        ROOM,
+      ]);
       const row = rows.rows[0];
       return row ? { text: row.text, subjectName: row.system_event.subject.name } : undefined;
     }
@@ -358,7 +420,10 @@ describe('PhoneService agent connect pairing claim', () => {
       );
       expect(memberships.rows).toEqual([{ room_id: null }, { room_id: ROOM }]);
       const joinLine = await readJoinLine();
-      expect(joinLine).toEqual({ text: `${claimed.agentName} joined`, subjectName: claimed.agentName });
+      expect(joinLine).toEqual({
+        text: `${claimed.agentName} joined`,
+        subjectName: claimed.agentName,
+      });
 
       // Calling finish afterward (an old CLI never does, but a mixed rollout
       // might) is a harmless no-op: the agent is already a member everywhere

@@ -19,7 +19,7 @@ async function fixture() {
   await database.query(
     `INSERT INTO identities(id,kind,name,handle) VALUES
       ($1,'human','Charles','lunchboxfortwo'),($2,'human','Bananaman','bananaman614305'),
-      ($3,'agent','Greeter',NULL)`,
+      ($3,'agent','Greeter','greeter')`,
     [OWNER, OUTSIDER, AGENT],
   );
   await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [WORKSPACE]);

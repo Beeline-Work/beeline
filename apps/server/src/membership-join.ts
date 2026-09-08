@@ -149,7 +149,9 @@ export async function joinRooms(
         workspace_name: string;
         room_name: string | null;
       }>(
-        `SELECT COALESCE(NULLIF(identity.handle,''),identity.name) display_name,identity.kind,
+        `SELECT CASE WHEN identity.kind='agent' THEN identity.name
+                     ELSE COALESCE(NULLIF(identity.handle,''),identity.name) END display_name,
+                identity.kind,
                 workspace.name workspace_name,
                 (SELECT name FROM rooms WHERE id=$3) room_name
          FROM identities identity CROSS JOIN workspaces workspace

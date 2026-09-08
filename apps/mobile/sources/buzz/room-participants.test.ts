@@ -56,15 +56,21 @@ describe('Room participant presentation', () => {
     });
   });
 
-  it('maps a visible @Agent name to its pubkey without partial-name matches', () => {
+  it('maps only exact @handles to pubkeys without name or partial matches', () => {
     const agents = [
       { pubkey: 'agent-a', name: 'Brisk Pilot', handle: 'brisk-pilot' },
       { pubkey: 'agent-b', name: 'Brisk', handle: 'brisk' },
     ];
-    expect(mentionedAgentPubkey('please ask @Brisk Pilot to inspect this', agents)).toBe('agent-a');
+    expect(mentionedAgentPubkey('please ask @Brisk Pilot to inspect this', agents)).toBe('agent-b');
     expect(mentionedAgentPubkey('hello @brisk!', agents)).toBe('agent-b');
     expect(mentionedAgentPubkey('hello @brisk-pilot!', agents)).toBe('agent-a');
     expect(mentionedAgentPubkey('email @briskness later', agents)).toBeUndefined();
+    expect(
+      mentionedAgentPubkey('@goosy', [
+        { pubkey: 'agent-goosy-suffixed', name: 'Goosy', handle: 'goosy_2' },
+        { pubkey: 'agent-goosy', name: 'Goosy', handle: 'goosy' },
+      ]),
+    ).toBe('agent-goosy');
   });
 
   it('keeps every selected person or agent mention that remains in the sent text', () => {
@@ -92,6 +98,59 @@ describe('Room participant presentation', () => {
     });
   });
 
+  it('keeps a selected person on their canonical handle when it collides with an agent name', () => {
+    const participants = [
+      { pubkey: 'agent-goosy', name: 'Goosy', handle: 'goosy' },
+      { pubkey: 'human-goosy', name: 'Goosy', handle: 'goosy_2' },
+    ];
+    const inserted = replaceActiveMention(
+      'Ask @goo',
+      { start: 4, end: 8, query: 'goo' },
+      'goosy_2',
+    );
+
+    expect(inserted.text).toBe('Ask @goosy_2');
+    expect(resolveComposerMentions(inserted.text, participants, new Map())).toEqual({
+      pubkeys: ['human-goosy'],
+      handles: ['goosy_2'],
+    });
+  });
+
+  it('stops an exact handle at trailing punctuation and never treats a bare agent name as a mention', () => {
+    const participants = [
+      { pubkey: 'agent-goosy', name: 'Goosy', handle: 'goosy' },
+      { pubkey: 'agent-lumen', name: 'Lumen', handle: 'lumen' },
+    ];
+
+    expect(
+      resolveComposerMentions(
+        'Hey @goosy- so in this repo, Lumen seems to think...',
+        participants,
+        new Map(),
+      ),
+    ).toEqual({ pubkeys: ['agent-goosy'], handles: ['goosy'] });
+    expect(resolveComposerMentions('Lumen seems to think...', participants, new Map())).toEqual({
+      pubkeys: [],
+      handles: [],
+    });
+    expect(resolveComposerMentions('@goosy--urgent', participants, new Map())).toEqual({
+      pubkeys: [],
+      handles: [],
+    });
+    expect(resolveComposerMentions('@goosy..urgent', participants, new Map())).toEqual({
+      pubkeys: [],
+      handles: [],
+    });
+    expect(resolveComposerMentions('𐐀@goosy', participants, new Map())).toEqual({
+      pubkeys: [],
+      handles: [],
+    });
+    expect(resolveComposerMentions('@goosy-𐐀', participants, new Map())).toEqual({
+      pubkeys: [],
+      handles: [],
+    });
+  });
+
   it('resolves a multi-word agent name through its underscored handle', () => {
     const participants = [{ pubkey: 'agent-keeper', name: 'Quiet Keeper', handle: 'quiet_keeper' }];
 
@@ -101,7 +160,7 @@ describe('Room participant presentation', () => {
     });
   });
 
-  it('resolves the owner typed @codex message against the visible name in a two-agent roster', () => {
+  it('does not substitute a name-derived alias for a distinct canonical handle', () => {
     const participants = [
       { pubkey: 'agent-ox', name: 'Ox', handle: 'ox' },
       // The server identity can retain a distinct canonical handle while the
@@ -115,9 +174,10 @@ describe('Room participant presentation', () => {
         participants,
         new Map(),
       ),
-    ).toEqual({
+    ).toEqual({ pubkeys: [], handles: [] });
+    expect(resolveComposerMentions('@codex-7f3a', participants, new Map())).toEqual({
       pubkeys: ['agent-codex'],
-      handles: ['codex'],
+      handles: ['codex-7f3a'],
     });
   });
 

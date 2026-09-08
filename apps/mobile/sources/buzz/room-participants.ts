@@ -176,6 +176,11 @@ export function resolveComposerMentions(
     const offset = match.index ?? 0;
     const before = offset > 0 ? normalized[offset - 1]! : '';
     if (before && MENTION_HANDLE_CHARACTER.test(before)) continue;
+    const punctuation = normalized.slice(offset + match[0].length).match(/^[.-]+/u)?.[0];
+    const afterPunctuation = punctuation
+      ? normalized[offset + match[0].length + punctuation.length]
+      : undefined;
+    if (afterPunctuation && MENTION_HANDLE_CHARACTER.test(afterPunctuation)) continue;
 
     const handle = match[1] ?? '';
     const selectedPubkey = selectedByHandle.get(handle);

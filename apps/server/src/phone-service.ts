@@ -1182,13 +1182,13 @@ export class PhoneService {
     };
   }
 
-  private async agentHandleWorkspaces(
+  private async handleWorkspaces(
     database: SqlDatabase,
-    workspaceId: string,
     identityId: string,
+    workspaceId?: string,
   ): Promise<readonly string[]> {
     await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
-      `agent-handle:${identityId}`,
+      `identity-handle:${identityId}`,
     ]);
     const memberships = await database.query<{ workspace_id: string }>(
       `SELECT workspace_id FROM memberships
@@ -1196,12 +1196,16 @@ export class PhoneService {
       [identityId],
     );
     const workspaceIds = [
-      ...new Set([workspaceId, ...memberships.rows.map((row) => row.workspace_id)]),
+      ...new Set([
+        ...(workspaceId ? [workspaceId] : []),
+        ...memberships.rows.map((row) => row.workspace_id),
+      ]),
     ].sort();
-    await database.query(
-      `SELECT id FROM workspaces WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE`,
-      [workspaceIds],
-    );
+    if (workspaceIds.length)
+      await database.query(
+        `SELECT id FROM workspaces WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE`,
+        [workspaceIds],
+      );
     return workspaceIds;
   }
 
@@ -1210,7 +1214,7 @@ export class PhoneService {
     workspaceId: string,
     exceptIdentityId: string,
     name: string,
-    lockedWorkspaces = this.agentHandleWorkspaces(database, workspaceId, exceptIdentityId),
+    lockedWorkspaces = this.handleWorkspaces(database, exceptIdentityId, workspaceId),
   ): Promise<string> {
     const workspaceIds = await lockedWorkspaces;
     const rows = await database.query<{ handle: string }>(
@@ -1331,10 +1335,10 @@ export class PhoneService {
       if (pairing.expires_at.getTime() <= Date.now()) return { status: 'expired' };
       if (pairing.claimed_by) return { status: 'already_claimed' };
 
-      const lockedWorkspaces = this.agentHandleWorkspaces(
+      const lockedWorkspaces = this.handleWorkspaces(
         database,
-        pairing.workspace_id,
         input.agentPubkey,
+        pairing.workspace_id,
       );
       await lockedWorkspaces;
       const worn = await this.wornSeededIdentity(database, pairing.workspace_id, input.agentPubkey);
@@ -2171,7 +2175,15 @@ export class PhoneService {
     )) {
       const offset = match.index ?? 0;
       const before = offset > 0 ? normalizedText[offset - 1]! : '';
-      if (!before || !tokenCharacter.test(before)) typedHandles.add(match[1] ?? '');
+      const punctuation = normalizedText.slice(offset + match[0].length).match(/^[.-]+/u)?.[0];
+      const afterPunctuation = punctuation
+        ? normalizedText[offset + match[0].length + punctuation.length]
+        : undefined;
+      if (
+        (!before || !tokenCharacter.test(before)) &&
+        (!afterPunctuation || !tokenCharacter.test(afterPunctuation))
+      )
+        typedHandles.add(match[1] ?? '');
     }
     const agents = await this.database.query<{ id: string; handle: string }>(
       `SELECT identity.id,identity.handle
@@ -3343,24 +3355,40 @@ export class PhoneService {
       !/^[a-z0-9](?:[a-z0-9._-]{0,28}[a-z0-9])?$/.test(input.handle)
     )
       throw new Error('invalid person handle');
-    const updated = await this.database.query<IdentityRow>(
-      `UPDATE identities
-       SET name=CASE WHEN $2::text IS NULL THEN name ELSE $2 END,
-           handle=CASE WHEN $3::text IS NULL THEN handle ELSE $3 END,
-           avatar=CASE WHEN $4::text IS NULL THEN avatar ELSE NULLIF($4,'') END,
-           updated_at=now()
-       WHERE id=$1
-       RETURNING id,kind,name,handle,avatar`,
-      [viewerId, input.name ?? null, input.handle ?? null, input.avatar ?? null],
-    );
-    const profile = updated.rows[0];
-    if (!profile) throw new Error('identity not found');
-    return {
-      personId: profile.id,
-      name: profile.name,
-      ...(profile.handle ? { handle: profile.handle } : {}),
-      ...(profile.avatar ? { avatar: profile.avatar } : {}),
-    };
+    return this.database.transaction(async (database) => {
+      if (input.handle !== undefined) {
+        const workspaceIds = await this.handleWorkspaces(database, viewerId);
+        const conflict = await database.query(
+          `SELECT 1
+           FROM memberships membership
+           JOIN identities identity ON identity.id=membership.identity_id
+           WHERE membership.workspace_id=ANY($1::uuid[]) AND membership.room_id IS NULL
+             AND membership.removed_at IS NULL AND identity.hidden_from_roster=false
+             AND identity.id<>$2 AND lower(identity.handle)=lower($3)
+           LIMIT 1`,
+          [workspaceIds, viewerId, input.handle],
+        );
+        if (conflict.rowCount) throw new Error('handle conflict in workspace');
+      }
+      const updated = await database.query<IdentityRow>(
+        `UPDATE identities
+         SET name=CASE WHEN $2::text IS NULL THEN name ELSE $2 END,
+             handle=CASE WHEN $3::text IS NULL THEN handle ELSE $3 END,
+             avatar=CASE WHEN $4::text IS NULL THEN avatar ELSE NULLIF($4,'') END,
+             updated_at=now()
+         WHERE id=$1
+         RETURNING id,kind,name,handle,avatar`,
+        [viewerId, input.name ?? null, input.handle ?? null, input.avatar ?? null],
+      );
+      const profile = updated.rows[0];
+      if (!profile) throw new Error('identity not found');
+      return {
+        personId: profile.id,
+        name: profile.name,
+        ...(profile.handle ? { handle: profile.handle } : {}),
+        ...(profile.avatar ? { avatar: profile.avatar } : {}),
+      };
+    });
   }
   /** The face ceremony: one of `FACE_IDS` for the viewer's own identity, or null to clear. */
   private async updateFace(input: Input<'updateIdentityFace'>, viewerId: string) {

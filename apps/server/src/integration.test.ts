@@ -1614,6 +1614,8 @@ describe('monolith integration', () => {
       ['@bee, please inspect this.', [AGENT]],
       ['@bee- please inspect this.', [AGENT]],
       ['@bee-urgent, please inspect this.', []],
+      ['@bee--urgent, please inspect this.', []],
+      ['@bee..urgent, please inspect this.', []],
       ['Bee, please inspect this.', []],
       ['@beeline, please inspect this.', []],
     ] as const;
@@ -2442,6 +2444,12 @@ describe('monolith integration', () => {
     await expect(cleared.json()).resolves.toEqual({
       personId: HUMAN,
       name: 'Captain',
+      handle: 'owner',
+    });
+
+    const colliding = await operation('updatePersonProfile', { handle: 'bee' });
+    expect(colliding.status).toBe(409);
+    await expect((await operation('getManagedIdentity')).json()).resolves.toMatchObject({
       handle: 'owner',
     });
 

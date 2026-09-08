@@ -2002,6 +2002,33 @@ describe('monolith integration', () => {
     );
   });
 
+  it('stays silent for parentless continuity outside the conversation window', async () => {
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,mention_ids,created_at)
+       VALUES($1,$2,$3,'Aged-out answer.',$4::jsonb,now()-interval '1 hour')`,
+      ['d'.repeat(64), ROOM, AGENT, JSON.stringify([HUMAN])],
+    );
+    for (let index = 0; index < 200; index += 1) {
+      await database.query(
+        `INSERT INTO messages(id,room_id,author_id,text)
+         VALUES($1,$2,$3,$4)`,
+        [index.toString(16).padStart(64, '0'), ROOM, HUMAN, `Later message ${index}.`],
+      );
+    }
+
+    const sent = await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: 'e'.repeat(64),
+      text: 'No active exchange remains.',
+    });
+    expect(sent.status).toBe(200);
+    const notices = await database.query<{ text: string }>(
+      `SELECT text FROM messages WHERE room_id=$1 AND presentation='system'`,
+      [ROOM],
+    );
+    expect(notices.rows).toEqual([]);
+  });
+
   it('accepts a direct reply from its parent agent after another agent replies', async () => {
     const peer = 'c'.repeat(64);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Peer')`, [peer]);

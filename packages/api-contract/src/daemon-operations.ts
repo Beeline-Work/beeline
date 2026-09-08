@@ -199,6 +199,8 @@ export type WorkspaceRosterResult = {
 export type RoomInboxResult = {
   readonly items: readonly {
     readonly id: string;
+    /** Opaque server ordering key for merging live and polled deliveries. */
+    readonly cursor?: string;
     readonly authorId: string;
     readonly createdAt: number;
     readonly type: string;

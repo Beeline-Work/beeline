@@ -49,6 +49,18 @@ export function laterInboxCursor(
   return leftMatch[2]! >= rightMatch[2]! ? left : right;
 }
 
+/** Merge live and polled entries in the same cursor order as the server. */
+export function orderInboxItems(items: readonly InboxItem[]): InboxItem[] {
+  return [...items].sort((left, right) => {
+    const leftMatch = left.cursor?.match(/^(\d+),([0-9a-f]{64})$/);
+    const rightMatch = right.cursor?.match(/^(\d+),([0-9a-f]{64})$/);
+    if (!leftMatch || !rightMatch) return 0;
+    const timeOrder = BigInt(leftMatch[1]!) - BigInt(rightMatch[1]!);
+    if (timeOrder !== 0n) return timeOrder < 0n ? -1 : 1;
+    return leftMatch[2]! < rightMatch[2]! ? -1 : leftMatch[2]! > rightMatch[2]! ? 1 : 0;
+  });
+}
+
 /**
  * Whether the server has definitively said this agent was removed.
  *

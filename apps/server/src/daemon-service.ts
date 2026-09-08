@@ -626,6 +626,7 @@ export class DaemonService {
     return {
       items: visiblePage.map((row) => ({
         id: row.id,
+        cursor: `${row.cursor_ms},${row.id}`,
         authorId: row.author_id,
         createdAt: seconds(row.created_at),
         type: row.presentation,

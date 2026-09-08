@@ -38,7 +38,12 @@ import {
 } from './read-only-policy.js';
 import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
 import type { BodyConfig } from './config.js';
-import { laterInboxCursor, type DaemonApiClient, type InboxItem } from './daemon-api-client.js';
+import {
+  laterInboxCursor,
+  orderInboxItems,
+  type DaemonApiClient,
+  type InboxItem,
+} from './daemon-api-client.js';
 import {
   explainEmptyAgentTurn,
   nextPinnedProvider,
@@ -1273,7 +1278,7 @@ export class MonolithRoomTurnLoop {
           if (pollNow) {
             this.reconciliationRequested = false;
           }
-          const delivered = [...pushedInbox.splice(0), ...inbox.items];
+          const delivered = orderInboxItems([...pushedInbox.splice(0), ...inbox.items]);
           for (const item of delivered) {
             if (processedInboxIds.has(item.id)) continue;
             processedInboxIds.add(item.id);

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { AttachmentReference } from '@beeline/buzz-client';
 
 import type { CornerSummary, CornerStatus } from './corners';
 import { cornerName } from './corners';
@@ -626,11 +627,27 @@ const room = {
 };
 const ada = { pubkey: PEER, kind: 'human' as const, name: 'Ada', handle: 'ada@usebeeline.app' };
 const beebee = { pubkey: PEER, kind: 'agent' as const, name: 'Beebee' };
-const message = (author: typeof ada | typeof beebee, text = 'Hello') => ({
+const imageAttachment: AttachmentReference = {
+  url: 'https://usebeeline.app/media/photo',
+  name: 'photo.png',
+  mimeType: 'image/png',
+  size: 1,
+};
+const documentAttachment: AttachmentReference = {
+  ...imageAttachment,
+  name: 'notes.pdf',
+  mimeType: 'application/pdf',
+};
+const message = (
+  author: typeof ada | typeof beebee,
+  text = 'Hello',
+  attachments?: readonly AttachmentReference[],
+) => ({
   id: 'c'.repeat(64),
   text,
   createdAt: 2,
   author,
+  ...(attachments ? { attachments } : {}),
 });
 
 describe('roomRowName — the sigil is the name’s first glyph', () => {
@@ -715,6 +732,28 @@ describe('roomRowPreview — attribution', () => {
     expect(roomRowPreview({ latestMessage: message(ada, '   ') }, VIEWER)).toEqual({
       attribution: 'none',
       text: NO_ACTIVITY_PREVIEW,
+    });
+  });
+
+  it('labels an attachment-only last message with its sender', () => {
+    expect(roomRowPreview({ latestMessage: message(ada, '   ', [imageAttachment]) }, VIEWER)).toEqual({
+      attribution: 'other',
+      handle: 'ada',
+      text: 'Image',
+    });
+    expect(
+      roomRowPreview(
+        { latestMessage: message({ ...ada, pubkey: VIEWER }, '', [documentAttachment]) },
+        VIEWER,
+      ),
+    ).toEqual({ attribution: 'self', text: 'Attachment' });
+  });
+
+  it('keeps text as the preview when a message also has an attachment', () => {
+    expect(roomRowPreview({ latestMessage: message(ada, 'Look here', [imageAttachment]) }, VIEWER)).toEqual({
+      attribution: 'other',
+      handle: 'ada',
+      text: 'Look here',
     });
   });
 });

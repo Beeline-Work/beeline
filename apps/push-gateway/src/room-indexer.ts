@@ -448,6 +448,7 @@ export class RoomIndexer {
                   text: latest.text,
                   createdAt: latest.createdAt,
                   author: latest.author,
+                  ...(latest.attachments ? { attachments: latest.attachments } : {}),
                 },
               }
             : {}),

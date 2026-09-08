@@ -75,7 +75,7 @@ describe('Room→repo corner-open lazy prompt', () => {
       '{cornerOpenRepoPrompt && (',
       'corner-open repo prompt banner',
     );
-    expect(banner).toContain('canManageRoomRepository(viewerChannelRole)');
+    expect(banner).toContain('canManageWorkspace');
     expect(banner).toContain('<RepoPicker');
     expect(banner).toContain('Ask a');
     expect(banner).toContain('ACCESS TO THIS REPO WAS REVOKED');
@@ -104,15 +104,12 @@ describe('Room→repo write confirmation', () => {
 });
 
 describe('Room→repo settings change', () => {
-  it('gates the set/change picker on canManageRoomRepository, leaving a read-only row otherwise', () => {
+  it('gates the set/change picker on workspace-manager authority, leaving a read-only row otherwise', () => {
     const adminIndex = chatSource.indexOf('testID="room-repo-action"');
     const readonlyIndex = chatSource.indexOf('testID="room-repo-readonly"');
     expect(adminIndex).toBeGreaterThanOrEqual(0);
     expect(readonlyIndex).toBeGreaterThan(adminIndex);
-    const guardStart = chatSource.lastIndexOf(
-      '{canManageRoomRepository(viewerChannelRole) ? (',
-      adminIndex,
-    );
+    const guardStart = chatSource.lastIndexOf('{canManageWorkspace ? (', adminIndex);
     expect(guardStart).toBeGreaterThanOrEqual(0);
     expect(guardStart).toBeLessThan(adminIndex);
   });

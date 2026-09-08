@@ -788,6 +788,7 @@ function agentYolo(value: unknown): boolean {
   return Boolean(
     item &&
     typeof item.enabled === 'boolean' &&
+    (item.forcedOff === undefined || typeof item.forcedOff === 'boolean') &&
     typeof item.canChange === 'boolean' &&
     (setBy === undefined || (setBy && typeof setBy.name === 'string')) &&
     (item.setAt === undefined || integer(item.setAt)),
@@ -836,7 +837,8 @@ export function isAgentDetailView(value: unknown): value is AgentDetailView {
     (item.selected === undefined || modelSelection(item.selected)) &&
     (item.yolo === undefined || agentYolo(item.yolo)) &&
     (item.access === undefined || agentAccess(item.access)) &&
-    (item.grants === undefined || (Array.isArray(item.grants) && item.grants.every(isAgentGrantView))) &&
+    (item.grants === undefined ||
+      (Array.isArray(item.grants) && item.grants.every(isAgentGrantView))) &&
     (item.canManageGrants === undefined || typeof item.canManageGrants === 'boolean') &&
     watchFilters(item.watchFilters),
   );

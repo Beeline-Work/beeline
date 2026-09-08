@@ -434,7 +434,7 @@ export default function BuzzChannels() {
 
   const createRoom = useCallback(async () => {
     const name = roomName.trim();
-    if (!name || !transport || !activeCommunityId || creatingRoom) return;
+    if (!name || !transport || !activeCommunityId || creatingRoom || !canManageWorkspace) return;
     setCreatingRoom(true);
     setError(null);
     let publishAcknowledged = false;
@@ -467,10 +467,11 @@ export default function BuzzChannels() {
     } finally {
       setCreatingRoom(false);
     }
-  }, [activeCommunityId, creatingRoom, pendingRepo, roomName, transport]);
+  }, [activeCommunityId, canManageWorkspace, creatingRoom, pendingRepo, roomName, transport]);
 
   const compose = useCallback(
     (action: RoomDeckComposeAction) => {
+      if (!canManageWorkspace && (action === 'room' || action === 'invite')) return;
       runRoomDeckComposeAction(action, {
         communityId: activeCommunityId,
         openMessagePicker: () => setMemberPickerVisible(true),
@@ -486,7 +487,7 @@ export default function BuzzChannels() {
         navigate: (target) => router.push(target as Href),
       });
     },
-    [activeCommunityId],
+    [activeCommunityId, canManageWorkspace],
   );
 
   if (workspaceList?.workspaces.length === 0) {
@@ -649,14 +650,16 @@ export default function BuzzChannels() {
               <Text style={styles.emptyCopy}>Start a Room to begin.</Text>
               {!viewerIsAgent && (
                 <View style={styles.emptyActions}>
-                  <TouchableOpacity
-                    accessibilityRole="button"
-                    onPress={() => setShowCreateRoom(true)}
-                    style={styles.emptyPrimary}
-                    testID="empty-add-room"
-                  >
-                    <Text style={styles.emptyPrimaryLabel}>Start a Room</Text>
-                  </TouchableOpacity>
+                  {canManageWorkspace && (
+                    <TouchableOpacity
+                      accessibilityRole="button"
+                      onPress={() => setShowCreateRoom(true)}
+                      style={styles.emptyPrimary}
+                      testID="empty-add-room"
+                    >
+                      <Text style={styles.emptyPrimaryLabel}>Start a Room</Text>
+                    </TouchableOpacity>
+                  )}
                   <TouchableOpacity
                     accessibilityRole="link"
                     onPress={() => compose('agent')}
@@ -819,7 +822,7 @@ export default function BuzzChannels() {
             pointerEvents="box-none"
             style={[styles.composeOverlay, { bottom: 16 + insets.bottom }]}
           >
-            <RoomDeckComposeMenu onSelect={compose} />
+            <RoomDeckComposeMenu canManageWorkspace={canManageWorkspace} onSelect={compose} />
           </View>
         )}
         <DirectMessagePickerSheet

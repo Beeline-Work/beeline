@@ -113,8 +113,6 @@ import {
 import { MemberPickerSheet, type MemberPickerCandidate } from '@/components/buzz/MemberPickerSheet';
 import { useVerifiedNip05Status } from '@/buzz/nip05-verification';
 import {
-  canRenameRoom,
-  canManageRoomRepository,
   canRemoveRoomParticipant,
   confirmRoomRepositoryLink,
   normalizedRoomRole,
@@ -469,7 +467,7 @@ export default function BuzzChat() {
   const activeCommunityId = roomSurface?.room.workspaceId ?? routeCommunityId ?? null;
   const viewerIsAgent = roomSurface?.viewer.identity.kind === 'agent';
   const viewerChannelRole = roomSurface?.viewer.role ?? null;
-  const canManageWorkspace = viewerChannelRole === 'owner' || viewerChannelRole === 'admin';
+  const canManageWorkspace = roomSurface?.viewer.permissions.manage ?? false;
   const communities = useMemo(
     () =>
       roomSurface
@@ -989,7 +987,9 @@ export default function BuzzChat() {
     [roomMembers],
   );
   const viewerRoomRole = normalizedRoomRole(roomMemberByPubkey.get(userPubkey));
-  const lifecycleAction = roomLifecycleAction(viewerRoomRole);
+  const lifecycleAction = canManageWorkspace
+    ? ('delete' as const)
+    : roomLifecycleAction(viewerRoomRole);
   const mentionableAgents = useMemo(
     () =>
       activeMentionCandidates(
@@ -1129,17 +1129,20 @@ export default function BuzzChat() {
           canChangeTargetBranch: Boolean(
             !isCorner &&
             !viewerIsAgent &&
-            canManageRoomRepository(viewerChannelRole) &&
+            canManageWorkspace &&
             pendingTargetBranchProposal &&
             !targetBranchActionId,
           ),
           canAddAgent: Boolean(!isCorner && !isDirectMessage && !viewerIsAgent),
-          canInvitePerson: Boolean(!isCorner && !isDirectMessage && !viewerIsAgent),
+          canInvitePerson: Boolean(
+            !isCorner && !isDirectMessage && !viewerIsAgent && canManageWorkspace,
+          ),
         },
         currentSlashQuery ?? '',
       ),
     [
       currentSlashQuery,
+      canManageWorkspace,
       isCorner,
       isDirectMessage,
       pendingCornerRequest,
@@ -2289,7 +2292,7 @@ export default function BuzzChat() {
       setRenameError(`${ROOM_LABEL} name cannot be empty.`);
       return;
     }
-    if (!transport || !canRenameRoom(viewerChannelRole) || renameBusy) return;
+    if (!transport || !canManageWorkspace || renameBusy) return;
 
     setRenameBusy(true);
     setRenameError(null);
@@ -2305,7 +2308,7 @@ export default function BuzzChat() {
     } finally {
       setRenameBusy(false);
     }
-  }, [decodedId, renameBusy, renameDraft, transport, viewerChannelRole]);
+  }, [canManageWorkspace, decodedId, renameBusy, renameDraft, transport]);
 
   const loadRoomRepoPicker = useCallback(
     async (refresh = false) => {
@@ -2707,6 +2710,10 @@ export default function BuzzChat() {
           }
           return;
         case 'add-agent':
+          if (!canManageWorkspace) {
+            handleConnectAgent();
+            return;
+          }
           setMembershipError(null);
           setParticipantPickerKind('agent');
           setParticipantPickerVisible(true);
@@ -2719,7 +2726,9 @@ export default function BuzzChat() {
     },
     [
       clearSlashComposer,
+      canManageWorkspace,
       handleCloseCorner,
+      handleConnectAgent,
       handleConfirmTargetBranch,
       handleWritePermission,
       pendingCornerRequest,
@@ -3095,7 +3104,7 @@ export default function BuzzChat() {
             {!isCorner && roomRepository && (
               <TouchableOpacity
                 accessibilityLabel={`Repo ${roomRepoChipLabel(roomRepository)}. ${
-                  canManageRoomRepository(viewerChannelRole) ? 'View or change it' : 'View it'
+                  canManageWorkspace ? 'View or change it' : 'View it'
                 }`}
                 accessibilityRole="button"
                 hitSlop={{ top: 6, bottom: 3, left: 12, right: 12 }}
@@ -3430,7 +3439,7 @@ export default function BuzzChat() {
                     </Text>
                   </TouchableOpacity>
                 )}
-                {canManageRoomRepository(viewerChannelRole) ? (
+                {canManageWorkspace ? (
                   <RepoPicker
                     busy={roomRepoBusy}
                     candidates={roomRepoCandidates}
@@ -3672,7 +3681,7 @@ export default function BuzzChat() {
         title={displayRoomName}
         visible={roomActionsVisible}
       >
-        {canRenameRoom(viewerChannelRole) &&
+        {canManageWorkspace &&
           (renameEditing ? (
             <View style={styles.roomRenameEditor} testID="rename-room-editor">
               <Text style={styles.roomRenameLabel}>New {ROOM_LABEL.toLowerCase()} name</Text>
@@ -3728,7 +3737,7 @@ export default function BuzzChat() {
               testID="rename-room-action"
             />
           ))}
-        {canManageRoomRepository(viewerChannelRole) ? (
+        {canManageWorkspace ? (
           <>
             <HullActionSheetRow
               accessibilityLabel={
@@ -3797,7 +3806,7 @@ export default function BuzzChat() {
             testID="room-repo-readonly"
           />
         )}
-        {canRenameRoom(viewerChannelRole) && getBuzzRuntimeConfig().monolithEnabled && (
+        {canManageWorkspace && getBuzzRuntimeConfig().monolithEnabled && (
           <HullActionSheetRow
             accessibilityLabel={`View ${ROOM_LABEL} scheduled work`}
             chevron="right"
@@ -3869,6 +3878,7 @@ export default function BuzzChat() {
       <MemberPickerSheet
         busy={addingMembers || memberInviteBusy}
         canManage={roomSurface?.viewer.permissions.manage ?? false}
+        canConnectAgent
         candidates={participantPickerCandidates}
         error={membershipError}
         kind={participantPickerKind}

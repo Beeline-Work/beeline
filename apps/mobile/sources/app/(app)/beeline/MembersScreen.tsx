@@ -169,7 +169,7 @@ function operationMessage(reason: unknown): string {
  * says exactly what that grants, not just who may ask.
  */
 function accessCaption(access: AgentDetailView['access'], agentName: string): string {
-  const change = 'Only the owner or a workspace admin can change this.';
+  const change = 'Only the owner can change this.';
   if (access?.policy === 'everyone')
     return (
       `Anyone in the Room can have ${agentName} run commands, install software and change ` +
@@ -181,7 +181,8 @@ function accessCaption(access: AgentDetailView['access'], agentName: string): st
 }
 
 /** What yolo means for this agent specifically, and the two things that still ask. */
-function yoloCaption(agentName: string): string {
+function yoloCaption(agentName: string, forcedOff = false): string {
+  if (forcedOff) return 'Yolo is forced off while this workspace is public.';
   return (
     `${agentName} acts without stopping to ask. Two things still ask you: anything that names ` +
     `one of your credentials, and a script nobody has read.`
@@ -257,6 +258,8 @@ export default function BuzzMembers() {
   const schedulerRef = useRef<SurfaceRefreshScheduler<WorkspaceView> | null>(null);
   const agentRequestGenerationRef = useRef(0);
   const requestedActionHandledRef = useRef(false);
+  const ownsSelectedAgent = selectedAgent?.access?.owner?.id === identity?.publicKey;
+  const canRemoveSelectedAgent = ownsSelectedAgent || Boolean(surface?.viewer.permissions.manage);
 
   const workspaceAddress = (nextIdentity = identity, nextRelayUrl = relayUrl) =>
     nextIdentity && nextRelayUrl && workspaceId
@@ -422,7 +425,7 @@ export default function BuzzMembers() {
    * for the public connect wizard, shown inside the one picker sheet.
    */
   const connectAgent = async () => {
-    if (!surface?.viewer.permissions.manage || !workspaceId) return;
+    if (!surface || !workspaceId) return;
     setPickerOpen(true);
     setSelectedAgent(null);
     setPairCommand(null);
@@ -444,8 +447,9 @@ export default function BuzzMembers() {
   };
 
   useEffect(() => {
-    if (!surface?.viewer.permissions.manage || requestedActionHandledRef.current) return;
+    if (!surface || requestedActionHandledRef.current) return;
     if (requestedAction === 'invite') {
+      if (!surface.viewer.permissions.manage) return;
       requestedActionHandledRef.current = true;
       void invitePerson();
     } else if (requestedAction === 'add-agent') {
@@ -523,14 +527,14 @@ export default function BuzzMembers() {
   };
 
   const beginAgentSoulEdit = () => {
-    if (!selectedAgent) return;
+    if (!selectedAgent || !ownsSelectedAgent) return;
     setAgentNameDraft(selectedAgent.soul?.name ?? selectedAgent.agent.identity.name);
     setAgentSoulDraft(agentSoulCopy(selectedAgent));
     setEditingAgentSoul(true);
   };
 
   const saveAgentSoul = async () => {
-    if (!selectedAgent || !surface?.viewer.permissions.manage || !workspaceId) return;
+    if (!selectedAgent || !ownsSelectedAgent || !workspaceId) return;
     const name = agentNameDraft.trim().slice(0, AGENT_NAME_MAX_LENGTH);
     const soul = agentSoulDraft.trim();
     if (!isReasonableAgentName(name)) {
@@ -588,7 +592,7 @@ export default function BuzzMembers() {
   );
 
   const setModelOption = async (kind: ModelAxisKind, choiceId: string) => {
-    if (!selectedAgent || !surface?.viewer.permissions.manage) return;
+    if (!selectedAgent || !ownsSelectedAgent) return;
     const axis = kind === 'model' ? modelAxes.model : modelAxes.effort;
     const input: AgentModelConfigInput =
       kind === 'model' ? modelSelectionInput(selectedAgent, axis, choiceId) : { effort: choiceId };
@@ -673,7 +677,7 @@ export default function BuzzMembers() {
   };
 
   const removeSelectedAgent = async () => {
-    if (!selectedAgent || !surface?.viewer.permissions.manage || !workspaceId) return;
+    if (!selectedAgent || !canRemoveSelectedAgent || !workspaceId) return;
     const pubkey = selectedAgent.agent.identity.pubkey;
     const name = selectedAgent.agent.identity.name;
     const confirmed = await Modal.confirm(
@@ -907,18 +911,16 @@ export default function BuzzMembers() {
               <Text style={styles.sectionLabel} testID="members-agents-head">
                 Agents {surface.agents.length}
               </Text>
-              {canManage && (
-                <TouchableOpacity
-                  accessibilityLabel="Add agents"
-                  disabled={busy}
-                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                  onPress={() => void connectAgent()}
-                  style={styles.sectionAdd}
-                  testID="members-add-agents"
-                >
-                  <Text style={styles.sectionAddGlyph}>+</Text>
-                </TouchableOpacity>
-              )}
+              <TouchableOpacity
+                accessibilityLabel="Add agents"
+                disabled={busy}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                onPress={() => void connectAgent()}
+                style={styles.sectionAdd}
+                testID="members-add-agents"
+              >
+                <Text style={styles.sectionAddGlyph}>+</Text>
+              </TouchableOpacity>
             </View>
             {surface.agents.map((member) => (
               <TouchableOpacity
@@ -959,10 +961,12 @@ export default function BuzzMembers() {
             >
               <View style={styles.detailHeading}>
                 <View style={styles.rowCopy}>
-                  <Text style={styles.sectionLabel}>Agent settings</Text>
+                  <Text style={styles.sectionLabel}>
+                    {ownsSelectedAgent ? 'Agent settings' : 'Agent'}
+                  </Text>
                   <View style={styles.agentTitleRow}>
                     <Text style={styles.name}>{selectedAgent.agent.identity.name}</Text>
-                    {canManage && (
+                    {ownsSelectedAgent && (
                       <TouchableOpacity
                         accessibilityLabel="Edit agent settings"
                         disabled={busy}
@@ -990,196 +994,220 @@ export default function BuzzMembers() {
                   <Text style={styles.glyphControlText}>×</Text>
                 </TouchableOpacity>
               </View>
-              <View style={styles.soulSection}>
-                <Text style={styles.sectionLabel}>Soul</Text>
-                {editingAgentSoul ? (
-                  <>
-                    <Text style={styles.fieldLabel}>Name</Text>
-                    <TextInput
-                      autoCapitalize="words"
-                      editable={!busy}
-                      maxLength={AGENT_NAME_MAX_LENGTH}
-                      onChangeText={setAgentNameDraft}
-                      placeholder="Agent name"
-                      style={styles.textInput}
-                      testID="agent-soul-name"
-                      value={agentNameDraft}
-                    />
-                    <Text style={styles.fieldLabel}>Persona / instructions</Text>
-                    <TextInput
-                      editable={!busy}
-                      maxLength={1000}
-                      multiline
-                      onChangeText={setAgentSoulDraft}
-                      placeholder="How this agent should work"
-                      style={[styles.textInput, styles.soulInput]}
-                      testID="agent-soul-instructions"
-                      value={agentSoulDraft}
-                    />
-                    <View style={styles.soulActions}>
-                      {!!selectedAgent.seededSoul &&
-                        agentSoulDraft.trim() !== selectedAgent.seededSoul && (
-                          <MonoButton
-                            label="SEEDED"
-                            disabled={busy}
-                            onPress={() => setAgentSoulDraft(selectedAgent.seededSoul ?? '')}
-                            testID="restore-seeded-soul"
-                            variant="secondary"
+              {ownsSelectedAgent && (
+                <View style={styles.soulSection}>
+                  <Text style={styles.sectionLabel}>Soul</Text>
+                  {editingAgentSoul ? (
+                    <>
+                      <Text style={styles.fieldLabel}>Name</Text>
+                      <TextInput
+                        autoCapitalize="words"
+                        editable={!busy}
+                        maxLength={AGENT_NAME_MAX_LENGTH}
+                        onChangeText={setAgentNameDraft}
+                        placeholder="Agent name"
+                        style={styles.textInput}
+                        testID="agent-soul-name"
+                        value={agentNameDraft}
+                      />
+                      <Text style={styles.fieldLabel}>Persona / instructions</Text>
+                      <TextInput
+                        editable={!busy}
+                        maxLength={1000}
+                        multiline
+                        onChangeText={setAgentSoulDraft}
+                        placeholder="How this agent should work"
+                        style={[styles.textInput, styles.soulInput]}
+                        testID="agent-soul-instructions"
+                        value={agentSoulDraft}
+                      />
+                      <View style={styles.soulActions}>
+                        {!!selectedAgent.seededSoul &&
+                          agentSoulDraft.trim() !== selectedAgent.seededSoul && (
+                            <MonoButton
+                              label="SEEDED"
+                              disabled={busy}
+                              onPress={() => setAgentSoulDraft(selectedAgent.seededSoul ?? '')}
+                              testID="restore-seeded-soul"
+                              variant="secondary"
+                            />
+                          )}
+                        <MonoButton
+                          label="CANCEL"
+                          disabled={busy}
+                          onPress={() => setEditingAgentSoul(false)}
+                          variant="secondary"
+                        />
+                        <MonoButton
+                          label={working === 'save-agent-soul' ? 'SAVING' : 'SAVE'}
+                          loading={working === 'save-agent-soul'}
+                          disabled={busy}
+                          onPress={() => void saveAgentSoul()}
+                          testID="save-agent-soul"
+                        />
+                      </View>
+                    </>
+                  ) : (
+                    <Text style={styles.soulCopy} testID="agent-soul-copy">
+                      {agentSoulCopy(selectedAgent)}
+                    </Text>
+                  )}
+                </View>
+              )}
+              {ownsSelectedAgent && (
+                <View style={styles.modelSection}>
+                  <Text style={styles.sectionLabel}>Model / effort</Text>
+                  {(['model', 'effort'] as const).map((kind) => {
+                    const axis = kind === 'model' ? modelAxes.model : modelAxes.effort;
+                    const current = axisValue(selectedAgent, kind, axis);
+                    const open = openModelAxis === kind;
+                    const freeEntry = kind === 'model' && !axis;
+                    const choices =
+                      axis?.options ?? (kind === 'effort' ? GENERIC_EFFORT_LADDER : []);
+                    const visibleChoices =
+                      kind === 'model'
+                        ? filterAgentModelOptions(choices, modelSearchQuery)
+                        : choices;
+                    const submitTypedModel = () => {
+                      const typed = modelSearchQuery.trim();
+                      if (freeEntry && typed) void setModelOption('model', typed);
+                    };
+                    return (
+                      <View key={kind} style={styles.axisBlock}>
+                        <TouchableOpacity
+                          disabled={busy}
+                          onPress={() => {
+                            setOpenModelAxis(open ? null : kind);
+                            setModelSearchQuery('');
+                          }}
+                          style={styles.axisRow}
+                          testID={`model-axis-${kind}`}
+                        >
+                          <Text style={styles.axisLabel}>
+                            {kind === 'model' ? 'Model' : 'Effort'}
+                          </Text>
+                          <Text style={styles.axisValue} numberOfLines={1}>
+                            {current ?? UNSET_VALUE}
+                          </Text>
+                          <Text style={styles.chevron}>{open ? '⌄' : '›'}</Text>
+                        </TouchableOpacity>
+                        {open && kind === 'model' && (
+                          <TextInput
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                            editable={!busy}
+                            onChangeText={setModelSearchQuery}
+                            onSubmitEditing={submitTypedModel}
+                            placeholder={freeEntry ? 'Model id' : 'Search models'}
+                            returnKeyType={freeEntry ? 'done' : 'search'}
+                            style={styles.modelSearchInput}
+                            testID="model-search-model"
+                            value={modelSearchQuery}
                           />
                         )}
-                      <MonoButton
-                        label="CANCEL"
-                        disabled={busy}
-                        onPress={() => setEditingAgentSoul(false)}
-                        variant="secondary"
-                      />
-                      <MonoButton
-                        label={working === 'save-agent-soul' ? 'SAVING' : 'SAVE'}
-                        loading={working === 'save-agent-soul'}
-                        disabled={busy}
-                        onPress={() => void saveAgentSoul()}
-                        testID="save-agent-soul"
-                      />
-                    </View>
-                  </>
-                ) : (
-                  <Text style={styles.soulCopy} testID="agent-soul-copy">
-                    {agentSoulCopy(selectedAgent)}
-                  </Text>
-                )}
-              </View>
-              <View style={styles.modelSection}>
-                <Text style={styles.sectionLabel}>Model / effort</Text>
-                {(['model', 'effort'] as const).map((kind) => {
-                  const axis = kind === 'model' ? modelAxes.model : modelAxes.effort;
-                  const current = axisValue(selectedAgent, kind, axis);
-                  const open = openModelAxis === kind;
-                  const freeEntry = kind === 'model' && !axis;
-                  const choices = axis?.options ?? (kind === 'effort' ? GENERIC_EFFORT_LADDER : []);
-                  const visibleChoices =
-                    kind === 'model' ? filterAgentModelOptions(choices, modelSearchQuery) : choices;
-                  const submitTypedModel = () => {
-                    const typed = modelSearchQuery.trim();
-                    if (freeEntry && typed) void setModelOption('model', typed);
-                  };
-                  return (
-                    <View key={kind} style={styles.axisBlock}>
-                      <TouchableOpacity
-                        disabled={!canManage || busy}
-                        onPress={() => {
-                          setOpenModelAxis(open ? null : kind);
-                          setModelSearchQuery('');
-                        }}
-                        style={styles.axisRow}
-                        testID={`model-axis-${kind}`}
-                      >
-                        <Text style={styles.axisLabel}>
-                          {kind === 'model' ? 'Model' : 'Effort'}
-                        </Text>
-                        <Text style={styles.axisValue} numberOfLines={1}>
-                          {current ?? UNSET_VALUE}
-                        </Text>
-                        {canManage && <Text style={styles.chevron}>{open ? '⌄' : '›'}</Text>}
-                      </TouchableOpacity>
-                      {open && kind === 'model' && (
-                        <TextInput
-                          autoCapitalize="none"
-                          autoCorrect={false}
-                          editable={!busy}
-                          onChangeText={setModelSearchQuery}
-                          onSubmitEditing={submitTypedModel}
-                          placeholder={freeEntry ? 'Model id' : 'Search models'}
-                          returnKeyType={freeEntry ? 'done' : 'search'}
-                          style={styles.modelSearchInput}
-                          testID="model-search-model"
-                          value={modelSearchQuery}
-                        />
-                      )}
-                      {open &&
-                        visibleChoices.map((choice) => (
-                          <TouchableOpacity
-                            key={choice.id}
-                            disabled={busy}
-                            onPress={() => void setModelOption(kind, choice.id)}
-                            style={[styles.choice, choice.id === current && styles.choiceActive]}
-                            testID={`model-option-${kind}-${choice.id}`}
-                          >
-                            <Text style={styles.choiceText}>{choice.name ?? choice.id}</Text>
-                            {choice.id === current && <Text style={styles.choiceText}>✓</Text>}
-                          </TouchableOpacity>
-                        ))}
-                      {modelAppliesNote === kind && (
-                        <Text style={styles.detail} testID={`model-applies-${kind}`}>
-                          Applies at the next session
-                        </Text>
-                      )}
-                    </View>
-                  );
-                })}
-              </View>
-              <View style={styles.switchSection} testID="agent-access">
-                <View style={styles.switchRow}>
-                  <Text style={styles.sectionLabel} testID="agent-access-label">
-                    Answers everyone
-                  </Text>
-                  <Switch
-                    accessibilityLabel="Answers everyone"
-                    disabled={!selectedAgent.access?.canChange || busy}
-                    onValueChange={(everyone) => void toggleAnswersEveryone(everyone)}
-                    testID="agent-access-switch"
-                    thumbColor={theme.buzz.textPrimary}
-                    trackColor={{ false: theme.buzz.bgRaised, true: theme.buzz.accent }}
-                    value={selectedAgent.access?.policy === 'everyone'}
-                  />
+                        {open &&
+                          visibleChoices.map((choice) => (
+                            <TouchableOpacity
+                              key={choice.id}
+                              disabled={busy}
+                              onPress={() => void setModelOption(kind, choice.id)}
+                              style={[styles.choice, choice.id === current && styles.choiceActive]}
+                              testID={`model-option-${kind}-${choice.id}`}
+                            >
+                              <Text style={styles.choiceText}>{choice.name ?? choice.id}</Text>
+                              {choice.id === current && <Text style={styles.choiceText}>✓</Text>}
+                            </TouchableOpacity>
+                          ))}
+                        {modelAppliesNote === kind && (
+                          <Text style={styles.detail} testID={`model-applies-${kind}`}>
+                            Applies at the next session
+                          </Text>
+                        )}
+                      </View>
+                    );
+                  })}
                 </View>
-                <Text style={styles.detail} testID="agent-access-caption">
-                  {accessCaption(selectedAgent.access, selectedAgent.agent.identity.name)}
-                </Text>
-                {accessError && (
-                  <Text style={styles.switchError} testID="agent-access-error">
-                    {accessError}
+              )}
+              {ownsSelectedAgent && (
+                <View style={styles.switchSection} testID="agent-access">
+                  <View style={styles.switchRow}>
+                    <Text style={styles.sectionLabel} testID="agent-access-label">
+                      Answers everyone
+                    </Text>
+                    <Switch
+                      accessibilityLabel="Answers everyone"
+                      disabled={!selectedAgent.access?.canChange || busy}
+                      onValueChange={(everyone) => void toggleAnswersEveryone(everyone)}
+                      testID="agent-access-switch"
+                      thumbColor={theme.buzz.textPrimary}
+                      trackColor={{ false: theme.buzz.bgRaised, true: theme.buzz.accent }}
+                      value={selectedAgent.access?.policy === 'everyone'}
+                    />
+                  </View>
+                  <Text style={styles.detail} testID="agent-access-caption">
+                    {accessCaption(selectedAgent.access, selectedAgent.agent.identity.name)}
                   </Text>
-                )}
-              </View>
-              <View style={styles.switchSection} testID="agent-yolo">
-                <View style={styles.switchRow}>
-                  <Text
-                    style={[styles.sectionLabel, selectedAgent.yolo?.enabled && styles.switchLabelOn]}
-                    testID="agent-yolo-label"
-                  >
-                    Yolo
-                  </Text>
-                  <Switch
-                    accessibilityLabel="Yolo"
-                    disabled={!selectedAgent.yolo?.canChange || busy}
-                    onValueChange={(enabled) => void toggleYolo(enabled)}
-                    testID="agent-yolo-switch"
-                    thumbColor={theme.buzz.textPrimary}
-                    trackColor={{ false: theme.buzz.bgRaised, true: theme.buzz.accent }}
-                    value={selectedAgent.yolo?.enabled ?? false}
-                  />
+                  {accessError && (
+                    <Text style={styles.switchError} testID="agent-access-error">
+                      {accessError}
+                    </Text>
+                  )}
                 </View>
-                <Text style={styles.detail} testID="agent-yolo-caption">
-                  {yoloCaption(selectedAgent.agent.identity.name)}
-                </Text>
-                {selectedAgent.yolo && yoloSetByLine(selectedAgent.yolo) && (
-                  <Text style={styles.detail} testID="agent-yolo-set-by">
-                    {yoloSetByLine(selectedAgent.yolo)}
+              )}
+              {ownsSelectedAgent && (
+                <View style={styles.switchSection} testID="agent-yolo">
+                  <View style={styles.switchRow}>
+                    <Text
+                      style={[
+                        styles.sectionLabel,
+                        selectedAgent.yolo?.enabled && styles.switchLabelOn,
+                      ]}
+                      testID="agent-yolo-label"
+                    >
+                      Yolo
+                    </Text>
+                    <Switch
+                      accessibilityLabel="Yolo"
+                      disabled={
+                        !selectedAgent.yolo?.canChange || selectedAgent.yolo?.forcedOff || busy
+                      }
+                      onValueChange={(enabled) => void toggleYolo(enabled)}
+                      testID="agent-yolo-switch"
+                      thumbColor={theme.buzz.textPrimary}
+                      trackColor={{ false: theme.buzz.bgRaised, true: theme.buzz.accent }}
+                      value={selectedAgent.yolo?.enabled ?? false}
+                    />
+                  </View>
+                  <Text style={styles.detail} testID="agent-yolo-caption">
+                    {yoloCaption(selectedAgent.agent.identity.name, selectedAgent.yolo?.forcedOff)}
                   </Text>
-                )}
-                {yoloError && (
-                  <Text style={styles.switchError} testID="agent-yolo-error">
-                    {yoloError}
-                  </Text>
-                )}
-              </View>
-              {canManage && (
+                  {selectedAgent.yolo && yoloSetByLine(selectedAgent.yolo) && (
+                    <Text style={styles.detail} testID="agent-yolo-set-by">
+                      {yoloSetByLine(selectedAgent.yolo)}
+                    </Text>
+                  )}
+                  {yoloError && (
+                    <Text style={styles.switchError} testID="agent-yolo-error">
+                      {yoloError}
+                    </Text>
+                  )}
+                </View>
+              )}
+              {canRemoveSelectedAgent && (
                 <View style={styles.dangerZone}>
                   <Text style={styles.dangerCopy}>
-                    Removal tears down the paired host after Workspace absence is confirmed.
+                    {ownsSelectedAgent
+                      ? 'Removal tears down the paired host after Workspace absence is confirmed.'
+                      : 'Ban this agent from every Room in the Workspace.'}
                   </Text>
                   <MonoButton
-                    label={working === 'remove-agent' ? 'REMOVING AGENT' : 'REMOVE AGENT'}
+                    label={
+                      working === 'remove-agent'
+                        ? 'REMOVING AGENT'
+                        : ownsSelectedAgent
+                          ? 'REMOVE AGENT'
+                          : 'BAN AGENT'
+                    }
                     loading={working === 'remove-agent'}
                     disabled={busy}
                     onPress={() => void removeSelectedAgent()}
@@ -1194,6 +1222,7 @@ export default function BuzzMembers() {
         <MemberPickerSheet
           busy={working === 'invite-person' || working === 'pair-agent'}
           canManage={canManage}
+          canConnectAgent
           candidates={undefined}
           error={pickerOpen ? error : null}
           onAdd={() => undefined}

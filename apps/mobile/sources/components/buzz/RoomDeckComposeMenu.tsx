@@ -22,6 +22,7 @@ export type RoomDeckComposeAction = 'message' | 'room' | 'invite' | 'agent' | 'j
 
 type RoomDeckComposeMenuProps = {
   onSelect: (action: RoomDeckComposeAction) => void;
+  canManageWorkspace?: boolean;
 };
 
 type ComposeOption = {
@@ -51,7 +52,10 @@ const FAB_SIZE = 44;
  * Flat hull compose affordance for the Room deck. The brass plus rotates into
  * a close mark while the shared bottom Hull sheet owns the floating actions.
  */
-export function RoomDeckComposeMenu({ onSelect }: RoomDeckComposeMenuProps) {
+export function RoomDeckComposeMenu({
+  onSelect,
+  canManageWorkspace = true,
+}: RoomDeckComposeMenuProps) {
   const [open, setOpen] = useState(false);
   const rotation = useSharedValue(0);
 
@@ -113,7 +117,10 @@ export function RoomDeckComposeMenu({ onSelect }: RoomDeckComposeMenuProps) {
           visible
         >
           <View style={styles.optionList} testID="room-deck-compose-options">
-            {COMPOSE_OPTIONS.map((option) => (
+            {COMPOSE_OPTIONS.filter(
+              (option) =>
+                canManageWorkspace || (option.action !== 'room' && option.action !== 'invite'),
+            ).map((option) => (
               <HullActionSheetRow
                 accessibilityLabel={`${option.label}. ${option.description}`}
                 label={option.label}

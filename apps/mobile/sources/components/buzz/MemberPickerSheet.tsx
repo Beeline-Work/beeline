@@ -7,10 +7,7 @@ import { HullActionSheet } from './HullActionSheet';
 import { HullModal } from './HullDialog';
 import { IdentityMark } from './IdentityMark';
 import { BrassButton, PixelLoader } from './MonoHull';
-import {
-  RoomMemberPickerActions,
-  type MemberPickerKind,
-} from './RoomMemberPickerActions';
+import { RoomMemberPickerActions, type MemberPickerKind } from './RoomMemberPickerActions';
 
 export type MemberPickerCandidate = {
   pubkey: string;
@@ -42,6 +39,8 @@ type MemberPickerSheetProps = {
    */
   workspacePeerCount?: number;
   canManage: boolean;
+  /** Any Workspace member may connect an agent they will own. */
+  canConnectAgent?: boolean;
   busy: boolean;
   error: string | null;
   /** Adds every checked candidate to the Room in scope. */
@@ -69,6 +68,7 @@ export function MemberPickerSheet({
   kind = null,
   workspacePeerCount = 0,
   canManage,
+  canConnectAgent = canManage,
   busy,
   error,
   onAdd,
@@ -169,6 +169,7 @@ export function MemberPickerSheet({
             addableCount={visibleCandidates.length}
             busy={busy}
             canManage={canManage}
+            canConnectAgent={canConnectAgent}
             kind={kind}
             workspacePeerCount={workspacePeerCount}
             onAddAgent={onConnectAgent}

@@ -304,7 +304,7 @@ function baseAgent() {
     yolo: { enabled: false, canChange: true },
     access: {
       policy: 'creator',
-      owner: { id: OWNER, name: 'Captain', handle: 'lunchboxfortwo' },
+      owner: { id: VIEWER, name: 'Viewer', handle: 'viewer' },
       canChange: true,
     },
     watchFilters: [],
@@ -349,7 +349,9 @@ describe('Members workspace management', () => {
     const mark = agentRow.findByType('IdentityMark' as any);
     expect(mark.props.kind).toBe('agent');
     expect(mark.props.alive).toBeFalsy();
-    expect(agentRow.findAllByType('Text' as any)[1].props.children).toBe('@clara · member · online');
+    expect(agentRow.findAllByType('Text' as any)[1].props.children).toBe(
+      '@clara · member · online',
+    );
   });
 
   it('shares a real Workspace invite directly from the PEOPLE section head +', async () => {
@@ -375,7 +377,7 @@ describe('Members workspace management', () => {
     expect(client.createAgentPairingCode).toHaveBeenCalledWith(WORKSPACE);
   });
 
-  it('gives a non-manager neither section head + and no full-width brass row', async () => {
+  it('lets a non-manager add their own agent but not invite people', async () => {
     state.workspace = {
       ...baseWorkspace(),
       viewer: {
@@ -386,7 +388,9 @@ describe('Members workspace management', () => {
     };
     const renderer = await render();
     expect(renderer.root.findAllByProps({ testID: 'members-add-people' })).toHaveLength(0);
-    expect(renderer.root.findAllByProps({ testID: 'members-add-agents' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'members-add-agents' }).length).toBeGreaterThan(
+      0,
+    );
     expect(renderer.root.findAllByProps({ testID: 'add-members' })).toHaveLength(0);
     expect(renderer.root.findAllByType('BrassButton' as any)).toHaveLength(0);
   });
@@ -421,7 +425,9 @@ describe('Members workspace management', () => {
   it('gives every row a name and one quiet @handle · role line; the ring is the only agent state', async () => {
     const renderer = await render();
     const agentRow = renderer.root.findByProps({ testID: `agent-${AGENT}-identity` });
-    const agentTexts = agentRow.findAllByType('Text' as any).map((node: any) => node.props.children);
+    const agentTexts = agentRow
+      .findAllByType('Text' as any)
+      .map((node: any) => node.props.children);
     expect(agentTexts).toEqual(['Clara', '@clara · member · online', '›']);
     expect(agentRow.findByType('IdentityMark' as any).props.alive).toBeFalsy();
     const personRow = renderer.root.findByProps({ testID: `member-${MEMBER}-identity` });
@@ -461,11 +467,17 @@ describe('Members workspace management', () => {
   it('offers an admin no removal of an owner or another admin', async () => {
     state.workspace = {
       ...baseWorkspace('admin'),
-      members: [member(VIEWER, 'Viewer', 'admin'), member(OWNER, 'Captain', 'owner'), member(MEMBER, 'Builder', 'admin')],
+      members: [
+        member(VIEWER, 'Viewer', 'admin'),
+        member(OWNER, 'Captain', 'owner'),
+        member(MEMBER, 'Builder', 'admin'),
+      ],
     };
     const renderer = await render();
     await press(renderer, `member-${MEMBER}-identity`);
-    expect(renderer.root.findAllByProps({ testID: `member-${MEMBER}-roles` }).length).toBeGreaterThan(0);
+    expect(
+      renderer.root.findAllByProps({ testID: `member-${MEMBER}-roles` }).length,
+    ).toBeGreaterThan(0);
     expect(renderer.root.findAllByProps({ testID: `remove-person-${MEMBER}` })).toHaveLength(0);
     expect(client.removeMember).not.toHaveBeenCalled();
   });
@@ -492,7 +504,9 @@ describe('Members workspace management', () => {
     await press(renderer, `agent-${AGENT}-identity`);
 
     expect(renderer.root.findAllByProps({ testID: 'model-axis-mode' })).toHaveLength(0);
-    expect(renderer.root.findAllByProps({ testID: 'model-config-activation-note' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'model-config-activation-note' })).toHaveLength(
+      0,
+    );
     expect(renderer.root.findAllByProps({ testID: 'model-catalog-missing' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'model-applies-model' })).toHaveLength(0);
     await press(renderer, 'model-axis-effort');
@@ -560,7 +574,9 @@ describe('Members workspace management', () => {
     await press(renderer, `agent-${AGENT}-identity`);
 
     expect(renderer.root.findAllByProps({ testID: 'model-catalog-missing' })).toHaveLength(0);
-    expect(renderer.root.findAllByProps({ testID: 'model-config-activation-note' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'model-config-activation-note' })).toHaveLength(
+      0,
+    );
     expect(
       renderer.root.findByProps({ testID: 'model-axis-model' }).props.children[1].props.children,
     ).toBe('openrouter/z-ai/glm-5.3-flash');
@@ -653,13 +669,13 @@ describe('Members workspace management', () => {
     });
   });
 
-  it('shows the seeded soul when no manager has written one', async () => {
+  it('shows the seeded soul when its owner has not written one', async () => {
     state.agent = { ...baseAgent(), soul: undefined };
     const renderer = await render();
     await press(renderer, `agent-${AGENT}-identity`);
-    expect(
-      renderer.root.findByProps({ testID: 'agent-soul-copy' }).props.children,
-    ).toBe(state.agent.seededSoul);
+    expect(renderer.root.findByProps({ testID: 'agent-soul-copy' }).props.children).toBe(
+      state.agent.seededSoul,
+    );
   });
 
   it('uses pencil and close glyph controls instead of boxed rename and close actions', async () => {
@@ -688,8 +704,8 @@ describe('Members workspace management', () => {
     // The owner is named by @handle here for the same reason the Room's system
     // lines name them that way: a display name is not an address.
     expect(renderer.root.findByProps({ testID: 'agent-access-caption' }).props.children).toBe(
-      'Only @lunchboxfortwo may ask this agent; everyone else is told to ask @lunchboxfortwo here. ' +
-        'Only the owner or a workspace admin can change this.',
+      'Only @viewer may ask this agent; everyone else is told to ask @viewer here. ' +
+        'Only the owner can change this.',
     );
 
     await act(async () => {
@@ -709,7 +725,7 @@ describe('Members workspace management', () => {
     expect(renderer.root.findAllByProps({ testID: 'agent-access-error' })).toHaveLength(0);
   });
 
-  it('shows a plain member the policy without the ability to change it', async () => {
+  it("hides another owner's agent configuration from a plain member", async () => {
     state.workspace = {
       ...baseWorkspace(),
       viewer: {
@@ -729,12 +745,34 @@ describe('Members workspace management', () => {
     const renderer = await render();
     await press(renderer, `agent-${AGENT}-identity`);
 
-    const toggle = renderer.root.findByProps({ testID: 'agent-access-switch' });
-    expect(toggle.props.disabled).toBe(true);
-    expect(toggle.props.value).toBe(false);
+    expect(renderer.root.findAllByProps({ testID: 'agent-access-switch' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'edit-agent-soul' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'model-axis-model' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'remove-agent' })).toHaveLength(0);
   });
 
-  it('lets the owner or a workspace admin flip yolo and shows who set it', async () => {
+  it("offers an admin only the ban affordance for another owner's agent", async () => {
+    state.workspace = baseWorkspace('admin');
+    state.agent = {
+      ...baseAgent(),
+      access: {
+        policy: 'creator',
+        owner: { id: OWNER, name: 'Captain', handle: 'lunchboxfortwo' },
+        canChange: false,
+      },
+      yolo: { enabled: false, canChange: false },
+    };
+    const renderer = await render();
+    await press(renderer, `agent-${AGENT}-identity`);
+
+    expect(renderer.root.findAllByProps({ testID: 'edit-agent-soul' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'model-axis-model' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'agent-access-switch' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'agent-yolo-switch' })).toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: 'remove-agent' }).props.label).toBe('BAN AGENT');
+  });
+
+  it('lets the owner flip yolo and shows who set it', async () => {
     const renderer = await render();
     await press(renderer, `agent-${AGENT}-identity`);
 
@@ -764,7 +802,24 @@ describe('Members workspace management', () => {
     expect(renderer.root.findAllByProps({ testID: 'agent-yolo-error' })).toHaveLength(0);
   });
 
-  it('renders the yolo switch disabled with the same caption for a plain member', async () => {
+  it('shows an owner that public Workspace policy forces yolo off', async () => {
+    state.agent = {
+      ...baseAgent(),
+      yolo: { enabled: false, forcedOff: true, canChange: true },
+    };
+    const renderer = await render();
+    await press(renderer, `agent-${AGENT}-identity`);
+
+    expect(renderer.root.findByProps({ testID: 'agent-yolo-switch' }).props).toMatchObject({
+      disabled: true,
+      value: false,
+    });
+    expect(renderer.root.findByProps({ testID: 'agent-yolo-caption' }).props.children).toBe(
+      'Yolo is forced off while this workspace is public.',
+    );
+  });
+
+  it("hides another owner's yolo setting from a plain member", async () => {
     state.workspace = {
       ...baseWorkspace(),
       viewer: {
@@ -775,21 +830,17 @@ describe('Members workspace management', () => {
     };
     state.agent = {
       ...baseAgent(),
+      access: {
+        policy: 'creator',
+        owner: { id: OWNER, name: 'Captain', handle: 'lunchboxfortwo' },
+        canChange: false,
+      },
       yolo: { enabled: true, canChange: false, setBy: { name: 'Captain' }, setAt: 1_756_684_800 },
     };
     const renderer = await render();
     await press(renderer, `agent-${AGENT}-identity`);
 
-    const toggle = renderer.root.findByProps({ testID: 'agent-yolo-switch' });
-    expect(toggle.props.disabled).toBe(true);
-    expect(toggle.props.value).toBe(true);
-    expect(renderer.root.findByProps({ testID: 'agent-yolo-caption' }).props.children).toBe(
-      'Clara acts without stopping to ask. Two things still ask you: anything that names one of ' +
-        'your credentials, and a script nobody has read.',
-    );
-    expect(renderer.root.findByProps({ testID: 'agent-yolo-set-by' }).props.children).toMatch(
-      /^Set by Captain · /,
-    );
+    expect(renderer.root.findAllByProps({ testID: 'agent-yolo-switch' })).toHaveLength(0);
   });
 
   it('flips yolo optimistically and rolls back with the server message when refused', async () => {
@@ -801,7 +852,7 @@ describe('Members workspace management', () => {
     phoneOperation.mockImplementationOnce(async () => {
       await pending;
       throw Object.assign(new Error('Monolith updateAgentYolo failed (403)'), {
-        code: "Only the agent's owner or a workspace admin can change this",
+        code: "Only the agent's owner can change this",
       });
     });
     let flip!: Promise<void>;
@@ -817,7 +868,7 @@ describe('Members workspace management', () => {
     // Rolled back with the server's plain message inline.
     expect(renderer.root.findByProps({ testID: 'agent-yolo-switch' }).props.value).toBe(false);
     expect(renderer.root.findByProps({ testID: 'agent-yolo-error' }).props.children).toBe(
-      "Only the agent's owner or a workspace admin can change this",
+      "Only the agent's owner can change this",
     );
     expect(roomView.agent).toHaveBeenCalled();
   });

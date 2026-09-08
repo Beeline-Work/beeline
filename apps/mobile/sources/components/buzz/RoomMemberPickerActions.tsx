@@ -8,6 +8,7 @@ type RoomMemberPickerActionsProps = {
   addableCount: number;
   busy: boolean;
   canManage: boolean;
+  canConnectAgent?: boolean;
   /** Which kind the picker is listing; `null` lists both. */
   kind?: MemberPickerKind;
   /**
@@ -36,10 +37,7 @@ const PICKER_NOUN = { person: 'people', agent: 'agents', any: 'members' } as con
  * are ALL already in it read as "Nobody else in this workspace yet", which
  * is what an empty Workspace looks like, not a full Room.
  */
-export function memberPickerEmptyLine(
-  kind: MemberPickerKind,
-  workspacePeerCount: number,
-): string {
+export function memberPickerEmptyLine(kind: MemberPickerKind, workspacePeerCount: number): string {
   const noun = PICKER_NOUN[kind ?? 'any'];
   return workspacePeerCount > 0
     ? `All the ${noun} in this workspace are already here.`
@@ -57,6 +55,7 @@ export function RoomMemberPickerActions({
   addableCount,
   busy,
   canManage,
+  canConnectAgent = canManage,
   kind = null,
   workspacePeerCount = 0,
   showEmpty = true,
@@ -70,30 +69,31 @@ export function RoomMemberPickerActions({
           {memberPickerEmptyLine(kind, workspacePeerCount)}
         </Text>
       )}
-      {canManage ? (
-        <>
-          <TouchableOpacity
-            accessibilityLabel="Invite a person"
-            disabled={busy}
-            onPress={onInvitePerson}
-            style={styles.row}
-            testID="room-member-picker-invite-person"
-          >
-            <Text style={styles.sigil}>+</Text>
-            <Text style={styles.label}>Invite a person…</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            accessibilityLabel="Connect a new agent"
-            disabled={busy}
-            onPress={onAddAgent}
-            style={styles.row}
-            testID="room-member-picker-add-agent"
-          >
-            <Text style={styles.sigil}>+</Text>
-            <Text style={styles.label}>Connect a new agent…</Text>
-          </TouchableOpacity>
-        </>
-      ) : (
+      {canManage && (
+        <TouchableOpacity
+          accessibilityLabel="Invite a person"
+          disabled={busy}
+          onPress={onInvitePerson}
+          style={styles.row}
+          testID="room-member-picker-invite-person"
+        >
+          <Text style={styles.sigil}>+</Text>
+          <Text style={styles.label}>Invite a person…</Text>
+        </TouchableOpacity>
+      )}
+      {canConnectAgent && (
+        <TouchableOpacity
+          accessibilityLabel="Connect a new agent"
+          disabled={busy}
+          onPress={onAddAgent}
+          style={styles.row}
+          testID="room-member-picker-add-agent"
+        >
+          <Text style={styles.sigil}>+</Text>
+          <Text style={styles.label}>Connect a new agent…</Text>
+        </TouchableOpacity>
+      )}
+      {!canManage && !canConnectAgent && (
         <Text style={styles.quiet} testID="room-member-picker-ask-manager">
           Ask a workspace manager to invite people
         </Text>

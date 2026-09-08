@@ -4,6 +4,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import type { SqlDatabase } from './database.js';
 import { bearer, type TokenAuth } from './auth.js';
 import {
+  AGENT_OWNER_AUTHORITY_MESSAGE,
   PHONE_OPERATION_NAMES,
   YOLO_AUTHORITY_MESSAGE,
   type PhoneService,
@@ -139,6 +140,8 @@ export function createBeelineServer(options: ServerOptions): Server {
             ? 409
             : message.includes('access denied') ||
                 message.includes('manager') ||
+                message.includes(AGENT_OWNER_AUTHORITY_MESSAGE) ||
+                message.includes('yolo cannot be enabled in a public workspace') ||
                 message.includes(YOLO_AUTHORITY_MESSAGE)
               ? 403
               : message.includes('not found')

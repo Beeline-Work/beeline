@@ -394,6 +394,7 @@ CREATE TABLE IF NOT EXISTS agent_turns (
   PRIMARY KEY (room_id, request_id, agent_id)
 );
 ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS failure_reason text;
+CREATE INDEX IF NOT EXISTS agent_turns_agent_activity ON agent_turns(agent_id,created_at DESC);
 
 CREATE TABLE IF NOT EXISTS live_outputs (
   room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
@@ -404,6 +405,8 @@ CREATE TABLE IF NOT EXISTS live_outputs (
   updated_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (room_id, agent_id, turn_id, kind)
 );
+
+CREATE INDEX IF NOT EXISTS live_outputs_agent_presence ON live_outputs(agent_id,updated_at DESC) WHERE kind='presence';
 
 CREATE TABLE IF NOT EXISTS room_read_marks (
   room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,

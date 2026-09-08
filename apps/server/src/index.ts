@@ -104,6 +104,7 @@ async function main() {
     live.publish({ type: 'invalidate', roomId, reason: 'schedule' }),
   );
   const connectionPresence = new ConnectionPresence(database, live);
+  await connectionPresence.start();
   const mediaExpiry = new MediaExpiryLoop(database);
   const sendPushTest = pushSender
     ? async (identityId: string) => {

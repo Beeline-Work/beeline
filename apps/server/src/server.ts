@@ -249,27 +249,21 @@ export function createBeelineServer(options: ServerOptions): Server {
                   replaying = false;
                 }
               };
-              releases.set(
-                roomId,
-                (() => {
-                  const releaseLive = options.live.subscribe(roomId, () => void replay());
-                  const releasePresence = options.connectionPresence?.connect(
-                    roomId,
-                    principal.identityId,
-                    {
-                      ...(typeof item.releaseVersion === 'string'
-                        ? { releaseVersion: item.releaseVersion }
-                        : {}),
-                      ...(typeof item.sourceSha === 'string' ? { sourceSha: item.sourceSha } : {}),
-                      ...(typeof item.available === 'boolean' ? { available: item.available } : {}),
-                    },
-                  );
-                  return () => {
-                    releaseLive();
-                    releasePresence?.();
-                  };
-                })(),
-              );
+              releases.set(roomId, options.live.subscribe(roomId, () => void replay()));
+              try {
+                await options.connectionPresence?.announce(roomId, principal.identityId, {
+                  ...(typeof item.lifecycleId === 'string' && item.lifecycleId.length <= 128
+                    ? { lifecycleId: item.lifecycleId } : {}),
+                  ...(typeof item.releaseVersion === 'string' ? { releaseVersion: item.releaseVersion } : {}),
+                  ...(typeof item.sourceSha === 'string' ? { sourceSha: item.sourceSha } : {}),
+                  ...(typeof item.available === 'boolean' ? { available: item.available } : {}),
+                });
+              } catch (error) {
+                console.error('[presence] startup announcement failed', error);
+                client.close(1011, 'startup announcement failed');
+                return;
+              }
+              if (client.readyState !== client.OPEN) return;
               client.send(
                 JSON.stringify({
                   type: 'subscribed',

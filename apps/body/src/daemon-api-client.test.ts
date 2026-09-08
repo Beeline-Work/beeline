@@ -178,8 +178,8 @@ describe('DaemonApiClient', () => {
     );
     const first = FakeWebSocket.instances[0]!;
     first.open();
-    expect(first.sent).toEqual([
-      JSON.stringify({ type: 'subscribe', roomId: 'room-1', cursor: `1000,${'a'.repeat(64)}` }),
+    expect(first.sent.map((value) => JSON.parse(value))).toEqual([
+      { type: 'subscribe', roomId: 'room-1', lifecycleId: expect.any(String), cursor: `1000,${'a'.repeat(64)}` },
     ]);
     first.message({ type: 'subscribed', roomId: 'room-1' });
 

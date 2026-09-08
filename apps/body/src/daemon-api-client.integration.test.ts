@@ -6,6 +6,7 @@ import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
+import WebSocket from 'ws';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getPublicKey } from '@beeline/nostr';
 import { migrate } from '../../server/src/database.js';
@@ -396,7 +397,7 @@ describe('daemon API client against the local monolith', () => {
         BUZZY_AUTH_OIDC_CLIENT_ID: 'test-client',
       },
     });
-    connectionPresence = new ConnectionPresence(database, live, 30_000, 10);
+    connectionPresence = new ConnectionPresence(database, live, 1_000);
     const githubOperations = new GitHubOperations(
       database,
       {} as never,
@@ -618,6 +619,64 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       { timeout: 10_000 },
     );
   }, 30_000);
+
+  it('keeps lifecycle presence across a real socket drop and resumes answering through push without polling', async () => {
+    const exchange = await auth.createDaemonExchange(AGENT);
+    const exchanged = await fetch(`${origin}/v1/auth/daemon/exchange`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ exchangeToken: exchange.exchangeToken }),
+    });
+    const { daemonToken } = await exchanged.json() as { daemonToken: string };
+    const sockets: WebSocket[] = [];
+    const client = new DaemonApiClient(origin, daemonToken, AGENT, fetch, (url, protocols) => {
+      const socket = new WebSocket(url, protocols);
+      sockets.push(socket);
+      return socket;
+    });
+    const operations = vi.spyOn(client, 'execute');
+    const activation = await client.execute('getRoomInbox', { roomId: ROOM, startAtLatest: true });
+    let connected = false;
+    let replies = Promise.resolve();
+    let answered = 0;
+    const disconnect = client.liveSubscribe(ROOM, activation.cursor, (items, cursor) => {
+      client.updateLiveCursor(ROOM, cursor);
+      for (const item of items) {
+        if (!item.mentionIds.includes(AGENT)) continue;
+        replies = replies.then(async () => {
+          await client.execute('postRoomMessage', { roomId: ROOM, requestId: item.id, text: 'Answered through push' });
+          answered += 1;
+        });
+      }
+    }, (value) => { connected = value; });
+    const state = async () => (await phone.readRoom(ROOM, HUMAN))?.members.find(
+      (member) => member.identity.pubkey === AGENT,
+    )?.presence?.status;
+    const attempt = async () => {
+      await phone.execute('sendRoomMessage', { roomId: ROOM, text: 'Hello', mentions: [AGENT] }, HUMAN);
+      // PGlite has no separate LISTEN connection; deliver the committed notification.
+      live.publish({ type: 'invalidate', roomId: ROOM, reason: 'postgres:messages' });
+    };
+    try {
+      await vi.waitFor(async () => { expect(connected).toBe(true); expect(await state()).toBe('online'); });
+      await attempt();
+      await vi.waitFor(() => expect(answered).toBe(1));
+      const before = (await database.query<{ updated_at: Date }>(
+        `SELECT updated_at FROM live_outputs WHERE agent_id=$1 AND kind='presence'`, [AGENT],
+      )).rows;
+      sockets[0]!.close();
+      await vi.waitFor(() => expect(connected).toBe(false));
+      expect(await state()).toBe('online');
+      await vi.waitFor(() => { expect(sockets).toHaveLength(2); expect(connected).toBe(true); }, { timeout: 3_000 });
+      await attempt();
+      await vi.waitFor(() => expect(answered).toBe(2));
+      await replies;
+      expect(await state()).toBe('online');
+      expect((await database.query<{ updated_at: Date }>(
+        `SELECT updated_at FROM live_outputs WHERE agent_id=$1 AND kind='presence'`, [AGENT],
+      )).rows).toEqual(before);
+      expect(operations.mock.calls.filter(([name]) => name === 'getRoomInbox')).toHaveLength(1);
+    } finally { disconnect(); await replies; }
+  });
 
   it('answers persisted implicit targets in a repo-less Room and keeps monolith presence current', async () => {
     await database.query(
@@ -998,12 +1057,30 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       await scheduler.dispose();
     }
 
+    // A stopped socket leaves presence online until an actual delivery fails.
+    expect((await phone.readRoom(ROOM, HUMAN))?.members.find(
+      (member) => member.identity.pubkey === AGENT,
+    )?.presence?.status).toBe('online');
+    await phone.execute('sendRoomMessage', {
+      roomId: ROOM, text: 'Attempt delivery to the stopped daemon', mentions: [AGENT],
+    }, HUMAN);
+    await connectionPresence.observe(ROOM);
     await vi.waitFor(async () => {
-      const visibleOffline = await phone.readRoom(ROOM, HUMAN);
-      expect(
-        visibleOffline?.members.find((member) => member.identity.pubkey === AGENT),
-      ).toMatchObject({ presence: { status: 'offline', roomId: ROOM } });
-    });
+      expect((await phone.readRoom(ROOM, HUMAN))?.members.find(
+        (member) => member.identity.pubkey === AGENT,
+      )?.presence?.status).toBe('offline');
+    }, { timeout: 3_000 });
+    // A NEW daemon client announces a new lifecycle through the actual WS path.
+    const recovered = new DaemonApiClient(origin, token.daemonToken, AGENT);
+    const disconnect = recovered.liveSubscribe(ROOM);
+    try {
+      await vi.waitFor(async () => {
+        expect((await phone.readRoom(ROOM, HUMAN))?.members.find(
+          (member) => member.identity.pubkey === AGENT,
+        )?.presence?.status).toBe('online');
+      });
+    } finally { disconnect(); }
+
   }, 20_000);
 
   it.skipIf(process.env.BEELINE_REAL_THIN_PROOF !== '1')(

@@ -1,3 +1,4 @@
+import { announceAgentLifecycle } from './connection-presence.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type {
   DaemonAttachment,
@@ -914,8 +915,6 @@ export class DaemonService {
     };
   }
   private async presence(input: Input<'getAgentPresence'>, agentId: string) {
-    const current = this.live.latestAgentPresence(agentId, input.roomId);
-    if (current) return { status: current.status, observedAt: current.observedAt };
     const row = (
       await this.database.query<{
         body: {
@@ -926,8 +925,8 @@ export class DaemonService {
         };
         updated_at: Date;
       }>(
-        `SELECT body,updated_at FROM live_outputs WHERE room_id=$1 AND agent_id=$2 AND kind='presence' ORDER BY updated_at DESC LIMIT 1`,
-        [input.roomId, agentId],
+        `SELECT body,updated_at FROM live_outputs WHERE agent_id=$1 AND kind='presence' ORDER BY updated_at DESC LIMIT 1`,
+        [agentId],
       )
     ).rows[0];
     return row
@@ -956,9 +955,7 @@ export class DaemonService {
        LEFT JOIN LATERAL(
          SELECT body FROM live_outputs
          WHERE agent_id=a.agent_id AND kind='presence'
-         ORDER BY (
-           body->>'status'='online' AND updated_at >= now() - interval '90 seconds'
-         ) DESC,updated_at DESC LIMIT 1
+         ORDER BY updated_at DESC LIMIT 1
        )lo ON true
        WHERE EXISTS(
          SELECT 1 FROM memberships m
@@ -966,19 +963,14 @@ export class DaemonService {
        )
        ORDER BY a.agent_id`,
     );
-    const now = Date.now();
     const daemons = result.rows.map((row) => {
-      const current = this.live.latestAgentPresence(row.agent_id);
-      const body = current ?? row.body;
+      const body = row.body;
       const observedAt = body?.observedAt;
-      const fresh = typeof observedAt === 'number' && Math.abs(now - observedAt * 1_000) <= 90_000;
       const state = !body
         ? 'never-seen'
         : body.status !== 'online'
           ? 'offline'
-          : fresh
-            ? 'ready'
-            : 'stale';
+          : 'ready';
       return {
         agentPubkey: row.agent_id,
         state,
@@ -1702,26 +1694,10 @@ export class DaemonService {
     return this.writeResult();
   }
   private async postPresence(input: Input<'postAgentPresence'>, agentId: string) {
-    const observedAt = Math.floor(Date.now() / 1000);
-    await this.database.query(
-      `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body) VALUES($1,$2,'presence','presence',$3::jsonb) ON CONFLICT(room_id,agent_id,turn_id,kind) DO UPDATE SET body=EXCLUDED.body,updated_at=now()`,
-      [
-        input.roomId,
-        agentId,
-        JSON.stringify({
-          status: input.status,
-          observedAt,
-          ...(input.releaseVersion ? { releaseVersion: input.releaseVersion } : {}),
-          ...(input.sourceSha ? { sourceSha: input.sourceSha } : {}),
-        }),
-      ],
-    );
-    this.live.publish({
-      type: 'presence',
-      roomId: input.roomId,
-      agentId,
-      status: input.status,
-      observedAt,
+    await announceAgentLifecycle(this.database, this.live, input.roomId, agentId, {
+      available: input.status === 'online',
+      ...(input.releaseVersion ? { releaseVersion: input.releaseVersion } : {}),
+      ...(input.sourceSha ? { sourceSha: input.sourceSha } : {}),
     });
     return this.writeResult();
   }

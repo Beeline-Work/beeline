@@ -72,6 +72,11 @@ export class LiveHub {
     };
   }
 
+  subscribeResync(listener: () => void): () => void {
+    this.#events.on('resync', listener);
+    return () => this.#events.off('resync', listener);
+  }
+
   resync(): void {
     this.#events.emit('resync');
   }

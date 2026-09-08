@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { LiveHub, type LiveEvent } from './live.js';
+import { announceAgentLifecycle } from './connection-presence.js';
 import { POSTGRES_LIVE_CHANNEL, PostgresLiveListener, type LivePgClient } from './postgres-live.js';
 import { PgliteDatabase } from './test-support.js';
 
@@ -124,6 +125,27 @@ describe('Postgres live fanout', () => {
       agentId: AUTHOR,
     });
     expect(clientsB[0]!.payloads[0]).not.toContain('hello');
+  });
+
+  it('fans the durable presence fact to every Room on another server without refresh notifications', async () => {
+    const otherRoom = '33333333-3333-4333-8333-333333333333';
+    const agent = 'b'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Bee')`, [agent]);
+    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Other')`, [otherRoom, WORKSPACE]);
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+      VALUES($1,$2,$4,'member'),($1,$3,$4,'member')`, [WORKSPACE, ROOM, otherRoom, agent]);
+    const liveB = new LiveHub();
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, liveB, () => client, 1);
+    listeners.push(listener);
+    void listener.run();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await announceAgentLifecycle(database, new LiveHub(), ROOM, agent, { lifecycleId: 'boot' });
+    await eventually(() => liveB.latestAgentPresence(agent, otherRoom)?.status === 'online');
+    await database.query(`UPDATE live_outputs SET body=body || jsonb_build_object(
+      'status','offline','observedAt',(body->>'observedAt')::bigint+1) WHERE agent_id=$1`, [agent]);
+    await eventually(() => liveB.latestAgentPresence(agent, otherRoom)?.status === 'offline');
+    expect(liveB.latestAgentPresence(agent, ROOM)?.status).toBe('offline');
   });
 
   it('broadcasts resync after its listener connection is restored', async () => {

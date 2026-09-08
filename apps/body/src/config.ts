@@ -39,7 +39,7 @@ export const WRITE_TOOL_NAMES = [
 ] as const;
 
 export interface BodyConfig {
-  /** Installed daemon bundle identity reported with monolith presence heartbeats. */
+  /** Installed daemon bundle identity reported with the monolith startup presence announcement. */
   daemonReleaseVersion?: string;
   daemonSourceSha?: string;
   /** Backward-compatible alias of agentCommand. */

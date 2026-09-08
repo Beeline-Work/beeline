@@ -241,22 +241,6 @@ export class PostgresLiveListener {
   private async rebroadcast(raw: string | undefined): Promise<void> {
     const payload = decodePayload(raw);
     if (!payload) return;
-    if (
-      payload.table === 'connection_presence' &&
-      payload.agentId &&
-      typeof payload.observedAt === 'number'
-    ) {
-      this.live.publish({
-        type: 'presence',
-        roomId: payload.roomId,
-        agentId: payload.agentId,
-        status: 'online',
-        observedAt: payload.observedAt,
-        ...(payload.ownerEpoch ? { ownerEpoch: payload.ownerEpoch } : {}),
-        ...(payload.expiresAt ? { expiresAt: payload.expiresAt } : {}),
-      });
-      return;
-    }
     if (payload.table === 'live_outputs' && payload.agentId && payload.turnId) {
       if (payload.operation === 'DELETE') {
         if (payload.kind === 'draft' || payload.kind === 'thought') {
@@ -294,9 +278,13 @@ export class PostgresLiveListener {
         (row.body.status === 'online' || row.body.status === 'offline') &&
         typeof row.body.observedAt === 'number'
       ) {
-        this.live.publish({
+        const rooms = await this.database.query<{ room_id: string }>(
+          `SELECT room_id FROM memberships WHERE identity_id=$1
+             AND room_id IS NOT NULL AND removed_at IS NULL`, [payload.agentId],
+        );
+        for (const room of rooms.rows) this.live.publish({
           type: 'presence',
-          roomId: payload.roomId,
+          roomId: room.room_id,
           agentId: payload.agentId,
           status: row.body.status,
           observedAt: row.body.observedAt,

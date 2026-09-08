@@ -1,6 +1,10 @@
 import { uniqueAgentHandle } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 
+/**
+ * Serialize handle allocation before taking an identity's membership snapshot,
+ * then lock every live Workspace where its global handle must remain unique.
+ */
 export async function lockIdentityHandleWorkspaces(
   database: SqlDatabase,
   identityId: string,
@@ -28,6 +32,7 @@ export async function lockIdentityHandleWorkspaces(
   return workspaceIds;
 }
 
+/** Keep a human's canonical handle by deterministically reseating any colliding agent. */
 export async function reassignCollidingAgentHandles(
   database: SqlDatabase,
   humanId: string,
@@ -57,7 +62,10 @@ export async function reassignCollidingAgentHandles(
          AND identity.id<>$2 AND identity.handle IS NOT NULL`,
       [agentWorkspaceIds, agent.id],
     );
-    const replacement = uniqueAgentHandle(agent.name, [handle, ...taken.rows.map((row) => row.handle)]);
+    const replacement = uniqueAgentHandle(agent.name, [
+      handle,
+      ...taken.rows.map((row) => row.handle),
+    ]);
     await database.query(`UPDATE identities SET handle=$2,updated_at=now() WHERE id=$1`, [
       agent.id,
       replacement,

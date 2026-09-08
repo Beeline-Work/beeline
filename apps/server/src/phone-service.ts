@@ -57,7 +57,10 @@ import type { LiveEvent, LiveHub } from './live.js';
 import type { GitHubOperations } from './github-operations.js';
 import { collapsePermissionCards } from '@beeline/push-gateway/projection';
 import { joinRooms, syncTopLevelSharedRoomRoles } from './membership-join.js';
-import { lockIdentityHandleWorkspaces, reassignCollidingAgentHandles } from './workspace-handles.js';
+import {
+  lockIdentityHandleWorkspaces,
+  reassignCollidingAgentHandles,
+} from './workspace-handles.js';
 import { REVIEW_IDENTITY_ID } from './review-access.js';
 import { identitySubject, systemLine } from './system-line.js';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
@@ -1867,11 +1870,7 @@ export class PhoneService {
     const id = input.messageId ?? messageId();
     if (!/^[0-9a-f]{64}$/.test(id)) throw new Error('messageId is invalid');
     const attachments = JSON.stringify(input.attachments ?? []);
-    const mentionResolution = await this.resolveMessageMentions(
-      input.roomId,
-      author,
-      input.text,
-    );
+    const mentionResolution = await this.resolveMessageMentions(input.roomId, author, input.text);
     const mentions = JSON.stringify(mentionResolution.mentionIds);
     const values = [id, input.roomId, author, input.text, attachments, mentions];
     const inserted = await this.database.query(
@@ -2726,7 +2725,9 @@ export class PhoneService {
     const row = result.rows[0];
     if (!row) throw new Error('invite not found');
     return this.database.transaction(async (database) => {
-      const workspaceIds = await lockIdentityHandleWorkspaces(database, viewerId, [row.workspace_id]);
+      const workspaceIds = await lockIdentityHandleWorkspaces(database, viewerId, [
+        row.workspace_id,
+      ]);
       const identity = (
         await database.query<{ handle: string | null }>(
           `SELECT handle FROM identities WHERE id=$1 FOR UPDATE`,

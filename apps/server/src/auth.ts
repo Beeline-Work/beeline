@@ -6,7 +6,10 @@ import {
 } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { joinRooms } from './membership-join.js';
-import { lockIdentityHandleWorkspaces, reassignCollidingAgentHandles } from './workspace-handles.js';
+import {
+  lockIdentityHandleWorkspaces,
+  reassignCollidingAgentHandles,
+} from './workspace-handles.js';
 import {
   REVIEW_IDENTITY_HANDLE,
   REVIEW_IDENTITY_ID,
@@ -121,14 +124,7 @@ export class TokenAuth {
         `UPDATE identities SET name=$2,
            handle=$3,avatar=$4,github_subject=$5,updated_at=$6
          WHERE id=$1`,
-        [
-          id,
-          github.name,
-          github.login,
-          github.avatar ?? null,
-          github.subject,
-          this.now(),
-        ],
+        [id, github.name, github.login, github.avatar ?? null, github.subject, this.now()],
       );
       await database.query(
         `INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience,provider_login)

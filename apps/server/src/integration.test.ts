@@ -2513,8 +2513,11 @@ describe('monolith integration', () => {
       handle: 'bee',
     });
     expect(
-      (await database.query<{ handle: string }>(`SELECT handle FROM identities WHERE id=$1`, [AGENT]))
-        .rows[0]?.handle,
+      (
+        await database.query<{ handle: string }>(`SELECT handle FROM identities WHERE id=$1`, [
+          AGENT,
+        ])
+      ).rows[0]?.handle,
     ).toBe('bee_2');
 
     const claimed = await operation('claimManagedHandle', { handle: 'captain.owner' });
@@ -2570,8 +2573,11 @@ describe('monolith integration', () => {
       ).status,
     ).toBe(200);
     expect(
-      (await database.query<{ handle: string }>(`SELECT handle FROM identities WHERE id=$1`, [AGENT]))
-        .rows[0]?.handle,
+      (
+        await database.query<{ handle: string }>(`SELECT handle FROM identities WHERE id=$1`, [
+          AGENT,
+        ])
+      ).rows[0]?.handle,
     ).toBe('bee_2');
 
     const invite = (await (await operation('createInvite', { workspaceId: WORKSPACE })).json()) as {
@@ -2579,18 +2585,15 @@ describe('monolith integration', () => {
     };
     const invitee = await phoneToken('bee_2');
     expect(
-      (
-        await request(
-          '/v1/phone/operations/redeemInvite',
-          'POST',
-          { token: invite.token },
-          invitee,
-        )
-      ).status,
+      (await request('/v1/phone/operations/redeemInvite', 'POST', { token: invite.token }, invitee))
+        .status,
     ).toBe(200);
     expect(
-      (await database.query<{ handle: string }>(`SELECT handle FROM identities WHERE id=$1`, [AGENT]))
-        .rows[0]?.handle,
+      (
+        await database.query<{ handle: string }>(`SELECT handle FROM identities WHERE id=$1`, [
+          AGENT,
+        ])
+      ).rows[0]?.handle,
     ).toBe('bee_3');
 
     const renamedLogin = new TokenAuth(database, async () => ({
@@ -2607,8 +2610,11 @@ describe('monolith integration', () => {
       ).rows[0]?.handle,
     ).toBe('bee_3');
     expect(
-      (await database.query<{ handle: string }>(`SELECT handle FROM identities WHERE id=$1`, [AGENT]))
-        .rows[0]?.handle,
+      (
+        await database.query<{ handle: string }>(`SELECT handle FROM identities WHERE id=$1`, [
+          AGENT,
+        ])
+      ).rows[0]?.handle,
     ).toBe('bee_4');
   });
 

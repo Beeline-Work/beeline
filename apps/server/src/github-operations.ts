@@ -9,7 +9,10 @@ import {
 import type { CornerLifecycleView, PhoneOperationMap } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { GITHUB_SUBJECT, systemLine, type SystemPhrase } from './system-line.js';
-import { lockIdentityHandleWorkspaces, reassignCollidingAgentHandles } from './workspace-handles.js';
+import {
+  lockIdentityHandleWorkspaces,
+  reassignCollidingAgentHandles,
+} from './workspace-handles.js';
 
 type Input<Name extends keyof PhoneOperationMap> = PhoneOperationMap[Name]['input'];
 

@@ -63,7 +63,14 @@ import {
   reassignCollidingAgentHandles,
 } from './workspace-handles.js';
 import { REVIEW_IDENTITY_ID } from './review-access.js';
-import { identitySubject, systemIdentityMention, systemLine } from './system-line.js';
+import {
+  directMessageRoomId,
+  identitySubject,
+  systemIdentityMention,
+  systemLine,
+  workspaceSystemLine,
+} from './system-line.js';
+export { directMessageRoomId } from './system-line.js';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
 import { mediaIdFromUrl } from './media-ttl.js';
 import {
@@ -370,20 +377,6 @@ function roomSchedule(row: RoomScheduleRow): Output<'createRoomSchedule'> {
     nextRunAt: unix(row.next_run_at),
     createdAt: unix(row.created_at),
   };
-}
-
-export function directMessageRoomId(
-  workspaceId: string,
-  participants: readonly [string, string],
-): string {
-  const bytes = createHash('sha256')
-    .update(`buzz-dm:v1:${workspaceId}:${participants.join(':')}`)
-    .digest()
-    .subarray(0, 16);
-  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
-  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
-  const hex = bytes.toString('hex');
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 export class PhoneService {
@@ -2437,19 +2430,14 @@ export class PhoneService {
       );
       if (input.visibility && input.visibility !== current?.visibility) {
         const actor = await this.requireIdentity(viewerId, database);
-        const rooms = await database.query<{ id: string }>(
-          `SELECT id FROM rooms WHERE workspace_id=$1 AND archived_at IS NULL`,
-          [input.workspaceId],
-        );
-        for (const room of rooms.rows)
-          await systemLine(database, {
-            roomId: room.id,
-            subject: identitySubject({ id: actor.pubkey, kind: actor.kind, name: actor.name }),
-            verb: 'changed workspace visibility to',
-            object: input.visibility,
-            cardType: 'workspace-visibility',
-            card: { visibility: input.visibility },
-          });
+        await workspaceSystemLine(database, {
+          workspaceId: input.workspaceId,
+          subject: identitySubject({ id: actor.pubkey, kind: actor.kind, name: actor.name }),
+          verb: 'changed workspace visibility to',
+          object: input.visibility,
+          cardType: 'workspace-visibility',
+          card: { visibility: input.visibility },
+        });
       }
     });
   }
@@ -2473,24 +2461,17 @@ export class PhoneService {
         );
         if (!otherOwner.rowCount) throw new Error('workspace manager cannot leave as sole owner');
       }
-      const rooms = await database.query<{ room_id: string }>(
-        `SELECT m.room_id FROM memberships m JOIN rooms r ON r.id=m.room_id
-         WHERE m.workspace_id=$1 AND m.identity_id=$2 AND m.removed_at IS NULL
-           AND r.archived_at IS NULL`,
-        [input.workspaceId, viewerId],
-      );
       await database.query(
         `UPDATE memberships SET removed_at=now() WHERE workspace_id=$1 AND identity_id=$2`,
         [input.workspaceId, viewerId],
       );
-      for (const room of rooms.rows)
-        await systemLine(database, {
-          roomId: room.room_id,
-          subject: identitySubject({ id: leaver.pubkey, kind: leaver.kind, name: leaver.name }),
-          verb: 'left',
-          cardType: 'member-left',
-          card: { identityId: viewerId },
-        });
+      await workspaceSystemLine(database, {
+        workspaceId: input.workspaceId,
+        subject: identitySubject({ id: leaver.pubkey, kind: leaver.kind, name: leaver.name }),
+        verb: 'left',
+        cardType: 'member-left',
+        card: { identityId: viewerId },
+      });
     });
   }
   private async createRoom(input: Input<'createRoom'>, viewerId: string) {
@@ -2714,34 +2695,26 @@ export class PhoneService {
         );
         await syncTopLevelSharedRoomRoles(database, input.workspaceId, input.memberId);
         if (!target.removed_at && target.role !== input.role) {
-          const rooms = await database.query<{ room_id: string }>(
-            `SELECT membership.room_id FROM memberships membership
-             JOIN rooms room ON room.id=membership.room_id
-             WHERE membership.workspace_id=$1 AND membership.identity_id=$2
-               AND membership.removed_at IS NULL AND room.archived_at IS NULL`,
-            [input.workspaceId, input.memberId],
-          );
           const targetMention = systemIdentityMention({
             id: changedMember.pubkey,
             kind: changedMember.kind,
             name: changedMember.name,
             handle: changedMember.handle ?? null,
           });
-          for (const room of rooms.rows)
-            await systemLine(database, {
-              roomId: room.room_id,
-              subject: identitySubject({
-                id: changingMember.pubkey,
-                kind: changingMember.kind,
-                name: changingMember.name,
-              }),
-              verb: 'changed',
-              object: targetMention
-                ? `${targetMention}'s role to ${input.role}`
-                : `role to ${input.role}`,
-              cardType: 'member-role',
-              card: { identityId: input.memberId, role: input.role },
-            });
+          await workspaceSystemLine(database, {
+            workspaceId: input.workspaceId,
+            subject: identitySubject({
+              id: changingMember.pubkey,
+              kind: changingMember.kind,
+              name: changingMember.name,
+            }),
+            verb: 'changed',
+            object: targetMention
+              ? `${targetMention}'s role to ${input.role}`
+              : `role to ${input.role}`,
+            cardType: 'member-role',
+            card: { identityId: input.memberId, role: input.role },
+          });
         }
         if (target.removed_at)
           await joinRooms(database, {
@@ -2802,25 +2775,18 @@ export class PhoneService {
       if (target.role === 'owner' || (actor.role === 'admin' && target.role === 'admin')) {
         throw new Error('workspace manager cannot remove a member with equal or greater authority');
       }
-      const rooms = await database.query<{ room_id: string }>(
-        `SELECT m.room_id FROM memberships m JOIN rooms r ON r.id=m.room_id
-         WHERE m.workspace_id=$1 AND m.identity_id=$2 AND m.removed_at IS NULL
-           AND r.archived_at IS NULL`,
-        [input.workspaceId, input.memberId],
-      );
       await database.query(
         `UPDATE memberships SET removed_at=now() WHERE workspace_id=$1 AND identity_id=$2`,
         [input.workspaceId, input.memberId],
       );
-      for (const room of rooms.rows)
-        await systemLine(database, {
-          roomId: room.room_id,
-          subject: identitySubject({ id: remover.pubkey, kind: remover.kind, name: remover.name }),
-          verb: 'removed',
-          object: { text: removed.name, id: removed.pubkey },
-          cardType: 'member-removed',
-          card: { identityId: input.memberId },
-        });
+      await workspaceSystemLine(database, {
+        workspaceId: input.workspaceId,
+        subject: identitySubject({ id: remover.pubkey, kind: remover.kind, name: remover.name }),
+        verb: 'removed',
+        object: { text: removed.name, id: removed.pubkey },
+        cardType: 'member-removed',
+        card: { identityId: input.memberId },
+      });
     });
   }
   private async resolveDirectMessage(input: Input<'resolveDirectMessage'>, viewerId: string) {
@@ -3350,12 +3316,6 @@ export class PhoneService {
     const remover = await this.requireIdentity(viewerId);
     const removed = await this.requireIdentity(input.agentId);
     await this.database.transaction(async (database) => {
-      const rooms = await database.query<{ room_id: string }>(
-        `SELECT m.room_id FROM memberships m JOIN rooms r ON r.id=m.room_id
-         WHERE m.workspace_id=$1 AND m.identity_id=$2 AND m.removed_at IS NULL
-           AND r.archived_at IS NULL`,
-        [input.workspaceId, input.agentId],
-      );
       await database.query(
         `UPDATE memberships SET removed_at=now() WHERE workspace_id=$1 AND identity_id=$2`,
         [input.workspaceId, input.agentId],
@@ -3417,15 +3377,14 @@ export class PhoneService {
             }),
           ],
         );
-      for (const room of rooms.rows)
-        await systemLine(database, {
-          roomId: room.room_id,
-          subject: identitySubject({ id: remover.pubkey, kind: remover.kind, name: remover.name }),
-          verb: 'removed',
-          object: { text: removed.name, id: removed.pubkey },
-          cardType: 'member-removed',
-          card: { identityId: input.agentId },
-        });
+      await workspaceSystemLine(database, {
+        workspaceId: input.workspaceId,
+        subject: identitySubject({ id: remover.pubkey, kind: remover.kind, name: remover.name }),
+        verb: 'removed',
+        object: { text: removed.name, id: removed.pubkey },
+        cardType: 'member-removed',
+        card: { identityId: input.agentId },
+      });
     });
   }
   /**

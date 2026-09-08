@@ -27,6 +27,7 @@ import {
 import { createMonolithAuth, type MonolithAuthMount } from './monolith-auth.js';
 import { REVIEW_IDENTITY_ID, ReviewAccess } from './review-access.js';
 import { announceAgentLifecycle } from './connection-presence.js';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 
 const HUMAN = createHash('sha256').update('github:owner').digest('hex');
 const AGENT = 'b'.repeat(64);
@@ -675,7 +676,7 @@ describe('monolith integration', () => {
       messages: Array<{ text: string; presentation: string; systemEvent?: { verb: string } }>;
     };
     expect(view.members.map((member) => member.identity.pubkey)).not.toContain(bobId);
-    expect(view.messages).toContainEqual(
+    expect(view.messages).not.toContainEqual(
       expect.objectContaining({
         presentation: 'system',
         text: expect.stringMatching(/ removed /),
@@ -685,6 +686,17 @@ describe('monolith integration', () => {
         }),
       }),
     );
+    const removalDms = await database.query<{ author_id: string; text: string; count: number }>(
+      `SELECT message.author_id,message.text,count(*)::int count
+       FROM messages message JOIN rooms room ON room.id=message.room_id
+       WHERE room.workspace_id=$1 AND room.direct_participants IS NOT NULL
+         AND message.card_type='member-removed'
+       GROUP BY message.author_id,message.text`,
+      [workspaceId],
+    );
+    expect(removalDms.rows).toEqual([
+      { author_id: SYSTEM_IDENTITY_ID, text: '@owner removed @bob', count: 2 },
+    ]);
     // Gone means gone: the second removal has no membership to act on.
     expect(
       (await operation('removeWorkspaceMember', { workspaceId, memberId: bobId })).status,
@@ -2214,7 +2226,7 @@ describe('monolith integration', () => {
       `SELECT role,invited_by FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`,
       [WORKSPACE, recipient.identityId],
     );
-    expect(membership.rows).toEqual([{ role: 'member', invited_by: OWNER }]);
+    expect(membership.rows).toEqual([{ role: 'member', invited_by: HUMAN }]);
   });
 
   it('collapses unknown, expired, and malformed public invites without authentication', async () => {
@@ -2249,7 +2261,7 @@ describe('monolith integration', () => {
     expect(await limited.json()).toEqual({ error: 'too_many_requests' });
   });
 
-  it('publishes one note per joined Room and one push when a person redeems an invite', async () => {
+  it('routes a Workspace join to one attributed @system DM and no shared Room lines', async () => {
     const recipient = await auth.exchangeGitHubOidc('recipient-proof');
     const secondRoom = (await (
       await operation('createRoom', { workspaceId: WORKSPACE, name: 'Workshop' })
@@ -2274,24 +2286,65 @@ describe('monolith integration', () => {
     );
     expect(redeemed.status).toBe(200);
 
-    const notes = await database.query<{
+    const roomNotes = await database.query<{
       room_id: string;
       text: string;
       presentation: string;
     }>(
       `SELECT room_id,text,presentation FROM messages
        WHERE author_id=$1 AND card_type='member-joined' AND room_id=ANY($2::uuid[])
-       ORDER BY room_id`,
+      ORDER BY room_id`,
       [recipient.identityId, [ROOM, secondRoom.id]],
     );
-    expect(notes.rows).toEqual(
-      [ROOM, secondRoom.id].sort().map((room_id) => ({
-        room_id,
+    expect(roomNotes.rows).toEqual([]);
+
+    const systemDms = await database.query<{
+      room_id: string;
+      author_id: string;
+      text: string;
+      presentation: string;
+      direct_participants: string[];
+    }>(
+      `SELECT message.room_id,message.author_id,message.text,message.presentation,
+              room.direct_participants
+       FROM messages message JOIN rooms room ON room.id=message.room_id
+       WHERE room.workspace_id=$1 AND message.card_type='workspace-member-joined'
+         AND room.direct_participants IS NOT NULL
+       ORDER BY message.room_id`,
+      [WORKSPACE],
+    );
+    expect(systemDms.rows).toEqual([
+      {
+        room_id: expect.any(String),
+        author_id: SYSTEM_IDENTITY_ID,
         text: '@recipient joined · invited by @owner',
         presentation: 'system',
-      })),
-    );
-
+        direct_participants: [HUMAN, SYSTEM_IDENTITY_ID].sort(),
+      },
+    ]);
+    const systemDmId = systemDms.rows[0]!.room_id;
+    const systemDmView = (await (
+      await request(`/v1/phone/rooms/${systemDmId}`)
+    ).json()) as RoomView;
+    expect(systemDmView.viewer.permissions.send).toBe(false);
+    expect(
+      (
+        await operation('sendRoomMessage', {
+          roomId: systemDmId,
+          text: 'replying must stay forbidden',
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM workspace_join_notification_devices device
+           JOIN workspace_join_notifications notification ON notification.id=device.notification_id
+           WHERE notification.workspace_id=$1`,
+          [WORKSPACE],
+        )
+      ).rowCount,
+    ).toBe(1);
     expect(await loop.runOnce()).toBe(1);
     const deliveredJoin = send.mock.calls[0]![1];
     const routedJoin = (
@@ -2395,7 +2448,7 @@ describe('monolith integration', () => {
     });
     expect(finished.status).toBe(200);
 
-    const notes = await database.query<{
+    const roomNotes = await database.query<{
       room_id: string;
       text: string;
       presentation: string;
@@ -2404,13 +2457,22 @@ describe('monolith integration', () => {
        WHERE author_id=$1 AND card_type='member-joined' ORDER BY room_id`,
       [grant.agent_pubkey],
     );
-    expect(notes.rows).toEqual(
-      [ROOM, secondRoom.id].sort().map((room_id) => ({
-        room_id,
-        text: `@${grant.agent_name.toLowerCase()} joined · invited by @owner`,
-        presentation: 'system',
-      })),
+    expect(roomNotes.rows).toEqual([]);
+    const dmNotes = await database.query<{ author_id: string; text: string; count: number }>(
+      `SELECT message.author_id,message.text,count(*)::int count
+       FROM messages message JOIN rooms room ON room.id=message.room_id
+       WHERE room.workspace_id=$1 AND room.direct_participants IS NOT NULL
+         AND message.card_type='workspace-member-joined'
+       GROUP BY message.author_id,message.text`,
+      [WORKSPACE],
     );
+    expect(dmNotes.rows).toEqual([
+      {
+        author_id: SYSTEM_IDENTITY_ID,
+        text: `@${grant.agent_name.toLowerCase()} joined · invited by @owner`,
+        count: 1,
+      },
+    ]);
 
     expect(await loop.runOnce()).toBe(1);
     expect(send).toHaveBeenCalledWith(
@@ -5731,7 +5793,7 @@ describe('monolith integration', () => {
     }
   });
 
-  it('wakes the agents that subscribed to arrivals in that Room, and no one else', async () => {
+  it('does not wake Room subscribers for a Workspace-scoped arrival', async () => {
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Owl')`, [
       WELCOME_AGENT,
     ]);
@@ -5753,12 +5815,16 @@ describe('monolith integration', () => {
        WHERE room_id=$1 AND card_type='member-joined' AND author_id=$2`,
       [WELCOME_ROOM_ID, REVIEW_IDENTITY_ID],
     );
-    expect(joined.rows).toHaveLength(1);
-    expect(joined.rows[0]!.system_event.kind).toBe('joined');
-    // The sentence a person reads is unchanged by the kind, and it names the
-    // newcomer by handle exactly as every other join line does.
-    expect(joined.rows[0]!.text).toBe('@play-review joined');
-    expect(joined.rows[0]!.mention_ids).toEqual([WELCOME_AGENT]);
+    expect(joined.rows).toEqual([]);
+
+    const workspaceDms = await database.query<{ text: string; mention_ids: string[] }>(
+      `SELECT message.text,message.mention_ids FROM messages message
+       JOIN rooms room ON room.id=message.room_id
+       WHERE room.workspace_id=$1 AND room.direct_participants IS NOT NULL
+         AND message.card_type='workspace-member-joined'`,
+      [DEFAULT_WORKSPACE_ID],
+    );
+    expect(workspaceDms.rows).toEqual([{ text: '@play-review joined', mention_ids: [] }]);
 
     const otherRoom = await database.query<{ mention_ids: string[] }>(
       `SELECT mention_ids FROM messages WHERE room_id=$1 AND card_type='member-joined'`,

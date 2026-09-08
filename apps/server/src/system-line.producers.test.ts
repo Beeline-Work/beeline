@@ -5,6 +5,7 @@ import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
 import { joinRooms } from './membership-join.js';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 
 const OWNER = 'a'.repeat(64);
 const MEMBER = 'b'.repeat(64);
@@ -58,6 +59,22 @@ async function lines(database: PgliteDatabase, roomId = ROOM): Promise<Line[]> {
       `SELECT author_id,text,presentation,mention_ids,card_type,system_event FROM messages
        WHERE room_id=$1 AND presentation IN ('system','card') ORDER BY created_at,id`,
       [roomId],
+    )
+  ).rows;
+}
+
+async function workspaceLineCounts(
+  database: PgliteDatabase,
+  cardTypes: readonly string[],
+): Promise<Array<{ text: string; author_id: string; count: number }>> {
+  return (
+    await database.query<{ text: string; author_id: string; count: number }>(
+      `SELECT message.text,message.author_id,count(*)::int count
+       FROM messages message JOIN rooms room ON room.id=message.room_id
+       WHERE room.workspace_id=$1 AND room.direct_participants IS NOT NULL
+         AND message.card_type=ANY($2::text[])
+       GROUP BY message.text,message.author_id ORDER BY message.text`,
+      [WORKSPACE, [...cardTypes]],
     )
   ).rows;
 }
@@ -181,30 +198,27 @@ describe('system-line producers', () => {
         { workspaceId: WORKSPACE, memberId: HANDLELESS, role: 'admin' },
         OWNER,
       );
-      expect((await lines(database)).map((line) => line.text)).toEqual([
-        '@owner changed role to admin',
+      expect(await lines(database)).toEqual([]);
+      expect(await workspaceLineCounts(database, ['member-role'])).toEqual([
+        {
+          author_id: SYSTEM_IDENTITY_ID,
+          text: '@owner changed role to admin',
+          count: 5,
+        },
       ]);
     } finally {
       await database.close();
     }
   });
 
-  it('phrases an agent removal in every live Room the agent was in', async () => {
+  it("routes an agent Workspace removal to each person's @system DM", async () => {
     const database = await fixture();
     try {
       const phone = new PhoneService(database, 'http://local.test');
       await phone.execute('removeAgent', { workspaceId: WORKSPACE, agentId: AGENT }, OWNER);
-      expect(await lines(database)).toEqual([
-        expect.objectContaining({
-          author_id: OWNER,
-          text: '@owner removed @bee',
-          card_type: 'member-removed',
-          system_event: {
-            subject: { kind: 'person', id: OWNER, name: '@owner' },
-            verb: 'removed',
-            object: { text: '@bee', id: AGENT },
-          },
-        }),
+      expect(await lines(database)).toEqual([]);
+      expect(await workspaceLineCounts(database, ['member-removed'])).toEqual([
+        { author_id: SYSTEM_IDENTITY_ID, text: '@owner removed @bee', count: 5 },
       ]);
     } finally {
       await database.close();
@@ -284,8 +298,18 @@ describe('system-line producers', () => {
       );
       expect((await lines(database)).map((line) => line.text)).toEqual([
         "@owner changed @bee's model to Codex",
-        "@owner changed @member's role to admin",
-        '@owner changed workspace visibility to public',
+      ]);
+      expect(await workspaceLineCounts(database, ['member-role', 'workspace-visibility'])).toEqual([
+        {
+          author_id: SYSTEM_IDENTITY_ID,
+          text: "@owner changed @member's role to admin",
+          count: 5,
+        },
+        {
+          author_id: SYSTEM_IDENTITY_ID,
+          text: '@owner changed workspace visibility to public',
+          count: 5,
+        },
       ]);
     } finally {
       await database.close();

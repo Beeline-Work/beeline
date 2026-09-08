@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { SqlDatabase } from './database.js';
-import { systemIdentityMention, systemLine } from './system-line.js';
+import { systemIdentityMention, systemLine, workspaceSystemLine } from './system-line.js';
 
 type RoomSelection =
   | { type: 'none' }
@@ -181,42 +181,52 @@ export async function joinRooms(
       handle: context.identity_handle,
     });
 
-    for (const roomId of roomIds) {
-      await systemLine(transaction, {
-        roomId,
-        subject: {
-          kind: context.kind === 'agent' ? 'agent' : 'person',
-          id: input.identityId,
-          name: joiningMention,
-        },
-        verb: 'joined',
-        ...(context.inviter_id &&
-        context.inviter_kind &&
-        context.inviter_name &&
-        context.inviter_handle
-          ? {
-              attribution: {
-                verb: 'invited by',
-                actor: {
-                  kind: context.inviter_kind === 'agent' ? ('agent' as const) : ('person' as const),
+    const line = {
+      subject: {
+        kind: context.kind === 'agent' ? ('agent' as const) : ('person' as const),
+        id: input.identityId,
+        name: joiningMention,
+      },
+      verb: 'joined',
+      ...(context.inviter_id &&
+      context.inviter_kind &&
+      context.inviter_name &&
+      context.inviter_handle
+        ? {
+            attribution: {
+              verb: 'invited by',
+              actor: {
+                kind: context.inviter_kind === 'agent' ? ('agent' as const) : ('person' as const),
+                id: context.inviter_id,
+                name: systemIdentityMention({
                   id: context.inviter_id,
-                  name: systemIdentityMention({
-                    id: context.inviter_id,
-                    kind: context.inviter_kind,
-                    name: context.inviter_name,
-                    handle: context.inviter_handle,
-                  }),
-                },
+                  kind: context.inviter_kind,
+                  name: context.inviter_name,
+                  handle: context.inviter_handle,
+                }),
               },
-            }
-          : {}),
-        // The one thing a producer says about who cares: the kind. A Room's
-        // subscribers are resolved inside `systemLine`, so an arrival wakes
-        // exactly the agents that asked to hear about arrivals in THIS Room.
-        kind: 'joined',
-        cardType: 'member-joined',
-        card: { identityId: input.identityId },
+            },
+          }
+        : {}),
+      kind: 'joined' as const,
+      cardType: 'member-joined',
+      card: { identityId: input.identityId },
+    };
+
+    if (input.workspaceJoined) {
+      await workspaceSystemLine(transaction, {
+        workspaceId: input.workspaceId,
+        excludeRecipientIds: [input.identityId],
+        ...line,
+        cardType: 'workspace-member-joined',
       });
+    } else {
+      // Room-scoped arrivals wake only subscribers in the Room being joined.
+      for (const roomId of roomIds)
+        await systemLine(transaction, {
+          roomId,
+          ...line,
+        });
     }
 
     const notificationId = `workspace-join:${randomUUID()}`;

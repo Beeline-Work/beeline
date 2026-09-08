@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import {
   MAX_EVENT_DEPTH,
   MAX_TURNS_PER_ROOT,
@@ -11,9 +11,14 @@ import {
   type SystemSubject,
 } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
+import {
+  SYSTEM_IDENTITY_HANDLE,
+  SYSTEM_IDENTITY_ID,
+  SYSTEM_IDENTITY_NAME,
+} from '@beeline/api-contract/system-identity';
 
 /**
- * The one producer of every system notification in a Room.
+ * The one producer of every system notification in a Room or Workspace.
  *
  * Every membership note, yolo change, grant line, failed turn, GitHub fact,
  * corner marker, scheduled prompt and card header is phrased HERE, in one
@@ -80,6 +85,56 @@ export interface SystemLineInput {
    * an access notice landed above the message that provoked it.
    */
   readonly afterMessageId?: string;
+}
+
+export interface WorkspaceSystemLineInput extends Omit<
+  SystemLineInput,
+  'roomId' | 'authorId' | 'id' | 'mentions' | 'causeId' | 'afterMessageId'
+> {
+  readonly workspaceId: string;
+  /** Active people who should not receive this Workspace fact, such as the person who just joined. */
+  readonly excludeRecipientIds?: readonly string[];
+}
+
+export function directMessageRoomId(
+  workspaceId: string,
+  participants: readonly [string, string],
+): string {
+  const bytes = createHash('sha256')
+    .update(`buzz-dm:v1:${workspaceId}:${participants.join(':')}`)
+    .digest()
+    .subarray(0, 16);
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = bytes.toString('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+async function ensureSystemDirectMessageRoom(
+  database: SqlDatabase,
+  workspaceId: string,
+  personId: string,
+): Promise<string> {
+  await database.query(
+    `INSERT INTO identities(id,kind,name,handle,hidden_from_roster)
+     VALUES ($1,'human',$2,$3,true) ON CONFLICT(id) DO NOTHING`,
+    [SYSTEM_IDENTITY_ID, SYSTEM_IDENTITY_NAME, SYSTEM_IDENTITY_HANDLE],
+  );
+  const participants = [SYSTEM_IDENTITY_ID, personId].sort() as [string, string];
+  const roomId = directMessageRoomId(workspaceId, participants);
+  await database.query(
+    `INSERT INTO rooms(id,workspace_id,created_by,name,direct_participants)
+     VALUES ($1,$2,$3,'Direct message',$4::jsonb) ON CONFLICT(id) DO NOTHING`,
+    [roomId, workspaceId, SYSTEM_IDENTITY_ID, JSON.stringify(participants)],
+  );
+  for (const memberId of participants)
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES ($1,$2,$3,'member')
+       ON CONFLICT (room_id,identity_id) WHERE room_id IS NOT NULL DO NOTHING`,
+      [workspaceId, roomId, memberId],
+    );
+  return roomId;
 }
 
 /**
@@ -387,6 +442,46 @@ export async function systemLine(
       await orderingFloor(tx, input.roomId, input.causeId),
     ),
   );
+}
+
+/**
+ * Routes one Workspace-scoped lifecycle fact into each active person's
+ * read-only `@system` DM. Shared Rooms never receive these rows.
+ */
+export async function workspaceSystemLine(
+  database: SqlDatabase,
+  input: WorkspaceSystemLineInput,
+): Promise<SystemLineResult[]> {
+  const excluded = input.excludeRecipientIds ?? [];
+  const recipients = await database.query<{ identity_id: string }>(
+    `SELECT membership.identity_id
+     FROM memberships membership
+     JOIN identities identity ON identity.id=membership.identity_id
+       AND identity.kind='human' AND identity.hidden_from_roster=false
+     WHERE membership.workspace_id=$1 AND membership.room_id IS NULL
+       AND membership.removed_at IS NULL
+       AND NOT (membership.identity_id=ANY($2::text[]))
+     ORDER BY membership.identity_id`,
+    [input.workspaceId, [...excluded]],
+  );
+  const { workspaceId, excludeRecipientIds: _excludeRecipientIds, ...line } = input;
+  const results: SystemLineResult[] = [];
+  for (const recipient of recipients.rows) {
+    const roomId = await ensureSystemDirectMessageRoom(
+      database,
+      workspaceId,
+      recipient.identity_id,
+    );
+    results.push(
+      await systemLine(database, {
+        ...line,
+        roomId,
+        authorId: SYSTEM_IDENTITY_ID,
+        ...(line.card ? { card: { ...line.card, scope: 'workspace' } } : {}),
+      }),
+    );
+  }
+  return results;
 }
 
 /**

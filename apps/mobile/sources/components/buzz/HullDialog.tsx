@@ -53,9 +53,7 @@ export function hullDialogMinimumHeight(contentHeight: number, includesBody: boo
     HULL_DIALOG_LAYOUT.copyPaddingBottom +
     HULL_DIALOG_LAYOUT.titleLineHeight +
     contentHeight +
-    (includesBody
-      ? HULL_DIALOG_LAYOUT.bodyMarginTop + HULL_DIALOG_LAYOUT.bodyLineHeight
-      : 0)
+    (includesBody ? HULL_DIALOG_LAYOUT.bodyMarginTop + HULL_DIALOG_LAYOUT.bodyLineHeight : 0)
   );
 }
 

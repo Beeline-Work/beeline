@@ -89,9 +89,12 @@ function textContent(node: any): string {
 }
 
 describe('New Room form', () => {
-  it.each([{ viewport: 'short', height: 320 }, { viewport: 'normal', height: 844 }])(
+  it.each([
+    { viewport: 'short', height: 320 },
+    { viewport: 'normal', height: 844 },
+  ])(
     'allows chat-only creation after opening the repository picker in the $viewport viewport',
-    ({ height }) => {
+    ({ viewport, height }) => {
       windowHeight = height;
       const { renderer, host, submit } = mount();
 

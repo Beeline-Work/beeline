@@ -90,10 +90,10 @@ beforeAll(() => {
 
 afterAll(() => vi.restoreAllMocks());
 
-function renderMenu(onSelect = vi.fn()): ReactTestRenderer {
+function renderMenu(onSelect = vi.fn(), canManageWorkspace = true): ReactTestRenderer {
   let renderer!: ReactTestRenderer;
   act(() => {
-    renderer = create(React.createElement(RoomDeckComposeMenu, { onSelect }));
+    renderer = create(React.createElement(RoomDeckComposeMenu, { onSelect, canManageWorkspace }));
   });
   return renderer;
 }
@@ -106,6 +106,15 @@ function open(renderer: ReactTestRenderer) {
 }
 
 describe('Room deck compose menu', () => {
+  it('hides room creation and person invites from non-admin members', () => {
+    const renderer = renderMenu(vi.fn(), false);
+    open(renderer);
+
+    expect(renderer.root.findAllByProps({ testID: 'room-deck-compose-room' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'room-deck-compose-invite' })).toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: 'room-deck-compose-agent' })).toBeDefined();
+  });
+
   it('morphs the FAB and opens one continuous list with five accessible rows in order', () => {
     const renderer = renderMenu();
     const fab = renderer.root.findByProps({ testID: 'room-deck-compose-fab' });

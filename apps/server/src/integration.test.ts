@@ -331,6 +331,135 @@ describe('monolith integration', () => {
     expect((await request(`/v1/phone/workspaces/${workspaceId}`)).status).toBe(404);
   });
 
+  it('reserves workspace and Room management for workspace owners and admins', async () => {
+    const memberToken = await phoneToken('room-member');
+    const memberId = createHash('sha256').update('github:room-member').digest('hex');
+    const adminToken = await phoneToken('room-admin');
+    const adminId = createHash('sha256').update('github:room-admin').digest('hex');
+    await operation('addWorkspaceMember', {
+      workspaceId: WORKSPACE,
+      memberId,
+      role: 'member',
+    });
+    await operation('addWorkspaceMember', {
+      workspaceId: WORKSPACE,
+      memberId: adminId,
+      role: 'admin',
+    });
+
+    for (const [name, input] of [
+      ['updateWorkspace', { workspaceId: WORKSPACE, name: 'Member renamed' }],
+      ['createRoom', { workspaceId: WORKSPACE, name: 'Member room' }],
+      ['updateRoom', { roomId: ROOM, name: 'Member renamed room' }],
+      ['deleteRoom', { roomId: ROOM }],
+    ] as const) {
+      const response = await operation(name, input, memberToken);
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: 'workspace manager required' });
+    }
+
+    expect(
+      (
+        await operation(
+          'updateWorkspace',
+          { workspaceId: WORKSPACE, name: 'Admin renamed' },
+          adminToken,
+        )
+      ).status,
+    ).toBe(204);
+    const adminRoom = (await (
+      await operation('createRoom', { workspaceId: WORKSPACE, name: 'Admin room' }, adminToken)
+    ).json()) as { id: string };
+    expect(
+      (
+        await operation(
+          'updateRoom',
+          { roomId: adminRoom.id, name: 'Admin renamed room' },
+          adminToken,
+        )
+      ).status,
+    ).toBe(204);
+    expect(
+      (await request(`/v1/phone/rooms/${adminRoom.id}`, 'GET', undefined, adminToken)).status,
+    ).toBe(200);
+    expect(
+      (
+        (await (
+          await request(`/v1/phone/rooms/${adminRoom.id}`, 'GET', undefined, adminToken)
+        ).json()) as RoomView
+      ).viewer.permissions.manage,
+    ).toBe(true);
+    expect((await operation('deleteRoom', { roomId: adminRoom.id }, adminToken)).status).toBe(204);
+  });
+
+  it('derives Room and corner management from the active Workspace role', async () => {
+    const staleToken = await phoneToken('stale-room-owner');
+    const staleId = createHash('sha256').update('github:stale-room-owner').digest('hex');
+    await operation('addWorkspaceMember', {
+      workspaceId: WORKSPACE,
+      memberId: staleId,
+      role: 'admin',
+    });
+    const room = (await (
+      await operation(
+        'createRoom',
+        { workspaceId: WORKSPACE, name: 'Stale owner room' },
+        staleToken,
+      )
+    ).json()) as { id: string };
+    await database.query(
+      `UPDATE memberships SET role='member' WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`,
+      [WORKSPACE, staleId],
+    );
+    expect(
+      (
+        (await (
+          await request(`/v1/phone/rooms/${room.id}`, 'GET', undefined, staleToken)
+        ).json()) as RoomView
+      ).viewer.permissions.manage,
+    ).toBe(false);
+    expect(
+      (
+        (await (
+          await request(`/v1/phone/rooms/${room.id}/corners`, 'GET', undefined, staleToken)
+        ).json()) as { viewer: { permissions: { manage: boolean } } }
+      ).viewer.permissions.manage,
+    ).toBe(false);
+  });
+
+  it('lets a Workspace manager remove a stale Room owner', async () => {
+    const staleToken = await phoneToken('stale-room-owner-removal');
+    const staleId = createHash('sha256').update('github:stale-room-owner-removal').digest('hex');
+    const adminToken = await phoneToken('room-removal-admin');
+    const adminId = createHash('sha256').update('github:room-removal-admin').digest('hex');
+    await operation('addWorkspaceMember', {
+      workspaceId: WORKSPACE,
+      memberId: staleId,
+      role: 'admin',
+    });
+    const room = (await (
+      await operation(
+        'createRoom',
+        { workspaceId: WORKSPACE, name: 'Stale owner removal' },
+        staleToken,
+      )
+    ).json()) as { id: string };
+    await operation('addWorkspaceMember', {
+      workspaceId: WORKSPACE,
+      memberId: adminId,
+      role: 'admin',
+    });
+    await operation('addRoomMember', { roomId: room.id, memberId: adminId });
+    await database.query(
+      `UPDATE memberships SET role='member' WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`,
+      [WORKSPACE, staleId],
+    );
+    expect(
+      (await operation('removeRoomMember', { roomId: room.id, memberId: staleId }, adminToken))
+        .status,
+    ).toBe(204);
+  });
+
   it('serves Welcome and makes person invites reusable, retry-safe, and Room-complete', async () => {
     const aliceToken = await phoneToken('alice');
     const bobToken = await phoneToken('bob');
@@ -4105,7 +4234,152 @@ describe('monolith integration', () => {
     expect(isAgentDetailView(view)).toBe(true);
   });
 
-  it('gates the agent yolo switch to the owner or a workspace admin and posts one system line per Room', async () => {
+  it('lets any workspace member invite their own agent', async () => {
+    const memberToken = await phoneToken('pairing-member');
+    const memberId = createHash('sha256').update('github:pairing-member').digest('hex');
+    await operation('addWorkspaceMember', { workspaceId: WORKSPACE, memberId, role: 'member' });
+
+    const pairing = await operation(
+      'createAgentPairingCode',
+      { workspaceId: WORKSPACE },
+      memberToken,
+    );
+    expect(pairing.status).toBe(200);
+    expect(await pairing.json()).toEqual({
+      code: expect.stringMatching(/^[0-9A-F]{8}-[0-9A-F]{8}$/),
+      expiresAt: expect.any(Number),
+    });
+    expect(
+      (
+        await database.query(
+          `SELECT created_by FROM agent_pairing_codes
+           WHERE workspace_id=$1 ORDER BY expires_at DESC LIMIT 1`,
+          [WORKSPACE],
+        )
+      ).rows,
+    ).toEqual([{ created_by: memberId }]);
+  });
+
+  it("refuses admin configuration of another owner's agent but permits an admin ban", async () => {
+    const adminToken = await phoneToken('agent-admin');
+    const adminId = createHash('sha256').update('github:agent-admin').digest('hex');
+    await operation('addWorkspaceMember', {
+      workspaceId: WORKSPACE,
+      memberId: adminId,
+      role: 'admin',
+    });
+
+    for (const [name, input, error] of [
+      [
+        'updateAgentSoul',
+        {
+          workspaceId: WORKSPACE,
+          agentId: AGENT,
+          name: 'Taken over',
+          instructions: 'Obey the admin',
+          avatarSeed: AGENT,
+        },
+        "Only the agent's owner can change this",
+      ],
+      [
+        'updateAgentModelSelection',
+        { workspaceId: WORKSPACE, agentId: AGENT, model: 'admin-model' },
+        "Only the agent's owner can change this",
+      ],
+      [
+        'updateAgentYolo',
+        { workspaceId: WORKSPACE, agentId: AGENT, enabled: false },
+        "Only the agent's owner can change this",
+      ],
+      [
+        'updateAgentAccessPolicy',
+        { workspaceId: WORKSPACE, agentId: AGENT, policy: 'creator' },
+        "Only the agent's owner can change this",
+      ],
+    ] as const) {
+      const response = await operation(name, input, adminToken);
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({ error });
+    }
+
+    expect(
+      (await operation('removeAgent', { workspaceId: WORKSPACE, agentId: AGENT }, adminToken))
+        .status,
+    ).toBe(204);
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM memberships WHERE workspace_id=$1 AND identity_id=$2
+           AND removed_at IS NULL`,
+          [WORKSPACE, AGENT],
+        )
+      ).rowCount,
+    ).toBe(0);
+  });
+
+  it('forces yolo off in public workspaces without overwriting the stored preference', async () => {
+    await database.query(`UPDATE agents SET yolo_mode=true WHERE agent_id=$1`, [AGENT]);
+    expect(
+      await (
+        await daemonOperation('getAgentConfiguration', { agentId: AGENT, roomId: ROOM })
+      ).json(),
+    ).toEqual(expect.objectContaining({ yoloMode: true }));
+
+    expect(
+      (
+        await operation('updateWorkspace', {
+          workspaceId: WORKSPACE,
+          visibility: 'public',
+        })
+      ).status,
+    ).toBe(204);
+    const publicConfiguration = await daemonOperation('getAgentConfiguration', {
+      agentId: AGENT,
+      roomId: ROOM,
+    });
+    expect(await publicConfiguration.json()).toEqual(expect.objectContaining({ yoloMode: false }));
+    expect(
+      await (await daemonOperation('getAgentConfiguration', { agentId: AGENT })).json(),
+    ).toEqual(expect.objectContaining({ yoloMode: true }));
+    const publicView = (await (
+      await request(`/v1/phone/workspaces/${WORKSPACE}/agents/${AGENT}`)
+    ).json()) as { yolo: unknown };
+    expect(publicView.yolo).toEqual(
+      expect.objectContaining({ enabled: false, forcedOff: true, canChange: true }),
+    );
+    expect(
+      (await database.query(`SELECT yolo_mode FROM agents WHERE agent_id=$1`, [AGENT])).rows,
+    ).toEqual([{ yolo_mode: true }]);
+    expect(
+      await (
+        await daemonOperation('requestAgentGrant', {
+          roomId: ROOM,
+          kind: 'command',
+          target: 'git status',
+          reason: 'inspect the checkout',
+        })
+      ).json(),
+    ).toEqual(expect.objectContaining({ status: 'pending', auto: false }));
+
+    const rejected = await operation('updateAgentYolo', {
+      workspaceId: WORKSPACE,
+      agentId: AGENT,
+      enabled: true,
+    });
+    expect(rejected.status).toBe(403);
+    expect(await rejected.json()).toEqual({
+      error: 'yolo cannot be enabled in a public workspace',
+    });
+
+    await operation('updateWorkspace', { workspaceId: WORKSPACE, visibility: 'invite-only' });
+    expect(
+      await (
+        await daemonOperation('getAgentConfiguration', { agentId: AGENT, roomId: ROOM })
+      ).json(),
+    ).toEqual(expect.objectContaining({ yoloMode: true }));
+  });
+
+  it('gates the agent yolo switch to its owner and posts one system line per Room', async () => {
     const adminToken = await phoneToken('admin');
     const adminId = createHash('sha256').update('github:admin').digest('hex');
     const memberToken = await phoneToken('member');
@@ -4172,7 +4446,7 @@ describe('monolith integration', () => {
     );
     expect(refused.status).toBe(403);
     expect(await refused.json()).toEqual({
-      error: "Only the agent's owner or a workspace admin can change this",
+      error: "Only the agent's owner can change this",
     });
     expect(
       (await database.query(`SELECT yolo_mode FROM agents WHERE agent_id=$1`, [AGENT])).rows,
@@ -4260,21 +4534,23 @@ describe('monolith integration', () => {
     });
     expect(await configuration.json()).toEqual(expect.objectContaining({ yoloMode: true }));
 
-    // A workspace admin who does not own the agent flips it off.
+    // A workspace admin who does not own the agent cannot flip it off.
     const admin = await operation(
       'updateAgentYolo',
       { workspaceId: WORKSPACE, agentId: AGENT, enabled: false },
       adminToken,
     );
-    expect(admin.status).toBe(204);
-    const off = (await (
-      await request(`/v1/phone/workspaces/${WORKSPACE}/agents/${AGENT}`)
-    ).json()) as {
-      yolo: { enabled: boolean; setBy?: { name: string } };
-    };
-    expect(off.yolo).toEqual(
-      expect.objectContaining({ enabled: false, setBy: { name: 'Admin' }, canChange: true }),
-    );
+    expect(admin.status).toBe(403);
+    expect(await admin.json()).toEqual({ error: "Only the agent's owner can change this" });
+    const adminView = (await (
+      await request(
+        `/v1/phone/workspaces/${WORKSPACE}/agents/${AGENT}`,
+        'GET',
+        undefined,
+        adminToken,
+      )
+    ).json()) as { yolo: { enabled: boolean; canChange: boolean } };
+    expect(adminView.yolo).toEqual(expect.objectContaining({ enabled: true, canChange: false }));
     expect(
       (
         await database.query(
@@ -4282,10 +4558,7 @@ describe('monolith integration', () => {
           [ROOM],
         )
       ).rows.map((row) => row.text),
-    ).toEqual([
-      'Owner turned yolo on for Bee · grant requests are now approved automatically',
-      'Admin turned yolo off for Bee · grant requests now ask before running',
-    ]);
+    ).toEqual(['Owner turned yolo on for Bee · grant requests are now approved automatically']);
   });
   it('runs the grant loop: pending card with mention, coalescing, owner ALWAYS/ONCE/NO, gate refusals, listing, revoke', async () => {
     // New agents default to yolo on; this test exercises the pending-card path

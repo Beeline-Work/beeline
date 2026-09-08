@@ -84,7 +84,6 @@ describe('Room list layout contract', () => {
     // rows continue underneath it and no separator divides it from the list.
     expect(source).toContain('pointerEvents="box-none"');
     expect(source).toContain('style={[styles.composeOverlay, { bottom: 16 + insets.bottom }]}');
-    expect(source).toContain('<RoomDeckComposeMenu onSelect={compose} />');
     expect(source).not.toContain('styles.footer');
     expect(source).not.toContain('ListFooterComponent');
     expect(styleBlock(source, 'composeOverlay')).toContain("position: 'absolute'");

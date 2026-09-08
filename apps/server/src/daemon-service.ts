@@ -255,7 +255,10 @@ export class DaemonService {
           (input as Input<'getIdentitySuccession'>).identityId,
         )) as Output<Name>;
       case 'getAgentConfiguration':
-        return (await this.configuration(authenticatedAgentId)) as Output<Name>;
+        return (await this.configuration(
+          authenticatedAgentId,
+          (input as Input<'getAgentConfiguration'>).roomId,
+        )) as Output<Name>;
       case 'getAgentPresence':
         return (await this.presence(
           input as Input<'getAgentPresence'>,
@@ -885,7 +888,8 @@ export class DaemonService {
     }
     return { currentIdentityId: current, predecessors };
   }
-  private async configuration(agentId: string) {
+  private async configuration(agentId: string, roomId?: string) {
+    if (roomId) await this.access(roomId, agentId);
     const row = (
       await this.database.query<{
         soul: { name: string; instructions: string } | null;
@@ -894,10 +898,13 @@ export class DaemonService {
         commands: Array<{ name: string; description?: string }>;
         yolo_mode: boolean;
       }>(
-        `SELECT a.soul,a.selected_model,a.selected_effort,a.commands,a.yolo_mode
+        `SELECT a.soul,a.selected_model,a.selected_effort,a.commands,
+                CASE WHEN workspace.visibility='public' THEN false ELSE a.yolo_mode END yolo_mode
          FROM agents a
+         LEFT JOIN rooms room ON room.id=$2
+         LEFT JOIN workspaces workspace ON workspace.id=room.workspace_id
          WHERE a.agent_id=$1`,
-        [agentId],
+        [agentId, roomId],
       )
     ).rows[0];
     return {
@@ -1822,10 +1829,12 @@ export class DaemonService {
         owner_handle: string | null;
         owner_avatar: string | null;
       }>(
-        `SELECT room.workspace_id,room.parent_id,a.owner_id,a.yolo_mode,
+        `SELECT room.workspace_id,room.parent_id,a.owner_id,
+                CASE WHEN workspace.visibility='public' THEN false ELSE a.yolo_mode END yolo_mode,
                 agent.name agent_name,agent.handle agent_handle,agent.avatar agent_avatar,
                 owner.name owner_name,owner.handle owner_handle,owner.avatar owner_avatar
          FROM rooms room
+         JOIN workspaces workspace ON workspace.id=room.workspace_id
          JOIN agents a ON a.agent_id=$2
          JOIN identities agent ON agent.id=a.agent_id
          JOIN identities owner ON owner.id=a.owner_id

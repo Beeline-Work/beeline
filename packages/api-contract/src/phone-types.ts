@@ -454,6 +454,8 @@ export type AgentAccessView = {
 
 export type AgentYoloView = {
   readonly enabled: boolean;
+  /** The stored preference is overridden while this Workspace is public. */
+  readonly forcedOff?: boolean;
   readonly setBy?: { readonly name: string };
   /** Absolute Unix timestamp in seconds. */
   readonly setAt?: number;

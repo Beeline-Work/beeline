@@ -626,9 +626,16 @@ export class PhoneService {
 
   async readRoom(roomId: string, viewerId: string): Promise<RoomView | null> {
     const roomResult = await this.database.query<
-      RoomRow & { viewer_role: 'owner' | 'admin' | 'member' }
+      RoomRow & {
+        viewer_role: 'owner' | 'admin' | 'member';
+        workspace_role: 'owner' | 'admin' | 'member';
+      }
     >(
-      `SELECT r.*,m.role viewer_role FROM rooms r JOIN memberships m ON m.room_id=r.id
+      `SELECT r.*,m.role viewer_role,workspace_member.role workspace_role
+       FROM rooms r JOIN memberships m ON m.room_id=r.id
+       JOIN memberships workspace_member ON workspace_member.workspace_id=r.workspace_id
+         AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
+         AND workspace_member.removed_at IS NULL
        WHERE r.id=$1 AND m.identity_id=$2 AND m.removed_at IS NULL`,
       [roomId, viewerId],
     );
@@ -736,7 +743,7 @@ export class PhoneService {
         role: room.viewer_role,
         permissions: {
           send: !room.archived_at && !room.direct_participants?.includes(SYSTEM_IDENTITY_ID),
-          manage: room.viewer_role !== 'member',
+          manage: room.workspace_role !== 'member',
         },
       },
       ...(room.direct_participants?.length === 2
@@ -805,9 +812,17 @@ export class PhoneService {
     roomViewFamilyOrder = false,
   ): Promise<CornerListView | null> {
     const parent = await this.database.query<
-      RoomRow & { viewer_role: 'owner' | 'admin' | 'member' }
+      RoomRow & {
+        viewer_role: 'owner' | 'admin' | 'member';
+        workspace_role: 'owner' | 'admin' | 'member';
+      }
     >(
-      `SELECT r.*,m.role viewer_role FROM rooms r JOIN memberships m ON m.room_id=r.id WHERE r.id=$1 AND m.identity_id=$2 AND m.removed_at IS NULL`,
+      `SELECT r.*,m.role viewer_role,workspace_member.role workspace_role
+       FROM rooms r JOIN memberships m ON m.room_id=r.id
+       JOIN memberships workspace_member ON workspace_member.workspace_id=r.workspace_id
+         AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
+         AND workspace_member.removed_at IS NULL
+       WHERE r.id=$1 AND m.identity_id=$2 AND m.removed_at IS NULL`,
       [roomId, viewerId],
     );
     const room = parent.rows[0];
@@ -919,7 +934,7 @@ export class PhoneService {
       viewer: {
         identity: viewerIdentity,
         role: room.viewer_role,
-        permissions: { send: !room.archived_at, manage: room.viewer_role !== 'member' },
+        permissions: { send: !room.archived_at, manage: room.workspace_role !== 'member' },
       },
       watchFilters: [],
     };
@@ -946,23 +961,31 @@ export class PhoneService {
         selected_model: string | null;
         selected_effort: string | null;
         yolo_mode: boolean;
+        yolo_forced_off: boolean;
         yolo_set_by_name: string | null;
         yolo_set_at: Date | null;
         can_change_yolo: boolean;
+        can_manage_grants: boolean;
         access_policy: unknown;
         owner_id: string | null;
         owner_name: string | null;
         owner_handle: string | null;
       }>(
-        `SELECT a.soul,a.model_catalog,a.selected_model,a.selected_effort,a.yolo_mode,a.yolo_set_at,
+        `SELECT a.soul,a.model_catalog,a.selected_model,a.selected_effort,
+                CASE WHEN workspace.visibility='public' THEN false ELSE a.yolo_mode END yolo_mode,
+                workspace.visibility='public' yolo_forced_off,a.yolo_set_at,
                 setter.name yolo_set_by_name,a.access_policy,a.owner_id,
                 owner.name owner_name,owner.handle owner_handle,
-                (a.owner_id=$3 OR EXISTS (
-                  SELECT 1 FROM memberships m
-                  WHERE m.workspace_id=$2 AND m.room_id IS NULL AND m.identity_id=$3
-                    AND m.role IN ('owner','admin') AND m.removed_at IS NULL
-                )) can_change_yolo
+                a.owner_id=$3 can_change_yolo,
+                (a.owner_id=$3 OR viewer_membership.role IN ('owner','admin')) can_manage_grants
          FROM agents a
+         JOIN memberships agent_membership ON agent_membership.identity_id=a.agent_id
+           AND agent_membership.workspace_id=$2 AND agent_membership.room_id IS NULL
+           AND agent_membership.removed_at IS NULL
+         JOIN workspaces workspace ON workspace.id=agent_membership.workspace_id
+         JOIN memberships viewer_membership ON viewer_membership.workspace_id=$2
+           AND viewer_membership.room_id IS NULL AND viewer_membership.identity_id=$3
+           AND viewer_membership.removed_at IS NULL
          LEFT JOIN identities setter ON setter.id=a.yolo_set_by
          LEFT JOIN identities owner ON owner.id=a.owner_id
          WHERE a.agent_id=$1`,
@@ -996,6 +1019,7 @@ export class PhoneService {
         : {}),
       yolo: {
         enabled: config?.yolo_mode ?? false,
+        ...(config?.yolo_forced_off ? { forcedOff: true } : {}),
         ...(config?.yolo_set_by_name ? { setBy: { name: config.yolo_set_by_name } } : {}),
         ...(config?.yolo_set_at ? { setAt: unix(config.yolo_set_at) } : {}),
         canChange: config?.can_change_yolo ?? false,
@@ -1016,8 +1040,8 @@ export class PhoneService {
         canChange: config?.can_change_yolo ?? false,
       },
       grants: await this.agentGrants(workspaceId, agentId),
-      // The same authority axis as yolo: the agent's owner or a Workspace manager.
-      canManageGrants: config?.can_change_yolo ?? false,
+      // Grant decisions retain their separate owner-or-Workspace-manager axis.
+      canManageGrants: config?.can_manage_grants ?? false,
       watchFilters: [],
     };
   }
@@ -1363,7 +1387,7 @@ export class PhoneService {
    * Authority is the pairing code itself — typed out of the app by someone who
    * could already add an agent — and it expires with the claim, so the CLI
    * never holds standing authority over the name. Every later rename goes
-   * through the app's manager-gated agent page.
+   * through the app's owner-gated agent page.
    */
   async renameConnectedAgent(input: {
     code: string;
@@ -1783,7 +1807,7 @@ export class PhoneService {
   private async createRoomSchedule(input: Input<'createRoomSchedule'>, viewerId: string) {
     const target = await this.requireTopLevelRoom(input.roomId);
     if (target.workspace_id !== input.workspaceId) throw new Error('room is not in workspace');
-    await this.requireManager(input.roomId, viewerId);
+    await this.requireWorkspaceManager(target.workspace_id, viewerId);
     if (typeof input.message !== 'string' || !input.message.trim())
       throw new Error('schedule message is required');
     if (!input.cadence || typeof input.cadence !== 'object')
@@ -1818,7 +1842,8 @@ export class PhoneService {
     return roomSchedule(inserted.rows[0]!);
   }
   private async listRoomSchedules(roomId: string, viewerId: string) {
-    await this.requireManager(roomId, viewerId);
+    const room = await this.requireTopLevelRoom(roomId);
+    await this.requireWorkspaceManager(room.workspace_id, viewerId);
     const schedules = await this.database.query<RoomScheduleRow>(
       `SELECT id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at,created_at
        FROM agent_schedules WHERE room_id=$1 ORDER BY created_at,id`,
@@ -1830,7 +1855,8 @@ export class PhoneService {
     input: Input<'deleteRoomSchedule'>,
     viewerId: string,
   ): Promise<void> {
-    await this.requireManager(input.roomId, viewerId);
+    const room = await this.requireTopLevelRoom(input.roomId);
+    await this.requireWorkspaceManager(room.workspace_id, viewerId);
     const deleted = await this.database.query(
       `DELETE FROM agent_schedules WHERE id=$1 AND room_id=$2`,
       [input.scheduleId, input.roomId],
@@ -2102,7 +2128,8 @@ export class PhoneService {
       )
     ).rows[0];
     if (!pending || pending.status !== 'pending') throw new Error('permission not found');
-    if (viewerId !== pending.principal_id) await this.requireManager(input.roomId, viewerId);
+    if (viewerId !== pending.principal_id)
+      await this.requireRoomWorkspaceManager(input.roomId, viewerId);
     const card = pending.card;
     const cardAgent = card?.agent as { pubkey?: unknown } | undefined;
     if (
@@ -2270,21 +2297,16 @@ export class PhoneService {
     return { id };
   }
   private async updateRoom(input: Input<'updateRoom'>, viewerId: string) {
-    await this.requireTopLevelRoom(input.roomId);
-    await this.requireManager(input.roomId, viewerId);
+    const room = await this.requireTopLevelRoom(input.roomId);
+    await this.requireWorkspaceManager(room.workspace_id, viewerId);
     await this.database.query(
       `UPDATE rooms SET name=COALESCE($2,name),visibility=COALESCE($3,visibility),updated_at=now() WHERE id=$1`,
       [input.roomId, input.name ?? null, input.visibility ?? null],
     );
   }
   private async deleteRoom(roomId: string, viewerId: string) {
-    await this.requireTopLevelRoom(roomId);
-    const membership = await this.database.query(
-      `SELECT 1 FROM memberships
-       WHERE room_id=$1 AND identity_id=$2 AND role='owner' AND removed_at IS NULL`,
-      [roomId, viewerId],
-    );
-    if (!membership.rowCount) throw new Error('room owner required');
+    const room = await this.requireTopLevelRoom(roomId);
+    await this.requireWorkspaceManager(room.workspace_id, viewerId);
     await this.database.query(`DELETE FROM rooms WHERE id=$1`, [roomId]);
   }
   private async leaveRoom(roomId: string, viewerId: string) {
@@ -2318,7 +2340,7 @@ export class PhoneService {
   }
   private async addRoomMember(input: Input<'addRoomMember'>, viewerId: string) {
     const room = await this.requireTopLevelRoom(input.roomId);
-    await this.requireManager(input.roomId, viewerId);
+    await this.requireWorkspaceManager(room.workspace_id, viewerId);
     const workspaceMember = await this.database.query(
       `SELECT 1 FROM memberships
        WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND removed_at IS NULL`,
@@ -2333,23 +2355,14 @@ export class PhoneService {
     return { joined: result.roomIds.length > 0 };
   }
   private async removeRoomMember(input: Input<'removeRoomMember'>, viewerId: string) {
-    await this.requireTopLevelRoom(input.roomId);
-    await this.requireManager(input.roomId, viewerId);
-    const roles = await this.database.query<{
-      identity_id: string;
-      role: 'owner' | 'admin' | 'member';
-    }>(
-      `SELECT identity_id,role FROM memberships
-       WHERE room_id=$1 AND identity_id IN ($2,$3) AND removed_at IS NULL`,
-      [input.roomId, viewerId, input.memberId],
+    const room = await this.requireTopLevelRoom(input.roomId);
+    await this.requireWorkspaceManager(room.workspace_id, viewerId);
+    const target = await this.database.query(
+      `SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
+      [input.roomId, input.memberId],
     );
-    const actor = roles.rows.find((row) => row.identity_id === viewerId);
-    const target = roles.rows.find((row) => row.identity_id === input.memberId);
-    if (!target) throw new Error('room membership required');
+    if (!target.rowCount) throw new Error('room membership required');
     if (input.memberId === viewerId) throw new Error('room managers cannot remove themselves');
-    if (target.role === 'owner' || (actor?.role === 'admin' && target.role === 'admin')) {
-      throw new Error('room manager cannot remove a member with equal or greater authority');
-    }
     const remover = await this.requireIdentity(viewerId);
     const removed = await this.requireIdentity(input.memberId);
     await this.database.transaction(async (database) => {
@@ -2548,7 +2561,7 @@ export class PhoneService {
     });
   }
   private async createPairing(input: Input<'createAgentPairingCode'>, viewerId: string) {
-    await this.requireWorkspaceManager(input.workspaceId, viewerId);
+    await this.requireWorkspaceMember(input.workspaceId, viewerId);
     const code = createAgentPairingCode(randomBytes(8));
     const expiresAt = Date.now() + 15 * 60_000;
     await this.database.query(
@@ -2732,31 +2745,38 @@ export class PhoneService {
   }
   /**
    * The agent "yolo" switch. Authorization is decided here, never on the phone:
-   * the viewer must be the agent's owner (the identity that connected it) or
-   * hold a manager role in the agent's Workspace. A flip posts one system line
+   * the viewer must be the agent's owner (the identity that connected it).
+   * Public Workspaces reject enabling yolo while preserving the stored value
+   * for a later return to invite-only. A flip posts one system line
    * to every live Room the agent is in so the change is visible where the
    * agent works; the line carries no mention and never pushes.
    */
   private async updateAgentYolo(input: Input<'updateAgentYolo'>, viewerId: string) {
     if (typeof input.enabled !== 'boolean') throw new Error('enabled is required');
     const agent = (
-      await this.database.query<{ owner_id: string; agent_name: string; viewer_name: string }>(
-        `SELECT a.owner_id,agent.name agent_name,viewer.name viewer_name
+      await this.database.query<{
+        owner_id: string;
+        agent_name: string;
+        viewer_name: string;
+        workspace_visibility: 'public' | 'invite-only';
+      }>(
+        `SELECT a.owner_id,agent.name agent_name,viewer.name viewer_name,
+                workspace.visibility workspace_visibility
          FROM agents a
          JOIN identities agent ON agent.id=a.agent_id
          JOIN memberships m ON m.identity_id=a.agent_id
            AND m.workspace_id=$2 AND m.room_id IS NULL AND m.removed_at IS NULL
          JOIN identities viewer ON viewer.id=$3
+         JOIN workspaces workspace ON workspace.id=$2
          WHERE a.agent_id=$1`,
         [input.agentId, input.workspaceId, viewerId],
       )
     ).rows[0];
     if (!agent) throw new Error('agent not found in workspace');
-    const manager = await this.database.query(
-      `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND role IN ('owner','admin') AND removed_at IS NULL`,
-      [input.workspaceId, viewerId],
-    );
-    if (agent.owner_id !== viewerId && !manager.rowCount) throw new Error(YOLO_AUTHORITY_MESSAGE);
+    await this.requireWorkspaceMember(input.workspaceId, viewerId);
+    if (agent.owner_id !== viewerId) throw new Error(AGENT_OWNER_AUTHORITY_MESSAGE);
+    if (input.enabled && agent.workspace_visibility === 'public')
+      throw new Error('yolo cannot be enabled in a public workspace');
     await this.database.transaction(async (database) => {
       const changed = await database.query(
         `UPDATE agents SET yolo_mode=$2,yolo_set_by=$3,yolo_set_at=now(),updated_at=now()
@@ -2786,8 +2806,8 @@ export class PhoneService {
     });
   }
   /**
-   * Who may address this agent. Authorization is the yolo axis: the agent's owner
-   * (the identity that connected it) or a Workspace manager. The row is the ONLY
+   * Who may address this agent. Authorization belongs only to the agent's owner
+   * (the identity that connected it). The row is the ONLY
    * authority — a running helper reads it through `getRoomAuthority` on its next
    * poll, so the change takes effect without a reconnect or a restart.
    *
@@ -2824,12 +2844,8 @@ export class PhoneService {
       )
     ).rows[0];
     if (!agent) throw new Error('agent not found in workspace');
-    const manager = await this.database.query(
-      `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND role IN ('owner','admin') AND removed_at IS NULL`,
-      [input.workspaceId, viewerId],
-    );
-    if (agent.owner_id !== viewerId && !manager.rowCount)
-      throw new Error(ACCESS_POLICY_AUTHORITY_MESSAGE);
+    await this.requireWorkspaceMember(input.workspaceId, viewerId);
+    if (agent.owner_id !== viewerId) throw new Error(ACCESS_POLICY_AUTHORITY_MESSAGE);
     await this.database.transaction(async (database) => {
       const changed = await database.query(
         `UPDATE agents SET access_policy=$2::jsonb,updated_at=now()
@@ -2913,7 +2929,7 @@ export class PhoneService {
    * transcript and its PR link readable.
    */
   private async removeAgent(input: Input<'removeAgent'>, viewerId: string) {
-    await this.requireWorkspaceAgent(input.workspaceId, input.agentId, viewerId);
+    await this.requireWorkspaceAgentRemover(input.workspaceId, input.agentId, viewerId);
     const remover = await this.requireIdentity(viewerId);
     const removed = await this.requireIdentity(input.agentId);
     await this.database.transaction(async (database) => {
@@ -3238,7 +3254,7 @@ export class PhoneService {
     if (!updated.rowCount) throw new Error('identity not found');
   }
   private async setRepository(input: Input<'setRoomRepository'>, viewerId: string) {
-    await this.requireManager(input.roomId, viewerId);
+    await this.requireRoomWorkspaceManager(input.roomId, viewerId);
     if (input.githubInstallationId !== undefined) {
       const repositoryId = input.key.match(/^github:(\d+)$/)?.[1];
       const fullName = input.remote.match(/^git:\/\/github\.com\/([^/\s]+\/[^/\s]+)$/i)?.[1];
@@ -3286,7 +3302,7 @@ export class PhoneService {
     };
   }
   private async setTargetBranch(input: Input<'setRoomTargetBranch'>, viewerId: string) {
-    await this.requireManager(input.roomId, viewerId);
+    await this.requireRoomWorkspaceManager(input.roomId, viewerId);
     const updated = await this.database.query(
       `UPDATE rooms SET repository_target_branch=$2,repository_updated_at=now(),updated_at=now() WHERE id=$1 AND repository_key IS NOT NULL AND repository_remote IS NOT NULL`,
       [input.roomId, input.targetBranch],
@@ -3295,7 +3311,7 @@ export class PhoneService {
     return this.roomRepository(input.roomId);
   }
   private async setGitHubEvents(input: Input<'setRoomGitHubEvents'>, viewerId: string) {
-    await this.requireManager(input.roomId, viewerId);
+    await this.requireRoomWorkspaceManager(input.roomId, viewerId);
     const updated = await this.database.query(
       `UPDATE rooms SET github_events_enabled=$2,repository_updated_at=now(),updated_at=now() WHERE id=$1 AND repository_key IS NOT NULL AND repository_remote IS NOT NULL`,
       [input.roomId, input.enabled],
@@ -3436,15 +3452,51 @@ export class PhoneService {
     return identity(row, this.publicOrigin);
   }
   private async requireWorkspaceAgent(workspaceId: string, agentId: string, viewerId: string) {
-    await this.requireWorkspaceManager(workspaceId, viewerId);
-    const result = await this.database.query(
-      `SELECT 1
+    const result = await this.database.query<{ owner_id: string }>(
+      `SELECT a.owner_id
        FROM agents a
        JOIN memberships m ON m.identity_id=a.agent_id
-       WHERE a.agent_id=$1 AND m.workspace_id=$2 AND m.room_id IS NULL AND m.removed_at IS NULL`,
+       WHERE a.agent_id=$1 AND m.workspace_id=$2
+         AND m.room_id IS NULL AND m.removed_at IS NULL`,
       [agentId, workspaceId],
     );
-    if (!result.rowCount) throw new Error('agent not found in workspace');
+    if (!result.rows[0]) throw new Error('agent not found in workspace');
+    await this.requireWorkspaceMember(workspaceId, viewerId);
+    if (result.rows[0].owner_id !== viewerId) throw new Error(AGENT_OWNER_AUTHORITY_MESSAGE);
+  }
+  private async requireWorkspaceAgentRemover(
+    workspaceId: string,
+    agentId: string,
+    viewerId: string,
+  ) {
+    const result = await this.database.query<{ owner_id: string; viewer_role: string | null }>(
+      `SELECT a.owner_id,viewer_membership.role viewer_role
+       FROM agents a
+       JOIN memberships agent_membership ON agent_membership.identity_id=a.agent_id
+       LEFT JOIN memberships viewer_membership ON viewer_membership.workspace_id=agent_membership.workspace_id
+         AND viewer_membership.room_id IS NULL AND viewer_membership.identity_id=$3
+         AND viewer_membership.removed_at IS NULL
+       WHERE a.agent_id=$1 AND agent_membership.workspace_id=$2
+         AND agent_membership.room_id IS NULL AND agent_membership.removed_at IS NULL`,
+      [agentId, workspaceId, viewerId],
+    );
+    const agent = result.rows[0];
+    if (!agent) throw new Error('agent not found in workspace');
+    if (!agent.viewer_role) throw new Error('workspace membership required');
+    if (
+      agent.owner_id !== viewerId &&
+      agent.viewer_role !== 'owner' &&
+      agent.viewer_role !== 'admin'
+    )
+      throw new Error('agent removal access denied');
+  }
+  private async requireWorkspaceMember(workspaceId: string, identityId: string) {
+    const row = await this.database.query(
+      `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL
+       AND identity_id=$2 AND removed_at IS NULL`,
+      [workspaceId, identityId],
+    );
+    if (!row.rowCount) throw new Error('workspace membership required');
   }
   private async hasRoomAccess(roomId: string, identityId: string) {
     return (
@@ -3474,12 +3526,16 @@ export class PhoneService {
       );
     }
   }
-  private async requireManager(roomId: string, identityId: string) {
+  private async requireRoomWorkspaceManager(roomId: string, identityId: string) {
     const row = await this.database.query(
-      `SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2 AND role IN ('owner','admin') AND removed_at IS NULL`,
+      `SELECT 1 FROM rooms room
+       JOIN memberships membership ON membership.workspace_id=room.workspace_id
+         AND membership.room_id IS NULL AND membership.identity_id=$2
+         AND membership.role IN ('owner','admin') AND membership.removed_at IS NULL
+       WHERE room.id=$1`,
       [roomId, identityId],
     );
-    if (!row.rowCount) throw new Error('room manager required');
+    if (!row.rowCount) throw new Error('workspace manager required');
   }
   private async requireTopLevelRoom(roomId: string) {
     const room = (
@@ -3704,11 +3760,14 @@ function personMention(handle: string | null | undefined): string | undefined {
   return trimmed ? `@${trimmed}` : undefined;
 }
 
-/** Plain refusal for a yolo flip by anyone but the agent owner or a Workspace manager. */
+/** Grant decisions retain the owner-or-Workspace-manager authority axis. */
 export const YOLO_AUTHORITY_MESSAGE = "Only the agent's owner or a workspace admin can change this";
 
-/** The same authority axis, for who may address an agent. */
-export const ACCESS_POLICY_AUTHORITY_MESSAGE = YOLO_AUTHORITY_MESSAGE;
+/** Agent configuration belongs only to the human who connected that agent. */
+export const AGENT_OWNER_AUTHORITY_MESSAGE = "Only the agent's owner can change this";
+
+/** The same owner-only axis, for who may address an agent. */
+export const ACCESS_POLICY_AUTHORITY_MESSAGE = AGENT_OWNER_AUTHORITY_MESSAGE;
 
 /**
  * The Google Play review identity signs in without GitHub, so it holds no

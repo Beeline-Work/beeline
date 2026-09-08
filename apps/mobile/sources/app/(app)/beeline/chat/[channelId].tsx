@@ -112,14 +112,7 @@ import {
 } from '@/buzz/community-invite';
 import { MemberPickerSheet, type MemberPickerCandidate } from '@/components/buzz/MemberPickerSheet';
 import { useVerifiedNip05Status } from '@/buzz/nip05-verification';
-import {
-  canRenameRoom,
-  canManageRoomRepository,
-  canRemoveRoomParticipant,
-  confirmRoomRepositoryLink,
-  normalizedRoomRole,
-  roomLifecycleAction,
-} from '@/buzz/room-management';
+import { confirmRoomRepositoryLink } from '@/buzz/room-management';
 import {
   looksLikeCornerOpenIntent,
   GITHUB_REPOSITORY_SELECTION_INSTRUCTION,
@@ -222,6 +215,7 @@ import {
   HullActionSheetModal,
   HullActionSheetRow,
 } from '@/components/buzz/HullActionSheet';
+import { RoomRepositoryActions } from '@/components/buzz/RoomRepositoryActions';
 import { EmptyLedgerState, type EmptyLedgerVariant } from '@/components/buzz/EmptyLedgerState';
 import { HeaderIdentitySlot, HeaderMetaCaps, HeaderMetaRow } from '@/components/buzz/HeaderLadder';
 import { ChannelHeaderTitle } from '@/components/buzz/ChannelHeaderTitle';
@@ -469,7 +463,7 @@ export default function BuzzChat() {
   const activeCommunityId = roomSurface?.room.workspaceId ?? routeCommunityId ?? null;
   const viewerIsAgent = roomSurface?.viewer.identity.kind === 'agent';
   const viewerChannelRole = roomSurface?.viewer.role ?? null;
-  const canManageWorkspace = viewerChannelRole === 'owner' || viewerChannelRole === 'admin';
+  const canManageWorkspace = roomSurface?.viewer.permissions.manage ?? false;
   const communities = useMemo(
     () =>
       roomSurface
@@ -988,8 +982,7 @@ export default function BuzzChat() {
       ),
     [roomMembers],
   );
-  const viewerRoomRole = normalizedRoomRole(roomMemberByPubkey.get(userPubkey));
-  const lifecycleAction = roomLifecycleAction(viewerRoomRole);
+  const lifecycleAction = canManageWorkspace ? ('delete' as const) : null;
   const mentionableAgents = useMemo(
     () =>
       activeMentionCandidates(
@@ -1129,17 +1122,20 @@ export default function BuzzChat() {
           canChangeTargetBranch: Boolean(
             !isCorner &&
             !viewerIsAgent &&
-            canManageRoomRepository(viewerChannelRole) &&
+            canManageWorkspace &&
             pendingTargetBranchProposal &&
             !targetBranchActionId,
           ),
           canAddAgent: Boolean(!isCorner && !isDirectMessage && !viewerIsAgent),
-          canInvitePerson: Boolean(!isCorner && !isDirectMessage && !viewerIsAgent),
+          canInvitePerson: Boolean(
+            !isCorner && !isDirectMessage && !viewerIsAgent && canManageWorkspace,
+          ),
         },
         currentSlashQuery ?? '',
       ),
     [
       currentSlashQuery,
+      canManageWorkspace,
       isCorner,
       isDirectMessage,
       pendingCornerRequest,
@@ -2087,10 +2083,10 @@ export default function BuzzChat() {
     async (message: ChatDisplayMessage) => {
       const proposal = message.targetBranchProposal;
       if (!transport || !proposal || targetBranchActionId) return;
-      if (viewerIsAgent || viewerChannelRole !== 'owner') {
+      if (viewerIsAgent || !canManageWorkspace) {
         setTargetBranchNotice({
           proposalId: proposal.proposalId,
-          text: `Only the ${ROOM_LABEL} owner can change the target branch.`,
+          text: 'Only a workspace manager can change the target branch.',
         });
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
         return;
@@ -2111,12 +2107,12 @@ export default function BuzzChat() {
         setTargetBranchActionId(null);
       }
     },
-    [decodedId, targetBranchActionId, transport, viewerChannelRole, viewerIsAgent],
+    [canManageWorkspace, decodedId, targetBranchActionId, transport, viewerIsAgent],
   );
 
   const handleAddRoomMembers = useCallback(
     async (pubkeys: string[]) => {
-      if (!transport || !activeCommunityId || addingMembers) return;
+      if (!transport || !activeCommunityId || !canManageWorkspace || addingMembers) return;
       const chosen = (participantPickerCandidates ?? []).filter(
         (candidate) =>
           pubkeys.includes(candidate.pubkey) && !roomMemberPubkeys.has(candidate.pubkey),
@@ -2149,6 +2145,7 @@ export default function BuzzChat() {
     [
       activeCommunityId,
       addingMembers,
+      canManageWorkspace,
       decodedId,
       participantPickerCandidates,
       roomMemberPubkeys,
@@ -2158,12 +2155,7 @@ export default function BuzzChat() {
 
   const handleRemoveRoomMember = useCallback(
     async (participant: RoomMemberOption) => {
-      const targetRole = normalizedRoomRole(roomMemberByPubkey.get(participant.pubkey));
-      if (
-        !transport ||
-        !canRemoveRoomParticipant(viewerRoomRole, targetRole, participant.pubkey === userPubkey)
-      )
-        return;
+      if (!transport || !canManageWorkspace || participant.pubkey === userPubkey) return;
       const confirmed = await Modal.confirm(
         `Remove ${participant.name}?`,
         `Their membership will be removed and this ${ROOM_LABEL} will disappear from their workspace list.`,
@@ -2182,14 +2174,14 @@ export default function BuzzChat() {
         })
         .finally(() => setMembershipActionPubkey(null));
     },
-    [decodedId, roomMemberByPubkey, transport, userPubkey, viewerRoomRole],
+    [canManageWorkspace, decodedId, transport, userPubkey],
   );
 
   // The picker's workspace-level rows. A one-person workspace has nobody to
   // add from the roster, so the same invite flows the Room-list "+" menu
   // reaches through the members screen live here too.
   const handleInvitePerson = useCallback(async () => {
-    if (!activeCommunityId || memberInviteBusy) return;
+    if (!activeCommunityId || !canManageWorkspace || memberInviteBusy) return;
     setMemberInviteBusy(true);
     setMembershipError(null);
     try {
@@ -2211,7 +2203,7 @@ export default function BuzzChat() {
     } finally {
       setMemberInviteBusy(false);
     }
-  }, [activeCommunityId, memberInviteBusy, setSessionTransport, transport]);
+  }, [activeCommunityId, canManageWorkspace, memberInviteBusy, setSessionTransport, transport]);
 
   // A NEW agent: the pairing command lives on the Members page. An agent
   // already in the Workspace is a checkbox row in the picker itself.
@@ -2236,7 +2228,7 @@ export default function BuzzChat() {
   }, [activeCommunityId]);
 
   const handleRoomLifecycle = useCallback(async () => {
-    if (!transport || !lifecycleAction || roomLifecycleBusy) return;
+    if (!transport || !canManageWorkspace || !lifecycleAction || roomLifecycleBusy) return;
     const deleting = lifecycleAction === 'delete';
     const confirmed = await Modal.confirm(
       deleting ? `Delete ${displayRoomName}?` : `Leave ${displayRoomName}?`,
@@ -2267,6 +2259,7 @@ export default function BuzzChat() {
   }, [
     decodedId,
     displayRoomName,
+    canManageWorkspace,
     lifecycleAction,
     returnToRoomList,
     roomLifecycleBusy,
@@ -2289,7 +2282,7 @@ export default function BuzzChat() {
       setRenameError(`${ROOM_LABEL} name cannot be empty.`);
       return;
     }
-    if (!transport || !canRenameRoom(viewerChannelRole) || renameBusy) return;
+    if (!transport || !canManageWorkspace || renameBusy) return;
 
     setRenameBusy(true);
     setRenameError(null);
@@ -2305,7 +2298,7 @@ export default function BuzzChat() {
     } finally {
       setRenameBusy(false);
     }
-  }, [decodedId, renameBusy, renameDraft, transport, viewerChannelRole]);
+  }, [canManageWorkspace, decodedId, renameBusy, renameDraft, transport]);
 
   const loadRoomRepoPicker = useCallback(
     async (refresh = false) => {
@@ -2707,11 +2700,16 @@ export default function BuzzChat() {
           }
           return;
         case 'add-agent':
+          if (!canManageWorkspace) {
+            handleConnectAgent();
+            return;
+          }
           setMembershipError(null);
           setParticipantPickerKind('agent');
           setParticipantPickerVisible(true);
           return;
         case 'invite':
+          if (!canManageWorkspace) return;
           setMembershipError(null);
           setParticipantPickerKind('person');
           setParticipantPickerVisible(true);
@@ -2719,7 +2717,9 @@ export default function BuzzChat() {
     },
     [
       clearSlashComposer,
+      canManageWorkspace,
       handleCloseCorner,
+      handleConnectAgent,
       handleConfirmTargetBranch,
       handleWritePermission,
       pendingCornerRequest,
@@ -2833,8 +2833,8 @@ export default function BuzzChat() {
           <TargetBranchProposalCard
             message={item}
             currentTargetBranch={roomRepository?.targetBranch}
+            canManageWorkspace={canManageWorkspace}
             viewerIsAgent={viewerIsAgent}
-            viewerRole={viewerChannelRole}
             actionId={targetBranchActionId}
             notice={notice}
             onConfirm={handleConfirmTargetBranch}
@@ -3095,7 +3095,7 @@ export default function BuzzChat() {
             {!isCorner && roomRepository && (
               <TouchableOpacity
                 accessibilityLabel={`Repo ${roomRepoChipLabel(roomRepository)}. ${
-                  canManageRoomRepository(viewerChannelRole) ? 'View or change it' : 'View it'
+                  canManageWorkspace ? 'View or change it' : 'View it'
                 }`}
                 accessibilityRole="button"
                 hitSlop={{ top: 6, bottom: 3, left: 12, right: 12 }}
@@ -3430,7 +3430,7 @@ export default function BuzzChat() {
                     </Text>
                   </TouchableOpacity>
                 )}
-                {canManageRoomRepository(viewerChannelRole) ? (
+                {canManageWorkspace ? (
                   <RepoPicker
                     busy={roomRepoBusy}
                     candidates={roomRepoCandidates}
@@ -3660,7 +3660,6 @@ export default function BuzzChat() {
         rosterSections={visibleRosterSections}
         total={roomParticipantTotal}
         userPubkey={userPubkey}
-        viewerRole={viewerRoomRole}
         visible={rosterVisible}
       />
 
@@ -3672,7 +3671,7 @@ export default function BuzzChat() {
         title={displayRoomName}
         visible={roomActionsVisible}
       >
-        {canRenameRoom(viewerChannelRole) &&
+        {canManageWorkspace &&
           (renameEditing ? (
             <View style={styles.roomRenameEditor} testID="rename-room-editor">
               <Text style={styles.roomRenameLabel}>New {ROOM_LABEL.toLowerCase()} name</Text>
@@ -3728,49 +3727,11 @@ export default function BuzzChat() {
               testID="rename-room-action"
             />
           ))}
-        {canManageRoomRepository(viewerChannelRole) ? (
-          <>
-            <HullActionSheetRow
-              accessibilityLabel={
-                roomRepository
-                  ? `Change repo, currently ${roomRepository.binding.name}`
-                  : 'Link a repo'
-              }
-              chevron={showRoomRepoPicker ? 'down' : 'right'}
-              description={
-                roomRepository
-                  ? `${CORNER_LABEL}s in this ${ROOM_LABEL} tree off this repo.`
-                  : `A ${ROOM_LABEL} needs a repo before a ${CORNER_LABEL} can open.`
-              }
-              disabled={roomRepoBusy}
-              label="Repo"
-              metadata={roomRepository ? roomRepository.binding.name : 'None'}
-              onPress={() => void handleToggleRoomRepoPicker()}
-              testID="room-repo-action"
-            />
-            {showRoomRepoPicker && (
-              <View style={styles.roomSheetInset}>
-                <RepoPicker
-                  busy={roomRepoBusy}
-                  candidates={roomRepoCandidates}
-                  installations={githubInstallations}
-                  currentKey={roomRepository?.binding.key ?? null}
-                  error={roomRepoError}
-                  notice={roomRepoNotice}
-                  ownerGrant={ownerGrant}
-                  uncoveredOwners={uncoveredOwnersRef.current}
-                  onAddAccount={() => void handleAddGitHubAccount()}
-                  onAskOwnerGrant={(fullName) => void handleAskOwnerGrant(fullName)}
-                  onCreateRepository={handleCreateGitHubRepository}
-                  onManageInstallation={(installation) =>
-                    void handleManageGitHubInstallation(installation)
-                  }
-                  onSelect={handleSelectRoomRepoCandidate}
-                  testIDPrefix="room-repo-picker"
-                />
-              </View>
-            )}
-            {roomRepository && (
+        <RoomRepositoryActions
+          busy={roomRepoBusy}
+          canManage={canManageWorkspace}
+          notifications={
+            roomRepository ? (
               <HullActionSheetRow
                 accessibilityLabel={
                   roomRepository.githubEventsEnabled === false
@@ -3788,16 +3749,35 @@ export default function BuzzChat() {
                   value: roomRepository.githubEventsEnabled !== false,
                 }}
               />
-            )}
-          </>
-        ) : (
-          <HullActionSheetRow
-            label="Repo"
-            metadata={roomRepository ? roomRepository.binding.name : 'None'}
-            testID="room-repo-readonly"
-          />
-        )}
-        {canRenameRoom(viewerChannelRole) && getBuzzRuntimeConfig().monolithEnabled && (
+            ) : null
+          }
+          onToggle={() => void handleToggleRoomRepoPicker()}
+          picker={
+            <View style={styles.roomSheetInset}>
+              <RepoPicker
+                busy={roomRepoBusy}
+                candidates={roomRepoCandidates}
+                installations={githubInstallations}
+                currentKey={roomRepository?.binding.key ?? null}
+                error={roomRepoError}
+                notice={roomRepoNotice}
+                ownerGrant={ownerGrant}
+                uncoveredOwners={uncoveredOwnersRef.current}
+                onAddAccount={() => void handleAddGitHubAccount()}
+                onAskOwnerGrant={(fullName) => void handleAskOwnerGrant(fullName)}
+                onCreateRepository={handleCreateGitHubRepository}
+                onManageInstallation={(installation) =>
+                  void handleManageGitHubInstallation(installation)
+                }
+                onSelect={handleSelectRoomRepoCandidate}
+                testIDPrefix="room-repo-picker"
+              />
+            </View>
+          }
+          pickerVisible={showRoomRepoPicker}
+          repositoryName={roomRepository?.binding.name ?? null}
+        />
+        {canManageWorkspace && getBuzzRuntimeConfig().monolithEnabled && (
           <HullActionSheetRow
             accessibilityLabel={`View ${ROOM_LABEL} scheduled work`}
             chevron="right"
@@ -3869,6 +3849,7 @@ export default function BuzzChat() {
       <MemberPickerSheet
         busy={addingMembers || memberInviteBusy}
         canManage={roomSurface?.viewer.permissions.manage ?? false}
+        canConnectAgent
         candidates={participantPickerCandidates}
         error={membershipError}
         kind={participantPickerKind}

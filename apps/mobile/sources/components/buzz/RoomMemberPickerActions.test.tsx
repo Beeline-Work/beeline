@@ -82,13 +82,19 @@ describe('RoomMemberPickerActions', () => {
     expect(empty.props.children).toBe('No other members in this workspace yet.');
 
     act(() => {
-      renderer.root.findAllByProps({ testID: 'room-member-picker-invite-person' }).at(-1)!.props.onPress();
+      renderer.root
+        .findAllByProps({ testID: 'room-member-picker-invite-person' })
+        .at(-1)!
+        .props.onPress();
     });
     expect(onInvitePerson).toHaveBeenCalledTimes(1);
     expect(onAddAgent).not.toHaveBeenCalled();
 
     act(() => {
-      renderer.root.findAllByProps({ testID: 'room-member-picker-add-agent' }).at(-1)!.props.onPress();
+      renderer.root
+        .findAllByProps({ testID: 'room-member-picker-add-agent' })
+        .at(-1)!
+        .props.onPress();
     });
     expect(onAddAgent).toHaveBeenCalledTimes(1);
   });
@@ -146,6 +152,24 @@ describe('RoomMemberPickerActions', () => {
     ]);
     const ask = renderer.root.findAllByProps({ testID: 'room-member-picker-ask-manager' }).at(-1)!;
     expect(ask.props.children).toBe('Ask a workspace manager to invite people');
+  });
+
+  it('lets a non-manager connect their own agent without offering a person invite', () => {
+    const renderer = render(
+      <RoomMemberPickerActions
+        addableCount={0}
+        busy={false}
+        canManage={false}
+        canConnectAgent
+        onAddAgent={vi.fn()}
+        onInvitePerson={vi.fn()}
+      />,
+    );
+    expect(testIds(renderer)).toEqual([
+      'room-member-picker-actions',
+      'room-member-picker-empty',
+      'room-member-picker-add-agent',
+    ]);
   });
 
   it('keeps the actions and drops the empty line once someone is addable', () => {

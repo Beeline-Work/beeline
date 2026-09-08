@@ -291,8 +291,8 @@ export const GrantRequestCard = React.memo(function GrantRequestCard({
 export interface TargetBranchProposalCardProps {
   message: ChatDisplayMessage;
   currentTargetBranch?: string;
+  canManageWorkspace: boolean;
   viewerIsAgent: boolean;
-  viewerRole: 'owner' | 'admin' | 'member' | null;
   actionId: string | null;
   notice: string | null;
   onConfirm(message: ChatDisplayMessage): void;
@@ -301,8 +301,8 @@ export interface TargetBranchProposalCardProps {
 export const TargetBranchProposalCard = React.memo(function TargetBranchProposalCard({
   message,
   currentTargetBranch,
+  canManageWorkspace,
   viewerIsAgent,
-  viewerRole,
   actionId,
   notice,
   onConfirm,
@@ -310,7 +310,7 @@ export const TargetBranchProposalCard = React.memo(function TargetBranchProposal
   const proposal = message.targetBranchProposal!;
   const applied = currentTargetBranch === proposal.to;
   const busy = actionId === proposal.proposalId;
-  const canConfirm = !viewerIsAgent && viewerRole === 'owner';
+  const canConfirm = !viewerIsAgent && canManageWorkspace;
   return (
     <HullSurface strength="raised" style={styles.targetCard} testID="target-branch-proposal">
       <Text style={styles.targetTitle}>Change this {ROOM_LABEL}’s target branch</Text>
@@ -338,7 +338,7 @@ export const TargetBranchProposalCard = React.memo(function TargetBranchProposal
         </View>
       ) : (
         <Text style={styles.targetStatus} testID="target-branch-denied">
-          {`ONLY THE ${ROOM_LABEL.toUpperCase()} OWNER CAN CONFIRM THIS`}
+          {'ONLY A WORKSPACE MANAGER CAN CONFIRM THIS'}
         </Text>
       )}
       {notice ? (

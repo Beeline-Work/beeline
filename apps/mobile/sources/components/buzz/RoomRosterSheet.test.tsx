@@ -124,7 +124,6 @@ function sheet(overrides: Partial<React.ComponentProps<typeof RoomRosterSheet>> 
       rosterSections={rosterSections}
       total={2}
       userPubkey="viewer"
-      viewerRole="owner"
       visible
       {...overrides}
     />
@@ -267,9 +266,7 @@ describe('RoomRosterSheet', () => {
     );
     const head = empty.root.findAllByProps({ testID: 'room-roster-agents-head' }).at(-1)!;
     expect(head.props.children).toEqual(['Agents', ' ', 0]);
-    act(() =>
-      empty.root.findByProps({ testID: 'room-roster-add-agents' }).props.onPress(),
-    );
+    act(() => empty.root.findByProps({ testID: 'room-roster-add-agents' }).props.onPress());
     expect(onAddAgents).toHaveBeenCalledTimes(1);
 
     // Not in a DM, and not in a corner: neither has a section to add into.
@@ -288,7 +285,7 @@ describe('RoomRosterSheet', () => {
   });
 
   it('gives a row no chevron and no detail when the viewer may not remove it', () => {
-    const renderer = render(sheet({ viewerRole: 'member' }));
+    const renderer = render(sheet({ canManage: false }));
     const agentRow = renderer.root.findAllByProps({ testID: `room-roster-agent-${OX}` }).at(-1)!;
     expect(agentRow.props.disabled).toBe(true);
     expect(
@@ -296,5 +293,21 @@ describe('RoomRosterSheet', () => {
     ).not.toContain('›');
     act(() => agentRow.props.onPress());
     expect(renderer.root.findAllByProps({ testID: `remove-room-member-${OX}` })).toHaveLength(0);
+  });
+
+  it('lets a workspace manager remove a member with a stale Room-owner role', () => {
+    const onRemove = vi.fn();
+    const renderer = render(
+      sheet({
+        memberByPubkey: new Map([[OX, { pubkey: OX, role: 'owner' }]]) as any,
+        onRemove,
+      }),
+    );
+    const agentRow = renderer.root.findAllByProps({ testID: `room-roster-agent-${OX}` }).at(-1)!;
+    expect(agentRow.props.disabled).toBe(false);
+    act(() => agentRow.props.onPress());
+    const remove = renderer.root.findByProps({ testID: `remove-room-member-${OX}` });
+    act(() => remove.props.onPress());
+    expect(onRemove).toHaveBeenCalledWith(expect.objectContaining({ pubkey: OX }));
   });
 });

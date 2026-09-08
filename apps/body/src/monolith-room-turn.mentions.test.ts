@@ -407,6 +407,15 @@ describe('the per-sender Room response rule', () => {
     ).toBe(false);
   });
 
+  it('retains outgoing human targets for an unmentioned follow-up', () => {
+    const responseRule = rule();
+    responseRule.noteReply(AGENT_HEX, [PEER]);
+
+    expect(responseRule.continues(message({ id: 'human-return', authorId: PEER }), AGENT_HEX)).toBe(
+      true,
+    );
+  });
+
   it('expires parentless continuity after 200 later messages', () => {
     const responseRule = rule();
     responseRule.noteReply(AGENT_HEX, [CAPTAIN]);

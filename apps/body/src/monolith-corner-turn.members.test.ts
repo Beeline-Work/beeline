@@ -52,6 +52,7 @@ async function runCorner(input: {
   };
   /** A server check note in the same poll, to prove one turn per check state. */
   checkNote?: boolean;
+  lostPostResponse?: boolean;
   /** Durable replies already in the corner, by author. */
   history?: {
     authorId: string;
@@ -95,6 +96,8 @@ async function runCorner(input: {
   };
   const abort = new AbortController();
   let closeReads = 0;
+  let committedReply = false;
+  let lostPostResponse = false;
   const execute = vi.fn(async (name: string) => {
     if (name === 'getAgentConfiguration') return { commands: [] };
     if (name === 'getWorkspaceRoster') {
@@ -110,18 +113,33 @@ async function runCorner(input: {
     if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
     if (name === 'getRoomConversation') {
       return {
-        items: (input.history ?? []).map((entry, index) => ({
-          id: `history-${index}`,
-          authorId: entry.authorId,
-          createdAt: 1,
-          type: 'message',
-          body: entry.body,
-          mentionIds: entry.mentionIds ?? [],
-          ...(entry.requestAuthorId ? { requestAuthorId: entry.requestAuthorId } : {}),
-          ...(entry.replyToMessageId ? { replyToMessageId: entry.replyToMessageId } : {}),
-          ...(entry.replyToAuthorId ? { replyToAuthorId: entry.replyToAuthorId } : {}),
-          attachments: [],
-        })),
+        items: [
+          ...(input.history ?? []).map((entry, index) => ({
+            id: `history-${index}`,
+            authorId: entry.authorId,
+            createdAt: 1,
+            type: 'message',
+            body: entry.body,
+            mentionIds: entry.mentionIds ?? [],
+            ...(entry.requestAuthorId ? { requestAuthorId: entry.requestAuthorId } : {}),
+            ...(entry.replyToMessageId ? { replyToMessageId: entry.replyToMessageId } : {}),
+            ...(entry.replyToAuthorId ? { replyToAuthorId: entry.replyToAuthorId } : {}),
+            attachments: [],
+          })),
+          ...(committedReply
+            ? [
+                {
+                  id: 'committed-reply',
+                  authorId: agent.publicKey,
+                  createdAt: 3,
+                  type: 'message',
+                  body: 'Done.',
+                  mentionIds: [HUMAN],
+                  attachments: [],
+                },
+              ]
+            : []),
+        ],
         cursor: 'latest',
       };
     }
@@ -170,9 +188,30 @@ async function runCorner(input: {
           cursor: 'human-msg',
         };
       }
+      if (input.lostPostResponse && closeReads === 2) {
+        return {
+          items: [
+            {
+              id: 'follow-up',
+              authorId: HUMAN,
+              createdAt: 4,
+              type: 'message',
+              body: 'Please continue.',
+              mentionIds: [],
+              attachments: [],
+            },
+          ],
+          cursor: 'follow-up',
+        };
+      }
       return { items: [], cursor: 'latest', closeRequested: true };
     }
     if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
+    if (name === 'postRoomMessage' && input.lostPostResponse && !lostPostResponse) {
+      committedReply = true;
+      lostPostResponse = true;
+      throw new Error('post response lost');
+    }
     return { id: 'write-id', createdAt: 1 };
   });
   const api = {
@@ -266,6 +305,20 @@ describe('a corner carried by its members', () => {
     });
     expect(bystander.prompts).toEqual([]);
   });
+
+  it('rebuilds committed continuity after a lost final-post response', async () => {
+    const helper = await runCorner({
+      agentKey: HELPER_KEY,
+      agentName: 'Goosy',
+      isOpener: false,
+      lostPostResponse: true,
+      message: { body: '@Goosy can you take this?', mentionIds: [HELPER] },
+      history: [{ authorId: OPENER, body: 'Started on it.' }],
+    });
+
+    expect(helper.prompts).toHaveLength(2);
+    expect(helper.prompts[1]).toContain('Please continue.');
+  }, 20_000);
 
   it('starts one check turn for the member carrying the corner, not one per member', async () => {
     // A check note is ONE server fact. Every member agent now watches the

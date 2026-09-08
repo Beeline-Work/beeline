@@ -326,6 +326,7 @@ export class MonolithCornerTurnLoop {
   private agentMembers = new Set<string>();
   /** Per-sender continuity, shared in shape with top-level Room intake. */
   private readonly responseRule = new AgentResponseRule();
+  private continuityRebuildRequested = false;
   /** The member agent that owns corner-wide lifecycle facts such as checks. */
   private carrier?: string;
   /** The last server check state that started a turn; the same state never starts another. */
@@ -990,12 +991,16 @@ export class MonolithCornerTurnLoop {
               // only restates the server's own check notes says nothing new, and
               // that turn settles through its receipt instead.
               const durableReply = spoken(reply);
+              if (durableReply && requestedById) this.continuityRebuildRequested = true;
               await trace.measure('publish', () =>
                 stream.settle(
                   durableReply,
                   requestedById ? { triggerMessageId: requestId } : {},
                   durableReply && requestedById
-                    ? () => this.responseRule.noteReply(this.agent.publicKey, [requestedById])
+                    ? () => {
+                        this.responseRule.noteReply(this.agent.publicKey, [requestedById]);
+                        this.continuityRebuildRequested = false;
+                      }
                     : undefined,
                 ),
               );
@@ -1180,6 +1185,19 @@ export class MonolithCornerTurnLoop {
       let pollWithoutWait = false;
       while (!signal?.aborted) {
         try {
+          if (this.continuityRebuildRequested) {
+            const reconciled = await api.execute('getRoomConversation', {
+              roomId: cornerId,
+              limit: 200,
+              window: 'continuity',
+            });
+            this.responseRule.replaceHistory(reconciled.items);
+            this.carrier = undefined;
+            for (const item of reconciled.items) {
+              if (item.type === 'message') this.noteCarrier(item.authorId);
+            }
+            this.continuityRebuildRequested = false;
+          }
           const pollNow: boolean =
             pushedInbox.length > 0 || !liveConnected || this.reconciliationRequested;
           const inbox: {

@@ -1178,14 +1178,7 @@ export class MonolithRoomTurnLoop {
                 ? agentReplyMentionIds(reply, roster, this.agent.publicKey)
                 : [];
               const continuitySenders = reply
-                ? [
-                    item.authorId,
-                    ...mentionIds.filter((id) =>
-                      roster.members.some(
-                        (member) => member.identityId === id && member.kind === 'agent',
-                      ),
-                    ),
-                  ]
+                ? [item.authorId, ...mentionIds]
                 : [];
               if (continuitySenders.length) {
                 active.continuitySenders = new Set(continuitySenders);

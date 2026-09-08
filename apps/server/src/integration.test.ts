@@ -1931,6 +1931,11 @@ describe('monolith integration', () => {
       triggerMessageId: first,
       text: 'My first answer.',
     });
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,mention_ids)
+       VALUES($1,$2,$3,'A card must not take over the exchange.','card',$4::jsonb)`,
+      ['f'.repeat(64), ROOM, peer, JSON.stringify([HUMAN])],
+    );
     await phone.execute(
       'sendRoomMessage',
       { roomId: ROOM, messageId: '7'.repeat(64), text: 'Interjecting.' },
@@ -1962,6 +1967,39 @@ describe('monolith integration', () => {
     );
     expect(pileOn.status).toBe(400);
     await expect(pileOn.json()).resolves.toEqual({ error: 'turn trigger is invalid for agent' });
+  });
+
+  it('notifies the direct parent agent even after a later agent answer', async () => {
+    const peer = 'd'.repeat(64);
+    const parentId = 'e'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Peer')`, [peer]);
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [peer, HUMAN]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
+      [WORKSPACE, peer, ROOM],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,mention_ids)
+       VALUES($1,$2,$3,'Older direct answer.','[]'::jsonb),
+             ($4,$2,$5,'Later answer.',$6::jsonb)`,
+      [parentId, ROOM, AGENT, 'f'.repeat(64), peer, JSON.stringify([HUMAN])],
+    );
+
+    const sent = await operation('sendRoomReply', {
+      roomId: ROOM,
+      messageId: 'a'.repeat(64),
+      parentMessageId: parentId,
+      text: 'Please continue the older answer.',
+    });
+    expect(sent.status).toBe(200);
+    const notices = await database.query<{ author_id: string; text: string }>(
+      `SELECT author_id,text FROM messages WHERE room_id=$1 AND presentation='system'`,
+      [ROOM],
+    );
+    expect(notices.rows).toContainEqual(
+      expect.objectContaining({ author_id: AGENT, text: expect.stringContaining('did not answer') }),
+    );
   });
 
   it('accepts a direct reply from its parent agent after another agent replies', async () => {

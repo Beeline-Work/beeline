@@ -1067,7 +1067,7 @@ export class DaemonService {
                      LEFT JOIN messages request ON request.id=answer.request_id
                      LEFT JOIN messages answer_parent ON answer_parent.id=answer.reply_to_message_id
                      WHERE answer.room_id=message.room_id
-                       AND answer_identity.kind='agent'
+                       AND answer.presentation='message' AND answer_identity.kind='agent'
                        AND (
                          request.author_id=message.author_id OR
                          answer.mention_ids @> jsonb_build_array(message.author_id) OR

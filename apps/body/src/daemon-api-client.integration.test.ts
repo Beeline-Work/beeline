@@ -2175,7 +2175,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       await vi.waitFor(
         async () =>
           expect(await systemLines()).toEqual([
-            'Bee did not answer @bananaman614305 · only @lunchboxfortwo may address Bee. ' +
+            '@bee did not answer @bananaman614305 · only @lunchboxfortwo may address @bee. ' +
               'Ask the user for permission to access the agent in the members page',
           ]),
         { timeout: 5_000 },
@@ -2215,7 +2215,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       expect(lines).toEqual(
         expect.arrayContaining([
           expect.stringContaining('did not answer @bananaman614305'),
-          '@lunchboxfortwo changed who may address Bee · anyone may ask now',
+          '@lunchboxfortwo changed who may address @bee · anyone may ask now',
         ]),
       );
     } finally {

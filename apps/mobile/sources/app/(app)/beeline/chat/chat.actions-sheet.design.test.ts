@@ -22,9 +22,7 @@ const cornerSheet = sheet('testID="corner-actions-sheet"', 'corner actions sheet
 
 const ROOM_ROWS = [
   'rename-room-action',
-  'room-repo-action',
   'room-github-events-toggle',
-  'room-repo-readonly',
   'room-schedules-action',
   'delete-room-action',
   'leave-room-action',
@@ -71,11 +69,6 @@ describe('Room and corner actions sheets', () => {
   });
 
   it('spends the trailing column on the closed vocabulary and nothing else', () => {
-    // A setting that opens a picker: its value on the axis, the chevron last,
-    // turned down while the picker stands open beneath the row.
-    const repo = row(roomSheet, 'room-repo-action');
-    expect(repo).toContain("chevron={showRoomRepoPicker ? 'down' : 'right'}");
-    expect(repo).toContain("metadata={roomRepository ? roomRepository.binding.name : 'None'}");
     // A row that toggles gets the switch, never a filled/empty circle.
     const notifications = row(roomSheet, 'room-github-events-toggle');
     expect(notifications).toContain('toggle={{');
@@ -100,7 +93,6 @@ describe('Room and corner actions sheets', () => {
   });
 
   it('keeps values and section-head capitals out of the row titles', () => {
-    expect(chat).toContain('label="Repo"');
     expect(chat).toContain('label="Repo notifications"');
     expect(chat).toContain('label="Scheduled work"');
     expect(chat).toContain('label="Rename"');
@@ -143,9 +135,6 @@ describe('Room and corner actions sheets', () => {
 
   it('leaves every action wired to exactly what it called before', () => {
     expect(row(roomSheet, 'rename-room-action')).toContain('setRenameEditing(true)');
-    expect(row(roomSheet, 'room-repo-action')).toContain(
-      'onPress={() => void handleToggleRoomRepoPicker()}',
-    );
     expect(row(roomSheet, 'room-github-events-toggle')).toContain(
       'onPress={() => void handleToggleGitHubEvents()}',
     );

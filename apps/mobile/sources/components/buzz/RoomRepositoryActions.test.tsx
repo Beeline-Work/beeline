@@ -48,6 +48,8 @@ describe('RoomRepositoryActions', () => {
       />,
     );
     const action = renderer.root.findByProps({ testID: 'room-repo-action' });
+    expect(action.props.label).toBe('Repo');
+    expect(action.props.metadata).toBe('beeline');
     expect(action.props.onPress).toBe(onToggle);
     expect(action.props.chevron).toBe('down');
     expect(renderer.root.findByProps({ testID: 'room-repo-picker' })).toBeDefined();
@@ -68,6 +70,7 @@ describe('RoomRepositoryActions', () => {
       />,
     );
     const readonly = renderer.root.findByProps({ testID: 'room-repo-readonly' });
+    expect(readonly.props.label).toBe('Repo');
     expect(readonly.props.metadata).toBe('beeline');
     expect(readonly.props.onPress).toBeUndefined();
     expect(renderer.root.findAllByProps({ testID: 'room-repo-action' })).toHaveLength(0);

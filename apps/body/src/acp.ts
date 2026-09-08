@@ -305,8 +305,13 @@ export function agentMessageRuns(updates: readonly SessionUpdate[], agentLabel?:
   let current = '';
   let lastWasText = false;
   for (const u of updates) {
+    const isToolCall = u.update.sessionUpdate === 'tool_call';
     const delta = normalizeStreamDelta(agentMessageChunkText(u.update), agentLabel);
     if (!delta) {
+      if (isToolCall && current) {
+        runs.push(current);
+        current = '';
+      }
       lastWasText = false;
       continue;
     }

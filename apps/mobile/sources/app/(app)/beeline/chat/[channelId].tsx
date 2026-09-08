@@ -1053,9 +1053,9 @@ export default function BuzzChat() {
   );
   const mentionMenuVisible = Boolean(
     composerFocused &&
-    mentionMenuKey &&
-    mentionMenuKey !== dismissedMentionKey &&
-    mentionSuggestions.matches.length > 0,
+      mentionMenuKey &&
+      mentionMenuKey !== dismissedMentionKey &&
+      mentionSuggestions.matches.length > 0,
   );
   // The latest signed lifecycle receipt is server-indexed. Draft/thought
   // overlays carry content only and can neither start nor extend a turn.
@@ -1112,10 +1112,10 @@ export default function BuzzChat() {
   // failed read is unknown, never "does not advertise".
   const mentionAgentLacksCommands = Boolean(
     mentionSlash &&
-    mentionSlashAgentPubkey &&
-    mentionAgentCommandScope &&
-    agentCommandsByScope[mentionAgentCommandScope] !== undefined &&
-    (agentCommandsByScope[mentionAgentCommandScope]?.commands.length ?? 0) === 0,
+      mentionSlashAgentPubkey &&
+      mentionAgentCommandScope &&
+      agentCommandsByScope[mentionAgentCommandScope] !== undefined &&
+      (agentCommandsByScope[mentionAgentCommandScope]?.commands.length ?? 0) === 0,
   );
   const pendingCornerRequest = useMemo(() => {
     for (let index = combinedMessages.length - 1; index >= 0; index -= 1) {
@@ -1150,10 +1150,10 @@ export default function BuzzChat() {
           canCloseCorner: isCorner && !viewerIsAgent,
           canChangeTargetBranch: Boolean(
             !isCorner &&
-            !viewerIsAgent &&
-            canManageWorkspace &&
-            pendingTargetBranchProposal &&
-            !targetBranchActionId,
+              !viewerIsAgent &&
+              canManageWorkspace &&
+              pendingTargetBranchProposal &&
+              !targetBranchActionId,
           ),
           canAddAgent: Boolean(!isCorner && !isDirectMessage && !viewerIsAgent),
           canInvitePerson: Boolean(
@@ -1176,8 +1176,8 @@ export default function BuzzChat() {
   );
   const slashMenuVisible = Boolean(
     composerFocused &&
-    (currentSlashQuery !== null || (mentionSlash !== null && mentionSlashAgentPubkey !== null)) &&
-    dismissedSlashText !== inputText,
+      (currentSlashQuery !== null || (mentionSlash !== null && mentionSlashAgentPubkey !== null)) &&
+      dismissedSlashText !== inputText,
   );
   const paletteItemCount = mentionAgentCommands.length + slashVerbs.length;
   useEffect(() => {

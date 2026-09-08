@@ -31,6 +31,9 @@ export type CornerReturnTarget = 'room-list';
 export type CornerOpenAction =
   { type: 'open-corner'; cornerId: string } | { type: 'explain'; message: string };
 
+export type MentionDirectMessageAction =
+  { type: 'open-room'; channelId: string } | { type: 'stay' };
+
 /** Resolve a visible corner action to a destination or a reader-facing reason. */
 export function cornerOpenAction(
   subchannelId: string | undefined,
@@ -55,6 +58,22 @@ export function cornerOpenAction(
 /** Open a top-level Room transcript. */
 export function roomHref(channelId: string): Href {
   return { pathname: '/beeline/chat/[channelId]', params: { channelId } } as unknown as Href;
+}
+
+/** Resolve or create the Workspace-scoped DM behind a tagged member mention. */
+export async function resolveMentionDirectMessageAction(
+  resolveDirectMessage: (
+    workspaceId: string,
+    participantId: string,
+  ) => Promise<{ channelId: string }>,
+  workspaceId: string,
+  participantId: string,
+  currentChannelId: string,
+): Promise<MentionDirectMessageAction> {
+  const directMessage = await resolveDirectMessage(workspaceId, participantId);
+  return directMessage.channelId === currentChannelId
+    ? { type: 'stay' }
+    : { type: 'open-room', channelId: directMessage.channelId };
 }
 
 /**

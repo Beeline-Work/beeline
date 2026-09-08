@@ -127,6 +127,8 @@ type MonoMarkdownProps = {
   leadingInline?: React.ReactNode;
   /** Handles backed by this event's real p-tags and current Room members. */
   mentionHandles?: readonly string[];
+  /** Invoked for a resolved member mention. The handle is normalized. */
+  onMention?: (handle: string) => void;
   /** Known rooms/corners of THIS workspace; omitted → no reference is linked. */
   channelIndex?: ChannelReferenceIndex;
   /** Invoked when a recognized `#room`/`#room/corner` reference is pressed. */
@@ -197,6 +199,7 @@ function InlineMarkdown({
   base,
   onLink,
   liveMentionHandles,
+  onMention,
   channelIndex,
   onChannelReference,
   tail,
@@ -205,6 +208,7 @@ function InlineMarkdown({
   base: TextStyle;
   onLink: (url: string) => void;
   liveMentionHandles: ReadonlySet<string>;
+  onMention?: (handle: string) => void;
   channelIndex?: ChannelReferenceIndex;
   onChannelReference?: (target: ChannelReferenceTarget, text: string) => void;
   tail?: { readonly length: number; readonly style: TextStyle };
@@ -220,13 +224,20 @@ function InlineMarkdown({
     <>
       {glossed.map((span, index) => (
         <Text
+          accessibilityRole={
+            (span.mention && onMention) || (span.channelRef && onChannelReference) || span.url
+              ? 'link'
+              : undefined
+          }
           key={`${span.text}-${index}`}
           onPress={
-            span.channelRef && onChannelReference
-              ? () => onChannelReference(span.channelRef!, span.text)
-              : span.url
-                ? () => onLink(span.url!)
-                : undefined
+            span.mention && onMention
+              ? () => onMention(span.text.slice(1).normalize('NFKC').toLocaleLowerCase())
+              : span.channelRef && onChannelReference
+                ? () => onChannelReference(span.channelRef!, span.text)
+                : span.url
+                  ? () => onLink(span.url!)
+                  : undefined
           }
           style={spanStyle(span, base, tail?.style)}
         >
@@ -276,6 +287,7 @@ export function monoMarkdownPropsAreEqual(
     previous.leadingInline === next.leadingInline &&
     previous.channelIndex === next.channelIndex &&
     previous.onChannelReference === next.onChannelReference &&
+    previous.onMention === next.onMention &&
     previous.testID === next.testID &&
     previous.tail?.length === next.tail?.length &&
     previous.tail?.style === next.tail?.style &&
@@ -288,6 +300,7 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
   textStyle,
   leadingInline,
   mentionHandles,
+  onMention,
   channelIndex,
   onChannelReference,
   tail,
@@ -333,6 +346,7 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
                 base={base}
                 onLink={onLink}
                 liveMentionHandles={liveMentionHandles}
+                onMention={onMention}
                 channelIndex={channelIndex}
                 onChannelReference={onChannelReference}
                 tail={trail}
@@ -349,6 +363,7 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
                 base={base}
                 onLink={onLink}
                 liveMentionHandles={liveMentionHandles}
+                onMention={onMention}
                 channelIndex={channelIndex}
                 onChannelReference={onChannelReference}
                 tail={trail}
@@ -374,6 +389,7 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
                     base={base}
                     onLink={onLink}
                     liveMentionHandles={liveMentionHandles}
+                    onMention={onMention}
                     channelIndex={channelIndex}
                     onChannelReference={onChannelReference}
                     tail={itemIndex === block.items.length - 1 ? trail : undefined}

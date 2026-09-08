@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   chatBackAction,
   cornerOpenAction,
   cornerHref,
   popCountToParentRoom,
+  resolveMentionDirectMessageAction,
   roomHref,
   routeChannelId,
   type ChatStackRoute,
@@ -140,5 +141,24 @@ describe('corner hrefs', () => {
       pathname: '/beeline/chat/[channelId]',
       params: { channelId: 'room-1' },
     });
+  });
+});
+
+describe('opening a resolved member mention', () => {
+  it('resolves the deterministic Workspace DM and opens the returned Room', async () => {
+    const resolveDirectMessage = vi.fn(async () => ({ channelId: 'dm-1', created: true }));
+
+    await expect(
+      resolveMentionDirectMessageAction(resolveDirectMessage, 'workspace-1', 'member-1', 'room-1'),
+    ).resolves.toEqual({ type: 'open-room', channelId: 'dm-1' });
+    expect(resolveDirectMessage).toHaveBeenCalledWith('workspace-1', 'member-1');
+  });
+
+  it('stays put when the resolved DM is already on screen', async () => {
+    const resolveDirectMessage = vi.fn(async () => ({ channelId: 'dm-1', created: false }));
+
+    await expect(
+      resolveMentionDirectMessageAction(resolveDirectMessage, 'workspace-1', 'member-1', 'dm-1'),
+    ).resolves.toEqual({ type: 'stay' });
   });
 });

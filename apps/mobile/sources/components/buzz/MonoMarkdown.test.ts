@@ -446,3 +446,46 @@ describe('MonoMarkdown renders a recognized reference as one tappable internal l
     expect(tappable).toHaveLength(3);
   });
 });
+
+describe('MonoMarkdown renders a resolved mention as a tappable member link', () => {
+  it('fires the mention handler with the normalized handle and exposes link semantics', () => {
+    const onMention = vi.fn();
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        React.createElement(MonoMarkdown, {
+          markdown: 'Ask @BeeBee for the result',
+          mentionHandles: ['beebee'],
+          onMention,
+          textStyle: { fontSize: 16 },
+        }),
+      );
+    });
+
+    const mention = renderer.root
+      .findAllByType('Text')
+      .find((node) => node.props.children === '@BeeBee');
+    expect(mention?.props.accessibilityRole).toBe('link');
+    act(() => mention?.props.onPress());
+    expect(onMention).toHaveBeenCalledWith('beebee');
+  });
+
+  it('leaves an unresolved token without a press action', () => {
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        React.createElement(MonoMarkdown, {
+          markdown: 'Ask @unknown for the result',
+          mentionHandles: ['beebee'],
+          onMention: vi.fn(),
+          textStyle: { fontSize: 16 },
+        }),
+      );
+    });
+
+    const token = renderer.root
+      .findAllByType('Text')
+      .find((node) => node.props.children === 'Ask @unknown for the result');
+    expect(token?.props.onPress).toBeUndefined();
+  });
+});

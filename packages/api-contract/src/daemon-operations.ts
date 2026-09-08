@@ -87,7 +87,7 @@ export type DaemonOperationMap = {
   getRoomGitHubToken: Operation<RoomInput, RoomGitHubTokenResult>;
   getRoomTargetBranch: Operation<RoomInput, RoomTargetBranchResult>;
   getIdentitySuccession: Operation<IdentityInput, IdentitySuccessionResult>;
-  getAgentConfiguration: Operation<AgentRoomInput, AgentConfigurationResult>;
+  getAgentConfiguration: Operation<AgentConfigurationInput, AgentConfigurationResult>;
   getAgentPresence: Operation<AgentRoomInput, AgentPresenceResult>;
   getRequestCompletion: Operation<RequestInput, RequestCompletionResult>;
   postRoomMessage: Operation<PostRoomMessageInput, WriteResult>;
@@ -122,6 +122,7 @@ export type Operation<Input, Output> = { readonly input: Input; readonly output:
 export type RoomInput = { readonly roomId: string };
 export type AgentInput = { readonly agentId: string };
 export type AgentRoomInput = AgentInput & RoomInput;
+export type AgentConfigurationInput = AgentInput & { readonly roomId?: string };
 export type CornerInput = { readonly cornerId: string };
 export type IdentityInput = { readonly identityId: string };
 export type RequestInput = RoomInput & { readonly requestId: string };

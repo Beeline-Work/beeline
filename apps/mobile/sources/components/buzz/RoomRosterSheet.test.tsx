@@ -267,9 +267,7 @@ describe('RoomRosterSheet', () => {
     );
     const head = empty.root.findAllByProps({ testID: 'room-roster-agents-head' }).at(-1)!;
     expect(head.props.children).toEqual(['Agents', ' ', 0]);
-    act(() =>
-      empty.root.findByProps({ testID: 'room-roster-add-agents' }).props.onPress(),
-    );
+    act(() => empty.root.findByProps({ testID: 'room-roster-add-agents' }).props.onPress());
     expect(onAddAgents).toHaveBeenCalledTimes(1);
 
     // Not in a DM, and not in a corner: neither has a section to add into.
@@ -288,7 +286,7 @@ describe('RoomRosterSheet', () => {
   });
 
   it('gives a row no chevron and no detail when the viewer may not remove it', () => {
-    const renderer = render(sheet({ viewerRole: 'member' }));
+    const renderer = render(sheet({ canManage: false, viewerRole: 'owner' }));
     const agentRow = renderer.root.findAllByProps({ testID: `room-roster-agent-${OX}` }).at(-1)!;
     expect(agentRow.props.disabled).toBe(true);
     expect(

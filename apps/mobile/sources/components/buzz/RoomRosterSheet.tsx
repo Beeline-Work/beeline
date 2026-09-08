@@ -171,6 +171,7 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
                     fallbackMemberHandle(participant.pubkey);
                   const targetRole = normalizedRoomRole(memberByPubkey.get(participant.pubkey));
                   const canRemove =
+                    canManage &&
                     !parentChannelId &&
                     !isDirectMessage &&
                     canRemoveRoomParticipant(

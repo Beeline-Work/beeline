@@ -4288,6 +4288,9 @@ describe('monolith integration', () => {
       roomId: ROOM,
     });
     expect(await publicConfiguration.json()).toEqual(expect.objectContaining({ yoloMode: false }));
+    expect(
+      await (await daemonOperation('getAgentConfiguration', { agentId: AGENT })).json(),
+    ).toEqual(expect.objectContaining({ yoloMode: true }));
     const publicView = (await (
       await request(`/v1/phone/workspaces/${WORKSPACE}/agents/${AGENT}`)
     ).json()) as { yolo: unknown };

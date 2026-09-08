@@ -69,14 +69,12 @@ describe('Room→repo corner-open lazy prompt', () => {
     );
   });
 
-  it('offers the picker to an admin and a plain ask-an-admin hint otherwise', () => {
+  it('shows the repo access guidance in the prompt', () => {
     const banner = blockFrom(
       chatSource,
       '{cornerOpenRepoPrompt && (',
       'corner-open repo prompt banner',
     );
-    expect(banner).toContain('canManageWorkspace');
-    expect(banner).toContain('<RepoPicker');
     expect(banner).toContain('Ask a');
     expect(banner).toContain('ACCESS TO THIS REPO WAS REVOKED');
     expect(banner).toContain('Add this repo to the Beeline installation');
@@ -104,16 +102,6 @@ describe('Room→repo write confirmation', () => {
 });
 
 describe('Room→repo settings change', () => {
-  it('gates the set/change picker on workspace-manager authority, leaving a read-only row otherwise', () => {
-    const adminIndex = chatSource.indexOf('testID="room-repo-action"');
-    const readonlyIndex = chatSource.indexOf('testID="room-repo-readonly"');
-    expect(adminIndex).toBeGreaterThanOrEqual(0);
-    expect(readonlyIndex).toBeGreaterThan(adminIndex);
-    const guardStart = chatSource.lastIndexOf('{canManageWorkspace ? (', adminIndex);
-    expect(guardStart).toBeGreaterThanOrEqual(0);
-    expect(guardStart).toBeLessThan(adminIndex);
-  });
-
   it('confirms before re-binding a repo out from under a Room with open corners', () => {
     const handler = blockFrom(
       chatSource,

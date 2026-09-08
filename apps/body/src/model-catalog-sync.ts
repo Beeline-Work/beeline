@@ -85,7 +85,7 @@ export async function syncAgentModelCatalog(
     // needed and naming one the agent has left would fail the access check.
     const configuration = await input.api.execute('getAgentConfiguration', {
       agentId: input.agentId,
-    } as Input<'getAgentConfiguration'>);
+    });
     const selection: Selection | undefined =
       configuration.model || configuration.effort
         ? {

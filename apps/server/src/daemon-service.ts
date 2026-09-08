@@ -893,7 +893,8 @@ export class DaemonService {
     }
     return { currentIdentityId: current, predecessors };
   }
-  private async configuration(agentId: string, roomId: string) {
+  private async configuration(agentId: string, roomId?: string) {
+    if (roomId) await this.access(roomId, agentId);
     const row = (
       await this.database.query<{
         soul: { name: string; instructions: string } | null;
@@ -905,11 +906,8 @@ export class DaemonService {
         `SELECT a.soul,a.selected_model,a.selected_effort,a.commands,
                 CASE WHEN workspace.visibility='public' THEN false ELSE a.yolo_mode END yolo_mode
          FROM agents a
-         JOIN rooms room ON room.id=$2
-         JOIN workspaces workspace ON workspace.id=room.workspace_id
-         JOIN memberships membership ON membership.identity_id=a.agent_id
-           AND membership.workspace_id=workspace.id AND membership.room_id IS NULL
-           AND membership.removed_at IS NULL
+         LEFT JOIN rooms room ON room.id=$2
+         LEFT JOIN workspaces workspace ON workspace.id=room.workspace_id
          WHERE a.agent_id=$1`,
         [agentId, roomId],
       )

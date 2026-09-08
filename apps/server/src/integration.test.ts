@@ -3756,7 +3756,7 @@ describe('monolith integration', () => {
     expect((await lines()).rows).toHaveLength(2);
   });
 
-  it('never 503s the repo picker when GitHub refresh fails and flags reconnect', async () => {
+  it('keeps cached repositories usable without a reconnect flag during a transient refresh failure', async () => {
     await database.query(
       `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,account_avatar_url,repository_selection,status) VALUES(77,$1,'42','owner','User','https://avatars.test/owner','selected','active')`,
       [HUMAN],
@@ -3771,9 +3771,10 @@ describe('monolith integration', () => {
       refresh: true,
     });
     expect(listed.status).toBe(200);
-    expect(await listed.json()).toMatchObject({
+    const payload = await listed.json();
+    expect(payload).not.toHaveProperty('githubReconnectNeeded');
+    expect(payload).toMatchObject({
       installed: true,
-      githubReconnectNeeded: true,
       repositories: [
         { id: 101, fullName: 'owner/widgets', installationId: 77, defaultBranch: 'trunk' },
       ],

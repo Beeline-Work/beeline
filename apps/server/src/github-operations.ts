@@ -953,7 +953,6 @@ export class GitHubOperations {
       )
     ).rows[0];
     if (!credential) return undefined;
-    if (credential.stale_at) return { subject: credential.subject };
     const sealed =
       credential.encrypted_token ?? (await this.resolveSealedUserToken?.(credential.subject));
     if (!sealed) return { subject: credential.subject };
@@ -962,7 +961,10 @@ export class GitHubOperations {
       : undefined;
     const token = this.open(sealed);
     const expiresAt = credential.expires_at ? new Date(credential.expires_at).getTime() : undefined;
-    if (refreshToken && expiresAt !== undefined && expiresAt - Date.now() < 60_000) {
+    if (
+      refreshToken &&
+      (credential.stale_at || (expiresAt !== undefined && expiresAt - Date.now() < 60_000))
+    ) {
       const rotated = await this.rotateUserCredential(
         { subject: credential.subject, refreshToken },
         database,
@@ -978,7 +980,6 @@ export class GitHubOperations {
       ...(refreshToken ? { refreshToken } : {}),
     };
   }
-  /** Exchanges the stored refresh grant for a fresh user token; marks it stale on failure. */
   private async rotateUserCredential(
     credential: { subject: string; refreshToken?: string },
     database: SqlDatabase,
@@ -996,7 +997,7 @@ export class GitHubOperations {
           [credential.subject],
         )
       ).rows[0];
-      if (!row || row.stale_at) return undefined;
+      if (!row) return undefined;
       if (
         !row.encrypted_refresh_token ||
         this.open(row.encrypted_refresh_token) !== credential.refreshToken
@@ -1020,7 +1021,7 @@ export class GitHubOperations {
       } catch (error) {
         if (!(error instanceof GitHubCredentialRejectedError)) throw error;
         await database.query(
-          `UPDATE github_user_tokens SET stale_at=now(),updated_at=now() WHERE subject=$1`,
+          `UPDATE github_user_tokens SET encrypted_refresh_token=NULL,stale_at=now(),updated_at=now() WHERE subject=$1`,
           [credential.subject],
         );
         return undefined;

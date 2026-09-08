@@ -25,17 +25,25 @@ export class GitHubHttpError extends Error {
 
 export class GitHubCredentialRejectedError extends Error {}
 
-async function jsonObject(response: Response, label: string): Promise<Record<string, unknown>> {
+async function jsonResponseObject(response: Response, label: string): Promise<Record<string, unknown>> {
   let body: unknown;
   try {
     body = await response.json();
   } catch {
+    if (!response.ok) throw new GitHubHttpError(label, response.status);
     throw new Error(`${label} returned invalid JSON`);
   }
-  if (!response.ok || !body || typeof body !== 'object' || Array.isArray(body)) {
-    throw new GitHubHttpError(label, response.status);
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    if (!response.ok) throw new GitHubHttpError(label, response.status);
+    throw new Error(`${label} returned invalid JSON`);
   }
   return body as Record<string, unknown>;
+}
+
+async function jsonObject(response: Response, label: string): Promise<Record<string, unknown>> {
+  const body = await jsonResponseObject(response, label);
+  if (!response.ok) throw new GitHubHttpError(label, response.status);
+  return body;
 }
 
 /** Some App endpoints (e.g. GET /app/installations) answer a bare JSON array, not an envelope. */
@@ -169,9 +177,7 @@ export class GitHubOAuthClient {
         refresh_token: refreshToken,
       }),
     });
-    // Only an explicit rejected refresh grant is permanent. Network failures,
-    // rate limits, malformed responses and server errors remain retryable.
-    const tokenBody = await jsonObject(tokenResponse, 'GitHub OAuth refresh');
+    const tokenBody = await jsonResponseObject(tokenResponse, 'GitHub OAuth refresh');
     if (
       tokenBody.error === 'bad_refresh_token' ||
       tokenBody.error === 'invalid_grant' ||
@@ -179,6 +185,7 @@ export class GitHubOAuthClient {
     ) {
       throw new GitHubCredentialRejectedError('GitHub refresh grant rejected');
     }
+    if (!tokenResponse.ok) throw new GitHubHttpError('GitHub OAuth refresh', tokenResponse.status);
     const accessToken = typeof tokenBody.access_token === 'string' ? tokenBody.access_token : '';
     if (!accessToken) throw new Error('GitHub OAuth refresh response is missing access_token');
     const nextRefreshToken =

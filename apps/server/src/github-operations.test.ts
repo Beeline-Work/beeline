@@ -575,10 +575,40 @@ describe('GitHub phone operations', () => {
         `UPDATE github_user_tokens SET expires_at=now()-interval '1 minute' WHERE subject='42'`,
       );
       fetchMock.mockResolvedValueOnce(
-        new Response(JSON.stringify({ error: 'bad_refresh_token' }), { status: 200 }),
+        new Response(JSON.stringify({ error: 'invalid_grant' }), { status: 400 }),
       );
       await expect(operations.refresh(HUMAN)).resolves.toEqual({ githubReconnectNeeded: true });
       await expect(operations.refresh(HUMAN)).resolves.toEqual({ githubReconnectNeeded: true });
+      expect(
+        (
+          await database.query<{ encrypted_refresh_token: string | null }>(
+            `SELECT encrypted_refresh_token FROM github_user_tokens WHERE subject='42'`,
+          )
+        ).rows[0]?.encrypted_refresh_token,
+      ).toBeNull();
+    });
+
+    it('recovers a historically stale credential that still has a refresh grant', async () => {
+      const operations = operationsFor(database);
+      const { tokenBodies } = await bindIdentity(database);
+      await operations.beginIdentity(HUMAN, {
+        redirectUri: 'beeline://callback',
+        state: 'historical-stale',
+      });
+      await operations.completeIdentity(HUMAN, { challenge: 'code', proof: 'historical-stale' }, false);
+      await database.query(
+        `UPDATE github_user_tokens SET stale_at=now(),expires_at=now()-interval '1 minute' WHERE subject='42'`,
+      );
+      tokenBodies.length = 0;
+
+      await expect(operations.refresh(HUMAN)).resolves.toEqual({});
+      expect(tokenBodies).toEqual([
+        expect.objectContaining({ grant_type: 'refresh_token', refresh_token: 'refresh-1' }),
+      ]);
+      expect(
+        (await database.query(`SELECT stale_at FROM github_user_tokens WHERE subject='42'`)).rows[0]
+          ?.stale_at,
+      ).toBeNull();
     });
 
     it('degrades to stored installations with a reconnect flag when refresh is impossible', async () => {

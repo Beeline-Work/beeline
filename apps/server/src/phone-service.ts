@@ -1646,7 +1646,6 @@ export class PhoneService {
             githubReconnectNeeded = Boolean(outcome?.githubReconnectNeeded);
           } catch {
             // Never 503 the repo picker: degrade to stored installations/repositories.
-            githubReconnectNeeded = true;
           }
         }
         const result = (await this.listRepositories(viewerId)) as Output<Name>;

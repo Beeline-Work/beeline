@@ -168,6 +168,13 @@ function toolCallKey(call: ToolCallEntry, index: number): string {
   return call.id ?? `tool-${index}`;
 }
 
+function toolCallSettled(call: ToolCallEntry): boolean {
+  if (call.resultReceived) return true;
+  return /^(?:completed|complete|failed|error|succeeded|success|passed|done)$/i.test(
+    call.status ?? '',
+  );
+}
+
 function isSuccessfulCommit(call: ToolCallEntry): boolean {
   if (/failed|error|denied/i.test(call.status ?? '')) return false;
   return /\bgit\s+commit\b|\bcommit(?:ted)?\s+(?:changes|files?)\b/i.test(
@@ -806,7 +813,7 @@ export class MonolithCornerTurnLoop {
                     pendingToolNarrations.set(key, narration);
                     if (narration) lastNarratedToolCall = key;
                   }
-                  if (settledOnly || publishedToolCalls.has(key)) return;
+                  if (settledOnly || publishedToolCalls.has(key) || !toolCallSettled(call)) return;
                   publishedToolCalls.add(key);
                   const narration = pendingToolNarrations.get(key) ?? '';
                   this.activityTail = this.activityTail

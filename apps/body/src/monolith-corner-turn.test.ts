@@ -752,6 +752,68 @@ describe('corner close-request polling cadence', () => {
     ]);
   });
 
+  it('does not publish an unfinished corner tool as successful activity', async () => {
+    let closeReads = 0;
+    const writes: Array<{ name: string; input: Record<string, unknown> }> = [];
+    const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
+      if (name === 'getAgentConfiguration') return { commands: [] };
+      if (name === 'getWorkspaceRoster') {
+        return {
+          members: [{ identityId: '11'.repeat(32), kind: 'agent', name: 'Bee', role: 'member' }],
+        };
+      }
+      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getCornerCloseRequests') {
+        closeReads += 1;
+        if (closeReads === 1) {
+          return {
+            items: [
+              {
+                id: 'human-msg',
+                authorId: '22'.repeat(32),
+                createdAt: 1,
+                type: 'message',
+                body: 'Please continue',
+                mentionIds: [],
+                attachments: [],
+              },
+            ],
+            cursor: 'human-msg',
+          };
+        }
+        return { items: [], cursor: 'latest', closeRequested: true };
+      }
+      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
+      writes.push({ name, input });
+      return { id: 'write-id', createdAt: 1 };
+    });
+    const { acp, loop, scheduler } = await cornerHarness(execute, 60_000);
+    vi.spyOn(acp, 'sessionPrompt').mockImplementation(
+      async (_id, _prompt, _timeout, draft, _activity, toolActivity) => {
+        draft?.('Inspecting', 'Inspecting');
+        const tool = {
+          kind: 'read' as const,
+          title: 'Read package.json',
+          rawInput: { path: 'package.json' },
+          status: 'in_progress' as const,
+        };
+        toolActivity?.([tool]);
+        return { stopReason: 'end_turn', updates: [], agentText: 'Done.', toolCalls: [tool] };
+      },
+    );
+    await loop.run();
+    await scheduler.dispose();
+
+    expect(writes.filter((write) => write.name === 'postAgentActivity')).toEqual([]);
+    expect(writes).toContainEqual(
+      expect.objectContaining({
+        name: 'postRoomMessage',
+        input: expect.objectContaining({ text: 'Done.' }),
+      }),
+    );
+  });
+
   it('folds a corner wake into the live stream without the retired long-poll', async () => {
     let closeReads = 0;
     let publishWake: (() => void) | undefined;

@@ -1177,9 +1177,7 @@ export class MonolithRoomTurnLoop {
               const mentionIds = reply
                 ? agentReplyMentionIds(reply, roster, this.agent.publicKey)
                 : [];
-              const continuitySenders = reply
-                ? [item.authorId, ...mentionIds]
-                : [];
+              const continuitySenders = reply ? [item.authorId, ...mentionIds] : [];
               if (continuitySenders.length) {
                 active.continuitySenders = new Set(continuitySenders);
                 active.rebuildContinuity = true;
@@ -1313,7 +1311,11 @@ export class MonolithRoomTurnLoop {
           }
           const deferred = this.activeTurn ? [] : [...deferredContinuity.values()];
           if (!this.activeTurn) deferredContinuity.clear();
-          const delivered = orderInboxItems([...deferred, ...pushedInbox.splice(0), ...inbox.items]);
+          const delivered = orderInboxItems([
+            ...deferred,
+            ...pushedInbox.splice(0),
+            ...inbox.items,
+          ]);
           for (const item of delivered) {
             if (processedInboxIds.has(item.id) || deferredContinuity.has(item.id)) continue;
             const triggers = inboxItemTriggersTurn(

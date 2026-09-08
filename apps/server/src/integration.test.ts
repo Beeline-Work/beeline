@@ -735,7 +735,9 @@ describe('monolith integration', () => {
     const unaddressedInbox = (await (
       await daemonOperation('getRoomInbox', { roomId: dm.id })
     ).json()) as { items: Array<{ id: string }> };
-    expect(unaddressedInbox.items).not.toContainEqual(expect.objectContaining({ id: 'c'.repeat(64) }));
+    expect(unaddressedInbox.items).not.toContainEqual(
+      expect.objectContaining({ id: 'c'.repeat(64) }),
+    );
 
     const addressed = await operation('sendRoomMessage', {
       roomId: dm.id,
@@ -2023,9 +2025,13 @@ describe('monolith integration', () => {
     expect(pileOn.status).toBe(400);
     await expect(pileOn.json()).resolves.toEqual({ error: 'turn trigger is invalid for agent' });
 
-    await database.query(
-      `UPDATE agents SET access_policy=$2::jsonb WHERE agent_id=$1`,
-      [AGENT, JSON.stringify({ type: 'allowlist', allow: [] })],
+    await database.query(`UPDATE agents SET access_policy=$2::jsonb WHERE agent_id=$1`, [
+      AGENT,
+      JSON.stringify({ type: 'allowlist', allow: [] }),
+    ]);
+    const existingNoticeIds = await database.query<{ id: string }>(
+      `SELECT id FROM messages WHERE room_id=$1 AND presentation='system'`,
+      [ROOM],
     );
     const addressedPeer = await operation('sendRoomMessage', {
       roomId: ROOM,
@@ -2034,8 +2040,9 @@ describe('monolith integration', () => {
     });
     expect(addressedPeer.status).toBe(200);
     const notices = await database.query<{ text: string }>(
-      `SELECT text FROM messages WHERE room_id=$1 AND presentation='system'`,
-      [ROOM],
+      `SELECT text FROM messages
+       WHERE room_id=$1 AND presentation='system' AND NOT (id=ANY($2::text[]))`,
+      [ROOM, existingNoticeIds.rows.map((row) => row.id)],
     );
     expect(notices.rows.map((row) => row.text)).toContainEqual(
       expect.stringContaining('Peer did not answer'),
@@ -2097,7 +2104,10 @@ describe('monolith integration', () => {
       [ROOM],
     );
     expect(notices.rows).toContainEqual(
-      expect.objectContaining({ author_id: AGENT, text: expect.stringContaining('did not answer') }),
+      expect.objectContaining({
+        author_id: AGENT,
+        text: expect.stringContaining('did not answer'),
+      }),
     );
   });
 
@@ -2119,10 +2129,10 @@ describe('monolith integration', () => {
        VALUES($1,$2,$3,'Direct parent answer.','[]'::jsonb)`,
       [parentId, ROOM, AGENT],
     );
-    await database.query(
-      `UPDATE agents SET access_policy=$2::jsonb WHERE agent_id=$1`,
-      [AGENT, JSON.stringify({ type: 'allowlist', allow: [] })],
-    );
+    await database.query(`UPDATE agents SET access_policy=$2::jsonb WHERE agent_id=$1`, [
+      AGENT,
+      JSON.stringify({ type: 'allowlist', allow: [] }),
+    ]);
 
     const sent = await operation('sendRoomReply', {
       roomId: ROOM,

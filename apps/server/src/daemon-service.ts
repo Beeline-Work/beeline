@@ -573,7 +573,8 @@ export class DaemonService {
     // sort for everyone. `getRoomInbox` and any cursor walk keep the ascending
     // forward semantics untouched.
     const newestPage = name === 'getRoomConversation' && !after && input.window !== 'earliest';
-    const continuityPage = name === 'getRoomConversation' && !after && input.window === 'continuity';
+    const continuityPage =
+      name === 'getRoomConversation' && !after && input.window === 'continuity';
     const rows = await this.database.query<{
       id: string;
       author_id: string;
@@ -601,11 +602,11 @@ export class DaemonService {
              ORDER BY cursor_ms DESC,id DESC LIMIT ${limit}) continuity
            ORDER BY cursor_ms,id`
         : newestPage
-        ? `SELECT * FROM (${conversationColumns}
+          ? `SELECT * FROM (${conversationColumns}
              FROM messages WHERE room_id=$1
              ORDER BY cursor_ms DESC,id DESC LIMIT ${limit}) newest
            ORDER BY cursor_ms,id`
-        : `${conversationColumns}
+          : `${conversationColumns}
              FROM messages WHERE room_id=$1
                ${
                  after

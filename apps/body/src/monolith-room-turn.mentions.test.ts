@@ -240,8 +240,7 @@ describe('who an agent can tag, and how it is spelled', () => {
     const running = loop.run();
     await vi.waitFor(() => expect(prompts).toHaveLength(1), { timeout: 10_000 });
     await vi.waitFor(
-      () =>
-        expect(writes).toContainEqual(expect.objectContaining({ triggerMessageId: 'ask-1' })),
+      () => expect(writes).toContainEqual(expect.objectContaining({ triggerMessageId: 'ask-1' })),
       { timeout: 10_000 },
     );
     await vi.waitFor(() => expect(followUpDelivered).toBe(true), { timeout: 10_000 });
@@ -342,9 +341,9 @@ describe('the per-sender Room response rule', () => {
     );
     const unaddressed = message({ id: 'aged-out' });
     expect(agedOut.continues(unaddressed, AGENT_HEX)).toBe(false);
-    expect(inboxItemTriggersTurn(message({ id: 'tagged', mentionIds: [AGENT_HEX] }), AGENT_HEX)).toBe(
-      true,
-    );
+    expect(
+      inboxItemTriggersTurn(message({ id: 'tagged', mentionIds: [AGENT_HEX] }), AGENT_HEX),
+    ).toBe(true);
     expect(
       agedOut.continues(
         message({

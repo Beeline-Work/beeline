@@ -356,13 +356,22 @@ describe('monolith-only thin daemon', () => {
       autoApprovePermissions: false,
     };
     const coordinator = new RoomRuntimeCoordinator(staged.runtime, staged.configPath, config, {
-      daemonApi: { execute } as unknown as DaemonApiClient,
+      daemonApi: {
+        execute,
+        connection: () => ({
+          baseUrl: 'https://server.example',
+          daemonToken: 'daemon-token',
+          agentId: staged.runtime.agent.publicKey,
+        }),
+      } as unknown as DaemonApiClient,
     });
     try {
       await coordinator.reconcile();
       await vi.waitFor(() => expect(posts).toHaveLength(1));
       expect(posts[0]).toMatchObject({ roomId, triggerMessageId: mentionedId });
-      expect(posts).not.toContainEqual(expect.objectContaining({ triggerMessageId: unmentionedId }));
+      expect(posts).not.toContainEqual(
+        expect.objectContaining({ triggerMessageId: unmentionedId }),
+      );
     } finally {
       await coordinator.shutdown();
       acpAlive.mockRestore();

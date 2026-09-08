@@ -52,6 +52,7 @@ async function runCorner(input: {
   };
   /** A server check note in the same poll, to prove one turn per check state. */
   checkNote?: boolean;
+  initialRosterFailure?: boolean;
   lostPostResponse?: boolean;
   /** Durable replies already in the corner, by author. */
   history?: {
@@ -96,11 +97,14 @@ async function runCorner(input: {
   };
   const abort = new AbortController();
   let closeReads = 0;
+  let rosterReads = 0;
   let committedReply = false;
   let lostPostResponse = false;
   const execute = vi.fn(async (name: string) => {
     if (name === 'getAgentConfiguration') return { commands: [] };
     if (name === 'getWorkspaceRoster') {
+      rosterReads += 1;
+      if (input.initialRosterFailure && rosterReads === 1) throw new Error('roster unavailable');
       return {
         members: [
           { identityId: OPENER, kind: 'agent', name: 'Codex', role: 'member' },
@@ -319,6 +323,20 @@ describe('a corner carried by its members', () => {
     expect(helper.prompts).toHaveLength(2);
     expect(helper.prompts[1]).toContain('Please continue.');
   }, 20_000);
+
+  it('recovers the roster before continuing retained sender history', async () => {
+    const helper = await runCorner({
+      agentKey: HELPER_KEY,
+      agentName: 'Goosy',
+      isOpener: false,
+      initialRosterFailure: true,
+      message: { body: 'Please continue.', mentionIds: [] },
+      history: [{ authorId: HELPER, body: 'I started this.', requestAuthorId: HUMAN }],
+    });
+
+    expect(helper.prompts).toHaveLength(1);
+    expect(helper.prompts[0]).toContain('Please continue.');
+  });
 
   it('starts one check turn for the member carrying the corner, not one per member', async () => {
     // A check note is ONE server fact. Every member agent now watches the

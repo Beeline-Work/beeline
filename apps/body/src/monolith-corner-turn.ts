@@ -324,6 +324,7 @@ export class MonolithCornerTurnLoop {
   private memberNames = new Map<string, string>();
   /** Agent identities in this Workspace, so a mention can be told from a human's. */
   private agentMembers = new Set<string>();
+  private rosterAvailable = false;
   /** Per-sender continuity, shared in shape with top-level Room intake. */
   private readonly responseRule = new AgentResponseRule();
   private continuityRebuildRequested = false;
@@ -379,7 +380,12 @@ export class MonolithCornerTurnLoop {
       roster.members.filter((member) => member.kind === 'agent').map((member) => member.identityId),
     );
     this.responseRule.setAgents(this.agentMembers);
+    this.rosterAvailable = true;
     return roster;
+  }
+
+  private async reconcileRoster(): Promise<void> {
+    if (!this.rosterAvailable) await this.roster().catch(() => undefined);
   }
 
   /**
@@ -1228,6 +1234,7 @@ export class MonolithCornerTurnLoop {
             while (processedInboxIds.size > INBOX_DEDUPLICATION_LIMIT)
               processedInboxIds.delete(processedInboxIds.values().next().value!);
             if (item.type === 'message') {
+              if (item.authorId !== this.agent.publicKey) await this.reconcileRoster();
               this.noteCarrier(item.authorId);
               if (item.authorId === this.agent.publicKey) continue;
               const addressed = this.addressesThisAgent(item);

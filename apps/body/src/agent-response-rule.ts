@@ -24,6 +24,7 @@ export class AgentResponseRule {
 
   setAgents(agentIds: Iterable<string>): void {
     this.agentIds = new Set(agentIds);
+    this.rebuildLastAgentBySender();
   }
 
   observeAll(items: readonly ResponseRuleMessage[]): void {
@@ -48,6 +49,10 @@ export class AgentResponseRule {
     if (item.type !== 'message') return;
     this.recentMessages.push(item);
     while (this.recentMessages.length > CONTINUITY_WINDOW_LIMIT) this.recentMessages.shift();
+    this.rebuildLastAgentBySender();
+  }
+
+  private rebuildLastAgentBySender(): void {
     this.lastAgentBySender.clear();
     for (const recent of this.recentMessages) {
       if (!this.agentIds.has(recent.authorId)) continue;

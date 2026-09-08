@@ -747,6 +747,7 @@ describe('Room message variant components', () => {
         kind: 'agent',
         name: 'Lumen',
         handle: 'lumen',
+        face: 'owl',
       },
     });
 
@@ -771,7 +772,8 @@ describe('Room message variant components', () => {
 
     expect(ledgerEntryRender.mock.lastCall?.[0].byline).toMatchObject({
       name: 'Lumen',
-      mark: { seed: 'agent-lumen', kind: 'agent' },
+      role: 'agent',
+      mark: { seed: 'agent-lumen', kind: 'agent', face: 'owl' },
     });
   });
 

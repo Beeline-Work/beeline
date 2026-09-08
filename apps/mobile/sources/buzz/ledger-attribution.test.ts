@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { continuedSpeakerIds } from './ledger-attribution';
+import { continuedSpeakerIds, ledgerSpeakerKey } from './ledger-attribution';
 
 const agent = (id: string, pubkey = 'beebee') => ({ id, speaker: `agent:${pubkey}` });
 const other = (id: string) => ({ id, speaker: null });
@@ -32,6 +32,33 @@ describe('ledger attribution runs', () => {
     // the other, and neither may swallow the next agent's announcement.
     const continued = continuedSpeakerIds([other('card-1'), other('card-2'), agent('a1')]);
     expect(continued.size).toBe(0);
+  });
+
+  it('breaks an agent run at a merged corner or PR summary card', () => {
+    const pubkey = 'hoots';
+    const mergedCard = {
+      id: 'merged-card',
+      pubkey,
+      isAgentActivity: true,
+      daemonFact: { type: 'corner-complete', outcome: 'landed' },
+    };
+    const prose = { id: 'answer', speaker: `agent:${pubkey}` };
+
+    const continued = continuedSpeakerIds([
+      { id: mergedCard.id, speaker: ledgerSpeakerKey(mergedCard, new Set([pubkey])) },
+      prose,
+    ]);
+
+    expect(continued.has(prose.id)).toBe(false);
+  });
+
+  it('always announces the first message from a new speaker', () => {
+    const continued = continuedSpeakerIds([
+      agent('hoots-1', 'hoots'),
+      agent('lumen-1', 'lumen'),
+    ]);
+
+    expect(continued.has('lumen-1')).toBe(false);
   });
 
   it('re-announces the voice when prose follows a collapsed tool run', () => {

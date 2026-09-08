@@ -74,6 +74,9 @@ export type LedgerAttributionMessage = {
   isArchivedNotice?: boolean;
   isSystemNotice?: boolean;
   githubEvent?: unknown;
+  daemonFact?: unknown;
+  durableFact?: unknown;
+  grantRequest?: unknown;
   writePermission?: unknown;
   targetBranchProposal?: unknown;
 };
@@ -100,7 +103,10 @@ export function ledgerSpeakerKey(
     message.roomUpdate ||
     message.isArchivedNotice ||
     message.isSystemNotice ||
-    message.githubEvent
+    message.githubEvent ||
+    message.daemonFact ||
+    message.durableFact ||
+    message.grantRequest
   )
     return null;
   if (message.writePermission || message.targetBranchProposal) return null;

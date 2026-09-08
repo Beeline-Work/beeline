@@ -3,6 +3,8 @@ import React, { useState } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
+let windowHeight = 844;
+
 vi.mock('react-native', async () => {
   const React = await import('react');
   const host = (name: string) => (props: any) => React.createElement(name, props, props.children);
@@ -14,7 +16,7 @@ vi.mock('react-native', async () => {
     Pressable: host('Pressable'),
     Modal: host('Modal'),
     Platform: { OS: 'android' },
-    useWindowDimensions: () => ({ width: 390, height: 844 }),
+    useWindowDimensions: () => ({ width: 390, height: windowHeight }),
   };
 });
 vi.mock('react-native-keyboard-controller', () => ({
@@ -79,7 +81,59 @@ function mount() {
   return { renderer, host, submit };
 }
 
+function flattenedStyle(node: any): Record<string, unknown> {
+  return Object.assign({}, ...node.props.style.flat(Infinity).filter(Boolean));
+}
+
+function textContent(node: any): string {
+  return node.children
+    .map((child: any) => (typeof child === 'string' ? child : textContent(child)))
+    .join('');
+}
+
 describe('New Room form', () => {
+  it.each([
+    { viewport: 'short', height: 500, expectedPickerHeight: 452 },
+    { viewport: 'normal', height: 844, expectedPickerHeight: 520 },
+  ])(
+    'gives the $viewport dialog body renderable height while keeping every creation field visible',
+    ({ height, expectedPickerHeight }) => {
+      windowHeight = height;
+      const { renderer, host } = mount();
+      const surface = renderer.root.findByType('HullSurface');
+
+      expect(flattenedStyle(surface)).toMatchObject({
+        minHeight: 300,
+        maxHeight: height - 48,
+      });
+      const header = renderer.root
+        .findAllByProps({ accessibilityRole: 'header' })
+        .find((node: any) => node.type === 'Text');
+      expect(textContent(header)).toBe('New Room');
+      expect(
+        renderer.root
+          .findAllByType('Text')
+          .some((node: any) => textContent(node).includes('Repository optional')),
+      ).toBe(true);
+      expect(host('create-room-name')).toBeDefined();
+      expect(
+        host('create-room-repo-row')
+          .findAllByType('Text')
+          .some((node: any) => textContent(node) === 'No repository (chat only)'),
+      ).toBe(true);
+      expect(host('create-room-submit')).toBeDefined();
+
+      act(() => host('create-room-repo-row').props.onPress());
+      expect(flattenedStyle(surface)).toMatchObject({
+        minHeight: expectedPickerHeight,
+        maxHeight: height - 48,
+      });
+      expect(host('create-room-picker')).toBeDefined();
+      act(() => renderer.unmount());
+      windowHeight = 844;
+    },
+  );
+
   it('makes name primary, keeps the footer separate, and explains name gating for chat-only creation', () => {
     const { renderer, host, submit } = mount();
     expect(host('create-room-name').props.accessibilityLabel).toBe('Room name');

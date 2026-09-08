@@ -8,6 +8,10 @@ import { Typography } from '@/constants/Typography';
 import { HullDialog, HullDialogInput } from './HullDialog';
 import { RepoPicker } from './RepoPicker';
 
+const DIALOG_VIEWPORT_GUTTER = 48;
+const FORM_DIALOG_MIN_HEIGHT = 300;
+const PICKER_DIALOG_HEIGHT = 520;
+
 type Props = {
   visible: boolean;
   workspaceName: string;
@@ -44,6 +48,11 @@ export function NewRoomDialog({
   repoPickerError,
 }: Props) {
   const { height } = useWindowDimensions();
+  const availableDialogHeight = Math.max(0, height - DIALOG_VIEWPORT_GUTTER);
+  const dialogMinHeight = Math.min(
+    showRepoPicker ? PICKER_DIALOG_HEIGHT : FORM_DIALOG_MIN_HEIGHT,
+    availableDialogHeight,
+  );
   return (
     <HullDialog
       actions={[
@@ -59,7 +68,7 @@ export function NewRoomDialog({
       ]}
       body={showRepoPicker ? undefined : `In ${workspaceName}. Repository optional.`}
       onRequestClose={onClose}
-      surfaceStyle={{ maxHeight: height - 48 }}
+      surfaceStyle={{ minHeight: dialogMinHeight, maxHeight: availableDialogHeight }}
       testID="new-room-dialog"
       title={`New ${ROOM_LABEL}`}
       visible={visible}

@@ -1883,7 +1883,7 @@ export class PhoneService {
       input.roomId,
       author,
       input.mentions ?? [],
-      parent.rows[0].author_kind === 'agent' ? parent.rows[0].author_id : undefined,
+      parent.rows[0].author_kind === 'agent' ? parent.rows[0].author_id : null,
     );
     const values = [
       id,
@@ -2074,7 +2074,7 @@ export class PhoneService {
     roomId: string,
     author: string,
     explicitMentions: readonly string[],
-    replyAgentId?: string,
+    replyAgentId?: string | null,
   ): Promise<readonly string[]> {
     if (explicitMentions.length) return explicitMentions;
     const authorKind = (
@@ -2085,6 +2085,9 @@ export class PhoneService {
     ).rows[0]?.kind;
     if (authorKind !== 'human') return [];
     if (replyAgentId) return [replyAgentId];
+    // A reply to a human is addressed to that human. Do not let the ordinary
+    // unthreaded-message fallbacks redirect it to the last or only agent.
+    if (replyAgentId === null) return [];
 
     const previousAgent = (
       await this.database.query<{ author_id: string }>(

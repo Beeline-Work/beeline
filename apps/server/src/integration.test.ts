@@ -1964,6 +1964,76 @@ describe('monolith integration', () => {
     await expect(pileOn.json()).resolves.toEqual({ error: 'turn trigger is invalid for agent' });
   });
 
+  it('accepts a direct reply from its parent agent after another agent replies', async () => {
+    const peer = 'c'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Peer')`, [peer]);
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [peer, HUMAN]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
+      [WORKSPACE, peer, ROOM],
+    );
+    const peerExchange = await auth.createDaemonExchange(peer);
+    const peerToken = (await auth.exchangeDaemonToken(peerExchange.exchangeToken))!.daemonToken;
+    const first = '9'.repeat(64);
+    await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: first,
+      text: '@bee Start this exchange.',
+      mentions: [AGENT],
+    });
+    const parent = await daemonOperation('postRoomMessage', {
+      roomId: ROOM,
+      requestId: first,
+      triggerMessageId: first,
+      text: 'My first answer.',
+    });
+    const parentId = ((await parent.json()) as { id: string }).id;
+    const peerRequest = 'a'.repeat(64);
+    await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: peerRequest,
+      text: '@Peer Please answer too.',
+      mentions: [peer],
+    });
+    await daemonOperation(
+      'postRoomMessage',
+      {
+        roomId: ROOM,
+        requestId: peerRequest,
+        triggerMessageId: peerRequest,
+        text: 'My later answer.',
+      },
+      peerToken,
+    );
+    const reply = 'b'.repeat(64);
+    await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: reply,
+      parentMessageId: parentId,
+      text: 'Please continue the first answer.',
+    });
+
+    const continued = await daemonOperation('postRoomMessage', {
+      roomId: ROOM,
+      requestId: reply,
+      triggerMessageId: reply,
+      text: 'Continuing the first answer.',
+    });
+    expect(continued.status).toBe(200);
+    const pileOn = await daemonOperation(
+      'postRoomMessage',
+      {
+        roomId: ROOM,
+        requestId: reply,
+        triggerMessageId: reply,
+        text: 'I should not answer this reply.',
+      },
+      peerToken,
+    );
+    expect(pileOn.status).toBe(400);
+  });
+
   it('does not address an agent when an untagged reply targets a human', async () => {
     const parentId = '8'.repeat(64);
     await operation('sendRoomMessage', {

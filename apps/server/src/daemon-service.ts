@@ -1058,22 +1058,24 @@ export class DaemonService {
                message.mention_ids @> $3::jsonb OR (
                  message.presentation='message'
                  AND (identity.kind<>'agent' OR message.agent_hop_count<$5)
-                 AND (message.reply_to_message_id IS NULL OR reply_parent.author_id=$4)
-                 AND $4=(
-                   SELECT answer.author_id
-                   FROM messages answer
-                   JOIN identities answer_identity ON answer_identity.id=answer.author_id
-                   LEFT JOIN messages request ON request.id=answer.request_id
-                   LEFT JOIN messages answer_parent ON answer_parent.id=answer.reply_to_message_id
-                   WHERE answer.room_id=message.room_id
-                     AND answer_identity.kind='agent'
-                     AND (
-                       request.author_id=message.author_id OR
-                       answer.mention_ids @> jsonb_build_array(message.author_id) OR
-                       answer_parent.author_id=message.author_id
-                     )
-                     AND (${MESSAGE_CURSOR_MS_SQL.replaceAll('created_at', 'answer.created_at')},answer.id)<(${MESSAGE_CURSOR_MS_SQL.replaceAll('created_at', 'message.created_at')},message.id)
-                   ORDER BY ${MESSAGE_CURSOR_MS_SQL.replaceAll('created_at', 'answer.created_at')} DESC,answer.id DESC LIMIT 1
+                 AND (
+                   (message.reply_to_message_id IS NOT NULL AND reply_parent.author_id=$4) OR
+                   (message.reply_to_message_id IS NULL AND $4=(
+                     SELECT answer.author_id
+                     FROM messages answer
+                     JOIN identities answer_identity ON answer_identity.id=answer.author_id
+                     LEFT JOIN messages request ON request.id=answer.request_id
+                     LEFT JOIN messages answer_parent ON answer_parent.id=answer.reply_to_message_id
+                     WHERE answer.room_id=message.room_id
+                       AND answer_identity.kind='agent'
+                       AND (
+                         request.author_id=message.author_id OR
+                         answer.mention_ids @> jsonb_build_array(message.author_id) OR
+                         answer_parent.author_id=message.author_id
+                       )
+                       AND (${MESSAGE_CURSOR_MS_SQL.replaceAll('created_at', 'answer.created_at')},answer.id)<(${MESSAGE_CURSOR_MS_SQL.replaceAll('created_at', 'message.created_at')},message.id)
+                     ORDER BY ${MESSAGE_CURSOR_MS_SQL.replaceAll('created_at', 'answer.created_at')} DESC,answer.id DESC LIMIT 1
+                   ))
                  )
                )
              )`,

@@ -76,7 +76,7 @@ describe('who an agent can tag, and how it is spelled', () => {
    * and the tag reaches nobody. Fails before the fix — no handle appeared in
    * the prompt at all.
    */
-  it('carries the canonical handles into the turn prompt', async () => {
+  it('carries the canonical handles into a direct-reply turn prompt and final write', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-room-mentions-'));
     roots.push(root);
     const identity = identityFromKey(AGENT_HEX, 'Greeter');
@@ -109,7 +109,8 @@ describe('who an agent can tag, and how it is spelled', () => {
       accessPolicy: 'everyone',
     } as BodyConfig;
     let inboxReads = 0;
-    const execute = vi.fn(async (name: string) => {
+    const writes: unknown[] = [];
+    const execute = vi.fn(async (name: string, input?: unknown) => {
       if (name === 'getAgentConfiguration') return { commands: [], yoloMode: false };
       if (name === 'getRoomRepositoryState') return { resolution: 'none' };
       if (name === 'getWorkspaceRoster') return ROSTER(agent.publicKey);
@@ -126,7 +127,9 @@ describe('who an agent can tag, and how it is spelled', () => {
                 createdAt: 900,
                 type: 'message',
                 body: 'say hello to the new arrival',
-                mentionIds: [agent.publicKey],
+                mentionIds: [],
+                replyToMessageId: 'agent-parent',
+                replyToAuthorId: agent.publicKey,
                 attachments: [],
               },
             ],
@@ -134,6 +137,7 @@ describe('who an agent can tag, and how it is spelled', () => {
           };
         return { items: [], cursor: 'latest' };
       }
+      if (name === 'postRoomMessage') writes.push(input);
       return { id: 'write-id', createdAt: 1 };
     });
     const api = {
@@ -180,6 +184,7 @@ describe('who an agent can tag, and how it is spelled', () => {
     expect(prompts[0]).toContain('Room members, and the exact spelling that tags each one:');
     expect(prompts[0]).toContain('- @lunchboxfortwo — Captain (person)');
     expect(prompts[0]).toContain('- @bananaman614305 (person)');
+    expect(writes).toContainEqual(expect.objectContaining({ triggerMessageId: 'ask-1' }));
   }, 20_000);
 
   /**

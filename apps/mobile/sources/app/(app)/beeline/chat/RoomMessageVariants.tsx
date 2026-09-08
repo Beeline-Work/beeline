@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Image, Linking, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { StyleSheet } from 'react-native-unistyles';
@@ -651,6 +651,7 @@ export interface OrdinaryLedgerMessageProps {
   channelIndex: ChannelReferenceIndex;
   deliveryFailed: boolean;
   onChannelReference(target: ChannelReferenceTarget): void;
+  onMention?(participantId: string): void;
   onReply(message: ChatDisplayMessage): void;
   onCopy(text: string): void;
   onRetry(eventId: string): void;
@@ -671,6 +672,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   channelIndex,
   deliveryFailed,
   onChannelReference,
+  onMention,
   onReply,
   onCopy,
   onRetry,
@@ -756,6 +758,32 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
         : '';
   }
   const settleFrom = settleRef.current || undefined;
+  const taggedMentionPubkeys = useMemo(
+    () => new Set(message.mentionPubkeys ?? []),
+    [message.mentionPubkeys],
+  );
+  const mentionHandles = useMemo(
+    () =>
+      participantHandles
+        .filter(
+          (participant) =>
+            participant.pubkey !== viewerPubkey && taggedMentionPubkeys.has(participant.pubkey),
+        )
+        .map((participant) => participant.handle),
+    [participantHandles, taggedMentionPubkeys, viewerPubkey],
+  );
+  const handleMention = useCallback(
+    (handle: string) => {
+      const participant = participantHandles.find(
+        (candidate) =>
+          candidate.pubkey !== viewerPubkey &&
+          taggedMentionPubkeys.has(candidate.pubkey) &&
+          candidate.handle.normalize('NFKC').toLocaleLowerCase() === handle,
+      );
+      if (participant) onMention?.(participant.pubkey);
+    },
+    [onMention, participantHandles, taggedMentionPubkeys, viewerPubkey],
+  );
   if (message.isAgentActivity) {
     return (
       <View style={styles.activityGroup} testID="corner-activity">
@@ -806,10 +834,6 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
       testID={`chat-machine-noise-${message.id}`}
     />
   ) : null;
-  const taggedMentionPubkeys = new Set(message.mentionPubkeys ?? []);
-  const mentionHandles = participantHandles
-    .filter((participant) => taggedMentionPubkeys.has(participant.pubkey))
-    .map((participant) => participant.handle);
   const attachments = message.attachments?.map((attachment) => (
     <AttachmentCard attachment={attachment} key={`${message.id}-${attachment.url}`} />
   ));
@@ -829,6 +853,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
               byline={byline}
               bodyText={message.text}
               mentionHandles={mentionHandles}
+              onMention={handleMention}
               channelIndex={channelIndex}
               onChannelReference={onChannelReference}
               bodyTestID={`chat-message-text-${message.id}`}
@@ -845,6 +870,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
               settleFrom={settleFrom}
               bodyText={ledgerText ? ledgerText.prose : message.text}
               mentionHandles={mentionHandles}
+              onMention={handleMention}
               channelIndex={channelIndex}
               onChannelReference={onChannelReference}
               bodyTestID={`chat-message-text-${message.id}`}

@@ -393,7 +393,12 @@ describe('who an agent can tag, and how it is spelled', () => {
     } as unknown as AgentRuntimeRecord;
     const roster = {
       members: [
-        { identityId: agent.publicKey, kind: 'agent' as const, name: 'Greeter', role: 'member' as const },
+        {
+          identityId: agent.publicKey,
+          kind: 'agent' as const,
+          name: 'Greeter',
+          role: 'member' as const,
+        },
         { identityId: OTHER_AGENT, kind: 'agent' as const, name: 'Peer', role: 'member' as const },
         { identityId: CAPTAIN, kind: 'human' as const, name: 'Captain', role: 'owner' as const },
       ],
@@ -531,7 +536,12 @@ describe('who an agent can tag, and how it is spelled', () => {
     vi.spyOn(acp, 'isAlive', 'get').mockReturnValue(true);
     vi.spyOn(acp, 'sessionPrompt').mockImplementation(async (_session, prompt) => {
       prompts.push(String(prompt));
-      return { stopReason: 'end_turn', updates: [], agentText: '@Peer, please take over.', toolCalls: [] };
+      return {
+        stopReason: 'end_turn',
+        updates: [],
+        agentText: '@Peer, please take over.',
+        toolCalls: [],
+      };
     });
     const scheduler = new SessionScheduler({ maxLiveSessions: 1 });
     const abort = new AbortController();
@@ -695,7 +705,11 @@ describe('the per-sender Room response rule', () => {
 
     expect(
       responseRule.continues(
-        message({ id: 'new-agent-address', mentionIds: [OTHER_AGENT], agentMentionIds: [OTHER_AGENT] }),
+        message({
+          id: 'new-agent-address',
+          mentionIds: [OTHER_AGENT],
+          agentMentionIds: [OTHER_AGENT],
+        }),
         AGENT_HEX,
       ),
     ).toBe(false);

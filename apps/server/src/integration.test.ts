@@ -2086,11 +2086,11 @@ describe('monolith integration', () => {
     );
     expect(redeemed.status).toBe(200);
     expect(await redeemed.json()).toEqual({ joined: true, workspaceId: WORKSPACE });
-    const membership = await database.query<{ role: string }>(
-      `SELECT role FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`,
+    const membership = await database.query<{ role: string; invited_by: string | null }>(
+      `SELECT role,invited_by FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`,
       [WORKSPACE, recipient.identityId],
     );
-    expect(membership.rows).toEqual([{ role: 'member' }]);
+    expect(membership.rows).toEqual([{ role: 'member', invited_by: OWNER }]);
   });
 
   it('collapses unknown, expired, and malformed public invites without authentication', async () => {

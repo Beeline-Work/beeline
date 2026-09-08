@@ -65,6 +65,11 @@ describe('deleteAccount', () => {
       [WORKSPACE, OWNER, PARTNER, ROOM, AGENT, DM_HUMAN, DM_AGENT],
     );
     await database.query(
+      `UPDATE memberships SET invited_by=$1
+       WHERE workspace_id=$2 AND room_id IS NULL AND identity_id=$3`,
+      [OWNER, WORKSPACE, PARTNER],
+    );
+    await database.query(
       `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lifecycle) VALUES($1,$2,'ship it','{"lifecycle":"working"}'::jsonb)`,
       [CORNER, AGENT],
     );
@@ -278,6 +283,12 @@ describe('deleteAccount', () => {
 
     // Attribution the account created is lifted off the shared artifacts.
     await expectRowCount(`SELECT 1 FROM rooms WHERE id=$1 AND created_by IS NULL`, [ROOM], 1);
+    await expectRowCount(
+      `SELECT 1 FROM memberships
+       WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND invited_by IS NULL`,
+      [WORKSPACE, PARTNER],
+      1,
+    );
 
     // Sole surviving owner succession: the partner now owns the Workspace.
     await expectRowCount(

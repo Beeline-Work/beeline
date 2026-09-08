@@ -562,6 +562,7 @@ export class DaemonService {
     // sort for everyone. `getRoomInbox` and any cursor walk keep the ascending
     // forward semantics untouched.
     const newestPage = name === 'getRoomConversation' && !after && input.window !== 'earliest';
+    const continuityPage = name === 'getRoomConversation' && !after && input.window === 'continuity';
     const rows = await this.database.query<{
       id: string;
       author_id: string;
@@ -583,7 +584,12 @@ export class DaemonService {
       // The newest page takes exactly `limit` rows from the tail and puts them
       // back in transcript order; the forward walk keeps its `limit + 1` probe
       // for whether another page exists.
-      newestPage
+      continuityPage
+        ? `SELECT * FROM (${conversationColumns}
+             FROM messages WHERE room_id=$1 AND presentation='message'
+             ORDER BY cursor_ms DESC,id DESC LIMIT ${limit}) continuity
+           ORDER BY cursor_ms,id`
+        : newestPage
         ? `SELECT * FROM (${conversationColumns}
              FROM messages WHERE room_id=$1
              ORDER BY cursor_ms DESC,id DESC LIMIT ${limit}) newest
@@ -1061,14 +1067,25 @@ export class DaemonService {
                  AND (identity.kind<>'agent' OR message.agent_hop_count<$5)
                  AND (
                    (message.reply_to_message_id IS NOT NULL AND reply_parent.author_id=$4) OR
-                   (message.reply_to_message_id IS NULL AND $4=(
+                   (message.reply_to_message_id IS NULL
+                    AND NOT EXISTS(
+                      SELECT 1 FROM jsonb_array_elements_text(message.mention_ids) mentioned
+                      JOIN identities mentioned_identity ON mentioned_identity.id=mentioned
+                      WHERE mentioned_identity.kind='agent'
+                    )
+                    AND $4=(
                      SELECT answer.author_id
-                     FROM messages answer
+                     FROM (
+                       SELECT id,author_id,presentation,mention_ids,request_id,reply_to_message_id,created_at
+                       FROM messages
+                       WHERE room_id=message.room_id AND presentation='message'
+                         AND (${MESSAGE_CURSOR_MS_SQL},id)<(${MESSAGE_CURSOR_MS_SQL.replaceAll('created_at', 'message.created_at')},message.id)
+                       ORDER BY ${MESSAGE_CURSOR_MS_SQL} DESC,id DESC LIMIT 200
+                     ) answer
                      JOIN identities answer_identity ON answer_identity.id=answer.author_id
                      LEFT JOIN messages request ON request.id=answer.request_id
                      LEFT JOIN messages answer_parent ON answer_parent.id=answer.reply_to_message_id
-                     WHERE answer.room_id=message.room_id
-                       AND answer.presentation='message' AND answer_identity.kind='agent'
+                     WHERE answer_identity.kind='agent'
                        AND (
                          request.author_id=message.author_id OR
                          answer.mention_ids @> jsonb_build_array(message.author_id) OR

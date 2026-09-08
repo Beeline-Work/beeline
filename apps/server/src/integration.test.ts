@@ -1905,7 +1905,10 @@ describe('monolith integration', () => {
   it('accepts a continuity turn for the last responder to this sender across an interjection', async () => {
     const peer = 'e'.repeat(64);
     const observer = 'd'.repeat(64);
-    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Peer')`, [peer]);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Peer','peer')`,
+      [peer],
+    );
     await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [peer, HUMAN]);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Observer')`, [
       observer,
@@ -1967,6 +1970,29 @@ describe('monolith integration', () => {
     );
     expect(pileOn.status).toBe(400);
     await expect(pileOn.json()).resolves.toEqual({ error: 'turn trigger is invalid for agent' });
+
+    const handoff = 'a'.repeat(64);
+    await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: handoff,
+      text: '@peer Please take over.',
+    });
+    expect(
+      (
+        await daemonOperation(
+          'postRoomMessage',
+          { roomId: ROOM, requestId: handoff, triggerMessageId: handoff, text: 'Taking over.' },
+          peerToken,
+        )
+      ).status,
+    ).toBe(200);
+    const duplicate = await daemonOperation('postRoomMessage', {
+      roomId: ROOM,
+      requestId: handoff,
+      triggerMessageId: handoff,
+      text: 'I should not continue the handoff.',
+    });
+    expect(duplicate.status).toBe(400);
   });
 
   it('notifies the direct parent agent even after a later agent answer', async () => {
@@ -2031,7 +2057,10 @@ describe('monolith integration', () => {
 
   it('accepts a direct reply from its parent agent after another agent replies', async () => {
     const peer = 'c'.repeat(64);
-    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Peer')`, [peer]);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Peer','peer')`,
+      [peer],
+    );
     await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [peer, HUMAN]);
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
@@ -2072,7 +2101,7 @@ describe('monolith integration', () => {
       peerToken,
     );
     const reply = 'b'.repeat(64);
-    await operation('sendRoomMessage', {
+    await operation('sendRoomReply', {
       roomId: ROOM,
       messageId: reply,
       parentMessageId: parentId,
@@ -2097,6 +2126,25 @@ describe('monolith integration', () => {
       peerToken,
     );
     expect(pileOn.status).toBe(400);
+
+    const taggedReply = 'c'.repeat(64);
+    const tagged = await operation('sendRoomReply', {
+      roomId: ROOM,
+      messageId: taggedReply,
+      parentMessageId: parentId,
+      text: '@peer Please continue the first answer.',
+    });
+    expect(tagged.status).toBe(200);
+    expect(
+      (
+        await daemonOperation('postRoomMessage', {
+          roomId: ROOM,
+          requestId: taggedReply,
+          triggerMessageId: taggedReply,
+          text: 'Continuing the tagged direct reply.',
+        })
+      ).status,
+    ).toBe(200);
   });
 
   it('does not address an agent when an untagged reply targets a human', async () => {

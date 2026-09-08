@@ -2320,7 +2320,7 @@ export class PhoneService {
           `SELECT answer.author_id
            FROM (
              SELECT id,author_id,presentation,mention_ids,request_id,reply_to_message_id,created_at
-             FROM messages WHERE room_id=$1
+             FROM messages WHERE room_id=$1 AND presentation='message'
              ORDER BY ${MESSAGE_CURSOR_MS_SQL} DESC,id DESC LIMIT 200
            ) answer
            JOIN identities answer_identity ON answer_identity.id=answer.author_id

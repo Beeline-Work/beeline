@@ -145,7 +145,7 @@ export type RoomCursorInput = RoomInput & {
  * for the window you need. A read that carries `after` keeps the inbox's
  * ascending cursor semantics and ignores this field.
  */
-export type RoomConversationWindow = 'recent' | 'earliest';
+export type RoomConversationWindow = 'recent' | 'earliest' | 'continuity';
 export type RoomConversationInput = RoomCursorInput & {
   readonly window?: RoomConversationWindow;
 };

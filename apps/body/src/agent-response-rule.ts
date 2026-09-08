@@ -1,6 +1,7 @@
 import { AGENT_TO_AGENT_HOP_CAP } from '@beeline/api-contract/daemon';
 
 export const INBOX_DEDUPLICATION_LIMIT = 10_000;
+export const CONTINUITY_WINDOW_LIMIT = 200;
 
 export interface ResponseRuleMessage {
   readonly id: string;
@@ -18,6 +19,8 @@ export class AgentResponseRule {
   private agentIds = new Set<string>();
   private readonly lastAgentBySender = new Map<string, string>();
   private readonly observedIds = new Set<string>();
+  private readonly recentMessages: ResponseRuleMessage[] = [];
+  private localReplySequence = 0;
 
   setAgents(agentIds: Iterable<string>): void {
     this.agentIds = new Set(agentIds);
@@ -32,19 +35,32 @@ export class AgentResponseRule {
     this.observedIds.add(item.id);
     while (this.observedIds.size > INBOX_DEDUPLICATION_LIMIT)
       this.observedIds.delete(this.observedIds.values().next().value!);
-    if (item.type !== 'message' || !this.agentIds.has(item.authorId)) return;
+    this.record(item);
+  }
 
-    const addressed = new Set(item.mentionIds);
-    if (item.requestAuthorId) addressed.add(item.requestAuthorId);
-    if (item.replyToAuthorId) addressed.add(item.replyToAuthorId);
-    for (const senderId of addressed) {
-      if (senderId !== item.authorId) this.lastAgentBySender.set(senderId, item.authorId);
+  private record(item: ResponseRuleMessage): void {
+    if (item.type !== 'message') return;
+    this.recentMessages.push(item);
+    while (this.recentMessages.length > CONTINUITY_WINDOW_LIMIT) this.recentMessages.shift();
+    this.lastAgentBySender.clear();
+    for (const recent of this.recentMessages) {
+      if (!this.agentIds.has(recent.authorId)) continue;
+      const addressed = new Set(recent.mentionIds);
+      if (recent.requestAuthorId) addressed.add(recent.requestAuthorId);
+      if (recent.replyToAuthorId) addressed.add(recent.replyToAuthorId);
+      for (const senderId of addressed) {
+        if (senderId !== recent.authorId) this.lastAgentBySender.set(senderId, recent.authorId);
+      }
     }
   }
 
-  /** Record a just-published reply without waiting for the daemon inbox to echo it. */
-  noteReply(agentId: string, senderId: string): void {
-    if (agentId !== senderId) this.lastAgentBySender.set(senderId, agentId);
+  noteReply(agentId: string, senderIds: Iterable<string>): void {
+    this.record({
+      id: `local-reply-${agentId}-${this.localReplySequence++}`,
+      authorId: agentId,
+      type: 'message',
+      mentionIds: [...senderIds],
+    });
   }
 
   /** Whether trigger 2 applies. Explicit mention handling stays with each intake loop. */
@@ -53,6 +69,7 @@ export class AgentResponseRule {
     if (this.agentIds.has(item.authorId) && (item.agentHopCount ?? 0) >= AGENT_TO_AGENT_HOP_CAP)
       return false;
     if (item.replyToMessageId) return item.replyToAuthorId === agentId;
+    if (item.mentionIds.some((mentioned) => this.agentIds.has(mentioned))) return false;
     if (this.lastAgentBySender.get(item.authorId) !== agentId) return false;
     return true;
   }

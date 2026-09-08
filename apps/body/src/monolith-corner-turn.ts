@@ -994,7 +994,7 @@ export class MonolithCornerTurnLoop {
                 stream.settle(durableReply, requestedById ? { triggerMessageId: requestId } : {}),
               );
               if (durableReply && requestedById)
-                this.responseRule.noteReply(this.agent.publicKey, requestedById);
+                this.responseRule.noteReply(this.agent.publicKey, [requestedById]);
             },
             { priority: 'interactive', roomKey: cornerId },
           );
@@ -1146,7 +1146,11 @@ export class MonolithCornerTurnLoop {
     // Newest page: "has this corner already answered?" is a question about the
     // work as it stands now. On a corner past one page the oldest rows say
     // nothing about whether the objective still needs kicking off.
-    const history = await api.execute('getRoomConversation', { roomId: cornerId, limit: 200 });
+    const history = await api.execute('getRoomConversation', {
+      roomId: cornerId,
+      limit: 200,
+      window: 'continuity',
+    });
     // Who is carrying this corner: the member agent that answered in it last.
     await this.roster().catch(() => undefined);
     this.responseRule.observeAll(history.items);

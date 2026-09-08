@@ -282,11 +282,58 @@ describe('the per-sender Room response rule', () => {
     expect(responseRule.continues(first, AGENT_HEX)).toBe(false);
     expect(responseRule.continues(first, OTHER_AGENT)).toBe(false);
 
-    responseRule.noteReply(AGENT_HEX, CAPTAIN);
-    responseRule.noteReply(OTHER_AGENT, CAPTAIN);
+    responseRule.noteReply(AGENT_HEX, [CAPTAIN]);
+    responseRule.noteReply(OTHER_AGENT, [CAPTAIN]);
     const followUp = message({ id: 'follow-up' });
     expect(responseRule.continues(followUp, AGENT_HEX)).toBe(false);
     expect(responseRule.continues(followUp, OTHER_AGENT)).toBe(true);
+  });
+
+  it('gives an explicit agent mention precedence over parentless continuity', () => {
+    const responseRule = rule();
+    responseRule.noteReply(AGENT_HEX, [CAPTAIN]);
+    const handoff = message({ id: 'handoff', mentionIds: [OTHER_AGENT] });
+    expect(responseRule.continues(handoff, AGENT_HEX)).toBe(false);
+    expect(inboxItemTriggersTurn(handoff, OTHER_AGENT)).toBe(true);
+
+    const directReply = message({
+      id: 'direct-handoff',
+      mentionIds: [OTHER_AGENT],
+      replyToMessageId: 'prior-agent-answer',
+      replyToAuthorId: AGENT_HEX,
+    });
+    expect(responseRule.continues(directReply, AGENT_HEX)).toBe(true);
+  });
+
+  it('retains outgoing agent targets for the return exchange until the hop cap', () => {
+    const responseRule = rule();
+    responseRule.noteReply(AGENT_HEX, [CAPTAIN, OTHER_AGENT]);
+    responseRule.observe(
+      message({ id: 'other-answer', authorId: OTHER_AGENT, requestAuthorId: AGENT_HEX }),
+    );
+    expect(
+      responseRule.continues(
+        message({ id: 'return', authorId: OTHER_AGENT, agentHopCount: 2 }),
+        AGENT_HEX,
+      ),
+    ).toBe(true);
+    expect(
+      responseRule.continues(
+        message({ id: 'capped-return', authorId: OTHER_AGENT, agentHopCount: 3 }),
+        AGENT_HEX,
+      ),
+    ).toBe(false);
+  });
+
+  it('expires parentless continuity after 200 later messages', () => {
+    const responseRule = rule();
+    responseRule.noteReply(AGENT_HEX, [CAPTAIN]);
+    responseRule.observeAll(
+      Array.from({ length: 200 }, (_, index) =>
+        message({ id: `later-message-${index}`, authorId: PEER }),
+      ),
+    );
+    expect(responseRule.continues(message({ id: 'expired' }), AGENT_HEX)).toBe(false);
   });
 
   it('uses the reply parent when present and stops agent continuity at the hop cap', () => {

@@ -49,7 +49,6 @@ export function laterInboxCursor(
   return leftMatch[2]! >= rightMatch[2]! ? left : right;
 }
 
-/** Merge live and polled entries in the same cursor order as the server. */
 export function orderInboxItems(items: readonly InboxItem[]): InboxItem[] {
   return [...items].sort((left, right) => {
     const leftMatch = left.cursor?.match(/^(\d+),([0-9a-f]{64})$/);

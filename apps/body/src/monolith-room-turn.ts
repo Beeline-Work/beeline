@@ -1166,18 +1166,27 @@ export class MonolithRoomTurnLoop {
               if (openCornerCall && !isFailedToolCall(openCornerCall)) {
                 reply = stripCornerOpenEcho(reply);
               }
+              const mentionIds = reply
+                ? agentReplyMentionIds(reply, roster, this.agent.publicKey)
+                : [];
               await trace.measure('publish', () =>
                 stream.settle(
                   reply,
                   reply
                     ? {
                         triggerMessageId: item.id,
-                        mentionIds: agentReplyMentionIds(reply, roster, this.agent.publicKey),
+                        mentionIds,
                       }
                     : {},
                 ),
               );
-              if (reply) this.responseRule.noteReply(this.agent.publicKey, item.authorId);
+              if (reply)
+                this.responseRule.noteReply(this.agent.publicKey, [
+                  item.authorId,
+                  ...mentionIds.filter((id) =>
+                    roster.members.some((member) => member.identityId === id && member.kind === 'agent'),
+                  ),
+                ]);
             },
             { priority: 'interactive', roomKey: this.options.roomId },
           );
@@ -1229,7 +1238,7 @@ export class MonolithRoomTurnLoop {
       const rewindSupported = Array.isArray(activation.rewindIds);
       for (const id of activation.rewindIds ?? []) processedInboxIds.add(id);
       const [history] = await Promise.all([
-        api.execute('getRoomConversation', { roomId, limit: 200 }),
+        api.execute('getRoomConversation', { roomId, limit: 200, window: 'continuity' }),
         this.roster(),
       ]);
       this.responseRule.observeAll(history.items);

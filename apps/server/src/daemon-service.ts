@@ -1366,10 +1366,14 @@ export class DaemonService {
         input.roomId,
       ]);
       if (!corner.rowCount)
-        throw new Error(key !== undefined ? 'corner activity key requires a corner' : 'output activity requires a corner');
+        throw new Error(
+          key !== undefined
+            ? 'invalid corner activity key: a corner is required'
+            : 'invalid output activity: a corner is required',
+        );
     }
     const messageId = key
-      ? `corner-activity:${createHash('sha256')`
+      ? `corner-activity:${createHash('sha256')
           .update(JSON.stringify(['corner-activity', input.roomId, agentId, input.requestId, key]))
           .digest('hex')}`
       : id();

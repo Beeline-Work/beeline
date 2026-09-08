@@ -369,7 +369,12 @@ describe('corner close-request polling cadence', () => {
         }
         return { items: [], cursor: 'latest', closeRequested: true };
       }
-      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomConversation') {
+        return {
+          items: [{ type: 'message', authorId: runtime.agent.publicKey, body: 'Already working.' }],
+          cursor: 'latest',
+        };
+      }
       if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
       if (name === 'postAgentActivity') {
         activityAttempts.push(input);
@@ -513,7 +518,7 @@ describe('corner close-request polling cadence', () => {
       expect.objectContaining({
         input: expect.objectContaining({
           roomId: 'corner-id',
-          requestId: 'cornerid',
+          requestId: 'human-msg',
           text: 'The fix is ready.',
           presentation: 'message',
         }),
@@ -525,13 +530,14 @@ describe('corner close-request polling cadence', () => {
       expect.objectContaining({
         input: expect.objectContaining({
           roomId: 'corner-id',
-          requestId: 'cornerid',
+          requestId: 'human-msg',
           cornerActivityKey: '1:tool-0',
           activity: [
             {
               kind: 'output',
               title: 'Update',
               text: 'Inspecting',
+              requestedBy: { pubkey: '22'.repeat(32) },
             },
             expect.objectContaining({
               kind: 'tool',
@@ -544,13 +550,14 @@ describe('corner close-request polling cadence', () => {
       expect.objectContaining({
         input: expect.objectContaining({
           roomId: 'corner-id',
-          requestId: 'cornerid',
+          requestId: 'human-msg',
           cornerActivityKey: '2:tool-0',
           activity: [
             {
               kind: 'output',
               title: 'Update',
               text: 'I inspected the code.',
+              requestedBy: { pubkey: '22'.repeat(32) },
             },
             expect.objectContaining({
               kind: 'tool',
@@ -572,12 +579,12 @@ describe('corner close-request polling cadence', () => {
     expect(draftTexts).toContain('Inspecting');
     expect(draftTexts.at(-1)).toBe('I inspected the code.\n\nThe fix is ready.');
     for (const draft of writes.filter((write) => write.name === 'postAgentDraft')) {
-      expect(draft.input.turnId).toBe('cornerid');
+      expect(draft.input.turnId).toBe('human-msg');
     }
     expect(writes).toContainEqual(
       expect.objectContaining({
         name: 'retractAgentLiveOutput',
-        input: expect.objectContaining({ turnId: 'cornerid', kind: 'draft' }),
+        input: expect.objectContaining({ turnId: 'human-msg', kind: 'draft' }),
       }),
     );
   });
@@ -700,7 +707,12 @@ describe('corner close-request polling cadence', () => {
         }
         return { items: [], cursor: 'latest', closeRequested: true };
       }
-      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomConversation') {
+        return {
+          items: [{ type: 'message', authorId: stored('11'.repeat(32), 'Bee').publicKey, body: 'Already working.' }],
+          cursor: 'latest',
+        };
+      }
       if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
       writes.push({ name, input });
       return { id: 'write-id', createdAt: 1 };
@@ -845,7 +857,12 @@ describe('corner close-request polling cadence', () => {
         }
         return { items: [], cursor: 'latest', closeRequested: true };
       }
-      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomConversation') {
+        return {
+          items: [{ type: 'message', authorId: stored('11'.repeat(32), 'Bee').publicKey, body: 'Already working.' }],
+          cursor: 'latest',
+        };
+      }
       if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
       writes.push({ name, input });
       return { id: 'write-id', createdAt: 1 };
@@ -996,7 +1013,12 @@ describe('corner close-request polling cadence', () => {
         }
         return { items: [], cursor: 'latest', closeRequested: true };
       }
-      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomConversation') {
+        return {
+          items: [{ type: 'message', authorId: stored('11'.repeat(32), 'Bee').publicKey, body: 'Already working.' }],
+          cursor: 'latest',
+        };
+      }
       if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
       writes.push({ name, input });
       return { id: 'write-id', createdAt: 1 };

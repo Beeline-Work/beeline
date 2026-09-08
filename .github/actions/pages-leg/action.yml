@@ -1,0 +1,69 @@
+name: Publish the current helper channel on Pages
+description: Preserve exact release bytes outside Git and deploy the complete static site
+inputs:
+  bundle_dir:
+    description: Verified daemon artifact directory; empty reuses the durable channel
+    default: ''
+  release_sha:
+    default: ''
+  release_version:
+    default: ''
+  manifest_url:
+    description: Direct Pages manifest URL (no redirects to the dev origin)
+    default: https://beeline-work.github.io/beeline/dl/manifest.json
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '20.19'
+        cache: npm
+    - shell: bash
+      run: npm ci
+    - name: Load the durable channel for a website-only deployment
+      if: inputs.bundle_dir == ''
+      uses: actions/github-script@v7
+      env:
+        CHANNEL_DIR: ${{ runner.temp }}/pages-channel
+      with:
+        script: |
+          const { downloadPagesChannel } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/pages-channel.mjs`);
+          await downloadPagesChannel({ github, repo: context.repo, directory: process.env.CHANNEL_DIR });
+    - name: Assemble Pages with the exact helper artifact
+      shell: bash
+      env:
+        BUNDLE_DIR: ${{ inputs.bundle_dir || format('{0}/pages-channel', runner.temp) }}
+        RELEASE_SHA: ${{ inputs.release_sha }}
+        RELEASE_VERSION: ${{ inputs.release_version }}
+      run: >-
+        node scripts/pages-site.mjs build --bundle-dir "$BUNDLE_DIR"
+        --output-dir "$RUNNER_TEMP/usebeeline-pages"
+        --sha "$RELEASE_SHA" --version "$RELEASE_VERSION"
+    - name: Persist the release channel outside Actions artifact retention
+      if: inputs.bundle_dir != ''
+      uses: actions/github-script@v7
+      env:
+        BUNDLE_DIR: ${{ inputs.bundle_dir }}
+        RELEASE_SHA: ${{ inputs.release_sha }}
+        RELEASE_VERSION: ${{ inputs.release_version }}
+      with:
+        script: |
+          const { publishPagesChannel } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/pages-channel.mjs`);
+          await publishPagesChannel({ github, repo: context.repo, directory: process.env.BUNDLE_DIR,
+            expectedSha: process.env.RELEASE_SHA, expectedVersion: process.env.RELEASE_VERSION });
+    - uses: actions/configure-pages@v5
+    - uses: actions/upload-pages-artifact@v5
+      with:
+        path: ${{ runner.temp }}/usebeeline-pages
+        include-hidden-files: true
+    - uses: actions/deploy-pages@v4
+    - name: Prove a real helper update from the deployed Pages host
+      shell: bash
+      env:
+        MANIFEST_URL: ${{ inputs.manifest_url }}
+      run: >-
+        node scripts/verify-pages-update.mjs
+        --manifest-url "$MANIFEST_URL"
+        --expected-manifest "$RUNNER_TEMP/usebeeline-pages/dl/manifest.json"
+        --work-dir "$RUNNER_TEMP/pages-update-proof"
+        --attempts 20

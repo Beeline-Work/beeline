@@ -305,11 +305,20 @@ jobs:
   promote_daemon:
     needs: [initialize, confirm_server]
     runs-on: [self-hosted, beeline-prod-host]
+    permissions:
+      actions: read
+      contents: write
+      pages: write
+      id-token: write
+    environment: github-pages
+    concurrency:
+      group: usebeeline-pages
+      cancel-in-progress: false
     # The daemon leg's confirm step waits up to 35 minutes: a busy helper may
     # hold its restart for the whole drain deadline (`UPDATE_DRAIN_DEADLINE_MS`)
     # before the forced restart, then systemd's restart backoff and the
     # successor probe follow.
-    timeout-minutes: 40
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@v4
         with:
@@ -319,6 +328,8 @@ jobs:
           phase: promote
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}
+          legacy_mirror: ${{ vars.BEELINE_DL_LEGACY_MIRROR || 'true' }}
+          pages_manifest_url: ${{ vars.BEELINE_PAGES_MANIFEST_URL || 'https://beeline-work.github.io/beeline/dl/manifest.json' }}
 
   confirm_daemon:
     needs: [initialize, promote_daemon]

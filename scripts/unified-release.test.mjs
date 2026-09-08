@@ -343,7 +343,7 @@ test('one workflow owns parallel builds, ordered promotion, retry, and the final
   // confirm waits 35 minutes and prints one readiness table per minute.
   assert.match(daemon, /wait_minutes=35/);
   assert.match(daemon, /readiness_table/);
-  assert.match(workflow, /promote_daemon:[\s\S]*?timeout-minutes: 40/);
+  assert.match(workflow, /promote_daemon:[\s\S]*?timeout-minutes: 55/);
   assert.match(daemon, /cat "\$RUNNER_TEMP\/release-readiness-error\.txt" >&2/);
   assert.doesNotMatch(daemon, /usebeeline\.app\/push\/health/);
   assert.match(workflow, /https:\/\/server\.usebeeline\.app\/v1\/releases\/daemon-readiness/);

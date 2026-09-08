@@ -69,7 +69,7 @@ async function readAssociations(root) {
   };
 }
 
-async function validateBundleDirectory(bundleRoot) {
+export async function validateBundleDirectory(bundleRoot, { expectedSha, expectedVersion } = {}) {
   const manifestPath = join(bundleRoot, 'manifest.json');
   const manifestBytes = await readFile(manifestPath);
   const manifest = JSON.parse(manifestBytes.toString('utf8'));
@@ -80,6 +80,10 @@ async function validateBundleDirectory(bundleRoot) {
   if (typeof manifest.version !== 'string' || manifest.version.length === 0) {
     fail('helper manifest must name a version');
   }
+  if (expectedSha && manifest.sourceCommit !== expectedSha)
+    fail('helper sourceCommit differs from the release');
+  if (expectedVersion && manifest.version !== expectedVersion)
+    fail('helper version differs from the release');
 
   const bundles = Object.entries(manifest.bundles ?? {});
   if (bundles.length === 0) fail('helper manifest has no bundles');
@@ -115,7 +119,13 @@ async function validateBundleDirectory(bundleRoot) {
   return { manifest, manifestBytes, files };
 }
 
-export async function buildPagesSite({ sourceRoot = DEFAULT_SOURCE_ROOT, bundleRoot, outputRoot }) {
+export async function buildPagesSite({
+  sourceRoot = DEFAULT_SOURCE_ROOT,
+  bundleRoot,
+  outputRoot,
+  expectedSha,
+  expectedVersion,
+}) {
   if (!bundleRoot) fail('bundleRoot is required');
   if (!outputRoot) fail('outputRoot is required');
   sourceRoot = resolve(sourceRoot);
@@ -132,7 +142,7 @@ export async function buildPagesSite({ sourceRoot = DEFAULT_SOURCE_ROOT, bundleR
   const associationErrors = validateRequiredAssociations(await readAssociations(sourceRoot));
   if (associationErrors.length > 0) fail(associationErrors.join('\n'));
 
-  const bundle = await validateBundleDirectory(bundleRoot);
+  const bundle = await validateBundleDirectory(bundleRoot, { expectedSha, expectedVersion });
   await rm(outputRoot, { recursive: true, force: true });
   await copyStaticTree(sourceRoot, outputRoot);
   await copyFile(join(sourceRoot, 'install.sh'), join(outputRoot, 'install'));
@@ -156,6 +166,8 @@ async function main() {
   const manifest = await buildPagesSite({
     bundleRoot: option('--bundle-dir'),
     outputRoot: option('--output-dir'),
+    expectedSha: option('--sha'),
+    expectedVersion: option('--version'),
   });
   console.log(
     `pages-site: built usebeeline.app for ${manifest.version} (${manifest.sourceCommit})`,

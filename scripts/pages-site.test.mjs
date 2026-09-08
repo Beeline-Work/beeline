@@ -102,30 +102,27 @@ test('refuses a corrupt helper bundle before producing a Pages tree', async () =
   }
 });
 
-test('the Pages workflow is standalone and the release keeps its dev-host publisher', () => {
-  const pagesWorkflow = fs.readFileSync(
-    path.join(REPOSITORY_ROOT, '.github', 'workflows', 'pages.yml'),
-    'utf8',
-  );
-  const unifiedRelease = fs.readFileSync(
-    path.join(REPOSITORY_ROOT, '.github', 'workflows', 'unified-release.yml'),
-    'utf8',
-  );
-  const daemonLeg = fs.readFileSync(
-    path.join(REPOSITORY_ROOT, '.github', 'actions', 'daemon-leg', 'action.yml'),
-    'utf8',
-  );
-
-  assert.match(pagesWorkflow, /^on:\s*\n\s*push:\s*\n\s*branches: \[main\]/m);
-  assert.match(pagesWorkflow, /workflow_dispatch: \{\}/);
-  assert.match(pagesWorkflow, /pages-site\.mjs build/);
-  assert.match(pagesWorkflow, /actions\/upload-pages-artifact@v5/);
-  assert.match(pagesWorkflow, /include-hidden-files: true/);
-  assert.match(pagesWorkflow, /actions\/deploy-pages@v4/);
-  assert.doesNotMatch(pagesWorkflow, /unified-release/);
-  assert.doesNotMatch(unifiedRelease, /publish_pages|pages_artifact|pages-site/);
-  assert.match(daemonLeg, /scripts\/publish-beeline-dl\.mjs/);
-  assert.match(daemonLeg, /\/home\/lunchbox\/buzz-router-relay-prod\/relay-front\/web\/dl/);
+test('refuses an artifact from another release before replacing the deployed tree', async () => {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'beeline-pages.'));
+  const bundleRoot = path.join(temporary, 'bundle');
+  const outputRoot = path.join(temporary, 'site');
+  fixtureBundle(bundleRoot);
+  fs.mkdirSync(outputRoot);
+  fs.writeFileSync(path.join(outputRoot, 'existing'), 'previous deployment');
+  try {
+    for (const expected of [{ expectedSha: 'b'.repeat(40) }, { expectedVersion: 'v0.0.63' }]) {
+      await assert.rejects(
+        buildPagesSite({ bundleRoot, outputRoot, ...expected }),
+        /differs from the release/,
+      );
+      assert.equal(
+        fs.readFileSync(path.join(outputRoot, 'existing'), 'utf8'),
+        'previous deployment',
+      );
+    }
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true });
+  }
 });
 
 test('the Pages 404 router preserves dynamic join and review fallback URLs', async () => {

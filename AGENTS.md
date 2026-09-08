@@ -49,7 +49,7 @@ Committed home for project-intrinsic agent knowledge: rule + authoritative file 
 
 - **Corner agents own the GitHub workflow.** Finish means commit, push, `gh pr create`, print the URL, wait for the server checks-passed fact. With no human hold the agent merges with `gh`; the merge webhook archives and reaps the worktree.
 - `fm/*` branches stack; check `gh pr list --json baseRefName,headRefName` before assuming a file is on `main`; `git branch -a --contains <commit>` finds the source branch.
-- A cherry-pick off `feature/*` can drop a context-only declaration — `npm run typecheck` catches it. Stale `fm/*` merges conflict mostly on `relay-stack/web/dl/` artifacts — pick either, regenerate with `npm run bundle:beeline`.
+- A cherry-pick off `feature/*` can drop a context-only declaration — `npm run typecheck` catches it. Generated `relay-stack/web/dl/` bundles are ignored; never stage them in a cherry-pick (the release-channel contract is in `docs/cli-bundle-channel.md`).
 - **Resolve merges as one batch gate:** enumerate every textual conflict and semantic overlap first, resolve the complete set in one pass, then run one integration matrix plus a single conflict-resolution review before push.
 - **`TYPECHECK` (root `npm run typecheck` = turbo + the isolated mobile app + `tsconfig.scripts.json`) gates every PR unfiltered by path** — the one gate with no path filter: two independently green PRs can merge cleanly into a red `main`, so a required-field change on a shared row type must re-run the root typecheck after merging `origin/main`.
 - **Stacked PRs merged base-first do not propagate** — re-target to `main`; verify with `git grep <symbol> origin/main`.

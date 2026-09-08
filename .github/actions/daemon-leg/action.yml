@@ -4,7 +4,7 @@
 # phase=promote publishes it to Pages plus a temporary legacy-origin mirror
 # (docs/cli-bundle-channel.md) and waits for every helper to restart READY on
 # the exact release. The caller checks out the release SHA first and owns
-# runner and timeout (promote needs 40 minutes, see the confirm step).
+# runner and timeout (promote needs 55 minutes, see the confirm step).
 name: Beeline daemon release leg
 description: Build the exact daemon artifact or publish it and await updater READY proof
 

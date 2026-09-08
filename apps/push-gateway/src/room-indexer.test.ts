@@ -2267,6 +2267,32 @@ describe('RoomIndexer', () => {
     });
   });
 
+  it('reads a normally connected agent owner from its server stamp', async () => {
+    await postgres.query(
+      `INSERT INTO users (community_id,pubkey,display_name,nip05_handle)
+       VALUES ($1,$2,'Connected owner','connected@example.test')`,
+      [TENANT, bytes(CONNECTED_OWNER)],
+    );
+    await postgres.query(
+      `INSERT INTO beeline_agent_pairing_claims
+        (token_hash,community_id,workspace_id,minter_pubkey,owner_pubkey,agent_pubkey,claimed_at)
+       VALUES($1,NULL,$2,$3,$3,$4,to_timestamp(2))`,
+      ['e'.repeat(64), WORKSPACE, bytes(CONNECTED_OWNER), bytes(AGENT)],
+    );
+
+    await expect(indexer.readWorkspace(WORKSPACE, VIEWER)).resolves.toMatchObject({
+      agents: [
+        {
+          identity: { pubkey: AGENT },
+          owner: { pubkey: CONNECTED_OWNER, handle: 'connected@example.test' },
+        },
+      ],
+    });
+    await expect(indexer.readAgent(WORKSPACE, AGENT, VIEWER)).resolves.toMatchObject({
+      owner: { pubkey: CONNECTED_OWNER, handle: 'connected@example.test' },
+    });
+  });
+
   it('keeps the scoped chat query to one physical statement at 1, 47, and 200 Rooms', async () => {
     const addRooms = async (from: number, through: number) => {
       await postgres.query(

@@ -114,6 +114,23 @@ describe('PhoneService agent connect pairing claim', () => {
         soul: { name: claim.agentName, instructions: claim.soul, avatarSeed: AGENT },
       },
     ]);
+    expect(
+      (
+        await database.query<{
+          community_id: string | null;
+          workspace_id: string;
+          owner_pubkey: string;
+          agent_pubkey: string;
+        }>(
+          `SELECT community_id::text,workspace_id::text,encode(owner_pubkey,'hex') AS owner_pubkey,
+                  encode(agent_pubkey,'hex') AS agent_pubkey
+           FROM beeline_agent_pairing_claims WHERE token_hash=$1`,
+          [createHash('sha256').update(CODE).digest('hex')],
+        )
+      ).rows,
+    ).toEqual([
+      { community_id: null, workspace_id: WORKSPACE, owner_pubkey: OWNER, agent_pubkey: AGENT },
+    ]);
     // The owner already wears a face; the agent never takes it.
     expect(claim.face).not.toBe(defaultFaceForSeed(OWNER));
     // No `deferJoin` (every already-installed CLI): the claim itself joins

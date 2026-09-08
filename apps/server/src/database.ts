@@ -564,6 +564,25 @@ CREATE TABLE IF NOT EXISTS agent_pairing_codes (
   claimed_at timestamptz
 );
 
+CREATE TABLE IF NOT EXISTS beeline_agent_pairing_claims (
+  token_hash text PRIMARY KEY CHECK (token_hash ~ '^[0-9a-f]{64}$'),
+  community_id uuid,
+  workspace_id uuid NOT NULL,
+  minter_pubkey bytea NOT NULL,
+  owner_pubkey bytea NOT NULL,
+  agent_pubkey bytea NOT NULL,
+  claimed_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE beeline_agent_pairing_claims
+  ADD COLUMN IF NOT EXISTS owner_pubkey bytea;
+ALTER TABLE beeline_agent_pairing_claims
+  ALTER COLUMN community_id DROP NOT NULL;
+UPDATE beeline_agent_pairing_claims
+  SET owner_pubkey=minter_pubkey
+  WHERE owner_pubkey IS NULL;
+ALTER TABLE beeline_agent_pairing_claims
+  ALTER COLUMN owner_pubkey SET NOT NULL;
+
 -- Workspace-owned bytes, independent of expiring Room attachments.
 CREATE TABLE IF NOT EXISTS avatars (
   id uuid PRIMARY KEY,

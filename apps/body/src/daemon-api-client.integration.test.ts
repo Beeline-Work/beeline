@@ -2302,14 +2302,16 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       ).rows[0]?.status,
     ).toBe('complete');
 
-    await client.execute('postAgentPresence', {
-      agentId: AGENT,
-      roomId: ROOM,
-      status: 'online',
-    });
-    await expect(
-      client.execute('getAgentPresence', { agentId: AGENT, roomId: ROOM }),
-    ).resolves.toEqual(expect.objectContaining({ status: 'online' }));
+    const disconnect = client.liveSubscribe(ROOM);
+    try {
+      await vi.waitFor(async () =>
+        expect(
+          await client.execute('getAgentPresence', { agentId: AGENT, roomId: ROOM }),
+        ).toEqual(expect.objectContaining({ status: 'online' })),
+      );
+    } finally {
+      disconnect();
+    }
 
     await expect(client.execute('getDaemonBootstrap', { agentId: AGENT })).resolves.toEqual(
       expect.objectContaining({

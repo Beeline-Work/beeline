@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { isServerEventKind } from '@beeline/api-contract/phone';
 import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-contract/agent-access';
 import type { SqlDatabase } from './database.js';
@@ -29,7 +28,6 @@ interface Delivery {
  * Socket ownership and elapsed idle time say nothing about delivery capability.
  */
 export class ConnectionPresence {
-  readonly epoch = randomUUID();
   readonly #timers = new Map<string, ReturnType<typeof setTimeout>>();
   readonly #release: () => void;
   readonly #releaseResync: () => void;
@@ -57,16 +55,9 @@ export class ConnectionPresence {
     await this.observe();
   }
 
-  connect(roomId: string, agentId: string, metadata: PresenceMetadata = {}): () => void {
-    void this.announce(roomId, agentId, metadata).catch(this.report);
-    return () => {}; // Losing a socket is not a failed delivery.
-  }
-
   async announce(roomId: string, agentId: string, metadata: PresenceMetadata = {}): Promise<void> {
-    await announceAgentLifecycle(this.database, this.live, roomId, agentId, {
-      ...metadata,
-      lifecycleId: metadata.lifecycleId ?? this.epoch,
-    });
+    if (!metadata.lifecycleId) return;
+    await announceAgentLifecycle(this.database, this.live, roomId, agentId, metadata);
   }
 
   async stop(): Promise<void> {
@@ -182,9 +173,9 @@ export async function announceAgentLifecycle(
   live: LiveHub,
   roomId: string,
   agentId: string,
-  metadata: PresenceMetadata,
+  metadata: PresenceMetadata & { lifecycleId: string },
 ): Promise<void> {
-  const lifecycle = metadata.lifecycleId ?? randomUUID();
+  const lifecycle = metadata.lifecycleId;
   const changed = await database.transaction(async (db) => {
     await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`presence:${agentId}`]);
     const previous = (

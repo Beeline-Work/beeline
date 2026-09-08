@@ -64,8 +64,6 @@ describe('delivery-driven presence', () => {
   it('keeps the persisted startup announcement online after its socket is released and idle time passes', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     await presence.announce(ROOM, AGENT, { lifecycleId: 'boot-1' });
-    const release = presence.connect(ROOM, AGENT, { lifecycleId: 'boot-1' });
-    release();
     await vi.advanceTimersByTimeAsync(180_000);
     expect(await body()).toMatchObject({ status: 'online', lifecycleId: 'boot-1' });
     expect((await body()).expiresAt).toBeUndefined();
@@ -163,6 +161,17 @@ describe('delivery-driven presence', () => {
     expect((await body()).status).toBe('offline');
     await presence.announce(ROOM, AGENT, { lifecycleId: 'boot-2' });
     expect((await body()).status).toBe('online');
+  });
+
+  it('does not let a lifecycle-less legacy re-subscription revive a failed delivery', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    await presence.announce(ROOM, AGENT, { lifecycleId: 'boot-1' });
+    await message();
+    await elapsed();
+    await presence.stop();
+    presence = new ConnectionPresence(database, new LiveHub(), 50);
+    await presence.announce(ROOM, AGENT);
+    expect(await body()).toMatchObject({ status: 'offline', lifecycleId: 'boot-1' });
   });
 
   it('retains lifecycle facts through maintenance and makes no idle writes', async () => {

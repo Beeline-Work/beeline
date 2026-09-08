@@ -104,7 +104,6 @@ export type DaemonOperationMap = {
   postAgentToolScheduleIndex: Operation<PostScheduleIndexInput, WriteResult>;
   postAgentToolMandate: Operation<PostAgentToolMandateInput, WriteResult>;
   postAgentCommands: Operation<PostAgentCommandsInput, WriteResult>;
-  postAgentPresence: Operation<PostAgentPresenceInput, WriteResult>;
   postAgentModelCatalog: Operation<PostAgentModelCatalogInput, WriteResult>;
   postCornerLifecycle: Operation<PostCornerLifecycleInput, WriteResult>;
   postCornerRemoteState: Operation<PostCornerRemoteStateInput, WriteResult>;
@@ -372,11 +371,6 @@ export type PostAgentToolMandateInput = AgentRoomInput & {
 export type PostAgentCommandsInput = AgentInput & {
   readonly workspaceId: string;
   readonly commands: readonly { readonly name: string; readonly description?: string }[];
-};
-export type PostAgentPresenceInput = AgentRoomInput & {
-  readonly status: 'online' | 'offline';
-  readonly releaseVersion?: string;
-  readonly sourceSha?: string;
 };
 export type PostAgentModelCatalogInput = AgentInput & {
   readonly workspaceId: string;

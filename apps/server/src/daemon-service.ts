@@ -1,4 +1,3 @@
-import { announceAgentLifecycle } from './connection-presence.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type {
   DaemonAttachment,
@@ -337,11 +336,6 @@ export class DaemonService {
       case 'postAgentCommands':
         return (await this.commands(
           input as Input<'postAgentCommands'>,
-          authenticatedAgentId,
-        )) as Output<Name>;
-      case 'postAgentPresence':
-        return (await this.postPresence(
-          input as Input<'postAgentPresence'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'postAgentModelCatalog':
@@ -1693,14 +1687,6 @@ export class DaemonService {
     );
     return this.writeResult();
   }
-  private async postPresence(input: Input<'postAgentPresence'>, agentId: string) {
-    await announceAgentLifecycle(this.database, this.live, input.roomId, agentId, {
-      available: input.status === 'online',
-      ...(input.releaseVersion ? { releaseVersion: input.releaseVersion } : {}),
-      ...(input.sourceSha ? { sourceSha: input.sourceSha } : {}),
-    });
-    return this.writeResult();
-  }
   private async modelCatalog(input: Input<'postAgentModelCatalog'>, agentId: string) {
     await this.database.query(
       `UPDATE agents SET model_catalog=$2::jsonb,selected_model=COALESCE($3,selected_model),selected_effort=COALESCE($4,selected_effort),updated_at=now() WHERE agent_id=$1`,
@@ -2366,7 +2352,6 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   postAgentToolScheduleIndex: true,
   postAgentToolMandate: true,
   postAgentCommands: true,
-  postAgentPresence: true,
   postAgentModelCatalog: true,
   postCornerLifecycle: true,
   postCornerRemoteState: true,

@@ -26,6 +26,7 @@ import {
 } from '@beeline/api-contract/phone';
 import { createMonolithAuth, type MonolithAuthMount } from './monolith-auth.js';
 import { REVIEW_IDENTITY_ID, ReviewAccess } from './review-access.js';
+import { announceAgentLifecycle } from './connection-presence.js';
 
 const HUMAN = createHash('sha256').update('github:owner').digest('hex');
 const AGENT = 'b'.repeat(64);
@@ -1522,19 +1523,11 @@ describe('monolith integration', () => {
 
   it('reports daemon bundle readiness over public monolith HTTP', async () => {
     const sourceSha = 'd03cff8f'.padEnd(40, '0');
-    const posted = await request(
-      '/v1/daemon/operations/postAgentPresence',
-      'POST',
-      {
-        agentId: AGENT,
-        roomId: ROOM,
-        status: 'online',
-        releaseVersion: 'v0.0.22',
-        sourceSha,
-      },
-      daemonToken,
-    );
-    expect(posted.status).toBe(200);
+    await announceAgentLifecycle(database, new LiveHub(), ROOM, AGENT, {
+      lifecycleId: 'release-readiness',
+      releaseVersion: 'v0.0.22',
+      sourceSha,
+    });
 
     const response = await fetch(`${origin}/v1/releases/daemon-readiness`);
 
@@ -1596,19 +1589,11 @@ describe('monolith integration', () => {
     };
 
     // A real fleet member on the release, so the ghost is the only odd one out.
-    const realPresence = await request(
-      '/v1/daemon/operations/postAgentPresence',
-      'POST',
-      {
-        agentId: AGENT,
-        roomId: ROOM,
-        status: 'online',
-        releaseVersion: 'v0.0.22',
-        sourceSha: 'd03cff8f'.padEnd(40, '0'),
-      },
-      daemonToken,
-    );
-    expect(realPresence.status).toBe(200);
+    await announceAgentLifecycle(database, new LiveHub(), ROOM, AGENT, {
+      lifecycleId: 'release-readiness',
+      releaseVersion: 'v0.0.22',
+      sourceSha: 'd03cff8f'.padEnd(40, '0'),
+    });
 
     const readiness = await fetch(`${origin}/v1/releases/daemon-readiness`);
     expect(readiness.status).toBe(200);
@@ -1639,12 +1624,9 @@ describe('monolith integration', () => {
   });
 
   it('refuses to roll back an agent that has already reported presence', async () => {
-    await request(
-      '/v1/daemon/operations/postAgentPresence',
-      'POST',
-      { agentId: AGENT, roomId: ROOM, status: 'online' },
-      daemonToken,
-    );
+    await announceAgentLifecycle(database, new LiveHub(), ROOM, AGENT, {
+      lifecycleId: 'rollback-refusal',
+    });
     const refused = await request('/v1/auth/daemon/rollback', 'POST', {});
     expect(refused.status).toBe(400);
   });

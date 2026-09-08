@@ -57,7 +57,7 @@ import type { LiveEvent, LiveHub } from './live.js';
 import type { GitHubOperations } from './github-operations.js';
 import { collapsePermissionCards } from '@beeline/push-gateway/projection';
 import { joinRooms, syncTopLevelSharedRoomRoles } from './membership-join.js';
-import { lockIdentityHandleWorkspaces, workspaceHandleAvailable } from './workspace-handles.js';
+import { lockIdentityHandleWorkspaces, reassignCollidingAgentHandles } from './workspace-handles.js';
 import { REVIEW_IDENTITY_ID } from './review-access.js';
 import { identitySubject, systemLine } from './system-line.js';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
@@ -1871,7 +1871,6 @@ export class PhoneService {
       input.roomId,
       author,
       input.text,
-      input.mentions ?? [],
     );
     const mentions = JSON.stringify(mentionResolution.mentionIds);
     const values = [id, input.roomId, author, input.text, attachments, mentions];
@@ -1972,7 +1971,6 @@ export class PhoneService {
       input.roomId,
       author,
       input.text,
-      input.mentions ?? [],
       parent.rows[0].author_kind === 'agent' ? parent.rows[0].author_id : null,
     );
     const values = [
@@ -2166,7 +2164,6 @@ export class PhoneService {
     roomId: string,
     author: string,
     text: string,
-    explicitMentions: readonly string[],
     replyAgentId?: string | null,
   ): Promise<{ mentionIds: readonly string[]; noticeAgentIds: readonly string[] }> {
     const authorKind = (
@@ -2176,15 +2173,7 @@ export class PhoneService {
       )
     ).rows[0]?.kind;
     if (authorKind !== 'human') return { mentionIds: [], noticeAgentIds: [] };
-    const explicitAgentIds = new Set(
-      (
-        await this.database.query<{ id: string }>(
-          `SELECT id FROM identities WHERE id=ANY($1::text[]) AND kind='agent'`,
-          [[...explicitMentions]],
-        )
-      ).rows.map((row) => row.id),
-    );
-    const mentions = new Set(explicitMentions.filter((id) => !explicitAgentIds.has(id)));
+    const mentions = new Set<string>();
     const tokenCharacter = /[\p{L}\p{M}\p{N}_.-]/u;
     const typedHandles = new Set<string>();
     const normalizedText = text.normalize('NFKC').toLocaleLowerCase();
@@ -2203,18 +2192,24 @@ export class PhoneService {
       )
         typedHandles.add(match[1] ?? '');
     }
-    const agents = await this.database.query<{ id: string; handle: string }>(
-      `SELECT identity.id,identity.handle
+    const members = await this.database.query<{
+      id: string;
+      handle: string;
+      kind: 'human' | 'agent';
+    }>(
+      `SELECT identity.id,identity.handle,identity.kind
        FROM memberships membership
        JOIN identities identity ON identity.id=membership.identity_id
-         AND identity.kind='agent' AND identity.handle IS NOT NULL
-       WHERE membership.room_id=$1 AND membership.removed_at IS NULL`,
+       WHERE membership.room_id=$1 AND membership.removed_at IS NULL
+         AND identity.handle IS NOT NULL`,
       [roomId],
     );
-    for (const agent of agents.rows)
-      if (typedHandles.has(agent.handle.normalize('NFKC').toLocaleLowerCase()))
-        mentions.add(agent.id);
-    const noticeAgentIds = new Set(mentions);
+    const noticeAgentIds = new Set<string>();
+    for (const member of members.rows)
+      if (typedHandles.has(member.handle.normalize('NFKC').toLocaleLowerCase())) {
+        mentions.add(member.id);
+        if (member.kind === 'agent') noticeAgentIds.add(member.id);
+      }
     const absentCornerAgents = await this.database.query<{ id: string; handle: string }>(
       `SELECT identity.id,identity.handle
        FROM rooms room
@@ -2527,20 +2522,16 @@ export class PhoneService {
     if (input.memberId === viewerId) throw new Error('workspace managers cannot change themselves');
     await this.requireIdentity(input.memberId);
     return this.database.transaction(async (database) => {
-      await lockIdentityHandleWorkspaces(database, input.memberId, [input.workspaceId]);
+      const workspaceIds = await lockIdentityHandleWorkspaces(database, input.memberId, [
+        input.workspaceId,
+      ]);
       const targetIdentity = (
-        await database.query<{ handle: string | null }>(
-          `SELECT handle FROM identities WHERE id=$1 FOR UPDATE`,
+        await database.query<{ handle: string | null; kind: 'human' | 'agent'; name: string }>(
+          `SELECT handle,kind,name FROM identities WHERE id=$1 FOR UPDATE`,
           [input.memberId],
         )
       ).rows[0];
-      if (
-        !targetIdentity ||
-        !(await workspaceHandleAvailable(database, input.memberId, targetIdentity.handle, [
-          input.workspaceId,
-        ]))
-      )
-        throw new Error('handle conflict in workspace');
+      if (!targetIdentity) throw new Error('identity not found');
       const roles = await database.query<{
         identity_id: string;
         role: 'owner' | 'admin' | 'member';
@@ -2560,6 +2551,26 @@ export class PhoneService {
         (input.role === 'owner' || target?.role === 'owner' || target?.role === 'admin')
       ) {
         throw new Error('workspace manager cannot change a member with equal or greater authority');
+      }
+      if (targetIdentity.kind === 'human')
+        await reassignCollidingAgentHandles(
+          database,
+          input.memberId,
+          targetIdentity.handle,
+          workspaceIds,
+        );
+      else {
+        const handle = await this.availableAgentHandle(
+          database,
+          input.workspaceId,
+          input.memberId,
+          targetIdentity.name,
+          Promise.resolve(workspaceIds),
+        );
+        await database.query(`UPDATE identities SET handle=$2,updated_at=now() WHERE id=$1`, [
+          input.memberId,
+          handle,
+        ]);
       }
       if (target) {
         await database.query(
@@ -2701,18 +2712,15 @@ export class PhoneService {
     const row = result.rows[0];
     if (!row) throw new Error('invite not found');
     return this.database.transaction(async (database) => {
-      await lockIdentityHandleWorkspaces(database, viewerId, [row.workspace_id]);
+      const workspaceIds = await lockIdentityHandleWorkspaces(database, viewerId, [row.workspace_id]);
       const identity = (
         await database.query<{ handle: string | null }>(
           `SELECT handle FROM identities WHERE id=$1 FOR UPDATE`,
           [viewerId],
         )
       ).rows[0];
-      if (
-        !identity ||
-        !(await workspaceHandleAvailable(database, viewerId, identity.handle, [row.workspace_id]))
-      )
-        throw new Error('handle conflict in workspace');
+      if (!identity) throw new Error('identity not found');
+      await reassignCollidingAgentHandles(database, viewerId, identity.handle, workspaceIds);
       const joined = await database.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member')
          ON CONFLICT (workspace_id,identity_id) WHERE room_id IS NULL
@@ -3402,8 +3410,7 @@ export class PhoneService {
     return this.database.transaction(async (database) => {
       if (input.handle !== undefined) {
         const workspaceIds = await lockIdentityHandleWorkspaces(database, viewerId);
-        if (!(await workspaceHandleAvailable(database, viewerId, input.handle, workspaceIds)))
-          throw new Error('handle conflict in workspace');
+        await reassignCollidingAgentHandles(database, viewerId, input.handle, workspaceIds);
       }
       const updated = await database.query<IdentityRow>(
         `UPDATE identities
@@ -3512,12 +3519,13 @@ export class PhoneService {
   }
   private async claimManagedHandle(viewerId: string, handle: string) {
     await this.database.transaction(async (database) => {
-      await lockIdentityHandleWorkspaces(database, viewerId);
+      const workspaceIds = await lockIdentityHandleWorkspaces(database, viewerId);
+      await reassignCollidingAgentHandles(database, viewerId, handle, workspaceIds);
       const claimed = await database.query(
         `UPDATE identities AS identity SET handle=$2,updated_at=now()
          WHERE identity.id=$1 AND NOT EXISTS(
            SELECT 1 FROM identities AS other
-           WHERE other.id<>$1 AND lower(other.handle)=lower($2)
+           WHERE other.id<>$1 AND other.kind='human' AND lower(other.handle)=lower($2)
          )`,
         [viewerId, handle],
       );

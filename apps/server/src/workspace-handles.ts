@@ -1,3 +1,4 @@
+import { uniqueAgentHandle } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 
 export async function lockIdentityHandleWorkspaces(
@@ -5,6 +6,9 @@ export async function lockIdentityHandleWorkspaces(
   identityId: string,
   additionalWorkspaceIds: readonly string[] = [],
 ): Promise<readonly string[]> {
+  await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+    'workspace-handle-allocation',
+  ]);
   await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
     `identity-handle:${identityId}`,
   ]);
@@ -24,22 +28,39 @@ export async function lockIdentityHandleWorkspaces(
   return workspaceIds;
 }
 
-export async function workspaceHandleAvailable(
+export async function reassignCollidingAgentHandles(
   database: SqlDatabase,
-  identityId: string,
+  humanId: string,
   handle: string | null | undefined,
   workspaceIds: readonly string[],
-): Promise<boolean> {
-  if (!handle || !workspaceIds.length) return true;
-  const conflict = await database.query(
-    `SELECT 1
+): Promise<void> {
+  if (!handle || !workspaceIds.length) return;
+  const conflicts = await database.query<{ id: string; name: string }>(
+    `SELECT DISTINCT identity.id,identity.name
      FROM memberships membership
      JOIN identities identity ON identity.id=membership.identity_id
      WHERE membership.workspace_id=ANY($1::uuid[]) AND membership.room_id IS NULL
        AND membership.removed_at IS NULL AND identity.hidden_from_roster=false
-       AND identity.id<>$2 AND lower(identity.handle)=lower($3)
-     LIMIT 1`,
-    [workspaceIds, identityId, handle],
+       AND identity.id<>$2 AND identity.kind='agent'
+       AND lower(identity.handle)=lower($3)
+     ORDER BY identity.id`,
+    [workspaceIds, humanId, handle],
   );
-  return conflict.rowCount === 0;
+  for (const agent of conflicts.rows) {
+    const agentWorkspaceIds = await lockIdentityHandleWorkspaces(database, agent.id);
+    const taken = await database.query<{ handle: string }>(
+      `SELECT identity.handle
+       FROM memberships membership
+       JOIN identities identity ON identity.id=membership.identity_id
+       WHERE membership.workspace_id=ANY($1::uuid[]) AND membership.room_id IS NULL
+         AND membership.removed_at IS NULL AND identity.hidden_from_roster=false
+         AND identity.id<>$2 AND identity.handle IS NOT NULL`,
+      [agentWorkspaceIds, agent.id],
+    );
+    const replacement = uniqueAgentHandle(agent.name, [handle, ...taken.rows.map((row) => row.handle)]);
+    await database.query(`UPDATE identities SET handle=$2,updated_at=now() WHERE id=$1`, [
+      agent.id,
+      replacement,
+    ]);
+  }
 }

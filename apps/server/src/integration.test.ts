@@ -1641,6 +1641,39 @@ describe('monolith integration', () => {
     }
   });
 
+  it('derives human mentions from exact typed handles, never supplied ids', async () => {
+    const peer = 'f'.repeat(64);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Peer','peer')`,
+      [peer],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
+      [WORKSPACE, peer, ROOM],
+    );
+    for (const [messageId, text, expected] of [
+      ['d'.repeat(64), 'Hello Peer.', []],
+      ['e'.repeat(64), '@peer, hello.', [peer]],
+    ] as const) {
+      const sent = await operation('sendRoomMessage', {
+        roomId: ROOM,
+        messageId,
+        text,
+        mentions: [AGENT, peer],
+      });
+      expect(sent.status).toBe(200);
+      expect(
+        (
+          await database.query<{ mention_ids: string[] }>(
+            `SELECT mention_ids FROM messages WHERE id=$1`,
+            [messageId],
+          )
+        ).rows[0]?.mention_ids,
+      ).toEqual(expected);
+    }
+  });
+
   it('does not persist a typed agent outside the Room as a mention', async () => {
     const outsideAgent = 'd'.repeat(64);
     await database.query(
@@ -2450,10 +2483,14 @@ describe('monolith integration', () => {
     });
 
     const colliding = await operation('updatePersonProfile', { handle: 'bee' });
-    expect(colliding.status).toBe(409);
+    expect(colliding.status).toBe(200);
     await expect((await operation('getManagedIdentity')).json()).resolves.toMatchObject({
-      handle: 'owner',
+      handle: 'bee',
     });
+    expect(
+      (await database.query<{ handle: string }>(`SELECT handle FROM identities WHERE id=$1`, [AGENT]))
+        .rows[0]?.handle,
+    ).toBe('bee_2');
 
     const claimed = await operation('claimManagedHandle', { handle: 'captain.owner' });
     expect(claimed.status).toBe(200);
@@ -2492,7 +2529,7 @@ describe('monolith integration', () => {
     expect(link.rows[0]?.audience).toBe('github');
   });
 
-  it('keeps agent handles unique across member joins and GitHub identity refreshes', async () => {
+  it('moves colliding agents when people join or refresh GitHub handles', async () => {
     const directMember = 'd'.repeat(64);
     await database.query(
       `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Direct member','bee')`,
@@ -2506,31 +2543,34 @@ describe('monolith integration', () => {
           role: 'member',
         })
       ).status,
-    ).toBe(409);
+    ).toBe(200);
+    expect(
+      (await database.query<{ handle: string }>(`SELECT handle FROM identities WHERE id=$1`, [AGENT]))
+        .rows[0]?.handle,
+    ).toBe('bee_2');
 
     const invite = (await (await operation('createInvite', { workspaceId: WORKSPACE })).json()) as {
       token: string;
     };
-    const collisionAuth = new TokenAuth(database, async () => ({
-      subject: 'collision-member',
-      login: 'bee',
-      name: 'Collision member',
-    }));
-    const invitee = await collisionAuth.exchangeGitHubOidc('collision-proof');
+    const invitee = await phoneToken('bee_2');
     expect(
       (
         await request(
           '/v1/phone/operations/redeemInvite',
           'POST',
           { token: invite.token },
-          invitee.accessToken,
+          invitee,
         )
       ).status,
-    ).toBe(409);
+    ).toBe(200);
+    expect(
+      (await database.query<{ handle: string }>(`SELECT handle FROM identities WHERE id=$1`, [AGENT]))
+        .rows[0]?.handle,
+    ).toBe('bee_3');
 
     const renamedLogin = new TokenAuth(database, async () => ({
       subject: 'owner',
-      login: 'bee',
+      login: 'bee_3',
       name: 'Owner',
     }));
     await renamedLogin.exchangeGitHubOidc('owner-renamed-login');
@@ -2540,7 +2580,11 @@ describe('monolith integration', () => {
           HUMAN,
         ])
       ).rows[0]?.handle,
-    ).toBe('owner');
+    ).toBe('bee_3');
+    expect(
+      (await database.query<{ handle: string }>(`SELECT handle FROM identities WHERE id=$1`, [AGENT]))
+        .rows[0]?.handle,
+    ).toBe('bee_4');
   });
 
   it('recovers a GitHub identity conflict and exposes the predecessor over HTTP', async () => {

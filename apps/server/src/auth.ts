@@ -6,7 +6,7 @@ import {
 } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { joinRooms } from './membership-join.js';
-import { lockIdentityHandleWorkspaces, workspaceHandleAvailable } from './workspace-handles.js';
+import { lockIdentityHandleWorkspaces, reassignCollidingAgentHandles } from './workspace-handles.js';
 import {
   REVIEW_IDENTITY_HANDLE,
   REVIEW_IDENTITY_ID,
@@ -61,17 +61,14 @@ async function landInWelcomeWorkspace(database: SqlDatabase, id: string): Promis
     WELCOME_WORKSPACE_ID,
     WELCOME_WORKSPACE_NAME,
   ]);
-  await lockIdentityHandleWorkspaces(database, id, [WELCOME_WORKSPACE_ID]);
+  const workspaceIds = await lockIdentityHandleWorkspaces(database, id, [WELCOME_WORKSPACE_ID]);
   const identity = (
     await database.query<{ handle: string | null }>(`SELECT handle FROM identities WHERE id=$1`, [
       id,
     ])
   ).rows[0];
-  if (
-    !identity ||
-    !(await workspaceHandleAvailable(database, id, identity.handle, [WELCOME_WORKSPACE_ID]))
-  )
-    throw new Error('handle conflict in workspace');
+  if (!identity) throw new Error('identity not found');
+  await reassignCollidingAgentHandles(database, id, identity.handle, workspaceIds);
   const membership = await database.query(
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
      VALUES($1,NULL,$2,'member') ON CONFLICT DO NOTHING`,
@@ -119,21 +116,14 @@ export class TokenAuth {
         [id, github.name, github.avatar ?? null, github.subject, this.now()],
       );
       const workspaceIds = await lockIdentityHandleWorkspaces(database, id, [WELCOME_WORKSPACE_ID]);
-      const handleAvailable = await workspaceHandleAvailable(
-        database,
-        id,
-        github.login,
-        workspaceIds,
-      );
+      await reassignCollidingAgentHandles(database, id, github.login, workspaceIds);
       await database.query(
         `UPDATE identities SET name=$2,
-           handle=CASE WHEN $3 THEN $4 ELSE handle END,
-           avatar=$5,github_subject=$6,updated_at=$7
+           handle=$3,avatar=$4,github_subject=$5,updated_at=$6
          WHERE id=$1`,
         [
           id,
           github.name,
-          handleAvailable,
           github.login,
           github.avatar ?? null,
           github.subject,

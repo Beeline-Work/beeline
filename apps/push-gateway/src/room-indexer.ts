@@ -270,8 +270,8 @@ export class RoomIndexer {
         const data = json(row.data);
         const memberIdentity = identity(data);
         const presenceStatus = text(data.presenceStatus);
-        const catalog = json(data.modelCatalog);
-        const config = json(data.modelConfig);
+        const catalog = safeJson(text(data.modelCatalog) ?? '') ?? {};
+        const config = safeJson(text(data.modelConfig) ?? '') ?? {};
         const owner = agentOwner(data);
         const model = memberIdentity.kind === 'agent' ? modelLabel(catalog, config) : undefined;
         return {

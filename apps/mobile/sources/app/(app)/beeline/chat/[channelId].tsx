@@ -3529,7 +3529,7 @@ export default function BuzzChat() {
               </TouchableOpacity>
               <TextInput
                 ref={composerRef}
-                style={[styles.input, { height: composerHeight }]}
+                style={styles.input}
                 value={inputText}
                 onChangeText={(value) => {
                   inputTextRef.current = value;
@@ -3592,7 +3592,6 @@ export default function BuzzChat() {
                 placeholder={composerPlaceholder}
                 placeholderTextColor={theme.buzz.dim}
                 multiline
-                numberOfLines={1}
                 returnKeyType="default"
                 scrollEnabled={composerHeight >= COMPOSER_MAX_HEIGHT}
                 submitBehavior="newline"

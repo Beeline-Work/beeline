@@ -104,6 +104,11 @@ describe('Postgres live fanout', () => {
 
     const received: LiveEvent[] = [];
     liveB.subscribe(ROOM, (event) => received.push(event));
+    // Every successful LISTEN (including its first) now resyncs to recover a
+    // delivery written before the listener was ready. Let that connection
+    // establishment event settle before verifying the next committed write.
+    await eventually(() => received.some((event) => event.type === 'invalidate' && event.reason === 'resync'));
+    received.length = 0;
     await database.transaction(async (transaction) => {
       await transaction.query(
         `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'hello')`,

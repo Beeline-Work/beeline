@@ -401,8 +401,8 @@ right now takes a gold ring plus a wider low-alpha halo drawn *around* its
 plate, breathing on the shared live clock (`HullLivePulse`). Its proof is the
 server-indexed working receipt or the corner's canonical `working` state
 (`selectWorkingAgents`), the same signal as the thinking line — never the
-presence lease: a helper whose every turn fails still renews its lease, so
-"alive" said nothing about whether the agent could answer (C77). It never touches the identity colour or the
+delivery-availability fact: a daemon can be available before it has claimed
+work, so availability says nothing about whether it is working (C77). It never touches the identity colour or the
 creature: who this is and what it is doing stay two separate reads, and a
 gold *fill* would have destroyed the first to say the second. It is mounted
 only where something is genuinely live, so a quiet row pays for no clock.

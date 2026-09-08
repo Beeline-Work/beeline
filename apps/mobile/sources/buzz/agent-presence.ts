@@ -122,9 +122,9 @@ export function isAgentTurnActive(
   const age = now - turn.createdAt * 1_000;
   if (age < -AGENT_TURN_FRESHNESS_MS || age >= AGENT_TURN_FRESHNESS_MS) return false;
 
-  // Turn lifecycle and liveness are independent relay streams. A signed
-  // working event is enough to render the Room progress row while the
-  // replaceable presence lease is still loading or briefly quota-delayed.
+  // Turn lifecycle and availability are independent relay streams. A signed
+  // working event is enough to render the Room progress row while the durable
+  // availability record is still loading.
   // An explicit offline marker, or a different current daemon generation,
   // is the only evidence that may close it before complete/failed arrives.
   if (presence?.status === 'offline') return false;
@@ -153,7 +153,7 @@ export function mergeAgentPresenceBatch(
  * One online/offline verdict per agent pubkey, resolved once per render.
  *
  * The transcript's renderItem needs each speaker's liveness for the byline
- * ring, but reading the three raw inputs (heartbeat map, wall clock,
+ * ring, but reading the three raw inputs (presence map, wall clock,
  * reconnect grace) directly recreated the callback on EVERY heartbeat and on
  * every streamed batch, rebuilding every visible ledger row for no visible
  * change. Collapsing them to a flat boolean record lets the screen preserve

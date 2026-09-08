@@ -54,9 +54,9 @@ export type TurnProgressInput = {
  * The server-indexed latest WORKING receipt is the only proof, and the only
  * vetoes are the receipt's own: the 90-second freshness horizon and — applied
  * upstream, in `isAgentTurnActive` — an explicit offline marker or a different
- * daemon generation. A stale or missing presence LEASE is never one of them
- * (C77): a helper whose lease heartbeat lapsed while it was mid-turn claimed
- * the message, and the claim receipt is better evidence than the lease. Draft
+ * daemon generation. A missing availability record is never one of them
+ * (C77): a helper that claimed the message has stronger evidence in its claim
+ * receipt than an unavailable presence read. Draft
  * streams are content overlays, not lifecycle: they can start late and a lost
  * retract can leave one open forever.
  */
@@ -78,10 +78,9 @@ export type WorkingAgentsInput = {
  * The agents whose identity marks wear the gold ring right now, keyed by
  * pubkey. The ring means WORKING — a live turn or a live corner — and this is
  * the same proof `selectTurnProgressAgentPubkey` and the corner header read.
- * The presence lease is deliberately not an input: a helper whose every turn
- * fails still renews its lease (C77, Candy: four `failed` receipts, no
- * `complete`, and a lease refreshed seconds ago), so "alive" said nothing
- * about whether the agent could answer. An empty record is the ordinary
+ * Delivery availability is deliberately not an input: a daemon can be online
+ * before it has claimed work (C77), so it says nothing about whether the agent
+ * is working. An empty record is the ordinary
  * result; the keys hold only agents genuinely working.
  */
 export function selectWorkingAgents(input: WorkingAgentsInput): Readonly<Record<string, true>> {

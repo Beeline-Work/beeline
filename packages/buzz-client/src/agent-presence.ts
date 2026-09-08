@@ -1,6 +1,7 @@
 /** Durable agent availability; elapsed idle time never revokes online. */
 import { TAG_AGENT_PRESENCE } from './kinds.js';
 
+/** @deprecated Presence is event-driven; no publisher schedules a heartbeat. */
 export const AGENT_PRESENCE_HEARTBEAT_MS = 45_000;
 export const AGENT_PRESENCE_STALE_MS = 120_000;
 
@@ -20,7 +21,7 @@ export type AgentPresenceTier = 'online' | 'offline' | 'dormant';
  * had spelled the key out by hand; the one that reached for `#h` (the
  * Workspace-wide agents directory, which fans across every Room) therefore
  * found no presence for any agent, ever, and showed a serving daemon with a
- * four-second-old `online` heartbeat as OFFLINE.
+ * four-second-old `online` availability record as OFFLINE.
  *
  * One builder so the publisher and every reader cannot drift again.
  */
@@ -82,17 +83,16 @@ export type AgentRosterStanding =
  * consumer sees.
  *
  * Why transient flakes can never satisfy eviction:
- * - Elapsed absence is not evidence. A missed heartbeat (quota-rejected 429s
- *   are not retried by the publisher), a daemon restart, a relay outage, and
- *   death are indistinguishable by time alone, so NO duration of lease
- *   darkness ever evicts — worst case is `dormant`.
+ * - Elapsed absence is not evidence. A daemon restart, relay outage, and
+ *   death are indistinguishable by time alone, so only an explicit offline
+ *   fact may age into `dormant`; online never does.
  * - A failed membership read is `unknown`, which degrades DOWNWARD to the
  *   presence tiers, never upward to evicted. Only a successful read saying
  *   `not-member` — signed kind:9001 removal authority — evicts.
- * - Membership wins over any presence record: a removed key's stale heartbeat
- *   (or a replayed one) cannot make an evicted agent look receivable.
+ * - Membership wins over any presence record: a removed key's replayed
+ *   availability record cannot make an evicted agent look receivable.
  * - Eviction is idempotent by construction: it derives from the projection,
- *   so re-deriving is stable, and a renewed lease or restored membership
+ *   so re-deriving is stable, and a new lifecycle announcement or restored membership
  *   returns the identity cleanly to the active tier with no duplicate roster
  *   entry (rosters key on pubkey).
  */

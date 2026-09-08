@@ -641,7 +641,7 @@ export interface OrdinaryLedgerMessageProps {
   /**
    * The speaker is WORKING right now — a fresh working receipt or a live
    * corner (`selectWorkingAgents`). Lights the byline's gold ring. Never the
-   * presence lease: a helper whose turns all fail still renews it (C77).
+   * delivery availability: an available daemon may not be working yet (C77).
    */
   speakerWorking: boolean;
   continued: boolean;

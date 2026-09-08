@@ -305,7 +305,7 @@ describe('corner close-request polling cadence', () => {
     expect(onCloseRequested).toHaveBeenCalledOnce();
   });
 
-  it('lands the closing message whole after a tool call, and streams only drafts (C100)', async () => {
+  it('keeps anonymous tool narration distinct after a provider re-pin', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-corner-stream-'));
     roots.push(root);
     await execFileAsync('git', ['init', root]);
@@ -373,7 +373,7 @@ describe('corner close-request polling cadence', () => {
       if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
       if (name === 'postAgentActivity') {
         activityAttempts.push(input);
-        if (++activityWrites === 1) throw new Error('temporary activity failure');
+        if (++activityWrites === 2) throw new Error('temporary activity failure');
       }
       writes.push({ name, input });
       return { id: 'write-id', createdAt: 1 };
@@ -393,8 +393,16 @@ describe('corner close-request polling cadence', () => {
     vi.spyOn(acp, 'sessionPrompt').mockImplementation(
       async (_id, _prompt, _timeout, draft, _activity, toolActivity) => {
         promptCalls += 1;
-        if (promptCalls > 1) {
-          return { stopReason: 'end_turn', updates: [], agentText: 'All done.', toolCalls: [] };
+        if (promptCalls === 1) {
+          toolActivity?.([
+            {
+              kind: 'read',
+              title: 'Read first provider',
+              rawInput: { path: 'first.json' },
+              status: 'completed',
+            },
+          ]);
+          return { stopReason: 'end_turn', updates: [], agentText: '', toolCalls: [] };
         }
         // The reported shape: prose, a tool call, then the closing prose. The
         // ACP delta hook is handed EVERY assistant run joined, while the result
@@ -403,7 +411,6 @@ describe('corner close-request polling cadence', () => {
         draft?.(' the code.', 'I inspected the code.');
         toolActivity?.([
           {
-            id: 'read-package',
             kind: 'read',
             title: 'Read package.json',
             rawInput: { path: 'package.json' },
@@ -412,7 +419,6 @@ describe('corner close-request polling cadence', () => {
         ]);
         toolActivity?.([
           {
-            id: 'read-package',
             kind: 'read',
             title: 'Read package.json',
             rawInput: { path: 'package.json' },
@@ -429,7 +435,6 @@ describe('corner close-request polling cadence', () => {
           agentText: 'The fix is ready.',
           toolCalls: [
             {
-              id: 'read-package',
               kind: 'read',
               title: 'Read package.json',
               rawInput: { path: 'package.json' },
@@ -442,7 +447,7 @@ describe('corner close-request polling cadence', () => {
       },
     );
     const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
-    await new MonolithCornerTurnLoop({
+    const loop = new MonolithCornerTurnLoop({
       cornerId: 'corner-id',
       parentRoomId: 'room-id',
       workspaceId: 'workspace',
@@ -464,13 +469,18 @@ describe('corner close-request polling cadence', () => {
       onFailure: vi.fn(),
       onCloseRequested: vi.fn(async () => undefined),
       createAcpClient: () => acp,
-    }).run();
+    });
+    (loop as unknown as { pinnedProviders: string[] }).pinnedProviders = ['first', 'second'];
+    await loop.run();
     await scheduler.dispose();
 
+    expect(promptCalls).toBe(2);
     const posts = writes.filter((write) => write.name === 'postRoomMessage');
-    expect(activityWrites).toBe(2);
-    expect(activityAttempts).toHaveLength(2);
-    expect(activityAttempts[1]).toEqual(activityAttempts[0]);
+    expect(activityWrites).toBe(3);
+    expect(activityAttempts).toHaveLength(3);
+    expect(activityAttempts[2]).toEqual(activityAttempts[1]);
+    expect(activityAttempts[0]?.cornerActivityKey).toBe('1:tool-0');
+    expect(activityAttempts[1]?.cornerActivityKey).toBe('2:tool-0');
     // The closing message lands WHOLE and under the turn's request id, so it
     // settles the receipt. Nothing is cut by a stream offset.
     expect(posts[0]).toEqual(
@@ -490,7 +500,21 @@ describe('corner close-request polling cadence', () => {
         input: expect.objectContaining({
           roomId: 'corner-id',
           requestId: 'cornerid',
-          cornerActivityKey: 'read-package',
+          cornerActivityKey: '1:tool-0',
+          activity: [
+            expect.objectContaining({
+              kind: 'tool',
+              operation: 'read',
+              title: 'Read first provider',
+            }),
+          ],
+        }),
+      }),
+      expect.objectContaining({
+        input: expect.objectContaining({
+          roomId: 'corner-id',
+          requestId: 'cornerid',
+          cornerActivityKey: '2:tool-0',
           activity: [
             {
               kind: 'output',

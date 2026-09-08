@@ -801,9 +801,10 @@ export class MonolithCornerTurnLoop {
               };
               const publishedToolCalls = new Set<string>();
               const pendingToolNarrations = new Map<string, string>();
+              let activityAttempt = 0;
               const publishToolCalls = (calls: readonly ToolCallEntry[], settledOnly: boolean) => {
                 calls.forEach((call, index) => {
-                  const key = toolCallKey(call, index);
+                  const key = `${activityAttempt}:${toolCallKey(call, index)}`;
                   if (publishedToolCalls.has(key) || (settledOnly && !toolCallSettled(call)))
                     return;
                   publishedToolCalls.add(key);
@@ -854,6 +855,9 @@ export class MonolithCornerTurnLoop {
               // re-pins the session to another provider and runs it again
               // (C92) — against the NEW client and session id.
               const runPrompt = async (): Promise<PromptResult> => {
+                activityAttempt += 1;
+                publishedToolCalls.clear();
+                pendingToolNarrations.clear();
                 stream.beginRun();
                 currentNarrationRun = '';
                 trace.promptSent();

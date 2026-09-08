@@ -26,23 +26,6 @@ type Props = {
   repoPickerError: string | null;
 };
 
-const CREATE_CONTENT_PADDING_TOP = 16;
-const PICKER_MARGIN_TOP = 8;
-const NO_REPOSITORY_ROW_HEIGHT = 44;
-const REPOSITORY_SEARCH_HEIGHT = 42;
-const REPOSITORY_ERROR_HEIGHT = 40;
-
-export function availableRepositoryPickerHeight(
-  bodyHeight: number | undefined,
-  controlsHeight: number | undefined,
-) {
-  if (bodyHeight === undefined || controlsHeight === undefined) return undefined;
-  return Math.max(
-    0,
-    Math.floor(bodyHeight - controlsHeight - CREATE_CONTENT_PADDING_TOP - PICKER_MARGIN_TOP),
-  );
-}
-
 export function NewRoomDialog({
   visible,
   workspaceName,
@@ -61,19 +44,6 @@ export function NewRoomDialog({
   repoPickerError,
 }: Props) {
   const { height } = useWindowDimensions();
-  const [bodyHeight, setBodyHeight] = React.useState<number>();
-  const [controlsHeight, setControlsHeight] = React.useState<number>();
-  const pickerHeight = availableRepositoryPickerHeight(bodyHeight, controlsHeight);
-  const listMaxHeight =
-    pickerHeight === undefined
-      ? undefined
-      : Math.max(
-          0,
-          pickerHeight -
-            NO_REPOSITORY_ROW_HEIGHT -
-            REPOSITORY_SEARCH_HEIGHT -
-            (repoPickerError ? REPOSITORY_ERROR_HEIGHT : 0),
-        );
   return (
     <HullDialog
       actions={[
@@ -88,7 +58,6 @@ export function NewRoomDialog({
         },
       ]}
       body={showRepoPicker ? undefined : `In ${workspaceName}. Repository optional.`}
-      onContentLayout={setBodyHeight}
       onRequestClose={onClose}
       surfaceStyle={{ maxHeight: height - 48 }}
       testID="new-room-dialog"
@@ -96,11 +65,7 @@ export function NewRoomDialog({
       visible={visible}
     >
       <View style={styles.createRoomContent}>
-        <View
-          onLayout={(event) => setControlsHeight(event.nativeEvent.layout.height)}
-          style={styles.roomControls}
-          testID="create-room-controls"
-        >
+        <View style={styles.roomControls}>
           <Text style={styles.fieldLabel}>Room name</Text>
           <HullDialogInput
             accessibilityLabel={`${ROOM_LABEL} name`}
@@ -136,10 +101,7 @@ export function NewRoomDialog({
           </TouchableOpacity>
         </View>
         {showRepoPicker && (
-          <View
-            style={[styles.picker, pickerHeight === undefined ? undefined : { maxHeight: pickerHeight }]}
-            testID="create-room-picker"
-          >
+          <View style={styles.picker} testID="create-room-picker">
             <TouchableOpacity
               accessibilityRole="button"
               onPress={handleSelectNoRepository}
@@ -152,8 +114,8 @@ export function NewRoomDialog({
               candidates={repoCandidates}
               currentKey={pendingRepo?.key ?? null}
               error={repoPickerError}
+              fillAvailableHeight
               installations={repoInstallations}
-              listMaxHeight={listMaxHeight}
               onSelect={handleSelectRepoCandidate}
               testIDPrefix="create-room-repo-picker"
             />
@@ -167,7 +129,7 @@ export function NewRoomDialog({
 const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
-    createRoomContent: { flexShrink: 1, minHeight: 0, paddingTop: 16 },
+    createRoomContent: { flex: 1, flexShrink: 1, minHeight: 0, overflow: 'hidden', paddingTop: 16 },
     roomControls: { gap: 8 },
     repoRow: {
       marginTop: 10,
@@ -199,6 +161,6 @@ const styles = StyleSheet.create((theme) => {
     },
     fieldLabel: { ...Typography.default(), ...hull.type.sectionHead, color: hull.textPrimary },
     hint: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
-    picker: { flexShrink: 1, minHeight: 0, marginTop: 8, overflow: 'hidden' },
+    picker: { flex: 1, flexShrink: 1, minHeight: 0, marginTop: 8, overflow: 'hidden' },
   };
 });

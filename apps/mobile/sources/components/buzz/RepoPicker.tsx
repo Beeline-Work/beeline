@@ -25,7 +25,7 @@ export type RepoPickerProps = {
   currentKey?: string | null;
   busy?: boolean;
   error?: string | null;
-  listMaxHeight?: number;
+  fillAvailableHeight?: boolean;
   notice?: string | null;
   /**
    * A typed pending state: the chosen repository is not covered by the App
@@ -63,7 +63,7 @@ export const RepoPicker = memo(function RepoPicker({
   currentKey,
   busy = false,
   error,
-  listMaxHeight,
+  fillAvailableHeight = false,
   notice,
   ownerGrant,
   onSelect,
@@ -114,10 +114,6 @@ export const RepoPicker = memo(function RepoPicker({
   const windowListMaxHeight = Math.round(
     Math.min(Math.max(windowHeight * MAX_LIST_HEIGHT_FRACTION, MIN_LIST_HEIGHT), MAX_LIST_HEIGHT_CAP),
   );
-  const candidateListMaxHeight =
-    listMaxHeight === undefined
-      ? windowListMaxHeight
-      : Math.min(windowListMaxHeight, Math.max(0, listMaxHeight));
   const pastedFullName = githubFullNameFromInput(query);
   const exactCandidate = pastedFullName
     ? candidates.find((candidate) => candidate.name.toLowerCase() === pastedFullName.toLowerCase())
@@ -148,7 +144,10 @@ export const RepoPicker = memo(function RepoPicker({
   );
 
   return (
-    <View style={styles.container} testID={testIDPrefix}>
+    <View
+      style={[styles.container, fillAvailableHeight && styles.containerFill]}
+      testID={testIDPrefix}
+    >
       <TextInput
         accessibilityLabel="Search repositories or paste a GitHub URL"
         autoCapitalize="none"
@@ -181,7 +180,11 @@ export const RepoPicker = memo(function RepoPicker({
           ) : null
         }
         sections={sections}
-        style={[styles.candidateScroll, { maxHeight: candidateListMaxHeight }]}
+        style={[
+          styles.candidateScroll,
+          fillAvailableHeight && styles.candidateScrollFill,
+          { maxHeight: windowListMaxHeight },
+        ]}
         testID={`${testIDPrefix}-list`}
       />
       {pastedFullName && !exactCandidate && (
@@ -346,12 +349,14 @@ const styles = StyleSheet.create((theme) => {
     paddingHorizontal: 0,
   },
   container: { flexShrink: 1, minHeight: 0 },
+  containerFill: { flex: 1 },
   candidateScroll: {
     // Height-bounded so a 100+ repo account scrolls instead of rendering past
     // the fold; the bound scales with the window and is clamped (see the
     // MAX_LIST_HEIGHT_* constants above).
     flexGrow: 0,
   },
+  candidateScrollFill: { flex: 1, flexShrink: 1, minHeight: 0 },
   groupHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',

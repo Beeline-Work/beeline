@@ -123,16 +123,10 @@ describe('New Room form', () => {
     act(() => renderer.unmount());
   });
 
-  it('bounds repository rows to the measured dialog body on a short viewport', () => {
+  it('keeps the repository picker in the shrinking dialog body on a short viewport', () => {
     const { renderer, host } = mount();
     act(() => host('create-room-repo-row').props.onPress());
-    act(() =>
-      host('new-room-dialog-content').props.onLayout({ nativeEvent: { layout: { height: 266 } } }),
-    );
-    act(() =>
-      host('create-room-controls').props.onLayout({ nativeEvent: { layout: { height: 136 } } }),
-    );
-    expect(renderer.root.findByType('RepoPicker').props.listMaxHeight).toBe(20);
+    expect(renderer.root.findByType('RepoPicker').props.fillAvailableHeight).toBe(true);
     act(() => renderer.unmount());
   });
 });

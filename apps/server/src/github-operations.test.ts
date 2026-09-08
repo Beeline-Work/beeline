@@ -588,6 +588,30 @@ describe('GitHub phone operations', () => {
       ).toBeNull();
     });
 
+    it('keeps reconnect required when a rejected grant meets a user-installations outage', async () => {
+      const operations = operationsFor(database);
+      const { fetchMock } = await bindIdentity(database);
+      await operations.beginIdentity(HUMAN, {
+        redirectUri: 'beeline://callback',
+        state: 'rejected-outage',
+      });
+      await operations.completeIdentity(HUMAN, { challenge: 'code', proof: 'rejected-outage' }, false);
+      await database.query(
+        `UPDATE github_user_tokens SET encrypted_refresh_token=NULL,stale_at=now() WHERE subject='42'`,
+      );
+      const originalFetch = fetchMock.getMockImplementation()!;
+      fetchMock.mockImplementation(async (input, init) =>
+        String(input).includes('/user/installations')
+          ? new Response(JSON.stringify({ message: 'unavailable' }), {
+              status: 503,
+              headers: { 'content-type': 'application/json' },
+            })
+          : originalFetch(input, init),
+      );
+
+      await expect(operations.refresh(HUMAN)).resolves.toEqual({ githubReconnectNeeded: true });
+    });
+
     it('recovers a historically stale credential that still has a refresh grant', async () => {
       const operations = operationsFor(database);
       const { tokenBodies } = await bindIdentity(database);

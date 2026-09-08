@@ -34,7 +34,7 @@ import { RepoPicker } from './RepoPicker';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-function renderPicker(listMaxHeight: number): ReactTestRenderer {
+function renderPicker(): ReactTestRenderer {
   let renderer!: ReactTestRenderer;
   act(() => {
     renderer = create(
@@ -45,7 +45,7 @@ function renderPicker(listMaxHeight: number): ReactTestRenderer {
           remote: `https://github.com/owner/repo-${index}`,
           defaultBranch: 'main',
         }))}
-        listMaxHeight={listMaxHeight}
+        fillAvailableHeight
         onSelect={() => {}}
       />,
     );
@@ -54,11 +54,13 @@ function renderPicker(listMaxHeight: number): ReactTestRenderer {
 }
 
 describe('RepoPicker', () => {
-  it('renders a scrollable candidate list within the available dialog height', () => {
-    const renderer = renderPicker(20);
+  it('renders a scrollable candidate list that shrinks inside the dialog body', () => {
+    const renderer = renderPicker();
     const list = renderer.root.findByProps({ testID: 'repo-picker-list' });
     expect(list.props.sections[0].data).toHaveLength(100);
-    expect(list.props.style).toContainEqual(expect.objectContaining({ maxHeight: 20 }));
+    expect(list.props.style).toContainEqual(
+      expect.objectContaining({ flex: 1, flexShrink: 1, minHeight: 0 }),
+    );
     expect(list.props.nestedScrollEnabled).toBe(true);
     expect(list.props.keyboardShouldPersistTaps).toBe('handled');
     act(() => renderer.unmount());

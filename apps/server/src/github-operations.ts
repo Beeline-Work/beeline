@@ -967,6 +967,7 @@ export class GitHubOperations {
     const refreshToken = credential.encrypted_refresh_token
       ? this.open(credential.encrypted_refresh_token)
       : undefined;
+    if (credential.stale_at && !refreshToken) return { subject: credential.subject };
     const token = this.open(sealed);
     const expiresAt = credential.expires_at ? new Date(credential.expires_at).getTime() : undefined;
     if (

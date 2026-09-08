@@ -2730,7 +2730,9 @@ export class PhoneService {
                 name: changingMember.name,
               }),
               verb: 'changed',
-              object: `${targetMention}'s role to ${input.role}`,
+              object: targetMention
+                ? `${targetMention}'s role to ${input.role}`
+                : `role to ${input.role}`,
               cardType: 'member-role',
               card: { identityId: input.memberId, role: input.role },
             });

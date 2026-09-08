@@ -10,6 +10,9 @@ const OWNER = 'a'.repeat(64);
 const MEMBER = 'b'.repeat(64);
 const AGENT = 'c'.repeat(64);
 const LATE = 'e'.repeat(64);
+const MANAGER = 'f'.repeat(64);
+const ADDED_AGENT = 'd'.repeat(64);
+const HANDLELESS = '9'.repeat(64);
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
 
@@ -18,8 +21,9 @@ async function fixture() {
   await migrate(database);
   await database.query(
     `INSERT INTO identities(id,kind,name,handle) VALUES
-      ($1,'human','Owner','owner'),($2,'human','Member','member'),($3,'agent','Bee','bee'),($4,'human','Candy','candy')`,
-    [OWNER, MEMBER, AGENT, LATE],
+      ($1,'human','Owner','owner'),($2,'human','Member','member'),($3,'agent','Bee','bee'),($4,'human','Candy','candy'),
+      ($5,'human','Manager','manager'),($6,'agent','Scout','scout'),($7,'human','Unnamed',NULL)`,
+    [OWNER, MEMBER, AGENT, LATE, MANAGER, ADDED_AGENT, HANDLELESS],
   );
   await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Workspace')`, [WORKSPACE]);
   await database.query(
@@ -28,11 +32,15 @@ async function fixture() {
   );
   await database.query(
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-      ($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,NULL,$4,'member'),($1,NULL,$6,'member'),
-      ($1,$5,$2,'owner'),($1,$5,$3,'member'),($1,$5,$4,'member')`,
-    [WORKSPACE, OWNER, MEMBER, AGENT, ROOM, LATE],
+      ($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,NULL,$4,'member'),($1,NULL,$6,'member'),($1,NULL,$7,'admin'),($1,NULL,$8,'member'),
+      ($1,$5,$2,'owner'),($1,$5,$3,'member'),($1,$5,$4,'member'),($1,$5,$8,'member')`,
+    [WORKSPACE, OWNER, MEMBER, AGENT, ROOM, LATE, MANAGER, HANDLELESS],
   );
-  await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [AGENT, OWNER]);
+  await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2),($3,$2)`, [
+    AGENT,
+    OWNER,
+    ADDED_AGENT,
+  ]);
   return database;
 }
 
@@ -110,6 +118,69 @@ describe('system-line producers', () => {
           },
         },
       ]);
+    } finally {
+      await database.close();
+    }
+  });
+
+  it('keeps a handleless inviter in membership history without a dangling join attribution', async () => {
+    const database = await fixture();
+    try {
+      await joinRooms(database, {
+        workspaceId: WORKSPACE,
+        identityId: LATE,
+        invitedById: HANDLELESS,
+        rooms: { type: 'rooms', roomIds: [ROOM] },
+      });
+      expect((await lines(database)).map((line) => line.text)).toEqual(['@candy joined']);
+      expect(
+        (
+          await database.query<{ invited_by: string | null }>(
+            `SELECT invited_by FROM memberships WHERE room_id=$1 AND identity_id=$2`,
+            [ROOM, LATE],
+          )
+        ).rows,
+      ).toEqual([{ invited_by: HANDLELESS }]);
+    } finally {
+      await database.close();
+    }
+  });
+
+  it('attributes an added agent to the manager without changing its connected owner', async () => {
+    const database = await fixture();
+    try {
+      const phone = new PhoneService(database, 'http://local.test');
+      await phone.execute(
+        'addWorkspaceMember',
+        { workspaceId: WORKSPACE, memberId: ADDED_AGENT, role: 'member' },
+        MANAGER,
+      );
+      await phone.execute('addRoomMember', { roomId: ROOM, memberId: ADDED_AGENT }, MANAGER);
+      expect((await lines(database)).map((line) => line.text)).toEqual([
+        '@scout joined · invited by @manager',
+      ]);
+      expect(
+        (
+          await database.query<{ owner_id: string }>(`SELECT owner_id FROM agents WHERE agent_id=$1`, [
+            ADDED_AGENT,
+          ])
+        ).rows,
+      ).toEqual([{ owner_id: OWNER }]);
+    } finally {
+      await database.close();
+    }
+  });
+
+  it('omits the possessive target when changing a handleless member role', async () => {
+    const database = await fixture();
+    try {
+      const phone = new PhoneService(database, 'http://local.test');
+      await phone.execute(
+        'addWorkspaceMember',
+        { workspaceId: WORKSPACE, memberId: HANDLELESS, role: 'admin' },
+        OWNER,
+      );
+      expect((await lines(database)).map((line) => line.text)).toEqual(['@owner changed role to admin']);
     } finally {
       await database.close();
     }

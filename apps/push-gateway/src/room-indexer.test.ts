@@ -21,6 +21,8 @@ const MISSING = '3f37b271-1a12-4d2a-b002-202b3f3582b9';
 const VIEWER = 'a'.repeat(64);
 const AGENT = 'b'.repeat(64);
 const OUTSIDER = 'c'.repeat(64);
+const CONNECTED_OWNER = 'd'.repeat(64);
+const ADDING_MANAGER = 'e'.repeat(64);
 
 function bytes(hex: string): Uint8Array {
   return Uint8Array.from(Buffer.from(hex, 'hex'));
@@ -79,6 +81,10 @@ describe('RoomIndexer', () => {
         avatar_url text,
         deactivated_at timestamptz
       );
+      CREATE TABLE agents (
+        agent_id text PRIMARY KEY,
+        owner_id text NOT NULL
+      );
       CREATE TABLE events (
         community_id uuid NOT NULL,
         id bytea NOT NULL,
@@ -115,6 +121,7 @@ describe('RoomIndexer', () => {
        VALUES ($1, $2, 'Ada', 'ada@example.test', 'https://media.test/ada.png')`,
       [TENANT, bytes(VIEWER)],
     );
+    await postgres.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [AGENT, VIEWER]);
 
     let eventNumber = 1;
     const event = async (
@@ -2227,6 +2234,32 @@ describe('RoomIndexer', () => {
     expect(
       detail?.watchFilters.some((filter) => filter.kinds?.includes(30078) && filter['#h']),
     ).toBe(false);
+  });
+
+  it('uses the connected agent owner rather than the manager who added its membership', async () => {
+    await postgres.query(
+      `INSERT INTO users (community_id,pubkey,display_name,nip05_handle)
+       VALUES ($1,$2,'Owner','owner@example.test'),($1,$3,'Manager','manager@example.test')`,
+      [TENANT, bytes(CONNECTED_OWNER), bytes(ADDING_MANAGER)],
+    );
+    await postgres.query(`UPDATE agents SET owner_id=$2 WHERE agent_id=$1`, [AGENT, CONNECTED_OWNER]);
+    await postgres.query(
+      `UPDATE channel_members SET invited_by=$3
+       WHERE community_id=$1 AND channel_id=$4 AND pubkey=decode($2,'hex')`,
+      [TENANT, AGENT, bytes(ADDING_MANAGER), WORKSPACE],
+    );
+
+    await expect(indexer.readWorkspace(WORKSPACE, VIEWER)).resolves.toMatchObject({
+      agents: [
+        {
+          identity: { pubkey: AGENT },
+          owner: { pubkey: CONNECTED_OWNER, handle: 'owner@example.test' },
+        },
+      ],
+    });
+    await expect(indexer.readAgent(WORKSPACE, AGENT, VIEWER)).resolves.toMatchObject({
+      owner: { pubkey: CONNECTED_OWNER, handle: 'owner@example.test' },
+    });
   });
 
   it('keeps the scoped chat query to one physical statement at 1, 47, and 200 Rooms', async () => {

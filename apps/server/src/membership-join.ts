@@ -160,11 +160,13 @@ export async function joinRooms(
         inviter_id: string | null;
         inviter_kind: 'human' | 'agent' | null;
         inviter_name: string | null;
+        inviter_handle: string | null;
       }>(
         `SELECT identity.name identity_name,identity.handle identity_handle,identity.kind,
                 workspace.name workspace_name,
                 (SELECT name FROM rooms WHERE id=$3) room_name,
-                inviter.id inviter_id,inviter.kind inviter_kind,inviter.name inviter_name
+                inviter.id inviter_id,inviter.kind inviter_kind,inviter.name inviter_name,
+                inviter.handle inviter_handle
          FROM identities identity CROSS JOIN workspaces workspace
          LEFT JOIN identities inviter ON inviter.id=$4
          WHERE identity.id=$1 AND workspace.id=$2`,
@@ -188,7 +190,7 @@ export async function joinRooms(
           name: joiningMention,
         },
         verb: 'joined',
-        ...(context.inviter_id && context.inviter_kind && context.inviter_name
+        ...(context.inviter_id && context.inviter_kind && context.inviter_handle
           ? {
               attribution: {
                 verb: 'invited by',

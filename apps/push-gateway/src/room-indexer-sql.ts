@@ -486,7 +486,7 @@ WITH candidates AS (
   SELECT a.community_id, a.id AS workspace_id, cm.pubkey, cm.role::text,
     NULLIF(u.display_name, '') AS human_name, u.nip05_handle, u.avatar_url,
     agent.content AS agent_content, soul.content AS soul_content,
-    catalog.content AS model_catalog, config.content AS model_config, cm.invited_by,
+    catalog.content AS model_catalog, config.content AS model_config, connected.owner_id,
     NULLIF(owner.display_name, '') AS owner_name, owner.nip05_handle AS owner_handle,
     presence.status AS presence_status, presence.observed_at, presence.room_id
   FROM authorized a
@@ -502,7 +502,9 @@ WITH candidates AS (
     AND config.agent_pubkey = encode(cm.pubkey, 'hex')
   LEFT JOIN agent_souls soul ON soul.community_id = cm.community_id
     AND soul.d_tag = a.id::text || ':' || encode(cm.pubkey, 'hex')
-  LEFT JOIN users owner ON owner.community_id = cm.community_id AND owner.pubkey = cm.invited_by
+  LEFT JOIN agents connected ON connected.agent_id = encode(cm.pubkey, 'hex')
+  LEFT JOIN users owner ON owner.community_id = cm.community_id
+    AND owner.pubkey = decode(connected.owner_id, 'hex')
   LEFT JOIN LATERAL (
     SELECT (SELECT t->>1 FROM jsonb_array_elements(e.tags) t WHERE t->>0 = 'status' LIMIT 1) AS status,
       extract(epoch FROM e.created_at)::bigint AS observed_at,
@@ -545,7 +547,7 @@ SELECT 'member', jsonb_build_object(
     r.agent_content::jsonb->>'avatar', r.avatar_url),
   'agent', r.agent_content IS NOT NULL,
   'modelCatalog', r.model_catalog, 'modelConfig', r.model_config,
-  'ownerPubkey', encode(r.invited_by, 'hex'), 'ownerName', r.owner_name,
+  'ownerPubkey', r.owner_id, 'ownerName', r.owner_name,
   'ownerHandle', r.owner_handle,
   'presenceStatus', r.presence_status, 'presenceObservedAt', r.observed_at,
   'presenceRoomId', r.room_id, 'kindTotal', r.kind_total
@@ -858,7 +860,7 @@ WITH authorized AS (
   WHERE c.id = $1::uuid AND c.deleted_at IS NULL
 ), selected AS (
   SELECT a.community_id, a.id AS workspace_id, cm.role::text,
-    encode(cm.pubkey, 'hex') AS pubkey, cm.invited_by, declaration.content, soul.content AS soul_content,
+    encode(cm.pubkey, 'hex') AS pubkey, connected.owner_id, declaration.content, soul.content AS soul_content,
     NULLIF(u.display_name, '') AS human_name, u.nip05_handle, u.avatar_url
   FROM authorized a
   JOIN channel_members cm ON cm.community_id = a.community_id AND cm.channel_id = a.id
@@ -876,6 +878,7 @@ WITH authorized AS (
     ORDER BY e.created_at DESC, e.id DESC LIMIT 1
   ) declaration ON true
   ${agentSoulLateralSql('cm', 'a.id::text', 'declaration')}
+  LEFT JOIN agents connected ON connected.agent_id = encode(cm.pubkey, 'hex')
 ), catalog AS (
   SELECT e.content FROM selected s JOIN LATERAL (
     SELECT e.content FROM events e
@@ -913,11 +916,12 @@ UNION ALL SELECT 'catalog', jsonb_build_object('content', c.content) FROM catalo
 UNION ALL SELECT 'config', jsonb_build_object('content', c.content) FROM config c
 UNION ALL SELECT 'soul', jsonb_build_object('content', s.soul_content) FROM selected s
 UNION ALL SELECT 'owner', jsonb_build_object(
-  'pubkey', encode(s.invited_by, 'hex'), 'name', NULLIF(owner.display_name, ''),
+  'pubkey', s.owner_id, 'name', NULLIF(owner.display_name, ''),
   'handle', owner.nip05_handle, 'agent', false
 ) FROM selected s
-LEFT JOIN users owner ON owner.community_id = s.community_id AND owner.pubkey = s.invited_by
-WHERE s.invited_by IS NOT NULL;
+LEFT JOIN users owner ON owner.community_id = s.community_id
+  AND owner.pubkey = decode(s.owner_id, 'hex')
+WHERE s.owner_id IS NOT NULL;
 `;
 
 export const INVITE_SQL = `

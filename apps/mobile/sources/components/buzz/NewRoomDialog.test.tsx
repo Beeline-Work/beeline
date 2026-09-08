@@ -116,7 +116,7 @@ describe('New Room form', () => {
       expect(host('create-room-picker')).toBeDefined();
       expect(host('create-room-content').type).toBe('ScrollView');
       expect(host('create-room-content').parent).not.toBe(host('create-room-submit').parent);
-      expect(renderer.root.findByType('RepoPicker').props.fillAvailableHeight).toBe(true);
+      expect(renderer.root.findByType('RepoPicker').props.fillAvailableHeight).toBeUndefined();
       expect(
         renderer.root
           .findAllByType('Text')
@@ -155,6 +155,7 @@ describe('New Room form', () => {
   });
 
   it('shows one chat-only choice while expanded and repo selection does not satisfy the name requirement', () => {
+    windowHeight = 320;
     const { renderer, host, submit } = mount();
     act(() => host('create-room-repo-row').props.onPress());
     const labels = renderer.root.findAll(
@@ -171,16 +172,6 @@ describe('New Room form', () => {
     act(() => host('create-room-no-repository').props.onPress());
     act(() => host('create-room-submit').props.onPress());
     expect(submit).toHaveBeenLastCalledWith('work', null);
-    act(() => renderer.unmount());
-  });
-
-  it('keeps the bounded repository picker in the scrollable dialog body on a short viewport', () => {
-    windowHeight = 320;
-    const { renderer, host } = mount();
-    act(() => host('create-room-repo-row').props.onPress());
-    expect(renderer.root.findByType('RepoPicker').props.fillAvailableHeight).toBe(true);
-    expect(host('create-room-content').type).toBe('ScrollView');
-    expect(host('create-room-content').parent).not.toBe(host('create-room-submit').parent);
     act(() => renderer.unmount());
     windowHeight = 844;
   });

@@ -154,7 +154,6 @@ export function NewRoomDialog({
               candidates={repoCandidates}
               currentKey={pendingRepo?.key ?? null}
               error={repoPickerError}
-              fillAvailableHeight
               installations={repoInstallations}
               onSelect={handleSelectRepoCandidate}
               testIDPrefix="create-room-repo-picker"

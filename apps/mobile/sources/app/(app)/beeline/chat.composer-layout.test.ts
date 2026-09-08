@@ -53,3 +53,26 @@ describe('Room composer status layout', () => {
     expect(source).toContain('copyEntireTurn(text, Clipboard.setStringAsync)');
   });
 });
+
+describe('Room composer keyboard dismissal', () => {
+  const transcript = source.slice(
+    source.indexOf('<FlatList'),
+    source.indexOf('renderItem={renderItem}'),
+  );
+
+  it('lets a drag on the transcript put the keyboard away', () => {
+    expect(transcript).toContain(
+      'keyboardDismissMode={transcriptKeyboardDismissMode(Platform.OS)}',
+    );
+    // Taps that no row handles still reach the list, which blurs the composer.
+    expect(transcript).toContain('keyboardShouldPersistTaps="handled"');
+  });
+
+  it('lets a tap on a transcript row put the keyboard away', () => {
+    expect(source).toContain('onTapOutsideComposer={dismissComposerKeyboard}');
+    expect(source).toContain(
+      'const dismissComposerKeyboard = useCallback(() => {\n    Keyboard.dismiss();\n  }, []);',
+    );
+    expect(variants).toContain('onPress={onPress}');
+  });
+});

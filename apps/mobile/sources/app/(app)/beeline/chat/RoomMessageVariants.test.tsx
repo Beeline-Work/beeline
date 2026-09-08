@@ -1065,4 +1065,37 @@ describe('Room message variant components', () => {
     );
     expect(card.root.findAllByProps({ testID: 'grant-g-2-script' })).toHaveLength(0);
   });
+
+  it('dismisses the composer keyboard when the transcript row is tapped', () => {
+    // Tapping outside the composer — the transcript being the whole of that
+    // outside — puts the keyboard away. The row keeps its long-press copy, so
+    // one gesture never costs the other.
+    const onTapOutsideComposer = vi.fn();
+    const onCopy = vi.fn();
+    const renderer = render(
+      <OrdinaryLedgerMessage
+        message={message({ id: 'tapped', text: 'a settled line' })}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onTapOutsideComposer={onTapOutsideComposer}
+        onReply={vi.fn()}
+        onCopy={onCopy}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+    const row = renderer.root.findByProps({ testID: 'copy-message-tapped' });
+    act(() => row.props.onPress());
+    expect(onTapOutsideComposer).toHaveBeenCalledTimes(1);
+    expect(onCopy).not.toHaveBeenCalled();
+    act(() => row.props.onLongPress());
+    expect(onCopy).toHaveBeenCalledWith('a settled line');
+    expect(onTapOutsideComposer).toHaveBeenCalledTimes(1);
+  });
 });

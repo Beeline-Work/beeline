@@ -577,11 +577,13 @@ function SwipeToReply({
   children,
   messageId,
   onLongPress,
+  onPress,
   onReply,
 }: {
   children: React.ReactNode;
   messageId: string;
   onLongPress(): void;
+  onPress?(): void;
   onReply(): void;
 }) {
   const swipeableRef = useRef<Swipeable | null>(null);
@@ -591,6 +593,7 @@ function SwipeToReply({
       accessibilityLabel="Message"
       delayLongPress={450}
       onLongPress={onLongPress}
+      onPress={onPress}
       testID={`copy-message-${messageId}`}
     >
       {children}
@@ -652,6 +655,8 @@ export interface OrdinaryLedgerMessageProps {
   deliveryFailed: boolean;
   onChannelReference(target: ChannelReferenceTarget): void;
   onMention?(participantId: string): void;
+  /** A tap on the row — the composer's "outside" — puts the keyboard away. */
+  onTapOutsideComposer?(): void;
   onReply(message: ChatDisplayMessage): void;
   onCopy(text: string): void;
   onRetry(eventId: string): void;
@@ -673,6 +678,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   deliveryFailed,
   onChannelReference,
   onMention,
+  onTapOutsideComposer,
   onReply,
   onCopy,
   onRetry,
@@ -842,6 +848,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
     <SwipeToReply
       messageId={message.id}
       onLongPress={() => onCopy(message.text)}
+      {...(onTapOutsideComposer ? { onPress: onTapOutsideComposer } : {})}
       onReply={message.isAgentDraft ? () => undefined : () => onReply(message)}
     >
       <NewMessageMaterialize enabled={Boolean(message.isNew)} messageId={message.id}>

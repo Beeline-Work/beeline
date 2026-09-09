@@ -222,6 +222,8 @@ export function createBeelineServer(options: ServerOptions): Server {
               let cursor = isInboxCursor(item.cursor) ? item.cursor : undefined;
               let replaying = false;
               let replayRequested = false;
+              let commandsPushing = false;
+              let commandsRequested = false;
               const replay = async () => {
                 replayRequested = true;
                 if (replaying) return;
@@ -257,6 +259,36 @@ export function createBeelineServer(options: ServerOptions): Server {
                   replaying = false;
                 }
               };
+              const pushCommands = async () => {
+                commandsRequested = true;
+                if (commandsPushing) return;
+                commandsPushing = true;
+                try {
+                  while (commandsRequested && client.readyState === client.OPEN) {
+                    commandsRequested = false;
+                    const page = await options.daemon.execute(
+                      'getAgentCommands',
+                      { roomId },
+                      principal.identityId,
+                    );
+                    client.send(
+                      JSON.stringify({
+                        type: 'commands',
+                        roomId,
+                        commandProtocol: page.commandProtocol,
+                        commands: page.commands,
+                      }),
+                    );
+                  }
+                } catch (error) {
+                  console.error(
+                    '[live] daemon command push failed',
+                    error instanceof Error ? error.message : String(error),
+                  );
+                } finally {
+                  commandsPushing = false;
+                }
+              };
               releases.set(
                 roomId,
                 options.live.subscribe(roomId, (event) => {
@@ -267,6 +299,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                   )
                     return;
                   void replay();
+                  void pushCommands();
                 }),
               );
               const lifecycleId =
@@ -299,7 +332,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                   },
                 }),
               );
-              await replay();
+              await Promise.all([replay(), pushCommands()]);
               return;
             }
             // Agents whose draft this socket has already been handed live.

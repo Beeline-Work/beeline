@@ -51,6 +51,7 @@ describe('phone contract', () => {
     expectTypeOf<PhoneOperationMap['addWorkspaceMember']['input']>().toHaveProperty('role');
     expectTypeOf<PhoneOperationMap['createRoomSchedule']['input']>().toHaveProperty('cadence');
     expectTypeOf<PhoneOperationMap['approveCornerMerge']['input']>().toHaveProperty('cornerId');
+    expectTypeOf<PhoneOperationMap['requestCornerClose']['input']>().toHaveProperty('roomId');
     expectTypeOf<PhoneOperationMap['listRoomSchedules']['output']>().toHaveProperty('schedules');
   });
 

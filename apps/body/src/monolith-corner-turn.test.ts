@@ -1331,7 +1331,7 @@ describe('corner close-request polling cadence', () => {
     expect(closeReads).toBe(2);
   });
 
-  it('does not poll a connected live stream before the slow reconciliation sweep', async () => {
+  it('reconciles a connected live stream on the configured recovery cadence', async () => {
     let closeReads = 0;
     const execute = vi.fn(async (name: string) => {
       if (name === 'getAgentConfiguration') return { commands: [] };
@@ -1355,7 +1355,7 @@ describe('corner close-request polling cadence', () => {
     abort.abort();
     await running;
     await scheduler.dispose();
-    expect(closeReads).toBe(2);
+    expect(closeReads).toBeGreaterThan(2);
     expect(execute).not.toHaveBeenCalledWith('waitForCornerWake', expect.anything());
   });
 });

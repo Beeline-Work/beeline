@@ -1,4 +1,8 @@
-import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
+import {
+  isAgentCommand,
+  type AgentCommand,
+  type DaemonOperationMap,
+} from '@beeline/api-contract/daemon';
 import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import WebSocket from 'ws';
@@ -108,11 +112,13 @@ export class DaemonApiClient {
     {
       cursor?: string;
       pushedIds: Set<string>;
+      pushedCommandIds: Set<string>;
       onItems?: (items: readonly InboxItem[], cursor?: string) => void;
       onState?: (
         connected: boolean,
         capabilities?: { pushIntake: boolean; connectionPresence: boolean },
       ) => void;
+      onCommands?: (commands: readonly AgentCommand[]) => void;
       presence?: { releaseVersion?: string; sourceSha?: string; available?: boolean };
     }
   >();
@@ -141,6 +147,7 @@ export class DaemonApiClient {
       capabilities?: { pushIntake: boolean; connectionPresence: boolean },
     ) => void,
     presence?: { releaseVersion?: string; sourceSha?: string; available?: boolean },
+    onCommands?: (commands: readonly AgentCommand[]) => void,
   ): () => void {
     const existing = this.liveRooms.get(roomId);
     if (existing) {
@@ -148,13 +155,16 @@ export class DaemonApiClient {
       existing.onItems = onItems ?? existing.onItems;
       existing.onState = onState ?? existing.onState;
       existing.presence = presence ?? existing.presence;
+      existing.onCommands = onCommands ?? existing.onCommands;
     } else {
       this.liveRooms.set(roomId, {
         ...(cursor ? { cursor } : {}),
         pushedIds: new Set(),
+        pushedCommandIds: new Set(),
         ...(onItems ? { onItems } : {}),
         ...(onState ? { onState } : {}),
         ...(presence ? { presence } : {}),
+        ...(onCommands ? { onCommands } : {}),
       });
     }
     this.ensureLiveSocket();
@@ -225,6 +235,30 @@ export class DaemonApiClient {
           pushIntake: capabilities?.pushIntake === true,
           connectionPresence: capabilities?.connectionPresence === true,
         });
+        return;
+      }
+      if (
+        event.type === 'commands' &&
+        typeof event.roomId === 'string' &&
+        event.commandProtocol === 1 &&
+        Array.isArray(event.commands)
+      ) {
+        const room = this.liveRooms.get(event.roomId);
+        if (!room) return;
+        const commands = event.commands.filter((command): command is AgentCommand => {
+          if (
+            !isAgentCommand(command) ||
+            command.roomId !== event.roomId ||
+            command.agentId !== this.agentId ||
+            room.pushedCommandIds.has(command.id)
+          )
+            return false;
+          room.pushedCommandIds.add(command.id);
+          return true;
+        });
+        while (room.pushedCommandIds.size > 10_000)
+          room.pushedCommandIds.delete(room.pushedCommandIds.values().next().value!);
+        if (commands.length) room.onCommands?.(commands);
         return;
       }
       if (event.type !== 'inbox' || typeof event.roomId !== 'string' || !Array.isArray(event.items))

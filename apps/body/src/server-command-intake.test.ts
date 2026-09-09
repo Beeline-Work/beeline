@@ -40,6 +40,7 @@ async function context() {
   return new CommandExecutionContext(dir);
 }
 describe('command intake mechanics', () => {
+  afterEach(() => vi.useRealTimers());
   it('refuses an older server without ever reading shared traffic', async () => {
     const execute = vi.fn(async () => ({ items: [command().source] }));
     await expect(
@@ -81,6 +82,79 @@ describe('command intake mechanics', () => {
       stop: vi.fn(),
     });
     expect(run).not.toHaveBeenCalled();
+  });
+  it('claims one live-pushed command without refetching commands', async () => {
+    const controller = new AbortController();
+    let onState:
+        | ((
+            connected: boolean,
+            capabilities?: { pushIntake: boolean; connectionPresence: boolean },
+          ) => void)
+        | undefined,
+      onCommands: ((commands: readonly AgentCommand[]) => void) | undefined;
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [] };
+      return { id: 'ok' };
+    });
+    const api = {
+      execute,
+      liveSubscribe: vi.fn(
+        (
+          _roomId: string,
+          _cursor: string | undefined,
+          _onItems: unknown,
+          state: typeof onState,
+          _presence: unknown,
+          commands: typeof onCommands,
+        ) => {
+          onState = state;
+          onCommands = commands;
+          return vi.fn();
+        },
+      ),
+    } as unknown as DaemonApiClient;
+    const run = vi.fn(async () => controller.abort());
+    const running = runServerCommandIntake({
+      api,
+      roomId: 'room',
+      agentId: 'agent',
+      context: await context(),
+      signal: controller.signal,
+      run,
+      stop: vi.fn(),
+    });
+    await vi.waitFor(() => expect(onCommands).toBeTypeOf('function'));
+    onState?.(true, { pushIntake: true, connectionPresence: true });
+    onCommands?.([command(), command()]);
+    await running;
+    expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands')).toHaveLength(1);
+    expect(execute.mock.calls.filter(([name]) => name === 'claimAgentCommand')).toHaveLength(1);
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+  it('reconciles an unavailable live push at one second, not sixty seconds', async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    let reads = 0;
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getAgentCommands')
+        return { commandProtocol: 1, commands: reads++ ? [command()] : [] };
+      return { id: 'ok' };
+    });
+    const running = runServerCommandIntake({
+      api: { execute } as unknown as DaemonApiClient,
+      roomId: 'room',
+      agentId: 'agent',
+      context: await context(),
+      signal: controller.signal,
+      run: vi.fn(async () => controller.abort()),
+      stop: vi.fn(),
+    });
+    await vi.advanceTimersByTimeAsync(999);
+    expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands')).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await running;
+    expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands')).toHaveLength(2);
+    expect(execute.mock.calls.filter(([name]) => name === 'claimAgentCommand')).toHaveLength(1);
   });
   it('processes a stop while an authorized input is running', async () => {
     const controller = new AbortController();

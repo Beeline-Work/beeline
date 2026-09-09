@@ -48,6 +48,7 @@ test('builds every public Pages path and preserves association and helper bytes'
 
     for (const file of [
       'index.html',
+      'desktop-download.mjs',
       'privacy/index.html',
       'terms/index.html',
       'brand/index.html',

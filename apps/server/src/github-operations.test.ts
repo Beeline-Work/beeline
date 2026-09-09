@@ -599,15 +599,62 @@ describe('GitHub phone operations', () => {
         `UPDATE github_user_tokens SET encrypted_refresh_token=NULL WHERE subject='42'`,
       );
       const original = fetchMock.getMockImplementation()!;
-      fetchMock.mockImplementation(async (input, init) =>
-        String(input).includes('/user/installations')
+      let unavailable = true;
+      fetchMock.mockImplementation(async (input, init) => {
+        if (!String(input).includes('/user/installations')) return original(input, init);
+        return unavailable
           ? new Response('{}', { status: 503 })
-          : original(input, init),
-      );
+          : new Response(JSON.stringify({ total_count: 1, installations: [INSTALLATION_ENTRY] }), {
+              status: 200,
+              headers: { 'content-type': 'application/json' },
+            });
+      });
       await expect(operations.refresh(HUMAN)).rejects.toThrow('HTTP 503');
       expect(
         (await database.query(`SELECT stale_at FROM github_user_tokens WHERE subject='42'`)).rows[0]
           ?.stale_at,
+      ).toBeNull();
+      unavailable = false;
+      await expect(operations.refresh(HUMAN)).resolves.toEqual({});
+    });
+
+    it('preserves reconnect required for an expired legacy credential across a user-installations outage', async () => {
+      const operations = operationsFor(database);
+      const { fetchMock } = await bindIdentity(database);
+      await operations.beginIdentity(HUMAN, {
+        redirectUri: 'beeline://callback',
+        state: 'legacy-expired-outage',
+      });
+      await operations.completeIdentity(
+        HUMAN,
+        { challenge: 'code', proof: 'legacy-expired-outage' },
+        false,
+      );
+      await database.query(
+        `UPDATE github_user_tokens SET encrypted_refresh_token=NULL,expires_at=now()-interval '1 minute',stale_at=NULL WHERE subject='42'`,
+      );
+      const originalFetch = fetchMock.getMockImplementation()!;
+      let unavailable = false;
+      fetchMock.mockImplementation(async (input, init) =>
+        unavailable && String(input).includes('/user/installations')
+          ? new Response(JSON.stringify({ message: 'unavailable' }), {
+              status: 503,
+              headers: { 'content-type': 'application/json' },
+            })
+          : originalFetch(input, init),
+      );
+
+      await expect(operations.refresh(HUMAN)).resolves.toEqual({ githubReconnectNeeded: true });
+      unavailable = true;
+      await expect(operations.refresh(HUMAN)).resolves.toEqual({ githubReconnectNeeded: true });
+      unavailable = false;
+      await expect(operations.refresh(HUMAN)).resolves.toEqual({ githubReconnectNeeded: true });
+      expect(
+        (
+          await database.query<{ stale_at: string | null }>(
+            `SELECT stale_at FROM github_user_tokens WHERE subject='42'`,
+          )
+        ).rows[0]?.stale_at,
       ).toBeNull();
     });
 

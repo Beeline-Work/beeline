@@ -77,3 +77,18 @@ export function formatSettledLine(verb: TurnVerb, startedAtMs: number, endedAtMs
   const seconds = elapsedSeconds(startedAtMs, endedAtMs);
   return `${verb.past} for ${seconds}s \u00b7 done ${formatDoneTime(endedAtMs)}`;
 }
+
+/**
+ * `<Past> for Ns · stopped h:MM` — the summary a turn the requester stopped
+ * leaves instead.
+ *
+ * Same shape, one different word, and the word is the whole point: a stopped
+ * turn is not `done`. The seconds it did run are still true and still shown —
+ * the person spent that wait — but nothing here may imply an answer arrived.
+ * Who stopped it is inscribed in the Room by the server; this line is only the
+ * status line's own last word before it clears.
+ */
+export function formatStoppedLine(verb: TurnVerb, startedAtMs: number, endedAtMs: number): string {
+  const seconds = elapsedSeconds(startedAtMs, endedAtMs);
+  return `${verb.past} for ${seconds}s \u00b7 stopped ${formatDoneTime(endedAtMs)}`;
+}

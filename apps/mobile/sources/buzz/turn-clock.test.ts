@@ -5,6 +5,7 @@ import {
   TURN_VERBS,
   elapsedSeconds,
   formatSettledLine,
+  formatStoppedLine,
   pickTurnVerb,
   spinnerFrameAt,
   spinnerFrameIndexAt,
@@ -55,5 +56,13 @@ describe('the thinking clock', () => {
   it('settles to "<Past> for Ns · done h:MM"', () => {
     const line = formatSettledLine({ gerund: 'Brewing', past: 'Brewed' }, 0, 14_000);
     expect(line).toMatch(/^Brewed for 14s \u00b7 done \d{1,2}:\d{2} (am|pm)$/);
+  });
+
+  it('says stopped, never done, for a turn the requester withdrew', () => {
+    // The seconds are still true \u2014 the person spent that wait \u2014 but no
+    // answer arrived, so the one word that would claim one is not used.
+    const line = formatStoppedLine({ gerund: 'Brewing', past: 'Brewed' }, 0, 14_000);
+    expect(line).toMatch(/^Brewed for 14s \u00b7 stopped \d{1,2}:\d{2} (am|pm)$/);
+    expect(line).not.toContain('done');
   });
 });

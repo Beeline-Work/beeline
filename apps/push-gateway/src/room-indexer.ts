@@ -165,7 +165,10 @@ function paintRoom(rows: readonly IndexRow[], roomId: string): RoomView | null {
         !/^[0-9a-f]{64}$/.test(requestId) ||
         !agentPubkey ||
         !/^[0-9a-f]{64}$/.test(agentPubkey) ||
-        (status !== 'working' && status !== 'complete' && status !== 'failed')
+        (status !== 'working' &&
+          status !== 'complete' &&
+          status !== 'failed' &&
+          status !== 'cancelled')
       ) {
         return [];
       }

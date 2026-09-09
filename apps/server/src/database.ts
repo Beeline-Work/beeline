@@ -396,13 +396,21 @@ CREATE TABLE IF NOT EXISTS agent_turns (
   room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
   request_id text NOT NULL,
   agent_id text NOT NULL REFERENCES identities(id),
-  status text NOT NULL CHECK (status IN ('working', 'complete', 'failed')),
+  status text NOT NULL CHECK (status IN ('working', 'complete', 'failed', 'cancelled')),
   generation_id text,
   created_at timestamptz NOT NULL DEFAULT now(),
   failure_reason text,
   PRIMARY KEY (room_id, request_id, agent_id)
 );
 ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS failure_reason text;
+-- 'cancelled' joined the vocabulary when the requester gained a stop control.
+-- A table created before that carries the older three-word CHECK, and a CHECK
+-- is not IF NOT EXISTS-able by definition: drop the constraint by its
+-- generated name and re-add the full vocabulary. Both statements together are
+-- idempotent, so an already-current database re-adds exactly what it had.
+ALTER TABLE agent_turns DROP CONSTRAINT IF EXISTS agent_turns_status_check;
+ALTER TABLE agent_turns ADD CONSTRAINT agent_turns_status_check
+  CHECK (status IN ('working', 'complete', 'failed', 'cancelled'));
 CREATE INDEX IF NOT EXISTS agent_turns_agent_activity ON agent_turns(agent_id,created_at DESC);
 
 CREATE TABLE IF NOT EXISTS live_outputs (

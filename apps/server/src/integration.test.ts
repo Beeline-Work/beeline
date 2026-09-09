@@ -4054,11 +4054,28 @@ describe('monolith integration', () => {
         },
         body: payload,
       });
+    processWebhook.mockRejectedValueOnce(new Error('transient webhook failure'));
+    expect((await send()).status).toBe(503);
+    expect(
+      (
+        await database.query(`SELECT 1 FROM github_webhook_deliveries WHERE delivery_id=$1`, [
+          'delivery-1',
+        ])
+      ).rowCount,
+    ).toBe(0);
     expect((await send()).status).toBe(202);
     const duplicate = await send();
     expect(duplicate.status).toBe(200);
     expect(((await duplicate.json()) as { duplicate: boolean }).duplicate).toBe(true);
-    expect(processWebhook).toHaveBeenCalledOnce();
+    expect(processWebhook).toHaveBeenCalledTimes(2);
+    expect(
+      (
+        await database.query<{ processed: boolean }>(
+          `SELECT processed_at IS NOT NULL processed FROM github_webhook_deliveries WHERE delivery_id=$1`,
+          ['delivery-1'],
+        )
+      ).rows,
+    ).toEqual([{ processed: true }]);
   });
 
   it('turns signed GitHub branch events into corner notes and closes a merged corner', async () => {
@@ -4139,6 +4156,7 @@ describe('monolith integration', () => {
     };
     expect((await webhook('issues', 'room-issue-open', issuePayload)).status).toBe(202);
     expect((await webhook('issues', 'room-issue-open', issuePayload)).status).toBe(200);
+    expect((await webhook('issues', 'room-issue-open-redelivery', issuePayload)).status).toBe(202);
     await webhook('pull_request', 'room-pr-open', {
       ...base,
       action: 'opened',
@@ -4383,20 +4401,20 @@ describe('monolith integration', () => {
       lifecycle: 'in-review',
       pr: { url: 'https://github.com/owner/widgets/pull/42', mergeability: 'clean' },
     });
-    const cornerAgentInbox = await daemonOperation('getRoomInbox', {
-      roomId: cornerId,
-      limit: 200,
-    });
-    expect(await cornerAgentInbox.json()).toEqual(
-      expect.objectContaining({
-        items: expect.arrayContaining([
-          expect.objectContaining({
-            type: 'system',
-            body: '@GitHub passed a check Beeline CI check suite',
-          }),
-        ]),
-      }),
-    );
+    expect(
+      (
+        await database.query<{ text: string }>(
+          `SELECT text FROM messages
+           WHERE room_id=$1 AND system_event->>'kind'='check-passed'
+             AND text='@GitHub passed a check Beeline CI check suite'`,
+          [cornerId],
+        )
+      ).rows,
+    ).toEqual([
+      {
+        text: '@GitHub passed a check Beeline CI check suite',
+      },
+    ]);
 
     const duplicateApproval = await request('/v1/phone/operations/approveCornerMerge', 'POST', {
       cornerId,

@@ -610,6 +610,7 @@ export class GitHubOperations {
   }
 
   private async processCornerEvent(event: string, body: GitHubRecord, installationId: number) {
+    const database = this.database;
     const repository = repositoryName(body);
     const branch = branchForEvent(event, body);
     if (!repository || !branch) return;
@@ -659,35 +660,43 @@ export class GitHubOperations {
               ? 'dirty'
               : 'unknown';
         if (!merged && url && number && targetBranch && headSha && body.action !== 'closed') {
-          await this.updateLifecycle(target.corner_id, {
-            lifecycle: 'in-review',
-            branch,
-            pr: {
-              number,
-              url,
-              title,
-              targetBranch,
-              headSha,
-              mergeability,
+          await this.updateLifecycle(
+            target.corner_id,
+            {
+              lifecycle: 'in-review',
+              branch,
+              pr: {
+                number,
+                url,
+                title,
+                targetBranch,
+                headSha,
+                mergeability,
+              },
             },
-          });
+            database,
+          );
         }
         if (merged && url) {
-          await this.mergeCorner(target, {
-            repository,
-            branch,
-            title,
-            url,
-            ...(number ? { number } : {}),
-            ...(targetBranch ? { targetBranch } : {}),
-            ...(headSha ? { headSha } : {}),
-            ...(text(pullRequest?.merged_at) ? { mergedAt: text(pullRequest?.merged_at)! } : {}),
-            ...(text(record(pullRequest?.merged_by)?.login)
-              ? { mergedBy: text(record(pullRequest?.merged_by)?.login)! }
-              : {}),
-            commits: integer(pullRequest?.commits) ?? 0,
-            files: integer(pullRequest?.changed_files) ?? 0,
-          });
+          await this.mergeCorner(
+            target,
+            {
+              repository,
+              branch,
+              title,
+              url,
+              ...(number ? { number } : {}),
+              ...(targetBranch ? { targetBranch } : {}),
+              ...(headSha ? { headSha } : {}),
+              ...(text(pullRequest?.merged_at) ? { mergedAt: text(pullRequest?.merged_at)! } : {}),
+              ...(text(record(pullRequest?.merged_by)?.login)
+                ? { mergedBy: text(record(pullRequest?.merged_by)?.login)! }
+                : {}),
+              commits: integer(pullRequest?.commits) ?? 0,
+              files: integer(pullRequest?.changed_files) ?? 0,
+            },
+            database,
+          );
         } else if (body.action === 'opened' && url) {
           await this.systemNote(
             target.corner_id,
@@ -698,6 +707,7 @@ export class GitHubOperations {
               object: { text: title, url },
             },
             `github:pull-request:opened:${url}`,
+            database,
           );
         }
         continue;
@@ -708,22 +718,26 @@ export class GitHubOperations {
           integer(body.size) ?? (Array.isArray(body.commits) ? body.commits.length : 0);
         const head = text(body.after);
         if (head) {
-          await this.database.query(`DELETE FROM corner_check_facts WHERE corner_id=$1`, [
+          await database.query(`DELETE FROM corner_check_facts WHERE corner_id=$1`, [
             target.corner_id,
           ]);
-          const lifecycle = await this.lifecycle(target.corner_id);
-          await this.updateLifecycle(target.corner_id, {
-            branch,
-            checks: 'unknown',
-            checksSummary: {
-              status: 'unknown',
-              total: 0,
-              failing: [],
-              checks: [],
-              updatedAt: Math.floor(Date.now() / 1_000),
+          const lifecycle = await this.lifecycle(target.corner_id, database);
+          await this.updateLifecycle(
+            target.corner_id,
+            {
+              branch,
+              checks: 'unknown',
+              checksSummary: {
+                status: 'unknown',
+                total: 0,
+                failing: [],
+                checks: [],
+                updatedAt: Math.floor(Date.now() / 1_000),
+              },
+              ...(lifecycle.pr ? { pr: { ...lifecycle.pr, headSha: head } } : {}),
             },
-            ...(lifecycle.pr ? { pr: { ...lifecycle.pr, headSha: head } } : {}),
-          });
+            database,
+          );
         }
         await this.systemNote(
           target.corner_id,
@@ -738,15 +752,16 @@ export class GitHubOperations {
             ...(head ? { consequence: `at ${head.slice(0, 12)}` } : {}),
           },
           `github:push:${text(body.after) ?? hash(JSON.stringify(body))}`,
+          database,
         );
         continue;
       }
       const check = checkFact(event, body);
       if (check) {
-        const current = await this.lifecycle(target.corner_id);
+        const current = await this.lifecycle(target.corner_id, database);
         // GitHub may deliver a completed run for the previous branch head after a push.
         if (check.headSha && current.pr?.headSha && check.headSha !== current.pr.headSha) continue;
-        await this.database.query(
+        await database.query(
           `INSERT INTO corner_check_facts(corner_id,name,status,conclusion,url,head_sha)
            VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(corner_id,name) DO UPDATE SET
              status=EXCLUDED.status,conclusion=EXCLUDED.conclusion,url=EXCLUDED.url,
@@ -760,11 +775,15 @@ export class GitHubOperations {
             check.headSha ?? null,
           ],
         );
-        const summary = await this.checksSummary(target.corner_id);
-        await this.updateLifecycle(target.corner_id, {
-          checks: summary.status,
-          checksSummary: summary,
-        });
+        const summary = await this.checksSummary(target.corner_id, database);
+        await this.updateLifecycle(
+          target.corner_id,
+          {
+            checks: summary.status,
+            checksSummary: summary,
+          },
+          database,
+        );
         const label = check.status === 'pending' ? 'started' : check.status;
         await this.systemNote(
           target.corner_id,
@@ -784,15 +803,19 @@ export class GitHubOperations {
               : {}),
           },
           `github:checks:${label}:${check.name}:${check.headSha ?? hash(JSON.stringify(body))}`,
+          database,
         );
       }
     }
   }
 
-  private async lifecycle(cornerId: string): Promise<CornerLifecycleView> {
+  private async lifecycle(
+    cornerId: string,
+    database: SqlDatabase = this.database,
+  ): Promise<CornerLifecycleView> {
     return (
       (
-        await this.database.query<{ lifecycle: CornerLifecycleView }>(
+        await database.query<{ lifecycle: CornerLifecycleView }>(
           `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
           [cornerId],
         )
@@ -800,16 +823,20 @@ export class GitHubOperations {
     );
   }
 
-  private async updateLifecycle(cornerId: string, patch: Partial<CornerLifecycleView>) {
-    const lifecycle = { ...(await this.lifecycle(cornerId)), ...patch };
-    await this.database.query(
+  private async updateLifecycle(
+    cornerId: string,
+    patch: Partial<CornerLifecycleView>,
+    database: SqlDatabase = this.database,
+  ) {
+    const lifecycle = { ...(await this.lifecycle(cornerId, database)), ...patch };
+    await database.query(
       `UPDATE corner_facts SET lifecycle=$2::jsonb,updated_at=now() WHERE corner_id=$1`,
       [cornerId, JSON.stringify(lifecycle)],
     );
   }
 
-  private async checksSummary(cornerId: string) {
-    const rows = await this.database.query<{
+  private async checksSummary(cornerId: string, database: SqlDatabase = this.database) {
+    const rows = await database.query<{
       name: string;
       status: 'pending' | 'passed' | 'failed';
       conclusion: string | null;
@@ -844,8 +871,14 @@ export class GitHubOperations {
     };
   }
 
-  private async systemNote(roomId: string, authorId: string, phrase: SystemPhrase, dedupe: string) {
-    const note = await systemLine(this.database, {
+  private async systemNote(
+    roomId: string,
+    authorId: string,
+    phrase: SystemPhrase,
+    dedupe: string,
+    database: SqlDatabase = this.database,
+  ) {
+    const note = await systemLine(database, {
       id: hash(`beeline:${roomId}:${dedupe}`),
       roomId,
       authorId,
@@ -871,9 +904,10 @@ export class GitHubOperations {
       commits: number;
       files: number;
     },
+    database: SqlDatabase = this.database,
   ) {
     const mergeKey = `github:pull-request:merged:${pullRequest.url}`;
-    const currentLifecycle = await this.lifecycle(target.corner_id);
+    const currentLifecycle = await this.lifecycle(target.corner_id, database);
     const currentPr = currentLifecycle.pr;
     const mergedPr =
       currentPr ??
@@ -886,7 +920,7 @@ export class GitHubOperations {
             headSha: pullRequest.headSha,
           }
         : undefined);
-    await this.database.transaction(async (database) => {
+    await database.transaction(async (database) => {
       const changed = await database.query(
         `UPDATE rooms SET archived_at=now(),updated_at=now()
          WHERE id=$1 AND archived_at IS NULL`,

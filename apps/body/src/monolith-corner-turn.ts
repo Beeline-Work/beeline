@@ -58,7 +58,7 @@ import { WarmTranscript } from './warm-transcript.js';
 import { withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
 import { TurnTrace, TurnTraceFile, type TurnTraceSink } from './turn-trace.js';
 import { installCornerGitHubWrappers } from './corner-github-auth.js';
-import { agentReplyMentionIds } from './monolith-room-turn.js';
+import { agentReplyMentionIds, roomMentionDirectory } from './monolith-room-turn.js';
 
 type WorkspaceRoster = DaemonOperationMap['getWorkspaceRoster']['output'];
 type DaemonActivity = DaemonOperationMap['postAgentActivity']['input']['activity'][number];
@@ -790,6 +790,7 @@ export class MonolithCornerTurnLoop {
                     'Corner transcript:',
                     'New in the corner since your last turn (the earlier transcript is already in this session):',
                   ),
+                  roomMentionDirectory(roster, this.agent.publicKey),
                   [
                     `Newest trigger:\n${trigger}`,
                     ...attachmentPromptLines(attachments, delivered, this.acceptsImages()),

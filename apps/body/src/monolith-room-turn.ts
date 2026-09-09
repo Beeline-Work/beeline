@@ -228,7 +228,12 @@ export function agentReplyMentionIds(
   const aliases = new Map<string, { display: string; ids: Set<string> }>();
   for (const member of roster.members) {
     if (member.identityId === authorId) continue;
-    for (const raw of [member.name, member.handle, member.soul?.name]) {
+    // Agent tags are execution authority, so only the canonical handle shown
+    // in the current directory may resolve one. Human aliases remain a
+    // presentation/delivery compatibility surface.
+    const rawAliases =
+      member.kind === 'agent' ? [member.handle] : [member.name, member.handle, member.soul?.name];
+    for (const raw of rawAliases) {
       const display = raw?.trim().replace(/^@/, '');
       if (!display) continue;
       const key = display.toLocaleLowerCase();
@@ -241,7 +246,7 @@ export function agentReplyMentionIds(
   // handle. Prefer any real `a_<handle>` member above; otherwise route the
   // old spelling to the one canonical handle it can unambiguously name.
   for (const member of roster.members) {
-    if (member.identityId === authorId || !member.handle) continue;
+    if (member.identityId === authorId || member.kind === 'agent' || !member.handle) continue;
     const handle = member.handle.trim().replace(/^@/, '').toLocaleLowerCase();
     const canonical = aliases.get(handle);
     const legacy = `a_${handle}`;

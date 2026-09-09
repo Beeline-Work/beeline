@@ -1,4 +1,5 @@
 import type { SqlDatabase } from './database.js';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { MEDIA_SWEEP_INTERVAL_MS, mediaTtlHours } from './media-ttl.js';
 import {
   claimReleaseCatchup,
@@ -75,6 +76,9 @@ export class PushDeliveryLoop {
         JOIN rooms room ON room.id=m.room_id
         JOIN memberships member ON member.room_id=m.room_id AND member.removed_at IS NULL
           AND member.identity_id<>m.author_id
+        LEFT JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
+          AND workspace_member.room_id IS NULL AND workspace_member.identity_id=member.identity_id
+          AND workspace_member.removed_at IS NULL
         JOIN push_devices d ON d.identity_id=member.identity_id
         JOIN identities author ON author.id=m.author_id
         JOIN identities recipient ON recipient.id=member.identity_id AND recipient.kind='human'
@@ -84,6 +88,12 @@ export class PushDeliveryLoop {
           AND m.card_type IS DISTINCT FROM 'agent-yolo'
           AND m.card_type IS DISTINCT FROM 'turn-failed'
           AND m.card_type IS DISTINCT FROM 'workspace-member-joined'
+          AND (
+            room.direct_participants IS NULL
+            OR m.card_type IS NULL
+            OR NOT (room.direct_participants @> jsonb_build_array('${SYSTEM_IDENTITY_ID}'::text))
+            OR workspace_member.identity_id IS NOT NULL
+          )
           AND (
             m.mention_ids @> jsonb_build_array(member.identity_id)
             OR room.direct_participants IS NOT NULL
@@ -102,6 +112,9 @@ export class PushDeliveryLoop {
         FROM workspace_join_notifications notification
         JOIN workspace_join_notification_devices device ON device.notification_id=notification.id
         JOIN push_devices push_device ON push_device.token=device.device_token
+        JOIN memberships workspace_member ON workspace_member.workspace_id=notification.workspace_id
+          AND workspace_member.room_id IS NULL AND workspace_member.identity_id=push_device.identity_id
+          AND workspace_member.removed_at IS NULL
         JOIN push_delivery_floors floor ON floor.id='message-delivery'
         WHERE notification.created_at>=push_device.registered_at
           AND notification.created_at>=floor.started_at
@@ -137,8 +150,34 @@ export class PushDeliveryLoop {
                 `INSERT INTO push_delivery_claims(message_id,device_token,status)
                  SELECT $1,$2,'claimed'
                  WHERE EXISTS (SELECT 1 FROM push_devices WHERE token=$2 AND identity_id=$3)
+                   AND (
+                     ($6='workspace-join' AND EXISTS (
+                       SELECT 1 FROM memberships
+                       WHERE workspace_id=$4 AND room_id IS NULL AND identity_id=$3
+                         AND removed_at IS NULL
+                     ))
+                     OR ($6='message' AND (
+                       NOT EXISTS (
+                         SELECT 1 FROM messages message JOIN rooms room ON room.id=message.room_id
+                         WHERE message.id=$1 AND message.card_type IS NOT NULL
+                           AND room.direct_participants @> jsonb_build_array($5::text)
+                       )
+                       OR EXISTS (
+                         SELECT 1 FROM memberships
+                         WHERE workspace_id=$4 AND room_id IS NULL AND identity_id=$3
+                           AND removed_at IS NULL
+                       )
+                     ))
+                   )
                  ON CONFLICT DO NOTHING`,
-                [candidate.message_id, candidate.token, candidate.identity_id],
+                [
+                  candidate.message_id,
+                  candidate.token,
+                  candidate.identity_id,
+                  candidate.workspace_id,
+                  SYSTEM_IDENTITY_ID,
+                  candidate.notification_type,
+                ],
               )
             ).rowCount,
           );

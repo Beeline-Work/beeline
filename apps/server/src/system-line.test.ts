@@ -1,7 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parseGrantDecisionLine } from '@beeline/api-contract/agent-grants';
 import { SCHEDULE_RAN_VERB } from '@beeline/api-contract/scheduled-prompts';
 import type { SystemEvent } from '@beeline/api-contract/phone';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
+import { PushDeliveryLoop } from './background.js';
 import { backfillSystemEventKinds, migrate, type SqlDatabase } from './database.js';
 import { PhoneService } from './phone-service.js';
 import { PgliteDatabase } from './test-support.js';
@@ -224,6 +226,14 @@ describe('workspace system lines', () => {
       [WORKSPACE, HUMAN],
     );
     const roomId = room.rows[0]!.room_id;
+    await database.query(
+      `INSERT INTO push_devices(token,identity_id,platform,environment)
+       VALUES('system-dm-device-token-123456789012345',$1,'ios','physical')`,
+      [HUMAN],
+    );
+    const send = vi.fn().mockResolvedValue(undefined);
+    const loop = new PushDeliveryLoop(database, { send });
+    expect(await loop.runOnce()).toBe(0);
     await database.query(`UPDATE memberships SET removed_at=now() WHERE workspace_id=$1 AND identity_id=$2`, [
       WORKSPACE,
       HUMAN,
@@ -233,6 +243,16 @@ describe('workspace system lines', () => {
       [roomId, HUMAN],
     );
     expect(await new PhoneService(database, 'http://local.test').canReadRoom(roomId, HUMAN)).toBe(false);
+    await systemLine(database, {
+      roomId,
+      authorId: SYSTEM_IDENTITY_ID,
+      subject: { kind: 'person', id: HUMAN, name: 'Ada' },
+      verb: 'changed workspace visibility to',
+      object: 'invite-only',
+      cardType: 'workspace-visibility',
+    });
+    expect(await loop.runOnce()).toBe(0);
+    expect(send).not.toHaveBeenCalled();
     await database.query(
       `UPDATE memberships SET removed_at=NULL WHERE workspace_id=$1 AND identity_id=$2 AND room_id IS NULL`,
       [WORKSPACE, HUMAN],
@@ -255,7 +275,7 @@ describe('workspace system lines', () => {
       (
         await database.query(`SELECT 1 FROM messages WHERE room_id=$1`, [roomId])
       ).rowCount,
-    ).toBe(2);
+    ).toBe(3);
   });
 });
 

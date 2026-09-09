@@ -2019,6 +2019,7 @@ export class PhoneService {
     );
     if (!parent.rows[0] || !(await this.hasRoomAccess(input.roomId, author)))
       throw new Error('reply parent is not in this room');
+    await this.assertRoomIsWritable(input.roomId, author);
     const id = input.messageId ?? messageId();
     if (!/^[0-9a-f]{64}$/.test(id)) throw new Error('messageId is invalid');
     const mentionResolution = await this.resolveMessageMentions(

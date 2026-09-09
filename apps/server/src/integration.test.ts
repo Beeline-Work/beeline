@@ -2299,13 +2299,14 @@ describe('monolith integration', () => {
     expect(roomNotes.rows).toEqual([]);
 
     const systemDms = await database.query<{
+      id: string;
       room_id: string;
       author_id: string;
       text: string;
       presentation: string;
       direct_participants: string[];
     }>(
-      `SELECT message.room_id,message.author_id,message.text,message.presentation,
+      `SELECT message.id,message.room_id,message.author_id,message.text,message.presentation,
               room.direct_participants
        FROM messages message JOIN rooms room ON room.id=message.room_id
        WHERE room.workspace_id=$1 AND message.card_type='workspace-member-joined'
@@ -2315,6 +2316,7 @@ describe('monolith integration', () => {
     );
     expect(systemDms.rows).toEqual([
       {
+        id: expect.any(String),
         room_id: expect.any(String),
         author_id: SYSTEM_IDENTITY_ID,
         text: '@recipient joined · invited by @owner',
@@ -2332,6 +2334,15 @@ describe('monolith integration', () => {
         await operation('sendRoomMessage', {
           roomId: systemDmId,
           text: 'replying must stay forbidden',
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await operation('sendRoomReply', {
+          roomId: systemDmId,
+          parentMessageId: systemDms.rows[0]!.id,
+          text: 'replying must stay forbidden too',
         })
       ).status,
     ).toBe(403);

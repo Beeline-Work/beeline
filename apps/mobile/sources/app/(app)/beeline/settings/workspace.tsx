@@ -553,10 +553,9 @@ const styles = StyleSheet.create((theme) => {
       color: hull.textMuted,
     },
     sectionNote: {
+      ...Typography.default(),
+      ...hull.type.meta,
       color: hull.dim,
-      ...Typography.mono(),
-      fontSize: 12,
-      lineHeight: 18,
       marginBottom: 8,
     },
     // An input is one of the two things DESIGN.md still lets a box wrap, and

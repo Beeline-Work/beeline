@@ -223,9 +223,33 @@ async function main() {
       cwd: bareCwd,
       env: runtimeEnv,
     });
-    const match = stripAnsi(version.stdout).match(/^\[body\] read-only mcp: (.+)$/m);
-    if (!match) fail(`beeline --version did not report the read-only MCP path:\n${version.stdout}`);
-    await access(match[1], constants.X_OK);
+    if (!stripAnsi(version.stdout).match(/^beeline 0\.0\.0$/m)) {
+      fail(`beeline --version did not report its version:\n${version.stdout}`);
+    }
+
+    // Self-update probes the staged JS entrypoint directly, before the shell
+    // wrapper can export paths for optional block-buzz helpers. Keep this
+    // exact release-blocking path hermetic: no helper overrides, no install
+    // bin directory on PATH, and no host-directory augmentation.
+    const directVersion = await run(
+      process.execPath,
+      [resolve(libDir, 'lib', 'beeline', 'beeline-cli.mjs'), '--version'],
+      {
+        cwd: bareCwd,
+        env: {
+          HOME: env.HOME,
+          PATH: '',
+          BEELINE_HARNESS_PATH_AUGMENT: '0',
+          BEELINE_UPDATE_DISABLE: '1',
+        },
+      },
+    );
+    if (!stripAnsi(directVersion.stdout).match(/^beeline 0\.0\.0$/m)) {
+      fail(`direct bundled beeline --version did not report its version:\n${directVersion.stdout}`);
+    }
+
+    const readonlyMcp = resolve(binDir, 'beeline-readonly-mcp');
+    await access(readonlyMcp, constants.X_OK);
     await access(resolve(libDir, 'lib', 'beeline', 'pi-mcp-adapter.mjs'), constants.F_OK);
 
     const probe = await run(resolve(binDir, 'beeline-readonly-mcp'), [], {
@@ -282,7 +306,7 @@ async function main() {
         mcpServers: [
           {
             name: 'beeline-readonly-mcp',
-            command: match[1],
+            command: readonlyMcp,
             args: [],
             env: [{ name: 'BEELINE_READONLY_ROOT', value: bareCwd }],
           },
@@ -298,7 +322,7 @@ async function main() {
     if (!readonlySession?.sessionId) fail('installed read-only ACP session returned no sessionId');
 
     console.log(`verify-beeline-install: installed into bare prefix ${dirname(binDir)}`);
-    console.log(`verify-beeline-install: read-only mcp ${match[1]}`);
+    console.log(`verify-beeline-install: read-only mcp ${readonlyMcp}`);
     console.log(`verify-beeline-install: tools ${tools.join(', ')}`);
     console.log(`verify-beeline-install: ACP read-only session ${readonlySession.sessionId}`);
   } finally {

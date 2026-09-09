@@ -5006,6 +5006,30 @@ describe('monolith integration', () => {
       ).rows[0],
     ).toEqual({ n: 0 });
 
+    // The partial answer the model had already written is published — stopping
+    // is not undoing — and publishing it does NOT promote the stopped turn back
+    // to `complete`, which is the one way a durable reply could have undone the
+    // stop behind the requester's back.
+    expect(
+      (
+        await daemonOperation('postRoomMessage', {
+          roomId: ROOM,
+          requestId,
+          triggerMessageId: requestId,
+          text: 'Half of an answer, cut off mid-',
+          mentionIds: [],
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await database.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2`, [
+          ROOM,
+          requestId,
+        ])
+      ).rows[0],
+    ).toEqual({ status: 'cancelled' });
+
     // A turn that is no longer running has nothing left to stop.
     expect(
       (await operation('cancelAgentTurn', { roomId: ROOM, requestId, agentId: AGENT })).status,

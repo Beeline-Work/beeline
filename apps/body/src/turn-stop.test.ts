@@ -89,7 +89,7 @@ describe('the stop a requester wrote', () => {
 });
 
 describe('a Room turn the requester stopped', () => {
-  it('cancels the harness session and publishes nothing at all', async () => {
+  it('cancels the harness session and keeps the words already written', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-turn-stop-'));
     roots.push(root);
     const identity = identityFromKey(AGENT_HEX, 'Bee');
@@ -198,12 +198,11 @@ describe('a Room turn the requester stopped', () => {
       promptStartedAlready = true;
       promptStarted?.();
       await promptReleased;
-      // The harness returns whatever it had when it was cancelled. None of it
-      // may reach the Room.
+      // The harness returns whatever it had written when it was cancelled.
       return {
         stopReason: 'cancelled',
         updates: [],
-        agentText: 'Half of an answer nobody asked for any more.',
+        agentText: 'Half of an answer, cut off mid-',
         toolCalls: [],
       } as unknown as PromptResult;
     });
@@ -234,16 +233,23 @@ describe('a Room turn the requester stopped', () => {
     await running;
     await scheduler.dispose();
 
-    const posted = execute.mock.calls.filter(([name]) => name === 'postRoomMessage');
+    const posted = execute.mock.calls
+      .filter(([name]) => name === 'postRoomMessage')
+      .map(([, input]) => input as { text: string; mentionIds?: string[] });
     const receipts = execute.mock.calls
       .filter(([name]) => name === 'postAgentTurnReceipt')
       .map(([, input]) => (input as { status: string; heartbeat?: boolean }).status);
-    // Nothing is said, and no terminal receipt is claimed: the server settled
-    // this turn `cancelled` before the line that stopped it was even written.
-    expect(posted).toEqual([]);
+    // What the model had already written stays: stopping is not undoing, and
+    // the words were already on the reader's page.
+    expect(posted).toHaveLength(1);
+    expect(posted[0]!.text).toBe('Half of an answer, cut off mid-');
+    // A sentence cut off mid-tag must not wake anyone it never finished naming.
+    expect(posted[0]!.mentionIds ?? []).toEqual([]);
+    // No terminal receipt is claimed: the server settled this turn `cancelled`
+    // before the line that stopped it was even written.
     expect(receipts).not.toContain('complete');
     expect(receipts).not.toContain('failed');
-    // The draft lane is retracted, so no half-written answer is left standing.
+    // The draft dissolves into that durable reply rather than flickering.
     expect(execute.mock.calls.filter(([name]) => name === 'retractAgentLiveOutput')).not.toEqual(
       [],
     );

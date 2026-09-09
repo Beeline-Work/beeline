@@ -221,7 +221,11 @@ channel. The one thing it admits is a **stop in its right-hand slot, offered to
 the person who asked and to nobody else** (`viewerMayStopTurn`): a question is
 the asker's to take back, and a Room where anyone can silence anyone else's
 agent mid-sentence is a different product. Everyone else sees the line exactly
-as it was. A corner is a place that exists, so the pinned line names it and
+as it was. **A stop keeps what was already written** — the half-finished answer
+settles as an ordinary message and the conversation carries on from it, the way
+every stop button a person has used already behaves; retracting it would delete
+words they had read and make stopping feel like undoing. The line's last word is
+`stopped`, never `done`. A corner is a place that exists, so the pinned line names it and
 opens it. They may show together, separately, or not at all, and neither
 is ever derived from the other: an agent busy on a plain Room reply must not
 light the corner line, and a corner line must never name a corner that has

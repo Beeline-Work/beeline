@@ -1256,15 +1256,24 @@ export class DaemonService {
       // A durable final Room reply is also the turn's terminal proof. This
       // makes the Room view settle even if the daemon is interrupted before
       // its redundant explicit complete receipt reaches the server.
+      //
+      // Except over a stop. A stopped turn PUBLISHES what the model had already
+      // written — the partial answer stays on the page, as it does everywhere
+      // else a person presses stop — so this path runs for a cancelled turn
+      // too, and the same terminal rule as `turnReceipt` holds: `cancelled` is
+      // the turn's ending and a reply written under it does not promote it back
+      // to `complete`.
       if (input.requestId) {
-        await database.query(
+        const settled = await database.query(
           `INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id)
            VALUES($1,$2,$3,'complete',NULL)
            ON CONFLICT(room_id,request_id,agent_id) DO UPDATE SET
-             status='complete',created_at=now()`,
+             status='complete',created_at=now()
+           WHERE agent_turns.status<>'cancelled'`,
           [input.roomId, input.requestId, agentId],
         );
-        await settleTurnFailureLine(database, input.roomId, input.requestId, agentId);
+        if (settled.rowCount)
+          await settleTurnFailureLine(database, input.roomId, input.requestId, agentId);
       }
     });
     this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'message', agentId });

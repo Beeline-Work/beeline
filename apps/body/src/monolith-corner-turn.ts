@@ -995,13 +995,15 @@ export class MonolithCornerTurnLoop {
                   explained = await this.explainEmpty(result);
                 }
               }
-              // The requester stopped this turn while it ran. Retract the draft
-              // lane so no half-written answer is left standing, settle the tool
-              // narration that did happen — the work reached the branch and the
-              // ledger must not lie about it — and publish no reply.
+              // The requester stopped this turn while it ran. What the model
+              // had already written STAYS, as in a Room (`monolith-room-turn`
+              // says why), and the tool narration settles with it — the work
+              // reached the branch and the ledger must not lie about it. The
+              // partial reply carries no mentions.
               if (this.stoppedTurns.has(requestId)) {
-                await flushToolCalls(result.toolCalls, '');
-                await stream.settle('');
+                const stoppedText = spoken(durableReplyText(result.agentText));
+                await flushToolCalls(result.toolCalls, stoppedText);
+                await stream.settle(stoppedText);
                 throw new TurnStoppedError('turn stopped by the requester');
               }
               let reply = durableReplyText(result.agentText);

@@ -132,8 +132,9 @@ describe('daemon API client against the local monolith', () => {
       ],
     };
 
-    expect(agentReplyMentionIds('@codex what time is it?', roster, AGENT)).toEqual([peer]);
-    expect(agentReplyMentionIds('Please ask @Clockwork.', roster, AGENT)).toEqual([peer]);
+    expect(agentReplyMentionIds('@codex what time is it?', roster, AGENT)).toEqual([]);
+    expect(agentReplyMentionIds('Please ask @Clockwork.', roster, AGENT)).toEqual([]);
+    expect(agentReplyMentionIds('@codex-helper what time is it?', roster, AGENT)).toEqual([peer]);
     expect(agentReplyMentionIds('Mail codex@example.com', roster, AGENT)).toEqual([]);
     expect(agentReplyMentionIds('@Owner please review', roster, AGENT)).toEqual([HUMAN]);
     expect(agentReplyMentionIds('@a_lunchboxfortwo please review', roster, AGENT)).toEqual([HUMAN]);

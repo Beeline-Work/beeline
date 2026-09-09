@@ -5366,6 +5366,14 @@ describe('monolith integration', () => {
     // Both tags are stored, so both are what the phone highlights and what the
     // push fan-out reads. A correct handle never becomes plain text in silence.
     expect(stored.rows[0]!.mention_ids).toEqual([HUMAN, human2]);
+    const projected = (await new PhoneService(database, origin).readRoom(ROOM, HUMAN))!;
+    expect(
+      projected.messages.find(
+        (message) =>
+          message.author.pubkey === AGENT &&
+          message.text.includes('@bananaman614305 you are up next.'),
+      )?.mentionPubkeys,
+    ).toEqual([HUMAN, human2]);
     const send = vi.fn().mockResolvedValue(undefined);
     expect(await new PushDeliveryLoop(database, { send }).runOnce()).toBe(2);
     expect(send.mock.calls.map(([token]) => token).sort()).toEqual([

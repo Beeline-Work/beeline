@@ -490,10 +490,11 @@ test('the store leg runs only on request, from the release sha, and never un-del
   assert.doesNotMatch(retryJob, /needs\.store_android|needs\.store_ios/);
 });
 
-test('the five PR gates live in one file under their unchanged check names', () => {
+test('the PR gates live in one file under their required check names', () => {
   const checks = readFileSync(new URL('../.github/workflows/checks.yml', import.meta.url), 'utf8');
   for (const name of [
     'TYPECHECK',
+    'DEAD CODE',
     'BODY SUITE',
     'MOBILE SUITE',
     'MOBILE-EXPORT REACHABILITY',
@@ -511,10 +512,18 @@ test('the five PR gates live in one file under their unchanged check names', () 
   // TYPECHECK alone has no path filter (two green PRs can merge into a red main).
   const typecheckJob = checks.slice(
     checks.indexOf('\n  typecheck:'),
-    checks.indexOf('\n  body-suite:'),
+    checks.indexOf('\n  dead-code:'),
   );
   assert.doesNotMatch(typecheckJob, /needs: changes/);
   assert.match(typecheckJob, /npx turbo run typecheck/);
+  const deadCodeJob = checks.slice(
+    checks.indexOf('\n  dead-code:'),
+    checks.indexOf('\n  body-suite:'),
+  );
+  assert.doesNotMatch(deadCodeJob, /needs: changes/);
+  assert.match(deadCodeJob, /github\.event_name == 'pull_request'/);
+  assert.match(deadCodeJob, /npm run dead-code/);
+  assert.match(deadCodeJob, /npm run test:dead-code/);
   // Every other gate keeps a path filter through the one changes job.
   for (const output of [
     'body',

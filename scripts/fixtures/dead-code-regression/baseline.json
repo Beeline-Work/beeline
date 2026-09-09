@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "detector": "knip",
+  "categories": ["files", "exports", "types"],
+  "findings": []
+}

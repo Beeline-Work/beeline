@@ -35,7 +35,6 @@ CREATE TABLE IF NOT EXISTS agent_commands (
  claimed_at timestamptz,
  completed_at timestamptz,
  result_message_id text REFERENCES messages(id),
- delegate_agent_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
  UNIQUE(room_id,source_message_id,agent_id,action)
 );
 CREATE INDEX IF NOT EXISTS agent_commands_delivery ON agent_commands(agent_id,room_id,state,created_at);
@@ -61,7 +60,6 @@ export type CommandRow = {
   generation_id: string | null;
   lease_expires_at: Date | null;
   result_message_id: string | null;
-  delegate_agent_ids: string[];
 };
 
 export function nextAgentDepth(parentDepth: number): number | undefined {
@@ -178,10 +176,16 @@ export async function routeAgentResult(
   db: SqlDatabase,
   parent: CommandRow,
   sourceId: string,
-  delegates: readonly string[],
   replyId?: string,
 ): Promise<void> {
-  const targets = new Set([...delegates, ...parent.delegate_agent_ids]);
+  const source = (
+    await db.query<{ mention_ids: string[] }>(
+      `SELECT mention_ids FROM messages WHERE id=$1 AND room_id=$2 AND author_id=$3`,
+      [sourceId, parent.room_id, parent.agent_id],
+    )
+  ).rows[0];
+  if (!source) return;
+  const targets = new Set(source.mention_ids);
   if (replyId) {
     const reply = (
       await db.query<{ author_id: string }>(
@@ -201,10 +205,7 @@ export async function routeAgentResult(
       agentId,
       sourceMessageId: sourceId,
       parent,
-      reason:
-        delegates.includes(agentId) || parent.delegate_agent_ids.includes(agentId)
-          ? 'agent_delegate'
-          : 'agent_reply',
+      reason: source.mention_ids.includes(agentId) ? 'agent_tag' : 'agent_reply',
     });
 }
 

@@ -1,6 +1,8 @@
 # @beeline/body
 
-The Beeline helper is a thin client that turns Room mentions into agent replies.
+The Beeline helper is a thin client that turns explicitly addressed Room messages and eligible
+per-sender follow-ups in top-level Rooms and corners into agent replies. Direct messages retain
+their existing explicit-mention and direct-reply routing.
 
 It keeps only four responsibilities:
 

@@ -15,6 +15,7 @@ import {
   type McpServerWire,
   type PromptResult,
 } from './acp.js';
+import { AgentResponseRule, INBOX_DEDUPLICATION_LIMIT } from './agent-response-rule.js';
 import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
 import { isSenderPermitted, LEGACY_ACCESS_POLICY } from './access-policy.js';
@@ -37,7 +38,12 @@ import {
 } from './read-only-policy.js';
 import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
 import type { BodyConfig } from './config.js';
-import { laterInboxCursor, type DaemonApiClient, type InboxItem } from './daemon-api-client.js';
+import {
+  laterInboxCursor,
+  orderInboxItems,
+  type DaemonApiClient,
+  type InboxItem,
+} from './daemon-api-client.js';
 import {
   explainEmptyAgentTurn,
   nextPinnedProvider,
@@ -70,7 +76,17 @@ type RoomRepositoryState = DaemonOperationMap['getRoomRepositoryState']['output'
 type RoomMessage = DaemonOperationMap['getRoomInbox']['output']['items'][number];
 type HumanMessage = Pick<
   RoomMessage,
-  'id' | 'authorId' | 'body' | 'createdAt' | 'attachments' | 'type' | 'mentionIds'
+  | 'id'
+  | 'authorId'
+  | 'body'
+  | 'createdAt'
+  | 'attachments'
+  | 'type'
+  | 'mentionIds'
+  | 'replyToMessageId'
+  | 'replyToAuthorId'
+  | 'requestAuthorId'
+  | 'agentHopCount'
 >;
 type RoomAuthority = DaemonOperationMap['getRoomAuthority']['output'];
 
@@ -228,7 +244,7 @@ export function isGrantDecisionLine(
 }
 
 /** Which inbox items may start or steer a turn: ordinary messages from others that
- *  mention the agent, mentioned event lines (plus the one-release verb fallback for
+ *  explicitly mention the agent or continue its per-sender exchange, mentioned event lines (plus the one-release verb fallback for
  *  a scheduled prompt written before the server stamped kinds), and the grant
  *  decision that resumes a turn paused on the ask. Never a plain system line and
  *  never the agent's own rows.
@@ -237,8 +253,13 @@ export function isGrantDecisionLine(
  *  path, which prompts the paused turn's session with the decision and the
  *  resume instruction. `isSubscribedEvent` excludes it so it cannot ALSO be
  *  handled as an ordinary event and prompt the granted work a second time. */
-export function inboxItemTriggersTurn(item: RoomMessage, agentId: string): boolean {
+export function inboxItemTriggersTurn(
+  item: RoomMessage,
+  agentId: string,
+  continuesExchange = false,
+): boolean {
   if (item.authorId === agentId) return false;
+  if (item.type === 'message' && continuesExchange) return true;
   if (!item.mentionIds.includes(agentId)) return false;
   return (
     item.type === 'message' ||
@@ -341,6 +362,8 @@ interface ActiveTurn {
   steerTail: Promise<void>;
   resumeRequested: boolean;
   phase: 'prompting' | 'finishing';
+  continuitySenders?: ReadonlySet<string>;
+  rebuildContinuity?: boolean;
   promise: Promise<void>;
 }
 
@@ -402,6 +425,7 @@ export class MonolithRoomTurnLoop {
   private turnInstructionPrefix = '';
   private activeTurn?: ActiveTurn;
   private readonly queuedTurns: HumanMessage[] = [];
+  private continuityRebuildRequested = false;
   /** Session scratch directory attachments are downloaded into (`TMPDIR/beeline-attachments`). */
   private attachmentDir?: string;
   /** Whether the pinned model takes images; `undefined` when the pin did not say. */
@@ -420,6 +444,8 @@ export class MonolithRoomTurnLoop {
   private pausedOnGrantRequestId?: string;
   /** Operator-local turn traces; built once when the daemon configured a directory. */
   private turnTraceSink?: TurnTraceSink;
+  /** Per-sender continuity, shared in shape with corner intake. */
+  private readonly responseRule = new AgentResponseRule();
 
   constructor(private readonly options: MonolithRoomTurnOptions) {
     this.agent = runtimeIdentity(options.runtime.agent);
@@ -522,6 +548,9 @@ export class MonolithRoomTurnLoop {
       workspaceId: this.options.workspaceId,
     });
     this.memberNames = new Map(roster.members.map((member) => [member.identityId, member.name]));
+    this.responseRule.setAgents(
+      roster.members.filter((member) => member.kind === 'agent').map((member) => member.identityId),
+    );
     return roster;
   }
 
@@ -866,7 +895,12 @@ export class MonolithRoomTurnLoop {
         console.error(`[thin-core] monolith Room ${this.options.roomId} turn failed:`, error);
       })
       .finally(() => {
-        if (this.activeTurn === active) this.activeTurn = undefined;
+        if (this.activeTurn === active) {
+          this.activeTurn = undefined;
+          if (active.rebuildContinuity) this.continuityRebuildRequested = true;
+          this.wakeIntake?.();
+          this.wakeIntake = undefined;
+        }
       });
   }
 
@@ -1140,15 +1174,32 @@ export class MonolithRoomTurnLoop {
               if (openCornerCall && !isFailedToolCall(openCornerCall)) {
                 reply = stripCornerOpenEcho(reply);
               }
+              const mentionIds = reply
+                ? agentReplyMentionIds(reply, roster, this.agent.publicKey)
+                : [];
+              const continuitySenders = reply ? [item.authorId, ...mentionIds] : [];
+              if (continuitySenders.length) {
+                active.continuitySenders = new Set(continuitySenders);
+                active.rebuildContinuity = true;
+              }
               await trace.measure('publish', () =>
                 stream.settle(
                   reply,
                   reply
                     ? {
                         triggerMessageId: item.id,
-                        mentionIds: agentReplyMentionIds(reply, roster, this.agent.publicKey),
+                        mentionIds,
                       }
                     : {},
+                  reply
+                    ? (posted) => {
+                        this.responseRule.noteReply(this.agent.publicKey, [
+                          item.authorId,
+                          ...(posted.mentionIds ?? []),
+                        ]);
+                        active.rebuildContinuity = false;
+                      }
+                    : undefined,
                 ),
               );
             },
@@ -1192,6 +1243,7 @@ export class MonolithRoomTurnLoop {
     const { api, roomId, signal } = this.options;
     let cursor: string | undefined;
     const processedInboxIds = new Set<string>();
+    const deferredContinuity = new Map<string, InboxItem>();
     const pushedInbox: InboxItem[] = [];
     let pendingPushedCursor: string | undefined;
     let liveConnected = false;
@@ -1201,6 +1253,11 @@ export class MonolithRoomTurnLoop {
       cursor = activation.cursor;
       const rewindSupported = Array.isArray(activation.rewindIds);
       for (const id of activation.rewindIds ?? []) processedInboxIds.add(id);
+      const [history] = await Promise.all([
+        api.execute('getRoomConversation', { roomId, limit: 200, window: 'continuity' }),
+        this.roster(),
+      ]);
+      this.responseRule.observeAll(history.items);
       stopLive = api.liveSubscribe?.(
         roomId,
         cursor,
@@ -1230,7 +1287,16 @@ export class MonolithRoomTurnLoop {
       );
       while (!signal?.aborted) {
         try {
-          if (!this.activeTurn && this.queuedTurns.length) {
+          if (!this.activeTurn && this.continuityRebuildRequested) {
+            const history = await api.execute('getRoomConversation', {
+              roomId,
+              limit: 200,
+              window: 'continuity',
+            });
+            this.responseRule.replaceHistory(history.items);
+            this.continuityRebuildRequested = false;
+          }
+          if (!this.activeTurn && deferredContinuity.size === 0 && this.queuedTurns.length) {
             this.startPrompt(this.queuedTurns.shift()!);
           }
           const pollNow =
@@ -1246,13 +1312,36 @@ export class MonolithRoomTurnLoop {
           if (pollNow) {
             this.reconciliationRequested = false;
           }
-          const delivered = [...pushedInbox.splice(0), ...inbox.items];
+          const deferred = this.activeTurn ? [] : [...deferredContinuity.values()];
+          if (!this.activeTurn) deferredContinuity.clear();
+          const delivered = orderInboxItems([
+            ...deferred,
+            ...pushedInbox.splice(0),
+            ...inbox.items,
+          ]);
           for (const item of delivered) {
-            if (processedInboxIds.has(item.id)) continue;
+            if (processedInboxIds.has(item.id) || deferredContinuity.has(item.id)) continue;
+            const triggers = inboxItemTriggersTurn(
+              item,
+              this.agent.publicKey,
+              this.responseRule.continues(item, this.agent.publicKey),
+            );
+            const finishing = this.activeTurn;
+            if (
+              !triggers &&
+              finishing?.phase === 'finishing' &&
+              finishing.continuitySenders?.has(item.authorId) &&
+              item.type === 'message' &&
+              !item.replyToMessageId
+            ) {
+              deferredContinuity.set(item.id, item);
+              continue;
+            }
             processedInboxIds.add(item.id);
-            while (processedInboxIds.size > 10_000)
+            while (processedInboxIds.size > INBOX_DEDUPLICATION_LIMIT)
               processedInboxIds.delete(processedInboxIds.values().next().value!);
-            if (!inboxItemTriggersTurn(item, this.agent.publicKey)) continue;
+            this.responseRule.observe(item);
+            if (!triggers) continue;
             // A server-authored event was already authority-gated where the
             // fact was made (schedule creation; the owner's grant decision;
             // membership). Everything else answers to the per-sender policy.

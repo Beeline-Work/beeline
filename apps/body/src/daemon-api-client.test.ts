@@ -6,6 +6,7 @@ import {
   activateDaemonTransport,
   DaemonApiClient,
   DaemonApiError,
+  orderInboxItems,
   type DaemonWebSocketFactory,
 } from './daemon-api-client.js';
 import {
@@ -53,6 +54,28 @@ afterEach(async () => {
 });
 
 describe('DaemonApiClient', () => {
+  it('orders delayed poll and live items by the server cursor', () => {
+    const item = (id: string, cursor: string) => ({
+      id,
+      cursor,
+      authorId: 'a'.repeat(64),
+      createdAt: 1,
+      type: 'message',
+      body: id,
+      mentionIds: [],
+      attachments: [],
+    });
+    const polledEarlier = item('a'.repeat(64), `1000,${'a'.repeat(64)}`);
+    const liveLater = item('b'.repeat(64), `1001,${'b'.repeat(64)}`);
+    const followUp = item('c'.repeat(64), `1002,${'c'.repeat(64)}`);
+
+    expect(orderInboxItems([liveLater, polledEarlier, followUp]).map((entry) => entry.id)).toEqual([
+      polledEarlier.id,
+      liveLater.id,
+      followUp.id,
+    ]);
+  });
+
   class FakeWebSocket {
     static readonly OPEN = 1;
     static readonly instances: FakeWebSocket[] = [];

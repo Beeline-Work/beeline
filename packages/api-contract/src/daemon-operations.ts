@@ -8,6 +8,9 @@ import type {
 import type { CornerLifecycleView } from './phone-types.js';
 import type { RoomScheduleCadence } from './phone-operations.js';
 
+/** Maximum number of consecutive agent-authored turns in one Room exchange. */
+export const AGENT_TO_AGENT_HOP_CAP = 3;
+
 export type CreateAgentScheduleInput = AgentRoomInput & {
   /** Delivered as a creator-authored Room mention to this agent on every run. */
   readonly prompt: string;
@@ -90,7 +93,7 @@ export type DaemonOperationMap = {
   getAgentConfiguration: Operation<AgentConfigurationInput, AgentConfigurationResult>;
   getAgentPresence: Operation<AgentRoomInput, AgentPresenceResult>;
   getRequestCompletion: Operation<RequestInput, RequestCompletionResult>;
-  postRoomMessage: Operation<PostRoomMessageInput, WriteResult>;
+  postRoomMessage: Operation<PostRoomMessageInput, PostRoomMessageResult>;
   postAgentAttachment: Operation<PostAgentAttachmentInput, WriteResult>;
   postAgentDraft: Operation<PostLiveOutputInput, WriteResult>;
   postAgentThought: Operation<PostLiveOutputInput, WriteResult>;
@@ -138,11 +141,12 @@ export type RoomCursorInput = RoomInput & {
  * code path. `recent` (the default) is the NEWEST page — what a turn must be
  * prompted with, since the oldest page of a long Room is old news. `earliest`
  * is the forward walk from the very first message, which is how corner startup
- * recovers the objective. Never flip the shared sort to serve one of them; ask
- * for the window you need. A read that carries `after` keeps the inbox's
- * ascending cursor semantics and ignores this field.
+ * recovers the objective. `continuity` is the newest message-only window used
+ * to rebuild conversational response ownership. Never flip the shared sort to
+ * serve one of them; ask for the window you need. A read that carries `after`
+ * keeps the inbox's ascending cursor semantics and ignores this field.
  */
-export type RoomConversationWindow = 'recent' | 'earliest';
+export type RoomConversationWindow = 'recent' | 'earliest' | 'continuity';
 export type RoomConversationInput = RoomCursorInput & {
   readonly window?: RoomConversationWindow;
 };
@@ -196,15 +200,25 @@ export type WorkspaceRosterResult = {
 export type RoomInboxResult = {
   readonly items: readonly {
     readonly id: string;
+    /** Opaque server ordering key for merging live and polled deliveries. */
+    readonly cursor?: string;
     readonly authorId: string;
     readonly createdAt: number;
     readonly type: string;
     readonly body: string;
     /** Server-validated addressing and reply metadata needed by Room intake. */
     readonly mentionIds: readonly string[];
+    readonly agentMentionIds?: readonly string[];
+    readonly agentAuthor?: boolean;
     readonly replyToMessageId?: string;
+    /** Current author of the reply parent, projected by the server. */
+    readonly replyToAuthorId?: string;
     readonly rootMessageId?: string;
     readonly requestId?: string;
+    /** Author of the message this agent reply answered, even outside this page. */
+    readonly requestAuthorId?: string;
+    /** Server-owned agent-to-agent chain depth. */
+    readonly agentHopCount?: number;
     readonly attachments: readonly DaemonAttachment[];
     /** Present on a server-phrased system line; the daemon reads the structured event, never the text. */
     readonly systemEvent?: SystemEvent;
@@ -309,6 +323,7 @@ export type RequestCompletionResult = {
   readonly completed: boolean;
 };
 export type WriteResult = { readonly id: string; readonly createdAt: number };
+export type PostRoomMessageResult = WriteResult & { readonly mentionIds: readonly string[] };
 export type PostRoomMessageInput = RoomInput & {
   readonly requestId?: string;
   readonly text: string;

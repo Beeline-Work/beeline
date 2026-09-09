@@ -32,6 +32,8 @@ function stored(hex: string, name: string) {
   };
 }
 
+const TEST_AGENT_PUBLIC_KEY = stored('11'.repeat(32), 'Bee').publicKey;
+
 describe('corner close-request polling cadence', () => {
   it('polls on a 10-15 second interval with jitter, not once per second', () => {
     expect(cornerClosePollMs(() => 0)).toBeGreaterThanOrEqual(10_000);
@@ -245,7 +247,7 @@ describe('corner close-request polling cadence', () => {
                 createdAt: 1,
                 type: 'message',
                 body: 'Please continue',
-                mentionIds: [],
+                mentionIds: [TEST_AGENT_PUBLIC_KEY],
                 attachments: [],
               },
             ],
@@ -360,7 +362,7 @@ describe('corner close-request polling cadence', () => {
                 createdAt: 1,
                 type: 'message',
                 body: 'Please continue',
-                mentionIds: [],
+                mentionIds: [TEST_AGENT_PUBLIC_KEY],
                 attachments: [],
               },
             ],
@@ -699,7 +701,7 @@ describe('corner close-request polling cadence', () => {
                 createdAt: 1,
                 type: 'message',
                 body: 'Please continue',
-                mentionIds: [],
+                mentionIds: [TEST_AGENT_PUBLIC_KEY],
                 attachments: [],
               },
             ],
@@ -793,7 +795,7 @@ describe('corner close-request polling cadence', () => {
                 createdAt: 1,
                 type: 'message',
                 body: 'Please continue',
-                mentionIds: [],
+                mentionIds: [TEST_AGENT_PUBLIC_KEY],
                 attachments: [],
               },
             ],
@@ -855,7 +857,7 @@ describe('corner close-request polling cadence', () => {
                 createdAt: 1,
                 type: 'message',
                 body: 'Please continue',
-                mentionIds: [],
+                mentionIds: [TEST_AGENT_PUBLIC_KEY],
                 attachments: [],
               },
             ],
@@ -938,7 +940,7 @@ describe('corner close-request polling cadence', () => {
                 createdAt: 1,
                 type: 'message',
                 body: 'Please continue',
-                mentionIds: [],
+                mentionIds: [TEST_AGENT_PUBLIC_KEY],
                 attachments: [],
               },
             ],
@@ -1025,7 +1027,7 @@ describe('corner close-request polling cadence', () => {
                 createdAt: 1,
                 type: 'message',
                 body: 'Please continue',
-                mentionIds: [],
+                mentionIds: [TEST_AGENT_PUBLIC_KEY],
                 attachments: [],
               },
             ],
@@ -1105,7 +1107,7 @@ describe('corner close-request polling cadence', () => {
                 createdAt: 1,
                 type: 'message',
                 body: 'Please continue',
-                mentionIds: [],
+                mentionIds: [TEST_AGENT_PUBLIC_KEY],
                 attachments: [],
               },
             ],
@@ -1186,7 +1188,7 @@ describe('corner close-request polling cadence', () => {
                 createdAt: 1,
                 type: 'message',
                 body: 'Please continue',
-                mentionIds: [],
+                mentionIds: [TEST_AGENT_PUBLIC_KEY],
                 attachments: [],
               },
             ],

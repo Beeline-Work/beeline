@@ -715,7 +715,7 @@ describe('monolith integration', () => {
     expect(repositoryState.resolution).toBe('none');
     expect([...(repositoryState.directParticipants ?? [])].sort()).toEqual([AGENT, HUMAN].sort());
 
-    // A DM still requires an explicit mention: membership is not authorship intent.
+    // A bootstrapped DM still requires an explicit mention: membership is not authorship intent.
     const sent = await operation('sendRoomMessage', {
       roomId: dm.id,
       messageId: 'c'.repeat(64),
@@ -727,6 +727,60 @@ describe('monolith integration', () => {
       ['c'.repeat(64)],
     );
     expect(stored.rows[0]?.mention_ids).toEqual([]);
+
+    const bootstrap = (await (await daemonOperation('getDaemonBootstrap', {})).json()) as {
+      rooms: Array<{ roomId: string }>;
+    };
+    expect(bootstrap.rooms).toContainEqual(expect.objectContaining({ roomId: dm.id }));
+    const unaddressedInbox = (await (
+      await daemonOperation('getRoomInbox', { roomId: dm.id })
+    ).json()) as { items: Array<{ id: string }> };
+    expect(unaddressedInbox.items).not.toContainEqual(
+      expect.objectContaining({ id: 'c'.repeat(64) }),
+    );
+
+    const addressed = await operation('sendRoomMessage', {
+      roomId: dm.id,
+      messageId: 'd'.repeat(64),
+      text: '@bee Are you there?',
+    });
+    expect(addressed.status).toBe(200);
+    const addressedInbox = (await (
+      await daemonOperation('getRoomInbox', { roomId: dm.id })
+    ).json()) as { items: Array<{ id: string }> };
+    expect(addressedInbox.items).toContainEqual(expect.objectContaining({ id: 'd'.repeat(64) }));
+
+    const agentReply = (await (
+      await daemonOperation('postRoomMessage', {
+        roomId: dm.id,
+        requestId: 'd'.repeat(64),
+        triggerMessageId: 'd'.repeat(64),
+        text: 'I am here.',
+      })
+    ).json()) as { id: string };
+    const directReplyId = 'e'.repeat(64);
+    expect(
+      (
+        await operation('sendRoomReply', {
+          roomId: dm.id,
+          messageId: directReplyId,
+          parentMessageId: agentReply.id,
+          text: 'Thanks.',
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await database.query<{ mention_ids: string[] }>(
+          `SELECT mention_ids FROM messages WHERE id=$1`,
+          [directReplyId],
+        )
+      ).rows[0]?.mention_ids,
+    ).toEqual([AGENT]);
+    const directReplyInbox = (await (
+      await daemonOperation('getRoomInbox', { roomId: dm.id })
+    ).json()) as { items: Array<{ id: string }> };
+    expect(directReplyInbox.items).toContainEqual(expect.objectContaining({ id: directReplyId }));
 
     // The chat list names a DM row by its peer, so it carries the one other
     // participant's identity instead of leaving the client the stored name.
@@ -1858,10 +1912,18 @@ describe('monolith integration', () => {
     ).toEqual([]);
   });
 
-  it('implicitly addresses a threaded human reply to the parent agent regardless of position', async () => {
+  it('projects a threaded human reply to its parent agent without inventing a mention', async () => {
+    const requestId = '3'.repeat(64);
+    await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: requestId,
+      text: '@bee Start this exchange.',
+      mentions: [AGENT],
+    });
     const parent = await daemonOperation('postRoomMessage', {
       roomId: ROOM,
-      requestId: '3'.repeat(64),
+      requestId,
+      triggerMessageId: requestId,
       text: 'Thread parent.',
     });
     const parentId = ((await parent.json()) as { id: string }).id;
@@ -1883,7 +1945,430 @@ describe('monolith integration', () => {
       `SELECT mention_ids,reply_to_message_id FROM messages WHERE id=$1`,
       ['5'.repeat(64)],
     );
-    expect(stored.rows[0]).toEqual({ mention_ids: [AGENT], reply_to_message_id: parentId });
+    expect(stored.rows[0]).toEqual({ mention_ids: [], reply_to_message_id: parentId });
+    const inbox = await daemonOperation('getRoomInbox', { roomId: ROOM });
+    expect(
+      (
+        (await inbox.json()) as {
+          items: Array<{ id: string; replyToAuthorId?: string }>;
+        }
+      ).items,
+    ).toContainEqual(expect.objectContaining({ id: '5'.repeat(64), replyToAuthorId: AGENT }));
+  });
+
+  it('accepts a continuity turn for the last responder to this sender across an interjection', async () => {
+    const peer = 'e'.repeat(64);
+    const observer = 'd'.repeat(64);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Peer','peer')`,
+      [peer],
+    );
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [peer, HUMAN]);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Observer')`, [
+      observer,
+    ]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'member'),($1,$3,$2,'member'),
+             ($1,NULL,$4,'member'),($1,$3,$4,'member')`,
+      [WORKSPACE, peer, ROOM, observer],
+    );
+    const peerExchange = await auth.createDaemonExchange(peer);
+    const peerToken = (await auth.exchangeDaemonToken(peerExchange.exchangeToken))!.daemonToken;
+    const first = '6'.repeat(64);
+    await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: first,
+      text: '@bee Start this exchange.',
+      mentions: [AGENT],
+    });
+    await daemonOperation('postRoomMessage', {
+      roomId: ROOM,
+      requestId: first,
+      triggerMessageId: first,
+      text: 'My first answer.',
+    });
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,mention_ids)
+       VALUES($1,$2,$3,'A card must not take over the exchange.','card',$4::jsonb)`,
+      ['f'.repeat(64), ROOM, peer, JSON.stringify([HUMAN])],
+    );
+    await phone.execute(
+      'sendRoomMessage',
+      { roomId: ROOM, messageId: '7'.repeat(64), text: 'Interjecting.' },
+      observer,
+    );
+    const followUp = '8'.repeat(64);
+    await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: followUp,
+      text: 'Please continue.',
+    });
+
+    const continued = await daemonOperation('postRoomMessage', {
+      roomId: ROOM,
+      requestId: followUp,
+      triggerMessageId: followUp,
+      text: 'Continuing.',
+    });
+    expect(continued.status).toBe(200);
+    const pileOn = await daemonOperation(
+      'postRoomMessage',
+      {
+        roomId: ROOM,
+        requestId: followUp,
+        triggerMessageId: followUp,
+        text: 'I should stay silent.',
+      },
+      peerToken,
+    );
+    expect(pileOn.status).toBe(400);
+    await expect(pileOn.json()).resolves.toEqual({ error: 'turn trigger is invalid for agent' });
+
+    await database.query(`UPDATE agents SET access_policy=$2::jsonb WHERE agent_id=$1`, [
+      AGENT,
+      JSON.stringify({ type: 'allowlist', allow: [] }),
+    ]);
+    const existingNoticeIds = await database.query<{ id: string }>(
+      `SELECT id FROM messages WHERE room_id=$1 AND presentation='system'`,
+      [ROOM],
+    );
+    const addressedPeer = await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: '9'.repeat(64),
+      text: '@peer Please take over.',
+    });
+    expect(addressedPeer.status).toBe(200);
+    const notices = await database.query<{ text: string }>(
+      `SELECT text FROM messages
+       WHERE room_id=$1 AND presentation='system' AND NOT (id=ANY($2::text[]))`,
+      [ROOM, existingNoticeIds.rows.map((row) => row.id)],
+    );
+    expect(notices.rows.map((row) => row.text)).toContainEqual(
+      expect.stringContaining('@peer did not answer'),
+    );
+    expect(notices.rows.map((row) => row.text)).not.toContainEqual(
+      expect.stringContaining('Bee did not answer'),
+    );
+
+    const handoff = 'a'.repeat(64);
+    await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: handoff,
+      text: '@peer Please take over.',
+    });
+    expect(
+      (
+        await daemonOperation(
+          'postRoomMessage',
+          { roomId: ROOM, requestId: handoff, triggerMessageId: handoff, text: 'Taking over.' },
+          peerToken,
+        )
+      ).status,
+    ).toBe(200);
+    const duplicate = await daemonOperation('postRoomMessage', {
+      roomId: ROOM,
+      requestId: handoff,
+      triggerMessageId: handoff,
+      text: 'I should not continue the handoff.',
+    });
+    expect(duplicate.status).toBe(400);
+  });
+
+  it('voids parentless continuity when its latest responder is retired', async () => {
+    const peer = 'e'.repeat(64);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Peer','peer')`,
+      [peer],
+    );
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [peer, HUMAN]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
+      [WORKSPACE, peer, ROOM],
+    );
+    const peerExchange = await auth.createDaemonExchange(peer);
+    const peerToken = (await auth.exchangeDaemonToken(peerExchange.exchangeToken))!.daemonToken;
+    const first = '6'.repeat(64);
+    await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: first,
+      text: '@bee Start this exchange.',
+      mentions: [AGENT],
+    });
+    expect(
+      (
+        await daemonOperation('postRoomMessage', {
+          roomId: ROOM,
+          requestId: first,
+          triggerMessageId: first,
+          text: 'Older live answer.',
+        })
+      ).status,
+    ).toBe(200);
+    const handoff = '7'.repeat(64);
+    await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: handoff,
+      text: '@peer Take over this exchange.',
+      mentions: [peer],
+    });
+    expect(
+      (
+        await daemonOperation(
+          'postRoomMessage',
+          { roomId: ROOM, requestId: handoff, triggerMessageId: handoff, text: 'Latest answer.' },
+          peerToken,
+        )
+      ).status,
+    ).toBe(200);
+
+    expect((await operation('removeAgent', { workspaceId: WORKSPACE, agentId: peer })).status).toBe(
+      204,
+    );
+    const followUp = '8'.repeat(64);
+    await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: followUp,
+      text: 'Please continue.',
+    });
+    const revived = await daemonOperation('postRoomMessage', {
+      roomId: ROOM,
+      requestId: followUp,
+      triggerMessageId: followUp,
+      text: 'The older agent must remain silent.',
+    });
+    expect(revived.status).toBe(400);
+    await expect(revived.json()).resolves.toEqual({ error: 'turn trigger is invalid for agent' });
+
+    const explicit = '9'.repeat(64);
+    await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: explicit,
+      text: '@bee Please take over.',
+      mentions: [AGENT],
+    });
+    expect(
+      (
+        await daemonOperation('postRoomMessage', {
+          roomId: ROOM,
+          requestId: explicit,
+          triggerMessageId: explicit,
+          text: 'The live agent may answer an explicit request.',
+        })
+      ).status,
+    ).toBe(200);
+  });
+
+  it('notifies the direct parent agent even after a later agent answer', async () => {
+    const peer = 'd'.repeat(64);
+    const parentId = 'e'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Peer')`, [peer]);
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [peer, HUMAN]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
+      [WORKSPACE, peer, ROOM],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,mention_ids)
+       VALUES($1,$2,$3,'Older direct answer.','[]'::jsonb),
+             ($4,$2,$5,'Later answer.',$6::jsonb)`,
+      [parentId, ROOM, AGENT, 'f'.repeat(64), peer, JSON.stringify([HUMAN])],
+    );
+
+    const sent = await operation('sendRoomReply', {
+      roomId: ROOM,
+      messageId: 'a'.repeat(64),
+      parentMessageId: parentId,
+      text: 'Please continue the older answer.',
+    });
+    expect(sent.status).toBe(200);
+    const notices = await database.query<{ author_id: string; text: string }>(
+      `SELECT author_id,text FROM messages WHERE room_id=$1 AND presentation='system'`,
+      [ROOM],
+    );
+    expect(notices.rows).toContainEqual(
+      expect.objectContaining({
+        author_id: AGENT,
+        text: expect.stringContaining('did not answer'),
+      }),
+    );
+  });
+
+  it('notifies only an explicitly addressed agent on a direct reply', async () => {
+    const peer = 'd'.repeat(64);
+    const parentId = 'e'.repeat(64);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Peer','peer')`,
+      [peer],
+    );
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [peer, HUMAN]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
+      [WORKSPACE, peer, ROOM],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,mention_ids)
+       VALUES($1,$2,$3,'Direct parent answer.','[]'::jsonb)`,
+      [parentId, ROOM, AGENT],
+    );
+    await database.query(`UPDATE agents SET access_policy=$2::jsonb WHERE agent_id=$1`, [
+      AGENT,
+      JSON.stringify({ type: 'allowlist', allow: [] }),
+    ]);
+
+    const sent = await operation('sendRoomReply', {
+      roomId: ROOM,
+      messageId: 'a'.repeat(64),
+      parentMessageId: parentId,
+      text: '@peer Please take over.',
+    });
+    expect(sent.status).toBe(200);
+    const notices = await database.query<{ text: string }>(
+      `SELECT text FROM messages WHERE room_id=$1 AND presentation='system'`,
+      [ROOM],
+    );
+    expect(notices.rows.map((row) => row.text)).toContainEqual(
+      expect.stringContaining('@peer did not answer'),
+    );
+    expect(notices.rows.map((row) => row.text)).not.toContainEqual(
+      expect.stringContaining('Bee did not answer'),
+    );
+  });
+
+  it('stays silent for parentless continuity outside the conversation window', async () => {
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,mention_ids,created_at)
+       VALUES($1,$2,$3,'Aged-out answer.',$4::jsonb,now()-interval '1 hour')`,
+      ['d'.repeat(64), ROOM, AGENT, JSON.stringify([HUMAN])],
+    );
+    for (let index = 0; index < 200; index += 1) {
+      await database.query(
+        `INSERT INTO messages(id,room_id,author_id,text)
+         VALUES($1,$2,$3,$4)`,
+        [index.toString(16).padStart(64, '0'), ROOM, HUMAN, `Later message ${index}.`],
+      );
+    }
+
+    const sent = await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: 'e'.repeat(64),
+      text: 'No active exchange remains.',
+    });
+    expect(sent.status).toBe(200);
+    const notices = await database.query<{ text: string }>(
+      `SELECT text FROM messages WHERE room_id=$1 AND presentation='system'`,
+      [ROOM],
+    );
+    expect(notices.rows).toEqual([]);
+  });
+
+  it('accepts a direct reply from its parent agent after another agent replies', async () => {
+    const peer = 'c'.repeat(64);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Peer','peer')`,
+      [peer],
+    );
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [peer, HUMAN]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
+      [WORKSPACE, peer, ROOM],
+    );
+    const peerExchange = await auth.createDaemonExchange(peer);
+    const peerToken = (await auth.exchangeDaemonToken(peerExchange.exchangeToken))!.daemonToken;
+    const first = '9'.repeat(64);
+    await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: first,
+      text: '@bee Start this exchange.',
+      mentions: [AGENT],
+    });
+    const parent = await daemonOperation('postRoomMessage', {
+      roomId: ROOM,
+      requestId: first,
+      triggerMessageId: first,
+      text: 'My first answer.',
+    });
+    const parentId = ((await parent.json()) as { id: string }).id;
+    const peerRequest = 'a'.repeat(64);
+    await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: peerRequest,
+      text: '@Peer Please answer too.',
+      mentions: [peer],
+    });
+    await daemonOperation(
+      'postRoomMessage',
+      {
+        roomId: ROOM,
+        requestId: peerRequest,
+        triggerMessageId: peerRequest,
+        text: 'My later answer.',
+      },
+      peerToken,
+    );
+    const reply = 'b'.repeat(64);
+    await operation('sendRoomReply', {
+      roomId: ROOM,
+      messageId: reply,
+      parentMessageId: parentId,
+      text: 'Please continue the first answer.',
+    });
+
+    const continued = await daemonOperation('postRoomMessage', {
+      roomId: ROOM,
+      requestId: reply,
+      triggerMessageId: reply,
+      text: 'Continuing the first answer.',
+    });
+    expect(continued.status).toBe(200);
+    const pileOn = await daemonOperation(
+      'postRoomMessage',
+      {
+        roomId: ROOM,
+        requestId: reply,
+        triggerMessageId: reply,
+        text: 'I should not answer this reply.',
+      },
+      peerToken,
+    );
+    expect(pileOn.status).toBe(400);
+
+    const taggedReply = 'c'.repeat(64);
+    const tagged = await operation('sendRoomReply', {
+      roomId: ROOM,
+      messageId: taggedReply,
+      parentMessageId: parentId,
+      text: '@peer Please continue the first answer.',
+    });
+    expect(tagged.status).toBe(200);
+    expect(
+      (
+        await daemonOperation('postRoomMessage', {
+          roomId: ROOM,
+          requestId: taggedReply,
+          triggerMessageId: taggedReply,
+          text: 'The parent agent should stay silent.',
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await daemonOperation(
+          'postRoomMessage',
+          {
+            roomId: ROOM,
+            requestId: taggedReply,
+            triggerMessageId: taggedReply,
+            text: 'The explicitly addressed agent answers.',
+          },
+          peerToken,
+        )
+      ).status,
+    ).toBe(200);
   });
 
   it('does not address an agent when an untagged reply targets a human', async () => {
@@ -1928,7 +2413,7 @@ describe('monolith integration', () => {
       roomId: ROOM,
       messageId: replyId,
       parentMessageId: parentId,
-      text: 'This one is explicitly for the agent.',
+      text: '@bee This one is explicitly for the agent.',
       mentions: [AGENT],
     });
     expect(sent.status).toBe(200);
@@ -3896,9 +4381,10 @@ describe('monolith integration', () => {
     });
     const peerInbox = (await (
       await daemonOperation('getCornerCloseRequests', { cornerId }, peerToken)
-    ).json()) as { items: { id: string; mentionIds: string[] }[] };
+    ).json()) as { items: { id: string; mentionIds: string[]; agentMentionIds: string[] }[] };
     expect(peerInbox.items.map((item) => item.id)).toContain(handoff);
     expect(peerInbox.items.find((item) => item.id === handoff)?.mentionIds).toEqual([peer]);
+    expect(peerInbox.items.find((item) => item.id === handoff)?.agentMentionIds).toEqual([peer]);
     expect(
       (
         await daemonOperation(
@@ -3953,6 +4439,76 @@ describe('monolith integration', () => {
         corners: [expect.objectContaining({ agent: expect.objectContaining({ pubkey: AGENT }) })],
       }),
     );
+  });
+
+  it('keeps an unaddressed corner follow-up silent after its responder retires', async () => {
+    const peer = 'c'.repeat(64);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Peer','peer')`,
+      [peer],
+    );
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [peer, HUMAN]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
+      [WORKSPACE, peer, ROOM],
+    );
+    const peerToken = (await auth.exchangeDaemonToken(
+      (await auth.createDaemonExchange(peer)).exchangeToken,
+    ))!.daemonToken;
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'retired-corner-responder',
+      name: 'Retired responder',
+      objective: 'Keep continuity local to active corner members',
+    });
+    expect(created.status).toBe(200);
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    expect(
+      (
+        await daemonOperation(
+          'postRoomMessage',
+          { roomId: cornerId, text: 'I last answered this person.', mentionIds: [HUMAN] },
+          peerToken,
+        )
+      ).status,
+    ).toBe(200);
+    expect((await operation('removeAgent', { workspaceId: WORKSPACE, agentId: peer })).status).toBe(
+      204,
+    );
+
+    const followUp = 'e'.repeat(64);
+    expect(
+      (
+        await operation('sendRoomMessage', {
+          roomId: cornerId,
+          messageId: followUp,
+          text: 'Please continue.',
+        })
+      ).status,
+    ).toBe(200);
+    const inbox = (await (
+      await daemonOperation('getCornerCloseRequests', { cornerId })
+    ).json()) as { items: Array<{ id: string; mentionIds: string[] }> };
+    expect(inbox.items).toContainEqual(expect.objectContaining({ id: followUp, mentionIds: [] }));
+    expect(
+      (
+        await database.query<{ count: string }>(
+          `SELECT count(*)::text count FROM agent_turns WHERE room_id=$1 AND request_id=$2`,
+          [cornerId, followUp],
+        )
+      ).rows[0],
+    ).toEqual({ count: '0' });
+    expect(
+      (
+        await database.query<{ count: string }>(
+          `SELECT count(*)::text count FROM messages
+           WHERE room_id=$1 AND presentation='system'
+             AND text='Peer could not be reached · not a member of this corner'`,
+          [cornerId],
+        )
+      ).rows[0],
+    ).toEqual({ count: '0' });
   });
 
   it('derives an owner for a legacy corner from its first agent-authored message', async () => {
@@ -4044,8 +4600,12 @@ describe('monolith integration', () => {
           expect.objectContaining({ id: previous, mentionIds: [target] }),
         );
       else {
-        expect(peerItems.items).not.toContainEqual(expect.objectContaining({ id: previous }));
-        expect(peerItems.items.map((item) => item.id)).not.toContain(previous);
+        // The response rule needs the row to update per-sender continuity, but
+        // the cap strips its agent mention and its projected depth keeps it
+        // from starting another continuity turn.
+        expect(peerItems.items).toContainEqual(
+          expect.objectContaining({ id: previous, mentionIds: [], agentHopCount: 3 }),
+        );
       }
       [speaker, target] = [target, speaker];
       [speakerToken, targetToken] = [targetToken, speakerToken];
@@ -5804,6 +6364,26 @@ describe('monolith integration', () => {
       [ROOM, newcomerId],
     );
     expect(joins.rows.some((row) => row.mention_ids.includes(AGENT))).toBe(true);
+    const ordinaryLine = 'd'.repeat(64);
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation)
+       VALUES($1,$2,$3,'Owner noted the weather.','system')`,
+      [ordinaryLine, ROOM, HUMAN],
+    );
+    const inbox = (await (await daemonOperation('getRoomInbox', { roomId: ROOM })).json()) as {
+      items: Array<{
+        id: string;
+        mentionIds: string[];
+        systemEvent?: { kind?: string };
+      }>;
+    };
+    expect(inbox.items.map((item) => item.id)).not.toContain(ordinaryLine);
+    expect(inbox.items).toContainEqual(
+      expect.objectContaining({
+        mentionIds: expect.arrayContaining([AGENT]),
+        systemEvent: { kind: 'joined' },
+      }),
+    );
   });
 
   it('refuses a subscription an agent may not hold, and a Room it is not in', async () => {

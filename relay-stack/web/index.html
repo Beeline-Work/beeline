@@ -374,8 +374,10 @@ footer .sep{margin:0 8px;opacity:.35}
   const approve=document.getElementById('approve');
   const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  all.forEach(t=>t.classList.add('in'));   // at rest: the finished Room
-  if(reduce) return;
+  if(reduce){
+    all.forEach(t=>t.classList.add('in')); // at rest: the finished Room
+    return;
+  }
 
   let timers=[];
   const wait=(fn,t)=>timers.push(setTimeout(fn,t));

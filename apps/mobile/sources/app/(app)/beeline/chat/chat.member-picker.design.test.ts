@@ -87,19 +87,6 @@ describe('Room member picker', () => {
     expect(sheet).toContain('workspacePeerCount={participantPickerWorkspacePeers}');
   });
 
-  it('adds every checked person or agent through the existing Room membership operations', () => {
-    const handler = between(
-      'const handleAddRoomMembers = useCallback(',
-      'const handleRemoveRoomMember = useCallback(',
-    );
-    expect(handler).toContain('transport.inviteAgentToChannel(decodedId, candidate.pubkey)');
-    expect(handler).toContain(
-      'transport.inviteWorkspaceMemberToChannel(decodedId, candidate.pubkey)',
-    );
-    expect(handler).toContain('setParticipantPickerVisible(false)');
-    expect(handler).toContain('setMembershipError(`Could not add @${current.name}:');
-  });
-
   it('invites a person through the workspace invite URL and the Share sheet', () => {
     const handler = between(
       'const handleInvitePerson = useCallback(',

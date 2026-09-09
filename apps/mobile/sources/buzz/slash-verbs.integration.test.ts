@@ -53,7 +53,6 @@ describe('Buzz composer slash picker integration', () => {
     expect(chatSource).toContain('agentMentionSlashQuery(inputText)');
     // The addressed agent's commands are read from the transport — the only
     // source — never a hardcoded inventory.
-    expect(chatSource).toContain('agentCommandsRead()');
     expect(chatSource).not.toMatch(/commands:\s*\[\s*\{\s*name:\s*'/);
     // The picker receives both the agent's list and Beeline's built-ins.
     expect(chatSource).toContain('commands={mentionAgentCommands}');

@@ -1,3 +1,4 @@
+import { createAgentCommand, claimAgentCommand } from './agent-command.js';
 import { createHash, createHmac } from 'node:crypto';
 import { request as httpRequest } from 'node:http';
 import { AddressInfo } from 'node:net';
@@ -179,8 +180,74 @@ describe('monolith integration', () => {
   const phoneToken = async (login: string) => (await auth.exchangeGitHubOidc(login)).accessToken;
   const operation = (name: string, payload: unknown, token = accessToken) =>
     request(`/v1/phone/operations/${name}`, 'POST', payload, token);
-  const daemonOperation = (name: string, payload: unknown, token = daemonToken) =>
-    request(`/v1/daemon/operations/${name}`, 'POST', payload, token);
+  // These fixtures test projections and lifecycle behavior downstream of intake.
+  // Supply an explicit command first. Routing/refusal tests call DaemonService
+  // directly in agent-command.integration.test.ts and never use this helper.
+  const daemonOperation = async (name: string, payload: unknown, token = daemonToken) => {
+    const input = { ...(payload as Record<string, unknown>) };
+    const writes = new Set([
+      'postRoomMessage',
+      'postAgentDraft',
+      'postAgentThought',
+      'postAgentActivity',
+      'postAgentAttachment',
+      'postAgentTurnReceipt',
+      'retractAgentLiveOutput',
+      'createCorner',
+      'postRoomEvent',
+      'requestAgentGrant',
+    ]);
+    const who = await auth.authenticateDaemon(token);
+    if (who && typeof input.roomId === 'string' && writes.has(name)) {
+      const requestId = String(
+        input.requestId ??
+          input.turnId ??
+          createHash('sha256')
+            .update(String(Date.now()) + Math.random())
+            .digest('hex'),
+      );
+      input.requestId = requestId;
+      input.generationId ??= 'fixture-generation';
+      await database.transaction(async (tx) => {
+        const existing = (
+          await tx.query<{ id: string }>(
+            `SELECT id FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3 ORDER BY created_at DESC LIMIT 1`,
+            [input.roomId, who, requestId],
+          )
+        ).rows[0];
+        if (existing) {
+          await claimAgentCommand(
+            tx,
+            String(input.roomId),
+            who,
+            existing.id,
+            String(input.generationId),
+          ).catch(() => undefined);
+          return;
+        }
+        await tx.query(
+          `INSERT INTO messages(id,room_id,author_id,text,presentation) VALUES($1,$2,$3,'Fixture command','activity') ON CONFLICT(id) DO NOTHING`,
+          [requestId, input.roomId, HUMAN],
+        );
+        const command = await createAgentCommand(tx, {
+          roomId: String(input.roomId),
+          agentId: who,
+          sourceMessageId: requestId,
+          turnRequestId: requestId,
+          reason: 'fixture',
+        });
+        if (command)
+          await claimAgentCommand(
+            tx,
+            String(input.roomId),
+            who,
+            command.id,
+            String(input.generationId),
+          );
+      });
+    }
+    return request(`/v1/daemon/operations/${name}`, 'POST', input, token);
+  };
   const webhook = async (event: string, delivery: string, payload: unknown) => {
     const bytes = Buffer.from(JSON.stringify(payload));
     const signature = `sha256=${createHmac('sha256', 'webhook-secret').update(bytes).digest('hex')}`;
@@ -3643,7 +3710,13 @@ describe('monolith integration', () => {
 
     // 3. Queue then drain onto the agent's final reply.
     expect(
-      (await daemonOperation('postAgentAttachment', { roomId: ROOM, attachment })).status,
+      (
+        await daemonOperation('postAgentAttachment', {
+          roomId: ROOM,
+          requestId: 'c'.repeat(64),
+          attachment,
+        })
+      ).status,
     ).toBe(200);
     const reply = await daemonOperation('postRoomMessage', {
       roomId: ROOM,

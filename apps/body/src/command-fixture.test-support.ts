@@ -1,0 +1,101 @@
+import type { AgentCommand, DaemonOperationMap } from '@beeline/api-contract/daemon';
+import type { DaemonApiClient, InboxItem } from './daemon-api-client.js';
+
+/** Convert the explicitly supplied work in older session-mechanics fixtures to
+ * protocol commands. Routing eligibility is tested against the real server.
+ * This adapter is test-only and never participates in production intake. */
+export function commandFixtureApi(
+  api: DaemonApiClient,
+  roomId: string,
+  agentId: string,
+  objective?: string | null,
+): DaemonApiClient {
+  const pending = new Map<string, AgentCommand>(),
+    seen = new Set<string>();
+  let started = false,
+    settled = objective === null,
+    closed = false;
+  let notify: (() => void) | undefined;
+  function add(source: InboxItem, reason = 'human_tag') {
+    const fixture = source as InboxItem & {
+      fixtureCommand?: boolean;
+      fixtureCommandAction?: 'input' | 'resume' | 'stop';
+      fixtureTurnRequestId?: string;
+    };
+    if (fixture.fixtureCommand === false || seen.has(source.id)) return;
+    seen.add(source.id);
+    pending.set(source.id, {
+      id: source.id,
+      roomId,
+      agentId,
+      sourceMessageId: source.id,
+      turnRequestId: fixture.fixtureTurnRequestId ?? source.id,
+      action: fixture.fixtureCommandAction ?? 'input',
+      reason,
+      rootCommandId: source.id,
+      rootSourceMessageId: source.id,
+      agentDepth: 0,
+      source,
+    });
+    notify?.();
+  }
+  if (objective)
+    add(
+      {
+        id: roomId.replaceAll('-', ''),
+        authorId: agentId,
+        createdAt: 1,
+        type: 'message',
+        body: objective,
+        mentionIds: [agentId],
+        attachments: [],
+      },
+      'corner_objective',
+    );
+  return new Proxy(api, {
+    get(target, key) {
+      if (key === 'liveSubscribe')
+        return (...args: unknown[]) => {
+          notify = args[2] as () => void;
+          return target.liveSubscribe?.(...(args as Parameters<DaemonApiClient['liveSubscribe']>));
+        };
+      if (key !== 'execute') {
+        const value = Reflect.get(target, key);
+        return typeof value === 'function' ? value.bind(target) : value;
+      }
+      return async (name: keyof DaemonOperationMap, input: Record<string, unknown>) => {
+        if (name === 'getAgentCommands') {
+          const page = await target.execute('getRoomInbox', {
+            roomId,
+            ...(!started ? { startAtLatest: true } : {}),
+          });
+          started = true;
+          closed ||= page.closeRequested === true;
+          for (const source of page.items ?? []) add(source);
+          return { commandProtocol: 1, commands: [...pending.values()] };
+        }
+        if (name === 'claimAgentCommand') {
+          settled = false;
+          pending.delete(String(input.commandId));
+          return { id: input.commandId, createdAt: 1 };
+        }
+        if (name === 'acknowledgeAgentCommand') return { id: input.commandId, createdAt: 1 };
+        if (name === 'getCornerRestoreState' && closed && settled && !pending.size)
+          return { cornerId: roomId, closeRequested: true };
+        if (
+          name === 'getCornerRestoreState' &&
+          objective !== undefined &&
+          settled &&
+          !pending.size
+        ) {
+          const page = await target.execute('getCornerCloseRequests', { cornerId: roomId });
+          for (const source of page.items ?? []) add(source);
+          return { cornerId: roomId, closeRequested: page.closeRequested ?? false };
+        }
+        const result = await target.execute(name, input as never);
+        if (name === 'postAgentTurnReceipt' && input.status !== 'working') settled = true;
+        return result;
+      };
+    },
+  });
+}

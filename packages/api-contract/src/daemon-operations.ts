@@ -54,14 +54,45 @@ export type EventSubscriptionsResult = { readonly kinds: readonly ServerEventKin
  * active turn receipt and derives cause, root and depth from it, because a
  * guard the guarded party sets is not a guard.
  */
-export type PostRoomEventInput = RoomInput & {
-  readonly kind: string;
-  readonly consequence: string;
-  /** Agent members of this Room to wake, at most `MAX_MENTIONS_PER_EVENT`. */
-  readonly mentionAgentIds?: readonly string[];
-};
+export type PostRoomEventInput = TurnOutputAuthority &
+  RoomInput & {
+    readonly kind: string;
+    readonly consequence: string;
+    /** Agent members of this Room to wake, at most `MAX_MENTIONS_PER_EVENT`. */
+    readonly mentionAgentIds?: readonly string[];
+  };
 
+export type AgentCommandAction = 'input' | 'resume' | 'stop';
+export type AgentCommand = {
+  readonly id: string;
+  readonly roomId: string;
+  readonly agentId: string;
+  readonly sourceMessageId: string;
+  readonly turnRequestId: string;
+  readonly action: AgentCommandAction;
+  readonly reason: string;
+  readonly rootCommandId: string;
+  readonly parentCommandId?: string;
+  readonly rootSourceMessageId: string;
+  readonly agentDepth: number;
+  readonly source: RoomInboxResult['items'][number];
+};
+export type CommandClaimInput = RoomInput & {
+  readonly commandId: string;
+  readonly generationId: string;
+};
+export type TurnOutputAuthority = { readonly generationId?: string; readonly requestId?: string };
 export type DaemonOperationMap = {
+  stageAgentDelegation: Operation<
+    RoomInput & TurnOutputAuthority & { readonly targetAgentId: string },
+    WriteResult
+  >;
+  getAgentCommands: Operation<
+    RoomInput,
+    { readonly commandProtocol: 1; readonly commands: readonly AgentCommand[] }
+  >;
+  claimAgentCommand: Operation<CommandClaimInput, WriteResult>;
+  acknowledgeAgentCommand: Operation<CommandClaimInput, WriteResult>;
   getDaemonBootstrap: Operation<DaemonBootstrapInput, DaemonBootstrapResult>;
   getWorkspaceRoster: Operation<WorkspaceRosterInput, WorkspaceRosterResult>;
   getRoomInbox: Operation<RoomCursorInput, RoomInboxResult>;
@@ -198,6 +229,8 @@ export type WorkspaceRosterResult = {
   }[];
 };
 export type RoomInboxResult = {
+  /** Present only when ordinary message rows are server-selected commands. */
+  readonly dispatchVersion?: 1;
   readonly items: readonly {
     readonly id: string;
     /** Opaque server ordering key for merging live and polled deliveries. */
@@ -324,30 +357,35 @@ export type RequestCompletionResult = {
 };
 export type WriteResult = { readonly id: string; readonly createdAt: number };
 export type PostRoomMessageResult = WriteResult & { readonly mentionIds: readonly string[] };
-export type PostRoomMessageInput = RoomInput & {
-  readonly requestId?: string;
-  readonly text: string;
-  /** The daemon never phrases a system line; the server does (`system-line.ts`). */
-  readonly presentation?: 'message' | 'card';
-  readonly tags?: Readonly<Record<string, string>>;
-  /** Validated peer addressing for monolith agent-to-agent turns. */
-  readonly mentionIds?: readonly string[];
-  readonly replyToMessageId?: string;
-  /** Inbox message that started this turn; independent of optional reply threading. */
-  readonly triggerMessageId?: string;
-};
-export type PostAgentAttachmentInput = RoomInput & {
-  /** A daemon media upload result; the server verifies the media row is owned by the agent. */
-  readonly attachment: DaemonAttachment;
-};
-export type PostLiveOutputInput = AgentRoomInput & {
-  readonly turnId: string;
-  readonly text: string;
-};
-export type RetractLiveOutputInput = AgentRoomInput & {
-  readonly turnId: string;
-  readonly kind: 'draft' | 'thought';
-};
+export type PostRoomMessageInput = TurnOutputAuthority &
+  RoomInput & {
+    readonly requestId?: string;
+    readonly text: string;
+    /** The daemon never phrases a system line; the server does (`system-line.ts`). */
+    readonly presentation?: 'message' | 'card';
+    readonly tags?: Readonly<Record<string, string>>;
+    /** Validated peer addressing for monolith agent-to-agent turns. */
+    readonly mentionIds?: readonly string[];
+    readonly replyToMessageId?: string;
+    /** Inbox message that started this turn; independent of optional reply threading. */
+    readonly triggerMessageId?: string;
+    readonly delegateAgentIds?: readonly string[];
+  };
+export type PostAgentAttachmentInput = TurnOutputAuthority &
+  RoomInput & {
+    /** A daemon media upload result; the server verifies the media row is owned by the agent. */
+    readonly attachment: DaemonAttachment;
+  };
+export type PostLiveOutputInput = TurnOutputAuthority &
+  AgentRoomInput & {
+    readonly turnId: string;
+    readonly text: string;
+  };
+export type RetractLiveOutputInput = TurnOutputAuthority &
+  AgentRoomInput & {
+    readonly turnId: string;
+    readonly kind: 'draft' | 'thought';
+  };
 export type PostTurnReceiptInput = AgentRoomInput & {
   readonly requestId: string;
   /**
@@ -362,11 +400,12 @@ export type PostTurnReceiptInput = AgentRoomInput & {
   /** One distilled line (≤200 chars, no stack, secrets scrubbed) sent only with `failed`. */
   readonly reason?: string;
 };
-export type PostAgentActivityInput = AgentRoomInput & {
-  readonly requestId: string;
-  readonly cornerActivityKey?: string;
-  readonly activity: readonly DaemonActivityItem[];
-};
+export type PostAgentActivityInput = TurnOutputAuthority &
+  AgentRoomInput & {
+    readonly requestId: string;
+    readonly cornerActivityKey?: string;
+    readonly activity: readonly DaemonActivityItem[];
+  };
 export type PostPermissionRequestInput = RoomPrincipalInput & {
   readonly permissionId: string;
   readonly requestId: string;
@@ -423,31 +462,33 @@ export type PostTargetBranchProposalInput = RoomInput & {
   readonly to: string;
   readonly repository: string;
 };
-export type CreateCornerInput = RoomInput & {
-  readonly requestId: string;
-  /** The corner's title on every surface, limited to 3 whitespace-delimited words. */
-  readonly name: string;
-  /** Immutable one-paragraph objective, limited to 24 whitespace-delimited words. */
-  readonly objective: string;
-  readonly repository?: string;
-  readonly targetBranch?: string;
-};
+export type CreateCornerInput = TurnOutputAuthority &
+  RoomInput & {
+    readonly requestId: string;
+    /** The corner's title on every surface, limited to 3 whitespace-delimited words. */
+    readonly name: string;
+    /** Immutable one-paragraph objective, limited to 24 whitespace-delimited words. */
+    readonly objective: string;
+    readonly repository?: string;
+    readonly targetBranch?: string;
+  };
 export type CornerResult = { readonly cornerId: string };
 
 /** request_grant: the agent raises its hand for one kind of reach in one Room. */
-export type RequestAgentGrantInput = RoomInput & {
-  readonly kind: AgentGrantKind;
-  readonly target: string;
-  readonly reason: string;
-  /** Optional lifetime in seconds; the grant expires this long after the request. */
-  readonly ttlSeconds?: number;
-  /**
-   * For an interpreter command, the script the daemon read out of the agent's
-   * checkout or scratch. The card shows it and the approval is bound to its
-   * hash (C94); the server never reads the operator's filesystem itself.
-   */
-  readonly script?: CommandGrantScript;
-};
+export type RequestAgentGrantInput = TurnOutputAuthority &
+  RoomInput & {
+    readonly kind: AgentGrantKind;
+    readonly target: string;
+    readonly reason: string;
+    /** Optional lifetime in seconds; the grant expires this long after the request. */
+    readonly ttlSeconds?: number;
+    /**
+     * For an interpreter command, the script the daemon read out of the agent's
+     * checkout or scratch. The card shows it and the approval is bound to its
+     * hash (C94); the server never reads the operator's filesystem itself.
+     */
+    readonly script?: CommandGrantScript;
+  };
 export type RequestAgentGrantResult = {
   readonly grantId: string;
   readonly status: AgentGrantStatus;
@@ -570,3 +611,39 @@ export type DaemonPullRequestFact = {
   readonly headSha: string;
   readonly mergeability?: 'clean' | 'dirty' | 'unknown';
 };
+
+/** Shape validation only. Target matching and claiming happen before execution. */
+export function isAgentCommand(value: unknown): value is AgentCommand {
+  if (!value || typeof value !== 'object') return false;
+  const c = value as Record<string, unknown>;
+  if (
+    ![
+      'id',
+      'roomId',
+      'agentId',
+      'sourceMessageId',
+      'turnRequestId',
+      'rootCommandId',
+      'rootSourceMessageId',
+      'reason',
+    ].every((key) => typeof c[key] === 'string' && (c[key] as string).length > 0)
+  )
+    return false;
+  if (
+    !['input', 'resume', 'stop'].includes(String(c.action)) ||
+    !Number.isInteger(c.agentDepth) ||
+    Number(c.agentDepth) < 0 ||
+    Number(c.agentDepth) > 3
+  )
+    return false;
+  const source = c.source as Record<string, unknown> | undefined;
+  return Boolean(
+    source &&
+    typeof source.id === 'string' &&
+    typeof source.authorId === 'string' &&
+    typeof source.body === 'string' &&
+    typeof source.createdAt === 'number' &&
+    Array.isArray(source.attachments) &&
+    Array.isArray(source.mentionIds),
+  );
+}

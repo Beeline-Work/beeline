@@ -190,7 +190,6 @@ export async function mapWithConcurrency<T>(
 
 type RoomLeaf = Pick<
   MonolithRoomTurnLoop | MonolithCornerTurnLoop,
-  | 'currentPrincipalCanDrive'
   | 'isBusy'
   | 'prepareForForcedUpdateRestart'
   | 'requestReconciliation'
@@ -351,14 +350,6 @@ export class RoomRuntimeCoordinator {
     if (Number.isFinite(deadlineAt)) {
       this.drainDeadlineAt = Math.min(this.drainDeadlineAt ?? Number.POSITIVE_INFINITY, deadlineAt);
     }
-  }
-
-  async currentPrincipalCanDrive(
-    roomId: string,
-    workspaceId: string,
-    principalId: string,
-  ): Promise<boolean | undefined> {
-    return this.running.get(roomId)?.body.currentPrincipalCanDrive(workspaceId, principalId);
   }
 
   async prepareForForcedUpdateRestart(): Promise<void> {

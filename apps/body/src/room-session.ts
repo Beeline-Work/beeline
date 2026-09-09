@@ -16,6 +16,7 @@ export function beelineAgentMcpServer(
   api: DaemonApiClient,
   context: {
     roomId: string;
+    turnContextPath?: string;
     workspaceId: string;
     cornerId?: string;
     attachRoot?: string;
@@ -40,6 +41,9 @@ export function beelineAgentMcpServer(
     args: [...(config.readonlyMcpArgs ?? [])],
     env: [
       { name: 'BEELINE_MCP_SURFACE', value: 'agent' },
+      ...(context.turnContextPath
+        ? [{ name: 'BEELINE_TURN_CONTEXT_FILE', value: context.turnContextPath }]
+        : []),
       ...(context.directMessage ? [{ name: 'BEELINE_AGENT_DM', value: '1' }] : []),
       { name: 'BEELINE_DAEMON_BASE_URL', value: connection.baseUrl },
       { name: 'BEELINE_DAEMON_TOKEN', value: connection.daemonToken },

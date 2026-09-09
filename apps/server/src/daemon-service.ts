@@ -1,3 +1,11 @@
+import {
+  authorizeCommandOutput,
+  claimAgentCommand,
+  commandInbox,
+  createAgentCommand,
+  readAgentCommands,
+  routeAgentResult,
+} from './agent-command.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type {
   DaemonAttachment,
@@ -40,7 +48,7 @@ import {
 } from '@beeline/api-contract/surface-capabilities';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
-import type { LiveHub } from './live.js';
+import { LiveHub, type LiveEvent } from './live.js';
 import { CORNER_WAKE_MIN_INTERVAL_MS, CORNER_WAKE_TIMEOUT_MS, wakesCorner } from './corner-wake.js';
 import {
   restateSystemLine,
@@ -129,6 +137,7 @@ export class DaemonService {
       roomId: string,
     ) => Promise<{ token: string; expiresAt: number }>,
     private readonly mediaMaximumBytes: number = DEFAULT_MEDIA_MAXIMUM_BYTES,
+    private readonly commandTransaction = false,
   ) {}
 
   /** When each corner last woke, so `CORNER_WAKE_MIN_INTERVAL_MS` can be held. */
@@ -152,7 +161,179 @@ export class DaemonService {
       await this.access(scopedRoom, authenticatedAgentId);
     if (scopedRoom && isCornerOpenerOnly(name))
       await this.assertCornerOpener(scopedRoom, authenticatedAgentId);
+    const turnWrites = new Set([
+      'postRoomMessage',
+      'postAgentAttachment',
+      'postAgentDraft',
+      'postAgentThought',
+      'retractAgentLiveOutput',
+      'postAgentTurnReceipt',
+      'postAgentActivity',
+      'createCorner',
+      'postRoomEvent',
+      'stageAgentDelegation',
+      'requestAgentGrant',
+    ]);
+    if (!this.commandTransaction && scopedRoom && turnWrites.has(name)) {
+      const events: LiveEvent[] = [];
+      const buffered = new LiveHub();
+      buffered.publish = (event) => {
+        events.push(event);
+      };
+      const output = await this.database.transaction(async (db) => {
+        const requestId = candidate.requestId ?? candidate.turnId;
+        if (
+          name === 'postAgentTurnReceipt' &&
+          candidate.status === 'working' &&
+          !candidate.heartbeat
+        ) {
+          // Old helpers claim the projected command through their first receipt.
+          const pending = (
+            await db.query<{ id: string }>(
+              `SELECT id FROM agent_commands
+            WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3 AND action IN ('input','resume')
+            AND state IN ('pending','claimed') ORDER BY created_at DESC LIMIT 1`,
+              [scopedRoom, authenticatedAgentId, requestId],
+            )
+          ).rows[0];
+          if (pending)
+            await claimAgentCommand(
+              db,
+              scopedRoom,
+              authenticatedAgentId,
+              pending.id,
+              String(candidate.generationId ?? ''),
+            );
+        }
+        const allowCompleted =
+          name === 'postRoomMessage' ||
+          name === 'retractAgentLiveOutput' ||
+          (name === 'postAgentTurnReceipt' && candidate.status === 'complete');
+        const command = await authorizeCommandOutput(
+          db,
+          scopedRoom,
+          authenticatedAgentId,
+          requestId,
+          candidate.generationId,
+          allowCompleted,
+        );
+        if (command.state === 'complete') {
+          if (name === 'postRoomMessage' && command.result_message_id) {
+            const saved = (
+              await db.query<{ id: string; created_at: Date; mention_ids: string[]; text: string }>(
+                `SELECT id,created_at,mention_ids,text FROM messages WHERE id=$1`,
+                [command.result_message_id],
+              )
+            ).rows[0]!;
+            if (saved.text !== candidate.text) throw new Error('command result conflict');
+            return {
+              id: saved.id,
+              createdAt: seconds(saved.created_at),
+              mentionIds: saved.mention_ids,
+            } as Output<Name>;
+          }
+          if (name !== 'retractAgentLiveOutput' && name !== 'postAgentTurnReceipt')
+            throw new Error('command already completed');
+          return this.writeResult() as Output<Name>;
+        }
+        const scoped = new DaemonService(
+          db,
+          buffered,
+          this.roomGitHubToken,
+          this.mediaMaximumBytes,
+          true,
+        );
+        const result = await scoped.execute(name, input, authenticatedAgentId);
+        if (name === 'requestAgentGrant') {
+          await db.query(
+            `UPDATE agent_grants SET command_id=$2 WHERE id=$1 AND command_id IS NULL`,
+            [(result as { grantId: string }).grantId, command.id],
+          );
+        }
+        if (name === 'postRoomMessage') {
+          const resultId = (result as { id: string }).id;
+          await routeAgentResult(
+            db,
+            command,
+            resultId,
+            (candidate.delegateAgentIds ?? []) as string[],
+            candidate.replyToMessageId as string | undefined,
+          );
+          await db.query(
+            `UPDATE agent_commands SET state='complete',completed_at=now(),result_message_id=$2 WHERE id=$1`,
+            [command.id, resultId],
+          );
+          await db.query(
+            `DELETE FROM live_outputs WHERE room_id=$1 AND agent_id=$2 AND turn_id=$3 AND kind IN ('draft','thought')`,
+            [scopedRoom, authenticatedAgentId, requestId],
+          );
+        } else if (name === 'postAgentTurnReceipt') {
+          if (candidate.status === 'working')
+            await db.query(
+              `UPDATE agent_commands SET lease_expires_at=now()+interval '90 seconds' WHERE id=$1`,
+              [command.id],
+            );
+          else if (candidate.status !== 'failed')
+            await db.query(`UPDATE agent_commands SET state=$2,completed_at=now() WHERE id=$1`, [
+              command.id,
+              candidate.status === 'cancelled' ? 'cancelled' : 'complete',
+            ]);
+        }
+        return result;
+      });
+      for (const event of events) this.live.publish(event);
+      return output;
+    }
     switch (name) {
+      case 'stageAgentDelegation': {
+        const command = await authorizeCommandOutput(
+          this.database,
+          scopedRoom!,
+          authenticatedAgentId,
+          candidate.requestId,
+          candidate.generationId,
+        );
+        if (typeof candidate.targetAgentId !== 'string')
+          throw new Error('delegation target is required');
+        const target = await this.database.query(
+          `SELECT 1 FROM memberships m JOIN identities i ON i.id=m.identity_id AND i.kind='agent'
+          WHERE m.room_id=$1 AND m.identity_id=$2 AND m.removed_at IS NULL`,
+          [scopedRoom, candidate.targetAgentId],
+        );
+        if (!target.rowCount || candidate.targetAgentId === authenticatedAgentId)
+          throw new Error('delegation target is not an agent member');
+        await this.database.query(
+          `UPDATE agent_commands SET delegate_agent_ids=(SELECT jsonb_agg(DISTINCT value)
+          FROM jsonb_array_elements(delegate_agent_ids || $2::jsonb)) WHERE id=$1`,
+          [command.id, JSON.stringify([candidate.targetAgentId])],
+        );
+        return this.writeResult() as Output<Name>;
+      }
+      case 'getAgentCommands':
+        return (await readAgentCommands(
+          this.database,
+          scopedRoom!,
+          authenticatedAgentId,
+        )) as Output<Name>;
+      case 'claimAgentCommand':
+        await claimAgentCommand(
+          this.database,
+          scopedRoom!,
+          authenticatedAgentId,
+          String(candidate.commandId),
+          String(candidate.generationId),
+        );
+        return this.writeResult() as Output<Name>;
+      case 'acknowledgeAgentCommand': {
+        const acknowledged = await this.database.query(
+          `UPDATE agent_commands SET state='complete',completed_at=now()
+          WHERE id=$1 AND room_id=$2 AND agent_id=$3 AND generation_id=$4 AND state='claimed'
+          AND action='stop' AND lease_expires_at>now()`,
+          [candidate.commandId, scopedRoom, authenticatedAgentId, candidate.generationId],
+        );
+        if (!acknowledged.rowCount) throw new Error('command acknowledgement conflict');
+        return this.writeResult() as Output<Name>;
+      }
       case 'getDaemonBootstrap':
         return (await this.bootstrap(authenticatedAgentId)) as Output<Name>;
       case 'getWorkspaceRoster':
@@ -502,17 +683,12 @@ export class DaemonService {
             ).rows[0]?.close_requested,
           )
         : undefined;
-    const directMessage =
-      name === 'getRoomInbox'
-        ? Boolean(
-            (
-              await this.database.query<{ direct: boolean }>(
-                `SELECT direct_participants IS NOT NULL direct FROM rooms WHERE id=$1`,
-                [roomId],
-              )
-            ).rows[0]?.direct,
-          )
-        : false;
+    if (name === 'getRoomInbox' || name === 'getCornerCloseRequests')
+      return {
+        ...(await commandInbox(this.database, roomId, agentId)),
+        ...(closeRequested !== undefined ? { closeRequested } : {}),
+      };
+    const commandInboxRead = false;
     if (input.startAtLatest) {
       if (input.after) throw new Error('startAtLatest cannot be combined with after');
       const latest = await this.database.query<{
@@ -556,6 +732,7 @@ export class DaemonService {
           ).rows.map((row) => row.id)
         : [];
       return {
+        dispatchVersion: 1 as const,
         items: [],
         cursor: activationCursor,
         rewindIds,
@@ -621,15 +798,7 @@ export class DaemonService {
       after ? (input.rewind ? [roomId, after[1]] : [roomId, after[1], after[2]]) : [roomId],
     );
     const page = newestPage ? rows.rows : rows.rows.slice(0, limit);
-    const visiblePage =
-      name === 'getRoomInbox'
-        ? page.filter(
-            (row) =>
-              row.author_id !== agentId &&
-              ((!directMessage && row.presentation === 'message') ||
-                (row.mention_ids ?? []).includes(agentId)),
-          )
-        : page;
+    const visiblePage = page;
     const expiredMedia = await this.expiredMediaIds(
       visiblePage.flatMap((row) => row.attachments ?? []),
     );
@@ -644,6 +813,7 @@ export class DaemonService {
       input.after,
     );
     return {
+      ...(commandInboxRead ? { dispatchVersion: 1 as const } : {}),
       items: visiblePage.map((row) => ({
         id: row.id,
         cursor: `${row.cursor_ms},${row.id}`,
@@ -667,6 +837,7 @@ export class DaemonService {
       ...(closeRequested !== undefined ? { closeRequested } : {}),
     };
   }
+
   /** Media ids these attachments name whose bytes are past the TTL (`media-ttl.ts`). */
   private async expiredMediaIds(
     attachments: readonly DaemonAttachment[],
@@ -1068,86 +1239,13 @@ export class DaemonService {
         ).rows[0]
       : undefined;
     if (input.replyToMessageId && !parent) throw new Error('reply parent is not in this room');
-    const trigger = input.triggerMessageId
-      ? (
-          await this.database.query<{
-            agent_hop_count: number;
-            author_kind: 'human' | 'agent';
-          }>(
-            `SELECT message.agent_hop_count,identity.kind author_kind
-             FROM messages message JOIN identities identity ON identity.id=message.author_id
-             LEFT JOIN messages reply_parent ON reply_parent.id=message.reply_to_message_id
-             WHERE message.id=$1 AND message.room_id=$2 AND (
-               message.mention_ids @> $3::jsonb OR (
-               message.presentation='message'
-               AND (identity.kind<>'agent' OR message.agent_hop_count<$5)
-                 AND EXISTS(
-                   SELECT 1 FROM rooms room
-                   WHERE room.id=message.room_id AND room.direct_participants IS NULL
-                 )
-                 AND NOT EXISTS(
-                   SELECT 1 FROM jsonb_array_elements_text(message.mention_ids) mentioned
-                   JOIN identities mentioned_identity ON mentioned_identity.id=mentioned
-                   WHERE mentioned_identity.kind='agent'
-                 )
-                 AND (
-                   (message.reply_to_message_id IS NOT NULL AND reply_parent.author_id=$4) OR
-                   (message.reply_to_message_id IS NULL AND $4=(
-                     SELECT selected_answer.author_id
-                     FROM (
-                       SELECT answer.author_id
-                       FROM (
-                         SELECT id,author_id,presentation,mention_ids,request_id,reply_to_message_id,created_at
-                         FROM messages
-                         WHERE room_id=message.room_id AND presentation='message'
-                           AND (${MESSAGE_CURSOR_MS_SQL},id)<(${MESSAGE_CURSOR_MS_SQL.replaceAll('created_at', 'message.created_at')},message.id)
-                         ORDER BY ${MESSAGE_CURSOR_MS_SQL} DESC,id DESC LIMIT 200
-                       ) answer
-                       JOIN identities answer_identity ON answer_identity.id=answer.author_id
-                       LEFT JOIN messages request ON request.id=answer.request_id
-                       LEFT JOIN messages answer_parent ON answer_parent.id=answer.reply_to_message_id
-                       WHERE answer_identity.kind='agent'
-                         AND (
-                           request.author_id=message.author_id OR
-                           answer.mention_ids @> jsonb_build_array(message.author_id) OR
-                           answer_parent.author_id=message.author_id
-                         )
-                         AND (${MESSAGE_CURSOR_MS_SQL.replaceAll('created_at', 'answer.created_at')},answer.id)<(${MESSAGE_CURSOR_MS_SQL.replaceAll('created_at', 'message.created_at')},message.id)
-                       ORDER BY ${MESSAGE_CURSOR_MS_SQL.replaceAll('created_at', 'answer.created_at')} DESC,answer.id DESC LIMIT 1
-                     ) selected_answer
-                     WHERE EXISTS(
-                       SELECT 1 FROM memberships selected_membership
-                       WHERE selected_membership.room_id=message.room_id
-                         AND selected_membership.identity_id=selected_answer.author_id
-                         AND selected_membership.removed_at IS NULL
-                     )
-                   ))
-                 )
-               )
-             )`,
-            [
-              input.triggerMessageId,
-              input.roomId,
-              JSON.stringify([agentId]),
-              agentId,
-              AGENT_TO_AGENT_HOP_CAP,
-            ],
-          )
-        ).rows[0]
-      : (
-          await this.database.query<{
-            agent_hop_count: number;
-            author_kind: 'agent';
-          }>(
-            `SELECT message.agent_hop_count,identity.kind author_kind
-             FROM messages message JOIN identities identity ON identity.id=message.author_id
-             WHERE message.room_id=$1 AND identity.kind='agent' AND message.author_id<>$2
-               AND message.mention_ids @> $3::jsonb
-             ORDER BY message.created_at DESC,message.id DESC LIMIT 1`,
-            [input.roomId, agentId, JSON.stringify([agentId])],
-          )
-        ).rows[0];
-    if (input.triggerMessageId && !trigger) throw new Error('turn trigger is invalid for agent');
+    const command = await authorizeCommandOutput(
+      this.database,
+      input.roomId,
+      agentId,
+      input.requestId,
+      input.generationId,
+    );
     let humanIds = new Set<string>();
     if (mentions.length) {
       const members = await this.database.query<{ identity_id: string; kind: 'human' | 'agent' }>(
@@ -1199,11 +1297,8 @@ export class DaemonService {
     // Turns are unthreaded by design. Count from the inbox item that woke this
     // agent, not the optional presentation reply parent; a human item starts a
     // fresh chain at zero.
-    const hopCount = trigger?.author_kind === 'agent' ? trigger.agent_hop_count + 1 : 0;
-    const capped = agentMentionIds.size > 0 && hopCount >= AGENT_TO_AGENT_HOP_CAP;
-    const persistedMentions = capped
-      ? deliveredMentions.filter((value) => !agentMentionIds.has(value))
-      : deliveredMentions;
+    const hopCount = command.agent_depth;
+    const persistedMentions = deliveredMentions;
     await this.database.transaction(async (database) => {
       // Attachments queued this turn by beeline-agent attach_file ride on this
       // final reply; they are drained exactly once, here.
@@ -1215,8 +1310,8 @@ export class DaemonService {
           size: number;
         }>(
           `SELECT url,name,mime_type,size::integer AS size FROM agent_pending_attachments
-           WHERE room_id=$1 AND agent_id=$2 ORDER BY created_at,id`,
-          [input.roomId, agentId],
+           WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND generation_id=$4 ORDER BY created_at,id`,
+          [input.roomId, agentId, input.requestId, input.generationId],
         )
       ).rows;
       await database.query(
@@ -1250,8 +1345,8 @@ export class DaemonService {
       );
       if (pending.length)
         await database.query(
-          `DELETE FROM agent_pending_attachments WHERE room_id=$1 AND agent_id=$2`,
-          [input.roomId, agentId],
+          `DELETE FROM agent_pending_attachments WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND generation_id=$4`,
+          [input.roomId, agentId, input.requestId, input.generationId],
         );
       // A durable final Room reply is also the turn's terminal proof. This
       // makes the Room view settle even if the daemon is interrupted before
@@ -1266,11 +1361,11 @@ export class DaemonService {
       if (input.requestId) {
         const settled = await database.query(
           `INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id)
-           VALUES($1,$2,$3,'complete',NULL)
+           VALUES($1,$2,$3,'complete',$4)
            ON CONFLICT(room_id,request_id,agent_id) DO UPDATE SET
              status='complete',created_at=now()
            WHERE agent_turns.status<>'cancelled'`,
-          [input.roomId, input.requestId, agentId],
+          [input.roomId, input.requestId, agentId, input.generationId],
         );
         if (settled.rowCount)
           await settleTurnFailureLine(database, input.roomId, input.requestId, agentId);
@@ -1316,8 +1411,8 @@ export class DaemonService {
     if (Number(queued.rows[0]!.total) + attachment.size > this.mediaMaximumBytes)
       throw new Error('queued attachments exceed the size cap');
     await this.database.query(
-      `INSERT INTO agent_pending_attachments(room_id,agent_id,url,name,mime_type,size)
-       VALUES($1,$2,$3,$4,$5,$6)`,
+      `INSERT INTO agent_pending_attachments(room_id,agent_id,url,name,mime_type,size,request_id,generation_id)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
       [
         input.roomId,
         agentId,
@@ -1325,6 +1420,8 @@ export class DaemonService {
         attachment.name,
         attachment.mimeType,
         attachment.size,
+        input.requestId,
+        input.generationId,
       ],
     );
     return this.writeResult();
@@ -1765,9 +1862,9 @@ export class DaemonService {
     }
     const active = await this.database.query<{ request_id: string }>(
       `SELECT request_id FROM agent_turns
-       WHERE room_id=$1 AND agent_id=$2 AND status='working'
+       WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND status='working'
        ORDER BY created_at DESC LIMIT 1`,
-      [input.roomId, agentId],
+      [input.roomId, agentId, input.requestId],
     );
     const causeId = active.rows[0]?.request_id;
     if (!causeId)
@@ -2247,6 +2344,22 @@ export class DaemonService {
         `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,request_id,lifecycle) VALUES($1,$2,$3,$4,'{"lifecycle":"working","checks":"unknown"}')`,
         [cornerId, agentId, objective, input.requestId],
       );
+      const parentCommand = await authorizeCommandOutput(
+        db,
+        input.roomId,
+        agentId,
+        input.requestId,
+        input.generationId,
+      );
+      await createAgentCommand(db, {
+        roomId: cornerId,
+        agentId,
+        sourceMessageId: parentCommand.source_message_id,
+        reason: 'corner_objective',
+        parent: parentCommand,
+        retainDepth: true,
+        turnRequestId: input.requestId,
+      });
       // One durable open marker in the parent Room; the phone renders this as
       // a daemon-fact card and the push rule fires on it.
       await systemLine(db, {
@@ -2523,6 +2636,10 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   getAgentConfiguration: true,
   getAgentPresence: true,
   getRequestCompletion: true,
+  stageAgentDelegation: true,
+  getAgentCommands: true,
+  claimAgentCommand: true,
+  acknowledgeAgentCommand: true,
   postRoomMessage: true,
   postAgentAttachment: true,
   postAgentDraft: true,

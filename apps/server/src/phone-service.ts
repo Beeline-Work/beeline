@@ -1,3 +1,4 @@
+import { routeHumanMessage } from './agent-command.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { storeWorkspaceAvatar } from './durable-avatar.js';
 import { queueLatestReleasePush } from './release-push-catchup.js';
@@ -391,6 +392,7 @@ export class PhoneService {
     private readonly github?: GitHubOperations,
     private readonly sendPushTest?: (identityId: string) => Promise<void>,
     private readonly live?: LiveHub,
+    private readonly routingTransaction = false,
   ) {}
 
   canReadRoom(roomId: string, identityId: string): Promise<boolean> {
@@ -1975,7 +1977,21 @@ export class PhoneService {
     };
   }
 
-  private async sendMessage(input: Input<'sendRoomMessage'>, author: string) {
+  private async sendMessage(
+    input: Input<'sendRoomMessage'>,
+    author: string,
+  ): Promise<{ messageId: string }> {
+    if (!this.routingTransaction)
+      return this.database.transaction((db) =>
+        new PhoneService(
+          db,
+          this.publicOrigin,
+          this.github,
+          this.sendPushTest,
+          this.live,
+          true,
+        ).sendMessage(input, author),
+      );
     if (!(await this.hasRoomAccess(input.roomId, author))) throw new Error('room access denied');
     await this.assertRoomIsWritable(input.roomId, author);
     const id = input.messageId ?? messageId();
@@ -1984,24 +2000,27 @@ export class PhoneService {
     const mentionResolution = await this.resolveMessageMentions(input.roomId, author, input.text);
     const mentions = JSON.stringify(mentionResolution.mentionIds);
     const values = [id, input.roomId, author, input.text, attachments, mentions];
-    const inserted = await this.database.query(
-      `INSERT INTO messages(id,room_id,author_id,text,attachments,mention_ids)
+    return this.database.transaction(async (database) => {
+      const inserted = await database.query(
+        `INSERT INTO messages(id,room_id,author_id,text,attachments,mention_ids)
        VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb) ON CONFLICT(id) DO NOTHING`,
-      values,
-    );
-    if (!inserted.rowCount) {
-      const retry = await this.database.query(
-        `SELECT 1 FROM messages
+        values,
+      );
+      if (!inserted.rowCount) {
+        const retry = await database.query(
+          `SELECT 1 FROM messages
          WHERE id=$1 AND room_id=$2 AND author_id=$3 AND text=$4
            AND attachments=$5::jsonb AND mention_ids=$6::jsonb
            AND reply_to_message_id IS NULL`,
-        values,
-      );
-      if (!retry.rowCount) throw new Error('messageId is invalid');
+          values,
+        );
+        if (!retry.rowCount) throw new Error('messageId is invalid');
+        return { messageId: id };
+      }
+      await routeHumanMessage(database, id);
+      await this.noteUnansweredMentions(input.roomId, author, mentionResolution.noticeAgentIds, id);
       return { messageId: id };
-    }
-    await this.noteUnansweredMentions(input.roomId, author, mentionResolution.noticeAgentIds, id);
-    return { messageId: id };
+    });
   }
   private async createRoomSchedule(input: Input<'createRoomSchedule'>, viewerId: string) {
     const target = await this.requireTopLevelRoom(input.roomId);
@@ -2062,7 +2081,21 @@ export class PhoneService {
     );
     if (!deleted.rowCount) throw new Error('schedule not found');
   }
-  private async sendReply(input: Input<'sendRoomReply'>, author: string) {
+  private async sendReply(
+    input: Input<'sendRoomReply'>,
+    author: string,
+  ): Promise<{ messageId: string }> {
+    if (!this.routingTransaction)
+      return this.database.transaction((db) =>
+        new PhoneService(
+          db,
+          this.publicOrigin,
+          this.github,
+          this.sendPushTest,
+          this.live,
+          true,
+        ).sendReply(input, author),
+      );
     const parent = await this.database.query<{
       root_message_id: string | null;
       author_id: string;
@@ -2102,24 +2135,27 @@ export class PhoneService {
       input.parentMessageId,
       parent.rows[0].root_message_id ?? input.parentMessageId,
     ];
-    const inserted = await this.database.query(
-      `INSERT INTO messages(id,room_id,author_id,text,attachments,mention_ids,reply_to_message_id,root_message_id)
+    return this.database.transaction(async (database) => {
+      const inserted = await database.query(
+        `INSERT INTO messages(id,room_id,author_id,text,attachments,mention_ids,reply_to_message_id,root_message_id)
        VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8) ON CONFLICT(id) DO NOTHING`,
-      values,
-    );
-    if (!inserted.rowCount) {
-      const retry = await this.database.query(
-        `SELECT 1 FROM messages
+        values,
+      );
+      if (!inserted.rowCount) {
+        const retry = await database.query(
+          `SELECT 1 FROM messages
          WHERE id=$1 AND room_id=$2 AND author_id=$3 AND text=$4
            AND attachments=$5::jsonb AND mention_ids=$6::jsonb
            AND reply_to_message_id=$7 AND root_message_id=$8`,
-        values,
-      );
-      if (!retry.rowCount) throw new Error('messageId is invalid');
+          values,
+        );
+        if (!retry.rowCount) throw new Error('messageId is invalid');
+        return { messageId: id };
+      }
+      await routeHumanMessage(database, id);
+      await this.noteUnansweredMentions(input.roomId, author, mentionResolution.noticeAgentIds, id);
       return { messageId: id };
-    }
-    await this.noteUnansweredMentions(input.roomId, author, mentionResolution.noticeAgentIds, id);
-    return { messageId: id };
+    });
   }
   /**
    * Say out loud why a mentioned agent will not answer. ONE producer for every
@@ -2447,9 +2483,9 @@ export class PhoneService {
       await this.database.query<{ author_id: string }>(
         `SELECT trigger.author_id
          FROM agent_turns turn
-         JOIN messages trigger ON trigger.id=turn.request_id
-           AND (trigger.room_id=turn.room_id
-             OR trigger.room_id=(SELECT parent_id FROM rooms WHERE id=turn.room_id))
+         JOIN agent_commands command ON command.room_id=turn.room_id AND command.agent_id=turn.agent_id
+           AND command.turn_request_id=turn.request_id
+         JOIN messages trigger ON trigger.id=command.root_source_message_id
          WHERE turn.room_id=$1 AND turn.request_id=$2 AND turn.agent_id=$3
            AND turn.status='working'`,
         [input.roomId, input.requestId, input.agentId],
@@ -2460,6 +2496,10 @@ export class PhoneService {
     const stopper = await this.requireIdentity(viewerId);
     const agent = await this.requireIdentity(input.agentId);
     await this.database.transaction(async (database) => {
+      await database.query(
+        `SELECT id FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3 FOR UPDATE`,
+        [input.roomId, input.agentId, input.requestId],
+      );
       const stopped = await database.query(
         `UPDATE agent_turns SET status='cancelled',created_at=now()
          WHERE room_id=$1 AND request_id=$2 AND agent_id=$3 AND status='working'`,
@@ -3219,6 +3259,12 @@ export class PhoneService {
         // A resume kind: it answers a turn already paused on the ask, and must
         // never start a second one (`RESUME_KINDS`).
         kind: 'grant-decided',
+        commandId: (
+          await database.query<{ command_id: string }>(
+            `SELECT command_id FROM agent_grants WHERE id=$1`,
+            [input.grantId],
+          )
+        ).rows[0]?.command_id,
         object: `${grant.kind} ${grant.target}`,
         mentions: [grant.agent_id],
         cardType: 'grant-decision',

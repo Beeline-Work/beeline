@@ -1,3 +1,4 @@
+import { CommandExecutionContext, runServerCommandIntake } from './server-command-intake.js';
 import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -7,12 +8,7 @@ import {
   SCHEDULE_RAN_VERB,
   SCHEDULE_SCHEDULER_NAME,
 } from '@beeline/api-contract/scheduled-prompts';
-import {
-  isControlKind,
-  isResumeKind,
-  isServerEventKind,
-  type SystemEvent,
-} from '@beeline/api-contract/daemon';
+import { isControlKind, isResumeKind, type SystemEvent } from '@beeline/api-contract/daemon';
 import {
   AcpClient,
   type AcpPermissionDecision,
@@ -20,10 +16,8 @@ import {
   type McpServerWire,
   type PromptResult,
 } from './acp.js';
-import { AgentResponseRule, INBOX_DEDUPLICATION_LIMIT } from './agent-response-rule.js';
 import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
-import { isSenderPermitted, LEGACY_ACCESS_POLICY } from './access-policy.js';
 import {
   attachmentImageBlocks,
   attachmentPromptLines,
@@ -43,12 +37,7 @@ import {
 } from './read-only-policy.js';
 import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
 import type { BodyConfig } from './config.js';
-import {
-  laterInboxCursor,
-  orderInboxItems,
-  type DaemonApiClient,
-  type InboxItem,
-} from './daemon-api-client.js';
+import { type DaemonApiClient } from './daemon-api-client.js';
 import {
   explainEmptyAgentTurn,
   nextPinnedProvider,
@@ -68,7 +57,7 @@ import type { AgentRuntimeRecord } from './runtime.js';
 import { runtimeIdentity } from './runtime.js';
 import { MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE, SOUL_HOUSE_RULE } from './response-directives.js';
 import { stripCornerOpenEcho } from './reply-sanitizer.js';
-import { TurnStoppedError, turnStopRequestId } from './turn-stop.js';
+import { TurnStoppedError } from './turn-stop.js';
 import { AgentTurnStream, durableReplyText } from './turn-stream.js';
 import { TurnTrace, TurnTraceFile, type TurnTraceSink } from './turn-trace.js';
 import { isFailedToolCall, toolCallFailureLine } from './tool-call-failure.js';
@@ -94,7 +83,6 @@ type HumanMessage = Pick<
   | 'requestAuthorId'
   | 'agentHopCount'
 >;
-type RoomAuthority = DaemonOperationMap['getRoomAuthority']['output'];
 
 /**
  * Rooms and corners share one rule: every MCP tool call from a server the
@@ -129,16 +117,6 @@ export function roomMcpPermissionDecision(
  * running, on its next poll. `humanPermitted` is the runtime record's own reading,
  * used only against a server too old to answer.
  */
-export function roomPrincipalMayAddressAgent(
-  authority: RoomAuthority,
-  humanPermitted: boolean,
-): boolean {
-  if (!authority.member) return false;
-  if (authority.principalKind === 'agent') return true;
-  if (authority.principalKind !== 'human') return false;
-  return authority.mayAddressAgent ?? humanPermitted;
-}
-
 /** Server-authored scheduled prompts arrive as system lines (`@scheduler ran a
  *  schedule for <agent> · <message>`) mentioning this agent and carrying the structured
  *  event; the scheduler is not a Room principal, so its lines skip the per-author
@@ -226,18 +204,6 @@ export function isSubscribedEvent(
  * `agent:` kind is a fact another agent emitted and stays gated on that agent.
  * Grant decisions were already authority-gated by the owner's own decision.
  */
-export function inboxItemSkipsSenderPolicy(
-  item: { type: string; mentionIds: readonly string[]; body: string; systemEvent?: SystemEvent },
-  agentId: string,
-): boolean {
-  if (isGrantDecisionLine(item, agentId)) return true;
-  if (item.type !== 'system' || !item.mentionIds.includes(agentId)) return false;
-  const kind = item.systemEvent?.kind;
-  // The one-release verb fallback covers a scheduled prompt written before the
-  // server stamped kinds; it is server-authored either way.
-  return kind === undefined ? isScheduledPrompt(item, agentId) : isServerEventKind(kind);
-}
-
 /** The owner's answer to a grant card arrives as a server-authored system line
  *  mentioning this agent (`<name> approved: command …`); it resumes the turn that
  *  paused on the ask. Recognised structurally, never by a bare `system` type. */
@@ -252,8 +218,8 @@ export function isGrantDecisionLine(
   );
 }
 
-/** Which inbox items may start or steer a turn: ordinary messages from others that
- *  explicitly mention the agent or continue its per-sender exchange, mentioned event lines (plus the one-release verb fallback for
+/** Which server-delivered commands may start or steer a turn: ordinary messages,
+ *  mentioned event lines (plus the one-release verb fallback for
  *  a scheduled prompt written before the server stamped kinds), and the grant
  *  decision that resumes a turn paused on the ask. Never a plain system line and
  *  never the agent's own rows.
@@ -262,22 +228,6 @@ export function isGrantDecisionLine(
  *  path, which prompts the paused turn's session with the decision and the
  *  resume instruction. `isSubscribedEvent` excludes it so it cannot ALSO be
  *  handled as an ordinary event and prompt the granted work a second time. */
-export function inboxItemTriggersTurn(
-  item: RoomMessage,
-  agentId: string,
-  continuesExchange = false,
-): boolean {
-  if (item.authorId === agentId) return false;
-  if (item.type === 'message' && continuesExchange) return true;
-  if (!item.mentionIds.includes(agentId)) return false;
-  return (
-    item.type === 'message' ||
-    isSubscribedEvent(item, agentId) ||
-    isScheduledPrompt(item, agentId) ||
-    isGrantDecisionLine(item, agentId)
-  );
-}
-
 /** A `request_grant` call whose reply says the card is posted pauses the turn. */
 export function pendingGrantToolCall(call: { title?: string; content?: unknown }): boolean {
   if (!/(?:^|[._:/-])request_grant$/i.test(call.title ?? '')) return false;
@@ -310,11 +260,14 @@ export function roomMentionDirectory(roster: WorkspaceRoster, selfId: string): s
     const alias = handle || name;
     if (!alias) continue;
     const kind = member.kind === 'agent' ? 'agent' : 'person';
-    rows.push(`- @${alias}${name && name !== alias ? ` — ${name}` : ''} (${kind})`);
+    rows.push(
+      `- @${alias}${name && name !== alias ? ` — ${name}` : ''} (${kind})${member.kind === 'agent' ? ` — delegation agentId: ${member.identityId}` : ''}`,
+    );
   }
   if (!rows.length) return '';
   return [
     'Room members, and the exact spelling that tags each one:',
+    'Agent tags in your prose are display-only. To ask another agent to work, call delegate_to_agent with its exact agentId, then put the request in your final answer.',
     ...rows,
     'Write a tag exactly as spelled here. An @name spelled any other way is plain text: it reaches nobody, and nobody is told it was meant for them. Never invent a handle, shorten one, or copy an @name out of the conversation — old messages carry spellings that no longer exist.',
   ].join('\n');
@@ -373,8 +326,6 @@ interface ActiveTurn {
   /** The requester stopped this turn: publish nothing, settle nothing. */
   cancelled: boolean;
   phase: 'prompting' | 'finishing';
-  continuitySenders?: ReadonlySet<string>;
-  rebuildContinuity?: boolean;
   promise: Promise<void>;
 }
 
@@ -412,13 +363,12 @@ export interface MonolithRoomTurnOptions {
  * monolith Room cannot accidentally fall through to a retired relay call.
  */
 export class MonolithRoomTurnLoop {
+  private readonly commandContext: CommandExecutionContext;
   private readonly agent: ReturnType<typeof runtimeIdentity>;
-  private reconciliationRequested = true;
   private wakeIntake?: () => void;
 
   /** Called by the daemon's one slow workspace reconciliation sweep. */
   requestReconciliation(): void {
-    this.reconciliationRequested = true;
     this.wakeIntake?.();
     this.wakeIntake = undefined;
   }
@@ -436,7 +386,6 @@ export class MonolithRoomTurnLoop {
   private turnInstructionPrefix = '';
   private activeTurn?: ActiveTurn;
   private readonly queuedTurns: HumanMessage[] = [];
-  private continuityRebuildRequested = false;
   /** Session scratch directory attachments are downloaded into (`TMPDIR/beeline-attachments`). */
   private attachmentDir?: string;
   /** Whether the pinned model takes images; `undefined` when the pin did not say. */
@@ -455,18 +404,21 @@ export class MonolithRoomTurnLoop {
   private pausedOnGrantRequestId?: string;
   /** Operator-local turn traces; built once when the daemon configured a directory. */
   private turnTraceSink?: TurnTraceSink;
-  /** Per-sender continuity, shared in shape with corner intake. */
-  private readonly responseRule = new AgentResponseRule();
 
   constructor(private readonly options: MonolithRoomTurnOptions) {
     this.agent = runtimeIdentity(options.runtime.agent);
+    this.commandContext = new CommandExecutionContext(options.config.agentHomeRoot);
+    this.options = { ...options, api: this.commandContext.bind(options.api) };
     options.grantRunner?.register(options.roomId, {
       workspaceId: options.workspaceId,
       cwd: options.cwd,
       // A top-level Room keeps its read-only promise for grants too: the runner
       // wraps the command in this Room's own mount table (C94).
       writePolicy: () => this.grantWritePolicy(),
-      turn: () => this.currentTurnForRunner(),
+      turn: () => {
+        const turn = this.currentTurnForRunner();
+        return turn ? { ...turn, generationId: this.commandContext.generationId } : undefined;
+      },
     });
   }
 
@@ -528,17 +480,6 @@ export class MonolithRoomTurnLoop {
     return { pubkey: authorId, ...(name ? { name } : {}) };
   }
 
-  currentPrincipalCanDrive(_workspaceId: string, principalId: string): Promise<boolean> {
-    return Promise.resolve(
-      isSenderPermitted(
-        this.options.config.accessPolicy ?? LEGACY_ACCESS_POLICY,
-        principalId,
-        this.options.config.accessOwnerPubkey,
-        this.options.config.accessAllowlist,
-      ),
-    );
-  }
-
   async refreshPersonaForSoulUpdate(): Promise<void> {
     await this.options.scheduler.suspend(this.options.roomId);
   }
@@ -559,9 +500,6 @@ export class MonolithRoomTurnLoop {
       workspaceId: this.options.workspaceId,
     });
     this.memberNames = new Map(roster.members.map((member) => [member.identityId, member.name]));
-    this.responseRule.setAgents(
-      roster.members.filter((member) => member.kind === 'agent').map((member) => member.identityId),
-    );
     return roster;
   }
 
@@ -739,6 +677,7 @@ export class MonolithRoomTurnLoop {
         // images dir, say), so anything inside the overlay it could possibly
         // have written must be attachable, whatever subdirectory that is.
         attachScratchRoot,
+        turnContextPath: this.commandContext.path,
         directMessage,
         ...(this.options.grantRunnerEndpoint
           ? { grantRunner: this.options.grantRunnerEndpoint }
@@ -909,7 +848,6 @@ export class MonolithRoomTurnLoop {
       .finally(() => {
         if (this.activeTurn === active) {
           this.activeTurn = undefined;
-          if (active.rebuildContinuity) this.continuityRebuildRequested = true;
           this.wakeIntake?.();
           this.wakeIntake = undefined;
         }
@@ -935,35 +873,6 @@ export class MonolithRoomTurnLoop {
     if (this.client && this.sessionId) this.client.sessionCancel(this.sessionId);
   }
 
-  private steer(active: ActiveTurn, item: HumanMessage): void {
-    active.steers.push(item);
-    active.steerTail = active.steerTail
-      .catch(() => undefined)
-      .then(async () => {
-        try {
-          const [roster, delivered] = await Promise.all([this.roster(), this.deliver(item)]);
-          const author =
-            roster.members.find((member) => member.identityId === item.authorId)?.name ??
-            item.authorId.slice(0, 12);
-          await this.client!.sessionSteer(
-            this.sessionId!,
-            [
-              `Human steer received while the current turn is running from ${author}:`,
-              roomMessagePrompt('', item.body, item.attachments, delivered, this.acceptsImages()),
-              'Adjust the current work now. Keep the original request and earlier messages as context.',
-            ].join('\n\n'),
-          );
-        } catch (error) {
-          active.resumeRequested = true;
-          this.client?.sessionCancel(this.sessionId!);
-          console.warn(
-            `[thin-core] monolith Room ${this.options.roomId} live steer unavailable; cancelling and resuming:`,
-            error,
-          );
-        }
-      });
-  }
-
   private async prompt(active: ActiveTurn): Promise<void> {
     const { item } = active;
     const api = this.options.api;
@@ -980,7 +889,7 @@ export class MonolithRoomTurnLoop {
           agentId: this.agent.publicKey,
           roomId: this.options.roomId,
           requestId: item.id,
-          generationId: `${this.agent.publicKey}:${this.options.roomId}`,
+          generationId: this.commandContext.generationId,
         },
         async () => {
           await api.execute('postAgentActivity', {
@@ -1034,7 +943,7 @@ export class MonolithRoomTurnLoop {
                     this.acceptsImages(),
                   ),
                 }));
-              const grantDecision = isGrantDecisionLine(item, this.agent.publicKey);
+              const grantDecision = this.commandContext.current?.action === 'resume';
               const resumedRequestId = grantDecision ? this.pausedOnGrantRequestId : undefined;
               if (grantDecision) this.pausedOnGrantRequestId = undefined;
               // Built per ATTEMPT, never once per turn: a C92 re-pin runs the
@@ -1170,8 +1079,7 @@ export class MonolithRoomTurnLoop {
               // to nothing, exactly as it should. Either way the Room's own
               // record of the stop is the attributed line the server wrote.
               if (active.cancelled) {
-                const stoppedText = durableReplyText(result.agentText);
-                await stream.settle(stoppedText, stoppedText ? { triggerMessageId: item.id } : {});
+                stream.close();
                 throw new TurnStoppedError('turn stopped by the requester');
               }
               active.phase = 'finishing';
@@ -1229,11 +1137,6 @@ export class MonolithRoomTurnLoop {
               const mentionIds = reply
                 ? agentReplyMentionIds(reply, roster, this.agent.publicKey)
                 : [];
-              const continuitySenders = reply ? [item.authorId, ...mentionIds] : [];
-              if (continuitySenders.length) {
-                active.continuitySenders = new Set(continuitySenders);
-                active.rebuildContinuity = true;
-              }
               await trace.measure('publish', () =>
                 stream.settle(
                   reply,
@@ -1243,15 +1146,6 @@ export class MonolithRoomTurnLoop {
                         mentionIds,
                       }
                     : {},
-                  reply
-                    ? (posted) => {
-                        this.responseRule.noteReply(this.agent.publicKey, [
-                          item.authorId,
-                          ...(posted.mentionIds ?? []),
-                        ]);
-                        active.rebuildContinuity = false;
-                      }
-                    : undefined,
                 ),
               );
             },
@@ -1269,7 +1163,7 @@ export class MonolithRoomTurnLoop {
         roomId: this.options.roomId,
         requestId: item.id,
         status: 'complete',
-        generationId: `${this.agent.publicKey}:${this.options.roomId}`,
+        generationId: this.commandContext.generationId,
       });
       // After the receipt: an operator artifact must never delay the answer,
       // and it never becomes one — the trace has no way to post a Room row.
@@ -1292,7 +1186,7 @@ export class MonolithRoomTurnLoop {
         roomId: this.options.roomId,
         requestId: item.id,
         status: 'failed',
-        generationId: `${this.agent.publicKey}:${this.options.roomId}`,
+        generationId: this.commandContext.generationId,
         reason,
       });
       await trace.finish('failed', reason);
@@ -1304,161 +1198,35 @@ export class MonolithRoomTurnLoop {
 
   async run(): Promise<void> {
     const { api, roomId, signal } = this.options;
-    let cursor: string | undefined;
-    const processedInboxIds = new Set<string>();
-    const deferredContinuity = new Map<string, InboxItem>();
-    const pushedInbox: InboxItem[] = [];
-    let pendingPushedCursor: string | undefined;
-    let liveConnected = false;
-    let stopLive: (() => void) | undefined;
     try {
-      const activation = await api.execute('getRoomInbox', { roomId, startAtLatest: true });
-      cursor = activation.cursor;
-      const rewindSupported = Array.isArray(activation.rewindIds);
-      for (const id of activation.rewindIds ?? []) processedInboxIds.add(id);
-      const [history] = await Promise.all([
-        api.execute('getRoomConversation', { roomId, limit: 200, window: 'continuity' }),
-        this.roster(),
-      ]);
-      this.responseRule.observeAll(history.items);
-      stopLive = api.liveSubscribe?.(
+      await runServerCommandIntake({
+        api,
         roomId,
-        cursor,
-        (items, pushedCursor) => {
-          pushedInbox.push(...items);
-          pendingPushedCursor = laterInboxCursor(pendingPushedCursor, pushedCursor);
-          this.wakeIntake?.();
-          this.wakeIntake = undefined;
+        agentId: this.agent.publicKey,
+        context: this.commandContext,
+        signal,
+        pollMs: this.options.pollMs,
+        onWake: (wake) => {
+          this.wakeIntake = wake;
         },
-        (connected, capabilities) => {
-          liveConnected = connected && capabilities?.pushIntake === true;
-          this.options.health.presence(
-            connected && !this.options.config.modelUnavailable ? 'online' : 'offline',
-          );
-          this.wakeIntake?.();
-          this.wakeIntake = undefined;
+        onPoll: () => this.options.health.poll(),
+        onError: (error) => console.error('[thin-core] Room command failed', error),
+        stop: (requestId) => this.stopTurn(requestId),
+        run: async (command) => {
+          const item = {
+            ...command.source,
+            id: command.turnRequestId,
+            body:
+              command.action === 'resume'
+                ? `Resume the paused turn. The server supplied this grant decision: ${command.source.body}`
+                : command.source.body,
+          };
+          this.startPrompt(item);
+          await this.activeTurn?.promise;
         },
-        {
-          ...(this.options.config.daemonReleaseVersion
-            ? { releaseVersion: this.options.config.daemonReleaseVersion }
-            : {}),
-          ...(this.options.config.daemonSourceSha
-            ? { sourceSha: this.options.config.daemonSourceSha }
-            : {}),
-          available: !this.options.config.modelUnavailable,
-        },
-      );
-      while (!signal?.aborted) {
-        try {
-          if (!this.activeTurn && this.continuityRebuildRequested) {
-            const history = await api.execute('getRoomConversation', {
-              roomId,
-              limit: 200,
-              window: 'continuity',
-            });
-            this.responseRule.replaceHistory(history.items);
-            this.continuityRebuildRequested = false;
-          }
-          if (!this.activeTurn && deferredContinuity.size === 0 && this.queuedTurns.length) {
-            this.startPrompt(this.queuedTurns.shift()!);
-          }
-          const pollNow =
-            pushedInbox.length === 0 && (!liveConnected || this.reconciliationRequested);
-          const inbox = !pollNow
-            ? { items: [], cursor: undefined }
-            : await api.execute('getRoomInbox', {
-                roomId,
-                ...(cursor ? { after: cursor } : {}),
-                ...(rewindSupported ? { rewind: true } : {}),
-                limit: 200,
-              });
-          if (pollNow) {
-            this.reconciliationRequested = false;
-          }
-          const deferred = this.activeTurn ? [] : [...deferredContinuity.values()];
-          if (!this.activeTurn) deferredContinuity.clear();
-          const delivered = orderInboxItems([
-            ...deferred,
-            ...pushedInbox.splice(0),
-            ...inbox.items,
-          ]);
-          for (const item of delivered) {
-            if (processedInboxIds.has(item.id) || deferredContinuity.has(item.id)) continue;
-            const triggers = inboxItemTriggersTurn(
-              item,
-              this.agent.publicKey,
-              this.responseRule.continues(item, this.agent.publicKey),
-            );
-            const finishing = this.activeTurn;
-            if (
-              !triggers &&
-              finishing?.phase === 'finishing' &&
-              finishing.continuitySenders?.has(item.authorId) &&
-              item.type === 'message' &&
-              !item.replyToMessageId
-            ) {
-              deferredContinuity.set(item.id, item);
-              continue;
-            }
-            processedInboxIds.add(item.id);
-            while (processedInboxIds.size > INBOX_DEDUPLICATION_LIMIT)
-              processedInboxIds.delete(processedInboxIds.values().next().value!);
-            // A stop is read before anything else can mistake it for work:
-            // it is server-authored, already authority-checked (only the
-            // requester may write one), and its whole job is to end a turn.
-            const stopped = turnStopRequestId(item, this.agent.publicKey);
-            if (stopped) {
-              this.stopTurn(stopped);
-              continue;
-            }
-            this.responseRule.observe(item);
-            if (!triggers) continue;
-            // A server-authored event was already authority-gated where the
-            // fact was made (schedule creation; the owner's grant decision;
-            // membership). Everything else answers to the per-sender policy.
-            if (!inboxItemSkipsSenderPolicy(item, this.agent.publicKey)) {
-              const authority = await api.execute('getRoomAuthority', {
-                roomId,
-                principalId: item.authorId,
-              });
-              const humanPermitted =
-                authority.principalKind === 'human'
-                  ? await this.currentPrincipalCanDrive(this.options.workspaceId, item.authorId)
-                  : false;
-              if (!roomPrincipalMayAddressAgent(authority, humanPermitted)) continue;
-            }
-            const active = this.activeTurn;
-            if (!active) this.startPrompt(item);
-            else if (active.phase === 'prompting') this.steer(active, item);
-            else this.queuedTurns.push(item);
-          }
-          cursor = laterInboxCursor(cursor, laterInboxCursor(inbox.cursor, pendingPushedCursor));
-          pendingPushedCursor = undefined;
-          api.updateLiveCursor?.(roomId, cursor);
-          if (pollNow) this.options.health.poll();
-          if (!pushedInbox.length) {
-            await Promise.race([
-              wait(liveConnected ? 2_147_483_647 : (this.options.pollMs ?? 1_000), signal),
-              new Promise<void>((resolve) => {
-                this.wakeIntake = resolve;
-              }),
-            ]);
-          }
-        } catch (error) {
-          if (signal?.aborted) break;
-          this.options.health.failure(1_000);
-          console.error(`[thin-core] monolith Room ${roomId} turn loop failed:`, error);
-          await wait(1_000, signal);
-        }
-      }
+      });
     } finally {
-      stopLive?.();
-      this.wakeIntake = undefined;
       this.options.grantRunner?.unregister(roomId);
-      if (this.activeTurn?.phase === 'prompting' && this.client && this.sessionId) {
-        this.client.sessionCancel(this.sessionId);
-      }
-      await this.activeTurn?.promise;
       await this.options.scheduler.suspend(roomId);
     }
   }
@@ -1476,17 +1244,4 @@ function roomMessagePrompt(
   return [rendered, ...attachmentPromptLines(attachments, delivered, harnessAcceptsImages)].join(
     '\n',
   );
-}
-
-async function wait(ms: number, signal?: AbortSignal): Promise<void> {
-  if (signal?.aborted) return;
-  await new Promise<void>((resolveWait) => {
-    const done = () => {
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', done);
-      resolveWait();
-    };
-    const timer = setTimeout(done, ms);
-    signal?.addEventListener('abort', done, { once: true });
-  });
 }

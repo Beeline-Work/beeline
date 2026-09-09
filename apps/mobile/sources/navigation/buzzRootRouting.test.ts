@@ -13,6 +13,7 @@ vi.mock('@/auth/AuthContext', () => ({ useAuth: () => auth }));
 vi.mock('@/auth/buzz-identity-storage', () => buzzIdentityStorage);
 vi.mock('expo-router', () => ({ router: navigation }));
 vi.mock('expo-linking', () => linking);
+vi.mock('expo-web-browser', () => ({}));
 vi.mock('@/buzz/person-name', () => personName);
 
 vi.mock('react-native', async () => {
@@ -118,6 +119,18 @@ describe('Buzz root launch routing', () => {
       params: { token },
     });
     expect(navigation.replace).not.toHaveBeenCalledWith('/beeline/channels');
+  });
+
+  it('sends a malformed cold desktop review link to its visible error route', async () => {
+    linking.getInitialURL.mockResolvedValue('beeline://review/short');
+
+    await renderHome();
+
+    expect(navigation.replace).toHaveBeenCalledWith({
+      pathname: '/review/[secret]',
+      params: { secret: 'short' },
+    });
+    expect(navigation.replace).not.toHaveBeenCalledWith('/beeline/onboarding');
   });
 
   it('renders the storage error instead of routing', async () => {

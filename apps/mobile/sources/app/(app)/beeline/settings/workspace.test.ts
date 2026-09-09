@@ -143,7 +143,16 @@ beforeEach(() => {
   avatarUpload.pickAndUploadAvatar.mockResolvedValue(null);
 });
 
-function workspaceView(role: 'owner' | 'admin' | 'member' = 'owner', avatar?: string) {
+function workspaceView(
+  role: 'owner' | 'admin' | 'member' = 'owner',
+  avatar?: string,
+  rooms?: Array<{
+    id: string;
+    name: string;
+    visibility: 'public' | 'invite-only';
+    createdAt: number;
+  }>,
+) {
   return {
     workspace: {
       id: 'workspace-1',
@@ -154,6 +163,9 @@ function workspaceView(role: 'owner' | 'admin' | 'member' = 'owner', avatar?: st
       createdAt: 1,
       updatedAt: 1,
     },
+    ...(role === 'owner' || role === 'admin'
+      ? { managerSettings: { visibility: 'invite-only' as const, ...(rooms ? { rooms } : {}) } }
+      : {}),
     members: [],
     agents: [],
     membersTruncated: false,
@@ -167,7 +179,7 @@ function workspaceView(role: 'owner' | 'admin' | 'member' = 'owner', avatar?: st
   };
 }
 
-function room(id: string, name: string, createdAt: number, archived = false) {
+function room(id: string, name: string, createdAt: number, archived = false, direct = false) {
   return {
     room: {
       id,
@@ -181,6 +193,13 @@ function room(id: string, name: string, createdAt: number, archived = false) {
     memberCount: 1,
     cornerCount: 0,
     unread: false,
+    ...(direct
+      ? {
+          directMessage: {
+            peer: { pubkey: 'b'.repeat(64), kind: 'human', name: 'System' },
+          },
+        }
+      : {}),
   };
 }
 
@@ -226,6 +245,7 @@ describe('Workspace Settings authority', () => {
     expect(renderer.root.findByProps({ testID: 'workspace-visibility-setting' })).toBeDefined();
     expect(renderer.root.findByProps({ testID: 'workspace-members-link' })).toBeDefined();
     expect(renderer.root.findByProps({ testID: 'channel-visibility-settings' })).toBeDefined();
+    expect(renderer.root.findAllByProps({ testID: 'open-rooms' })).toHaveLength(0);
   });
 
   it('lets a Workspace manager set a canonical uploaded picture', async () => {
@@ -363,6 +383,41 @@ describe('Workspace Settings authority', () => {
     ).toHaveLength(1);
   });
 
+  it('excludes deterministic Direct Messages from Room visibility', async () => {
+    roomViews.chats.mockResolvedValue(
+      chatListView([room('room-1', 'atlas', 1), room('dm-1', 'Direct message', 2, false, true)]),
+    );
+
+    const renderer = await render();
+
+    expect(renderer.root.findByProps({ testID: 'room-visibility-room-1' })).toBeDefined();
+    expect(renderer.root.findAllByProps({ testID: 'room-visibility-dm-1' })).toHaveLength(0);
+  });
+
+  it('uses the manager index so an unjoined private Room remains configurable', async () => {
+    roomViews.workspace.mockResolvedValue(
+      workspaceView('admin', undefined, [
+        {
+          id: 'private-room',
+          name: 'captains',
+          visibility: 'invite-only',
+          createdAt: 3,
+        },
+      ]),
+    );
+    roomViews.chats.mockResolvedValue(chatListView([]));
+
+    const renderer = await render();
+    const control = renderer.root.findByProps({ testID: 'room-visibility-private-room' });
+    expect(control.props.accessibilityLabel).toBe('Make #captains public');
+
+    await act(async () => {
+      control.props.onPress();
+      await Promise.resolve();
+    });
+    expect(client.setChannelVisibility).toHaveBeenCalledWith('private-room', 'public');
+  });
+
   it('qualifies same-name Rooms with human dates and discloses the full ID on demand', async () => {
     roomViews.chats.mockResolvedValue(
       chatListView([room('11111111-room', 'beeline', 1), room('22222222-room', 'beeline', 2)]),
@@ -390,17 +445,27 @@ describe('Workspace Settings authority', () => {
     roomViews.chats.mockResolvedValue(chatListView([room('room-1', 'atlas', 1)]));
 
     const renderer = await render();
-    expect(renderer.root.findByProps({ testID: 'room-visibility-room-1' }).props).toMatchObject({
+    const visibilityControl = renderer.root.findAll(
+      (node) => node.type === 'TouchableOpacity' && node.props.testID === 'room-visibility-room-1',
+    )[0]!;
+    expect(visibilityControl.props).toMatchObject({
       accessibilityLabel: 'Make #atlas invite-only',
       accessibilityRole: 'button',
     });
+
+    await act(async () => {
+      visibilityControl.props.onPress();
+      await Promise.resolve();
+    });
+    expect(client.setChannelVisibility).toHaveBeenCalledWith('room-1', 'invite-only');
+    expect(navigation.push).not.toHaveBeenCalled();
   });
 
   it('renders Room rows with the # channel mark while stored names stay unmarked', async () => {
     roomViews.chats.mockResolvedValue(chatListView([room('room-1', 'atlas', 1)]));
 
     const renderer = await render();
-    const openRow = renderer.root.findByProps({ accessibilityLabel: 'Open Room #atlas' });
+    const openRow = renderer.root.findByProps({ accessibilityLabel: 'Make #atlas invite-only' });
     // The title leads the row; the visibility value trails it on the one axis.
     const [rowTitle, rowValue] = openRow
       .findAllByType('Text')

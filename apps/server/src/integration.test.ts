@@ -345,23 +345,29 @@ describe('monolith integration', () => {
     );
 
     const created = (await (
-      await operation('createRoom', { workspaceId, name: 'Private by default' })
+      await operation('createRoom', { workspaceId, name: 'Public by default' })
     ).json()) as { id: string };
     expect(
       (await request(`/v1/phone/rooms/${created.id}`, 'GET', undefined, aliceToken)).status,
-    ).toBe(404);
+    ).toBe(200);
     expect(
       (
         await operation('updateRoom', {
           roomId: created.id,
           name: 'Renamed Room',
-          visibility: 'public',
+          visibility: 'invite-only',
         })
       ).status,
     ).toBe(204);
     expect(
-      await (await operation('addRoomMember', { roomId: created.id, memberId: aliceId })).json(),
-    ).toEqual({ joined: true });
+      (
+        (await (
+          await request(`/v1/phone/rooms/${created.id}`, 'GET', undefined, aliceToken)
+        ).json()) as {
+          room: { visibility: string };
+        }
+      ).room.visibility,
+    ).toBe('invite-only');
     expect(
       (await request(`/v1/phone/rooms/${created.id}`, 'GET', undefined, aliceToken)).status,
     ).toBe(200);
@@ -594,7 +600,57 @@ describe('monolith integration', () => {
     ).json()) as { id: string };
     expect(
       (await request(`/v1/phone/rooms/${laterRoom.id}`, 'GET', undefined, aliceToken)).status,
+    ).toBe(200);
+
+    await operation('addWorkspaceMember', {
+      workspaceId,
+      memberId: aliceId,
+      role: 'admin',
+    });
+
+    const privateRoom = (await (
+      await operation('createRoom', {
+        workspaceId,
+        name: 'Admins invite only',
+        visibility: 'invite-only',
+      })
+    ).json()) as { id: string };
+    expect(
+      (await request(`/v1/phone/rooms/${privateRoom.id}`, 'GET', undefined, aliceToken)).status,
     ).toBe(404);
+    const aliceWorkspace = (await (
+      await request(`/v1/phone/workspaces/${workspaceId}`, 'GET', undefined, aliceToken)
+    ).json()) as {
+      managerSettings?: { rooms?: Array<{ id: string; visibility: string }> };
+    };
+    expect(aliceWorkspace.managerSettings?.rooms).toContainEqual({
+      id: privateRoom.id,
+      name: 'Admins invite only',
+      visibility: 'invite-only',
+      createdAt: expect.any(Number),
+    });
+    expect(
+      await (
+        await operation('addRoomMember', { roomId: privateRoom.id, memberId: aliceId })
+      ).json(),
+    ).toEqual({ joined: true });
+
+    const openedRoom = (await (
+      await operation('createRoom', {
+        workspaceId,
+        name: 'Open later',
+        visibility: 'invite-only',
+      })
+    ).json()) as { id: string };
+    expect(
+      (await request(`/v1/phone/rooms/${openedRoom.id}`, 'GET', undefined, aliceToken)).status,
+    ).toBe(404);
+    expect(
+      (await operation('updateRoom', { roomId: openedRoom.id, visibility: 'public' })).status,
+    ).toBe(204);
+    expect(
+      (await request(`/v1/phone/rooms/${openedRoom.id}`, 'GET', undefined, aliceToken)).status,
+    ).toBe(200);
   });
 
   it('bounds Room membership and direct messages to current Workspace members', async () => {
@@ -821,7 +877,7 @@ describe('monolith integration', () => {
     expect(response.status).toBe(400);
   });
 
-  it('emits one workspace push and Room join notes across explicit member adds', async () => {
+  it('emits one workspace push and auto-joins public Rooms with their join notes', async () => {
     const aliceToken = await phoneToken('alice');
     const aliceId = createHash('sha256').update('github:alice').digest('hex');
     const workspaceId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
@@ -859,13 +915,9 @@ describe('monolith integration', () => {
 
     expect(
       await (await operation('addRoomMember', { roomId: room.id, memberId: aliceId })).json(),
-    ).toEqual({ joined: true });
-    expect(await loop.runOnce()).toBe(1);
-    expect(send).toHaveBeenCalledTimes(2);
-    expect(send).toHaveBeenLastCalledWith(
-      'owner-explicit-add-device-token-1234567890',
-      expect.objectContaining({ text: '@alice joined Planning' }),
-    );
+    ).toEqual({ joined: false });
+    expect(await loop.runOnce()).toBe(0);
+    expect(send).toHaveBeenCalledTimes(1);
     const roomView = (await (
       await request(`/v1/phone/rooms/${room.id}`, 'GET', undefined, aliceToken)
     ).json()) as { messages: Array<{ text: string; presentation: string }> };
@@ -1185,7 +1237,7 @@ describe('monolith integration', () => {
     socket.close();
   });
 
-  it('lets a late Room member open a corner card created before they joined', async () => {
+  it('lets a Workspace member open a corner inherited from a public Room', async () => {
     const aliceToken = await phoneToken('alice');
     const aliceId = createHash('sha256').update('github:alice').digest('hex');
     await operation('addWorkspaceMember', {
@@ -1204,10 +1256,7 @@ describe('monolith integration', () => {
 
     expect(
       (await request(`/v1/phone/rooms/${cornerId}`, 'GET', undefined, aliceToken)).status,
-    ).toBe(404);
-    expect(
-      await (await operation('addRoomMember', { roomId: ROOM, memberId: aliceId })).json(),
-    ).toEqual({ joined: true });
+    ).toBe(200);
     const parent = (await (
       await request(`/v1/phone/rooms/${ROOM}`, 'GET', undefined, aliceToken)
     ).json()) as RoomView;
@@ -2996,9 +3045,12 @@ describe('monolith integration', () => {
       ).members.find((member) => member.identityId === AGENT)?.soul;
 
     const view = (await (await request(`/v1/phone/workspaces/${WORKSPACE}`)).json()) as {
-      managerSettings?: { visibility?: string };
+      managerSettings?: { visibility?: string; rooms?: unknown[] };
     };
-    expect(view.managerSettings).toEqual({ visibility: expect.any(String) });
+    expect(view.managerSettings).toEqual({
+      visibility: expect.any(String),
+      rooms: expect.any(Array),
+    });
     expect(await soulOf()).toMatchObject({ instructions: 'You are a fox.' });
     expect(await rosterSoulOf()).toBeDefined();
   });

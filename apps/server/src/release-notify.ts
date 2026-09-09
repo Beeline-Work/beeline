@@ -1,8 +1,12 @@
 import { createHash } from 'node:crypto';
 import { DEFAULT_WORKSPACE_ID } from '@beeline/api-contract/phone';
-import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
+import {
+  SYSTEM_IDENTITY_HANDLE,
+  SYSTEM_IDENTITY_ID,
+  SYSTEM_IDENTITY_NAME,
+} from '@beeline/api-contract/system-identity';
 import type { SqlDatabase } from './database.js';
-import { ensureSystemDirectMessageRoom, ensureSystemIdentity } from './system-line.js';
+import { ensureSystemDirectMessageRoom } from './system-line.js';
 
 export { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 
@@ -64,6 +68,15 @@ export function composeReleaseNotice(input: {
   return sections.join('\n\n');
 }
 
+async function repairSystemIdentity(database: SqlDatabase): Promise<void> {
+  await database.query(
+    `INSERT INTO identities(id,kind,name,handle,hidden_from_roster)
+     VALUES ($1,'human',$2,$3,true) ON CONFLICT(id) DO UPDATE
+     SET name=EXCLUDED.name,handle=EXCLUDED.handle,hidden_from_roster=true,updated_at=now()`,
+    [SYSTEM_IDENTITY_ID, SYSTEM_IDENTITY_NAME, SYSTEM_IDENTITY_HANDLE],
+  );
+}
+
 /**
  * Posts one release notice to one person. Idempotent: the message id is
  * derived from (version, personId), so a re-run of the same release version
@@ -82,6 +95,7 @@ async function notifyPerson(
   },
 ): Promise<boolean> {
   const roomId = await ensureSystemDirectMessageRoom(database, DEFAULT_WORKSPACE_ID, personId);
+  await database.query(`UPDATE rooms SET visibility='invite-only' WHERE id=$1`, [roomId]);
   const id = createHash('sha256')
     .update(`beeline-release-notice:v1:${input.version}:${personId}`)
     .digest('hex');
@@ -106,7 +120,7 @@ export async function notifyReleaseDelivered(
   const version = required(input.version, 'version');
   const changelogUrl = required(input.changelogUrl, 'changelogUrl');
   required(input.sha, 'sha');
-  await ensureSystemIdentity(database);
+  await repairSystemIdentity(database);
   const behindOwners = new Set(
     (
       await database.query<{ owner_id: string }>(

@@ -391,6 +391,13 @@ export type WorkspaceListView = {
   readonly watchFilters: readonly SurfaceWatchFilter[];
 };
 
+export type WorkspaceManagedRoomView = {
+  readonly id: string;
+  readonly name: string;
+  readonly visibility: 'public' | 'invite-only';
+  readonly createdAt: number;
+};
+
 export type WorkspaceView = {
   readonly workspace: ChatListWorkspace & {
     readonly about?: string;
@@ -398,6 +405,12 @@ export type WorkspaceView = {
   };
   readonly managerSettings?: {
     readonly visibility: 'public' | 'invite-only';
+    /**
+     * Every visibility-bearing top-level Room, including private Rooms the
+     * manager has not joined. Older indexers omit this field; clients may fall
+     * back to their membership-scoped chat list until they upgrade.
+     */
+    readonly rooms?: readonly WorkspaceManagedRoomView[];
   };
   readonly members: readonly RoomViewMember[];
   readonly agents: readonly WorkspaceAgentView[];

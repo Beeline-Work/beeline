@@ -514,6 +514,18 @@ function workspace(value: unknown): value is ChatListWorkspace {
   );
 }
 
+function managedRoom(value: unknown): boolean {
+  const item = record(value);
+  return Boolean(
+    item &&
+    typeof item.id === 'string' &&
+    UUID.test(item.id) &&
+    typeof item.name === 'string' &&
+    (item.visibility === 'public' || item.visibility === 'invite-only') &&
+    integer(item.createdAt),
+  );
+}
+
 function latest(value: unknown): boolean {
   const item = record(value);
   return Boolean(
@@ -753,8 +765,11 @@ export function isWorkspaceView(value: unknown): value is WorkspaceView {
     optionalString(record(item.workspace)?.about) &&
     (managerSettings === undefined ||
       (managerSettings &&
-        (managerSettings.visibility === 'public' ||
-          managerSettings.visibility === 'invite-only'))) &&
+        (managerSettings.visibility === 'public' || managerSettings.visibility === 'invite-only') &&
+        (managerSettings.rooms === undefined ||
+          (Array.isArray(managerSettings.rooms) &&
+            managerSettings.rooms.length <= ROOM_VIEW_CHAT_LIMIT &&
+            managerSettings.rooms.every(managedRoom))))) &&
     Array.isArray(item.members) &&
     item.members.length <= ROOM_VIEW_MEMBER_LIMIT &&
     item.members.every(member) &&

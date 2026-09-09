@@ -23,15 +23,16 @@ export async function seedDefaultWorkspace(database: SqlDatabase): Promise<void>
       [DEFAULT_WORKSPACE_ID, DEFAULT_WORKSPACE_NAME],
     );
     await transaction.query(
-      `INSERT INTO rooms(id,workspace_id,created_by,name,about)
+      `INSERT INTO rooms(id,workspace_id,created_by,name,about,visibility)
        SELECT $1,$2,
          (SELECT identity_id FROM memberships
           WHERE workspace_id=$2 AND room_id IS NULL AND role='owner' AND removed_at IS NULL
           ORDER BY joined_at,id LIMIT 1),
-         $3,$4
+         $3,$4,'public'
        ON CONFLICT(id) DO NOTHING`,
       [WELCOME_ROOM_ID, DEFAULT_WORKSPACE_ID, WELCOME_ROOM_NAME, WELCOME_ROOM_ABOUT],
     );
+    await transaction.query(`UPDATE rooms SET visibility='public' WHERE id=$1`, [WELCOME_ROOM_ID]);
     await transaction.query(
       `UPDATE rooms SET created_by=owner.identity_id
        FROM (

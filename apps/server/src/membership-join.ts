@@ -3,10 +3,7 @@ import type { SqlDatabase } from './database.js';
 import { systemIdentityMention, systemLine, workspaceSystemLine } from './system-line.js';
 
 type RoomSelection =
-  | { type: 'none' }
-  | { type: 'rooms'; roomIds: readonly string[] }
-  | { type: 'all-live-top-level' }
-  | { type: 'inherited-live-top-level'; identityId: string };
+  { type: 'none' } | { type: 'rooms'; roomIds: readonly string[] } | { type: 'all-live-top-level' };
 
 export interface JoinRoomsInput {
   workspaceId: string;
@@ -69,6 +66,36 @@ async function inheritCornerMemberships(
 }
 
 /**
+ * A public top-level Room belongs to every current Workspace member. This is
+ * the server-side projection used both when the Room becomes public and when
+ * it is first created; DMs and corners can never enter through this path.
+ */
+export async function joinWorkspaceMembersToPublicRoom(
+  database: SqlDatabase,
+  workspaceId: string,
+  roomId: string,
+): Promise<number> {
+  const joined = await database.query<{ identity_id: string }>(
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+     SELECT room.workspace_id,room.id,workspace_member.identity_id,workspace_member.role
+     FROM rooms room
+     JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
+       AND workspace_member.room_id IS NULL AND workspace_member.removed_at IS NULL
+     WHERE room.id=$2 AND room.workspace_id=$1 AND room.parent_id IS NULL
+       AND room.direct_participants IS NULL AND room.archived_at IS NULL
+       AND room.visibility='public'
+     ON CONFLICT (room_id,identity_id) WHERE room_id IS NOT NULL
+     DO UPDATE SET role=EXCLUDED.role,removed_at=NULL
+       WHERE memberships.removed_at IS NOT NULL OR memberships.role<>EXCLUDED.role
+     RETURNING identity_id`,
+    [workspaceId, roomId],
+  );
+  for (const member of joined.rows)
+    await inheritCornerMemberships(database, workspaceId, member.identity_id, [roomId]);
+  return joined.rowCount;
+}
+
+/**
  * Repairs the roster snapshot older corners took when they were created.
  * Missing rows mean the person joined the parent later; an existing removed
  * row is intentional corner-level authority and must stay removed.
@@ -109,15 +136,7 @@ export async function joinRooms(
           roomPredicate = `room.id=ANY($3::uuid[])`;
           break;
         case 'all-live-top-level':
-          roomPredicate = 'true';
-          break;
-        case 'inherited-live-top-level':
-          values.push(input.rooms.identityId);
-          roomPredicate = `EXISTS(
-            SELECT 1 FROM memberships inherited
-            WHERE inherited.room_id=room.id AND inherited.identity_id=$3
-              AND inherited.removed_at IS NULL
-          )`;
+          roomPredicate = `room.visibility='public'`;
           break;
       }
       if (roomPredicate) {

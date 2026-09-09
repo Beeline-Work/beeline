@@ -262,7 +262,7 @@ CREATE TABLE IF NOT EXISTS rooms (
   name text NOT NULL,
   about text,
   avatar text,
-  visibility text NOT NULL DEFAULT 'invite-only' CHECK (visibility IN ('public', 'invite-only')),
+  visibility text NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'invite-only')),
   archived_at timestamptz,
   direct_participants jsonb,
   repository_key text,
@@ -276,6 +276,7 @@ CREATE TABLE IF NOT EXISTS rooms (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE rooms ALTER COLUMN visibility SET DEFAULT 'public';
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS created_by text REFERENCES identities(id);
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS repository_updated_at timestamptz;
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS repository_name text;

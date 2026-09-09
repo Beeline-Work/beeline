@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  directMessageHeaderName,
   directMessagePeer,
   fallbackMemberHandle,
   fallbackMemberName,
@@ -9,6 +10,18 @@ import {
 const pubkey = 'a'.repeat(64);
 
 describe('direct-message member display', () => {
+  it('uses the indexed System name for an announcements-only DM header', () => {
+    expect(
+      directMessageHeaderName(
+        { pubkey: 's'.repeat(64), kind: 'human', name: 'System', handle: 'system' },
+        undefined,
+        's'.repeat(64),
+        'none',
+        true,
+      ),
+    ).toBe('System');
+  });
+
   it('resolves the other participant', () => {
     expect(
       directMessagePeer(

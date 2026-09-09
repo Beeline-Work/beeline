@@ -1,4 +1,4 @@
-import { isCommunityInviteToken } from '@beeline/api-contract/phone';
+import { isCommunityInviteToken } from '../../../packages/api-contract/src/invite-token.ts';
 
 const TOKEN_PATH_PATTERN = /^\/join\/([^/]+)\/?$/;
 export const APK_DOWNLOAD_URL = '/dl/beeline-android.apk';

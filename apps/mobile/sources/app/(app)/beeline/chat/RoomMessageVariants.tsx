@@ -661,6 +661,8 @@ export interface OrdinaryLedgerMessageProps {
   onCopy(text: string): void;
   onRetry(eventId: string): void;
   onDismiss(eventId: string): void;
+  /** Read-only @system DMs are a full-width announcement feed, not a chat. */
+  announcementFeed?: boolean;
 }
 
 export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
@@ -683,6 +685,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   onCopy,
   onRetry,
   onDismiss,
+  announcementFeed = false,
 }: OrdinaryLedgerMessageProps) {
   const isOwn = message.isUser;
   const indexedAuthor = message.authorIdentity;
@@ -722,19 +725,23 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
       (message.pubkey ? fallbackMemberName(message.pubkey) : 'SOMEONE'));
   const markSeed = message.pubkey ?? (isSelfSteer ? viewerPubkey || 'self' : 'unknown-person');
   const byline: LedgerByline | undefined =
-    continued && !isAgent
+    continued && !isAgent && !announcementFeed
       ? undefined
       : {
           name: isSelfSteer ? 'You' : voiceName,
           role: isAgent ? 'agent' : undefined,
           stamp: ledgerStamp(message.timestamp),
           isViewer: isSelfSteer,
-          mark: {
-            seed: markSeed,
-            kind: isAgent ? 'agent' : 'human',
-            ...(speakerFace ? { face: speakerFace } : {}),
-            ...(isAgent ? { alive: speakerWorking } : {}),
-          },
+          ...(announcementFeed
+            ? {}
+            : {
+                mark: {
+                  seed: markSeed,
+                  kind: isAgent ? ('agent' as const) : ('human' as const),
+                  ...(speakerFace ? { face: speakerFace } : {}),
+                  ...(isAgent ? { alive: speakerWorking } : {}),
+                },
+              }),
         };
   const activity = useMemo(
     () =>
@@ -845,6 +852,59 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
     <AttachmentCard attachment={attachment} key={`${message.id}-${attachment.url}`} />
   ));
 
+  const content = (
+    <NewMessageMaterialize enabled={Boolean(message.isNew)} messageId={message.id}>
+      <View>
+        {isSelfSteer ? (
+          <LedgerSteer
+            itemId={message.id}
+            continued={continued}
+            byline={byline}
+            bodyText={message.text}
+            mentionHandles={mentionHandles}
+            onMention={handleMention}
+            channelIndex={channelIndex}
+            onChannelReference={onChannelReference}
+            bodyTestID={`chat-message-text-${message.id}`}
+            replyReference={replyReference}
+            attachments={attachments}
+          />
+        ) : (
+          <LedgerEntry
+            itemId={message.id}
+            byline={byline}
+            continued={continued}
+            luminous={isAgent && !announcementFeed}
+            typewriter={isAgent && !announcementFeed && Boolean(message.isNew)}
+            settleFrom={settleFrom}
+            bodyText={ledgerText ? ledgerText.prose : message.text}
+            mentionHandles={mentionHandles}
+            onMention={handleMention}
+            channelIndex={channelIndex}
+            onChannelReference={onChannelReference}
+            bodyTestID={`chat-message-text-${message.id}`}
+            replyReference={replyReference}
+            machineNoise={machineNoise}
+            attachments={attachments}
+          />
+        )}
+        {message.isUser && deliveryFailed ? (
+          <View style={styles.outboxFailure} testID={`outbox-delivery-failed-${message.id}`}>
+            <Text style={styles.outboxFailureText}>DELIVERY FAILED</Text>
+            <View style={styles.outboxFailureActions}>
+              <MonoButton label="RETRY" onPress={() => onRetry(message.id)} variant="secondary" />
+              <MonoButton
+                label="DISMISS"
+                onPress={() => onDismiss(message.id)}
+                variant="secondary"
+              />
+            </View>
+          </View>
+        ) : null}
+      </View>
+    </NewMessageMaterialize>
+  );
+  if (announcementFeed) return content;
   return (
     <SwipeToReply
       messageId={message.id}
@@ -852,56 +912,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
       {...(onTapOutsideComposer ? { onPress: onTapOutsideComposer } : {})}
       onReply={message.isAgentDraft ? () => undefined : () => onReply(message)}
     >
-      <NewMessageMaterialize enabled={Boolean(message.isNew)} messageId={message.id}>
-        <View>
-          {isSelfSteer ? (
-            <LedgerSteer
-              itemId={message.id}
-              continued={continued}
-              byline={byline}
-              bodyText={message.text}
-              mentionHandles={mentionHandles}
-              onMention={handleMention}
-              channelIndex={channelIndex}
-              onChannelReference={onChannelReference}
-              bodyTestID={`chat-message-text-${message.id}`}
-              replyReference={replyReference}
-              attachments={attachments}
-            />
-          ) : (
-            <LedgerEntry
-              itemId={message.id}
-              byline={byline}
-              continued={continued}
-              luminous={isAgent}
-              typewriter={isAgent && Boolean(message.isNew)}
-              settleFrom={settleFrom}
-              bodyText={ledgerText ? ledgerText.prose : message.text}
-              mentionHandles={mentionHandles}
-              onMention={handleMention}
-              channelIndex={channelIndex}
-              onChannelReference={onChannelReference}
-              bodyTestID={`chat-message-text-${message.id}`}
-              replyReference={replyReference}
-              machineNoise={machineNoise}
-              attachments={attachments}
-            />
-          )}
-          {message.isUser && deliveryFailed ? (
-            <View style={styles.outboxFailure} testID={`outbox-delivery-failed-${message.id}`}>
-              <Text style={styles.outboxFailureText}>DELIVERY FAILED</Text>
-              <View style={styles.outboxFailureActions}>
-                <MonoButton label="RETRY" onPress={() => onRetry(message.id)} variant="secondary" />
-                <MonoButton
-                  label="DISMISS"
-                  onPress={() => onDismiss(message.id)}
-                  variant="secondary"
-                />
-              </View>
-            </View>
-          ) : null}
-        </View>
-      </NewMessageMaterialize>
+      {content}
     </SwipeToReply>
   );
 });

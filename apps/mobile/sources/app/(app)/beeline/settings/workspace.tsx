@@ -17,6 +17,7 @@ import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { pickAndUploadAvatar } from '@/buzz/avatar-upload';
 import { WORKSPACE_PICTURES_ENABLED } from '@/buzz/photo-overrides';
+import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { displayRoomIndexTitle } from '@/buzz/room-list-row';
 import { MEMBERS_LABEL, ROOM_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import {
@@ -28,6 +29,7 @@ import { MonoButton, PixelGateReveal, PixelLoader } from '@/components/buzz/Mono
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { Typography } from '@/constants/Typography';
 import { BuzzRigTransport } from '@/sync/transport';
+import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { Modal } from '@/modal';
 
@@ -84,20 +86,22 @@ export default function WorkspaceSettings() {
 
   const workspace = workspaceView?.workspace;
   const canManageWorkspace = workspaceView?.viewer.permissions.manage ?? false;
-  const rooms = useMemo<WorkspaceRoomSetting[]>(
-    () =>
+  const rooms = useMemo<WorkspaceRoomSetting[]>(() => {
+    const indexedRooms = workspaceView?.managerSettings?.rooms;
+    return (
+      indexedRooms ??
       (chatList?.chats ?? [])
-        .filter((item) => !item.room.archived)
+        .filter((item) => !item.room.archived && !item.directMessage)
         .map((item) => ({
           id: item.room.id,
           name: item.room.name,
-          visibility: item.room.visibility ?? 'invite-only',
-          canManage: canManageWorkspace,
+          visibility: item.room.visibility ?? 'public',
           createdAt: item.room.createdAt,
         }))
-        .sort((left, right) => left.name.localeCompare(right.name)),
-    [canManageWorkspace, chatList],
-  );
+    )
+      .map((room) => ({ ...room, canManage: canManageWorkspace }))
+      .sort((left, right) => left.name.localeCompare(right.name));
+  }, [canManageWorkspace, chatList, workspaceView?.managerSettings?.rooms]);
   const duplicateRoomNames = useMemo(() => {
     const counts = new Map<string, number>();
     for (const room of rooms) {
@@ -254,11 +258,16 @@ export default function WorkspaceSettings() {
   const changeRoomVisibility = useCallback(
     async (room: WorkspaceRoomSetting) => {
       if (!client || !room.canManage) return;
+      if (!getBuzzRuntimeConfig().monolithEnabled) {
+        setError(`${ROOM_LABEL} visibility requires the current Beeline runtime.`);
+        return;
+      }
       const visibility = room.visibility === 'public' ? 'invite-only' : 'public';
       setWorkingKey(`room-${room.id}`);
       setError(null);
       try {
-        await client.setChannelVisibility(room.id, visibility);
+        await monolithPhoneOperation('updateRoom', { roomId: room.id, visibility });
+        workspaceSchedulerRef.current?.force();
         chatsSchedulerRef.current?.force();
       } catch (caught) {
         setError(`Could not change ${ROOM_LABEL} visibility: ${String(caught)}`);
@@ -441,23 +450,19 @@ export default function WorkspaceSettings() {
           </View>
 
           <View style={styles.section} testID="channel-visibility-settings">
-            <Text style={styles.sectionLabel}>{ROOM_LABEL} visibility</Text>
-            <SettingsRow
-              chevron="right"
-              description="Create, rename, archive, and manage participants."
-              onPress={() =>
-                router.push({ pathname: '/beeline/channels', params: { communityId } } as Href)
-              }
-              testID="open-rooms"
-              title={`${ROOM_LABEL}s`}
-            />
+            <Text style={styles.sectionLabel}>{ROOM_LABEL}s</Text>
+            {workspaceView?.managerSettings?.roomsTruncated && (
+              <Text style={styles.sectionNote} testID="room-visibility-truncated">
+                Showing the first 200 {ROOM_LABEL}s.
+              </Text>
+            )}
             {rooms.map((room) => {
               const displayName = displayRoomIndexTitle(room.name) ?? room.name;
               const duplicateName = duplicateRoomNames.has(room.name.trim().toLocaleLowerCase());
               const nextVisibility = room.visibility === 'public' ? 'invite-only' : 'public';
               return (
                 <SettingsRow
-                  accessibilityLabel={`Open ${ROOM_LABEL} ${displayName}`}
+                  accessibilityLabel={`Make ${displayName} ${nextVisibility}`}
                   description={duplicateName ? roomCreatedQualifier(room.createdAt) : undefined}
                   descriptionAction={
                     duplicateName
@@ -469,18 +474,11 @@ export default function WorkspaceSettings() {
                         }
                       : undefined
                   }
-                  chevron="right"
                   key={room.id}
-                  onPress={() =>
-                    router.push(`/beeline/chat/${encodeURIComponent(room.id)}` as Href)
-                  }
+                  disabled={!room.canManage || workingKey === `room-${room.id}`}
+                  onPress={() => void changeRoomVisibility(room)}
+                  testID={`room-visibility-${room.id}`}
                   title={displayName}
-                  trailingPress={{
-                    accessibilityLabel: `Make ${displayName} ${nextVisibility}`,
-                    disabled: !room.canManage || workingKey === `room-${room.id}`,
-                    onPress: () => void changeRoomVisibility(room),
-                    testID: `room-visibility-${room.id}`,
-                  }}
                   value={VISIBILITY_LABELS[room.visibility]}
                 />
               );
@@ -553,6 +551,12 @@ const styles = StyleSheet.create((theme) => {
       paddingRight: hull.space.sm,
       paddingBottom: hull.space.xs,
       color: hull.textMuted,
+    },
+    sectionNote: {
+      ...Typography.default(),
+      ...hull.type.meta,
+      color: hull.dim,
+      marginBottom: 8,
     },
     // An input is one of the two things DESIGN.md still lets a box wrap, and
     // the editor hangs under the row it belongs to rather than beside it.

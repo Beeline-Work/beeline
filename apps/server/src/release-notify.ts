@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { DEFAULT_WORKSPACE_ID } from '@beeline/api-contract/phone';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { SqlDatabase } from './database.js';
-import { ensureSystemDirectMessageRoom, ensureSystemIdentity } from './system-line.js';
+import { ensureSystemDirectMessageRoom } from './system-line.js';
 
 export { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 
@@ -106,7 +106,6 @@ export async function notifyReleaseDelivered(
   const version = required(input.version, 'version');
   const changelogUrl = required(input.changelogUrl, 'changelogUrl');
   required(input.sha, 'sha');
-  await ensureSystemIdentity(database);
   const behindOwners = new Set(
     (
       await database.query<{ owner_id: string }>(

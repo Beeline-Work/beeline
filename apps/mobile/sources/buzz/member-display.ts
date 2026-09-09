@@ -3,6 +3,7 @@ import {
   personHandle,
   type DirectMessage,
   type PersonProfile,
+  type RoomViewIdentity,
 } from '@beeline/buzz-client';
 import type { Nip05VerificationStatus } from '@beeline/buzz-client';
 
@@ -28,6 +29,24 @@ export function personIdentityLabel(
   if (profile?.handle) return `@${profile.handle}`;
   if (profile?.name) return profile.name;
   return fallbackMemberName(pubkey);
+}
+
+/**
+ * A read-only announcement DM uses the server-owned peer name verbatim so its
+ * header and message byline cannot disagree. Ordinary DMs retain the familiar
+ * verified handle-first presentation, with the indexed identity as fallback.
+ */
+export function directMessageHeaderName(
+  peer: RoomViewIdentity | undefined,
+  profile: Pick<PersonProfile, 'name' | 'handle' | 'nip05'> | undefined,
+  pubkey: string,
+  nip05Status: Nip05VerificationStatus | 'checking' | 'none' | undefined,
+  announcementsOnly: boolean,
+  announcementAuthor?: RoomViewIdentity,
+): string {
+  if (announcementsOnly && peer?.name.trim()) return peer.name.trim();
+  if (announcementsOnly && announcementAuthor?.name.trim()) return announcementAuthor.name.trim();
+  return personIdentityLabel(profile ?? peer, pubkey, nip05Status);
 }
 
 export function directMessagePeer(dm: DirectMessage, viewerPubkey: string): string {

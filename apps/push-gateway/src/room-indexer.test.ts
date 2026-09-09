@@ -2366,6 +2366,54 @@ describe('RoomIndexer', () => {
     expect(observed?.agentsTruncated).toBe(false);
     expect(JSON.stringify(observed)).not.toContain('catalog');
 
+    await postgres.query(
+      `INSERT INTO channels
+        (community_id,id,name,visibility,created_by,created_at,updated_at)
+       VALUES($1,$2,'Unjoined private','private',$3,to_timestamp(30),to_timestamp(30))`,
+      [TENANT, MISSING, bytes(VIEWER)],
+    );
+    await postgres.query(
+      `INSERT INTO events(community_id,id,pubkey,created_at,kind,tags,content,channel_id)
+       VALUES($1,decode(lpad('30',64,'0'),'hex'),$3,to_timestamp(30),9007,
+         jsonb_build_array(jsonb_build_array('h',$2::text),jsonb_build_array('community',$4::text),
+           jsonb_build_array('name','Unjoined private')),'',$2::uuid)`,
+      [TENANT, MISSING, bytes(VIEWER), WORKSPACE],
+    );
+    const managerWorkspace = await indexer.readWorkspace(WORKSPACE, VIEWER);
+    expect(managerWorkspace?.managerSettings?.rooms).toContainEqual(
+      expect.objectContaining({
+        id: MISSING,
+        name: 'Unjoined private',
+        visibility: 'invite-only',
+      }),
+    );
+    expect(managerWorkspace?.managerSettings?.roomsTruncated).toBe(false);
+    await expect(indexer.readRoom(MISSING, VIEWER)).resolves.toBeNull();
+
+    await postgres.query(
+      `WITH rooms AS (
+         SELECT ('60000000-0000-4000-8000-' || lpad(value::text, 12, '0'))::uuid AS id,value
+         FROM generate_series(1,200) value
+       ), inserted_rooms AS (
+         INSERT INTO channels
+           (community_id,id,name,visibility,created_by,created_at,updated_at)
+         SELECT $1,id,'Managed ' || lpad(value::text,3,'0'),'private',$3,
+                to_timestamp(value + 40),to_timestamp(value + 40)
+         FROM rooms
+       )
+       INSERT INTO events(community_id,id,pubkey,created_at,kind,tags,content,channel_id)
+       SELECT $1,decode(lpad(to_hex(value + 30000),64,'0'),'hex'),$3,
+              to_timestamp(value + 40),9007,
+              jsonb_build_array(jsonb_build_array('h',id::text),
+                jsonb_build_array('community',$2::text),
+                jsonb_build_array('name','Managed ' || lpad(value::text,3,'0'))),'',id
+       FROM rooms`,
+      [TENANT, WORKSPACE, bytes(VIEWER)],
+    );
+    const boundedManagerWorkspace = await indexer.readWorkspace(WORKSPACE, VIEWER);
+    expect(boundedManagerWorkspace?.managerSettings?.rooms).toHaveLength(200);
+    expect(boundedManagerWorkspace?.managerSettings?.roomsTruncated).toBe(true);
+
     const normalMember = await indexer.readWorkspace(WORKSPACE, AGENT);
     expect(normalMember?.managerSettings).toBeUndefined();
 

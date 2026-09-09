@@ -736,6 +736,46 @@ describe('Room message variant components', () => {
     ).toEqual({ label: 'CODEX thinking…' });
   });
 
+  it('renders an announcements-only System message full-width without an avatar or reply gesture', () => {
+    const renderer = render(
+      <OrdinaryLedgerMessage
+        message={message({
+          authorIdentity: {
+            pubkey: 's'.repeat(64),
+            kind: 'human',
+            name: 'System',
+            handle: 'system',
+          },
+          pubkey: 's'.repeat(64),
+          text: 'Beeline release v1.2.3 is out!',
+        })}
+        announcementFeed
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+
+    expect(renderer.root.findAllByProps({ testID: 'swipe-reply-message' })).toHaveLength(0);
+    expect(ledgerEntryRender).toHaveBeenCalledWith(
+      expect.objectContaining({
+        byline: expect.objectContaining({ name: 'System' }),
+        luminous: false,
+        typewriter: false,
+      }),
+    );
+    expect(ledgerEntryRender.mock.calls[0]?.[0].byline.mark).toBeUndefined();
+  });
+
   it('keeps an agent avatar and name byline on a consecutive message', () => {
     const consecutive = message({
       id: 'lumen-second-message',

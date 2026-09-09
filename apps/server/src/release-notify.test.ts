@@ -83,6 +83,33 @@ describe('notifyReleaseDelivered', () => {
   });
   afterEach(() => database.close());
 
+  it('repairs the fixed @system identity name and keeps announcement DMs private', async () => {
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle,hidden_from_roster)
+       VALUES($1,'human','Cato',NULL,true)`,
+      [SYSTEM_IDENTITY_ID],
+    );
+
+    await notifyReleaseDelivered(database, {
+      version: 'v0.0.42',
+      sha: 'a'.repeat(40),
+      changelogUrl: 'https://example.test/releases/v0.0.42',
+    });
+
+    expect(
+      (await database.query(`SELECT name,handle FROM identities WHERE id=$1`, [SYSTEM_IDENTITY_ID]))
+        .rows,
+    ).toEqual([{ name: 'System', handle: 'system' }]);
+    expect(
+      (
+        await database.query(
+          `SELECT DISTINCT visibility FROM rooms WHERE direct_participants::jsonb ? $1`,
+          [SYSTEM_IDENTITY_ID],
+        )
+      ).rows,
+    ).toEqual([{ visibility: 'invite-only' }]);
+  });
+
   it('DMs every non-hidden human once, never touching a shared Room', async () => {
     const result = await notifyReleaseDelivered(database, {
       version: 'v0.0.42',

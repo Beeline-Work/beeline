@@ -204,14 +204,12 @@ export function roomMentionDirectory(roster: WorkspaceRoster, selfId: string): s
     const alias = handle || name;
     if (!alias) continue;
     const kind = member.kind === 'agent' ? 'agent' : 'person';
-    rows.push(
-      `- @${alias}${name && name !== alias ? ` — ${name}` : ''} (${kind})${member.kind === 'agent' ? ` — delegation agentId: ${member.identityId}` : ''}`,
-    );
+    rows.push(`- @${alias}${name && name !== alias ? ` — ${name}` : ''} (${kind})`);
   }
   if (!rows.length) return '';
   return [
     'Room members, and the exact spelling that tags each one:',
-    'Agent tags in your prose are display-only. To ask another agent to work, call delegate_to_agent with its exact agentId, then put the request in your final answer.',
+    'An exact agent tag assigns that agent work; use it only when you are asking that agent to act.',
     ...rows,
     'Write a tag exactly as spelled here. An @name spelled any other way is plain text: it reaches nobody, and nobody is told it was meant for them. Never invent a handle, shorten one, or copy an @name out of the conversation — old messages carry spellings that no longer exist.',
   ].join('\n');

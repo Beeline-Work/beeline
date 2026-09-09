@@ -31,7 +31,6 @@
     "exports:apps/body/src/trusty-squire-storage.ts:trustySquireHostEnv",
     "exports:apps/body/src/trusty-squire-storage.ts:trustySquireIsolationPaths",
     "exports:apps/gate/src/config.ts:SCHEME",
-    "exports:apps/gate/src/human-authority.ts:authorizeHumanAuthority",
     "exports:apps/mobile/scripts/identity-axis-proof-shims.tsx:HullLivePulse",
     "exports:apps/mobile/scripts/identity-axis-proof-shims.tsx:useUnistyles",
     "exports:apps/mobile/sources/auth/buzz-identity-storage.ts:clearRelayUrl",

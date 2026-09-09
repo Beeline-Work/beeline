@@ -1,4 +1,4 @@
-import { routeHumanMessage } from './agent-command.js';
+import { createAgentCommand, routeHumanMessage, type CommandRow } from './agent-command.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { storeWorkspaceAvatar } from './durable-avatar.js';
 import { queueLatestReleasePush } from './release-push-catchup.js';
@@ -79,6 +79,7 @@ import {
 export { directMessageRoomId } from './system-line.js';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
 import { mediaIdFromUrl } from './media-ttl.js';
+import { closeCornerState } from './corner-close.js';
 import {
   DELETED_ACCOUNT_IDENTITY_ID,
   DELETED_ACCOUNT_NAME,
@@ -1704,6 +1705,9 @@ export class PhoneService {
       case 'cancelAgentTurn':
         await this.cancelAgentTurn(input as Input<'cancelAgentTurn'>, viewerId);
         return undefined as Output<Name>;
+      case 'requestCornerClose':
+        await this.requestCornerClose((input as Input<'requestCornerClose'>).roomId, viewerId);
+        return undefined as Output<Name>;
       case 'decideWritePermission':
         return (await this.decidePermission(
           input as Input<'decideWritePermission'>,
@@ -2551,6 +2555,76 @@ export class PhoneService {
     // status line; an `agentId`-stamped `turn` invalidate would additionally be
     // read as the agent's OWN turn narration and suppressed by `wakesCorner` —
     // in a corner, the very reader that must hear this.
+  }
+  /**
+   * Close a corner at a current human member's explicit request.
+   *
+   * The server owns both effects: it applies the same terminal corner state
+   * as helper completion and turns every active assignment into the existing
+   * structured stop command. No chat sentence is created or interpreted.
+   */
+  private async requestCornerClose(roomId: string, viewerId: string) {
+    await this.database.transaction(async (database) => {
+      const access = await database.query(
+        `SELECT room_member.identity_id FROM memberships room_member
+         JOIN rooms room ON room.id=room_member.room_id
+         JOIN memberships workspace_member
+           ON workspace_member.workspace_id=room.workspace_id
+          AND workspace_member.room_id IS NULL
+          AND workspace_member.identity_id=room_member.identity_id
+          AND workspace_member.removed_at IS NULL
+         JOIN identities viewer ON viewer.id=room_member.identity_id AND viewer.kind='human'
+         WHERE room_member.room_id=$1 AND room_member.identity_id=$2
+           AND room_member.removed_at IS NULL
+         FOR SHARE OF room_member,workspace_member,room,viewer`,
+        [roomId, viewerId],
+      );
+      if (!access.rowCount) throw new Error('room access denied');
+      const room = (
+        await database.query<{ archived: boolean }>(
+          `SELECT archived_at IS NOT NULL archived FROM rooms
+           WHERE id=$1 AND parent_id IS NOT NULL FOR UPDATE`,
+          [roomId],
+        )
+      ).rows[0];
+      if (!room) throw new Error('corner not found');
+
+      if (!room.archived) {
+        const active = await database.query<CommandRow>(
+          `SELECT * FROM agent_commands
+           WHERE room_id=$1 AND action IN ('input','resume') AND state IN ('pending','claimed')
+           ORDER BY created_at DESC,id DESC FOR UPDATE`,
+          [roomId],
+        );
+        const assignments = new Map<string, CommandRow>();
+        for (const command of active.rows) {
+          const key = `${command.agent_id}:${command.turn_request_id}`;
+          if (!assignments.has(key)) assignments.set(key, command);
+        }
+        for (const command of assignments.values())
+          await createAgentCommand(database, {
+            roomId,
+            agentId: command.agent_id,
+            sourceMessageId: command.source_message_id,
+            turnRequestId: command.turn_request_id,
+            action: 'stop',
+            reason: 'corner_close',
+            parent: command,
+            retainDepth: true,
+          });
+        await database.query(
+          `UPDATE agent_commands SET state='cancelled',completed_at=now()
+           WHERE room_id=$1 AND action IN ('input','resume') AND state IN ('pending','claimed')`,
+          [roomId],
+        );
+        await database.query(
+          `UPDATE agent_turns SET status='cancelled',created_at=now()
+           WHERE room_id=$1 AND status='working'`,
+          [roomId],
+        );
+      }
+      await closeCornerState(database, roomId);
+    });
   }
   private async decidePermission(input: Input<'decideWritePermission'>, viewerId: string) {
     const pending = (
@@ -4458,6 +4532,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'listRoomSchedules',
   'deleteRoomSchedule',
   'cancelAgentTurn',
+  'requestCornerClose',
   'decideWritePermission',
   'decideAgentGrant',
   'revokeAgentGrant',

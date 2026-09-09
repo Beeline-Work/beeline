@@ -266,6 +266,37 @@ describe('monolith Room send path', () => {
     );
   });
 
+  it('closes a corner through the explicit operation without posting prose', async () => {
+    controls.fetch.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const transport = new MonolithRigTransport(identity);
+
+    await expect(transport.closeCorner(ROOM)).resolves.toBeUndefined();
+
+    expect(controls.fetch).toHaveBeenCalledWith(
+      'https://server.example/v1/phone/operations/requestCornerClose',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ roomId: ROOM }),
+      }),
+    );
+    expect(String(controls.fetch.mock.calls[0]![1]?.body)).not.toContain('Close this corner.');
+  });
+
+  it('returns the server refusal when a corner close request fails', async () => {
+    controls.fetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: 'room access denied' }), { status: 403 }),
+    );
+    const transport = new MonolithRigTransport(identity);
+
+    await expect(transport.closeCorner(ROOM)).rejects.toEqual(
+      expect.objectContaining<Partial<MonolithPhoneOperationError>>({
+        operation: 'requestCornerClose',
+        status: 403,
+        code: 'room access denied',
+      }),
+    );
+  });
+
   it('translates the legacy BuzzClient soul field and accepts monolith no-content writes', async () => {
     controls.fetch.mockResolvedValue(new Response(null, { status: 204 }));
     const client = await new MonolithRigTransport(identity).ensureClient();

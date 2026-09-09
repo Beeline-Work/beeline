@@ -45,7 +45,7 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_http::init())
-        .setup(|app| {
+        .setup(|_app| {
             #[cfg(target_os = "linux")]
             {
                 use tauri_plugin_deep_link::DeepLinkExt;
@@ -54,7 +54,7 @@ pub fn run() {
                 // shell must still launch; installed packages already carry
                 // their protocol association and direct AppImage registration
                 // can be retried on the next launch.
-                if let Err(error) = app.deep_link().register_all() {
+                if let Err(error) = _app.deep_link().register_all() {
                     eprintln!("could not register desktop deep links: {error}");
                 }
             }

@@ -2,6 +2,9 @@
 !package.json
 !package-lock.json
 !tsconfig.base.json
+!scripts
+scripts/*
+!scripts/clean-dist.mjs
 !apps
 apps/*
 !apps/auth

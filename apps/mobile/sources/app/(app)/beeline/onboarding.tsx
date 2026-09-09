@@ -114,6 +114,7 @@ const WEB_NOTICE: OnboardingNotice = {
     'Account sign-in is available in the Android and iOS app. Web key storage is not hardened for this flow.',
   retryable: false,
 };
+const DESKTOP_WORDMARK_SCALE = 34 / 28;
 
 export default function BuzzOnboarding() {
   const { theme } = useUnistyles();
@@ -1068,7 +1069,7 @@ const styles = StyleSheet.create((theme) => {
       marginTop: 2,
       marginBottom: 8,
     },
-    desktopTitle: { fontSize: 34, lineHeight: 40, marginTop: 6 },
+    desktopTitle: { transform: [{ scale: DESKTOP_WORDMARK_SCALE }], marginTop: 6 },
     // The trailing period of the `beeline.` wordmark is the one brass glyph.
     // Same canonical family as the title it nests inside, per the typography
     // governor (every Text style names an app font).

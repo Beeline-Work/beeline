@@ -52,12 +52,12 @@ export default function Home() {
     // below replaces it.
     // Native callback routes, including malformed review links, must reach
     // their own visible result before the ordinary identity redirect wins.
-    if (initialUrl && deliverDesktopDeepLink(initialUrl, router)) {
-      markInitialLandingResolved();
-      return;
-    }
-
-    if (initialReviewSecret) {
+    const nativeDestinationDelivered = initialUrl
+      ? deliverDesktopDeepLink(initialUrl, router)
+      : false;
+    if (nativeDestinationDelivered) {
+      // The desktop destination has already replaced this landing route.
+    } else if (initialReviewSecret) {
       router.replace({
         pathname: '/review/[secret]',
         params: { secret: initialReviewSecret },

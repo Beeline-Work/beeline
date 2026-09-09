@@ -5,15 +5,14 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 
 const auth = vi.hoisted(() => ({ isAuthenticated: false }));
 const buzzIdentityStorage = vi.hoisted(() => ({ loadBuzzIdentity: vi.fn() }));
-const linking = vi.hoisted(() => ({ getInitialURL: vi.fn() }));
+const desktopAuthSession = vi.hoisted(() => ({ initialAuthUrl: vi.fn() }));
 const personName = vi.hoisted(() => ({ isPersonNameOnboardingPending: vi.fn() }));
 const navigation = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
 
 vi.mock('@/auth/AuthContext', () => ({ useAuth: () => auth }));
 vi.mock('@/auth/buzz-identity-storage', () => buzzIdentityStorage);
+vi.mock('@/auth/desktop-auth-session', () => desktopAuthSession);
 vi.mock('expo-router', () => ({ router: navigation }));
-vi.mock('expo-linking', () => linking);
-vi.mock('expo-web-browser', () => ({}));
 vi.mock('@/buzz/person-name', () => personName);
 
 vi.mock('react-native', async () => {
@@ -62,7 +61,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   auth.isAuthenticated = false;
   buzzIdentityStorage.loadBuzzIdentity.mockResolvedValue(null);
-  linking.getInitialURL.mockResolvedValue(null);
+  desktopAuthSession.initialAuthUrl.mockResolvedValue(null);
   personName.isPersonNameOnboardingPending.mockResolvedValue(false);
 });
 
@@ -109,7 +108,7 @@ describe('Buzz root launch routing', () => {
 
   it('preserves a cold-start invite link instead of replacing it with the app root', async () => {
     const token = `bzi_${'ab'.repeat(32)}`;
-    linking.getInitialURL.mockResolvedValue(`https://usebeeline.app/join/${token}`);
+    desktopAuthSession.initialAuthUrl.mockResolvedValue(`https://usebeeline.app/join/${token}`);
     buzzIdentityStorage.loadBuzzIdentity.mockResolvedValue({ publicKey: 'buzz-user' });
 
     await renderHome();
@@ -121,14 +120,17 @@ describe('Buzz root launch routing', () => {
     expect(navigation.replace).not.toHaveBeenCalledWith('/beeline/channels');
   });
 
-  it('sends a malformed cold desktop review link to its visible error route', async () => {
-    linking.getInitialURL.mockResolvedValue('beeline://review/short');
+  it.each([
+    ['valid', 'play-review-secret-value-0001'],
+    ['malformed', 'short'],
+  ])('sends a %s cold desktop review link to its visible result route', async (_kind, secret) => {
+    desktopAuthSession.initialAuthUrl.mockResolvedValue(`beeline://review/${secret}`);
 
     await renderHome();
 
     expect(navigation.replace).toHaveBeenCalledWith({
       pathname: '/review/[secret]',
-      params: { secret: 'short' },
+      params: { secret },
     });
     expect(navigation.replace).not.toHaveBeenCalledWith('/beeline/onboarding');
   });

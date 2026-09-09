@@ -3,8 +3,7 @@ import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useURL } from 'expo-linking';
-import { PixelLoader } from '@/components/buzz/MonoHull';
-import { MonoButton } from '@/components/buzz/MonoHull';
+import { MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
 import { signInWithReviewSecret } from '@/auth/review-sign-in';
 import { parseReviewSecret } from '@/buzz/review-link';
 
@@ -13,10 +12,9 @@ import { parseReviewSecret } from '@/buzz/review-link';
  * and the association-independent `beeline://review/<secret>` resolve here.
  *
  * Nothing inside the app links here, so the app gains no control and no
- * ordinary user ever sees this screen. It signs the
- * device in as the review identity and hands it to the Room deck; anything the
- * server refuses lands on the ordinary sign-in screen with no hint that a
- * review link exists.
+ * ordinary user ever sees this screen. It signs the device in as the review
+ * identity and hands it to the Room deck; anything the server refuses stays
+ * here with a useful error and a route back to the ordinary sign-in screen.
  */
 export default function ReviewSignIn() {
   const { secret: routeSecret } = useLocalSearchParams<{ secret?: string | string[] }>();

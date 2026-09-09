@@ -113,7 +113,8 @@ export function directMessageRoomId(
 export async function ensureSystemIdentity(database: SqlDatabase): Promise<void> {
   await database.query(
     `INSERT INTO identities(id,kind,name,handle,hidden_from_roster)
-     VALUES ($1,'human',$2,$3,true) ON CONFLICT(id) DO NOTHING`,
+     VALUES ($1,'human',$2,$3,true) ON CONFLICT(id) DO UPDATE
+     SET name=EXCLUDED.name,handle=EXCLUDED.handle,hidden_from_roster=true,updated_at=now()`,
     [SYSTEM_IDENTITY_ID, SYSTEM_IDENTITY_NAME, SYSTEM_IDENTITY_HANDLE],
   );
 }

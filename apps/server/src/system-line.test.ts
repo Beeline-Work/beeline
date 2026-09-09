@@ -2,7 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parseGrantDecisionLine } from '@beeline/api-contract/agent-grants';
 import { SCHEDULE_RAN_VERB } from '@beeline/api-contract/scheduled-prompts';
 import type { SystemEvent } from '@beeline/api-contract/phone';
-import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
+import {
+  SYSTEM_IDENTITY_HANDLE,
+  SYSTEM_IDENTITY_ID,
+  SYSTEM_IDENTITY_NAME,
+} from '@beeline/api-contract/system-identity';
 import { PushDeliveryLoop } from './background.js';
 import { backfillSystemEventKinds, migrate, type SqlDatabase } from './database.js';
 import { PhoneService } from './phone-service.js';
@@ -212,6 +216,36 @@ describe('workspace system lines', () => {
     );
   });
   afterEach(() => database.close());
+
+  it('repairs a legacy System identity before rendering a lifecycle announcement', async () => {
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle,hidden_from_roster)
+       VALUES($1,'human','Cato',NULL,true)`,
+      [SYSTEM_IDENTITY_ID],
+    );
+
+    await workspaceSystemLine(database, {
+      workspaceId: WORKSPACE,
+      subject: { kind: 'person', id: HUMAN, name: 'Ada' },
+      verb: 'changed workspace visibility to',
+      object: 'public',
+    });
+
+    const roomId = (
+      await database.query<{ room_id: string }>(
+        `SELECT room_id FROM memberships
+         WHERE workspace_id=$1 AND identity_id=$2 AND room_id IS NOT NULL`,
+        [WORKSPACE, HUMAN],
+      )
+    ).rows[0]!.room_id;
+    const view = await new PhoneService(database, 'http://local.test').readRoom(roomId, HUMAN);
+    expect(view?.messages[0]?.author).toEqual({
+      pubkey: SYSTEM_IDENTITY_ID,
+      kind: 'human',
+      name: SYSTEM_IDENTITY_NAME,
+      handle: SYSTEM_IDENTITY_HANDLE,
+    });
+  });
 
   it('restores a rejoined recipient to their existing @system DM', async () => {
     await workspaceSystemLine(database, {

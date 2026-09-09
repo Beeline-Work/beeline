@@ -99,6 +99,30 @@ describe('default Workspace seed', () => {
     expect((await db.query(`SELECT 1 FROM workspace_join_notifications`)).rowCount).toBe(0);
   });
 
+  it('does not restore an explicit #welcome leave during roster-humans repair', async () => {
+    await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Leaver')`, [LEAVER]);
+    await db.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member')`,
+      [DEFAULT_WORKSPACE_ID, LEAVER],
+    );
+    await seedDefaultWorkspace(db);
+    await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [
+      WELCOME_ROOM_ID,
+      LEAVER,
+    ]);
+
+    await seedDefaultWorkspace(db);
+
+    expect(
+      (
+        await db.query<{ removed: boolean }>(
+          `SELECT removed_at IS NOT NULL removed FROM memberships WHERE room_id=$1 AND identity_id=$2`,
+          [WELCOME_ROOM_ID, LEAVER],
+        )
+      ).rows,
+    ).toEqual([{ removed: true }]);
+  });
+
   it('never backfills a hidden_from_roster identity into the Workspace or #welcome', async () => {
     const HIDDEN = 'e'.repeat(64);
     await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Captain')`, [CAPTAIN]);

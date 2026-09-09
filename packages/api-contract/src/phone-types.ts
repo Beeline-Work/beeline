@@ -406,9 +406,10 @@ export type WorkspaceView = {
   readonly managerSettings?: {
     readonly visibility: 'public' | 'invite-only';
     /**
-     * Every visibility-bearing top-level Room, including private Rooms the
-     * manager has not joined. Older indexers omit this field; clients may fall
-     * back to their membership-scoped chat list until they upgrade.
+     * Up to 200 visibility-bearing top-level Rooms, including private Rooms
+     * the manager has not joined. `roomsTruncated` records when eligible Rooms
+     * exceed that bound. Older indexers omit this field; clients may fall back
+     * to their membership-scoped chat list until they upgrade.
      */
     readonly rooms?: readonly WorkspaceManagedRoomView[];
     /** True when the server omitted Rooms beyond its 200-Room settings bound. */

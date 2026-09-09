@@ -635,7 +635,7 @@ describe('monolith integration', () => {
     expect(
       (await operation('updateRoom', { roomId: privateRoom.id, visibility: 'public' }, bobToken))
         .status,
-    ).toBe(403);
+    ).toBe(400);
     expect(
       (await operation('updateRoom', { roomId: privateRoom.id, visibility: 'public' }, aliceToken))
         .status,

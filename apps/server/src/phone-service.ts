@@ -508,14 +508,12 @@ export class PhoneService {
             )
           ).rows
         : undefined;
-    const managedRooms = managedRoomRows
-      ?.slice(0, ROOM_VIEW_CHAT_LIMIT)
-      .map((room) => ({
-        id: room.id,
-        name: room.name,
-        visibility: room.visibility,
-        createdAt: unix(room.created_at),
-      }));
+    const managedRooms = managedRoomRows?.slice(0, ROOM_VIEW_CHAT_LIMIT).map((room) => ({
+      id: room.id,
+      name: room.name,
+      visibility: room.visibility,
+      createdAt: unix(room.created_at),
+    }));
     const members = await this.members(workspaceId, null);
     const humans = members.filter((member) => member.identity.kind === 'human');
     const agentMembers = members.filter((member) => member.identity.kind === 'agent');

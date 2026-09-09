@@ -544,6 +544,8 @@ WITH candidates AS (
   WHERE a.viewer_role IN ('owner','admin')
     AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(generation.tags) t WHERE t->>0='parent')
     AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(generation.tags) t WHERE t->>0='t' AND t->>1='buzz-dm')
+  -- $5 is 201: retain the pre-limit total while emitting the 200-Room
+  -- manager-settings bound defined by WorkspaceView.
   ORDER BY lower(c.name),c.name,c.id
   LIMIT $5 - 1
 )

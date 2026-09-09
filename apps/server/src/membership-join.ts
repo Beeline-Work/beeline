@@ -128,7 +128,9 @@ export async function joinRooms(
   input: JoinRoomsInput,
 ): Promise<JoinRoomsResult> {
   return database.transaction(async (transaction) => {
-    await transaction.query(`SELECT id FROM workspaces WHERE id=$1 FOR UPDATE`, [input.workspaceId]);
+    await transaction.query(`SELECT id FROM workspaces WHERE id=$1 FOR UPDATE`, [
+      input.workspaceId,
+    ]);
     let roomIds: string[] = [];
     if (input.rooms.type !== 'none') {
       const values: unknown[] = [input.workspaceId, input.identityId];

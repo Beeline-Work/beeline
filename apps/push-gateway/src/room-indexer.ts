@@ -309,8 +309,7 @@ export class RoomIndexer {
                 visibility: room.visibility === 'invite-only' ? 'invite-only' : 'public',
                 createdAt: integer(room.createdAt),
               })),
-              roomsTruncated:
-                integer(managerRooms[0]?.total) > ROOM_VIEW_CHAT_LIMIT,
+              roomsTruncated: integer(managerRooms[0]?.total) > ROOM_VIEW_CHAT_LIMIT,
             },
           }
         : {}),

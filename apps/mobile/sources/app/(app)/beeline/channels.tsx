@@ -43,7 +43,6 @@ import { MEMBERS_LABEL, ROOM_LABEL, WORKSPACE_LABEL, ROOMS_LABEL } from '@/buzz/
 import { BuzzCommunityShell, CommunityDrawerTrigger } from '@/components/buzz/CommunityRail';
 import { DirectMessagePickerSheet } from '@/components/buzz/DirectMessagePickerSheet';
 import { NewRoomDialog } from '@/components/buzz/NewRoomDialog';
-import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
 import {
   RoomDeckComposeMenu,
@@ -57,12 +56,9 @@ const AGE_TICK_MS = 60_000;
 const COMPOSE_FAB_CLEARANCE = 80;
 /** The empty deck's one primary: the same 44pt touch height as the FAB. */
 const EMPTY_PRIMARY_HEIGHT = 44;
-/** Speakeasy index row: 64 tall, a 40px leading unit. A DM row fills it with
- *  the peer's identity tile; a Room row leaves it empty (C71: a Room is many
- *  voices, its `#name` sigil is the mark) so every row's copy hangs off ONE
- *  straight edge. */
+/** Speakeasy index row: 64 tall. Room and DM copy share one leading edge;
+ *  the brass `#`/`@` sigil states the row kind without a separate tile. */
 const ROW_HEIGHT = 64;
-const ROW_TILE_SIZE = 40;
 /** The trailing brass unread/attention square — lit or reserved, never absent. */
 const ATTENTION_SQUARE = 7;
 
@@ -626,8 +622,8 @@ export default function BuzzChannels() {
           }
           renderItem={({ item }: { item: ChatListItem }) => {
             // Every row-level fact is derived once in room-list-row.ts: the
-            // sigil and name (`@peer` for a DM, `#room` for a Room), the tile
-            // seed, the preview attribution, and whether the trailing brass
+            // sigil and name (`@peer` for a DM, `#room` for a Room), the
+            // preview attribution, and whether the trailing brass
             // square is lit. `unread` is server-owned and cross-device; a
             // corner waiting on a human (`agentState === 'needs-you'`) lights
             // the same square. The screen renders answers, never re-derives.
@@ -659,16 +655,6 @@ export default function BuzzChannels() {
                         />
                       )}
                     </View>
-                    {heading.tile && (
-                      <IdentityMark
-                        kind={heading.tile.kind}
-                        seed={heading.tile.seed}
-                        face={heading.tile.face}
-                        name={heading.name}
-                        size={ROW_TILE_SIZE}
-                        testID={`room-tile-${item.room.id}`}
-                      />
-                    )}
                     <View style={styles.rowCopy}>
                       <Text numberOfLines={1} style={styles.title}>
                         <Text style={styles.sigil} testID={`room-sigil-${item.room.id}`}>

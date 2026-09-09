@@ -16,7 +16,9 @@ const ladderSource = readFileSync(path.join(componentsDir, 'HeaderLadder.tsx'), 
 
 describe('the chat header title (C72)', () => {
   it('renders every header title through the one shared renderer', () => {
-    expect(chatSource).toContain("import { ChannelHeaderTitle } from '@/components/buzz/ChannelHeaderTitle'");
+    expect(chatSource).toContain(
+      "import { ChannelHeaderTitle } from '@/components/buzz/ChannelHeaderTitle'",
+    );
     expect(chatSource.match(/<ChannelHeaderTitle\b/g)).toHaveLength(2);
     expect(chatSource).toContain(
       "const headerTitleKind: ChannelHeaderKind = isCorner ? 'corner' : dmPeerPubkey ? 'dm' : 'room';",
@@ -30,11 +32,27 @@ describe('the chat header title (C72)', () => {
     expect(titleSource).toContain('sigil: { color: theme.buzz.accent }');
     expect(titleSource).toContain('...theme.buzz.type.hero');
     expect(titleSource).toContain('...theme.buzz.type.bodyStrong');
-    expect(titleSource).not.toMatch(/fontSize:|letterSpacing:|Typography\.|theme\.buzz\.type\.machine|Mono/);
+    expect(titleSource).not.toMatch(
+      /fontSize:|letterSpacing:|Typography\.|theme\.buzz\.type\.machine|Mono/,
+    );
   });
 
   it('sets every header subtitle in the meta role', () => {
     expect(ladderSource).toContain('...theme.buzz.type.meta');
     expect(ladderSource).not.toMatch(/Typography\.mono|fontSize:|letterSpacing:/);
+  });
+
+  it('shows an ordinary Direct Message peer identity without changing Room, system, or corner slots', () => {
+    expect(chatSource).toContain(
+      '{isDirectMessage && !isReadOnlyDirectMessage && dmPeerPubkey && (',
+    );
+    expect(chatSource).toContain('<HeaderIdentitySlot testID="direct-message-header-identity">');
+    expect(chatSource).toContain(
+      "dmPeerAgentDisplay || dmPeerIdentity?.kind === 'agent' ? 'agent' : 'human'",
+    );
+    expect(chatSource).toContain('seed={dmPeerAgentDisplay?.avatarSeed ?? dmPeerPubkey}');
+    expect(chatSource).toContain('name={displayRoomName}');
+    expect(chatSource).toContain('<HeaderIdentitySlot testID="corner-header-agent">');
+    expect(chatSource).not.toContain('testID="room-header-identity"');
   });
 });

@@ -651,43 +651,24 @@ const message = (
 });
 
 describe('roomRowName — the sigil is the name’s first glyph', () => {
-  it('names a Room `#` + its stored name, with no tile — the sigil is its mark', () => {
-    // C71: a Room is many voices, so no one picture stands for it.
+  it('names a Room `#` + its stored name', () => {
     expect(roomRowName({ room })).toEqual({ sigil: '#', name: 'design' });
-    expect(roomRowName({ room }).tile).toBeUndefined();
   });
 
   it('never double-marks a stored name that already carries the mark', () => {
     expect(roomRowName({ room: { ...room, name: '#design' } }).name).toBe('design');
   });
 
-  it('names a DM `@` + its peer handle, tiled by the peer identity', () => {
+  it('names a DM `@` + its peer handle without list-only identity data', () => {
     expect(
       roomRowName({ room: { ...room, name: 'Direct message' }, directMessage: { peer: ada } }),
     ).toEqual({
       sigil: '@',
       name: 'ada',
-      tile: { seed: PEER, kind: 'human' },
     });
     expect(roomRowName({ room, directMessage: { peer: beebee } })).toEqual({
       sigil: '@',
       name: 'Beebee',
-      tile: { seed: PEER, kind: 'agent' },
-    });
-  });
-
-  it('carries the peer’s own creature onto the tile, agent or person', () => {
-    // The row must draw the animal every other surface draws for that key —
-    // for an agent that is the server's assignment, not the seed default.
-    expect(roomRowName({ room, directMessage: { peer: { ...beebee, face: 'owl' } } }).tile).toEqual({
-      seed: PEER,
-      kind: 'agent',
-      face: 'owl',
-    });
-    expect(roomRowName({ room, directMessage: { peer: { ...ada, face: 'moth' } } }).tile).toEqual({
-      seed: PEER,
-      kind: 'human',
-      face: 'moth',
     });
   });
 
@@ -736,7 +717,9 @@ describe('roomRowPreview — attribution', () => {
   });
 
   it('labels an attachment-only last message with its sender', () => {
-    expect(roomRowPreview({ latestMessage: message(ada, '   ', [imageAttachment]) }, VIEWER)).toEqual({
+    expect(
+      roomRowPreview({ latestMessage: message(ada, '   ', [imageAttachment]) }, VIEWER),
+    ).toEqual({
       attribution: 'other',
       handle: 'ada',
       text: 'Image',
@@ -750,7 +733,9 @@ describe('roomRowPreview — attribution', () => {
   });
 
   it('keeps text as the preview when a message also has an attachment', () => {
-    expect(roomRowPreview({ latestMessage: message(ada, 'Look here', [imageAttachment]) }, VIEWER)).toEqual({
+    expect(
+      roomRowPreview({ latestMessage: message(ada, 'Look here', [imageAttachment]) }, VIEWER),
+    ).toEqual({
       attribution: 'other',
       handle: 'ada',
       text: 'Look here',

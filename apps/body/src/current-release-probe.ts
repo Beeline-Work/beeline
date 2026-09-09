@@ -48,6 +48,7 @@ export const UPDATE_PROBE_COMMAND = 'update-probe';
 export type UpdateProbeReport =
   | { probe: 'served' }
   | { probe: 'refused'; status: number; reason: string }
+  | { probe: 'sandbox-unavailable'; reason: string }
   | { probe: 'failed'; reason: string };
 
 function parseReport(line: string): UpdateProbeReport | undefined {
@@ -70,6 +71,9 @@ function parseReport(line: string): UpdateProbeReport | undefined {
   if (report.probe === 'failed' && typeof report.reason === 'string') {
     return { probe: 'failed', reason: report.reason };
   }
+  if (report.probe === 'sandbox-unavailable' && typeof report.reason === 'string') {
+    return { probe: 'sandbox-unavailable', reason: report.reason };
+  }
   return undefined;
 }
 
@@ -79,7 +83,15 @@ export function outcomeFromReport(report: UpdateProbeReport): CurrentReleaseProb
       return { kind: 'served' };
     case 'refused':
       return { kind: 'refused', status: report.status, reason: report.reason };
+    case 'sandbox-unavailable':
+      return { kind: 'sandbox-unavailable', reason: report.reason };
     case 'failed':
+      // Releases predating the structured sandbox report still preserve the
+      // typed probe reason in their failure text. This bounded compatibility
+      // read is what lets a fixed successor escape rollback to that release.
+      if (report.reason.startsWith('functional update probe failed (sandbox-unavailable):')) {
+        return { kind: 'sandbox-unavailable', reason: report.reason };
+      }
       return { kind: 'unavailable', reason: report.reason };
   }
 }
@@ -200,6 +212,7 @@ export async function runUpdateProbeCommand(
       runtimeDir,
       releaseId,
       sandboxRequired: runtime.sandbox !== 'off',
+      sandboxUnavailableDetail: sandbox.advisory,
       // The successor's probe still holds `<runtimeDir>/update-functional-probe`.
       probeRoot: join(runtimeDir, 'current-release-probe'),
     }),
@@ -209,6 +222,8 @@ export async function runUpdateProbeCommand(
       ? { probe: 'served' }
       : outcome.kind === 'refused'
         ? { probe: 'refused', status: outcome.status, reason: outcome.reason }
+        : outcome.kind === 'sandbox-unavailable'
+          ? { probe: 'sandbox-unavailable', reason: outcome.reason }
         : { probe: 'failed', reason: outcome.reason };
   write(JSON.stringify(report));
 }

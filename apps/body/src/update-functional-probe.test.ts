@@ -127,6 +127,48 @@ describe('runUpdateFunctionalProbe', () => {
     );
   });
 
+  it('does not roll a candidate back when the current release has the same host sandbox failure', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const compare = vi.fn(async () => ({
+      kind: 'sandbox-unavailable' as const,
+      reason: 'AppArmor denied unprivileged user namespaces for /usr/bin/bwrap',
+    }));
+    await expect(
+      probe('served', {
+        sandboxRequired: true,
+        sandboxUnavailableDetail:
+          'AppArmor denied unprivileged user namespaces for /usr/bin/bwrap; install the narrow bwrap profile',
+        compareWithCurrentRelease: compare,
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        sandboxed: false,
+        sessionStarted: false,
+        turnCompleted: false,
+        modelAnswer: 'unavailable',
+        modelAnswerReason: expect.stringContaining('install the narrow bwrap profile'),
+      }),
+    );
+    expect(compare).toHaveBeenCalledWith({
+      kind: 'sandbox-unavailable',
+      reason:
+        'AppArmor denied unprivileged user namespaces for /usr/bin/bwrap; install the narrow bwrap profile',
+    });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('preserving fail-closed sandboxing'));
+  });
+
+  it('still rejects a sandbox failure when the current release can serve', async () => {
+    await expect(
+      probe('served', {
+        sandboxRequired: true,
+        sandboxUnavailableDetail: 'bubblewrap unavailable: AppArmor denied it',
+        compareWithCurrentRelease: async () => ({ kind: 'served' }),
+      }),
+    ).rejects.toThrow(
+      'bubblewrap unavailable: AppArmor denied it; the current release answered',
+    );
+  });
+
   it("passes with the reason logged when pi's record shows an account-side refusal", async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     await expect(probe('refused-402')).resolves.toEqual(

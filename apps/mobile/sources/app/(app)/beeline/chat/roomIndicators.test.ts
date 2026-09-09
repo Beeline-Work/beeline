@@ -119,7 +119,10 @@ describe('the corner line and the turn indicator are independent', () => {
     // turn's WORKING receipt lights `thinking` on its own.
     const at = chatSource.indexOf('await sendTransport.publishPreparedMessage(preparedEvent);');
     expect(at).toBeGreaterThan(0);
-    const settled = chatSource.indexOf('void roomClient?.markRead(decodedId, preparedEvent.id)', at);
+    const settled = chatSource.indexOf(
+      'void roomClient?.markRead(decodedId, preparedEvent.id)',
+      at,
+    );
     expect(settled).toBeGreaterThan(at);
     const bridge = chatSource.slice(at, settled);
     expect(bridge).toContain('setPendingAck((current) =>');
@@ -163,7 +166,7 @@ describe('the corner line and the turn indicator are independent', () => {
     expect(chatSource).not.toMatch(/<TurnProgressLine[^>]*onPress/);
   });
 
-  it('offers the stop from the selector\'s verdict, never from a screen-local rule', () => {
+  it("offers the stop from the selector's verdict, never from a screen-local rule", () => {
     // The requester test lives in `room-indicators.ts` beside the line's own
     // presentation, so the screen can only pass on a verdict it was given —
     // and `composerAck.stop` carries the turn's coordinates, so a stop pressed

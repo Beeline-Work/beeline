@@ -162,21 +162,21 @@ export function isSystemEvent(value: unknown): value is SystemEvent {
   const object = event.object as Record<string, unknown> | undefined;
   return Boolean(
     subject &&
-      typeof subject === 'object' &&
-      (subject.kind === 'person' ||
-        subject.kind === 'agent' ||
-        subject.kind === 'github' ||
-        subject.kind === 'system') &&
-      (subject.id === undefined || typeof subject.id === 'string') &&
-      typeof subject.name === 'string' &&
-      typeof event.verb === 'string' &&
-      (object === undefined ||
-        (object &&
-          typeof object === 'object' &&
-          typeof object.text === 'string' &&
-          (object.id === undefined || typeof object.id === 'string') &&
-          (object.url === undefined || typeof object.url === 'string'))) &&
-      (event.consequence === undefined || typeof event.consequence === 'string') &&
-      (event.kind === undefined || isSystemEventKind(event.kind)),
+    typeof subject === 'object' &&
+    (subject.kind === 'person' ||
+      subject.kind === 'agent' ||
+      subject.kind === 'github' ||
+      subject.kind === 'system') &&
+    (subject.id === undefined || typeof subject.id === 'string') &&
+    typeof subject.name === 'string' &&
+    typeof event.verb === 'string' &&
+    (object === undefined ||
+      (object &&
+        typeof object === 'object' &&
+        typeof object.text === 'string' &&
+        (object.id === undefined || typeof object.id === 'string') &&
+        (object.url === undefined || typeof object.url === 'string'))) &&
+    (event.consequence === undefined || typeof event.consequence === 'string') &&
+    (event.kind === undefined || isSystemEventKind(event.kind)),
   );
 }

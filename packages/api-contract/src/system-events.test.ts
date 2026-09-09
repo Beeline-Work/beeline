@@ -54,9 +54,9 @@ describe('the one system-line grammar', () => {
   });
 
   it('validates the wire shape', () => {
-    expect(isSystemEvent({ subject: { kind: 'agent', name: 'Bee' }, verb: 'could not answer' })).toBe(
-      true,
-    );
+    expect(
+      isSystemEvent({ subject: { kind: 'agent', name: 'Bee' }, verb: 'could not answer' }),
+    ).toBe(true);
     expect(isSystemEvent({ subject: { kind: 'robot', name: 'Bee' }, verb: 'x' })).toBe(false);
     expect(isSystemEvent({ subject: { kind: 'agent', name: 'Bee' }, verb: 'x', object: 'y' })).toBe(
       false,

@@ -65,7 +65,11 @@ export function TurnProgressLine({
 
   return (
     <View
-      accessibilityLabel={startedAt != null ? `${label} (${elapsedSeconds(startedAt * 1_000, now)}s · thinking)` : label}
+      accessibilityLabel={
+        startedAt != null
+          ? `${label} (${elapsedSeconds(startedAt * 1_000, now)}s · thinking)`
+          : label
+      }
       accessibilityRole="progressbar"
       style={styles.bar}
       testID={testID}

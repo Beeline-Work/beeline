@@ -370,7 +370,8 @@ export function formatTurnAttempt(attempt: TurnAttemptTrace): string {
         : `${phase} ${formatDuration(value)}`,
     );
   }
-  if (attempt.toolCalls) parts.push(`${attempt.toolCalls} tool call${attempt.toolCalls === 1 ? '' : 's'}`);
+  if (attempt.toolCalls)
+    parts.push(`${attempt.toolCalls} tool call${attempt.toolCalls === 1 ? '' : 's'}`);
   return parts.join(' · ');
 }
 

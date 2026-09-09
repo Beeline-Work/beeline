@@ -86,11 +86,24 @@ export async function readDaemonReleaseFleetStatus(
     .filter((entry) => entry.isDirectory() && AGENT_PUBKEY.test(entry.name))
     .map((entry) => entry.name)
     .sort();
-  return Promise.all(
-    agents.map(async (agentPubkey): Promise<DaemonReleaseFleetEntry> => {
+  const statuses = await Promise.all(
+    agents.map(async (agentPubkey): Promise<DaemonReleaseFleetEntry | undefined> => {
       const runtimeDir = resolve(root, agentPubkey);
-      const runtime = await readFile(resolve(runtimeDir, 'runtime.json'), 'utf8').catch(() => '');
-      if (!runtime) return { agentPubkey, state: 'invalid' };
+      let runtime: string;
+      try {
+        runtime = await readFile(resolve(runtimeDir, 'runtime.json'), 'utf8');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+        return { agentPubkey, state: 'invalid' };
+      }
+      try {
+        const parsedRuntime: unknown = JSON.parse(runtime);
+        if (!parsedRuntime || typeof parsedRuntime !== 'object' || Array.isArray(parsedRuntime)) {
+          return { agentPubkey, state: 'invalid' };
+        }
+      } catch {
+        return { agentPubkey, state: 'invalid' };
+      }
       const raw = await readFile(resolve(runtimeDir, DAEMON_RELEASE_STATUS_FILE), 'utf8').catch(
         () => '',
       );
@@ -117,4 +130,5 @@ export async function readDaemonReleaseFleetStatus(
       };
     }),
   );
+  return statuses.filter((status): status is DaemonReleaseFleetEntry => status !== undefined);
 }

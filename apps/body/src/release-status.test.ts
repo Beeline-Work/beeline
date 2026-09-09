@@ -2,13 +2,30 @@ import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import {
-  readDaemonReleaseFleetStatus,
-  writeDaemonReleaseStatus,
-} from './release-status.js';
+import { readDaemonReleaseFleetStatus, writeDaemonReleaseStatus } from './release-status.js';
 
 const AGENT = 'a'.repeat(64);
+const HUSK = 'b'.repeat(64);
+const MALFORMED = 'c'.repeat(64);
 const SHA = '1'.repeat(40);
+
+function runtimeRecord(agentPubkey: string) {
+  return {
+    version: 2,
+    communityId: 'workspace',
+    pairedBy: 'owner',
+    agent: {
+      name: 'agent',
+      secretKeyHex: '1'.repeat(64),
+      publicKey: agentPubkey,
+    },
+    body: {
+      name: 'body',
+      secretKeyHex: '2'.repeat(64),
+      publicKey: 'd'.repeat(64),
+    },
+  };
+}
 
 describe('daemon release status', () => {
   it('writes one release-version + sha record and reports it only for the matching live pid', async () => {
@@ -47,12 +64,48 @@ describe('daemon release status', () => {
     await mkdir(runtimeDir, { recursive: true });
     await writeFile(resolve(runtimeDir, 'runtime.json'), '{}');
     await writeFile(resolve(runtimeDir, 'daemon.pid'), '4242\n');
-    await writeDaemonReleaseStatus(runtimeDir, AGENT, { version: 'v0.0.1', commit: SHA }, { pid: 4242 });
+    await writeDaemonReleaseStatus(
+      runtimeDir,
+      AGENT,
+      { version: 'v0.0.1', commit: SHA },
+      { pid: 4242 },
+    );
     const before = await readFile(resolve(runtimeDir, 'release-status.json'), 'utf8');
 
     await expect(
       writeDaemonReleaseStatus(runtimeDir, AGENT, { version: 'development', commit: 'HEAD' }),
     ).resolves.toBeUndefined();
     expect(await readFile(resolve(runtimeDir, 'release-status.json'), 'utf8')).toBe(before);
+  });
+
+  it('ignores directory-only registration husks without hiding valid agents', async () => {
+    const stateHome = await mkdtemp(resolve(tmpdir(), 'beeline-release-status-husk-'));
+    const runtimeDir = resolve(stateHome, 'beeline', 'agents', AGENT);
+    await mkdir(runtimeDir, { recursive: true });
+    await mkdir(resolve(stateHome, 'beeline', 'agents', HUSK), { recursive: true });
+    await writeFile(resolve(runtimeDir, 'runtime.json'), JSON.stringify(runtimeRecord(AGENT)));
+    await writeFile(resolve(runtimeDir, 'daemon.pid'), '4242\n');
+    await writeDaemonReleaseStatus(
+      runtimeDir,
+      AGENT,
+      { version: 'v0.0.1', commit: SHA },
+      { pid: 4242 },
+    );
+
+    const fleet = await readDaemonReleaseFleetStatus({ XDG_STATE_HOME: stateHome });
+
+    expect(fleet).toHaveLength(1);
+    expect(fleet[0]).toMatchObject({ agentPubkey: AGENT, state: 'ready' });
+  });
+
+  it('keeps malformed runtime records visible as invalid agents', async () => {
+    const stateHome = await mkdtemp(resolve(tmpdir(), 'beeline-release-status-malformed-'));
+    const runtimeDir = resolve(stateHome, 'beeline', 'agents', MALFORMED);
+    await mkdir(runtimeDir, { recursive: true });
+    await writeFile(resolve(runtimeDir, 'runtime.json'), '{not-json');
+
+    await expect(readDaemonReleaseFleetStatus({ XDG_STATE_HOME: stateHome })).resolves.toEqual([
+      { agentPubkey: MALFORMED, state: 'invalid' },
+    ]);
   });
 });

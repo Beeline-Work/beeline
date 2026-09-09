@@ -387,11 +387,7 @@ export class MonolithRigTransport {
     });
   }
   closeCorner(roomId: string) {
-    return this.operation('sendRoomMessage', {
-      roomId,
-      messageId: eventId(),
-      text: 'Close this corner.',
-    }).then(() => undefined);
+    return this.operation('requestCornerClose', { roomId }).then(() => undefined);
   }
   agentCommandsRead() {
     return Promise.resolve(null);

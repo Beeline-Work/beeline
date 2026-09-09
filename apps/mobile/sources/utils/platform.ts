@@ -17,3 +17,9 @@ export function isRunningOnMac(): boolean {
     return Platform.isPad && Platform.Version && typeof Platform.Version === 'string' && 
            Platform.Version.includes('Mac');
 }
+
+// Platforms that draw desktop chrome. Width is a separate question — ask
+// `useIsDesktop()` in `utils/responsive` when the layout depends on both.
+export function isDesktopPlatform(): boolean {
+    return Platform.OS === 'web' || isRunningOnMac();
+}

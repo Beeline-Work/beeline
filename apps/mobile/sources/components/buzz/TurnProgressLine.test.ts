@@ -116,6 +116,45 @@ describe('the per-turn progress indicator', () => {
     expect(renderer.root.findAllByType('View')[0].props.accessibilityRole).toBe('progressbar');
   });
 
+  it('offers the requester one stop, and everyone else the line unchanged', () => {
+    // No `onStop` is the ordinary case — a spectator's line is byte-for-byte
+    // what it was before the control existed.
+    const watching = render(
+      React.createElement(TurnProgressLine, {
+        label: 'beebee Thinking\u2026',
+        startedAt: 10,
+        testID: 'turn-progress-line',
+      }),
+    );
+    expect(watching.root.findAllByType('Pressable')).toHaveLength(0);
+
+    const onStop = vi.fn();
+    const asking = render(
+      React.createElement(TurnProgressLine, {
+        label: 'beebee Thinking\u2026',
+        startedAt: 10,
+        onStop,
+        testID: 'turn-progress-line',
+      }),
+    );
+    // Exactly one control, and it is the stop: the LINE still goes nowhere.
+    const [stop] = asking.root.findAllByType('Pressable');
+    expect(asking.root.findAllByType('Pressable')).toHaveLength(1);
+    expect(stop.props.testID).toBe('turn-progress-line-stop');
+    expect(stop.props.accessibilityRole).toBe('button');
+    expect(stop.props.accessibilityLabel).toBe('Stop this turn');
+    expect(stop.findByType('Text').props.children).toBe('stop');
+    act(() => stop.props.onPress());
+    expect(onStop).toHaveBeenCalledTimes(1);
+
+    // It sits at the right, after the elapsed counter, so the label's own
+    // left edge and the counter's place never move for anybody.
+    const trailing = asking.root
+      .findAllByType('Text')
+      .map((node: { props: { children: unknown } }) => node.props.children);
+    expect(trailing.indexOf('stop')).toBe(trailing.length - 1);
+  });
+
   it('breathes on the same live clock, in the same reserved gold', () => {
     const renderer = render(
       React.createElement(TurnProgressLine, { label: 'beebee thinking\u2026' }),

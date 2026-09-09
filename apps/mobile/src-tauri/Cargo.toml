@@ -1,0 +1,47 @@
+[package]
+name = "beeline-desktop"
+# The shipped version is read from apps/mobile/package.json by
+# tauri.conf.json's `"version": "../package.json"`, so the release version has
+# exactly one home. This number only names the crate to cargo.
+version = "0.0.0"
+description = "Beeline desktop shell"
+authors = ["Beeline"]
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+# `_lib` because a Windows target cannot have a bin and a lib of the same
+# name; the staticlib/cdylib pair is what a future iOS/Android tauri target
+# links against.
+name = "beeline_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+# The Tauri CLI refuses to build when a Rust crate and its JS package differ in
+# minor version, so these track apps/mobile/package.json rather than crates.io
+# HEAD: @tauri-apps/api is pinned there at 2.9.1, and both plugins resolve to
+# 2.5.x. Moving a crate minor means moving its JS package in the same commit.
+[build-dependencies]
+tauri-build = { version = "~2.5", features = [] }
+
+[dependencies]
+tauri = { version = "~2.9", features = [] }
+# Both plugins have a JS half already declared in apps/mobile/package.json
+# (@tauri-apps/plugin-opener, @tauri-apps/plugin-http). A JS half without its
+# Rust half fails only at runtime, on the user's machine, so they are
+# registered here and scoped in capabilities/default.json.
+tauri-plugin-http = "~2.5"
+tauri-plugin-opener = "~2.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[features]
+# Used by `tauri build --debug` bundles: keeps devtools reachable in a build
+# that is otherwise a release binary.
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

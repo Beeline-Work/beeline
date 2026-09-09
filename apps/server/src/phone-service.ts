@@ -749,15 +749,30 @@ export class PhoneService {
     if (!room) return null;
     const allMembers = await this.members(room.workspace_id, roomId);
     const members = allMembers.slice(0, ROOM_VIEW_MEMBER_LIMIT);
+    // `requested_by` is the author of the message the request id names — the
+    // one person who may stop this turn. It is resolved HERE, from the row, and
+    // never from the transcript window: a long turn's request scrolls out of
+    // that window while it is still running, and a control that disappears
+    // because the question scrolled away is a control nobody can rely on. A
+    // corner's request lives in the parent Room, so the join looks there too.
     const turns = await this.database.query<{
       request_id: string;
       agent_id: string;
-      status: 'working' | 'complete' | 'failed';
+      status: 'working' | 'complete' | 'failed' | 'cancelled';
       created_at: Date;
       generation_id: string | null;
+      requested_by: string | null;
     }>(
-      `SELECT DISTINCT ON(agent_id) request_id,agent_id,status,created_at,generation_id
-       FROM agent_turns WHERE room_id=$1 ORDER BY agent_id,created_at DESC,request_id DESC`,
+      `SELECT DISTINCT ON(turn.agent_id)
+         turn.request_id,turn.agent_id,turn.status,turn.created_at,turn.generation_id,
+         requester.id requested_by
+       FROM agent_turns turn
+       LEFT JOIN messages trigger ON trigger.id=turn.request_id
+         AND (trigger.room_id=turn.room_id
+           OR trigger.room_id=(SELECT parent_id FROM rooms WHERE id=turn.room_id))
+       LEFT JOIN identities requester ON requester.id=trigger.author_id AND requester.kind='human'
+       WHERE turn.room_id=$1
+       ORDER BY turn.agent_id,turn.created_at DESC,turn.request_id DESC`,
       [roomId],
     );
     const latestAgentTurns = turns.rows
@@ -767,6 +782,7 @@ export class PhoneService {
         status: turn.status,
         createdAt: unix(turn.created_at),
         ...(turn.generation_id ? { generationId: turn.generation_id } : {}),
+        ...(turn.requested_by ? { requestedBy: turn.requested_by } : {}),
       }))
       .sort(
         (left, right) =>
@@ -1683,6 +1699,9 @@ export class PhoneService {
       case 'deleteRoomSchedule':
         await this.deleteRoomSchedule(input as Input<'deleteRoomSchedule'>, viewerId);
         return undefined as Output<Name>;
+      case 'cancelAgentTurn':
+        await this.cancelAgentTurn(input as Input<'cancelAgentTurn'>, viewerId);
+        return undefined as Output<Name>;
       case 'decideWritePermission':
         return (await this.decidePermission(
           input as Input<'decideWritePermission'>,
@@ -2388,6 +2407,85 @@ export class PhoneService {
       if (lastResponder) noticeAgentIds.add(lastResponder);
     }
     return { mentionIds: [...mentions], noticeAgentIds: [...noticeAgentIds] };
+  }
+  /**
+   * Stop a turn in progress, at the asker's word.
+   *
+   * The authority is the request, not the Room: whoever wrote the message this
+   * turn answers may withdraw it, and nobody else may — not a Workspace owner,
+   * not the agent's owner, not another member watching the line tick. A
+   * question is the asker's to take back, and a Room where anyone can silence
+   * anyone else's agent mid-sentence is a different feature with different
+   * consequences.
+   *
+   * Three facts settle together, in one transaction, and in this order for a
+   * reason:
+   *
+   *   1. The receipt turns `cancelled`. This is what retires the turn status
+   *      line on every reader's phone, and it is written the moment the stop is
+   *      accepted rather than when the helper gets around to obeying — the
+   *      person withdrew the question, so nobody is waiting for that answer
+   *      any more, whatever the harness does next. `cancelled` is terminal
+   *      (`DaemonService.turnReceipt`), so the run that lands a second later
+   *      cannot overwrite the stop with `complete`.
+   *   2. One attributed system line inscribes WHO stopped it. A turn that
+   *      simply vanished would read as an agent that gave up; the Room carries
+   *      the actual fact instead, in the ordinary grammar, naming the person by
+   *      handle.
+   *   3. That same line IS the intake item. It mentions the agent — the only
+   *      thing that wakes a daemon — and carries the stopped turn's request id
+   *      in the row's `request_id`, which is how the helper knows which of its
+   *      sessions to cancel. `turn-cancelled` is a CONTROL kind, so it can
+   *      never start the very turn it exists to end.
+   */
+  private async cancelAgentTurn(input: Input<'cancelAgentTurn'>, viewerId: string) {
+    if (!(await this.hasRoomAccess(input.roomId, viewerId))) throw new Error('room access denied');
+    // The turn must be running, and the message it answers must be the
+    // viewer's own. A corner's request lives in its parent Room, the same
+    // widening `inscribeTurnFailure` makes.
+    const running = (
+      await this.database.query<{ author_id: string }>(
+        `SELECT trigger.author_id
+         FROM agent_turns turn
+         JOIN messages trigger ON trigger.id=turn.request_id
+           AND (trigger.room_id=turn.room_id
+             OR trigger.room_id=(SELECT parent_id FROM rooms WHERE id=turn.room_id))
+         WHERE turn.room_id=$1 AND turn.request_id=$2 AND turn.agent_id=$3
+           AND turn.status='working'`,
+        [input.roomId, input.requestId, input.agentId],
+      )
+    ).rows[0];
+    if (!running) throw new Error('running turn not found');
+    if (running.author_id !== viewerId) throw new Error(TURN_REQUESTER_AUTHORITY_MESSAGE);
+    const stopper = await this.requireIdentity(viewerId);
+    const agent = await this.requireIdentity(input.agentId);
+    await this.database.transaction(async (database) => {
+      const stopped = await database.query(
+        `UPDATE agent_turns SET status='cancelled',created_at=now()
+         WHERE room_id=$1 AND request_id=$2 AND agent_id=$3 AND status='working'`,
+        [input.roomId, input.requestId, input.agentId],
+      );
+      // Lost the race with the turn's own settling receipt: it answered, and
+      // there is nothing left to stop. Nothing is written, so no line claims a
+      // stop that never happened.
+      if (!stopped.rowCount) throw new Error('running turn not found');
+      await systemLine(database, {
+        roomId: input.roomId,
+        authorId: viewerId,
+        subject: identitySubject({ id: stopper.pubkey, kind: stopper.kind, name: stopper.name }),
+        verb: 'stopped',
+        object: { text: agent.name, id: agent.pubkey },
+        consequence: 'turn cancelled',
+        kind: 'turn-cancelled',
+        mentions: [input.agentId],
+        requestId: input.requestId,
+      });
+    });
+    // No publish here on purpose. Every phone operation carrying a `roomId`
+    // already invalidates that Room (`server.ts`), which is what repaints the
+    // status line; an `agentId`-stamped `turn` invalidate would additionally be
+    // read as the agent's OWN turn narration and suppressed by `wakesCorner` —
+    // in a corner, the very reader that must hear this.
   }
   private async decidePermission(input: Input<'decideWritePermission'>, viewerId: string) {
     const pending = (
@@ -4254,6 +4352,13 @@ export const YOLO_AUTHORITY_MESSAGE = "Only the agent's owner or a workspace adm
 /** Agent configuration belongs only to the human who connected that agent. */
 export const AGENT_OWNER_AUTHORITY_MESSAGE = "Only the agent's owner can change this";
 
+/**
+ * Stopping a turn answers to the REQUEST, not to the Room: a question is the
+ * asker's to take back, and no amount of Workspace authority makes it someone
+ * else's. Named here so `server.ts` answers 403 rather than a generic failure.
+ */
+export const TURN_REQUESTER_AUTHORITY_MESSAGE = 'Only the person who asked can stop this turn';
+
 /** The same owner-only axis, for who may address an agent. */
 export const ACCESS_POLICY_AUTHORITY_MESSAGE = AGENT_OWNER_AUTHORITY_MESSAGE;
 
@@ -4281,6 +4386,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'createRoomSchedule',
   'listRoomSchedules',
   'deleteRoomSchedule',
+  'cancelAgentTurn',
   'decideWritePermission',
   'decideAgentGrant',
   'revokeAgentGrant',

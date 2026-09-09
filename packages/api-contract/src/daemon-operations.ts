@@ -350,7 +350,12 @@ export type RetractLiveOutputInput = AgentRoomInput & {
 };
 export type PostTurnReceiptInput = AgentRoomInput & {
   readonly requestId: string;
-  readonly status: 'working' | 'complete' | 'failed';
+  /**
+   * `cancelled` is TERMINAL and wins: once the requester has stopped a turn,
+   * no later receipt for that request may reopen or re-settle it, whichever
+   * party writes it.
+   */
+  readonly status: 'working' | 'complete' | 'failed' | 'cancelled';
   readonly generationId?: string;
   /** Refreshes an existing working receipt; never starts or resurrects a turn. */
   readonly heartbeat?: boolean;

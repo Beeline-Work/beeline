@@ -76,7 +76,7 @@ import {
   selectComposerAckPresentation,
   type ComposerAckPresentation,
 } from '@/buzz/room-indicators';
-import { formatSettledLine, type TurnVerb } from '@/buzz/turn-clock';
+import { formatSettledLine, formatStoppedLine, type TurnVerb } from '@/buzz/turn-clock';
 import { TurnSettledLine } from '@/components/buzz/TurnProgressLine';
 import { useRoomSendFrame } from '@/buzz/room-send-frame';
 import { liveDraftMessages, projectActiveTurnStream } from '@/buzz/live-turn-stream';
@@ -464,6 +464,9 @@ export default function BuzzChat() {
   const resolvedChannelName = roomSurface?.room.name ?? routeChannelTitle ?? null;
   const activeCommunityId = roomSurface?.room.workspaceId ?? routeCommunityId ?? null;
   const viewerIsAgent = roomSurface?.viewer.identity.kind === 'agent';
+  // The SERVER's statement of who is reading, so the phone's requester test and
+  // the server's own are the same comparison over the same namespace.
+  const viewerPubkey = roomSurface?.viewer.identity.pubkey;
   const viewerChannelRole = roomSurface?.viewer.role ?? null;
   const canManageWorkspace = roomSurface?.viewer.permissions.manage ?? false;
   const communities = useMemo(
@@ -1656,14 +1659,46 @@ export default function BuzzChat() {
         ? {
             activeTurnStartedAt: activeAgentTurn.createdAt,
             activeTurnRequestId: activeAgentTurn.requestId,
+            activeTurnAgentPubkey: activeAgentTurn.agentPubkey,
+            ...(activeAgentTurn.requestedBy
+              ? { activeTurnRequestedBy: activeAgentTurn.requestedBy }
+              : {}),
           }
         : {}),
+      ...(viewerPubkey ? { viewerPubkey } : {}),
       ...(pendingAck ? { pendingAckSentAt: pendingAck.sentAt } : {}),
       now: pendingAck?.sentAt ?? Date.now(),
       conversationIdentities,
       agentsByPubkey: agentByPubkey,
     });
-  }, [activeAgentTurn, agentByPubkey, conversationIdentities, isCorner, pendingAck]);
+  }, [activeAgentTurn, agentByPubkey, conversationIdentities, isCorner, pendingAck, viewerPubkey]);
+
+  /**
+   * Withdraw the question this turn is answering.
+   *
+   * The control is offered only to the asker (`viewerMayStopTurn`) and the
+   * server refuses anyone else, so the two agree on one rule rather than the
+   * phone guessing at it. Nothing is decided locally: the stop's whole effect —
+   * the turn's `cancelled` receipt, the line naming who stopped it — comes back
+   * through the ordinary indexed read, which is what retires this very line.
+   */
+  const handleStopTurn = useCallback(
+    async (stop: { agentPubkey: string; requestId: string }) => {
+      try {
+        await monolithPhoneOperation('cancelAgentTurn', {
+          roomId: decodedId,
+          requestId: stop.requestId,
+          agentId: stop.agentPubkey,
+        });
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      } catch (err) {
+        // A turn that settled while the press was in the air is the ordinary
+        // race, not a failure worth a dialog: the line is already gone.
+        console.warn('Stopping the turn failed:', err);
+      }
+    },
+    [decodedId],
+  );
 
   /** The settled "<Past> for Ns · done h:MM" line a finished turn leaves briefly. */
   const [settledTurn, setSettledTurn] = useState<{
@@ -1700,7 +1735,13 @@ export default function BuzzChat() {
     if (!terminal) return;
     lastActiveTurnRef.current = null;
     setSettledTurn({
-      line: formatSettledLine(last.verb, last.startedAt, terminal.createdAt * 1_000),
+      // A stopped turn is not a finished one: the same shape, without the word
+      // `done`, because no answer arrived. The Room carries who stopped it.
+      line: (terminal.status === 'cancelled' ? formatStoppedLine : formatSettledLine)(
+        last.verb,
+        last.startedAt,
+        terminal.createdAt * 1_000,
+      ),
     });
   }, [activeAgentTurn, agentTurnMarkers, composerAck]);
   useEffect(() => {
@@ -3577,6 +3618,7 @@ export default function BuzzChat() {
               <TurnProgressLine
                 label={composerAck.label}
                 startedAt={composerAck.startedAt}
+                onStop={composerAck.stop ? () => void handleStopTurn(composerAck.stop!) : undefined}
                 testID="turn-progress-line"
               />
             )}

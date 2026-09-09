@@ -10,6 +10,7 @@ import {
   pinnedCornerVerb,
   selectComposerAckState,
   selectComposerAckPresentation,
+  viewerMayStopTurn,
   selectPinnedCorner,
   selectTurnProgressAgentPubkey,
   selectWorkingAgents,
@@ -284,6 +285,59 @@ describe('composer ack presentation', () => {
         conversationIdentities: new Map(),
       }),
     ).toEqual({ label: 'Agent thinking…' });
+  });
+
+  it('offers the stop only to the person who asked, and never on the sending… bridge', () => {
+    const agent = 'aa'.repeat(32);
+    const asker = 'bb'.repeat(32);
+    const bystander = 'cc'.repeat(32);
+    const turn = {
+      isCorner: false,
+      activeTurnPubkey: agent,
+      activeTurnAgentPubkey: agent,
+      activeTurnRequestId: 'ask-1',
+      activeTurnStartedAt: NOW / 1_000,
+      activeTurnRequestedBy: asker,
+      now: NOW,
+    } as const;
+
+    expect(selectComposerAckPresentation({ ...turn, viewerPubkey: asker })?.stop).toEqual({
+      agentPubkey: agent,
+      requestId: 'ask-1',
+    });
+    // Everyone else is a spectator, whatever their standing in the Workspace.
+    expect(
+      selectComposerAckPresentation({ ...turn, viewerPubkey: bystander })?.stop,
+    ).toBeUndefined();
+    // Both halves must be known: an unattributed turn offers the control to
+    // nobody rather than to everybody.
+    expect(
+      selectComposerAckPresentation({
+        ...turn,
+        activeTurnRequestedBy: undefined,
+        viewerPubkey: asker,
+      })?.stop,
+    ).toBeUndefined();
+    expect(
+      selectComposerAckPresentation({ ...turn, viewerPubkey: undefined })?.stop,
+    ).toBeUndefined();
+    // The local bridge is not a turn yet: nothing is running to be stopped.
+    expect(
+      selectComposerAckPresentation({
+        isCorner: false,
+        pendingAckSentAt: NOW,
+        now: NOW,
+        viewerPubkey: asker,
+      }),
+    ).toEqual({ label: 'sending…' });
+  });
+
+  it('names the requester test once, for the phone and the server to agree on', () => {
+    expect(viewerMayStopTurn('aa', 'aa')).toBe(true);
+    expect(viewerMayStopTurn('aa', 'bb')).toBe(false);
+    expect(viewerMayStopTurn(undefined, 'aa')).toBe(false);
+    expect(viewerMayStopTurn('aa', undefined)).toBe(false);
+    expect(viewerMayStopTurn(undefined, undefined)).toBe(false);
   });
 
   it('recognizes a terminal receipt for the sent message after the agent has replied', () => {

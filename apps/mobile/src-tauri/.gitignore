@@ -1,0 +1,5 @@
+# Cargo build output. metro.config.js already blocks this path from the
+# bundler's file map; keep it out of git too.
+/target/
+# Written by tauri-build on every build from tauri.conf.json + capabilities.
+/gen/

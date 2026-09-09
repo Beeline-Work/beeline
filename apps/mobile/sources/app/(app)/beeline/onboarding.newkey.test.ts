@@ -19,6 +19,13 @@ const profileClient = vi.hoisted(() => ({
   setGlobalPersonProfile: vi.fn(async (profile: unknown) => profile),
 }));
 const sdk = vi.hoisted(() => ({ lookupManagedIdentity: vi.fn(async () => null) }));
+const phoneOperation = vi.hoisted(() =>
+  vi.fn(async (_name: string, input: { handle?: string }) => ({
+    personId: 'person',
+    name: input.handle ?? 'Ada',
+    handle: input.handle,
+  })),
+);
 
 vi.mock('@beeline/buzz-client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@beeline/buzz-client')>();
@@ -69,6 +76,7 @@ vi.mock('@/sync/transport', () => ({
     ensureClient = vi.fn(async () => profileClient);
   },
 }));
+vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));
 vi.mock('@/components/buzz/BeelineMark', async () => {
   const ReactModule = await import('react');
   return { BeelineMark: (props: any) => ReactModule.createElement('BeelineMark', props) };
@@ -165,6 +173,7 @@ describe('onboarding — create a new key', () => {
     profileClient.setGlobalPersonProfile.mockClear();
     personName.resolve.mockResolvedValue({ needsPrompt: false, name: 'Ada', communityId: 'w1' });
     sdk.lookupManagedIdentity.mockResolvedValue(null);
+    phoneOperation.mockClear();
     vi.unstubAllGlobals();
   });
 
@@ -249,40 +258,6 @@ describe('onboarding — create a new key', () => {
   });
 
   it('runs the focused handle ceremony before a first-run key enters Beeline', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (_input: string | URL, init?: RequestInit) => {
-        if (init?.method !== 'POST') {
-          return new Response(JSON.stringify({ identity: null }), {
-            status: 200,
-            headers: { 'content-type': 'application/json' },
-          });
-        }
-        const authorization = String(
-          init.headers && (init.headers as Record<string, string>).authorization,
-        );
-        const event = JSON.parse(
-          Buffer.from(authorization.slice('Nostr '.length), 'base64').toString(),
-        );
-        return new Response(
-          JSON.stringify({
-            claimed: true,
-            idempotent: false,
-            name: 'ada-labs',
-            pubkey: event.pubkey,
-            identity: {
-              handle: 'ada-labs',
-              display_name: 'ada-labs',
-              nip05: 'ada-labs@usebeeline.app',
-              source: 'key',
-              github_rename_available: false,
-            },
-          }),
-          { status: 201, headers: { 'content-type': 'application/json' } },
-        );
-      }),
-    );
-
     const tree = await openNewKeyStep();
     await press(one(tree, 'onboarding-new-key-reveal'));
     await press(one(tree, 'onboarding-new-key-confirm'));
@@ -294,11 +269,11 @@ describe('onboarding — create a new key', () => {
     });
     await press(one(tree, 'onboarding-claim-handle'));
 
+    expect(phoneOperation).toHaveBeenCalledWith('claimManagedHandle', { handle: 'ada-labs' });
     expect(profileClient.setGlobalPersonProfile).toHaveBeenCalledWith(
       expect.objectContaining({
         name: 'ada-labs',
         handle: 'ada-labs',
-        nip05: 'ada-labs@usebeeline.app',
       }),
     );
     expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels');

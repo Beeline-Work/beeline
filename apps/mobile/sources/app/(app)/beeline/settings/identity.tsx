@@ -231,7 +231,6 @@ export default function BuzzIdentitySettings() {
                   ? {
                       handle: hosted.handle,
                       displayName: hosted.name,
-                      nip05: `${hosted.handle}@usebeeline.app`,
                       source: 'github',
                       githubLogin: hosted.handle,
                       githubRenameAvailable: false,
@@ -327,7 +326,6 @@ export default function BuzzIdentitySettings() {
         name: normalized,
         handle: normalizedHandle,
         avatar: avatarUrl,
-        nip05: `${normalizedHandle}@usebeeline.app`,
       });
       await savePreferredPersonName(profilePubkey, normalized);
       setProfileName(normalized);
@@ -351,7 +349,6 @@ export default function BuzzIdentitySettings() {
         name: nextName,
         handle: hosted.handle,
         avatar: avatarUrl,
-        nip05: hosted.nip05,
       });
       await savePreferredPersonName(profilePubkey, nextName);
       setProfileName(nextName);
@@ -631,8 +628,7 @@ export default function BuzzIdentitySettings() {
           ? 'GitHub link unavailable while offline'
           : 'Checking linked account';
   const managedHandle = managedIdentity?.handle ?? profileHandle;
-  const managedNip05 =
-    managedIdentity?.nip05 ?? (managedHandle ? `${managedHandle}@usebeeline.app` : '');
+  const managedHandleLabel = managedHandle ? `@${managedHandle}` : '';
 
   return (
     <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
@@ -682,11 +678,11 @@ export default function BuzzIdentitySettings() {
               <View style={styles.managedHandle} testID="identity-managed-handle">
                 <Text style={styles.managedHandleLabel}>BEELINE HANDLE</Text>
                 <Text style={styles.managedHandleValue}>
-                  {managedNip05 || 'Connecting GitHub…'}
+                  {managedHandleLabel || 'Connecting GitHub…'}
                 </Text>
               </View>
               <View style={styles.nameMetaRow}>
-                <Text style={styles.nameHandle}>VERIFIED AND MANAGED BY BEELINE</Text>
+                <Text style={styles.nameHandle}>MANAGED BY BEELINE</Text>
                 {nameSaved && <Text style={styles.nameSaved}>✓ SAVED</Text>}
               </View>
               <MonoButton

@@ -426,7 +426,6 @@ describe('OIDC device-key bind protocol', () => {
     const hosted = {
       handle: 'ada-labs',
       display_name: 'Ada',
-      nip05: 'ada-labs@usebeeline.app',
       source: 'key',
       github_login: 'ada',
       github_rename_available: true,
@@ -446,7 +445,6 @@ describe('OIDC device-key bind protocol', () => {
             identity: {
               ...hosted,
               handle: 'ada',
-              nip05: 'ada@usebeeline.app',
               source: 'github',
               github_rename_available: false,
             },

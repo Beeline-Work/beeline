@@ -414,14 +414,11 @@ export {
   normalizeManagedHandle,
   parseManagedIdentity,
   verifyNip05,
-  claimNip05Handle,
-  Nip05ClaimError,
 } from './nip05.js';
 export type {
   ParsedNip05,
   Nip05VerificationStatus,
   Nip05VerificationResult,
-  Nip05ClaimResult,
   ManagedIdentity,
 } from './nip05.js';
 

@@ -1,8 +1,5 @@
-import { generateKeypair } from '@beeline/nostr';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  claimNip05Handle,
-  Nip05ClaimError,
   normalizeManagedHandle,
   normalizeNip05Identifier,
   parseManagedIdentity,
@@ -24,7 +21,10 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe('parseNip05Identifier', () => {
   it('parses a well-formed identifier and lowercases the domain', () => {
-    expect(parseNip05Identifier('Bob@Example.COM')).toEqual({ local: 'Bob', domain: 'example.com' });
+    expect(parseNip05Identifier('Bob@Example.COM')).toEqual({
+      local: 'Bob',
+      domain: 'example.com',
+    });
   });
 
   it('rejects malformed identifiers', () => {
@@ -59,13 +59,12 @@ describe('normalizeManagedHandle', () => {
 });
 
 describe('parseManagedIdentity', () => {
-  it('accepts GitHub-length handles but binds the hosted identifier to that exact handle', () => {
+  it('accepts GitHub-length handles as display labels without a hosted NIP-05 identifier', () => {
     const handle = 'a'.repeat(39);
     expect(
       parseManagedIdentity({
         handle,
         display_name: 'GitHub Person',
-        nip05: `${handle}@usebeeline.app`,
         source: 'github',
         github_login: handle,
         github_rename_available: false,
@@ -75,11 +74,10 @@ describe('parseManagedIdentity', () => {
       parseManagedIdentity({
         handle: 'alice',
         display_name: 'Alice',
-        nip05: 'mallory@usebeeline.app',
         source: 'key',
         github_rename_available: false,
       }),
-    ).toBeNull();
+    ).toMatchObject({ handle: 'alice', source: 'key' });
   });
 });
 
@@ -97,13 +95,19 @@ describe('verifyNip05', () => {
   });
 
   it('reports mismatch when the domain maps the name to a different pubkey', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ names: { bob: otherPubkey } })));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonResponse({ names: { bob: otherPubkey } })),
+    );
     const result = await verifyNip05('bob@example.com', pubkey);
     expect(result.status).toBe('mismatch');
   });
 
   it('reports mismatch when the name is absent from the response', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ names: {} })));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonResponse({ names: {} })),
+    );
     const result = await verifyNip05('bob@example.com', pubkey);
     expect(result.status).toBe('mismatch');
   });
@@ -120,7 +124,10 @@ describe('verifyNip05', () => {
   });
 
   it('reports unreachable on a non-2xx response', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({}, 404)));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonResponse({}, 404)),
+    );
     const result = await verifyNip05('bob@example.com', pubkey);
     expect(result.status).toBe('unreachable');
   });
@@ -148,72 +155,5 @@ describe('verifyNip05', () => {
     const result = await verifyNip05('bob@example.com', 'not-hex');
     expect(result.status).toBe('invalid');
     expect(fetchSpy).not.toHaveBeenCalled();
-  });
-});
-
-describe('claimNip05Handle', () => {
-  it('signs a NIP-98 POST with the requested name and returns the claim result', async () => {
-    const identity = generateKeypair();
-    const fetchSpy = vi.fn(async (input: string | URL, init?: RequestInit) => {
-      expect(String(input)).toBe('https://auth.example/nip05/claim');
-      expect(init?.method).toBe('POST');
-      expect(String(init?.headers && (init.headers as Record<string, string>).authorization)).toMatch(
-        /^Nostr /,
-      );
-      expect(JSON.parse(String(init?.body))).toEqual({ name: 'alice' });
-      return jsonResponse({
-        claimed: true,
-        idempotent: false,
-        name: 'alice',
-        pubkey: identity.publicKey,
-        identity: {
-          handle: 'alice',
-          display_name: 'Alice',
-          nip05: 'alice@usebeeline.app',
-          source: 'key',
-          github_rename_available: false,
-        },
-      });
-    });
-    vi.stubGlobal('fetch', fetchSpy);
-    const result = await claimNip05Handle('https://auth.example', identity, 'alice');
-    expect(result).toEqual({
-      claimed: true,
-      idempotent: false,
-      name: 'alice',
-      pubkey: identity.publicKey,
-      identity: {
-        handle: 'alice',
-        displayName: 'Alice',
-        nip05: 'alice@usebeeline.app',
-        source: 'key',
-        githubRenameAvailable: false,
-      },
-    });
-  });
-
-  it('throws a Nip05ClaimError carrying the service error code on a taken name', async () => {
-    const identity = generateKeypair();
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => jsonResponse({ error: 'name_taken', message: 'handle is already claimed' }, 409)),
-    );
-    await expect(claimNip05Handle('https://auth.example', identity, 'alice')).rejects.toMatchObject({
-      code: 'name_taken',
-      status: 409,
-    });
-  });
-
-  it('throws an offline Nip05ClaimError on network failure', async () => {
-    const identity = generateKeypair();
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => {
-        throw new Error('network down');
-      }),
-    );
-    await expect(claimNip05Handle('https://auth.example', identity, 'alice')).rejects.toBeInstanceOf(
-      Nip05ClaimError,
-    );
   });
 });

@@ -51,18 +51,10 @@ vi.mock('react-native-svg', async () => {
 vi.mock('@beeline/buzz-client', () => ({
   adoptGitHubHandle: vi.fn(),
   buildOidcBindEvent: vi.fn(),
-  claimNip05Handle: vi.fn(),
   finishOidcBind: vi.fn(),
   fallbackPersonName: (pubkey: string) => `Person ${pubkey.slice(0, 4)}`,
   lookupRecovery: vi.fn(async () => []),
   lookupManagedIdentity: vi.fn(async () => null),
-  Nip05ClaimError: class extends Error {
-    code: string;
-    constructor(code: string, message: string) {
-      super(message);
-      this.code = code;
-    }
-  },
   normalizeNip05Identifier: (value: string) => value.trim().toLowerCase(),
   normalizePersonHandle: (value: string) => value.trim().toLowerCase() || null,
   normalizePersonName: (value: string) => value.trim() || null,

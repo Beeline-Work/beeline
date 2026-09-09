@@ -70,18 +70,10 @@ vi.mock('react-native-svg', async () => {
 vi.mock('@beeline/buzz-client', () => ({
   adoptGitHubHandle: vi.fn(),
   buildOidcBindEvent: vi.fn(),
-  claimNip05Handle: vi.fn(),
   finishOidcBind: vi.fn(),
   fallbackPersonName: (pubkey: string) => `Person ${pubkey.slice(0, 4)}`,
   lookupRecovery: identityApi.lookupRecovery,
   lookupManagedIdentity: identityApi.lookupManagedIdentity,
-  Nip05ClaimError: class extends Error {
-    code: string;
-    constructor(code: string, message: string) {
-      super(message);
-      this.code = code;
-    }
-  },
   normalizeNip05Identifier: (value: string) => value.trim().toLowerCase(),
   normalizePersonHandle: (value: string) => value.trim().toLowerCase() || null,
   normalizePersonName: (value: string) => value.trim() || null,
@@ -258,7 +250,6 @@ describe('photo-override darkflight on the settings surfaces', () => {
     identityApi.lookupManagedIdentity.mockResolvedValue({
       handle: 'octocat',
       displayName: 'The Octocat',
-      nip05: 'octocat@usebeeline.app',
       source: 'github',
       githubLogin: 'octocat',
       githubRenameAvailable: false,
@@ -268,7 +259,7 @@ describe('photo-override darkflight on the settings surfaces', () => {
     expect(renderer.root.findByProps({ testID: 'identity-person-name-input' }).props.value).toBe(
       'The Octocat',
     );
-    expect(renderedText(renderer)).toContain('octocat@usebeeline.app');
+    expect(renderedText(renderer)).toContain('@octocat');
     expect(
       renderer.root.findAllByProps({ testID: 'identity-managed-handle' }).length,
     ).toBeGreaterThan(0);

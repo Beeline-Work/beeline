@@ -374,12 +374,7 @@ async function route(
 ): Promise<void> {
   const url = exactPath(request.url);
   const method = request.method ?? 'GET';
-  if (
-    options.authHandler &&
-    (url.pathname.startsWith('/auth/') ||
-      url.pathname.startsWith('/nip05/') ||
-      url.pathname === '/.well-known/nostr.json')
-  ) {
+  if (options.authHandler && url.pathname.startsWith('/auth/')) {
     options.authHandler(request, response);
     return;
   }

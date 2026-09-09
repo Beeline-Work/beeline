@@ -9,9 +9,7 @@ import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
 import { getRandomBytes } from 'expo-crypto';
 import {
-  claimNip05Handle,
   lookupManagedIdentity,
-  Nip05ClaimError,
   normalizeManagedHandle,
   OidcBindError,
   type BuzzClient,
@@ -222,7 +220,6 @@ export default function BuzzOnboarding() {
             name: displayName,
             handle: managedIdentity.handle,
             avatar: current?.avatar,
-            nip05: managedIdentity.nip05,
           });
         } catch {
           // The server-side assignment is already authoritative. Profile
@@ -678,33 +675,26 @@ export default function BuzzOnboarding() {
     setLoadingAction('name');
     setNotice(null);
     try {
-      const claim = await claimNip05Handle(
-        getBuzzRuntimeConfig().relayUrl,
-        namingIdentity,
-        normalized,
-      );
+      const claim = await monolithPhoneOperation('claimManagedHandle', { handle: normalized });
       try {
         const client = namingClient ?? (await new BuzzRigTransport(namingIdentity).ensureClient());
         const current = await client
           .getGlobalPersonProfile(namingIdentity.publicKey)
           .catch(() => null);
         await client.setGlobalPersonProfile({
-          name: claim.identity.displayName,
-          handle: claim.identity.handle,
+          name: claim.name,
+          handle: claim.handle,
           avatar: current?.avatar,
-          nip05: claim.identity.nip05,
         });
       } catch {
-        // The authenticated hosted claim is authoritative. Relay profile
+        // The authenticated server assignment is authoritative. Profile
         // publication is best-effort here and can reconcile on next launch.
       }
-      await savePreferredPersonName(namingIdentity.publicKey, claim.identity.displayName).catch(
-        () => undefined,
-      );
+      await savePreferredPersonName(namingIdentity.publicKey, claim.name).catch(() => undefined);
       await clearPersonNameOnboardingPending().catch(() => undefined);
       router.replace('/beeline/channels');
     } catch (error) {
-      const taken = error instanceof Nip05ClaimError && error.code === 'name_taken';
+      const taken = error instanceof Error && /already claimed/i.test(error.message);
       setNotice({
         status: 'bind_retry',
         title: taken
@@ -783,7 +773,7 @@ export default function BuzzOnboarding() {
             value={nameInput}
           />
           <Text style={styles.nameHandle}>
-            {normalized ? `${normalized}@usebeeline.app` : t('beelineIdentity.handleRules')}
+            {normalized ? `@${normalized}` : t('beelineIdentity.handleRules')}
           </Text>
           {notice && (
             <View accessibilityRole="alert" style={styles.noticePanel}>

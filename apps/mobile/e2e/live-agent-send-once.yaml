@@ -7,7 +7,7 @@ env:
   LIVE_AGENT_HANDLE: ${LIVE_AGENT_HANDLE}
   LIVE_REPLY: ${LIVE_REPLY}
 ---
-# This is intentionally a real relay + Body/ACP check. The caller provisions
+# This is intentionally a real monolith mobile + Body/ACP check. The caller provisions
 # the throwaway identity, Room, and live agent, then supplies the three values.
 - launchApp:
     clearState: true
@@ -40,21 +40,21 @@ env:
     timeout: 20000
 - tapOn:
     id: chat-input
-- inputText: "@"
+- inputText: '@'
 - extendedWaitUntil:
     visible:
       id: mention-suggestions
     timeout: 5000
 - tapOn:
     id: mention-suggestion-${LIVE_AGENT_HANDLE}
-- inputText: " reply with exactly: ${LIVE_REPLY}"
+- inputText: ' reply with exactly: ${LIVE_REPLY}'
 - tapOn:
     id: chat-send
-# Immediate focus and back navigation exercise the UI while the signed relay
-# publish is in flight; a prior send storm left both controls unresponsive.
+# Immediate focus and back navigation exercise the UI while the monolith write
+# is in flight; a prior send storm left both controls unresponsive.
 - tapOn:
     id: chat-input
-- inputText: " still responsive"
+- inputText: ' still responsive'
 - pressKey: back
 - pressKey: back
 - extendedWaitUntil:

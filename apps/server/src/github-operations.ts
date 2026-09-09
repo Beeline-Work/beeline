@@ -309,7 +309,7 @@ export class GitHubOperations {
     );
     const installationIds = new Set(rows.rows.map((row) => Number(row.installation_id)));
     const credential = await this.userCredential(viewerId, this.database);
-    let githubReconnectNeeded: boolean | undefined;
+    let githubReconnectNeeded: boolean | undefined = credential?.reconnectNeeded;
     if (credential) {
       let administered: Set<number> | undefined;
       try {
@@ -317,18 +317,23 @@ export class GitHubOperations {
           ? new Set(await this.app.listUserInstallationIds(credential.token))
           : new Set<number>();
       } catch (error) {
-        if (!(error instanceof GitHubHttpError) || error.status !== 401) throw error;
-        // User-to-server tokens expire after 8 hours; rotate once before giving up.
-        const rotated = credential.refreshToken
-          ? await this.rotateUserCredential(credential, this.database)
-          : undefined;
-        if (rotated) {
-          administered = new Set(await this.app.listUserInstallationIds(rotated));
-        } else {
-          // Refresh is impossible (no/revoked refresh token): degrade to the stored
-          // installations instead of surfacing a 503 to the repo picker.
+        if (githubReconnectNeeded && error instanceof GitHubHttpError && error.status >= 500) {
           administered = undefined;
-          githubReconnectNeeded = true;
+        } else if (!(error instanceof GitHubHttpError) || error.status !== 401) {
+          throw error;
+        } else {
+          // User-to-server tokens expire after 8 hours; rotate once before giving up.
+          const rotated = credential.refreshToken
+            ? await this.rotateUserCredential(credential, this.database)
+            : undefined;
+          if (rotated) {
+            administered = new Set(await this.app.listUserInstallationIds(rotated));
+          } else {
+            // Refresh is impossible (no/revoked refresh token): degrade to the stored
+            // installations instead of surfacing a 503 to the repo picker.
+            administered = undefined;
+            githubReconnectNeeded = true;
+          }
         }
       }
       if (!credential.token) githubReconnectNeeded = true;
@@ -1062,7 +1067,9 @@ export class GitHubOperations {
   private async userCredential(
     viewerId: string,
     database: SqlDatabase,
-  ): Promise<{ subject: string; token?: string; refreshToken?: string } | undefined> {
+  ): Promise<
+    { subject: string; token?: string; refreshToken?: string; reconnectNeeded?: true } | undefined
+  > {
     const credential = (
       await database.query<{
         subject: string;
@@ -1098,11 +1105,13 @@ export class GitHubOperations {
         ? { subject: credential.subject, token: rotated }
         : { subject: credential.subject };
     }
-    // A legacy expired token without a refresh grant can lose this reconnect signal on a user-installations 503; beeline-reconnect-flag-503-edge owns that follow-up.
     return {
       subject: credential.subject,
       token,
       ...(refreshToken ? { refreshToken } : {}),
+      ...(!refreshToken && expiresAt !== undefined && expiresAt <= Date.now()
+        ? { reconnectNeeded: true as const }
+        : {}),
     };
   }
   private async rotateUserCredential(

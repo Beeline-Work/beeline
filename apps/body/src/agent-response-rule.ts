@@ -92,12 +92,6 @@ export class AgentResponseRule {
     )
       return false;
     if (item.replyToMessageId) return item.replyToAuthorId === agentId;
-    if (
-      (item.agentAuthor || this.agentIds.has(item.authorId)) &&
-      item.requestAuthorId &&
-      item.requestAuthorId !== agentId
-    )
-      return false;
     if (this.lastAgentBySender.get(item.authorId) !== agentId) return false;
     return true;
   }

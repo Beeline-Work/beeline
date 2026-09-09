@@ -624,145 +624,6 @@ describe('the per-sender Room response rule', () => {
     return responseRule;
   }
 
-  it('keeps Goosy silent after Hoots answers a human despite older Hoots-to-Goosy history', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'beeline-room-human-request-boundary-'));
-    roots.push(root);
-    const identity = identityFromKey(AGENT_HEX, 'Goosy');
-    const agent = {
-      name: 'Goosy',
-      publicKey: identity.publicKey,
-      secretKeyHex: Buffer.from(identity.secretKey).toString('hex'),
-    };
-    const runtime = {
-      agent,
-      rooms: [],
-      supervisorRoot: root,
-      transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'token' },
-      agentBinary: '/fake-agent',
-      agentKind: 'codex',
-      agentCommand: '/fake-agent',
-      agentArgs: [],
-      mcpBinary: '/fake-dev-mcp',
-    } as unknown as AgentRuntimeRecord;
-    const config: BodyConfig = {
-      agentBinary: '/fake-agent',
-      agentKind: 'codex',
-      agentCommand: '/fake-agent',
-      agentArgs: [],
-      mcpBinary: '/fake-dev-mcp',
-      readonlyMcpCommand: '/fake-beeline-mcp',
-      agentEnv: {},
-      workspaceRoot: root,
-      autoApprovePermissions: true,
-    };
-    let inboxReads = 0;
-    const execute = vi.fn(async (name: string) => {
-      if (name === 'getWorkspaceRoster')
-        return {
-          members: [
-            { identityId: agent.publicKey, kind: 'agent', name: 'Goosy', role: 'member' },
-            { identityId: OTHER_AGENT, kind: 'agent', name: 'Hoots', role: 'member' },
-            { identityId: CAPTAIN, kind: 'human', name: 'Captain', role: 'owner' },
-          ],
-        };
-      if (name === 'getRoomConversation')
-        return {
-          items: [
-            {
-              id: 'older-goosy-answer-to-hoots',
-              authorId: agent.publicKey,
-              createdAt: 1,
-              type: 'message',
-              body: 'Older reply to Hoots.',
-              mentionIds: [],
-              agentAuthor: true,
-              requestAuthorId: OTHER_AGENT,
-              attachments: [],
-            },
-          ],
-          cursor: 'older-goosy-answer-to-hoots',
-        };
-      if (name === 'getRoomInbox') {
-        inboxReads += 1;
-        if (inboxReads === 1) return { items: [], cursor: 'activation', rewindIds: [] };
-        if (inboxReads === 2)
-          return {
-            items: [
-              {
-                id: 'human-tags-hoots',
-                authorId: CAPTAIN,
-                createdAt: 2,
-                type: 'message',
-                body: '@hoots please answer.',
-                mentionIds: [OTHER_AGENT],
-                agentMentionIds: [OTHER_AGENT],
-                attachments: [],
-              },
-            ],
-            cursor: 'human-tags-hoots',
-          };
-        if (inboxReads === 3)
-          return {
-            items: [
-              {
-                id: 'hoots-answer',
-                authorId: OTHER_AGENT,
-                createdAt: 3,
-                type: 'message',
-                body: 'Hoots answers the human.',
-                mentionIds: [],
-                agentMentionIds: [],
-                agentAuthor: true,
-                requestAuthorId: CAPTAIN,
-                attachments: [],
-              },
-            ],
-            cursor: 'hoots-answer',
-          };
-        return { items: [], cursor: 'latest' };
-      }
-      return { id: 'write-id', createdAt: 1 };
-    });
-    const api = {
-      execute,
-      connection: () => ({
-        baseUrl: 'https://server.example',
-        daemonToken: 'daemon-token',
-        agentId: agent.publicKey,
-      }),
-    } as unknown as DaemonApiClient;
-    const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
-    const prompts: string[] = [];
-    vi.spyOn(acp, 'sessionPrompt').mockImplementation(async (_session, prompt) => {
-      prompts.push(String(prompt));
-      return { stopReason: 'end_turn', updates: [], agentText: '', toolCalls: [] };
-    });
-    const scheduler = new SessionScheduler({ maxLiveSessions: 1 });
-    const abort = new AbortController();
-    const running = new MonolithRoomTurnLoop({
-      roomId: 'room-id',
-      workspaceId: 'workspace',
-      cwd: root,
-      runtime,
-      config,
-      api,
-      scheduler,
-      health: { poll: vi.fn(), failure: vi.fn(), presence: vi.fn() },
-      signal: abort.signal,
-      pollMs: 0,
-      createAcpClient: () => acp,
-    }).run();
-
-    await vi.waitFor(() => expect(inboxReads).toBeGreaterThanOrEqual(4));
-    expect(prompts).toEqual([]);
-    expect(execute.mock.calls.filter(([name]) => name === 'postAgentTurnReceipt')).toEqual([]);
-    expect(execute.mock.calls.filter(([name]) => name === 'postRoomMessage')).toEqual([]);
-
-    abort.abort();
-    await running.catch(() => undefined);
-    await scheduler.dispose();
-  });
-
   it('drops failed local continuity after an empty authoritative rebuild', () => {
     const responseRule = rule();
     responseRule.noteReply(AGENT_HEX, [CAPTAIN]);
@@ -908,12 +769,7 @@ describe('the per-sender Room response rule', () => {
     );
     expect(
       responseRule.continues(
-        message({
-          id: 'return',
-          authorId: OTHER_AGENT,
-          requestAuthorId: AGENT_HEX,
-          agentHopCount: 2,
-        }),
+        message({ id: 'return', authorId: OTHER_AGENT, agentHopCount: 2 }),
         AGENT_HEX,
       ),
     ).toBe(true);
@@ -923,44 +779,6 @@ describe('the per-sender Room response rule', () => {
         AGENT_HEX,
       ),
     ).toBe(false);
-  });
-
-  it('does not mistake an agent answer to a human for an older agent-to-agent return', () => {
-    const responseRule = rule();
-    responseRule.observe(
-      message({
-        id: 'hoots-addresses-goosy',
-        authorId: OTHER_AGENT,
-        mentionIds: [AGENT_HEX],
-        agentMentionIds: [AGENT_HEX],
-        agentAuthor: true,
-        requestAuthorId: CAPTAIN,
-      }),
-    );
-    responseRule.noteReply(AGENT_HEX, [OTHER_AGENT]);
-
-    const hootsAnswersHuman = message({
-      id: 'hoots-answers-human',
-      authorId: OTHER_AGENT,
-      agentAuthor: true,
-      requestAuthorId: CAPTAIN,
-    });
-    expect(responseRule.continues(hootsAnswersHuman, AGENT_HEX)).toBe(false);
-    expect(
-      inboxItemTriggersTurn(
-        hootsAnswersHuman,
-        AGENT_HEX,
-        responseRule.continues(hootsAnswersHuman, AGENT_HEX),
-      ),
-    ).toBe(false);
-
-    const genuineReturn = message({
-      id: 'hoots-answers-goosy',
-      authorId: OTHER_AGENT,
-      agentAuthor: true,
-      requestAuthorId: AGENT_HEX,
-    });
-    expect(responseRule.continues(genuineReturn, AGENT_HEX)).toBe(true);
   });
 
   it('retains outgoing human targets for an unmentioned follow-up', () => {

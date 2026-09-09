@@ -921,7 +921,7 @@ export default function BuzzOnboarding() {
       <View style={[styles.brandSurface, desktopAuthSurface && styles.desktopBrandSurface]}>
         <BeelineMark size={desktopAuthSurface ? 156 : 112} shimmer />
         <Text
-          style={[styles.title, desktopAuthSurface && styles.desktopTitle]}
+          style={desktopAuthSurface ? [styles.title, styles.desktopTitle] : styles.title}
           testID="onboarding-wordmark"
         >
           beeline<Text style={styles.titlePeriod}>.</Text>

@@ -6,6 +6,7 @@ import {
   WELCOME_ROOM_NAME,
 } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
+import { joinWorkspaceMembersToPublicRoom } from './membership-join.js';
 
 /**
  * Seed the shared "Beeline Welcome" Workspace and its `#welcome` Room, then
@@ -54,16 +55,11 @@ export async function seedDefaultWorkspace(database: SqlDatabase): Promise<void>
        ON CONFLICT (workspace_id,identity_id) WHERE room_id IS NULL DO NOTHING`,
       [DEFAULT_WORKSPACE_ID],
     );
-    await transaction.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-       SELECT $1,$2,member.identity_id,member.role
-       FROM memberships member JOIN identities identity ON identity.id=member.identity_id
-       WHERE member.workspace_id=$1 AND member.room_id IS NULL AND member.removed_at IS NULL
-         AND identity.kind='human' AND identity.hidden_from_roster=false
-       ON CONFLICT (room_id,identity_id) WHERE room_id IS NOT NULL
-       DO UPDATE SET role=EXCLUDED.role
-         WHERE memberships.removed_at IS NULL AND memberships.role<>EXCLUDED.role`,
-      [DEFAULT_WORKSPACE_ID, WELCOME_ROOM_ID],
+    await joinWorkspaceMembersToPublicRoom(
+      transaction,
+      DEFAULT_WORKSPACE_ID,
+      WELCOME_ROOM_ID,
+      'roster-humans',
     );
   });
 }

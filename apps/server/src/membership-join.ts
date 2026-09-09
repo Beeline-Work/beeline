@@ -74,6 +74,7 @@ export async function joinWorkspaceMembersToPublicRoom(
   database: SqlDatabase,
   workspaceId: string,
   roomId: string,
+  scope: 'all' | 'roster-humans' = 'all',
 ): Promise<number> {
   const joined = await database.query<{ identity_id: string }>(
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
@@ -81,14 +82,15 @@ export async function joinWorkspaceMembersToPublicRoom(
      FROM rooms room
      JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
        AND workspace_member.room_id IS NULL AND workspace_member.removed_at IS NULL
+     JOIN identities identity ON identity.id=workspace_member.identity_id
      WHERE room.id=$2 AND room.workspace_id=$1 AND room.parent_id IS NULL
        AND room.direct_participants IS NULL AND room.archived_at IS NULL
        AND room.visibility='public'
+       AND ($3='all' OR (identity.kind='human' AND identity.hidden_from_roster=false))
      ON CONFLICT (room_id,identity_id) WHERE room_id IS NOT NULL
-     DO UPDATE SET role=EXCLUDED.role,removed_at=NULL
-       WHERE memberships.removed_at IS NOT NULL OR memberships.role<>EXCLUDED.role
+     DO NOTHING
      RETURNING identity_id`,
-    [workspaceId, roomId],
+    [workspaceId, roomId, scope],
   );
   for (const member of joined.rows)
     await inheritCornerMemberships(database, workspaceId, member.identity_id, [roomId]);

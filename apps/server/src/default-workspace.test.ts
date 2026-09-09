@@ -14,6 +14,7 @@ const CAPTAIN = 'a'.repeat(64);
 const CREW = 'b'.repeat(64);
 const LEAVER = 'c'.repeat(64);
 const AGENT = 'd'.repeat(64);
+const MISSING = 'e'.repeat(64);
 
 describe('default Workspace seed', () => {
   let db: PgliteDatabase;
@@ -55,6 +56,17 @@ describe('default Workspace seed', () => {
       WELCOME_ROOM_ID,
       LEAVER,
     ]);
+    await db.query(`UPDATE rooms SET visibility='invite-only' WHERE id=$1`, [WELCOME_ROOM_ID]);
+    await db.query(
+      `INSERT INTO identities(id,kind,name) VALUES($1,'human','Missing'),($2,'agent','Agent')
+       ON CONFLICT(id) DO NOTHING`,
+      [MISSING, AGENT],
+    );
+    await db.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'member')`,
+      [DEFAULT_WORKSPACE_ID, AGENT],
+    );
     await seedDefaultWorkspace(db);
 
     const members = await db.query<{ identity_id: string; role: string; removed: boolean }>(
@@ -66,6 +78,7 @@ describe('default Workspace seed', () => {
       { identity_id: CAPTAIN, role: 'owner', removed: false },
       { identity_id: CREW, role: 'member', removed: false },
       { identity_id: LEAVER, role: 'member', removed: true },
+      { identity_id: MISSING, role: 'member', removed: false },
     ]);
     const workspaceMembers = await db.query<{ identity_id: string; role: string }>(
       `SELECT identity_id,role FROM memberships
@@ -76,6 +89,8 @@ describe('default Workspace seed', () => {
       { identity_id: CAPTAIN, role: 'owner' },
       { identity_id: CREW, role: 'member' },
       { identity_id: LEAVER, role: 'member' },
+      { identity_id: AGENT, role: 'member' },
+      { identity_id: MISSING, role: 'member' },
     ]);
     expect(
       (await db.query(`SELECT created_by FROM rooms WHERE id=$1`, [WELCOME_ROOM_ID])).rows,

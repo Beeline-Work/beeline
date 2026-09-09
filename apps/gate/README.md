@@ -6,13 +6,13 @@ root); it does not own corner review or landing.
 
 ## Layout
 
-| Path                        | Role                                                                |
-| --------------------------- | ------------------------------------------------------------------- |
-| `src/buzz.ts`               | Channel/community creation, roles, and repository announcements     |
-| `src/git.ts`                | Bounded Git process helpers used by daemon-side repository code     |
-| `src/provisioning.ts`       | Agent and Room provisioning checks                                  |
-| `src/permission-request.ts` | Signed factory-permission requests and receipts                     |
-| `src/relay.ts`              | Signed HTTP relay reader and publisher                              |
+| Path                        | Role                                                            |
+| --------------------------- | --------------------------------------------------------------- |
+| `src/buzz.ts`               | Channel/community creation, roles, and repository announcements |
+| `src/git.ts`                | Bounded Git process helpers used by daemon-side repository code |
+| `src/provisioning.ts`       | Agent and Room provisioning checks                              |
+| `src/permission-request.ts` | Signed factory-permission requests and receipts                 |
+| `src/relay.ts`              | Signed HTTP relay reader and publisher                          |
 
 Corner agents receive a Room-scoped GitHub App installation token from Body and
 use ordinary `git` and `gh` commands. GitHub branch and pull-request state is the

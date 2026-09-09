@@ -341,6 +341,10 @@ test('one workflow owns parallel builds, ordered promotion, retry, and the final
     );
   }
   const retryJob = workflow.slice(workflow.indexOf('\n  retry:'));
+  // A timed-out promotion leaves later jobs skipped. `always()` lets the
+  // retry inspect that terminal result; `failure()` can skip the retry job.
+  assert.match(retryJob, /if: >-\s+always\(\) &&/);
+  assert.doesNotMatch(retryJob, /failure\(\)/);
   for (const job of [
     'promote_server',
     'confirm_server',

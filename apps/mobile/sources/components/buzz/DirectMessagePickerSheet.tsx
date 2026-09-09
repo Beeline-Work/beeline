@@ -1,6 +1,6 @@
-import React from 'react';
-import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import React, { useEffect, useMemo, useState } from 'react';
+import { ScrollView, Text, TextInput, TouchableOpacity } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { WorkspaceMemberDisplayItem } from '@/buzz/room-view-presentation';
 import { Typography } from '@/constants/Typography';
 import { IdentityMark } from './IdentityMark';
@@ -22,8 +22,21 @@ export function DirectMessagePickerSheet({
   onMessage,
   visible,
 }: DirectMessagePickerSheetProps) {
-  const people = members.filter((member) => member.peerKind === 'person');
-  const agents = members.filter((member) => member.peerKind === 'agent');
+  const { theme } = useUnistyles();
+  const [query, setQuery] = useState('');
+  useEffect(() => {
+    if (!visible) setQuery('');
+  }, [visible]);
+
+  const filteredMembers = useMemo(() => {
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    if (!normalizedQuery) return members;
+    return members.filter((member) =>
+      member.peerName.toLocaleLowerCase().includes(normalizedQuery),
+    );
+  }, [members, query]);
+  const people = filteredMembers.filter((member) => member.peerKind === 'person');
+  const agents = filteredMembers.filter((member) => member.peerKind === 'agent');
 
   return (
     <HullActionSheetModal
@@ -35,7 +48,25 @@ export function DirectMessagePickerSheet({
       title="Message"
       visible={visible}
     >
-      <ScrollView contentContainerStyle={styles.list} showsVerticalScrollIndicator={false}>
+      <TextInput
+        accessibilityLabel="Search Workspace members"
+        autoCapitalize="none"
+        autoCorrect={false}
+        onChangeText={setQuery}
+        placeholder="Search members"
+        placeholderTextColor={theme.buzz.textMuted}
+        returnKeyType="search"
+        style={styles.search}
+        testID="direct-message-picker-search"
+        value={query}
+      />
+      <ScrollView
+        contentContainerStyle={styles.list}
+        keyboardDismissMode="on-drag"
+        keyboardShouldPersistTaps="handled"
+        style={styles.listViewport}
+        testID="direct-message-picker-list"
+      >
         {people.length > 0 && <SectionHeading label="PEOPLE" />}
         {people.map((member) => (
           <MemberRow
@@ -47,7 +78,11 @@ export function DirectMessagePickerSheet({
           />
         ))}
         {people.length === 0 && agents.length === 0 && (
-          <Text style={styles.empty}>No other members in this Workspace yet.</Text>
+          <Text accessibilityLiveRegion="polite" style={styles.empty}>
+            {query.trim()
+              ? `No members match “${query.trim()}”.`
+              : 'No other members in this Workspace yet.'}
+          </Text>
         )}
         {agents.length > 0 && <SectionHeading label="AGENTS" />}
         {agents.map((member) => (
@@ -109,7 +144,19 @@ function MemberRow({
 const styles = StyleSheet.create((theme) => {
   const groknight = theme.buzz;
   return {
-    list: { maxHeight: 440, paddingBottom: 4 },
+    search: {
+      ...Typography.default(),
+      ...groknight.type.meta,
+      minHeight: 44,
+      marginHorizontal: 10,
+      paddingHorizontal: 0,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: groknight.border,
+      color: groknight.textPrimary,
+      fontFamily: groknight.proseRegular,
+    },
+    listViewport: { maxHeight: 440, flexGrow: 0 },
+    list: { paddingBottom: 4 },
     row: {
       minHeight: 60,
       paddingHorizontal: 10,

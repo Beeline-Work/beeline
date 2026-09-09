@@ -12,6 +12,7 @@ vi.mock('react-native', async () => {
     ScrollView: host('ScrollView'),
     StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
     Text: host('Text'),
+    TextInput: host('TextInput'),
     TouchableOpacity: host('TouchableOpacity'),
     View: host('View'),
   };
@@ -19,6 +20,7 @@ vi.mock('react-native', async () => {
 
 vi.mock('react-native-unistyles', () => ({
   StyleSheet: { create: (styles: unknown) => styles },
+  useUnistyles: () => ({ theme: { buzz: { textMuted: '#777' } } }),
 }));
 
 vi.mock('@/constants/Typography', () => ({
@@ -111,5 +113,67 @@ describe('direct message picker', () => {
       }),
     );
     expect(renderer.root.findByProps({ testID: 'direct-message-picker-close' })).toBeDefined();
+  });
+
+  it('filters displayed identities without flattening sections or changing DM routing', () => {
+    const onMessage = vi.fn();
+    const renderer = render(
+      React.createElement(DirectMessagePickerSheet, {
+        busyPubkey: null,
+        members,
+        onClose: vi.fn(),
+        onMessage,
+        visible: true,
+      }),
+    );
+
+    expect(renderer.root.findByProps({ testID: 'direct-message-picker-list' })).toBeDefined();
+    act(() =>
+      renderer.root
+        .findByProps({ testID: 'direct-message-picker-search' })
+        .props.onChangeText('bEe'),
+    );
+
+    expect(
+      renderer.root.findAll((node) => node.type === 'Text' && node.props.children === 'PEOPLE'),
+    ).toHaveLength(0);
+    expect(
+      renderer.root.findAll((node) => node.type === 'Text' && node.props.children === 'AGENTS'),
+    ).toHaveLength(1);
+    expect(
+      renderer.root.findAllByProps({ testID: 'message-workspace-member-pubkey-alice' }),
+    ).toHaveLength(0);
+
+    act(() =>
+      renderer.root
+        .findByProps({ testID: 'message-workspace-member-pubkey-agent' })
+        .props.onPress(),
+    );
+    expect(onMessage).toHaveBeenCalledWith(members[2]);
+  });
+
+  it('shows a filtered empty state and clears the query after dismissal', () => {
+    const props = {
+      busyPubkey: null,
+      members,
+      onClose: vi.fn(),
+      onMessage: vi.fn(),
+      visible: true,
+    };
+    const renderer = render(React.createElement(DirectMessagePickerSheet, props));
+
+    act(() =>
+      renderer.root
+        .findByProps({ testID: 'direct-message-picker-search' })
+        .props.onChangeText('nobody'),
+    );
+    expect(renderer.root.findByProps({ children: 'No members match “nobody”.' })).toBeDefined();
+
+    act(() =>
+      renderer.update(React.createElement(DirectMessagePickerSheet, { ...props, visible: false })),
+    );
+    expect(renderer.root.findByProps({ testID: 'direct-message-picker-search' }).props.value).toBe(
+      '',
+    );
   });
 });

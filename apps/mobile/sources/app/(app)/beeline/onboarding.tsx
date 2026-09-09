@@ -720,6 +720,7 @@ export default function BuzzOnboarding() {
   const canRetryBind = notice?.retryable === true && pendingBind.current !== null;
   const signInLabel = 'Continue with GitHub';
   const monolithEnabled = getBuzzRuntimeConfig().monolithEnabled;
+  const desktopAuthSurface = isTauri();
 
   if (faceStep) {
     return (
@@ -917,9 +918,12 @@ export default function BuzzOnboarding() {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
-      <View style={styles.brandSurface}>
-        <BeelineMark shimmer />
-        <Text style={styles.title} testID="onboarding-wordmark">
+      <View style={[styles.brandSurface, desktopAuthSurface && styles.desktopBrandSurface]}>
+        <BeelineMark size={desktopAuthSurface ? 156 : 112} shimmer />
+        <Text
+          style={[styles.title, desktopAuthSurface && styles.desktopTitle]}
+          testID="onboarding-wordmark"
+        >
           beeline<Text style={styles.titlePeriod}>.</Text>
         </Text>
         <Text style={styles.subtitle} testID="onboarding-tagline">
@@ -1051,6 +1055,7 @@ const styles = StyleSheet.create((theme) => {
       backgroundColor: groknight.bgVoid,
     },
     brandSurface: { alignItems: 'center', marginBottom: 28 },
+    desktopBrandSurface: { marginBottom: 36 },
     title: {
       // Canonical brand family (theme prose voice, Space Grotesk) — the login
       // wordmark is a brand surface, not a logo-font exception.
@@ -1063,6 +1068,7 @@ const styles = StyleSheet.create((theme) => {
       marginTop: 2,
       marginBottom: 8,
     },
+    desktopTitle: { fontSize: 34, lineHeight: 40, marginTop: 6 },
     // The trailing period of the `beeline.` wordmark is the one brass glyph.
     // Same canonical family as the title it nests inside, per the typography
     // governor (every Text style names an app font).
@@ -1083,6 +1089,9 @@ const styles = StyleSheet.create((theme) => {
       textAlign: 'center',
     },
     noticePanel: {
+      width: '100%',
+      maxWidth: 440,
+      alignSelf: 'center',
       borderWidth: 1,
       borderColor: groknight.borderStrong,
       backgroundColor: groknight.bgHighlight,
@@ -1104,7 +1113,7 @@ const styles = StyleSheet.create((theme) => {
       fontSize: 14,
       lineHeight: 20,
     },
-    importPanel: { marginBottom: 16 },
+    importPanel: { width: '100%', maxWidth: 440, alignSelf: 'center', marginBottom: 16 },
     sectionLabel: {
       ...Typography.mono('semiBold'),
       color: groknight.textMuted,
@@ -1135,7 +1144,7 @@ const styles = StyleSheet.create((theme) => {
     },
     inputFocused: { borderWidth: 2, borderColor: groknight.focus, paddingHorizontal: 11 },
     importAction: { marginTop: 10 },
-    actions: { gap: 10 },
+    actions: { width: '100%', maxWidth: 440, alignSelf: 'center', gap: 10 },
     recoveryActions: { gap: 10 },
     recoveryWarning: {
       ...Typography.default(),

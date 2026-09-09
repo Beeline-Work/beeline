@@ -3,9 +3,11 @@ import { useWindowDimensions } from 'react-native';
 import { useMemo } from 'react';
 import { calculateDeviceDimensions, determineDeviceType, calculateHeaderHeight } from './deviceCalculations';
 import { isRunningOnMac } from './platform';
+import { getLayoutClass, type LayoutClass } from './layoutClass';
 
 // Re-export calculation functions for use in other components
 export { calculateDeviceDimensions, determineDeviceType, calculateHeaderHeight };
+export { getLayoutClass, LAYOUT_BREAKPOINTS, type LayoutClass } from './layoutClass';
 
 // Get header height based on platform, device type, and orientation (wrapper for backward compatibility)
 export function getHeaderHeight(isLandscape: boolean, deviceType: 'phone' | 'tablet'): number {
@@ -57,10 +59,20 @@ export function useDeviceType(): 'phone' | 'tablet' {
     }, [width, height]);
 }
 
-// Hook to detect if device is tablet
+// Window-size classes follow the live layout width, including split-screen and
+// resized desktop windows.
+export function useLayoutClass(): LayoutClass {
+    const { width } = useWindowDimensions();
+    return getLayoutClass(width);
+}
+
+// Hook to detect if the current layout has room for the persistent sidebar.
 export function useIsTablet(): boolean {
-    const deviceType = useDeviceType();
-    return deviceType === 'tablet';
+    return useLayoutClass() !== 'compact';
+}
+
+export function useIsDesktop(): boolean {
+    return useLayoutClass() === 'wide';
 }
 
 // Hook to detect landscape orientation

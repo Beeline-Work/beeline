@@ -6,6 +6,7 @@ import { Platform, View } from 'react-native';
 import { isRunningOnMac } from '@/utils/platform';
 import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
+import { useIsDesktop } from '@/utils/responsive';
 
 export const unstable_settings = {
   initialRouteName: 'index',
@@ -16,7 +17,7 @@ export default function RootLayout() {
   // native-stack animate every blur/glass subview during each push and pop.
   const shouldUseCustomHeader =
     Platform.OS === 'android' || isRunningOnMac() || Platform.OS === 'web';
-  const isDesktop = Platform.OS === 'web' || isRunningOnMac();
+  const isDesktop = useIsDesktop();
   const { theme } = useUnistyles();
 
   return (

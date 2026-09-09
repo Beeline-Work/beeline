@@ -497,7 +497,7 @@ jobs:
   production-corpus-replay-on-demand:
     name: PRODUCTION-CORPUS REPLAY (on demand)
     if: github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'production-corpus-replay')
-    runs-on: [self-hosted, beeline-production-squire]
+    runs-on: [self-hosted, beeline-prod-host]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -535,7 +535,7 @@ jobs:
   frame-budget-on-demand:
     name: FRAME-BUDGET (on demand)
     if: github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'frame-budget')
-    runs-on: [self-hosted, beeline-production-squire]
+    runs-on: [self-hosted, beeline-prod-host]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -577,7 +577,7 @@ jobs:
   state-upgrade-on-demand:
     name: STATE-UPGRADE (on demand)
     if: github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'state-upgrade')
-    runs-on: [self-hosted, beeline-production-squire]
+    runs-on: [self-hosted, beeline-prod-host]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -691,7 +691,7 @@ jobs:
         (github.event_name == 'pull_request' && needs.changes.outputs.workflows == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'actionlint'))
       )
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'beeline-production-squire' }}
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'beeline-prod-host' }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4

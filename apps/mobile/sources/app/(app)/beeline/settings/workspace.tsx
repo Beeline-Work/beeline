@@ -554,7 +554,7 @@ const styles = StyleSheet.create((theme) => {
     },
     sectionNote: {
       color: hull.dim,
-      fontFamily: Typography.mono,
+      ...Typography.mono(),
       fontSize: 12,
       lineHeight: 18,
       marginBottom: 8,

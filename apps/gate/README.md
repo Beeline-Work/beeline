@@ -11,7 +11,6 @@ root); it does not own corner review or landing.
 | `src/buzz.ts`               | Channel/community creation, roles, and repository announcements     |
 | `src/git.ts`                | Bounded Git process helpers used by daemon-side repository code     |
 | `src/provisioning.ts`       | Agent and Room provisioning checks                                  |
-| `src/human-authority.ts`    | Human custody and current-role verification for factory permissions |
 | `src/permission-request.ts` | Signed factory-permission requests and receipts                     |
 | `src/relay.ts`              | Signed HTTP relay reader and publisher                              |
 

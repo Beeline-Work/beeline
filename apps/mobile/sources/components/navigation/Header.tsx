@@ -3,8 +3,7 @@ import { View, Text, Platform, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackHeaderProps } from '@react-navigation/native-stack';
 import { layout } from '../layout';
-import { isRunningOnMac } from '@/utils/platform';
-import { useHeaderHeight, useIsTablet } from '@/utils/responsive';
+import { useHeaderHeight, useIsDesktop, useIsTablet } from '@/utils/responsive';
 import { Typography } from '@/constants/Typography';
 import { StyleSheet } from 'react-native-unistyles';
 
@@ -44,7 +43,7 @@ export const Header = React.memo((props: HeaderProps) => {
     const insets = useSafeAreaInsets();
     const paddingTop = safeAreaEnabled ? insets.top : 0;
     const headerHeight = useHeaderHeight();
-    const isDesktop = Platform.OS === 'web' || isRunningOnMac();
+    const isDesktop = useIsDesktop();
     const contentHeight = headerHeight;
 
     const containerStyle = [
@@ -121,7 +120,7 @@ const NavigationHeaderComponent: React.FC<NativeStackHeaderProps> = React.memo((
     const { options, route, back, navigation } = props;
     const extendedOptions = options as ExtendedNavigationOptions;
     const isTablet = useIsTablet();
-    const isDesktop = Platform.OS === 'web' || isRunningOnMac();
+    const isDesktop = useIsDesktop();
 
     // Hide back button on tablet — navigation is handled via sidebar and persistent header
     const shouldHideBackButton = isTablet;

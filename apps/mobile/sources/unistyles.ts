@@ -1,18 +1,13 @@
 import { StyleSheet, UnistylesRuntime } from 'react-native-unistyles';
 import { obsidianTheme } from './theme';
 import * as SystemUI from 'expo-system-ui';
+import { LAYOUT_BREAKPOINTS } from './utils/layoutClass';
 
 const appThemes = {
     obsidian: obsidianTheme,
 };
 
-const breakpoints = {
-    xs: 0,
-    sm: 300,
-    md: 500,
-    lg: 800,
-    xl: 1200,
-};
+const breakpoints = LAYOUT_BREAKPOINTS;
 
 type AppThemes = typeof appThemes;
 type AppBreakpoints = typeof breakpoints;

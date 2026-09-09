@@ -316,6 +316,7 @@ type HullDialogProps = Omit<HullModalProps, 'children' | 'placement'> & {
   actions: readonly HullDialogAction[];
   body?: string;
   children?: React.ReactNode;
+  contentLayout?: 'intrinsic' | 'fill';
   surfaceStyle?: StyleProp<ViewStyle>;
   title: string;
 };
@@ -325,6 +326,7 @@ export function HullDialog({
   actions,
   body,
   children,
+  contentLayout = 'intrinsic',
   surfaceStyle,
   title,
   testID,
@@ -334,12 +336,18 @@ export function HullDialog({
   return (
     <HullModal {...modalProps} placement="center" testID={testID}>
       <HullFloatingSurface style={[styles.dialogSurface, surfaceStyle]}>
-        <View style={styles.dialogCopy}>
+        <View style={[styles.dialogCopy, contentLayout === 'fill' && styles.dialogCopyFill]}>
           <Text accessibilityRole="header" style={styles.dialogTitle}>
             {title}
           </Text>
           {body ? <Text style={styles.dialogBody}>{body}</Text> : null}
-          {children ? <View style={styles.dialogContent}>{children}</View> : null}
+          {children ? (
+            <View
+              style={[styles.dialogContent, contentLayout === 'fill' && styles.dialogContentFill]}
+            >
+              {children}
+            </View>
+          ) : null}
         </View>
         <View style={styles.dialogActions}>
           {actions.map((action, index) => {
@@ -428,7 +436,6 @@ const styles = StyleSheet.create((theme) => {
     },
     dialogSurface: { width: '100%' },
     dialogCopy: {
-      flex: 1,
       flexShrink: 1,
       minHeight: 0,
       overflow: 'hidden',
@@ -436,7 +443,9 @@ const styles = StyleSheet.create((theme) => {
       paddingTop: HULL_DIALOG_LAYOUT.copyPaddingTop,
       paddingBottom: HULL_DIALOG_LAYOUT.copyPaddingBottom,
     },
-    dialogContent: { flex: 1, flexShrink: 1, minHeight: 0 },
+    dialogCopyFill: { flex: 1 },
+    dialogContent: { flexShrink: 1, minHeight: 0 },
+    dialogContentFill: { flex: 1 },
     dialogTitle: {
       ...Typography.default('semiBold'),
       fontFamily: hull.proseSemibold,

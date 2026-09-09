@@ -2,7 +2,6 @@ import { RoundButton } from '@/components/RoundButton';
 import { Text, View } from 'react-native';
 import * as React from 'react';
 import { router } from 'expo-router';
-import * as Linking from 'expo-linking';
 import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
@@ -10,6 +9,7 @@ import { parseCommunityInviteToken } from '@/buzz/community-invite';
 import { parseReviewSecret } from '@/buzz/review-link';
 import { isPersonNameOnboardingPending } from '@/buzz/person-name';
 import { markInitialLandingResolved } from '@/navigation/initial-landing';
+import { initialAuthUrl } from '@/auth/desktop-auth-session';
 
 export default function Home() {
   const [buzzCheckDone, setBuzzCheckDone] = React.useState(false);
@@ -20,7 +20,7 @@ export default function Home() {
   const [buzzStorageError, setBuzzStorageError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
-    void Promise.all([loadBuzzIdentity(), Linking.getInitialURL().catch(() => null)])
+    void Promise.all([loadBuzzIdentity(), initialAuthUrl().catch(() => null)])
       .then(async ([identity, initialUrl]) => {
         setHasBuzzIdentity(identity !== null);
         setPersonNameOnboardingPending(identity ? await isPersonNameOnboardingPending() : false);

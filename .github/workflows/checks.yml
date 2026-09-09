@@ -221,6 +221,7 @@ jobs:
               - 'scripts/check-app-association-drift.mjs'
               - 'scripts/pages-site.mjs'
               - 'scripts/pages-site.test.mjs'
+              - 'scripts/landing-animation.test.mjs'
               - 'scripts/pages-channel.mjs'
               - 'scripts/pages-channel.test.mjs'
               - 'scripts/verify-pages-update.mjs'
@@ -675,7 +676,7 @@ jobs:
       - run: npm ci
       - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client
       - name: Verify the committed app associations and Pages build
-        run: node --test scripts/app-associations.test.mjs scripts/pages-site.test.mjs scripts/pages-channel.test.mjs scripts/verify-pages-update.test.mjs
+        run: node --test scripts/app-associations.test.mjs scripts/pages-site.test.mjs scripts/landing-animation.test.mjs scripts/pages-channel.test.mjs scripts/verify-pages-update.test.mjs
       - name: Run the relay-front contract test
         run: npm test -w @beeline/relay-front -- --run src/invite-web.test.ts
 

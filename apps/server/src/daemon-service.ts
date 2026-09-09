@@ -171,7 +171,6 @@ export class DaemonService {
       'postAgentActivity',
       'createCorner',
       'postRoomEvent',
-      'stageAgentDelegation',
       'requestAgentGrant',
     ]);
     if (!this.commandTransaction && scopedRoom && turnWrites.has(name)) {
@@ -256,7 +255,6 @@ export class DaemonService {
             db,
             command,
             resultId,
-            (candidate.delegateAgentIds ?? []) as string[],
             candidate.replyToMessageId as string | undefined,
           );
           await db.query(
@@ -285,30 +283,6 @@ export class DaemonService {
       return output;
     }
     switch (name) {
-      case 'stageAgentDelegation': {
-        const command = await authorizeCommandOutput(
-          this.database,
-          scopedRoom!,
-          authenticatedAgentId,
-          candidate.requestId,
-          candidate.generationId,
-        );
-        if (typeof candidate.targetAgentId !== 'string')
-          throw new Error('delegation target is required');
-        const target = await this.database.query(
-          `SELECT 1 FROM memberships m JOIN identities i ON i.id=m.identity_id AND i.kind='agent'
-          WHERE m.room_id=$1 AND m.identity_id=$2 AND m.removed_at IS NULL`,
-          [scopedRoom, candidate.targetAgentId],
-        );
-        if (!target.rowCount || candidate.targetAgentId === authenticatedAgentId)
-          throw new Error('delegation target is not an agent member');
-        await this.database.query(
-          `UPDATE agent_commands SET delegate_agent_ids=(SELECT jsonb_agg(DISTINCT value)
-          FROM jsonb_array_elements(delegate_agent_ids || $2::jsonb)) WHERE id=$1`,
-          [command.id, JSON.stringify([candidate.targetAgentId])],
-        );
-        return this.writeResult() as Output<Name>;
-      }
       case 'getAgentCommands':
         return (await readAgentCommands(
           this.database,
@@ -2641,7 +2615,6 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   getAgentConfiguration: true,
   getAgentPresence: true,
   getRequestCompletion: true,
-  stageAgentDelegation: true,
   getAgentCommands: true,
   claimAgentCommand: true,
   acknowledgeAgentCommand: true,

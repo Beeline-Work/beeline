@@ -41,7 +41,7 @@ async function claim(c: AgentCommand, generationId = 'g1') {
 const result = (
   c: AgentCommand,
   text: string,
-  delegateAgentIds: string[] = [],
+  mentionIds: string[] = [],
   generationId = 'g1',
   extra = {},
 ) =>
@@ -52,7 +52,7 @@ const result = (
       requestId: c.turnRequestId,
       generationId,
       text,
-      delegateAgentIds,
+      mentionIds,
       ...extra,
     },
     c.agentId,
@@ -122,8 +122,11 @@ describe.each([R, C])('server command authority in %s', (room) => {
     await send('@hoots explain tags', room);
     const [next] = await commands(A, room);
     await claim(next!);
-    await result(next!, 'Tag @goosy and Goosy answers', [], 'g1', { mentionIds: [B] });
-    expect(await commands(B, room)).toEqual([]);
+    await result(next!, 'Tag @goosy and Goosy answers', [B]);
+    const [tagged] = await commands(B, room);
+    expect(tagged).toBeDefined();
+    await claim(tagged!);
+    await result(tagged!, 'Goosy answered');
     await send('Thanks everyone', room);
     expect(await commands(A, room)).toEqual([]);
     expect(await commands(B, room)).toEqual([]);
@@ -294,17 +297,12 @@ it('rejects unknown, wrong agent, cross-Room, completed and cancelled turn outpu
     daemon.execute('postAgentDraft', { ...draft, turnId: next!.turnRequestId }, A),
   ).rejects.toThrow();
 });
-it('stores deliberate tool delegation separately from prose mentions', async () => {
+it('routes a validated agent tag when the final message is committed', async () => {
   await send('@hoots');
   const [c] = await commands();
   await claim(c!);
-  await daemon.execute(
-    'stageAgentDelegation',
-    { roomId: R, requestId: c!.turnRequestId, generationId: 'g1', targetAgentId: B },
-    A,
-  );
   expect(await commands(B)).toEqual([]);
-  await result(c!, 'Please help');
+  await result(c!, '@goosy please help', [B]);
   expect(await commands(B)).toHaveLength(1);
 });
 it('rolls final storage back if creating the next command fails', async () => {
@@ -492,20 +490,15 @@ it('never reopens terminal commands and never accepts missing generation claims'
   await result(c!, 'Terminal');
   await expect(claim(c!, 'another')).rejects.toThrow();
 });
-it('rechecks delegated membership at final commit, including staged targets', async () => {
+it('rechecks tagged agent membership at final commit', async () => {
   await send('@hoots');
   const [c] = await commands();
   await claim(c!);
-  await daemon.execute(
-    'stageAgentDelegation',
-    { roomId: R, requestId: c!.turnRequestId, generationId: 'g1', targetAgentId: B },
-    A,
-  );
   await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [
     R,
     B,
   ]);
-  await result(c!, 'No target remains', [B]);
+  await result(c!, '@goosy no target remains', [B]);
   expect((await db.query(`SELECT 1 FROM agent_commands WHERE agent_id=$1`, [B])).rowCount).toBe(0);
 });
 it('binds emitted events to the issuing command when agents share a human request', async () => {

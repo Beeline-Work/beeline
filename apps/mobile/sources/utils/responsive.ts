@@ -2,7 +2,7 @@ import { Dimensions, Platform } from 'react-native';
 import { useWindowDimensions } from 'react-native';
 import { useMemo } from 'react';
 import { calculateDeviceDimensions, determineDeviceType, calculateHeaderHeight } from './deviceCalculations';
-import { isRunningOnMac } from './platform';
+import { isDesktopPlatform, isRunningOnMac } from './platform';
 import { getLayoutClass, type LayoutClass } from './layoutClass';
 
 // Re-export calculation functions for use in other components
@@ -63,7 +63,13 @@ export function useDeviceType(): 'phone' | 'tablet' {
 // resized desktop windows.
 export function useLayoutClass(): LayoutClass {
     const { width } = useWindowDimensions();
-    return getLayoutClass(width);
+    const deviceType = useDeviceType();
+
+    // On web and Mac the "device" is a resizable window, so its physical
+    // diagonal says nothing about the layout — width alone decides. A handheld
+    // keeps the device check, which is what holds a phone in landscape (wider
+    // than the `regular` threshold) at compact.
+    return getLayoutClass(width, isDesktopPlatform() ? undefined : deviceType);
 }
 
 // Hook to detect if the current layout has room for the persistent sidebar.
@@ -71,8 +77,11 @@ export function useIsTablet(): boolean {
     return useLayoutClass() !== 'compact';
 }
 
+// Desktop chrome needs a desktop platform *and* a window with room for it; a
+// narrow browser window gets the single-column treatment instead.
 export function useIsDesktop(): boolean {
-    return useLayoutClass() === 'wide';
+    const layoutClass = useLayoutClass();
+    return isDesktopPlatform() && layoutClass !== 'compact';
 }
 
 // Hook to detect landscape orientation

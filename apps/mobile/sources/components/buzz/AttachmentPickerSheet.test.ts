@@ -34,6 +34,8 @@ describe('AttachmentPickerSheet', () => {
     expect(source).toContain('testID="attachment-picker-document"');
     expect(source).toContain('<HullActionSheetModal');
     expect(source).toContain('<HullActionSheetCancel');
+    expect(source).toContain('label="Photos"');
+    expect(source).toContain('metadata="Choose up to 10"');
   });
 
   it('replaces the composer attachment alert while preserving both picker actions', () => {
@@ -41,6 +43,15 @@ describe('AttachmentPickerSheet', () => {
     expect(chatSource).toContain('onPickDocument={() => void pickDocument()}');
     expect(chatSource).toContain('onPickPhoto={() => void pickPhoto()}');
     expect(chatSource).not.toContain("Alert.alert('Attach to message'");
+  });
+
+  it('selects and renders multiple photos for one Room or corner message', () => {
+    expect(chatSource).toContain('allowsMultipleSelection: true');
+    expect(chatSource).toContain('selectionLimit: remaining');
+    expect(chatSource).toContain('pickedPhotoAttachments(result.assets)');
+    expect(chatSource).toContain('pendingAttachments.map((attachment, index) =>');
+    expect(chatSource).toContain('uploadChatAttachments(');
+    expect(chatSource).toContain('testID={`pending-chat-attachment-remove-${index}`}');
   });
 
   it('closes before dispatching Photo or Document and exposes scrim/Cancel dismissal', () => {

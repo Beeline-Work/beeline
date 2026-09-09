@@ -23,8 +23,6 @@ export async function createMonolithAuth(
     | {
         oauth: GitHubOAuthClient;
         app: GitHubAppClient;
-        webhookSecret?: string;
-        onWebhook?: (eventType: string, payload: unknown) => Promise<void>;
       }
     | undefined,
   options: {
@@ -64,7 +62,14 @@ export async function createMonolithAuth(
   await app.ready();
 
   return {
-    handle: (request, response) => app.routing(request, response),
+    handle: (request, response) => {
+      if (new URL(request.url ?? '/', publicOrigin).pathname === '/auth/github/webhook') {
+        response.writeHead(404, { 'content-type': 'application/json' });
+        response.end('{"error":"not_found"}\n');
+        return;
+      }
+      app.routing(request, response);
+    },
     verifyGitHubTicket: async (ticket) => {
       const result = await verifyPhoneGitHubTicket(store, tenant.community, ticket);
       if (result.status !== 'verified') throw new Error('GitHub identity exchange failed');

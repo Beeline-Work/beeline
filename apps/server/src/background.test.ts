@@ -248,6 +248,8 @@ describe('background advisory-lock ownership', () => {
       );
       expect(await loop.runOnce()).toBe(6);
       expect(send).toHaveBeenCalledTimes(6);
+      expect(await loop.runOnce()).toBe(0);
+      expect(send).toHaveBeenCalledTimes(6);
       expect(send).toHaveBeenCalledWith(
         'owner-device-token-12345678901234567890',
         expect.objectContaining({ text: 'Bee: Please review' }),

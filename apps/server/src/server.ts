@@ -527,15 +527,24 @@ async function route(
     if (typeof delivery !== 'string' || typeof event !== 'string')
       throw new Error('GitHub delivery headers are required');
     const parsed = JSON.parse(payload.toString('utf8')) as unknown;
+    const completed = await options.database.query(
+      `SELECT 1 FROM github_webhook_deliveries WHERE delivery_id=$1`,
+      [delivery],
+    );
+    if (completed.rowCount) {
+      json(response, 200, { accepted: false, duplicate: true });
+      return;
+    }
+    if (options.github?.onWebhook) await options.github.onWebhook(event, parsed);
     const inserted = await options.database.query(
-      `INSERT INTO github_webhook_deliveries(delivery_id,event_type,payload) VALUES($1,$2,$3::jsonb) ON CONFLICT DO NOTHING`,
+      `INSERT INTO github_webhook_deliveries(delivery_id,event_type,payload,processed_at)
+       VALUES($1,$2,$3::jsonb,now()) ON CONFLICT DO NOTHING`,
       [delivery, event, JSON.stringify(parsed)],
     );
-    if (inserted.rowCount && options.github.onWebhook)
-      await options.github.onWebhook(event, parsed);
-    json(response, inserted.rowCount ? 202 : 200, {
-      accepted: Boolean(inserted.rowCount),
-      duplicate: !inserted.rowCount,
+    const accepted = Boolean(inserted.rowCount);
+    json(response, accepted ? 202 : 200, {
+      accepted,
+      duplicate: !accepted,
     });
     return;
   }

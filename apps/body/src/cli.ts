@@ -507,12 +507,7 @@ async function main(): Promise<void> {
   // same plain output as before this existed, and never blocks on a prompt.
   const interactiveUi = command !== 'daemon' && Boolean(stdin.isTTY && stdout.isTTY);
 
-  // Parse optional flags.
-  const llmEnvFile = process.env.BUZZY_BODY_LLM_FILE;
-  const workspaceRoot = process.env.BUZZY_BODY_WORKSPACE ?? './body-workspace';
-
   if (command === '--version' || command === 'version') {
-    const config = loadBodyConfig({ workspaceRoot, llmEnvFile });
     console.log(pc.bold('beeline 0.0.0'));
     const layout = beelineInstallLayout(process.env);
     if (layout) {
@@ -522,9 +517,6 @@ async function main(): Promise<void> {
         `${pc.dim('installed bundle:')} ${describeIdentity(identity)}${active ? ` (release ${active})` : ''}`,
       );
     }
-    console.log(`${pc.dim('[body] agent binary:')} ${config.agentCommand ?? config.agentBinary}`);
-    console.log(`${pc.dim('[body] mcp binary:')} ${config.mcpBinary}`);
-    console.log(`${pc.dim('[body] read-only mcp:')} ${config.readonlyMcpCommand}`);
     return;
   }
 

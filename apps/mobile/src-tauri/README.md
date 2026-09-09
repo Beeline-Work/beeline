@@ -2,8 +2,9 @@
 
 The desktop app is the Expo **web** bundle in a native window. There is no
 second client: `expo export --platform web` produces `apps/mobile/dist`, and
-Tauri wraps it. Everything a user sees is the TypeScript in `sources/`; the
-Rust in `src/` opens the window and registers two plugins, nothing more.
+Tauri wraps it. Everything a user sees is the TypeScript in `sources/`; Rust
+owns the native window, plugins, and the OS credential-store commands used for
+monolith session refresh tokens.
 
 ## The three configurations
 
@@ -13,15 +14,15 @@ only what differs. Each has its own bundle identifier, which is what lets a
 tester keep all three installed side by side without them sharing a webview
 data directory.
 
-| Script | Config | Product name | Identifier |
-| --- | --- | --- | --- |
-| `npm run tauri:dev` | `tauri.dev.conf.json` | Beeline Dev | `app.usebeeline.desktop.dev` |
-| `npm run tauri:build:dev` | `tauri.dev.conf.json` | Beeline Dev | `app.usebeeline.desktop.dev` |
-| `npm run tauri:build:preview` | `tauri.preview.conf.json` | Beeline Preview | `app.usebeeline.desktop.preview` |
-| `npm run tauri:build:production` | `tauri.conf.json` | Beeline | `app.usebeeline.desktop` |
+| Script                           | Config                    | Product name    | Identifier                       |
+| -------------------------------- | ------------------------- | --------------- | -------------------------------- |
+| `npm run tauri:dev`              | `tauri.dev.conf.json`     | Beeline Dev     | `app.usebeeline.desktop.dev`     |
+| `npm run tauri:build:dev`        | `tauri.dev.conf.json`     | Beeline Dev     | `app.usebeeline.desktop.dev`     |
+| `npm run tauri:build:preview`    | `tauri.preview.conf.json` | Beeline Preview | `app.usebeeline.desktop.preview` |
+| `npm run tauri:build:production` | `tauri.conf.json`         | Beeline         | `app.usebeeline.desktop`         |
 
 `tauri.dev.conf.json` and `tauri.preview.conf.json` restate the whole window
-object rather than one field of it: the CLI merges objects but *replaces*
+object rather than one field of it: the CLI merges objects but _replaces_
 arrays, and `app.windows` is an array.
 
 The one behavioural difference between preview and production is the frontend
@@ -46,6 +47,8 @@ version as the phone build from the same commit.
   the native zoom so the layout viewport really changes and responsive
   breakpoints react.
 - `opener:default` — external links leave the app in the user's browser.
+- `deep-link:default` — the external browser returns an allowlisted OAuth
+  callback to the existing app instance.
 - `http:default`, scoped to the Beeline hosts plus loopback for a self-hosted
   server. The scope is an allowlist: a new host has to be added here before
   the plugin will fetch it.
@@ -53,6 +56,19 @@ version as the phone build from the same commit.
 The window is frameless-on-macOS (`titleBarStyle: "Overlay"`,
 `hiddenTitle: true`), which is why `SidebarNavigator.tsx` insets its header by
 the width of the traffic lights.
+
+## Session storage
+
+The Expo web bundle has no `expo-secure-store` backend. In Tauri,
+`sources/auth/monolith-secure-storage.ts` routes the two monolith session keys
+to allowlisted Rust commands instead. The shell stores them in the Linux
+kernel keyring, macOS Keychain, or Windows Credential Manager. Android and iOS
+continue to use Expo SecureStore unchanged; browser `localStorage` never holds
+these session credentials.
+
+The shell registers the existing `beeline://` callback scheme. Linux and
+Windows forward a second launch into the running instance; AppImages also
+register their absolute path at startup because they have no installer hook.
 
 ## Icons
 

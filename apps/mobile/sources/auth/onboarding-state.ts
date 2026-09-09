@@ -37,9 +37,7 @@ export function clearOnboardingNotice(): void {
   pendingOnboardingNotice = null;
 }
 
-export function subscribeToOnboardingNotices(
-  listener: OnboardingNoticeListener,
-): () => void {
+export function subscribeToOnboardingNotices(listener: OnboardingNoticeListener): () => void {
   onboardingNoticeListeners.add(listener);
   if (pendingOnboardingNotice) listener(pendingOnboardingNotice);
   return () => onboardingNoticeListeners.delete(listener);
@@ -90,9 +88,7 @@ export function clearOnboardingFaceStep(): void {
   for (const listener of faceStepListeners) listener(null);
 }
 
-export function subscribeToOnboardingFaceStep(
-  listener: OnboardingFaceStepListener,
-): () => void {
+export function subscribeToOnboardingFaceStep(listener: OnboardingFaceStepListener): () => void {
   faceStepListeners.add(listener);
   if (pendingFaceStep) listener(pendingFaceStep);
   return () => faceStepListeners.delete(listener);
@@ -112,7 +108,9 @@ interface AuthUrlSubscription {
 interface WaitForAuthCallbackInput {
   redirectUri: string;
   openAuthSession(): Promise<AuthBrowserResult>;
-  subscribeToUrls(listener: (url: string) => void): AuthUrlSubscription;
+  subscribeToUrls(
+    listener: (url: string) => void,
+  ): AuthUrlSubscription | Promise<AuthUrlSubscription>;
   callbackGraceMs?: number;
 }
 
@@ -150,7 +148,7 @@ export async function waitForAuthCallbackResult({
   const observedCallback = new Promise<AuthCallbackResult>((resolve) => {
     resolveObservedCallback = resolve;
   });
-  const subscription = subscribeToUrls((url) => {
+  const subscription = await subscribeToUrls((url) => {
     if (isExpectedCallback(url, redirectUri)) {
       resolveObservedCallback({ url, source: 'linking' });
     }
@@ -181,9 +179,7 @@ export async function waitForAuthCallbackResult({
   }
 }
 
-export async function waitForAuthCallback(
-  input: WaitForAuthCallbackInput,
-): Promise<string> {
+export async function waitForAuthCallback(input: WaitForAuthCallbackInput): Promise<string> {
   return (await waitForAuthCallbackResult(input)).url;
 }
 

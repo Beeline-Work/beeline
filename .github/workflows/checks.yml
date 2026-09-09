@@ -211,18 +211,14 @@ jobs:
               - 'scripts/readme.test.mjs'
               - 'package.json'
               - '.github/workflows/checks.yml'
-            # This lane owns the canonical static site, its host publisher,
-            # and the independent Pages build and byte contract.
+            # This lane owns the canonical static site and Pages byte contract.
             appLinkAssociations:
               - 'apps/api/**'
               - 'relay-stack/web/**'
               - 'relay-stack/nginx.conf'
-              - 'relay-stack/prod/nginx.conf'
               - 'scripts/app-associations.mjs'
               - 'scripts/app-associations.test.mjs'
               - 'scripts/check-app-association-drift.mjs'
-              - 'scripts/publish-relay-front.mjs'
-              - 'scripts/publish-relay-front.test.mjs'
               - 'scripts/pages-site.mjs'
               - 'scripts/pages-site.test.mjs'
               - 'scripts/pages-channel.mjs'
@@ -678,8 +674,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client
-      - name: Verify the committed app associations, publisher safety, and Pages build
-        run: node --test scripts/app-associations.test.mjs scripts/publish-relay-front.test.mjs scripts/pages-site.test.mjs scripts/pages-channel.test.mjs scripts/verify-pages-update.test.mjs
+      - name: Verify the committed app associations and Pages build
+        run: node --test scripts/app-associations.test.mjs scripts/pages-site.test.mjs scripts/pages-channel.test.mjs scripts/verify-pages-update.test.mjs
       - name: Run the relay-front contract test
         run: npm test -w @beeline/relay-front -- --run src/invite-web.test.ts
 

@@ -9,13 +9,7 @@ const androidPackage = "app.usebeeline";
 const scheme = "beeline";
 const updatesChannel = process.env.EXPO_UPDATES_CHANNEL || "production";
 const consoleLoggingDefault = process.env.NODE_ENV !== 'production';
-const buzzyRelayUrl = process.env.EXPO_PUBLIC_BUZZY_RELAY_URL || 'https://usebeeline.app';
-const buzzyPushGatewayUrl = process.env.EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL || 'https://usebeeline.app/push';
 const buzzyMonolithUrl = process.env.EXPO_PUBLIC_BUZZY_MONOLITH_URL || 'https://server.usebeeline.app';
-// Phase C production cut: every OTA built from this revision uses the monolith.
-// The release governor's immutable source SHA + release version now prove the
-// transport choice without depending on an unrecorded build-host environment.
-const buzzyMonolithEnabled = true;
 
 function git(args) {
     try {
@@ -74,6 +68,8 @@ export default {
             supportsTablet: true,
             bundleIdentifier: bundleId,
             buildNumber: "1",
+            // Retained so already-issued HTTPS invite links can still enter an installed app.
+            // This is an OS routing declaration, not an API/relay transport.
             associatedDomains: ["applinks:usebeeline.app", "applinks:relay.buzzrouter.com"],
             config: {
                 usesNonExemptEncryption: false
@@ -233,10 +229,7 @@ export default {
                 buildCommitTimestamp: buildMetadata.commitTimestamp,
                 releaseVersion: process.env.EXPO_PUBLIC_BEELINE_RELEASE_VERSION,
                 releaseSha: process.env.EXPO_PUBLIC_BEELINE_RELEASE_SHA || buildMetadata.commitSha,
-                buzzyRelayUrl,
-                buzzyPushGatewayUrl,
                 buzzyMonolithUrl,
-                buzzyMonolithEnabled,
             }
         },
         owner: "lunchboxfortwo"

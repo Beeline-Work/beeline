@@ -129,6 +129,12 @@ vi.mock('@/sync/transport', () => ({
     ensureClient = vi.fn(async () => client);
   },
 }));
+vi.mock('@/sync/transport/room-view-client', () => ({
+  RoomViewClient: class {
+    workspace = roomView.workspace;
+    agent = roomView.agent;
+  },
+}));
 vi.mock('@beeline/buzz-client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@beeline/buzz-client')>();
   class RoomViewClient {

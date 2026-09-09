@@ -24,7 +24,7 @@ services:
       # existing links remain visible after the hostname migration. The Room
       # allowlist uses server-stamped channels.community_id values instead.
       BUZZY_AUTH_TENANTS_JSON: >-
-        [{"host":"usebeeline.app","community":"relay.buzzrouter.com","roomCommunityIds":["3a47eeff-fdff-4a1e-9eb9-b48cb4ed90ed","e8299f28-f095-472f-941a-80d1195b9a24"],"origin":"https://usebeeline.app"},{"host":"relay.buzzrouter.com","community":"relay.buzzrouter.com","roomCommunityIds":["3a47eeff-fdff-4a1e-9eb9-b48cb4ed90ed","e8299f28-f095-472f-941a-80d1195b9a24"],"origin":"https://relay.buzzrouter.com"},{"host":"10.0.2.2:3010","community":"relay.buzzrouter.com","roomCommunityIds":["3a47eeff-fdff-4a1e-9eb9-b48cb4ed90ed","e8299f28-f095-472f-941a-80d1195b9a24"],"origin":"http://10.0.2.2:3010"}]
+        [{"host":"usebeeline.app","community":"relay.buzzrouter.com","roomCommunityIds":["3a47eeff-fdff-4a1e-9eb9-b48cb4ed90ed","e8299f28-f095-472f-941a-80d1195b9a24"],"origin":"https://usebeeline.app"},{"host":"10.0.2.2:3010","community":"relay.buzzrouter.com","roomCommunityIds":["3a47eeff-fdff-4a1e-9eb9-b48cb4ed90ed","e8299f28-f095-472f-941a-80d1195b9a24"],"origin":"http://10.0.2.2:3010"}]
       BUZZY_AUTH_OIDC_ISSUER: https://accounts.google.com
       BUZZY_AUTH_OIDC_AUTHORIZATION_ENDPOINT: https://accounts.google.com/o/oauth2/v2/auth
       BUZZY_AUTH_OIDC_TOKEN_ENDPOINT: https://oauth2.googleapis.com/token

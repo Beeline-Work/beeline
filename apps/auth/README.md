@@ -165,11 +165,8 @@ service for clone, fetch, push, pull-request operations, repository settings,
 rename, preview, and CI reads; the App private key stays here.
 
 Monolith production uses `https://server.usebeeline.app/auth/github/callback`.
-The legacy non-monolith tenant remains `https://usebeeline.app`, and its tenant
-list also keeps `https://relay.buzzrouter.com/auth/github/callback` valid so
-stored legacy relay URLs continue their OAuth ceremony on the same origin where
-it began. The browser authorization origin and ticket consumer must always be
-the same stack.
+`usebeeline.app` is the static Pages origin, not an auth tenant. Retired relay
+domains must not be restored to production tenant configuration.
 
 HTTP OIDC endpoints are accepted only for local emulators when
 `BUZZY_AUTH_ALLOW_INSECURE_OIDC=true` and `NODE_ENV` is not `production`.

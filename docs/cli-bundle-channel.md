@@ -1,5 +1,10 @@
 # Beeline helper update channel
 
+> **Current topology (2026-09-09):** the cutover below is complete.
+> `usebeeline.app` is backed by GitHub Pages and `server.usebeeline.app` is the
+> Fly monolith. The unified release has no legacy host mirror. The runbook is
+> retained only as cutover history; do not execute its mirror-enable steps.
+
 Existing helpers poll `https://usebeeline.app/dl/manifest.json`. That URL and
 its relative `beeline-linux-x64.tar.gz` and `.sha256` paths remain unchanged.
 No helper migration, URL override, or intervening helper release is required.
@@ -64,7 +69,7 @@ direct github.io URL before custom-domain setup and the public Cloudflare URL
 after cutover. Pages propagation is retried for up to 20 attempts, 15 seconds
 apart; stale manifests and checksum mismatches never count as success.
 
-## Firstmate cutover runbook
+## Historical firstmate cutover runbook (completed; do not execute)
 
 Only firstmate performs these remote configuration and teardown steps. Decision
 `pages-tls-cutover`: use the ongoing Cloudflare bridge, with orange-cloud proxying
@@ -75,8 +80,8 @@ of this migration; never retain the dev origin as a permanent fallback.
 ### 1. Land and populate Pages while the old origin remains live
 
 - Merge the validated PR. Do not change DNS or stop the dev stack yet.
-- Leave `BEELINE_DL_LEGACY_MIRROR` unset (defaults to `true`). Every unified
-  release now publishes to Pages and also updates the old `/dl` directory.
+- The former temporary host mirror was active during this historical step; it
+  has since been removed from the release workflow.
 - Bootstrap Pages with the current unified release's artifact, or run a full
   unified release. At implementation time the current release was `v0.0.63`,
   SHA `9fc9f30cde8e6cbdeab6183dbf22b5402e47473a`, run `34189855500`, archive
@@ -163,16 +168,8 @@ server daemon-readiness report for release convergence. A certificate mismatch
 from a **direct** `curl --resolve usebeeline.app:443:<Pages-IP>` is irrelevant
 to this bridge; the public Cloudflare URL must pass without `--insecure`.
 
-Only after those checks pass:
-
-```sh
-gh-axi variable set BEELINE_DL_LEGACY_MIRROR --repo lunchboxfortwo/beeline --body false
-```
-
-Run a website-only Pages deployment with no bootstrap input and confirm it
-reuses the same Release assets. Run the next unified release with the mirror
-disabled and retain its public update and fleet-readiness proof. This proves
-future releases no longer write the dev `/dl` directory.
+The completed cutover then ran a website-only Pages deployment and confirmed
+future releases no longer wrote the dev `/dl` directory.
 
 Firstmate may then disable the cloudflared tunnel services serving this old
 apex origin and their autostart, stop the `beeline-front` nginx service/container
@@ -198,7 +195,5 @@ re-enabling the dev mirror is not a recovery dependency.
 - [Cloudflare apex CNAME flattening](https://developers.cloudflare.com/dns/cname-flattening/set-up-cname-flattening/)
 
 Run `npm run test:pages`, the targeted release/association tests, and
-`npm run lint:workflows`. `scripts/publish-beeline-dl.mjs` remains only the
-transition mirror, with its existing explicit output directory, verification,
-manifest-last writes, and local rollback archives. `npm run bundle:beeline`
-remains the local native build command.
+`npm run lint:workflows`. `npm run bundle:beeline` remains the local native
+build command.

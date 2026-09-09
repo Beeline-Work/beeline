@@ -118,12 +118,12 @@ idempotent.
 Every candidate database event produces one `[push] decision` line with its full
 event id and Room id, recipient, `notify`/`skip` verdict, exact reason, and send
 counts when FCM was attempted. To audit the metadata and fixture gates against
-the legacy private relay path without sending FCM, run:
+an isolated relay fixture without sending FCM, run:
 
 ```sh
 BUZZY_PUSH_REGISTRY_FILE=/path/to/registrations.json \
 BUZZY_RELAY_URL=http://127.0.0.1:3410 \
-BUZZY_RELAY_HOST=relay.buzzrouter.com \
+BUZZY_RELAY_HOST=127.0.0.1:3010 \
   npm run audit:suppression -w @beeline/push-gateway -- <pubkey-prefix> [room-id ...]
 ```
 
@@ -140,10 +140,7 @@ Changes under this service require a materializer redeploy. Changes to the
 Android notification channel label require a new APK; the application label is
 already Beeline.
 
-Production runs one `materializer` service in `relay-stack/prod/compose.yml`.
-The tracked relay-front proxies `/push/` plus the eight indexer routes to it on
-the Compose network. The host deploy builds the image, retires the old
-`beeline-events.service`, applies the tracked Compose/nginx configuration, and
-verifies the unsigned indexer refusal plus push health on merge. Do not deploy
-it manually. Preserve the existing push registry and repository-events signing
-identity directories.
+The Fly monolith owns production indexing and push delivery. This package is
+retained for the isolated relay stack and historical reader tooling; do not
+deploy it as a standalone production service. Preserve any existing registry
+or signing-identity directories as archived data.

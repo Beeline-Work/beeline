@@ -21,14 +21,6 @@ readonly UPDATE_IDENTITY_TIMEOUT="${MAESTRO_UPDATE_IDENTITY_TIMEOUT_SECONDS:-10}
 # app against the latter when the caller supplies it, while the fixture keeps
 # using RELAY_URL.  This must be exported before e2e:build: Expo evaluates the
 # config again from Gradle, not just during prebuild.
-if [[ -n "${RELAY_PUBLIC_ORIGIN:-}" ]]; then
-  export EXPO_PUBLIC_BUZZY_RELAY_URL="${EXPO_PUBLIC_BUZZY_RELAY_URL:-$RELAY_PUBLIC_ORIGIN}"
-  export EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL="${EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL:-${RELAY_PUBLIC_ORIGIN%/}/push}"
-elif [[ -n "${RELAY_URL:-}" ]]; then
-  export EXPO_PUBLIC_BUZZY_RELAY_URL="${EXPO_PUBLIC_BUZZY_RELAY_URL:-$RELAY_URL}"
-  export EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL="${EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL:-${RELAY_URL%/}/push}"
-fi
-
 reply_fixture_pid=""
 disabled_deep_link_packages=()
 cleanup() {

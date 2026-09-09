@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 describe('production iOS capabilities', () => {
-  it('declares the relay invite domain without enabling push', () => {
+  it('retains legacy invite entry without enabling push or legacy API config', () => {
     const projectRoot = new URL('../..', import.meta.url).pathname;
     const { NODE_ENV: _nodeEnv, VITEST: _vitest, ...cliEnv } = process.env;
     const output = execFileSync(
@@ -24,7 +24,7 @@ describe('production iOS capabilities', () => {
       },
     );
     const config = JSON.parse(output) as {
-      extra?: { app?: { buzzyRelayUrl?: string; buzzyPushGatewayUrl?: string } };
+      extra?: { app?: { buzzyMonolithUrl?: string } };
       ios?: { associatedDomains?: string[] };
       android?: {
         package?: string;
@@ -60,8 +60,7 @@ describe('production iOS capabilities', () => {
       ),
     );
 
-    expect(config.extra?.app?.buzzyRelayUrl).toBe('https://usebeeline.app');
-    expect(config.extra?.app?.buzzyPushGatewayUrl).toBe('https://usebeeline.app/push');
+    expect(config.extra?.app?.buzzyMonolithUrl).toBe('https://server.usebeeline.app');
     expect(config.ios?.associatedDomains).toEqual([
       'applinks:usebeeline.app',
       'applinks:relay.buzzrouter.com',

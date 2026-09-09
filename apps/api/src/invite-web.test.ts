@@ -50,7 +50,7 @@ describe('relay invite web front', () => {
     Function(script!)();
     expect(action.href).toBe('beeline://review/play-review-secret-value-0001');
 
-    for (const path of ['relay-stack/nginx.conf', 'relay-stack/prod/nginx.conf']) {
+    for (const path of ['relay-stack/nginx.conf']) {
       const nginx = repoFile(path);
       expect(nginx).toContain('^/review/[A-Za-z0-9_-]{24,128}/?$');
       expect(nginx).toContain(`script-src 'sha256-${scriptHash}'`);
@@ -73,12 +73,12 @@ describe('relay invite web front', () => {
     expect(compose).toContain('${BUZZ_HTTP_PORT:-3010}:3000');
     expect(compose).toContain('./web:/usr/share/nginx/html:ro');
     expect(compose).toContain('"host":"usebeeline.app"');
-    expect(compose).toContain('"host":"relay.buzzrouter.com"');
+    expect(compose).not.toContain('"host":"relay.buzzrouter.com"');
     expect(landing).toContain("You're invited to a Workspace");
     expect(landing).toContain('rel="icon"');
     expect(landing).toContain('data:image/svg+xml');
     expect(script).toContain('beeline://join/');
-    for (const path of ['relay-stack/nginx.conf', 'relay-stack/prod/nginx.conf']) {
+    for (const path of ['relay-stack/nginx.conf']) {
       expect(repoFile(path)).toContain('connect-src https://server.usebeeline.app');
     }
   });
@@ -99,7 +99,7 @@ describe('relay invite web front', () => {
   );
 
   it('isolates active media previews from the authenticated product origin', () => {
-    for (const path of ['relay-stack/nginx.conf', 'relay-stack/prod/nginx.conf']) {
+    for (const path of ['relay-stack/nginx.conf']) {
       const nginx = repoFile(path);
       const preview = nginx.slice(nginx.indexOf('server_name preview.usebeeline.app'));
       expect(nginx).toContain('map $upstream_http_content_type $product_media_disposition');
@@ -115,11 +115,10 @@ describe('relay invite web front', () => {
       expect(preview).not.toContain('location /auth/');
       expect(preview).not.toContain('location /push/');
     }
-    expect(repoFile('relay-stack/prod/compose.yml')).toContain('beeline-media-preview');
   });
 
   it('does not expose the retired public NIP-05 service in any stack', () => {
-    for (const path of ['relay-stack/nginx.conf', 'relay-stack/prod/nginx.conf']) {
+    for (const path of ['relay-stack/nginx.conf']) {
       const nginx = repoFile(path);
       expect(nginx).not.toContain('location /nip05/');
       expect(nginx).not.toContain('location = /.well-known/nostr.json');

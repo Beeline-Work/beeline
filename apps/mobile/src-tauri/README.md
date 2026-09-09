@@ -67,6 +67,15 @@ npm run tauri:icons:check   # fail if they drift; the DESKTOP ICONS CI gate
 The script uses only node's `zlib`, so refreshing an icon does not require the
 Rust toolchain that `tauri icon` would.
 
+## Crate versions are tied to the JS packages
+
+The Tauri CLI refuses to build when a Rust crate and its JS counterpart differ
+in minor version, so `Cargo.toml` tracks `apps/mobile/package.json` rather than
+crates.io HEAD: `tauri` follows `@tauri-apps/api` (pinned at 2.9.1), and both
+plugin crates follow their `@tauri-apps/plugin-*` packages (2.5.x). Moving a
+crate minor means moving its JS package in the same commit; `@tauri-apps/api`
+is pinned exactly, which is the client's call to change, not the shell's.
+
 ## Building locally
 
 Needs the Rust toolchain plus each platform's webview development packages

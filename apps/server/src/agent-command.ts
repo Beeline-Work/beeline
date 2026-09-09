@@ -216,18 +216,31 @@ export async function claimAgentCommand(
   generation: string,
 ): Promise<CommandRow> {
   if (!generation || generation.length > 200) throw new Error('command generation is required');
-  const row = (
-    await db.query<CommandRow>(
-      `UPDATE agent_commands SET state='claimed',generation_id=$4,
+  return db.transaction(async (transaction) => {
+    const row = (
+      await transaction.query<CommandRow>(
+        `UPDATE agent_commands SET state='claimed',generation_id=$4,
  lease_expires_at=now()+interval '90 seconds',claimed_at=now()
  WHERE id=$1 AND room_id=$2 AND agent_id=$3 AND
  (state='pending' OR (state='claimed' AND lease_expires_at<=now()) OR (state='claimed' AND generation_id=$4))
  RETURNING *`,
-      [commandId, roomId, agentId, generation],
-    )
-  ).rows[0];
-  if (!row) throw new Error('command claim conflict');
-  return row;
+        [commandId, roomId, agentId, generation],
+      )
+    ).rows[0];
+    if (!row) throw new Error('command claim conflict');
+    if (row.action !== 'stop') {
+      const working = await transaction.query(
+        `INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id)
+         VALUES($1,$2,$3,'working',$4)
+         ON CONFLICT(room_id,request_id,agent_id) DO UPDATE SET
+           status='working',generation_id=EXCLUDED.generation_id,failure_reason=NULL,created_at=now()
+         WHERE agent_turns.status<>'cancelled'`,
+        [row.room_id, row.turn_request_id, row.agent_id, generation],
+      );
+      if (!working.rowCount) throw new Error('command turn cancelled');
+    }
+    return row;
+  });
 }
 
 export async function authorizeCommandOutput(

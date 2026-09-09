@@ -323,6 +323,12 @@ export class DaemonService {
           String(candidate.commandId),
           typeof candidate.generationId === 'string' ? candidate.generationId : '',
         );
+        this.live.publish({
+          type: 'invalidate',
+          roomId: scopedRoom!,
+          reason: 'turn',
+          agentId: authenticatedAgentId,
+        });
         return this.writeResult() as Output<Name>;
       case 'acknowledgeAgentCommand': {
         const acknowledged = await this.database.query(

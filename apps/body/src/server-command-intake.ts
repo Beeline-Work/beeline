@@ -68,7 +68,8 @@ export function validateServerCommand(
 /**
  * Targeted commands -> claim -> local session mechanics. Inputs remain durable
  * and unclaimed while a session is busy. Stops are claimed even during a prompt.
- * Live traffic is only a wakeup; it is never interpreted as conversational input.
+ * Live traffic carries server-authorized commands. A one-second durable read
+ * remains the lossless recovery path for unavailable or failed live delivery.
  */
 export async function runServerCommandIntake(options: {
   api: DaemonApiClient;
@@ -89,28 +90,31 @@ export async function runServerCommandIntake(options: {
   if (first?.commandProtocol !== 1)
     throw new Error('server command protocol 1 is required; refusing intake');
   let busy: Promise<void> | undefined;
-  let wake: (() => void) | undefined;
-  let dirty = true;
-  let live = false;
-  const notify = () => {
-    dirty = true;
-    wake?.();
+  let wake: ((reconcile: boolean) => void) | undefined;
+  const pending = new Map(first.commands.map((command) => [command.id, command]));
+  const claimed = new Set<string>();
+  const notify = (commands: readonly AgentCommand[] = []) => {
+    for (const command of commands) if (!claimed.has(command.id)) pending.set(command.id, command);
+    wake?.(false);
   };
   options.onWake?.(notify);
-  const off = api.liveSubscribe?.(roomId, undefined, notify, (connected, capabilities) => {
-    live = connected && capabilities?.pushIntake === true;
-    notify();
-  });
-  let page = first;
+  const off = api.liveSubscribe?.(
+    roomId,
+    undefined,
+    undefined,
+    (connected) => {
+      if (!connected) wake?.(true);
+    },
+    undefined,
+    notify,
+  );
   try {
     while (!signal?.aborted) {
       if (options.closed && (await options.closed())) return;
-      const seen = new Set<string>();
-      for (const command of page.commands) {
+      for (const command of [...pending.values()]) {
         validateServerCommand(command, roomId, agentId);
-        if (seen.has(command.id)) continue;
-        seen.add(command.id);
         if (busy && command.action !== 'stop') continue;
+        pending.delete(command.id);
         try {
           await api.execute('claimAgentCommand', {
             roomId,
@@ -121,6 +125,7 @@ export async function runServerCommandIntake(options: {
           options.onError?.(error);
           continue;
         }
+        claimed.add(command.id);
         if (command.action === 'stop') {
           options.stop(command.turnRequestId);
           await api.execute('acknowledgeAgentCommand', {
@@ -132,7 +137,10 @@ export async function runServerCommandIntake(options: {
           await context.enter(command);
           busy = options
             .run(command)
-            .catch((error) => options.onError?.(error))
+            .catch((error) => {
+              claimed.delete(command.id);
+              options.onError?.(error);
+            })
             .finally(async () => {
               await context.leave();
               busy = undefined;
@@ -141,23 +149,26 @@ export async function runServerCommandIntake(options: {
         }
       }
       options.onPoll?.();
-      if (!dirty)
-        await new Promise<void>((resolve) => {
-          const done = () => {
-            clearTimeout(timer);
-            signal?.removeEventListener('abort', done);
-            wake = undefined;
-            resolve();
-          };
-          const timer = setTimeout(done, live ? 60_000 : (options.pollMs ?? 1_000));
-          wake = done;
-          signal?.addEventListener('abort', done, { once: true });
-        });
-      dirty = false;
+      const reconcile = await new Promise<boolean>((resolve) => {
+        const done = (needed: boolean) => {
+          if (timer) clearTimeout(timer);
+          signal?.removeEventListener('abort', aborted);
+          wake = undefined;
+          resolve(needed);
+        };
+        const aborted = () => done(false);
+        wake = done;
+        const timer = setTimeout(() => done(true), options.pollMs ?? 1_000);
+        signal?.addEventListener('abort', aborted, { once: true });
+        if (pending.size && !busy) done(false);
+      });
       if (signal?.aborted) break;
-      page = await api.execute('getAgentCommands', { roomId });
-      if (page.commandProtocol !== 1)
-        throw new Error('server command protocol changed; refusing intake');
+      if (reconcile) {
+        const page = await api.execute('getAgentCommands', { roomId });
+        if (page.commandProtocol !== 1)
+          throw new Error('server command protocol changed; refusing intake');
+        notify(page.commands);
+      }
     }
   } finally {
     off?.();

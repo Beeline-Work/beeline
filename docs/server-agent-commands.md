@@ -17,3 +17,22 @@ Mixed versions fail closed. The legacy inbox projects targeted commands only. A 
 The exact first-presence test in `daemon-api-client.integration.test.ts` passed on both the PR and clean current main (`5dfa1d95329d433e41f6c87b9acdb21f33f4c8d1`) via the Body workspace script, but failed on both from repository-root `vitest --root apps/body`. Its child log showed `MODULE_NOT_FOUND` for repository-root `dist/cli.js`, before server registration. The fixture now resolves the built CLI relative to its own module. The same live pairing, token exchange, daemon launch, first presence and final-answer assertions then passed on both branches under the previously failing invocation. No assertion or timeout was weakened.
 
 Build Body before running the pairing proof. Focused gates cover API-contract, server command/integration tests, Room/corner Body tests, Body/server integration, and all three workspace typechecks. Production agents and no-mistakes are not invoked by this task.
+
+## Verification
+
+- API-contract: 59 passed.
+- Body: 742 passed, 8 skipped, including the original live pairing proof.
+- Focused server: 196 passed, 7 failed. The failure-name set exactly matches the clean current-main control below; the command boundary and changed routing fixtures pass.
+- API-contract, server and Body typechecks: passed.
+
+The unchanged failures reproduced on main `5dfa1d95329d433e41f6c87b9acdb21f33f4c8d1` are:
+
+- `src/integration.test.ts > monolith integration > always hands an agent its seeded soul, at both daemon seams (no Workspace switch)`
+- `src/integration.test.ts > monolith integration > keeps workspace and Room mutations aligned with the phone HTTP contract`
+- `src/integration.test.ts > monolith integration > lets an agent subscribe itself, and wakes it on the next arrival`
+- `src/integration.test.ts > monolith integration > publishes one note per joined Room and one push through agent connect`
+- `src/integration.test.ts > monolith integration > rejects agent names without an addressable handle`
+- `src/integration.test.ts > monolith integration > routes a Workspace join to one attributed @system DM and no shared Room lines`
+- `src/system-line.producers.test.ts > system-line producers > writes one Room visibility line for concurrent identical updates`
+
+These failures are reported, not waived or described as a passing server gate. The protocol changes do not repair those unrelated membership, identity and visibility assertions.

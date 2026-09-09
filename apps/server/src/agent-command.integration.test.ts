@@ -574,3 +574,17 @@ it('accepts and settles draft, thought, activity, attachment and final under one
     ).rowCount,
   ).toBe(0);
 });
+
+it('stores an ambiguous agent tag as prose without dispatching either candidate', async () => {
+  await db.query(`UPDATE identities SET handle='hoots' WHERE id=$1`, [B]);
+  try {
+    const source = await send('@hoots who is this?');
+    expect(await commands(A)).toEqual([]);
+    expect(await commands(B)).toEqual([]);
+    expect(
+      (await db.query(`SELECT text FROM messages WHERE id=$1`, [source.messageId])).rows[0]?.text,
+    ).toBe('@hoots who is this?');
+  } finally {
+    await db.query(`UPDATE identities SET handle='goosy' WHERE id=$1`, [B]);
+  }
+});

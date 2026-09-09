@@ -1352,12 +1352,8 @@ export class DaemonService {
       // makes the Room view settle even if the daemon is interrupted before
       // its redundant explicit complete receipt reaches the server.
       //
-      // Except over a stop. A stopped turn PUBLISHES what the model had already
-      // written — the partial answer stays on the page, as it does everywhere
-      // else a person presses stop — so this path runs for a cancelled turn
-      // too, and the same terminal rule as `turnReceipt` holds: `cancelled` is
-      // the turn's ending and a reply written under it does not promote it back
-      // to `complete`.
+      // Command authorization has already rejected cancelled output. Keep the
+      // receipt guard as a second terminal-state invariant inside this upsert.
       if (input.requestId) {
         const settled = await database.query(
           `INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id)

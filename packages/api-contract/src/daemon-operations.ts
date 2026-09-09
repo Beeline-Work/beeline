@@ -141,9 +141,10 @@ export type RoomCursorInput = RoomInput & {
  * code path. `recent` (the default) is the NEWEST page — what a turn must be
  * prompted with, since the oldest page of a long Room is old news. `earliest`
  * is the forward walk from the very first message, which is how corner startup
- * recovers the objective. Never flip the shared sort to serve one of them; ask
- * for the window you need. A read that carries `after` keeps the inbox's
- * ascending cursor semantics and ignores this field.
+ * recovers the objective. `continuity` is the newest message-only window used
+ * to rebuild conversational response ownership. Never flip the shared sort to
+ * serve one of them; ask for the window you need. A read that carries `after`
+ * keeps the inbox's ascending cursor semantics and ignores this field.
  */
 export type RoomConversationWindow = 'recent' | 'earliest' | 'continuity';
 export type RoomConversationInput = RoomCursorInput & {

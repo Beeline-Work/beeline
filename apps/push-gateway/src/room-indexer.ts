@@ -248,6 +248,7 @@ export class RoomIndexer {
         viewerPubkey,
         ROOM_VIEW_MEMBER_LIMIT,
         ROOM_VIEW_AGENT_LIMIT,
+        ROOM_VIEW_CHAT_LIMIT + 1,
       ])
     ).rows;
     const workspaceData = rowData(rows, 'workspace');
@@ -289,6 +290,9 @@ export class RoomIndexer {
     const item = workspaceItem(workspaceData);
     const currentViewer = roster.find((member) => member.identity.pubkey === viewerPubkey);
     const role = item.role;
+    const managerRooms = rows
+      .filter((row) => row.section === 'managed-room')
+      .map((row) => json(row.data));
     return {
       workspace: {
         ...item,
@@ -296,7 +300,19 @@ export class RoomIndexer {
         createdAt: integer(workspaceData.createdAt),
       },
       ...(role === 'owner' || role === 'admin'
-        ? { managerSettings: { visibility: item.visibility } }
+        ? {
+            managerSettings: {
+              visibility: item.visibility,
+              rooms: managerRooms.map((room) => ({
+                id: String(room.id),
+                name: text(room.name) ?? '',
+                visibility: room.visibility === 'invite-only' ? 'invite-only' : 'public',
+                createdAt: integer(room.createdAt),
+              })),
+              roomsTruncated:
+                integer(managerRooms[0]?.total) > ROOM_VIEW_CHAT_LIMIT,
+            },
+          }
         : {}),
       members,
       agents,

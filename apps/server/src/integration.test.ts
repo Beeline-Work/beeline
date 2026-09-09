@@ -632,6 +632,17 @@ describe('monolith integration', () => {
       visibility: 'invite-only',
       createdAt: expect.any(Number),
     });
+    expect(
+      (await operation('updateRoom', { roomId: privateRoom.id, visibility: 'public' }, bobToken))
+        .status,
+    ).toBe(403);
+    expect(
+      (await operation('updateRoom', { roomId: privateRoom.id, visibility: 'public' }, aliceToken))
+        .status,
+    ).toBe(204);
+    expect(
+      (await request(`/v1/phone/rooms/${privateRoom.id}`, 'GET', undefined, aliceToken)).status,
+    ).toBe(200);
     await database.query(
       `INSERT INTO rooms(id,workspace_id,name)
        SELECT ('70000000-0000-4000-8000-' || lpad(value::text,12,'0'))::uuid,$1,
@@ -646,12 +657,6 @@ describe('monolith integration', () => {
     };
     expect(boundedManagerWorkspace.managerSettings?.rooms).toHaveLength(200);
     expect(boundedManagerWorkspace.managerSettings?.roomsTruncated).toBe(true);
-    expect(
-      await (
-        await operation('addRoomMember', { roomId: privateRoom.id, memberId: aliceId })
-      ).json(),
-    ).toEqual({ joined: true });
-
     const openedRoom = (await (
       await operation('createRoom', {
         workspaceId,

@@ -14,13 +14,13 @@ const auth = vi.hoisted(() => ({
 const avatarUpload = vi.hoisted(() => ({ pickAndUploadAvatar: vi.fn() }));
 const clipboard = vi.hoisted(() => ({ setStringAsync: vi.fn(async () => undefined) }));
 const modal = vi.hoisted(() => ({ actionSheet: vi.fn() }));
+const phoneOperation = vi.hoisted(() => vi.fn());
 const roomViews = vi.hoisted(() => ({ workspace: vi.fn(), chats: vi.fn() }));
 const client = vi.hoisted(() => ({
   surfaceSubscribe: vi.fn(async () => vi.fn()),
   renameCommunity: vi.fn(),
   setCommunityAvatar: vi.fn(),
   setCommunityVisibility: vi.fn(),
-  setChannelVisibility: vi.fn(),
 }));
 
 vi.mock('@beeline/buzz-client', () => ({
@@ -68,6 +68,7 @@ vi.mock('@/auth/buzz-identity-storage', () => auth);
 vi.mock('@/buzz/avatar-upload', () => avatarUpload);
 vi.mock('expo-clipboard', () => clipboard);
 vi.mock('@/modal', () => ({ Modal: modal }));
+vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));
 vi.mock('@/sync/transport', () => ({
   BuzzRigTransport: class {
     ensureClient = vi.fn(async () => client);
@@ -422,7 +423,10 @@ describe('Workspace Settings authority', () => {
       control.props.onPress();
       await Promise.resolve();
     });
-    expect(client.setChannelVisibility).toHaveBeenCalledWith('private-room', 'public');
+    expect(phoneOperation).toHaveBeenCalledWith('updateRoom', {
+      roomId: 'private-room',
+      visibility: 'public',
+    });
   });
 
   it('discloses the server-owned Room settings bound', async () => {
@@ -481,7 +485,10 @@ describe('Workspace Settings authority', () => {
       visibilityControl.props.onPress();
       await Promise.resolve();
     });
-    expect(client.setChannelVisibility).toHaveBeenCalledWith('room-1', 'invite-only');
+    expect(phoneOperation).toHaveBeenCalledWith('updateRoom', {
+      roomId: 'room-1',
+      visibility: 'invite-only',
+    });
     expect(navigation.push).not.toHaveBeenCalled();
   });
 

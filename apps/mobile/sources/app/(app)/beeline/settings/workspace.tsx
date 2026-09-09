@@ -28,6 +28,7 @@ import { MonoButton, PixelGateReveal, PixelLoader } from '@/components/buzz/Mono
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { Typography } from '@/constants/Typography';
 import { BuzzRigTransport } from '@/sync/transport';
+import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { Modal } from '@/modal';
 
@@ -260,7 +261,7 @@ export default function WorkspaceSettings() {
       setWorkingKey(`room-${room.id}`);
       setError(null);
       try {
-        await client.setChannelVisibility(room.id, visibility);
+      await monolithPhoneOperation('updateRoom', { roomId: room.id, visibility });
         chatsSchedulerRef.current?.force();
       } catch (caught) {
         setError(`Could not change ${ROOM_LABEL} visibility: ${String(caught)}`);

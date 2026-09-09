@@ -528,6 +528,24 @@ WITH candidates AS (
     row_number() OVER (PARTITION BY (r.agent_content IS NOT NULL) ORDER BY encode(r.pubkey, 'hex')) AS ordinal,
     count(*) OVER (PARTITION BY (r.agent_content IS NOT NULL)) AS kind_total
   FROM roster_resolved r
+), managed_rooms AS (
+  SELECT c.id,c.name,c.visibility::text,c.created_at,
+    count(*) OVER () AS total
+  FROM authorized a
+  JOIN channels c ON c.community_id=a.community_id AND c.id<>a.id
+    AND c.archived_at IS NULL AND c.deleted_at IS NULL
+  JOIN LATERAL (
+    SELECT e.tags FROM events e
+    WHERE e.community_id=c.community_id AND e.channel_id=c.id
+      AND e.kind=9007 AND e.deleted_at IS NULL
+    ORDER BY e.created_at ASC,e.id ASC LIMIT 1
+  ) generation ON EXISTS (SELECT 1 FROM jsonb_array_elements(generation.tags) t
+    WHERE t->>0='community' AND t->>1=a.id::text)
+  WHERE a.viewer_role IN ('owner','admin')
+    AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(generation.tags) t WHERE t->>0='parent')
+    AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(generation.tags) t WHERE t->>0='t' AND t->>1='buzz-dm')
+  ORDER BY lower(c.name),c.name,c.id
+  LIMIT $5
 )
 SELECT 'workspace' AS section, jsonb_build_object(
   'id', a.id, 'name', a.name, 'about', a.description, 'avatar', a.avatar,
@@ -548,7 +566,13 @@ SELECT 'member', jsonb_build_object(
   'presenceRoomId', r.room_id, 'kindTotal', r.kind_total
 ) FROM roster r
 WHERE (r.agent_content IS NULL AND r.ordinal <= $3)
-   OR (r.agent_content IS NOT NULL AND r.ordinal <= $4);
+   OR (r.agent_content IS NOT NULL AND r.ordinal <= $4)
+UNION ALL
+SELECT 'managed-room', jsonb_build_object(
+  'id',r.id,'name',r.name,
+  'visibility',CASE WHEN r.visibility='private' THEN 'invite-only' ELSE 'public' END,
+  'createdAt',extract(epoch FROM r.created_at)::bigint,'total',r.total
+) FROM managed_rooms r;
 `;
 
 export const CHAT_LIST_SQL = `

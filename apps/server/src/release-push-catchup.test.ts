@@ -22,6 +22,13 @@ describe('release push catch-up at device registration', () => {
       `INSERT INTO identities(id,kind,name) VALUES($1,'human','Person'),($2,'human','Other')`,
       [PERSON, OTHER],
     );
+    // A real sign-in lands each person in the default Workspace. Announcement
+    // DM reads require that active Workspace membership, so the fixture must
+    // model the supported signed-in state rather than a bare identity row.
+    await database.query(
+      `INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'member'),($1,$3,'member')`,
+      [DEFAULT_WORKSPACE_ID, PERSON, OTHER],
+    );
     phone = new PhoneService(database, 'https://server.test');
     send = vi.fn(async () => undefined);
     loop = new PushDeliveryLoop(database, { send });

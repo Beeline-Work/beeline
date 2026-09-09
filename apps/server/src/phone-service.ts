@@ -3908,10 +3908,11 @@ export class PhoneService {
     );
   }
   /**
-   * The `@system` release-announcement DM (release-notify.ts) is read-only:
-   * only `@system` may post into a direct-message Room it is a participant
-   * of. A person who IS a member of that Room (they must be, to read it)
-   * still cannot send — so this is a distinct check from `hasRoomAccess`.
+   * An `@system` notification DM (release or Workspace lifecycle) is
+   * read-only: only `@system` may post into a direct-message Room it is a
+   * participant of. A person who IS a member of that Room (they must be, to
+   * read it) still cannot send or reply, so this is distinct from
+   * `hasRoomAccess`.
    */
   private async assertRoomIsWritable(roomId: string, author: string): Promise<void> {
     if (author === SYSTEM_IDENTITY_ID) return;

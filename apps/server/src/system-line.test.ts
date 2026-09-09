@@ -234,15 +234,17 @@ describe('workspace system lines', () => {
     const send = vi.fn().mockResolvedValue(undefined);
     const loop = new PushDeliveryLoop(database, { send });
     expect(await loop.runOnce()).toBe(0);
-    await database.query(`UPDATE memberships SET removed_at=now() WHERE workspace_id=$1 AND identity_id=$2`, [
-      WORKSPACE,
-      HUMAN,
-    ]);
+    await database.query(
+      `UPDATE memberships SET removed_at=now() WHERE workspace_id=$1 AND identity_id=$2`,
+      [WORKSPACE, HUMAN],
+    );
     await database.query(
       `UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`,
       [roomId, HUMAN],
     );
-    expect(await new PhoneService(database, 'http://local.test').canReadRoom(roomId, HUMAN)).toBe(false);
+    expect(await new PhoneService(database, 'http://local.test').canReadRoom(roomId, HUMAN)).toBe(
+      false,
+    );
     await systemLine(database, {
       roomId,
       authorId: SYSTEM_IDENTITY_ID,
@@ -270,11 +272,11 @@ describe('workspace system lines', () => {
       [roomId, HUMAN],
     );
     expect(restored.rows).toEqual([{ removed_at: null }]);
-    expect(await new PhoneService(database, 'http://local.test').canReadRoom(roomId, HUMAN)).toBe(true);
+    expect(await new PhoneService(database, 'http://local.test').canReadRoom(roomId, HUMAN)).toBe(
+      true,
+    );
     expect(
-      (
-        await database.query(`SELECT 1 FROM messages WHERE room_id=$1`, [roomId])
-      ).rowCount,
+      (await database.query(`SELECT 1 FROM messages WHERE room_id=$1`, [roomId])).rowCount,
     ).toBe(3);
   });
 });

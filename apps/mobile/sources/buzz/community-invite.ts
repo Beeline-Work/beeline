@@ -1,6 +1,3 @@
-import {
-  createBuzzClient,
-} from '@beeline/buzz-client';
 import { isCommunityInviteToken } from '@beeline/api-contract/phone';
 
 // Keep custom invite parsing aligned with the installed schemes in app.config.js.

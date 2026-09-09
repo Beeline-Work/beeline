@@ -6,6 +6,10 @@ import { BeelineMarkSpinner, MARK_CELL } from './BeelineMarkSpinner';
 import { HullLivePulse } from './MonoHull';
 import { SPINNER_STEP_MS, elapsedSeconds } from '@/buzz/turn-clock';
 
+/** The compose FAB recipe at status-line scale: a sharp brass square whose
+ * surrounding hit slop preserves a comfortable touch target. */
+const STOP_SIZE = 16;
+
 /**
  * The ordinary per-turn indicator: the agent has taken this Room's question
  * and has not answered yet. One transient line pinned above the composer,
@@ -90,15 +94,11 @@ export function TurnProgressLine({
           <Pressable
             accessibilityLabel="Stop this turn"
             accessibilityRole="button"
-            hitSlop={12}
+            hitSlop={14}
             onPress={onStop}
+            style={styles.stop}
             testID={testID ? `${testID}-stop` : undefined}
-          >
-            {/* One brass word, the settings row's trailing vocabulary. It
-                borrows the counter's type so this file's raw type literals stay
-                where they were; only the tone is its own. */}
-            <Text style={[styles.counter, styles.stop]}>stop</Text>
-          </Pressable>
+          />
         )}
       </HullLivePulse>
     </View>
@@ -170,11 +170,14 @@ const styles = StyleSheet.create((theme) => {
       fontSize: 12,
       lineHeight: 18,
     },
-    // The one action a turn admits, in the trailing slot: a single brass word,
-    // underlined so it reads as pressable in a row that otherwise is not.
+    // The compose FAB's brass square recipe, reduced to the status line's 16pt
+    // scale. Its geometry and contrast carry the affordance without a label.
     stop: {
-      color: groknight.accent,
-      textDecorationLine: 'underline',
+      width: STOP_SIZE,
+      height: STOP_SIZE,
+      flexShrink: 0,
+      borderRadius: groknight.radius,
+      backgroundColor: groknight.accent,
     },
   };
 });

@@ -143,16 +143,21 @@ describe('the per-turn progress indicator', () => {
     expect(stop.props.testID).toBe('turn-progress-line-stop');
     expect(stop.props.accessibilityRole).toBe('button');
     expect(stop.props.accessibilityLabel).toBe('Stop this turn');
-    expect(stop.findByType('Text').props.children).toBe('stop');
+    expect(stop.props.hitSlop).toBe(14);
+    expect(stop.props.style).toMatchObject({
+      width: 16,
+      height: 16,
+      borderRadius: groknight.radius,
+      backgroundColor: groknight.accent,
+    });
+    expect(stop.findAllByType('Text')).toHaveLength(0);
     act(() => stop.props.onPress());
     expect(onStop).toHaveBeenCalledTimes(1);
 
     // It sits at the right, after the elapsed counter, so the label's own
     // left edge and the counter's place never move for anybody.
-    const trailing = asking.root
-      .findAllByType('Text')
-      .map((node: { props: { children: unknown } }) => node.props.children);
-    expect(trailing.indexOf('stop')).toBe(trailing.length - 1);
+    const row = stop.parent;
+    expect(row?.children.indexOf(stop)).toBe((row?.children.length ?? 0) - 1);
   });
 
   it('breathes on the same live clock, in the same reserved gold', () => {

@@ -1077,6 +1077,7 @@ export class DaemonService {
             `SELECT message.agent_hop_count,identity.kind author_kind
              FROM messages message JOIN identities identity ON identity.id=message.author_id
              LEFT JOIN messages reply_parent ON reply_parent.id=message.reply_to_message_id
+             LEFT JOIN messages trigger_request ON trigger_request.id=message.request_id
              WHERE message.id=$1 AND message.room_id=$2 AND (
                message.mention_ids @> $3::jsonb OR (
                message.presentation='message'
@@ -1092,7 +1093,9 @@ export class DaemonService {
                  )
                  AND (
                    (message.reply_to_message_id IS NOT NULL AND reply_parent.author_id=$4) OR
-                   (message.reply_to_message_id IS NULL AND $4=(
+                   (message.reply_to_message_id IS NULL
+                     AND (identity.kind<>'agent' OR trigger_request.author_id IS NULL OR trigger_request.author_id=$4)
+                     AND $4=(
                      SELECT selected_answer.author_id
                      FROM (
                        SELECT answer.author_id

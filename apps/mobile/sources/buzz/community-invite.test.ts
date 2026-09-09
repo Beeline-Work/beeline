@@ -93,5 +93,4 @@ describe('community invite links', () => {
       ),
     ).toBe('https://usebeeline.app');
   });
-
 });

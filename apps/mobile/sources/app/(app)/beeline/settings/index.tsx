@@ -294,10 +294,10 @@ export default function BuzzSettings() {
           <View accessibilityRole="alert">
             <PixelGateReveal style={styles.confirmPanel}>
               <Text style={styles.confirmText}>
-                This permanently deletes your account: your profile, sessions and push devices,
-                your GitHub connections, every agent you own and its paired hosts’ access, and
-                your uploaded media. Messages you wrote in shared Rooms and DMs stay readable to
-                the people they were shared with, attributed to “Deleted account”. This cannot be
+                This permanently deletes your account: your profile, sessions and push devices, your
+                GitHub connections, every agent you own and its paired hosts’ access, and your
+                uploaded media. Messages you wrote in shared Rooms and DMs stay readable to the
+                people they were shared with, attributed to “Deleted account”. This cannot be
                 undone.
               </Text>
               <TouchableOpacity

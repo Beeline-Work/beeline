@@ -6,10 +6,7 @@ import { useURL } from 'expo-linking';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Identity } from '@beeline/buzz-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
-import {
-  parseCommunityInviteToken,
-  resolveCommunityInviteRelayUrl,
-} from '@/buzz/community-invite';
+import { parseCommunityInviteToken, resolveCommunityInviteRelayUrl } from '@/buzz/community-invite';
 import { saveActiveCommunityId } from '@/buzz/community-storage';
 import { ROOM_LABEL } from '@/buzz/vocabulary';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';

@@ -1,7 +1,7 @@
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const TOKEN = 'bzi_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 const IDENTITY = { publicKey: 'person-1', secretKey: new Uint8Array(32) };
@@ -18,7 +18,8 @@ const controls = vi.hoisted(() => ({
 
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
-  const host = (name: string) => (props: any) => ReactModule.createElement(name, props, props.children);
+  const host = (name: string) => (props: any) =>
+    ReactModule.createElement(name, props, props.children);
   return { Text: host('Text'), TouchableOpacity: host('TouchableOpacity'), View: host('View') };
 });
 vi.mock('react-native-unistyles', () => ({
@@ -68,10 +69,27 @@ vi.mock('@/components/buzz/MonoHull', async () => {
   const ReactModule = await import('react');
   return { PixelLoader: (props: any) => ReactModule.createElement('PixelLoader', props) };
 });
-vi.mock('@/constants/Typography', () => ({ Typography: { default: () => ({}), mono: () => ({}) } }));
+vi.mock('@/constants/Typography', () => ({
+  Typography: { default: () => ({}), mono: () => ({}) },
+}));
 vi.mock('@beeline/buzz-client', () => ({ createBuzzClient: controls.createBuzzClient }));
 
 import CommunityInviteJoin from './[token]';
+
+const originalConsoleError = console.error;
+
+beforeAll(() => {
+  (
+    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  ).IS_REACT_ACT_ENVIRONMENT = true;
+  vi.spyOn(console, 'error').mockImplementation((message?: unknown, ...args: unknown[]) => {
+    if (typeof message === 'string' && message.startsWith('react-test-renderer is deprecated'))
+      return;
+    originalConsoleError(message, ...args);
+  });
+});
+
+afterAll(() => vi.restoreAllMocks());
 
 async function render(): Promise<ReactTestRenderer> {
   let renderer!: ReactTestRenderer;

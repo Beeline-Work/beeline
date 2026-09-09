@@ -5,11 +5,11 @@ Measured 2026-08-12 against the mobile screen SDK call graphs. The probe is
 authenticated `BuzzClient`, four Rooms, DM discovery, and a serialized 30 ms
 relay hop to expose request fan-out that a localhost relay hides.
 
-| Screen path | Before requests | Before wall | After requests | After wall | Request reduction |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Workspace home / Room list (4 Rooms, including DM discovery) | 48 | 1,554 ms | 8 | 308 ms | 83% |
-| Room or DM chat | 20 | 653 ms | 5 | 180 ms | 75% |
-| Agents | 10 | 327 ms | 3 | 106 ms | 70% |
+| Screen path                                                  | Before requests | Before wall | After requests | After wall | Request reduction |
+| ------------------------------------------------------------ | --------------: | ----------: | -------------: | ---------: | ----------------: |
+| Workspace home / Room list (4 Rooms, including DM discovery) |              48 |    1,554 ms |              8 |     308 ms |               83% |
+| Room or DM chat                                              |              20 |      653 ms |              5 |     180 ms |               75% |
+| Agents                                                       |              10 |      327 ms |              3 |     106 ms |               70% |
 
 The relay itself was not the bottleneck. Bootstrap reads already used the
 authenticated HTTP bridge and did not wait for WebSocket setup. The cost came

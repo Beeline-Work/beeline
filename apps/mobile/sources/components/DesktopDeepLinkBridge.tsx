@@ -13,10 +13,7 @@ export function DesktopDeepLinkBridge() {
     if (!isTauri()) return;
     let removed = false;
     let subscription: { remove(): void } | undefined;
-    const seen = new Set<string>();
     const deliver = (url: string) => {
-      if (seen.has(url)) return;
-      seen.add(url);
       deliverDesktopDeepLink(url, router);
     };
 

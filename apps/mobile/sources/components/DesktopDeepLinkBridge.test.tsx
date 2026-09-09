@@ -29,7 +29,7 @@ describe('running desktop app deep-link bridge', () => {
     native.listener = null;
   });
 
-  it('moves the already-running window to review sign-in exactly once', async () => {
+  it('routes every separate delivery, including reopening the same review link', async () => {
     await act(async () => {
       create(React.createElement(DesktopDeepLinkBridge));
       await Promise.resolve();
@@ -40,7 +40,7 @@ describe('running desktop app deep-link bridge', () => {
       native.listener?.(url);
       native.listener?.(url);
     });
-    expect(replace).toHaveBeenCalledTimes(1);
+    expect(replace).toHaveBeenCalledTimes(2);
     expect(replace).toHaveBeenCalledWith({
       pathname: '/review/[secret]',
       params: { secret: 'play-review-secret-value-0001' },

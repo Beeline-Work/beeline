@@ -1256,6 +1256,9 @@ export default function BuzzChat() {
   const dmPeerIdentity = dmPeerPubkey
     ? roomSurface?.members.find((member) => member.identity.pubkey === dmPeerPubkey)?.identity
     : undefined;
+  const dmAnnouncementAuthor = dmPeerPubkey
+    ? roomSurface?.messages.find((message) => message.author.pubkey === dmPeerPubkey)?.author
+    : undefined;
   const dmPeerNip05Status = useVerifiedNip05Status(
     dmPeerPubkey ?? '',
     dmPeerProfile ? { nip05: undefined } : undefined,
@@ -1270,9 +1273,11 @@ export default function BuzzChat() {
       dmPeerPubkey,
       dmPeerNip05Status,
       isReadOnlyDirectMessage,
+      dmAnnouncementAuthor,
     );
   }, [
     agentByPubkey,
+    dmAnnouncementAuthor,
     dmPeerIdentity,
     dmPeerNip05Status,
     dmPeerProfile,

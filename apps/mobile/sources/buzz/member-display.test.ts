@@ -22,6 +22,19 @@ describe('direct-message member display', () => {
     ).toBe('System');
   });
 
+  it('uses the indexed announcement author when the hidden System peer is absent', () => {
+    expect(
+      directMessageHeaderName(
+        undefined,
+        undefined,
+        's'.repeat(64),
+        'none',
+        true,
+        { pubkey: 's'.repeat(64), kind: 'human', name: 'System', handle: 'system' },
+      ),
+    ).toBe('System');
+  });
+
   it('resolves the other participant', () => {
     expect(
       directMessagePeer(

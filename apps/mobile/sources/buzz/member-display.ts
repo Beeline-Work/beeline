@@ -42,8 +42,10 @@ export function directMessageHeaderName(
   pubkey: string,
   nip05Status: Nip05VerificationStatus | 'checking' | 'none' | undefined,
   announcementsOnly: boolean,
+  announcementAuthor?: RoomViewIdentity,
 ): string {
   if (announcementsOnly && peer?.name.trim()) return peer.name.trim();
+  if (announcementsOnly && announcementAuthor?.name.trim()) return announcementAuthor.name.trim();
   return personIdentityLabel(profile ?? peer, pubkey, nip05Status);
 }
 

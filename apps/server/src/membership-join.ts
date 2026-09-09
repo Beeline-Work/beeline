@@ -76,6 +76,7 @@ export async function joinWorkspaceMembersToPublicRoom(
   roomId: string,
   scope: 'all' | 'roster-humans' = 'all',
 ): Promise<number> {
+  await database.query(`SELECT id FROM workspaces WHERE id=$1 FOR UPDATE`, [workspaceId]);
   const joined = await database.query<{ identity_id: string }>(
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
      SELECT room.workspace_id,room.id,workspace_member.identity_id,workspace_member.role
@@ -127,6 +128,7 @@ export async function joinRooms(
   input: JoinRoomsInput,
 ): Promise<JoinRoomsResult> {
   return database.transaction(async (transaction) => {
+    await transaction.query(`SELECT id FROM workspaces WHERE id=$1 FOR UPDATE`, [input.workspaceId]);
     let roomIds: string[] = [];
     if (input.rooms.type !== 'none') {
       const values: unknown[] = [input.workspaceId, input.identityId];

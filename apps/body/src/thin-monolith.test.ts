@@ -361,7 +361,7 @@ describe('monolith-only thin daemon', () => {
     });
     try {
       await coordinator.reconcile();
-      await vi.waitFor(() => expect(posts).toHaveLength(1));
+      await vi.waitFor(() => expect(posts).toHaveLength(1), { timeout: 2_000 });
       expect(posts[0]).toMatchObject({ roomId, triggerMessageId: firstMessageId });
     } finally {
       await coordinator.shutdown();

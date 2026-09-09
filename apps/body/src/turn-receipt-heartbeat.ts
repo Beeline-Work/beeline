@@ -19,7 +19,6 @@ export async function withTurnReceiptHeartbeat<T>(
   task: () => Promise<T>,
   onHeartbeatError: (error: unknown) => void,
 ): Promise<T> {
-  await api.execute('postAgentTurnReceipt', { ...receipt, status: 'working' });
   let tail = Promise.resolve();
   const timer = setInterval(() => {
     tail = tail

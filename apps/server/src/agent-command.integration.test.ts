@@ -480,6 +480,50 @@ it('selects exactly one winner when two generations claim a pending command toge
   expect(attempts.filter((a) => a.status === 'fulfilled')).toHaveLength(1);
   expect(attempts.filter((a) => a.status === 'rejected')).toHaveLength(1);
 });
+it('atomically establishes the working receipt when an input command is claimed', async () => {
+  await send('@hoots');
+  const [c] = await commands();
+  await daemon.execute(
+    'claimAgentCommand',
+    { roomId: R, commandId: c!.id, generationId: 'working-at-claim' },
+    A,
+  );
+  expect(
+    (
+      await db.query(
+        `SELECT status,generation_id FROM agent_turns
+         WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
+        [R, c!.turnRequestId, A],
+      )
+    ).rows,
+  ).toEqual([{ status: 'working', generation_id: 'working-at-claim' }]);
+  expect((await phone.readRoom(R, H))?.latestAgentTurns).toContainEqual(
+    expect.objectContaining({
+      requestId: c!.turnRequestId,
+      agentPubkey: A,
+      status: 'working',
+    }),
+  );
+});
+it('rolls the command claim back when a cancelled turn cannot become working', async () => {
+  await send('@hoots');
+  const [c] = await commands();
+  await db.query(
+    `INSERT INTO agent_turns(room_id,request_id,agent_id,status)
+     VALUES($1,$2,$3,'cancelled')`,
+    [R, c!.turnRequestId, A],
+  );
+  await expect(
+    daemon.execute(
+      'claimAgentCommand',
+      { roomId: R, commandId: c!.id, generationId: 'too-late' },
+      A,
+    ),
+  ).rejects.toThrow('cancelled');
+  expect((await db.query(`SELECT state FROM agent_commands WHERE id=$1`, [c!.id])).rows).toEqual([
+    { state: 'pending' },
+  ]);
+});
 it('never reopens terminal commands and never accepts missing generation claims', async () => {
   await send('@hoots');
   const [c] = await commands();

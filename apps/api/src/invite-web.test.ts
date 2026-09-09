@@ -242,9 +242,6 @@ describe('relay invite web front', () => {
       minify: true,
       platform: 'browser',
       target: ['es2022'],
-      alias: {
-        '@beeline/api-contract/phone': './packages/api-contract/src/phone.ts',
-      },
       write: false,
     }).outputFiles[0]?.text;
 

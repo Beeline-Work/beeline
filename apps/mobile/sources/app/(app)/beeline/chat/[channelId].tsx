@@ -142,8 +142,10 @@ import {
 } from '@/buzz/community-storage';
 import {
   formatAttachmentSize,
-  uploadChatAttachment,
+  MAX_MESSAGE_ATTACHMENTS,
+  pickedPhotoAttachments,
   type PickedChatAttachment,
+  uploadChatAttachments,
 } from '@/buzz/chat-attachment';
 import {
   availableSlashVerbs,
@@ -385,7 +387,7 @@ export default function BuzzChat() {
   >({});
   const [sending, setSending] = useState(false);
   const failedOutboxIds = outbox.failedIds;
-  const [pendingAttachment, setPendingAttachment] = useState<PickedChatAttachment | null>(null);
+  const [pendingAttachments, setPendingAttachments] = useState<PickedChatAttachment[]>([]);
   const [attachmentPickerVisible, setAttachmentPickerVisible] = useState(false);
   // "No corner on record" and "the corner list has not answered yet" are
   // different answers, and only the first one may let a freshly permitted
@@ -1826,7 +1828,8 @@ export default function BuzzChat() {
     const rawText = inputTextRef.current.trim();
     // State updates are committed asynchronously. A ref closes the short
     // double-tap window before `sending` can disable the native control.
-    if (sendInFlightRef.current || (!rawText && !pendingAttachment) || isArchived) return;
+    if (sendInFlightRef.current || (!rawText && pendingAttachments.length === 0) || isArchived)
+      return;
     // The daemon already refuses corner-open on a repo-less Room; this is the
     // friendly client-side path — catch the common phrasing before the
     // message is sent (and the composer text lost) rather than after a
@@ -1890,9 +1893,10 @@ export default function BuzzChat() {
       }
       if (!transport) setSessionTransport(sendTransport);
       preparedTransport = sendTransport;
-      const attachments = pendingAttachment
-        ? [await uploadChatAttachment(await sendTransport.ensureClient(), pendingAttachment)]
-        : [];
+      const attachments = await uploadChatAttachments(
+        await sendTransport.ensureClient(),
+        pendingAttachments,
+      );
       // Sign before append. The authoritative event id is the optimistic row
       // identity and the durable outbox key from its first frame onward.
       preparedEvent = replyTarget
@@ -1953,7 +1957,7 @@ export default function BuzzChat() {
       setInputText('');
       setComposerHeight(COMPOSER_MIN_HEIGHT);
       setInputSelection({ start: 0, end: 0 });
-      setPendingAttachment(null);
+      setPendingAttachments([]);
       setReplyTarget(null);
       await activeOutbox.attempted(preparedEvent.id);
       await sendTransport.publishPreparedMessage(preparedEvent);
@@ -2004,7 +2008,7 @@ export default function BuzzChat() {
     }
   }, [
     activeCommunityId,
-    pendingAttachment,
+    pendingAttachments,
     transport,
     decodedId,
     addMessages,
@@ -2031,6 +2035,14 @@ export default function BuzzChat() {
   ]);
 
   const pickPhoto = useCallback(async () => {
+    const remaining = MAX_MESSAGE_ATTACHMENTS - pendingAttachments.length;
+    if (remaining <= 0) {
+      Modal.alert(
+        'Attachment limit reached',
+        `A message can include up to ${MAX_MESSAGE_ATTACHMENTS} attachments.`,
+      );
+      return;
+    }
     if (Platform.OS === 'ios') {
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (permission.status !== 'granted') {
@@ -2040,23 +2052,26 @@ export default function BuzzChat() {
     }
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
-      allowsMultipleSelection: false,
+      allowsMultipleSelection: true,
+      selectionLimit: remaining,
       quality: 1,
       exif: false,
     });
-    const asset = result.canceled ? undefined : result.assets[0];
-    if (!asset) return;
-    setPendingAttachment({
-      uri: asset.uri,
-      name: asset.fileName?.trim() || `photo-${Date.now()}.jpg`,
-      mimeType: asset.mimeType ?? 'image/jpeg',
-      size: asset.fileSize ?? 0,
-      width: asset.width,
-      height: asset.height,
-    });
-  }, []);
+    if (result.canceled || result.assets.length === 0) return;
+    setPendingAttachments((current) => [
+      ...current,
+      ...pickedPhotoAttachments(result.assets).slice(0, MAX_MESSAGE_ATTACHMENTS - current.length),
+    ]);
+  }, [pendingAttachments.length]);
 
   const pickDocument = useCallback(async () => {
+    if (pendingAttachments.length >= MAX_MESSAGE_ATTACHMENTS) {
+      Modal.alert(
+        'Attachment limit reached',
+        `A message can include up to ${MAX_MESSAGE_ATTACHMENTS} attachments.`,
+      );
+      return;
+    }
     const result = await DocumentPicker.getDocumentAsync({
       copyToCacheDirectory: true,
       multiple: false,
@@ -2064,13 +2079,16 @@ export default function BuzzChat() {
     });
     const asset = result.canceled ? undefined : result.assets[0];
     if (!asset) return;
-    setPendingAttachment({
-      uri: asset.uri,
-      name: asset.name?.trim() || `file-${Date.now()}`,
-      mimeType: asset.mimeType ?? 'application/octet-stream',
-      size: asset.size ?? 0,
-    });
-  }, []);
+    setPendingAttachments((current) => [
+      ...current,
+      {
+        uri: asset.uri,
+        name: asset.name?.trim() || `file-${Date.now()}`,
+        mimeType: asset.mimeType ?? 'application/octet-stream',
+        size: asset.size ?? 0,
+      },
+    ]);
+  }, [pendingAttachments.length]);
 
   const chooseAttachment = useCallback(() => {
     setAttachmentPickerVisible(true);
@@ -3605,26 +3623,36 @@ export default function BuzzChat() {
                 </TouchableOpacity>
               </View>
             )}
-            {pendingAttachment && (
-              <View style={styles.pendingAttachment} testID="pending-chat-attachment">
+            {pendingAttachments.map((attachment, index) => (
+              <View
+                key={`${attachment.uri}:${index}`}
+                style={styles.pendingAttachment}
+                testID={`pending-chat-attachment-${index}`}
+              >
                 <View style={styles.pendingAttachmentCopy}>
                   <Text numberOfLines={1} style={styles.pendingAttachmentName}>
-                    {pendingAttachment.name}
+                    {attachment.name}
                   </Text>
                   <Text style={styles.pendingAttachmentMeta}>
-                    {sending ? 'UPLOADING' : formatAttachmentSize(pendingAttachment.size)}
+                    {sending ? 'UPLOADING' : formatAttachmentSize(attachment.size)}
                   </Text>
                 </View>
                 <TouchableOpacity
-                  accessibilityLabel={`Remove ${pendingAttachment.name}`}
+                  accessibilityLabel={`Remove ${attachment.name}`}
+                  accessibilityRole="button"
                   disabled={sending}
-                  onPress={() => setPendingAttachment(null)}
+                  onPress={() =>
+                    setPendingAttachments((current) =>
+                      current.filter((_, attachmentIndex) => attachmentIndex !== index),
+                    )
+                  }
                   style={styles.pendingAttachmentRemove}
+                  testID={`pending-chat-attachment-remove-${index}`}
                 >
                   <Text style={styles.pendingAttachmentRemoveText}>×</Text>
                 </TouchableOpacity>
               </View>
-            )}
+            ))}
             {/* Keep this in the composer stack, directly above the field. A
                 growing multiline field then takes room from the transcript,
                 never from the only live progress signal. */}
@@ -3725,7 +3753,7 @@ export default function BuzzChat() {
                   styles.sendButton,
                   (slashMenuVisible
                     ? !inputText.trim()
-                    : (!inputText.trim() && !pendingAttachment) || sending) &&
+                    : (!inputText.trim() && pendingAttachments.length === 0) || sending) &&
                     styles.sendButtonDisabled,
                 ]}
                 onPress={
@@ -3738,7 +3766,7 @@ export default function BuzzChat() {
                 disabled={
                   slashMenuVisible
                     ? !inputText.trim()
-                    : (!inputText.trim() && !pendingAttachment) || sending
+                    : (!inputText.trim() && pendingAttachments.length === 0) || sending
                 }
                 testID="chat-send"
               >

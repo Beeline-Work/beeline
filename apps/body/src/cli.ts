@@ -338,6 +338,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
                 runtimeDir,
                 releaseId: loadedRelease ?? 'unknown',
                 sandboxRequired: runtime.sandbox !== 'off',
+                sandboxUnavailableDetail: sandbox.advisory,
                 ...(currentReleaseId
                   ? {
                       compareWithCurrentRelease: async (appeal) => {

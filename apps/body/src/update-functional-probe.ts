@@ -54,7 +54,8 @@ export type AcpTurnFailure =
 /** Why the successor is appealing to the release it would otherwise roll back to. */
 export type ProbeAppeal =
   | { kind: 'provider-refusal'; reason: string; refusal: ProviderRefusal }
-  | { kind: 'acp-turn-failure'; reason: string; failure: AcpTurnFailure };
+  | { kind: 'acp-turn-failure'; reason: string; failure: AcpTurnFailure }
+  | { kind: 'sandbox-unavailable'; reason: string };
 
 const ACP_ERROR_CODE = /\bACP error (-\d+):/;
 const ACP_PROMPT_INACTIVITY = /\bACP session\/prompt timed out after \d+ms of inactivity\b/;
@@ -95,6 +96,7 @@ export function sameAcpTurnFailure(one: AcpTurnFailure, other: AcpTurnFailure): 
 export type CurrentReleaseProbeOutcome =
   | { kind: 'served' }
   | { kind: 'refused'; status: number; reason: string }
+  | { kind: 'sandbox-unavailable'; reason: string }
   /** The comparison could not run or the current release failed some other way. */
   | { kind: 'unavailable'; reason: string };
 
@@ -122,6 +124,9 @@ export async function probeOutcome(
     await run();
     return { kind: 'served' };
   } catch (error) {
+    if (error instanceof UpdateFunctionalProbeError && error.reason === 'sandbox-unavailable') {
+      return { kind: 'sandbox-unavailable', reason: error.message };
+    }
     if (error instanceof UpdateFunctionalProbeError && error.providerRefusal) {
       return { kind: 'refused', ...error.providerRefusal };
     }
@@ -135,6 +140,8 @@ function describeCurrentReleaseOutcome(outcome: CurrentReleaseProbeOutcome): str
       return 'the current release answered';
     case 'refused':
       return `the current release got a different refusal (${outcome.reason})`;
+    case 'sandbox-unavailable':
+      return `the current release has the same unavailable sandbox (${outcome.reason})`;
     case 'unavailable':
       return `the current release could not be compared (${outcome.reason})`;
   }
@@ -143,7 +150,7 @@ function describeCurrentReleaseOutcome(outcome: CurrentReleaseProbeOutcome): str
 export interface UpdateFunctionalProbeResult {
   harness: string;
   sandboxed: boolean;
-  sessionStarted: true;
+  sessionStarted: boolean;
   /** False only when the turn failed the way the current release fails it too. */
   turnCompleted: boolean;
   nativeTools: readonly [];
@@ -197,6 +204,8 @@ export async function runUpdateFunctionalProbe(input: {
   releaseId: string;
   /** `sandbox: off` is the sole supported reason for an unwrapped probe. */
   sandboxRequired: boolean;
+  /** The host-specific sandbox diagnostic shown when bubblewrap is unavailable. */
+  sandboxUnavailableDetail?: string;
   /** Protocol initialize timeout. Also controls session/new when explicitly set alone. */
   sessionTimeoutMs?: number;
   /** Test seam for the separate cold session/new budget. */
@@ -222,10 +231,35 @@ export async function runUpdateFunctionalProbe(input: {
     throw new UpdateFunctionalProbeError('model-unavailable', input.config.modelUnavailable.detail);
   }
   if (input.sandboxRequired && !input.config.bwrapPath) {
-    throw new UpdateFunctionalProbeError(
-      'sandbox-unavailable',
-      'the configured bubblewrap boundary did not pass its startup self-test',
+    const detail =
+      input.sandboxUnavailableDetail ??
+      'the configured bubblewrap boundary did not pass its startup self-test';
+    if (!input.compareWithCurrentRelease) {
+      throw new UpdateFunctionalProbeError('sandbox-unavailable', detail);
+    }
+    const current = await input.compareWithCurrentRelease({
+      kind: 'sandbox-unavailable',
+      reason: detail,
+    });
+    if (current.kind !== 'sandbox-unavailable') {
+      throw new UpdateFunctionalProbeError(
+        'sandbox-unavailable',
+        `${detail}; ${describeCurrentReleaseOutcome(current)}`,
+      );
+    }
+    console.warn(
+      '[body] update probe: the sandbox is unavailable to this release and the current release alike; ' +
+        'preserving fail-closed sandboxing and accepting the bundle as inconclusive',
     );
+    return {
+      harness,
+      sandboxed: false,
+      sessionStarted: false,
+      turnCompleted: false,
+      nativeTools: [],
+      modelAnswer: 'unavailable',
+      modelAnswerReason: `${detail} (the current release has the same host sandbox failure)`,
+    };
   }
 
   const root = input.probeRoot ?? resolve(input.runtimeDir, 'update-functional-probe');

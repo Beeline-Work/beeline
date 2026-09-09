@@ -130,6 +130,20 @@ if (command !== '${UPDATE_PROBE_COMMAND}' || flag !== '--config' || config !== '
       kind: 'unavailable',
       reason: 'y',
     });
+    expect(
+      outcomeFromReport({
+        probe: 'failed',
+        reason:
+          'functional update probe failed (sandbox-unavailable): AppArmor denied bwrap',
+      }),
+    ).toEqual({
+      kind: 'sandbox-unavailable',
+      reason: 'functional update probe failed (sandbox-unavailable): AppArmor denied bwrap',
+    });
+    expect(outcomeFromReport({ probe: 'sandbox-unavailable', reason: 'AppArmor denied bwrap' })).toEqual({
+      kind: 'sandbox-unavailable',
+      reason: 'AppArmor denied bwrap',
+    });
   });
 });
 

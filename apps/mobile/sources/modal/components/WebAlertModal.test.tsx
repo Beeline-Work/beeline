@@ -10,8 +10,9 @@ vi.mock('@/components/buzz/HullDialog', async () => {
 
 import { WebAlertModal } from './WebAlertModal';
 
-(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
-  true;
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('Hull alert and confirm adapter', () => {
   it('keeps ordinary alerts non-dismissible outside their actions and preserves button callbacks', () => {
@@ -51,6 +52,7 @@ describe('Hull alert and confirm adapter', () => {
             confirmText: 'Leave',
             destructive: true,
             id: 'confirm-1',
+            message: 'This removes the agent from every Room and the Workspace.',
             title: 'Leave Room?',
             type: 'confirm',
           }}
@@ -61,6 +63,16 @@ describe('Hull alert and confirm adapter', () => {
     });
     const dialog = renderer!.root.findByType('HullDialog' as any);
 
+    expect(dialog.props).toMatchObject({
+      body: 'This removes the agent from every Room and the Workspace.',
+      dismissOnBackdrop: true,
+      scrimTestID: 'hull-confirm-dismiss',
+      title: 'Leave Room?',
+    });
+    expect(dialog.props.actions.map((action: any) => action.testID)).toEqual([
+      'hull-confirm-cancel',
+      'hull-confirm-submit',
+    ]);
     expect(dialog.props.actions.map((action: any) => action.variant)).toEqual([
       'quiet',
       'destructive',

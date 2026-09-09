@@ -316,6 +316,7 @@ type HullDialogProps = Omit<HullModalProps, 'children' | 'placement'> & {
   actions: readonly HullDialogAction[];
   body?: string;
   children?: React.ReactNode;
+  contentLayout?: 'intrinsic' | 'fill';
   surfaceStyle?: StyleProp<ViewStyle>;
   title: string;
 };
@@ -325,6 +326,7 @@ export function HullDialog({
   actions,
   body,
   children,
+  contentLayout = 'intrinsic',
   surfaceStyle,
   title,
   testID,
@@ -334,7 +336,7 @@ export function HullDialog({
   return (
     <HullModal {...modalProps} placement="center" testID={testID}>
       <HullFloatingSurface style={[styles.dialogSurface, surfaceStyle]}>
-        <View style={styles.dialogCopy}>
+        <View style={[styles.dialogCopy, contentLayout === 'fill' && styles.dialogCopyFill]}>
           <Text accessibilityRole="header" style={styles.dialogTitle}>
             {title}
           </Text>
@@ -428,7 +430,6 @@ const styles = StyleSheet.create((theme) => {
     },
     dialogSurface: { width: '100%' },
     dialogCopy: {
-      flex: 1,
       flexShrink: 1,
       minHeight: 0,
       overflow: 'hidden',
@@ -436,6 +437,7 @@ const styles = StyleSheet.create((theme) => {
       paddingTop: HULL_DIALOG_LAYOUT.copyPaddingTop,
       paddingBottom: HULL_DIALOG_LAYOUT.copyPaddingBottom,
     },
+    dialogCopyFill: { flex: 1 },
     dialogContent: { flex: 1, flexShrink: 1, minHeight: 0 },
     dialogTitle: {
       ...Typography.default('semiBold'),

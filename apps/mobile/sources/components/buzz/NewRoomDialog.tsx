@@ -128,6 +128,7 @@ export function NewRoomDialog({
         },
       ]}
       body={`In ${workspaceName}. Repository optional.`}
+      contentLayout="fill"
       onRequestClose={onClose}
       surfaceStyle={{ minHeight: dialogMinHeight, maxHeight: availableDialogHeight }}
       testID="new-room-dialog"

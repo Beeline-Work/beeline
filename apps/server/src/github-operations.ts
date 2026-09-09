@@ -1097,7 +1097,7 @@ export class GitHubOperations {
       try {
         const refreshed = await this.oauth.refreshUserToken(credential.refreshToken);
         await database.query(
-          `UPDATE github_user_tokens SET encrypted_token=$2,encrypted_refresh_token=$3,expires_at=$4,stale_at=NULL,updated_at=now() WHERE subject=$1`,
+          `UPDATE github_user_tokens SET encrypted_token=$2,encrypted_refresh_token=COALESCE($3,encrypted_refresh_token),expires_at=$4,stale_at=NULL,updated_at=now() WHERE subject=$1`,
           [
             credential.subject,
             this.seal(refreshed.accessToken),

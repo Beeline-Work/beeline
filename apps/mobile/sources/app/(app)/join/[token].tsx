@@ -1,50 +1,34 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useURL } from 'expo-linking';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { createBuzzClient, type Identity } from '@beeline/buzz-client';
+import type { Identity } from '@beeline/buzz-client';
+import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import {
-  generateBuzzIdentity,
-  getEffectiveRelayUrl,
-  loadBuzzIdentity,
-} from '@/auth/buzz-identity-storage';
-import {
-  loadCommunityInvitePreview,
   parseCommunityInviteToken,
   resolveCommunityInviteRelayUrl,
-  type CommunityInvitePreview,
 } from '@/buzz/community-invite';
 import { saveActiveCommunityId } from '@/buzz/community-storage';
-import {
-  ensurePersonNameForWorkspace,
-  resolveOnboardingPersonName,
-  savePreferredPersonName,
-} from '@/buzz/person-name';
-import { ROOM_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
+import { ROOM_LABEL } from '@/buzz/vocabulary';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
-import { registerBuzzPushNotifications } from '@/push/buzz-push-registration';
 import { Typography } from '@/constants/Typography';
 import { PixelLoader } from '@/components/buzz/MonoHull';
-import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
 
 export default function CommunityInviteJoin() {
-  const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const { token: routeToken } = useLocalSearchParams<{ token?: string | string[] }>();
   const incomingUrl = useURL();
   const token = parseCommunityInviteToken(routeToken);
   const [identity, setIdentity] = useState<Identity | null>(null);
-  const [relayUrl, setRelayUrl] = useState<string | null>(null);
-  const [preview, setPreview] = useState<CommunityInvitePreview | { name: string } | null>(null);
+  const [preview, setPreview] = useState<{ name: string } | null>(null);
   const [communities, setCommunities] = useState<
     { communityId: string; name: string; avatar?: string }[]
   >([]);
-  const [displayName, setDisplayName] = useState('');
   const [loading, setLoading] = useState(true);
   const [joining, setJoining] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -63,31 +47,17 @@ export default function CommunityInviteJoin() {
           getEffectiveRelayUrl(),
         ]);
         const url = resolveCommunityInviteRelayUrl(incomingUrl, token, configuredRelayUrl);
-        if (getBuzzRuntimeConfig().monolithEnabled && !currentIdentity) {
+        if (!currentIdentity) {
           router.replace('/beeline/onboarding');
           return;
         }
-        const nextPreview = getBuzzRuntimeConfig().monolithEnabled
-          ? await new RoomViewClient({ baseUrl: url, identity: currentIdentity! })
-              .invite(token)
-              .then((value) => ({ name: value.name }))
-          : await loadCommunityInvitePreview(url, token, currentIdentity ?? undefined);
-        let available: { communityId: string; name: string; avatar?: string }[] = [];
-        if (currentIdentity) {
-          if (getBuzzRuntimeConfig().monolithEnabled) {
-            const view = await new RoomViewClient({
-              baseUrl: url,
-              identity: currentIdentity,
-            }).workspaces();
-            available = view.workspaces.map(workspaceRailItem);
-          } else {
-            const client = createBuzzClient({ baseUrl: url, identity: currentIdentity });
-            available = await client.listCommunities();
-          }
-        }
+        const view = new RoomViewClient({ baseUrl: url, identity: currentIdentity });
+        const [nextPreview, available] = await Promise.all([
+          view.invite(token).then((value) => ({ name: value.name })),
+          view.workspaces().then((value) => value.workspaces.map(workspaceRailItem)),
+        ]);
         if (!cancelled) {
           setIdentity(currentIdentity);
-          setRelayUrl(url);
           setPreview(nextPreview);
           setCommunities(available);
         }
@@ -103,53 +73,23 @@ export default function CommunityInviteJoin() {
   }, [incomingUrl, token]);
 
   const handleJoin = useCallback(async () => {
-    if (!token || !relayUrl || !preview) return;
-    if (!identity && !displayName.trim()) {
-      setError('Choose a name to create your key and join.');
-      return;
-    }
+    if (!token || !preview || !identity) return;
     setJoining(true);
     setError(null);
     try {
-      if (getBuzzRuntimeConfig().monolithEnabled) {
-        if (!identity) {
-          router.replace('/beeline/onboarding');
-          return;
-        }
-        const redemption = await monolithPhoneOperation('redeemInvite', { token });
-        await saveActiveCommunityId(identity.publicKey, redemption.workspaceId);
-        router.replace({
-          pathname: '/beeline/channels',
-          params: { communityId: redemption.workspaceId },
-        });
-        return;
-      }
-      const joiningIdentity = identity ?? (await generateBuzzIdentity(displayName.trim()));
-      if (!identity) await registerBuzzPushNotifications(joiningIdentity);
-      const client = createBuzzClient({ baseUrl: relayUrl, identity: joiningIdentity });
-      if (identity) {
-        await resolveOnboardingPersonName(client, joiningIdentity.publicKey);
-      } else {
-        await savePreferredPersonName(joiningIdentity.publicKey, displayName);
-      }
-      const redemption = await client.redeemInvite(token);
-      await client.waitUntilMember(redemption.communityId, joiningIdentity.publicKey);
-      await ensurePersonNameForWorkspace(client, redemption.communityId, joiningIdentity.publicKey);
-      const community = await client.getCommunity(redemption.communityId);
-      if (!community)
-        throw new Error(`Joined, but ${WORKSPACE_LABEL} details are not visible yet.`);
-      await saveActiveCommunityId(joiningIdentity.publicKey, community.communityId);
+      const redemption = await monolithPhoneOperation('redeemInvite', { token });
+      await saveActiveCommunityId(identity.publicKey, redemption.workspaceId);
       router.replace({
         pathname: '/beeline/channels',
-        params: { communityId: community.communityId },
+        params: { communityId: redemption.workspaceId },
       });
     } catch (err) {
       setError(`Could not join: ${String(err)}`);
     } finally {
       setJoining(false);
     }
-  }, [displayName, identity, preview, relayUrl, token]);
-  const previewName = preview && ('community' in preview ? preview.community.name : preview.name);
+  }, [identity, preview, token]);
+  const previewName = preview?.name;
 
   const selectCommunity = useCallback((communityId: string | null) => {
     if (!communityId) return;
@@ -195,33 +135,10 @@ export default function CommunityInviteJoin() {
               <Text style={styles.title}>Join {previewName}?</Text>
               <Text style={styles.details}>Open its {ROOM_LABEL}s and work with its Agents.</Text>
 
-              {!identity && (
-                <View style={styles.identityForm}>
-                  <Text style={styles.identityLabel}>Your name</Text>
-                  <TextInput
-                    autoFocus
-                    style={styles.input}
-                    value={displayName}
-                    onChangeText={setDisplayName}
-                    onSubmitEditing={() => void handleJoin()}
-                    editable={!joining}
-                    maxLength={60}
-                    placeholder="Ada"
-                    placeholderTextColor={theme.buzz.dim}
-                  />
-                  <Text style={styles.identityHint}>
-                    Your private identity key stays on this device.
-                  </Text>
-                </View>
-              )}
-
               <TouchableOpacity
                 testID="confirm-community-join"
-                style={[
-                  styles.primaryButton,
-                  (joining || (!identity && !displayName.trim())) && styles.disabled,
-                ]}
-                disabled={joining || (!identity && !displayName.trim())}
+                style={[styles.primaryButton, joining && styles.disabled]}
+                disabled={joining}
                 onPress={() => void handleJoin()}
               >
                 <Text style={styles.primaryButtonText}>
@@ -313,30 +230,6 @@ const styles = StyleSheet.create((theme) => {
       fontSize: 12,
       lineHeight: 18,
       textAlign: 'center',
-    },
-    identityForm: { alignSelf: 'stretch', marginTop: 28 },
-    identityLabel: {
-      marginBottom: 7,
-      color: groknight.textSecondary,
-      fontSize: 12,
-      fontWeight: '600',
-    },
-    input: {
-      minHeight: 48,
-      paddingHorizontal: 12,
-      paddingVertical: 10,
-      borderRadius: 4,
-      borderWidth: 1,
-      borderColor: groknight.borderActive,
-      color: groknight.textPrimary,
-      backgroundColor: groknight.bgBase,
-      fontSize: 14,
-    },
-    identityHint: {
-      marginTop: 7,
-      color: groknight.dim,
-      fontSize: 10,
-      lineHeight: 14,
     },
     primaryButton: {
       alignSelf: 'stretch',

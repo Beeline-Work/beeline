@@ -5,7 +5,7 @@ import { SidebarView } from './SidebarView';
 import { useWindowDimensions, View, Pressable, Platform } from 'react-native';
 import { useLocalSetting, useLocalSettingMutable } from '@/sync/storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { usePathname, useRouter } from 'expo-router';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
@@ -14,15 +14,42 @@ import { isTauri } from '@/utils/isTauri';
 import { DEFAULT_APP_ZOOM } from '@/hooks/useTauriZoom';
 import { canRouteForward, canUseRouteBack, getNavigatorCanGoBack } from '@/navigation/browserNavigation';
 import { useBrowserNavigationStore } from '@/navigation/browserNavigationStore';
+import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
+import { monolithSession } from '@/auth/monolith-session';
+import { showsDesktopSessionChrome, type DesktopSessionState, usesPersistentDesktopFrame } from './desktop-shell-policy';
 
 const TAURI_HEADER_CONTROL_LEFT = Math.ceil(92 / DEFAULT_APP_ZOOM);
 
 export const SidebarNavigator = React.memo(() => {
     const isTablet = useIsTablet();
+    const inDesktopShell = isTauri();
+    const pathname = usePathname();
     const zenMode = useLocalSetting('zenMode');
-    const isDesktopLayout = isTablet;
-    const showSidebar = isDesktopLayout && !zenMode;
+    const [desktopSession, setDesktopSession] = React.useState<DesktopSessionState>(inDesktopShell ? 'checking' : 'signed-in');
+    const isDesktopLayout = usesPersistentDesktopFrame(inDesktopShell, isTablet);
+    const showSessionChrome = showsDesktopSessionChrome(inDesktopShell, isTablet, desktopSession);
+    const showSidebar = showSessionChrome && !zenMode;
     const { width: windowWidth } = useWindowDimensions();
+
+    React.useEffect(() => {
+        if (!inDesktopShell) return;
+        let cancelled = false;
+        const refresh = () => {
+            void Promise.all([monolithSession.identityId(), loadBuzzIdentity()])
+                .then(([identityId, legacyIdentity]) => {
+                    if (!cancelled) setDesktopSession(identityId || legacyIdentity ? 'signed-in' : 'signed-out');
+                })
+                .catch(() => {
+                    if (!cancelled) setDesktopSession('signed-out');
+                });
+        };
+        refresh();
+        const unsubscribe = monolithSession.subscribeIdentityChange(refresh);
+        return () => {
+            cancelled = true;
+            unsubscribe();
+        };
+    }, [inDesktopShell, pathname]);
 
     // Calculate target drawer width
     const fullDrawerWidth = React.useMemo(() => {
@@ -71,21 +98,13 @@ export const SidebarNavigator = React.memo(() => {
         };
     }, [isDesktopLayout, drawerWidth]);
 
-    const drawerContent = React.useCallback(
-        () => <SidebarView />,
-        []
-    );
+    const drawerContent = React.useCallback(() => <SidebarView />, []);
 
     return (
         <View style={{ flex: 1 }}>
-            <Drawer
-                screenOptions={drawerNavigationOptions}
-                drawerContent={isDesktopLayout ? drawerContent : undefined}
-            />
-            {/* Persistent header overlay — always visible on desktop, same position regardless of zen mode */}
-            {isDesktopLayout && (
-                <PersistentHeader />
-            )}
+            {/* DOM order follows the desktop's spatial reading order. */}
+            {showSessionChrome && <PersistentHeader />}
+            <Drawer screenOptions={drawerNavigationOptions} drawerContent={showSessionChrome ? drawerContent : undefined} />
         </View>
     );
 });
@@ -101,10 +120,8 @@ const PersistentHeader = React.memo(() => {
     const isMacTauri = inTauri && typeof navigator !== 'undefined' && /Mac/.test(navigator.platform);
 
     const routeHistory = useBrowserNavigationStore((s) => s.routeHistory);
-    const canGoForward = useBrowserNavigationStore((s) => s.routeHistory ? canRouteForward(s.routeHistory) : false);
-    const canGoBack = routeHistory
-        ? canUseRouteBack(routeHistory, getNavigatorCanGoBack(router))
-        : false;
+    const canGoForward = useBrowserNavigationStore((s) => (s.routeHistory ? canRouteForward(s.routeHistory) : false));
+    const canGoBack = routeHistory ? canUseRouteBack(routeHistory, getNavigatorCanGoBack(router)) : false;
 
     const handleZenToggle = React.useCallback(() => {
         setZenMode(!zenMode);
@@ -145,17 +162,8 @@ const PersistentHeader = React.memo(() => {
             {...(inTauri ? { dataSet: { tauriDragRegion: 'true' } } : {})}
         >
             {/* Zen / Back / Forward buttons */}
-            <View
-                style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}
-                pointerEvents="auto"
-                {...(inTauri ? { dataSet: { tauriDragRegion: 'false' } } : {})}
-            >
-                <Pressable
-                    onPress={handleZenToggle}
-                    hitSlop={10}
-                    style={{ width: 28, height: 28, alignItems: 'center', justifyContent: 'center' }}
-                    accessibilityLabel={t('zen.toggle')}
-                >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }} pointerEvents="auto" {...(inTauri ? { dataSet: { tauriDragRegion: 'false' } } : {})}>
+                <Pressable onPress={handleZenToggle} hitSlop={10} style={{ width: 28, height: 28, alignItems: 'center', justifyContent: 'center' }} accessibilityLabel={t('zen.toggle')}>
                     <Image
                         source={require('@/assets/images/zen-icon.png')}
                         contentFit="contain"
@@ -163,11 +171,37 @@ const PersistentHeader = React.memo(() => {
                         tintColor={zenMode ? theme.colors.textLink : theme.colors.header.tint}
                     />
                 </Pressable>
-                <Pressable onPress={handleBack} disabled={!canGoBack} hitSlop={10} style={{ width: 28, height: 28, alignItems: 'center', justifyContent: 'center', opacity: canGoBack ? 1 : 0.3 }}>
+                <Pressable
+                    focusable={canGoBack}
+                    tabIndex={canGoBack ? 0 : -1}
+                    onPress={handleBack}
+                    disabled={!canGoBack}
+                    hitSlop={10}
+                    style={{
+                        width: 28,
+                        height: 28,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        opacity: canGoBack ? 1 : 0.3,
+                    }}
+                >
                     <Ionicons name="chevron-back" size={20} color={theme.colors.header.tint} />
                 </Pressable>
                 {Platform.OS === 'web' && (
-                    <Pressable onPress={handleForward} disabled={!canGoForward} hitSlop={10} style={{ width: 28, height: 28, alignItems: 'center', justifyContent: 'center', opacity: canGoForward ? 1 : 0.3 }}>
+                    <Pressable
+                        focusable={canGoForward}
+                        tabIndex={canGoForward ? 0 : -1}
+                        onPress={handleForward}
+                        disabled={!canGoForward}
+                        hitSlop={10}
+                        style={{
+                            width: 28,
+                            height: 28,
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            opacity: canGoForward ? 1 : 0.3,
+                        }}
+                    >
                         <Ionicons name="chevron-forward" size={20} color={theme.colors.header.tint} />
                     </Pressable>
                 )}

@@ -1,8 +1,15 @@
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { monolithSecureStorage, type MonolithSecureStorage } from '@/auth/monolith-secure-storage';
+import { isDesktopShell } from '@/utils/isDesktopShell';
 
 const REFRESH_KEY = 'buzzy.monolith.refresh.v1';
 const IDENTITY_KEY = 'buzzy.monolith.identity.v1';
+
+async function monolithFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  if (!isDesktopShell()) return fetch(input, init);
+  const { fetch: desktopFetch } = await import('@tauri-apps/plugin-http');
+  return desktopFetch(input, init);
+}
 
 export interface MonolithTokens {
   accessToken: string;
@@ -32,7 +39,7 @@ export class MonolithSession {
 
   constructor(
     private readonly baseUrl = getBuzzRuntimeConfig().monolithUrl,
-    private readonly fetchImpl: typeof fetch = fetch,
+    private readonly fetchImpl: typeof fetch = monolithFetch,
     private readonly secureStorage: () => Promise<MonolithSecureStorage> = monolithSecureStorage,
   ) {}
 

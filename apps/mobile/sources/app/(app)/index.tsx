@@ -2,7 +2,6 @@ import { RoundButton } from '@/components/RoundButton';
 import { Text, View } from 'react-native';
 import * as React from 'react';
 import { router } from 'expo-router';
-import * as Linking from 'expo-linking';
 import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
@@ -10,20 +9,24 @@ import { parseCommunityInviteToken } from '@/buzz/community-invite';
 import { parseReviewSecret } from '@/buzz/review-link';
 import { isPersonNameOnboardingPending } from '@/buzz/person-name';
 import { markInitialLandingResolved } from '@/navigation/initial-landing';
+import { initialAuthUrl } from '@/auth/desktop-auth-session';
+import { deliverDesktopDeepLink } from '@/auth/desktop-deep-link';
 
 export default function Home() {
   const [buzzCheckDone, setBuzzCheckDone] = React.useState(false);
   const [hasBuzzIdentity, setHasBuzzIdentity] = React.useState(false);
   const [initialInviteToken, setInitialInviteToken] = React.useState<string | null>(null);
   const [initialReviewSecret, setInitialReviewSecret] = React.useState<string | null>(null);
+  const [initialUrl, setInitialUrl] = React.useState<string | null>(null);
   const [personNameOnboardingPending, setPersonNameOnboardingPending] = React.useState(false);
   const [buzzStorageError, setBuzzStorageError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
-    void Promise.all([loadBuzzIdentity(), Linking.getInitialURL().catch(() => null)])
+    void Promise.all([loadBuzzIdentity(), initialAuthUrl().catch(() => null)])
       .then(async ([identity, initialUrl]) => {
         setHasBuzzIdentity(identity !== null);
         setPersonNameOnboardingPending(identity ? await isPersonNameOnboardingPending() : false);
+        setInitialUrl(initialUrl);
         setInitialInviteToken(parseCommunityInviteToken(initialUrl ?? undefined));
         setInitialReviewSecret(parseReviewSecret(initialUrl ?? undefined));
         setBuzzCheckDone(true);
@@ -47,7 +50,14 @@ export default function Home() {
     // A cold start hands this route the launching URL as well, so an app link
     // that has its own destination must be honored here or the identity check
     // below replaces it.
-    if (initialReviewSecret) {
+    // Native callback routes, including malformed review links, must reach
+    // their own visible result before the ordinary identity redirect wins.
+    const nativeDestinationDelivered = initialUrl
+      ? deliverDesktopDeepLink(initialUrl, router)
+      : false;
+    if (nativeDestinationDelivered) {
+      // The desktop destination has already replaced this landing route.
+    } else if (initialReviewSecret) {
       router.replace({
         pathname: '/review/[secret]',
         params: { secret: initialReviewSecret },
@@ -69,6 +79,7 @@ export default function Home() {
     hasBuzzIdentity,
     initialInviteToken,
     initialReviewSecret,
+    initialUrl,
     personNameOnboardingPending,
   ]);
 

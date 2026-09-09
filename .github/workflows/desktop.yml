@@ -31,6 +31,10 @@ on:
       - 'apps/mobile/app.config.js'
       - 'apps/mobile/scripts/generate-tauri-icons.mjs'
       - 'apps/mobile/sources/assets/images/icon.png'
+      - 'packages/api-contract/package.json'
+      - 'packages/buzz-client/package.json'
+      - 'scripts/clean-dist.mjs'
+      - 'scripts/clean-dist.test.mjs'
       - '.github/workflows/desktop.yml'
   workflow_dispatch:
     inputs:
@@ -74,6 +78,8 @@ jobs:
       - name: Check the desktop icons match the app icon
         working-directory: apps/mobile
         run: npm run tauri:icons:check
+      - name: Check desktop dependency builds use portable cleanup
+        run: node --test scripts/clean-dist.test.mjs
 
   build:
     name: DESKTOP BUILD (${{ matrix.label }})

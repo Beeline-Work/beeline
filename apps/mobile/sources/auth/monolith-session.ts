@@ -1,11 +1,8 @@
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
+import { monolithSecureStorage, type MonolithSecureStorage } from '@/auth/monolith-secure-storage';
 
 const REFRESH_KEY = 'buzzy.monolith.refresh.v1';
 const IDENTITY_KEY = 'buzzy.monolith.identity.v1';
-
-async function secureStore() {
-  return import('expo-secure-store');
-}
 
 export interface MonolithTokens {
   accessToken: string;
@@ -36,6 +33,7 @@ export class MonolithSession {
   constructor(
     private readonly baseUrl = getBuzzRuntimeConfig().monolithUrl,
     private readonly fetchImpl: typeof fetch = fetch,
+    private readonly secureStorage: () => Promise<MonolithSecureStorage> = monolithSecureStorage,
   ) {}
 
   async exchangeGitHubTicket(ticket: string): Promise<string> {
@@ -82,7 +80,7 @@ export class MonolithSession {
   }
 
   async identityId(): Promise<string | null> {
-    return this.access?.identityId ?? (await secureStore()).getItemAsync(IDENTITY_KEY);
+    return this.access?.identityId ?? (await this.secureStorage()).getItemAsync(IDENTITY_KEY);
   }
 
   /** Session consumers must observe sign-in after the root layout has mounted. */
@@ -105,7 +103,7 @@ export class MonolithSession {
 
   async clear(): Promise<void> {
     this.access = undefined;
-    const storage = await secureStore();
+    const storage = await this.secureStorage();
     await Promise.all([
       storage.deleteItemAsync(REFRESH_KEY),
       storage.deleteItemAsync(IDENTITY_KEY),
@@ -142,7 +140,7 @@ export class MonolithSession {
   }
 
   private async performRefresh(): Promise<string> {
-    const refreshToken = await (await secureStore()).getItemAsync(REFRESH_KEY);
+    const refreshToken = await (await this.secureStorage()).getItemAsync(REFRESH_KEY);
     if (!refreshToken) throw new MonolithSessionRequiredError();
     const response = await this.fetchImpl(`${this.baseUrl}/v1/auth/refresh`, {
       method: 'POST',
@@ -161,7 +159,7 @@ export class MonolithSession {
   private async accept(tokens: MonolithTokens, signedIn = false): Promise<void> {
     if (!tokens.accessToken || !tokens.refreshToken || !tokens.identityId)
       throw new Error('Invalid monolith session response');
-    const storage = await secureStore();
+    const storage = await this.secureStorage();
     const previousId = this.access?.identityId ?? (await storage.getItemAsync(IDENTITY_KEY));
     await Promise.all([
       storage.setItemAsync(REFRESH_KEY, tokens.refreshToken),

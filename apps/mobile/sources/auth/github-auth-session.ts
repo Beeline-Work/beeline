@@ -9,6 +9,7 @@ import {
 } from '@beeline/buzz-client';
 import { getBuzzRuntimeConfig, type BuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { waitForAuthCallbackResult } from './onboarding-state';
+import { desktopAuthRedirectUri } from './desktop-auth-redirect';
 
 const PENDING_GITHUB_PURPOSE_KEY = 'buzzy.github-purpose.v1';
 
@@ -113,7 +114,7 @@ function createRepositoryReturnMonitor(
 }
 
 export function githubSignInRedirectUri(): string {
-  return Linking.createURL('beeline/github-callback');
+  return desktopAuthRedirectUri('github-callback', Linking.createURL('beeline/github-callback'));
 }
 
 /** Keep the browser authorize origin on the same stack that will consume its one-use ticket. */
@@ -129,7 +130,10 @@ export function startGitHubSignInWebFlow(
 }
 
 export function githubInstallationRedirectUri(): string {
-  return Linking.createURL('beeline/github-installation');
+  return desktopAuthRedirectUri(
+    'github-installation',
+    Linking.createURL('beeline/github-installation'),
+  );
 }
 
 function isCallbackFor(url: string, redirectUri: string): boolean {

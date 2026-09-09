@@ -139,7 +139,7 @@ Committed home for project-intrinsic agent knowledge: rule + authoritative file 
 
 ## Community model
 
-- Authority `community.ts` (`community.live.test.ts`): NIP-29 group, self-referencing `community=<h>` on kind:9007, 9000 roles, 39001/39002 projections. Workspace membership = direct membership in every live top-level Room; a rollback-aware agent-pairing claim atomically adds the new agent to its Workspace and eligible top-level Rooms. Invites are signed kind:30078 (`t=buzz-community-invite`). DMs: deterministic private `t=buzz-dm` Room; agent DMs strictly conversational — never borrow a repo or open a corner.
+- Authority `community.ts` (`community.live.test.ts`): NIP-29 group, self-referencing `community=<h>` on kind:9007, 9000 roles, 39001/39002 projections. Workspace membership = direct membership in every live top-level Room; a rollback-aware agent-pairing claim atomically adds the new agent to its Workspace and eligible top-level Rooms. Invites are signed kind:30078 (`t=buzz-community-invite`). DMs: deterministic private `t=buzz-dm` Room; agent DMs strictly conversational — never borrow a repo or open a corner. `PhoneService.resolveMessageMentions` persists the sole agent as addressed on every human message in a two-member agent DM, including an untagged first message and replies to human rows, so restart/replay keeps the same intent; duplicate delivery remains one turn. Coverage: server `integration.test.ts`, body `thin-monolith.test.ts`.
 
 ## Explicit external MCP capabilities (Trusty Squire)
 

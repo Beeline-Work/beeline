@@ -79,7 +79,7 @@ async function main() {
   mountedAuth = await createMonolithAuth(
     database,
     publicOrigin,
-    githubClients ? { ...githubClients, onWebhook: processGitHubWebhook } : undefined,
+    githubClients ? { oauth: githubClients.oauth, app: githubClients.app } : undefined,
     {
       createDaemonExchange: (agentId, transaction) =>
         auth.createDaemonExchange(agentId, transaction),

@@ -13,6 +13,7 @@ COPY apps/auth/src ./apps/auth/src
 COPY packages/nostr/src ./packages/nostr/src
 COPY packages/api-contract/src ./packages/api-contract/src
 COPY packages/buzz-client/src ./packages/buzz-client/src
+COPY scripts/clean-dist.mjs ./scripts/clean-dist.mjs
 RUN npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client && npm run build -w @beeline/auth
 
 FROM node:22-bookworm-slim AS runtime

@@ -246,7 +246,7 @@ describe('monolith-only thin daemon', () => {
     );
   });
 
-  it('answers an untagged direct reply in a bootstrapped direct message', async () => {
+  it('answers an untagged first direct message once after restart and duplicate delivery', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'beeline-dm-runtime-'));
     roots.push(root);
     const staged = await stageMonolithAgentRuntime({
@@ -264,8 +264,7 @@ describe('monolith-only thin daemon', () => {
     });
     const roomId = 'dm-room';
     const humanId = '99'.repeat(32);
-    const unmentionedId = 'a'.repeat(64);
-    const mentionedId = 'b'.repeat(64);
+    const firstMessageId = 'a'.repeat(64);
     const posts: Array<Record<string, unknown>> = [];
     let inboxReads = 0;
     const execute = vi.fn(async (name: string, input?: Record<string, unknown>) => {
@@ -299,31 +298,20 @@ describe('monolith-only thin daemon', () => {
         if (input?.startAtLatest) return { items: [], cursor: 'latest', rewindIds: [] };
         inboxReads += 1;
         if (inboxReads === 1) {
+          const firstMessage = {
+            id: firstMessageId,
+            authorId: humanId,
+            createdAt: 1,
+            type: 'message',
+            body: 'Are you there?',
+            mentionIds: [staged.runtime.agent.publicKey],
+            attachments: [],
+          };
           return {
-            items: [
-              {
-                id: unmentionedId,
-                fixtureCommand: false,
-                authorId: humanId,
-                createdAt: 1,
-                type: 'message',
-                body: 'Are you there?',
-                mentionIds: [],
-                attachments: [],
-              },
-              {
-                id: mentionedId,
-                authorId: humanId,
-                createdAt: 2,
-                type: 'message',
-                body: 'Are you there?',
-                mentionIds: [staged.runtime.agent.publicKey],
-                replyToMessageId: 'agent-parent',
-                replyToAuthorId: staged.runtime.agent.publicKey,
-                attachments: [],
-              },
-            ],
-            cursor: mentionedId,
+            // Live delivery and the reconciliation rewind can carry the same
+            // durable row together. The restarted loop must answer it once.
+            items: [firstMessage, firstMessage],
+            cursor: firstMessageId,
           };
         }
         return { items: [], cursor: 'latest' };
@@ -374,10 +362,7 @@ describe('monolith-only thin daemon', () => {
     try {
       await coordinator.reconcile();
       await vi.waitFor(() => expect(posts).toHaveLength(1));
-      expect(posts[0]).toMatchObject({ roomId, triggerMessageId: mentionedId });
-      expect(posts).not.toContainEqual(
-        expect.objectContaining({ triggerMessageId: unmentionedId }),
-      );
+      expect(posts[0]).toMatchObject({ roomId, triggerMessageId: firstMessageId });
     } finally {
       await coordinator.shutdown();
       acpAlive.mockRestore();

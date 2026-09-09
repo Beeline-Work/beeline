@@ -928,7 +928,8 @@ describe('monolith integration', () => {
     expect(repositoryState.resolution).toBe('none');
     expect([...(repositoryState.directParticipants ?? [])].sort()).toEqual([AGENT, HUMAN].sort());
 
-    // A bootstrapped DM still requires an explicit mention: membership is not authorship intent.
+    // The Room itself supplies authorship intent: its sole agent is addressed
+    // even by the first untagged human message.
     const sent = await operation('sendRoomMessage', {
       roomId: dm.id,
       messageId: 'c'.repeat(64),
@@ -939,16 +940,43 @@ describe('monolith integration', () => {
       `SELECT mention_ids FROM messages WHERE id=$1`,
       ['c'.repeat(64)],
     );
-    expect(stored.rows[0]?.mention_ids).toEqual([]);
+    expect(stored.rows[0]?.mention_ids).toEqual([AGENT]);
 
+    // A retried phone delivery is idempotent after the server-derived mention
+    // is applied and cannot create a second inbox item.
+    expect(
+      (
+        await operation('sendRoomMessage', {
+          roomId: dm.id,
+          messageId: 'c'.repeat(64),
+          text: 'Are you there?',
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await database.query<{ count: number }>(
+          `SELECT count(*)::int count FROM messages WHERE id=$1`,
+          ['c'.repeat(64)],
+        )
+      ).rows[0]?.count,
+    ).toBe(1);
+
+    // A fresh daemon token models the helper restarting after the message was
+    // committed. The durable mention still makes that first message intake.
+    const restartedExchange = await auth.createDaemonExchange(AGENT);
+    const restartedToken = (await auth.exchangeDaemonToken(restartedExchange.exchangeToken))!
+      .daemonToken;
     const bootstrap = (await (await daemonOperation('getDaemonBootstrap', {})).json()) as {
       rooms: Array<{ roomId: string }>;
     };
     expect(bootstrap.rooms).toContainEqual(expect.objectContaining({ roomId: dm.id }));
-    const unaddressedInbox = (await (
-      await daemonOperation('getRoomInbox', { roomId: dm.id })
+    const restartedInbox = (await (
+      await daemonOperation('getRoomInbox', { roomId: dm.id }, restartedToken)
     ).json()) as { items: Array<{ id: string }> };
-    expect(unaddressedInbox.items).toContainEqual(expect.objectContaining({ id: 'c'.repeat(64) }));
+    expect(restartedInbox.items).toEqual([
+      expect.objectContaining({ id: 'c'.repeat(64), mentionIds: [AGENT] }),
+    ]);
 
     const addressed = await operation('sendRoomMessage', {
       roomId: dm.id,
@@ -992,6 +1020,26 @@ describe('monolith integration', () => {
       await daemonOperation('getRoomInbox', { roomId: dm.id })
     ).json()) as { items: Array<{ id: string }> };
     expect(directReplyInbox.items).toContainEqual(expect.objectContaining({ id: directReplyId }));
+
+    const humanParentReplyId = 'f'.repeat(64);
+    expect(
+      (
+        await operation('sendRoomReply', {
+          roomId: dm.id,
+          messageId: humanParentReplyId,
+          parentMessageId: 'c'.repeat(64),
+          text: 'One more thing.',
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await database.query<{ mention_ids: string[] }>(
+          `SELECT mention_ids FROM messages WHERE id=$1`,
+          [humanParentReplyId],
+        )
+      ).rows[0]?.mention_ids,
+    ).toEqual([AGENT]);
 
     // The chat list names a DM row by its peer, so it carries the one other
     // participant's identity instead of leaving the client the stored name.
@@ -3932,11 +3980,28 @@ describe('monolith integration', () => {
         },
         body: payload,
       });
+    processWebhook.mockRejectedValueOnce(new Error('transient webhook failure'));
+    expect((await send()).status).toBe(503);
+    expect(
+      (
+        await database.query(`SELECT 1 FROM github_webhook_deliveries WHERE delivery_id=$1`, [
+          'delivery-1',
+        ])
+      ).rowCount,
+    ).toBe(0);
     expect((await send()).status).toBe(202);
     const duplicate = await send();
     expect(duplicate.status).toBe(200);
     expect(((await duplicate.json()) as { duplicate: boolean }).duplicate).toBe(true);
-    expect(processWebhook).toHaveBeenCalledOnce();
+    expect(processWebhook).toHaveBeenCalledTimes(2);
+    expect(
+      (
+        await database.query<{ processed: boolean }>(
+          `SELECT processed_at IS NOT NULL processed FROM github_webhook_deliveries WHERE delivery_id=$1`,
+          ['delivery-1'],
+        )
+      ).rows,
+    ).toEqual([{ processed: true }]);
   });
 
   it('turns signed GitHub branch events into corner notes and closes a merged corner', async () => {
@@ -4017,6 +4082,7 @@ describe('monolith integration', () => {
     };
     expect((await webhook('issues', 'room-issue-open', issuePayload)).status).toBe(202);
     expect((await webhook('issues', 'room-issue-open', issuePayload)).status).toBe(200);
+    expect((await webhook('issues', 'room-issue-open-redelivery', issuePayload)).status).toBe(202);
     await webhook('pull_request', 'room-pr-open', {
       ...base,
       action: 'opened',
@@ -4261,20 +4327,20 @@ describe('monolith integration', () => {
       lifecycle: 'in-review',
       pr: { url: 'https://github.com/owner/widgets/pull/42', mergeability: 'clean' },
     });
-    const cornerAgentInbox = await daemonOperation('getRoomConversation', {
-      roomId: cornerId,
-      limit: 200,
-    });
-    expect(await cornerAgentInbox.json()).toEqual(
-      expect.objectContaining({
-        items: expect.arrayContaining([
-          expect.objectContaining({
-            type: 'system',
-            body: '@GitHub passed a check Beeline CI check suite',
-          }),
-        ]),
-      }),
-    );
+    expect(
+      (
+        await database.query<{ text: string }>(
+          `SELECT text FROM messages
+           WHERE room_id=$1 AND system_event->>'kind'='check-passed'
+             AND text='@GitHub passed a check Beeline CI check suite'`,
+          [cornerId],
+        )
+      ).rows,
+    ).toEqual([
+      {
+        text: '@GitHub passed a check Beeline CI check suite',
+      },
+    ]);
 
     const duplicateApproval = await request('/v1/phone/operations/approveCornerMerge', 'POST', {
       cornerId,
@@ -4285,26 +4351,61 @@ describe('monolith integration', () => {
     });
     expect(githubApp.mergePullRequest).toHaveBeenCalledOnce();
 
+    const deviceToken = 'github-merge-device-token-1234567890';
+    await database.query(
+      `INSERT INTO push_devices(token,identity_id,platform,environment)
+       VALUES($1,$2,'ios','physical')`,
+      [deviceToken, HUMAN],
+    );
+    const send = vi.fn().mockResolvedValue(undefined);
+    const pushes = new PushDeliveryLoop(database, { send });
+    expect(await pushes.runOnce()).toBe(0);
+    const mergedPayload = {
+      ...base,
+      action: 'closed',
+      pull_request: {
+        number: 42,
+        title: 'Ship the widget',
+        html_url: 'https://github.com/owner/widgets/pull/42',
+        head: { ref: 'fm/widget', sha: '1'.repeat(40) },
+        base: { ref: 'main' },
+        merged: true,
+        merged_at: '2026-09-02T14:00:00Z',
+        merged_by: { login: 'owner' },
+        commits: 3,
+        changed_files: 5,
+      },
+    };
+    expect((await webhook('pull_request', 'corner-pr-merged', mergedPayload)).status).toBe(202);
+    expect(
+      (await webhook('pull_request', 'corner-pr-merged-semantic-retry', mergedPayload)).status,
+    ).toBe(202);
+    expect(await pushes.runOnce()).toBe(1);
+    expect(await pushes.runOnce()).toBe(0);
+    expect(send).toHaveBeenCalledOnce();
+    expect(send).toHaveBeenCalledWith(
+      deviceToken,
+      expect.objectContaining({ text: '@owner merged Ship the widget' }),
+    );
     expect(
       (
-        await webhook('pull_request', 'corner-pr-merged', {
-          ...base,
-          action: 'closed',
-          pull_request: {
-            number: 42,
-            title: 'Ship the widget',
-            html_url: 'https://github.com/owner/widgets/pull/42',
-            head: { ref: 'fm/widget', sha: '1'.repeat(40) },
-            base: { ref: 'main' },
-            merged: true,
-            merged_at: '2026-09-02T14:00:00Z',
-            merged_by: { login: 'owner' },
-            commits: 3,
-            changed_files: 5,
-          },
-        })
-      ).status,
-    ).toBe(202);
+        await database.query<{ count: number }>(
+          `SELECT count(*)::int count FROM messages
+           WHERE room_id=$1 AND card_type='daemon-fact' AND card->>'type'='corner-complete'`,
+          [ROOM],
+        )
+      ).rows[0]?.count,
+    ).toBe(1);
+    expect(
+      (
+        await database.query<{ count: number }>(
+          `SELECT count(*)::int count FROM messages
+           WHERE room_id=$1 AND card_type='github-event'
+             AND card->>'type'='pull-request' AND card->>'action'='merged'`,
+          [ROOM],
+        )
+      ).rows[0]?.count,
+    ).toBe(0);
     const close = await daemonOperation('getCornerCloseRequests', { cornerId });
     expect(close.status).toBe(200);
     expect(await close.json()).toMatchObject({ closeRequested: true });

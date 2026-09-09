@@ -83,6 +83,13 @@ import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { FaceCeremonyStep } from '@/components/buzz/FaceCeremonyStep';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { t } from '@/text';
+import { isTauri } from '@/utils/isTauri';
+import { accountSignInAvailable } from '@/auth/account-sign-in-platform';
+import {
+  initialAuthUrl,
+  openAccountAuthSession,
+  subscribeToAuthUrls,
+} from '@/auth/desktop-auth-session';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -113,12 +120,11 @@ export default function BuzzOnboarding() {
   const insets = useSafeAreaInsets();
   const pendingBind = useRef<PendingBind | null>(null);
   const existingIdentity = useRef<Identity | null>(null);
+  const canSignIn = accountSignInAvailable(Platform.OS, isTauri());
   const [nsecInput, setNsecInput] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [status, setStatus] = useState<OnboardingStatus>('checking_device');
-  const [notice, setNotice] = useState<OnboardingNotice | null>(
-    Platform.OS === 'web' ? WEB_NOTICE : null,
-  );
+  const [notice, setNotice] = useState<OnboardingNotice | null>(canSignIn ? null : WEB_NOTICE);
   const [loadingAction, setLoadingAction] = useState<
     'github' | 'bind' | 'recover' | 'import' | 'name' | 'create' | 'enter' | null
   >(null);
@@ -318,14 +324,14 @@ export default function BuzzOnboarding() {
   };
 
   useEffect(() => {
-    if (Platform.OS === 'web') {
+    if (!canSignIn) {
       setStatus('idle');
       return;
     }
     let alive = true;
     const relayUrl = getBuzzRuntimeConfig().relayUrl;
     void (async () => {
-      const initialUrl = await Linking.getInitialURL().catch(() => null);
+      const initialUrl = await initialAuthUrl().catch(() => null);
       if (getBuzzRuntimeConfig().monolithEnabled) {
         // A press already running in this process owns its own callback. This
         // screen is the one expo-router routed over it when that callback
@@ -430,10 +436,10 @@ export default function BuzzOnboarding() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [canSignIn]);
 
   const handleSignIn = async () => {
-    if (Platform.OS === 'web') return;
+    if (!canSignIn) return;
     setLoadingAction('github');
     setStatus('opening_browser');
     clearOnboardingNotice();
@@ -448,13 +454,12 @@ export default function BuzzOnboarding() {
         const callbackUrl = await waitForAuthCallback({
           redirectUri: start.redirectUri,
           openAuthSession: () =>
-            WebBrowser.openAuthSessionAsync(
+            openAccountAuthSession(
               start.authorizationUrl,
               start.redirectUri,
               authSessionOptions(Platform.OS, start.redirectUri),
             ),
-          subscribeToUrls: (listener) =>
-            Linking.addEventListener('url', ({ url }) => listener(url)),
+          subscribeToUrls: subscribeToAuthUrls,
         });
         const challenge = await resumeGitHubSignInCallback(callbackUrl);
         const identityId = await monolithSession.exchangeGitHubTicket(challenge.ticket);
@@ -474,12 +479,12 @@ export default function BuzzOnboarding() {
       const callbackUrl = await waitForAuthCallback({
         redirectUri: start.redirectUri,
         openAuthSession: () =>
-          WebBrowser.openAuthSessionAsync(
+          openAccountAuthSession(
             start.authorizationUrl,
             start.redirectUri,
             authSessionOptions(Platform.OS, start.redirectUri),
           ),
-        subscribeToUrls: (listener) => Linking.addEventListener('url', ({ url }) => listener(url)),
+        subscribeToUrls: subscribeToAuthUrls,
       });
       setStatus(nextOnboardingStatus('opening_browser', 'callback_received'));
       const challenge = await resumeGitHubSignInCallback(callbackUrl);
@@ -963,7 +968,7 @@ export default function BuzzOnboarding() {
             onBlur={() => setInputFocused(false)}
             autoCapitalize="none"
             autoCorrect={false}
-            secureTextEntry={Platform.OS !== 'web'}
+            secureTextEntry={canSignIn}
             testID="onboarding-secret-key"
             editable={!loading}
             onSubmitEditing={() => void handleImport()}
@@ -1007,7 +1012,7 @@ export default function BuzzOnboarding() {
             onPress={() => pendingBind.current && void finishPendingBind(pendingBind.current)}
             disabled={loading}
           />
-        ) : !showAdvanced && Platform.OS !== 'web' ? (
+        ) : !showAdvanced && canSignIn ? (
           <MonoButton
             labelStyle={styles.buttonLabel}
             label={signInLabel}
@@ -1025,7 +1030,7 @@ export default function BuzzOnboarding() {
             variant="secondary"
             onPress={() => {
               setShowAdvanced((value) => !value);
-              setNotice(Platform.OS === 'web' ? WEB_NOTICE : null);
+              setNotice(canSignIn ? null : WEB_NOTICE);
             }}
             disabled={loading}
             testID="onboarding-advanced"

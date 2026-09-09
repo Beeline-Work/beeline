@@ -75,8 +75,6 @@ describe('mounted monolith auth', () => {
       {
         oauth: githubOauth,
         app: githubApp,
-        webhookSecret: 'webhook-secret',
-        onWebhook: async (event, payload) => processWebhook(event, payload),
       },
       {
         createDaemonExchange: (agentId, transaction) =>
@@ -331,7 +329,7 @@ describe('mounted monolith auth', () => {
     expect((await reconnect(completion.searchParams.get('ticket')!)).status).not.toBe(204);
   });
 
-  it('reconciles the monolith GitHub catalog from a signed mounted auth webhook', async () => {
+  it('does not expose a duplicate GitHub webhook through the auth mount', async () => {
     const owner = 'a'.repeat(64);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner')`, [
       owner,
@@ -377,22 +375,15 @@ describe('mounted monolith auth', () => {
       outgoing.end(payload);
     });
 
-    expect(response.status).toBe(202);
-    expect(processWebhook).toHaveBeenCalledWith(
-      'installation_repositories',
-      expect.objectContaining({ installation: { id: 77 } }),
-    );
+    expect(response.status).toBe(404);
+    expect(processWebhook).not.toHaveBeenCalled();
     await expect(
       database.query<{ installation_id: number; status: string }>(
         `SELECT installation_id,status FROM github_installations WHERE installation_id=77`,
       ),
     ).resolves.toMatchObject({ rows: [{ installation_id: 77, status: 'active' }] });
     await expect(
-      database.query<{ repository_id: number; full_name: string; active: boolean }>(
-        `SELECT repository_id,full_name,active FROM github_repositories WHERE installation_id=77`,
-      ),
-    ).resolves.toMatchObject({
-      rows: [{ repository_id: 101, full_name: 'owner/widgets', active: true }],
-    });
+      database.query(`SELECT 1 FROM github_repositories WHERE installation_id=77`),
+    ).resolves.toMatchObject({ rows: [] });
   });
 });

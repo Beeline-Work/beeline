@@ -4647,6 +4647,81 @@ describe('monolith integration', () => {
       await (await daemonOperation('listRoomCorners', { roomId: ROOM }, strangerToken)).json(),
     ).toEqual({ corners: [] });
 
+    // Seeing the shared corner is not authorization to start its objective.
+    // A helper on an old Body release is stopped at the first receipt and at
+    // every publish surface even if it ignores that refusal.
+    for (const [operationName, input] of [
+      [
+        'postAgentTurnReceipt',
+        { roomId: cornerId, agentId: peer, requestId: 'shared-corner', status: 'working' },
+      ],
+      [
+        'postAgentDraft',
+        { roomId: cornerId, agentId: peer, turnId: 'shared-corner', text: 'stale draft' },
+      ],
+      [
+        'postAgentActivity',
+        {
+          roomId: cornerId,
+          agentId: peer,
+          requestId: 'shared-corner',
+          activity: [{ kind: 'thinking', title: 'Stale work', status: 'in_progress' }],
+        },
+      ],
+      [
+        'postRoomMessage',
+        {
+          roomId: cornerId,
+          agentId: peer,
+          requestId: 'shared-corner',
+          text: 'A stale helper must not publish this objective response.',
+        },
+      ],
+    ] as const) {
+      const refused = await daemonOperation(operationName, input, peerToken);
+      expect(refused.status).toBe(400);
+      await expect(refused.json()).resolves.toEqual({
+        error: 'corner objective turn is invalid for agent',
+      });
+    }
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM agent_turns
+           WHERE room_id=$1 AND request_id='shared-corner' AND agent_id=$2`,
+          [cornerId, peer],
+        )
+      ).rowCount,
+    ).toBe(0);
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM live_outputs
+           WHERE room_id=$1 AND turn_id='shared-corner' AND agent_id=$2`,
+          [cornerId, peer],
+        )
+      ).rowCount,
+    ).toBe(0);
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM messages
+           WHERE room_id=$1 AND request_id='shared-corner' AND author_id=$2`,
+          [cornerId, peer],
+        )
+      ).rowCount,
+    ).toBe(0);
+
+    expect(
+      (
+        await daemonOperation('postAgentTurnReceipt', {
+          roomId: cornerId,
+          requestId: 'shared-corner',
+          status: 'working',
+        })
+      ).status,
+    ).toBe(200);
+
     // A human hands the work to the member that did not open it. The mention
     // reaches that agent's corner inbox and its turn is accepted.
     const handoff = '7'.repeat(64);

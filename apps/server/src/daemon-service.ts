@@ -93,8 +93,9 @@ async function settleTurnFailureLine(
     );
 }
 /**
- * Corner operations that stay with the opener. Membership authorizes every
- * other corner write (`DaemonService.assertCornerOpener` says why).
+ * Corner operations that always stay with the opener. Membership authorizes
+ * ordinary shared-corner writes; the stored objective request is separately
+ * opener-bound by `assertCornerTurnAuthorized`.
  */
 const CORNER_OPENER_ONLY_OPERATIONS = new Set<keyof DaemonOperationMap>(['archiveCorner']);
 function isCornerOpenerOnly(name: keyof DaemonOperationMap): boolean {
@@ -1049,6 +1050,8 @@ export class DaemonService {
   }
   private async postRoomMessage(input: Input<'postRoomMessage'>, agentId: string) {
     await this.access(input.roomId, agentId);
+    if (input.requestId)
+      await this.assertCornerTurnAuthorized(input.roomId, input.requestId, agentId);
     const messageId = id();
     const mentions = [...new Set(input.mentionIds ?? [])].filter((value) => value !== agentId);
     let agentMentionIds = new Set<string>();
@@ -1338,6 +1341,7 @@ export class DaemonService {
     agentId: string,
   ) {
     await this.access(input.roomId, agentId);
+    await this.assertCornerTurnAuthorized(input.roomId, input.turnId, agentId);
     await this.database.query(
       `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body) VALUES($1,$2,$3,$4,$5::jsonb) ON CONFLICT(room_id,agent_id,turn_id,kind) DO UPDATE SET body=EXCLUDED.body,updated_at=now()`,
       [input.roomId, agentId, input.turnId, kind, JSON.stringify({ text: input.text })],
@@ -1367,6 +1371,7 @@ export class DaemonService {
   }
   private async turnReceipt(input: Input<'postAgentTurnReceipt'>, agentId: string) {
     await this.access(input.roomId, agentId);
+    await this.assertCornerTurnAuthorized(input.roomId, input.requestId, agentId);
     if (input.heartbeat && input.status !== 'working') {
       throw new Error('turn receipt heartbeat must be working');
     }
@@ -1471,6 +1476,7 @@ export class DaemonService {
   }
   private async activity(input: Input<'postAgentActivity'>, agentId: string) {
     await this.access(input.roomId, agentId);
+    await this.assertCornerTurnAuthorized(input.roomId, input.requestId, agentId);
     const key = input.cornerActivityKey;
     if (key !== undefined) {
       if (typeof key !== 'string' || !key || key.length > 200)
@@ -1523,6 +1529,30 @@ export class DaemonService {
     if (activity.inserted)
       this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'activity', agentId });
     return { id: activity.id, createdAt: seconds(activity.created_at) };
+  }
+
+  /**
+   * A corner's stored request is its objective kickoff, not a broadcast to
+   * every member that can read the shared branch. Only the opener may start
+   * that request. Later messages in the corner have their own request ids, so
+   * explicit handoffs and ordinary per-sender continuity remain member work.
+   *
+   * This check deliberately sits on the server's turn-bearing write paths: an
+   * old helper that predates the Body-side opener rule cannot claim a receipt,
+   * stream work, narrate activity, or publish a final objective response.
+   */
+  private async assertCornerTurnAuthorized(
+    roomId: string,
+    requestId: string,
+    agentId: string,
+  ): Promise<void> {
+    const denied = await this.database.query(
+      `SELECT 1 FROM corner_facts
+       WHERE corner_id=$1 AND request_id=$2 AND owner_agent_id IS NOT NULL
+         AND owner_agent_id<>$3`,
+      [roomId, requestId, agentId],
+    );
+    if (denied.rowCount) throw new Error('corner objective turn is invalid for agent');
   }
   private async permissionRequest(input: Input<'postPermissionRequest'>, agentId: string) {
     await this.access(input.roomId, agentId);

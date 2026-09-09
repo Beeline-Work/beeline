@@ -4425,26 +4425,61 @@ describe('monolith integration', () => {
     });
     expect(githubApp.mergePullRequest).toHaveBeenCalledOnce();
 
+    const deviceToken = 'github-merge-device-token-1234567890';
+    await database.query(
+      `INSERT INTO push_devices(token,identity_id,platform,environment)
+       VALUES($1,$2,'ios','physical')`,
+      [deviceToken, HUMAN],
+    );
+    const send = vi.fn().mockResolvedValue(undefined);
+    const pushes = new PushDeliveryLoop(database, { send });
+    expect(await pushes.runOnce()).toBe(0);
+    const mergedPayload = {
+      ...base,
+      action: 'closed',
+      pull_request: {
+        number: 42,
+        title: 'Ship the widget',
+        html_url: 'https://github.com/owner/widgets/pull/42',
+        head: { ref: 'fm/widget', sha: '1'.repeat(40) },
+        base: { ref: 'main' },
+        merged: true,
+        merged_at: '2026-09-02T14:00:00Z',
+        merged_by: { login: 'owner' },
+        commits: 3,
+        changed_files: 5,
+      },
+    };
+    expect((await webhook('pull_request', 'corner-pr-merged', mergedPayload)).status).toBe(202);
+    expect(
+      (await webhook('pull_request', 'corner-pr-merged-semantic-retry', mergedPayload)).status,
+    ).toBe(202);
+    expect(await pushes.runOnce()).toBe(1);
+    expect(await pushes.runOnce()).toBe(0);
+    expect(send).toHaveBeenCalledOnce();
+    expect(send).toHaveBeenCalledWith(
+      deviceToken,
+      expect.objectContaining({ text: '@owner merged Ship the widget' }),
+    );
     expect(
       (
-        await webhook('pull_request', 'corner-pr-merged', {
-          ...base,
-          action: 'closed',
-          pull_request: {
-            number: 42,
-            title: 'Ship the widget',
-            html_url: 'https://github.com/owner/widgets/pull/42',
-            head: { ref: 'fm/widget', sha: '1'.repeat(40) },
-            base: { ref: 'main' },
-            merged: true,
-            merged_at: '2026-09-02T14:00:00Z',
-            merged_by: { login: 'owner' },
-            commits: 3,
-            changed_files: 5,
-          },
-        })
-      ).status,
-    ).toBe(202);
+        await database.query<{ count: number }>(
+          `SELECT count(*)::int count FROM messages
+           WHERE room_id=$1 AND card_type='daemon-fact' AND card->>'type'='corner-complete'`,
+          [ROOM],
+        )
+      ).rows[0]?.count,
+    ).toBe(1);
+    expect(
+      (
+        await database.query<{ count: number }>(
+          `SELECT count(*)::int count FROM messages
+           WHERE room_id=$1 AND card_type='github-event'
+             AND card->>'type'='pull-request' AND card->>'action'='merged'`,
+          [ROOM],
+        )
+      ).rows[0]?.count,
+    ).toBe(0);
     const close = await daemonOperation('getCornerCloseRequests', { cornerId });
     expect(close.status).toBe(200);
     expect(await close.json()).toEqual(

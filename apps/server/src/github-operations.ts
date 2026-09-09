@@ -580,8 +580,7 @@ export class GitHubOperations {
          AND ($3::text IS NULL OR NOT EXISTS(
            SELECT 1 FROM rooms corner
            JOIN corner_facts fact ON fact.corner_id=corner.id
-           WHERE corner.parent_id=room.id AND corner.archived_at IS NULL
-             AND fact.feature_branch=$3
+           WHERE corner.parent_id=room.id AND fact.feature_branch=$3
          ))`,
       [installationId, repository, branch ?? null],
     );

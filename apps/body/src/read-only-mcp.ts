@@ -402,7 +402,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'close_corner',
     description:
-      'Close this chat-only corner after its task is complete. Attach every file you want to keep before closing: close archives the corner and its local scratch workspace is deleted as soon as this turn finishes. Already-attached files remain available from the Room.',
+      'Close this corner after its task is complete. Only the corner opener may close it. Attach every file you want to keep before closing: close archives the corner, and a chat-only corner’s local scratch workspace is deleted as soon as this turn finishes. Already-attached files remain available from the Room.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
@@ -1106,11 +1106,6 @@ async function openCorner(args: JsonObject): Promise<string> {
 
 async function closeCorner(): Promise<string> {
   const cornerId = requiredEnv('BEELINE_DAEMON_CORNER_ID');
-  const roomId = requiredEnv('BEELINE_DAEMON_ROOM_ID');
-  const repository = await daemonExecute('getRoomRepositoryState', { roomId });
-  if (repository.resolution !== 'none') {
-    throw new Error('close_corner is available only in a chat-only corner');
-  }
   await daemonExecute('archiveCorner', { cornerId });
   return JSON.stringify({ cornerId, status: 'closed' });
 }

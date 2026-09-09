@@ -4577,7 +4577,11 @@ describe('monolith integration', () => {
       ).status,
     ).toBe(200);
     // Archiving is terminal for everyone's work, so it stays with the opener.
-    expect((await daemonOperation('archiveCorner', { cornerId }, peerToken)).status).toBe(403);
+    const peerArchive = await daemonOperation('archiveCorner', { cornerId }, peerToken);
+    expect(peerArchive.status).toBe(403);
+    expect(await peerArchive.json()).toMatchObject({
+      error: 'only the corner opener can archive this corner',
+    });
     expect(
       (
         await daemonOperation(

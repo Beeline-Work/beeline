@@ -2497,7 +2497,8 @@ export class DaemonService {
       [roomId],
     );
     const opener = corner.rows[0]?.owner_agent_id;
-    if (corner.rowCount && opener !== agentId) throw new Error('daemon corner access denied');
+    if (corner.rowCount && opener !== agentId)
+      throw new Error('only the corner opener can archive this corner');
   }
   private writeResult() {
     return { id: id(), createdAt: Math.floor(Date.now() / 1000) };

@@ -49,13 +49,19 @@ async function daemonDoor(
       const body = JSON.parse(Buffer.concat(chunks).toString() || '{}') as Record<string, unknown>;
       const operation = (request.url ?? '').split('/').pop();
       calls.push({ operation, ...body });
+      const archiveError =
+        operation === 'archiveCorner' && typeof repository.archiveError === 'string'
+          ? repository.archiveError
+          : undefined;
       const payload =
-        operation === 'getRoomRepositoryState'
+        archiveError
+          ? { error: archiveError }
+          : operation === 'getRoomRepositoryState'
           ? repository
           : operation === 'createCorner'
             ? { cornerId: CORNER }
             : { ok: true };
-      response.writeHead(200, { 'content-type': 'application/json' });
+      response.writeHead(archiveError ? 403 : 200, { 'content-type': 'application/json' });
       response.end(JSON.stringify(payload));
     });
   });
@@ -236,7 +242,7 @@ describe('open_corner over the grok wire', () => {
     );
   }, 30_000);
 
-  it('does not let close_corner bypass a repository corner merge', async () => {
+  it('closes a repository corner through the existing archive operation', async () => {
     const door = await daemonDoor();
     const { result } = await callTool(
       door.origin,
@@ -247,9 +253,30 @@ describe('open_corner over the grok wire', () => {
       },
     );
 
+    expect(result?.isError).toBeUndefined();
+    expect(JSON.parse(result!.content[0]!.text)).toEqual({ cornerId: CORNER, status: 'closed' });
+    expect(door.calls).toContainEqual(
+      expect.objectContaining({ operation: 'archiveCorner', cornerId: CORNER }),
+    );
+  }, 30_000);
+
+  it('returns the opener-only archive refusal as actionable tool text', async () => {
+    const door = await daemonDoor({
+      resolution: 'repository',
+      archiveError: 'only the corner opener can archive this corner',
+    });
+    const { result, error } = await callTool(
+      door.origin,
+      {},
+      {
+        name: 'close_corner',
+        cornerId: CORNER,
+      },
+    );
+
+    expect(error).toBeUndefined();
     expect(result?.isError).toBe(true);
-    expect(result?.content[0]?.text).toContain('only in a chat-only corner');
-    expect(door.calls.some((call) => call.operation === 'archiveCorner')).toBe(false);
+    expect(result?.content[0]?.text).toContain('only the corner opener can archive this corner');
   }, 30_000);
 
   it('answers a genuine refusal as a tool result the model reads, not a protocol error', async () => {

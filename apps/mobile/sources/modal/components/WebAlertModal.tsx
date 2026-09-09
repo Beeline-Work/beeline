@@ -29,6 +29,11 @@ export function WebAlertModal({ config, onClose, onConfirm }: WebAlertModalProps
     : undefined;
   const actions: HullDialogAction[] = buttons.map((button, index) => ({
     label: button.text,
+    testID: isConfirm
+      ? index === 0
+        ? 'hull-confirm-cancel'
+        : 'hull-confirm-submit'
+      : `hull-alert-action-${index}`,
     variant:
       button.style === 'destructive' ? 'destructive' : index === primaryIndex ? 'primary' : 'quiet',
     onPress: () => {
@@ -50,8 +55,9 @@ export function WebAlertModal({ config, onClose, onConfirm }: WebAlertModalProps
     <HullDialog
       actions={actions}
       body={config.message}
-      dismissOnBackdrop={false}
+      dismissOnBackdrop={isConfirm}
       onRequestClose={dismiss}
+      scrimTestID={isConfirm ? 'hull-confirm-dismiss' : undefined}
       testID="hull-alert-dialog"
       title={config.title}
       visible

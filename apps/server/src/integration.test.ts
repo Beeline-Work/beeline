@@ -345,23 +345,29 @@ describe('monolith integration', () => {
     );
 
     const created = (await (
-      await operation('createRoom', { workspaceId, name: 'Private by default' })
+      await operation('createRoom', { workspaceId, name: 'Public by default' })
     ).json()) as { id: string };
     expect(
       (await request(`/v1/phone/rooms/${created.id}`, 'GET', undefined, aliceToken)).status,
-    ).toBe(404);
+    ).toBe(200);
     expect(
       (
         await operation('updateRoom', {
           roomId: created.id,
           name: 'Renamed Room',
-          visibility: 'public',
+          visibility: 'invite-only',
         })
       ).status,
     ).toBe(204);
     expect(
-      await (await operation('addRoomMember', { roomId: created.id, memberId: aliceId })).json(),
-    ).toEqual({ joined: true });
+      (
+        (await (
+          await request(`/v1/phone/rooms/${created.id}`, 'GET', undefined, aliceToken)
+        ).json()) as {
+          room: { visibility: string };
+        }
+      ).room.visibility,
+    ).toBe('invite-only');
     expect(
       (await request(`/v1/phone/rooms/${created.id}`, 'GET', undefined, aliceToken)).status,
     ).toBe(200);
@@ -594,7 +600,79 @@ describe('monolith integration', () => {
     ).json()) as { id: string };
     expect(
       (await request(`/v1/phone/rooms/${laterRoom.id}`, 'GET', undefined, aliceToken)).status,
+    ).toBe(200);
+
+    await operation('addWorkspaceMember', {
+      workspaceId,
+      memberId: aliceId,
+      role: 'admin',
+    });
+
+    const privateRoom = (await (
+      await operation('createRoom', {
+        workspaceId,
+        name: 'Admins invite only',
+        visibility: 'invite-only',
+      })
+    ).json()) as { id: string };
+    expect(
+      (await request(`/v1/phone/rooms/${privateRoom.id}`, 'GET', undefined, aliceToken)).status,
     ).toBe(404);
+    const aliceWorkspace = (await (
+      await request(`/v1/phone/workspaces/${workspaceId}`, 'GET', undefined, aliceToken)
+    ).json()) as {
+      managerSettings?: {
+        rooms?: Array<{ id: string; visibility: string }>;
+        roomsTruncated?: boolean;
+      };
+    };
+    expect(aliceWorkspace.managerSettings?.rooms).toContainEqual({
+      id: privateRoom.id,
+      name: 'Admins invite only',
+      visibility: 'invite-only',
+      createdAt: expect.any(Number),
+    });
+    expect(
+      (await operation('updateRoom', { roomId: privateRoom.id, visibility: 'public' }, bobToken))
+        .status,
+    ).toBe(400);
+    expect(
+      (await operation('updateRoom', { roomId: privateRoom.id, visibility: 'public' }, aliceToken))
+        .status,
+    ).toBe(204);
+    expect(
+      (await request(`/v1/phone/rooms/${privateRoom.id}`, 'GET', undefined, aliceToken)).status,
+    ).toBe(200);
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,name)
+       SELECT ('70000000-0000-4000-8000-' || lpad(value::text,12,'0'))::uuid,$1,
+              'Bounded index ' || lpad(value::text,3,'0')
+       FROM generate_series(1,201) value`,
+      [workspaceId],
+    );
+    const boundedManagerWorkspace = (await (
+      await request(`/v1/phone/workspaces/${workspaceId}`, 'GET', undefined, aliceToken)
+    ).json()) as {
+      managerSettings?: { rooms?: Array<{ id: string }>; roomsTruncated?: boolean };
+    };
+    expect(boundedManagerWorkspace.managerSettings?.rooms).toHaveLength(200);
+    expect(boundedManagerWorkspace.managerSettings?.roomsTruncated).toBe(true);
+    const openedRoom = (await (
+      await operation('createRoom', {
+        workspaceId,
+        name: 'Open later',
+        visibility: 'invite-only',
+      })
+    ).json()) as { id: string };
+    expect(
+      (await request(`/v1/phone/rooms/${openedRoom.id}`, 'GET', undefined, aliceToken)).status,
+    ).toBe(404);
+    expect(
+      (await operation('updateRoom', { roomId: openedRoom.id, visibility: 'public' })).status,
+    ).toBe(204);
+    expect(
+      (await request(`/v1/phone/rooms/${openedRoom.id}`, 'GET', undefined, aliceToken)).status,
+    ).toBe(200);
   });
 
   it('bounds Room membership and direct messages to current Workspace members', async () => {
@@ -821,7 +899,7 @@ describe('monolith integration', () => {
     expect(response.status).toBe(400);
   });
 
-  it('emits one workspace push and Room join notes across explicit member adds', async () => {
+  it('emits one workspace push and auto-joins public Rooms with their join notes', async () => {
     const aliceToken = await phoneToken('alice');
     const aliceId = createHash('sha256').update('github:alice').digest('hex');
     const workspaceId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
@@ -859,13 +937,9 @@ describe('monolith integration', () => {
 
     expect(
       await (await operation('addRoomMember', { roomId: room.id, memberId: aliceId })).json(),
-    ).toEqual({ joined: true });
-    expect(await loop.runOnce()).toBe(1);
-    expect(send).toHaveBeenCalledTimes(2);
-    expect(send).toHaveBeenLastCalledWith(
-      'owner-explicit-add-device-token-1234567890',
-      expect.objectContaining({ text: '@alice joined Planning' }),
-    );
+    ).toEqual({ joined: false });
+    expect(await loop.runOnce()).toBe(0);
+    expect(send).toHaveBeenCalledTimes(1);
     const roomView = (await (
       await request(`/v1/phone/rooms/${room.id}`, 'GET', undefined, aliceToken)
     ).json()) as { messages: Array<{ text: string; presentation: string }> };
@@ -1185,7 +1259,7 @@ describe('monolith integration', () => {
     socket.close();
   });
 
-  it('lets a late Room member open a corner card created before they joined', async () => {
+  it('lets a Workspace member open a corner inherited from a public Room', async () => {
     const aliceToken = await phoneToken('alice');
     const aliceId = createHash('sha256').update('github:alice').digest('hex');
     await operation('addWorkspaceMember', {
@@ -1204,10 +1278,7 @@ describe('monolith integration', () => {
 
     expect(
       (await request(`/v1/phone/rooms/${cornerId}`, 'GET', undefined, aliceToken)).status,
-    ).toBe(404);
-    expect(
-      await (await operation('addRoomMember', { roomId: ROOM, memberId: aliceId })).json(),
-    ).toEqual({ joined: true });
+    ).toBe(200);
     const parent = (await (
       await request(`/v1/phone/rooms/${ROOM}`, 'GET', undefined, aliceToken)
     ).json()) as RoomView;
@@ -2790,9 +2861,10 @@ describe('monolith integration', () => {
       text: string;
       presentation: string;
       direct_participants: string[];
+      visibility: 'public' | 'invite-only';
     }>(
       `SELECT message.id,message.room_id,message.author_id,message.text,message.presentation,
-              room.direct_participants
+              room.direct_participants,room.visibility
        FROM messages message JOIN rooms room ON room.id=message.room_id
        WHERE room.workspace_id=$1 AND message.card_type='workspace-member-joined'
          AND room.direct_participants IS NOT NULL
@@ -2807,6 +2879,7 @@ describe('monolith integration', () => {
         text: '@recipient joined · invited by @owner',
         presentation: 'system',
         direct_participants: [HUMAN, SYSTEM_IDENTITY_ID].sort(),
+        visibility: 'invite-only',
       },
     ]);
     const systemDmId = systemDms.rows[0]!.room_id;
@@ -2996,9 +3069,12 @@ describe('monolith integration', () => {
       ).members.find((member) => member.identityId === AGENT)?.soul;
 
     const view = (await (await request(`/v1/phone/workspaces/${WORKSPACE}`)).json()) as {
-      managerSettings?: { visibility?: string };
+      managerSettings?: { visibility?: string; rooms?: unknown[] };
     };
-    expect(view.managerSettings).toEqual({ visibility: expect.any(String) });
+    expect(view.managerSettings).toEqual({
+      visibility: expect.any(String),
+      rooms: expect.any(Array),
+    });
     expect(await soulOf()).toMatchObject({ instructions: 'You are a fox.' });
     expect(await rosterSoulOf()).toBeDefined();
   });
@@ -6530,7 +6606,13 @@ describe('monolith integration', () => {
        WHERE room_id=$1 AND card_type='member-joined' AND author_id=$2`,
       [WELCOME_ROOM_ID, REVIEW_IDENTITY_ID],
     );
-    expect(joined.rows).toEqual([]);
+    expect(joined.rows).toEqual([
+      expect.objectContaining({
+        mention_ids: [],
+        text: '@play-review joined',
+        system_event: expect.not.objectContaining({ kind: expect.anything() }),
+      }),
+    ]);
 
     const workspaceDms = await database.query<{ text: string; mention_ids: string[] }>(
       `SELECT message.text,message.mention_ids FROM messages message

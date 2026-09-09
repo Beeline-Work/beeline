@@ -6,6 +6,7 @@ import {
   isServerEventKind,
   ROOM_VIEW_AGENT_LIMIT,
   ROOM_VIEW_BRIEFING_LIMIT,
+  ROOM_VIEW_CHAT_LIMIT,
   ROOM_VIEW_MEMBER_LIMIT,
   ROOM_VIEW_MESSAGE_LIMIT,
   ROOM_VIEW_TOOL_ROW_LIMIT,
@@ -57,7 +58,11 @@ import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
 import type { LiveEvent, LiveHub } from './live.js';
 import type { GitHubOperations } from './github-operations.js';
 import { collapsePermissionCards } from '@beeline/push-gateway/projection';
-import { joinRooms, syncTopLevelSharedRoomRoles } from './membership-join.js';
+import {
+  joinRooms,
+  joinWorkspaceMembersToPublicRoom,
+  syncTopLevelSharedRoomRoles,
+} from './membership-join.js';
 import {
   lockIdentityHandleWorkspaces,
   reassignCollidingAgentHandles,
@@ -485,6 +490,30 @@ export class PhoneService {
     );
     const row = workspace.rows[0];
     if (!row) return null;
+    const managedRoomRows =
+      row.role === 'owner' || row.role === 'admin'
+        ? (
+            await this.database.query<{
+              id: string;
+              name: string;
+              visibility: 'public' | 'invite-only';
+              created_at: Date;
+            }>(
+              `SELECT id,name,visibility,created_at FROM rooms
+               WHERE workspace_id=$1 AND parent_id IS NULL AND direct_participants IS NULL
+                 AND archived_at IS NULL
+               -- Fetch one extra row to expose the server-owned 200-Room settings bound.
+               ORDER BY lower(name),name,id LIMIT $2`,
+              [workspaceId, ROOM_VIEW_CHAT_LIMIT + 1],
+            )
+          ).rows
+        : undefined;
+    const managedRooms = managedRoomRows?.slice(0, ROOM_VIEW_CHAT_LIMIT).map((room) => ({
+      id: room.id,
+      name: room.name,
+      visibility: room.visibility,
+      createdAt: unix(room.created_at),
+    }));
     const members = await this.members(workspaceId, null);
     const humans = members.filter((member) => member.identity.kind === 'human');
     const agentMembers = members.filter((member) => member.identity.kind === 'agent');
@@ -537,7 +566,15 @@ export class PhoneService {
         ...(row.about ? { about: row.about } : {}),
         createdAt: unix(row.created_at),
       },
-      managerSettings: { visibility: row.visibility },
+      ...(managedRooms
+        ? {
+            managerSettings: {
+              visibility: row.visibility,
+              rooms: managedRooms,
+              roomsTruncated: managedRoomRows!.length > ROOM_VIEW_CHAT_LIMIT,
+            },
+          }
+        : {}),
       members: humans.slice(0, ROOM_VIEW_MEMBER_LIMIT),
       agents: agents.slice(0, ROOM_VIEW_AGENT_LIMIT),
       membersTruncated: humans.length > ROOM_VIEW_MEMBER_LIMIT,
@@ -1261,7 +1298,7 @@ export class PhoneService {
         workspaceId: pairing.workspace_id,
         identityId: agentId,
         invitedById: pairing.created_by,
-        rooms: { type: 'inherited-live-top-level', identityId: pairing.created_by },
+        rooms: { type: 'all-live-top-level' },
         workspaceJoined: workspaceMembership.rowCount > 0,
       });
       return {
@@ -1505,7 +1542,7 @@ export class PhoneService {
           workspaceId: pairing.workspace_id,
           identityId: input.agentPubkey,
           invitedById: pairing.created_by,
-          rooms: { type: 'inherited-live-top-level', identityId: pairing.created_by },
+          rooms: { type: 'all-live-top-level' },
           workspaceJoined: workspaceMembership.rowCount > 0,
         });
         const subscriptions = [...new Set(input.eventSubscriptions ?? [])].filter(
@@ -1616,7 +1653,7 @@ export class PhoneService {
         workspaceId: pairing.workspace_id,
         identityId: pairing.claimed_by,
         invitedById: pairing.created_by,
-        rooms: { type: 'inherited-live-top-level', identityId: pairing.created_by },
+        rooms: { type: 'all-live-top-level' },
         workspaceJoined: input.workspaceJoined,
       });
       // What this agent reacts to, in the Rooms it just joined. A subscription
@@ -2652,7 +2689,7 @@ export class PhoneService {
           input.workspaceId,
           viewerId,
           input.name,
-          input.visibility ?? 'invite-only',
+          input.visibility ?? 'public',
           repository ? `github:${repository.repository_id}` : null,
           repository?.full_name ?? null,
           repository ? `git://github.com/${repository.full_name}` : null,
@@ -2668,6 +2705,7 @@ export class PhoneService {
          WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$3 AND removed_at IS NULL`,
         [input.workspaceId, id, viewerId],
       );
+      await joinWorkspaceMembersToPublicRoom(db, input.workspaceId, id);
     });
     return { id };
   }
@@ -2686,6 +2724,8 @@ export class PhoneService {
         [input.roomId, input.name ?? null, input.visibility ?? null],
       );
       if (input.visibility && input.visibility !== current?.visibility) {
+        if (input.visibility === 'public')
+          await joinWorkspaceMembersToPublicRoom(database, room.workspace_id, input.roomId);
         const actor = await this.requireIdentity(viewerId, database);
         await systemLine(database, {
           roomId: input.roomId,
@@ -2865,7 +2905,7 @@ export class PhoneService {
             workspaceId: input.workspaceId,
             identityId: input.memberId,
             invitedById: viewerId,
-            rooms: { type: 'none' },
+            rooms: { type: 'all-live-top-level' },
             workspaceJoined: true,
           });
         return { joined: target.removed_at !== null };
@@ -2880,7 +2920,7 @@ export class PhoneService {
           workspaceId: input.workspaceId,
           identityId: input.memberId,
           invitedById: viewerId,
-          rooms: { type: 'none' },
+          rooms: { type: 'all-live-top-level' },
           workspaceJoined: true,
         });
       return { joined: inserted.rowCount > 0 };
@@ -2952,8 +2992,8 @@ export class PhoneService {
     const id = directMessageRoomId(input.workspaceId, participants as [string, string]);
     const created = await this.database.transaction(async (db) => {
       const inserted = await db.query(
-        `INSERT INTO rooms(id,workspace_id,created_by,name,direct_participants)
-         VALUES($1,$2,$3,'Direct message',$4::jsonb) ON CONFLICT DO NOTHING`,
+        `INSERT INTO rooms(id,workspace_id,created_by,name,visibility,direct_participants)
+         VALUES($1,$2,$3,'Direct message','invite-only',$4::jsonb) ON CONFLICT DO NOTHING`,
         [id, input.workspaceId, viewerId, JSON.stringify(participants)],
       );
       if (!inserted.rowCount) return false;

@@ -102,6 +102,7 @@ import {
   type CornerSummary,
 } from '@/buzz/corners';
 import {
+  directMessageHeaderName,
   fallbackMemberHandle,
   fallbackMemberName,
   personIdentityLabel,
@@ -1255,6 +1256,12 @@ export default function BuzzChat() {
     ? directMessage?.participants.find((pubkey) => pubkey !== userPubkey)
     : undefined;
   const dmPeerProfile = dmPeerPubkey ? personProfileByPubkey.get(dmPeerPubkey) : undefined;
+  const dmPeerIdentity = dmPeerPubkey
+    ? roomSurface?.members.find((member) => member.identity.pubkey === dmPeerPubkey)?.identity
+    : undefined;
+  const dmAnnouncementAuthor = dmPeerPubkey
+    ? roomSurface?.messages.find((message) => message.author.pubkey === dmPeerPubkey)?.author
+    : undefined;
   const dmPeerNip05Status = useVerifiedNip05Status(
     dmPeerPubkey ?? '',
     dmPeerProfile ? { nip05: undefined } : undefined,
@@ -1263,8 +1270,24 @@ export default function BuzzChat() {
     if (!dmPeerPubkey) return roomName;
     const peerAgent = agentByPubkey.get(dmPeerPubkey);
     if (peerAgent) return resolveAgentDisplayIdentity(dmPeerPubkey, peerAgent).name;
-    return personIdentityLabel(dmPeerProfile, dmPeerPubkey, dmPeerNip05Status);
-  }, [agentByPubkey, dmPeerNip05Status, dmPeerProfile, dmPeerPubkey, roomName]);
+    return directMessageHeaderName(
+      dmPeerIdentity,
+      dmPeerProfile,
+      dmPeerPubkey,
+      dmPeerNip05Status,
+      isReadOnlyDirectMessage,
+      dmAnnouncementAuthor,
+    );
+  }, [
+    agentByPubkey,
+    dmAnnouncementAuthor,
+    dmPeerIdentity,
+    dmPeerNip05Status,
+    dmPeerProfile,
+    dmPeerPubkey,
+    isReadOnlyDirectMessage,
+    roomName,
+  ]);
   // The header's own title still distinguishes "not resolved yet" (`null` —
   // render the skeleton) from a resolved name. A DM is resolved as soon as its
   // peer is known, which the cached roster usually already answers.
@@ -2976,6 +2999,7 @@ export default function BuzzChat() {
       return (
         <OrdinaryLedgerMessage
           message={item}
+          announcementFeed={isReadOnlyDirectMessage}
           {...(knownAgent ? { agent: knownAgent } : {})}
           participantsHydrated={participantsHydrated}
           {...(personName ? { personName } : {})}
@@ -3027,6 +3051,7 @@ export default function BuzzChat() {
       handleOpenMention,
       handleOpenGitHubEvent,
       handleCopyLedgerMessage,
+      isReadOnlyDirectMessage,
     ],
   );
   const renderItem = useRoomMessageRenderItem({

@@ -13,7 +13,9 @@ host-side relay-front directory.
   load-bearing libraries for signing/event DTOs and indexed Room views; their
   package names are not evidence of Nostr production routing.
 - **Deliberate compatibility:** `app.buzzy.mobile` identifiers remain for
-  install continuity. `relay-stack`, `apps/gate`, and relay helpers remain for
+  install continuity. OS app-link declarations for the retired relay hostname
+  remain so already-issued invite links can enter installed apps; they are not
+  API transports. `relay-stack`, `apps/gate`, and relay helpers remain for
   the isolated loopback development/proof stack and historical data reads;
   their shared defaults are loopback-only.
 - **Retired:** `buzz.trustysquire.ai`, `relay.buzzrouter.com`,

@@ -68,7 +68,9 @@ export default {
             supportsTablet: true,
             bundleIdentifier: bundleId,
             buildNumber: "1",
-            associatedDomains: ["applinks:usebeeline.app"],
+            // Retained so already-issued HTTPS invite links can still enter an installed app.
+            // This is an OS routing declaration, not an API/relay transport.
+            associatedDomains: ["applinks:usebeeline.app", "applinks:relay.buzzrouter.com"],
             config: {
                 usesNonExemptEncryption: false
             },
@@ -133,6 +135,16 @@ export default {
                             "scheme": "https",
                             "host": "usebeeline.app",
                             "pathPrefix": "/review/"
+                        },
+                        {
+                            "scheme": "https",
+                            "host": "relay.buzzrouter.com",
+                            "pathPrefix": "/join/"
+                        },
+                        {
+                            "scheme": "https",
+                            "host": "relay.buzzrouter.com",
+                            "pathPrefix": "/auth/github/mobile-callback"
                         },
                     ],
                     "category": ["BROWSABLE", "DEFAULT"]

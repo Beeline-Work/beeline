@@ -190,6 +190,12 @@ vi.mock('@/sync/transport', () => ({
     ensureClient = vi.fn(async () => client);
   },
 }));
+vi.mock('@/sync/transport/room-view-client', () => ({
+  RoomViewClient: class {
+    workspace = roomView.workspace;
+    agent = roomView.agent;
+  },
+}));
 vi.mock('@beeline/buzz-client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@beeline/buzz-client')>();
   class RoomViewClient {
@@ -369,7 +375,7 @@ describe('Members workspace management', () => {
 
     expect(client.createInvite).toHaveBeenCalledWith(WORKSPACE);
     expect(share).toHaveBeenCalledWith({
-      message: `https://relay.test/join/inv_${'e'.repeat(64)}`,
+      message: `https://usebeeline.app/join/inv_${'e'.repeat(64)}`,
     });
     expect(renderer.root.findAllByProps({ testID: 'invite-person' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'invite-agent' })).toHaveLength(0);

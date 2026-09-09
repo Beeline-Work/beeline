@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 describe('production iOS capabilities', () => {
-  it('declares only the canonical invite domain without enabling push', () => {
+  it('retains legacy invite entry without enabling push or legacy API config', () => {
     const projectRoot = new URL('../..', import.meta.url).pathname;
     const { NODE_ENV: _nodeEnv, VITEST: _vitest, ...cliEnv } = process.env;
     const output = execFileSync(
@@ -61,7 +61,10 @@ describe('production iOS capabilities', () => {
     );
 
     expect(config.extra?.app?.buzzyMonolithUrl).toBe('https://server.usebeeline.app');
-    expect(config.ios?.associatedDomains).toEqual(['applinks:usebeeline.app']);
+    expect(config.ios?.associatedDomains).toEqual([
+      'applinks:usebeeline.app',
+      'applinks:relay.buzzrouter.com',
+    ]);
     expect(config.android?.package).toBe('app.usebeeline');
     expect(config.android?.intentFilters).toContainEqual(
       expect.objectContaining({
@@ -84,12 +87,23 @@ describe('production iOS capabilities', () => {
             host: 'usebeeline.app',
             pathPrefix: '/review/',
           },
+          {
+            scheme: 'https',
+            host: 'relay.buzzrouter.com',
+            pathPrefix: '/join/',
+          },
+          {
+            scheme: 'https',
+            host: 'relay.buzzrouter.com',
+            pathPrefix: '/auth/github/mobile-callback',
+          },
         ]),
       }),
     );
     expect(nativeIos?.entitlements).not.toHaveProperty('aps-environment');
     expect(nativeIos?.entitlements?.['com.apple.developer.associated-domains']).toEqual([
       'applinks:usebeeline.app',
+      'applinks:relay.buzzrouter.com',
     ]);
     expect(nativeIos?.infoPlist?.UIBackgroundModes).not.toContain('remote-notification');
     expect(mobileAssociation).toEqual(relayAssociation);

@@ -15,6 +15,7 @@
       "allow": [
         { "url": "https://usebeeline.app/*" },
         { "url": "https://server.usebeeline.app/*" },
+        { "url": "https://relay.buzzrouter.com/*" },
         { "url": "http://localhost:*/*" },
         { "url": "http://127.0.0.1:*/*" }
       ]

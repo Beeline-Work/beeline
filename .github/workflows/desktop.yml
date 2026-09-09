@@ -1,7 +1,8 @@
 # Builds the Tauri desktop shell (apps/mobile/src-tauri) for macOS, Linux and
-# Windows and uploads every bundle as a downloadable artifact. The desktop app
-# is the Expo web bundle in a native window, so each leg exports the web build
-# first and then wraps it.
+# Windows and uploads every bundle as a downloadable artifact. Published
+# releases also receive stable installer filenames used by usebeeline.app.
+# The desktop app is the Expo web bundle in a native window, so each leg exports
+# the web build first and then wraps it.
 #
 # Triggers:
 #   pull_request  — only when a desktop-owning path changes (the crate, the
@@ -11,6 +12,8 @@
 #                   without also failing MOBILE SUITE.
 #   workflow_dispatch — pick the variant; this is how a tester gets a build of
 #                   an arbitrary branch.
+#   workflow_call   — the unified release builds production installers before
+#                   it creates the GitHub release.
 #
 # The variant selects which config the CLI merges over tauri.conf.json:
 # production is the release identity, preview installs beside it with console
@@ -18,8 +21,7 @@
 # an artifact from a PR should never claim to be the release app.
 #
 # Nothing here is signed or notarized: macOS users will see Gatekeeper's
-# unidentified-developer prompt. These are test builds, not a distribution
-# channel.
+# unidentified-developer prompt.
 name: Desktop
 
 on:
@@ -46,6 +48,12 @@ on:
           - dev
           - preview
           - production
+  workflow_call:
+    inputs:
+      variant:
+        description: Which configuration to build
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -108,7 +116,8 @@ jobs:
             target: x86_64-pc-windows-msvc
             rust-targets: x86_64-pc-windows-msvc
     env:
-      # Empty on pull_request, where `inputs` carries nothing.
+      # Pull requests carry no input and remain preview builds. The unified
+      # release calls this workflow explicitly with production.
       VARIANT: ${{ inputs.variant || 'preview' }}
     steps:
       - uses: actions/checkout@v4
@@ -221,3 +230,37 @@ jobs:
           path: apps/mobile/src-tauri/target/${{ matrix.target }}/release/bundle/**
           if-no-files-found: error
           retention-days: 14
+
+      - name: Stage stable public installer names
+        if: inputs.variant == 'production'
+        run: |
+          set -euo pipefail
+          bundle="apps/mobile/src-tauri/target/${{ matrix.target }}/release/bundle"
+          release="$RUNNER_TEMP/desktop-release"
+          mkdir -p "$release"
+          one() {
+            count=$(find "$bundle" -type f -name "$1" | awk 'END { print NR }')
+            [ "$count" -eq 1 ] || { echo "::error::expected one $1, found $count"; exit 1; }
+            source=$(find "$bundle" -type f -name "$1" -print -quit)
+            cp "$source" "$release/$2"
+          }
+          case "${{ matrix.label }}" in
+            macos-universal) one '*.dmg' 'Beeline-universal.dmg' ;;
+            windows-x86_64)
+              one '*.exe' 'Beeline-x86_64-setup.exe'
+              one '*.msi' 'Beeline-x86_64.msi'
+              ;;
+            linux-x86_64)
+              one '*.AppImage' 'Beeline-x86_64.AppImage'
+              one '*.deb' 'Beeline-x86_64.deb'
+              one '*.rpm' 'Beeline-x86_64.rpm'
+              ;;
+          esac
+
+      - uses: actions/upload-artifact@v4
+        if: inputs.variant == 'production'
+        with:
+          name: beeline-desktop-release-${{ matrix.label }}
+          path: ${{ runner.temp }}/desktop-release/*
+          if-no-files-found: error
+          retention-days: 7

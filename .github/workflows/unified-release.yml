@@ -135,6 +135,12 @@ jobs:
           path: ${{ runner.temp }}/unified-release.json
           retention-days: 7
 
+  desktop_installers:
+    needs: initialize
+    uses: ./.github/workflows/desktop.yml
+    with:
+      variant: production
+
   # These three jobs start together. The one self-hosted runner may serialize
   # its two host-native builds, but neither waits behind the mobile export.
   app_artifact:
@@ -405,7 +411,7 @@ jobs:
           retention-days: 7
 
   delivery_report:
-    needs: [initialize, confirm_app]
+    needs: [initialize, desktop_installers, confirm_app]
     runs-on: [self-hosted, beeline-prod-host]
     permissions:
       contents: write
@@ -424,6 +430,11 @@ jobs:
         with:
           name: mobile-ota-promoted-${{ needs.initialize.outputs.release_sha }}
           path: ${{ runner.temp }}/mobile
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: beeline-desktop-release-*
+          path: ${{ runner.temp }}/desktop-release
+          merge-multiple: true
       - name: Refuse a mixed-version delivery report
         env:
           RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
@@ -508,9 +519,11 @@ jobs:
           [ -s "$notes_file" ] || echo '- No changes recorded for this range.' > "$notes_file"
           if gh release view "$RELEASE_VERSION" >/dev/null 2>&1; then
             echo "GitHub Release $RELEASE_VERSION already exists (governor retry); reusing it."
+            gh release upload "$RELEASE_VERSION" "$RUNNER_TEMP"/desktop-release/* --clobber
           else
             gh release create "$RELEASE_VERSION" \
-              --target "$RELEASE_SHA" --title "$RELEASE_VERSION" --notes-file "$notes_file"
+              --target "$RELEASE_SHA" --title "$RELEASE_VERSION" --notes-file "$notes_file" \
+              "$RUNNER_TEMP"/desktop-release/*
           fi
           changelog_url="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${RELEASE_VERSION}"
           echo "Changelog: $changelog_url" >> "$GITHUB_STEP_SUMMARY"

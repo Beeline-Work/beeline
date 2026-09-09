@@ -32,7 +32,9 @@
     "tauri:dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
     "tauri:build:dev": "tauri build --config src-tauri/tauri.dev.conf.json",
     "tauri:build:preview": "tauri build --config src-tauri/tauri.preview.conf.json",
-    "tauri:build:production": "tauri build"
+    "tauri:build:production": "tauri build",
+    "tauri:icons": "node scripts/generate-tauri-icons.mjs",
+    "tauri:icons:check": "node scripts/generate-tauri-icons.mjs --check"
   },
   "jest": {
     "preset": "jest-expo"

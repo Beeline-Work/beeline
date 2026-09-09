@@ -192,6 +192,22 @@ npx expo start --web --port 8081
 Evidence of a successful boot is recorded in the PR (terminal transcript +
 screenshot when available).
 
+## Desktop (Tauri)
+
+The desktop app is that same web bundle in a native window. The crate, the
+three build configurations and the generated icons live in `src-tauri/`; see
+[src-tauri/README.md](src-tauri/README.md) for what each variant is for.
+
+```sh
+cd apps/mobile
+npm run tauri:dev                # Beeline Dev against the Expo dev server
+npm run tauri:build:preview      # installable Beeline Preview bundle
+npm run tauri:build:production   # release identity
+```
+
+Installers for all three platforms are built by the `Desktop` workflow and
+downloadable from its run.
+
 ## Relay transport
 
 Beeline's Room and Workspace surfaces use `sources/sync/transport/buzz-rig-transport.ts`

@@ -1,0 +1,62 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Beeline",
+  "version": "../package.json",
+  "identifier": "app.usebeeline.desktop",
+  "build": {
+    "beforeDevCommand": "npx expo start --web --port 8081",
+    "beforeBuildCommand": "npx cross-env NODE_ENV=production expo export --platform web --output-dir dist --clear",
+    "devUrl": "http://localhost:8081",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Beeline",
+        "width": 1280,
+        "height": 840,
+        "minWidth": 480,
+        "minHeight": 480,
+        "resizable": true,
+        "center": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "acceptFirstMouse": true
+      }
+    ],
+    "security": {
+      "csp": null
+    },
+    "macOSPrivateApi": false
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Productivity",
+    "shortDescription": "The merge you hold from your phone.",
+    "longDescription": "Beeline desktop: the same client the phone and the browser run, in a native window.",
+    "copyright": "Copyright © Beeline",
+    "publisher": "Beeline",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    },
+    "linux": {
+      "deb": {
+        "depends": []
+      }
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
+  }
+}

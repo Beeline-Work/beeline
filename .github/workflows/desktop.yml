@@ -1,0 +1,217 @@
+# Builds the Tauri desktop shell (apps/mobile/src-tauri) for macOS, Linux and
+# Windows and uploads every bundle as a downloadable artifact. The desktop app
+# is the Expo web bundle in a native window, so each leg exports the web build
+# first and then wraps it.
+#
+# Triggers:
+#   pull_request  — only when a desktop-owning path changes (the crate, the
+#                   configs, the icons, the mobile manifest, this file). A
+#                   three-runner matrix is too expensive to attach to every
+#                   mobile PR, and nothing in sources/ can break the shell
+#                   without also failing MOBILE SUITE.
+#   workflow_dispatch — pick the variant; this is how a tester gets a build of
+#                   an arbitrary branch.
+#
+# The variant selects which config the CLI merges over tauri.conf.json:
+# production is the release identity, preview installs beside it with console
+# logging kept, dev is the local-identity build. Pull requests build preview —
+# an artifact from a PR should never claim to be the release app.
+#
+# Nothing here is signed or notarized: macOS users will see Gatekeeper's
+# unidentified-developer prompt. These are test builds, not a distribution
+# channel.
+name: Desktop
+
+on:
+  pull_request:
+    paths:
+      - 'apps/mobile/src-tauri/**'
+      - 'apps/mobile/package.json'
+      - 'apps/mobile/package-lock.json'
+      - 'apps/mobile/app.config.js'
+      - 'apps/mobile/scripts/generate-tauri-icons.mjs'
+      - 'apps/mobile/sources/assets/images/icon.png'
+      - '.github/workflows/desktop.yml'
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: Which configuration to build
+        type: choice
+        default: preview
+        options:
+          - dev
+          - preview
+          - production
+
+permissions:
+  contents: read
+
+# One build per ref. A newer push supersedes the whole matrix, never one
+# platform of it.
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    # The Windows leg runs the same shell script as the others; the runner's
+    # default there is pwsh, which does not speak any of it.
+    shell: bash
+
+jobs:
+  # icons/ is generated from sources/assets/images/icon.png. Regenerating is
+  # seconds of node, so prove the committed files still match the source
+  # before spending three runners on a bundle that would ship a stale mark.
+  icons:
+    name: DESKTOP ICONS
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check the desktop icons match the app icon
+        working-directory: apps/mobile
+        run: npm run tauri:icons:check
+
+  build:
+    name: DESKTOP BUILD (${{ matrix.label }})
+    needs: icons
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      # One platform's toolchain failing should not hide whether the other two
+      # produce a bundle.
+      fail-fast: false
+      matrix:
+        include:
+          # A universal binary, so one download covers Apple silicon and Intel.
+          - label: macos-universal
+            os: macos-latest
+            target: universal-apple-darwin
+            rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
+          # 22.04 rather than latest: the .deb and the AppImage inherit the
+          # builder's glibc, and a newer one narrows who can install them.
+          - label: linux-x86_64
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            rust-targets: x86_64-unknown-linux-gnu
+          - label: windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            rust-targets: x86_64-pc-windows-msvc
+    env:
+      # Empty on pull_request, where `inputs` carries nothing.
+      VARIANT: ${{ inputs.variant || 'preview' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # The webview Tauri renders into is the system one: WebKitGTK here,
+      # WKWebView on macOS, WebView2 on Windows. Only Linux needs it installed.
+      - name: Install the Linux webview toolchain
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            libssl-dev \
+            patchelf \
+            file
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+
+      # Cargo.lock is committed, so the key names an exact dependency set: a
+      # hit restores a build that resolved the same crates.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            apps/mobile/src-tauri/target
+          key: desktop-cargo-${{ matrix.label }}-${{ hashFiles('apps/mobile/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            desktop-cargo-${{ matrix.label }}-
+
+      - run: npm ci
+      # Metro resolves @beeline/* from built dist, exactly as the phone build
+      # does, so the web export needs those dists to exist first.
+      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client
+      # The mobile app is isolated from the root workspaces and carries its own
+      # node_modules, including the Tauri CLI.
+      - name: Install mobile dependencies
+        working-directory: apps/mobile
+        run: npm ci
+
+      # `tauri build` runs the config's beforeBuildCommand (the Expo web
+      # export) and then bundles it for this platform's installers.
+      - name: Build the desktop bundle
+        working-directory: apps/mobile
+        env:
+          # app.config.js stamps the build with the commit it came from; the
+          # checkout's git metadata would otherwise name a merge commit.
+          EXPO_PUBLIC_BEELINE_RELEASE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          config=()
+          case "$VARIANT" in
+            production) ;;
+            dev) config=(--config src-tauri/tauri.dev.conf.json) ;;
+            preview) config=(--config src-tauri/tauri.preview.conf.json) ;;
+            *) echo "::error::unknown variant '$VARIANT'"; exit 1 ;;
+          esac
+          npx tauri build --target "${{ matrix.target }}" ${config[@]+"${config[@]}"}
+
+      # A bundler that produced nothing still exits 0 in some failure modes;
+      # the installer files are the evidence. The same listing tells whoever
+      # opens the run which downloads it produced.
+      - name: Prove the build produced installers
+        run: |
+          set -euo pipefail
+          dir="apps/mobile/src-tauri/target/${{ matrix.target }}/release/bundle"
+          if [ ! -d "$dir" ]; then
+            echo "::error::no bundle directory at $dir"
+            exit 1
+          fi
+          # The .app bundle is a directory, and it is the only artifact a
+          # macOS `dev` build produces (that variant bundles no installer).
+          found=$(
+            {
+              find "$dir" -type f \
+                \( -name '*.dmg' -o -name '*.app.tar.gz' -o -name '*.deb' -o -name '*.rpm' \
+                   -o -name '*.AppImage' -o -name '*.msi' -o -name '*.exe' \)
+              find "$dir" -type d -name '*.app'
+            } | sort
+          )
+          if [ -z "$found" ]; then
+            echo "::error::$dir contains no installer or app bundle for ${{ matrix.label }}"
+            find "$dir" -type f | head -n 50
+            exit 1
+          fi
+          {
+            echo "### ${{ matrix.label }} ($VARIANT)"
+            echo
+            echo '```'
+            echo "$found"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: beeline-desktop-${{ inputs.variant || 'preview' }}-${{ matrix.label }}
+          # The whole bundle directory: a macOS run carries both the .dmg and
+          # the .app archive, a Windows run both the .msi and the NSIS .exe.
+          path: apps/mobile/src-tauri/target/${{ matrix.target }}/release/bundle/**
+          if-no-files-found: error
+          retention-days: 14

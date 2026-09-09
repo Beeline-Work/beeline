@@ -95,7 +95,6 @@ async function notifyPerson(
   },
 ): Promise<boolean> {
   const roomId = await ensureSystemDirectMessageRoom(database, DEFAULT_WORKSPACE_ID, personId);
-  await database.query(`UPDATE rooms SET visibility='invite-only' WHERE id=$1`, [roomId]);
   const id = createHash('sha256')
     .update(`beeline-release-notice:v1:${input.version}:${personId}`)
     .digest('hex');

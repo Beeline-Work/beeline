@@ -490,7 +490,7 @@ export class PhoneService {
     );
     const row = workspace.rows[0];
     if (!row) return null;
-    const managedRooms =
+    const managedRoomRows =
       row.role === 'owner' || row.role === 'admin'
         ? (
             await this.database.query<{
@@ -502,16 +502,20 @@ export class PhoneService {
               `SELECT id,name,visibility,created_at FROM rooms
                WHERE workspace_id=$1 AND parent_id IS NULL AND direct_participants IS NULL
                  AND archived_at IS NULL
+               -- Fetch one extra row to expose the server-owned 200-Room settings bound.
                ORDER BY lower(name),name,id LIMIT $2`,
-              [workspaceId, ROOM_VIEW_CHAT_LIMIT],
+              [workspaceId, ROOM_VIEW_CHAT_LIMIT + 1],
             )
-          ).rows.map((room) => ({
-            id: room.id,
-            name: room.name,
-            visibility: room.visibility,
-            createdAt: unix(room.created_at),
-          }))
+          ).rows
         : undefined;
+    const managedRooms = managedRoomRows
+      ?.slice(0, ROOM_VIEW_CHAT_LIMIT)
+      .map((room) => ({
+        id: room.id,
+        name: room.name,
+        visibility: room.visibility,
+        createdAt: unix(room.created_at),
+      }));
     const members = await this.members(workspaceId, null);
     const humans = members.filter((member) => member.identity.kind === 'human');
     const agentMembers = members.filter((member) => member.identity.kind === 'agent');
@@ -565,7 +569,13 @@ export class PhoneService {
         createdAt: unix(row.created_at),
       },
       ...(managedRooms
-        ? { managerSettings: { visibility: row.visibility, rooms: managedRooms } }
+        ? {
+            managerSettings: {
+              visibility: row.visibility,
+              rooms: managedRooms,
+              roomsTruncated: managedRoomRows!.length > ROOM_VIEW_CHAT_LIMIT,
+            },
+          }
         : {}),
       members: humans.slice(0, ROOM_VIEW_MEMBER_LIMIT),
       agents: agents.slice(0, ROOM_VIEW_AGENT_LIMIT),

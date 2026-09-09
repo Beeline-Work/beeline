@@ -411,6 +411,8 @@ export type WorkspaceView = {
      * back to their membership-scoped chat list until they upgrade.
      */
     readonly rooms?: readonly WorkspaceManagedRoomView[];
+    /** True when the server omitted Rooms beyond its 200-Room settings bound. */
+    readonly roomsTruncated?: boolean;
   };
   readonly members: readonly RoomViewMember[];
   readonly agents: readonly WorkspaceAgentView[];

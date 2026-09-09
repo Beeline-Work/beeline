@@ -769,7 +769,9 @@ export function isWorkspaceView(value: unknown): value is WorkspaceView {
         (managerSettings.rooms === undefined ||
           (Array.isArray(managerSettings.rooms) &&
             managerSettings.rooms.length <= ROOM_VIEW_CHAT_LIMIT &&
-            managerSettings.rooms.every(managedRoom))))) &&
+            managerSettings.rooms.every(managedRoom))) &&
+        (managerSettings.roomsTruncated === undefined ||
+          typeof managerSettings.roomsTruncated === 'boolean'))) &&
     Array.isArray(item.members) &&
     item.members.length <= ROOM_VIEW_MEMBER_LIMIT &&
     item.members.every(member) &&

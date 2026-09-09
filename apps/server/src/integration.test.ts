@@ -621,7 +621,10 @@ describe('monolith integration', () => {
     const aliceWorkspace = (await (
       await request(`/v1/phone/workspaces/${workspaceId}`, 'GET', undefined, aliceToken)
     ).json()) as {
-      managerSettings?: { rooms?: Array<{ id: string; visibility: string }> };
+      managerSettings?: {
+        rooms?: Array<{ id: string; visibility: string }>;
+        roomsTruncated?: boolean;
+      };
     };
     expect(aliceWorkspace.managerSettings?.rooms).toContainEqual({
       id: privateRoom.id,
@@ -629,6 +632,20 @@ describe('monolith integration', () => {
       visibility: 'invite-only',
       createdAt: expect.any(Number),
     });
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,name)
+       SELECT ('70000000-0000-4000-8000-' || lpad(value::text,12,'0'))::uuid,$1,
+              'Bounded index ' || lpad(value::text,3,'0')
+       FROM generate_series(1,201) value`,
+      [workspaceId],
+    );
+    const boundedManagerWorkspace = (await (
+      await request(`/v1/phone/workspaces/${workspaceId}`, 'GET', undefined, aliceToken)
+    ).json()) as {
+      managerSettings?: { rooms?: Array<{ id: string }>; roomsTruncated?: boolean };
+    };
+    expect(boundedManagerWorkspace.managerSettings?.rooms).toHaveLength(200);
+    expect(boundedManagerWorkspace.managerSettings?.roomsTruncated).toBe(true);
     expect(
       await (
         await operation('addRoomMember', { roomId: privateRoom.id, memberId: aliceId })
@@ -2839,9 +2856,10 @@ describe('monolith integration', () => {
       text: string;
       presentation: string;
       direct_participants: string[];
+      visibility: 'public' | 'invite-only';
     }>(
       `SELECT message.id,message.room_id,message.author_id,message.text,message.presentation,
-              room.direct_participants
+              room.direct_participants,room.visibility
        FROM messages message JOIN rooms room ON room.id=message.room_id
        WHERE room.workspace_id=$1 AND message.card_type='workspace-member-joined'
          AND room.direct_participants IS NOT NULL
@@ -2856,6 +2874,7 @@ describe('monolith integration', () => {
         text: '@recipient joined · invited by @owner',
         presentation: 'system',
         direct_participants: [HUMAN, SYSTEM_IDENTITY_ID].sort(),
+        visibility: 'invite-only',
       },
     ]);
     const systemDmId = systemDms.rows[0]!.room_id;

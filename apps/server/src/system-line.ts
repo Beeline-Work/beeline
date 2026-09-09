@@ -127,8 +127,9 @@ export async function ensureSystemDirectMessageRoom(
   const participants = [SYSTEM_IDENTITY_ID, personId].sort() as [string, string];
   const roomId = directMessageRoomId(workspaceId, participants);
   await database.query(
-    `INSERT INTO rooms(id,workspace_id,created_by,name,direct_participants)
-     VALUES ($1,$2,$3,'Direct message',$4::jsonb) ON CONFLICT(id) DO NOTHING`,
+    `INSERT INTO rooms(id,workspace_id,created_by,name,visibility,direct_participants)
+     VALUES ($1,$2,$3,'Direct message','invite-only',$4::jsonb)
+     ON CONFLICT(id) DO UPDATE SET visibility='invite-only'`,
     [roomId, workspaceId, SYSTEM_IDENTITY_ID, JSON.stringify(participants)],
   );
   for (const memberId of participants)

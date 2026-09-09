@@ -152,6 +152,7 @@ function workspaceView(
     visibility: 'public' | 'invite-only';
     createdAt: number;
   }>,
+  roomsTruncated = false,
 ) {
   return {
     workspace: {
@@ -164,7 +165,13 @@ function workspaceView(
       updatedAt: 1,
     },
     ...(role === 'owner' || role === 'admin'
-      ? { managerSettings: { visibility: 'invite-only' as const, ...(rooms ? { rooms } : {}) } }
+      ? {
+          managerSettings: {
+            visibility: 'invite-only' as const,
+            ...(rooms ? { rooms } : {}),
+            ...(roomsTruncated ? { roomsTruncated: true } : {}),
+          },
+        }
       : {}),
     members: [],
     agents: [],
@@ -416,6 +423,23 @@ describe('Workspace Settings authority', () => {
       await Promise.resolve();
     });
     expect(client.setChannelVisibility).toHaveBeenCalledWith('private-room', 'public');
+  });
+
+  it('discloses the server-owned Room settings bound', async () => {
+    roomViews.workspace.mockResolvedValue(
+      workspaceView(
+        'admin',
+        undefined,
+        [{ id: 'private-room', name: 'captains', visibility: 'invite-only', createdAt: 3 }],
+        true,
+      ),
+    );
+
+    const renderer = await render();
+
+    expect(renderer.root.findByProps({ testID: 'room-visibility-truncated' }).children).toEqual([
+      'Showing the first 200 Rooms.',
+    ]);
   });
 
   it('qualifies same-name Rooms with human dates and discloses the full ID on demand', async () => {

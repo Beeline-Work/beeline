@@ -444,6 +444,11 @@ export default function WorkspaceSettings() {
 
           <View style={styles.section} testID="channel-visibility-settings">
             <Text style={styles.sectionLabel}>{ROOM_LABEL}s</Text>
+            {workspaceView?.managerSettings?.roomsTruncated && (
+              <Text style={styles.sectionNote} testID="room-visibility-truncated">
+                Showing the first 200 {ROOM_LABEL}s.
+              </Text>
+            )}
             {rooms.map((room) => {
               const displayName = displayRoomIndexTitle(room.name) ?? room.name;
               const duplicateName = duplicateRoomNames.has(room.name.trim().toLocaleLowerCase());
@@ -539,6 +544,13 @@ const styles = StyleSheet.create((theme) => {
       paddingRight: hull.space.sm,
       paddingBottom: hull.space.xs,
       color: hull.textMuted,
+    },
+    sectionNote: {
+      color: hull.dim,
+      fontFamily: Typography.mono,
+      fontSize: 12,
+      lineHeight: 18,
+      marginBottom: 8,
     },
     // An input is one of the two things DESIGN.md still lets a box wrap, and
     // the editor hangs under the row it belongs to rather than beside it.

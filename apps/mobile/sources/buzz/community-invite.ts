@@ -1,22 +1,7 @@
-import {
-  createBuzzClient,
-  createIdentity,
-  findCommunityInvite,
-  inviteTokenHash,
-  type Community,
-  type CommunityInviteRecord,
-  type Identity,
-} from '@beeline/buzz-client';
 import { isCommunityInviteToken } from '@beeline/api-contract/phone';
-import { WORKSPACE_LABEL } from './vocabulary';
 
 // Keep custom invite parsing aligned with the installed schemes in app.config.js.
 const MOBILE_APP_SCHEMES = ['beeline'] as const;
-
-export type CommunityInvitePreview = {
-  community: Community;
-  invite: CommunityInviteRecord;
-};
 
 type CommunityInviteCreator = {
   createInvite: (communityId: string) => Promise<{ token: string }>;
@@ -91,38 +76,4 @@ export async function createCommunityInviteUrl(
 ): Promise<string> {
   const invite = await client.createInvite(communityId);
   return buildCommunityInviteUrl(invite.token, relayUrl);
-}
-
-export async function loadCommunityInvitePreview(
-  baseUrl: string,
-  token: string,
-  identity?: Identity,
-): Promise<CommunityInvitePreview> {
-  const parsedToken = parseCommunityInviteToken(token);
-  if (!parsedToken) throw new Error('invalid invite link');
-
-  const reader = identity ?? createIdentity('buzzy-invite-preview');
-  const normalizedBaseUrl = baseUrl.replace(/\/$/, '');
-  const host = new URL(normalizedBaseUrl).host;
-  const tokenHash = inviteTokenHash(parsedToken);
-  const invite = await findCommunityInvite(
-    { baseUrl: normalizedBaseUrl, host, identity: reader },
-    tokenHash,
-    reader.publicKey,
-  );
-  if (!invite) throw new Error('invite not found');
-  if (invite.expiresAt <= Math.floor(Date.now() / 1000)) {
-    throw new Error('invite has expired');
-  }
-
-  const client = createBuzzClient({ baseUrl: normalizedBaseUrl, host, identity: reader });
-  const [community, members] = await Promise.all([
-    client.getCommunity(invite.communityId),
-    client.communityMembers(invite.communityId),
-  ]);
-  if (!community) throw new Error(`${WORKSPACE_LABEL} not found`);
-  if (!members.some((member) => member.pubkey === invite.mintedBy)) {
-    throw new Error('invite is no longer valid');
-  }
-  return { community, invite };
 }

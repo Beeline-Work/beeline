@@ -231,8 +231,8 @@ SMOKE_LATEST_MESSAGE_ID="$(read_seed_value MAESTRO_SMOKE_LATEST_MESSAGE_ID)"
 readonly SMOKE_LATEST_MESSAGE_ID
 
 # A separate registered agent waits for the device's actual Room and corner
-# messages, then responds. This verifies live relay delivery without requiring
-# a local Body daemon in the emulator fixture.
+# messages after server materialization, then responds. This verifies the
+# monolith write-to-live-read path without requiring a local Body daemon.
 (cd "$REPO_DIR" && npx tsx scripts/publish-smoke-replies.ts "$SMOKE_AGENT_NSEC" "$SMOKE_ROOM_ID" "$SMOKE_CORNER_ID") &
 reply_fixture_pid=$!
 
@@ -249,7 +249,7 @@ maestro test --device "$DEVICE" \
   --env "EXPECTED_UPDATE_GROUP_ID=${EXPECTED_UPDATE_GROUP_ID:-}" \
   "$FLOW"
 
-# The fixture queries relay history after the actual device mention arrives.
+# The fixture queries relay-backed history after the device mention arrives.
 # Waiting makes duplicate-event detection part of this on-device check.
 wait "$reply_fixture_pid"
 

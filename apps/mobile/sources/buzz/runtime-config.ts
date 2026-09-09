@@ -16,7 +16,7 @@ function normalizedUrl(value: string | undefined, fallback: string): string {
   return candidate.replace(/\/$/, '');
 }
 
-/** Runtime config shared by the Buzz relay transport and push registration. */
+/** Runtime config shared by server-indexed reads, public app links, and push registration. */
 export function getBuzzRuntimeConfig(): BuzzRuntimeConfig {
   const config = loadAppConfig();
   return {

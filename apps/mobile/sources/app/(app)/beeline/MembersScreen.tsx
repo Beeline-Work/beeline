@@ -301,7 +301,7 @@ export default function BuzzMembers() {
 
   const writeClient = async () => {
     if (!identity || !relayUrl) throw new Error('Workspace connection unavailable');
-    return new BuzzRigTransport(identity, relayUrl).ensureClient();
+    return new BuzzRigTransport(identity).ensureClient();
   };
 
   useEffect(() => {
@@ -327,7 +327,7 @@ export default function BuzzMembers() {
       setRelayUrl(nextRelayUrl);
       if (cached) setSurface(cached);
       const http = new RoomViewClient({ baseUrl: nextRelayUrl, identity: nextIdentity });
-      const relay = await new BuzzRigTransport(nextIdentity, nextRelayUrl).ensureClient();
+      const relay = await new BuzzRigTransport(nextIdentity).ensureClient();
       const bootstrapFilters: WorkspaceView['watchFilters'] = [
         { kinds: [0, 9, 9000, 9001], '#h': [workspaceId] },
       ];

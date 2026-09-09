@@ -477,7 +477,7 @@ export function useRoomSurfaceSession({
 
         const relayUrl = await getEffectiveRelayUrl();
         if (cancelled) return;
-        const nextTransport = new BuzzRigTransport(identity, relayUrl);
+        const nextTransport = new BuzzRigTransport(identity);
         const nextRoomClient = new RoomViewClient({
           baseUrl: relayUrl,
           identity,

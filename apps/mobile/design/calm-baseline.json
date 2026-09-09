@@ -9,7 +9,7 @@
   "app/(app)/beeline/settings/schedules.tsx": 5,
   "app/(app)/changelog.tsx": 6,
   "app/(app)/index.tsx": 2,
-  "app/(app)/join/[token].tsx": 10,
+  "app/(app)/join/[token].tsx": 8,
   "app/(app)/settings/language.tsx": 1,
   "app/(app)/text-selection.tsx": 7,
   "components/CommandPalette/CommandPaletteInput.tsx": 1,

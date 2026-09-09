@@ -282,7 +282,7 @@ export default function BuzzChat() {
   const { theme } = useUnistyles();
   // `parent`/`title` are hints, not authority: every surface that opens a
   // corner already knows both, so passing them makes the header correct on the
-  // first frame instead of one relay round trip later. The screen's own reads
+  // first frame instead of one server round trip later. The screen's own reads
   // still run and still win.
   const {
     channelId,
@@ -447,7 +447,7 @@ export default function BuzzChat() {
   } | null>(null);
   // Armed the instant a message this client believes addresses an agent is
   // sent, so the composer never shows dead air waiting on the real WORKING
-  // receipt (relay round trip + pickup + publish + refetch). See
+  // receipt (API write + pickup + receipt + refetch). See
   // `selectComposerAckState`.
   const [pendingAck, setPendingAck] = useState<{ sentAt: number; requestId?: string } | null>(null);
   const cacheViewerPubkey = userPubkey;
@@ -671,7 +671,7 @@ export default function BuzzChat() {
     [combinedMessages, roomSurface?.members],
   );
   // Open on the tail; older history reveals from what's already resident here
-  // first, then pages in from the relay once that's exhausted.
+  // first, then pages in from the server once that's exhausted.
   // A corner turn's per-call activity rows read back as one collapsed group
   // per turn; the window and paging count those groups, not the raw rows.
   // Same-verb system lines fold into one ("Candy, Terra and Codex joined").
@@ -1199,7 +1199,7 @@ export default function BuzzChat() {
     if (agentCommandsByScope[scope] !== undefined) return;
     let cancelled = false;
     transport
-      .agentCommandsRead(decodedId, pubkey, activeCommunityId ?? undefined)
+      .agentCommandsRead()
       .then((list) => {
         if (!cancelled) {
           setAgentCommandsByScope((current) => ({ ...current, [scope]: list }));
@@ -1249,7 +1249,7 @@ export default function BuzzChat() {
   const storedRoomName = resolvedChannelName?.trim() || ROOM_LABEL;
   // A DM's title is its peer's identity. Derived from cached state rather
   // than resolved inside the enter-room fetch chain, so it is right on the
-  // first painted frame of a warm cache instead of several relay reads later.
+  // first painted frame of a warm cache instead of several server reads later.
   // Deliberately not `directMessagePeer`, which throws when the viewer is not
   // a participant — a throw here would be a render-time crash, not a bad title.
   const dmPeerPubkey = userPubkey
@@ -1326,7 +1326,7 @@ export default function BuzzChat() {
       : canonicalCorner?.machineState === 'concluded' || canonicalCorner?.machineState === 'closed'
         ? 'done'
         : 'idle';
-  // A notification may outlive the corner it names. Once relay truth says the
+  // A notification may outlive the corner it names. Once server truth says the
   // target disappeared or finished, replace it with the parent Room carried by
   // the push instead of stranding the reader on an empty/read-only transcript.
   useEffect(() => {
@@ -1785,7 +1785,7 @@ export default function BuzzChat() {
       return {
         // A reconciled draft/final bubble's display `id` is a synthetic
         // per-turn key. The composer separately obtains the opaque threading
-        // proof from the snapshot using this real relay id.
+        // proof from the snapshot using this real message id.
         messageId: message.relayId ?? message.id,
         authorName: message.isUser
           ? 'You'
@@ -1876,13 +1876,13 @@ export default function BuzzChat() {
     try {
       // A warm/partial snapshot can paint before the hydration effect has
       // published its transport state. Sending is still a valid operation:
-      // construct the shared authenticated transport on demand rather than
+      // construct the monolith transport on demand rather than
       // leaving the enabled send control as a silent no-op.
       let sendTransport = transport;
       if (!sendTransport) {
         const identity = await loadBuzzIdentity();
         if (!identity) throw new Error('Beeline identity is unavailable');
-        sendTransport = new BuzzRigTransport(identity, await getEffectiveRelayUrl());
+        sendTransport = new BuzzRigTransport(identity);
       }
       if (!transport) setSessionTransport(sendTransport);
       preparedTransport = sendTransport;
@@ -2226,13 +2226,9 @@ export default function BuzzChat() {
         for (const candidate of chosen) {
           current = candidate;
           if (candidate.kind === 'agent') {
-            await transport.inviteAgentToChannel(decodedId, candidate.pubkey, activeCommunityId);
+            await transport.inviteAgentToChannel(decodedId, candidate.pubkey);
           } else {
-            await transport.inviteWorkspaceMemberToChannel(
-              decodedId,
-              candidate.pubkey,
-              activeCommunityId,
-            );
+            await transport.inviteWorkspaceMemberToChannel(decodedId, candidate.pubkey);
           }
         }
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -2290,7 +2286,7 @@ export default function BuzzChat() {
       if (!inviteTransport) {
         const identity = await loadBuzzIdentity();
         if (!identity) throw new Error('Beeline identity is unavailable');
-        inviteTransport = new BuzzRigTransport(identity, await getEffectiveRelayUrl());
+        inviteTransport = new BuzzRigTransport(identity);
         setSessionTransport(inviteTransport);
       }
       const url = await createCommunityInviteUrl(
@@ -2415,7 +2411,7 @@ export default function BuzzChat() {
         );
       } catch (error) {
         if (refresh) throw error;
-        setRoomRepoCandidates(await transport.workspaceRoomRepositoryCandidates(activeCommunityId));
+        setRoomRepoCandidates(await transport.workspaceRoomRepositoryCandidates());
         setGitHubInstallations([]);
       }
     },
@@ -2711,13 +2707,13 @@ export default function BuzzChat() {
     // ever failed. The screen paints from cache, so the button is on screen
     // well before `transport` exists: pressing it did nothing, said nothing,
     // and published nothing, which is exactly what the captain saw (a corner
-    // with zero `buzz-corner-close` events on the relay after many presses).
+    // with zero close requests accepted by the server after many presses).
     // A control the reader can see must either act or explain itself.
     if (!transport) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Modal.alert(
         `Not connected yet`,
-        `This ${CORNER_LABEL} could not be closed because the app is still connecting to the relay. Try again in a moment.`,
+        `This ${CORNER_LABEL} could not be closed because the app is still connecting to the server. Try again in a moment.`,
       );
       return;
     }

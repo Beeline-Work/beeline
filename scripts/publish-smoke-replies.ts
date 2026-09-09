@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
  * Fixture-only remote participant for the mobile Maestro smoke. It waits for
- * the device's real relay events, then replies through the same relay so the
- * assertions cover subscription delivery rather than preloaded transcript UI.
+ * the device's messages after server materialization, then replies through the
+ * relay so assertions cover live delivery rather than preloaded transcript UI.
  */
 import {
   CORNER_REMOTE_STATE_KIND,
@@ -70,7 +70,7 @@ async function requireRoomViewWithinBudget(
   );
 }
 
-/** The device event is the proof: retries must preserve one relay event id. */
+/** The device message is the proof: retries must preserve one event id. */
 async function requireExactlyOneMessage(
   client: ReturnType<typeof createBuzzClient>,
   channelId: string,

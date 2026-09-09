@@ -66,7 +66,7 @@ export default function BuzzCorners() {
         },
       });
       schedulerRef.current = scheduler;
-      const transport = new BuzzRigTransport(identity, relayUrl);
+      const transport = new BuzzRigTransport(identity);
       const relay = await transport.ensureClient();
       const filters = cached?.watchFilters ?? [
         { kinds: [9, 9000, 9001, 9007, 30078], '#h': [decodedId] },

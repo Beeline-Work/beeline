@@ -164,7 +164,7 @@ export default function BuzzChannels() {
       }
       const nextRelayUrl = await getEffectiveRelayUrl();
       if (cancelled) return;
-      const nextTransport = new BuzzRigTransport(nextIdentity, nextRelayUrl);
+      const nextTransport = new BuzzRigTransport(nextIdentity);
       const http = new RoomViewClient({ baseUrl: nextRelayUrl, identity: nextIdentity });
       const relay = await nextTransport.ensureClient();
       if (cancelled) return;

@@ -135,7 +135,7 @@ export default function WorkspaceSettings() {
             return;
           }
           const currentRelayUrl = await getEffectiveRelayUrl();
-          const transport = new BuzzRigTransport(currentIdentity, currentRelayUrl);
+          const transport = new BuzzRigTransport(currentIdentity);
           const currentClient = await transport.ensureClient();
           if (cancelled) return;
           setClient(currentClient);

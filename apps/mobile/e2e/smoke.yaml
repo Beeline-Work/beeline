@@ -48,7 +48,7 @@ env:
     timeout: 20000
 
 # Two successive successful creates must both land in the deck immediately.
-# This specifically catches a relay list projection that is one create behind:
+# This specifically catches a server-indexed list projection that is one create behind:
 # the second create may reconcile the first, but must not evict itself.
 - tapOn:
     id: room-deck-compose-fab
@@ -141,7 +141,7 @@ env:
     timeout: 5000
 
 # A Room send must reach the remote participant, whose fixture reply is only
-# published after the signed device event appears on the relay.
+# published after the monolith write appears in the relay-backed fixture history.
 - tapOn:
     id: chat-input
 - inputText: SMOKE ROOM SEND
@@ -173,8 +173,8 @@ env:
 - tapOn:
     id: chat-send
 - assertVisible: .*mention picker stayed responsive
-# This must run while the signed mention publish is still in flight. It catches
-# a foreground JS/MMKV stall rather than merely proving the eventual relay ACK.
+# This must run while the mention write is still in flight. It catches a
+# foreground JS/MMKV stall rather than merely proving the eventual API response.
 - tapOn:
     id: chat-input
 - inputText: ' still accepting input'
@@ -183,8 +183,8 @@ env:
     timeout: 1000
 
 # Selecting Beebee then appending text used to race Android's controlled
-# selection and publish only the prefix. The remote agent waits for the exact
-# full payload, proving the relay stored every trailing character.
+# selection and submit only the prefix. The remote agent waits for the exact
+# full payload, proving the server retained every trailing character.
 - eraseText
 - inputText: '@'
 - extendedWaitUntil:
@@ -327,9 +327,9 @@ env:
 - assertNotVisible: '.*checks failing.*'
 
 # The fixture only completes this phase after the device's explicit merge
-# command reaches the relay. It then observes branch death, posts the parent
-# landed summary, and archives the child — the same mechanical sequence the
-# daemon performs after `gh pr merge` deletes the branch.
+# command reaches the relay-backed fixture history. It then observes branch
+# death, posts the parent landed summary, and archives the child — the same
+# mechanical sequence the daemon performs after `gh pr merge` deletes the branch.
 - tapOn:
     id: chat-input
 - inputText: SMOKE GH MERGE

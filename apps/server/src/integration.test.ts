@@ -406,6 +406,56 @@ describe('monolith integration', () => {
     ]);
   });
 
+  it('restores a tombstoned Workspace member when an invite-only Room becomes public', async () => {
+    const memberToken = await phoneToken('publicize-tombstoned-member');
+    const memberId = createHash('sha256')
+      .update('github:publicize-tombstoned-member')
+      .digest('hex');
+    await operation('addWorkspaceMember', { workspaceId: WORKSPACE, memberId, role: 'member' });
+    const room = (await (
+      await operation('createRoom', {
+        workspaceId: WORKSPACE,
+        name: 'Opening after an explicit removal',
+        visibility: 'invite-only',
+      })
+    ).json()) as { id: string };
+
+    expect((await operation('addRoomMember', { roomId: room.id, memberId })).status).toBe(200);
+    expect((await operation('removeRoomMember', { roomId: room.id, memberId })).status).toBe(204);
+    expect(
+      (await request(`/v1/phone/rooms/${room.id}`, 'GET', undefined, memberToken)).status,
+    ).toBe(404);
+
+    expect((await operation('updateRoom', { roomId: room.id, visibility: 'public' })).status).toBe(
+      204,
+    );
+    expect(
+      (await request(`/v1/phone/rooms/${room.id}`, 'GET', undefined, memberToken)).status,
+    ).toBe(200);
+  });
+
+  it('restores a removed public-Room membership with its current Workspace role', async () => {
+    const memberId = createHash('sha256').update('github:public-room-role-restore').digest('hex');
+    await phoneToken('public-room-role-restore');
+    await operation('addWorkspaceMember', { workspaceId: WORKSPACE, memberId, role: 'admin' });
+    const room = (await (
+      await operation('createRoom', { workspaceId: WORKSPACE, name: 'Role-preserving rejoin' })
+    ).json()) as { id: string };
+
+    expect((await operation('removeRoomMember', { roomId: room.id, memberId })).status).toBe(204);
+    expect(await (await operation('addRoomMember', { roomId: room.id, memberId })).json()).toEqual({
+      joined: true,
+    });
+    expect(
+      (
+        await database.query<{ role: string; removed: boolean }>(
+          `SELECT role,removed_at IS NOT NULL removed FROM memberships WHERE room_id=$1 AND identity_id=$2`,
+          [room.id, memberId],
+        )
+      ).rows,
+    ).toEqual([{ role: 'admin', removed: false }]);
+  });
+
   it('reserves workspace and Room management for workspace owners and admins', async () => {
     const memberToken = await phoneToken('room-member');
     const memberId = createHash('sha256').update('github:room-member').digest('hex');

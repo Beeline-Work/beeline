@@ -89,7 +89,8 @@ export async function joinWorkspaceMembersToPublicRoom(
        AND room.visibility='public'
        AND ($3='all' OR (identity.kind='human' AND identity.hidden_from_roster=false))
      ON CONFLICT (room_id,identity_id) WHERE room_id IS NOT NULL
-     DO NOTHING
+     DO UPDATE SET role=EXCLUDED.role,removed_at=NULL
+       WHERE memberships.removed_at IS NOT NULL AND $3='all'
      RETURNING identity_id`,
     [workspaceId, roomId, scope],
   );
@@ -157,7 +158,7 @@ export async function joinRooms(
              AND room.direct_participants IS NULL AND room.archived_at IS NULL
              AND ${roomPredicate}
            ON CONFLICT (room_id,identity_id) WHERE room_id IS NOT NULL
-           DO UPDATE SET role='member',removed_at=NULL
+           DO UPDATE SET role=EXCLUDED.role,removed_at=NULL
              WHERE memberships.removed_at IS NOT NULL
            RETURNING room_id`,
           values,

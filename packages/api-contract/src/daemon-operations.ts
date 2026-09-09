@@ -83,10 +83,6 @@ export type CommandClaimInput = RoomInput & {
 };
 export type TurnOutputAuthority = { readonly generationId?: string; readonly requestId?: string };
 export type DaemonOperationMap = {
-  stageAgentDelegation: Operation<
-    RoomInput & TurnOutputAuthority & { readonly targetAgentId: string },
-    WriteResult
-  >;
   getAgentCommands: Operation<
     RoomInput,
     { readonly commandProtocol: 1; readonly commands: readonly AgentCommand[] }
@@ -369,7 +365,6 @@ export type PostRoomMessageInput = TurnOutputAuthority &
     readonly replyToMessageId?: string;
     /** Inbox message that started this turn; independent of optional reply threading. */
     readonly triggerMessageId?: string;
-    readonly delegateAgentIds?: readonly string[];
   };
 export type PostAgentAttachmentInput = TurnOutputAuthority &
   RoomInput & {

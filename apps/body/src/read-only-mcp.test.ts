@@ -7,6 +7,7 @@ describe('direct message helper surface', () => {
     const names = tools.map((tool) => tool.name);
     expect(names).toContain('attach_file');
     expect(names).not.toContain('open_corner');
+    expect(names).not.toContain('delegate_to_agent');
 
     // The read-only surface is untouched: it never carried daemon tools.
     const roomTools = agentToolsFor(false, true).map((tool) => tool.name);
@@ -15,6 +16,7 @@ describe('direct message helper surface', () => {
 
     // A top-level Room keeps the bounded daemon controls.
     expect(agentToolsFor(true, false).map((tool) => tool.name)).toContain('open_corner');
+    expect(agentToolsFor(true, false).map((tool) => tool.name)).not.toContain('delegate_to_agent');
   });
 });
 

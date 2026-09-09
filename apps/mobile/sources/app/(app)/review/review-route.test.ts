@@ -1,58 +1,93 @@
-import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import React from 'react';
+// @ts-expect-error react-test-renderer has no declarations in this workspace.
+import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const read = (relative: string) =>
-  readFileSync(fileURLToPath(new URL(relative, import.meta.url)), 'utf8');
+const route = vi.hoisted(() => ({ secret: 'play-review-secret-value-0001' }));
+const replace = vi.hoisted(() => vi.fn());
+const signIn = vi.hoisted(() => vi.fn());
 
-const route = read('./[secret].tsx');
-const home = read('../index.tsx');
-const layout = read('../_layout.tsx');
-const appConfig = read('../../../../app.config.js');
+vi.mock('react-native', async () => {
+  const ReactModule = await import('react');
+  const host = (name: string) => (props: any) =>
+    ReactModule.createElement(name, props, props.children);
+  return { Text: host('Text'), View: host('View') };
+});
+vi.mock('react-native-unistyles', () => ({
+  StyleSheet: {
+    create: (factory: (theme: any) => unknown) =>
+      factory({
+        buzz: {
+          bgTerminal: '#000',
+          muted: '#777',
+          textPrimary: '#fff',
+          textSecondary: '#aaa',
+          type: { meta: {}, title: {}, body: {} },
+          space: { md: 8, lg: 16 },
+        },
+      }),
+  },
+}));
+vi.mock('expo-router', () => ({
+  router: { replace },
+  useLocalSearchParams: () => route,
+}));
+vi.mock('expo-linking', () => ({ useURL: () => null }));
+vi.mock('@/components/buzz/MonoHull', async () => {
+  const ReactModule = await import('react');
+  return {
+    PixelLoader: (props: any) => ReactModule.createElement('PixelLoader', props),
+    MonoButton: (props: any) => ReactModule.createElement('MonoButton', props),
+  };
+});
+vi.mock('@/auth/review-sign-in', () => ({ signInWithReviewSecret: signIn }));
 
-describe('the review link route', () => {
-  it('signs in and lands in the app, with no control and no hint on refusal', () => {
-    expect(route).toContain('signInWithReviewSecret(secret)');
-    expect(route).toContain("router.replace('/beeline/channels')");
-    // A refusal is the ordinary sign-in screen; the reviewer link is never named.
-    expect(route).toContain("router.replace('/beeline/onboarding')");
-    for (const control of ['TouchableOpacity', 'Pressable', 'Button', 'onPress'])
-      expect([control, route.includes(control)]).toEqual([control, false]);
+import ReviewSignIn from './[secret]';
+
+beforeAll(() => {
+  (
+    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  ).IS_REACT_ACT_ENVIRONMENT = true;
+});
+
+async function renderRoute(): Promise<ReactTestRenderer> {
+  let renderer!: ReactTestRenderer;
+  await act(async () => {
+    renderer = create(React.createElement(ReviewSignIn));
+    await Promise.resolve();
+  });
+  return renderer;
+}
+
+describe('review deep-link screen', () => {
+  beforeEach(() => {
+    route.secret = 'play-review-secret-value-0001';
+    replace.mockReset();
+    signIn.mockReset();
   });
 
-  it('reads the secret from the route and from the launching URL', () => {
-    expect(route).toContain('parseReviewSecret(routeSecret)');
-    expect(route).toContain('parseReviewSecret(incomingUrl ?? undefined)');
+  it('completes a valid review sign-in in the ordinary Rooms destination', async () => {
+    signIn.mockResolvedValue('reviewer');
+    await renderRoute();
+    expect(signIn).toHaveBeenCalledWith(route.secret);
+    expect(replace).toHaveBeenCalledWith('/beeline/channels');
   });
 
-  it('registers the custom scheme in the binary for the same file route', () => {
-    expect(appConfig).toContain('const scheme = "beeline"');
-    expect(appConfig).toContain('scheme,');
-    expect(layout).toContain('name="review/[secret]"');
+  it('shows an actionable error when the server refuses the review link', async () => {
+    signIn.mockRejectedValue(new Error('not found'));
+    const renderer = await renderRoute();
+    expect(renderer.root.findByProps({ testID: 'review-sign-in-error' })).toBeTruthy();
+    expect(replace).not.toHaveBeenCalled();
+    const button = renderer.root.findByType('MonoButton');
+    expect(button.props.label).toBe('Return to sign in');
+    act(() => button.props.onPress());
+    expect(replace).toHaveBeenCalledWith('/beeline/onboarding');
   });
 
-  it('is honored on a cold start before the identity check redirects', () => {
-    const decision = home.slice(home.indexOf('if (initialReviewSecret)'), home.lastIndexOf('}, ['));
-    expect(decision).toContain("pathname: '/review/[secret]'");
-    expect(decision.indexOf('initialReviewSecret')).toBeLessThan(
-      decision.indexOf('hasBuzzIdentity'),
-    );
-    expect(layout).toContain('name="review/[secret]"');
-  });
-
-  it('is reachable only from external review links — nothing in the app links to it', () => {
-    const referring = execFileSync(
-      'git',
-      ['grep', '-l', '--untracked', '-F', "'/review/[secret]'", '--', 'sources'],
-      { cwd: fileURLToPath(new URL('../../../..', import.meta.url)), encoding: 'utf8' },
-    )
-      .split('\n')
-      .filter(Boolean);
-    // Only the cold-start hand-off names the route; nothing renders a way in.
-    expect(referring.sort()).toEqual([
-      'sources/app/(app)/index.tsx',
-      'sources/app/(app)/review/review-route.test.ts',
-    ]);
+  it('explains a malformed link without making an exchange request', async () => {
+    route.secret = 'short';
+    const renderer = await renderRoute();
+    expect(signIn).not.toHaveBeenCalled();
+    expect(renderer.root.findByProps({ testID: 'review-sign-in-error' })).toBeTruthy();
   });
 });

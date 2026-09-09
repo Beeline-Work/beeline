@@ -31,14 +31,61 @@ fn desktop_secure_remove(app: tauri::AppHandle, key: String) -> Result<(), Strin
     }
 }
 
+#[cfg(target_os = "linux")]
+fn register_linux_deep_links(app: &tauri::AppHandle) -> Result<(), String> {
+    use std::process::Command;
+    use tauri::Manager;
+    use tauri_plugin_deep_link::DeepLinkExt;
+
+    if app.deep_link().register_all().is_ok() {
+        return Ok(());
+    }
+
+    // The plugin writes the handler before refreshing the desktop database.
+    // Minimal AppImage hosts often omit `update-desktop-database`, but
+    // `xdg-mime` can still install that already-written handler directly.
+    let bin = std::env::current_exe().map_err(|error| error.to_string())?;
+    let file_name = format!(
+        "{}-handler.desktop",
+        bin.file_name()
+            .ok_or_else(|| "desktop executable has no file name".to_string())?
+            .to_string_lossy()
+    );
+    let handler = app
+        .path()
+        .data_dir()
+        .map_err(|error| error.to_string())?
+        .join("applications")
+        .join(&file_name);
+    if !handler.is_file() {
+        return Err("the desktop deep-link handler could not be written".to_string());
+    }
+    let status = Command::new("xdg-mime")
+        .args(["default", &file_name, "x-scheme-handler/beeline"])
+        .status()
+        .map_err(|error| format!("could not run xdg-mime: {error}"))?;
+    if !status.success() {
+        return Err(format!("xdg-mime exited with {status}"));
+    }
+    Ok(())
+}
+
 // The shell hosts the Expo web bundle but owns the few native boundaries that
 // cannot safely degrade to browser APIs, including session credential custody.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default();
     #[cfg(desktop)]
-    let builder = builder.plugin(tauri_plugin_single_instance::init(|_app, _argv, _cwd| {
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
         // The deep-link feature forwards a matching URL before this callback.
+        // Bring the existing window forward too: delivery is not useful when
+        // its visible result stays hidden behind the invoking application.
+        use tauri::Manager;
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
     }));
 
     builder
@@ -48,13 +95,11 @@ pub fn run() {
         .setup(|_app| {
             #[cfg(target_os = "linux")]
             {
-                use tauri_plugin_deep_link::DeepLinkExt;
                 // AppImages have no installer to register their desktop file.
-                // Minimal Linux images may omit update-desktop-database. The
-                // shell must still launch; installed packages already carry
-                // their protocol association and direct AppImage registration
-                // can be retried on the next launch.
-                if let Err(error) = _app.deep_link().register_all() {
+                // Installed packages already carry their association; direct
+                // AppImages register on launch, including minimal hosts that
+                // have xdg-mime but omit update-desktop-database.
+                if let Err(error) = register_linux_deep_links(_app.handle()) {
                     eprintln!("could not register desktop deep links: {error}");
                 }
             }

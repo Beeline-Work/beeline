@@ -64,7 +64,7 @@ describe.each([
   ['Room', R],
   ['corner', C],
 ])('%s complete command conversation', (surface, roomId) => {
-  it('replays Hoots/Goosy with two helpers, deliberate delegation, fresh human reply and idle untagged traffic', async () => {
+  it('replays Hoots/Goosy with exact agent tags, fresh human reply and idle untagged traffic', async () => {
     const scheduler = new SessionScheduler({ maxLiveSessions: 4 });
     const controller = new AbortController();
     const helpers = [A, B].map((agentId) => {
@@ -109,15 +109,6 @@ describe.each([
       let turns = 0;
       const prompt = vi.spyOn(acp, 'sessionPrompt').mockImplementation(async () => {
         turns++;
-        if (agentId === A && turns === 1) {
-          // The deterministic model explicitly invokes delegation, using the same
-          // live turn context the MCP process receives. Prose is separate.
-          const path = session.mock.calls[0]![0].mcpServers!.flatMap(
-            (server) => server.env ?? [],
-          ).find((entry) => entry.name === 'BEELINE_TURN_CONTEXT_FILE')!.value;
-          const context = JSON.parse(await readFile(path, 'utf8'));
-          await api.execute('stageAgentDelegation', { ...context, targetAgentId: B });
-        }
         return {
           stopReason: 'end_turn',
           updates: [],
@@ -126,7 +117,7 @@ describe.each([
             agentId === A
               ? turns === 1
                 ? '@goosy please help'
-                : 'Tag @goosy and Goosy answers'
+                : 'Hoots explains tags'
               : turns === 1
                 ? 'Goosy answered'
                 : 'Goosy answered again',

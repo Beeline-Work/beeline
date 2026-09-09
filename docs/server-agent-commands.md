@@ -2,7 +2,7 @@
 
 `apps/server/src/agent-command.ts` is the routing authority. `agent_commands` records source, target, action, reason, root/parent, depth, lease, generation and result. `agent_turns` remains the execution receipt authority.
 
-Human tags, stored replies to agents and direct messages create commands in the message transaction after current membership, policy and reachability checks. Agent prose mentions never dispatch work. `delegate_to_agent` stages stable target IDs on the active command; final storage and any next command commit together. A stored agent reply is addressed only within its current chain. Human intent starts depth zero; delegated depths one through three are allowed, and depth three cannot dispatch another agent.
+Human tags, stored replies to agents and direct messages create commands in the message transaction after current membership and policy checks. Presence can shape the offline notice shown to the sender, but never gates command creation: the pending command survives a disconnected helper and is claimable after it returns. An exact agent tag in a committed agent reply dispatches that agent; final storage and the next command commit together, with targets derived from the stored message's validated mention IDs. A stored agent reply is addressed only within its current chain. Human intent starts depth zero; delegated depths one through three are allowed, and depth three cannot dispatch another agent.
 
 Both helper loops consume only `getAgentCommands`, claim with a session generation, and queue inputs while busy. Stop commands may interrupt a running prompt. Live notifications wake a command read; they never authorize work. The existing transcript reads and model sessions supply context and execution machinery.
 

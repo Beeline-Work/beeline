@@ -41,7 +41,7 @@ async function claim(c: AgentCommand, generationId = 'g1') {
 const result = (
   c: AgentCommand,
   text: string,
-  delegateAgentIds: string[] = [],
+  mentionIds: string[] = [],
   generationId = 'g1',
   extra = {},
 ) =>
@@ -52,7 +52,7 @@ const result = (
       requestId: c.turnRequestId,
       generationId,
       text,
-      delegateAgentIds,
+      mentionIds,
       ...extra,
     },
     c.agentId,
@@ -93,7 +93,12 @@ beforeAll(async () => {
 afterAll(async () => db?.close());
 beforeEach(async () => {
   await db.query(
-    `UPDATE live_outputs SET body='{"status":"online"}',updated_at=now() WHERE kind='presence'`,
+    `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)
+     VALUES($1,$2,'presence','presence','{"status":"online"}'),
+           ($1,$3,'presence','presence','{"status":"online"}')
+     ON CONFLICT(room_id,agent_id,turn_id,kind)
+     DO UPDATE SET body=EXCLUDED.body,updated_at=now()`,
+    [R, A, B],
   );
   await db.query(`DELETE FROM live_outputs WHERE kind<>'presence'`);
   await db.query(`DELETE FROM agent_commands`);
@@ -117,8 +122,11 @@ describe.each([R, C])('server command authority in %s', (room) => {
     await send('@hoots explain tags', room);
     const [next] = await commands(A, room);
     await claim(next!);
-    await result(next!, 'Tag @goosy and Goosy answers', [], 'g1', { mentionIds: [B] });
-    expect(await commands(B, room)).toEqual([]);
+    await result(next!, 'Tag @goosy and Goosy answers', [B]);
+    const [tagged] = await commands(B, room);
+    expect(tagged).toBeDefined();
+    await claim(tagged!);
+    await result(tagged!, 'Goosy answered');
     await send('Thanks everyone', room);
     expect(await commands(A, room)).toEqual([]);
     expect(await commands(B, room)).toEqual([]);
@@ -147,6 +155,7 @@ describe.each([R, C])('server command authority in %s', (room) => {
     await claim(b!);
     const reply = await result(b!, 'Deliberate reply', [], 'g1', { replyToMessageId: posted.id });
     expect((await commands(A, room))[0]?.agentDepth).toBe(2);
+    await db.query(`UPDATE live_outputs SET body='{"status":"offline"}' WHERE agent_id=$1`, [B]);
     await phone.execute(
       'sendRoomReply',
       { roomId: room, parentMessageId: reply.id, text: 'Continue' },
@@ -169,12 +178,13 @@ it('resolves multiple natural tags and ignores human-only and unknown tags', asy
   );
   expect(await commands(A)).toHaveLength(1);
 });
-it('routes a direct message without redundant tags', async () => {
+it('routes a direct message without redundant tags or a presence row', async () => {
   await db.query(`UPDATE rooms SET direct_participants=$2::jsonb WHERE id=$1`, [
     R,
     JSON.stringify([H, A]),
   ]);
   try {
+    await db.query(`DELETE FROM live_outputs WHERE agent_id=$1 AND kind='presence'`, [A]);
     await send('Hello');
     expect((await commands(A))[0]?.reason).toBe('direct_message');
     expect(await commands(B)).toEqual([]);
@@ -201,6 +211,14 @@ it('deduplicates human writes, claims and final results', async () => {
   const messageId = id();
   for (let n = 0; n < 2; n++)
     await phone.execute('sendRoomMessage', { roomId: R, text: '@hoots', messageId }, H);
+  expect(
+    (
+      await db.query(
+        `SELECT 1 FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2 AND state='pending'`,
+        [messageId, A],
+      )
+    ).rowCount,
+  ).toBe(1);
   const [c] = await commands();
   await claim(c!);
   const attempts = await Promise.allSettled(
@@ -279,17 +297,12 @@ it('rejects unknown, wrong agent, cross-Room, completed and cancelled turn outpu
     daemon.execute('postAgentDraft', { ...draft, turnId: next!.turnRequestId }, A),
   ).rejects.toThrow();
 });
-it('stores deliberate tool delegation separately from prose mentions', async () => {
+it('routes a validated agent tag when the final message is committed', async () => {
   await send('@hoots');
   const [c] = await commands();
   await claim(c!);
-  await daemon.execute(
-    'stageAgentDelegation',
-    { roomId: R, requestId: c!.turnRequestId, generationId: 'g1', targetAgentId: B },
-    A,
-  );
   expect(await commands(B)).toEqual([]);
-  await result(c!, 'Please help');
+  await result(c!, '@goosy please help', [B]);
   expect(await commands(B)).toHaveLength(1);
 });
 it('rolls final storage back if creating the next command fails', async () => {
@@ -387,10 +400,63 @@ it('makes the depth boundary explicit', () => {
   expect([0, 1, 2, 3].map(nextAgentDepth)).toEqual([1, 2, 3, undefined]);
 });
 
-it('creates no executable work for an unreachable helper', async () => {
+it.each(['absent', 'stale', 'offline'] as const)(
+  'keeps exactly one pending command while helper presence is %s and permits claim after return',
+  async (presence) => {
+    if (presence === 'absent')
+      await db.query(`DELETE FROM live_outputs WHERE agent_id=$1 AND kind='presence'`, [A]);
+    else if (presence === 'stale')
+      await db.query(
+        `UPDATE live_outputs SET body='{"status":"online"}',updated_at=now()-interval '10 minutes' WHERE agent_id=$1 AND kind='presence'`,
+        [A],
+      );
+    else
+      await db.query(`UPDATE live_outputs SET body='{"status":"offline"}' WHERE agent_id=$1`, [A]);
+
+    const messageId = id();
+    for (let attempt = 0; attempt < 2; attempt++)
+      await phone.execute(
+        'sendRoomMessage',
+        { roomId: R, text: '@hoots are you there?', messageId },
+        H,
+      );
+    expect(
+      (
+        await db.query<{ state: string }>(
+          `SELECT state FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2`,
+          [messageId, A],
+        )
+      ).rows,
+    ).toEqual([{ state: 'pending' }]);
+
+    await db.query(
+      `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)
+       VALUES($1,$2,'presence','presence','{"status":"online"}')
+       ON CONFLICT(room_id,agent_id,turn_id,kind)
+       DO UPDATE SET body=EXCLUDED.body,updated_at=now()`,
+      [R, A],
+    );
+    const [command] = await commands();
+    expect(command?.sourceMessageId).toBe(messageId);
+    await daemon.execute(
+      'claimAgentCommand',
+      { roomId: R, commandId: command!.id, generationId: `return-${presence}` },
+      A,
+    );
+    expect(
+      (
+        await db.query<{ state: string }>(`SELECT state FROM agent_commands WHERE id=$1`, [
+          command!.id,
+        ])
+      ).rows[0]?.state,
+    ).toBe('claimed');
+  },
+);
+
+it('still presents an offline notice without dropping the durable command', async () => {
   await db.query(`UPDATE live_outputs SET body='{"status":"offline"}' WHERE agent_id=$1`, [A]);
   const source = await send('@hoots are you there?');
-  expect(await commands()).toEqual([]);
+  expect(await commands()).toHaveLength(1);
   expect(
     (
       await db.query(
@@ -424,20 +490,15 @@ it('never reopens terminal commands and never accepts missing generation claims'
   await result(c!, 'Terminal');
   await expect(claim(c!, 'another')).rejects.toThrow();
 });
-it('rechecks delegated membership at final commit, including staged targets', async () => {
+it('rechecks tagged agent membership at final commit', async () => {
   await send('@hoots');
   const [c] = await commands();
   await claim(c!);
-  await daemon.execute(
-    'stageAgentDelegation',
-    { roomId: R, requestId: c!.turnRequestId, generationId: 'g1', targetAgentId: B },
-    A,
-  );
   await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [
     R,
     B,
   ]);
-  await result(c!, 'No target remains', [B]);
+  await result(c!, '@goosy no target remains', [B]);
   expect((await db.query(`SELECT 1 FROM agent_commands WHERE agent_id=$1`, [B])).rowCount).toBe(0);
 });
 it('binds emitted events to the issuing command when agents share a human request', async () => {

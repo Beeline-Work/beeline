@@ -4,11 +4,7 @@ import type {
   AgentCommandAction,
   RoomInboxResult,
 } from '@beeline/api-contract/daemon';
-import {
-  AGENT_REACHABLE_HORIZON_MS,
-  parseAgentAccessPolicy,
-  senderMayAddressAgent,
-} from '@beeline/api-contract/agent-access';
+import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-contract/agent-access';
 import type { SqlDatabase } from './database.js';
 
 export const COMMAND_LEASE_SECONDS = 90;
@@ -39,7 +35,6 @@ CREATE TABLE IF NOT EXISTS agent_commands (
  claimed_at timestamptz,
  completed_at timestamptz,
  result_message_id text REFERENCES messages(id),
- delegate_agent_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
  UNIQUE(room_id,source_message_id,agent_id,action)
 );
 CREATE INDEX IF NOT EXISTS agent_commands_delivery ON agent_commands(agent_id,room_id,state,created_at);
@@ -65,7 +60,6 @@ export type CommandRow = {
   generation_id: string | null;
   lease_expires_at: Date | null;
   result_message_id: string | null;
-  delegate_agent_ids: string[];
 };
 
 export function nextAgentDepth(parentDepth: number): number | undefined {
@@ -148,16 +142,15 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
   targets.delete(source.author_id);
   for (const target of targets) {
     const agent = (
-      await db.query<{ owner_id: string; access_policy: unknown; reachable: boolean }>(
-        `SELECT a.owner_id,a.access_policy,COALESCE((SELECT lo.body->>'status'='online' AND lo.updated_at>=now()-make_interval(secs => $4::double precision / 1000) FROM live_outputs lo WHERE lo.agent_id=a.agent_id AND lo.kind='presence' ORDER BY lo.updated_at DESC LIMIT 1),false) reachable FROM agents a
+      await db.query<{ owner_id: string; access_policy: unknown }>(
+        `SELECT a.owner_id,a.access_policy FROM agents a
    JOIN memberships m ON m.identity_id=$2 AND m.room_id=$3 AND m.removed_at IS NULL
    WHERE a.agent_id=$1 FOR SHARE OF a,m`,
-        [target, source.author_id, source.room_id, AGENT_REACHABLE_HORIZON_MS],
+        [target, source.author_id, source.room_id],
       )
     ).rows[0];
     if (
       !agent ||
-      !agent.reachable ||
       !senderMayAddressAgent(
         parseAgentAccessPolicy(agent.access_policy),
         source.author_id,
@@ -183,10 +176,16 @@ export async function routeAgentResult(
   db: SqlDatabase,
   parent: CommandRow,
   sourceId: string,
-  delegates: readonly string[],
   replyId?: string,
 ): Promise<void> {
-  const targets = new Set([...delegates, ...parent.delegate_agent_ids]);
+  const source = (
+    await db.query<{ mention_ids: string[] }>(
+      `SELECT mention_ids FROM messages WHERE id=$1 AND room_id=$2 AND author_id=$3`,
+      [sourceId, parent.room_id, parent.agent_id],
+    )
+  ).rows[0];
+  if (!source) return;
+  const targets = new Set(source.mention_ids);
   if (replyId) {
     const reply = (
       await db.query<{ author_id: string }>(
@@ -206,10 +205,7 @@ export async function routeAgentResult(
       agentId,
       sourceMessageId: sourceId,
       parent,
-      reason:
-        delegates.includes(agentId) || parent.delegate_agent_ids.includes(agentId)
-          ? 'agent_delegate'
-          : 'agent_reply',
+      reason: source.mention_ids.includes(agentId) ? 'agent_tag' : 'agent_reply',
     });
 }
 

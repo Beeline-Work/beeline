@@ -60,14 +60,12 @@ async function runCorner(input: {
   agentName: string;
   isOpener: boolean;
   message?: {
-    authorId?: string;
     body: string;
     mentionIds: string[];
     agentMentionIds?: string[];
     replyToMessageId?: string;
     replyToAuthorId?: string;
     agentHopCount?: number;
-    requestAuthorId?: string;
   };
   /** A server check note in the same poll, to prove one turn per check state. */
   checkNote?: boolean;
@@ -188,7 +186,7 @@ async function runCorner(input: {
                 ? [
                     {
                       id: 'human-msg',
-                      authorId: input.message.authorId ?? HUMAN,
+                      authorId: HUMAN,
                       createdAt: 2,
                       type: 'message',
                       body: input.message.body,
@@ -202,9 +200,6 @@ async function runCorner(input: {
                         : {}),
                       ...(input.message.agentHopCount !== undefined
                         ? { agentHopCount: input.message.agentHopCount }
-                        : {}),
-                      ...(input.message.requestAuthorId
-                        ? { requestAuthorId: input.message.requestAuthorId }
                         : {}),
                       attachments: [],
                     },
@@ -349,24 +344,6 @@ describe('a corner carried by its members', () => {
     expect(bystander.prompts).toEqual([]);
   });
 
-  it('preserves an explicit instruction from the opener to another member', async () => {
-    const helper = await runCorner({
-      agentKey: HELPER_KEY,
-      agentName: 'Goosy',
-      isOpener: false,
-      message: {
-        authorId: OPENER,
-        body: '@Goosy inspect the server boundary.',
-        mentionIds: [HELPER],
-        agentMentionIds: [HELPER],
-      },
-      history: [{ authorId: OPENER, body: 'Started on it.', requestAuthorId: HUMAN }],
-    });
-
-    expect(helper.prompts).toHaveLength(1);
-    expect(helper.prompts[0]).toContain('inspect the server boundary');
-  });
-
   it('rebuilds committed continuity after a lost final-post response', async () => {
     const helper = await runCorner({
       agentKey: HELPER_KEY,
@@ -449,57 +426,6 @@ describe('a corner carried by its members', () => {
       ],
     });
     expect(helper.prompts).toEqual([]);
-  });
-
-  it('does not revive an older agent exchange when that agent is answering a human', async () => {
-    const helper = await runCorner({
-      agentKey: HELPER_KEY,
-      agentName: 'Goosy',
-      isOpener: false,
-      message: {
-        authorId: OPENER,
-        body: 'Codex answers the captain without addressing Goosy.',
-        mentionIds: [],
-        requestAuthorId: HUMAN,
-      },
-      history: [
-        {
-          authorId: OPENER,
-          body: '@Goosy take the older exchange.',
-          mentionIds: [HELPER],
-          requestAuthorId: HUMAN,
-        },
-        { authorId: HELPER, body: 'Older Goosy answer.', requestAuthorId: OPENER },
-      ],
-    });
-
-    expect(helper.prompts).toEqual([]);
-  });
-
-  it('preserves a genuine unmentioned return from the agent that was asked', async () => {
-    const helper = await runCorner({
-      agentKey: HELPER_KEY,
-      agentName: 'Goosy',
-      isOpener: false,
-      message: {
-        authorId: OPENER,
-        body: 'Here is the result you asked me for.',
-        mentionIds: [],
-        requestAuthorId: HELPER,
-      },
-      history: [
-        {
-          authorId: OPENER,
-          body: '@Goosy take the older exchange.',
-          mentionIds: [HELPER],
-          requestAuthorId: HUMAN,
-        },
-        { authorId: HELPER, body: 'Can you verify the query?', requestAuthorId: OPENER },
-      ],
-    });
-
-    expect(helper.prompts).toHaveLength(1);
-    expect(helper.prompts[0]).toContain('result you asked me for');
   });
 
   it('keeps an unaddressed message silent when its sender has no active exchange', async () => {

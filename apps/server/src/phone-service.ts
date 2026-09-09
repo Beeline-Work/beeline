@@ -2332,6 +2332,32 @@ export class PhoneService {
          AND identity.handle IS NOT NULL`,
       [roomId],
     );
+    const noticeAgentIds = new Set<string>();
+    const directAgents = await this.database.query<{ id: string }>(
+      `SELECT identity.id
+       FROM rooms room
+       JOIN LATERAL jsonb_array_elements_text(
+         CASE WHEN jsonb_typeof(room.direct_participants)='array'
+           THEN room.direct_participants ELSE '[]'::jsonb END
+       ) participant(id) ON true
+       JOIN identities identity ON identity.id=participant.id AND identity.kind='agent'
+       JOIN memberships membership ON membership.room_id=room.id
+         AND membership.identity_id=identity.id AND membership.removed_at IS NULL
+       WHERE room.id=$1 AND jsonb_array_length(
+         CASE WHEN jsonb_typeof(room.direct_participants)='array'
+           THEN room.direct_participants ELSE '[]'::jsonb END
+       )=2`,
+      [roomId],
+    );
+    // A private two-member DM with one agent is already an addressed surface:
+    // every human message in it is for that sole helper, including the first
+    // untagged message and a reply to the human's own row. Persist the address
+    // as an ordinary mention so inbox replay after a daemon restart has the
+    // same meaning as live delivery.
+    if (directAgents.rows.length === 1) {
+      mentions.add(directAgents.rows[0]!.id);
+      noticeAgentIds.add(directAgents.rows[0]!.id);
+    }
     const absentCornerAgents = await this.database.query<{ id: string; handle: string }>(
       `SELECT identity.id,identity.handle
        FROM rooms room
@@ -2360,7 +2386,6 @@ export class PhoneService {
       candidates.push({ id: agent.id, kind: 'agent', member: false });
       candidatesByHandle.set(handle, candidates);
     }
-    const noticeAgentIds = new Set<string>();
     for (const handle of typedHandles) {
       const [candidate] = candidatesByHandle.get(handle) ?? [];
       if ((candidatesByHandle.get(handle)?.length ?? 0) !== 1 || !candidate) continue;

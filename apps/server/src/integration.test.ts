@@ -855,7 +855,8 @@ describe('monolith integration', () => {
     expect(repositoryState.resolution).toBe('none');
     expect([...(repositoryState.directParticipants ?? [])].sort()).toEqual([AGENT, HUMAN].sort());
 
-    // A bootstrapped DM still requires an explicit mention: membership is not authorship intent.
+    // The Room itself supplies authorship intent: its sole agent is addressed
+    // even by the first untagged human message.
     const sent = await operation('sendRoomMessage', {
       roomId: dm.id,
       messageId: 'c'.repeat(64),
@@ -866,18 +867,43 @@ describe('monolith integration', () => {
       `SELECT mention_ids FROM messages WHERE id=$1`,
       ['c'.repeat(64)],
     );
-    expect(stored.rows[0]?.mention_ids).toEqual([]);
+    expect(stored.rows[0]?.mention_ids).toEqual([AGENT]);
 
+    // A retried phone delivery is idempotent after the server-derived mention
+    // is applied and cannot create a second inbox item.
+    expect(
+      (
+        await operation('sendRoomMessage', {
+          roomId: dm.id,
+          messageId: 'c'.repeat(64),
+          text: 'Are you there?',
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await database.query<{ count: number }>(
+          `SELECT count(*)::int count FROM messages WHERE id=$1`,
+          ['c'.repeat(64)],
+        )
+      ).rows[0]?.count,
+    ).toBe(1);
+
+    // A fresh daemon token models the helper restarting after the message was
+    // committed. The durable mention still makes that first message intake.
+    const restartedExchange = await auth.createDaemonExchange(AGENT);
+    const restartedToken = (await auth.exchangeDaemonToken(restartedExchange.exchangeToken))!
+      .daemonToken;
     const bootstrap = (await (await daemonOperation('getDaemonBootstrap', {})).json()) as {
       rooms: Array<{ roomId: string }>;
     };
     expect(bootstrap.rooms).toContainEqual(expect.objectContaining({ roomId: dm.id }));
-    const unaddressedInbox = (await (
-      await daemonOperation('getRoomInbox', { roomId: dm.id })
+    const restartedInbox = (await (
+      await daemonOperation('getRoomInbox', { roomId: dm.id }, restartedToken)
     ).json()) as { items: Array<{ id: string }> };
-    expect(unaddressedInbox.items).not.toContainEqual(
-      expect.objectContaining({ id: 'c'.repeat(64) }),
-    );
+    expect(restartedInbox.items).toEqual([
+      expect.objectContaining({ id: 'c'.repeat(64), mentionIds: [AGENT] }),
+    ]);
 
     const addressed = await operation('sendRoomMessage', {
       roomId: dm.id,
@@ -921,6 +947,26 @@ describe('monolith integration', () => {
       await daemonOperation('getRoomInbox', { roomId: dm.id })
     ).json()) as { items: Array<{ id: string }> };
     expect(directReplyInbox.items).toContainEqual(expect.objectContaining({ id: directReplyId }));
+
+    const humanParentReplyId = 'f'.repeat(64);
+    expect(
+      (
+        await operation('sendRoomReply', {
+          roomId: dm.id,
+          messageId: humanParentReplyId,
+          parentMessageId: 'c'.repeat(64),
+          text: 'One more thing.',
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await database.query<{ mention_ids: string[] }>(
+          `SELECT mention_ids FROM messages WHERE id=$1`,
+          [humanParentReplyId],
+        )
+      ).rows[0]?.mention_ids,
+    ).toEqual([AGENT]);
 
     // The chat list names a DM row by its peer, so it carries the one other
     // participant's identity instead of leaving the client the stored name.

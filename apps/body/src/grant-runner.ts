@@ -61,10 +61,7 @@ import {
   type CommandGrantRule,
 } from '@beeline/api-contract/agent-grants';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
-import {
-  surfaceAllows,
-  type AgentSurface,
-} from '@beeline/api-contract/surface-capabilities';
+import { surfaceAllows, type AgentSurface } from '@beeline/api-contract/surface-capabilities';
 import { wrapAgentCommand, type MaskedPath } from './bwrap-sandbox.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import {
@@ -107,7 +104,8 @@ export interface GrantRunnerRoom {
   /** Read at each run, because a Room's scratch is only known once its session starts. */
   writePolicy: () => GrantWritePolicy;
   /** The turn in flight, if any: its request id and the identity whose message started it. */
-  turn: () => { requestId: string; requester?: GrantRunRequester } | undefined;
+  turn: () =>
+    { requestId: string; generationId?: string; requester?: GrantRunRequester } | undefined;
 }
 
 export interface GrantRunResult {
@@ -147,9 +145,10 @@ export function operatorSecretResolver(env: NodeJS.ProcessEnv = process.env): Se
       const saved = (await readProviderKeyStore(env))[provider];
       if (saved) return saved;
     }
-    const raw = await readFile(resolve(dirname(providerKeyStorePath(env)), 'secrets.json'), 'utf8').catch(
-      () => undefined,
-    );
+    const raw = await readFile(
+      resolve(dirname(providerKeyStorePath(env)), 'secrets.json'),
+      'utf8',
+    ).catch(() => undefined);
     if (!raw) return undefined;
     try {
       const parsed = JSON.parse(raw) as unknown;
@@ -163,7 +162,8 @@ export function operatorSecretResolver(env: NodeJS.ProcessEnv = process.env): Se
 }
 
 export function validateGrantArgv(value: unknown): string[] {
-  if (!Array.isArray(value) || value.length === 0) throw new Error('argv must be a non-empty array');
+  if (!Array.isArray(value) || value.length === 0)
+    throw new Error('argv must be a non-empty array');
   if (value.length > ARGV_MAX_WORDS) throw new Error(`argv exceeds ${ARGV_MAX_WORDS} words`);
   return value.map((word) => {
     if (typeof word !== 'string' || !word) throw new Error('argv words must be non-empty strings');
@@ -225,7 +225,8 @@ export class GrantCommandRunner {
   private readonly resolveSecret: SecretResolver;
 
   constructor(private readonly options: GrantCommandRunnerOptions) {
-    this.resolveSecret = options.resolveSecret ?? operatorSecretResolver(options.env ?? process.env);
+    this.resolveSecret =
+      options.resolveSecret ?? operatorSecretResolver(options.env ?? process.env);
   }
 
   register(roomId: string, room: GrantRunnerRoom): void {
@@ -241,7 +242,9 @@ export class GrantCommandRunner {
     const room = this.rooms.get(input.roomId);
     if (!room) throw new Error('this daemon is not serving that Room');
     const argv = validateGrantArgv(input.argv);
-    const live = await this.options.api.execute('listAgentGrants', { agentId: this.options.agentId });
+    const live = await this.options.api.execute('listAgentGrants', {
+      agentId: this.options.agentId,
+    });
     const match = matchCommandGrant(live.grants, room.workspaceId, argv);
     if (!match) {
       throw new Error(
@@ -307,7 +310,8 @@ export class GrantCommandRunner {
         },
         (error, stdout, stderr) => {
           const combined = [stdout, stderr].filter(Boolean).join(stderr && stdout ? '\n' : '');
-          const failure = error as (NodeJS.ErrnoException & { killed?: boolean; signal?: string }) | null;
+          const failure = error as
+            (NodeJS.ErrnoException & { killed?: boolean; signal?: string }) | null;
           const spawnFailure = Boolean(failure && typeof failure.code === 'string');
           resolveRun({
             exitCode: spawnFailure
@@ -315,7 +319,9 @@ export class GrantCommandRunner {
               : (child.exitCode ?? (typeof failure?.code === 'number' ? failure.code : 0)),
             ...(failure?.signal ? { signal: failure.signal } : {}),
             timedOut: Boolean(failure?.killed && failure?.signal === 'SIGKILL'),
-            output: spawnFailure ? `${combined}${combined ? '\n' : ''}${failure!.message}` : combined,
+            output: spawnFailure
+              ? `${combined}${combined ? '\n' : ''}${failure!.message}`
+              : combined,
           });
         },
       );
@@ -345,6 +351,7 @@ export class GrantCommandRunner {
       agentId: this.options.agentId,
       roomId: input.roomId,
       requestId: turn?.requestId ?? `grant:${grant.grantId}`,
+      generationId: turn?.generationId,
       activity: [
         {
           kind: 'tool',
@@ -418,7 +425,10 @@ function scriptCandidates(
 ): string[] {
   const argument = interpreterScriptArgument(argv);
   if (!argument) return [];
-  const paths = [resolve(cwd, argument.path), ...(scratch ? [resolve(scratch, argument.path)] : [])];
+  const paths = [
+    resolve(cwd, argument.path),
+    ...(scratch ? [resolve(scratch, argument.path)] : []),
+  ];
   return [...new Set(paths)];
 }
 

@@ -1,3 +1,4 @@
+import { commandFixtureApi } from './command-fixture.test-support.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -130,7 +131,7 @@ describe('monolith Room turn context', () => {
       cwd: config.workspaceRoot,
       runtime,
       config,
-      api,
+      api: commandFixtureApi(api, 'room-id', runtime.agent.publicKey),
       scheduler,
       health: { poll: vi.fn(), failure: vi.fn(), presence: vi.fn() },
       signal: abort.signal,
@@ -143,15 +144,11 @@ describe('monolith Room turn context', () => {
     await running.catch(() => undefined);
     await scheduler.dispose();
 
-    // Startup reconstructs continuity from its dedicated bounded projection,
-    // while prompt context still takes the server-default newest page.
-    expect(conversationReads).toContainEqual({
-      roomId: 'room-id',
-      limit: 200,
-      window: 'continuity',
-    });
+    expect(conversationReads.every((read) => read.window !== 'continuity')).toBe(true);
     const promptConversationRead = conversationReads.find((read) => !('window' in read));
-    expect(promptConversationRead).toEqual({ roomId: 'room-id', limit: 200 });
+    expect(promptConversationRead).toEqual(
+      expect.objectContaining({ roomId: 'room-id', limit: 200 }),
+    );
 
     // Turn one on a cold session carries the whole final-80 window the Room
     // turn renders, which now ends on the newest row instead of row 200.

@@ -829,7 +829,9 @@ export class GitHubOperations {
   ) {
     const lifecycle = { ...(await this.lifecycle(cornerId, database)), ...patch };
     await database.query(
-      `UPDATE corner_facts SET lifecycle=$2::jsonb,updated_at=now() WHERE corner_id=$1`,
+      `UPDATE corner_facts SET lifecycle=$2::jsonb,
+       command_check_state=CASE WHEN lifecycle->>'checks' IS DISTINCT FROM $2::jsonb->>'checks' THEN NULL ELSE command_check_state END,
+       updated_at=now() WHERE corner_id=$1`,
       [cornerId, JSON.stringify(lifecycle)],
     );
   }

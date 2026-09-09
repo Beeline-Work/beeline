@@ -1,3 +1,5 @@
+import { isControlKind } from '@beeline/api-contract/daemon';
+import { commandFixtureApi } from './command-fixture.test-support.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -5,11 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AcpClient, type PromptResult } from './acp.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
-import {
-  inboxItemTriggersTurn,
-  isSubscribedEvent,
-  MonolithRoomTurnLoop,
-} from './monolith-room-turn.js';
+import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 import { SessionScheduler } from './session-scheduler.js';
 import { turnStopRequestId } from './turn-stop.js';
@@ -43,7 +41,7 @@ const stopLine = (over: Record<string, unknown> = {}) =>
       kind: 'turn-cancelled',
     },
     ...over,
-  }) as Parameters<typeof inboxItemTriggersTurn>[0] & { requestId?: string };
+  }) as import('./daemon-api-client.js').InboxItem & { requestId?: string };
 
 describe('the stop a requester wrote', () => {
   it('names the one request it ends', () => {
@@ -83,13 +81,12 @@ describe('the stop a requester wrote', () => {
   it('never starts the very turn it exists to end', () => {
     // A control kind is off the subscribed-event path, so a stop can neither
     // wake a subscriber nor be answered as if it were news.
-    expect(isSubscribedEvent(stopLine(), AGENT)).toBe(false);
-    expect(inboxItemTriggersTurn(stopLine(), AGENT)).toBe(false);
+    expect(isControlKind('turn-cancelled')).toBe(true);
   });
 });
 
 describe('a Room turn the requester stopped', () => {
-  it('cancels the harness session and keeps the words already written', async () => {
+  it('cancels the harness session without publishing after its authority ends', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-turn-stop-'));
     roots.push(root);
     const identity = identityFromKey(AGENT_HEX, 'Bee');
@@ -170,7 +167,14 @@ describe('a Room turn the requester stopped', () => {
         if (!stopDelivered && promptStartedAlready) {
           stopDelivered = true;
           return {
-            items: [{ ...stopLine(), mentionIds: [agent.publicKey] }],
+            items: [
+              {
+                ...stopLine(),
+                mentionIds: [agent.publicKey],
+                fixtureCommandAction: 'stop',
+                fixtureTurnRequestId: 'ask-1',
+              },
+            ],
             cursor: 'stop-1',
           };
         }
@@ -215,7 +219,7 @@ describe('a Room turn the requester stopped', () => {
       cwd: config.workspaceRoot,
       runtime,
       config,
-      api,
+      api: commandFixtureApi(api, 'room-id', agent.publicKey),
       scheduler,
       health: { poll: vi.fn(), failure: vi.fn(), presence: vi.fn() },
       signal: abort.signal,
@@ -239,19 +243,12 @@ describe('a Room turn the requester stopped', () => {
     const receipts = execute.mock.calls
       .filter(([name]) => name === 'postAgentTurnReceipt')
       .map(([, input]) => (input as { status: string; heartbeat?: boolean }).status);
-    // What the model had already written stays: stopping is not undoing, and
-    // the words were already on the reader's page.
-    expect(posted).toHaveLength(1);
-    expect(posted[0]!.text).toBe('Half of an answer, cut off mid-');
-    // A sentence cut off mid-tag must not wake anyone it never finished naming.
-    expect(posted[0]!.mentionIds ?? []).toEqual([]);
+    expect(posted).toEqual([]);
     // No terminal receipt is claimed: the server settled this turn `cancelled`
     // before the line that stopped it was even written.
     expect(receipts).not.toContain('complete');
     expect(receipts).not.toContain('failed');
-    // The draft dissolves into that durable reply rather than flickering.
-    expect(execute.mock.calls.filter(([name]) => name === 'retractAgentLiveOutput')).not.toEqual(
-      [],
-    );
+    // The server clears the cancelled draft; the helper sends no late output.
+    expect(execute.mock.calls.filter(([name]) => name === 'retractAgentLiveOutput')).toEqual([]);
   });
 });

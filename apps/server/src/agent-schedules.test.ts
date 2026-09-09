@@ -258,11 +258,20 @@ describe('agent schedule background posting', () => {
           item.mentionIds.includes(AGENT),
       );
       expect(scheduledItems).toHaveLength(2);
+      const [command] = (await daemon.execute('getAgentCommands', { roomId: ROOM }, AGENT))
+        .commands;
+      await daemon.execute(
+        'claimAgentCommand',
+        { roomId: ROOM, commandId: command!.id, generationId: 'g1' },
+        AGENT,
+      );
       await daemon.execute(
         'postRoomMessage',
         {
           roomId: ROOM,
           text: 'hello @methoxine-debug',
+          requestId: command!.turnRequestId,
+          generationId: 'g1',
           replyToMessageId: scheduledItems[0]!.id,
         },
         AGENT,

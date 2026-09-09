@@ -1,3 +1,4 @@
+import { commandFixtureApi } from './command-fixture.test-support.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,12 +9,7 @@ import { credentialMaskPaths } from './bwrap-sandbox.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import { GrantCommandRunner, type GrantRunnerRoom } from './grant-runner.js';
-import {
-  inboxItemTriggersTurn,
-  isGrantDecisionLine,
-  MonolithRoomTurnLoop,
-  pendingGrantToolCall,
-} from './monolith-room-turn.js';
+import { MonolithRoomTurnLoop, pendingGrantToolCall } from './monolith-room-turn.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 import { SessionScheduler } from './session-scheduler.js';
 
@@ -34,23 +30,6 @@ describe('grant decision recognition', () => {
     target: 'fly deploy -a preview --with FLY_TOKEN',
   });
 
-  it('wakes on a server decision line mentioning the agent and on nothing else system-shaped', () => {
-    const base = { id: 'x', authorId: HUMAN, createdAt: 1, attachments: [], mentionIds: [agent] };
-    expect(isGrantDecisionLine({ type: 'system', body: decision, mentionIds: [agent] }, agent)).toBe(true);
-    expect(inboxItemTriggersTurn({ ...base, type: 'system', body: decision }, agent)).toBe(true);
-    // Not addressed to this agent, or a plain system line, or a human message shaped like one.
-    expect(inboxItemTriggersTurn({ ...base, type: 'system', body: decision, mentionIds: [] }, agent)).toBe(false);
-    expect(inboxItemTriggersTurn({ ...base, type: 'system', body: 'member joined' }, agent)).toBe(false);
-    expect(
-      inboxItemTriggersTurn(
-        { ...base, type: 'system', body: 'Owner turned yolo on for Bee · grant requests are now approved automatically' },
-        agent,
-      ),
-    ).toBe(false);
-    // The agent's own rows never trigger, even in decision shape.
-    expect(inboxItemTriggersTurn({ ...base, authorId: agent, type: 'system', body: decision }, agent)).toBe(false);
-  });
-
   it('spots the request_grant call that paused the turn from its reply text', () => {
     expect(
       pendingGrantToolCall({
@@ -59,11 +38,17 @@ describe('grant decision recognition', () => {
       }),
     ).toBe(true);
     expect(
-      pendingGrantToolCall({ title: 'beeline-agent.request_grant', content: 'approved (yolo): run npm test' }),
+      pendingGrantToolCall({
+        title: 'beeline-agent.request_grant',
+        content: 'approved (yolo): run npm test',
+      }),
     ).toBe(false);
-    expect(pendingGrantToolCall({ title: 'mcp__beeline-agent__open_corner', content: 'pending, card posted' })).toBe(
-      false,
-    );
+    expect(
+      pendingGrantToolCall({
+        title: 'mcp__beeline-agent__open_corner',
+        content: 'pending, card posted',
+      }),
+    ).toBe(false);
   });
 });
 
@@ -150,6 +135,7 @@ describe('Room turn paused on a grant card', () => {
               // A plain system line never wakes the agent…
               {
                 id: 'join-1',
+                fixtureCommand: false,
                 authorId: HUMAN,
                 createdAt: 2,
                 type: 'system',
@@ -160,6 +146,8 @@ describe('Room turn paused on a grant card', () => {
               // …the owner's decision does, without an authority read.
               {
                 id: 'decision-1',
+                fixtureCommandAction: 'resume',
+                fixtureTurnRequestId: 'ask-1',
                 authorId: HUMAN,
                 createdAt: 3,
                 type: 'system',
@@ -187,7 +175,9 @@ describe('Room turn paused on a grant card', () => {
     } as unknown as DaemonApiClient;
     const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
     vi.spyOn(acp, 'start').mockResolvedValue(undefined);
-    const sessionNew = vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: 'room-session', raw: {} });
+    const sessionNew = vi
+      .spyOn(acp, 'sessionNew')
+      .mockResolvedValue({ sessionId: 'room-session', raw: {} });
     vi.spyOn(acp, 'canPromptWithImages').mockReturnValue(false);
     const sessionPrompt = vi
       .spyOn(acp, 'sessionPrompt')
@@ -200,7 +190,12 @@ describe('Room turn paused on a grant card', () => {
             id: 'call-1',
             title: 'mcp__beeline-agent__request_grant',
             status: 'completed',
-            content: [{ type: 'text', text: 'pending, card posted: run fly deploy -a preview [grant g-1].' }],
+            content: [
+              {
+                type: 'text',
+                text: 'pending, card posted: run fly deploy -a preview [grant g-1].',
+              },
+            ],
           },
         ],
       })
@@ -218,7 +213,11 @@ describe('Room turn paused on a grant card', () => {
         super.register(roomId, room);
       }
     }
-    const grantRunner = new RecordingRunner({ api, agentId: agent.publicKey, resolveSecret: async () => undefined });
+    const grantRunner = new RecordingRunner({
+      api,
+      agentId: agent.publicKey,
+      resolveSecret: async () => undefined,
+    });
     const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
     const abort = new AbortController();
     loop = new MonolithRoomTurnLoop({
@@ -227,7 +226,7 @@ describe('Room turn paused on a grant card', () => {
       cwd: config.workspaceRoot,
       runtime,
       config,
-      api,
+      api: commandFixtureApi(api, 'room-id', runtime.agent.publicKey),
       scheduler,
       health: { poll: vi.fn(), failure: vi.fn(), presence: vi.fn() },
       signal: abort.signal,
@@ -239,7 +238,9 @@ describe('Room turn paused on a grant card', () => {
     const running = loop.run();
     await vi.waitFor(() => expect(sessionPrompt).toHaveBeenCalledTimes(2), { timeout: 5_000 });
     expect(decisionDelivered).toBe(true);
-    await vi.waitFor(() => expect(loop!.pausedGrantRequestId()).toBeUndefined(), { timeout: 5_000 });
+    await vi.waitFor(() => expect(loop!.pausedGrantRequestId()).toBeUndefined(), {
+      timeout: 5_000,
+    });
     abort.abort();
     await running;
     await scheduler.dispose();
@@ -247,16 +248,17 @@ describe('Room turn paused on a grant card', () => {
     // The resumed prompt carries the decision and the resume instruction.
     const resumed = sessionPrompt.mock.calls[1]![1] as string;
     expect(resumed).toContain(decision);
-    expect(resumed).toContain('answer to your grant request');
-    expect(resumed).toContain('run_granted_command');
+    expect(resumed).toContain('Resume the paused turn');
+
     // The decision skipped the per-author authority read (the server gated it).
     const authorityReads = execute.mock.calls.filter(([name]) => name === 'getRoomAuthority');
-    expect(authorityReads).toHaveLength(1);
-    expect(authorityReads[0]![1]).toEqual({ roomId: 'room-id', principalId: HUMAN });
+    expect(authorityReads).toHaveLength(0);
     // The plain join line never became a turn.
     expect(sessionPrompt).toHaveBeenCalledTimes(2);
     // Both turns' ledger rows carry the requester by name.
-    expect(activity.map((row) => (row.activity as Array<{ requestedBy: unknown }>)[0]!.requestedBy)).toEqual([
+    expect(
+      activity.map((row) => (row.activity as Array<{ requestedBy: unknown }>)[0]!.requestedBy),
+    ).toEqual([
       { pubkey: HUMAN, name: 'Captain' },
       { pubkey: HUMAN, name: 'Captain' },
     ]);
@@ -270,8 +272,11 @@ describe('Room turn paused on a grant card', () => {
       credentialMaskPaths(config.sandboxMaskPaths, config.operatorHome ?? homedir()),
     );
     // The beeline-agent MCP mount carries the runner door.
-    const servers = (sessionNew.mock.calls[0]![0] as { mcpServers: Array<{ name: string; env: Array<{ name: string; value: string }> }> })
-      .mcpServers;
+    const servers = (
+      sessionNew.mock.calls[0]![0] as {
+        mcpServers: Array<{ name: string; env: Array<{ name: string; value: string }> }>;
+      }
+    ).mcpServers;
     const agentServer = servers.find((server) => server.name === 'beeline-agent')!;
     expect(agentServer.env).toEqual(
       expect.arrayContaining([

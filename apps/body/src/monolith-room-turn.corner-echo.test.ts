@@ -1,3 +1,4 @@
+import { commandFixtureApi } from './command-fixture.test-support.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -118,7 +119,7 @@ async function runTurn(
     cwd: config.workspaceRoot,
     runtime,
     config,
-    api,
+    api: commandFixtureApi(api, 'room-id', runtime.agent.publicKey),
     scheduler,
     health: { poll: vi.fn(), failure: vi.fn(), presence: vi.fn() },
     signal: abort.signal,

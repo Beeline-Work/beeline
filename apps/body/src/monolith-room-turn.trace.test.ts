@@ -1,3 +1,4 @@
+import { commandFixtureApi } from './command-fixture.test-support.js';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -188,7 +189,7 @@ async function runTurns(options: {
     cwd: config.workspaceRoot,
     runtime,
     config,
-    api,
+    api: commandFixtureApi(api, 'room-id', runtime.agent.publicKey),
     scheduler,
     health: { poll: vi.fn(), failure: vi.fn(), presence: vi.fn() },
     signal: abort.signal,
@@ -355,7 +356,6 @@ describe('Room turn phase trace', () => {
     expect(new Set(traced.operations)).toEqual(
       new Set([
         'getRoomInbox',
-        'getRoomAuthority',
         'getWorkspaceRoster',
         'postAgentActivity',
         'getAgentConfiguration',

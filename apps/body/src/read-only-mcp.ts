@@ -16,7 +16,7 @@
  * edit-corner worktree after the signed human ALLOW flow.
  */
 import { execFileSync } from 'node:child_process';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import {
   closeSync,
   constants,
@@ -242,6 +242,19 @@ const READ_ONLY_TOOLS: ToolDefinition[] = [
 ];
 
 const AGENT_TOOLS: ToolDefinition[] = [
+  {
+    name: 'delegate_to_agent',
+    description:
+      'Deliberately delegate work to an agent in this Room. The server dispatches it with your final answer. Mentioning an agent in prose alone never dispatches work.',
+    inputSchema: {
+      type: 'object',
+      required: ['agentId'],
+      properties: {
+        agentId: { type: 'string', description: 'Exact agent identity id from the roster.' },
+      },
+      additionalProperties: false,
+    },
+  },
   {
     name: 'create_schedule',
     description:
@@ -997,6 +1010,18 @@ function requiredEnv(name: string): string {
   return value;
 }
 
+async function activeCommandContext(): Promise<{
+  roomId: string;
+  requestId: string;
+  generationId: string;
+}> {
+  const { readFile } = await import('node:fs/promises');
+  const value = JSON.parse(await readFile(requiredEnv('BEELINE_TURN_CONTEXT_FILE'), 'utf8'));
+  if (!value.roomId || !value.requestId || !value.generationId)
+    throw new Error('no active server command');
+  return value;
+}
+
 async function daemonExecute(name: string, input: JsonObject): Promise<JsonObject> {
   const baseUrl = requiredEnv('BEELINE_DAEMON_BASE_URL');
   const response = await fetch(new URL(`/v1/daemon/operations/${name}`, `${baseUrl}/`), {
@@ -1005,7 +1030,14 @@ async function daemonExecute(name: string, input: JsonObject): Promise<JsonObjec
       authorization: `Bearer ${requiredEnv('BEELINE_DAEMON_TOKEN')}`,
       'content-type': 'application/json',
     },
-    body: JSON.stringify(input),
+    body: JSON.stringify({
+      ...input,
+      ...(process.env.BEELINE_TURN_CONTEXT_FILE &&
+      !name.startsWith('get') &&
+      !name.startsWith('list')
+        ? await activeCommandContext()
+        : {}),
+    }),
   });
   if (!response.ok) {
     let code = 'request_failed';
@@ -1046,7 +1078,7 @@ async function openCorner(args: JsonObject): Promise<string> {
   if (repository.resolution === 'repository' && (!repository.key || !repository.remote)) {
     throw new Error('open_corner requires a complete verified repository binding');
   }
-  const requestId = randomBytes(32).toString('hex');
+  const requestId = (await activeCommandContext()).requestId;
   const created = await daemonExecute('createCorner', {
     roomId,
     requestId,
@@ -1064,12 +1096,6 @@ async function openCorner(args: JsonObject): Promise<string> {
   if (typeof created.cornerId !== 'string' || !created.cornerId) {
     throw new Error('createCorner returned no corner id');
   }
-  await daemonExecute('postRoomMessage', {
-    roomId: created.cornerId,
-    requestId,
-    text: objective,
-    presentation: 'message',
-  });
   return JSON.stringify({
     cornerId: created.cornerId,
     name,
@@ -1754,6 +1780,12 @@ async function daemonUploadMedia(
 
 async function callAgentTool(name: string, args: JsonObject): Promise<string> {
   switch (name) {
+    case 'delegate_to_agent':
+      await daemonExecute('stageAgentDelegation', {
+        roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+        targetAgentId: args.agentId,
+      });
+      return 'Delegation recorded for your final answer.';
     case 'open_corner':
       return openCorner(args);
     case 'close_corner':

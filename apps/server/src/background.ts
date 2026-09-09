@@ -264,6 +264,9 @@ export class MediaExpiryLoop {
 }
 
 export async function runMaintenance(database: SqlDatabase): Promise<void> {
+  await database.query(
+    `DELETE FROM agent_commands WHERE state IN ('complete','cancelled') AND completed_at<now()-interval '30 days'`,
+  );
   await database.query(`DELETE FROM phone_access_tokens WHERE expires_at<now()`);
   await database.query(`DELETE FROM phone_sessions WHERE expires_at<now()`);
   await database.query(

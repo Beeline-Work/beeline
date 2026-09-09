@@ -1,3 +1,4 @@
+import { commandFixtureApi } from './command-fixture.test-support.js';
 /**
  * Regression for the attach-scratch-root sandbox gap: `write_scratch_file`
  * writes strictly inside `BEELINE_ATTACH_SCRATCH_ROOT` (the per-Room
@@ -132,7 +133,7 @@ describe('Room session sandbox — attach scratch root', () => {
       cwd: config.workspaceRoot,
       runtime,
       config,
-      api,
+      api: commandFixtureApi(api, 'room-id', agent.publicKey),
       scheduler,
       health: { poll: vi.fn(), failure: vi.fn(), presence: vi.fn() },
       signal: abort.signal,

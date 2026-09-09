@@ -522,6 +522,54 @@ describe('GitHub phone operations', () => {
       );
     });
 
+    it('keeps a valid linked account healthy across repeated refreshes without a replacement grant', async () => {
+      const operations = operationsFor(database);
+      const { tokenBodies, fetchMock } = await bindIdentity(database);
+      await operations.beginIdentity(HUMAN, {
+        redirectUri: 'beeline://callback',
+        state: 'repeated-renewal',
+      });
+      await operations.completeIdentity(
+        HUMAN,
+        { challenge: 'code', proof: 'repeated-renewal' },
+        false,
+      );
+      const originalFetch = fetchMock.getMockImplementation()!;
+      fetchMock.mockImplementation(async (input, init) => {
+        if (String(input) === 'https://github.test/token') {
+          const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+          tokenBodies.push(body);
+          if (body.grant_type === 'refresh_token') {
+            return new Response(
+              JSON.stringify({ access_token: 'fresh-user-token', expires_in: 28800 }),
+              { status: 200, headers: { 'content-type': 'application/json' } },
+            );
+          }
+        }
+        return originalFetch(input, init);
+      });
+      tokenBodies.length = 0;
+
+      for (let refresh = 0; refresh < 2; refresh += 1) {
+        await database.query(
+          `UPDATE github_user_tokens SET expires_at=now()-interval '1 minute' WHERE subject='42'`,
+        );
+        await expect(operations.refresh(HUMAN)).resolves.toEqual({});
+      }
+
+      expect(tokenBodies).toEqual([
+        expect.objectContaining({ grant_type: 'refresh_token', refresh_token: 'refresh-1' }),
+        expect.objectContaining({ grant_type: 'refresh_token', refresh_token: 'refresh-1' }),
+      ]);
+      expect(
+        (
+          await database.query<{ stale_at: string | null }>(
+            `SELECT stale_at FROM github_user_tokens WHERE subject='42'`,
+          )
+        ).rows[0]?.stale_at,
+      ).toBeNull();
+    });
+
     it('preserves a refresh credential after a temporary rotation failure and recovers next time', async () => {
       const operations = operationsFor(database);
       const { fetchMock } = await bindIdentity(database);

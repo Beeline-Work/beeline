@@ -58,6 +58,7 @@ export const SERVER_EVENT_KINDS = [
   'check-failed',
   'merged',
   'grant-decided',
+  'turn-cancelled',
 ] as const;
 export type ServerEventKind = (typeof SERVER_EVENT_KINDS)[number];
 export type AgentEventKind = `agent:${string}`;
@@ -83,6 +84,22 @@ export function isSystemEventKind(value: unknown): value is SystemEventKind {
 export const RESUME_KINDS: readonly SystemEventKind[] = ['grant-decided'];
 export function isResumeKind(value: unknown): boolean {
   return RESUME_KINDS.includes(value as SystemEventKind);
+}
+
+/**
+ * Kinds that CONTROL a turn already running instead of starting one. A stop
+ * request names the request id of the turn it ends: the daemon reads it,
+ * cancels that session and publishes nothing. Waking a new turn on it would
+ * start the very work the person asked to stop, so it is excluded from the
+ * subscribed-event path the way a resume kind is — and for the same reason.
+ *
+ * A control kind still MENTIONS the agent, because a mention is the only thing
+ * that wakes its daemon, and a stop that waits for the next poll is a stop the
+ * person watches not happen.
+ */
+export const CONTROL_KINDS: readonly SystemEventKind[] = ['turn-cancelled'];
+export function isControlKind(value: unknown): boolean {
+  return CONTROL_KINDS.includes(value as SystemEventKind);
 }
 
 /**

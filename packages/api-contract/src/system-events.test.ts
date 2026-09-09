@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CONTROL_KINDS,
   formatSystemLine,
   isAgentKind,
+  isControlKind,
   isResumeKind,
   isServerEventKind,
   isSystemEvent,
@@ -73,6 +75,7 @@ describe('the event kinds beside the prose', () => {
       'check-failed',
       'merged',
       'grant-decided',
+      'turn-cancelled',
     ]);
     expect(isServerEventKind('joined')).toBe(true);
     expect(isServerEventKind('agent:handoff')).toBe(false);
@@ -99,6 +102,18 @@ describe('the event kinds beside the prose', () => {
     expect([...RESUME_KINDS]).toEqual(['grant-decided']);
     expect(isResumeKind('grant-decided')).toBe(true);
     expect(isResumeKind('joined')).toBe(false);
+  });
+
+  it('keeps a stop on the control path, so it can never start the turn it ends', () => {
+    expect([...CONTROL_KINDS]).toEqual(['turn-cancelled']);
+    expect(isControlKind('turn-cancelled')).toBe(true);
+    expect(isControlKind('grant-decided')).toBe(false);
+    expect(isControlKind('joined')).toBe(false);
+    // It is still a SERVER kind: the server authored it, so a helper acts on
+    // it without re-checking whose name is on the row.
+    expect(isServerEventKind('turn-cancelled')).toBe(true);
+    // The two paths are disjoint. A kind on both would be read twice.
+    expect(RESUME_KINDS.some((kind) => CONTROL_KINDS.includes(kind))).toBe(false);
   });
 
   it('owns the cascade bounds both the server and the helper read', () => {

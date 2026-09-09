@@ -1371,8 +1371,15 @@ export class DaemonService {
           [input.roomId, input.requestId, agentId, input.generationId ?? null],
         );
       } else {
-        await database.query(
-          `INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id,failure_reason) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(room_id,request_id,agent_id) DO UPDATE SET status=EXCLUDED.status,generation_id=EXCLUDED.generation_id,failure_reason=EXCLUDED.failure_reason,created_at=now()`,
+        // `cancelled` is terminal and wins. The requester withdrew the question,
+        // so the answer that arrives a moment later is an answer to nothing: a
+        // helper that finishes its run mid-stop must not overwrite the stop with
+        // `complete`, nor turn the cancelled turn into a failure it never was.
+        // A refused write leaves `rowCount` at zero, which is also what keeps
+        // the consequences below — the failure line, the settle — from running
+        // over a turn the requester already stopped.
+        const written = await database.query(
+          `INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id,failure_reason) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(room_id,request_id,agent_id) DO UPDATE SET status=EXCLUDED.status,generation_id=EXCLUDED.generation_id,failure_reason=EXCLUDED.failure_reason,created_at=now() WHERE agent_turns.status<>'cancelled'`,
           [
             input.roomId,
             input.requestId,
@@ -1382,6 +1389,7 @@ export class DaemonService {
             reason,
           ],
         );
+        if (!written.rowCount) return;
       }
       if (input.status === 'failed') {
         await this.inscribeTurnFailure(database, input.roomId, input.requestId, agentId, reason);

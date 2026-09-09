@@ -158,6 +158,23 @@ describe('the corner line and the turn indicator are independent', () => {
   it('keeps the corner line the only tappable one', () => {
     // `TurnProgressLine` takes no `onPress` at all — a turn has no
     // destination, which is why it cannot strand a reader in a dead channel.
+    // `onStop` is not a destination: it is the one action a turn admits, and
+    // it acts on the turn itself rather than taking the reader anywhere.
     expect(chatSource).not.toMatch(/<TurnProgressLine[^>]*onPress/);
+  });
+
+  it('offers the stop from the selector\'s verdict, never from a screen-local rule', () => {
+    // The requester test lives in `room-indicators.ts` beside the line's own
+    // presentation, so the screen can only pass on a verdict it was given —
+    // and `composerAck.stop` carries the turn's coordinates, so a stop pressed
+    // as one turn ends can never name the next one.
+    expect(chatSource).toContain('onStop={');
+    expect(chatSource).toContain('composerAck.stop ? () => void handleStopTurn(composerAck.stop!)');
+    expect(chatSource).toContain("monolithPhoneOperation('cancelAgentTurn'");
+    // The viewer is the SERVER's statement of who is reading, so both ends
+    // compare the same thing.
+    expect(chatSource).toContain('const viewerPubkey = roomSurface?.viewer.identity.pubkey;');
+    // No screen-local requester comparison; the selector owns that one rule.
+    expect(chatSource).not.toMatch(/requestedBy\s*===/);
   });
 });

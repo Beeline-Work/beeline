@@ -494,9 +494,13 @@ function agentTurn(value: unknown): value is RoomViewAgentTurn {
     item.requestId.length > 0 &&
     typeof item.agentPubkey === 'string' &&
     HEX.test(item.agentPubkey) &&
-    (item.status === 'working' || item.status === 'complete' || item.status === 'failed') &&
+    (item.status === 'working' ||
+      item.status === 'complete' ||
+      item.status === 'failed' ||
+      item.status === 'cancelled') &&
     integer(item.createdAt) &&
-    optionalString(item.generationId),
+    optionalString(item.generationId) &&
+    optionalString(item.requestedBy),
   );
 }
 

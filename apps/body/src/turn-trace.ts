@@ -93,7 +93,8 @@ export interface TurnTraceRecord {
   requestId: string;
   /** Wall clock at admission, for correlation only — never subtracted (see the header). */
   startedAt: string;
-  outcome: 'complete' | 'failed';
+  /** `cancelled` is the requester's stop: the turn ended, and nothing failed. */
+  outcome: 'complete' | 'failed' | 'cancelled';
   /** The distilled failure reason, when the turn failed. */
   reason?: string;
   /** Monotonic total for the whole turn, this process's clock. */
@@ -288,7 +289,7 @@ export class TurnTrace {
   }
 
   /** The record as it stands, without writing it. */
-  snapshot(outcome: 'complete' | 'failed', reason?: string): TurnTraceRecord {
+  snapshot(outcome: 'complete' | 'failed' | 'cancelled', reason?: string): TurnTraceRecord {
     return {
       version: 1,
       surface: this.options.surface,
@@ -326,7 +327,10 @@ export class TurnTrace {
    * the turn's receipt, so it never delays an answer; failures are swallowed,
    * because losing a diagnostic must never fail a turn.
    */
-  async finish(outcome: 'complete' | 'failed', reason?: string): Promise<TurnTraceRecord> {
+  async finish(
+    outcome: 'complete' | 'failed' | 'cancelled',
+    reason?: string,
+  ): Promise<TurnTraceRecord> {
     if (!this.finished) {
       this.finished = true;
       for (const phase of [...this.open.keys()]) this.end(phase);

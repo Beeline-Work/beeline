@@ -7,7 +7,12 @@ import {
   SCHEDULE_RAN_VERB,
   SCHEDULE_SCHEDULER_NAME,
 } from '@beeline/api-contract/scheduled-prompts';
-import { isResumeKind, isServerEventKind, type SystemEvent } from '@beeline/api-contract/daemon';
+import {
+  isControlKind,
+  isResumeKind,
+  isServerEventKind,
+  type SystemEvent,
+} from '@beeline/api-contract/daemon';
 import {
   AcpClient,
   type AcpPermissionDecision,
@@ -63,6 +68,7 @@ import type { AgentRuntimeRecord } from './runtime.js';
 import { runtimeIdentity } from './runtime.js';
 import { MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE, SOUL_HOUSE_RULE } from './response-directives.js';
 import { stripCornerOpenEcho } from './reply-sanitizer.js';
+import { TurnStoppedError, turnStopRequestId } from './turn-stop.js';
 import { AgentTurnStream, durableReplyText } from './turn-stream.js';
 import { TurnTrace, TurnTraceFile, type TurnTraceSink } from './turn-trace.js';
 import { isFailedToolCall, toolCallFailureLine } from './tool-call-failure.js';
@@ -194,7 +200,9 @@ export function inboxItemPromptBody(
  * event carries a `kind`. The kind is the contract — never the line's wording,
  * which is prose an editor may reword. A RESUME kind is excluded: a grant
  * decision answers a turn already paused on the ask, and starting a second
- * turn on it would run the same work twice.
+ * turn on it would run the same work twice. A CONTROL kind is excluded for the
+ * mirror-image reason: a stop request exists to END a turn, and waking one on
+ * it would start the very work the person asked to stop.
  */
 export function isSubscribedEvent(
   item: { type: string; mentionIds: readonly string[]; systemEvent?: SystemEvent },
@@ -205,6 +213,7 @@ export function isSubscribedEvent(
     item.type === 'system' &&
     kind !== undefined &&
     !isResumeKind(kind) &&
+    !isControlKind(kind) &&
     item.mentionIds.includes(agentId)
   );
 }
@@ -361,6 +370,8 @@ interface ActiveTurn {
   steers: HumanMessage[];
   steerTail: Promise<void>;
   resumeRequested: boolean;
+  /** The requester stopped this turn: publish nothing, settle nothing. */
+  cancelled: boolean;
   phase: 'prompting' | 'finishing';
   continuitySenders?: ReadonlySet<string>;
   rebuildContinuity?: boolean;
@@ -885,6 +896,7 @@ export class MonolithRoomTurnLoop {
       steers: [],
       steerTail: Promise.resolve(),
       resumeRequested: false,
+      cancelled: false,
       phase: 'prompting',
       promise: Promise.resolve(),
     };
@@ -902,6 +914,25 @@ export class MonolithRoomTurnLoop {
           this.wakeIntake = undefined;
         }
       });
+  }
+
+  /**
+   * Obey a stop the requester already made a fact.
+   *
+   * A stop names ONE request id and touches only the turn that answers it. The
+   * turn in flight is cancelled at the harness and marked so its own run
+   * publishes nothing; a turn still queued is simply dropped, since starting
+   * work the person has already withdrawn is worse than never starting it.
+   * A stop for neither is ignored — it belongs to a turn that ended between
+   * the press and the delivery, and the server's own receipt already said so.
+   */
+  private stopTurn(requestId: string): void {
+    for (let index = this.queuedTurns.length - 1; index >= 0; index -= 1)
+      if (this.queuedTurns[index]!.id === requestId) this.queuedTurns.splice(index, 1);
+    const active = this.activeTurn;
+    if (!active || active.item.id !== requestId) return;
+    active.cancelled = true;
+    if (this.client && this.sessionId) this.client.sessionCancel(this.sessionId);
   }
 
   private steer(active: ActiveTurn, item: HumanMessage): void {
@@ -1122,6 +1153,14 @@ export class MonolithRoomTurnLoop {
                   explained = await this.explainEmpty(result);
                 }
               }
+              // The requester stopped this turn while it ran. Retract the draft
+              // lane so no half-written answer is left standing on the page,
+              // and publish nothing else: the reply that was being composed
+              // answers a question that has been taken back.
+              if (active.cancelled) {
+                await stream.settle('');
+                throw new TurnStoppedError('turn stopped by the requester');
+              }
               active.phase = 'finishing';
               if (result.toolCalls.some((call) => pendingGrantToolCall(call))) {
                 this.pausedOnGrantRequestId = item.id;
@@ -1223,6 +1262,17 @@ export class MonolithRoomTurnLoop {
       // and it never becomes one — the trace has no way to post a Room row.
       await trace.finish('complete');
     } catch (error) {
+      // A stopped turn already has its ending — the server wrote `cancelled`
+      // and named who stopped it the moment it accepted the request. There is
+      // no receipt to post and nothing to blame the helper for, so the turn
+      // ends here quietly and only the operator's trace records it.
+      if (error instanceof TurnStoppedError || active.cancelled) {
+        console.log(
+          `[thin-core] monolith Room ${this.options.roomId} turn ${item.id} stopped by the requester`,
+        );
+        await trace.finish('cancelled');
+        return;
+      }
       const reason = distillTurnFailureReason(error);
       await api.execute('postAgentTurnReceipt', {
         agentId: this.agent.publicKey,
@@ -1340,6 +1390,14 @@ export class MonolithRoomTurnLoop {
             processedInboxIds.add(item.id);
             while (processedInboxIds.size > INBOX_DEDUPLICATION_LIMIT)
               processedInboxIds.delete(processedInboxIds.values().next().value!);
+            // A stop is read before anything else can mistake it for work:
+            // it is server-authored, already authority-checked (only the
+            // requester may write one), and its whole job is to end a turn.
+            const stopped = turnStopRequestId(item, this.agent.publicKey);
+            if (stopped) {
+              this.stopTurn(stopped);
+              continue;
+            }
             this.responseRule.observe(item);
             if (!triggers) continue;
             // A server-authored event was already authority-gated where the

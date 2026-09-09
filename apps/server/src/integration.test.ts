@@ -4892,6 +4892,126 @@ describe('monolith integration', () => {
     ).toEqual({ status: 'failed', old: true });
   });
 
+  it("stops a running turn at the asker's word, and at nobody else's", async () => {
+    const requestId = '9'.repeat(64);
+    await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: requestId,
+      text: '@bee summarise the release',
+      mentions: [AGENT],
+    });
+    await daemonOperation('postAgentTurnReceipt', { roomId: ROOM, requestId, status: 'working' });
+
+    // The running turn names its requester, so the phone can offer the control
+    // to exactly one person without reading the transcript.
+    const working = await new PhoneService(database, origin).readRoom(ROOM, HUMAN);
+    expect(working!.latestAgentTurns).toContainEqual(
+      expect.objectContaining({ requestId, status: 'working', requestedBy: HUMAN }),
+    );
+
+    // Anyone but the asker is refused, and the turn keeps running.
+    const aliceToken = await phoneToken('alice');
+    const aliceId = createHash('sha256').update('github:alice').digest('hex');
+    await operation('addWorkspaceMember', {
+      workspaceId: WORKSPACE,
+      memberId: aliceId,
+      role: 'member',
+    });
+    await operation('addRoomMember', { roomId: ROOM, memberId: aliceId });
+    const refused = await operation(
+      'cancelAgentTurn',
+      { roomId: ROOM, requestId, agentId: AGENT },
+      aliceToken,
+    );
+    expect(refused.status).toBe(403);
+    expect(
+      (
+        await database.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2`, [
+          ROOM,
+          requestId,
+        ])
+      ).rows[0],
+    ).toEqual({ status: 'working' });
+
+    // The asker's stop settles all three facts at once.
+    expect(
+      (await operation('cancelAgentTurn', { roomId: ROOM, requestId, agentId: AGENT })).status,
+    ).toBe(204);
+    expect(
+      (
+        await database.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2`, [
+          ROOM,
+          requestId,
+        ])
+      ).rows[0],
+    ).toEqual({ status: 'cancelled' });
+    const stopLine = (
+      await database.query<{
+        text: string;
+        mention_ids: string[];
+        request_id: string;
+        system_event: { kind?: string };
+      }>(
+        `SELECT text,mention_ids,request_id,system_event FROM messages
+         WHERE room_id=$1 AND presentation='system' AND system_event->>'kind'='turn-cancelled'`,
+        [ROOM],
+      )
+    ).rows;
+    expect(stopLine).toEqual([
+      expect.objectContaining({
+        text: '@owner stopped @bee · turn cancelled',
+        // The mention is the daemon's wake-up, and the request id is how it
+        // knows which of its sessions to cancel.
+        mention_ids: [AGENT],
+        request_id: requestId,
+      }),
+    ]);
+
+    // `cancelled` is terminal: the run that lands a moment later cannot
+    // overwrite the stop, and its lateness is not inscribed as a failure.
+    expect(
+      (
+        await daemonOperation('postAgentTurnReceipt', {
+          roomId: ROOM,
+          requestId,
+          status: 'complete',
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await daemonOperation('postAgentTurnReceipt', {
+          roomId: ROOM,
+          requestId,
+          status: 'failed',
+          reason: 'harness exited during cancellation',
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await database.query(
+          `SELECT status,failure_reason FROM agent_turns WHERE room_id=$1 AND request_id=$2`,
+          [ROOM, requestId],
+        )
+      ).rows[0],
+    ).toEqual({ status: 'cancelled', failure_reason: null });
+    expect(
+      (
+        await database.query(
+          `SELECT count(*)::int n FROM messages WHERE room_id=$1 AND card_type='turn-failed'
+             AND card->>'requestId'=$2`,
+          [ROOM, requestId],
+        )
+      ).rows[0],
+    ).toEqual({ n: 0 });
+
+    // A turn that is no longer running has nothing left to stop.
+    expect(
+      (await operation('cancelAgentTurn', { roomId: ROOM, requestId, agentId: AGENT })).status,
+    ).toBe(404);
+  });
+
   it('inscribes a failed turn as one system line, coalesces its retry, and settles it on success', async () => {
     const requestId = '8'.repeat(64);
     await operation('sendRoomMessage', {

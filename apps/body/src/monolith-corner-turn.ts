@@ -24,6 +24,7 @@ import {
   type DeliveredAttachment,
 } from './attachment-delivery.js';
 import { isCornerStatusRestatement } from './reply-sanitizer.js';
+import { TurnStoppedError, turnStopRequestId } from './turn-stop.js';
 import { AgentTurnStream, durableReplyText } from './turn-stream.js';
 import { toolCallFailureLine } from './tool-call-failure.js';
 import { distillTurnFailureReason, redactToolDetail } from './turn-failure-reason.js';
@@ -332,6 +333,13 @@ export class MonolithCornerTurnLoop {
   private carrier?: string;
   /** The last server check state that started a turn; the same state never starts another. */
   private lastChecksState?: CornerChecksState;
+  /**
+   * Request ids the requester has stopped. A corner's intake is blocked while
+   * its turn runs, so a stop is recorded from the live-push callback and read
+   * back here; ids that never matched a running turn are harmless and bounded
+   * by the same replay window the inbox already de-duplicates over.
+   */
+  private readonly stoppedTurns = new Set<string>();
 
   constructor(private readonly options: MonolithCornerTurnOptions) {
     this.agent = runtimeIdentity(options.runtime.agent);
@@ -368,6 +376,22 @@ export class MonolithCornerTurnLoop {
   async forceRecoverRoom(): Promise<void> {
     if (this.client && this.sessionId) this.client.sessionCancel(this.sessionId);
     await this.options.scheduler.forceSuspend(this.options.cornerId);
+  }
+
+  /**
+   * Obey a stop the requester already made a fact.
+   *
+   * The id is remembered whether or not it names the turn in flight: a stop for
+   * work not yet started must still keep that work from starting, and one for a
+   * turn that has already ended is simply never read again. Only the session
+   * actually running the stopped turn is cancelled.
+   */
+  private stopTurn(requestId: string): void {
+    this.stoppedTurns.add(requestId);
+    while (this.stoppedTurns.size > 500)
+      this.stoppedTurns.delete(this.stoppedTurns.values().next().value!);
+    if (this.currentTurn?.requestId !== requestId) return;
+    if (this.client && this.sessionId) this.client.sessionCancel(this.sessionId);
   }
 
   private async roster(): Promise<WorkspaceRoster> {
@@ -718,6 +742,9 @@ export class MonolithCornerTurnLoop {
     restates?: readonly string[],
   ): Promise<void> {
     const { api, cornerId } = this.options;
+    // Work the requester has already withdrawn is never started. A stop can
+    // land between the message being read and the session becoming free.
+    if (this.stoppedTurns.has(requestId)) return;
     const spoken = (text: string): string =>
       restates && isCornerStatusRestatement(text, restates) ? '' : text;
     const requester = requestedById
@@ -968,6 +995,15 @@ export class MonolithCornerTurnLoop {
                   explained = await this.explainEmpty(result);
                 }
               }
+              // The requester stopped this turn while it ran. Retract the draft
+              // lane so no half-written answer is left standing, settle the tool
+              // narration that did happen — the work reached the branch and the
+              // ledger must not lie about it — and publish no reply.
+              if (this.stoppedTurns.has(requestId)) {
+                await flushToolCalls(result.toolCalls, '');
+                await stream.settle('');
+                throw new TurnStoppedError('turn stopped by the requester');
+              }
               let reply = durableReplyText(result.agentText);
               if (!reply && explained?.recoveredText)
                 reply = durableReplyText(explained.recoveredText);
@@ -1027,6 +1063,14 @@ export class MonolithCornerTurnLoop {
       // never becomes one — the trace has no way to post a Room row.
       await trace.finish('complete');
     } catch (error) {
+      // A stopped turn already has its ending: the server wrote `cancelled` and
+      // named who stopped it when it accepted the request. Nothing to post, and
+      // nothing the helper is to blame for.
+      if (error instanceof TurnStoppedError || this.stoppedTurns.has(requestId)) {
+        console.log(`[thin-core] corner ${cornerId} turn ${requestId} stopped by the requester`);
+        await trace.finish('cancelled');
+        return;
+      }
       const reason = distillTurnFailureReason(error);
       await api.execute('postAgentTurnReceipt', {
         agentId: this.agent.publicKey,
@@ -1147,6 +1191,16 @@ export class MonolithCornerTurnLoop {
       cursor,
       (items, pushedCursor) => {
         pushedInbox.push(...items);
+        // A corner's intake loop is BLOCKED while its turn runs — the prompt is
+        // awaited inline, unlike a Room's — so a stop read on the next pass
+        // would arrive only after the turn it was meant to end. This callback
+        // is the one place a corner hears anything mid-turn, so the stop is
+        // obeyed here. The item stays in the queue and is processed again
+        // normally, where it is a no-op.
+        for (const item of items) {
+          const stopped = turnStopRequestId(item, this.agent.publicKey);
+          if (stopped) this.stopTurn(stopped);
+        }
         pendingPushedCursor = laterInboxCursor(pendingPushedCursor, pushedCursor);
         this.wakeIntake?.();
         this.wakeIntake = undefined;
@@ -1243,6 +1297,14 @@ export class MonolithCornerTurnLoop {
             processedInboxIds.add(item.id);
             while (processedInboxIds.size > INBOX_DEDUPLICATION_LIMIT)
               processedInboxIds.delete(processedInboxIds.values().next().value!);
+            // The live callback above already obeyed any stop it delivered;
+            // this is the same read on the polling path, and the second read of
+            // a stop already obeyed, which `stopTurn` treats as the no-op it is.
+            const stoppedTurn = turnStopRequestId(item, this.agent.publicKey);
+            if (stoppedTurn) {
+              this.stopTurn(stoppedTurn);
+              continue;
+            }
             if (item.type === 'message') {
               if (item.authorId !== this.agent.publicKey) await this.reconcileRoster();
               await this.noteIncomingCarrier(item);

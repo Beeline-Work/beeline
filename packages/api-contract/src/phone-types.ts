@@ -287,10 +287,19 @@ export type RoomDirectMessageView = {
 export type RoomViewAgentTurn = {
   readonly requestId: string;
   readonly agentPubkey: string;
-  readonly status: 'working' | 'complete' | 'failed';
+  readonly status: 'working' | 'complete' | 'failed' | 'cancelled';
   /** Relay event time in Unix seconds. */
   readonly createdAt: number;
   readonly generationId?: string;
+  /**
+   * The identity that asked for this turn — the author of the message the
+   * request id names. Present only when that message is still readable and its
+   * author is a person, which is exactly when a stop control may be offered:
+   * the one who asked the question is the one who may withdraw it, and the
+   * phone must never infer that from a transcript window the request may have
+   * already scrolled out of.
+   */
+  readonly requestedBy?: string;
 };
 
 export type RoomView = {

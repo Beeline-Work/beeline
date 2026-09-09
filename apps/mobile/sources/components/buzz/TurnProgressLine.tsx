@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Text, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { BeelineMarkSpinner, MARK_CELL } from './BeelineMarkSpinner';
@@ -35,15 +35,25 @@ import { SPINNER_STEP_MS, elapsedSeconds } from '@/buzz/turn-clock';
  * The same live treatment also covers the short local "sending…" bridge. It
  * expires at its deadline; this component never presents an inferred waiting
  * state in the absence of a server receipt.
+ *
+ * The LINE still goes nowhere — it has no `onPress` and no destination, which
+ * is what keeps it from stranding a reader in a dead channel. `onStop` is a
+ * different thing in the trailing slot: not navigation but the one action a
+ * turn in progress admits, withdrawing the question. It is passed only to the
+ * person who asked (`viewerMayStopTurn`), so for everyone else this component
+ * renders exactly what it rendered before.
  */
 export function TurnProgressLine({
   label,
   startedAt,
+  onStop,
   testID,
 }: {
   label: string;
   /** Server receipt time, unix seconds, the elapsed counter ticks from. */
   startedAt?: number;
+  /** Present only for the turn's own requester; absent renders no control. */
+  onStop?: () => void;
   testID?: string;
 }) {
   const [now, setNow] = useState(() => Date.now());
@@ -71,6 +81,20 @@ export function TurnProgressLine({
           <Text style={styles.counter} testID={testID ? `${testID}-elapsed` : undefined}>
             {`${elapsedSeconds(startedAt * 1_000, now)}s · thinking`}
           </Text>
+        )}
+        {onStop && (
+          <Pressable
+            accessibilityLabel="Stop this turn"
+            accessibilityRole="button"
+            hitSlop={12}
+            onPress={onStop}
+            testID={testID ? `${testID}-stop` : undefined}
+          >
+            {/* One brass word, the settings row's trailing vocabulary. It
+                borrows the counter's type so this file's raw type literals stay
+                where they were; only the tone is its own. */}
+            <Text style={[styles.counter, styles.stop]}>stop</Text>
+          </Pressable>
         )}
       </HullLivePulse>
     </View>
@@ -141,6 +165,12 @@ const styles = StyleSheet.create((theme) => {
       color: groknight.accent,
       fontSize: 12,
       lineHeight: 18,
+    },
+    // The one action a turn admits, in the trailing slot: a single brass word,
+    // underlined so it reads as pressable in a row that otherwise is not.
+    stop: {
+      color: groknight.accent,
+      textDecorationLine: 'underline',
     },
   };
 });

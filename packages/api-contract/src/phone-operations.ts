@@ -13,6 +13,7 @@ export type PhoneOperationMap = {
   createRoomSchedule: { input: CreateRoomScheduleInput; output: RoomScheduleView };
   listRoomSchedules: { input: RoomInput; output: RoomScheduleListResult };
   deleteRoomSchedule: { input: DeleteRoomScheduleInput; output: void };
+  cancelAgentTurn: { input: CancelAgentTurnInput; output: void };
   decideWritePermission: { input: DecideWritePermissionInput; output: MessageWriteResult };
   decideAgentGrant: { input: DecideAgentGrantInput; output: AgentGrantDecisionResult };
   revokeAgentGrant: { input: RevokeAgentGrantInput; output: AgentGrantDecisionResult };
@@ -115,6 +116,19 @@ export type SendRoomMessageInput = RoomInput & {
   readonly attachments?: readonly AttachmentReference[];
 };
 export type SendRoomReplyInput = SendRoomMessageInput & { readonly parentMessageId: string };
+/**
+ * Stop one turn in progress.
+ *
+ * Named by the turn's own coordinates — the Room, the request the turn answers,
+ * and the agent running it — never by "whatever is running here", so a stop
+ * pressed as one turn ends can never land on the next one. Only the person who
+ * asked may send it: withdrawing a question is the asker's to do, and a Room
+ * where anyone can silence anyone else's agent is a different feature.
+ */
+export type CancelAgentTurnInput = RoomInput & {
+  readonly requestId: string;
+  readonly agentId: string;
+};
 export type DecideWritePermissionInput = RoomInput & {
   readonly permissionId: string;
   readonly requestId: string;

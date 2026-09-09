@@ -15,6 +15,9 @@ const invoke = vi.hoisted(() =>
   }),
 );
 const desktopSecrets = vi.hoisted(() => new Map<string, string>());
+const desktopFetch = vi.hoisted(() =>
+  vi.fn(async () => new Response(JSON.stringify(tokens), { status: 200 })),
+);
 
 vi.mock('expo-secure-store', () => ({
   getItemAsync: vi.fn(() => {
@@ -27,6 +30,9 @@ vi.mock('expo-secure-store', () => ({
     throw new Error('the packaged web bundle has no Expo SecureStore backend');
   }),
 }));
+vi.mock('@tauri-apps/api/core', () => ({ invoke }));
+vi.mock('@tauri-apps/plugin-http', () => ({ fetch: desktopFetch }));
+vi.mock('@/utils/isDesktopShell', () => ({ isDesktopShell: () => true }));
 vi.mock('@/buzz/runtime-config', () => ({
   getBuzzRuntimeConfig: () => ({ monolithUrl: 'https://server.example' }),
 }));
@@ -46,6 +52,18 @@ describe('packaged desktop monolith session storage', () => {
   beforeEach(() => {
     desktopSecrets.clear();
     invoke.mockClear();
+    desktopFetch.mockClear();
+  });
+
+  it('uses the native HTTP plugin for cross-origin session exchange', async () => {
+    const session = new MonolithSession();
+
+    await expect(session.exchangeReviewSecret('review')).resolves.toBe(tokens.identityId);
+
+    expect(desktopFetch).toHaveBeenCalledWith(
+      'https://server.example/v1/auth/review/exchange',
+      expect.objectContaining({ method: 'POST' }),
+    );
   });
 
   it('boots without an identity and persists sign-in through the desktop credential commands', async () => {

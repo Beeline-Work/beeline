@@ -1,4 +1,3 @@
 self-hosted-runner:
   labels:
     - beeline-prod-host
-    - beeline-production-squire

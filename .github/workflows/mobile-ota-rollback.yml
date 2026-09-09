@@ -24,7 +24,7 @@ permissions:
 jobs:
   rollback:
     name: Republish last-known-good production group
-    runs-on: [self-hosted, beeline-production-squire]
+    runs-on: [self-hosted, beeline-prod-host]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4

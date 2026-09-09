@@ -411,7 +411,7 @@ export async function recoverOidcBind(
   };
 }
 
-/** Read the canonical hosted handle assigned to the key on this device. */
+/** Read the canonical managed display handle assigned to the key on this device. */
 export async function lookupManagedIdentity(
   baseUrl: string,
   identity: Pick<Identity, 'secretKey' | 'publicKey'>,

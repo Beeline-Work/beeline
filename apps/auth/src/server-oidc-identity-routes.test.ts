@@ -75,141 +75,34 @@ describe('OIDC and identity HTTP routes', () => {
       identity: {
         handle: 'octocat',
         display_name: 'The Octocat',
-        nip05: 'octocat@usebeeline.app',
         source: 'github',
         github_login: 'octocat',
         github_rename_available: false,
       },
     });
 
-    const resolved = await app.inject({
+    await expect(
+      store.managedIdentity(alphaTenant.community, identity.publicKey),
+    ).resolves.toMatchObject({
+      handle: 'octocat',
+      displayName: 'The Octocat',
+    });
+  });
+
+  it('does not register the retired public NIP-05 routes', async () => {
+    const lookup = await app.inject({
       method: 'GET',
       url: '/.well-known/nostr.json?name=octocat',
       headers: { host: alphaTenant.host },
     });
-    expect(resolved.json()).toEqual({ names: { octocat: identity.publicKey } });
-  });
-
-  it('keeps a key-only identity in place when GitHub is linked and offers one rename', async () => {
-    const identity = generateKeypair();
-    const claimUrl = `${alphaTenant.origin}/nip05/claim`;
-    const claimed = await app.inject({
+    const claim = await app.inject({
       method: 'POST',
       url: '/nip05/claim',
-      headers: {
-        host: alphaTenant.host,
-        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, claimUrl, 'POST'),
-      },
-      payload: { name: 'local-handle' },
-    });
-    expect(claimed.statusCode).toBe(201);
-
-    const linked = await bindGitHubIdentity(identity, 'j'.repeat(43));
-    expect(linked).toMatchObject({
-      pubkey: identity.publicKey,
-      identity: {
-        handle: 'local-handle',
-        nip05: 'local-handle@usebeeline.app',
-        github_login: 'octocat',
-        github_rename_available: true,
-      },
-    });
-    await expect(
-      store.successionPredecessors(alphaTenant.community, identity.publicKey),
-    ).resolves.toEqual([]);
-
-    const renameUrl = `${alphaTenant.origin}/auth/identity/${identity.publicKey}/github-handle`;
-    const renamed = await app.inject({
-      method: 'POST',
-      url: `/auth/identity/${identity.publicKey}/github-handle`,
-      headers: {
-        host: alphaTenant.host,
-        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, renameUrl, 'POST'),
-      },
-      payload: { confirm_rename: true },
-    });
-    expect(renamed.statusCode).toBe(200);
-    expect(renamed.json()).toMatchObject({
-      renamed: true,
-      identity: { handle: 'octocat', github_rename_available: false },
-    });
-    const released = await app.inject({
-      method: 'GET',
-      url: '/.well-known/nostr.json?name=local-handle',
       headers: { host: alphaTenant.host },
-    });
-    expect(released.json()).toEqual({ names: {} });
-
-    const secondAuthorization = nip98AuthHeader(
-      identity.secretKey,
-      identity.publicKey,
-      renameUrl,
-      'POST',
-    );
-    const second = await app.inject({
-      method: 'POST',
-      url: `/auth/identity/${identity.publicKey}/github-handle`,
-      headers: { host: alphaTenant.host, authorization: secondAuthorization },
-      payload: { confirm_rename: true },
-    });
-    expect(second.statusCode).toBe(409);
-    expect(second.json().error).toBe('rename_not_available');
-  });
-
-  it('prevents key-only claims from squatting an already linked GitHub handle', async () => {
-    const githubIdentity = generateKeypair();
-    await bindGitHubIdentity(githubIdentity, 'k'.repeat(43));
-    const keyIdentity = generateKeypair();
-    const claimUrl = `${alphaTenant.origin}/nip05/claim`;
-    const response = await app.inject({
-      method: 'POST',
-      url: '/nip05/claim',
-      headers: {
-        host: alphaTenant.host,
-        authorization: nip98AuthHeader(
-          keyIdentity.secretKey,
-          keyIdentity.publicKey,
-          claimUrl,
-          'POST',
-        ),
-      },
       payload: { name: 'octocat' },
     });
-    expect(response.statusCode).toBe(409);
-    expect(response.json().error).toBe('name_taken');
-  });
-
-  it('gives a verified GitHub owner a handle claimed before that account was linked', async () => {
-    const earlyKeyIdentity = generateKeypair();
-    const claimUrl = `${alphaTenant.origin}/nip05/claim`;
-    const earlyClaim = await app.inject({
-      method: 'POST',
-      url: '/nip05/claim',
-      headers: {
-        host: alphaTenant.host,
-        authorization: nip98AuthHeader(
-          earlyKeyIdentity.secretKey,
-          earlyKeyIdentity.publicKey,
-          claimUrl,
-          'POST',
-        ),
-      },
-      payload: { name: 'octocat' },
-    });
-    expect(earlyClaim.statusCode).toBe(201);
-
-    const githubIdentity = generateKeypair();
-    await bindGitHubIdentity(githubIdentity, 'l'.repeat(43));
-
-    const resolved = await app.inject({
-      method: 'GET',
-      url: '/.well-known/nostr.json?name=octocat',
-      headers: { host: alphaTenant.host },
-    });
-    expect(resolved.json()).toEqual({ names: { octocat: githubIdentity.publicKey } });
-    await expect(
-      store.managedIdentity(alphaTenant.community, earlyKeyIdentity.publicKey),
-    ).resolves.toBeNull();
+    expect(lookup.statusCode).toBe(404);
+    expect(claim.statusCode).toBe(404);
   });
 
   async function bind(

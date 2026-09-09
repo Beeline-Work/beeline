@@ -475,7 +475,6 @@ describe('GitHub callback delivery into onboarding', () => {
     ]);
     sdk.lookupManagedIdentity.mockResolvedValue({
       handle: 'octocat',
-      nip05: 'octocat@usebeeline.app',
       displayName: 'The Octocat',
       source: 'github',
       githubRenameAvailable: false,
@@ -524,7 +523,7 @@ describe('GitHub callback delivery into onboarding', () => {
     expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels');
   });
 
-  it('lands a GitHub login with its auto-provisioned handle and NIP-05 without asking', async () => {
+  it('lands a GitHub login with its username preserved as the display handle', async () => {
     sdk.finish.mockResolvedValueOnce({
       linked: true,
       idempotent: false,
@@ -532,7 +531,6 @@ describe('GitHub callback delivery into onboarding', () => {
       identity: {
         handle: 'octocat',
         displayName: 'The Octocat',
-        nip05: 'octocat@usebeeline.app',
         source: 'github',
         githubLogin: 'octocat',
         githubRenameAvailable: false,
@@ -547,7 +545,6 @@ describe('GitHub callback delivery into onboarding', () => {
       name: 'The Octocat',
       handle: 'octocat',
       avatar: undefined,
-      nip05: 'octocat@usebeeline.app',
     });
     expect(
       tree.root.findAll((node: any) => node.props?.testID === 'onboarding-handle-ceremony'),

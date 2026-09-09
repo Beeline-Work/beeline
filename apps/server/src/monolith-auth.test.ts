@@ -211,6 +211,9 @@ describe('mounted monolith auth', () => {
       login: 'octocat',
       name: 'The Octocat',
     });
+
+    const retiredLookup = await mountedRequest('/.well-known/nostr.json?name=octocat');
+    expect(retiredLookup.status).toBe(404);
   });
 
   it('turns an in-process GitHub ticket into a phone session with subject and login', async () => {

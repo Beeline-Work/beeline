@@ -30,8 +30,7 @@ import {
 import { extractGitHubRepoEvent } from './github-repo-events.js';
 import { resolveGitHubRepositoryAccess } from './github-repository-access.js';
 import {
-  isValidNip05Name,
-  isResolvableNip05Name,
+  isGitHubHandle,
   normalizeHost,
   OIDC_BIND_KIND,
   OIDC_BIND_MARKER,
@@ -215,7 +214,6 @@ function managedIdentityJson(identity: ManagedIdentity) {
   return {
     handle: identity.handle,
     display_name: identity.displayName,
-    nip05: identity.nip05,
     source: identity.source,
     ...(identity.githubLogin ? { github_login: identity.githubLogin } : {}),
     github_rename_available: identity.githubRenameAvailable,
@@ -832,7 +830,7 @@ export function createAuthRouteContext(options: AuthServerOptions) {
   ): Promise<ManagedIdentity | undefined> => {
     if (ticket.issuer !== 'https://github.com') return undefined;
     const login = ticket.providerLogin?.toLowerCase() ?? '';
-    if (!isResolvableNip05Name(login)) {
+    if (!isGitHubHandle(login)) {
       throw new Error('verified GitHub identity is missing a valid login');
     }
     const displayName = ticket.providerDisplayName?.trim().slice(0, 60) || login;
@@ -1082,8 +1080,7 @@ export function createAuthRouteContext(options: AuthServerOptions) {
     checkGitHubAppDriftBestEffort,
     convertAppManifestCode,
     setupTokenMatches,
-    isValidNip05Name,
-    isResolvableNip05Name,
+    isGitHubHandle,
     OIDC_BIND_KIND,
     OIDC_BIND_MARKER,
     randomToken,

@@ -6,18 +6,11 @@ export { verifyNip98Header } from '@beeline/nostr';
 export const OIDC_BIND_KIND = 24_250;
 export const OIDC_BIND_MARKER = 'beeline-oidc-bind-v1';
 
-const MANAGED_HANDLE_RE = /^[a-z0-9][a-z0-9-]{2,29}$/;
-const NIP05_LOOKUP_NAME_RE = /^[a-z0-9][a-z0-9-]{0,38}$/;
-const NIP05_BLOCKED_NAMES = new Set(['admin', 'support', 'beeline']);
+const GITHUB_HANDLE_RE = /^[a-z0-9][a-z0-9-]{0,38}$/;
 
-/** Key-only ceremony handles: lowercase alnum + `-`, 3-30 chars, not reserved. */
-export function isValidNip05Name(name: string): boolean {
-  return MANAGED_HANDLE_RE.test(name) && !NIP05_BLOCKED_NAMES.has(name);
-}
-
-/** Hosted names may also be GitHub-derived (GitHub permits 1-39 characters). */
-export function isResolvableNip05Name(name: string): boolean {
-  return NIP05_LOOKUP_NAME_RE.test(name);
+/** GitHub usernames are retained as display handles after hosted NIP-05 retirement. */
+export function isGitHubHandle(name: string): boolean {
+  return GITHUB_HANDLE_RE.test(name);
 }
 
 export function randomToken(bytes = 32): string {

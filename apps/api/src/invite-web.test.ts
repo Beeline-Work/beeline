@@ -118,17 +118,11 @@ describe('relay invite web front', () => {
     expect(repoFile('relay-stack/prod/compose.yml')).toContain('beeline-media-preview');
   });
 
-  it('routes hosted NIP-05 claims and resolution through auth in every stack', () => {
+  it('does not expose the retired public NIP-05 service in any stack', () => {
     for (const path of ['relay-stack/nginx.conf', 'relay-stack/prod/nginx.conf']) {
       const nginx = repoFile(path);
-      expect(nginx).toContain('location /nip05/');
-      expect(nginx).toContain('location = /.well-known/nostr.json');
-      const claimRoute = nginx.match(/location \/nip05\/ \{[\s\S]*?\n    \}/)?.[0];
-      const resolutionRoute = nginx.match(
-        /location = \/\.well-known\/nostr\.json \{[\s\S]*?\n    \}/,
-      )?.[0];
-      expect(claimRoute).toContain('proxy_pass http://auth:8789');
-      expect(resolutionRoute).toContain('proxy_pass http://auth:8789');
+      expect(nginx).not.toContain('location /nip05/');
+      expect(nginx).not.toContain('location = /.well-known/nostr.json');
     }
   });
 

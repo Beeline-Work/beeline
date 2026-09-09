@@ -39,25 +39,20 @@ or accept a Nostr secret key.
    header signed by that public key. Auth-event IDs are durably replay guarded.
    The response is tenant-scoped and never contains email.
 
-## Hosted identity names
+## Managed display handles
 
-The auth sidecar is also the authority for `@usebeeline.app` identity names:
+The auth sidecar preserves identity labels without publishing a public name resolver:
 
-- A verified GitHub bind automatically reserves the current GitHub login,
-  publishes `<login>@usebeeline.app` through `/.well-known/nostr.json`, and
+- A verified GitHub bind stores the current GitHub login as the handle and
   returns the GitHub display name to the client. There is no naming step in the
   GitHub onboarding path.
-- A key-only first run claims one lowercase, 3–30 character `[a-z0-9-]` handle
-  through authenticated `POST /nip05/claim`. Claims are unique across the
-  hosted namespace and cannot take a login already reserved by a linked GitHub
-  account.
-- `GET /auth/identity/:pubkey` returns the key's canonical hosted identity.
+- `GET /auth/identity/:pubkey` returns the key's canonical managed identity.
   When a key-only user links GitHub later, the link stays on that same key and
   the response offers one optional `POST /auth/identity/:pubkey/github-handle`
-  rename. Keeping the original handle remains valid; renaming releases it.
+  rename. Keeping the original handle remains valid.
 
 Custom NIP-05 identifiers remain ordinary optional profile data. They are not
-part of this hosted-name ceremony and are never an authentication prerequisite.
+part of managed display handles and are never an authentication prerequisite.
 
 There is deliberately no endpoint that accepts a bearer ID token and no OIDC
 token that can authorize `/events`, `/query`, WebSockets, or Room state.
@@ -65,8 +60,7 @@ token that can authorize `/events`, `/query`, WebSockets, or Room state.
 ## Deployment shape
 
 Run this as a small sidecar on the existing Beeline network with the existing
-PostgreSQL service. `relay-front` routes `/auth/`, `/nip05/`, and the exact
-`/.well-known/nostr.json` endpoint to it while preserving the original `Host`.
+PostgreSQL service. `relay-front` routes `/auth/` to it while preserving the original `Host`.
 All other relay traffic remains on the existing relay service.
 
 GitHub follows the same bind-ticket transaction through `/auth/github/start`

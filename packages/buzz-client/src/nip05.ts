@@ -1,25 +1,21 @@
-import { nip98AuthHeader } from '@beeline/nostr';
-import type { Identity } from './types.js';
-
 const NIP05_LOCAL_RE = /^[a-z0-9_.-]+$/i;
 const NIP05_DOMAIN_RE =
   /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/i;
 const NIP05_MAX_LENGTH = 255;
 const HEX_PUBKEY_RE = /^[0-9a-f]{64}$/;
 const MANAGED_HANDLE_RE = /^[a-z0-9][a-z0-9-]{2,29}$/;
-const HOSTED_HANDLE_RE = /^[a-z0-9][a-z0-9-]{0,38}$/;
+const GITHUB_HANDLE_RE = /^[a-z0-9][a-z0-9-]{0,38}$/;
 const MANAGED_HANDLE_BLOCKLIST = new Set(['admin', 'support', 'beeline']);
 
 export interface ManagedIdentity {
   handle: string;
   displayName: string;
-  nip05: string;
   source: 'key' | 'github';
   githubLogin?: string;
   githubRenameAvailable: boolean;
 }
 
-/** Normalize a key-only ceremony handle, or return null when it violates the hosted rules. */
+/** Normalize a key-only managed handle, or return null when it violates the naming rules. */
 export function normalizeManagedHandle(value: string): string | null {
   const handle = value.trim().toLowerCase();
   return MANAGED_HANDLE_RE.test(handle) && !MANAGED_HANDLE_BLOCKLIST.has(handle) ? handle : null;
@@ -31,32 +27,27 @@ export function parseManagedIdentity(value: unknown): ManagedIdentity | null {
   if (
     typeof record.handle !== 'string' ||
     typeof record.display_name !== 'string' ||
-    typeof record.nip05 !== 'string' ||
     (record.source !== 'key' && record.source !== 'github') ||
     typeof record.github_rename_available !== 'boolean' ||
     (record.github_login !== undefined && typeof record.github_login !== 'string')
   ) {
     return null;
   }
-  const normalizedNip05 = normalizeNip05Identifier(record.nip05);
   const validHandle =
     record.source === 'key'
       ? normalizeManagedHandle(record.handle) === record.handle
-      : HOSTED_HANDLE_RE.test(record.handle);
+      : GITHUB_HANDLE_RE.test(record.handle);
   if (
     !validHandle ||
     !record.display_name.trim() ||
     record.display_name.length > 60 ||
-    !normalizedNip05 ||
-    normalizedNip05 !== `${record.handle}@usebeeline.app` ||
-    (typeof record.github_login === 'string' && !HOSTED_HANDLE_RE.test(record.github_login))
+    (typeof record.github_login === 'string' && !GITHUB_HANDLE_RE.test(record.github_login))
   ) {
     return null;
   }
   return {
     handle: record.handle,
     displayName: record.display_name,
-    nip05: record.nip05,
     source: record.source,
     ...(typeof record.github_login === 'string' ? { githubLogin: record.github_login } : {}),
     githubRenameAvailable: record.github_rename_available,
@@ -146,103 +137,5 @@ export async function verifyNip05(
   return {
     identifier,
     status: resolved.toLowerCase() === expectedPubkey.toLowerCase() ? 'verified' : 'mismatch',
-  };
-}
-
-export class Nip05ClaimError extends Error {
-  constructor(
-    readonly code: string,
-    message: string,
-    readonly status?: number,
-  ) {
-    super(message);
-    this.name = 'Nip05ClaimError';
-  }
-}
-
-export interface Nip05ClaimResult {
-  claimed: true;
-  idempotent: boolean;
-  name: string;
-  pubkey: string;
-  identity: ManagedIdentity;
-}
-
-async function claimResponseBody(response: Response): Promise<Record<string, unknown>> {
-  let body: unknown;
-  try {
-    body = await response.json();
-  } catch {
-    body = null;
-  }
-  if (!body || typeof body !== 'object' || Array.isArray(body)) {
-    throw new Nip05ClaimError(
-      'invalid_response',
-      'auth service returned an invalid response',
-      response.status,
-    );
-  }
-  return body as Record<string, unknown>;
-}
-
-/**
- * Claim `<name>@usebeeline.app` first-come-first-served against the deployed auth service.
- * Does not touch the person profile — the caller writes `nip05` on success.
- */
-export async function claimNip05Handle(
-  baseUrl: string,
-  identity: Pick<Identity, 'secretKey' | 'publicKey'>,
-  name: string,
-): Promise<Nip05ClaimResult> {
-  if (!HEX_PUBKEY_RE.test(identity.publicKey)) {
-    throw new Nip05ClaimError('invalid_identity', 'invalid public key');
-  }
-  const url = new URL('/nip05/claim', baseUrl).toString();
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, url, 'POST'),
-      },
-      body: JSON.stringify({ name }),
-    });
-  } catch (error) {
-    throw new Nip05ClaimError(
-      'offline',
-      error instanceof Error ? error.message : 'auth service unavailable',
-    );
-  }
-  const body = await claimResponseBody(response);
-  if (!response.ok) {
-    const code = typeof body.error === 'string' ? body.error : 'auth_service_error';
-    const message =
-      typeof body.message === 'string'
-        ? body.message
-        : `auth service returned HTTP ${response.status}`;
-    throw new Nip05ClaimError(code, message, response.status);
-  }
-  if (
-    body.claimed !== true ||
-    typeof body.idempotent !== 'boolean' ||
-    typeof body.name !== 'string' ||
-    typeof body.pubkey !== 'string' ||
-    !HEX_PUBKEY_RE.test(body.pubkey) ||
-    body.pubkey !== identity.publicKey ||
-    !parseManagedIdentity(body.identity)
-  ) {
-    throw new Nip05ClaimError(
-      'invalid_response',
-      'auth service returned an invalid claim result',
-      response.status,
-    );
-  }
-  return {
-    claimed: true,
-    idempotent: body.idempotent as boolean,
-    name: body.name as string,
-    pubkey: body.pubkey as string,
-    identity: parseManagedIdentity(body.identity)!,
   };
 }

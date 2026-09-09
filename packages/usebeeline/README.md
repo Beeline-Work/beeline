@@ -185,7 +185,7 @@ Repository map:
 ```text
 beeline/
 ├── apps/
-│   ├── auth/          GitHub identity, NIP-05, repository install ceremony
+│   ├── auth/          GitHub identity and repository install ceremony
 │   ├── body/          The daemon: harness sessions, Room turns, corners, self-update
 │   ├── gate/          Relay, repository, and provisioning primitives
 │   ├── mobile/        The phone app

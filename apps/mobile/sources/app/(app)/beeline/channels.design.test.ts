@@ -106,24 +106,19 @@ describe('Room list layout contract', () => {
     expect(source).toContain('const COMPOSE_FAB_CLEARANCE = 80');
   });
 
-  it('leads with the state column on a 64pt row; only a DM row also wears a 40px tile', () => {
+  it('aligns Room and Direct Message copy after the state column on a 64pt row', () => {
     expect(source).toContain('const ROW_HEIGHT = 64');
-    expect(source).toContain('const ROW_TILE_SIZE = 40');
     expect(styleBlock(source, 'row')).toContain('minHeight: ROW_HEIGHT');
     expect(styleBlock(source, 'rowMain')).toContain('minHeight: ROW_HEIGHT');
-    // C71: a Room is many voices, so no picture stands for it — the `#name`
-    // sigil is its mark. The tile renders only when the one derivation
-    // (`roomRowName`) supplies one, i.e. for a DM's peer, and it renders
-    // AFTER the leading state column (C81): [state][tile if DM][copy][age].
+    // Both kinds use their brass sigil as the mark, so opening a DM never
+    // shifts its copy onto a different axis: [state][copy][age].
     const rowStateIndex = source.indexOf('styles.rowStateSlot');
-    const tileIndex = source.indexOf('{heading.tile && (');
     const rowCopyIndex = source.indexOf('<View style={styles.rowCopy}>');
     expect(rowStateIndex).toBeGreaterThan(0);
-    expect(tileIndex).toBeGreaterThan(rowStateIndex);
-    expect(rowCopyIndex).toBeGreaterThan(tileIndex);
-    expect(source).toContain('size={ROW_TILE_SIZE}');
-    expect(source).toContain('kind={heading.tile.kind}');
-    expect(source).toContain('seed={heading.tile.seed}');
+    expect(rowCopyIndex).toBeGreaterThan(rowStateIndex);
+    expect(source).not.toContain("from '@/components/buzz/IdentityMark'");
+    expect(source).not.toContain('heading.tile');
+    expect(source).not.toContain('room-tile-');
     expect(source).not.toContain('rowTileSlot');
     expect(source).not.toContain('room-tile-slot-');
     expect(source).not.toMatch(/kind="workspace"[^\n]*room\.id/);

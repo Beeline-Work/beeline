@@ -1259,6 +1259,11 @@ export default function BuzzChat() {
   const dmPeerIdentity = dmPeerPubkey
     ? roomSurface?.members.find((member) => member.identity.pubkey === dmPeerPubkey)?.identity
     : undefined;
+  const dmPeerAgent = dmPeerPubkey ? agentByPubkey.get(dmPeerPubkey) : undefined;
+  const dmPeerAgentDisplay =
+    dmPeerPubkey && dmPeerAgent
+      ? resolveAgentDisplayIdentity(dmPeerPubkey, dmPeerAgent)
+      : undefined;
   const dmAnnouncementAuthor = dmPeerPubkey
     ? roomSurface?.messages.find((message) => message.author.pubkey === dmPeerPubkey)?.author
     : undefined;
@@ -1268,8 +1273,7 @@ export default function BuzzChat() {
   );
   const displayRoomName = useMemo(() => {
     if (!dmPeerPubkey) return roomName;
-    const peerAgent = agentByPubkey.get(dmPeerPubkey);
-    if (peerAgent) return resolveAgentDisplayIdentity(dmPeerPubkey, peerAgent).name;
+    if (dmPeerAgentDisplay) return dmPeerAgentDisplay.name;
     return directMessageHeaderName(
       dmPeerIdentity,
       dmPeerProfile,
@@ -1279,8 +1283,8 @@ export default function BuzzChat() {
       dmAnnouncementAuthor,
     );
   }, [
-    agentByPubkey,
     dmAnnouncementAuthor,
+    dmPeerAgentDisplay,
     dmPeerIdentity,
     dmPeerNip05Status,
     dmPeerProfile,
@@ -3163,6 +3167,20 @@ export default function BuzzChat() {
                 name={cornerAgentDisplay?.name ?? 'Agent'}
                 size={26}
                 alive={sessionState === 'working'}
+              />
+            </HeaderIdentitySlot>
+          )}
+          {isDirectMessage && !isReadOnlyDirectMessage && dmPeerPubkey && (
+            <HeaderIdentitySlot testID="direct-message-header-identity">
+              <IdentityMark
+                kind={dmPeerAgentDisplay || dmPeerIdentity?.kind === 'agent' ? 'agent' : 'human'}
+                seed={dmPeerAgentDisplay?.avatarSeed ?? dmPeerPubkey}
+                avatarUrl={
+                  dmPeerAgentDisplay?.avatarUrl ?? dmPeerIdentity?.avatar ?? dmPeerProfile?.avatar
+                }
+                face={dmPeerAgentDisplay?.face ?? dmPeerIdentity?.face ?? dmPeerProfile?.face}
+                name={displayRoomName}
+                size={26}
               />
             </HeaderIdentitySlot>
           )}

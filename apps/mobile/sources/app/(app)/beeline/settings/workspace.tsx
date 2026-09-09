@@ -17,6 +17,7 @@ import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { pickAndUploadAvatar } from '@/buzz/avatar-upload';
 import { WORKSPACE_PICTURES_ENABLED } from '@/buzz/photo-overrides';
+import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { displayRoomIndexTitle } from '@/buzz/room-list-row';
 import { MEMBERS_LABEL, ROOM_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import {
@@ -257,11 +258,16 @@ export default function WorkspaceSettings() {
   const changeRoomVisibility = useCallback(
     async (room: WorkspaceRoomSetting) => {
       if (!client || !room.canManage) return;
+      if (!getBuzzRuntimeConfig().monolithEnabled) {
+        setError(`${ROOM_LABEL} visibility requires the current Beeline runtime.`);
+        return;
+      }
       const visibility = room.visibility === 'public' ? 'invite-only' : 'public';
       setWorkingKey(`room-${room.id}`);
       setError(null);
       try {
-      await monolithPhoneOperation('updateRoom', { roomId: room.id, visibility });
+        await monolithPhoneOperation('updateRoom', { roomId: room.id, visibility });
+        workspaceSchedulerRef.current?.force();
         chatsSchedulerRef.current?.force();
       } catch (caught) {
         setError(`Could not change ${ROOM_LABEL} visibility: ${String(caught)}`);

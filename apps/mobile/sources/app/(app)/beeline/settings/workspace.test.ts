@@ -15,6 +15,7 @@ const avatarUpload = vi.hoisted(() => ({ pickAndUploadAvatar: vi.fn() }));
 const clipboard = vi.hoisted(() => ({ setStringAsync: vi.fn(async () => undefined) }));
 const modal = vi.hoisted(() => ({ actionSheet: vi.fn() }));
 const phoneOperation = vi.hoisted(() => vi.fn());
+const runtime = vi.hoisted(() => ({ monolithEnabled: true }));
 const roomViews = vi.hoisted(() => ({ workspace: vi.fn(), chats: vi.fn() }));
 const client = vi.hoisted(() => ({
   surfaceSubscribe: vi.fn(async () => vi.fn()),
@@ -66,6 +67,9 @@ vi.mock('react-native-safe-area-context', () => ({
 }));
 vi.mock('@/auth/buzz-identity-storage', () => auth);
 vi.mock('@/buzz/avatar-upload', () => avatarUpload);
+vi.mock('@/buzz/runtime-config', () => ({
+  getBuzzRuntimeConfig: () => ({ monolithEnabled: runtime.monolithEnabled }),
+}));
 vi.mock('expo-clipboard', () => clipboard);
 vi.mock('@/modal', () => ({ Modal: modal }));
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));
@@ -141,6 +145,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   roomViews.workspace.mockResolvedValue(workspaceView());
   roomViews.chats.mockResolvedValue(chatListView());
+  runtime.monolithEnabled = true;
   avatarUpload.pickAndUploadAvatar.mockResolvedValue(null);
 });
 
@@ -414,6 +419,13 @@ describe('Workspace Settings authority', () => {
       ]),
     );
     roomViews.chats.mockResolvedValue(chatListView([]));
+    phoneOperation.mockImplementation(async () => {
+      roomViews.workspace.mockResolvedValue(
+        workspaceView('admin', undefined, [
+          { id: 'private-room', name: 'captains', visibility: 'public', createdAt: 3 },
+        ]),
+      );
+    });
 
     const renderer = await render();
     const control = renderer.root.findByProps({ testID: 'room-visibility-private-room' });
@@ -422,11 +434,30 @@ describe('Workspace Settings authority', () => {
     await act(async () => {
       control.props.onPress();
       await Promise.resolve();
+      await Promise.resolve();
     });
     expect(phoneOperation).toHaveBeenCalledWith('updateRoom', {
       roomId: 'private-room',
       visibility: 'public',
     });
+    expect(renderer.root.findByProps({ testID: 'room-visibility-private-room' }).props.value).toBe(
+      'Public',
+    );
+  });
+
+  it('refuses Room visibility changes outside the Monolith runtime', async () => {
+    runtime.monolithEnabled = false;
+    roomViews.chats.mockResolvedValue(chatListView([room('room-1', 'atlas', 1)]));
+    const renderer = await render();
+
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'room-visibility-room-1' }).props.onPress();
+    });
+
+    expect(phoneOperation).not.toHaveBeenCalled();
+    expect(renderer.root.findAllByType('Text').map((node) => node.children.join(''))).toContain(
+      'Room visibility requires the current Beeline runtime.',
+    );
   });
 
   it('discloses the server-owned Room settings bound', async () => {

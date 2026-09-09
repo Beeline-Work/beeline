@@ -1,7 +1,7 @@
-# The five PR gates in one file (was typecheck.yml, body-tests.yml,
+# The consolidated PR gates in one file (was typecheck.yml, body-tests.yml,
 # client-truth-gates.yml, workflow-lint.yml, auth-image.yml). Check names are
 # the job `name:`s below and are unchanged: TYPECHECK, BODY SUITE,
-# PUSH-GATEWAY SUITE, MOBILE SUITE, MOBILE-EXPORT REACHABILITY,
+# DEAD CODE, PUSH-GATEWAY SUITE, MOBILE SUITE, MOBILE-EXPORT REACHABILITY,
 # PRODUCTION-CORPUS REPLAY, FRAME-BUDGET, STATE-UPGRADE, NATIVE FINGERPRINT,
 # README PARITY, APP LINK ASSOCIATIONS, ACTIONLINT, Build auth container,
 # Detect changes.
@@ -38,6 +38,7 @@ on:
         options:
           - all
           - typecheck
+          - dead-code
           - body-suite
           - push-gateway-suite
           - mobile-suite
@@ -298,6 +299,29 @@ jobs:
       # workflow file, so a filtered lane would never see it.
       - name: Check no workflow names a deleted test
         run: npm run lint:workflow-paths
+
+  dead-code:
+    name: DEAD CODE
+    if: github.event_name == 'pull_request' || inputs.suite == 'all' || inputs.suite == 'dead-code'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install root dependencies
+        run: timeout 5m npm ci
+      # Mobile is intentionally outside the root npm workspaces. Knip still
+      # analyzes it as an explicit workspace and loads its local config graph.
+      - name: Install isolated mobile dependencies
+        working-directory: apps/mobile
+        run: timeout 5m npm ci
+      - name: Reject new unused files or exports
+        run: timeout 5m npm run dead-code
+      - name: Prove an unused export fails the guard
+        run: timeout 5m npm run test:dead-code
 
   body-suite:
     name: BODY SUITE

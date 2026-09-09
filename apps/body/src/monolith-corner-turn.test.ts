@@ -1498,6 +1498,13 @@ describe('thin monolith corner turn', () => {
               name: 'Bee',
               role: 'member',
             },
+            {
+              identityId: 'peer-agent',
+              kind: 'agent',
+              name: 'Goosy',
+              handle: 'goosy-2',
+              role: 'member',
+            },
           ],
         };
       }
@@ -1641,6 +1648,10 @@ describe('thin monolith corner turn', () => {
     expect(secondPrompt).not.toContain('corner row 1\n');
     expect(firstPrompt).toContain('Corner objective:\nImplement the widget');
     expect(secondPrompt).toContain('Corner objective:\nImplement the widget');
+    expect(firstPrompt).toContain('Room members, and the exact spelling that tags each one:');
+    expect(secondPrompt).toContain('Room members, and the exact spelling that tags each one:');
+    expect(firstPrompt).toContain('- @goosy-2 — Goosy (agent)');
+    expect(secondPrompt).toContain('- @goosy-2 — Goosy (agent)');
     expect(sessionNew).toHaveBeenCalledWith(
       expect.objectContaining({
         cwd: worktree,

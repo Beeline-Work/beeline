@@ -1,0 +1,75 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  // This gate owns dead source only. Dependency declarations, shell binaries,
+  // unresolved platform modules, duplicate exports, and enum members have
+  // separate manifests/toolchains and are intentionally outside its contract.
+  "include": ["files", "exports", "types"],
+  "includeEntryExports": true,
+  "ignoreExportsUsedInFile": true,
+  "workspaces": {
+    ".": {
+      // Shell hooks and device harnesses invoke these by path, outside the
+      // JavaScript module graph Knip can follow.
+      "entry": [
+        "scripts/cutover-hooks/{generate-daemon-exchanges,production-e2e}.mjs",
+        "scripts/{provision-smoke,publish-smoke-replies}.ts",
+      ],
+      "project": [
+        "scripts/**/*.{js,cjs,mjs,ts,tsx}",
+        "!scripts/fixtures/dead-code-regression/**",
+        ".verification/**/*.ts",
+        "relay-stack/web/**/*.{js,mjs}",
+        "!relay-stack/web/join/invite.js",
+      ],
+    },
+    "apps/*": {
+      "project": [
+        "src/**/*.{js,cjs,mjs,ts,tsx}",
+        "scripts/**/*.{js,cjs,mjs,ts,tsx}",
+        "deploy/**/*.{js,cjs,mjs,ts,tsx}",
+        "*.config.{js,cjs,mjs,ts}",
+      ],
+    },
+    "packages/*": {
+      "project": ["src/**/*.{js,cjs,mjs,ts,tsx}", "scripts/**/*.{js,cjs,mjs,ts,tsx}"],
+    },
+    "apps/mobile": {
+      // Expo's plugin evaluator cannot model this app's tuple-shaped config
+      // plugins or its environment-gated branches. The config itself and the
+      // filesystem router are represented explicitly below, so both branches
+      // stay in the static graph without executing a CI-specific environment.
+      "expo": false,
+      "entry": [
+        "index.ts",
+        "app.config.js",
+        "sources/app/**/*.{ts,tsx}",
+        "sources/**/*.{ios,android,windows,web,native,default}.{js,jsx,ts,tsx}",
+        "scripts/{ota-delivery-index,ota-release}.mjs",
+        "scripts/{identity-axis-proof,identity-axis-proof-shims}.tsx",
+      ],
+      "project": [
+        "sources/**/*.{js,ts,tsx}",
+        "scripts/**/*.{js,cjs,mjs,ts,tsx}",
+        "plugins/**/*.js",
+        "*.config.js",
+      ],
+    },
+    "apps/body": {
+      "entry": ["src/{index,cli}.ts", "scripts/measure-turn-phases.ts", "vitest.live.config.ts"],
+    },
+    "apps/gate": {
+      "entry": ["src/{index,provisioning}.ts", "vitest.live.config.ts"],
+    },
+    "apps/server": {
+      // These are copied to an operator host and executed during database
+      // cutover; they are intentionally not package.json commands.
+      "entry": [
+        "src/{index,import-cli,measure-cli}.ts",
+        "scripts/{copy-postgres-data,verify-fly-cutover}.mjs",
+      ],
+    },
+    "packages/buzz-client": {
+      "entry": ["src/index.ts", "scripts/capture-relay-history.ts", "vitest.live.config.ts"],
+    },
+  },
+}

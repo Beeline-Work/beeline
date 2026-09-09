@@ -147,25 +147,6 @@ async function callTool(
 }
 
 describe('open_corner over the grok wire', () => {
-  it('sends explicit delegation as separate turn-bound data over the MCP wire', async () => {
-    const door = await daemonDoor();
-    const { result, error } = await callTool(
-      door.origin,
-      { agentId: 'goosy-id' },
-      { name: 'delegate_to_agent' },
-    );
-    expect(error).toBeUndefined();
-    expect(result?.isError).toBeUndefined();
-    expect(door.calls).toContainEqual({
-      operation: 'stageAgentDelegation',
-      roomId: ROOM,
-      targetAgentId: 'goosy-id',
-      requestId: 'command-request',
-      generationId: 'g1',
-    });
-    expect(door.calls.some((c) => c.operation === 'postRoomMessage')).toBe(false);
-  });
-
   it('opens a corner from the multi-line brief that used to be refused', async () => {
     const door = await daemonDoor();
     const { result, error } = await callTool(door.origin, {

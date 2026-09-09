@@ -261,7 +261,6 @@ export function isMountedMcpToolPermissionRequest(
 }
 
 const AGENT_SURFACE_TOOL_NAMES = [
-  'delegate_to_agent',
   'open_corner',
   'pr_checks_status',
   'attach_file',

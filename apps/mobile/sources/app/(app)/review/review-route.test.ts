@@ -49,10 +49,12 @@ describe('the review link route', () => {
     )
       .split('\n')
       .filter(Boolean);
-    // Only the cold-start hand-off names the route; nothing renders a way in.
+    // Only the cold-start hand-off and its regression tests name the route;
+    // nothing renders a way in.
     expect(referring.sort()).toEqual([
       'sources/app/(app)/index.tsx',
       'sources/app/(app)/review/review-route.test.ts',
+      'sources/navigation/buzzRootRouting.test.ts',
     ]);
   });
 });

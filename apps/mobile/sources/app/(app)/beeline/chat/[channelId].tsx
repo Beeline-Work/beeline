@@ -2690,7 +2690,7 @@ export default function BuzzChat() {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Modal.alert(
         `Not connected yet`,
-        `This ${CORNER_LABEL} could not be closed because the app is still connecting to the relay. Try again in a moment.`,
+        `This ${CORNER_LABEL} could not be closed because the app is still connecting to the server. Try again in a moment.`,
       );
       return;
     }

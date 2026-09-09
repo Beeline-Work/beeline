@@ -162,7 +162,7 @@ rollback_ota() {
   previous="$(jq -er '[(.previousProductionGroupIds // .previousProductionGroupId) | if type=="string" then split(",")[] else .[] end] | unique | join(",")' "$CUTOVER_OTA_LEDGER")"; current="$(jq -er '[(.production.groupIds // .production.groupId) | if type=="string" then split(",")[] else .[] end] | unique | join(",")' "$CUTOVER_OTA_LEDGER")"
   (cd "$REPO_ROOT/apps/mobile" && node scripts/ota-release.mjs rollback --group "$previous" --expected-current-group "$current" --ledger "$CUTOVER_OTA_ROLLBACK_LEDGER")
   jq -e '.status=="rolled-back" and (.productionGroupId|type=="string")' "$CUTOVER_OTA_ROLLBACK_LEDGER" >/dev/null || die 'OTA rollback did not republish the expected previous group; old writes remain frozen'
-  install -m 644 "$REPO_ROOT/relay-stack/prod/cutover-write-freeze.conf" "$CUTOVER_OLD_STACK_DIR/relay-front/cutover-write-freeze.conf"
+  install -m 644 "$REPO_ROOT/scripts/cutover-hooks/cutover-write-freeze.conf" "$CUTOVER_OLD_STACK_DIR/relay-front/cutover-write-freeze.conf"
   docker compose --project-directory "$CUTOVER_OLD_STACK_DIR" exec -T relay-front nginx -t
   docker compose --project-directory "$CUTOVER_OLD_STACK_DIR" kill -s HUP relay-front
 }

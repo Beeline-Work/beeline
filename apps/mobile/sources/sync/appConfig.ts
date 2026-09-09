@@ -7,10 +7,7 @@ export interface AppConfig {
   buildCommitTimestamp?: string;
   releaseVersion?: string;
   releaseSha?: string;
-  buzzyRelayUrl?: string;
-  buzzyPushGatewayUrl?: string;
   buzzyMonolithUrl?: string;
-  buzzyMonolithEnabled?: boolean;
 }
 
 /**
@@ -51,27 +48,8 @@ export function loadAppConfig(): AppConfig {
     console.log('[loadAppConfig] Override postHogKey from EXPO_PUBLIC_POSTHOG_KEY');
     config.postHogKey = process.env.EXPO_PUBLIC_POSTHOG_KEY;
   }
-  if (
-    process.env.EXPO_PUBLIC_BUZZY_RELAY_URL &&
-    config.buzzyRelayUrl !== process.env.EXPO_PUBLIC_BUZZY_RELAY_URL
-  ) {
-    console.log('[loadAppConfig] Override relay URL from EXPO_PUBLIC_BUZZY_RELAY_URL');
-    config.buzzyRelayUrl = process.env.EXPO_PUBLIC_BUZZY_RELAY_URL;
-  }
-  if (
-    process.env.EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL &&
-    config.buzzyPushGatewayUrl !== process.env.EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL
-  ) {
-    console.log(
-      '[loadAppConfig] Override push gateway URL from EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL',
-    );
-    config.buzzyPushGatewayUrl = process.env.EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL;
-  }
   if (process.env.EXPO_PUBLIC_BUZZY_MONOLITH_URL) {
     config.buzzyMonolithUrl = process.env.EXPO_PUBLIC_BUZZY_MONOLITH_URL;
-  }
-  if (process.env.EXPO_PUBLIC_BUZZY_MONOLITH_ENABLED) {
-    config.buzzyMonolithEnabled = process.env.EXPO_PUBLIC_BUZZY_MONOLITH_ENABLED === 'true';
   }
   if (process.env.EXPO_PUBLIC_BEELINE_RELEASE_VERSION) {
     config.releaseVersion = process.env.EXPO_PUBLIC_BEELINE_RELEASE_VERSION;

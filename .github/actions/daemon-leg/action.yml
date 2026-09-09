@@ -1,8 +1,7 @@
 # Daemon leg of the unified release (was .github/workflows/beeline-bundle.yml).
 # unified-release.yml calls it twice from the self-hosted production host:
 # phase=build builds and install-verifies the exact linux-x64 bundle,
-# phase=promote publishes it to Pages plus a temporary legacy-origin mirror
-# (docs/cli-bundle-channel.md) and waits for every helper to restart READY on
+# phase=promote publishes it to Pages and waits for every helper to restart READY on
 # the exact release. The caller checks out the release SHA first and owns
 # runner and timeout (promote needs 55 minutes, see the confirm step).
 name: Beeline daemon release leg
@@ -16,9 +15,6 @@ inputs:
     required: true
   release_version:
     required: true
-  legacy_mirror:
-    description: Keep the old origin current until DNS cutover is verified; then set false
-    default: 'true'
   pages_manifest_url:
     default: https://beeline-work.github.io/beeline/dl/manifest.json
 
@@ -105,13 +101,6 @@ runs:
         release_sha: ${{ inputs.release_sha }}
         release_version: ${{ inputs.release_version }}
         manifest_url: ${{ inputs.pages_manifest_url }}
-    - name: Mirror the exact bundle to the old origin during DNS migration
-      if: inputs.phase == 'promote' && inputs.legacy_mirror != 'false'
-      shell: bash
-      run: node scripts/publish-beeline-dl.mjs --dir bundle --output-dir "$BEELINE_DL_ROOT" --keep 5
-      env:
-        GITHUB_SHA: ${{ inputs.release_sha }}
-        BEELINE_DL_ROOT: /home/lunchbox/buzz-router-relay-prod/relay-front/web/dl
     - name: Confirm every daemon restarted READY on the exact release
       if: inputs.phase == 'promote'
       shell: bash

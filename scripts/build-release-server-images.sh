@@ -29,6 +29,5 @@ build_image() {
   test "$(docker image inspect --format '{{ index .Config.Labels "app.usebeeline.release.sha" }}' "$name:release-$RELEASE_SHA")" = "$RELEASE_SHA"
 }
 
-build_image beeline-auth apps/auth/Dockerfile
-build_image beeline-materializer apps/push-gateway/Dockerfile
+build_image beeline-server apps/server/Dockerfile
 echo "server artifacts built for $RELEASE_VERSION ($RELEASE_SHA)"

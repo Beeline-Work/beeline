@@ -3,21 +3,11 @@
 The relay front serves invite links, app-association files, and the hosted
 Beeline installer from the read-only `web/` mount.
 
-## Publish the relay-front web assets
+## Publish the Pages assets
 
-The repository's `relay-stack/web/` tree is the source of truth. On the
-production operator host, publish it and reload the front with one command
-from a clean checkout of the intended commit:
-
-```sh
-npm run publish:relay-front
-```
-
-The publisher updates tracked web assets without deleting host-only download
-artifacts, so it is safe to run repeatedly. Before changing anything, it
-compares both the live and on-host Apple and Android associations with the
-repository and refuses to remove an entry either currently carries. After
-reviewing an intentional removal, use `npm run publish:relay-front -- --force`.
+The repository's `relay-stack/web/` tree is the source of truth. The Pages leg
+publishes it to GitHub Pages. No production command writes or reloads the
+retired relay-front host.
 
 `.github/workflows/app-association-drift.yml` independently checks the live
 domain every six hours. It fails the workflow and prints every repository-only
@@ -80,26 +70,20 @@ npm run bundle:beeline -- --platform darwin-arm64
 ```
 
 Each local build writes `web/dl/manifest.json`, a tarball, and its checksum
-sidecar as ignored build outputs. CI (the daemon leg of
-`.github/workflows/unified-release.yml`, `.github/actions/daemon-leg/`)
-publishes the verified set directly to the production host's persistent
-`relay-front/web/dl/` store; Git carries none of those generated files. The
-Fly monolith server leg does not touch that store. nginx continues to serve:
+sidecar as ignored build outputs. The release workflow uploads the verified
+bundle as a GitHub Actions artifact; it no longer mirrors files into the
+retired relay-front host. Git carries none of those generated files. The
+Pages deployment serves the repository-owned static site, while the Fly
+monolith is the only production API/server.
 
 - `/install` as `text/x-shellscript`
 - `/dl/beeline-<os>-<arch>.tar.gz` and its `.sha256` sidecar
 - `/dl/manifest.json` — the rolling "latest from main" manifest consumed by
   the daemon self-update flow (see `docs/cli-bundle-channel.md`)
 
-The publisher stages under the store, renames files atomically with the
-manifest last, and retains five generations by default for rollback. The
-bundle workflow dispatches the production deploy only after publication, so
-the first checkout-without-tarballs deploy never empties `/dl/`.
-
-The invite landing page also expects the latest signed Android release APK at
-`web/dl/beeline-android.apk`. This stable deployment alias is not committed;
-copy the same APK attached to the current GitHub release before deploying the
-relay front so new invitees can install Beeline without losing their invite URL.
+Historical relay-front publication procedures are intentionally not retained
+as runnable instructions. Release artifacts belong in GitHub releases/Actions;
+do not restore a host-side `/dl` mirror.
 
 For local verification, override the install origin while using the same
 published script:

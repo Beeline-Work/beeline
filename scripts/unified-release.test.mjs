@@ -369,6 +369,8 @@ test('one workflow owns parallel builds, ordered promotion, retry, and the final
   );
   assert.match(server, /--build-arg "BEELINE_RELEASE_SHA=\$RELEASE_SHA"/);
   assert.doesNotMatch(server, /deploy-relay-host\.sh/);
+  assert.match(server, /images: \['server'\]/);
+  assert.doesNotMatch(server, /images: \['auth', 'materializer'\]/);
   assert.match(workflow, /name: Confirm monolith readiness and exact deployed image/);
   assert.match(workflow, /https:\/\/server\.usebeeline\.app\/readyz/);
   assert.match(workflow, /https:\/\/server\.usebeeline\.app\/version/);
@@ -383,6 +385,7 @@ test('one workflow owns parallel builds, ordered promotion, retry, and the final
   assert.equal(workflowDefinition.jobs.promote_daemon['timeout-minutes'], 55);
   assert.match(daemon, /cat "\$RUNNER_TEMP\/release-readiness-error\.txt" >&2/);
   assert.doesNotMatch(daemon, /usebeeline\.app\/push\/health/);
+  assert.doesNotMatch(daemon, /legacy_mirror|BEELINE_DL_ROOT|buzz-router-relay-prod/);
   assert.match(workflow, /https:\/\/server\.usebeeline\.app\/v1\/releases\/daemon-readiness/);
   assert.doesNotMatch(workflow, /usebeeline\.app\/push\/health/);
   assert.doesNotMatch(workflow, /post_promote_rehearsal|mobile-ota-post-promote|emulator|Maestro/);

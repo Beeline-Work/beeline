@@ -328,7 +328,6 @@ jobs:
           phase: promote
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}
-          legacy_mirror: ${{ vars.BEELINE_DL_LEGACY_MIRROR || 'true' }}
           pages_manifest_url: ${{ vars.BEELINE_PAGES_MANIFEST_URL || 'https://beeline-work.github.io/beeline/dl/manifest.json' }}
 
   confirm_daemon:

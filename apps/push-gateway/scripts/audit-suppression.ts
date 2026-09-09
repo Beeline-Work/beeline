@@ -1,6 +1,6 @@
 /**
  * Operator gate audit: run the gateway's REAL metadata resolution + suppression
- * gates against the production relay for a registered identity and print one
+ * gates against an explicitly configured isolated relay and print one
  * verdict per candidate room.
  *
  * Usage:
@@ -18,7 +18,7 @@ import { NotificationMetadataResolver } from '../src/metadata.js';
 
 const relayHttp = {
   baseUrl: process.env.BUZZY_RELAY_URL ?? 'http://127.0.0.1:3410',
-  host: process.env.BUZZY_RELAY_HOST ?? 'relay.buzzrouter.com',
+  host: process.env.BUZZY_RELAY_HOST ?? '127.0.0.1:3010',
 };
 
 async function resolvePubkey(prefix: string): Promise<string> {

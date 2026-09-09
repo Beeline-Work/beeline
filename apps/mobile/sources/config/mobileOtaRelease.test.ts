@@ -53,10 +53,9 @@ function runRelease(args: string[], env: Record<string, string> = {}) {
 
 describe('mobile OTA release governor', () => {
   it('pins the final-cut OTA transport to the monolith in source', () => {
-    expect(appConfig).toContain('const buzzyMonolithEnabled = true;');
-    expect(appConfig).not.toContain(
-      'const buzzyMonolithEnabled = process.env.EXPO_PUBLIC_BUZZY_MONOLITH_ENABLED',
-    );
+    expect(appConfig).toContain("'https://server.usebeeline.app'");
+    expect(appConfig).not.toContain('EXPO_PUBLIC_BUZZY_MONOLITH_ENABLED');
+    expect(appConfig).not.toContain('EXPO_PUBLIC_BUZZY_RELAY_URL');
   });
 
   it('dry-runs beta publish and exact-group production operations with pinned EAS CLI', () => {

@@ -321,14 +321,14 @@ export class DaemonService {
           scopedRoom!,
           authenticatedAgentId,
           String(candidate.commandId),
-          String(candidate.generationId),
+          typeof candidate.generationId === 'string' ? candidate.generationId : '',
         );
         return this.writeResult() as Output<Name>;
       case 'acknowledgeAgentCommand': {
         const acknowledged = await this.database.query(
           `UPDATE agent_commands SET state='complete',completed_at=now()
-          WHERE id=$1 AND room_id=$2 AND agent_id=$3 AND generation_id=$4 AND state='claimed'
-          AND action='stop' AND lease_expires_at>now()`,
+          WHERE id=$1 AND room_id=$2 AND agent_id=$3 AND generation_id=$4 AND (state='complete' OR (state='claimed' AND lease_expires_at>now()))
+          AND action='stop'`,
           [candidate.commandId, scopedRoom, authenticatedAgentId, candidate.generationId],
         );
         if (!acknowledged.rowCount) throw new Error('command acknowledgement conflict');
@@ -1884,6 +1884,15 @@ export class DaemonService {
       kind: input.kind,
       mentions,
       causeId,
+      commandId: (
+        await authorizeCommandOutput(
+          this.database,
+          input.roomId,
+          agentId,
+          input.requestId,
+          input.generationId,
+        )
+      ).id,
     });
     return { id: line.id, createdAt: Math.floor(Date.now() / 1_000) };
   }

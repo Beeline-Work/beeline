@@ -82,14 +82,23 @@ beforeAll(async () => {
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`,
         [W, room, who],
       );
+  for (const agent of [A, B])
+    await db.query(
+      `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body) VALUES($1,$2,'presence','presence','{"status":"online"}') ON CONFLICT(room_id,agent_id,turn_id,kind) DO UPDATE SET body=EXCLUDED.body,updated_at=now()`,
+      [R, agent],
+    );
   phone = new PhoneService(db, 'http://test');
   daemon = new DaemonService(db, new LiveHub());
 }, 30_000);
 afterAll(async () => db?.close());
 beforeEach(async () => {
+  await db.query(
+    `UPDATE live_outputs SET body='{"status":"online"}',updated_at=now() WHERE kind='presence'`,
+  );
+  await db.query(`DELETE FROM live_outputs WHERE kind<>'presence'`);
   await db.query(`DELETE FROM agent_commands`);
   await db.query(`DELETE FROM agent_turns`);
-  await db.query(`UPDATE agents SET access_policy='{"mode":"everyone"}'::jsonb`);
+  await db.query(`UPDATE agents SET access_policy='{"type":"everyone"}'::jsonb`);
   await db.query(`UPDATE memberships SET removed_at=NULL`);
 });
 
@@ -182,10 +191,9 @@ it('does not route a removed target or refused human', async () => {
   expect(await db.query(`SELECT 1 FROM agent_commands WHERE agent_id=$1`, [B])).toMatchObject({
     rowCount: 0,
   });
-  await db.query(
-    `UPDATE agents SET access_policy='{"mode":"owner-only"}'::jsonb WHERE agent_id=$1`,
-    [A],
-  );
+  await db.query(`UPDATE agents SET access_policy='{"type":"creator"}'::jsonb WHERE agent_id=$1`, [
+    A,
+  ]);
   await phone.execute('sendRoomMessage', { roomId: R, text: '@hoots' }, P);
   expect(await commands(A)).toEqual([]);
 });
@@ -377,4 +385,192 @@ it('transfers a corner objective without resetting the authorized chain', async 
 });
 it('makes the depth boundary explicit', () => {
   expect([0, 1, 2, 3].map(nextAgentDepth)).toEqual([1, 2, 3, undefined]);
+});
+
+it('creates no executable work for an unreachable helper', async () => {
+  await db.query(`UPDATE live_outputs SET body='{"status":"offline"}' WHERE agent_id=$1`, [A]);
+  const source = await send('@hoots are you there?');
+  expect(await commands()).toEqual([]);
+  expect(
+    (
+      await db.query(
+        `SELECT text FROM messages WHERE room_id=$1 AND presentation='system' AND text LIKE '%helper is offline%'`,
+        [R],
+      )
+    ).rowCount,
+  ).toBeGreaterThan(0);
+  expect((await db.query(`SELECT 1 FROM messages WHERE id=$1`, [source.messageId])).rowCount).toBe(
+    1,
+  );
+});
+it('selects exactly one winner when two generations claim a pending command together', async () => {
+  await send('@hoots');
+  const [c] = await commands();
+  const attempts = await Promise.allSettled(
+    ['race-a', 'race-b'].map((generationId) =>
+      daemon.execute('claimAgentCommand', { roomId: R, commandId: c!.id, generationId }, A),
+    ),
+  );
+  expect(attempts.filter((a) => a.status === 'fulfilled')).toHaveLength(1);
+  expect(attempts.filter((a) => a.status === 'rejected')).toHaveLength(1);
+});
+it('never reopens terminal commands and never accepts missing generation claims', async () => {
+  await send('@hoots');
+  const [c] = await commands();
+  await expect(
+    daemon.execute('claimAgentCommand', { roomId: R, commandId: c!.id } as never, A),
+  ).rejects.toThrow();
+  await claim(c!);
+  await result(c!, 'Terminal');
+  await expect(claim(c!, 'another')).rejects.toThrow();
+});
+it('rechecks delegated membership at final commit, including staged targets', async () => {
+  await send('@hoots');
+  const [c] = await commands();
+  await claim(c!);
+  await daemon.execute(
+    'stageAgentDelegation',
+    { roomId: R, requestId: c!.turnRequestId, generationId: 'g1', targetAgentId: B },
+    A,
+  );
+  await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [
+    R,
+    B,
+  ]);
+  await result(c!, 'No target remains', [B]);
+  expect((await db.query(`SELECT 1 FROM agent_commands WHERE agent_id=$1`, [B])).rowCount).toBe(0);
+});
+it('binds emitted events to the issuing command when agents share a human request', async () => {
+  await send('@hoots @goosy');
+  const [a] = await commands(A),
+    [b] = await commands(B);
+  await claim(a!);
+  await claim(b!);
+  const event = await daemon.execute(
+    'postRoomEvent',
+    {
+      roomId: R,
+      requestId: a!.turnRequestId,
+      generationId: 'g1',
+      kind: 'agent:handoff',
+      consequence: 'Ready',
+      mentionAgentIds: [B],
+    },
+    A,
+  );
+  const [child] = (await commands(B)).filter((c) => c.sourceMessageId === event.id);
+  expect(child?.parentCommandId).toBe(a!.id);
+  expect(child?.agentDepth).toBe(1);
+});
+
+it.each(['unknown', 'wrong-agent', 'wrong-room', 'stale', 'cancelled', 'completed'])(
+  'rejects every output surface for %s authority',
+  async (invalid) => {
+    await send('@hoots');
+    const [c] = await commands();
+    await claim(c!);
+    const input = {
+      roomId: R,
+      agentId: A,
+      requestId: c!.turnRequestId,
+      turnId: c!.turnRequestId,
+      generationId: 'g1',
+    };
+    let author = A;
+    if (invalid === 'unknown') {
+      input.requestId = id();
+      input.turnId = input.requestId;
+    }
+    if (invalid === 'wrong-agent') {
+      author = B;
+      input.agentId = B;
+    }
+    if (invalid === 'wrong-room') input.roomId = C;
+    if (invalid === 'stale') input.generationId = 'stale';
+    if (invalid === 'cancelled')
+      await phone.execute(
+        'cancelAgentTurn',
+        { roomId: R, agentId: A, requestId: c!.turnRequestId },
+        H,
+      );
+    if (invalid === 'completed') await result(c!, 'Already done');
+    const writes = [
+      ['postAgentDraft', { text: 'Late draft' }],
+      ['postAgentThought', { text: 'Late thought' }],
+      [
+        'postAgentActivity',
+        { activity: [{ kind: 'thinking', title: 'Late', status: 'in_progress' }] },
+      ],
+      [
+        'postAgentAttachment',
+        {
+          attachment: {
+            url: 'http://test/v1/media/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            name: 'file.txt',
+            mimeType: 'text/plain',
+            size: 1,
+          },
+        },
+      ],
+      ['postRoomMessage', { text: 'Late final' }],
+    ] as const;
+    const before = (await db.query(`SELECT count(*)::int n FROM messages`)).rows[0];
+    for (const [operation, payload] of writes)
+      await expect(
+        daemon.execute(operation, { ...input, ...payload } as never, author),
+      ).rejects.toThrow();
+    expect((await db.query(`SELECT count(*)::int n FROM messages`)).rows[0]).toEqual(before);
+  },
+);
+it('accepts and settles draft, thought, activity, attachment and final under one claimed generation', async () => {
+  await send('@hoots');
+  const [c] = await commands();
+  await claim(c!);
+  const input = {
+    roomId: R,
+    agentId: A,
+    requestId: c!.turnRequestId,
+    turnId: c!.turnRequestId,
+    generationId: 'g1',
+  };
+  await daemon.execute('postAgentDraft', { ...input, text: 'Draft' }, A);
+  await daemon.execute('postAgentThought', { ...input, text: 'Thought' }, A);
+  await daemon.execute(
+    'postAgentActivity',
+    { ...input, activity: [{ kind: 'thinking', title: 'Working', status: 'in_progress' }] },
+    A,
+  );
+  const media = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  await db.query(
+    `INSERT INTO media(id,owner_id,bytes,mime_type,name,sha256) VALUES($1,$2,$3,'text/plain','result.txt',$4) ON CONFLICT(id) DO NOTHING`,
+    [media, A, Buffer.from('ok'), id()],
+  );
+  await daemon.execute(
+    'postAgentAttachment',
+    {
+      ...input,
+      attachment: {
+        url: 'http://test/v1/media/' + media,
+        name: 'result.txt',
+        mimeType: 'text/plain',
+        size: 2,
+      },
+    },
+    A,
+  );
+  const final = await result(c!, 'With attachment');
+  const saved = (
+    await db.query<{ attachments: unknown[] }>(`SELECT attachments FROM messages WHERE id=$1`, [
+      final.id,
+    ])
+  ).rows[0]!;
+  expect(saved.attachments).toHaveLength(1);
+  expect(
+    (
+      await db.query(
+        `SELECT 1 FROM live_outputs WHERE room_id=$1 AND agent_id=$2 AND kind IN ('draft','thought')`,
+        [R, A],
+      )
+    ).rowCount,
+  ).toBe(0);
 });

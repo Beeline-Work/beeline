@@ -4,9 +4,7 @@ import { formatGrantDecisionLine } from '@beeline/api-contract/agent-grants';
 import {
   inboxItemAuthorName,
   inboxItemPromptBody,
-  isGrantDecisionLine,
   isScheduledPrompt,
-  isSubscribedEvent,
 } from './monolith-room-turn.js';
 
 const AGENT = 'a'.repeat(64);

@@ -9,11 +9,7 @@ import { credentialMaskPaths } from './bwrap-sandbox.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import { GrantCommandRunner, type GrantRunnerRoom } from './grant-runner.js';
-import {
-  isGrantDecisionLine,
-  MonolithRoomTurnLoop,
-  pendingGrantToolCall,
-} from './monolith-room-turn.js';
+import { MonolithRoomTurnLoop, pendingGrantToolCall } from './monolith-room-turn.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 import { SessionScheduler } from './session-scheduler.js';
 

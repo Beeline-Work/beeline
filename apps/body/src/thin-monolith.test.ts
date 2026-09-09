@@ -1,3 +1,4 @@
+import { commandFixtureApi } from './command-fixture.test-support.js';
 import { execFile } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -302,6 +303,7 @@ describe('monolith-only thin daemon', () => {
             items: [
               {
                 id: unmentionedId,
+                fixtureCommand: false,
                 authorId: humanId,
                 createdAt: 1,
                 type: 'message',
@@ -356,14 +358,18 @@ describe('monolith-only thin daemon', () => {
       autoApprovePermissions: false,
     };
     const coordinator = new RoomRuntimeCoordinator(staged.runtime, staged.configPath, config, {
-      daemonApi: {
-        execute,
-        connection: () => ({
-          baseUrl: 'https://server.example',
-          daemonToken: 'daemon-token',
-          agentId: staged.runtime.agent.publicKey,
-        }),
-      } as unknown as DaemonApiClient,
+      daemonApi: commandFixtureApi(
+        {
+          execute,
+          connection: () => ({
+            baseUrl: 'https://server.example',
+            daemonToken: 'daemon-token',
+            agentId: staged.runtime.agent.publicKey,
+          }),
+        } as unknown as DaemonApiClient,
+        roomId,
+        staged.runtime.agent.publicKey,
+      ),
     });
     try {
       await coordinator.reconcile();

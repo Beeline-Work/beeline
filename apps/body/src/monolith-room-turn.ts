@@ -3,12 +3,11 @@ import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
-import { parseGrantDecisionLine } from '@beeline/api-contract/agent-grants';
 import {
   SCHEDULE_RAN_VERB,
   SCHEDULE_SCHEDULER_NAME,
 } from '@beeline/api-contract/scheduled-prompts';
-import { isControlKind, isResumeKind, type SystemEvent } from '@beeline/api-contract/daemon';
+import { type SystemEvent } from '@beeline/api-contract/daemon';
 import {
   AcpClient,
   type AcpPermissionDecision,
@@ -173,61 +172,6 @@ export function inboxItemPromptBody(
     : item.body;
 }
 
-/**
- * An event this agent subscribed to: a mentioned system line whose structured
- * event carries a `kind`. The kind is the contract — never the line's wording,
- * which is prose an editor may reword. A RESUME kind is excluded: a grant
- * decision answers a turn already paused on the ask, and starting a second
- * turn on it would run the same work twice. A CONTROL kind is excluded for the
- * mirror-image reason: a stop request exists to END a turn, and waking one on
- * it would start the very work the person asked to stop.
- */
-export function isSubscribedEvent(
-  item: { type: string; mentionIds: readonly string[]; systemEvent?: SystemEvent },
-  agentId: string,
-): boolean {
-  const kind = item.systemEvent?.kind;
-  return (
-    item.type === 'system' &&
-    kind !== undefined &&
-    !isResumeKind(kind) &&
-    !isControlKind(kind) &&
-    item.mentionIds.includes(agentId)
-  );
-}
-
-/**
- * Whether an item may skip the per-sender access policy. The SERVER authored a
- * server-kind line — a join, a schedule, a check — so the row's author is the
- * subject of the fact, not the principal asking for work: gating on them would
- * keep a greeter asleep, since a newcomer is never the agent's creator. An
- * `agent:` kind is a fact another agent emitted and stays gated on that agent.
- * Grant decisions were already authority-gated by the owner's own decision.
- */
-/** The owner's answer to a grant card arrives as a server-authored system line
- *  mentioning this agent (`<name> approved: command …`); it resumes the turn that
- *  paused on the ask. Recognised structurally, never by a bare `system` type. */
-export function isGrantDecisionLine(
-  item: { type: string; body: string; mentionIds: readonly string[] },
-  agentId: string,
-): boolean {
-  return (
-    item.type === 'system' &&
-    item.mentionIds.includes(agentId) &&
-    parseGrantDecisionLine(item.body) !== undefined
-  );
-}
-
-/** Which server-delivered commands may start or steer a turn: ordinary messages,
- *  mentioned event lines (plus the one-release verb fallback for
- *  a scheduled prompt written before the server stamped kinds), and the grant
- *  decision that resumes a turn paused on the ask. Never a plain system line and
- *  never the agent's own rows.
- *
- *  A RESUME kind reaches the loop only through `isGrantDecisionLine`, its own
- *  path, which prompts the paused turn's session with the decision and the
- *  resume instruction. `isSubscribedEvent` excludes it so it cannot ALSO be
- *  handled as an ordinary event and prompt the granted work a second time. */
 /** A `request_grant` call whose reply says the card is posted pauses the turn. */
 export function pendingGrantToolCall(call: { title?: string; content?: unknown }): boolean {
   if (!/(?:^|[._:/-])request_grant$/i.test(call.title ?? '')) return false;

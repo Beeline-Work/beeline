@@ -1,3 +1,6 @@
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 /**
  * The `open_corner` wire, driven exactly as grok drives it.
  *
@@ -68,9 +71,20 @@ async function callTool(
   options: { name?: string; cornerId?: string } = {},
 ): Promise<{ result?: ToolResult; error?: { code: number; message: string } }> {
   const entrypoint = fileURLToPath(new URL('./read-only-mcp.ts', import.meta.url));
+  const root = await mkdtemp(join(tmpdir(), 'command-mcp-test-'));
+  const context = join(root, 'command.json');
+  await writeFile(
+    context,
+    JSON.stringify({
+      roomId: options.cornerId ?? ROOM,
+      requestId: 'command-request',
+      generationId: 'g1',
+    }),
+  );
   const child = spawn(process.execPath, ['--import', 'tsx', entrypoint], {
     env: {
       ...process.env,
+      BEELINE_TURN_CONTEXT_FILE: context,
       BEELINE_MCP_SURFACE: 'agent',
       BEELINE_DAEMON_BASE_URL: origin,
       BEELINE_DAEMON_TOKEN: 'daemon-token',
@@ -128,10 +142,30 @@ async function callTool(
     return await answer;
   } finally {
     child.kill();
+    await rm(root, { recursive: true, force: true });
   }
 }
 
 describe('open_corner over the grok wire', () => {
+  it('sends explicit delegation as separate turn-bound data over the MCP wire', async () => {
+    const door = await daemonDoor();
+    const { result, error } = await callTool(
+      door.origin,
+      { agentId: 'goosy-id' },
+      { name: 'delegate_to_agent' },
+    );
+    expect(error).toBeUndefined();
+    expect(result?.isError).toBeUndefined();
+    expect(door.calls).toContainEqual({
+      operation: 'stageAgentDelegation',
+      roomId: ROOM,
+      targetAgentId: 'goosy-id',
+      requestId: 'command-request',
+      generationId: 'g1',
+    });
+    expect(door.calls.some((c) => c.operation === 'postRoomMessage')).toBe(false);
+  });
+
   it('opens a corner from the multi-line brief that used to be refused', async () => {
     const door = await daemonDoor();
     const { result, error } = await callTool(door.origin, {
@@ -155,11 +189,9 @@ describe('open_corner over the grok wire', () => {
       repository: 'owner/widgets',
       targetBranch: 'main',
     });
-    // The corner's opening line is still the objective, unchanged in job.
-    expect(door.calls.find((call) => call.operation === 'postRoomMessage')).toMatchObject({
-      roomId: CORNER,
-      text: 'Ship the corner name parameter. Make grok able to open a corner. Update every surface that draws the title.',
-    });
+    // The server creates the objective command inside createCorner.
+    expect(door.calls.some((call) => call.operation === 'postRoomMessage')).toBe(false);
+    expect(created).toMatchObject({ requestId: 'command-request', generationId: 'g1' });
   }, 30_000);
 
   it('opens a chat-only corner without inventing repository fields', async () => {
@@ -199,7 +231,9 @@ describe('open_corner over the grok wire', () => {
     expect(error).toBeUndefined();
     expect(result?.isError).toBeUndefined();
     expect(JSON.parse(result!.content[0]!.text)).toEqual({ cornerId: CORNER, status: 'closed' });
-    expect(door.calls).toContainEqual({ operation: 'archiveCorner', cornerId: CORNER });
+    expect(door.calls).toContainEqual(
+      expect.objectContaining({ operation: 'archiveCorner', cornerId: CORNER }),
+    );
   }, 30_000);
 
   it('does not let close_corner bypass a repository corner merge', async () => {

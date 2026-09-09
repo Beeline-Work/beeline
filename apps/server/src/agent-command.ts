@@ -4,7 +4,11 @@ import type {
   AgentCommandAction,
   RoomInboxResult,
 } from '@beeline/api-contract/daemon';
-import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-contract/agent-access';
+import {
+  AGENT_REACHABLE_HORIZON_MS,
+  parseAgentAccessPolicy,
+  senderMayAddressAgent,
+} from '@beeline/api-contract/agent-access';
 import type { SqlDatabase } from './database.js';
 
 export const COMMAND_LEASE_SECONDS = 90;
@@ -144,15 +148,16 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
   targets.delete(source.author_id);
   for (const target of targets) {
     const agent = (
-      await db.query<{ owner_id: string; access_policy: unknown }>(
-        `SELECT a.owner_id,a.access_policy FROM agents a
+      await db.query<{ owner_id: string; access_policy: unknown; reachable: boolean }>(
+        `SELECT a.owner_id,a.access_policy,COALESCE((SELECT lo.body->>'status'='online' AND lo.updated_at>=now()-make_interval(secs => $4::double precision / 1000) FROM live_outputs lo WHERE lo.agent_id=a.agent_id AND lo.kind='presence' ORDER BY lo.updated_at DESC LIMIT 1),false) reachable FROM agents a
    JOIN memberships m ON m.identity_id=$2 AND m.room_id=$3 AND m.removed_at IS NULL
    WHERE a.agent_id=$1 FOR SHARE OF a,m`,
-        [target, source.author_id, source.room_id],
+        [target, source.author_id, source.room_id, AGENT_REACHABLE_HORIZON_MS],
       )
     ).rows[0];
     if (
       !agent ||
+      !agent.reachable ||
       !senderMayAddressAgent(
         parseAgentAccessPolicy(agent.access_policy),
         source.author_id,
@@ -201,7 +206,10 @@ export async function routeAgentResult(
       agentId,
       sourceMessageId: sourceId,
       parent,
-      reason: delegates.includes(agentId) ? 'agent_delegate' : 'agent_reply',
+      reason:
+        delegates.includes(agentId) || parent.delegate_agent_ids.includes(agentId)
+          ? 'agent_delegate'
+          : 'agent_reply',
     });
 }
 
@@ -280,10 +288,12 @@ export async function readAgentCommands(
       attachments: RoomInboxResult['items'][number]['attachments'];
       system_event: RoomInboxResult['items'][number]['systemEvent'];
       presentation: string;
+      reply_to_message_id: string | null;
+      reply_to_author_id: string | null;
       created_at: Date;
     }
   >(
-    `SELECT c.*,CASE WHEN c.reason='corner_objective' THEN f.objective ELSE m.text END text,m.author_id,m.attachments,m.system_event,m.presentation FROM agent_commands c JOIN messages m ON m.id=c.source_message_id LEFT JOIN corner_facts f ON f.corner_id=c.room_id
+    `SELECT c.*,CASE WHEN c.reason='corner_objective' THEN f.objective ELSE m.text END text,m.author_id,m.attachments,m.system_event,m.presentation,m.reply_to_message_id,(SELECT author_id FROM messages WHERE id=m.reply_to_message_id) reply_to_author_id FROM agent_commands c JOIN messages m ON m.id=c.source_message_id LEFT JOIN corner_facts f ON f.corner_id=c.room_id
  WHERE c.room_id=$1 AND c.agent_id=$2 AND (c.state='pending' OR (c.state='claimed' AND c.lease_expires_at<=now()))
  ORDER BY CASE c.action WHEN 'stop' THEN 0 WHEN 'resume' THEN 1 ELSE 2 END,c.created_at,c.id LIMIT 100`,
     [roomId, agentId],
@@ -311,6 +321,8 @@ export async function readAgentCommands(
         type: r.presentation,
         systemEvent: r.system_event,
         mentionIds: [agentId],
+        ...(r.reply_to_message_id ? { replyToMessageId: r.reply_to_message_id } : {}),
+        ...(r.reply_to_author_id ? { replyToAuthorId: r.reply_to_author_id } : {}),
       },
     })),
   };
@@ -421,8 +433,8 @@ export async function routeSystemCommand(
     } else if (input.kind.startsWith('agent:')) {
       parent = (
         await db.query<CommandRow>(
-          `SELECT * FROM agent_commands WHERE room_id=$1 AND turn_request_id=$2 AND state='claimed' ORDER BY created_at DESC LIMIT 1`,
-          [input.roomId, input.causeId ?? null],
+          `SELECT * FROM agent_commands WHERE room_id=$1 AND id=$2 AND state='claimed' ORDER BY created_at DESC LIMIT 1`,
+          [input.roomId, input.commandId ?? null],
         )
       ).rows[0];
       if (!parent) continue;

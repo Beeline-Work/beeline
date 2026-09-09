@@ -105,8 +105,11 @@ export async function runServerCommandIntake(options: {
   try {
     while (!signal?.aborted) {
       if (options.closed && (await options.closed())) return;
+      const seen = new Set<string>();
       for (const command of page.commands) {
         validateServerCommand(command, roomId, agentId);
+        if (seen.has(command.id)) continue;
+        seen.add(command.id);
         if (busy && command.action !== 'stop') continue;
         try {
           await api.execute('claimAgentCommand', {

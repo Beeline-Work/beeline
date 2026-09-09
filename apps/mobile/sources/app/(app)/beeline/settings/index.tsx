@@ -6,11 +6,7 @@ import * as Updates from 'expo-updates';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { GitHubInstallationAccess } from '@beeline/buzz-client';
-import {
-  clearBuzzIdentity,
-  getEffectiveRelayUrl,
-  loadBuzzIdentity,
-} from '@/auth/buzz-identity-storage';
+import { clearBuzzIdentity, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { clearPendingGitHubSignInState } from '@/auth/github-auth-session';
 import { clearMobileSurfaceStorage } from '@/buzz/surface-storage';
 import { WORKSPACES_LABEL } from '@/buzz/vocabulary';
@@ -65,10 +61,10 @@ export default function BuzzSettings() {
 
   useEffect(() => {
     let cancelled = false;
-    void Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()])
-      .then(async ([identity, relayUrl]) => {
+    void loadBuzzIdentity()
+      .then(async (identity) => {
         if (!identity) return;
-        const access = await new BuzzRigTransport(identity, relayUrl).workspaceGitHubAccess();
+        const access = await new BuzzRigTransport(identity).workspaceGitHubAccess();
         if (!cancelled) setGitHubInstallations(access.installations);
       })
       .catch(() => undefined);
@@ -101,8 +97,8 @@ export default function BuzzSettings() {
     if (deleteBusy) return;
     setDeleteBusy(true);
     try {
-      const [identity, relayUrl] = await Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]);
-      if (identity) await new BuzzRigTransport(identity, relayUrl).deleteAccount();
+      const identity = await loadBuzzIdentity();
+      if (identity) await new BuzzRigTransport(identity).deleteAccount();
       await Promise.all([clearBuzzIdentity(), clearPendingGitHubSignInState()]);
       clearMobileSurfaceStorage();
       router.replace('/beeline/onboarding');

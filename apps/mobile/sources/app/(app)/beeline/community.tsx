@@ -70,7 +70,7 @@ export default function BuzzCommunityCreateOrJoin() {
           return;
         }
         const relayUrl = await getEffectiveRelayUrl();
-        const nextTransport = new BuzzRigTransport(currentIdentity, relayUrl);
+        const nextTransport = new BuzzRigTransport(currentIdentity);
         const relay = await nextTransport.ensureClient();
         const http = new RoomViewClient({ baseUrl: relayUrl, identity: currentIdentity });
         const address = surfaceAddress(relayUrl, currentIdentity.publicKey, '/workspaces');

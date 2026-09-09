@@ -211,7 +211,7 @@ export default function BuzzOnboarding() {
   ) => {
     setStatus('entering_workspace');
     try {
-      const transport = new BuzzRigTransport(identity, getBuzzRuntimeConfig().relayUrl);
+      const transport = new BuzzRigTransport(identity);
       const client = await transport.ensureClient();
       const enterWithManagedIdentity = async (managedIdentity: ManagedIdentity) => {
         let displayName = managedIdentity.displayName;
@@ -684,12 +684,7 @@ export default function BuzzOnboarding() {
         normalized,
       );
       try {
-        const client =
-          namingClient ??
-          (await new BuzzRigTransport(
-            namingIdentity,
-            getBuzzRuntimeConfig().relayUrl,
-          ).ensureClient());
+        const client = namingClient ?? (await new BuzzRigTransport(namingIdentity).ensureClient());
         const current = await client
           .getGlobalPersonProfile(namingIdentity.publicKey)
           .catch(() => null);

@@ -186,7 +186,7 @@ export default function BuzzIdentitySettings() {
         const identity = await loadBuzzIdentity();
         if (!identity) return;
         const relayUrl = await getEffectiveRelayUrl();
-        const transport = new BuzzRigTransport(identity, relayUrl);
+        const transport = new BuzzRigTransport(identity);
         const client = await transport.ensureClient();
         const [workspaceList, activeCommunityId, preferredName, enabled, registration, permission] =
           await Promise.all([

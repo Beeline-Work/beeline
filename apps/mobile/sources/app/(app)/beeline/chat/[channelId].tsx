@@ -1198,7 +1198,7 @@ export default function BuzzChat() {
     if (agentCommandsByScope[scope] !== undefined) return;
     let cancelled = false;
     transport
-      .agentCommandsRead(decodedId, pubkey, activeCommunityId ?? undefined)
+      .agentCommandsRead()
       .then((list) => {
         if (!cancelled) {
           setAgentCommandsByScope((current) => ({ ...current, [scope]: list }));
@@ -1853,13 +1853,13 @@ export default function BuzzChat() {
     try {
       // A warm/partial snapshot can paint before the hydration effect has
       // published its transport state. Sending is still a valid operation:
-      // construct the shared authenticated transport on demand rather than
+      // construct the monolith transport on demand rather than
       // leaving the enabled send control as a silent no-op.
       let sendTransport = transport;
       if (!sendTransport) {
         const identity = await loadBuzzIdentity();
         if (!identity) throw new Error('Beeline identity is unavailable');
-        sendTransport = new BuzzRigTransport(identity, await getEffectiveRelayUrl());
+        sendTransport = new BuzzRigTransport(identity);
       }
       if (!transport) setSessionTransport(sendTransport);
       preparedTransport = sendTransport;
@@ -2203,13 +2203,9 @@ export default function BuzzChat() {
         for (const candidate of chosen) {
           current = candidate;
           if (candidate.kind === 'agent') {
-            await transport.inviteAgentToChannel(decodedId, candidate.pubkey, activeCommunityId);
+            await transport.inviteAgentToChannel(decodedId, candidate.pubkey);
           } else {
-            await transport.inviteWorkspaceMemberToChannel(
-              decodedId,
-              candidate.pubkey,
-              activeCommunityId,
-            );
+            await transport.inviteWorkspaceMemberToChannel(decodedId, candidate.pubkey);
           }
         }
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -2267,7 +2263,7 @@ export default function BuzzChat() {
       if (!inviteTransport) {
         const identity = await loadBuzzIdentity();
         if (!identity) throw new Error('Beeline identity is unavailable');
-        inviteTransport = new BuzzRigTransport(identity, await getEffectiveRelayUrl());
+        inviteTransport = new BuzzRigTransport(identity);
         setSessionTransport(inviteTransport);
       }
       const url = await createCommunityInviteUrl(
@@ -2392,7 +2388,7 @@ export default function BuzzChat() {
         );
       } catch (error) {
         if (refresh) throw error;
-        setRoomRepoCandidates(await transport.workspaceRoomRepositoryCandidates(activeCommunityId));
+        setRoomRepoCandidates(await transport.workspaceRoomRepositoryCandidates());
         setGitHubInstallations([]);
       }
     },

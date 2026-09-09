@@ -134,8 +134,8 @@ describe('monolith Room send path', () => {
     });
   });
 
-  it('dispatches the composer reply path through the shared monolith cutover wrapper', async () => {
-    const transport = new BuzzRigTransport(identity, 'wss://legacy.example');
+  it('dispatches the composer reply path through the monolith-only transport', async () => {
+    const transport = new BuzzRigTransport(identity);
     const event = await driveHandleSendPath(transport, () =>
       transport.composeReplyMessage(
         '@Terra What is your soul?',

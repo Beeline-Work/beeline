@@ -92,10 +92,10 @@ describe('Room member picker', () => {
       'const handleAddRoomMembers = useCallback(',
       'const handleRemoveRoomMember = useCallback(',
     );
+    expect(handler).toContain('transport.inviteAgentToChannel(decodedId, candidate.pubkey)');
     expect(handler).toContain(
-      'transport.inviteAgentToChannel(decodedId, candidate.pubkey, activeCommunityId)',
+      'transport.inviteWorkspaceMemberToChannel(decodedId, candidate.pubkey)',
     );
-    expect(handler).toContain('transport.inviteWorkspaceMemberToChannel(');
     expect(handler).toContain('setParticipantPickerVisible(false)');
     expect(handler).toContain('setMembershipError(`Could not add @${current.name}:');
   });

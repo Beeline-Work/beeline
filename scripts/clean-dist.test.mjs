@@ -39,7 +39,7 @@ test('release images copy clean-dist before building workspace packages', () => 
     'Docker build context must include scripts/clean-dist.mjs',
   );
 
-  for (const app of ['auth', 'server']) {
+  for (const app of ['auth', 'push-gateway', 'server']) {
     const dockerfile = readFileSync(join(repositoryRoot, 'apps', app, 'Dockerfile'), 'utf8');
     const copyIndex = dockerfile.indexOf('COPY scripts/clean-dist.mjs ./scripts/clean-dist.mjs');
     const buildIndex = dockerfile.indexOf('RUN npm run build -w @beeline/nostr');

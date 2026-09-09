@@ -25,6 +25,9 @@ BEGIN
         'turnId', COALESCE(NEW.turn_id, OLD.turn_id),
         'kind', COALESCE(NEW.kind, OLD.kind)
       );
+    WHEN 'agent_commands' THEN
+      payload = jsonb_build_object('table', TG_TABLE_NAME, 'operation', TG_OP,
+        'roomId', COALESCE(NEW.room_id, OLD.room_id), 'agentId', COALESCE(NEW.agent_id, OLD.agent_id));
     WHEN 'agent_turns' THEN
       payload = jsonb_build_object(
         'table', TG_TABLE_NAME, 'operation', TG_OP,
@@ -91,7 +94,7 @@ BEGIN
   FOREACH table_name IN ARRAY ARRAY[
     'messages', 'live_outputs', 'agent_turns', 'rooms', 'memberships',
     'corner_facts', 'corner_check_facts', 'permission_authority',
-    'agent_grants', 'agent_schedules'
+    'agent_grants', 'agent_schedules', 'agent_commands'
   ] LOOP
     IF NOT EXISTS (
       SELECT 1 FROM pg_trigger
@@ -296,6 +299,7 @@ export class PostgresLiveListener {
       type: 'invalidate',
       roomId: payload.roomId,
       reason: `postgres:${payload.table}`,
+      ...(payload.table === 'agent_commands' ? { targetAgentId: payload.agentId } : {}),
       ...(payload.agentId ? { agentId: payload.agentId } : {}),
     };
     this.live.publish(event);

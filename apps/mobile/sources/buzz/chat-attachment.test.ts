@@ -15,7 +15,9 @@ import { canonicalizeJpeg } from './avatar-png';
 import {
   attachmentOpenUrl,
   formatAttachmentSize,
+  pickedPhotoAttachments,
   uploadChatAttachment,
+  uploadChatAttachments,
 } from './chat-attachment';
 
 function segment(marker: number, payload: number[]): number[] {
@@ -93,6 +95,87 @@ describe('chat attachment display metadata', () => {
     ).toBe('https://usebeeline.app/media/hash/photo.png');
   });
 
+  it('keeps every selected photo in picker order with distinct fallback names', () => {
+    expect(
+      pickedPhotoAttachments(
+        [
+          {
+            uri: 'content://gallery/first',
+            fileName: ' first.png ',
+            mimeType: 'image/png',
+            fileSize: 12,
+            width: 100,
+            height: 80,
+          },
+          {
+            uri: 'content://gallery/second',
+            width: 80,
+            height: 100,
+          },
+        ],
+        1234,
+      ),
+    ).toEqual([
+      {
+        uri: 'content://gallery/first',
+        name: 'first.png',
+        mimeType: 'image/png',
+        size: 12,
+        width: 100,
+        height: 80,
+      },
+      {
+        uri: 'content://gallery/second',
+        name: 'photo-1234-2.jpg',
+        mimeType: 'image/jpeg',
+        size: 0,
+        width: 80,
+        height: 100,
+      },
+    ]);
+  });
+
+  it('uploads a message attachment batch in display order', async () => {
+    mocks.readFileBytes.mockImplementation(async (uri: string) =>
+      uri.endsWith('first') ? new Uint8Array([1]) : new Uint8Array([2]),
+    );
+    const uploadMedia = vi
+      .fn()
+      .mockResolvedValueOnce({
+        url: 'https://relay.example/media/first.txt',
+        sha256: 'first-hash',
+        size: 1,
+        type: 'text/plain',
+      })
+      .mockResolvedValueOnce({
+        url: 'https://relay.example/media/second.txt',
+        sha256: 'second-hash',
+        size: 1,
+        type: 'text/plain',
+      });
+
+    const uploaded = await uploadChatAttachments({ uploadMedia } as never, [
+      {
+        uri: 'file:///first',
+        name: 'first.txt',
+        mimeType: 'text/plain',
+        size: 1,
+      },
+      {
+        uri: 'file:///second',
+        name: 'second.txt',
+        mimeType: 'text/plain',
+        size: 1,
+      },
+    ]);
+
+    expect(mocks.readFileBytes.mock.calls.map(([uri]) => uri)).toEqual([
+      'file:///first',
+      'file:///second',
+    ]);
+    expect(uploaded.map(({ name }) => name)).toEqual(['first.txt', 'second.txt']);
+  });
+
   it('strips EXIF, ICC, and comment marker channels from JPEG containers', () => {
     const normalized = canonicalizeJpeg(jpegWithMetadata());
 
@@ -122,17 +205,14 @@ describe('chat attachment display metadata', () => {
         type: 'image/jpeg',
       });
 
-    const uploaded = await uploadChatAttachment(
-      { uploadMedia } as never,
-      {
-        uri: 'content://gallery/14561',
-        name: '14561.jpg',
-        mimeType: 'image/jpeg',
-        size: 191_398,
-        width: 100,
-        height: 80,
-      },
-    );
+    const uploaded = await uploadChatAttachment({ uploadMedia } as never, {
+      uri: 'content://gallery/14561',
+      name: '14561.jpg',
+      mimeType: 'image/jpeg',
+      size: 191_398,
+      width: 100,
+      height: 80,
+    });
 
     expect(mocks.manipulateAsync).toHaveBeenNthCalledWith(1, 'content://gallery/14561', [], {
       compress: 0.9,

@@ -30,8 +30,8 @@ export function AttachmentPickerSheet({
       visible={visible}
     >
       <HullActionSheetRow
-        label="Photo"
-        metadata="Photo library"
+        label="Photos"
+        metadata="Choose up to 10"
         onPress={() => choose(onPickPhoto)}
         testID="attachment-picker-photo"
       />

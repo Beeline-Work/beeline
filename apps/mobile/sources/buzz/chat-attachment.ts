@@ -4,6 +4,7 @@ import { canonicalizeJpeg, canonicalizePng } from '@/buzz/avatar-png';
 import { readFileBytes } from '@/utils/readFileBytes';
 
 export const MAX_CHAT_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+export const MAX_MESSAGE_ATTACHMENTS = 10;
 const THUMBNAIL_EDGE = 360;
 const PHOTO_JPEG_QUALITY = 0.9;
 
@@ -15,6 +16,30 @@ export type PickedChatAttachment = {
   width?: number;
   height?: number;
 };
+
+type PickedPhotoAsset = {
+  uri: string;
+  fileName?: string | null;
+  mimeType?: string | null;
+  fileSize?: number;
+  width: number;
+  height: number;
+};
+
+/** Preserves the picker order and gives unnamed assets stable, distinct labels. */
+export function pickedPhotoAttachments(
+  assets: readonly PickedPhotoAsset[],
+  pickedAt = Date.now(),
+): PickedChatAttachment[] {
+  return assets.map((asset, index) => ({
+    uri: asset.uri,
+    name: asset.fileName?.trim() || `photo-${pickedAt}-${index + 1}.jpg`,
+    mimeType: asset.mimeType ?? 'image/jpeg',
+    size: asset.fileSize ?? 0,
+    width: asset.width,
+    height: asset.height,
+  }));
+}
 
 export function formatAttachmentSize(size: number): string {
   if (size < 1024) return `${size} B`;
@@ -113,4 +138,16 @@ export async function uploadChatAttachment(
     ...(attachment.width ? { width: attachment.width } : {}),
     ...(attachment.height ? { height: attachment.height } : {}),
   };
+}
+
+/** Upload one message's files in display order without holding several full photos in memory. */
+export async function uploadChatAttachments(
+  client: BuzzClient,
+  attachments: readonly PickedChatAttachment[],
+): Promise<AttachmentReference[]> {
+  const uploaded: AttachmentReference[] = [];
+  for (const attachment of attachments) {
+    uploaded.push(await uploadChatAttachment(client, attachment));
+  }
+  return uploaded;
 }

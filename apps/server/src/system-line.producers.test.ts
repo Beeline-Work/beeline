@@ -1,3 +1,4 @@
+import { createAgentCommand, claimAgentCommand } from './agent-command.js';
 import { describe, expect, it } from 'vitest';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
@@ -340,10 +341,26 @@ describe('system-line producers', () => {
         `INSERT INTO messages(id,room_id,author_id,text,mention_ids) VALUES($1,$2,$3,'@bee hi',$4::jsonb)`,
         [requestId, ROOM, OWNER, JSON.stringify([AGENT])],
       );
+      const command = await database.transaction((tx) =>
+        createAgentCommand(tx, {
+          roomId: ROOM,
+          agentId: AGENT,
+          sourceMessageId: requestId,
+          reason: 'fixture',
+        }),
+      );
+      await claimAgentCommand(database, ROOM, AGENT, command!.id, 'g1');
       const daemon = new DaemonService(database, new LiveHub());
       await daemon.execute(
         'postAgentTurnReceipt',
-        { agentId: AGENT, roomId: ROOM, requestId, status: 'failed', reason: 'provider error 429' },
+        {
+          agentId: AGENT,
+          roomId: ROOM,
+          requestId,
+          generationId: 'g1',
+          status: 'failed',
+          reason: 'provider error 429',
+        },
         AGENT,
       );
       await daemon.execute(
@@ -352,6 +369,7 @@ describe('system-line producers', () => {
           agentId: AGENT,
           roomId: ROOM,
           requestId,
+          generationId: 'g1',
           status: 'failed',
           reason: 'timed out: after 120s',
         },
@@ -374,7 +392,7 @@ describe('system-line producers', () => {
       ]);
       await daemon.execute(
         'postAgentTurnReceipt',
-        { agentId: AGENT, roomId: ROOM, requestId, status: 'complete' },
+        { agentId: AGENT, roomId: ROOM, requestId, generationId: 'g1', status: 'complete' },
         AGENT,
       );
       expect(await lines(database)).toEqual([

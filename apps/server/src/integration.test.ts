@@ -6462,7 +6462,13 @@ describe('monolith integration', () => {
        WHERE room_id=$1 AND card_type='member-joined' AND author_id=$2`,
       [WELCOME_ROOM_ID, REVIEW_IDENTITY_ID],
     );
-    expect(joined.rows).toEqual([]);
+    expect(joined.rows).toEqual([
+      expect.objectContaining({
+        mention_ids: [],
+        text: '@play-review joined',
+        system_event: expect.not.objectContaining({ kind: expect.anything() }),
+      }),
+    ]);
 
     const workspaceDms = await database.query<{ text: string; mention_ids: string[] }>(
       `SELECT message.text,message.mention_ids FROM messages message

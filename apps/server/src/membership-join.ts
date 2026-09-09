@@ -243,14 +243,16 @@ export async function joinRooms(
         ...line,
         cardType: 'workspace-member-joined',
       });
-    } else {
-      // Room-scoped arrivals wake only subscribers in the Room being joined.
-      for (const roomId of roomIds)
-        await systemLine(transaction, {
-          roomId,
-          ...line,
-        });
     }
+    // A Workspace arrival is also a Room arrival when the public-Room
+    // projection adds it. Keep that ledger fact in the Room without turning a
+    // Workspace-scoped join into a subscribed Room event.
+    for (const roomId of roomIds)
+      await systemLine(transaction, {
+        roomId,
+        ...line,
+        ...(input.workspaceJoined ? { kind: undefined } : {}),
+      });
 
     const notificationId = `workspace-join:${randomUUID()}`;
     await transaction.query(

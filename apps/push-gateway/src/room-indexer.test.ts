@@ -2376,7 +2376,7 @@ describe('RoomIndexer', () => {
       `INSERT INTO events(community_id,id,pubkey,created_at,kind,tags,content,channel_id)
        VALUES($1,decode(lpad('30',64,'0'),'hex'),$3,to_timestamp(30),9007,
          jsonb_build_array(jsonb_build_array('h',$2::text),jsonb_build_array('community',$4::text),
-           jsonb_build_array('name','Unjoined private')),'',$2)`,
+           jsonb_build_array('name','Unjoined private')),'',$2::uuid)`,
       [TENANT, MISSING, bytes(VIEWER), WORKSPACE],
     );
     const managerWorkspace = await indexer.readWorkspace(WORKSPACE, VIEWER);

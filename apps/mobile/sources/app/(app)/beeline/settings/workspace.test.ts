@@ -73,6 +73,12 @@ vi.mock('@/buzz/runtime-config', () => ({
 vi.mock('expo-clipboard', () => clipboard);
 vi.mock('@/modal', () => ({ Modal: modal }));
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));
+vi.mock('@/sync/transport/room-view-client', () => ({
+  RoomViewClient: class {
+    workspace = roomViews.workspace;
+    chats = roomViews.chats;
+  },
+}));
 vi.mock('@/sync/transport', () => ({
   BuzzRigTransport: class {
     ensureClient = vi.fn(async () => client);
@@ -472,9 +478,9 @@ describe('Workspace Settings authority', () => {
 
     const renderer = await render();
 
-    expect(renderer.root.findByProps({ testID: 'room-visibility-truncated' }).children).toEqual([
+    expect(renderer.root.findAllByType('Text').map((node) => node.children.join(''))).toContain(
       'Showing the first 200 Rooms.',
-    ]);
+    );
   });
 
   it('qualifies same-name Rooms with human dates and discloses the full ID on demand', async () => {

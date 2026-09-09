@@ -140,6 +140,9 @@ export function createBeelineServer(options: ServerOptions): Server {
               message.includes('checks are failing')
             ? 409
             : message.includes('access denied') ||
+                message.includes('command output authority rejected') ||
+                message.includes('command turn cancelled') ||
+                message.includes('command already completed') ||
                 message.includes('manager') ||
                 message.includes(AGENT_OWNER_AUTHORITY_MESSAGE) ||
                 message.includes(TURN_REQUESTER_AUTHORITY_MESSAGE) ||
@@ -256,7 +259,15 @@ export function createBeelineServer(options: ServerOptions): Server {
               };
               releases.set(
                 roomId,
-                options.live.subscribe(roomId, () => void replay()),
+                options.live.subscribe(roomId, (event) => {
+                  if (
+                    event.type === 'invalidate' &&
+                    event.targetAgentId &&
+                    event.targetAgentId !== principal.identityId
+                  )
+                    return;
+                  void replay();
+                }),
               );
               const lifecycleId =
                 typeof item.lifecycleId === 'string' && item.lifecycleId.length <= 128

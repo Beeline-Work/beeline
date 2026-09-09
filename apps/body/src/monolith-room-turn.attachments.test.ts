@@ -1,3 +1,4 @@
+import { commandFixtureApi } from './command-fixture.test-support.js';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -182,7 +183,7 @@ async function runTurn(acceptsImages: boolean, modelInputModalities?: string[]) 
     cwd: config.workspaceRoot,
     runtime,
     config,
-    api,
+    api: commandFixtureApi(api, 'room-id', runtime.agent.publicKey),
     scheduler,
     health: { poll: vi.fn(), failure: vi.fn(), presence: vi.fn() },
     signal: abort.signal,
@@ -247,7 +248,9 @@ describe('Room turn attachment delivery', () => {
     const { prompt } = await runTurn(false);
     const text = String(prompt);
     expect(text).toContain('NOT shown to you as an image: this session cannot take image content');
-    expect(text).toContain('say that in one plain sentence rather than describing an image you cannot see');
+    expect(text).toContain(
+      'say that in one plain sentence rather than describing an image you cannot see',
+    );
     // The PDF is not a picture and is never described as one.
     expect(text.split('\n').find((line) => line.includes('spec.pdf'))).not.toContain(
       'NOT shown to you',

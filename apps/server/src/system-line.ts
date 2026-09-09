@@ -1,3 +1,4 @@
+import { routeSystemCommand } from './agent-command.js';
 import { createHash, randomBytes } from 'node:crypto';
 import {
   MAX_EVENT_DEPTH,
@@ -62,6 +63,7 @@ export interface SystemLineInput {
   readonly cardType?: string;
   readonly card?: Record<string, unknown>;
   readonly requestId?: string;
+  readonly commandId?: string;
   readonly durableFact?: 'failure' | 'merge' | 'action';
   /**
    * The message this line is a consequence of, when it is one.
@@ -430,14 +432,26 @@ export async function systemLine(
         notBefore,
       ],
     );
+    if (result.rowCount)
+      await routeSystemCommand(db, {
+        roomId: input.roomId,
+        sourceMessageId: id,
+        kind: input.kind,
+        targets: mentions,
+        requestId: input.requestId,
+        causeId: input.causeId,
+        commandId: input.commandId,
+      });
     return { id, text, event, inserted: Boolean(result.rowCount) };
   };
   if (!input.kind) {
     const notBefore = await orderingFloor(database, input.roomId, input.afterMessageId);
-    return write(database, undefined, notBefore);
+    return database.transaction((tx) => write(tx, undefined, notBefore));
   }
   if (input.causeId === undefined)
-    return write(database, { causeId: null, rootCauseId: id, depth: 0 }, null);
+    return database.transaction((tx) =>
+      write(tx, { causeId: null, rootCauseId: id, depth: 0 }, null),
+    );
   // One transaction holds the advisory lock through the insert. A caller that
   // already passed its own transaction handle gets that same handle back
   // (`PostgresDatabase.transaction` does not nest), so the lock lives exactly

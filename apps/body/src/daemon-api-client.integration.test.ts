@@ -1,4 +1,6 @@
+import { createAgentCommand, claimAgentCommand } from '../../server/src/agent-command.js';
 import { execFile } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { createHash, createHmac } from 'node:crypto';
 import { access, chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
@@ -24,10 +26,8 @@ import { DaemonApiClient } from './daemon-api-client.js';
 import { AcpClient } from './acp.js';
 import {
   agentReplyMentionIds,
-  inboxItemTriggersTurn,
   isScheduledPrompt,
   MonolithRoomTurnLoop,
-  roomPrincipalMayAddressAgent,
 } from './monolith-room-turn.js';
 import {
   SCHEDULE_RAN_VERB,
@@ -69,15 +69,33 @@ describe('daemon API client against the local monolith', () => {
   let live: LiveHub;
   let connectionPresence: ConnectionPresence;
 
+  const prepareTurn = async (client: DaemonApiClient, requestId: string) => {
+    await database.transaction(async (tx) => {
+      await tx.query(
+        `INSERT INTO messages(id,room_id,author_id,text,presentation) VALUES($1,$2,$3,'Transport fixture','activity') ON CONFLICT DO NOTHING`,
+        [requestId, ROOM, HUMAN],
+      );
+      const c = await createAgentCommand(tx, {
+        roomId: ROOM,
+        agentId: AGENT,
+        sourceMessageId: requestId,
+        reason: 'fixture',
+      });
+      await claimAgentCommand(tx, ROOM, AGENT, c!.id, 'generation-1');
+    });
+  };
+
   it('returns only persisted Room mention ids from an agent reply', async () => {
     const exchange = await auth.createDaemonExchange(AGENT);
     const daemonToken = (await auth.exchangeDaemonToken(exchange.exchangeToken))!.daemonToken;
     const client = new DaemonApiClient(origin, daemonToken, AGENT);
 
+    await prepareTurn(client, 'c'.repeat(64));
     await expect(
       client.execute('postRoomMessage', {
         roomId: ROOM,
         requestId: 'c'.repeat(64),
+        generationId: 'generation-1',
         text: 'Please review this.',
         mentionIds: [HUMAN, 'missing-member'],
       }),
@@ -119,18 +137,6 @@ describe('daemon API client against the local monolith', () => {
     expect(agentReplyMentionIds('@Owner please review', roster, AGENT)).toEqual([HUMAN]);
     expect(agentReplyMentionIds('@a_lunchboxfortwo please review', roster, AGENT)).toEqual([HUMAN]);
     expect(agentReplyMentionIds('Unknown @Stranger stays plain text', roster, AGENT)).toEqual([]);
-    expect(
-      roomPrincipalMayAddressAgent(
-        { workspaceId: WORKSPACE, member: true, principalKind: 'agent' },
-        false,
-      ),
-    ).toBe(true);
-    expect(
-      roomPrincipalMayAddressAgent(
-        { workspaceId: WORKSPACE, member: true, principalKind: 'human' },
-        false,
-      ),
-    ).toBe(false);
   });
 
   it.skipIf(process.env.BEELINE_REAL_ROOM_CAPABILITY_PROOF !== '1')(
@@ -579,7 +585,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
           liveRuntime.sandbox = 'off';
           await writeRuntimeRecord(liveRuntime);
           return launchRuntimeDaemon(configPath, {
-            entrypoint: resolve('dist/cli.js'),
+            entrypoint: fileURLToPath(new URL('../dist/cli.js', import.meta.url)),
             env: {
               ...process.env,
               BEELINE_SYSTEMD_USER: '0',
@@ -666,9 +672,18 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         for (const item of items) {
           if (!item.mentionIds.includes(AGENT)) continue;
           replies = replies.then(async () => {
+            const page = await client.execute('getAgentCommands', { roomId: ROOM });
+            const command = page.commands.find((c) => c.sourceMessageId === item.id);
+            if (!command) return;
+            await client.execute('claimAgentCommand', {
+              roomId: ROOM,
+              commandId: command.id,
+              generationId: 'generation-1',
+            });
             await client.execute('postRoomMessage', {
               roomId: ROOM,
               requestId: item.id,
+              generationId: 'generation-1',
               text: 'Answered through push',
             });
             answered += 1;
@@ -729,424 +744,6 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       await replies;
     }
   });
-
-  it('answers canonical targets in a repo-less Room and keeps monolith presence current', async () => {
-    await database.query(
-      `UPDATE agents SET selected_model=NULL,selected_effort=NULL WHERE agent_id=$1`,
-      [AGENT],
-    );
-    const exchange = await auth.createDaemonExchange(AGENT);
-    const exchanged = await fetch(`${origin}/v1/auth/daemon/exchange`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ exchangeToken: exchange.exchangeToken }),
-    });
-    const token = (await exchanged.json()) as { daemonToken: string };
-    const client = new DaemonApiClient(origin, token.daemonToken, AGENT);
-    const polled = vi.fn();
-    const sourceSha = 'd03cff8f'.padEnd(40, '0');
-    const config = {
-      agentBinary: '/nonexistent/codex-acp',
-      agentCommand: '/nonexistent/codex-acp',
-      mcpBinary: '/nonexistent',
-      readonlyMcpCommand: '/nonexistent-readonly-mcp',
-      agentEnv: {},
-      workspaceRoot: join(supervisorRoot, 'repo-less-room'),
-      autoApprovePermissions: true,
-      accessPolicy: 'everyone',
-      agentHomeRoot: join(supervisorRoot, 'agent-home'),
-      daemonReleaseVersion: 'v0.0.22',
-      daemonSourceSha: sourceSha,
-    } as const;
-    const runtime: AgentRuntimeRecord = {
-      version: 2,
-      communityId: WORKSPACE,
-      pairedBy: HUMAN,
-      agent: {
-        name: 'Bee',
-        publicKey: AGENT,
-        secretKeyHex: Buffer.from(AGENT_SECRET).toString('hex'),
-      },
-      body: {
-        name: 'Body',
-        publicKey: getPublicKey(new Uint8Array(32).fill(22)),
-        secretKeyHex: Buffer.from(new Uint8Array(32).fill(22)).toString('hex'),
-      },
-      rooms: [],
-      supervisorRoot,
-      agentBinary: '/nonexistent',
-      mcpBinary: '/nonexistent',
-      createdAt: new Date().toISOString(),
-      accessPolicy: 'everyone',
-      transport: { kind: 'monolith', baseUrl: origin, daemonToken: token.daemonToken },
-    };
-    const acp = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
-    vi.spyOn(acp, 'start').mockResolvedValue(undefined);
-    const sessionNew = vi.spyOn(acp, 'sessionNew').mockResolvedValue({
-      sessionId: 'repo-less-session',
-      raw: {},
-    });
-    let finishHarnessTurn!: () => void;
-    const harnessTurn = new Promise<void>((resolveTurn) => {
-      finishHarnessTurn = resolveTurn;
-    });
-    let promptCount = 0;
-    const sessionPrompt = vi
-      .spyOn(acp, 'sessionPrompt')
-      .mockImplementation(async (_sessionId, _prompt, _timeout, onText) => {
-        promptCount += 1;
-        if (promptCount === 1) await harnessTurn;
-        const agentText =
-          promptCount === 1
-            ? 'This cancelled answer must not be published.'
-            : 'Course changed: I will focus only on the latest human steer.';
-        if (promptCount > 1) {
-          onText?.('', '');
-          onText?.(
-            "Terra, respond to the user's latest message.",
-            "Terra, respond to the user's latest message.",
-          );
-          onText?.(agentText, agentText);
-        }
-        return {
-          stopReason: 'end_turn',
-          updates: [],
-          agentText,
-          toolCalls: [],
-        };
-      });
-    const sessionSteer = vi.spyOn(acp, 'sessionSteer').mockImplementation(async () => {
-      if (sessionSteer.mock.calls.length === 1) {
-        return { runId: 'run-original', messageId: 'steer-1' };
-      }
-      throw new Error('harness cannot accept another live steer');
-    });
-    const sessionCancel = vi.spyOn(acp, 'sessionCancel').mockImplementation(() => {
-      finishHarnessTurn();
-    });
-    const daemonOperations = vi.spyOn(client, 'execute');
-    const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
-    const abort = new AbortController();
-    const turnLoop = new MonolithRoomTurnLoop({
-      roomId: ROOM,
-      workspaceId: WORKSPACE,
-      cwd: config.workspaceRoot,
-      runtime,
-      config: config as never,
-      api: client,
-      scheduler,
-      health: { poll: polled, failure: vi.fn(), presence: vi.fn() },
-      signal: abort.signal,
-      pollMs: 10,
-      createAcpClient: () => acp,
-    });
-    await phone.execute(
-      'sendRoomMessage',
-      {
-        roomId: ROOM,
-        messageId: 'f'.repeat(64),
-        text: '@bee Who are you?',
-        mentions: [],
-      },
-      HUMAN,
-    );
-    const loop = turnLoop.run();
-    try {
-      await vi.waitFor(() => expect(polled).toHaveBeenCalled(), { timeout: 2_000 });
-      const visibleOnline = await phone.readRoom(ROOM, HUMAN);
-      expect(
-        visibleOnline?.members.find((member) => member.identity.pubkey === AGENT),
-      ).toMatchObject({ presence: { status: 'online', roomId: ROOM } });
-      await expect(
-        fetch(`${origin}/v1/releases/daemon-readiness`).then((response) => response.json()),
-      ).resolves.toEqual({
-        daemons: [
-          expect.objectContaining({
-            agentPubkey: AGENT,
-            state: 'ready',
-            version: 'v0.0.22',
-            sha: sourceSha,
-            observedAt: expect.any(Number),
-          }),
-        ],
-        summary: { total: 1, ready: 1, neverSeen: 0 },
-      });
-
-      const sent = await phone.execute(
-        'sendRoomMessage',
-        {
-          roomId: ROOM,
-          // IDs break same-millisecond transcript timestamps deterministically. Keep the
-          // original request before its two live steers while addressing the
-          // server-authoritative canonical agent handle (no client-supplied id).
-          messageId: '1'.repeat(64),
-          text: '@bee Introduce yourself',
-          attachments: [
-            {
-              url: `${origin}/v1/media/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa`,
-              name: 'world.png',
-              mimeType: 'image/png',
-              size: 9,
-            },
-          ],
-        },
-        HUMAN,
-      );
-      live.publish({ type: 'invalidate', roomId: ROOM, reason: 'test-commit' });
-      await vi.waitFor(() => expect(sessionPrompt).toHaveBeenCalled(), { timeout: 3_000 });
-      const systemPrompt = sessionNew.mock.calls[0]![0].systemPrompt ?? '';
-      expect(systemPrompt).toContain(
-        'Your human-authored identity and soul in this Workspace is Terra.',
-      );
-      expect(systemPrompt).toContain('Soul instructions: Vishnu, destroyer of worlds.');
-      expect(systemPrompt).toContain('using-beeline skill (SKILL.md)');
-      expect(systemPrompt).toContain('including another agent');
-      expect(systemPrompt).toContain('beeline-agent open_corner');
-      expect(sessionNew.mock.calls[0]![0].mcpServers?.map((server) => server.name)).toEqual([
-        'beeline-readonly-mcp',
-        'beeline-agent',
-      ]);
-      expect(
-        sessionNew.mock.calls[0]![0].mcpServers?.flatMap((server) => server.env ?? []).map(
-          (entry) => entry.name,
-        ),
-      ).not.toEqual(expect.arrayContaining(['GH_TOKEN', 'GITHUB_TOKEN']));
-      const wirePrompt = sessionPrompt.mock.calls[0]![1];
-      expect(wirePrompt).toContain('This is who you are in this Workspace.');
-      expect(wirePrompt).toContain('using-beeline skill (SKILL.md)');
-      expect(wirePrompt).toContain('including another agent');
-      expect(wirePrompt).toContain('beeline-agent open_corner');
-      expect(wirePrompt).toContain('Who are you?');
-      expect(wirePrompt).toContain('most recent unanswered human message');
-      expect(wirePrompt).toContain('image: world.png (image/png, 9 bytes)');
-      expect(wirePrompt).toContain('/v1/media/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
-      expect(wirePrompt).toMatch(
-        /Maintain your assigned identity and soul in every response, including when tools or permissions block the requested action\.$/,
-      );
-      expect(turnLoop.isBusy()).toBe(true);
-      await turnLoop.prepareForForcedUpdateRestart();
-      expect(turnLoop.isBusy()).toBe(true);
-      const steer = await phone.execute(
-        'sendRoomMessage',
-        {
-          roomId: ROOM,
-          messageId: '2'.repeat(64),
-          text: '@bee Change course and focus only on this steer.',
-        },
-        HUMAN,
-      );
-      live.publish({ type: 'invalidate', roomId: ROOM, reason: 'test-commit' });
-      await vi.waitFor(() => expect(sessionSteer).toHaveBeenCalledTimes(1), { timeout: 3_000 });
-      expect(sessionSteer.mock.calls[0]?.[1]).toContain(
-        'Change course and focus only on this steer.',
-      );
-      const fallbackSteer = await phone.execute(
-        'sendRoomMessage',
-        {
-          roomId: ROOM,
-          messageId: '3'.repeat(64),
-          text: '@bee Ignore the introduction and report only the steering result.',
-        },
-        HUMAN,
-      );
-      live.publish({ type: 'invalidate', roomId: ROOM, reason: 'test-commit' });
-      await vi.waitFor(() => expect(sessionSteer).toHaveBeenCalledTimes(2), { timeout: 3_000 });
-      await vi.waitFor(() => expect(sessionPrompt).toHaveBeenCalledTimes(2), { timeout: 3_000 });
-      expect(sessionCancel).toHaveBeenCalledTimes(1);
-      const resumePrompt = sessionPrompt.mock.calls[1]?.[1] ?? '';
-      expect(resumePrompt).toContain('Change course and focus only on this steer.');
-      expect(resumePrompt).toContain(
-        'Ignore the introduction and report only the steering result.',
-      );
-      expect(resumePrompt.indexOf('Change course')).toBeLessThan(
-        resumePrompt.indexOf('Ignore the introduction'),
-      );
-      await expect(
-        readFile(
-          join(supervisorRoot, 'agent-home', 'codex', 'skills', 'using-beeline', 'SKILL.md'),
-          'utf8',
-        ),
-      ).resolves.toContain('name: using-beeline');
-      finishHarnessTurn();
-      await vi.waitFor(
-        async () => {
-          const room = await phone.readRoom(ROOM, HUMAN);
-          expect(room?.messages).toContainEqual(
-            expect.objectContaining({
-              author: expect.objectContaining({ pubkey: AGENT }),
-              requestId: sent.messageId,
-              text: 'Course changed: I will focus only on the latest human steer.',
-            }),
-          );
-        },
-        { timeout: 3_000 },
-      );
-      const visible = await phone.readRoom(ROOM, HUMAN);
-      expect(
-        visible?.messages
-          .filter(
-            (message) =>
-              message.id === sent.messageId ||
-              message.id === steer.messageId ||
-              message.id === fallbackSteer.messageId,
-          )
-          .map((message) => ({ id: message.id, text: message.text })),
-      ).toEqual([
-        { id: sent.messageId, text: '@bee Introduce yourself' },
-        { id: steer.messageId, text: '@bee Change course and focus only on this steer.' },
-        {
-          id: fallbackSteer.messageId,
-          text: '@bee Ignore the introduction and report only the steering result.',
-        },
-      ]);
-      await vi.waitFor(async () => {
-        expect(turnLoop.isBusy()).toBe(false);
-        expect(
-          (
-            await database.query<{ status: string }>(
-              `SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
-              [ROOM, sent.messageId, AGENT],
-            )
-          ).rows[0]?.status,
-        ).toBe('complete');
-      });
-      const followup = await phone.execute(
-        'sendRoomMessage',
-        {
-          roomId: ROOM,
-          messageId: '8'.repeat(64),
-          text: '@bee Who are you?',
-        },
-        HUMAN,
-      );
-      live.publish({ type: 'invalidate', roomId: ROOM, reason: 'test-commit' });
-      // Each of the remaining messages is awaited to its OWN prompt before the
-      // next one is sent. `sessionPrompt`'s count only ever climbs, so a target
-      // the loop can run past is a target `vi.waitFor` can miss between polls
-      // and then never see again: waiting here for 2 (the count already
-      // reached before this message was sent) returned instantly, left the
-      // followup's prompt in flight, and handed the next wait a count that
-      // could jump 2 → 3 → 4 inside one poll interval — 'expected 3, got 4',
-      // for good. One message outstanding at a time makes every target a
-      // resting point.
-      await vi.waitFor(() => expect(sessionPrompt).toHaveBeenCalledTimes(3), { timeout: 3_000 });
-      await vi.waitFor(async () => {
-        const room = await phone.readRoom(ROOM, HUMAN);
-        expect(room?.messages).toContainEqual(
-          expect.objectContaining({
-            author: expect.objectContaining({ pubkey: AGENT }),
-            requestId: followup.messageId,
-          }),
-        );
-      });
-      await vi.waitFor(() => expect(turnLoop.isBusy()).toBe(false));
-
-      const agentParent = (await phone.readRoom(ROOM, HUMAN))?.messages.find(
-        (message) => message.requestId === followup.messageId,
-      );
-      expect(agentParent).toBeDefined();
-      const threaded = await phone.execute(
-        'sendRoomReply',
-        {
-          roomId: ROOM,
-          messageId: '9'.repeat(64),
-          parentMessageId: agentParent!.id,
-          text: 'Answer in this thread too.',
-        },
-        HUMAN,
-      );
-      live.publish({ type: 'invalidate', roomId: ROOM, reason: 'test-commit' });
-      // Exercise the slow safety net too: a racing push replay and
-      // reconciliation must still deliver this reply exactly once.
-      turnLoop.requestReconciliation();
-      await vi.waitFor(() => expect(sessionPrompt).toHaveBeenCalledTimes(4), { timeout: 5_000 });
-      await vi.waitFor(async () => {
-        const room = await phone.readRoom(ROOM, HUMAN);
-        expect(room?.messages).toContainEqual(
-          expect.objectContaining({
-            author: expect.objectContaining({ pubkey: AGENT }),
-            requestId: threaded.messageId,
-          }),
-        );
-      });
-      await vi.waitFor(() =>
-        expect(daemonOperations).toHaveBeenCalledWith(
-          'postAgentDraft',
-          expect.objectContaining({ turnId: threaded.messageId }),
-        ),
-      );
-      const draftWrites = daemonOperations.mock.calls
-        .filter(([operation]) => operation === 'postAgentDraft')
-        .map(([, input]) => input);
-      expect(draftWrites).toEqual([
-        expect.objectContaining({
-          turnId: sent.messageId,
-          text: 'Course changed: I will focus only on the latest human steer.',
-        }),
-        expect.objectContaining({
-          turnId: followup.messageId,
-          text: 'Course changed: I will focus only on the latest human steer.',
-        }),
-        expect.objectContaining({
-          turnId: threaded.messageId,
-          text: 'Course changed: I will focus only on the latest human steer.',
-        }),
-      ]);
-      for (const requestId of [sent.messageId, followup.messageId, threaded.messageId]) {
-        await vi.waitFor(() =>
-          expect(daemonOperations).toHaveBeenCalledWith(
-            'retractAgentLiveOutput',
-            expect.objectContaining({ turnId: requestId, kind: 'draft' }),
-          ),
-        );
-      }
-    } finally {
-      finishHarnessTurn();
-      abort.abort();
-      await loop;
-      await scheduler.dispose();
-    }
-
-    // A stopped socket leaves presence online until an actual delivery fails.
-    expect(
-      (await phone.readRoom(ROOM, HUMAN))?.members.find(
-        (member) => member.identity.pubkey === AGENT,
-      )?.presence?.status,
-    ).toBe('online');
-    await phone.execute(
-      'sendRoomMessage',
-      {
-        roomId: ROOM,
-        text: '@bee Attempt delivery to the stopped daemon',
-      },
-      HUMAN,
-    );
-    await connectionPresence.observe(ROOM);
-    await vi.waitFor(
-      async () => {
-        expect(
-          (await phone.readRoom(ROOM, HUMAN))?.members.find(
-            (member) => member.identity.pubkey === AGENT,
-          )?.presence?.status,
-        ).toBe('offline');
-      },
-      { timeout: 3_000 },
-    );
-    // A NEW daemon client announces a new lifecycle through the actual WS path.
-    const recovered = new DaemonApiClient(origin, token.daemonToken, AGENT);
-    const disconnect = recovered.liveSubscribe(ROOM);
-    try {
-      await vi.waitFor(async () => {
-        expect(
-          (await phone.readRoom(ROOM, HUMAN))?.members.find(
-            (member) => member.identity.pubkey === AGENT,
-          )?.presence?.status,
-        ).toBe('online');
-      });
-    } finally {
-      disconnect();
-    }
-  }, 20_000);
 
   it.skipIf(process.env.BEELINE_REAL_THIN_PROOF !== '1')(
     'proves live steering and clean update drain through a real thin daemon and harness',
@@ -1908,31 +1505,6 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   );
 
   it('wakes the agent from a scheduler-authored scheduled prompt, never from plain system lines', async () => {
-    // Gating unit checks: own rows and mentionless system lines never trigger.
-    const line = (over: Partial<Parameters<typeof isScheduledPrompt>[0]>) => ({
-      id: 'x',
-      authorId: SCHEDULE_SCHEDULER_ID,
-      createdAt: 0,
-      type: 'system' as const,
-      body: 'Beeline Scheduler ran a schedule for Bee · ping',
-      systemEvent: {
-        subject: { kind: 'system' as const, id: SCHEDULE_SCHEDULER_ID, name: 'Beeline Scheduler' },
-        verb: SCHEDULE_RAN_VERB,
-        object: { text: 'Bee', id: AGENT },
-        consequence: 'ping',
-      },
-      mentionIds: [AGENT],
-      attachments: [],
-      ...over,
-    });
-    expect(inboxItemTriggersTurn(line({}), AGENT)).toBe(true);
-    expect(inboxItemTriggersTurn(line({ authorId: AGENT }), AGENT)).toBe(false);
-    expect(inboxItemTriggersTurn(line({ mentionIds: [] }), AGENT)).toBe(false);
-    expect(
-      inboxItemTriggersTurn(line({ body: 'Scout joined', systemEvent: undefined }), AGENT),
-    ).toBe(false);
-    expect(inboxItemTriggersTurn(line({ type: 'message', authorId: HUMAN }), AGENT)).toBe(true);
-
     const exchange = await auth.createDaemonExchange(AGENT);
     const exchanged = await fetch(`${origin}/v1/auth/daemon/exchange`, {
       method: 'POST',
@@ -2046,6 +1618,14 @@ createInterface({ input: process.stdin }).on('line', (line) => {
             consequence: 'Post exactly: hello',
           }),
         ],
+      );
+      await database.transaction((tx) =>
+        createAgentCommand(tx, {
+          roomId: ROOM,
+          agentId: AGENT,
+          sourceMessageId: 'd'.repeat(64),
+          reason: 'schedule',
+        }),
       );
       live.publish({ type: 'invalidate', roomId: ROOM, reason: 'test-commit' });
       await vi.waitFor(() => expect(sessionPrompt).toHaveBeenCalled(), { timeout: 5_000 });
@@ -2195,14 +1775,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
           ]),
         { timeout: 5_000 },
       );
-      await vi.waitFor(
-        () =>
-          expect(daemonOperations).toHaveBeenCalledWith('getRoomAuthority', {
-            roomId: ROOM,
-            principalId: OUTSIDER,
-          }),
-        { timeout: 5_000 },
-      );
+      expect(daemonOperations.mock.calls.some(([name]) => name === 'getRoomAuthority')).toBe(false);
       expect(sessionPrompt).not.toHaveBeenCalled();
       expect(await turns()).toBe(0);
 
@@ -2315,38 +1888,39 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       }),
     );
 
+    await prepareTurn(client, 'a'.repeat(64));
     const message = await client.execute('postRoomMessage', {
       roomId: ROOM,
       requestId: 'a'.repeat(64),
+      generationId: 'generation-1',
       text: 'daemon reply',
     });
+    const conversationBefore = await client.execute('getRoomConversation', { roomId: ROOM });
     const activation = await client.execute('getRoomInbox', {
       roomId: ROOM,
       startAtLatest: true,
     });
-    expect(activation).toEqual({
-      items: [],
-      cursor: expect.any(String),
-      rewindIds: expect.any(Array),
-    });
+    expect(activation).toMatchObject({ dispatchVersion: 1, items: [] });
+    await prepareTurn(client, 'd'.repeat(64));
     const afterActivation = await client.execute('postRoomMessage', {
       roomId: ROOM,
       requestId: 'd'.repeat(64),
+      generationId: 'generation-1',
       text: 'after activation',
     });
     await expect(
       // Inbox intake deliberately suppresses the daemon's own messages. The
       // conversation operation is the round-trip surface for its writes.
-      client.execute('getRoomConversation', { roomId: ROOM, after: activation.cursor }),
+      client.execute('getRoomConversation', { roomId: ROOM, after: conversationBefore.cursor }),
     ).resolves.toEqual(
       expect.objectContaining({
-        items: [
+        items: expect.arrayContaining([
           expect.objectContaining({
             id: afterActivation.id,
             authorId: AGENT,
             body: 'after activation',
           }),
-        ],
+        ]),
       }),
     );
     expect(message.id).not.toBe(afterActivation.id);

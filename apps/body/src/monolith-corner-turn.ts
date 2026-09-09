@@ -1,10 +1,10 @@
+import { CommandExecutionContext, runServerCommandIntake } from './server-command-intake.js';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { parseGrantDecisionLine } from '@beeline/api-contract/agent-grants';
 import type { DaemonAttachment, DaemonOperationMap } from '@beeline/api-contract/daemon';
 import {
   AcpClient,
@@ -13,7 +13,6 @@ import {
   type PromptResult,
   type ToolCallEntry,
 } from './acp.js';
-import { AgentResponseRule, INBOX_DEDUPLICATION_LIMIT } from './agent-response-rule.js';
 import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
 import {
@@ -24,7 +23,7 @@ import {
   type DeliveredAttachment,
 } from './attachment-delivery.js';
 import { isCornerStatusRestatement } from './reply-sanitizer.js';
-import { TurnStoppedError, turnStopRequestId } from './turn-stop.js';
+import { TurnStoppedError } from './turn-stop.js';
 import { AgentTurnStream, durableReplyText } from './turn-stream.js';
 import { toolCallFailureLine } from './tool-call-failure.js';
 import { distillTurnFailureReason, redactToolDetail } from './turn-failure-reason.js';
@@ -35,12 +34,7 @@ import { beelineAgentMcpServer } from './room-session.js';
 import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
 import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
 import type { BodyConfig } from './config.js';
-import {
-  laterInboxCursor,
-  orderInboxItems,
-  type DaemonApiClient,
-  type InboxItem,
-} from './daemon-api-client.js';
+import { type DaemonApiClient } from './daemon-api-client.js';
 import {
   explainEmptyAgentTurn,
   isAccountOrProviderRefusal,
@@ -49,12 +43,6 @@ import {
   turnFailureReasonWithProvider,
   type EmptyTurnExplanation,
 } from './empty-turn.js';
-import {
-  checksStateFromLifecycle,
-  completedCheckNote,
-  isCheckStartNote,
-  type CornerChecksState,
-} from './corner-checks.js';
 import type { GrantCommandRunner, GrantRunnerEndpoint } from './grant-runner.js';
 import {
   agentArgsWithModelSelection,
@@ -65,7 +53,6 @@ import {
 import type { AgentRuntimeRecord } from './runtime.js';
 import { runtimeIdentity } from './runtime.js';
 import { MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE, SOUL_HOUSE_RULE } from './response-directives.js';
-import { roomPrincipalMayAddressAgent } from './monolith-room-turn.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
 import { WarmTranscript } from './warm-transcript.js';
 import { withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
@@ -241,10 +228,8 @@ export interface MonolithCornerTurnOptions {
   parentRoomId: string;
   workspaceId: string;
   /**
-   * The agent that opened the corner. History and a default, never an access
-   * check: only the opener kicks the objective off unprompted, and an
-   * unaddressed message falls to whoever is carrying the corner — the opener
-   * until another member is addressed in it.
+   * The agent that opened the corner. History and the initial lifecycle
+   * carrier only; command dispatch is selected by the server.
    */
   openedBy?: string;
   objective: string;
@@ -286,13 +271,12 @@ export function cornerClosePollMs(random: () => number = Math.random): number {
 
 /** One write-enabled corner session, driven only by monolith transcript facts. */
 export class MonolithCornerTurnLoop {
+  private readonly commandContext: CommandExecutionContext;
   private readonly agent: ReturnType<typeof runtimeIdentity>;
-  private reconciliationRequested = true;
   private wakeIntake?: () => void;
 
   /** Called by the daemon's one slow workspace reconciliation sweep. */
   requestReconciliation(): void {
-    this.reconciliationRequested = true;
     this.wakeIntake?.();
     this.wakeIntake = undefined;
   }
@@ -324,15 +308,9 @@ export class MonolithCornerTurnLoop {
   private turnTraceSink?: TurnTraceSink;
   private memberNames = new Map<string, string>();
   /** Agent identities in this Workspace, so a mention can be told from a human's. */
-  private agentMembers = new Set<string>();
-  private rosterAvailable = false;
   /** Per-sender continuity, shared in shape with top-level Room intake. */
-  private readonly responseRule = new AgentResponseRule();
-  private continuityRebuildRequested = false;
   /** The member agent that owns corner-wide lifecycle facts such as checks. */
-  private carrier?: string;
   /** The last server check state that started a turn; the same state never starts another. */
-  private lastChecksState?: CornerChecksState;
   /**
    * Request ids the requester has stopped. A corner's intake is blocked while
    * its turn runs, so a stop is recorded from the live-push callback and read
@@ -343,6 +321,8 @@ export class MonolithCornerTurnLoop {
 
   constructor(private readonly options: MonolithCornerTurnOptions) {
     this.agent = runtimeIdentity(options.runtime.agent);
+    this.commandContext = new CommandExecutionContext(options.config.agentHomeRoot);
+    this.options = { ...options, api: this.commandContext.bind(options.api) };
     options.grantRunner?.register(options.cornerId, {
       workspaceId: options.workspaceId,
       cwd: options.worktreePath,
@@ -353,16 +333,15 @@ export class MonolithCornerTurnLoop {
         surface: 'corner',
         ...(this.sessionScratchDir ? { scratch: this.sessionScratchDir } : {}),
       }),
-      turn: () => this.currentTurn,
+      turn: () =>
+        this.currentTurn
+          ? { ...this.currentTurn, generationId: this.commandContext.generationId }
+          : undefined,
     });
   }
 
   isBusy(): boolean {
     return this.busy;
-  }
-
-  currentPrincipalCanDrive(_workspaceId: string, _principalId: string): Promise<boolean> {
-    return Promise.resolve(true);
   }
 
   refreshPersonaForSoulUpdate(): Promise<void> {
@@ -400,16 +379,7 @@ export class MonolithCornerTurnLoop {
       workspaceId: this.options.workspaceId,
     });
     this.memberNames = new Map(roster.members.map((member) => [member.identityId, member.name]));
-    this.agentMembers = new Set(
-      roster.members.filter((member) => member.kind === 'agent').map((member) => member.identityId),
-    );
-    this.responseRule.setAgents(this.agentMembers);
-    this.rosterAvailable = true;
     return roster;
-  }
-
-  private async reconcileRoster(): Promise<void> {
-    if (!this.rosterAvailable) await this.roster().catch(() => undefined);
   }
 
   /**
@@ -592,6 +562,7 @@ export class MonolithCornerTurnLoop {
         // The whole per-session overlay, not an enumerated subset: see
         // `monolith-room-turn.ts`'s matching comment.
         attachScratchRoot,
+        turnContextPath: this.commandContext.path,
         ...(this.options.grantRunnerEndpoint
           ? { grantRunner: this.options.grantRunnerEndpoint }
           : {}),
@@ -756,7 +727,6 @@ export class MonolithCornerTurnLoop {
         }
       : undefined;
     this.currentTurn = { requestId, ...(requester ? { requester } : {}) };
-    this.carrier = this.agent.publicKey;
     const trace = this.beginTurnTrace(requestId);
     try {
       await withTurnReceiptHeartbeat(
@@ -765,7 +735,7 @@ export class MonolithCornerTurnLoop {
           agentId: this.agent.publicKey,
           roomId: cornerId,
           requestId,
-          generationId: `${this.agent.publicKey}:${cornerId}`,
+          generationId: this.commandContext.generationId,
         },
         () => {
           trace.noteScheduler('queue', this.options.scheduler.snapshot());
@@ -1001,9 +971,7 @@ export class MonolithCornerTurnLoop {
               // reached the branch and the ledger must not lie about it. The
               // partial reply carries no mentions.
               if (this.stoppedTurns.has(requestId)) {
-                const stoppedText = spoken(durableReplyText(result.agentText));
-                await flushToolCalls(result.toolCalls, stoppedText);
-                await stream.settle(stoppedText);
+                stream.close();
                 throw new TurnStoppedError('turn stopped by the requester');
               }
               let reply = durableReplyText(result.agentText);
@@ -1035,18 +1003,8 @@ export class MonolithCornerTurnLoop {
               // only restates the server's own check notes says nothing new, and
               // that turn settles through its receipt instead.
               const durableReply = spoken(reply);
-              if (durableReply && requestedById) this.continuityRebuildRequested = true;
               await trace.measure('publish', () =>
-                stream.settle(
-                  durableReply,
-                  requestedById ? { triggerMessageId: requestId } : {},
-                  durableReply && requestedById
-                    ? () => {
-                        this.responseRule.noteReply(this.agent.publicKey, [requestedById]);
-                        this.continuityRebuildRequested = false;
-                      }
-                    : undefined,
-                ),
+                stream.settle(durableReply, requestedById ? { triggerMessageId: requestId } : {}),
               );
             },
             { priority: 'interactive', roomKey: cornerId },
@@ -1059,7 +1017,7 @@ export class MonolithCornerTurnLoop {
         roomId: cornerId,
         requestId,
         status: 'complete',
-        generationId: `${this.agent.publicKey}:${cornerId}`,
+        generationId: this.commandContext.generationId,
       });
       // After the receipt: an operator artifact never delays the answer, and
       // never becomes one — the trace has no way to post a Room row.
@@ -1079,7 +1037,7 @@ export class MonolithCornerTurnLoop {
         roomId: cornerId,
         requestId,
         status: 'failed',
-        generationId: `${this.agent.publicKey}:${cornerId}`,
+        generationId: this.commandContext.generationId,
         reason,
       });
       await trace.finish('failed', reason);
@@ -1088,51 +1046,6 @@ export class MonolithCornerTurnLoop {
       this.busy = false;
       this.currentTurn = undefined;
     }
-  }
-
-  /** Whether this agent opened the corner. A corner with no recorded opener
-   *  behaves exactly as it did before members could carry it. */
-  private isOpener(): boolean {
-    return !this.options.openedBy || this.options.openedBy === this.agent.publicKey;
-  }
-
-  /**
-   * Whether this agent is the one carrying the corner right now.
-   *
-   * Every member agent polls the corner, but its lifecycle — a server check
-   * note, a close request answered with work — is ONE fact and must start ONE
-   * turn, not one per member (the "one check turn per changed server state"
-   * rule). The carrier is whoever answered in the corner last, which is the
-   * opener until a human hands the work to someone else.
-   */
-  private carriesCorner(): boolean {
-    return (this.carrier ?? this.options.openedBy ?? this.agent.publicKey) === this.agent.publicKey;
-  }
-
-  /** Notes an agent's durable message as the corner changing hands. */
-  private noteCarrier(authorId: string): void {
-    if (this.agentMembers.has(authorId)) this.carrier = authorId;
-  }
-
-  private async noteIncomingCarrier(
-    item: Pick<InboxItem, 'authorId' | 'agentAuthor'>,
-  ): Promise<void> {
-    if (item.agentAuthor && !this.agentMembers.has(item.authorId))
-      await this.roster().catch(() => undefined);
-    this.noteCarrier(item.authorId);
-  }
-
-  /**
-   * Whether a message in this corner is addressed to THIS agent.
-   *
-   * A corner now runs like a Room — every member agent polls it — so an
-   * A server-resolved mention always routes to its agent. Otherwise the one
-   * agent already exchanging messages with this exact sender continues; the
-   * lifecycle carrier is deliberately not a conversational fallback.
-   */
-  private addressesThisAgent(item: InboxItem): boolean {
-    if (item.mentionIds.includes(this.agent.publicKey)) return true;
-    return this.responseRule.continues(item, this.agent.publicKey);
   }
 
   /**
@@ -1159,257 +1072,40 @@ export class MonolithCornerTurnLoop {
     });
   }
 
-  /** The server's check state for this head, or the notes' own verdict when the server carries none. */
-  private async checksState(
-    notes: readonly { readonly type: string; readonly body: string }[],
-  ): Promise<CornerChecksState | undefined> {
-    try {
-      const restore = await this.options.api.execute('getCornerRestoreState', {
-        cornerId: this.options.cornerId,
-      });
-      const fromServer = checksStateFromLifecycle(restore.lifecycle);
-      if (fromServer) return fromServer;
-    } catch (error) {
-      console.error(`[thin-core] corner ${this.options.cornerId} check state read failed:`, error);
-    }
-    return notes.some((note) => completedCheckNote(note) === 'failed') ? 'failing' : 'passing';
-  }
-
   async run(): Promise<void> {
     const { api, cornerId, signal } = this.options;
-    const activation = await api.execute('getRoomInbox', {
-      roomId: cornerId,
-      startAtLatest: true,
-    });
-    let cursor = activation.cursor;
-    const processedInboxIds = new Set<string>();
-    const pushedInbox: InboxItem[] = [];
-    let pendingPushedCursor: string | undefined;
-    let liveConnected = false;
-    const rewindSupported = Array.isArray(activation.rewindIds);
-    for (const id of activation.rewindIds ?? []) processedInboxIds.add(id);
-    const stopLive = api.liveSubscribe?.(
-      cornerId,
-      cursor,
-      (items, pushedCursor) => {
-        pushedInbox.push(...items);
-        // A corner's intake loop is BLOCKED while its turn runs — the prompt is
-        // awaited inline, unlike a Room's — so a stop read on the next pass
-        // would arrive only after the turn it was meant to end. This callback
-        // is the one place a corner hears anything mid-turn, so the stop is
-        // obeyed here. The item stays in the queue and is processed again
-        // normally, where it is a no-op.
-        for (const item of items) {
-          const stopped = turnStopRequestId(item, this.agent.publicKey);
-          if (stopped) this.stopTurn(stopped);
-        }
-        pendingPushedCursor = laterInboxCursor(pendingPushedCursor, pushedCursor);
-        this.wakeIntake?.();
-        this.wakeIntake = undefined;
-      },
-      (connected, capabilities) => {
-        liveConnected = connected && capabilities?.pushIntake === true;
-        this.wakeIntake?.();
-        this.wakeIntake = undefined;
-      },
-      {
-        ...(this.options.config.daemonReleaseVersion
-          ? { releaseVersion: this.options.config.daemonReleaseVersion }
-          : {}),
-        ...(this.options.config.daemonSourceSha
-          ? { sourceSha: this.options.config.daemonSourceSha }
-          : {}),
-        available: !this.options.config.modelUnavailable,
-      },
-    );
-    // Newest page: "has this corner already answered?" is a question about the
-    // work as it stands now. On a corner past one page the oldest rows say
-    // nothing about whether the objective still needs kicking off.
-    const history = await api.execute('getRoomConversation', {
-      roomId: cornerId,
-      limit: 200,
-      window: 'continuity',
-    });
-    // Who is carrying this corner: the member agent that answered in it last.
-    await this.roster().catch(() => undefined);
-    this.responseRule.observeAll(history.items);
-    for (const item of history.items) {
-      if (item.type === 'message') await this.noteIncomingCarrier(item);
-    }
-    const durableAgentReplies = history.items.filter(
-      (item) =>
-        item.type === 'message' &&
-        item.authorId === this.agent.publicKey &&
-        item.body.trim() !== this.options.objective.trim(),
-    );
-    // Only the opener kicks the objective off. A helper addressed later has
-    // never replied here either, and starting it on the objective would run
-    // the same work twice against one branch.
-    if (durableAgentReplies.length === 0 && this.isOpener()) {
-      await this.prompt(
-        history.items.find((item) => item.requestId)?.requestId ?? cornerId.replaceAll('-', ''),
-        this.options.objective,
-      );
-    }
     try {
-      // A finished turn may have been the merge/close itself: re-check close
-      // requests right away instead of waiting out the next full interval.
-      let pollWithoutWait = false;
-      while (!signal?.aborted) {
-        try {
-          if (this.continuityRebuildRequested) {
-            const reconciled = await api.execute('getRoomConversation', {
-              roomId: cornerId,
-              limit: 200,
-              window: 'continuity',
-            });
-            this.responseRule.replaceHistory(reconciled.items);
-            this.carrier = undefined;
-            for (const item of reconciled.items) {
-              if (item.type === 'message') await this.noteIncomingCarrier(item);
-            }
-            this.continuityRebuildRequested = false;
-          }
-          const pollNow: boolean =
-            pushedInbox.length > 0 || !liveConnected || this.reconciliationRequested;
-          const inbox: {
-            items: readonly InboxItem[];
-            cursor?: string;
-            closeRequested?: boolean;
-          } = !pollNow
-            ? { items: [], cursor: undefined, closeRequested: false }
-            : await api.execute('getCornerCloseRequests', {
-                cornerId,
-                ...(cursor ? { after: cursor } : {}),
-                ...(rewindSupported ? { rewind: true } : {}),
-              });
-          if (pollNow) {
-            this.reconciliationRequested = false;
-          }
-          if (inbox.closeRequested) {
-            await this.options.onCloseRequested();
-            return;
-          }
-          // Server check notes arrive one per GitHub run; a poll's worth of them
-          // is one fact, and only a changed server check state starts a turn.
-          const checkNotes: InboxItem[] = [];
-          const delivered = orderInboxItems([...pushedInbox.splice(0), ...inbox.items]);
-          for (const item of delivered) {
-            if (processedInboxIds.has(item.id)) continue;
-            processedInboxIds.add(item.id);
-            while (processedInboxIds.size > INBOX_DEDUPLICATION_LIMIT)
-              processedInboxIds.delete(processedInboxIds.values().next().value!);
-            // The live callback above already obeyed any stop it delivered;
-            // this is the same read on the polling path, and the second read of
-            // a stop already obeyed, which `stopTurn` treats as the no-op it is.
-            const stoppedTurn = turnStopRequestId(item, this.agent.publicKey);
-            if (stoppedTurn) {
-              this.stopTurn(stoppedTurn);
-              continue;
-            }
-            if (item.type === 'message') {
-              if (item.authorId !== this.agent.publicKey) await this.reconcileRoster();
-              await this.noteIncomingCarrier(item);
-              if (item.authorId === this.agent.publicKey) continue;
-              const addressed = this.addressesThisAgent(item);
-              this.responseRule.observe(item);
-              if (!addressed) continue;
-              const authority = await api.execute('getRoomAuthority', {
-                roomId: cornerId,
-                principalId: item.authorId,
-              });
-              const humanPermitted =
-                authority.principalKind === 'human'
-                  ? await this.currentPrincipalCanDrive(this.options.workspaceId, item.authorId)
-                  : false;
-              if (!roomPrincipalMayAddressAgent(authority, humanPermitted)) continue;
-              await this.prompt(item.id, item.body, item.attachments, item.authorId);
-              pollWithoutWait = true;
-              continue;
-            }
-            // The owner's grant decision (server-gated, mentioning this agent)
-            // resumes the paused work; the server's checks note starts a turn.
-            const grantDecision =
-              item.type === 'system' &&
-              item.mentionIds.includes(this.agent.publicKey) &&
-              parseGrantDecisionLine(item.body) !== undefined;
-            if (grantDecision) {
-              await this.prompt(
-                item.id,
-                `${item.body}\nThis answers your grant request; resume the paused work. If approved and it is a command grant, run it with run_granted_command and the exact argv; if declined, try another way or say what you cannot do.`,
-                [],
-                item.authorId,
-              );
-              pollWithoutWait = true;
-              continue;
-            }
-            if (isCheckStartNote(item)) {
-              // A new head is being checked: its verdict is a fresh fact.
-              this.lastChecksState = undefined;
-              continue;
-            }
-            if (completedCheckNote(item)) checkNotes.push(item);
-          }
-          if (checkNotes.length && this.carriesCorner()) {
-            const state = await this.checksState(checkNotes);
-            if (state && state !== 'pending' && state !== this.lastChecksState) {
-              this.lastChecksState = state;
-              const lines = checkNotes.map((note) => note.body);
-              await this.prompt(
-                checkNotes[checkNotes.length - 1]!.id,
-                lines.join('\n'),
-                [],
-                undefined,
-                lines,
-              );
-              pollWithoutWait = true;
-            }
-          }
-          cursor = laterInboxCursor(cursor, laterInboxCursor(inbox.cursor, pendingPushedCursor));
-          pendingPushedCursor = undefined;
-          api.updateLiveCursor?.(cornerId, cursor);
-          if (pollNow) this.options.onPoll();
-          await Promise.race([
-            wait(
-              pollWithoutWait
-                ? 0
-                : liveConnected
-                  ? 2_147_483_647
-                  : (this.options.pollMs ?? cornerClosePollMs()),
-              signal,
-            ),
-            pushedInbox.length
-              ? Promise.resolve()
-              : new Promise<void>((resolve) => {
-                  this.wakeIntake = resolve;
-                }),
-          ]);
-          pollWithoutWait = false;
-        } catch (error) {
-          if (signal?.aborted) break;
-          this.options.onFailure(1_000);
-          console.error(`[thin-core] corner ${cornerId} turn loop failed:`, error);
-          await wait(1_000, signal);
-        }
-      }
+      await runServerCommandIntake({
+        api,
+        roomId: cornerId,
+        agentId: this.agent.publicKey,
+        context: this.commandContext,
+        signal,
+        pollMs: this.options.pollMs,
+        onWake: (wake) => {
+          this.wakeIntake = wake;
+        },
+        onPoll: () => this.options.onPoll(),
+        onError: (error) => console.error('[thin-core] corner command failed', error),
+        stop: (requestId) => this.stopTurn(requestId),
+        closed: async () => {
+          const state = await api.execute('getCornerRestoreState', { cornerId });
+          if (!state.closeRequested) return false;
+          await this.options.onCloseRequested();
+          return true;
+        },
+        run: (command) =>
+          this.prompt(
+            command.turnRequestId,
+            command.source.body,
+            command.source.attachments,
+            command.source.authorId,
+            command.reason === 'corner_check' ? [command.source.body] : undefined,
+          ),
+      });
     } finally {
-      stopLive?.();
-      this.wakeIntake = undefined;
       this.options.grantRunner?.unregister(cornerId);
       await this.options.scheduler.suspend(cornerId);
     }
   }
-}
-
-async function wait(ms: number, signal?: AbortSignal): Promise<void> {
-  if (signal?.aborted) return;
-  await new Promise<void>((resolveWait) => {
-    const done = () => {
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', done);
-      resolveWait();
-    };
-    const timer = setTimeout(done, ms);
-    signal?.addEventListener('abort', done, { once: true });
-  });
 }

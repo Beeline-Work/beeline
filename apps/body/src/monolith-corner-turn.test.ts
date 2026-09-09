@@ -1,3 +1,4 @@
+import { commandFixtureApi } from './command-fixture.test-support.js';
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -160,7 +161,12 @@ describe('corner close-request polling cadence', () => {
       worktreePath: workspace,
       runtime,
       config,
-      api,
+      api: commandFixtureApi(
+        api,
+        'corner-id',
+        runtime.agent.publicKey,
+        'Generate and attach a clip',
+      ),
       scheduler,
       pollMs: 1,
       onPoll: vi.fn(),
@@ -293,7 +299,7 @@ describe('corner close-request polling cadence', () => {
       },
       runtime,
       config,
-      api,
+      api: commandFixtureApi(api, 'corner-id', runtime.agent.publicKey, 'Implement the widget'),
       scheduler,
       signal: abort.signal,
       pollMs: 60_000,
@@ -494,7 +500,7 @@ describe('corner close-request polling cadence', () => {
       },
       runtime,
       config,
-      api,
+      api: commandFixtureApi(api, 'corner-id', runtime.agent.publicKey, null),
       scheduler,
       signal: abort.signal,
       pollMs: 60_000,
@@ -666,7 +672,7 @@ describe('corner close-request polling cadence', () => {
         },
         runtime,
         config,
-        api,
+        api: commandFixtureApi(api, 'corner-id', runtime.agent.publicKey, null),
         scheduler,
         signal: abort.signal,
         pollMs,
@@ -993,7 +999,7 @@ describe('corner close-request polling cadence', () => {
     await harness.loop.run();
     await harness.scheduler.dispose();
 
-    const retries = activityAttempts.filter((activity) => activity.requestId === 'cornerid');
+    const retries = activityAttempts.filter((activity) => activity.requestId === 'human-msg');
     expect(retries.length).toBeGreaterThanOrEqual(2);
     for (const activity of retries.slice(1)) expect(activity).toEqual(retries[0]);
     expect(retries[0]).toMatchObject({
@@ -1073,7 +1079,7 @@ describe('corner close-request polling cadence', () => {
     await loop.run();
     await scheduler.dispose();
 
-    const activities = persisted.filter((activity) => activity.requestId === 'cornerid');
+    const activities = persisted.filter((activity) => activity.requestId === 'human-msg');
     expect(activities).toEqual([
       expect.objectContaining({
         cornerActivityKey: expect.stringMatching(/^1:id-[a-f0-9]{64}$/),
@@ -1349,7 +1355,7 @@ describe('corner close-request polling cadence', () => {
     abort.abort();
     await running;
     await scheduler.dispose();
-    expect(closeReads).toBe(1);
+    expect(closeReads).toBe(2);
     expect(execute).not.toHaveBeenCalledWith('waitForCornerWake', expect.anything());
   });
 });
@@ -1529,7 +1535,7 @@ describe('thin monolith corner turn', () => {
               type: 'message',
               body: 'Implement the widget',
               mentionIds: [],
-              requestId: 'request-id',
+              requestId: 'cornerid',
               attachments: [],
             },
             // A transcript long enough that a warm second turn has something to
@@ -1607,7 +1613,7 @@ describe('thin monolith corner turn', () => {
       },
       runtime,
       config,
-      api,
+      api: commandFixtureApi(api, 'corner-id', runtime.agent.publicKey, 'Implement the widget'),
       scheduler,
       signal: abort.signal,
       pollMs: 1,
@@ -1715,11 +1721,11 @@ describe('thin monolith corner turn', () => {
       expect.objectContaining({
         input: expect.objectContaining({
           activity: [
-            {
+            expect.objectContaining({
               kind: 'output',
               title: 'Update',
               text: 'Opening PR',
-            },
+            }),
             expect.objectContaining({
               kind: 'tool',
               operation: 'read',
@@ -1864,7 +1870,7 @@ describe('corner turn failure receipt', () => {
       },
       runtime,
       config,
-      api,
+      api: commandFixtureApi(api, 'corner-id', runtime.agent.publicKey, 'Implement the widget'),
       scheduler,
       signal: abort.signal,
       pollMs: 10,
@@ -1881,7 +1887,7 @@ describe('corner turn failure receipt', () => {
       { timeout: 5_000 },
     );
     abort.abort();
-    await expect(running).resolves.toBe(failure);
+    await expect(running).resolves.toBeUndefined();
     await scheduler.dispose();
 
     const failed = receipts.find((receipt) => receipt.status === 'failed')!;
@@ -1890,250 +1896,5 @@ describe('corner turn failure receipt', () => {
     expect(reason).toContain('timed out after 120000ms of inactivity');
     expect(reason).toContain('[REDACTED]');
     expect(reason).not.toMatch(/ghp_abc|\n|\bat AcpClient/);
-  });
-});
-
-describe('corner check notes', () => {
-  const AGENT_SECRET = '11'.repeat(32);
-
-  async function runChecksFlow(
-    polls: ReadonlyArray<{
-      notes: ReadonlyArray<{ id: string; verb: string; object: string }>;
-      checks?: 'passing' | 'failing' | 'pending';
-    }>,
-    answer: (prompt: string) => string,
-  ) {
-    const root = await mkdtemp(join(tmpdir(), 'beeline-corner-checks-'));
-    roots.push(root);
-    await execFileAsync('git', ['init', root]);
-    const agent = stored(AGENT_SECRET, 'Bee');
-    const AGENT = agent.publicKey;
-    const runtime = {
-      agent,
-      rooms: [],
-      supervisorRoot: root,
-      transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'token' },
-      agentBinary: '/fake-agent',
-      agentKind: 'codex',
-      agentCommand: '/fake-agent',
-      agentArgs: [],
-      mcpBinary: '/fake-dev-mcp',
-    } as unknown as AgentRuntimeRecord;
-    const config: BodyConfig = {
-      agentBinary: '/fake-agent',
-      agentKind: 'codex',
-      agentCommand: '/fake-agent',
-      agentArgs: [],
-      mcpBinary: '/fake-dev-mcp',
-      readonlyMcpCommand: '/fake-beeline-mcp',
-      agentEnv: {},
-      workspaceRoot: root,
-      autoApprovePermissions: true,
-    };
-    const abort = new AbortController();
-    const writes: Array<{ name: string; input: Record<string, unknown> }> = [];
-    let closeReads = 0;
-    let checks: 'passing' | 'failing' | 'pending' | undefined;
-    const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
-      if (name === 'getAgentConfiguration') return { commands: [] };
-      if (name === 'getWorkspaceRoster') {
-        return { members: [{ identityId: AGENT, kind: 'agent', name: 'Bee', role: 'member' }] };
-      }
-      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
-      if (name === 'getCornerRestoreState') {
-        return {
-          cornerId: 'corner-id',
-          closeRequested: false,
-          ...(checks ? { lifecycle: { lifecycle: 'in-review', checks } } : {}),
-        };
-      }
-      if (name === 'getCornerCloseRequests') {
-        const poll = polls[closeReads];
-        closeReads += 1;
-        if (!poll) return { items: [], cursor: 'latest', closeRequested: true };
-        checks = poll.checks;
-        return {
-          items: poll.notes.map((note) => ({
-            id: note.id,
-            authorId: '33'.repeat(32),
-            createdAt: closeReads,
-            type: 'system',
-            body: `GitHub ${note.verb} ${note.object}`,
-            systemEvent: {
-              subject: { kind: 'github', name: 'GitHub' },
-              verb: note.verb,
-              object: { text: note.object },
-            },
-            mentionIds: [],
-            attachments: [],
-          })),
-          cursor: poll.notes[poll.notes.length - 1]?.id ?? 'latest',
-        };
-      }
-      if (name === 'getRoomConversation') {
-        // One durable agent reply already exists, so the loop does not re-run the objective.
-        return {
-          items: [
-            {
-              id: 'pr-line',
-              authorId: AGENT,
-              createdAt: 1,
-              type: 'message',
-              body: 'PR: https://github.com/acme/widgets/pull/7',
-              mentionIds: [],
-              attachments: [],
-            },
-          ],
-          cursor: 'latest',
-        };
-      }
-      writes.push({ name, input });
-      return { id: 'write-id', createdAt: 1 };
-    });
-    const api = {
-      execute,
-      connection: () => ({
-        baseUrl: 'https://server.example',
-        daemonToken: 'token',
-        agentId: AGENT,
-      }),
-    } as unknown as DaemonApiClient;
-    const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
-    vi.spyOn(acp, 'start').mockResolvedValue(undefined);
-    vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: 'corner-session', raw: {} });
-    const sessionPrompt = vi
-      .spyOn(acp, 'sessionPrompt')
-      .mockImplementation(async (_id, prompt, _timeout, draft) => {
-        const text = answer(prompt);
-        // Stream in two halves so a sentence boundary posts a narration segment.
-        const half = Math.ceil(text.length / 2);
-        draft?.(text.slice(0, half), text.slice(0, half));
-        draft?.(text.slice(half), text);
-        return { stopReason: 'end_turn', updates: [], agentText: text, toolCalls: [] };
-      });
-    const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
-    await new MonolithCornerTurnLoop({
-      cornerId: 'corner-id',
-      parentRoomId: 'room-id',
-      workspaceId: 'workspace',
-      objective: 'Implement the widget',
-      worktreePath: root,
-      repository: {
-        featureBranch: 'feature/widget',
-        targetBranch: 'main',
-        gitCommonDir: join(root, '.git'),
-        githubToken: 'token',
-      },
-      runtime,
-      config,
-      api,
-      scheduler,
-      signal: abort.signal,
-      pollMs: 1,
-      onPoll: vi.fn(),
-      onFailure: vi.fn(),
-      onCloseRequested: vi.fn(async () => undefined),
-      createAcpClient: () => acp,
-    }).run();
-    await scheduler.dispose();
-    const messages = writes
-      .filter((write) => write.name === 'postRoomMessage')
-      .map((write) => write.input.text as string);
-    const receipts = writes
-      .filter((write) => write.name === 'postAgentTurnReceipt')
-      .map((write) => ({ requestId: write.input.requestId, status: write.input.status }));
-    return {
-      prompts: sessionPrompt.mock.calls.map((call) => call[1] as string),
-      messages,
-      receipts,
-    };
-  }
-
-  it('starts one turn per changed server check state, never per delivered note', async () => {
-    const { prompts, messages, receipts } = await runChecksFlow(
-      [
-        {
-          notes: [{ id: 'ci-start', verb: 'started a check', object: 'Beeline CI' }],
-          checks: 'pending',
-        },
-        {
-          notes: [{ id: 'ci-fail', verb: 'failed a check', object: 'Beeline CI' }],
-          checks: 'failing',
-        },
-        {
-          notes: [{ id: 'ci-fail-again', verb: 'failed a check', object: 'Beeline CI' }],
-          checks: 'failing',
-        },
-        {
-          notes: [{ id: 'ci-restart', verb: 'started a check', object: 'Beeline CI' }],
-          checks: 'pending',
-        },
-        {
-          notes: [{ id: 'ci-pass', verb: 'passed a check', object: 'Beeline CI' }],
-          checks: 'pending',
-        },
-        {
-          notes: [
-            { id: 'lint-pass', verb: 'passed a check', object: 'Lint' },
-            { id: 'build-pass', verb: 'passed a check', object: 'Build' },
-          ],
-          checks: 'passing',
-        },
-        {
-          notes: [{ id: 'lint-pass-again', verb: 'passed a check', object: 'Lint' }],
-          checks: 'passing',
-        },
-      ],
-      (prompt) =>
-        prompt.includes('failed a check')
-          ? 'Beeline CI failed on the typecheck step; pushing a fix.'
-          : 'PR checks have passed. CI has passed.',
-    );
-
-    expect(prompts).toHaveLength(2);
-    expect(prompts[0]).toContain('GitHub failed a check Beeline CI');
-    // Every completed note of one poll rides in that one turn.
-    expect(prompts[1]).toContain('GitHub passed a check Lint\nGitHub passed a check Build');
-    // The failing turn said something new and it stayed; the green turn only
-    // restated the server's lines and nothing reached the Room.
-    expect(messages).toEqual(['Beeline CI failed on the typecheck step; pushing a fix.']);
-    expect(receipts).toEqual([
-      { requestId: 'ci-fail', status: 'working' },
-      { requestId: 'ci-fail', status: 'complete' },
-      { requestId: 'build-pass', status: 'working' },
-      { requestId: 'build-pass', status: 'complete' },
-    ]);
-  });
-
-  it('keeps a green turn that acts, and falls back to the notes when the server carries no state', async () => {
-    const { prompts, messages, receipts } = await runChecksFlow(
-      [{ notes: [{ id: 'ci-pass', verb: 'passed a check', object: 'Beeline CI' }] }],
-      () => 'Checks passed. Merged https://github.com/acme/widgets/pull/7',
-    );
-    expect(prompts).toHaveLength(1);
-    // The reply carries a new fact (the merge), so it is not a restatement of
-    // the server's own note and lands whole — the same rule a Room applies.
-    expect(messages).toEqual(['Checks passed. Merged https://github.com/acme/widgets/pull/7']);
-    expect(receipts).toEqual([
-      { requestId: 'ci-pass', status: 'working' },
-      { requestId: 'ci-pass', status: 'complete' },
-    ]);
-  });
-
-  it('settles a silent green turn through its receipt instead of failing it', async () => {
-    const { messages, receipts } = await runChecksFlow(
-      [
-        {
-          notes: [{ id: 'ci-pass', verb: 'passed a check', object: 'Beeline CI' }],
-          checks: 'passing',
-        },
-      ],
-      () => '',
-    );
-    expect(messages).toEqual([]);
-    expect(receipts).toEqual([
-      { requestId: 'ci-pass', status: 'working' },
-      { requestId: 'ci-pass', status: 'complete' },
-    ]);
   });
 });

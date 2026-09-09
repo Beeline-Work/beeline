@@ -1,3 +1,4 @@
+import { AGENT_COMMAND_SCHEMA } from './agent-command.js';
 import { SCHEDULE_RAN_VERB } from '@beeline/api-contract/scheduled-prompts';
 import { uniqueAgentHandle } from '@beeline/api-contract/phone';
 import { seedDefaultWorkspace } from './default-workspace.js';
@@ -782,6 +783,7 @@ CREATE TABLE IF NOT EXISTS import_items (
 
 export async function migrate(database: SqlDatabase): Promise<void> {
   await database.query(SCHEMA);
+  await database.query(AGENT_COMMAND_SCHEMA);
   await database.query(
     `CREATE INDEX CONCURRENTLY IF NOT EXISTS messages_room_cursor_idx ON messages (room_id,
      (${MESSAGE_CURSOR_MS_SQL}), id)`,

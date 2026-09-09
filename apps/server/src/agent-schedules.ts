@@ -1,3 +1,4 @@
+import { createAgentCommand } from './agent-command.js';
 import { randomBytes } from 'node:crypto';
 import { CronExpressionParser } from 'cron-parser';
 import type { RoomScheduleCadence } from '@beeline/api-contract/phone';
@@ -184,6 +185,12 @@ export class AgentScheduleLoop {
             ],
           );
         }
+        await createAgentCommand(database, {
+          roomId: current.room_id,
+          agentId: current.agent_id,
+          sourceMessageId: messageId,
+          reason: 'schedule',
+        });
         const finished = current.max_runs !== null && current.run_count + 1 >= current.max_runs;
         if (finished) {
           await database.query(`DELETE FROM agent_schedules WHERE id=$1`, [current.id]);

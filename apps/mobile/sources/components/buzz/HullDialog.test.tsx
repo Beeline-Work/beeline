@@ -185,6 +185,42 @@ describe('Hull dialog family', () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
+  it('renders and operates every destructive confirmation control', () => {
+    const cancel = vi.fn();
+    const remove = vi.fn();
+    const renderer = render(
+      <HullDialog
+        actions={[
+          { label: 'Cancel', onPress: cancel, variant: 'quiet' },
+          { label: 'Remove agent', onPress: remove, variant: 'destructive' },
+        ]}
+        body="This removes the agent from every Room and the Workspace."
+        dismissOnBackdrop={false}
+        onRequestClose={cancel}
+        title="Remove Clara?"
+        visible
+      />,
+    );
+
+    expect(
+      renderer.root.findAllByType('Text' as any).map((node: any) => node.children.join('')),
+    ).toEqual(
+      expect.arrayContaining([
+        'Remove Clara?',
+        'This removes the agent from every Room and the Workspace.',
+        'Cancel',
+        'Remove agent',
+      ]),
+    );
+
+    const actions = renderer.root.findAllByType('Pressable' as any);
+    act(() => actions[0]!.props.onPress());
+    act(() => actions[1]!.props.onPress());
+    act(() => renderer.root.findByType('Modal' as any).props.onRequestClose());
+    expect(cancel).toHaveBeenCalledTimes(2);
+    expect(remove).toHaveBeenCalledOnce();
+  });
+
   it('renders the input member as a focused hairline field with dim placeholder copy', () => {
     const renderer = render(
       <HullDialogInput

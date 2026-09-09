@@ -341,7 +341,13 @@ export function HullDialog({
             {title}
           </Text>
           {body ? <Text style={styles.dialogBody}>{body}</Text> : null}
-          {children ? <View style={styles.dialogContent}>{children}</View> : null}
+          {children ? (
+            <View
+              style={[styles.dialogContent, contentLayout === 'fill' && styles.dialogContentFill]}
+            >
+              {children}
+            </View>
+          ) : null}
         </View>
         <View style={styles.dialogActions}>
           {actions.map((action, index) => {
@@ -438,7 +444,8 @@ const styles = StyleSheet.create((theme) => {
       paddingBottom: HULL_DIALOG_LAYOUT.copyPaddingBottom,
     },
     dialogCopyFill: { flex: 1 },
-    dialogContent: { flex: 1, flexShrink: 1, minHeight: 0 },
+    dialogContent: { flexShrink: 1, minHeight: 0 },
+    dialogContentFill: { flex: 1 },
     dialogTitle: {
       ...Typography.default('semiBold'),
       fontFamily: hull.proseSemibold,

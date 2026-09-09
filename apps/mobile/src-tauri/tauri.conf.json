@@ -30,6 +30,13 @@
     },
     "macOSPrivateApi": false
   },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["beeline"]
+      }
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",

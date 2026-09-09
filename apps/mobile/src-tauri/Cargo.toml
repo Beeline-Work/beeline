@@ -18,21 +18,35 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 # The Tauri CLI refuses to build when a Rust crate and its JS package differ in
 # minor version, so these track apps/mobile/package.json rather than crates.io
-# HEAD: @tauri-apps/api is pinned there at 2.9.1, and both plugins resolve to
-# 2.5.x. Moving a crate minor means moving its JS package in the same commit.
+# HEAD: @tauri-apps/api is pinned there at 2.9.1. Moving a crate minor means
+# moving its JS package in the same commit.
 [build-dependencies]
 tauri-build = { version = "~2.5", features = [] }
 
 [dependencies]
 tauri = { version = "~2.9", features = [] }
-# Both plugins have a JS half already declared in apps/mobile/package.json
-# (@tauri-apps/plugin-opener, @tauri-apps/plugin-http). A JS half without its
-# Rust half fails only at runtime, on the user's machine, so they are
-# registered here and scoped in capabilities/default.json.
+# Plugins with a JS half have that package declared in apps/mobile/package.json.
+# A JS half without its Rust half fails only at runtime, on the user's machine,
+# so they are registered here and scoped in capabilities/default.json.
 tauri-plugin-http = "~2.5"
 tauri-plugin-opener = "~2.5"
+tauri-plugin-deep-link = "~2.4"
+tauri-plugin-single-instance = { version = "=2.3.2", features = ["deep-link"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# Session refresh tokens stay in the operating system credential store. Linux
+# uses the kernel keyring so first launch also works without a desktop Secret
+# Service (for example over X11 forwarding); macOS and Windows use their native
+# Keychain and Credential Manager implementations.
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3.6.3", default-features = false, features = ["linux-native"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3.6.3", default-features = false, features = ["apple-native"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3.6.3", default-features = false, features = ["windows-native"] }
 
 [features]
 # Used by `tauri build --debug` bundles: keeps devtools reachable in a build

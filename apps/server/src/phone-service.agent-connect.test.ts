@@ -11,6 +11,7 @@ import {
 import { migrate } from './database.js';
 import { PhoneService } from './phone-service.js';
 import { PgliteDatabase } from './test-support.js';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 
 const OWNER = 'a'.repeat(64);
 const AGENT = 'b'.repeat(64);
@@ -328,9 +329,13 @@ describe('PhoneService agent connect pairing claim', () => {
       const rows = await database.query<{
         text: string;
         system_event: { subject: { name: string } };
-      }>(`SELECT text,system_event FROM messages WHERE room_id=$1 AND card_type='member-joined'`, [
-        ROOM,
-      ]);
+      }>(
+        `SELECT message.text,message.system_event FROM messages message
+         JOIN rooms room ON room.id=message.room_id
+         WHERE room.workspace_id=$1 AND room.direct_participants @> jsonb_build_array($2::text,$3::text)
+           AND message.card_type='workspace-member-joined'`,
+        [WORKSPACE, OWNER, SYSTEM_IDENTITY_ID],
+      );
       const row = rows.rows[0];
       return row ? { text: row.text, subjectName: row.system_event.subject.name } : undefined;
     }
@@ -415,9 +420,13 @@ describe('PhoneService agent connect pairing claim', () => {
       const rows = await database.query<{
         text: string;
         system_event: { subject: { name: string } };
-      }>(`SELECT text,system_event FROM messages WHERE room_id=$1 AND card_type='member-joined'`, [
-        ROOM,
-      ]);
+      }>(
+        `SELECT message.text,message.system_event FROM messages message
+         JOIN rooms room ON room.id=message.room_id
+         WHERE room.workspace_id=$1 AND room.direct_participants @> jsonb_build_array($2::text,$3::text)
+           AND message.card_type='workspace-member-joined'`,
+        [WORKSPACE, OWNER, SYSTEM_IDENTITY_ID],
+      );
       const row = rows.rows[0];
       return row ? { text: row.text, subjectName: row.system_event.subject.name } : undefined;
     }
@@ -455,8 +464,10 @@ describe('PhoneService agent connect pairing claim', () => {
         phone.finishAgentConnectPairing({ code: CODE, workspaceJoined: false }),
       ).resolves.toEqual({ status: 'finished' });
       const afterFinish = await database.query<{ count: string }>(
-        `SELECT count(*)::text FROM messages WHERE room_id=$1 AND card_type='member-joined'`,
-        [ROOM],
+        `SELECT count(*)::text FROM messages message JOIN rooms room ON room.id=message.room_id
+         WHERE room.workspace_id=$1 AND room.direct_participants @> jsonb_build_array($2::text,$3::text)
+           AND message.card_type='workspace-member-joined'`,
+        [WORKSPACE, OWNER, SYSTEM_IDENTITY_ID],
       );
       expect(afterFinish.rows[0]?.count).toBe('1');
     });

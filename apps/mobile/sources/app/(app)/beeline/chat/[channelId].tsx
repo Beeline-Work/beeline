@@ -1086,9 +1086,10 @@ export default function BuzzChat() {
   const activeAgentTurn = activeAgentTurns[0];
   const messages = unprojectedMessages;
   const isDirectMessage = Boolean(directMessage);
-  // The @system release-announcement DM: the server never lets anyone but
-  // @system post into it (viewer.permissions.send is false there and only
-  // there for a direct message, since a DM can never be archived).
+  // An @system notification DM (release or Workspace lifecycle): the server
+  // never lets anyone but @system post into it (viewer.permissions.send is
+  // false there and only there for a direct message, since a DM can never be
+  // archived).
   const isReadOnlyDirectMessage = isDirectMessage && roomSurface?.viewer.permissions.send === false;
   const currentSlashQuery = useMemo(() => slashVerbQuery(inputText), [inputText]);
   // Mention-scoped palette: `@agent /query` addresses THAT agent's advertised

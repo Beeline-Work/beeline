@@ -20,6 +20,7 @@ export async function queueLatestReleasePush(
          AND member.removed_at IS NULL
        WHERE m.author_id=$3 AND r.workspace_id=$4
          AND r.direct_participants @> jsonb_build_array($1::text,$3::text)
+         AND m.card_type IS NULL
        ORDER BY m.created_at DESC,m.id DESC LIMIT 1
      )
      INSERT INTO push_release_catchups(device_token,identity_id,message_id)
@@ -59,7 +60,8 @@ export async function claimReleaseCatchup(
        WHERE catchup.device_token=$2 AND catchup.identity_id=$3 AND catchup.message_id=$1
          AND (read.message_id IS NULL OR (m.created_at,m.id)>(read.message_created_at,read.message_id))
          AND NOT EXISTS (SELECT 1 FROM messages newer WHERE newer.room_id=m.room_id
-           AND newer.author_id=m.author_id AND (newer.created_at,newer.id)>(m.created_at,m.id))
+           AND newer.author_id=m.author_id AND newer.card_type IS NULL
+           AND (newer.created_at,newer.id)>(m.created_at,m.id))
      ) ON CONFLICT DO NOTHING`,
     [messageId, token, identityId],
   );
@@ -91,7 +93,8 @@ export async function retireTerminalReleaseCatchups(database: SqlDatabase) {
          WHERE d.token=catchup.device_token AND d.identity_id=catchup.identity_id
            AND (read.message_id IS NULL OR (m.created_at,m.id)>(read.message_created_at,read.message_id))
            AND NOT EXISTS (SELECT 1 FROM messages newer WHERE newer.room_id=m.room_id
-             AND newer.author_id=m.author_id AND (newer.created_at,newer.id)>(m.created_at,m.id))
+             AND newer.author_id=m.author_id AND newer.card_type IS NULL
+             AND (newer.created_at,newer.id)>(m.created_at,m.id))
        )
      )`,
   );
@@ -114,5 +117,6 @@ export const RELEASE_CATCHUP_CANDIDATES_SQL = `
   LEFT JOIN room_read_marks read ON read.room_id=r.id AND read.identity_id=d.identity_id
   WHERE (read.message_id IS NULL OR (m.created_at,m.id)>(read.message_created_at,read.message_id))
     AND NOT EXISTS (SELECT 1 FROM messages newer WHERE newer.room_id=m.room_id
-      AND newer.author_id=m.author_id AND (newer.created_at,newer.id)>(m.created_at,m.id))
+      AND newer.author_id=m.author_id AND newer.card_type IS NULL
+      AND (newer.created_at,newer.id)>(m.created_at,m.id))
 `;

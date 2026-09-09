@@ -1,12 +1,8 @@
 import { createHash } from 'node:crypto';
 import { DEFAULT_WORKSPACE_ID } from '@beeline/api-contract/phone';
-import {
-  SYSTEM_IDENTITY_HANDLE,
-  SYSTEM_IDENTITY_ID,
-  SYSTEM_IDENTITY_NAME,
-} from '@beeline/api-contract/system-identity';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { SqlDatabase } from './database.js';
-import { directMessageRoomId } from './phone-service.js';
+import { ensureSystemDirectMessageRoom, ensureSystemIdentity } from './system-line.js';
 
 export { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 
@@ -68,33 +64,6 @@ export function composeReleaseNotice(input: {
   return sections.join('\n\n');
 }
 
-async function ensureSystemIdentity(database: SqlDatabase): Promise<void> {
-  await database.query(
-    `INSERT INTO identities(id,kind,name,handle,hidden_from_roster)
-     VALUES ($1,'human',$2,$3,true) ON CONFLICT(id) DO NOTHING`,
-    [SYSTEM_IDENTITY_ID, SYSTEM_IDENTITY_NAME, SYSTEM_IDENTITY_HANDLE],
-  );
-}
-
-/** Finds or creates the one read-only announcement DM between @system and this person. */
-async function ensureSystemAnnouncementRoom(database: SqlDatabase, personId: string): Promise<string> {
-  const participants = [SYSTEM_IDENTITY_ID, personId].sort() as [string, string];
-  const id = directMessageRoomId(DEFAULT_WORKSPACE_ID, participants);
-  await database.query(
-    `INSERT INTO rooms(id,workspace_id,created_by,name,direct_participants)
-     VALUES ($1,$2,$3,'Direct message',$4::jsonb) ON CONFLICT(id) DO NOTHING`,
-    [id, DEFAULT_WORKSPACE_ID, SYSTEM_IDENTITY_ID, JSON.stringify(participants)],
-  );
-  for (const member of participants) {
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES ($1,$2,$3,'member')
-       ON CONFLICT (room_id,identity_id) WHERE room_id IS NOT NULL DO NOTHING`,
-      [DEFAULT_WORKSPACE_ID, id, member],
-    );
-  }
-  return id;
-}
-
 /**
  * Posts one release notice to one person. Idempotent: the message id is
  * derived from (version, personId), so a re-run of the same release version
@@ -112,7 +81,7 @@ async function notifyPerson(
     readonly platforms: ReadonlySet<'android' | 'ios'>;
   },
 ): Promise<boolean> {
-  const roomId = await ensureSystemAnnouncementRoom(database, personId);
+  const roomId = await ensureSystemDirectMessageRoom(database, DEFAULT_WORKSPACE_ID, personId);
   const id = createHash('sha256')
     .update(`beeline-release-notice:v1:${input.version}:${personId}`)
     .digest('hex');
@@ -138,7 +107,6 @@ export async function notifyReleaseDelivered(
   const changelogUrl = required(input.changelogUrl, 'changelogUrl');
   required(input.sha, 'sha');
   await ensureSystemIdentity(database);
-
   const behindOwners = new Set(
     (
       await database.query<{ owner_id: string }>(

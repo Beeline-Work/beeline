@@ -4,11 +4,7 @@ import type {
   AgentCommandAction,
   RoomInboxResult,
 } from '@beeline/api-contract/daemon';
-import {
-  AGENT_REACHABLE_HORIZON_MS,
-  parseAgentAccessPolicy,
-  senderMayAddressAgent,
-} from '@beeline/api-contract/agent-access';
+import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-contract/agent-access';
 import type { SqlDatabase } from './database.js';
 
 export const COMMAND_LEASE_SECONDS = 90;
@@ -148,16 +144,15 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
   targets.delete(source.author_id);
   for (const target of targets) {
     const agent = (
-      await db.query<{ owner_id: string; access_policy: unknown; reachable: boolean }>(
-        `SELECT a.owner_id,a.access_policy,COALESCE((SELECT lo.body->>'status'='online' AND lo.updated_at>=now()-make_interval(secs => $4::double precision / 1000) FROM live_outputs lo WHERE lo.agent_id=a.agent_id AND lo.kind='presence' ORDER BY lo.updated_at DESC LIMIT 1),false) reachable FROM agents a
+      await db.query<{ owner_id: string; access_policy: unknown }>(
+        `SELECT a.owner_id,a.access_policy FROM agents a
    JOIN memberships m ON m.identity_id=$2 AND m.room_id=$3 AND m.removed_at IS NULL
    WHERE a.agent_id=$1 FOR SHARE OF a,m`,
-        [target, source.author_id, source.room_id, AGENT_REACHABLE_HORIZON_MS],
+        [target, source.author_id, source.room_id],
       )
     ).rows[0];
     if (
       !agent ||
-      !agent.reachable ||
       !senderMayAddressAgent(
         parseAgentAccessPolicy(agent.access_policy),
         source.author_id,

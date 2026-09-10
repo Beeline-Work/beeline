@@ -68,8 +68,8 @@ export function validateServerCommand(
 /**
  * Targeted commands -> claim -> local session mechanics. Inputs remain durable
  * and unclaimed while a session is busy. Stops are claimed even during a prompt.
- * Live traffic carries server-authorized commands. A one-second durable read
- * remains the lossless recovery path for unavailable or failed live delivery.
+ * Live traffic carries server-authorized commands. Durable reads recover every
+ * second until push intake is acknowledged, then reconcile once per minute.
  */
 export async function runServerCommandIntake(options: {
   api: DaemonApiClient;
@@ -92,6 +92,7 @@ export async function runServerCommandIntake(options: {
     throw new Error('server command protocol 1 is required; refusing intake');
   let busy: Promise<void> | undefined;
   let wake: ((reconcile: boolean) => void) | undefined;
+  let pushIntakeAcknowledged = false;
   const pending = new Map(first.commands.map((command) => [command.id, command]));
   const claimed = new Set<string>();
   const notify = (commands: readonly AgentCommand[] = []) => {
@@ -103,8 +104,16 @@ export async function runServerCommandIntake(options: {
     roomId,
     undefined,
     undefined,
-    (connected) => {
-      if (!connected) wake?.(true);
+    (connected, capabilities) => {
+      const acknowledged = connected && capabilities?.pushIntake === true;
+      if (pushIntakeAcknowledged !== acknowledged) {
+        pushIntakeAcknowledged = acknowledged;
+        // Re-arm the recovery timer at the cadence this connection proved it
+        // supports. A disconnect still reconciles immediately.
+        wake?.(!connected);
+      } else if (!connected) {
+        wake?.(true);
+      }
     },
     options.presence,
     notify,
@@ -159,7 +168,10 @@ export async function runServerCommandIntake(options: {
         };
         const aborted = () => done(false);
         wake = done;
-        const timer = setTimeout(() => done(true), options.pollMs ?? 1_000);
+        const timer = setTimeout(
+          () => done(true),
+          pushIntakeAcknowledged ? 60_000 : (options.pollMs ?? 1_000),
+        );
         signal?.addEventListener('abort', aborted, { once: true });
         if (pending.size && !busy) done(false);
       });

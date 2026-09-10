@@ -279,19 +279,17 @@ export class PostgresLiveListener {
         (row.body.status === 'online' || row.body.status === 'offline') &&
         typeof row.body.observedAt === 'number'
       ) {
-        const rooms = await this.database.query<{ room_id: string }>(
-          `SELECT room_id FROM memberships WHERE identity_id=$1
-             AND room_id IS NOT NULL AND removed_at IS NULL`,
-          [payload.agentId],
-        );
-        for (const room of rooms.rows)
-          this.live.publish({
-            type: 'presence',
-            roomId: room.room_id,
-            agentId: payload.agentId,
-            status: row.body.status,
-            observedAt: row.body.observedAt,
-          });
+        // The writer updates one durable presence row per affected Room, and
+        // PostgreSQL emits one notification for each changed row. Rebroadcast
+        // only that row here; expanding every notification back to every Room
+        // turns an R-Room update into R² work on every server machine.
+        this.live.publish({
+          type: 'presence',
+          roomId: payload.roomId,
+          agentId: payload.agentId,
+          status: row.body.status,
+          observedAt: row.body.observedAt,
+        });
       }
       return;
     }

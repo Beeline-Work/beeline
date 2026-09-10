@@ -4,11 +4,11 @@ import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { BeelineMarkSpinner, MARK_CELL } from './BeelineMarkSpinner';
 import { HullLivePulse } from './MonoHull';
-import { SPINNER_STEP_MS, elapsedSeconds } from '@/buzz/turn-clock';
+import { SPINNER_STEP_MS, formatWorkingCounter } from '@/buzz/turn-clock';
 
-/** The compose FAB recipe at status-line scale: a sharp brass square whose
- * surrounding hit slop preserves a comfortable touch target. */
-const STOP_SIZE = 16;
+/** Smaller than the 18pt mark it sits beside. Hit slop keeps the 44pt target. */
+const STOP_SIZE = 10;
+const STOP_HIT_SLOP = 17;
 
 /**
  * The ordinary per-turn indicator: the agent has taken this Room's question
@@ -45,12 +45,15 @@ const STOP_SIZE = 16;
  * different thing in the trailing slot: not navigation but the one action a
  * turn in progress admits, withdrawing the question. It is passed only to the
  * person who asked (`viewerMayStopTurn`), so for everyone else this component
- * renders exactly what it rendered before.
+ * renders exactly what it rendered before. A press is acknowledged here —
+ * the square empties and the counter says `stopping` — before the cancelled
+ * receipt lands; a failed stop puts the filled square back.
  */
 export function TurnProgressLine({
   label,
   startedAt,
   onStop,
+  stopping = false,
   testID,
 }: {
   label: string;
@@ -58,6 +61,8 @@ export function TurnProgressLine({
   startedAt?: number;
   /** Present only for the turn's own requester; absent renders no control. */
   onStop?: () => void;
+  /** The asker already pressed stop; the cancelled receipt has not landed yet. */
+  stopping?: boolean;
   testID?: string;
 }) {
   const [now, setNow] = useState(() => Date.now());
@@ -67,13 +72,13 @@ export function TurnProgressLine({
     return () => clearInterval(timer);
   }, []);
 
+  const phase = stopping ? 'stopping' : 'thinking';
+  const counter =
+    startedAt != null ? formatWorkingCounter(startedAt * 1_000, now, phase) : undefined;
+
   return (
     <View
-      accessibilityLabel={
-        startedAt != null
-          ? `${label} (${elapsedSeconds(startedAt * 1_000, now)}s · thinking)`
-          : label
-      }
+      accessibilityLabel={counter ? `${label} (${counter})` : label}
       accessibilityRole="progressbar"
       style={styles.bar}
       testID={testID}
@@ -85,18 +90,24 @@ export function TurnProgressLine({
         <Text numberOfLines={1} style={styles.label}>
           {label}
         </Text>
-        {startedAt != null && (
+        {counter != null && (
           <Text style={styles.counter} testID={testID ? `${testID}-elapsed` : undefined}>
-            {`${elapsedSeconds(startedAt * 1_000, now)}s · thinking`}
+            {counter}
           </Text>
         )}
         {onStop && (
           <Pressable
-            accessibilityLabel="Stop this turn"
+            accessibilityLabel={stopping ? 'Stopping this turn' : 'Stop this turn'}
             accessibilityRole="button"
-            hitSlop={14}
-            onPress={onStop}
-            style={styles.stop}
+            accessibilityState={{ busy: stopping, disabled: stopping }}
+            disabled={stopping}
+            hitSlop={STOP_HIT_SLOP}
+            onPress={stopping ? undefined : onStop}
+            style={({ pressed }) => [
+              styles.stop,
+              pressed && !stopping && styles.stopPressed,
+              stopping && styles.stopStopping,
+            ]}
             testID={testID ? `${testID}-stop` : undefined}
           />
         )}
@@ -170,14 +181,22 @@ const styles = StyleSheet.create((theme) => {
       fontSize: 12,
       lineHeight: 18,
     },
-    // The compose FAB's brass square recipe, reduced to the status line's 16pt
-    // scale. Its geometry and contrast carry the affordance without a label.
+    // A small brass square. Pressed dims it; stopping empties it so the press
+    // is visible until the cancelled receipt retires the line.
     stop: {
       width: STOP_SIZE,
       height: STOP_SIZE,
       flexShrink: 0,
       borderRadius: groknight.radius,
       backgroundColor: groknight.accent,
+    },
+    stopPressed: {
+      opacity: 0.6,
+    },
+    stopStopping: {
+      backgroundColor: 'transparent',
+      borderWidth: 1,
+      borderColor: groknight.accent,
     },
   };
 });

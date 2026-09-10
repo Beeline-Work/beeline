@@ -233,6 +233,68 @@ describe('command intake mechanics', () => {
     controller.abort();
     await running;
   });
+  it('dispatches a pushed claim immediately while a loaded recovery read is still pending', async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    let onState:
+        | ((
+            connected: boolean,
+            capabilities?: { pushIntake: boolean; connectionPresence: boolean },
+          ) => void)
+        | undefined,
+      onCommands: ((commands: readonly AgentCommand[]) => void) | undefined,
+      finishRecovery: ((page: { commandProtocol: 1; commands: AgentCommand[] }) => void) | undefined;
+    let reads = 0;
+    const claimDispatchedAt: number[] = [];
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getAgentCommands') {
+        if (reads++ === 0) return { commandProtocol: 1, commands: [] };
+        return new Promise<{ commandProtocol: 1; commands: AgentCommand[] }>((resolve) => {
+          finishRecovery = resolve;
+        });
+      }
+      if (name === 'claimAgentCommand') claimDispatchedAt.push(Date.now());
+      return { id: 'ok' };
+    });
+    const api = {
+      execute,
+      liveSubscribe: vi.fn(
+        (
+          _roomId: string,
+          _cursor: string | undefined,
+          _onItems: unknown,
+          state: typeof onState,
+          _presence: unknown,
+          commands: typeof onCommands,
+        ) => {
+          onState = state;
+          onCommands = commands;
+          return vi.fn();
+        },
+      ),
+    } as unknown as DaemonApiClient;
+    const running = runServerCommandIntake({
+      api,
+      roomId: 'room',
+      agentId: 'agent',
+      context: await context(),
+      signal: controller.signal,
+      run: vi.fn(async () => controller.abort()),
+      stop: vi.fn(),
+    });
+    await vi.waitFor(() => expect(onCommands).toBeTypeOf('function'));
+    onState?.(true, { pushIntake: true, connectionPresence: true });
+    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.waitFor(() => expect(finishRecovery).toBeTypeOf('function'));
+
+    const pushedAt = Date.now();
+    onCommands?.([command()]);
+    await vi.waitFor(() => expect(claimDispatchedAt).toHaveLength(1));
+    expect(claimDispatchedAt[0]! - pushedAt).toBeLessThan(500);
+
+    finishRecovery?.({ commandProtocol: 1, commands: [] });
+    await running;
+  });
   it('processes a stop while an authorized input is running', async () => {
     const controller = new AbortController();
     let reads = 0,

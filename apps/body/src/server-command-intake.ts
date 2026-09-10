@@ -93,11 +93,31 @@ export async function runServerCommandIntake(options: {
   let busy: Promise<void> | undefined;
   let wake: ((reconcile: boolean) => void) | undefined;
   let pushIntakeAcknowledged = false;
+  let reconciliation: Promise<void> | undefined;
+  let reconciliationError: unknown;
+  let stopped = false;
   const pending = new Map(first.commands.map((command) => [command.id, command]));
   const claimed = new Set<string>();
   const notify = (commands: readonly AgentCommand[] = []) => {
     for (const command of commands) if (!claimed.has(command.id)) pending.set(command.id, command);
     wake?.(false);
+  };
+  const requestReconciliation = () => {
+    if (reconciliation) return;
+    reconciliation = api
+      .execute('getAgentCommands', { roomId })
+      .then((page) => {
+        if (page.commandProtocol !== 1)
+          throw new Error('server command protocol changed; refusing intake');
+        if (!stopped) notify(page.commands);
+      })
+      .catch((error: unknown) => {
+        reconciliationError = error;
+        wake?.(false);
+      })
+      .finally(() => {
+        reconciliation = undefined;
+      });
   };
   options.onWake?.(notify);
   const off = api.liveSubscribe?.(
@@ -120,6 +140,7 @@ export async function runServerCommandIntake(options: {
   );
   try {
     while (!signal?.aborted) {
+      if (reconciliationError) throw reconciliationError;
       if (options.closed && (await options.closed())) return;
       for (const command of [...pending.values()]) {
         validateServerCommand(command, roomId, agentId);
@@ -176,14 +197,12 @@ export async function runServerCommandIntake(options: {
         if (pending.size && !busy) done(false);
       });
       if (signal?.aborted) break;
-      if (reconcile) {
-        const page = await api.execute('getAgentCommands', { roomId });
-        if (page.commandProtocol !== 1)
-          throw new Error('server command protocol changed; refusing intake');
-        notify(page.commands);
-      }
+      // The slow sweep is only a recovery net. Never make a command that
+      // already arrived over the acknowledged push path wait behind its GET.
+      if (reconcile) requestReconciliation();
     }
   } finally {
+    stopped = true;
     off?.();
     options.onWake?.(undefined);
     if (context.current) options.stop(context.current.turnRequestId);

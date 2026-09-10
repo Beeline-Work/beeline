@@ -1,9 +1,24 @@
 import { EventEmitter } from 'node:events';
 
+export type LiveTrace = {
+  /** Per database-row notification nonce. It correlates authorized wire phases
+   * without exposing a Room, identity, message, request, or command id. */
+  id: string;
+  databaseAt: number;
+  emittedAt: number;
+};
+
 export type LiveEvent =
   /** `agentId` names the author when one agent's own write caused it; a fact the
    *  server itself publishes carries none. `corner-wake.ts` reads it. */
-  | { type: 'invalidate'; roomId: string; reason: string; agentId?: string; targetAgentId?: string }
+  | {
+      type: 'invalidate';
+      roomId: string;
+      reason: string;
+      agentId?: string;
+      targetAgentId?: string;
+      trace?: LiveTrace;
+    }
   | { type: 'draft' | 'thought'; roomId: string; agentId: string; turnId: string; text: string }
   | { type: 'retract'; roomId: string; agentId: string; turnId: string; kind: 'draft' | 'thought' }
   | {

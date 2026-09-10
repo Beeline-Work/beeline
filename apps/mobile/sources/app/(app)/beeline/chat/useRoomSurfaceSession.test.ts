@@ -360,6 +360,38 @@ describe('useRoomSurfaceSession', () => {
     },
   );
 
+  it('records a bounded correlation trace when the phone socket receives an invalidation', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    controls.cached = roomView('room-a');
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, {
+          channelId: 'room-a',
+          capture: () => undefined,
+        }),
+      );
+    });
+    await flushEffects();
+
+    await act(async () => {
+      controls.subscriptions[0]!.emit({
+        monolithLive: {
+          type: 'invalidate',
+          roomId: 'room-a',
+          reason: 'postgres:agent_turns',
+          trace: { id: 'trace-turn', databaseAt: 100, emittedAt: 125 },
+        },
+      });
+    });
+
+    expect(info).toHaveBeenCalledWith(expect.stringContaining('"phase":"socket-receipt","at":'));
+    expect(info).toHaveBeenCalledWith(expect.stringContaining('"id":"trace-turn"'));
+    expect(info).toHaveBeenCalledWith(expect.stringContaining('"reason":"postgres:agent_turns"'));
+    info.mockRestore();
+    await act(async () => renderer.unmount());
+  });
+
   it('lights the gold bar from a fresh indexed child-turn receipt', async () => {
     let renderer!: ReactTestRenderer;
     await act(async () => {
@@ -492,7 +524,12 @@ describe('useRoomSurfaceSession', () => {
     const emit = (live: Record<string, unknown>) =>
       controls.subscriptions[0]!.emit({ monolithLive: { roomId: 'corner-a', ...live } });
     await act(async () => {
-      emit({ type: 'draft', agentId: 'agent-a', turnId: 'turn-c', text: "I'll trace the producer" });
+      emit({
+        type: 'draft',
+        agentId: 'agent-a',
+        turnId: 'turn-c',
+        text: "I'll trace the producer",
+      });
       emit({
         type: 'draft',
         agentId: 'agent-a',
@@ -611,7 +648,12 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => {
       emit({ type: 'draft', agentId: 'agent-a', turnId: 'turn-1', text: 'I' });
       emit({ type: 'draft', agentId: 'agent-a', turnId: 'turn-1', text: 'I will update only X,' });
-      emit({ type: 'draft', agentId: 'agent-a', turnId: 'turn-1', text: 'I will update only X, then commit.' });
+      emit({
+        type: 'draft',
+        agentId: 'agent-a',
+        turnId: 'turn-1',
+        text: 'I will update only X, then commit.',
+      });
       // The final is about to land: the helper retracts the live lane first.
       emit({ type: 'retract', kind: 'draft', agentId: 'agent-a', turnId: 'turn-1' });
     });
@@ -640,9 +682,7 @@ describe('useRoomSurfaceSession', () => {
       controls.schedulers[0]!.apply({ ...roomView('room-a'), messages: [finalMessage] });
       await Promise.resolve();
     });
-    expect(
-      visibleLiveOverlays(current.liveOverlays, current.roomSurface!.messages),
-    ).toEqual([]);
+    expect(visibleLiveOverlays(current.liveOverlays, current.roomSurface!.messages)).toEqual([]);
     await act(async () => renderer.unmount());
   });
 

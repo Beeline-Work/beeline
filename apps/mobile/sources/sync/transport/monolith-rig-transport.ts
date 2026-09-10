@@ -15,8 +15,14 @@ import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import type { RepoCandidate } from '@/buzz/room-repo-picker';
 import { MonolithPhoneOperationError } from './monolith-operation';
 
+export type LiveWireTrace = {
+  id: string;
+  databaseAt: number;
+  emittedAt: number;
+};
+
 type LiveWireEvent =
-  | { type: 'invalidate'; roomId: string; reason: string }
+  | { type: 'invalidate'; roomId: string; reason: string; trace?: LiveWireTrace }
   | { type: 'draft' | 'thought'; roomId: string; agentId: string; turnId: string; text: string }
   | { type: 'retract'; roomId: string; agentId: string; turnId: string; kind: 'draft' | 'thought' }
   | {

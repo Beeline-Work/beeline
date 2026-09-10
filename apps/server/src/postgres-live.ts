@@ -80,6 +80,10 @@ BEGIN
         'scheduleId', COALESCE(NEW.id, OLD.id)
       );
   END CASE;
+  payload = payload || jsonb_build_object(
+    'traceId', md5(random()::text || clock_timestamp()::text || txid_current()::text),
+    'databaseAt', floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint
+  );
   IF payload->>'roomId' IS NOT NULL THEN
     PERFORM pg_notify('${POSTGRES_LIVE_CHANNEL}', payload::text);
   END IF;
@@ -138,6 +142,8 @@ interface LiveNotificationPayload {
   observedAt?: number;
   ownerEpoch?: string;
   expiresAt?: number;
+  traceId?: string;
+  databaseAt?: number;
 }
 
 function decodePayload(value: string | undefined): LiveNotificationPayload | undefined {
@@ -160,6 +166,8 @@ function decodePayload(value: string | undefined): LiveNotificationPayload | und
       ...(typeof parsed.observedAt === 'number' ? { observedAt: parsed.observedAt } : {}),
       ...(typeof parsed.ownerEpoch === 'string' ? { ownerEpoch: parsed.ownerEpoch } : {}),
       ...(typeof parsed.expiresAt === 'number' ? { expiresAt: parsed.expiresAt } : {}),
+      ...(typeof parsed.traceId === 'string' ? { traceId: parsed.traceId } : {}),
+      ...(typeof parsed.databaseAt === 'number' ? { databaseAt: parsed.databaseAt } : {}),
     };
   } catch {
     return undefined;
@@ -314,6 +322,15 @@ export class PostgresLiveListener {
       reason: `postgres:${payload.table}`,
       ...(payload.table === 'agent_commands' ? { targetAgentId: payload.agentId } : {}),
       ...(payload.agentId ? { agentId: payload.agentId } : {}),
+      ...(payload.traceId && payload.databaseAt
+        ? {
+            trace: {
+              id: payload.traceId,
+              databaseAt: payload.databaseAt,
+              emittedAt: Date.now(),
+            },
+          }
+        : {}),
     };
     this.live.publish(event);
   }

@@ -954,7 +954,7 @@ async function route(
       await refuseDaemon(request, response, options);
       return;
     }
-    await options.connectionPresence?.evidence(undefined, agentId);
+    void options.connectionPresence?.evidence(undefined, agentId);
     const raw = await bytes(request, options.mediaMaximumBytes + 1);
     const mime =
       typeof request.headers['content-type'] === 'string'
@@ -990,7 +990,7 @@ async function route(
         : typeof input.cornerId === 'string'
           ? input.cornerId
           : undefined;
-    await options.connectionPresence?.evidence(evidenceRoom, agentId);
+    void options.connectionPresence?.evidence(evidenceRoom, agentId);
     json(response, 200, await options.daemon.execute(name as never, input as never, agentId));
     return;
   }

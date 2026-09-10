@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
-import { ConnectionPresence } from './connection-presence.js';
+import { ConnectionPresence, recordAgentEvidence } from './connection-presence.js';
 import { LiveHub } from './live.js';
 import { runMaintenance } from './background.js';
 
@@ -177,6 +177,63 @@ describe('delivery-driven presence', () => {
     await presence.evidence(ROOM, AGENT);
     await elapsed();
     expect((await body()).status).toBe('online');
+  });
+
+  it('does not demote authenticated arrival while its durable refresh is blocked', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    await presence.announce(ROOM, AGENT, { lifecycleId: 'boot-1' });
+    await message();
+    const original = database.query.bind(database);
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    vi.spyOn(database, 'query').mockImplementation((async (sql: string, values?: unknown[]) => {
+      if (sql.includes('WITH previous AS MATERIALIZED')) await held;
+      return original(sql, values);
+    }) as typeof database.query);
+
+    const durable = presence.evidence(ROOM, AGENT);
+    await elapsed();
+    expect((await body()).status).toBe('online');
+    release();
+    await durable;
+  });
+
+  it('coalesces a burst to one in-flight and one pending durable evidence refresh', async () => {
+    await presence.announce(ROOM, AGENT, { lifecycleId: 'boot-1' });
+    const original = database.query.bind(database);
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let evidenceStatements = 0;
+    vi.spyOn(database, 'query').mockImplementation((async (sql: string, values?: unknown[]) => {
+      if (sql.includes('WITH previous AS MATERIALIZED')) {
+        evidenceStatements += 1;
+        if (evidenceStatements === 1) await held;
+      }
+      return original(sql, values);
+    }) as typeof database.query);
+
+    const first = presence.evidence(ROOM, AGENT);
+    const burst = Array.from({ length: 100 }, () => presence.evidence(OTHER, AGENT));
+    release();
+    await Promise.all([first, ...burst]);
+
+    expect(evidenceStatements).toBe(2);
+    expect(await body()).toMatchObject({ status: 'online', lifecycleId: 'boot-1' });
+  });
+
+  it('merges evidence into the current row without replacing newer lifecycle metadata', async () => {
+    await presence.announce(ROOM, AGENT, {
+      lifecycleId: 'boot-new',
+      releaseVersion: 'v9',
+      sourceSha: 'new-source',
+    });
+    await recordAgentEvidence(database, live, OTHER, AGENT);
+    expect(await body()).toMatchObject({
+      status: 'online',
+      lifecycleId: 'boot-new',
+      releaseVersion: 'v9',
+      sourceSha: 'new-source',
+    });
   });
 
   it('retains lifecycle facts through maintenance and makes no idle writes', async () => {

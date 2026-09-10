@@ -30,6 +30,7 @@ export const ROOM_JOIN_CONCURRENCY = 4;
 export const DEFAULT_ROOM_WATCHDOG_STALE_MS = 90_000;
 export const DEFAULT_RECONCILE_HEARTBEAT_MS = 60_000;
 export const DEFAULT_DRAIN_DEADLINE_MS = 30 * 60_000;
+export const CORNER_BRANCH_DELETE_ATTEMPTS = 3;
 
 /**
  * A restarted helper must not overwrite the server's GitHub-owned corner facts,
@@ -208,16 +209,78 @@ interface RunningRoom {
   scratch?: CornerScratch;
 }
 
-interface CornerWorktree {
+export interface CornerWorktree {
   path: string;
   gitCommonDir: string;
   cornerId: string;
   branch: string;
+  token: string;
 }
 
 interface CornerScratch {
   path: string;
   cornerId: string;
+}
+
+export async function removeCornerWorktreeAndBranches(worktree: CornerWorktree): Promise<void> {
+  const localRef = `refs/heads/${worktree.branch}`;
+  await execFileAsync('git', [
+    `--git-dir=${worktree.gitCommonDir}`,
+    'show-ref',
+    '--verify',
+    localRef,
+  ]);
+  if (existsSync(worktree.path)) {
+    const checkedOut = await execFileAsync('git', [
+      '-C',
+      worktree.path,
+      'symbolic-ref',
+      '--quiet',
+      'HEAD',
+    ]);
+    if (checkedOut.stdout.trim() !== localRef) {
+      throw new Error(`corner worktree branch mismatch: expected ${localRef}`);
+    }
+    await execFileAsync('git', [
+      `--git-dir=${worktree.gitCommonDir}`,
+      'worktree',
+      'remove',
+      '--force',
+      worktree.path,
+    ]);
+  }
+  const authEnv = githubGitEnv(worktree.token);
+  const remoteRef = `refs/heads/${worktree.branch}`;
+  let remoteError: unknown;
+  for (let attempt = 1; attempt <= CORNER_BRANCH_DELETE_ATTEMPTS; attempt += 1) {
+    try {
+      const remote = await execFileAsync(
+        'git',
+        [`--git-dir=${worktree.gitCommonDir}`, 'ls-remote', '--heads', 'origin', remoteRef],
+        { env: authEnv, maxBuffer: 4 * 1024 * 1024 },
+      );
+      if (remote.stdout.trim()) {
+        await execFileAsync(
+          'git',
+          [`--git-dir=${worktree.gitCommonDir}`, 'push', 'origin', `:${remoteRef}`],
+          { env: authEnv, maxBuffer: 4 * 1024 * 1024 },
+        );
+      }
+      remoteError = undefined;
+      break;
+    } catch (error) {
+      remoteError = error;
+    }
+  }
+  if (remoteError) throw remoteError;
+  await execFileAsync('git', [
+    `--git-dir=${worktree.gitCommonDir}`,
+    'branch',
+    '--delete',
+    '--force',
+    '--',
+    worktree.branch,
+  ]);
 }
 
 interface DesiredCorner {
@@ -665,6 +728,7 @@ export class RoomRuntimeCoordinator {
                 ...worktree,
                 cornerId: corner.cornerId,
                 branch: featureBranch!,
+                token: granted!.token,
               })
             : this.reapCornerScratch({ path: workspacePath, cornerId: corner.cornerId }),
       });
@@ -693,6 +757,7 @@ export class RoomRuntimeCoordinator {
                 ...worktree,
                 cornerId: corner.cornerId,
                 branch: featureBranch!,
+                token: granted!.token,
               },
             }
           : {}),
@@ -763,15 +828,11 @@ export class RoomRuntimeCoordinator {
   }
 
   private async reapCornerWorktree(worktree: CornerWorktree): Promise<void> {
-    if (existsSync(worktree.path)) {
-      await execFileAsync('git', [
-        `--git-dir=${worktree.gitCommonDir}`,
-        'worktree',
-        'remove',
-        '--force',
-        worktree.path,
-      ]);
-    }
+    // The exact local ref is the deletion authority. It was created for this
+    // corner's worktree, survives a failed remote deletion for the next retry,
+    // and prevents cleanup from turning an untrusted branch string into a
+    // broad or guessed deletion.
+    await removeCornerWorktreeAndBranches(worktree);
     await this.options.daemonApi.execute('postCornerRemoteState', {
       cornerId: worktree.cornerId,
       branch: worktree.branch,

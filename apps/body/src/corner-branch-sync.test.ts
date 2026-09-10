@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
-import { CornerBranchDivergedError, syncCornerBranch } from './corner-branch-sync.js';
+import { syncCornerBranch } from './corner-branch-sync.js';
 import { materializeCornerWorktree } from './room-runtime.js';
 
 /**
@@ -148,21 +148,17 @@ describe('syncCornerBranch — two agents pushing to one branch', () => {
     expect(await git(worktree.path, 'log', '-2', '--format=%s')).toBe('my work\npeer work');
   });
 
-  it('fails loudly and leaves no rebase in progress when the two pushes conflict', async () => {
+  it('realigns to the shared remote branch when two unpushed changes conflict', async () => {
     const { remote, worktree } = await helperWorktree('beeline-corner-sync-conflict-');
     await writeFile(resolve(worktree.path, 'shared.txt'), 'mine\n');
     await git(worktree.path, 'add', '.');
     await git(worktree.path, 'commit', '-m', 'my work');
     await pushToRemote(remote, 'peer work', { file: 'shared.txt', contents: 'theirs\n' });
-    await expect(
-      syncCornerBranch({ worktreePath: worktree.path, featureBranch: FEATURE }),
-    ).rejects.toBeInstanceOf(CornerBranchDivergedError);
-    await expect(
-      syncCornerBranch({ worktreePath: worktree.path, featureBranch: FEATURE }),
-    ).rejects.toThrow(/another agent pushed to this corner's branch/);
-    // The abort matters: a worktree left mid-rebase would fail every later
-    // turn for a reason that has nothing to do with the work.
-    expect(await git(worktree.path, 'log', '-1', '--format=%s')).toBe('my work');
+    expect(await syncCornerBranch({ worktreePath: worktree.path, featureBranch: FEATURE })).toBe(
+      'realigned',
+    );
+    expect(await git(worktree.path, 'log', '-1', '--format=%s')).toBe('peer work');
+    expect(await git(worktree.path, 'show', 'HEAD:shared.txt')).toBe('theirs');
     expect(await git(worktree.path, 'status', '--porcelain')).toBe('');
   });
 

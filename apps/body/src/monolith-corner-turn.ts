@@ -68,6 +68,12 @@ const TOOL_ARGUMENT_MAX_BYTES = 1_200;
 const TOOL_OUTPUT_MAX_BYTES = 3_200;
 const TOOL_PATH_LIMIT = 12;
 
+export function cornerMergeInstruction(yoloMode: boolean): string {
+  return yoloMode
+    ? 'Yolo mode is on: when that merge gate passes, merge this pull request yourself with gh.'
+    : 'Yolo mode is off: never merge the pull request yourself; leave it for human approval in the app.';
+}
+
 function oneLine(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
 }
@@ -416,6 +422,7 @@ export class MonolithCornerTurnLoop {
       effort: configuration.effort ?? this.options.config.modelSelection?.effort,
       soul: configuration.soul ?? self?.soul,
       agentName: self?.name ?? this.agent.name,
+      yoloMode: configuration.yoloMode,
     });
   }
 
@@ -435,6 +442,7 @@ export class MonolithCornerTurnLoop {
       effort: configuration.effort ?? this.options.config.modelSelection?.effort,
       soul: configuration.soul ?? self?.soul,
       agentName: self?.name ?? this.agent.name,
+      yoloMode: configuration.yoloMode,
     });
     await mkdir(this.options.worktreePath, { recursive: true });
     const selection =
@@ -599,16 +607,13 @@ export class MonolithCornerTurnLoop {
         ...(repository
           ? [
               `You are in an isolated git worktree on ${repository.featureBranch}, targeting ${repository.targetBranch}.`,
-              'Work normally with the full coding tools. Commit and push only this feature branch. Use gh to open its pull request.',
-              `This corner is shared: any of its member agents may be addressed in it and work on ${repository.featureBranch}. Run git pull --rebase origin ${repository.featureBranch} before you push, and never force-push it.`,
+              `Work normally, then commit and push only ${repository.featureBranch}; never force-push or write to ${repository.targetBranch}. Open its pull request with gh. Before each push, rebase on origin/${repository.featureBranch}; resolve conflicts autonomously and rerun affected tests.`,
               'PR-opening turn rule: as soon as a pull request exists, print its full GitHub URL as your final response and end the turn immediately. Do not call pr_checks_status in that same turn and do not wait for checks inside it. Then stay idle until a later corner fact or human message starts another turn.',
-              'Never merge because local tests pass or because gh reports passing checks. On a later turn triggered by a server-posted checks-passed note, call beeline-agent pr_checks_status. Merge only when it returns checks="passed", held=false, and approvalPending=false.',
-              'Merge the PR yourself only after the checks-passed event shows every check green; if any check failed or is still running, say exactly which and stop - never merge red.',
-              'If any human in this corner says hold or do not merge, do not merge until a later human explicitly resumes it.',
+              'On a later server checks turn, call beeline-agent pr_checks_status. Never merge unless it returns checks="passed", held=false, and approvalPending=false; a human hold remains until a later human explicitly resumes.',
+              cornerMergeInstruction(configuration.yoloMode),
               'Do not tag the user when a corner turn finishes: the server posts the merge summary card and its push already cover completion. Tag a human only mid-turn, and only when you need a decision or input.',
               'GitHub check and merge notes are server lines already in the corner: never restate them (no "checks passed", "CI is green", "PR ready for review"). On a checks turn, say nothing unless you act - a merge or a pushed fix - and then one short line about that.',
-              'A human approval in the app asks the server to merge. When approval is pending, wait for the server close request instead of racing it with gh. If checks passed, no hold exists, and no approval is pending, merge the pull request yourself with gh.',
-              'Never push directly to the target branch. Never merge a different pull request.',
+              'When approval is pending, wait for the server close request. Never merge a different pull request.',
             ]
           : [
               'This is a chat-only corner with no repository or GitHub workflow.',
@@ -1068,8 +1073,8 @@ export class MonolithCornerTurnLoop {
    * The branch is the shared artifact: another member agent may have pushed to
    * it since this helper last looked, and a first touch of a corner this
    * helper did not open starts from whatever `room-runtime.ts` restored. A
-   * divergence this cannot rebase away is raised, not pushed over — the turn
-   * fails with that sentence and the server inscribes it in the corner.
+   * conflicting local commits are realigned to that remote branch so the
+   * fixed objective can be attempted again without clobbering a sibling push.
    */
   private async syncBranch(): Promise<void> {
     const repository = this.options.repository;

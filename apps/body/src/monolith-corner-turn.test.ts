@@ -10,6 +10,7 @@ import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import {
   cornerClosePollMs,
+  cornerMergeInstruction,
   cornerToolActivity,
   MonolithCornerTurnLoop,
 } from './monolith-corner-turn.js';
@@ -34,6 +35,13 @@ function stored(hex: string, name: string) {
 }
 
 const TEST_AGENT_PUBLIC_KEY = stored('11'.repeat(32), 'Bee').publicKey;
+
+describe('corner merge instructions', () => {
+  it('allows autonomous merge only in yolo mode', () => {
+    expect(cornerMergeInstruction(true)).toContain('merge this pull request yourself');
+    expect(cornerMergeInstruction(false)).toContain('never merge the pull request yourself');
+  });
+});
 
 describe('corner close-request polling cadence', () => {
   it('polls on a 10-15 second interval with jitter, not once per second', () => {
@@ -1486,6 +1494,7 @@ describe('thin monolith corner turn', () => {
       if (name === 'getAgentConfiguration') {
         return {
           commands: [],
+          yoloMode: true,
           soul: { name: 'Terra', instructions: 'Steady, exact, and kind.' },
         };
       }
@@ -1666,13 +1675,13 @@ describe('thin monolith corner turn', () => {
           }),
           expect.objectContaining({ name: 'beeline-agent' }),
         ]),
-        systemPrompt: expect.stringContaining('server-posted checks-passed note'),
+        systemPrompt: expect.stringContaining('On a later server checks turn'),
       }),
     );
     expect(sessionNew).toHaveBeenCalledWith(
       expect.objectContaining({
         systemPrompt: expect.stringContaining(
-          'Merge the PR yourself only after the checks-passed event shows every check green; if any check failed or is still running, say exactly which and stop - never merge red.',
+          'Yolo mode is on: when that merge gate passes, merge this pull request yourself with gh.',
         ),
       }),
     );

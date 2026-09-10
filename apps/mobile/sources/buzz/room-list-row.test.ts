@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AttachmentReference } from '@beeline/buzz-client';
+import type { AttachmentReference, ChatListItem } from '@beeline/buzz-client';
 
 import type { CornerSummary, CornerStatus } from './corners';
 import { cornerName } from './corners';
@@ -13,6 +13,7 @@ import {
   roomRowName,
   roomRowNeedsAttention,
   roomRowPreview,
+  roomListSections,
   roomListFeed,
   roomRowPresentation,
 } from './room-list-row';
@@ -66,6 +67,45 @@ const NO_NAMES = new Map<string, string>();
 const NOW = Date.UTC(2026, 0, 15, 12, 0, 0);
 const TODAY_S = Math.floor(NOW / 1000) - 60;
 const EARLIER_S = Math.floor((NOW - 3 * 24 * 60 * 60 * 1000) / 1000);
+
+describe('Room list sections', () => {
+  const chat = (
+    id: string,
+    updatedAt: number,
+    direct = false,
+    latestMessageAt?: number,
+  ): ChatListItem =>
+    ({
+      room: { id, name: id, updatedAt },
+      ...(latestMessageAt === undefined
+        ? {}
+        : {
+            latestMessage: {
+              id: `message-${id}`,
+              text: id,
+              createdAt: latestMessageAt,
+              author: { pubkey: 'author', kind: 'human', name: 'Author' },
+            },
+          }),
+      ...(direct ? { directMessage: { peer: { pubkey: `peer-${id}`, kind: 'human', name: id } } } : {}),
+    }) as ChatListItem;
+
+  it('keeps Rooms first and sorts direct messages by latest message', () => {
+    const older = chat('older-dm', 30, true, 10);
+    const newer = chat('newer-dm', 20, true, 40);
+    const sections = roomListSections([older, chat('room-a', 50), newer, chat('room-b', 5)]);
+
+    expect(sections.map((section) => section.title)).toEqual([undefined, 'Messages']);
+    expect(sections[0]?.data.map((item) => item.room.id)).toEqual(['room-a', 'room-b']);
+    expect(sections[1]?.data.map((item) => item.room.id)).toEqual(['newer-dm', 'older-dm']);
+  });
+
+  it('omits the Messages heading when there are no direct messages', () => {
+    expect(roomListSections([chat('room-a', 1)])).toEqual([
+      { kind: 'rooms', data: [chat('room-a', 1)] },
+    ]);
+  });
+});
 
 describe('Room row presentation', () => {
   it('derives the three deck states from real corner lifecycle', () => {

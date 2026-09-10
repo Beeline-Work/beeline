@@ -585,18 +585,10 @@ export class RoomRuntimeCoordinator {
     if (this.running.has(corner.cornerId) || this.startingCorners.has(corner.cornerId)) return;
     this.startingCorners.add(corner.cornerId);
     try {
-      const [restore, repository, conversation] = await Promise.all([
+      const [restore, repository] = await Promise.all([
         this.options.daemonApi.execute('getCornerRestoreState', { cornerId: corner.cornerId }),
         this.options.daemonApi.execute('getRoomRepositoryState', {
           roomId: corner.parentRoomId,
-        }),
-        // Startup recovers the objective from the corner's FIRST durable
-        // message, so this is the one conversation read that wants the oldest
-        // end of the Room. Every other read defaults to the newest page.
-        this.options.daemonApi.execute('getRoomConversation', {
-          roomId: corner.cornerId,
-          limit: 200,
-          window: 'earliest',
         }),
       ]);
       if (repository.resolution === 'unverified') {
@@ -605,8 +597,8 @@ export class RoomRuntimeCoordinator {
       if (repository.resolution === 'repository' && (!repository.remote || !repository.key)) {
         throw new Error('corner parent Room has an incomplete repository binding');
       }
-      const objective = conversation.items.find((item) => item.type === 'message')?.body.trim();
-      if (!objective) throw new Error('corner has no durable objective post');
+      const objective = restore.objective.trim();
+      if (!objective) throw new Error('corner has no authoritative objective fact');
       const repositoryBacked = repository.resolution === 'repository';
       const targetBranch = repositoryBacked ? repository.targetBranch || 'main' : undefined;
       const featureBranch = repositoryBacked

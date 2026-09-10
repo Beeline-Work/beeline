@@ -174,6 +174,9 @@ describe('the corner line and the turn indicator are independent', () => {
     // as one turn ends can never name the next one.
     expect(chatSource).toContain('onStop={');
     expect(chatSource).toContain('composerAck.stop ? () => void handleStopTurn(composerAck.stop!)');
+    expect(chatSource).toContain('stopping={stoppingThisTurn}');
+    expect(chatSource).toContain('setStoppingTurn(stop)');
+    expect(chatSource).toContain('setStoppingTurn((current) =>');
     expect(chatSource).toContain("monolithPhoneOperation('cancelAgentTurn'");
     // The viewer is the SERVER's statement of who is reading, so both ends
     // compare the same thing.

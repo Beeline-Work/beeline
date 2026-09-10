@@ -234,6 +234,7 @@ import { EmptyLedgerState, type EmptyLedgerVariant } from '@/components/buzz/Emp
 import { HeaderIdentitySlot, HeaderMetaCaps, HeaderMetaRow } from '@/components/buzz/HeaderLadder';
 import { ChannelHeaderTitle } from '@/components/buzz/ChannelHeaderTitle';
 import type { ChannelHeaderKind } from '@/buzz/channel-header-title';
+import { roomMemberManagementState } from '@/buzz/room-member-management';
 import {
   LEDGER_MARGINALIA_WIDTH,
   LedgerRoomUpdate,
@@ -1143,6 +1144,12 @@ export default function BuzzChat() {
   const activeAgentTurn = activeAgentTurns[0];
   const messages = unprojectedMessages;
   const isDirectMessage = Boolean(directMessage);
+  const memberManagement = roomMemberManagementState({
+    isDirectMessage,
+    participantsHydrated,
+    rosterRequested: rosterVisible,
+    pickerRequested: participantPickerVisible,
+  });
   // An @system notification DM (release or Workspace lifecycle): the server
   // never lets anyone but @system post into it (viewer.permissions.send is
   // false there and only there for a direct message, since a DM can never be
@@ -1735,12 +1742,17 @@ export default function BuzzChat() {
    *
    * The control is offered only to the asker (`viewerMayStopTurn`) and the
    * server refuses anyone else, so the two agree on one rule rather than the
-   * phone guessing at it. Nothing is decided locally: the stop's whole effect —
-   * the turn's `cancelled` receipt, the line naming who stopped it — comes back
-   * through the ordinary indexed read, which is what retires this very line.
+   * phone guessing at it. The press is acknowledged on this line immediately
+   * (`stoppingTurn`); the cancelled receipt is still what settles the durable
+   * "stopped" line and retires the control.
    */
+  const [stoppingTurn, setStoppingTurn] = useState<{
+    agentPubkey: string;
+    requestId: string;
+  } | null>(null);
   const handleStopTurn = useCallback(
     async (stop: { agentPubkey: string; requestId: string }) => {
+      setStoppingTurn(stop);
       try {
         await monolithPhoneOperation('cancelAgentTurn', {
           roomId: decodedId,
@@ -1749,12 +1761,33 @@ export default function BuzzChat() {
         });
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       } catch (err) {
+        setStoppingTurn((current) =>
+          current?.requestId === stop.requestId && current.agentPubkey === stop.agentPubkey
+            ? null
+            : current,
+        );
         // A turn that settled while the press was in the air is the ordinary
         // race, not a failure worth a dialog: the line is already gone.
         console.warn('Stopping the turn failed:', err);
       }
     },
     [decodedId],
+  );
+  useEffect(() => {
+    if (!stoppingTurn) return;
+    if (
+      !activeAgentTurn ||
+      activeAgentTurn.requestId !== stoppingTurn.requestId ||
+      activeAgentTurn.agentPubkey !== stoppingTurn.agentPubkey
+    ) {
+      setStoppingTurn(null);
+    }
+  }, [activeAgentTurn, stoppingTurn]);
+  const stoppingThisTurn = Boolean(
+    stoppingTurn &&
+      composerAck?.stop &&
+      stoppingTurn.requestId === composerAck.stop.requestId &&
+      stoppingTurn.agentPubkey === composerAck.stop.agentPubkey,
   );
 
   /** The settled "<Past> for Ns · done h:MM" line a finished turn leaves briefly. */
@@ -3332,11 +3365,15 @@ export default function BuzzChat() {
               accessibilityLabel={
                 isCorner
                   ? `${CORNER_LABEL} opened by ${cornerAgentDisplay?.name ?? 'Agent'}. View ${formatRoomParticipantTotal(roomParticipantTotal)}`
-                  : `View ${formatRoomParticipantTotal(roomParticipantTotal)}`
+                  : isDirectMessage
+                    ? displayRoomName
+                    : `View ${formatRoomParticipantTotal(roomParticipantTotal)}`
               }
               accessibilityRole="button"
-              disabled={!participantsHydrated}
-              onPress={() => setRosterVisible(true)}
+              disabled={!memberManagement.canOpenRoster}
+              onPress={() => {
+                if (memberManagement.canOpenRoster) setRosterVisible(true);
+              }}
               style={styles.headerCenter}
               testID="room-participant-roster-trigger"
             >
@@ -3384,9 +3421,11 @@ export default function BuzzChat() {
                 </HeaderMetaRow>
               ) : (
                 <HeaderMetaCaps testID="room-header-meta">
-                  {participantsHydrated
-                    ? `${formatRoomParticipantTotal(roomParticipantTotal)}  ›`
-                    : 'LOADING MEMBERS'}
+                  {isDirectMessage
+                    ? 'DIRECT MESSAGE'
+                    : participantsHydrated
+                      ? `${formatRoomParticipantTotal(roomParticipantTotal)}  ›`
+                      : 'LOADING MEMBERS'}
                 </HeaderMetaCaps>
               )}
             </TouchableOpacity>
@@ -3812,6 +3851,7 @@ export default function BuzzChat() {
                     <TurnProgressLine
                       label={composerAck.label}
                       startedAt={composerAck.startedAt}
+                      stopping={stoppingThisTurn}
                       onStop={
                         composerAck.stop ? () => void handleStopTurn(composerAck.stop!) : undefined
                       }
@@ -3838,6 +3878,7 @@ export default function BuzzChat() {
                     <TurnProgressLine
                       label={composerAck.label}
                       startedAt={composerAck.startedAt}
+                      stopping={stoppingThisTurn}
                       onStop={
                         composerAck.stop ? () => void handleStopTurn(composerAck.stop!) : undefined
                       }
@@ -4022,7 +4063,7 @@ export default function BuzzChat() {
         rosterSections={visibleRosterSections}
         total={roomParticipantTotal}
         userPubkey={userPubkey}
-        visible={rosterVisible}
+        visible={memberManagement.rosterVisible}
       />
 
       <HullActionSheetModal
@@ -4220,7 +4261,7 @@ export default function BuzzChat() {
         onClose={() => setParticipantPickerVisible(false)}
         onConnectAgent={handleConnectAgent}
         onInvitePerson={() => void handleInvitePerson()}
-        visible={participantPickerVisible}
+        visible={memberManagement.pickerVisible}
       />
     </BuzzCommunityShell>
   );

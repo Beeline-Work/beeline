@@ -92,6 +92,15 @@ function render(element: React.ReactElement): ReactTestRenderer {
   return renderer;
 }
 
+function pressableStyle(node: { props: { style?: unknown } }, pressed = false) {
+  const style = node.props.style;
+  const resolved =
+    typeof style === 'function'
+      ? (style as (state: { pressed: boolean }) => unknown)({ pressed })
+      : style;
+  return (Array.isArray(resolved) ? resolved : [resolved]).filter(Boolean);
+}
+
 describe('the per-turn progress indicator', () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -143,13 +152,21 @@ describe('the per-turn progress indicator', () => {
     expect(stop.props.testID).toBe('turn-progress-line-stop');
     expect(stop.props.accessibilityRole).toBe('button');
     expect(stop.props.accessibilityLabel).toBe('Stop this turn');
-    expect(stop.props.hitSlop).toBe(14);
-    expect(stop.props.style).toMatchObject({
-      width: 16,
-      height: 16,
-      borderRadius: groknight.radius,
-      backgroundColor: groknight.accent,
-    });
+    expect(stop.props.hitSlop).toBe(17);
+    expect(stop.props.disabled).toBe(false);
+    expect(pressableStyle(stop)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          width: 10,
+          height: 10,
+          borderRadius: groknight.radius,
+          backgroundColor: groknight.accent,
+        }),
+      ]),
+    );
+    expect(pressableStyle(stop, true)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ opacity: 0.6 })]),
+    );
     expect(stop.findAllByType('Text')).toHaveLength(0);
     act(() => stop.props.onPress());
     expect(onStop).toHaveBeenCalledTimes(1);
@@ -158,6 +175,44 @@ describe('the per-turn progress indicator', () => {
     // left edge and the counter's place never move for anybody.
     const row = stop.parent;
     expect(row?.children.indexOf(stop)).toBe((row?.children.length ?? 0) - 1);
+  });
+
+  it('empties the square and says stopping the moment the asker has pressed', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(12_500);
+    const onStop = vi.fn();
+    const renderer = render(
+      React.createElement(TurnProgressLine, {
+        label: 'beebee Thinking\u2026',
+        startedAt: 10,
+        onStop,
+        stopping: true,
+        testID: 'turn-progress-line',
+      }),
+    );
+    const [stop] = renderer.root.findAllByType('Pressable');
+    expect(stop.props.disabled).toBe(true);
+    expect(stop.props.accessibilityLabel).toBe('Stopping this turn');
+    expect(stop.props.accessibilityState).toEqual({ busy: true, disabled: true });
+    expect(renderer.root.findByProps({ testID: 'turn-progress-line-elapsed' }).props.children).toBe(
+      '2s \u00b7 stopping',
+    );
+    expect(renderer.root.findAllByType('View')[0].props.accessibilityLabel).toBe(
+      'beebee Thinking\u2026 (2s \u00b7 stopping)',
+    );
+    expect(pressableStyle(stop)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          backgroundColor: 'transparent',
+          borderWidth: 1,
+          borderColor: groknight.accent,
+        }),
+      ]),
+    );
+    // Pressed must not layer on top of stopping: the empty square is the state.
+    expect(pressableStyle(stop, true)).toEqual(pressableStyle(stop, false));
+    expect(stop.props.onPress).toBeUndefined();
+    expect(onStop).not.toHaveBeenCalled();
   });
 
   it('breathes on the same live clock, in the same reserved gold', () => {

@@ -234,11 +234,16 @@ describe('daemon live command push', () => {
 
     const commandCalls = () =>
       execute.mock.calls.filter(([name]) => name === 'getAgentCommands').length;
+    const inboxCalls = () => execute.mock.calls.filter(([name]) => name === 'getRoomInbox').length;
     expect(commandCalls()).toBe(1);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(inboxCalls()).toBe(1);
 
     live.publish({ type: 'presence', roomId, agentId, status: 'online', observedAt: 1 });
     live.publish({ type: 'draft', roomId, agentId, turnId: 'turn', text: 'draft' });
     live.publish({ type: 'thought', roomId, agentId, turnId: 'turn', text: 'thought' });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(inboxCalls()).toBe(1);
     const messageTrace = { id: 'trace-message', databaseAt: 50, emittedAt: 75 };
     const replayed = nextSocketMessage(socket, 'inbox');
     live.publish({

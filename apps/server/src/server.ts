@@ -382,17 +382,20 @@ export function createBeelineServer(options: ServerOptions): Server {
               releases.set(
                 roomId,
                 options.live.subscribe(roomId, (event) => {
-                  const trigger =
-                    event.type === 'invalidate' && event.trace
-                      ? { reason: event.reason, trace: event.trace }
-                      : undefined;
+                  // Presence and streaming overlays are not durable inbox
+                  // invalidations. Replaying for them turns every evidence
+                  // refresh into an unrelated Room read on every daemon
+                  // listener. Commands have their own targeted projection;
+                  // their source message is delivered by its message event.
+                  if (event.type !== 'invalidate') return;
+                  const trigger = event.trace
+                    ? { reason: event.reason, trace: event.trace }
+                    : undefined;
+                  if (event.reason === 'postgres:agent_commands') {
+                    if (event.targetAgentId === principal.identityId) void pushCommands(trigger);
+                    return;
+                  }
                   void replay(trigger);
-                  if (
-                    event.type === 'invalidate' &&
-                    event.reason === 'postgres:agent_commands' &&
-                    event.targetAgentId === principal.identityId
-                  )
-                    void pushCommands(trigger);
                 }),
               );
               const lifecycleId =

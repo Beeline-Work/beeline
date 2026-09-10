@@ -50,7 +50,12 @@ import {
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
 import { closeCornerState } from './corner-close.js';
-import { LiveHub, type LiveEvent } from './live.js';
+import {
+  LiveHub,
+  type CommittedMessageLiveRow,
+  type CommittedTurnLiveRow,
+  type LiveEvent,
+} from './live.js';
 import { CORNER_WAKE_MIN_INTERVAL_MS, CORNER_WAKE_TIMEOUT_MS, wakesCorner } from './corner-wake.js';
 import {
   restateSystemLine,
@@ -177,6 +182,7 @@ export class DaemonService {
       'requestAgentGrant',
     ]);
     if (!this.commandTransaction && scopedRoom && turnWrites.has(name)) {
+      const writeStartedAt = Date.now();
       const events: LiveEvent[] = [];
       const buffered = new LiveHub();
       buffered.publish = (event) => {
@@ -279,7 +285,22 @@ export class DaemonService {
         }
         return result;
       });
-      for (const event of events) this.live.publish(event);
+      for (const event of events) {
+        if (event.type !== 'invalidate' || !event.committedRow) {
+          this.live.publish(event);
+          continue;
+        }
+        const emittedAt = Date.now();
+        this.live.publish({
+          ...event,
+          trace: {
+            id: randomBytes(16).toString('hex'),
+            databaseAt: event.committedRow.row.created_at.getTime(),
+            emittedAt,
+            startedAt: writeStartedAt,
+          },
+        });
+      }
       return output;
     }
     switch (name) {
@@ -1344,13 +1365,13 @@ export class DaemonService {
       ];
       if (this.commandTransaction) {
         return (
-          await database.query<{ id: string; created_at: Date }>(
+          await database.query<CommittedMessageLiveRow>(
             `WITH inserted AS (
                INSERT INTO messages(
                  id,room_id,author_id,text,presentation,request_id,legacy_event,mention_ids,
                  reply_to_message_id,root_message_id,agent_hop_count,attachments
                ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10,$11,$12::jsonb)
-               RETURNING id,created_at
+               RETURNING *
              ), completed AS (
                UPDATE agent_commands SET state='complete',completed_at=now(),result_message_id=inserted.id
                FROM inserted WHERE agent_commands.id=$13
@@ -1358,18 +1379,25 @@ export class DaemonService {
                DELETE FROM live_outputs
                WHERE room_id=$2 AND agent_id=$3 AND turn_id=$6 AND kind IN ('draft','thought')
              )
-             SELECT id,created_at FROM inserted`,
+             SELECT inserted.*,author.kind author_kind,author.name author_name,
+               author.handle author_handle,author.avatar author_avatar,author.face_id author_face
+             FROM inserted JOIN identities author ON author.id=inserted.author_id`,
             [...values, command.id],
           )
         ).rows[0]!;
       }
       return (
-        await database.query<{ id: string; created_at: Date }>(
-          `INSERT INTO messages(
-             id,room_id,author_id,text,presentation,request_id,legacy_event,mention_ids,
-             reply_to_message_id,root_message_id,agent_hop_count,attachments
-           ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10,$11,$12::jsonb)
-           RETURNING id,created_at`,
+        await database.query<CommittedMessageLiveRow>(
+          `WITH inserted AS (
+             INSERT INTO messages(
+               id,room_id,author_id,text,presentation,request_id,legacy_event,mention_ids,
+               reply_to_message_id,root_message_id,agent_hop_count,attachments
+             ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10,$11,$12::jsonb)
+             RETURNING *
+           )
+           SELECT inserted.*,author.kind author_kind,author.name author_name,
+             author.handle author_handle,author.avatar author_avatar,author.face_id author_face
+           FROM inserted JOIN identities author ON author.id=inserted.author_id`,
           values,
         )
       ).rows[0]!;
@@ -1380,6 +1408,7 @@ export class DaemonService {
       reason: 'message',
       agentId,
       messageId,
+      committedRow: { type: 'message', row: saved },
     });
     return {
       id: messageId,
@@ -1477,14 +1506,25 @@ export class DaemonService {
       input.status === 'failed' && typeof input.reason === 'string'
         ? input.reason.replace(/\s+/g, ' ').trim().slice(0, TURN_FAILURE_REASON_MAX) || null
         : null;
+    let committedTurn: CommittedTurnLiveRow | undefined;
     await this.database.transaction(async (database) => {
       if (input.heartbeat) {
-        await database.query(
-          `UPDATE agent_turns SET created_at=now()
-           WHERE room_id=$1 AND request_id=$2 AND agent_id=$3 AND status='working'
-             AND generation_id IS NOT DISTINCT FROM $4`,
-          [input.roomId, input.requestId, agentId, input.generationId ?? null],
-        );
+        committedTurn = (
+          await database.query<CommittedTurnLiveRow>(
+            `WITH written AS (
+               UPDATE agent_turns SET created_at=now()
+               WHERE room_id=$1 AND request_id=$2 AND agent_id=$3 AND status='working'
+                 AND generation_id IS NOT DISTINCT FROM $4
+               RETURNING room_id,request_id,agent_id,status,created_at,generation_id
+             )
+             SELECT written.*,requester.id requested_by FROM written
+             LEFT JOIN messages trigger ON trigger.id=written.request_id
+               AND (trigger.room_id=$1 OR trigger.room_id=(SELECT parent_id FROM rooms WHERE id=$1))
+             LEFT JOIN identities requester ON requester.id=trigger.author_id
+               AND requester.kind='human'`,
+            [input.roomId, input.requestId, agentId, input.generationId ?? null],
+          )
+        ).rows[0];
       } else {
         // `cancelled` is terminal and wins. The requester withdrew the question,
         // so the answer that arrives a moment later is an answer to nothing: a
@@ -1493,8 +1533,21 @@ export class DaemonService {
         // A refused write leaves `rowCount` at zero, which is also what keeps
         // the consequences below — the failure line, the settle — from running
         // over a turn the requester already stopped.
-        const written = await database.query(
-          `INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id,failure_reason) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(room_id,request_id,agent_id) DO UPDATE SET status=EXCLUDED.status,generation_id=EXCLUDED.generation_id,failure_reason=EXCLUDED.failure_reason,created_at=now() WHERE agent_turns.status<>'cancelled'`,
+        const written = await database.query<CommittedTurnLiveRow>(
+          `WITH written AS (
+             INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id,failure_reason)
+             VALUES($1,$2,$3,$4,$5,$6)
+             ON CONFLICT(room_id,request_id,agent_id) DO UPDATE SET
+               status=EXCLUDED.status,generation_id=EXCLUDED.generation_id,
+               failure_reason=EXCLUDED.failure_reason,created_at=now()
+             WHERE agent_turns.status<>'cancelled'
+             RETURNING room_id,request_id,agent_id,status,created_at,generation_id
+           )
+           SELECT written.*,requester.id requested_by FROM written
+           LEFT JOIN messages trigger ON trigger.id=written.request_id
+             AND (trigger.room_id=$1 OR trigger.room_id=(SELECT parent_id FROM rooms WHERE id=$1))
+           LEFT JOIN identities requester ON requester.id=trigger.author_id
+             AND requester.kind='human'`,
           [
             input.roomId,
             input.requestId,
@@ -1505,6 +1558,7 @@ export class DaemonService {
           ],
         );
         if (!written.rowCount) return;
+        committedTurn = written.rows[0];
       }
       if (input.status === 'failed') {
         await this.inscribeTurnFailure(database, input.roomId, input.requestId, agentId, reason);
@@ -1518,6 +1572,7 @@ export class DaemonService {
       reason: 'turn',
       agentId,
       requestId: input.requestId,
+      ...(committedTurn ? { committedRow: { type: 'turn' as const, row: committedTurn } } : {}),
     });
     return this.writeResult();
   }

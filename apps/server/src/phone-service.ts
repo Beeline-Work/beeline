@@ -57,7 +57,7 @@ import {
   senderMayAddressAgent,
 } from '@beeline/api-contract/agent-access';
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
-import type { LiveEvent, LiveHub } from './live.js';
+import type { CommittedMessageLiveRow, CommittedTurnLiveRow, LiveEvent, LiveHub } from './live.js';
 import type { GitHubOperations } from './github-operations.js';
 import { collapsePermissionCards } from '@beeline/push-gateway/projection';
 import {
@@ -448,6 +448,27 @@ export class PhoneService {
 
   canReadRoom(roomId: string, identityId: string): Promise<boolean> {
     return this.hasRoomAccess(roomId, identityId);
+  }
+
+  /** Project a row the daemon's committing transaction already returned. The
+   * socket subscription performed the Room access check; cross-process hints
+   * still use readLiveDelta, which rechecks current membership. */
+  projectCommittedLiveDelta(
+    roomId: string,
+    committed:
+      | { type: 'message'; row: CommittedMessageLiveRow }
+      | { type: 'turn'; row: CommittedTurnLiveRow },
+  ): RoomLiveDelta | null {
+    if (committed.row.room_id !== roomId) return null;
+    if (committed.type === 'turn') {
+      const turn = this.projectAgentTurns([committed.row])[0];
+      return turn ? { type: 'turn-delta', roomId, turn } : null;
+    }
+    return {
+      type: 'message-delta',
+      roomId,
+      message: projectedMessage(committed.row, this.publicOrigin),
+    };
   }
 
   /** One committed row for the live paint path, behind the same two membership

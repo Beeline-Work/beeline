@@ -15,7 +15,12 @@ const REQUEST = 'c'.repeat(64);
 const GENERATION = 'latency-generation';
 const QUERY_DURATION_MS = 60;
 
-type Timing = { messageWriteEndedAt?: number };
+type Timing = {
+  messageWriteStartedAt?: number;
+  messageWriteEndedAt?: number;
+  messageWriteStartedAtWall?: number;
+  messageWriteEndedAtWall?: number;
+};
 
 class DelayedDatabase implements SqlDatabase {
   constructor(
@@ -27,10 +32,19 @@ class DelayedDatabase implements SqlDatabase {
     sql: string,
     values: unknown[] = [],
   ): Promise<QueryResult<Row>> {
+    const messageWrite = /INSERT INTO messages\(|WITH inserted AS \(\s*INSERT INTO messages\(/.test(
+      sql,
+    );
+    if (messageWrite) {
+      this.timing.messageWriteStartedAt = performance.now();
+      this.timing.messageWriteStartedAtWall = Date.now();
+    }
     await new Promise((resolve) => setTimeout(resolve, QUERY_DURATION_MS));
     const result = await this.database.query<Row>(sql, values);
-    if (/INSERT INTO messages\(|WITH inserted AS \(\s*INSERT INTO messages\(/.test(sql))
+    if (messageWrite) {
       this.timing.messageWriteEndedAt = performance.now();
+      this.timing.messageWriteEndedAtWall = Date.now();
+    }
     return result;
   }
 
@@ -102,6 +116,24 @@ describe('agent reply completion latency', () => {
     expect(publish).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'invalidate', roomId: ROOM, reason: 'message' }),
     );
+    const committedEvent = publish.mock.calls
+      .map(([event]) => event)
+      .find((event) => event.type === 'invalidate' && event.committedRow);
+    expect(committedEvent).toMatchObject({
+      type: 'invalidate',
+      committedRow: { type: 'message', row: { room_id: ROOM, text: 'Answer' } },
+      trace: {
+        id: expect.any(String),
+        databaseAt: expect.any(Number),
+        emittedAt: expect.any(Number),
+        startedAt: expect.any(Number),
+      },
+    });
+    if (committedEvent?.type !== 'invalidate' || !committedEvent.trace)
+      throw new Error('committed trace missing');
+    expect(committedEvent.trace.startedAt!).toBeLessThanOrEqual(timing.messageWriteStartedAtWall!);
+    expect(timing.messageWriteEndedAtWall!).toBeLessThanOrEqual(committedEvent.trace.emittedAt);
+    expect(committedEvent.trace.databaseAt).toBeLessThanOrEqual(committedEvent.trace.emittedAt);
     expect(timing.messageWriteEndedAt).toBeDefined();
     expect(dispatchedAt - timing.messageWriteEndedAt!).toBeLessThan(QUERY_DURATION_MS);
     expect(
@@ -146,4 +178,60 @@ describe('agent reply completion latency', () => {
       ).rows[0],
     ).toEqual({ state: 'claimed', status: 'working' });
   }, 10_000);
+
+  it('publishes the committed working row with its Room and a pre-write timestamp', async () => {
+    const request = 'e'.repeat(64);
+    const generation = `${GENERATION}-live`;
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,mention_ids)
+       VALUES($1,$2,$3,'@agent live',jsonb_build_array($4::text))`,
+      [request, ROOM, HUMAN, AGENT],
+    );
+    const command = await createAgentCommand(database, {
+      roomId: ROOM,
+      agentId: AGENT,
+      sourceMessageId: request,
+      reason: 'human_tag',
+    });
+    await claimAgentCommand(database, ROOM, AGENT, command!.id, generation);
+    const live = new LiveHub();
+    const publish = vi.spyOn(live, 'publish');
+    const daemon = new DaemonService(database, live);
+    const beforeExecute = Date.now();
+
+    await daemon.execute(
+      'postAgentTurnReceipt',
+      {
+        roomId: ROOM,
+        requestId: request,
+        status: 'working',
+        generationId: generation,
+        heartbeat: true,
+      },
+      AGENT,
+    );
+
+    expect(publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'invalidate',
+        roomId: ROOM,
+        reason: 'turn',
+        requestId: request,
+        committedRow: {
+          type: 'turn',
+          row: expect.objectContaining({ room_id: ROOM, status: 'working' }),
+        },
+        trace: expect.objectContaining({
+          startedAt: expect.any(Number),
+          databaseAt: expect.any(Number),
+          emittedAt: expect.any(Number),
+        }),
+      }),
+    );
+    const event = publish.mock.calls.at(-1)?.[0];
+    if (event?.type !== 'invalidate' || !event.trace) throw new Error('turn trace missing');
+    expect(event.trace.startedAt!).toBeGreaterThanOrEqual(beforeExecute);
+    expect(event.trace.startedAt!).toBeLessThanOrEqual(event.trace.databaseAt);
+    expect(event.trace.databaseAt).toBeLessThanOrEqual(event.trace.emittedAt);
+  });
 });

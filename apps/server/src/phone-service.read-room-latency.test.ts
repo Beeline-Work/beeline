@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { QueryResultRow } from 'pg';
 import { migrate, type QueryResult, type SqlDatabase } from './database.js';
 import { PhoneService } from './phone-service.js';
+import type { CommittedMessageLiveRow, CommittedTurnLiveRow } from './live.js';
 import { PgliteDatabase } from './test-support.js';
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111119';
@@ -273,5 +274,49 @@ describe('PhoneService.readRoom latency', () => {
       }),
     ).resolves.toBeNull();
     expect(representative.spans).toHaveLength(2);
+  });
+
+  it('projects committed message and turn rows exactly like the authorized row reads', async () => {
+    const phone = new PhoneService(database, 'https://server.usebeeline.app');
+    const messageRow = (
+      await database.query<CommittedMessageLiveRow>(
+        `SELECT message.*,author.kind author_kind,author.name author_name,
+           author.handle author_handle,author.avatar author_avatar,author.face_id author_face
+         FROM messages message JOIN identities author ON author.id=message.author_id
+         WHERE message.room_id=$1 AND message.id='reply-message'`,
+        [ROOM],
+      )
+    ).rows[0]!;
+    const turnRow = (
+      await database.query<CommittedTurnLiveRow>(
+        `SELECT turn.room_id,turn.request_id,turn.agent_id,turn.status,turn.created_at,
+           turn.generation_id,requester.id requested_by
+         FROM agent_turns turn
+         LEFT JOIN messages trigger ON trigger.id=turn.request_id AND trigger.room_id=turn.room_id
+         LEFT JOIN identities requester ON requester.id=trigger.author_id AND requester.kind='human'
+         WHERE turn.room_id=$1 AND turn.agent_id=$2`,
+        [ROOM, '0'.repeat(64)],
+      )
+    ).rows[0]!;
+
+    expect(phone.projectCommittedLiveDelta(ROOM, { type: 'message', row: messageRow })).toEqual(
+      await phone.readLiveDelta(ROOM, VIEWER, {
+        type: 'message',
+        messageId: 'reply-message',
+      }),
+    );
+    expect(phone.projectCommittedLiveDelta(ROOM, { type: 'turn', row: turnRow })).toEqual(
+      await phone.readLiveDelta(ROOM, VIEWER, {
+        type: 'turn',
+        agentId: '0'.repeat(64),
+        requestId: 'message-179',
+      }),
+    );
+    expect(
+      phone.projectCommittedLiveDelta('cross-room', { type: 'message', row: messageRow }),
+    ).toBeNull();
+    expect(
+      phone.projectCommittedLiveDelta('cross-room', { type: 'turn', row: turnRow }),
+    ).toBeNull();
   });
 });

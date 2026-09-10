@@ -221,7 +221,11 @@ channel. The one thing it admits is a **stop in its right-hand slot, offered to
 the person who asked and to nobody else** (`viewerMayStopTurn`): a question is
 the asker's to take back, and a Room where anyone can silence anyone else's
 agent mid-sentence is a different product. Everyone else sees the line exactly
-as it was. **A stop keeps what was already written** — the half-finished answer
+as it was. The control is a brass square smaller than the 18pt mark beside it
+(hit slop keeps the 44pt target). A press dims it; once pressed it empties to a
+brass outline and the counter says `stopping` until the cancelled receipt lands,
+so the press is visible before the write returns. **A stop keeps what was
+already written** — the half-finished answer
 settles as an ordinary message and the conversation carries on from it, the way
 every stop button a person has used already behaves; retracting it would delete
 words they had read and make stopping feel like undoing. The line's last word is

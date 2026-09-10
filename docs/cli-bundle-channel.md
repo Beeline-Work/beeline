@@ -13,10 +13,12 @@ for the entire website, including `/dl` and `.well-known`.
 
 ## Release authority and durable storage
 
+When helper code or a shared helper contract is selected,
 `.github/actions/daemon-leg/action.yml` builds and install-verifies the native
-linux-x64 bundle under the unified release's exact version and source SHA.
-After the server confirms that identity, its promote phase passes the downloaded
-`daemon-artifact-<sha>` to `.github/actions/pages-leg/action.yml`. The Pages leg:
+linux-x64 bundle under the release's exact version and source SHA. Other selective
+releases carry the last successful helper version, SHA, and artifact reference.
+Its promote phase passes `daemon-artifact-<version>-<sha>` to
+`.github/actions/pages-leg/action.yml`. The Pages leg:
 
 1. Verifies the artifact identity, every archive's digest and size, and sidecars.
 2. Assembles the static website with those exact bytes, ignoring checkout `dl/`.
@@ -33,12 +35,11 @@ publication and deployment. An interrupted backup upload fails validation;
 the next release retry replaces and repairs it. The previous Pages deployment
 continues serving until a complete replacement is deployed.
 
-`.github/workflows/pages.yml` still runs on pushes to main. It reuses the
-GitHub Release assets and never builds or assigns a second helper version.
-A missing or corrupt channel fails closed, preserving the existing Pages site;
-it never falls back to the stale checkout or the dev machine. For the first
-migration, its manual `release_run_id` input bootstraps from the exact artifact
-matching the live server identity. A normal unified release also bootstraps it.
+Website changes are selected and deployed only by `unified-release.yml`; a
+merge to main does not deploy Pages. Website-only releases reuse the durable
+helper channel and never build or assign a second helper version. A missing or
+corrupt channel fails closed, preserving the existing Pages site; it never
+falls back to checkout helper bytes or the dev machine.
 
 No new binaries are committed to Git (#647). The served Pages site and Release
 assets are independent of the dev machine and Actions artifact retention.
@@ -61,7 +62,8 @@ smoke-tests the CLI, activates the stable anchor, checks the installed identity,
 and runs the installed `beeline --version`. It does not pair, start a daemon,
 or touch an existing helper. The older identity is a fixture that forces a
 same-release redeploy through the real updater path, not a claim of fleet
-restart. The unified release's existing readiness check proves fleet uptake.
+restart. Release-time smoke proves the published package and manifest. Fleet
+uptake is asynchronous post-release observability and never blocks delivery.
 
 Redirects are refused in the hosting proof: a github.io redirect back to the
 old dev origin must not count as a successful Pages verification. Use the
@@ -86,7 +88,8 @@ of this migration; never retain the dev origin as a permanent fallback.
   unified release. At implementation time the current release was `v0.0.63`,
   SHA `9fc9f30cde8e6cbdeab6183dbf22b5402e47473a`, run `34189855500`, archive
   SHA-256 `77a3a0cd4fc180e64dac0f3f55dbfd3ab4c77189de3e3d111df3274b876664d3`.
-  Confirm those values are still current before using this example:
+  The retired bootstrap workflow used this command (historical evidence only;
+  the workflow no longer exists):
 
   ```sh
   gh-axi workflow run pages.yml --repo lunchboxfortwo/beeline --ref main -f release_run_id=34189855500

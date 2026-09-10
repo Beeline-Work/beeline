@@ -1,9 +1,8 @@
 # Daemon leg of the unified release (was .github/workflows/beeline-bundle.yml).
 # unified-release.yml calls it twice from the self-hosted production host:
 # phase=build builds and install-verifies the exact linux-x64 bundle,
-# phase=promote publishes it to Pages and waits for every helper to restart READY on
-# the exact release. The caller checks out the release SHA first and owns
-# runner and timeout (promote needs 55 minutes, see the confirm step).
+# phase=promote publishes it to Pages and smoke-tests the exact manifest. Fleet
+# uptake is asynchronous observability and never holds a release open.
 name: Beeline daemon release leg
 description: Build the exact daemon artifact or publish it and await updater READY proof
 
@@ -28,7 +27,7 @@ runs:
       uses: actions/github-script@v7
       with:
         script: |
-          const name = `daemon-artifact-${{ inputs.release_sha }}`;
+          const name = `daemon-artifact-${{ inputs.release_version }}-${{ inputs.release_sha }}`;
           const artifacts = await github.paginate(github.rest.actions.listArtifactsForRepo, {
             owner: context.repo.owner, repo: context.repo.repo, name, per_page: 100,
           });
@@ -50,7 +49,7 @@ runs:
       if: inputs.phase == 'build' && steps.reuse.outputs.run_id != ''
       uses: actions/download-artifact@v4
       with:
-        name: daemon-artifact-${{ inputs.release_sha }}
+        name: daemon-artifact-${{ inputs.release_version }}-${{ inputs.release_sha }}
         path: ${{ runner.temp }}/daemon-release
         run-id: ${{ steps.reuse.outputs.run_id }}
         github-token: ${{ github.token }}
@@ -82,7 +81,7 @@ runs:
     - if: inputs.phase == 'build'
       uses: actions/upload-artifact@v4
       with:
-        name: daemon-artifact-${{ inputs.release_sha }}
+        name: daemon-artifact-${{ inputs.release_version }}-${{ inputs.release_sha }}
         path: ${{ runner.temp }}/daemon-release/
         if-no-files-found: error
         retention-days: 7
@@ -91,7 +90,7 @@ runs:
     - if: inputs.phase == 'promote'
       uses: actions/download-artifact@v4
       with:
-        name: daemon-artifact-${{ inputs.release_sha }}
+        name: daemon-artifact-${{ inputs.release_version }}-${{ inputs.release_sha }}
         path: bundle/linux-x64
     - name: Publish the daemon artifact to durable Pages hosting
       if: inputs.phase == 'promote'
@@ -101,61 +100,26 @@ runs:
         release_sha: ${{ inputs.release_sha }}
         release_version: ${{ inputs.release_version }}
         manifest_url: ${{ inputs.pages_manifest_url }}
-    - name: Confirm every daemon restarted READY on the exact release
+    - name: Record asynchronous fleet uptake without blocking the release
       if: inputs.phase == 'promote'
       shell: bash
+      continue-on-error: true
       env:
         RELEASE_SHA: ${{ inputs.release_sha }}
         RELEASE_VERSION: ${{ inputs.release_version }}
       run: |
-        set -euo pipefail
-        # Wait at least the helper's drain budget plus margin: a helper with a
-        # turn in flight restarts at its absolute drain deadline, then systemd
-        # restart backoff and the successor's functional probe follow.
-        wait_minutes=35
-        deadline=$((SECONDS + wait_minutes * 60))
-        next_report=0
-        : > "$RUNNER_TEMP/release-readiness-error.txt"
-        readiness_table() {
-          # shellcheck disable=SC2016 # JavaScript template literals, not shell expansion
-          node -e '
-            const status = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
-            for (const daemon of status.daemons ?? []) {
-              console.log(
-                `  ${String(daemon.agentPubkey ?? "<unknown>").slice(0, 12)}  ` +
-                  `${String(daemon.state ?? "<missing-state>").padEnd(10)}  ` +
-                  `${daemon.version ?? "-"}@${String(daemon.sha ?? "-").slice(0, 8)}`,
-              );
-            }
-          ' "$RUNNER_TEMP/release-readiness.json" 2>/dev/null || echo "  (no readiness payload yet)"
-        }
-        while (( SECONDS < deadline )); do
-          if curl -fsS --max-time 15 \
+        set -u
+        {
+          echo '## Helper fleet uptake (asynchronous)'
+          echo
+          if curl -fsS --max-time 10 \
             https://server.usebeeline.app/v1/releases/daemon-readiness \
-            -o "$RUNNER_TEMP/release-readiness.json" \
-            2> "$RUNNER_TEMP/release-readiness-error.txt" \
-            && node scripts/unified-release.mjs assert-daemons \
-              --status "$RUNNER_TEMP/release-readiness.json" \
-              --version "$RELEASE_VERSION" \
-              --sha "$RELEASE_SHA" \
-              > "$RUNNER_TEMP/release-readiness-summary.txt" \
-              2> "$RUNNER_TEMP/release-readiness-error.txt"
-          then
+            -o "$RUNNER_TEMP/release-readiness.json"; then
+            echo '```json'
             cat "$RUNNER_TEMP/release-readiness.json"
-            cat "$RUNNER_TEMP/release-readiness-summary.txt"
-            { echo "## Daemon fleet"; echo; cat "$RUNNER_TEMP/release-readiness-summary.txt"; } >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+            echo
+            echo '```'
+          else
+            echo 'Readiness snapshot unavailable. Fleet convergence remains post-release observability.'
           fi
-          # One readiness table per minute, so a helper stuck on the old
-          # release is visible in the job log while the wait is still running.
-          if (( SECONDS >= next_report )); then
-            echo "daemon readiness at $(date -u +%FT%TZ); waiting up to $(( (deadline - SECONDS + 59) / 60 ))m more for $RELEASE_VERSION ($RELEASE_SHA)"
-            readiness_table
-            next_report=$((SECONDS + 60))
-          fi
-          sleep 5
-        done
-        echo "daemon fleet did not confirm $RELEASE_VERSION ($RELEASE_SHA) within $wait_minutes minutes" >&2
-        cat "$RUNNER_TEMP/release-readiness-error.txt" >&2 || true
-        readiness_table >&2
-        exit 1
+        } >> "$GITHUB_STEP_SUMMARY"

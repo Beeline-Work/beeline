@@ -239,7 +239,6 @@ jobs:
               - 'turbo.json'
               - '.github/workflows/checks.yml'
               - '.github/workflows/app-association-drift.yml'
-              - '.github/workflows/pages.yml'
             workflows:
               - '.github/workflows/*.yml'
               - '.github/workflows/*.yaml'

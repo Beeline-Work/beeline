@@ -93,10 +93,12 @@ test('the unified release publishes every stable website installer name', () => 
   assert.match(desktopWorkflow, /workflow_call:/);
   assert.match(desktopWorkflow, /if: inputs\.variant == 'production'/);
   assert.match(releaseWorkflow, /desktop_installers:/);
-  assert.match(releaseWorkflow, /needs: \[initialize, desktop_installers/);
+  assert.match(releaseWorkflow, /needs: \[initialize, server, helper, mobile_ota, mobile_native, desktop_installers/);
   for (const { asset } of DESKTOP_INSTALLERS) {
     assert.match(desktopWorkflow, new RegExp(asset.replace('.', '\\.')));
   }
-  assert.match(releaseWorkflow, /gh release create[\s\S]*desktop-release\/\*/);
-  assert.match(releaseWorkflow, /gh release upload[\s\S]*desktop-release\/\*/);
+  assert.match(releaseWorkflow, /assets=\("\$RUNNER_TEMP"\/desktop-release\/Beeline-\*\)/);
+  assert.match(releaseWorkflow, /gh release create[\s\S]*"\$\{assets\[@\]\}"/);
+  assert.match(releaseWorkflow, /gh release upload[\s\S]*"\$\{assets\[@\]\}"/);
+  assert.match(releaseWorkflow, /gh release download "\$previous_version" --pattern 'Beeline-\*'/);
 });

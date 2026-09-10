@@ -105,7 +105,16 @@ describe('agent reply completion latency', () => {
     const delayed = new DelayedDatabase(database, timing);
     const live = new LiveHub();
     const publish = vi.spyOn(live, 'publish');
-    const daemon = new DaemonService(delayed, live);
+    const daemon = new DaemonService(
+      delayed,
+      live,
+      undefined,
+      undefined,
+      false,
+      undefined,
+      true,
+      'machine-test',
+    );
 
     const first = await daemon.execute(
       'postRoomMessage',
@@ -134,6 +143,9 @@ describe('agent reply completion latency', () => {
         databaseAt: expect.any(Number),
         emittedAt: expect.any(Number),
         startedAt: expect.any(Number),
+        databaseAwaitResolvedAt: expect.any(Number),
+        projectionCompletedAt: expect.any(Number),
+        serverInstance: 'machine-test',
       },
     });
     if (committedEvent?.type !== 'invalidate' || !committedEvent.trace)
@@ -144,6 +156,15 @@ describe('agent reply completion latency', () => {
     expect(committedEvent.trace.startedAt!).toBeLessThanOrEqual(timing.messageWriteEndedAtWall!);
     expect(timing.messageWriteEndedAtWall!).toBeLessThanOrEqual(committedEvent.trace.emittedAt);
     expect(committedEvent.trace.databaseAt).toBeLessThanOrEqual(committedEvent.trace.emittedAt);
+    expect(committedEvent.trace.databaseAt).toBeLessThanOrEqual(
+      committedEvent.trace.databaseAwaitResolvedAt!,
+    );
+    expect(committedEvent.trace.databaseAwaitResolvedAt!).toBeLessThanOrEqual(
+      committedEvent.trace.projectionCompletedAt!,
+    );
+    expect(committedEvent.trace.projectionCompletedAt!).toBeLessThanOrEqual(
+      committedEvent.trace.emittedAt,
+    );
     expect(timing.messageWriteEndedAt).toBeDefined();
     const writeToPublishMs = committedEvent.trace.emittedAt - committedEvent.trace.startedAt!;
     const projectedUpperBoundMs = writeToPublishMs + DELIVERY_AND_PAINT_BUDGET_MS;
@@ -206,6 +227,39 @@ describe('agent reply completion latency', () => {
       ).rows[0]?.count,
     ).toBe(1);
   }, 10_000);
+
+  it('omits internal server spans unless live-paint diagnostics are enabled', async () => {
+    const request = 'f'.repeat(64);
+    const generation = `${GENERATION}-ordinary`;
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,mention_ids)
+       VALUES($1,$2,$3,'@agent ordinary',jsonb_build_array($4::text))`,
+      [request, ROOM, HUMAN, AGENT],
+    );
+    const command = await createAgentCommand(database, {
+      roomId: ROOM,
+      agentId: AGENT,
+      sourceMessageId: request,
+      reason: 'human_tag',
+    });
+    await claimAgentCommand(database, ROOM, AGENT, command!.id, generation);
+    const live = new LiveHub();
+    const publish = vi.spyOn(live, 'publish');
+
+    await new DaemonService(database, live).execute(
+      'postRoomMessage',
+      { roomId: ROOM, requestId: request, generationId: generation, text: 'Ordinary reply' },
+      AGENT,
+    );
+
+    const event = publish.mock.calls
+      .map(([published]) => published)
+      .find((published) => published.type === 'invalidate' && published.committedRow);
+    expect(event).toMatchObject({ trace: { startedAt: expect.any(Number) } });
+    if (event?.type !== 'invalidate') throw new Error('committed trace missing');
+    expect(event.trace).not.toHaveProperty('databaseAwaitResolvedAt');
+    expect(event.trace).not.toHaveProperty('projectionCompletedAt');
+  });
 
   it('commits a claimed turn in one representative database round trip', async () => {
     const request = 'd'.repeat(64);

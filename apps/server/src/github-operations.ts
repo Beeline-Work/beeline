@@ -339,16 +339,36 @@ export class GitHubOperations {
       if (!credential.token) githubReconnectNeeded = true;
       try {
         const installations = await this.app.listInstallations();
-        if (administered) {
-          for (const installation of installations) {
-            if (
-              installation.account.type === 'User'
-                ? installation.account.id === credential.subject
-                : administered.has(installation.installationId)
-            ) {
+        for (const installation of installations) {
+          if (installation.account.type === 'User') {
+            // A user-owned install claims only on the App JWT's own identity
+            // match: GET /user/installations is the positive confirmation a
+            // User account can always provide, so an unavailable listing
+            // confirms nothing for it.
+            if (administered && installation.account.id === credential.subject) {
               installationIds.add(installation.installationId);
             }
+            continue;
           }
+          // GET /user/installations is keyed to the lookup token's visibility
+          // and cannot list organization installations — the same blindness
+          // the install callback accommodates (see the reconciliation gate in
+          // apps/auth/src/server-context.ts for the canonical comment). A
+          // positively listed organization claims; an UNAVAILABLE listing
+          // follows the install-callback precedent and claims an organization
+          // nobody else owns yet; a definitive answer without it (or no
+          // stored credential to ask with) refuses.
+          if (administered && !administered.has(installation.installationId)) continue;
+          if (!administered) {
+            const owner = (
+              await this.database.query<{ owner_id: string }>(
+                `SELECT owner_id FROM github_installations WHERE installation_id=$1`,
+                [installation.installationId],
+              )
+            ).rows[0]?.owner_id;
+            if (owner && owner !== viewerId) continue;
+          }
+          installationIds.add(installation.installationId);
         }
       } catch (error) {
         if (!githubReconnectNeeded) throw error;

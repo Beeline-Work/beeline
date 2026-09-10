@@ -52,6 +52,12 @@ type Props = {
   repoCandidates: RepoCandidate[];
   repoInstallations: GitHubInstallationAccess[];
   repoPickerError: string | null;
+  /** Progress line for the GitHub install session that shares the picker's state. */
+  repoPickerNotice?: string | null;
+  /** Connect a NEW GitHub account/organization (the App's install page). */
+  handleAddGitHubAccount?: () => void;
+  /** Adjust an existing installation's repository selection on GitHub. */
+  handleManageGitHubInstallation?: (installation: GitHubInstallationAccess) => void;
 };
 
 export function NewRoomDialog({
@@ -70,6 +76,9 @@ export function NewRoomDialog({
   repoCandidates,
   repoInstallations,
   repoPickerError,
+  repoPickerNotice,
+  handleAddGitHubAccount,
+  handleManageGitHubInstallation,
 }: Props) {
   const { height } = useWindowDimensions();
   const availableDialogHeight = Math.max(0, height - DIALOG_VIEWPORT_GUTTER);
@@ -156,6 +165,9 @@ export function NewRoomDialog({
               currentKey={pendingRepo?.key ?? null}
               error={repoPickerError}
               installations={repoInstallations}
+              notice={repoPickerNotice}
+              onAddAccount={handleAddGitHubAccount}
+              onManageInstallation={handleManageGitHubInstallation}
               onSelect={handleSelectRepoCandidate}
               testIDPrefix="create-room-repo-picker"
             />

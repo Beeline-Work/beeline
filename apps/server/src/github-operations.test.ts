@@ -862,5 +862,165 @@ describe('GitHub phone operations', () => {
         (successfulUserInstallationsCall?.[1]?.headers as Record<string, string>).authorization,
       ).toBe('Bearer fresh-user-token');
     });
+
+    const ORG_INSTALLATION_ENTRY = {
+      id: 90,
+      account: {
+        id: 900,
+        login: 'Beeline-Work',
+        type: 'Organization',
+        avatar_url: 'https://avatars.test/beeline-work',
+      },
+      repository_selection: 'selected',
+    };
+    const ORG_REPOSITORY_ENTRY = {
+      id: 202,
+      name: 'monolith',
+      full_name: 'Beeline-Work/monolith',
+      clone_url: 'https://github.test/Beeline-Work/monolith',
+      default_branch: 'main',
+    };
+
+    // Links HUMAN and serves both installations from the App listing. The
+    // user-token listing mode is the variable under test: GitHub's own
+    // /user/installations visibility decides which org-claim path refresh()
+    // may take.
+    async function bindOrgIdentity(
+      database: PgliteDatabase,
+      userListings: 'confirmed' | 'user-only' | 'unavailable',
+    ) {
+      const operations = operationsFor(database);
+      const { fetchMock } = await bindIdentity(database);
+      await operations.beginIdentity(HUMAN, {
+        redirectUri: 'beeline://callback',
+        state: 'org-claim-state',
+      });
+      await operations.completeIdentity(
+        HUMAN,
+        { challenge: 'oauth-code', proof: 'org-claim-state' },
+        false,
+      );
+      const originalFetch = fetchMock.getMockImplementation()!;
+      fetchMock.mockImplementation(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        if (
+          userListings === 'confirmed' &&
+          url === 'https://api.github.test/user/installations?per_page=100&page=1'
+        )
+          return new Response(
+            JSON.stringify({
+              total_count: 2,
+              installations: [INSTALLATION_ENTRY, ORG_INSTALLATION_ENTRY],
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          );
+        if (userListings === 'unavailable' && url.includes('/user/installations'))
+          return new Response(JSON.stringify({ message: 'unavailable' }), {
+            status: 503,
+            headers: { 'content-type': 'application/json' },
+          });
+        if (url === 'https://api.github.test/app/installations?per_page=100&page=1')
+          return new Response(JSON.stringify([INSTALLATION_ENTRY, ORG_INSTALLATION_ENTRY]), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        if (url === 'https://api.github.test/app/installations/90')
+          return new Response(JSON.stringify(ORG_INSTALLATION_ENTRY), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        if (url === 'https://api.github.test/app/installations/90/access_tokens')
+          return new Response(
+            JSON.stringify({ token: 'org-installation-token', expires_at: '2030-01-01T00:00:00Z' }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          );
+        if (url.startsWith('https://api.github.test/installation/repositories')) {
+          const authorization = (init?.headers as Record<string, string>).authorization;
+          if (authorization === 'Bearer org-installation-token')
+            return new Response(JSON.stringify({ repositories: [ORG_REPOSITORY_ENTRY] }), {
+              status: 200,
+              headers: { 'content-type': 'application/json' },
+            });
+          return originalFetch(input, init);
+        }
+        return originalFetch(input, init);
+      });
+      return { operations, fetchMock, originalFetch };
+    }
+
+    it('claims an organization installation the user listing confirms', async () => {
+      const { operations } = await bindOrgIdentity(database, 'confirmed');
+      await expect(operations.refresh(HUMAN)).resolves.toEqual({});
+      expect(
+        (
+          await database.query<{ installation_id: string | number; owner_id: string }>(
+            `SELECT installation_id,owner_id FROM github_installations ORDER BY installation_id`,
+          )
+        ).rows.map((row) => ({ installation_id: Number(row.installation_id), owner_id: row.owner_id })),
+      ).toEqual([
+        { installation_id: 77, owner_id: HUMAN },
+        { installation_id: 90, owner_id: HUMAN },
+      ]);
+      expect(
+        (
+          await database.query<{ full_name: string }>(
+            `SELECT full_name FROM github_repositories WHERE installation_id=90`,
+          )
+        ).rows.map((row) => row.full_name),
+      ).toEqual(['Beeline-Work/monolith']);
+    });
+
+    it('refuses an organization installation the user listing excludes', async () => {
+      const { operations } = await bindOrgIdentity(database, 'user-only');
+      await expect(operations.refresh(HUMAN)).resolves.toEqual({});
+      expect(
+        (
+          await database.query(
+            `SELECT installation_id FROM github_installations WHERE installation_id=90`,
+          )
+        ).rows,
+      ).toEqual([]);
+    });
+
+    it('claims an unclaimed organization installation when the user listing is unavailable', async () => {
+      const { operations } = await bindOrgIdentity(database, 'unavailable');
+      // Expired token with no refresh grant: reconnect is already required,
+      // and the 503 leaves the user listing UNAVAILABLE rather than definitive.
+      await database.query(
+        `UPDATE github_user_tokens SET encrypted_refresh_token=NULL, expires_at=now()-interval '1 minute' WHERE subject='42'`,
+      );
+      await expect(operations.refresh(HUMAN)).resolves.toEqual({ githubReconnectNeeded: true });
+      // The App's own listing still sees the org install; nobody owns it yet.
+      expect(
+        (
+          await database.query<{ installation_id: string | number; owner_id: string }>(
+            `SELECT installation_id,owner_id FROM github_installations WHERE installation_id=90`,
+          )
+        ).rows.map((row) => ({ installation_id: Number(row.installation_id), owner_id: row.owner_id })),
+      ).toEqual([{ installation_id: 90, owner_id: HUMAN }]);
+    });
+
+    it("does not claim another viewer's organization installation during a user-listings outage", async () => {
+      const OTHER = 'b'.repeat(64);
+      await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Other')`, [
+        OTHER,
+      ]);
+      await database.query(
+        `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status) VALUES(90,$1,'900','Beeline-Work','Organization','selected','active')`,
+        [OTHER],
+      );
+      const { operations } = await bindOrgIdentity(database, 'unavailable');
+      await database.query(
+        `UPDATE github_user_tokens SET encrypted_refresh_token=NULL, expires_at=now()-interval '1 minute' WHERE subject='42'`,
+      );
+      await expect(operations.refresh(HUMAN)).resolves.toEqual({ githubReconnectNeeded: true });
+      expect(
+        (
+          await database.query<{ owner_id: string }>(
+            `SELECT owner_id FROM github_installations WHERE installation_id=90`,
+          )
+        ).rows[0]?.owner_id,
+      ).toBe(OTHER);
+    });
   });
 });

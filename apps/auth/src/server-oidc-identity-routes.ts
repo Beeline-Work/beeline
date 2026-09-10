@@ -46,6 +46,49 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
     return reply.send({ github: Boolean(options.github), oidc: true });
   });
 
+  /** Recover a completed native GitHub flow without trusting OS callback delivery. */
+  app.post('/auth/github/completion', async (request, reply) => {
+    const tenant = tenantFor(request);
+    const body = request.body as Record<string, unknown>;
+    if (typeof body.recoveryToken !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(body.recoveryToken)) {
+      throw new ProtocolError(400, 'invalid_recovery', 'GitHub recovery token is invalid');
+    }
+    const ticket = await options.store.findTicket(sha256(body.recoveryToken));
+    noStore(reply);
+    // Missing and not-yet-completed tokens are deliberately indistinguishable.
+    if (!ticket) return reply.code(202).send({ status: 'pending' });
+    if (ticket.community !== tenant.community || ticket.issuer !== 'https://github.com') {
+      return reply.code(202).send({ status: 'pending' });
+    }
+    if (ticket.consumedAt || ticket.expiresAt.getTime() < now().getTime()) {
+      return reply.code(410).send({ error: 'github_completion_expired' });
+    }
+    return reply.send({
+      protocol: 1,
+      kind: OIDC_BIND_KIND,
+      marker: OIDC_BIND_MARKER,
+      ticket: body.recoveryToken,
+      challenge: ticket.challenge,
+      provider: ticket.issuer,
+      audience: ticket.audience,
+      subject: ticket.subject,
+      community: ticket.community,
+      issued_at: Math.floor(ticket.createdAt.getTime() / 1_000),
+      expires_at: Math.floor(ticket.expiresAt.getTime() / 1_000),
+    });
+  });
+
+  app.post('/auth/github/completion/cancel', async (request, reply) => {
+    tenantFor(request);
+    const body = request.body as Record<string, unknown>;
+    if (typeof body.recoveryToken !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(body.recoveryToken)) {
+      throw new ProtocolError(400, 'invalid_recovery', 'GitHub recovery token is invalid');
+    }
+    await options.store.cancelRecoveryTicket(sha256(body.recoveryToken), now());
+    noStore(reply);
+    return reply.code(204).send();
+  });
+
   /** One-use bridge from the existing native GitHub ceremony to monolith sessions. */
   app.post('/auth/github/phone-exchange', async (request, reply) => {
     const tenant = tenantFor(request);
@@ -156,6 +199,7 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
     const query = request.query as Record<string, unknown>;
     const appRedirect = query.app_redirect;
     const appState = query.app_state;
+    const appRecoveryChallenge = query.app_recovery_challenge;
     const deviceUserCode = query.device_user_code;
     if (deviceUserCode !== undefined && (appRedirect !== undefined || appState !== undefined)) {
       throw new ProtocolError(
@@ -174,6 +218,7 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
     let appRedirectUri: string | null = null;
     let boundAppState: string | null = null;
     let deviceCodeHash: string | null = null;
+    let appRecoveryHash: string | null = null;
     if (appRedirect !== undefined && appState !== undefined) {
       const associatedRedirect = `${tenant.origin}/auth/github/mobile-callback`;
       if (
@@ -191,6 +236,21 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
       }
       appRedirectUri = appRedirect;
       boundAppState = appState;
+      if (appRecoveryChallenge !== undefined) {
+        if (
+          typeof appRecoveryChallenge !== 'string' ||
+          !/^[0-9a-f]{64}$/.test(appRecoveryChallenge)
+        ) {
+          throw new ProtocolError(400, 'invalid_request', 'native recovery challenge is invalid');
+        }
+        appRecoveryHash = appRecoveryChallenge;
+      }
+    } else if (appRecoveryChallenge !== undefined) {
+      throw new ProtocolError(
+        400,
+        'invalid_request',
+        'native recovery requires an app redirect and state',
+      );
     }
     if (deviceUserCode !== undefined) {
       if (typeof deviceUserCode !== 'string') {
@@ -226,6 +286,7 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
       appRedirectUri,
       appState: boundAppState,
       deviceCodeHash,
+      appRecoveryHash,
       createdAt: issuedAt,
       expiresAt: new Date(issuedAt.getTime() + flowTtlMs),
     });

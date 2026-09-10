@@ -56,13 +56,16 @@ import {
 import { authSessionOptions } from '@/auth/auth-session';
 import {
   clearPendingGitHubSignInState,
+  cancelPendingGitHubSignIn,
   isPendingGitHubReconnect,
   loadPendingGitHubBindChallenge,
   persistGitHubSignInState,
+  recoverPendingGitHubBindChallenge,
   resumeGitHubSignInCallback,
   resumeInitialGitHubInstallation,
   resumeInitialGitHubSignIn,
   startGitHubSignInWebFlow,
+  runResilientGitHubSignInSession,
 } from '@/auth/github-auth-session';
 import {
   clearPersonNameOnboardingPending,
@@ -341,6 +344,7 @@ export default function BuzzOnboarding() {
         if (isSignInInFlight()) return;
         const challenge =
           (await resumeInitialGitHubSignIn(() => Promise.resolve(initialUrl))) ??
+          (await recoverPendingGitHubBindChallenge()) ??
           (await loadPendingGitHubBindChallenge());
         if (challenge) {
           if (await isPendingGitHubReconnect()) {
@@ -450,19 +454,18 @@ export default function BuzzOnboarding() {
       const runtime = getBuzzRuntimeConfig();
       if (runtime.monolithEnabled) {
         const state = randomState();
-        const start = startGitHubSignInWebFlow(state, runtime);
-        await persistGitHubSignInState(state);
-        const callbackUrl = await waitForAuthCallback({
-          redirectUri: start.redirectUri,
-          openAuthSession: () =>
+        const challenge = await runResilientGitHubSignInSession({
+          state,
+          recoveryToken: randomState(),
+          runtime,
+          openAuthSession: (authorizationUrl, redirectUri) =>
             openAccountAuthSession(
-              start.authorizationUrl,
-              start.redirectUri,
-              authSessionOptions(Platform.OS, start.redirectUri),
+              authorizationUrl,
+              redirectUri,
+              authSessionOptions(Platform.OS, redirectUri),
             ),
           subscribeToUrls: subscribeToAuthUrls,
         });
-        const challenge = await resumeGitHubSignInCallback(callbackUrl);
         const identityId = await monolithSession.exchangeGitHubTicket(challenge.ticket);
         await clearPendingGitHubSignInState();
         await enterAfterMonolithSignIn(identityId);
@@ -493,7 +496,11 @@ export default function BuzzOnboarding() {
       pendingBind.current = pending;
       await finishPendingBind(pending);
     } catch (error) {
-      await clearPendingGitHubSignInState();
+      if (getBuzzRuntimeConfig().monolithEnabled) {
+        await cancelPendingGitHubSignIn().catch(() => undefined);
+      } else {
+        await clearPendingGitHubSignInState();
+      }
       const next = noticeForAuthError(error);
       setStatus(next.status);
       setNotice(next);

@@ -197,6 +197,39 @@ describe('mounted monolith auth', () => {
     });
   }
 
+  async function mountedJsonRequest(
+    path: string,
+    payload: unknown,
+  ): Promise<{ status: number; body: unknown }> {
+    return new Promise((resolve, reject) => {
+      const serialized = JSON.stringify(payload);
+      const outgoing = request(
+        new URL(path, origin),
+        {
+          method: 'POST',
+          headers: {
+            host: tenant.host,
+            'content-type': 'application/json',
+            'content-length': Buffer.byteLength(serialized),
+          },
+        },
+        (incoming) => {
+          const chunks: Buffer[] = [];
+          incoming.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+          incoming.on('end', () => {
+            const text = Buffer.concat(chunks).toString('utf8');
+            resolve({
+              status: incoming.statusCode ?? 0,
+              body: text ? (JSON.parse(text) as unknown) : null,
+            });
+          });
+        },
+      );
+      outgoing.on('error', reject);
+      outgoing.end(serialized);
+    });
+  }
+
   it('serves the auth verifier route and rejects malformed tickets', async () => {
     const bad = await authRequest('bad');
     expect(bad.status).toBe(400);
@@ -271,6 +304,89 @@ describe('mounted monolith auth', () => {
       `SELECT audience FROM identity_external_links WHERE provider='github' AND subject='42'`,
     );
     expect(audiences.rows).toEqual([{ audience: 'github' }]);
+  });
+
+  it('recovers one session when browser authorization completes without a delivered deep link', async () => {
+    const appState = 's'.repeat(43);
+    const recoveryToken = 'r'.repeat(43);
+    const recoveryChallenge = createHash('sha256').update(recoveryToken).digest('hex');
+    const start = await mountedRequest(
+      `/auth/github/start?app_redirect=${encodeURIComponent('beeline://beeline/github-callback')}&app_state=${appState}&app_recovery_challenge=${recoveryChallenge}`,
+    );
+    const authorization = new URL(String(start.headers.location));
+    const callback = await mountedRequest(
+      `/auth/github/callback?code=github-code&state=${authorization.searchParams.get('state')}`,
+      { cookie: String(start.headers['set-cookie']).split(';', 1)[0]! },
+    );
+
+    expect(callback.status).toBe(302);
+    const droppedCompletion = new URL(String(callback.headers.location));
+    expect(droppedCompletion.searchParams.get('state')).toBe(appState);
+    expect(droppedCompletion.searchParams.get('completed')).toBe('1');
+    expect(droppedCompletion.searchParams.has('ticket')).toBe(false);
+
+    expect(
+      await mountedJsonRequest('/auth/github/completion', { recoveryToken: 'w'.repeat(43) }),
+    ).toEqual({ status: 202, body: { status: 'pending' } });
+    const recovered = await mountedJsonRequest('/auth/github/completion', { recoveryToken });
+    expect(recovered).toMatchObject({
+      status: 200,
+      body: {
+        ticket: recoveryToken,
+        challenge: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
+        provider: 'https://github.com',
+        subject: '42',
+      },
+    });
+
+    const exchange = await fetch(`${origin}/v1/auth/github/exchange`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ oidcToken: recoveryToken }),
+    });
+    expect(exchange.status).toBe(200);
+    expect(
+      (
+        await fetch(`${origin}/v1/auth/github/exchange`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ oidcToken: recoveryToken }),
+        })
+      ).status,
+    ).not.toBe(200);
+    expect(await mountedJsonRequest('/auth/github/completion', { recoveryToken })).toMatchObject({
+      status: 410,
+    });
+  });
+
+  it('burns a completed recovery credential on cancel so retry cannot reuse it', async () => {
+    const appState = 'c'.repeat(43);
+    const recoveryToken = 'z'.repeat(43);
+    const recoveryChallenge = createHash('sha256').update(recoveryToken).digest('hex');
+    const start = await mountedRequest(
+      `/auth/github/start?app_redirect=${encodeURIComponent('beeline://beeline/github-callback')}&app_state=${appState}&app_recovery_challenge=${recoveryChallenge}`,
+    );
+    const authorization = new URL(String(start.headers.location));
+
+    const callback = await mountedRequest(
+      `/auth/github/callback?code=github-code&state=${authorization.searchParams.get('state')}`,
+      { cookie: String(start.headers['set-cookie']).split(';', 1)[0]! },
+    );
+    expect(callback.status).toBe(302);
+    expect(await mountedJsonRequest('/auth/github/completion/cancel', { recoveryToken })).toEqual({
+      status: 204,
+      body: null,
+    });
+    expect(await mountedJsonRequest('/auth/github/completion', { recoveryToken })).toEqual({
+      status: 410,
+      body: { error: 'github_completion_expired' },
+    });
+    const exchange = await fetch(`${origin}/v1/auth/github/exchange`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ oidcToken: recoveryToken }),
+    });
+    expect(exchange.status).not.toBe(200);
   });
 
   it('reconnects through the mounted browser callback, replaces stale credentials and rejects another account', async () => {

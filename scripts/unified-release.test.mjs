@@ -102,6 +102,69 @@ test('unchanged components carry previous version, sha, and immutable artifact r
   assert.match(releasePlanSummary(state).carried.helper, /^v0\.0\.8@1111/);
 });
 
+test('same-identity selection supplements only a stale carried component', () => {
+  const initial = initializeRelease({
+    version: 'v0.0.9', sourceSha: NEW_SHA, previous: deliveredPrevious(),
+    selectedComponents: ['server', 'mobile-ota'], startedAt: '2026-09-09T12:00:00.000Z',
+  });
+  for (const component of ['server', 'mobile-ota']) {
+    for (const stage of ['built', 'promoted', 'checked']) markComponentStage(initial, component, stage);
+  }
+  finalizeRelease(initial, { finishedAt: '2026-09-09T12:03:20.000Z' });
+  const preserved = Object.fromEntries(RELEASE_COMPONENTS
+    .filter((component) => component !== 'helper')
+    .map((component) => [component, structuredClone(initial.components[component])]));
+
+  const supplemental = initializeRelease({
+    version: 'v0.0.9', sourceSha: NEW_SHA, previous: initial,
+    selectedComponents: ['server', 'helper'], startedAt: '2026-09-09T13:00:00.000Z',
+  });
+
+  assert.equal(supplemental.state, 'planned');
+  assert.deepEqual(supplemental.plan.selected, ['helper']);
+  assert.deepEqual(retryPlan(supplemental), {
+    server: false,
+    helper: true,
+    'mobile-ota': false,
+    'mobile-native': false,
+    desktop: false,
+    website: false,
+  });
+  assert.deepEqual(supplemental.components.helper, {
+    state: 'pending', selected: true, version: 'v0.0.9', sourceSha: NEW_SHA,
+    artifactRef: `helper-v0.0.9-${NEW_SHA}`,
+  });
+  for (const [component, entry] of Object.entries(preserved)) {
+    assert.deepEqual(supplemental.components[component], entry);
+  }
+
+  applyComponentCheckpoints(supplemental, [{
+    component: 'helper', version: 'v0.0.9', sourceSha: NEW_SHA, state: 'checked',
+    artifactRef: `helper-v0.0.9-${NEW_SHA}`,
+  }]);
+  finalizeRelease(supplemental, { finishedAt: '2026-09-09T13:02:00.000Z' });
+  assert.equal(supplemental.state, 'delivered');
+  assert.ok(RELEASE_COMPONENTS.every((component) =>
+    ['checked', 'carried'].includes(supplemental.components[component].state)));
+
+  const repeated = initializeRelease({
+    version: 'v0.0.9', sourceSha: NEW_SHA, previous: supplemental, selectedComponents: ['helper'],
+  });
+  assert.deepEqual(repeated, supplemental);
+  assert.ok(Object.values(retryPlan(repeated)).every((runnable) => !runnable));
+});
+
+test('same-identity auto selection with no source changes remains a no-op', () => {
+  const initial = initializeRelease({
+    version: 'v0.0.9', sourceSha: NEW_SHA, previous: deliveredPrevious(), selectedComponents: ['server'],
+  });
+  for (const stage of ['built', 'promoted', 'checked']) markComponentStage(initial, 'server', stage);
+  finalizeRelease(initial);
+  assert.deepEqual(initializeRelease({
+    version: 'v0.0.9', sourceSha: NEW_SHA, previous: initial, selectedComponents: [],
+  }), initial);
+});
+
 test('selective retry keeps the identity and reruns only an unfinished component', () => {
   const state = initializeRelease({
     version: 'v0.0.9', sourceSha: NEW_SHA, previous: deliveredPrevious(), selectedComponents: ['server', 'helper'],

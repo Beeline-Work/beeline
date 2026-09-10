@@ -40,10 +40,9 @@ function tokenColor(token: HighlightToken): string | undefined {
 /**
  * Renders a code block with syntax-highlighted spans.
  *
- * Falls back to plain monochrome text when no language is specified or the
- * code is short/trivial — the tokeniser works on any input, but a `null`
- * language fence produces no keyword/type classification (only strings,
- * numbers, and comments get coloured) which keeps the output clean.
+ * A `null` language fence still colours strings, numbers, and comments while
+ * omitting language-specific classification. Very large blocks fall back to
+ * one full-fidelity monochrome Text node so native layout stays bounded.
  */
 export function CodeHighlighter({ code, language, style }: CodeHighlighterProps) {
   const lines = useMemo(

@@ -123,7 +123,7 @@ describe('PhoneService.readRoom latency', () => {
 
   afterAll(async () => database.close());
 
-  it('collapses a production-shaped read to two database waves', async () => {
+  it('projects the same production-shaped Room in one database round trip', async () => {
     const representative = new RepresentativeDatabase(database);
     const phone = new PhoneService(representative, 'https://server.usebeeline.app');
     const startedAt = performance.now();
@@ -150,7 +150,28 @@ describe('PhoneService.readRoom latency', () => {
     expect(view?.messages.length).toBe(30);
     expect(view?.members.length).toBe(31);
     expect(view?.corners.length).toBe(30);
-    expect(durationMs).toBeLessThan(400);
+    expect(view?.messages.map((message) => message.id)).toEqual(
+      Array.from(
+        { length: 30 },
+        (_, index) => `message-${(150 + index).toString().padStart(3, '0')}`,
+      ),
+    );
+    expect(new Set(view?.members.map((member) => member.identity.pubkey))).toEqual(
+      new Set([
+        VIEWER,
+        ...Array.from({ length: 30 }, (_, index) => index.toString(16).padStart(64, '0')),
+      ]),
+    );
+    expect(new Set(view?.corners.map((corner) => corner.corner.id))).toEqual(
+      new Set(
+        Array.from(
+          { length: 30 },
+          (_, index) => `33333333-3333-4333-8333-${index.toString().padStart(12, '0')}`,
+        ),
+      ),
+    );
+    expect(representative.spans).toHaveLength(1);
+    expect(durationMs).toBeLessThan(250);
   }, 10_000);
 
   it('does not restore the serial waterfall at concurrency four', async () => {
@@ -164,6 +185,15 @@ describe('PhoneService.readRoom latency', () => {
       }),
     );
     const sorted = durations.toSorted((left, right) => left - right);
-    expect(sorted.at(-1)).toBeLessThan(600);
+    expect(representative.spans).toHaveLength(4);
+    expect(sorted.at(-1)).toBeLessThan(250);
   }, 10_000);
+
+  it('keeps the batched projection behind the Room and Workspace membership gate', async () => {
+    const representative = new RepresentativeDatabase(database, POOL_MAX, 0);
+    const phone = new PhoneService(representative, 'https://server.usebeeline.app');
+
+    expect(await phone.readRoom(ROOM, 'f'.repeat(64))).toBeNull();
+    expect(representative.spans).toHaveLength(2);
+  });
 });

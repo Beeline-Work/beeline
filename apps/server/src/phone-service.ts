@@ -204,6 +204,11 @@ interface AgentTurnRow {
   generation_id: string | null;
   requested_by: string | null;
 }
+interface MemberRow extends IdentityRow {
+  role: 'owner' | 'admin' | 'member';
+  presence_body: { status: 'online' | 'offline'; observedAt: number } | null;
+  presence_updated_at: Date | null;
+}
 interface CornerRow extends RoomRow {
   lifecycle: RoomView['cornerLifecycle'] | null;
   objective: string | null;
@@ -219,6 +224,17 @@ interface CornerRow extends RoomRow {
   agent_avatar: string | null;
   latest_turn_status: 'working' | 'complete' | 'failed' | null;
   latest_turn_created_at: Date | null;
+}
+interface TopLevelRoomReadRow {
+  room: RoomRow & {
+    viewer_role: 'owner' | 'admin' | 'member';
+    workspace_role: 'owner' | 'admin' | 'member';
+  };
+  members: MemberRow[];
+  turns: AgentTurnRow[];
+  transcript: MessageRow[];
+  activity: MessageRow[];
+  corners: CornerRow[];
 }
 interface RoomScheduleRow {
   id: string;
@@ -243,6 +259,14 @@ function messageId(): string {
 }
 function unix(date: Date): number {
   return Math.floor(date.getTime() / 1_000);
+}
+function reviveDates<Row extends object>(row: Row, fields: readonly string[]): Row {
+  const mutable = row as Record<string, unknown>;
+  for (const field of fields) {
+    const value = mutable[field];
+    if (typeof value === 'string') mutable[field] = new Date(value);
+  }
+  return row;
 }
 function assetUrl(value: string, publicOrigin: string) {
   return value.startsWith('/') ? `${publicOrigin}${value}` : value;
@@ -769,39 +793,39 @@ export class PhoneService {
         spans.set(operation, performance.now() - startedAt);
       }
     };
-    const roomResult = await measured(
-      'access',
-      this.database.query<
-        RoomRow & {
-          viewer_role: 'owner' | 'admin' | 'member';
-          workspace_role: 'owner' | 'admin' | 'member';
-        }
-      >(
-        `SELECT r.*,m.role viewer_role,workspace_member.role workspace_role
-       FROM rooms r JOIN memberships m ON m.room_id=r.id
-       JOIN memberships workspace_member ON workspace_member.workspace_id=r.workspace_id
-         AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
-         AND workspace_member.removed_at IS NULL
-      WHERE r.id=$1 AND m.identity_id=$2 AND m.removed_at IS NULL`,
-        [roomId, viewerId],
-      ),
-    );
-    const room = roomResult.rows[0];
+    const topLevelRows = await measured('data', this.topLevelRoomRows(roomId, viewerId));
+    const room =
+      topLevelRows?.room ?? (await measured('access', this.roomAccess(roomId, viewerId)));
     if (!room) return null;
     const familyRoomId = room.parent_id ?? roomId;
-    // Once access is proven, every remaining top-level Room query is an
-    // independent snapshot read. Start them together so a live invalidation
-    // pays one database round trip, not a waterfall of identical waits.
-    const latestAgentTurnsPromise = this.latestAgentTurns(roomId);
-    const [allMembers, latestAgentTurns, messageResult, cornerRows] = await Promise.all([
-      measured('members', this.members(room.workspace_id, roomId)),
-      measured('turns', latestAgentTurnsPromise),
-      measured(
-        'messages',
-        this.roomMessages(roomId, latestAgentTurnsPromise, Boolean(room.parent_id)),
-      ),
-      measured('corners', this.cornerRows(familyRoomId, viewerId, true)),
-    ]);
+    let allMembers: RoomViewMember[];
+    let latestAgentTurns: RoomView['latestAgentTurns'];
+    let messageResult: { messages: RoomViewMessage[]; toolRows: RoomViewMessage[] };
+    let cornerRows: CornerRow[];
+    if (topLevelRows) {
+      const rows = topLevelRows;
+      allMembers = this.projectMembers(rows.members, roomId);
+      latestAgentTurns = this.projectAgentTurns(rows.turns);
+      messageResult = this.projectRoomMessages(
+        rows.transcript,
+        rows.activity,
+        [],
+        latestAgentTurns,
+        false,
+      );
+      cornerRows = rows.corners;
+    } else {
+      // A corner also reads its parent briefing and lifecycle. Keep its
+      // independent queries concurrent; the top-level live path above is the
+      // high-frequency path whose remote round trips must stay bounded.
+      const latestAgentTurnsPromise = this.latestAgentTurns(roomId);
+      [allMembers, latestAgentTurns, messageResult, cornerRows] = await Promise.all([
+        measured('members', this.members(room.workspace_id, roomId)),
+        measured('turns', latestAgentTurnsPromise),
+        measured('messages', this.roomMessages(roomId, latestAgentTurnsPromise, true)),
+        measured('corners', this.cornerRows(familyRoomId, viewerId, true)),
+      ]);
+    }
     const members = allMembers.slice(0, ROOM_VIEW_MEMBER_LIMIT);
     const { messages, toolRows } = messageResult;
     const corners = this.projectCorners(cornerRows);
@@ -1000,6 +1024,178 @@ export class PhoneService {
       },
       watchFilters: [],
     };
+  }
+
+  /**
+   * A top-level Room's five paint inputs are independent, but production's
+   * transaction pool can serialize five simultaneous requests behind one
+   * another. Ask PostgreSQL for the same rows in one statement, then keep the
+   * existing TypeScript projection as the sole DTO authority.
+   */
+  private async roomAccess(roomId: string, viewerId: string) {
+    return (
+      await this.database.query<
+        RoomRow & {
+          viewer_role: 'owner' | 'admin' | 'member';
+          workspace_role: 'owner' | 'admin' | 'member';
+        }
+      >(
+        `SELECT room.*,membership.role viewer_role,workspace_member.role workspace_role
+         FROM rooms room
+         JOIN memberships membership ON membership.room_id=room.id
+           AND membership.identity_id=$2 AND membership.removed_at IS NULL
+         JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
+           AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
+           AND workspace_member.removed_at IS NULL
+         WHERE room.id=$1`,
+        [roomId, viewerId],
+      )
+    ).rows[0];
+  }
+
+  private async topLevelRoomRows(
+    roomId: string,
+    viewerId: string,
+  ): Promise<TopLevelRoomReadRow | undefined> {
+    const eligible = `m.id IN (
+      (SELECT raw.id FROM legacy_room_events raw WHERE raw.room_id=$1 AND raw.kind=9
+         AND raw.raw_page_candidate=true
+       ORDER BY raw.created_at DESC,raw.id ASC LIMIT 180)
+      UNION
+      (SELECT conversation.id FROM legacy_room_events conversation
+       WHERE conversation.room_id=$1 AND conversation.conversation_candidate=true
+       ORDER BY conversation.created_at DESC,conversation.id ASC LIMIT 30)
+      UNION
+      (SELECT plan.id FROM legacy_room_events plan WHERE plan.room_id=$1 AND plan.kind=30078)
+    )`;
+    const row = (
+      await this.database.query<TopLevelRoomReadRow>(
+        `WITH authorized_room AS (
+           SELECT room.*,membership.role viewer_role,
+             workspace_member.role workspace_role
+           FROM rooms room
+           JOIN memberships membership ON membership.room_id=room.id
+             AND membership.identity_id=$2 AND membership.removed_at IS NULL
+           JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
+             AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
+             AND workspace_member.removed_at IS NULL
+           WHERE room.id=$1 AND room.parent_id IS NULL
+         ), member_rows AS (
+           SELECT i.id,i.kind,i.name,i.handle,i.avatar,i.face_id,
+             membership.role,presence.body presence_body,presence.updated_at presence_updated_at
+           FROM authorized_room room
+           JOIN memberships membership ON membership.workspace_id=room.workspace_id
+             AND membership.room_id=room.id
+           JOIN identities i ON i.id=membership.identity_id
+           LEFT JOIN LATERAL(
+             SELECT body,updated_at FROM live_outputs
+             WHERE agent_id=i.id AND kind='presence' ORDER BY updated_at DESC LIMIT 1
+           ) presence ON true
+           WHERE membership.removed_at IS NULL AND i.hidden_from_roster=false
+         ), turn_rows AS (
+           SELECT DISTINCT ON(turn.agent_id)
+             turn.request_id,turn.agent_id,turn.status,turn.created_at,turn.generation_id,
+             requester.id requested_by
+           FROM authorized_room room
+           JOIN agent_turns turn ON turn.room_id=room.id
+           LEFT JOIN messages trigger ON trigger.id=turn.request_id AND trigger.room_id=turn.room_id
+           LEFT JOIN identities requester ON requester.id=trigger.author_id AND requester.kind='human'
+           ORDER BY turn.agent_id,turn.created_at DESC,turn.request_id DESC
+         ), transcript_rows AS (
+           SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
+             i.avatar author_avatar,i.face_id author_face
+           FROM authorized_room room
+           JOIN messages m ON m.room_id=room.id
+           JOIN identities i ON i.id=m.author_id
+           WHERE (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
+             AND m.card_type IS DISTINCT FROM 'grant-decision'
+             AND (NOT EXISTS(
+               SELECT 1 FROM legacy_room_events any_legacy WHERE any_legacy.room_id=$1
+             ) OR ${eligible})
+           ORDER BY m.created_at DESC,m.id DESC LIMIT ${ROOM_VIEW_MESSAGE_LIMIT}
+         ), activity_rows AS (
+           SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
+             i.avatar author_avatar,i.face_id author_face
+           FROM authorized_room room
+           JOIN messages m ON m.room_id=room.id
+           JOIN identities i ON i.id=m.author_id
+           WHERE m.presentation='activity' AND m.durable_fact IS NULL
+             AND (NOT EXISTS(
+               SELECT 1 FROM legacy_room_events any_legacy WHERE any_legacy.room_id=$1
+             ) OR ${eligible})
+           ORDER BY m.created_at DESC,m.id DESC
+         ), corner_rows AS (
+           SELECT corner.*,fact.lifecycle,fact.objective,
+             latest.id latest_id,latest.text latest_text,latest.created_at latest_created_at,
+             latest.author_id latest_author_id,latest_identity.kind latest_author_kind,
+             latest_identity.name latest_author_name,agent.identity_id agent_id,
+             agent.name agent_name,agent.handle agent_handle,agent.avatar agent_avatar,
+             turn.status latest_turn_status,turn.created_at latest_turn_created_at
+           FROM authorized_room room
+           JOIN rooms corner ON corner.parent_id=room.id
+           LEFT JOIN corner_facts fact ON fact.corner_id=corner.id
+           LEFT JOIN LATERAL(
+             SELECT * FROM messages WHERE room_id=corner.id
+               AND presentation IN ('message','system')
+             ORDER BY created_at DESC,id DESC LIMIT 1
+           ) latest ON true
+           LEFT JOIN identities latest_identity ON latest_identity.id=latest.author_id
+           LEFT JOIN LATERAL(
+             SELECT identity.id identity_id,identity.name,identity.handle,identity.avatar
+             FROM identities identity
+             LEFT JOIN memberships member ON member.room_id=corner.id
+               AND member.identity_id=identity.id AND member.removed_at IS NULL
+             WHERE identity.id=fact.owner_agent_id AND identity.kind='agent' LIMIT 1
+           ) agent ON true
+           LEFT JOIN LATERAL(
+             SELECT status,created_at FROM agent_turns WHERE room_id=corner.id
+             ORDER BY created_at DESC LIMIT 1
+           ) turn ON true
+           WHERE corner.archived_at IS NULL AND EXISTS(
+             SELECT 1 FROM memberships viewer WHERE viewer.room_id=corner.id
+               AND viewer.identity_id=$2 AND viewer.removed_at IS NULL
+           )
+         )
+         SELECT
+           (to_jsonb(authorized_room) - 'github_installation_id')
+             || jsonb_build_object(
+               'github_installation_id',authorized_room.github_installation_id::text
+             ) room,
+           COALESCE((SELECT jsonb_agg(to_jsonb(member_rows)) FROM member_rows),'[]'::jsonb) members,
+           COALESCE((SELECT jsonb_agg(to_jsonb(turn_rows)) FROM turn_rows),'[]'::jsonb) turns,
+           COALESCE((SELECT jsonb_agg(to_jsonb(transcript_rows)
+             ORDER BY transcript_rows.created_at DESC,transcript_rows.id DESC)
+             FROM transcript_rows),'[]'::jsonb) transcript,
+           COALESCE((SELECT jsonb_agg(to_jsonb(activity_rows)
+             ORDER BY activity_rows.created_at DESC,activity_rows.id DESC)
+             FROM activity_rows),'[]'::jsonb) activity,
+           COALESCE((SELECT jsonb_agg((to_jsonb(corner_rows) - 'github_installation_id')
+             || jsonb_build_object(
+               'github_installation_id',corner_rows.github_installation_id::text
+             )) FROM corner_rows),'[]'::jsonb) corners
+         FROM authorized_room`,
+        [roomId, viewerId],
+      )
+    ).rows[0];
+    if (!row) return undefined;
+    reviveDates(row.room, ['archived_at', 'repository_updated_at', 'created_at', 'updated_at']);
+    for (const member of row.members) reviveDates(member, ['presence_updated_at']);
+    for (const turn of row.turns) reviveDates(turn, ['created_at']);
+    for (const message of [...row.transcript, ...row.activity])
+      reviveDates(message, ['created_at']);
+    for (const corner of row.corners) {
+      reviveDates(corner, [
+        'archived_at',
+        'repository_updated_at',
+        'created_at',
+        'updated_at',
+        'latest_created_at',
+        'latest_turn_created_at',
+      ]);
+      if (corner.github_installation_id !== null)
+        corner.github_installation_id = String(corner.github_installation_id);
+    }
+    return row;
   }
 
   private async cornerRows(
@@ -4331,13 +4527,7 @@ export class PhoneService {
     if (!row.rowCount) throw new Error('workspace manager required');
   }
   private async members(workspaceId: string, roomId: string | null): Promise<RoomViewMember[]> {
-    const rows = await this.database.query<
-      IdentityRow & {
-        role: 'owner' | 'admin' | 'member';
-        presence_body: { status: 'online' | 'offline'; observedAt: number } | null;
-        presence_updated_at: Date | null;
-      }
-    >(
+    const rows = await this.database.query<MemberRow>(
       `SELECT i.id,
          i.kind,i.name,i.handle,i.avatar,
          i.face_id,
@@ -4348,7 +4538,10 @@ export class PhoneService {
          AND m.removed_at IS NULL AND i.hidden_from_roster=false`,
       roomId ? [workspaceId, roomId] : [workspaceId],
     );
-    return rows.rows.map((row) => ({
+    return this.projectMembers(rows.rows, roomId);
+  }
+  private projectMembers(rows: readonly MemberRow[], roomId: string | null): RoomViewMember[] {
+    return rows.map((row) => ({
       identity: identity(row, this.publicOrigin),
       role: row.role,
       ...(row.presence_body && row.presence_updated_at
@@ -4428,7 +4621,10 @@ export class PhoneService {
        ORDER BY turn.agent_id,turn.created_at DESC,turn.request_id DESC`,
       [roomId],
     );
-    return turns.rows
+    return this.projectAgentTurns(turns.rows);
+  }
+  private projectAgentTurns(turns: readonly AgentTurnRow[]): RoomView['latestAgentTurns'] {
+    return turns
       .map((turn) => ({
         requestId: turn.request_id,
         agentPubkey: turn.agent_id,
@@ -4501,13 +4697,28 @@ export class PhoneService {
       cornerActivityRowsPromise,
       latestAgentTurns,
     ]);
-    const transcript = transcriptRows.rows.map((row) => projectedMessage(row, this.publicOrigin));
+    return this.projectRoomMessages(
+      transcriptRows.rows,
+      liveRows.rows,
+      cornerActivityRows.rows,
+      resolvedAgentTurns,
+      isCorner,
+    );
+  }
+  private projectRoomMessages(
+    transcriptRows: readonly MessageRow[],
+    liveRows: readonly MessageRow[],
+    cornerActivityRows: readonly MessageRow[],
+    resolvedAgentTurns: RoomView['latestAgentTurns'],
+    isCorner: boolean,
+  ): { messages: RoomViewMessage[]; toolRows: RoomViewMessage[] } {
+    const transcript = transcriptRows.map((row) => projectedMessage(row, this.publicOrigin));
     const workingByAgent = new Map(
       resolvedAgentTurns
         .filter((turn) => turn.status === 'working')
         .map((turn) => [turn.agentPubkey, turn.createdAt]),
     );
-    const liveActivity = liveRows.rows
+    const liveActivity = liveRows
       .map((row) => projectedMessage(row, this.publicOrigin))
       .filter(
         (message) =>
@@ -4519,7 +4730,7 @@ export class PhoneService {
     // own interim prose share the additive activity payload, under its own cap
     // so neither crowds out the message window. The wire field keeps its
     // historical `toolRows` name for compatibility with shipped phones.
-    const cornerActivityMessages = cornerActivityRows.rows.map((row) =>
+    const cornerActivityMessages = cornerActivityRows.map((row) =>
       projectedMessage(row, this.publicOrigin),
     );
     const byId = new Map(

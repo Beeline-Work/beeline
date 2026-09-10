@@ -1048,17 +1048,19 @@ export class DaemonService {
     await this.access(cornerId, agentId);
     const row = (
       await this.database.query<{
+        objective: string;
         feature_branch: string | null;
         request_id: string | null;
         close_requested: boolean;
         lifecycle: import('@beeline/api-contract/phone').CornerLifecycleView;
       }>(
-        `SELECT feature_branch,request_id,close_requested,lifecycle FROM corner_facts WHERE corner_id=$1`,
+        `SELECT objective,feature_branch,request_id,close_requested,lifecycle FROM corner_facts WHERE corner_id=$1`,
         [cornerId],
       )
     ).rows[0];
     return {
       cornerId,
+      objective: row?.objective ?? '',
       ...(row?.feature_branch ? { featureBranch: row.feature_branch } : {}),
       ...(row?.request_id ? { requestId: row.request_id } : {}),
       closeRequested: row?.close_requested ?? false,

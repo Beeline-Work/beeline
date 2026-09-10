@@ -310,6 +310,8 @@ export type CornerListResult = {
 };
 export type CornerRestoreResult = {
   readonly cornerId: string;
+  /** Immutable objective from the authoritative corner fact. */
+  readonly objective: string;
   readonly featureBranch?: string;
   readonly requestId?: string;
   readonly closeRequested: boolean;

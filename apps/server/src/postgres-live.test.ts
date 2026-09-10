@@ -147,6 +147,44 @@ describe('Postgres live fanout', () => {
     expect(clientsB[0]!.payloads[0]).not.toContain('hello');
   });
 
+  it('publishes room-scoped message and turn notifications without a database lookup', async () => {
+    const live = new LiveHub();
+    const client = new PgliteListenClient(database);
+    const query = vi.fn(database.query.bind(database));
+    const listener = new PostgresLiveListener(
+      { query, transaction: database.transaction.bind(database) },
+      live,
+      () => client,
+      1,
+    );
+    listeners.push(listener);
+    const received: LiveEvent[] = [];
+    live.subscribe(ROOM, (event) => received.push(event));
+    void listener.run();
+    await eventually(() => client.listenerCount('notification') === 1);
+    received.length = 0;
+    query.mockClear();
+
+    for (const table of ['messages', 'agent_turns']) {
+      client.emit('notification', {
+        channel: POSTGRES_LIVE_CHANNEL,
+        payload: JSON.stringify({
+          table,
+          operation: table === 'messages' ? 'INSERT' : 'UPDATE',
+          roomId: ROOM,
+          agentId: AUTHOR,
+        }),
+      });
+    }
+
+    await eventually(() => received.length === 2);
+    expect(query).not.toHaveBeenCalled();
+    expect(received.map((event) => event.type === 'invalidate' && event.reason)).toEqual([
+      'postgres:messages',
+      'postgres:agent_turns',
+    ]);
+  });
+
   it('fans an agent presence fact to every joined Room on another server', async () => {
     const otherRoom = '33333333-3333-4333-8333-333333333333';
     const agent = 'b'.repeat(64);

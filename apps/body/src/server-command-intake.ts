@@ -78,6 +78,7 @@ export async function runServerCommandIntake(options: {
   context: CommandExecutionContext;
   signal?: AbortSignal;
   pollMs?: number;
+  presence?: { releaseVersion?: string; sourceSha?: string; available?: boolean };
   run: (command: AgentCommand) => Promise<void>;
   stop: (requestId: string) => void;
   onWake?: (wake: (() => void) | undefined) => void;
@@ -105,7 +106,7 @@ export async function runServerCommandIntake(options: {
     (connected) => {
       if (!connected) wake?.(true);
     },
-    undefined,
+    options.presence,
     notify,
   );
   try {

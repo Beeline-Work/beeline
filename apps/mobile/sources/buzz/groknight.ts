@@ -157,6 +157,7 @@ export const beelineThemes = {
     turnGap: 4,
     continuationGap: 0,
     turnPaddingVertical: 18,
+    continuationPaddingVertical: 6,
     railWidth: 2,
     railInset: 12,
     // Editorial direction additions.

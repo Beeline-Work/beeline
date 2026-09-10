@@ -113,7 +113,6 @@ export function useRoomSurfaceSession({
   const outboxRef = useRef<RoomOutbox | null>(null);
   const schedulerRef = useRef<SurfaceRefreshScheduler<RoomView> | null>(null);
   const reconciledViewRef = useRef<RoomView | null>(null);
-  const confirmationTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const agentPresencesRef = useRef(heartbeatPresences);
   const reconnectGraceRef = useRef(presenceReconnectGrace);
   agentPresencesRef.current = heartbeatPresences;
@@ -143,16 +142,12 @@ export function useRoomSurfaceSession({
 
   const scheduleConfirmation = useCallback(
     (eventId: string) => {
-      const previous = confirmationTimersRef.current.get(eventId);
-      if (previous) clearTimeout(previous);
-      const timer = setTimeout(() => {
-        const record = outboxRef.current?.get(eventId);
-        if (!record || record.status !== 'pending') return;
-        void markFailed(eventId);
-      }, OUTBOX_CONFIRMATION_TIMEOUT_MS);
-      confirmationTimersRef.current.set(eventId, timer);
+      schedulerRef.current?.signalUntil(
+        (view) => view.messages.some((message) => message.id === eventId),
+        OUTBOX_CONFIRMATION_TIMEOUT_MS,
+      );
     },
-    [markFailed],
+    [],
   );
 
   const retryOutbox = useCallback(
@@ -182,9 +177,6 @@ export function useRoomSurfaceSession({
 
   const dismissOutbox = useCallback(
     (eventId: string) => {
-      const timer = confirmationTimersRef.current.get(eventId);
-      if (timer) clearTimeout(timer);
-      confirmationTimersRef.current.delete(eventId);
       void outboxRef.current?.remove(eventId);
       setFailedIds((current) => {
         const next = new Set(current);
@@ -316,12 +308,6 @@ export function useRoomSurfaceSession({
         const next = new Set([...current].filter((id) => !authoritativeIds.has(id)));
         return next.size === current.size ? current : next;
       });
-      for (const id of authoritativeIds) {
-        const timer = confirmationTimersRef.current.get(id);
-        if (timer) clearTimeout(timer);
-        confirmationTimersRef.current.delete(id);
-      }
-
       if (fresh) {
         void mobileSurfaceCache.write(
           surfaceAddress(relayUrl, identityPubkey, `/room/${channelId}`),
@@ -347,7 +333,15 @@ export function useRoomSurfaceSession({
           if ('monolithLive' in event) {
             const live = (event as MonolithSurfaceEvent).monolithLive;
             if (live.type === 'invalidate') {
-              scheduler?.signal();
+              // A claim has already committed its WORKING receipt before the
+              // server emits this invalidation. Give that receipt an immediate
+              // authoritative read instead of placing it behind ordinary
+              // surface coalescing, where a short turn can complete first.
+              if (live.reason === 'turn' || live.reason === 'postgres:agent_turns') {
+                scheduler?.force();
+              } else {
+                scheduler?.signal();
+              }
             } else if (live.roomId !== channelId) {
               // Parent Room watches include corners for lifecycle invalidation,
               // but an ephemeral lane belongs exclusively to its emitting Room.
@@ -574,8 +568,6 @@ export function useRoomSurfaceSession({
       scheduler?.dispose();
       appStateSubscription?.remove();
       unsubscribe?.();
-      for (const timer of confirmationTimersRef.current.values()) clearTimeout(timer);
-      confirmationTimersRef.current.clear();
       outboxRef.current = null;
       schedulerRef.current = null;
       reconciledViewRef.current = null;

@@ -15,6 +15,7 @@ const controls = vi.hoisted(() => ({
     error(error: unknown): void;
     disposed: boolean;
     expectations: Array<(view: RoomView) => boolean>;
+    forceCalls: number;
   }>,
   subscriptions: [] as Array<{
     filters: unknown;
@@ -24,6 +25,8 @@ const controls = vi.hoisted(() => ({
   replayEvents: [] as NostrEvent[],
   transportCount: 0,
   identityPromise: null as Promise<{ publicKey: string; secretKey: Uint8Array } | null> | null,
+  outboxFail: vi.fn(async (_eventId: string) => undefined),
+  outboxGet: vi.fn((_eventId: string) => ({ status: 'pending' as const })),
 }));
 
 vi.mock('react-native', () => ({
@@ -85,10 +88,10 @@ vi.mock('@/buzz/surface-storage', () => ({
     restore: vi.fn(async () => undefined),
     list: vi.fn(() => []),
     reconcile: vi.fn(async () => undefined),
-    fail: vi.fn(async () => undefined),
+    fail: controls.outboxFail,
     retry: vi.fn(async () => undefined),
     remove: vi.fn(async () => undefined),
-    get: vi.fn(),
+    get: controls.outboxGet,
   })),
 }));
 
@@ -134,6 +137,7 @@ vi.mock('@beeline/buzz-client', async () => {
           error: (error) => this.options.onError(error),
           disposed: false,
           expectations: [],
+          forceCalls: 0,
         };
         controls.schedulers.push(this.control);
       }
@@ -144,7 +148,9 @@ vi.mock('@beeline/buzz-client', async () => {
       signalUntil(expectation: (view: RoomView) => boolean) {
         this.control.expectations.push(expectation);
       }
-      force() {}
+      force() {
+        this.control.forceCalls += 1;
+      }
       dispose() {
         this.control.disposed = true;
       }
@@ -265,10 +271,95 @@ beforeEach(() => {
   controls.transportCount = 0;
   controls.replayEvents.length = 0;
   controls.identityPromise = null;
+  controls.outboxFail.mockClear();
+  controls.outboxGet.mockClear();
   vi.clearAllMocks();
 });
 
 describe('useRoomSurfaceSession', () => {
+  it('keeps an acknowledged send pending while authoritative projection catches up', async () => {
+    vi.useFakeTimers();
+    controls.cached = roomView('room-a');
+    let current!: UseRoomSurfaceSessionResult;
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, {
+          channelId: 'room-a',
+          capture: (result: UseRoomSurfaceSessionResult) => (current = result),
+        }),
+      );
+    });
+    await flushEffects();
+
+    current.outbox.scheduleConfirmation('accepted-message');
+    await act(async () => vi.advanceTimersByTimeAsync(15_000));
+    expect(controls.outboxFail).not.toHaveBeenCalled();
+    expect(current.outbox.failedIds).not.toContain('accepted-message');
+    const expectation = controls.schedulers[0]!.expectations[0]!;
+    expect(expectation(roomView('room-a'))).toBe(false);
+    expect(
+      expectation({
+        ...roomView('room-a'),
+        messages: [
+          {
+            id: 'accepted-message',
+            text: 'hello',
+            createdAt: 1,
+            author: { pubkey: 'viewer', kind: 'human', name: 'Captain' },
+            presentation: 'message',
+          },
+        ],
+      }),
+    ).toBe(true);
+    await act(async () => renderer.unmount());
+    vi.useRealTimers();
+  });
+
+  it.each(['turn', 'postgres:agent_turns'])(
+    'forces an immediate indexed read for a persisted %s receipt',
+    async (reason) => {
+      controls.cached = roomView('room-a');
+      let current!: UseRoomSurfaceSessionResult;
+      let renderer!: ReactTestRenderer;
+      await act(async () => {
+        renderer = create(
+          React.createElement(Harness, {
+            channelId: 'room-a',
+            capture: (result: UseRoomSurfaceSessionResult) => (current = result),
+          }),
+        );
+      });
+      await flushEffects();
+
+      await act(async () => {
+        controls.subscriptions[0]!.emit({
+          monolithLive: { type: 'invalidate', roomId: 'room-a', reason },
+        });
+      });
+      expect(controls.schedulers[0]!.forceCalls).toBe(1);
+
+      const claimedAt = Math.floor(Date.now() / 1_000);
+      await act(async () => {
+        controls.schedulers[0]!.apply({
+          ...roomView('room-a'),
+          latestAgentTurns: [
+            {
+              requestId: 'request-a',
+              agentPubkey: 'agent-a',
+              status: 'working',
+              createdAt: claimedAt,
+            },
+          ],
+        });
+      });
+      expect(current.roomSurface?.latestAgentTurns).toEqual([
+        expect.objectContaining({ requestId: 'request-a', status: 'working' }),
+      ]);
+      await act(async () => renderer.unmount());
+    },
+  );
+
   it('lights the gold bar from a fresh indexed child-turn receipt', async () => {
     let renderer!: ReactTestRenderer;
     await act(async () => {

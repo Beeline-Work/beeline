@@ -1511,13 +1511,16 @@ export class DaemonService {
              WHERE agent.id=$3 AND failure.room_id=$2 AND failure.card_type='turn-failed'
                AND failure.card->>'requestId'=$6 AND failure.card->>'agentId'=$3
                AND failure.card->>'state'='failed'
+             RETURNING failure.id
+           ), recovery_barrier AS (
+             SELECT count(*) recovered_count FROM recovered
            ), inserted AS (
              INSERT INTO messages(
                id,room_id,author_id,text,presentation,request_id,legacy_event,mention_ids,
                reply_to_message_id,root_message_id,agent_hop_count,attachments
              ) SELECT $1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10,
                  writable.agent_depth,attachment_payload.attachments
-               FROM writable,settled,attachment_payload
+               FROM writable,settled,attachment_payload,recovery_barrier
              RETURNING *
            ), completed AS (
              UPDATE agent_commands command SET

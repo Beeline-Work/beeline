@@ -234,6 +234,7 @@ import { EmptyLedgerState, type EmptyLedgerVariant } from '@/components/buzz/Emp
 import { HeaderIdentitySlot, HeaderMetaCaps, HeaderMetaRow } from '@/components/buzz/HeaderLadder';
 import { ChannelHeaderTitle } from '@/components/buzz/ChannelHeaderTitle';
 import type { ChannelHeaderKind } from '@/buzz/channel-header-title';
+import { roomMemberManagementState } from '@/buzz/room-member-management';
 import {
   LEDGER_MARGINALIA_WIDTH,
   LedgerRoomUpdate,
@@ -1143,6 +1144,12 @@ export default function BuzzChat() {
   const activeAgentTurn = activeAgentTurns[0];
   const messages = unprojectedMessages;
   const isDirectMessage = Boolean(directMessage);
+  const memberManagement = roomMemberManagementState({
+    isDirectMessage,
+    participantsHydrated,
+    rosterRequested: rosterVisible,
+    pickerRequested: participantPickerVisible,
+  });
   // An @system notification DM (release or Workspace lifecycle): the server
   // never lets anyone but @system post into it (viewer.permissions.send is
   // false there and only there for a direct message, since a DM can never be
@@ -3332,11 +3339,15 @@ export default function BuzzChat() {
               accessibilityLabel={
                 isCorner
                   ? `${CORNER_LABEL} opened by ${cornerAgentDisplay?.name ?? 'Agent'}. View ${formatRoomParticipantTotal(roomParticipantTotal)}`
-                  : `View ${formatRoomParticipantTotal(roomParticipantTotal)}`
+                  : isDirectMessage
+                    ? displayRoomName
+                    : `View ${formatRoomParticipantTotal(roomParticipantTotal)}`
               }
               accessibilityRole="button"
-              disabled={!participantsHydrated}
-              onPress={() => setRosterVisible(true)}
+              disabled={!memberManagement.canOpenRoster}
+              onPress={() => {
+                if (memberManagement.canOpenRoster) setRosterVisible(true);
+              }}
               style={styles.headerCenter}
               testID="room-participant-roster-trigger"
             >
@@ -3384,9 +3395,11 @@ export default function BuzzChat() {
                 </HeaderMetaRow>
               ) : (
                 <HeaderMetaCaps testID="room-header-meta">
-                  {participantsHydrated
-                    ? `${formatRoomParticipantTotal(roomParticipantTotal)}  ›`
-                    : 'LOADING MEMBERS'}
+                  {isDirectMessage
+                    ? 'DIRECT MESSAGE'
+                    : participantsHydrated
+                      ? `${formatRoomParticipantTotal(roomParticipantTotal)}  ›`
+                      : 'LOADING MEMBERS'}
                 </HeaderMetaCaps>
               )}
             </TouchableOpacity>
@@ -4022,7 +4035,7 @@ export default function BuzzChat() {
         rosterSections={visibleRosterSections}
         total={roomParticipantTotal}
         userPubkey={userPubkey}
-        visible={rosterVisible}
+        visible={memberManagement.rosterVisible}
       />
 
       <HullActionSheetModal
@@ -4220,7 +4233,7 @@ export default function BuzzChat() {
         onClose={() => setParticipantPickerVisible(false)}
         onConnectAgent={handleConnectAgent}
         onInvitePerson={() => void handleInvitePerson()}
-        visible={participantPickerVisible}
+        visible={memberManagement.pickerVisible}
       />
     </BuzzCommunityShell>
   );

@@ -630,8 +630,14 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       HUMAN,
     );
     // PGlite does not run the production Postgres LISTEN/NOTIFY listener.
-    // Deliver the committed invalidation that listener would rebroadcast.
+    // Deliver both committed invalidations that listener would rebroadcast.
     live.publish({ type: 'invalidate', roomId: ROOM, reason: 'test-commit' });
+    live.publish({
+      type: 'invalidate',
+      roomId: ROOM,
+      reason: 'postgres:agent_commands',
+      targetAgentId: result.runtime.agent.publicKey,
+    });
     await vi.waitFor(
       async () => {
         const room = await phone.readRoom(ROOM, HUMAN);
@@ -700,8 +706,14 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       )?.presence?.status;
     const attempt = async () => {
       await phone.execute('sendRoomMessage', { roomId: ROOM, text: '@bee Hello' }, HUMAN);
-      // PGlite has no separate LISTEN connection; deliver the committed notification.
+      // PGlite has no separate LISTEN connection; deliver the two committed notifications.
       live.publish({ type: 'invalidate', roomId: ROOM, reason: 'postgres:messages' });
+      live.publish({
+        type: 'invalidate',
+        roomId: ROOM,
+        reason: 'postgres:agent_commands',
+        targetAgentId: AGENT,
+      });
     };
     try {
       await vi.waitFor(async () => {
@@ -1629,6 +1641,12 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         }),
       );
       live.publish({ type: 'invalidate', roomId: ROOM, reason: 'test-commit' });
+      live.publish({
+        type: 'invalidate',
+        roomId: ROOM,
+        reason: 'postgres:agent_commands',
+        targetAgentId: AGENT,
+      });
       await vi.waitFor(() => expect(sessionPrompt).toHaveBeenCalled(), { timeout: 5_000 });
       const wirePrompt = sessionPrompt.mock.calls[0]![1];
       expect(wirePrompt).toContain('Post exactly: hello');
@@ -1792,6 +1810,12 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         OUTSIDER,
       );
       live.publish({ type: 'invalidate', roomId: ROOM, reason: 'test-commit' });
+      live.publish({
+        type: 'invalidate',
+        roomId: ROOM,
+        reason: 'postgres:agent_commands',
+        targetAgentId: AGENT,
+      });
       await vi.waitFor(() => expect(sessionPrompt).toHaveBeenCalled(), { timeout: 5_000 });
       expect(sessionPrompt.mock.calls[0]![1]).toContain('yo again');
       await vi.waitFor(async () => expect(await turns()).toBeGreaterThan(0), { timeout: 5_000 });

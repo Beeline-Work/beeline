@@ -181,6 +181,18 @@ export class DaemonService {
       'postRoomEvent',
       'requestAgentGrant',
     ]);
+    if (
+      !this.commandTransaction &&
+      scopedRoom &&
+      name === 'postRoomMessage' &&
+      (!Array.isArray(candidate.mentionIds) || candidate.mentionIds.length === 0) &&
+      typeof candidate.replyToMessageId !== 'string'
+    )
+      return (await this.postRoomMessage(
+        input as Input<'postRoomMessage'>,
+        authenticatedAgentId,
+        true,
+      )) as Output<Name>;
     if (!this.commandTransaction && scopedRoom && turnWrites.has(name)) {
       const writeStartedAt = Date.now();
       const events: LiveEvent[] = [];
@@ -297,7 +309,7 @@ export class DaemonService {
             id: randomBytes(16).toString('hex'),
             databaseAt: event.committedRow.row.created_at.getTime(),
             emittedAt,
-            startedAt: writeStartedAt,
+            startedAt: event.committedRow.startedAt ?? writeStartedAt,
           },
         });
       }
@@ -1219,8 +1231,12 @@ export class DaemonService {
     ).rows[0]!;
     return { ...(row.corner_id ? { openedCornerId: row.corner_id } : {}), completed: row.complete };
   }
-  private async postRoomMessage(input: Input<'postRoomMessage'>, agentId: string) {
-    if (!this.commandTransaction) await this.access(input.roomId, agentId);
+  private async postRoomMessage(
+    input: Input<'postRoomMessage'>,
+    agentId: string,
+    atomicCommandWrite = false,
+  ) {
+    if (!this.commandTransaction && !atomicCommandWrite) await this.access(input.roomId, agentId);
     const messageId = id();
     const mentions = [...new Set(input.mentionIds ?? [])].filter((value) => value !== agentId);
     let agentMentionIds = new Set<string>();
@@ -1240,15 +1256,16 @@ export class DaemonService {
         ).rows[0]
       : undefined;
     if (input.replyToMessageId && !parent) throw new Error('reply parent is not in this room');
-    const command =
-      this.authorizedCommand ??
-      (await authorizeCommandOutput(
-        this.database,
-        input.roomId,
-        agentId,
-        input.requestId,
-        input.generationId,
-      ));
+    const command = atomicCommandWrite
+      ? undefined
+      : (this.authorizedCommand ??
+        (await authorizeCommandOutput(
+          this.database,
+          input.roomId,
+          agentId,
+          input.requestId,
+          input.generationId,
+        )));
     let humanIds = new Set<string>();
     if (mentions.length) {
       const members = await this.database.query<{ identity_id: string; kind: 'human' | 'agent' }>(
@@ -1300,9 +1317,10 @@ export class DaemonService {
     // Turns are unthreaded by design. Count from the inbox item that woke this
     // agent, not the optional presentation reply parent; a human item starts a
     // fresh chain at zero.
-    const hopCount = command.agent_depth;
+    const hopCount = command?.agent_depth ?? 0;
     const persistedMentions = deliveredMentions;
-    const saved = await this.database.transaction(async (database) => {
+    let messageWriteStartedAt: number | undefined;
+    const saveCompatibilityReply = async (database: SqlDatabase) => {
       // Attachments queued this turn by beeline-agent attach_file ride on this
       // final reply; they are drained exactly once, here.
       const pending = (
@@ -1382,7 +1400,7 @@ export class DaemonService {
              SELECT inserted.*,author.kind author_kind,author.name author_name,
                author.handle author_handle,author.avatar author_avatar,author.face_id author_face
              FROM inserted JOIN identities author ON author.id=inserted.author_id`,
-            [...values, command.id],
+            [...values, command!.id],
           )
         ).rows[0]!;
       }
@@ -1401,19 +1419,165 @@ export class DaemonService {
           values,
         )
       ).rows[0]!;
-    });
+    };
+    let saved: CommittedMessageLiveRow;
+    if (atomicCommandWrite) {
+      type AtomicReplyResult = {
+        outcome:
+          | 'committed'
+          | 'authority_rejected'
+          | 'turn_cancelled'
+          | 'already_completed'
+          | 'result_conflict'
+          | 'write_failed';
+        row: (Omit<CommittedMessageLiveRow, 'created_at'> & { created_at: string }) | null;
+      };
+      // One autocommit statement owns the lock, generation/lease/cancellation
+      // decision, attachment drain, terminal turn/failure state, reply insert,
+      // command completion, and live-output cleanup. PostgreSQL commits the
+      // statement before query() resolves, so the live row remains authoritative.
+      messageWriteStartedAt = Date.now();
+      const result = (
+        await this.database.query<AtomicReplyResult>(
+          `WITH candidate AS MATERIALIZED (
+             SELECT command.*,
+               EXISTS(SELECT 1 FROM agent_turns turn
+                 WHERE turn.room_id=command.room_id AND turn.agent_id=command.agent_id
+                   AND turn.request_id=command.turn_request_id AND turn.status='cancelled') turn_cancelled
+             FROM agent_commands command
+             WHERE command.room_id=$2 AND command.agent_id=$3 AND command.turn_request_id=$6
+               AND command.action IN ('input','resume') AND command.generation_id=$11
+             ORDER BY command.created_at DESC,command.id DESC LIMIT 1 FOR UPDATE OF command
+           ), writable AS (
+             SELECT * FROM candidate
+             WHERE state='claimed' AND lease_expires_at>clock_timestamp() AND NOT turn_cancelled
+           ), pending AS (
+             DELETE FROM agent_pending_attachments attachment USING writable
+             WHERE attachment.room_id=$2 AND attachment.agent_id=$3
+               AND attachment.request_id=$6 AND attachment.generation_id=$11
+             RETURNING attachment.url,attachment.name,attachment.mime_type,attachment.size,
+               attachment.created_at,attachment.id
+           ), attachment_payload AS (
+             SELECT COALESCE(jsonb_agg(jsonb_build_object(
+               'url',url,'name',name,'mimeType',mime_type,'size',size::integer
+             ) ORDER BY created_at,id),'[]'::jsonb) attachments FROM pending
+           ), settled AS (
+             INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id)
+             SELECT room_id,turn_request_id,agent_id,'complete',$11 FROM writable
+             ON CONFLICT(room_id,request_id,agent_id) DO UPDATE SET
+               status='complete',created_at=now()
+             WHERE agent_turns.status<>'cancelled'
+             RETURNING 1
+           ), recovered AS (
+             UPDATE messages failure SET
+               text=COALESCE('@'||NULLIF(agent.handle,''),failure.system_event->'subject'->>'name')||' answered after a retry',
+               system_event=jsonb_set(
+                 jsonb_set(failure.system_event,'{subject,name}',
+                   to_jsonb(COALESCE('@'||NULLIF(agent.handle,''),failure.system_event->'subject'->>'name'))),
+                 '{verb}',to_jsonb('answered after a retry'::text)
+               ),
+               card=jsonb_set(failure.card,'{state}',to_jsonb('recovered'::text))
+             FROM settled,identities agent
+             WHERE agent.id=$3 AND failure.room_id=$2 AND failure.card_type='turn-failed'
+               AND failure.card->>'requestId'=$6 AND failure.card->>'agentId'=$3
+               AND failure.card->>'state'='failed'
+           ), inserted AS (
+             INSERT INTO messages(
+               id,room_id,author_id,text,presentation,request_id,legacy_event,mention_ids,
+               reply_to_message_id,root_message_id,agent_hop_count,attachments
+             ) SELECT $1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10,
+                 writable.agent_depth,attachment_payload.attachments
+               FROM writable,settled,attachment_payload
+             RETURNING *
+           ), completed AS (
+             UPDATE agent_commands command SET
+               state='complete',completed_at=now(),result_message_id=inserted.id
+             FROM inserted WHERE command.id=(SELECT id FROM writable)
+             RETURNING command.id
+           ), cleared AS (
+             DELETE FROM live_outputs output USING completed
+             WHERE output.room_id=$2 AND output.agent_id=$3 AND output.turn_id=$6
+               AND output.kind IN ('draft','thought')
+           ), inserted_public AS (
+             SELECT inserted.*,author.kind author_kind,author.name author_name,
+               author.handle author_handle,author.avatar author_avatar,author.face_id author_face
+             FROM inserted JOIN identities author ON author.id=inserted.author_id
+             CROSS JOIN completed
+           ), existing_public AS (
+             SELECT message.*,author.kind author_kind,author.name author_name,
+               author.handle author_handle,author.avatar author_avatar,author.face_id author_face
+             FROM candidate JOIN messages message ON message.id=candidate.result_message_id
+             JOIN identities author ON author.id=message.author_id
+             WHERE candidate.state='complete' AND message.text=$4
+           ), committed AS (
+             SELECT * FROM inserted_public UNION ALL SELECT * FROM existing_public
+           )
+           SELECT 'committed'::text outcome,to_jsonb(committed) row FROM committed
+           UNION ALL
+           SELECT CASE
+             WHEN NOT EXISTS(SELECT 1 FROM candidate) THEN 'authority_rejected'
+             WHEN (SELECT turn_cancelled FROM candidate) THEN 'turn_cancelled'
+             WHEN (SELECT state FROM candidate)='complete'
+               AND (SELECT result_message_id FROM candidate) IS NULL THEN 'already_completed'
+             WHEN (SELECT state FROM candidate)='complete' THEN 'result_conflict'
+             ELSE 'write_failed'
+           END outcome,NULL::jsonb row
+           WHERE NOT EXISTS(SELECT 1 FROM committed)
+           LIMIT 1`,
+          [
+            messageId,
+            input.roomId,
+            agentId,
+            input.text,
+            input.presentation === 'card' ? 'card' : 'message',
+            input.requestId ?? null,
+            JSON.stringify(input.tags ?? {}),
+            JSON.stringify(persistedMentions),
+            input.replyToMessageId ?? null,
+            rootMessageId,
+            input.generationId,
+          ],
+        )
+      ).rows[0];
+      if (!result || result.outcome === 'write_failed')
+        throw new Error('command output authority rejected');
+      if (result.outcome === 'authority_rejected')
+        throw new Error('command output authority rejected');
+      if (result.outcome === 'turn_cancelled') throw new Error('command turn cancelled');
+      if (result.outcome === 'already_completed') throw new Error('command already completed');
+      if (result.outcome === 'result_conflict') throw new Error('command result conflict');
+      if (!result.row) throw new Error('command output authority rejected');
+      saved = { ...result.row, created_at: new Date(result.row.created_at) };
+    } else {
+      saved = await this.database.transaction(saveCompatibilityReply);
+    }
+    const emittedAt = Date.now();
     this.live.publish({
       type: 'invalidate',
       roomId: input.roomId,
       reason: 'message',
       agentId,
       messageId,
-      committedRow: { type: 'message', row: saved },
+      committedRow: {
+        type: 'message',
+        row: saved,
+        ...(messageWriteStartedAt ? { startedAt: messageWriteStartedAt } : {}),
+      },
+      ...(messageWriteStartedAt
+        ? {
+            trace: {
+              id: randomBytes(16).toString('hex'),
+              databaseAt: saved.created_at.getTime(),
+              emittedAt,
+              startedAt: messageWriteStartedAt,
+            },
+          }
+        : {}),
     });
     return {
-      id: messageId,
+      id: saved.id,
       createdAt: seconds(saved.created_at),
-      mentionIds: persistedMentions,
+      mentionIds: saved.mention_ids,
     };
   }
   /** An agent-claimed attachment queued by attach_file; stamped onto the agent's

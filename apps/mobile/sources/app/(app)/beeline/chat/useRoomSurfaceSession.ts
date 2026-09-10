@@ -75,16 +75,18 @@ function logLiveTrace(phase: string, traces: readonly ReceivedLiveTrace[], at = 
 
 function logLivePaintAck(event: {
   id: string;
-  startedAt: number;
   databaseAt: number;
-  serverReceivedAt: number;
+  startedAt?: number;
+  serverReceivedAt?: number;
+  databaseClockAt?: number;
+  upperBoundMs: number;
 }): void {
   if (remainingLiveTraceLogs <= 0) return;
   remainingLiveTraceLogs -= 1;
   const row = {
     phase: 'server-paint-ack',
     at: Date.now(),
-    event: { ...event, upperBoundMs: event.serverReceivedAt - event.startedAt },
+    event,
   };
   if (__DEV__) console.info(`[live-trace] ${JSON.stringify(row)}`);
   liveTraceRows = [...liveTraceRows.slice(-127), row];

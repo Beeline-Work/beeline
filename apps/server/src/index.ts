@@ -151,6 +151,7 @@ async function main() {
     connectionPresence,
     review,
     releaseNotify,
+    livePaintDiagnostics: process.env.LIVE_PAINT_DIAGNOSTICS === 'true',
     mediaMaximumBytes: Number(process.env.MEDIA_MAX_BYTES ?? String(DEFAULT_MEDIA_MAXIMUM_BYTES)),
     authHandler: mountedAuth.handle,
     github: {

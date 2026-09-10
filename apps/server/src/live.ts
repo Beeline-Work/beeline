@@ -45,6 +45,9 @@ export type LiveTrace = {
   /** Server-process clock captured before the committing write begins. It is
    * paired with the server's paint-ack receipt as a conservative upper bound. */
   startedAt?: number;
+  /** Ask this phone to acknowledge paint so the server can take one
+   * diagnostics-only DB-clock sample for a cross-process notification. */
+  paintAck?: 'database-clock';
 };
 
 export type LiveEvent =
@@ -62,8 +65,8 @@ export type LiveEvent =
       trace?: LiveTrace;
       /** Same-process only. PostgreSQL notifications deliberately remain ID-only. */
       committedRow?:
-        | { type: 'message'; row: CommittedMessageLiveRow }
-        | { type: 'turn'; row: CommittedTurnLiveRow };
+        | { type: 'message'; row: CommittedMessageLiveRow; startedAt?: number }
+        | { type: 'turn'; row: CommittedTurnLiveRow; startedAt?: number };
     }
   | { type: 'draft' | 'thought'; roomId: string; agentId: string; turnId: string; text: string }
   | { type: 'retract'; roomId: string; agentId: string; turnId: string; kind: 'draft' | 'thought' }

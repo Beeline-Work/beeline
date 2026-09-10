@@ -61,6 +61,9 @@ export interface ServerOptions {
   review?: ReviewAccess;
   /** Absent when no release-notify secret is configured; the endpoint then refuses like any wrong secret. */
   releaseNotify?: ReleaseNotifier;
+  /** Diagnostics only: one DB-clock read after an authorized cross-process
+   * delta is painted. Ordinary live delivery performs no extra query. */
+  livePaintDiagnostics?: boolean;
   authHandler?: (request: IncomingMessage, response: ServerResponse) => void;
 }
 
@@ -222,13 +225,19 @@ export function createBeelineServer(options: ServerOptions): Server {
       const releases = new Map<string, () => void>();
       const pendingPaintTraces = new Map<
         string,
-        { readonly startedAt: number; readonly databaseAt: number }
+        {
+          readonly startedAt?: number;
+          readonly databaseAt: number;
+          readonly databaseClock: boolean;
+        }
       >();
       const rememberPaintTrace = (trace: LiveTrace | undefined) => {
-        if (typeof trace?.startedAt !== 'number') return;
+        if (!trace || (typeof trace.startedAt !== 'number' && trace.paintAck !== 'database-clock'))
+          return;
         pendingPaintTraces.set(trace.id, {
           startedAt: trace.startedAt,
           databaseAt: trace.databaseAt,
+          databaseClock: trace.paintAck === 'database-clock',
         });
         if (pendingPaintTraces.size > 64) {
           const oldest = pendingPaintTraces.keys().next().value;
@@ -249,13 +258,35 @@ export function createBeelineServer(options: ServerOptions): Server {
             const trace = pendingPaintTraces.get(item.id);
             if (!trace || client.readyState !== client.OPEN) return;
             pendingPaintTraces.delete(item.id);
+            if (trace.databaseClock) {
+              const clock = (
+                await options.database.query<{ clock_at: Date }>(
+                  `SELECT clock_timestamp() clock_at`,
+                )
+              ).rows[0]?.clock_at;
+              if (!clock || client.readyState !== client.OPEN) return;
+              const databaseClockAt = clock.getTime();
+              client.send(
+                JSON.stringify({
+                  type: 'trace-painted',
+                  id: item.id,
+                  databaseAt: trace.databaseAt,
+                  databaseClockAt,
+                  upperBoundMs: databaseClockAt - trace.databaseAt,
+                }),
+              );
+              return;
+            }
+            if (typeof trace.startedAt !== 'number') return;
+            const serverReceivedAt = Date.now();
             client.send(
               JSON.stringify({
                 type: 'trace-painted',
                 id: item.id,
                 startedAt: trace.startedAt,
                 databaseAt: trace.databaseAt,
-                serverReceivedAt: Date.now(),
+                serverReceivedAt,
+                upperBoundMs: serverReceivedAt - trace.startedAt,
               }),
             );
             return;
@@ -429,8 +460,13 @@ export function createBeelineServer(options: ServerOptions): Server {
                   return;
                 }
                 const trace = event.trace;
+                const wireTrace =
+                  trace && options.livePaintDiagnostics && typeof trace.startedAt !== 'number'
+                    ? ({ ...trace, paintAck: 'database-clock' as const } satisfies LiveTrace)
+                    : trace;
                 const fallback = {
                   ...wireEvent,
+                  ...(wireTrace ? { trace: wireTrace } : {}),
                   reason: `delta-fallback:${event.reason}`,
                 };
                 // Begin every bounded row read immediately. Only delivery is
@@ -471,10 +507,12 @@ export function createBeelineServer(options: ServerOptions): Server {
                     const result = await pendingDelta;
                     if (client.readyState !== client.OPEN) return;
                     if ('error' in result) throw result.error;
-                    rememberPaintTrace(trace);
+                    rememberPaintTrace(wireTrace);
                     client.send(
                       JSON.stringify(
-                        result.delta ? { ...result.delta, ...(trace ? { trace } : {}) } : fallback,
+                        result.delta
+                          ? { ...result.delta, ...(wireTrace ? { trace: wireTrace } : {}) }
+                          : fallback,
                       ),
                     );
                   })
@@ -484,7 +522,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                       error instanceof Error ? error.message : String(error),
                     );
                     if (client.readyState === client.OPEN) {
-                      rememberPaintTrace(trace);
+                      rememberPaintTrace(wireTrace);
                       client.send(JSON.stringify(fallback));
                     }
                   });

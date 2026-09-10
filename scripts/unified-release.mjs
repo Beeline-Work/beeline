@@ -140,7 +140,27 @@ export function initializeRelease({ version, sourceSha, previous, selectedCompon
   }
   if (previous?.sourceSha === sourceSha) {
     if (previous.version !== version) fail(`sha ${sourceSha} is already assigned to ${previous.version}, not ${version}`);
-    return structuredClone(previous);
+    const supplemental = previous.state === 'delivered' ? RELEASE_COMPONENTS.filter((component) => {
+      const entry = previous.components?.[component];
+      return selected.has(component) && entry?.state === 'carried' && entry.sourceSha !== sourceSha;
+    }) : [];
+    if (supplemental.length === 0) return structuredClone(previous);
+    const state = structuredClone(previous);
+    for (const component of supplemental) {
+      state.components[component] = {
+        state: 'pending', selected: true, version, sourceSha,
+        artifactRef: artifactReference(component, { version, sourceSha }),
+      };
+    }
+    state.state = 'planned';
+    state.startedAt = startedAt;
+    state.updatedAt = startedAt;
+    state.plan = {
+      selected: supplemental,
+      carried: RELEASE_COMPONENTS.filter((component) => !supplemental.includes(component)),
+    };
+    state.delivery = { state: 'pending' };
+    return state;
   }
   if (selected.size !== RELEASE_COMPONENTS.length && !previous) fail('a selective release requires a previous successful release index');
   const components = {};

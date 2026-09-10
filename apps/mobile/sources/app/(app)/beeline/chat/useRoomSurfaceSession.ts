@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import { AppState } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import {
   KIND_AGENT_DRAFT,
@@ -35,23 +36,30 @@ const OUTBOX_CONFIRMATION_TIMEOUT_MS = 15_000;
 
 type ReceivedLiveTrace = LiveWireTrace & { reason: string; receivedAt: number };
 let remainingLiveTraceLogs = 128;
+let liveTraceRows: unknown[] = [];
+let liveTraceWrite = Promise.resolve();
+export const LIVE_TRACE_STORAGE_KEY = '@beeline/live-event-trace-v1';
 
 function logLiveTrace(phase: string, traces: readonly ReceivedLiveTrace[], at = Date.now()): void {
   if (traces.length === 0 || remainingLiveTraceLogs <= 0) return;
   remainingLiveTraceLogs -= 1;
-  console.info(
-    `[live-trace] ${JSON.stringify({
-      phase,
-      at,
-      events: traces.map(({ id, reason, databaseAt, emittedAt, receivedAt }) => ({
-        id,
-        reason,
-        databaseAt,
-        emittedAt,
-        receivedAt,
-      })),
-    })}`,
-  );
+  const row = {
+    phase,
+    at,
+    events: traces.map(({ id, reason, databaseAt, emittedAt, receivedAt }) => ({
+      id,
+      reason,
+      databaseAt,
+      emittedAt,
+      receivedAt,
+    })),
+  };
+  console.info(`[live-trace] ${JSON.stringify(row)}`);
+  liveTraceRows = [...liveTraceRows.slice(-127), row];
+  const snapshot = JSON.stringify(liveTraceRows);
+  liveTraceWrite = liveTraceWrite
+    .then(() => AsyncStorage.setItem(LIVE_TRACE_STORAGE_KEY, snapshot))
+    .catch(() => undefined);
 }
 
 function eventTag(event: { tags: string[][] }, name: string): string | undefined {

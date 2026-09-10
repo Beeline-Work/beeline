@@ -281,6 +281,53 @@ describe('daemon live command push', () => {
   });
 });
 
+describe('daemon operation presence evidence', () => {
+  const servers: ReturnType<typeof createBeelineServer>[] = [];
+  afterEach(async () => {
+    await Promise.all(
+      servers
+        .splice(0)
+        .map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
+    );
+  });
+
+  it('does not hold a command read behind a blocked durable evidence refresh', async () => {
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => (release = resolve));
+    const evidence = vi.fn(() => blocked);
+    const execute = vi.fn().mockResolvedValue({ commandProtocol: 1, commands: [] });
+    const server = createBeelineServer({
+      database: { query: vi.fn(), transaction: vi.fn() },
+      auth: {
+        authenticatePhone: vi.fn().mockResolvedValue(null),
+        authenticateDaemon: vi.fn().mockResolvedValue('agent'),
+      } as unknown as TokenAuth,
+      phone: {} as PhoneService,
+      daemon: { execute } as unknown as DaemonService,
+      live: {} as LiveHub,
+      connectionPresence: { evidence } as never,
+      mediaMaximumBytes: 1,
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+
+    const response = await fetch(`http://127.0.0.1:${port}/v1/daemon/operations/getAgentCommands`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer bdt_${'t'.repeat(43)}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ roomId: 'room' }),
+      signal: AbortSignal.timeout(1_000),
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ commandProtocol: 1, commands: [] });
+    expect(evidence).toHaveBeenCalledWith('room', 'agent');
+    release();
+  });
+});
+
 describe('phone committed-row live delivery', () => {
   const servers: ReturnType<typeof createBeelineServer>[] = [];
   const sockets: WebSocket[] = [];

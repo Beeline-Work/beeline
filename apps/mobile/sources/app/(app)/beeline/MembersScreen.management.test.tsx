@@ -434,13 +434,13 @@ describe('Members workspace management', () => {
     expect(texts.flat().join(' ')).not.toMatch(/⌬|ONLINE|OFFLINE|MEMBER\b/);
   });
 
-  it('gives people a role line and agents a model/owner line', async () => {
+  it('keeps human display names and gives agents their handle with a model/owner line', async () => {
     const renderer = await render();
     const agentRow = renderer.root.findByProps({ testID: `agent-${AGENT}-identity` });
     const agentTexts = agentRow
       .findAllByType('Text' as any)
       .map((node: any) => node.props.children);
-    expect(agentTexts).toEqual(['Clara', '@clara · Sonnet · by @viewer', '›']);
+    expect(agentTexts).toEqual(['@clara', '@clara · Sonnet · by @viewer', '›']);
     expect(agentRow.findByType('IdentityMark' as any).props.alive).toBeFalsy();
     const personRow = renderer.root.findByProps({ testID: `member-${MEMBER}-identity` });
     expect(personRow.findAllByType('Text' as any).map((node: any) => node.props.children)).toEqual([
@@ -473,7 +473,7 @@ describe('Members workspace management', () => {
     const renderer = await render();
     const agentRow = renderer.root.findByProps({ testID: `agent-${AGENT}-identity` });
     expect(agentRow.findAllByType('Text' as any).map((node: any) => node.props.children)).toEqual([
-      'Clara',
+      '@clara',
       '@clara · Sonnet',
       '›',
     ]);

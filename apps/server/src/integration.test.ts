@@ -5361,7 +5361,7 @@ describe('monolith integration', () => {
     expect(response.headers.get('location')).toBe('beeline://buzz/github-installation?installed=1');
     expect(completeInstallation).toHaveBeenCalledWith('server-state', 77);
   });
-  it('stores a model-written human mention as a real mention and pushes it', async () => {
+  it('resolves a model-written human tag at the server boundary, highlights it, and pushes it', async () => {
     const send = vi.fn(async () => undefined);
     const loop = new PushDeliveryLoop(database, { send });
     await loop.runOnce(); // establish the durable floor before the new events
@@ -5383,7 +5383,7 @@ describe('monolith integration', () => {
       requestId: 'human-mention-turn',
       triggerMessageId: '5'.repeat(64),
       text: '@Owner Repository root files: README.md',
-      mentionIds: [HUMAN, unknown],
+      mentionIds: [unknown],
     });
     expect(reply.status).toBe(200);
     const stored = await database.query<{ mention_ids: string[] }>(
@@ -5393,6 +5393,10 @@ describe('monolith integration', () => {
     expect(stored.rows).toHaveLength(1);
     // The human member is a real mention; an unknown name stays plain text.
     expect(stored.rows[0]!.mention_ids).toEqual([HUMAN]);
+    const projected = (await new PhoneService(database, origin).readRoom(ROOM, HUMAN))!;
+    expect(
+      projected.messages.find((message) => message.text.startsWith('@Owner'))?.mentionPubkeys,
+    ).toEqual([HUMAN]);
     expect(await loop.runOnce()).toBe(1);
     expect(send).toHaveBeenCalledWith(
       'owner-device-token-12345678901234567890',
@@ -5400,6 +5404,42 @@ describe('monolith integration', () => {
         roomId: ROOM,
         text: 'Bee: @Owner Repository root files: README.md',
       }),
+    );
+  });
+
+  it('routes an exact model-written agent tag resolved at the shared write boundary', async () => {
+    const peer = 'f'.repeat(64);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Peer','fuckface')`,
+      [peer],
+    );
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [peer, HUMAN]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
+      [WORKSPACE, peer, ROOM],
+    );
+    const peerExchange = await auth.createDaemonExchange(peer);
+    const peerToken = (await auth.exchangeDaemonToken(peerExchange.exchangeToken))!.daemonToken;
+    const reply = await daemonOperation('postRoomMessage', {
+      roomId: ROOM,
+      text: '@fuckface investigate the failed build.',
+    });
+    expect(reply.status).toBe(200);
+    const body = (await reply.json()) as { id: string; mentionIds: string[] };
+    expect(body.mentionIds).toEqual([peer]);
+    const stored = await database.query<{ mention_ids: string[] }>(
+      `SELECT mention_ids FROM messages WHERE id=$1`,
+      [body.id],
+    );
+    expect(stored.rows[0]?.mention_ids).toEqual([peer]);
+    const inbox = (await (
+      await daemonOperation('getRoomInbox', { roomId: ROOM }, peerToken)
+    ).json()) as {
+      items: Array<{ id: string; mentionIds: string[] }>;
+    };
+    expect(inbox.items).toContainEqual(
+      expect.objectContaining({ id: body.id, mentionIds: [peer] }),
     );
   });
 

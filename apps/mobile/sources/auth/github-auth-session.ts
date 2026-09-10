@@ -26,6 +26,7 @@ const PENDING_SIGN_IN_RECOVERY_KEY = 'buzzy.github-sign-in-recovery.v1';
 const PENDING_INSTALLATION_RETURN_KEY = 'buzzy.github-installation-return.v1';
 const PENDING_INSTALLATION_COMPLETED_KEY = 'buzzy.github-installation-completed.v1';
 const STATE_RE = /^[A-Za-z0-9_-]{43}$/;
+const GITHUB_RECOVERY_WAIT_MS = 120_000;
 
 async function githubAuthFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   if (!isDesktopShell()) return fetch(input, init);
@@ -241,32 +242,44 @@ async function fetchGitHubRecoveryChallenge(
 ): Promise<OidcBindChallenge | null> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 3_000);
+  let response: Response;
   try {
-    const response = await fetchImpl(`${authBaseUrl(runtime)}/auth/github/completion`, {
+    response = await fetchImpl(`${authBaseUrl(runtime)}/auth/github/completion`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ recoveryToken }),
       signal: controller.signal,
     });
-    if (response.status === 202) return null;
-    if (response.status === 410) {
-      throw new OidcBindError('ticket_expired', 'The GitHub completion expired', 410);
-    }
-    if (!response.ok) {
-      throw new OidcBindError(
-        'offline',
-        'Could not check GitHub sign-in completion',
-        response.status,
-      );
-    }
-    const challenge = (await response.json()) as OidcBindChallenge;
-    return parseOidcBindCallback(challengeCallbackUrl(challenge, state), state);
   } catch (error) {
-    if (error instanceof OidcBindError) throw error;
     throw new OidcBindError('offline', 'Could not check GitHub sign-in completion');
   } finally {
     clearTimeout(timeout);
   }
+  if (response.status === 202) return null;
+  if (response.status === 410) {
+    throw new OidcBindError('ticket_expired', 'The GitHub completion expired', 410);
+  }
+  if (!response.ok) {
+    if (response.status < 500) {
+      throw new OidcBindError(
+        'invalid_response',
+        'GitHub sign-in completion was rejected',
+        response.status,
+      );
+    }
+    throw new OidcBindError(
+      'offline',
+      'Could not check GitHub sign-in completion',
+      response.status,
+    );
+  }
+  let challenge: OidcBindChallenge;
+  try {
+    challenge = (await response.json()) as OidcBindChallenge;
+  } catch {
+    throw new OidcBindError('invalid_response', 'GitHub completion response was invalid');
+  }
+  return parseOidcBindCallback(challengeCallbackUrl(challenge, state), state);
 }
 
 async function cancelGitHubRecovery(
@@ -349,7 +362,7 @@ export async function runResilientGitHubSignInSession({
   openAuthSession,
   subscribeToUrls,
   fetchImpl = githubAuthFetch,
-  recoveryWaitMs = 5_000,
+  recoveryWaitMs = GITHUB_RECOVERY_WAIT_MS,
   recoveryPollMs = 200,
   callbackGraceMs,
 }: ResilientGitHubSessionInput): Promise<OidcBindChallenge> {
@@ -390,8 +403,8 @@ export async function runResilientGitHubSignInSession({
   }
 
   const deadline = Date.now() + recoveryWaitMs;
-  try {
-    do {
+  do {
+    try {
       const recovered = await fetchGitHubRecoveryChallenge(
         recoveryToken,
         state,
@@ -405,15 +418,20 @@ export async function runResilientGitHubSignInSession({
         );
         return recovered;
       }
-      if (Date.now() >= deadline) break;
-      await new Promise((resolve) => setTimeout(resolve, recoveryPollMs));
-    } while (Date.now() <= deadline);
-  } catch (error) {
-    await cancelGitHubRecovery(recoveryToken, runtime, fetchImpl).catch(() => undefined);
-    throw error;
-  }
+    } catch (error) {
+      // A slow or interrupted completion read says nothing about the proof. Keep
+      // the app-held recovery secret and retry while the server ticket can live.
+      if (!(error instanceof OidcBindError) || !error.retryable) {
+        await cancelGitHubRecovery(recoveryToken, runtime, fetchImpl).catch(() => undefined);
+        throw error;
+      }
+    }
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(recoveryPollMs, remainingMs)));
+  } while (Date.now() <= deadline);
   await cancelGitHubRecovery(recoveryToken, runtime, fetchImpl).catch(() => undefined);
-  throw new OidcBindError('browser_canceled', 'Account authorization was canceled');
+  throw new OidcBindError('ticket_expired', 'The GitHub completion expired', 410);
 }
 
 /** Reload the signed bind challenge if Expo Router remounted during callback handling. */

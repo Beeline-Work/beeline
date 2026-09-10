@@ -26,6 +26,7 @@ const {
   loadPendingGitHubBindChallenge,
   persistGitHubInstallationReturnPath,
   persistGitHubSignInState,
+  recoverPendingGitHubBindChallenge,
   resumeInitialGitHubInstallation,
   resumeInitialGitHubSignIn,
   runResilientGitHubSignInSession,
@@ -177,6 +178,156 @@ describe('GitHub auth session redirects', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
+  it('retries after the first completion read crosses the three-second request limit', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchImpl = vi
+        .fn()
+        .mockImplementationOnce(
+          (_input: RequestInfo | URL, init?: RequestInit) =>
+            new Promise<Response>((_resolve, reject) => {
+              init?.signal?.addEventListener('abort', () => reject(new Error('aborted')), {
+                once: true,
+              });
+            }),
+        )
+        .mockResolvedValueOnce(recoveryResponse());
+
+      const pending = runResilientGitHubSignInSession({
+        state: STATE,
+        recoveryToken: RECOVERY_TOKEN,
+        runtime: {
+          relayUrl: 'https://usebeeline.app',
+          pushGatewayUrl: 'https://usebeeline.app/push',
+          monolithUrl: 'https://server.usebeeline.app',
+          monolithEnabled: true,
+        },
+        openAuthSession: async () => ({
+          type: 'success',
+          url: `beeline://beeline/github-callback?state=${STATE}&completed=1`,
+        }),
+        subscribeToUrls: () => ({ remove: () => undefined }),
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        recoveryWaitMs: 120_000,
+        recoveryPollMs: 200,
+      });
+
+      await vi.advanceTimersByTimeAsync(3_000);
+      await vi.advanceTimersByTimeAsync(200);
+
+      await expect(pending).resolves.toMatchObject({ ticket: RECOVERY_TOKEN });
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+      expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
+        'https://server.usebeeline.app/auth/github/completion',
+        'https://server.usebeeline.app/auth/github/completion',
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('retries a 503 completion read and accepts the next completed response', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockResolvedValueOnce(recoveryResponse());
+
+    await expect(
+      runResilientGitHubSignInSession({
+        state: STATE,
+        recoveryToken: RECOVERY_TOKEN,
+        openAuthSession: async () => ({
+          type: 'success',
+          url: `beeline://beeline/github-callback?state=${STATE}&completed=1`,
+        }),
+        subscribeToUrls: () => ({ remove: () => undefined }),
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        recoveryPollMs: 0,
+      }),
+    ).resolves.toMatchObject({ ticket: RECOVERY_TOKEN });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
+      'https://server.usebeeline.app/auth/github/completion',
+      'https://server.usebeeline.app/auth/github/completion',
+    ]);
+  });
+
+  it('keeps polling through repeated pending responses', async () => {
+    const pendingResponse = () =>
+      new Response(JSON.stringify({ status: 'pending' }), {
+        status: 202,
+        headers: { 'content-type': 'application/json' },
+      });
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(pendingResponse())
+      .mockResolvedValueOnce(pendingResponse())
+      .mockResolvedValueOnce(recoveryResponse());
+
+    await expect(
+      runResilientGitHubSignInSession({
+        state: STATE,
+        recoveryToken: RECOVERY_TOKEN,
+        openAuthSession: async () => ({
+          type: 'success',
+          url: `beeline://beeline/github-callback?state=${STATE}&completed=1`,
+        }),
+        subscribeToUrls: () => ({ remove: () => undefined }),
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        recoveryPollMs: 0,
+      }),
+    ).resolves.toMatchObject({ ticket: RECOVERY_TOKEN });
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it('treats a 410 completion response as terminal expiry and cancels recovery', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(null, { status: 410 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    await expect(
+      runResilientGitHubSignInSession({
+        state: STATE,
+        recoveryToken: RECOVERY_TOKEN,
+        openAuthSession: async () => ({
+          type: 'success',
+          url: `beeline://beeline/github-callback?state=${STATE}&completed=1`,
+        }),
+        subscribeToUrls: () => ({ remove: () => undefined }),
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      }),
+    ).rejects.toMatchObject({ code: 'ticket_expired' });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(fetchImpl.mock.calls[1]?.[0]).toBe(
+      'https://server.usebeeline.app/auth/github/completion/cancel',
+    );
+  });
+
+  it('cancels instead of retrying a terminal completion protocol failure', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(null, { status: 400 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    await expect(
+      runResilientGitHubSignInSession({
+        state: STATE,
+        recoveryToken: RECOVERY_TOKEN,
+        openAuthSession: async () => ({
+          type: 'success',
+          url: `beeline://beeline/github-callback?state=${STATE}&completed=1`,
+        }),
+        subscribeToUrls: () => ({ remove: () => undefined }),
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      }),
+    ).rejects.toMatchObject({ code: 'invalid_response', retryable: false });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(fetchImpl.mock.calls[1]?.[0]).toBe(
+      'https://server.usebeeline.app/auth/github/completion/cancel',
+    );
+  });
+
   it('cancels a timed-out recovery so retry cannot inherit a reusable credential', async () => {
     const fetchImpl = vi
       .fn()
@@ -204,7 +355,7 @@ describe('GitHub auth session redirects', () => {
         callbackGraceMs: 0,
         recoveryWaitMs: 0,
       }),
-    ).rejects.toMatchObject({ code: 'browser_canceled' });
+    ).rejects.toMatchObject({ code: 'ticket_expired' });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
     expect(fetchImpl.mock.calls[1]?.[0]).toBe(
       'https://server.usebeeline.app/auth/github/completion/cancel',
@@ -228,6 +379,40 @@ describe('GitHub auth session redirects', () => {
 
     const confirmedCancel = vi.fn(async () => new Response(null, { status: 204 }));
     await cancelPendingGitHubSignIn(runtime, confirmedCancel as unknown as typeof fetch);
+    expect(storage.has('buzzy.github-sign-in-recovery.v1')).toBe(false);
+    expect(storage.has('buzzy.github-sign-in-state.v1')).toBe(false);
+  });
+
+  it('preserves recovery state across a retryable resume read failure', async () => {
+    await persistGitHubSignInState(STATE, 'signin', RECOVERY_TOKEN);
+    const interruptedRead = vi.fn(async () => {
+      throw new TypeError('network interrupted');
+    });
+
+    await expect(
+      recoverPendingGitHubBindChallenge(undefined, interruptedRead as unknown as typeof fetch),
+    ).rejects.toMatchObject({ code: 'offline', retryable: true });
+    expect(storage.get('buzzy.github-sign-in-recovery.v1')).toBe(RECOVERY_TOKEN);
+    expect(storage.get('buzzy.github-sign-in-state.v1')).toBe(STATE);
+
+    await expect(
+      recoverPendingGitHubBindChallenge(
+        undefined,
+        vi.fn(async () => recoveryResponse()) as unknown as typeof fetch,
+      ),
+    ).resolves.toMatchObject({ ticket: RECOVERY_TOKEN });
+  });
+
+  it('cancels explicitly and clears recovery only after the server confirms it', async () => {
+    await persistGitHubSignInState(STATE, 'signin', RECOVERY_TOKEN);
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }));
+
+    await cancelPendingGitHubSignIn(undefined, fetchImpl as unknown as typeof fetch);
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl.mock.calls[0]?.[0]).toBe(
+      'https://server.usebeeline.app/auth/github/completion/cancel',
+    );
     expect(storage.has('buzzy.github-sign-in-recovery.v1')).toBe(false);
     expect(storage.has('buzzy.github-sign-in-state.v1')).toBe(false);
   });

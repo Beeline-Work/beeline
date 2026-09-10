@@ -45,6 +45,15 @@ export type LiveTrace = {
   /** Server-process clock captured before the committing write begins. It is
    * paired with the server's paint-ack receipt as a conservative upper bound. */
   startedAt?: number;
+  /** Diagnostics-only server clock captured immediately after the committing
+   * database query resolves (including implicit autocommit and driver await). */
+  databaseAwaitResolvedAt?: number;
+  /** Diagnostics-only server clock captured after the returned row has been
+   * converted into the authoritative live projection input. */
+  projectionCompletedAt?: number;
+  /** Diagnostics-only infrastructure identity; never a user, Room, message,
+   * request, command, or content identifier. */
+  serverInstance?: string;
   /** Ask this phone to acknowledge paint so the server can take one
    * diagnostics-only DB-clock sample for a cross-process notification. */
   paintAck?: 'database-clock';

@@ -146,6 +146,8 @@ export class DaemonService {
     private readonly mediaMaximumBytes: number = DEFAULT_MEDIA_MAXIMUM_BYTES,
     private readonly commandTransaction = false,
     private readonly authorizedCommand?: CommandRow,
+    private readonly livePaintDiagnostics = false,
+    private readonly liveDiagnosticServerInstance?: string,
   ) {}
 
   /** When each corner last woke, so `CORNER_WAKE_MIN_INTERVAL_MS` can be held. */
@@ -263,6 +265,8 @@ export class DaemonService {
           this.mediaMaximumBytes,
           true,
           command,
+          this.livePaintDiagnostics,
+          this.liveDiagnosticServerInstance,
         );
         const result = await scoped.execute(name, input, authenticatedAgentId);
         if (name === 'requestAgentGrant') {
@@ -1421,6 +1425,8 @@ export class DaemonService {
       ).rows[0]!;
     };
     let saved: CommittedMessageLiveRow;
+    let databaseAwaitResolvedAt: number | undefined;
+    let projectionCompletedAt: number | undefined;
     if (atomicCommandWrite) {
       type AtomicReplyResult = {
         outcome:
@@ -1437,9 +1443,8 @@ export class DaemonService {
       // command completion, and live-output cleanup. PostgreSQL commits the
       // statement before query() resolves, so the live row remains authoritative.
       messageWriteStartedAt = Date.now();
-      const result = (
-        await this.database.query<AtomicReplyResult>(
-          `WITH candidate AS MATERIALIZED (
+      const query = await this.database.query<AtomicReplyResult>(
+        `WITH candidate AS MATERIALIZED (
              SELECT command.*,
                EXISTS(SELECT 1 FROM agent_turns turn
                  WHERE turn.room_id=command.room_id AND turn.agent_id=command.agent_id
@@ -1524,21 +1529,22 @@ export class DaemonService {
            END outcome,NULL::jsonb row
            WHERE NOT EXISTS(SELECT 1 FROM committed)
            LIMIT 1`,
-          [
-            messageId,
-            input.roomId,
-            agentId,
-            input.text,
-            input.presentation === 'card' ? 'card' : 'message',
-            input.requestId ?? null,
-            JSON.stringify(input.tags ?? {}),
-            JSON.stringify(persistedMentions),
-            input.replyToMessageId ?? null,
-            rootMessageId,
-            input.generationId,
-          ],
-        )
-      ).rows[0];
+        [
+          messageId,
+          input.roomId,
+          agentId,
+          input.text,
+          input.presentation === 'card' ? 'card' : 'message',
+          input.requestId ?? null,
+          JSON.stringify(input.tags ?? {}),
+          JSON.stringify(persistedMentions),
+          input.replyToMessageId ?? null,
+          rootMessageId,
+          input.generationId,
+        ],
+      );
+      if (this.livePaintDiagnostics) databaseAwaitResolvedAt = Date.now();
+      const result = query.rows[0];
       if (!result || result.outcome === 'write_failed')
         throw new Error('command output authority rejected');
       if (result.outcome === 'authority_rejected')
@@ -1548,6 +1554,7 @@ export class DaemonService {
       if (result.outcome === 'result_conflict') throw new Error('command result conflict');
       if (!result.row) throw new Error('command output authority rejected');
       saved = { ...result.row, created_at: new Date(result.row.created_at) };
+      if (this.livePaintDiagnostics) projectionCompletedAt = Date.now();
     } else {
       saved = await this.database.transaction(saveCompatibilityReply);
     }
@@ -1570,6 +1577,11 @@ export class DaemonService {
               databaseAt: saved.created_at.getTime(),
               emittedAt,
               startedAt: messageWriteStartedAt,
+              ...(databaseAwaitResolvedAt ? { databaseAwaitResolvedAt } : {}),
+              ...(projectionCompletedAt ? { projectionCompletedAt } : {}),
+              ...(this.livePaintDiagnostics && this.liveDiagnosticServerInstance
+                ? { serverInstance: this.liveDiagnosticServerInstance }
+                : {}),
             },
           }
         : {}),

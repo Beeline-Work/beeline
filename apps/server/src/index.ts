@@ -126,6 +126,10 @@ async function main() {
     live,
     github ? (roomId) => github!.roomToken(roomId) : undefined,
     Number(process.env.MEDIA_MAX_BYTES ?? String(DEFAULT_MEDIA_MAXIMUM_BYTES)),
+    false,
+    undefined,
+    process.env.LIVE_PAINT_DIAGNOSTICS === 'true',
+    process.env.FLY_MACHINE_ID,
   );
   // The Google Play review link. Absent secret = the endpoint refuses like any
   // wrong secret; rotating the value revokes every future use of the link.

@@ -1374,7 +1374,13 @@ export class DaemonService {
         )
       ).rows[0]!;
     });
-    this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'message', agentId });
+    this.live.publish({
+      type: 'invalidate',
+      roomId: input.roomId,
+      reason: 'message',
+      agentId,
+      messageId,
+    });
     return {
       id: messageId,
       createdAt: seconds(saved.created_at),
@@ -1506,7 +1512,13 @@ export class DaemonService {
         await settleTurnFailureLine(database, input.roomId, input.requestId, agentId);
       }
     });
-    this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'turn', agentId });
+    this.live.publish({
+      type: 'invalidate',
+      roomId: input.roomId,
+      reason: 'turn',
+      agentId,
+      requestId: input.requestId,
+    });
     return this.writeResult();
   }
   /**
@@ -1618,7 +1630,13 @@ export class DaemonService {
       return { ...row, inserted: Boolean(inserted.rowCount) };
     });
     if (activity.inserted)
-      this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'activity', agentId });
+      this.live.publish({
+        type: 'invalidate',
+        roomId: input.roomId,
+        reason: 'activity',
+        agentId,
+        messageId: activity.id,
+      });
     return { id: activity.id, createdAt: seconds(activity.created_at) };
   }
   private async permissionRequest(input: Input<'postPermissionRequest'>, agentId: string) {

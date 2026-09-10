@@ -5,12 +5,18 @@ import type {
   ChatListWorkspace,
   CommunityMember,
   RoomView,
+  RoomViewAgentTurn,
   RoomViewIdentity,
   RoomViewMember,
   RoomViewMessage,
   WorkspaceView,
 } from '@beeline/buzz-client';
-import type { SystemEvent, SystemSubject } from '@beeline/api-contract/phone';
+import {
+  ROOM_VIEW_AGENT_LIMIT,
+  ROOM_VIEW_MESSAGE_LIMIT,
+  type SystemEvent,
+  type SystemSubject,
+} from '@beeline/api-contract/phone';
 import type { AgentActivityItem } from '@/sync/transport';
 import type { DisplayableAgent } from '@/buzz/agent-display';
 import type { CornerStatus, CornerSummary } from '@/buzz/corners';
@@ -98,6 +104,50 @@ export function reconcileRoomView(previous: RoomView | null, next: RoomView): Ro
     corners,
     ...(briefing ? { briefing } : {}),
   }) as RoomView;
+}
+
+/** Merge one server-projected committed message into the bounded Room window. */
+export function reconcileRoomMessageDelta(view: RoomView, message: RoomViewMessage): RoomView {
+  const messages = [...view.messages.filter((candidate) => candidate.id !== message.id), message]
+    .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id))
+    .slice(-ROOM_VIEW_MESSAGE_LIMIT);
+  return reconcileRoomView(view, { ...view, messages });
+}
+
+/** Merge the server's latest persisted turn for one agent. Terminal state also
+ * removes that agent's transient activity, exactly as the next full read does. */
+export function reconcileRoomTurnDelta(view: RoomView, turn: RoomViewAgentTurn): RoomView {
+  const previous = view.latestAgentTurns.find(
+    (candidate) => candidate.agentPubkey === turn.agentPubkey,
+  );
+  const sameGeneration =
+    previous?.requestId === turn.requestId && previous.generationId === turn.generationId;
+  if (
+    previous &&
+    (previous.createdAt > turn.createdAt ||
+      (sameGeneration &&
+        previous.createdAt === turn.createdAt &&
+        previous.status !== 'working' &&
+        turn.status === 'working'))
+  )
+    return view;
+  const latestAgentTurns = [
+    ...view.latestAgentTurns.filter((candidate) => candidate.agentPubkey !== turn.agentPubkey),
+    turn,
+  ]
+    .sort(
+      (left, right) =>
+        right.createdAt - left.createdAt || left.agentPubkey.localeCompare(right.agentPubkey),
+    )
+    .slice(0, ROOM_VIEW_AGENT_LIMIT);
+  const messages = view.messages.filter(
+    (message) =>
+      message.presentation !== 'activity' ||
+      message.durableFact ||
+      message.author.pubkey !== turn.agentPubkey ||
+      (turn.status === 'working' && message.createdAt >= turn.createdAt),
+  );
+  return reconcileRoomView(view, { ...view, messages, latestAgentTurns });
 }
 
 export type RoomMessageProjector = {

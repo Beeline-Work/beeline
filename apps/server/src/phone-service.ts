@@ -19,6 +19,7 @@ import type {
   ChatListView,
   CornerListView,
   InviteView,
+  RoomLiveDelta,
   RoomHistoryView,
   RoomView,
   RoomViewIdentity,
@@ -447,6 +448,77 @@ export class PhoneService {
 
   canReadRoom(roomId: string, identityId: string): Promise<boolean> {
     return this.hasRoomAccess(roomId, identityId);
+  }
+
+  /** One committed row for the live paint path, behind the same two membership
+   * bounds as a full Room read. A missing/hidden row falls back to the ordinary
+   * reconciliation read at the caller. */
+  async readLiveDelta(
+    roomId: string,
+    viewerId: string,
+    target:
+      { type: 'message'; messageId: string } | { type: 'turn'; agentId: string; requestId: string },
+  ): Promise<RoomLiveDelta | null> {
+    if (target.type === 'turn') {
+      const row = (
+        await this.database.query<AgentTurnRow>(
+          `SELECT turn.request_id,turn.agent_id,turn.status,turn.created_at,turn.generation_id,
+             requester.id requested_by
+           FROM rooms room
+           JOIN memberships member ON member.room_id=room.id AND member.identity_id=$2
+             AND member.removed_at IS NULL
+           JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
+             AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
+             AND workspace_member.removed_at IS NULL
+           JOIN agent_turns turn ON turn.room_id=room.id AND turn.agent_id=$3
+           LEFT JOIN messages trigger ON trigger.id=turn.request_id
+             AND (trigger.room_id=turn.room_id OR trigger.room_id=room.parent_id)
+           LEFT JOIN identities requester ON requester.id=trigger.author_id
+             AND requester.kind='human'
+           WHERE room.id=$1
+           ORDER BY turn.created_at DESC,turn.request_id DESC LIMIT 1`,
+          [roomId, viewerId, target.agentId],
+        )
+      ).rows[0];
+      if (!row || row.request_id !== target.requestId) return null;
+      return { type: 'turn-delta', roomId, turn: this.projectAgentTurns([row])[0]! };
+    }
+    const row = (
+      await this.database.query<MessageRow>(
+        `SELECT message.*,author.kind author_kind,author.name author_name,
+           author.handle author_handle,author.avatar author_avatar,author.face_id author_face
+         FROM rooms room
+         JOIN memberships member ON member.room_id=room.id AND member.identity_id=$3
+           AND member.removed_at IS NULL
+         JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
+           AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$3
+           AND workspace_member.removed_at IS NULL
+         JOIN messages message ON message.room_id=room.id AND message.id=$2
+         JOIN identities author ON author.id=message.author_id
+         WHERE room.id=$1 AND message.card_type IS DISTINCT FROM 'grant-decision'
+           AND (
+             message.presentation<>'activity' OR message.durable_fact IS NOT NULL OR EXISTS(
+               SELECT 1 FROM agent_turns turn
+               WHERE turn.room_id=room.id AND turn.agent_id=message.author_id
+                 AND turn.status='working'
+                 AND date_trunc('second',message.created_at)>=date_trunc('second',turn.created_at)
+                 AND NOT EXISTS(
+                   SELECT 1 FROM agent_turns newer
+                   WHERE newer.room_id=turn.room_id AND newer.agent_id=turn.agent_id
+                     AND (newer.created_at,newer.request_id)>(turn.created_at,turn.request_id)
+                 )
+             )
+           )`,
+        [roomId, target.messageId, viewerId],
+      )
+    ).rows[0];
+    if (!row) return null;
+    const message = projectedMessage(row, this.publicOrigin);
+    return {
+      type: 'message-delta',
+      roomId,
+      message: withAttachmentExpiry([message], await this.expiredMediaIds([message]))[0]!,
+    };
   }
 
   /**

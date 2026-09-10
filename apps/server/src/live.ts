@@ -17,6 +17,9 @@ export type LiveEvent =
       reason: string;
       agentId?: string;
       targetAgentId?: string;
+      messageId?: string;
+      requestId?: string;
+      operation?: string;
       trace?: LiveTrace;
     }
   | { type: 'draft' | 'thought'; roomId: string; agentId: string; turnId: string; text: string }

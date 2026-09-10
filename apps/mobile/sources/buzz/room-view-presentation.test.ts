@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { RoomViewMessage } from '@beeline/buzz-client';
+import type { RoomView, RoomViewMessage } from '@beeline/buzz-client';
 import {
   conversationIdentityByPubkey,
   cornerSummaries,
@@ -9,11 +9,87 @@ import {
   foldSettledActivityRuns,
   memberAgent,
   mergeDisplayPages,
+  reconcileRoomMessageDelta,
+  reconcileRoomTurnDelta,
+  reconcileRoomView,
   roomViewTranscriptMessages,
   type ChatDisplayMessage,
 } from './room-view-presentation';
 
 describe('Room view presentation', () => {
+  const emptyRoom = (): RoomView => ({
+    room: {
+      id: 'room',
+      workspaceId: 'workspace',
+      name: 'Room',
+      archived: false,
+      createdAt: 1,
+      updatedAt: 1,
+    },
+    messages: [],
+    members: [],
+    latestAgentTurns: [],
+    viewer: {
+      identity: { pubkey: 'viewer', kind: 'human', name: 'Captain' },
+      role: 'owner',
+      permissions: { send: true, manage: true },
+    },
+    repositoryResolution: { status: 'absent' },
+    corners: [],
+    watchFilters: [{ '#h': ['room'] }],
+  });
+
+  it('applies committed message deltas idempotently and in authoritative order', () => {
+    const message = (id: string, createdAt: number): RoomViewMessage => ({
+      id,
+      text: id,
+      createdAt,
+      author: { pubkey: 'agent', kind: 'agent', name: 'Greeter' },
+      presentation: 'message',
+    });
+    const newestFirst = reconcileRoomMessageDelta(emptyRoom(), message('message-2', 2));
+    const ordered = reconcileRoomMessageDelta(newestFirst, message('message-1', 1));
+    const duplicate = reconcileRoomMessageDelta(ordered, message('message-2', 2));
+
+    expect(ordered.messages.map((item) => item.id)).toEqual(['message-1', 'message-2']);
+    expect(duplicate).toBe(ordered);
+  });
+
+  it('does not let a reordered working delta regress the same completed turn', () => {
+    const base = emptyRoom();
+    const working = {
+      requestId: 'request',
+      generationId: 'generation',
+      agentPubkey: 'agent',
+      status: 'working' as const,
+      createdAt: 2,
+    };
+    const completed = reconcileRoomTurnDelta(base, { ...working, status: 'complete' });
+
+    expect(reconcileRoomTurnDelta(completed, working)).toBe(completed);
+    expect(completed.latestAgentTurns[0]?.status).toBe('complete');
+  });
+
+  it('converges delta-first state to the same full authoritative snapshot', () => {
+    const turn = {
+      requestId: 'request',
+      agentPubkey: 'agent',
+      status: 'complete' as const,
+      createdAt: 2,
+    };
+    const reply: RoomViewMessage = {
+      id: 'reply',
+      text: 'done',
+      createdAt: 3,
+      author: { pubkey: 'agent', kind: 'agent', name: 'Greeter' },
+      presentation: 'message',
+    };
+    const full = { ...emptyRoom(), messages: [reply], latestAgentTurns: [turn] };
+    const deltaFirst = reconcileRoomMessageDelta(reconcileRoomTurnDelta(emptyRoom(), turn), reply);
+
+    expect(reconcileRoomView(deltaFirst, full)).toEqual(full);
+  });
+
   it('uses the child turn receipt time for a working corner instead of stale metadata', () => {
     const receiptAt = Math.floor(Date.now() / 1_000);
     const [corner] = cornerSummaries({

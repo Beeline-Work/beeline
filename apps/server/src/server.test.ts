@@ -281,6 +281,120 @@ describe('daemon live command push', () => {
   });
 });
 
+describe('phone committed-row live delivery', () => {
+  const servers: ReturnType<typeof createBeelineServer>[] = [];
+  const sockets: WebSocket[] = [];
+
+  afterEach(async () => {
+    for (const socket of sockets.splice(0)) socket.terminate();
+    await Promise.all(
+      servers
+        .splice(0)
+        .map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
+    );
+  });
+
+  async function connect(readLiveDelta: PhoneService['readLiveDelta']) {
+    const roomId = 'room-live';
+    const live = new LiveHub();
+    const server = createBeelineServer({
+      database: { query: vi.fn(), transaction: vi.fn() },
+      auth: { authenticatePhone: vi.fn().mockResolvedValue('viewer') } as unknown as TokenAuth,
+      phone: {
+        canReadRoom: vi.fn().mockResolvedValue(true),
+        liveDraftSnapshot: vi.fn().mockResolvedValue([]),
+        readLiveDelta,
+      } as unknown as PhoneService,
+      daemon: {} as DaemonService,
+      live,
+      mediaMaximumBytes: 1,
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/phone/live`, ['bearer.phone']);
+    sockets.push(socket);
+    await new Promise<void>((resolve, reject) => {
+      socket.once('open', resolve);
+      socket.once('error', reject);
+    });
+    const subscribed = nextSocketMessage(socket, 'subscribed');
+    socket.send(JSON.stringify({ type: 'subscribe', roomId }));
+    await subscribed;
+    return { live, roomId, socket };
+  }
+
+  it.each([
+    ['missing', vi.fn().mockResolvedValue(null)],
+    ['failed', vi.fn().mockRejectedValue(new Error('row read failed'))],
+  ])(
+    'falls back to an authoritative invalidation when the delta read is %s',
+    async (_case, read) => {
+      const { live, roomId, socket } = await connect(read as PhoneService['readLiveDelta']);
+      const fallback = nextSocketMessage(socket, 'invalidate');
+
+      live.publish({
+        type: 'invalidate',
+        roomId,
+        reason: 'postgres:messages',
+        messageId: 'message-fallback',
+      });
+
+      await expect(fallback).resolves.toMatchObject({
+        type: 'invalidate',
+        roomId,
+        messageId: 'message-fallback',
+        reason: 'delta-fallback:postgres:messages',
+      });
+    },
+  );
+
+  it('bounds a stalled lookup while preserving burst delivery order', async () => {
+    const read = vi.fn(
+      async (_roomId: string, _viewerId: string, target: { messageId: string }) => {
+        if (target.messageId === 'message-1') return new Promise<never>(() => undefined);
+        return {
+          type: 'message-delta' as const,
+          roomId: 'room-live',
+          message: {
+            id: target.messageId,
+            text: target.messageId,
+            createdAt: Number(target.messageId.at(-1)),
+            author: { pubkey: 'agent', kind: 'agent' as const, name: 'Greeter' },
+            presentation: 'message' as const,
+          },
+        };
+      },
+    );
+    const { live, roomId, socket } = await connect(read as PhoneService['readLiveDelta']);
+    const received = nextSocketMessages(socket, 3);
+    const startedAt = Date.now();
+
+    for (const messageId of ['message-1', 'message-2', 'message-3']) {
+      live.publish({ type: 'invalidate', roomId, reason: 'postgres:messages', messageId });
+    }
+
+    const messages = await received;
+    expect(Date.now() - startedAt).toBeLessThan(800);
+    expect(
+      messages.map((message) =>
+        message.type === 'message-delta'
+          ? (message.message as { id: string }).id
+          : message.messageId,
+      ),
+    ).toEqual(['message-1', 'message-2', 'message-3']);
+    expect(messages[0]).toMatchObject({
+      type: 'invalidate',
+      reason: 'delta-fallback:postgres:messages',
+    });
+    expect(messages.slice(1).map((message) => message.type)).toEqual([
+      'message-delta',
+      'message-delta',
+    ]);
+    expect(read).toHaveBeenCalledTimes(3);
+  });
+});
+
 function nextSocketMessage(socket: WebSocket, type: string): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     const onMessage = (raw: WebSocket.RawData) => {
@@ -292,6 +406,27 @@ function nextSocketMessage(socket: WebSocket, type: string): Promise<Record<stri
     const timer = setTimeout(() => {
       cleanup();
       reject(new Error(`websocket ${type} timeout`));
+    }, 3_000);
+    const cleanup = () => {
+      clearTimeout(timer);
+      socket.off('message', onMessage);
+    };
+    socket.on('message', onMessage);
+  });
+}
+
+function nextSocketMessages(socket: WebSocket, count: number): Promise<Record<string, unknown>[]> {
+  return new Promise((resolve, reject) => {
+    const messages: Record<string, unknown>[] = [];
+    const onMessage = (raw: WebSocket.RawData) => {
+      messages.push(JSON.parse(raw.toString()) as Record<string, unknown>);
+      if (messages.length !== count) return;
+      cleanup();
+      resolve(messages);
+    };
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error(`websocket ${count}-message timeout`));
     }, 3_000);
     const cleanup = () => {
       clearTimeout(timer);

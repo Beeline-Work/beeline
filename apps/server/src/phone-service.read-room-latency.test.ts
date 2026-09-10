@@ -136,6 +136,11 @@ describe('PhoneService.readRoom latency', () => {
        VALUES('current-activity',$1,$2,'','activity','[]'::jsonb,now() + interval '1 second')`,
       [ROOM, '0'.repeat(64)],
     );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       VALUES('reply-message',$1,$2,'Done',now() + interval '2 seconds')`,
+      [ROOM, '0'.repeat(64)],
+    );
   }, 30_000);
 
   afterAll(async () => database.close());
@@ -169,10 +174,11 @@ describe('PhoneService.readRoom latency', () => {
     expect(view?.corners.length).toBe(30);
     expect(view?.messages.map((message) => message.id)).toEqual([
       ...Array.from(
-        { length: 29 },
-        (_, index) => `message-${(151 + index).toString().padStart(3, '0')}`,
+        { length: 28 },
+        (_, index) => `message-${(152 + index).toString().padStart(3, '0')}`,
       ),
       'current-activity',
+      'reply-message',
     ]);
     expect(new Set(view?.members.map((member) => member.identity.pubkey))).toEqual(
       new Set([
@@ -220,6 +226,52 @@ describe('PhoneService.readRoom latency', () => {
     const phone = new PhoneService(representative, 'https://server.usebeeline.app');
 
     expect(await phone.readRoom(ROOM, 'f'.repeat(64))).toBeNull();
+    expect(representative.spans).toHaveLength(2);
+  });
+
+  it.each([
+    [
+      'working turn',
+      { type: 'turn' as const, agentId: '0'.repeat(64), requestId: 'message-179' },
+      'turn-delta',
+    ],
+    ['reply message', { type: 'message' as const, messageId: 'reply-message' }, 'message-delta'],
+  ])('projects one persisted %s delta in one sub-500ms round trip', async (_case, target, type) => {
+    const representative = new RepresentativeDatabase(database);
+    const phone = new PhoneService(representative, 'https://server.usebeeline.app');
+    const startedAt = performance.now();
+    const delta = await phone.readLiveDelta(ROOM, VIEWER, target);
+    const durationMs = performance.now() - startedAt;
+
+    if (process.env.READ_ROOM_TRACE === '1') {
+      console.info(
+        JSON.stringify({
+          operation: `live delta ${_case}`,
+          durationMs: Math.round(durationMs),
+          queryCount: representative.spans.length,
+        }),
+      );
+    }
+    expect(delta).toMatchObject({ type, roomId: ROOM });
+    expect(representative.spans).toHaveLength(1);
+    expect(durationMs).toBeLessThan(500);
+  });
+
+  it('keeps every live delta behind current Room and Workspace membership', async () => {
+    const representative = new RepresentativeDatabase(database, POOL_MAX, 0);
+    const phone = new PhoneService(representative, 'https://server.usebeeline.app');
+    const outsider = 'f'.repeat(64);
+
+    await expect(
+      phone.readLiveDelta(ROOM, outsider, { type: 'message', messageId: 'reply-message' }),
+    ).resolves.toBeNull();
+    await expect(
+      phone.readLiveDelta(ROOM, outsider, {
+        type: 'turn',
+        agentId: '0'.repeat(64),
+        requestId: 'message-179',
+      }),
+    ).resolves.toBeNull();
     expect(representative.spans).toHaveLength(2);
   });
 });

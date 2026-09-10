@@ -136,6 +136,8 @@ interface LiveNotificationPayload {
   table: string;
   operation: string;
   roomId: string;
+  messageId?: string;
+  requestId?: string;
   agentId?: string;
   turnId?: string;
   kind?: string;
@@ -161,6 +163,8 @@ function decodePayload(value: string | undefined): LiveNotificationPayload | und
       operation: parsed.operation,
       roomId: parsed.roomId,
       ...(typeof parsed.agentId === 'string' ? { agentId: parsed.agentId } : {}),
+      ...(typeof parsed.messageId === 'string' ? { messageId: parsed.messageId } : {}),
+      ...(typeof parsed.requestId === 'string' ? { requestId: parsed.requestId } : {}),
       ...(typeof parsed.turnId === 'string' ? { turnId: parsed.turnId } : {}),
       ...(typeof parsed.kind === 'string' ? { kind: parsed.kind } : {}),
       ...(typeof parsed.observedAt === 'number' ? { observedAt: parsed.observedAt } : {}),
@@ -320,6 +324,9 @@ export class PostgresLiveListener {
       type: 'invalidate',
       roomId: payload.roomId,
       reason: `postgres:${payload.table}`,
+      operation: payload.operation,
+      ...(payload.messageId ? { messageId: payload.messageId } : {}),
+      ...(payload.requestId ? { requestId: payload.requestId } : {}),
       ...(payload.table === 'agent_commands' ? { targetAgentId: payload.agentId } : {}),
       ...(payload.agentId ? { agentId: payload.agentId } : {}),
       ...(payload.traceId && payload.databaseAt

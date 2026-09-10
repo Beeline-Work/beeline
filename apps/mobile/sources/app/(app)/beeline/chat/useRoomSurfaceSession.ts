@@ -17,6 +17,8 @@ import { loadBuzzIdentity, getEffectiveRelayUrl } from '@/auth/buzz-identity-sto
 import {
   displayRoomMessages,
   reconcileRoomView,
+  reconcileRoomMessageDelta,
+  reconcileRoomTurnDelta,
   type ChatDisplayMessage,
 } from '@/buzz/room-view-presentation';
 import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-storage';
@@ -149,14 +151,23 @@ export function useRoomSurfaceSession({
   const agentPresencesRef = useRef(heartbeatPresences);
   const reconnectGraceRef = useRef(presenceReconnectGrace);
   const pendingPaintTracesRef = useRef<readonly ReceivedLiveTrace[]>([]);
+  const deltaReconcilePendingRef = useRef(false);
   agentPresencesRef.current = heartbeatPresences;
   reconnectGraceRef.current = presenceReconnectGrace;
 
   useEffect(() => {
     const traces = pendingPaintTracesRef.current;
-    if (!roomSurface || traces.length === 0) return;
-    pendingPaintTracesRef.current = [];
-    logLiveTrace('paint', traces);
+    if (!roomSurface) return;
+    if (traces.length > 0) {
+      pendingPaintTracesRef.current = [];
+      logLiveTrace('paint', traces);
+    }
+    // The committed delta paints first. This post-paint signal then converges
+    // the entire Room without putting the full snapshot on the feedback path.
+    if (deltaReconcilePendingRef.current) {
+      deltaReconcilePendingRef.current = false;
+      schedulerRef.current?.signal();
+    }
   }, [roomSurface]);
 
   const applyAgentPresence = useCallback((presence: RoomAgentPresence | undefined) => {
@@ -371,6 +382,45 @@ export function useRoomSurfaceSession({
           if (cancelled || generation !== watchGeneration) return;
           if ('monolithLive' in event) {
             const live = (event as MonolithSurfaceEvent).monolithLive;
+            if (live.type === 'subscribed') {
+              if (hasPainted) scheduler?.force();
+              return;
+            }
+            if (live.type === 'message-delta' || live.type === 'turn-delta') {
+              if (live.roomId !== channelId) return;
+              const received = live.trace
+                ? { ...live.trace, reason: live.type, receivedAt: Date.now() }
+                : undefined;
+              if (received) logLiveTrace('socket-receipt', [received], received.receivedAt);
+              const current = reconciledViewRef.current;
+              if (!current) {
+                scheduler?.force();
+                return;
+              }
+              const next =
+                live.type === 'message-delta'
+                  ? reconcileRoomMessageDelta(current, live.message)
+                  : reconcileRoomTurnDelta(current, live.turn);
+              if (next === current) return;
+              reconciledViewRef.current = next;
+              hasPainted = true;
+              bindingsRef.current.observeRoomSurface();
+              if (received) pendingPaintTracesRef.current = [received];
+              deltaReconcilePendingRef.current = true;
+              setRoomSurface(next);
+              if (live.type === 'message-delta') {
+                void outboxRef.current?.reconcile(
+                  new Set(next.messages.map((message) => message.id)),
+                );
+                setFailedIds((failed) => {
+                  if (!failed.has(live.message.id)) return failed;
+                  const reconciled = new Set(failed);
+                  reconciled.delete(live.message.id);
+                  return reconciled;
+                });
+              }
+              return;
+            }
             if (live.type === 'invalidate') {
               if (live.trace) {
                 const received = { ...live.trace, reason: live.reason, receivedAt: Date.now() };
@@ -381,7 +431,10 @@ export function useRoomSurfaceSession({
               // server emits this invalidation. Give that receipt an immediate
               // authoritative read instead of placing it behind ordinary
               // surface coalescing, where a short turn can complete first.
-              if (live.reason === 'turn' || live.reason === 'postgres:agent_turns') {
+              if (['message', 'turn', 'activity', 'phone-write'].includes(live.reason)) {
+                // The committed-row delta follows this same-process hint. The
+                // periodic/reconnect read remains the lossless fallback.
+              } else if (live.reason === 'postgres:agent_turns') {
                 scheduler?.force();
               } else {
                 scheduler?.signal();

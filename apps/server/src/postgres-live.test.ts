@@ -121,7 +121,12 @@ describe('Postgres live fanout', () => {
 
     await eventually(() => received.length === 1);
     expect(received).toEqual([
-      expect.objectContaining({ type: 'invalidate', roomId: ROOM, agentId: AUTHOR }),
+      expect.objectContaining({
+        type: 'invalidate',
+        roomId: ROOM,
+        agentId: AUTHOR,
+        messageId: '1'.repeat(64),
+      }),
     ]);
     expect(clientsB[0]!.payloads).toHaveLength(1);
     expect(JSON.parse(clientsB[0]!.payloads[0]!)).toEqual(
@@ -173,6 +178,7 @@ describe('Postgres live fanout', () => {
           operation: table === 'messages' ? 'INSERT' : 'UPDATE',
           roomId: ROOM,
           agentId: AUTHOR,
+          ...(table === 'messages' ? { messageId: 'message-id' } : { requestId: 'request-id' }),
         }),
       });
     }
@@ -182,6 +188,10 @@ describe('Postgres live fanout', () => {
     expect(received.map((event) => event.type === 'invalidate' && event.reason)).toEqual([
       'postgres:messages',
       'postgres:agent_turns',
+    ]);
+    expect(received).toEqual([
+      expect.objectContaining({ messageId: 'message-id' }),
+      expect.objectContaining({ requestId: 'request-id' }),
     ]);
   });
 

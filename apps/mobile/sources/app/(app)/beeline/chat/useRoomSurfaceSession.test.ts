@@ -17,6 +17,7 @@ const controls = vi.hoisted(() => ({
     disposed: boolean;
     expectations: Array<(view: RoomView) => boolean>;
     forceCalls: number;
+    signalCalls: number;
   }>,
   subscriptions: [] as Array<{
     filters: unknown;
@@ -161,13 +162,16 @@ vi.mock('@beeline/buzz-client', async () => {
           disposed: false,
           expectations: [],
           forceCalls: 0,
+          signalCalls: 0,
         };
         controls.schedulers.push(this.control);
       }
       async startAfter(watch: Promise<void>) {
         await watch;
       }
-      signal() {}
+      signal() {
+        this.control.signalCalls += 1;
+      }
       signalUntil(expectation: (view: RoomView) => boolean) {
         this.control.expectations.push(expectation);
       }
@@ -340,49 +344,128 @@ describe('useRoomSurfaceSession', () => {
     vi.useRealTimers();
   });
 
-  it.each(['turn', 'postgres:agent_turns'])(
-    'forces an immediate indexed read for a persisted %s receipt',
-    async (reason) => {
-      controls.cached = roomView('room-a');
-      let current!: UseRoomSurfaceSessionResult;
-      let renderer!: ReactTestRenderer;
-      await act(async () => {
-        renderer = create(
-          React.createElement(Harness, {
-            channelId: 'room-a',
-            capture: (result: UseRoomSurfaceSessionResult) => (current = result),
-          }),
-        );
-      });
-      await flushEffects();
+  it('paints a committed turn delta before scheduling full reconciliation', async () => {
+    controls.cached = roomView('room-a');
+    let current!: UseRoomSurfaceSessionResult;
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, {
+          channelId: 'room-a',
+          capture: (result: UseRoomSurfaceSessionResult) => (current = result),
+        }),
+      );
+    });
+    await flushEffects();
 
-      await act(async () => {
-        controls.subscriptions[0]!.emit({
-          monolithLive: { type: 'invalidate', roomId: 'room-a', reason },
-        });
+    const claimedAt = Math.floor(Date.now() / 1_000);
+    const startedAt = performance.now();
+    await act(async () => {
+      controls.subscriptions[0]!.emit({
+        monolithLive: {
+          type: 'turn-delta',
+          roomId: 'room-a',
+          turn: {
+            requestId: 'request-a',
+            agentPubkey: 'agent-a',
+            status: 'working',
+            createdAt: claimedAt,
+          },
+        },
       });
-      expect(controls.schedulers[0]!.forceCalls).toBe(1);
+    });
+    expect(performance.now() - startedAt).toBeLessThan(500);
+    expect(current.roomSurface?.latestAgentTurns).toEqual([
+      expect.objectContaining({ requestId: 'request-a', status: 'working' }),
+    ]);
+    expect(controls.schedulers[0]!.signalCalls).toBe(1);
+    await act(async () => renderer.unmount());
+  });
 
-      const claimedAt = Math.floor(Date.now() / 1_000);
-      await act(async () => {
-        controls.schedulers[0]!.apply({
-          ...roomView('room-a'),
-          latestAgentTurns: [
-            {
-              requestId: 'request-a',
-              agentPubkey: 'agent-a',
-              status: 'working',
-              createdAt: claimedAt,
-            },
-          ],
-        });
+  it('paints one committed reply exactly once, then converges with the full read', async () => {
+    controls.cached = roomView('room-a');
+    let current!: UseRoomSurfaceSessionResult;
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, {
+          channelId: 'room-a',
+          capture: (result: UseRoomSurfaceSessionResult) => (current = result),
+        }),
+      );
+    });
+    await flushEffects();
+    const reply = {
+      id: 'reply-message',
+      text: 'Done',
+      createdAt: 3,
+      author: { pubkey: 'agent-a', kind: 'agent' as const, name: 'Greeter' },
+      presentation: 'message' as const,
+    };
+    const emitReply = () =>
+      controls.subscriptions[0]!.emit({
+        monolithLive: { type: 'message-delta', roomId: 'room-a', message: reply },
       });
-      expect(current.roomSurface?.latestAgentTurns).toEqual([
-        expect.objectContaining({ requestId: 'request-a', status: 'working' }),
-      ]);
-      await act(async () => renderer.unmount());
-    },
-  );
+
+    await act(async () => emitReply());
+    expect(current.roomSurface?.messages.map((message) => message.id)).toEqual(['reply-message']);
+    expect(controls.schedulers[0]!.signalCalls).toBe(1);
+
+    await act(async () => emitReply());
+    expect(current.roomSurface?.messages.map((message) => message.id)).toEqual(['reply-message']);
+    expect(controls.schedulers[0]!.signalCalls).toBe(1);
+
+    const full = { ...roomView('room-a'), messages: [reply] };
+    await act(async () => controls.schedulers[0]!.apply(full));
+    expect(current.roomSurface).toEqual(full);
+    expect(current.roomSurface?.messages).toHaveLength(1);
+    expect(controls.schedulers[0]!.signalCalls).toBe(1);
+    await act(async () => renderer.unmount());
+  });
+
+  it('reconciles immediately when a committed delta cannot be delivered', async () => {
+    controls.cached = roomView('room-a');
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, { channelId: 'room-a', capture: () => undefined }),
+      );
+    });
+    await flushEffects();
+
+    await act(async () => {
+      controls.subscriptions[0]!.emit({
+        monolithLive: {
+          type: 'invalidate',
+          roomId: 'room-a',
+          reason: 'delta-fallback:postgres:messages',
+        },
+      });
+    });
+
+    expect(controls.schedulers[0]!.signalCalls).toBe(1);
+    await act(async () => renderer.unmount());
+  });
+
+  it('forces reconciliation when the live socket resubscribes after a painted Room', async () => {
+    controls.cached = roomView('room-a');
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, { channelId: 'room-a', capture: () => undefined }),
+      );
+    });
+    await flushEffects();
+
+    await act(async () => {
+      controls.subscriptions[0]!.emit({
+        monolithLive: { type: 'subscribed', roomId: 'room-a' },
+      });
+    });
+
+    expect(controls.schedulers[0]!.forceCalls).toBe(1);
+    await act(async () => renderer.unmount());
+  });
 
   it('records a bounded correlation trace when the phone socket receives an invalidation', async () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => {});

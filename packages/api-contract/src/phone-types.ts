@@ -302,6 +302,19 @@ export type RoomViewAgentTurn = {
   readonly requestedBy?: string;
 };
 
+/** A committed Room row small enough to paint directly from the live channel. */
+export type RoomLiveDelta =
+  | {
+      readonly type: 'message-delta';
+      readonly roomId: string;
+      readonly message: RoomViewMessage;
+    }
+  | {
+      readonly type: 'turn-delta';
+      readonly roomId: string;
+      readonly turn: RoomViewAgentTurn;
+    };
+
 export type RoomView = {
   readonly room: RoomViewHeader;
   readonly messages: readonly RoomViewMessage[];

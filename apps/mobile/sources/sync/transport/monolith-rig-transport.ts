@@ -7,6 +7,8 @@ import type {
   KnownMessageReference,
   RoomRepository,
   RoomRepositoryInput,
+  RoomViewAgentTurn,
+  RoomViewMessage,
   WritePermissionDecision,
 } from '@beeline/buzz-client';
 import type { MessageSubmitInput } from './rig-transport';
@@ -23,6 +25,9 @@ export type LiveWireTrace = {
 
 type LiveWireEvent =
   | { type: 'invalidate'; roomId: string; reason: string; trace?: LiveWireTrace }
+  | { type: 'subscribed'; roomId: string }
+  | { type: 'message-delta'; roomId: string; message: RoomViewMessage; trace?: LiveWireTrace }
+  | { type: 'turn-delta'; roomId: string; turn: RoomViewAgentTurn; trace?: LiveWireTrace }
   | { type: 'draft' | 'thought'; roomId: string; agentId: string; turnId: string; text: string }
   | { type: 'retract'; roomId: string; agentId: string; turnId: string; kind: 'draft' | 'thought' }
   | {

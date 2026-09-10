@@ -21,6 +21,25 @@ import type { ConnectionPresence } from './connection-presence.js';
 export const DEFAULT_MEDIA_MAXIMUM_BYTES = 25 * 1024 * 1024;
 
 const MAX_JSON_BYTES = 1024 * 1024;
+const LIVE_DELTA_DEADLINE_MS = 400;
+
+async function withinLiveDeltaDeadline<T>(work: Promise<T>): Promise<T> {
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_resolve, reject) => {
+        deadline = setTimeout(
+          () => reject(new Error('committed row delivery deadline exceeded')),
+          LIVE_DELTA_DEADLINE_MS,
+        );
+        deadline.unref?.();
+      }),
+    ]);
+  } finally {
+    if (deadline) clearTimeout(deadline);
+  }
+}
 
 export interface GitHubServerHooks {
   webhookSecret?: string;
@@ -353,11 +372,60 @@ export function createBeelineServer(options: ServerOptions): Server {
             // first; replacing it with the older row would show the reader the
             // answer going backwards.
             const streamed = new Set<string>();
+            let deltaDelivery = Promise.resolve();
             releases.set(
               item.roomId,
               options.live.subscribe(item.roomId, (event) => {
                 if (event.type === 'draft') streamed.add(event.agentId);
-                if (client.readyState === client.OPEN) client.send(JSON.stringify(event));
+                if (event.type !== 'invalidate') {
+                  if (client.readyState === client.OPEN) client.send(JSON.stringify(event));
+                  return;
+                }
+                const target = event.messageId
+                  ? ({ type: 'message' as const, messageId: event.messageId } as const)
+                  : event.agentId && event.requestId
+                    ? ({
+                        type: 'turn' as const,
+                        agentId: event.agentId,
+                        requestId: event.requestId,
+                      } as const)
+                    : undefined;
+                if (!target) {
+                  if (client.readyState === client.OPEN) client.send(JSON.stringify(event));
+                  return;
+                }
+                const trace = event.trace;
+                const fallback = {
+                  ...event,
+                  reason: `delta-fallback:${event.reason}`,
+                };
+                // Begin every bounded row read immediately. Only delivery is
+                // serialized, preserving commit-notification order without a
+                // slow lookup preventing later reads from making progress.
+                const pendingDelta = withinLiveDeltaDeadline(
+                  options.phone.readLiveDelta(item.roomId as string, principal.identityId, target),
+                ).then(
+                  (delta) => ({ delta }) as const,
+                  (error: unknown) => ({ error }) as const,
+                );
+                deltaDelivery = deltaDelivery
+                  .then(async () => {
+                    const result = await pendingDelta;
+                    if (client.readyState !== client.OPEN) return;
+                    if ('error' in result) throw result.error;
+                    client.send(
+                      JSON.stringify(
+                        result.delta ? { ...result.delta, ...(trace ? { trace } : {}) } : fallback,
+                      ),
+                    );
+                  })
+                  .catch((error) => {
+                    console.error(
+                      '[live] committed row delivery failed',
+                      error instanceof Error ? error.message : String(error),
+                    );
+                    if (client.readyState === client.OPEN) client.send(JSON.stringify(fallback));
+                  });
               }),
             );
             client.send(JSON.stringify({ type: 'subscribed', roomId: item.roomId }));

@@ -308,14 +308,15 @@ export function useRoomSurfaceSession({
     const liveLaneStamp = () => Date.now() / 1000;
 
     const applyDecodedOverlay = (overlay: LiveOverlay) => {
-      setLiveOverlays((current) => applyLiveOverlay(current, overlay));
       if (overlay.kind === 'presence') {
         applyAgentPresence({
           agentPubkey: overlay.agentPubkey,
           status: overlay.status,
           observedAt: overlay.createdAt * 1_000,
         });
+        return;
       }
+      setLiveOverlays((current) => applyLiveOverlay(current, overlay));
     };
 
     const applyView = (

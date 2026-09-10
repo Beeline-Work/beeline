@@ -127,6 +127,16 @@ function tokenizeLine(line: string, _language: string | null): TokenSpan[] {
   const spans: TokenSpan[] = [];
   let pos = 0;
 
+  const append = (token: HighlightToken, text: string) => {
+    if (!text) return;
+    const previous = spans.at(-1);
+    if (previous?.token === token) {
+      previous.text += text;
+      return;
+    }
+    spans.push({ token, text });
+  };
+
   while (pos < line.length) {
     let matched = false;
     for (const { pattern, token } of TOKEN_PATTERNS) {
@@ -141,24 +151,24 @@ function tokenizeLine(line: string, _language: string | null): TokenSpan[] {
           // happens to be a keyword/type/builtin (e.g. `async (`) we keep
           // the better classification instead of calling it a function.
           const idToken = classifyReserved(m[1]);
-          spans.push({ token: idToken ?? 'function', text: m[1] });
+          append(idToken ?? 'function', m[1]);
           const rest = text.slice(m[1].length);
           if (rest) {
-            spans.push({ token: 'punctuation', text: rest });
+            append('punctuation', rest);
           }
         } else if (token === 'tag' && text.startsWith('</')) {
           // Closing tag — whole token is a tag
-          spans.push({ token: 'tag', text });
+          append('tag', text);
         } else if (token === 'tag' && text.length > 1 && text.endsWith('>')) {
           // Self-closing or opening tag — whole token is a tag
-          spans.push({ token: 'tag', text });
+          append('tag', text);
         } else if (token === 'attrName') {
           // The match is `name=`; split the value assignment punctuation
           const eqIdx = text.indexOf('=');
-          spans.push({ token: 'attrName', text: text.slice(0, eqIdx) });
-          spans.push({ token: 'punctuation', text: '=' });
+          append('attrName', text.slice(0, eqIdx));
+          append('punctuation', '=');
         } else {
-          spans.push({ token, text });
+          append(token, text);
         }
         pos += text.length;
         matched = true;
@@ -167,9 +177,8 @@ function tokenizeLine(line: string, _language: string | null): TokenSpan[] {
     }
     if (matched) continue;
 
-    // Not matched by any pattern — emit the current character as plain text.
-    // Consume one character at a time to avoid merging distinct words/tokens.
-    spans.push({ token: 'plain', text: line[pos] });
+    // Not matched by any pattern — add this character to the current plain run.
+    append('plain', line[pos]);
     pos += 1;
   }
 

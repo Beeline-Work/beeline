@@ -306,6 +306,45 @@ beforeEach(() => {
 });
 
 describe('useRoomSurfaceSession', () => {
+  it('routes presence snapshots outside transcript overlays', async () => {
+    controls.cached = roomView('room-a');
+    let current!: UseRoomSurfaceSessionResult;
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, {
+          channelId: 'room-a',
+          capture: (result: UseRoomSurfaceSessionResult) => (current = result),
+        }),
+      );
+    });
+    await flushEffects();
+
+    const transcriptOverlays = current.liveOverlays;
+    await act(async () => {
+      for (let index = 0; index < 200; index += 1) {
+        controls.subscriptions[0]!.emit({
+          monolithLive: {
+            type: 'presence',
+            roomId: 'room-a',
+            agentId: 'agent-a',
+            status: 'online',
+            observedAt: 1_000 + index,
+          },
+        });
+      }
+    });
+
+    expect(current.liveOverlays).toBe(transcriptOverlays);
+    expect(current.liveOverlays).toEqual([]);
+    expect(current.heartbeatPresences['agent-a']).toEqual({
+      agentPubkey: 'agent-a',
+      status: 'online',
+      observedAt: 1_199_000,
+    });
+    await act(async () => renderer.unmount());
+  });
+
   it('keeps an acknowledged send pending while authoritative projection catches up', async () => {
     vi.useFakeTimers();
     controls.cached = roomView('room-a');

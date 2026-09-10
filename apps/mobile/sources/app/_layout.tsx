@@ -44,6 +44,7 @@ import { getOpenBuzzChannelId } from '@/buzz/open-room-tracker';
 import { decideForegroundNotificationDisplay } from '@/push/foreground-policy';
 import { UpdateProvider } from '@/hooks/useUpdates';
 import { UpdateReadyPrompt } from '@/components/UpdateReadyPrompt';
+import { DesktopDeepLinkBridge } from '@/components/DesktopDeepLinkBridge';
 
 // Foreground banner policy: suppress banners while the app is active, and
 // always for the Room the person currently has open. Background display and
@@ -361,6 +362,7 @@ export default function RootLayout() {
             <ThemeProvider value={navigationTheme}>
               <StatusBarProvider />
               <ModalProvider>
+                <DesktopDeepLinkBridge />
                 <BrowserNavigationShortcuts />
                 <CommandPaletteProvider>
                   <HorizontalSafeAreaWrapper>

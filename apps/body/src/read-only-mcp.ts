@@ -243,19 +243,6 @@ const READ_ONLY_TOOLS: ToolDefinition[] = [
 
 const AGENT_TOOLS: ToolDefinition[] = [
   {
-    name: 'delegate_to_agent',
-    description:
-      'Deliberately delegate work to an agent in this Room. The server dispatches it with your final answer. Mentioning an agent in prose alone never dispatches work.',
-    inputSchema: {
-      type: 'object',
-      required: ['agentId'],
-      properties: {
-        agentId: { type: 'string', description: 'Exact agent identity id from the roster.' },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
     name: 'create_schedule',
     description:
       'Create a schedule that runs your prompt as a mention to you in this Room, on an interval (everyMinutes, minimum 1) or a 5-field cron. With maxRuns the schedule deletes itself after that many runs.',
@@ -1780,12 +1767,6 @@ async function daemonUploadMedia(
 
 async function callAgentTool(name: string, args: JsonObject): Promise<string> {
   switch (name) {
-    case 'delegate_to_agent':
-      await daemonExecute('stageAgentDelegation', {
-        roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
-        targetAgentId: args.agentId,
-      });
-      return 'Delegation recorded for your final answer.';
     case 'open_corner':
       return openCorner(args);
     case 'close_corner':

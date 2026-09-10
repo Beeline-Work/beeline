@@ -40,6 +40,7 @@ async function context() {
   return new CommandExecutionContext(dir);
 }
 describe('command intake mechanics', () => {
+  afterEach(() => vi.useRealTimers());
   it('refuses an older server without ever reading shared traffic', async () => {
     const execute = vi.fn(async () => ({ items: [command().source] }));
     await expect(
@@ -81,6 +82,235 @@ describe('command intake mechanics', () => {
       stop: vi.fn(),
     });
     expect(run).not.toHaveBeenCalled();
+  });
+  it('claims one live-pushed command and forwards release identity without availability', async () => {
+    const controller = new AbortController();
+    let onState:
+        | ((
+            connected: boolean,
+            capabilities?: { pushIntake: boolean; connectionPresence: boolean },
+          ) => void)
+        | undefined,
+      onCommands: ((commands: readonly AgentCommand[]) => void) | undefined;
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [] };
+      return { id: 'ok' };
+    });
+    const api = {
+      execute,
+      liveSubscribe: vi.fn(
+        (
+          _roomId: string,
+          _cursor: string | undefined,
+          _onItems: unknown,
+          state: typeof onState,
+          _presence: unknown,
+          commands: typeof onCommands,
+        ) => {
+          onState = state;
+          onCommands = commands;
+          return vi.fn();
+        },
+      ),
+    } as unknown as DaemonApiClient;
+    const run = vi.fn(async () => controller.abort());
+    const presence = {
+      releaseVersion: 'v0.0.68',
+      sourceSha: 'db2618408a205a3f319d26017a953725e7f13b61',
+    };
+    const running = runServerCommandIntake({
+      api,
+      roomId: 'room',
+      agentId: 'agent',
+      context: await context(),
+      signal: controller.signal,
+      presence,
+      run,
+      stop: vi.fn(),
+    });
+    await vi.waitFor(() => expect(onCommands).toBeTypeOf('function'));
+    onState?.(true, { pushIntake: true, connectionPresence: true });
+    onCommands?.([command(), command()]);
+    await running;
+    expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands')).toHaveLength(1);
+    expect(execute.mock.calls.filter(([name]) => name === 'claimAgentCommand')).toHaveLength(1);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(api.liveSubscribe).toHaveBeenCalledWith(
+      'room',
+      undefined,
+      undefined,
+      expect.any(Function),
+      presence,
+      expect.any(Function),
+    );
+  });
+  it('reconciles an unavailable live push at one second, not sixty seconds', async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    let reads = 0;
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getAgentCommands')
+        return { commandProtocol: 1, commands: reads++ ? [command()] : [] };
+      return { id: 'ok' };
+    });
+    const running = runServerCommandIntake({
+      api: { execute } as unknown as DaemonApiClient,
+      roomId: 'room',
+      agentId: 'agent',
+      context: await context(),
+      signal: controller.signal,
+      run: vi.fn(async () => controller.abort()),
+      stop: vi.fn(),
+    });
+    await vi.advanceTimersByTimeAsync(999);
+    expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands')).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await running;
+    expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands')).toHaveLength(2);
+    expect(execute.mock.calls.filter(([name]) => name === 'claimAgentCommand')).toHaveLength(1);
+  });
+  it('uses a sixty-second recovery sweep only after push intake is acknowledged', async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    let onState:
+      | ((
+          connected: boolean,
+          capabilities?: { pushIntake: boolean; connectionPresence: boolean },
+        ) => void)
+      | undefined;
+    const execute = vi.fn(async (name: string) =>
+      name === 'getAgentCommands' ? { commandProtocol: 1, commands: [] } : { id: 'ok' },
+    );
+    const api = {
+      execute,
+      liveSubscribe: vi.fn(
+        (
+          _roomId: string,
+          _cursor: string | undefined,
+          _onItems: unknown,
+          state: typeof onState,
+        ) => {
+          onState = state;
+          return vi.fn();
+        },
+      ),
+    } as unknown as DaemonApiClient;
+    const running = runServerCommandIntake({
+      api,
+      roomId: 'room',
+      agentId: 'agent',
+      context: await context(),
+      signal: controller.signal,
+      run: vi.fn(),
+      stop: vi.fn(),
+    });
+    for (let flush = 0; flush < 5 && !onState; flush += 1) await Promise.resolve();
+    expect(onState).toBeTypeOf('function');
+
+    await vi.advanceTimersByTimeAsync(999);
+    expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands')).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.waitFor(() =>
+      expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands')).toHaveLength(2),
+    );
+
+    onState?.(true, { pushIntake: true, connectionPresence: true });
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands')).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.waitFor(() =>
+      expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands')).toHaveLength(3),
+    );
+
+    onState?.(false);
+    await vi.waitFor(() =>
+      expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands')).toHaveLength(4),
+    );
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() =>
+      expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands')).toHaveLength(5),
+    );
+    controller.abort();
+    await running;
+  });
+  it('dispatches a pushed claim immediately while a loaded recovery read is still pending', async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    let onState:
+        | ((
+            connected: boolean,
+            capabilities?: { pushIntake: boolean; connectionPresence: boolean },
+          ) => void)
+        | undefined,
+      onCommands: ((commands: readonly AgentCommand[]) => void) | undefined,
+      finishRecovery: ((page: { commandProtocol: 1; commands: AgentCommand[] }) => void) | undefined,
+      finishClaim: ((result: { id: string }) => void) | undefined;
+    let reads = 0;
+    const claimDispatchedAt: number[] = [];
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getAgentCommands') {
+        if (reads++ === 0) return { commandProtocol: 1, commands: [] };
+        return new Promise<{ commandProtocol: 1; commands: AgentCommand[] }>((resolve) => {
+          finishRecovery = resolve;
+        });
+      }
+      if (name === 'claimAgentCommand') {
+        claimDispatchedAt.push(Date.now());
+        return new Promise<{ id: string }>((resolve) => {
+          finishClaim = resolve;
+        });
+      }
+      return { id: 'ok' };
+    });
+    const api = {
+      execute,
+      liveSubscribe: vi.fn(
+        (
+          _roomId: string,
+          _cursor: string | undefined,
+          _onItems: unknown,
+          state: typeof onState,
+          _presence: unknown,
+          commands: typeof onCommands,
+        ) => {
+          onState = state;
+          onCommands = commands;
+          return vi.fn();
+        },
+      ),
+    } as unknown as DaemonApiClient;
+    const running = runServerCommandIntake({
+      api,
+      roomId: 'room',
+      agentId: 'agent',
+      context: await context(),
+      signal: controller.signal,
+      run: vi.fn(async () => undefined),
+      stop: vi.fn(),
+    });
+    await vi.waitFor(() => expect(onCommands).toBeTypeOf('function'));
+    onState?.(true, { pushIntake: true, connectionPresence: true });
+    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.waitFor(() => expect(finishRecovery).toBeTypeOf('function'));
+
+    const pushedAt = Date.now();
+    onCommands?.([command()]);
+    await vi.waitFor(() => expect(claimDispatchedAt).toHaveLength(1));
+    expect(claimDispatchedAt[0]! - pushedAt).toBeLessThan(500);
+
+    // Representative loaded ordering: the stale recovery snapshot completes
+    // after push dispatch but before the claim response. It must not enqueue
+    // the command a second time.
+    finishRecovery?.({ commandProtocol: 1, commands: [command()] });
+    await Promise.resolve();
+    finishClaim?.({ id: 'ok' });
+    await vi.waitFor(() =>
+      expect(execute.mock.calls.filter(([name]) => name === 'claimAgentCommand')).toHaveLength(1),
+    );
+    await vi.advanceTimersByTimeAsync(1);
+    expect(execute.mock.calls.filter(([name]) => name === 'claimAgentCommand')).toHaveLength(1);
+    controller.abort();
+    await running;
   });
   it('processes a stop while an authorized input is running', async () => {
     const controller = new AbortController();

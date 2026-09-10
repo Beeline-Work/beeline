@@ -16,6 +16,7 @@ const transport = vi.hoisted(() => ({ deleteCalls: 0, failDelete: false }));
 const authSession = vi.hoisted(() => ({
   clearPendingGitHubSignInState: vi.fn(async () => undefined),
 }));
+const monolithSession = vi.hoisted(() => ({ clear: vi.fn(async () => undefined) }));
 const updates = vi.hoisted(() => ({
   isEnabled: true,
   checkForUpdateAsync: vi.fn(),
@@ -40,6 +41,7 @@ vi.mock('expo-updates', () => ({
 }));
 vi.mock('@/auth/buzz-identity-storage', () => identityStorage);
 vi.mock('@/auth/github-auth-session', () => authSession);
+vi.mock('@/auth/monolith-session', () => ({ monolithSession }));
 vi.mock('@/buzz/surface-storage', () => surfaceStorage);
 vi.mock('@/sync/transport', () => ({
   BuzzRigTransport: class {
@@ -312,6 +314,7 @@ describe('Buzz global Settings', () => {
       await renderer.root.findByProps({ testID: 'sign-out-setting' }).props.onPress();
     });
     expect(identityStorage.clearBuzzIdentity).toHaveBeenCalledOnce();
+    expect(monolithSession.clear).toHaveBeenCalledOnce();
     expect(authSession.clearPendingGitHubSignInState).toHaveBeenCalledOnce();
     expect(surfaceStorage.clearMobileSurfaceStorage).toHaveBeenCalledOnce();
     expect(navigation.replace).toHaveBeenCalledWith('/beeline/onboarding');
@@ -374,6 +377,7 @@ describe('Buzz global Settings', () => {
       // The server heard the deletion before any local state moved.
       expect(transport.deleteCalls).toBe(1);
       expect(identityStorage.clearBuzzIdentity).toHaveBeenCalledOnce();
+      expect(monolithSession.clear).toHaveBeenCalledOnce();
       expect(authSession.clearPendingGitHubSignInState).toHaveBeenCalledOnce();
       expect(surfaceStorage.clearMobileSurfaceStorage).toHaveBeenCalledOnce();
       expect(navigation.replace).toHaveBeenCalledWith('/beeline/onboarding');

@@ -3671,6 +3671,103 @@ describe('monolith integration', () => {
     expect(Buffer.from(await media.arrayBuffer()).toString()).toBe('video-bytes');
   });
 
+  it('authenticates an explicit corner close and routes structured stops without chat prose', async () => {
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'phone-close-corner',
+      name: 'Close request',
+      objective: 'Close this corner from the phone',
+    });
+    expect(created.status).toBe(200);
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    const outsiderToken = await phoneToken('corner-outsider');
+    expect(
+      (
+        await daemonOperation('postAgentTurnReceipt', {
+          roomId: cornerId,
+          requestId: 'phone-close-corner',
+          status: 'working',
+        })
+      ).status,
+    ).toBe(200);
+
+    const refused = await operation('requestCornerClose', { roomId: cornerId }, outsiderToken);
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual({ error: 'room access denied' });
+    expect(
+      (
+        await database.query<{ close_requested: boolean }>(
+          `SELECT close_requested FROM corner_facts WHERE corner_id=$1`,
+          [cornerId],
+        )
+      ).rows[0]?.close_requested,
+    ).toBe(false);
+
+    const closed = await operation('requestCornerClose', { roomId: cornerId });
+    expect(closed.status).toBe(204);
+    expect((await operation('requestCornerClose', { roomId: cornerId })).status).toBe(204);
+    expect(
+      (
+        await database.query<{
+          archived: boolean;
+          close_requested: boolean;
+          lifecycle: Record<string, unknown>;
+        }>(
+          `SELECT room.archived_at IS NOT NULL archived,fact.close_requested,fact.lifecycle
+           FROM rooms room JOIN corner_facts fact ON fact.corner_id=room.id WHERE room.id=$1`,
+          [cornerId],
+        )
+      ).rows[0],
+    ).toMatchObject({
+      archived: true,
+      close_requested: true,
+      lifecycle: { lifecycle: 'done', checks: 'unknown' },
+    });
+    expect(
+      (
+        await database.query<{ status: string }>(
+          `SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
+          [cornerId, 'phone-close-corner', AGENT],
+        )
+      ).rows[0]?.status,
+    ).toBe('cancelled');
+    const helperCommands = (await (
+      await daemonOperation('getAgentCommands', { roomId: cornerId })
+    ).json()) as { commands: Array<{ action: string; reason: string; turnRequestId: string }> };
+    expect(helperCommands.commands).toContainEqual(
+      expect.objectContaining({
+        action: 'stop',
+        reason: 'corner_close',
+        turnRequestId: 'phone-close-corner',
+      }),
+    );
+    expect(
+      (
+        await database.query<{ action: string; reason: string; state: string; agent_id: string }>(
+          `SELECT action,reason,state,agent_id FROM agent_commands
+           WHERE room_id=$1 ORDER BY created_at,id`,
+          [cornerId],
+        )
+      ).rows,
+    ).toEqual([
+      expect.objectContaining({ action: 'input', state: 'cancelled', agent_id: AGENT }),
+      expect.objectContaining({
+        action: 'stop',
+        reason: 'corner_close',
+        state: 'pending',
+        agent_id: AGENT,
+      }),
+    ]);
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM messages WHERE room_id=$1 AND text='Close this corner.'`,
+          [cornerId],
+        )
+      ).rowCount,
+    ).toBe(0);
+  });
+
   it('deduplicates push delivery claims in Postgres', async () => {
     await database.query(
       `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES('device-token-12345678901234567890',$1,'ios','physical')`,
@@ -5366,6 +5463,14 @@ describe('monolith integration', () => {
     // Both tags are stored, so both are what the phone highlights and what the
     // push fan-out reads. A correct handle never becomes plain text in silence.
     expect(stored.rows[0]!.mention_ids).toEqual([HUMAN, human2]);
+    const projected = (await new PhoneService(database, origin).readRoom(ROOM, HUMAN))!;
+    expect(
+      projected.messages.find(
+        (message) =>
+          message.author.pubkey === AGENT &&
+          message.text.includes('@bananaman614305 you are up next.'),
+      )?.mentionPubkeys,
+    ).toEqual([HUMAN, human2]);
     const send = vi.fn().mockResolvedValue(undefined);
     expect(await new PushDeliveryLoop(database, { send }).runOnce()).toBe(2);
     expect(send.mock.calls.map(([token]) => token).sort()).toEqual([

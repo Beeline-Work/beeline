@@ -1,25 +1,61 @@
 #!/usr/bin/env node
-import { readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 
-export const RELEASE_COMPONENTS = ['server', 'daemon', 'app'];
+export const RELEASE_COMPONENTS = ['server', 'helper', 'mobile-ota', 'mobile-native', 'desktop', 'website'];
+export const RELEASE_BUDGET_MINUTES = 20;
+export const RELEASE_NOTIFY_TIMEOUT_MS = 10_000;
+export const RELEASE_NOTIFY_ENDPOINT = 'https://server.usebeeline.app/v1/releases/notify';
+
+// Release-affecting paths belong in this inspectable table, beside drift tests,
+// rather than in scattered workflow conditionals.
+export const COMPONENT_PATH_RULES = [
+  { prefix: 'apps/server/', components: ['server'] },
+  { prefix: 'apps/auth/', components: ['server'] },
+  { prefix: 'apps/push-gateway/', components: ['server'] },
+  { prefix: 'apps/body/', components: ['helper'] },
+  { prefix: 'packages/usebeeline/', components: ['helper'] },
+  { prefix: 'packages/gate/', components: ['helper'] },
+  { prefix: 'packages/api-contract/', components: ['server', 'helper', 'mobile-ota', 'desktop'] },
+  { prefix: 'packages/buzz-client/', components: ['helper', 'mobile-ota', 'desktop'] },
+  { prefix: 'packages/nostr/', components: ['helper', 'mobile-ota', 'desktop'] },
+  { prefix: 'apps/mobile/sources/', components: ['mobile-ota', 'desktop'] },
+  { prefix: 'apps/mobile/assets/', components: ['mobile-ota', 'desktop'] },
+  { prefix: 'apps/mobile/src-tauri/', components: ['desktop'] },
+  { prefix: 'apps/mobile/android/', components: ['mobile-native'] },
+  { prefix: 'apps/mobile/ios/', components: ['mobile-native'] },
+  { prefix: 'apps/mobile/plugins/', components: ['mobile-native'] },
+  { exact: 'apps/mobile/app.config.js', components: ['mobile-ota', 'mobile-native', 'desktop'] },
+  { exact: 'apps/mobile/package.json', components: ['mobile-ota', 'mobile-native', 'desktop'] },
+  { exact: 'apps/mobile/package-lock.json', components: ['mobile-ota', 'mobile-native', 'desktop'] },
+  { prefix: 'relay-stack/web/', components: ['website'] },
+  { prefix: 'apps/mobile/store/', components: ['website', 'mobile-native'] },
+  { prefix: 'scripts/app-associations.', components: ['website'] },
+  { prefix: 'scripts/pages-', components: ['website'] },
+  { prefix: 'scripts/build-beeline-bundle.', components: ['helper'] },
+  { prefix: 'scripts/build-usebeeline-package.', components: ['helper'] },
+  { prefix: 'scripts/install-beeline.', components: ['helper'] },
+  { prefix: 'scripts/verify-beeline-install.', components: ['helper'] },
+  { prefix: 'scripts/verify-pages-update.', components: ['helper', 'website'] },
+  { prefix: '.github/actions/server-leg/', components: ['server'] },
+  { prefix: '.github/actions/daemon-leg/', components: ['helper'] },
+  { prefix: '.github/actions/mobile-ota-leg/', components: ['mobile-ota'] },
+  { prefix: '.github/actions/pages-leg/', components: ['helper', 'website'] },
+  { exact: '.github/workflows/desktop.yml', components: ['desktop'] },
+  { exact: '.github/workflows/unified-release.yml', components: ['server', 'helper', 'mobile-ota', 'desktop', 'website'] },
+  { exact: 'scripts/unified-release.mjs', components: ['server', 'helper', 'mobile-ota', 'desktop', 'website'] },
+];
+
 const VERSION = /^v(\d+)\.(\d+)\.(\d+)$/;
 const SHA = /^[0-9a-f]{7,64}$/;
+const FINAL_STATES = new Set(['checked', 'carried']);
 
-function fail(message) {
-  throw new Error(message);
-}
-
-function readJson(path) {
-  return JSON.parse(readFileSync(path, 'utf8'));
-}
-
+function fail(message) { throw new Error(message); }
+function readJson(path) { return JSON.parse(readFileSync(path, 'utf8')); }
 function writeJson(path, value) {
+  if (!path) fail('missing output state path');
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
 }
-
-function now() {
-  return new Date().toISOString();
-}
+function now() { return new Date().toISOString(); }
 
 export function validateReleaseIdentity(version, sourceSha) {
   if (!VERSION.test(version ?? '')) fail(`invalid release version: ${version ?? '<missing>'}`);
@@ -34,235 +70,238 @@ export function nextReleaseVersion(previous) {
   return `v${match[1]}.${match[2]}.${Number(match[3]) + 1}`;
 }
 
-export function initializeRelease({ version, sourceSha, previous }) {
-  validateReleaseIdentity(version, sourceSha);
-  if (previous?.sourceSha === sourceSha) {
-    if (previous.version !== version) {
-      fail(`sha ${sourceSha} is already assigned to ${previous.version}, not ${version}`);
+function assertComponent(component) {
+  if (!RELEASE_COMPONENTS.includes(component)) fail(`unknown release component: ${component}`);
+}
+function matchesRule(path, rule) { return rule.exact === path || (rule.prefix && path.startsWith(rule.prefix)); }
+
+export function selectReleaseComponents(paths, { selection = 'auto', storeTrack = 'none' } = {}) {
+  if (!['none', 'internal', 'beta', 'production'].includes(storeTrack)) fail(`invalid store track: ${storeTrack}`);
+  let selected;
+  if (selection === 'all') selected = new Set(RELEASE_COMPONENTS);
+  else if (selection === 'auto' || selection === '') {
+    selected = new Set();
+    for (const path of paths) {
+      for (const rule of COMPONENT_PATH_RULES) {
+        if (matchesRule(path, rule)) rule.components.forEach((component) => selected.add(component));
+      }
     }
-    return previous;
+  } else {
+    selected = new Set(selection.split(',').map((value) => value.trim()).filter(Boolean));
+    for (const component of selected) assertComponent(component);
   }
-  const createdAt = now();
+  if (storeTrack !== 'none') selected.add('mobile-native');
+  return RELEASE_COMPONENTS.filter((component) => selected.has(component));
+}
+
+export function artifactReference(component, { version, sourceSha }) {
+  assertComponent(component);
+  validateReleaseIdentity(version, sourceSha);
+  return `${component}-${version}-${sourceSha}`;
+}
+
+function previousComponent(previous, component) {
+  const legacyName = component === 'helper' ? 'daemon' : component === 'mobile-ota' ? 'app' : component;
+  const entry = previous?.components?.[component] ?? previous?.artifacts?.[legacyName];
+  if (!entry && previous?.schemaVersion !== 1) fail(`previous release has no ${component} artifact to carry forward`);
+  // Schema 1 recorded only the old three core legs. The first schema-2 release
+  // migrates the already-live stable desktop/site/store references once; every
+  // later release requires the explicit component entry above.
+  if (!entry) {
+    validateReleaseIdentity(previous.version, previous.sourceSha);
+    return {
+      state: 'carried', selected: false, version: previous.version, sourceSha: previous.sourceSha,
+      artifactRef: `legacy-${component}-${previous.version}-${previous.sourceSha}`,
+    };
+  }
+  const version = entry.version ?? previous.version;
+  const sourceSha = entry.sourceSha ?? entry.sourceCommit ?? previous.sourceSha;
+  validateReleaseIdentity(version, sourceSha);
   return {
-    schemaVersion: 1,
-    version,
-    sourceSha,
-    state: 'building',
-    createdAt,
-    updatedAt: createdAt,
-    ...(previous
-      ? {
-          supersedes: {
-            version: previous.version,
-            sourceSha: previous.sourceSha,
-          },
-        }
-      : {}),
-    artifacts: Object.fromEntries(
-      RELEASE_COMPONENTS.map((component) => [component, { state: 'pending' }]),
-    ),
-    delivery: { state: 'pending' },
+    state: 'carried', selected: false, version, sourceSha,
+    artifactRef: entry.artifactRef ?? artifactReference(component, { version, sourceSha }),
+  };
+}
+
+export function initializeRelease({ version, sourceSha, previous, selectedComponents = RELEASE_COMPONENTS, retry, startedAt = now() }) {
+  validateReleaseIdentity(version, sourceSha);
+  const selected = new Set(selectedComponents);
+  selected.forEach(assertComponent);
+  if (retry) {
+    validateReleaseIdentity(retry.version, retry.sourceSha);
+    if (retry.version !== version || retry.sourceSha !== sourceSha) fail(`retry identity ${retry.version}@${retry.sourceSha} does not match ${version}@${sourceSha}`);
+    const resumed = structuredClone(retry);
+    resumed.firstStartedAt ??= resumed.startedAt;
+    resumed.startedAt = startedAt;
+    resumed.state = 'planned';
+    resumed.delivery = { state: 'pending' };
+    resumed.updatedAt = startedAt;
+    return resumed;
+  }
+  if (previous?.sourceSha === sourceSha) {
+    if (previous.version !== version) fail(`sha ${sourceSha} is already assigned to ${previous.version}, not ${version}`);
+    const supplemental = previous.state === 'delivered' ? RELEASE_COMPONENTS.filter((component) => {
+      const entry = previous.components?.[component];
+      return selected.has(component) && entry?.state === 'carried' && entry.sourceSha !== sourceSha;
+    }) : [];
+    if (supplemental.length === 0) return structuredClone(previous);
+    const state = structuredClone(previous);
+    for (const component of supplemental) {
+      state.components[component] = {
+        state: 'pending', selected: true, version, sourceSha,
+        artifactRef: artifactReference(component, { version, sourceSha }),
+      };
+    }
+    state.state = 'planned';
+    state.startedAt = startedAt;
+    state.updatedAt = startedAt;
+    state.plan = {
+      selected: supplemental,
+      carried: RELEASE_COMPONENTS.filter((component) => !supplemental.includes(component)),
+    };
+    state.delivery = { state: 'pending' };
+    return state;
+  }
+  if (selected.size !== RELEASE_COMPONENTS.length && !previous) fail('a selective release requires a previous successful release index');
+  const components = {};
+  for (const component of RELEASE_COMPONENTS) {
+    components[component] = selected.has(component)
+      ? { state: 'pending', selected: true, version, sourceSha, artifactRef: artifactReference(component, { version, sourceSha }) }
+      : previousComponent(previous, component);
+  }
+  return {
+    schemaVersion: 2, version, sourceSha, state: 'planned', startedAt, updatedAt: startedAt,
+    ...(previous ? { supersedes: { version: previous.version, sourceSha: previous.sourceSha } } : {}),
+    plan: {
+      selected: RELEASE_COMPONENTS.filter((component) => selected.has(component)),
+      carried: RELEASE_COMPONENTS.filter((component) => !selected.has(component)),
+    },
+    components, delivery: { state: 'pending' },
   };
 }
 
 function currentRelease(state) {
-  if (state?.schemaVersion !== 1) fail('unsupported unified release state');
+  if (state?.schemaVersion !== 2) fail('unsupported unified release state');
   validateReleaseIdentity(state.version, state.sourceSha);
-  if (state.state === 'superseded') fail(`release ${state.version} was superseded`);
   return state;
 }
-
 function componentEntry(state, component) {
-  if (!RELEASE_COMPONENTS.includes(component)) fail(`unknown release component: ${component}`);
-  return state.artifacts?.[component] ?? fail(`release state has no ${component} artifact`);
+  assertComponent(component);
+  return state.components?.[component] ?? fail(`release state has no ${component} component`);
 }
 
-export function markBuilt(state, component, identity = state) {
+export function markComponentStage(state, component, stage, identity = state, artifactRef) {
   currentRelease(state);
   const entry = componentEntry(state, component);
+  if (!entry.selected) fail(`${component} is carried forward and cannot run`);
   validateReleaseIdentity(identity.version, identity.sourceSha);
-  if (identity.version !== state.version || identity.sourceSha !== state.sourceSha) {
-    fail(
-      `${component} artifact identity ${identity.version}@${identity.sourceSha} does not match release ` +
-        `${state.version}@${state.sourceSha}`,
-    );
-  }
-  state.artifacts[component] = {
-    ...entry,
-    state: 'built',
-    version: identity.version,
-    sourceSha: identity.sourceSha,
-    builtAt: now(),
-  };
+  if (identity.version !== state.version || identity.sourceSha !== state.sourceSha) fail(`mixed release identity for ${component}`);
+  const allowed = { built: ['pending', 'built'], promoted: ['built', 'promoted'], checked: ['promoted', 'checked'] };
+  if (!allowed[stage]?.includes(entry.state)) fail(`${component} cannot move from ${entry.state} to ${stage}`);
+  state.components[component] = { ...entry, state: stage, artifactRef: artifactRef ?? entry.artifactRef, [`${stage}At`]: now() };
   state.updatedAt = now();
   return state;
 }
 
-export function assertAllArtifactsBuilt(state) {
+export function retryPlan(state) {
   currentRelease(state);
-  for (const component of RELEASE_COMPONENTS) {
+  return Object.fromEntries(RELEASE_COMPONENTS.map((component) => {
     const entry = componentEntry(state, component);
-    if (
-      entry.state !== 'built' ||
-      entry.version !== state.version ||
-      entry.sourceSha !== state.sourceSha
-    ) {
-      fail(`${component} artifact is not built for ${state.version}@${state.sourceSha}`);
+    return [component, entry.selected && entry.state !== 'checked'];
+  }));
+}
+
+export function applyComponentCheckpoints(state, checkpoints) {
+  currentRelease(state);
+  const rank = { pending: 0, built: 1, promoted: 2, checked: 3 };
+  for (const checkpoint of checkpoints) {
+    const { component, version, sourceSha, state: stage, artifactRef } = checkpoint ?? {};
+    assertComponent(component);
+    if (version !== state.version || sourceSha !== state.sourceSha) {
+      fail(`checkpoint identity for ${component} does not match release`);
     }
+    const entry = componentEntry(state, component);
+    if (!entry.selected) fail(`checkpoint supplied for carried component ${component}`);
+    if (!['built', 'promoted', 'checked'].includes(stage) || !artifactRef) fail(`invalid ${component} checkpoint`);
+    if (rank[stage] < rank[entry.state]) continue;
+    state.components[component] = { ...entry, state: stage, artifactRef, [`${stage}At`]: checkpoint[`${stage}At`] ?? now() };
   }
-  state.state = 'ready';
   state.updatedAt = now();
   return state;
 }
 
-export function confirmPromotion(state, component, identity = state) {
+export function finalizeRelease(state, { outcome = 'success', finishedAt = now(), failureClass } = {}) {
   currentRelease(state);
-  if (state.state !== 'ready' && state.state !== 'promoting') {
-    fail(`release ${state.version} is not ready for promotion`);
-  }
-  validateReleaseIdentity(identity.version, identity.sourceSha);
-  if (identity.version !== state.version || identity.sourceSha !== state.sourceSha) {
-    fail(`mixed-version ${component} confirmation refused`);
-  }
-  const position = RELEASE_COMPONENTS.indexOf(component);
-  for (const dependency of RELEASE_COMPONENTS.slice(0, position)) {
-    if (componentEntry(state, dependency).state !== 'confirmed') {
-      fail(`${component} cannot promote before ${dependency} confirms`);
-    }
-  }
-  const entry = componentEntry(state, component);
-  if (!['built', 'confirmed'].includes(entry.state)) {
-    fail(`${component} cannot promote from ${entry.state}`);
-  }
-  state.artifacts[component] = {
-    ...entry,
-    state: 'confirmed',
-    confirmedAt: now(),
-  };
-  state.state = 'promoting';
-  state.updatedAt = now();
-  return state;
-}
-
-export function confirmDelivery(state, identity = state) {
-  currentRelease(state);
-  if (componentEntry(state, 'app').state !== 'confirmed') {
-    fail('delivery cannot confirm before app promotion');
-  }
-  validateReleaseIdentity(identity.version, identity.sourceSha);
-  if (identity.version !== state.version || identity.sourceSha !== state.sourceSha) {
-    fail('mixed-version delivery confirmation refused');
-  }
-  state.delivery = {
-    state: 'passed',
-    version: identity.version,
-    sourceSha: identity.sourceSha,
-    confirmedAt: now(),
-  };
-  state.state = 'delivered';
-  state.updatedAt = now();
-  return state;
-}
-
-export function supersedeRelease(state, nextIdentity) {
-  currentRelease(state);
-  validateReleaseIdentity(nextIdentity.version, nextIdentity.sourceSha);
-  if (nextIdentity.sourceSha === state.sourceSha) fail('a release cannot supersede itself');
-  state.state = 'superseded';
-  state.supersededBy = { ...nextIdentity, at: now() };
-  state.updatedAt = now();
-  return state;
-}
-
-export function deliveryReport(state, observed = undefined) {
-  currentRelease(state);
-  if (observed) {
+  if (!['success', 'failure'].includes(outcome)) fail(`invalid release outcome: ${outcome}`);
+  if (outcome === 'success') {
     for (const component of RELEASE_COMPONENTS) {
-      const identity = observed[component];
-      validateReleaseIdentity(identity?.version, identity?.sourceSha);
-      if (identity.version !== state.version || identity.sourceSha !== state.sourceSha) {
-        fail(
-          `NOT DELIVERED: mixed-version ${component} is ${identity.version}@${identity.sourceSha}; ` +
-            `expected ${state.version}@${state.sourceSha}`,
-        );
-      }
+      const entry = componentEntry(state, component);
+      if (!FINAL_STATES.has(entry.state) || !entry.artifactRef) fail(`${component} has no delivered or carried artifact`);
     }
-  }
-  const componentsConfirmed = RELEASE_COMPONENTS.every(
-    (component) => componentEntry(state, component).state === 'confirmed',
-  );
-  if (!componentsConfirmed || state.delivery?.state !== 'passed' || state.state !== 'delivered') {
-    fail(`NOT DELIVERED: ${state.version}@${state.sourceSha} is not aligned and ledger-confirmed`);
-  }
-  return `DELIVERED ${state.version} (${state.sourceSha})`;
+  } else if (!failureClass) fail('failed releases require a failure class');
+  const durationSeconds = Math.max(0, Math.round((Date.parse(finishedAt) - Date.parse(state.startedAt)) / 1000));
+  state.state = outcome === 'success' ? 'delivered' : 'failed';
+  state.delivery = { state: outcome, finishedAt, durationSeconds, ...(failureClass ? { failureClass } : {}) };
+  state.updatedAt = finishedAt;
+  return state;
 }
 
-export function assertDaemonFleetReady(status, version, sourceSha) {
+export function releasePlanSummary(state) {
+  currentRelease(state);
+  return {
+    identity: `${state.version}@${state.sourceSha}`,
+    selected: state.plan.selected,
+    carried: Object.fromEntries(state.plan.carried.map((component) => {
+      const entry = componentEntry(state, component);
+      return [component, `${entry.version}@${entry.sourceSha} (${entry.artifactRef})`];
+    })),
+    retry: retryPlan(state), budgetMinutes: RELEASE_BUDGET_MINUTES,
+  };
+}
+
+export async function notifyRelease({
+  version,
+  sourceSha,
+  repository,
+  secret,
+  timeoutMs = RELEASE_NOTIFY_TIMEOUT_MS,
+  fetchImpl = fetch,
+}) {
   validateReleaseIdentity(version, sourceSha);
-  const daemons = Array.isArray(status?.daemons) ? status.daemons : [];
-  // An agent that has NEVER reported (no presence output at all) is a ghost
-  // registration, not a daemon in trouble: it cannot confirm a release and it
-  // must not block one. A daemon that reported before but has gone silent is
-  // 'missing'/'stale'/'offline' and still counts as observed below.
-  const observed = daemons.filter((daemon) => daemon?.state !== 'never-seen');
-  if (observed.length === 0) fail('daemon readiness reported no agents that ever reported');
-  // A helper on someone else's machine is proof-of-runnability, not a veto: one
-  // exact-version convergence proves the bundle runs. Every other observed
-  // daemon is informational (named in the summary, never a release blocker) —
-  // unless NONE converged, which means the bundle itself is bad.
-  const converged = observed.filter(
-    (daemon) => daemon?.state === 'ready' && daemon?.version === version && daemon?.sha === sourceSha,
-  );
-  const laggards = observed.filter((daemon) => !converged.includes(daemon));
-  if (converged.length === 0) {
-    fail(
-      `no daemon converged to ${version}@${sourceSha}; the bundle does not run:\n` +
-        laggards
-          .map(
-            (daemon) =>
-              `agent ${daemon?.agentPubkey ?? '<unknown>'} reported ` +
-              `${daemon?.state ?? '<missing-state>'} ` +
-              `${daemon?.version ?? '<missing-version>'}@${daemon?.sha ?? '<missing-sha>'}; ` +
-              `expected ready ${version}@${sourceSha}`,
-          )
-          .join('\n'),
-    );
+  if (!secret) return { state: 'skipped', detail: 'notification secret is not configured' };
+  const signal = AbortSignal.timeout(timeoutMs);
+  try {
+    const response = await fetchImpl(RELEASE_NOTIFY_ENDPOINT, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${secret}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        version,
+        sha: sourceSha,
+        changelogUrl: `https://github.com/${repository}/releases/tag/${version}`,
+      }),
+      signal,
+    });
+    if (!response.ok) return { state: 'warning', detail: `server returned HTTP ${response.status}` };
+    return { state: 'sent', detail: `server returned HTTP ${response.status}` };
+  } catch (error) {
+    if (signal.aborted) return { state: 'warning', detail: `timed out after ${timeoutMs}ms` };
+    const detail = error instanceof Error ? error.message.split(/\r?\n/, 1)[0] : String(error);
+    return { state: 'warning', detail: `delivery failed: ${detail}` };
   }
-  return { daemons, observed, converged, laggards };
-}
-
-export function describeDaemonFleet({ converged, laggards }, version, sourceSha) {
-  const total = converged.length + laggards.length;
-  const summary = `daemon fleet: ${converged.length}/${total} on ${version} (${sourceSha.slice(0, 8)})`;
-  if (laggards.length === 0) return summary;
-  const laggardText = laggards
-    .map(
-      (daemon) =>
-        `${String(daemon?.agentPubkey ?? '<unknown>').slice(0, 8)} ` +
-        `${daemon?.version ?? '<missing-version>'}@${String(daemon?.sha ?? '<missing-sha>').slice(0, 8)}`,
-    )
-    .join(', ');
-  return `${summary}; not converged: ${laggardText} - informational, does not block`;
 }
 
 function options(argv) {
   const parsed = { _: [] };
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
-    if (!value.startsWith('--')) {
-      parsed._.push(value);
-      continue;
-    }
-    parsed[value.slice(2)] = argv[++index];
+    if (!value.startsWith('--')) parsed._.push(value);
+    else parsed[value.slice(2)] = argv[++index];
   }
   return parsed;
 }
+function identityFromOptions(args) { return { version: args.version, sourceSha: args.sha }; }
 
-function identityFromOptions(args) {
-  return { version: args.version, sourceSha: args.sha };
-}
-
-function main(argv) {
+async function main(argv) {
   const args = options(argv);
   const command = args._[0];
   if (command === 'next-version') {
@@ -270,52 +309,66 @@ function main(argv) {
     process.stdout.write(`${nextReleaseVersion(previous?.version)}\n`);
     return;
   }
-  if (command === 'init') {
+  if (command === 'plan' || command === 'init') {
     const previous = args.previous ? readJson(args.previous) : undefined;
-    writeJson(args.state, initializeRelease({ ...identityFromOptions(args), previous }));
+    const retry = args.retry ? readJson(args.retry) : undefined;
+    const paths = args.paths ? readFileSync(args.paths, 'utf8').split(/\r?\n/).map((path) => path.trim()).filter(Boolean) : [];
+    const selection = args.selection ?? (command === 'init' && !args.paths ? 'all' : 'auto');
+    const selectedComponents = selectReleaseComponents(paths, { selection, storeTrack: args['store-track'] ?? 'none' });
+    const state = initializeRelease({ ...identityFromOptions(args), previous, retry, selectedComponents });
+    state.plan.paths = paths;
+    state.plan.selection = selection;
+    writeJson(args.state, state);
+    if (args.summary) writeJson(args.summary, releasePlanSummary(state));
+    else if (command === 'plan') console.log(JSON.stringify(releasePlanSummary(state)));
     return;
   }
-  if (command === 'assert-daemons') {
-    const result = assertDaemonFleetReady(readJson(args.status), args.version, args.sha);
-    console.log(describeDaemonFleet(result, args.version, args.sha));
+  if (command === 'notify') {
+    const result = await notifyRelease({
+      ...identityFromOptions(args),
+      repository: args.repository,
+      secret: process.env.BEELINE_RELEASE_NOTIFY_SECRET,
+    });
+    if (args.output) writeJson(args.output, result);
+    if (process.env.GITHUB_OUTPUT) {
+      appendFileSync(process.env.GITHUB_OUTPUT, `state=${result.state}\ndetail=${result.detail}\n`);
+    }
+    if (result.state === 'warning') console.error(`::warning title=Release notification not delivered::${result.detail}`);
+    else console.log(`Release notification ${result.state}: ${result.detail}`);
     return;
   }
   const state = readJson(args.state);
-  switch (command) {
-    case 'mark-built':
-      markBuilt(state, args.component, identityFromOptions(args));
-      break;
-    case 'assert-built':
-      assertAllArtifactsBuilt(state);
-      break;
-    case 'confirm':
-      confirmPromotion(state, args.component, identityFromOptions(args));
-      break;
-    case 'confirm-delivery':
-      confirmDelivery(state, identityFromOptions(args));
-      break;
-    case 'supersede':
-      supersedeRelease(state, identityFromOptions(args));
-      break;
-    case 'report':
-      validateReleaseIdentity(args.version, args.sha);
-      if (args.version !== state.version || args.sha !== state.sourceSha) {
-        fail('mixed-version delivery report refused');
-      }
-      console.log(deliveryReport(state, args.observed ? readJson(args.observed) : undefined));
-      return;
-    default:
-      fail(
-        'Usage: unified-release.mjs <next-version|init|mark-built|assert-built|assert-daemons|confirm|confirm-delivery|supersede|report>',
-      );
+  if (command === 'mark-stage') {
+    markComponentStage(state, args.component, args.stage, identityFromOptions(args), args.artifact);
+    writeJson(args.state, state);
+    return;
   }
-  writeJson(args.state, state);
+  if (command === 'apply-checkpoints') {
+    const checkpoints = args.checkpoints ? readJson(args.checkpoints) : fail('missing checkpoints file');
+    if (!Array.isArray(checkpoints)) fail('checkpoints file must contain an array');
+    applyComponentCheckpoints(state, checkpoints);
+    writeJson(args.state, state);
+    if (args.summary) writeJson(args.summary, releasePlanSummary(state));
+    return;
+  }
+  if (command === 'finalize') {
+    finalizeRelease(state, { outcome: args.outcome, failureClass: args['failure-class'] });
+    writeJson(args.state, state);
+    return;
+  }
+  if (command === 'report') {
+    validateReleaseIdentity(args.version, args.sha);
+    if (args.version !== state.version || args.sha !== state.sourceSha) fail('mixed-version delivery report refused');
+    if (state.state !== 'delivered') fail(`NOT DELIVERED: ${state.version}@${state.sourceSha}`);
+    console.log(`DELIVERED ${state.version} (${state.sourceSha}) in ${state.delivery.durationSeconds}s`);
+    return;
+  }
+  fail('Usage: unified-release.mjs <next-version|plan|init|mark-stage|apply-checkpoints|finalize|notify|report>');
 }
 
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
-  try {
-    main(process.argv.slice(2));
-  } catch (error) {
+  try { await main(process.argv.slice(2)); }
+  catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
   }

@@ -22,6 +22,7 @@ import {
   manualUpdateMessage,
   manualUpdateReducer,
 } from './manual-update-state';
+import { monolithSession } from '@/auth/monolith-session';
 
 /**
  * The account settings hub — the single surface the Workspace rail's YOU
@@ -78,7 +79,11 @@ export default function BuzzSettings() {
       setConfirmForget(true);
       return;
     }
-    await Promise.all([clearBuzzIdentity(), clearPendingGitHubSignInState()]);
+    await Promise.all([
+      monolithSession.clear(),
+      clearBuzzIdentity(),
+      clearPendingGitHubSignInState(),
+    ]);
     clearMobileSurfaceStorage();
     router.replace('/beeline/onboarding');
   }, [confirmForget]);
@@ -99,7 +104,11 @@ export default function BuzzSettings() {
     try {
       const identity = await loadBuzzIdentity();
       if (identity) await new BuzzRigTransport(identity).deleteAccount();
-      await Promise.all([clearBuzzIdentity(), clearPendingGitHubSignInState()]);
+      await Promise.all([
+        monolithSession.clear(),
+        clearBuzzIdentity(),
+        clearPendingGitHubSignInState(),
+      ]);
       clearMobileSurfaceStorage();
       router.replace('/beeline/onboarding');
     } catch {

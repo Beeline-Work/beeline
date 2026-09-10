@@ -7,7 +7,9 @@ primary_region = "iad"
 [env]
   HOST = "0.0.0.0"
   PORT = "8080"
-  DATABASE_POOL_MAX = "5"
+  # Nine helpers can reconnect together; keep one leader slot plus their
+  # evidence writes without starving phone/auth requests.
+  DATABASE_POOL_MAX = "10"
   MEDIA_MAX_BYTES = "26214400"
   PUBLIC_ORIGIN = "https://server.usebeeline.app"
 

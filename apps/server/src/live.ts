@@ -1,9 +1,82 @@
 import { EventEmitter } from 'node:events';
+import type { RoomViewMessage } from '@beeline/api-contract/phone';
+
+export type CommittedMessageLiveRow = {
+  id: string;
+  room_id: string;
+  author_id: string;
+  text: string;
+  presentation: RoomViewMessage['presentation'];
+  attachments: unknown[];
+  mention_ids: string[];
+  reply_to_message_id: string | null;
+  root_message_id: string | null;
+  request_id: string | null;
+  turn_id: string | null;
+  activity: unknown[] | null;
+  durable_fact: RoomViewMessage['durableFact'] | null;
+  card_type: string | null;
+  card: Record<string, unknown> | null;
+  system_event: NonNullable<RoomViewMessage['systemEvent']> | null;
+  created_at: Date;
+  author_kind: 'human' | 'agent';
+  author_name: string;
+  author_handle: string | null;
+  author_avatar: string | null;
+  author_face: string | null;
+};
+
+export type CommittedTurnLiveRow = {
+  room_id: string;
+  request_id: string;
+  agent_id: string;
+  status: 'working' | 'complete' | 'failed' | 'cancelled';
+  created_at: Date;
+  generation_id: string | null;
+  requested_by: string | null;
+};
+
+export type LiveTrace = {
+  /** Per database-row notification nonce. It correlates authorized wire phases
+   * without exposing a Room, identity, message, request, or command id. */
+  id: string;
+  databaseAt: number;
+  emittedAt: number;
+  /** Server-process clock captured before the committing write begins. It is
+   * paired with the server's paint-ack receipt as a conservative upper bound. */
+  startedAt?: number;
+  /** Diagnostics-only server clock captured immediately after the committing
+   * database query resolves (including implicit autocommit and driver await). */
+  databaseAwaitResolvedAt?: number;
+  /** Diagnostics-only server clock captured after the returned row has been
+   * converted into the authoritative live projection input. */
+  projectionCompletedAt?: number;
+  /** Diagnostics-only infrastructure identity; never a user, Room, message,
+   * request, command, or content identifier. */
+  serverInstance?: string;
+  /** Ask this phone to acknowledge paint so the server can take one
+   * diagnostics-only DB-clock sample for a cross-process notification. */
+  paintAck?: 'database-clock';
+};
 
 export type LiveEvent =
   /** `agentId` names the author when one agent's own write caused it; a fact the
    *  server itself publishes carries none. `corner-wake.ts` reads it. */
-  | { type: 'invalidate'; roomId: string; reason: string; agentId?: string; targetAgentId?: string }
+  | {
+      type: 'invalidate';
+      roomId: string;
+      reason: string;
+      agentId?: string;
+      targetAgentId?: string;
+      messageId?: string;
+      requestId?: string;
+      operation?: string;
+      trace?: LiveTrace;
+      /** Same-process only. PostgreSQL notifications deliberately remain ID-only. */
+      committedRow?:
+        | { type: 'message'; row: CommittedMessageLiveRow; startedAt?: number }
+        | { type: 'turn'; row: CommittedTurnLiveRow; startedAt?: number };
+    }
   | { type: 'draft' | 'thought'; roomId: string; agentId: string; turnId: string; text: string }
   | { type: 'retract'; roomId: string; agentId: string; turnId: string; kind: 'draft' | 'thought' }
   | {

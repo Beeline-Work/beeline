@@ -80,6 +80,10 @@ BEGIN
         'scheduleId', COALESCE(NEW.id, OLD.id)
       );
   END CASE;
+  payload = payload || jsonb_build_object(
+    'traceId', md5(random()::text || clock_timestamp()::text || txid_current()::text),
+    'databaseAt', floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint
+  );
   IF payload->>'roomId' IS NOT NULL THEN
     PERFORM pg_notify('${POSTGRES_LIVE_CHANNEL}', payload::text);
   END IF;
@@ -132,12 +136,16 @@ interface LiveNotificationPayload {
   table: string;
   operation: string;
   roomId: string;
+  messageId?: string;
+  requestId?: string;
   agentId?: string;
   turnId?: string;
   kind?: string;
   observedAt?: number;
   ownerEpoch?: string;
   expiresAt?: number;
+  traceId?: string;
+  databaseAt?: number;
 }
 
 function decodePayload(value: string | undefined): LiveNotificationPayload | undefined {
@@ -155,11 +163,15 @@ function decodePayload(value: string | undefined): LiveNotificationPayload | und
       operation: parsed.operation,
       roomId: parsed.roomId,
       ...(typeof parsed.agentId === 'string' ? { agentId: parsed.agentId } : {}),
+      ...(typeof parsed.messageId === 'string' ? { messageId: parsed.messageId } : {}),
+      ...(typeof parsed.requestId === 'string' ? { requestId: parsed.requestId } : {}),
       ...(typeof parsed.turnId === 'string' ? { turnId: parsed.turnId } : {}),
       ...(typeof parsed.kind === 'string' ? { kind: parsed.kind } : {}),
       ...(typeof parsed.observedAt === 'number' ? { observedAt: parsed.observedAt } : {}),
       ...(typeof parsed.ownerEpoch === 'string' ? { ownerEpoch: parsed.ownerEpoch } : {}),
       ...(typeof parsed.expiresAt === 'number' ? { expiresAt: parsed.expiresAt } : {}),
+      ...(typeof parsed.traceId === 'string' ? { traceId: parsed.traceId } : {}),
+      ...(typeof parsed.databaseAt === 'number' ? { databaseAt: parsed.databaseAt } : {}),
     };
   } catch {
     return undefined;
@@ -255,6 +267,38 @@ export class PostgresLiveListener {
         }
         return;
       }
+      if (payload.kind === 'presence') {
+        const rows = await this.database.query<{
+          room_id: string;
+          body: Record<string, unknown>;
+        }>(
+          `SELECT membership.room_id,presence.body
+           FROM memberships membership
+           JOIN LATERAL(
+             SELECT body FROM live_outputs
+             WHERE agent_id=$1 AND kind='presence'
+             ORDER BY updated_at DESC LIMIT 1
+           ) presence ON true
+           WHERE membership.identity_id=$1 AND membership.room_id IS NOT NULL
+             AND membership.removed_at IS NULL`,
+          [payload.agentId],
+        );
+        for (const row of rows.rows) {
+          if (
+            (row.body.status !== 'online' && row.body.status !== 'offline') ||
+            typeof row.body.observedAt !== 'number'
+          )
+            continue;
+          this.live.publish({
+            type: 'presence',
+            roomId: row.room_id,
+            agentId: payload.agentId,
+            status: row.body.status,
+            observedAt: row.body.observedAt,
+          });
+        }
+        return;
+      }
       const row = (
         await this.database.query<{ body: Record<string, unknown> }>(
           `SELECT body FROM live_outputs
@@ -274,33 +318,26 @@ export class PostgresLiveListener {
         });
         return;
       }
-      if (
-        payload.kind === 'presence' &&
-        (row.body.status === 'online' || row.body.status === 'offline') &&
-        typeof row.body.observedAt === 'number'
-      ) {
-        const rooms = await this.database.query<{ room_id: string }>(
-          `SELECT room_id FROM memberships WHERE identity_id=$1
-             AND room_id IS NOT NULL AND removed_at IS NULL`,
-          [payload.agentId],
-        );
-        for (const room of rooms.rows)
-          this.live.publish({
-            type: 'presence',
-            roomId: room.room_id,
-            agentId: payload.agentId,
-            status: row.body.status,
-            observedAt: row.body.observedAt,
-          });
-      }
       return;
     }
     const event: LiveEvent = {
       type: 'invalidate',
       roomId: payload.roomId,
       reason: `postgres:${payload.table}`,
+      operation: payload.operation,
+      ...(payload.messageId ? { messageId: payload.messageId } : {}),
+      ...(payload.requestId ? { requestId: payload.requestId } : {}),
       ...(payload.table === 'agent_commands' ? { targetAgentId: payload.agentId } : {}),
       ...(payload.agentId ? { agentId: payload.agentId } : {}),
+      ...(payload.traceId && payload.databaseAt
+        ? {
+            trace: {
+              id: payload.traceId,
+              databaseAt: payload.databaseAt,
+              emittedAt: Date.now(),
+            },
+          }
+        : {}),
     };
     this.live.publish(event);
   }

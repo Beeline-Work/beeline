@@ -53,13 +53,3 @@ export {
 } from './provisioning.js';
 
 export { nip98AuthHeader, buildNip98Event, NIP98_KIND } from './nip98.js';
-
-export { isRegisteredAgentIdentity } from './agent-identity.js';
-
-export {
-  authorizeHumanAuthority,
-  type HumanAuthorityDependencies,
-  type HumanAuthorityResult,
-  type HumanAuthorityRole,
-  type HumanKeyCustody,
-} from './human-authority.js';

@@ -11,7 +11,7 @@ import {
   type PhoneService,
 } from './phone-service.js';
 import { DAEMON_OPERATION_NAMES, type DaemonService } from './daemon-service.js';
-import type { LiveEvent, LiveHub } from './live.js';
+import type { LiveEvent, LiveHub, LiveTrace } from './live.js';
 import type { ReviewAccess } from './review-access.js';
 import type { ReleaseNotifier } from './release-notify.js';
 import { isMediaId, mediaTtlHours } from './media-ttl.js';
@@ -21,6 +21,25 @@ import type { ConnectionPresence } from './connection-presence.js';
 export const DEFAULT_MEDIA_MAXIMUM_BYTES = 25 * 1024 * 1024;
 
 const MAX_JSON_BYTES = 1024 * 1024;
+const LIVE_DELTA_DEADLINE_MS = 400;
+
+async function withinLiveDeltaDeadline<T>(work: Promise<T>): Promise<T> {
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_resolve, reject) => {
+        deadline = setTimeout(
+          () => reject(new Error('committed row delivery deadline exceeded')),
+          LIVE_DELTA_DEADLINE_MS,
+        );
+        deadline.unref?.();
+      }),
+    ]);
+  } finally {
+    if (deadline) clearTimeout(deadline);
+  }
+}
 
 export interface GitHubServerHooks {
   webhookSecret?: string;
@@ -42,6 +61,9 @@ export interface ServerOptions {
   review?: ReviewAccess;
   /** Absent when no release-notify secret is configured; the endpoint then refuses like any wrong secret. */
   releaseNotify?: ReleaseNotifier;
+  /** Diagnostics only: one DB-clock read after an authorized cross-process
+   * delta is painted. Ordinary live delivery performs no extra query. */
+  livePaintDiagnostics?: boolean;
   authHandler?: (request: IncomingMessage, response: ServerResponse) => void;
 }
 
@@ -201,6 +223,27 @@ export function createBeelineServer(options: ServerOptions): Server {
       principal: { identityId: string; kind: 'phone' | 'daemon' },
     ) => {
       const releases = new Map<string, () => void>();
+      const pendingPaintTraces = new Map<
+        string,
+        {
+          readonly startedAt?: number;
+          readonly databaseAt: number;
+          readonly databaseClock: boolean;
+        }
+      >();
+      const rememberPaintTrace = (trace: LiveTrace | undefined) => {
+        if (!trace || (typeof trace.startedAt !== 'number' && trace.paintAck !== 'database-clock'))
+          return;
+        pendingPaintTraces.set(trace.id, {
+          startedAt: trace.startedAt,
+          databaseAt: trace.databaseAt,
+          databaseClock: trace.paintAck === 'database-clock',
+        });
+        if (pendingPaintTraces.size > 64) {
+          const oldest = pendingPaintTraces.keys().next().value;
+          if (oldest) pendingPaintTraces.delete(oldest);
+        }
+      };
       client.on('message', (raw) => {
         void (async () => {
           let message: unknown;
@@ -211,6 +254,43 @@ export function createBeelineServer(options: ServerOptions): Server {
           }
           if (!message || typeof message !== 'object') return;
           const item = message as Record<string, unknown>;
+          if (item.type === 'trace-paint' && typeof item.id === 'string') {
+            const trace = pendingPaintTraces.get(item.id);
+            if (!trace || client.readyState !== client.OPEN) return;
+            pendingPaintTraces.delete(item.id);
+            if (trace.databaseClock) {
+              const clock = (
+                await options.database.query<{ clock_at: Date }>(
+                  `SELECT clock_timestamp() clock_at`,
+                )
+              ).rows[0]?.clock_at;
+              if (!clock || client.readyState !== client.OPEN) return;
+              const databaseClockAt = clock.getTime();
+              client.send(
+                JSON.stringify({
+                  type: 'trace-painted',
+                  id: item.id,
+                  databaseAt: trace.databaseAt,
+                  databaseClockAt,
+                  upperBoundMs: databaseClockAt - trace.databaseAt,
+                }),
+              );
+              return;
+            }
+            if (typeof trace.startedAt !== 'number') return;
+            const serverReceivedAt = Date.now();
+            client.send(
+              JSON.stringify({
+                type: 'trace-painted',
+                id: item.id,
+                startedAt: trace.startedAt,
+                databaseAt: trace.databaseAt,
+                serverReceivedAt,
+                upperBoundMs: serverReceivedAt - trace.startedAt,
+              }),
+            );
+            return;
+          }
           if (
             item.type === 'subscribe' &&
             typeof item.roomId === 'string' &&
@@ -222,8 +302,13 @@ export function createBeelineServer(options: ServerOptions): Server {
               let cursor = isInboxCursor(item.cursor) ? item.cursor : undefined;
               let replaying = false;
               let replayRequested = false;
-              const replay = async () => {
+              let replayTrigger: { reason: string; trace: LiveTrace } | undefined;
+              let commandsPushing = false;
+              let commandsRequested = false;
+              let commandTrigger: { reason: string; trace: LiveTrace } | undefined;
+              const replay = async (trigger?: { reason: string; trace: LiveTrace }) => {
                 replayRequested = true;
+                if (trigger) replayTrigger = trigger;
                 if (replaying) return;
                 replaying = true;
                 try {
@@ -239,12 +324,15 @@ export function createBeelineServer(options: ServerOptions): Server {
                       principal.identityId,
                     );
                     cursor = inbox.cursor ?? cursor;
+                    const currentTrigger = replayTrigger;
+                    replayTrigger = undefined;
                     client.send(
                       JSON.stringify({
                         type: 'inbox',
                         roomId,
                         items: inbox.items,
                         ...(cursor ? { cursor } : {}),
+                        ...(currentTrigger ? { trigger: currentTrigger } : {}),
                       }),
                     );
                   }
@@ -257,16 +345,57 @@ export function createBeelineServer(options: ServerOptions): Server {
                   replaying = false;
                 }
               };
+              const pushCommands = async (trigger?: { reason: string; trace: LiveTrace }) => {
+                commandsRequested = true;
+                if (trigger) commandTrigger = trigger;
+                if (commandsPushing) return;
+                commandsPushing = true;
+                try {
+                  while (commandsRequested && client.readyState === client.OPEN) {
+                    commandsRequested = false;
+                    const page = await options.daemon.execute(
+                      'getAgentCommands',
+                      { roomId },
+                      principal.identityId,
+                    );
+                    const currentTrigger = commandTrigger;
+                    commandTrigger = undefined;
+                    client.send(
+                      JSON.stringify({
+                        type: 'commands',
+                        roomId,
+                        commandProtocol: page.commandProtocol,
+                        commands: page.commands,
+                        ...(currentTrigger ? { trigger: currentTrigger } : {}),
+                      }),
+                    );
+                  }
+                } catch (error) {
+                  console.error(
+                    '[live] daemon command push failed',
+                    error instanceof Error ? error.message : String(error),
+                  );
+                } finally {
+                  commandsPushing = false;
+                }
+              };
               releases.set(
                 roomId,
                 options.live.subscribe(roomId, (event) => {
-                  if (
-                    event.type === 'invalidate' &&
-                    event.targetAgentId &&
-                    event.targetAgentId !== principal.identityId
-                  )
+                  // Presence and streaming overlays are not durable inbox
+                  // invalidations. Replaying for them turns every evidence
+                  // refresh into an unrelated Room read on every daemon
+                  // listener. Commands have their own targeted projection;
+                  // their source message is delivered by its message event.
+                  if (event.type !== 'invalidate') return;
+                  const trigger = event.trace
+                    ? { reason: event.reason, trace: event.trace }
+                    : undefined;
+                  if (event.reason === 'postgres:agent_commands') {
+                    if (event.targetAgentId === principal.identityId) void pushCommands(trigger);
                     return;
-                  void replay();
+                  }
+                  void replay(trigger);
                 }),
               );
               const lifecycleId =
@@ -299,7 +428,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                   },
                 }),
               );
-              await replay();
+              await Promise.all([replay(), pushCommands()]);
               return;
             }
             // Agents whose draft this socket has already been handed live.
@@ -307,11 +436,99 @@ export function createBeelineServer(options: ServerOptions): Server {
             // first; replacing it with the older row would show the reader the
             // answer going backwards.
             const streamed = new Set<string>();
+            let deltaDelivery = Promise.resolve();
             releases.set(
               item.roomId,
               options.live.subscribe(item.roomId, (event) => {
                 if (event.type === 'draft') streamed.add(event.agentId);
-                if (client.readyState === client.OPEN) client.send(JSON.stringify(event));
+                if (event.type !== 'invalidate') {
+                  if (client.readyState === client.OPEN) client.send(JSON.stringify(event));
+                  return;
+                }
+                // committedRow is process-local authority input. Strip it
+                // before every wire branch, including malformed/no-target
+                // invalidations, so only a projected public delta can leave.
+                const { committedRow, ...wireEvent } = event;
+                const target = event.messageId
+                  ? ({ type: 'message' as const, messageId: event.messageId } as const)
+                  : event.agentId && event.requestId
+                    ? ({
+                        type: 'turn' as const,
+                        agentId: event.agentId,
+                        requestId: event.requestId,
+                      } as const)
+                    : undefined;
+                if (!target) {
+                  if (client.readyState === client.OPEN) client.send(JSON.stringify(wireEvent));
+                  return;
+                }
+                const trace = event.trace;
+                const wireTrace =
+                  trace && options.livePaintDiagnostics && typeof trace.startedAt !== 'number'
+                    ? ({ ...trace, paintAck: 'database-clock' as const } satisfies LiveTrace)
+                    : trace;
+                const fallback = {
+                  ...wireEvent,
+                  ...(wireTrace ? { trace: wireTrace } : {}),
+                  reason: `delta-fallback:${event.reason}`,
+                };
+                // Begin every bounded row read immediately. Only delivery is
+                // serialized, preserving commit-notification order without a
+                // slow lookup preventing later reads from making progress.
+                let projectionError: unknown;
+                let committedDelta;
+                try {
+                  committedDelta = committedRow
+                    ? options.phone.projectCommittedLiveDelta(item.roomId as string, committedRow)
+                    : undefined;
+                } catch (error) {
+                  projectionError = error;
+                }
+                // An internal row must agree with the Room-scoped bus key. A
+                // mismatch is neither serialized nor retried against attacker-
+                // controlled ids; the canonical PostgreSQL hint remains the
+                // independent recovery path for the real Room.
+                if (committedRow && !committedDelta && !projectionError) return;
+                const pendingDelta = (
+                  projectionError
+                    ? Promise.reject(projectionError)
+                    : committedDelta
+                      ? Promise.resolve(committedDelta)
+                      : withinLiveDeltaDeadline(
+                          options.phone.readLiveDelta(
+                            item.roomId as string,
+                            principal.identityId,
+                            target,
+                          ),
+                        )
+                ).then(
+                  (delta) => ({ delta }) as const,
+                  (error: unknown) => ({ error }) as const,
+                );
+                deltaDelivery = deltaDelivery
+                  .then(async () => {
+                    const result = await pendingDelta;
+                    if (client.readyState !== client.OPEN) return;
+                    if ('error' in result) throw result.error;
+                    rememberPaintTrace(wireTrace);
+                    client.send(
+                      JSON.stringify(
+                        result.delta
+                          ? { ...result.delta, ...(wireTrace ? { trace: wireTrace } : {}) }
+                          : fallback,
+                      ),
+                    );
+                  })
+                  .catch((error) => {
+                    console.error(
+                      '[live] committed row delivery failed',
+                      error instanceof Error ? error.message : String(error),
+                    );
+                    if (client.readyState === client.OPEN) {
+                      rememberPaintTrace(wireTrace);
+                      client.send(JSON.stringify(fallback));
+                    }
+                  });
               }),
             );
             client.send(JSON.stringify({ type: 'subscribed', roomId: item.roomId }));
@@ -338,6 +555,7 @@ export function createBeelineServer(options: ServerOptions): Server {
         })();
       });
       client.on('close', () => {
+        pendingPaintTraces.clear();
         for (const release of releases.values()) release();
         releases.clear();
       });
@@ -739,7 +957,7 @@ async function route(
       await refuseDaemon(request, response, options);
       return;
     }
-    await options.connectionPresence?.evidence(undefined, agentId);
+    void options.connectionPresence?.evidence(undefined, agentId);
     const raw = await bytes(request, options.mediaMaximumBytes + 1);
     const mime =
       typeof request.headers['content-type'] === 'string'
@@ -775,7 +993,7 @@ async function route(
         : typeof input.cornerId === 'string'
           ? input.cornerId
           : undefined;
-    await options.connectionPresence?.evidence(evidenceRoom, agentId);
+    void options.connectionPresence?.evidence(evidenceRoom, agentId);
     json(response, 200, await options.daemon.execute(name as never, input as never, agentId));
     return;
   }

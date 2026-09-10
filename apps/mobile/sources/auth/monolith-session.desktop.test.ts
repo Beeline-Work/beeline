@@ -15,6 +15,9 @@ const invoke = vi.hoisted(() =>
   }),
 );
 const desktopSecrets = vi.hoisted(() => new Map<string, string>());
+const desktopFetch = vi.hoisted(() =>
+  vi.fn(async () => new Response(JSON.stringify(tokens), { status: 200 })),
+);
 
 vi.mock('expo-secure-store', () => ({
   getItemAsync: vi.fn(() => {
@@ -27,12 +30,14 @@ vi.mock('expo-secure-store', () => ({
     throw new Error('the packaged web bundle has no Expo SecureStore backend');
   }),
 }));
+vi.mock('@tauri-apps/plugin-http', () => ({ fetch: desktopFetch }));
+vi.mock('@/utils/isDesktopShell', () => ({ isDesktopShell: () => true }));
 vi.mock('@/buzz/runtime-config', () => ({
   getBuzzRuntimeConfig: () => ({ monolithUrl: 'https://server.example' }),
 }));
 
 import { MonolithSession } from './monolith-session';
-import { monolithSecureStorage } from './monolith-secure-storage';
+import { browserMonolithStorage, monolithSecureStorage } from './monolith-secure-storage';
 
 const tokens = {
   accessToken: 'access',
@@ -46,6 +51,19 @@ describe('packaged desktop monolith session storage', () => {
   beforeEach(() => {
     desktopSecrets.clear();
     invoke.mockClear();
+    desktopFetch.mockClear();
+  });
+
+  it('uses the native HTTP plugin for cross-origin session exchange', async () => {
+    const desktopStorage = () => monolithSecureStorage(true, invoke);
+    const session = new MonolithSession('https://server.example', undefined, desktopStorage);
+
+    await expect(session.exchangeReviewSecret('review')).resolves.toBe(tokens.identityId);
+
+    expect(desktopFetch).toHaveBeenCalledWith(
+      'https://server.example/v1/auth/review/exchange',
+      expect.objectContaining({ method: 'POST' }),
+    );
   });
 
   it('boots without an identity and persists sign-in through the desktop credential commands', async () => {
@@ -74,5 +92,20 @@ describe('packaged desktop monolith session storage', () => {
       key: 'buzzy.monolith.refresh.v1',
       value: tokens.refreshToken,
     });
+  });
+});
+
+describe('browser monolith session storage', () => {
+  it('persists the session through the origin storage API', async () => {
+    const values = new Map<string, string>();
+    const browser = browserMonolithStorage({
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+      removeItem: (key: string) => values.delete(key),
+    } as unknown as Storage);
+    await browser.setItemAsync('session', 'token');
+    expect(await browser.getItemAsync('session')).toBe('token');
+    await browser.deleteItemAsync('session');
+    expect(await browser.getItemAsync('session')).toBeNull();
   });
 });

@@ -31,6 +31,11 @@ interface Delivery {
  */
 export class ConnectionPresence {
   readonly #timers = new Map<string, ReturnType<typeof setTimeout>>();
+  readonly #evidence = new Map<
+    string,
+    { roomId: string | undefined; pending: boolean; worker: Promise<void> }
+  >();
+  readonly #authenticatedAt = new Map<string, number>();
   readonly #release: () => void;
   readonly #releaseResync: () => void;
   #stopped = false;
@@ -60,6 +65,7 @@ export class ConnectionPresence {
   async announce(roomId: string, agentId: string, metadata: PresenceMetadata = {}): Promise<void> {
     const lifecycleId = metadata.lifecycleId;
     if (!lifecycleId) return;
+    if (this.#stopped) return;
     await announceAgentLifecycle(this.database, this.live, roomId, agentId, {
       ...metadata,
       lifecycleId,
@@ -67,8 +73,31 @@ export class ConnectionPresence {
   }
 
   /** Record a request accepted under this agent's daemon credential. */
-  async evidence(roomId: string | undefined, agentId: string): Promise<void> {
-    await recordAgentEvidence(this.database, this.live, roomId, agentId);
+  evidence(roomId: string | undefined, agentId: string): Promise<void> {
+    if (this.#stopped) return Promise.resolve();
+    // Authentication itself is delivery evidence. Record it synchronously so
+    // a deadline cannot demote the agent while its coalesced durable refresh
+    // is waiting for the database.
+    this.#authenticatedAt.set(agentId, Date.now());
+    const active = this.#evidence.get(agentId);
+    if (active) {
+      active.roomId = roomId ?? active.roomId;
+      active.pending = true;
+      return active.worker;
+    }
+    const state = { roomId, pending: true, worker: Promise.resolve() };
+    state.worker = (async () => {
+      while (state.pending && !this.#stopped) {
+        state.pending = false;
+        await recordAgentEvidence(this.database, this.live, state.roomId, agentId).catch(
+          this.report,
+        );
+      }
+    })().finally(() => {
+      if (this.#evidence.get(agentId) === state) this.#evidence.delete(agentId);
+    });
+    this.#evidence.set(agentId, state);
+    return state.worker;
   }
 
   async stop(): Promise<void> {
@@ -77,6 +106,8 @@ export class ConnectionPresence {
     this.#releaseResync();
     for (const timer of this.#timers.values()) clearTimeout(timer);
     this.#timers.clear();
+    this.#authenticatedAt.clear();
+    this.#evidence.clear();
   }
 
   private readonly report = (error: unknown) =>
@@ -135,6 +166,8 @@ export class ConnectionPresence {
 
   private async failDelivery(delivery: Delivery): Promise<void> {
     if (this.#stopped) return;
+    if ((this.#authenticatedAt.get(delivery.agent_id) ?? 0) >= delivery.created_at.getTime())
+      return;
     const authority = (
       await this.database.query<{
         access_policy: unknown;
@@ -162,8 +195,12 @@ export class ConnectionPresence {
       return;
     const changed = await this.database.query(
       `UPDATE live_outputs p SET body=p.body || jsonb_build_object(
-         'status','offline','observedAt',GREATEST($4::bigint,(p.body->>'observedAt')::bigint+1)),updated_at=now()
+         'status','offline','observedAt',GREATEST($4::bigint,(p.body->>'observedAt')::bigint+1)),updated_at=clock_timestamp()
        WHERE p.agent_id=$1 AND p.kind='presence' AND p.body->>'status'='online'
+         AND (p.room_id,p.agent_id,p.turn_id,p.kind)=(
+           SELECT room_id,agent_id,turn_id,kind FROM live_outputs
+           WHERE agent_id=$1 AND kind='presence' ORDER BY updated_at DESC LIMIT 1
+         )
          AND (p.body->>'lifecycleId') IS NOT DISTINCT FROM $2::text
          AND COALESCE(p.body->>'evidenceNonce',p.body->>'lifecycleId',p.body->>'observedAt')=$7
          AND EXISTS(SELECT 1 FROM memberships WHERE identity_id=$1 AND room_id=$5 AND removed_at IS NULL)
@@ -194,15 +231,15 @@ export async function announceAgentLifecycle(
   const changed = await database.transaction(async (db) => {
     await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`presence:${agentId}`]);
     const previous = (
-      await db.query<{ body: Record<string, unknown> }>(
-        `SELECT body FROM live_outputs WHERE agent_id=$1 AND kind='presence'
+      await db.query<{ room_id: string; body: Record<string, unknown> }>(
+        `SELECT room_id,body FROM live_outputs WHERE agent_id=$1 AND kind='presence'
          ORDER BY updated_at DESC LIMIT 1`,
         [agentId],
       )
-    ).rows[0]?.body;
+    ).rows[0];
     const observedAt = Math.max(
       Math.floor(Date.now() / 1000),
-      Number(previous?.observedAt ?? 0) + 1,
+      Number(previous?.body.observedAt ?? 0) + 1,
     );
     const body = {
       status: metadata.available === false ? 'offline' : 'online',
@@ -212,18 +249,22 @@ export async function announceAgentLifecycle(
       ...(metadata.releaseVersion ? { releaseVersion: metadata.releaseVersion } : {}),
       ...(metadata.sourceSha ? { sourceSha: metadata.sourceSha } : {}),
     };
-    await db.query(
-      `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)
-         VALUES($1,$2,'presence','presence',$3::jsonb)
-         ON CONFLICT(room_id,agent_id,turn_id,kind) DO UPDATE SET body=EXCLUDED.body,updated_at=now()`,
-      [roomId, agentId, JSON.stringify(body)],
-    );
-    // All viewers, including other Rooms and corners, share the agent fact.
-    await db.query(
-      `UPDATE live_outputs SET body=$2::jsonb,updated_at=now()
-         WHERE agent_id=$1 AND kind='presence' AND body IS DISTINCT FROM $2::jsonb`,
-      [agentId, JSON.stringify(body)],
-    );
+    if (previous)
+      await db.query(
+        `UPDATE live_outputs SET body=$3::jsonb,updated_at=clock_timestamp()
+         WHERE room_id=$1 AND agent_id=$2 AND turn_id='presence' AND kind='presence'`,
+        [previous.room_id, agentId, JSON.stringify(body)],
+      );
+    else
+      await db.query(
+        `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body,updated_at)
+         VALUES($1,$2,'presence','presence',$3::jsonb,clock_timestamp())
+         ON CONFLICT(room_id,agent_id,turn_id,kind) DO UPDATE SET
+           body=EXCLUDED.body,updated_at=EXCLUDED.updated_at`,
+        [roomId, agentId, JSON.stringify(body)],
+      );
+    // Presence is an agent fact. Change one durable row; the PostgreSQL
+    // listener expands its one notification across current Room memberships.
     return true;
   });
   if (changed) await broadcastAgentPresence(database, live, agentId);
@@ -235,51 +276,43 @@ export async function recordAgentEvidence(
   roomId: string | undefined,
   agentId: string,
 ): Promise<void> {
-  const changed = await database.transaction(async (db) => {
-    await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`presence:${agentId}`]);
-    const previous = (
-      await db.query<{ room_id: string; body: Record<string, unknown> }>(
-        `SELECT room_id,body FROM live_outputs WHERE agent_id=$1 AND kind='presence'
-         ORDER BY updated_at DESC LIMIT 1`,
-        [agentId],
-      )
-    ).rows[0];
-    const requestedRoom = roomId ?? previous?.room_id;
-    const targetRoom = requestedRoom
-      ? (
-          await db.query<{ room_id: string }>(
-            `SELECT room_id FROM memberships
-             WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
-            [requestedRoom, agentId],
-          )
-        ).rows[0]?.room_id
-      : undefined;
-    if (!targetRoom) return false;
-    const now = Math.floor(Date.now() / 1000);
-    const observedAt =
-      previous?.body.status === 'offline'
-        ? Math.max(now, Number(previous.body.observedAt ?? 0) + 1)
-        : now;
-    const body = {
-      ...(previous?.body ?? {}),
-      status: 'online',
-      observedAt,
-      evidenceNonce: randomUUID(),
-    };
-    await db.query(
-      `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)
-       VALUES($1,$2,'presence','presence',$3::jsonb)
-       ON CONFLICT(room_id,agent_id,turn_id,kind) DO UPDATE SET body=EXCLUDED.body,updated_at=now()`,
-      [targetRoom, agentId, JSON.stringify(body)],
-    );
-    await db.query(
-      `UPDATE live_outputs SET body=$2::jsonb,updated_at=now()
-       WHERE agent_id=$1 AND kind='presence' AND body IS DISTINCT FROM $2::jsonb`,
-      [agentId, JSON.stringify(body)],
-    );
-    return true;
-  });
-  if (changed) await broadcastAgentPresence(database, live, agentId);
+  const changed = await database.query(
+    `WITH previous AS MATERIALIZED (
+       SELECT output.room_id,output.body FROM live_outputs output
+       WHERE output.agent_id=$1 AND output.kind='presence'
+       ORDER BY output.updated_at DESC LIMIT 1
+     ), target AS MATERIALIZED (
+       SELECT membership.room_id,previous.room_id previous_room,previous.body
+       FROM (SELECT 1) singleton LEFT JOIN previous ON true
+       JOIN memberships membership
+         ON membership.room_id=COALESCE($2::uuid,previous.room_id)
+        AND membership.identity_id=$1 AND membership.removed_at IS NULL
+     ), written AS (
+       INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body,updated_at)
+       SELECT COALESCE(previous_room,room_id),$1,'presence','presence',
+         COALESCE(body,'{}'::jsonb) || jsonb_build_object(
+           'status','online',
+           'observedAt',CASE WHEN body->>'status'='offline'
+             THEN GREATEST($3::bigint,COALESCE((body->>'observedAt')::bigint,0)+1)
+             ELSE $3::bigint END,
+           'evidenceNonce',$4::text
+         ),clock_timestamp()
+       FROM target
+       ON CONFLICT(room_id,agent_id,turn_id,kind) DO UPDATE SET
+         body=live_outputs.body || jsonb_build_object(
+           'status','online',
+           'observedAt',CASE WHEN live_outputs.body->>'status'='offline'
+             THEN GREATEST($3::bigint,COALESCE((live_outputs.body->>'observedAt')::bigint,0)+1)
+             ELSE $3::bigint END,
+           'evidenceNonce',$4::text
+         ),updated_at=EXCLUDED.updated_at
+       RETURNING 1
+     ) SELECT 1 FROM written`,
+    [agentId, roomId ?? null, Math.floor(Date.now() / 1000), randomUUID()],
+  );
+  // One canonical presence row produces one PostgreSQL notification. Local
+  // subscribers still receive the same membership-authorized projection.
+  if (changed.rowCount) await broadcastAgentPresence(database, live, agentId);
 }
 
 async function broadcastAgentPresence(

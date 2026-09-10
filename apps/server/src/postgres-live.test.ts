@@ -121,20 +121,81 @@ describe('Postgres live fanout', () => {
 
     await eventually(() => received.length === 1);
     expect(received).toEqual([
-      expect.objectContaining({ type: 'invalidate', roomId: ROOM, agentId: AUTHOR }),
+      expect.objectContaining({
+        type: 'invalidate',
+        roomId: ROOM,
+        agentId: AUTHOR,
+        messageId: '1'.repeat(64),
+      }),
     ]);
     expect(clientsB[0]!.payloads).toHaveLength(1);
-    expect(JSON.parse(clientsB[0]!.payloads[0]!)).toEqual({
-      table: 'messages',
-      operation: 'INSERT',
-      roomId: ROOM,
-      messageId: '1'.repeat(64),
-      agentId: AUTHOR,
-    });
+    expect(JSON.parse(clientsB[0]!.payloads[0]!)).toEqual(
+      expect.objectContaining({
+        table: 'messages',
+        operation: 'INSERT',
+        roomId: ROOM,
+        messageId: '1'.repeat(64),
+        agentId: AUTHOR,
+        traceId: expect.stringMatching(/^[0-9a-f]{32}$/),
+        databaseAt: expect.any(Number),
+      }),
+    );
+    expect(received[0]).toEqual(
+      expect.objectContaining({
+        trace: expect.objectContaining({
+          id: expect.stringMatching(/^[0-9a-f]{32}$/),
+          databaseAt: expect.any(Number),
+          emittedAt: expect.any(Number),
+        }),
+      }),
+    );
     expect(clientsB[0]!.payloads[0]).not.toContain('hello');
   });
 
-  it('fans the durable presence fact to every Room on another server without refresh notifications', async () => {
+  it('publishes room-scoped message and turn notifications without a database lookup', async () => {
+    const live = new LiveHub();
+    const client = new PgliteListenClient(database);
+    const query = vi.fn(database.query.bind(database));
+    const listener = new PostgresLiveListener(
+      { query, transaction: database.transaction.bind(database) },
+      live,
+      () => client,
+      1,
+    );
+    listeners.push(listener);
+    const received: LiveEvent[] = [];
+    live.subscribe(ROOM, (event) => received.push(event));
+    void listener.run();
+    await eventually(() => client.listenerCount('notification') === 1);
+    received.length = 0;
+    query.mockClear();
+
+    for (const table of ['messages', 'agent_turns']) {
+      client.emit('notification', {
+        channel: POSTGRES_LIVE_CHANNEL,
+        payload: JSON.stringify({
+          table,
+          operation: table === 'messages' ? 'INSERT' : 'UPDATE',
+          roomId: ROOM,
+          agentId: AUTHOR,
+          ...(table === 'messages' ? { messageId: 'message-id' } : { requestId: 'request-id' }),
+        }),
+      });
+    }
+
+    await eventually(() => received.length === 2);
+    expect(query).not.toHaveBeenCalled();
+    expect(received.map((event) => event.type === 'invalidate' && event.reason)).toEqual([
+      'postgres:messages',
+      'postgres:agent_turns',
+    ]);
+    expect(received).toEqual([
+      expect.objectContaining({ messageId: 'message-id' }),
+      expect.objectContaining({ requestId: 'request-id' }),
+    ]);
+  });
+
+  it('fans an agent presence fact to every joined Room on another server', async () => {
     const otherRoom = '33333333-3333-4333-8333-333333333333';
     const agent = 'b'.repeat(64);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Bee')`, [agent]);
@@ -154,7 +215,18 @@ describe('Postgres live fanout', () => {
     void listener.run();
     await new Promise((resolve) => setTimeout(resolve, 10));
     await announceAgentLifecycle(database, new LiveHub(), ROOM, agent, { lifecycleId: 'boot' });
+    await eventually(() => liveB.latestAgentPresence(agent, ROOM)?.status === 'online');
+    expect(liveB.latestAgentPresence(agent, otherRoom)?.status).toBe('online');
+    await announceAgentLifecycle(database, new LiveHub(), otherRoom, agent, {
+      lifecycleId: 'boot',
+    });
     await eventually(() => liveB.latestAgentPresence(agent, otherRoom)?.status === 'online');
+    const presenceRows = await database.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM live_outputs
+       WHERE agent_id=$1 AND kind='presence'`,
+      [agent],
+    );
+    expect(presenceRows.rows[0]?.count).toBe('1');
     await database.query(
       `UPDATE live_outputs SET body=body || jsonb_build_object(
       'status','offline','observedAt',(body->>'observedAt')::bigint+1) WHERE agent_id=$1`,
@@ -162,6 +234,97 @@ describe('Postgres live fanout', () => {
     );
     await eventually(() => liveB.latestAgentPresence(agent, otherRoom)?.status === 'offline');
     expect(liveB.latestAgentPresence(agent, ROOM)?.status).toBe('offline');
+  });
+
+  it('fans one canonical presence notification across thirty Rooms on each listener', async () => {
+    const agent = 'b'.repeat(64);
+    const roomIds = Array.from(
+      { length: 30 },
+      (_, index) => `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+    );
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Bee')`, [agent]);
+    for (const roomId of roomIds) {
+      await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Load')`, [
+        roomId,
+        WORKSPACE,
+      ]);
+      await database.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+         VALUES($1,$2,$3,'member')`,
+        [WORKSPACE, roomId, agent],
+      );
+    }
+    for (const roomId of roomIds)
+      await database.query(
+        `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)
+         VALUES($1,$2,'presence','presence',$3::jsonb)`,
+        [
+          roomId,
+          agent,
+          JSON.stringify({
+            status: 'online',
+            observedAt: 1,
+            evidenceNonce: 'before',
+            lifecycleId: 'boot',
+          }),
+        ],
+      );
+    const queryA = vi.fn(database.query.bind(database));
+    const queryB = vi.fn(database.query.bind(database));
+    const liveA = new LiveHub();
+    const liveB = new LiveHub();
+    const clientA = new PgliteListenClient(database);
+    const clientB = new PgliteListenClient(database);
+    const listenerA = new PostgresLiveListener(
+      { query: queryA, transaction: database.transaction.bind(database) },
+      liveA,
+      () => clientA,
+      1,
+    );
+    const listenerB = new PostgresLiveListener(
+      { query: queryB, transaction: database.transaction.bind(database) },
+      liveB,
+      () => clientB,
+      1,
+    );
+    listeners.push(listenerA, listenerB);
+    void listenerA.run();
+    void listenerB.run();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const publishA = vi.spyOn(liveA, 'publish');
+    const publishB = vi.spyOn(liveB, 'publish');
+    const evidence = new ConnectionPresence(database, new LiveHub());
+    await evidence.evidence(roomIds[0], agent);
+
+    await eventually(
+      () =>
+        liveA.latestAgentPresence(agent, roomIds[0])?.status === 'online' &&
+        liveB.latestAgentPresence(agent, roomIds[0])?.status === 'online',
+    );
+    await evidence.stop();
+    const stored = await database.query<{ body: { evidenceNonce?: string } }>(
+      `SELECT body FROM live_outputs WHERE agent_id=$1 AND kind='presence'`,
+      [agent],
+    );
+    expect(stored.rows.filter((row) => row.body.evidenceNonce !== 'before')).toHaveLength(1);
+    expect(clientA.payloads).toHaveLength(1);
+    expect(clientB.payloads).toHaveLength(1);
+    expect(queryA).toHaveBeenCalledTimes(1);
+    expect(queryB).toHaveBeenCalledTimes(1);
+    for (const query of [queryA.mock.calls[0]?.[0], queryB.mock.calls[0]?.[0]]) {
+      expect(query).toContain('SELECT membership.room_id,presence.body');
+      expect(query?.match(/SELECT body FROM live_outputs/g)).toHaveLength(1);
+    }
+    expect(publishA).toHaveBeenCalledTimes(roomIds.length);
+    expect(publishB).toHaveBeenCalledTimes(roomIds.length);
+    expect([...queryA.mock.calls, ...queryB.mock.calls].map(([sql]) => sql)).toContainEqual(
+      expect.stringContaining('memberships'),
+    );
+    for (const roomId of roomIds) {
+      expect(liveA.latestAgentPresence(agent, roomId)?.status).toBe('online');
+      expect(liveB.latestAgentPresence(agent, roomId)?.status).toBe('online');
+    }
   });
 
   it('rehydrates a missed delivery deadline when its first LISTEN connection opens', async () => {

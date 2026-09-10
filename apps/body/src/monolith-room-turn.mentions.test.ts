@@ -42,6 +42,14 @@ const ROSTER = (selfId: string) => ({
       handle: 'bananaman614305',
       role: 'member' as const,
     },
+    {
+      identityId: OTHER_AGENT,
+      kind: 'agent' as const,
+      name: 'Goosy',
+      handle: 'goosy-2',
+      soul: { name: 'Strategist' },
+      role: 'member' as const,
+    },
   ],
 });
 
@@ -53,6 +61,7 @@ describe('who an agent can tag, and how it is spelled', () => {
     expect(directory).toContain('- @lunchboxfortwo — Captain (person)');
     // No redundant restatement when the display name IS the handle.
     expect(directory).toContain('- @bananaman614305 (person)');
+    expect(directory).toContain('- @goosy-2 — Goosy (agent)');
     // Never the agent itself: it cannot tag itself, and the resolver drops it.
     expect(directory).not.toContain('Greeter');
     expect(directory).toContain('Never invent a handle');
@@ -271,5 +280,18 @@ describe('who an agent can tag, and how it is spelled', () => {
     ].join('\n');
     expect(text.indexOf('@bananaman614305')).toBeGreaterThan(0);
     expect(agentReplyMentionIds(text, ROSTER(AGENT_HEX), AGENT_HEX)).toEqual([CAPTAIN, PEER]);
+  });
+
+  it('resolves an agent only by its current canonical handle', () => {
+    expect(agentReplyMentionIds('@goosy please help', ROSTER(AGENT_HEX), AGENT_HEX)).toEqual([]);
+    expect(agentReplyMentionIds('@Strategist please help', ROSTER(AGENT_HEX), AGENT_HEX)).toEqual(
+      [],
+    );
+    expect(agentReplyMentionIds('@a_goosy-2 please help', ROSTER(AGENT_HEX), AGENT_HEX)).toEqual(
+      [],
+    );
+    expect(agentReplyMentionIds('@goosy-2 please help', ROSTER(AGENT_HEX), AGENT_HEX)).toEqual([
+      OTHER_AGENT,
+    ]);
   });
 });

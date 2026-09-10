@@ -58,3 +58,61 @@ their data until the captain separately authorizes deletion:
 
 Do not stop `cloudflared.service` or the `buzzrouter` compose project: the host
 audit proved they serve unrelated, current VNC and Buzzrouter product routes.
+
+## Final cutover verification (2026-09-09)
+
+The repository variable was already at the final value before the retirement
+check and was written idempotently to the same value:
+
+- `BEELINE_PAGES_MANIFEST_URL=https://usebeeline.app/dl/manifest.json`
+- `BEELINE_DL_LEGACY_MIRROR` is absent. Current release wiring has no input,
+  environment variable, or step that can publish the old mirror.
+
+Pages run `34391717505` deployed commit `ff4672f6` after the mirror publisher
+was removed. Its installer proof fetched version `v0.0.67`, source commit
+`27dfa1c8f3015b1fdf032a7c9ddf009de716c934`, and bundle digest
+`72d6399dc0ce7fedb7991407fd14ff84a48f8023fd01a75200ae710d68d5fe2d`
+from `https://usebeeline.app/dl/manifest.json`. A separate live read compared
+that manifest byte-for-byte with the `helper-update-channel` release asset,
+downloaded the public tarball, verified the same digest, and compared both
+app-association responses with their repository copies. The Fly `/version`
+response named the same version and source commit; no Fly service was changed.
+
+The reversible host-side retirement state is:
+
+- `buzz-agent.service` is disabled and inactive. Its `ExecStart` tree no
+  longer exists; its last process was `buzz-acp`, which only retried the dead
+  `wss://buzz.trustysquire.ai` endpoint before shutting down cleanly.
+- `buzzy-push-gateway.service` is not loaded; its preserved unit is the
+  quarantined file named above.
+- `buzz-router-prod-relay-front-1` is stopped (`Exited (0)`) with its container,
+  bind-mounted web data, Compose file, and volumes retained.
+
+No Cloudflare connector or DNS/tunnel route was retired in this pass. The live
+`buzzrouter-web-1` and `buzzrouter-worker-1` containers both set
+`BUZZROUTER_HOME_RELAY_URL=wss://relay.buzzrouter.com`, and the BuzzRouter
+source defaults to that URL. Its `buzzrouter-tunnel-1` connector also serves
+the separate BuzzRouter product. The public relay currently answers HTTP 502
+while the retained relay-front is stopped. That is an exact unresolved
+consumer, so the shared tunnel, `relay.buzzrouter.com` route, BuzzRouter
+containers, and stopped relay-front object must not be deleted as part of
+Beeline retirement. `push.buzzrouter.com` returns 530 and
+`buzz.trustysquire.ai` returns 521; neither response is proof that a shared
+tunnel can be removed.
+
+## Rollback
+
+No running shared service was changed by the final verification. To undo the
+only external mutation, restore `BEELINE_PAGES_MANIFEST_URL` to its recorded
+pre-check value, which is the same `https://usebeeline.app/dl/manifest.json`.
+The absent legacy-mirror variable does not need restoration because current
+release code cannot read it.
+
+If a separately authorized BuzzRouter recovery needs the stopped front for
+investigation, `docker start buzz-router-prod-relay-front-1` restores that exact
+container without recreating it or touching the shared tunnel. This alone does
+not restore the retired relay/auth/push backends: their container names are
+currently occupied by inert placeholders. Restoring those backends requires a
+separate BuzzRouter-owned decision. Do not restart the whole Compose project,
+do not stop `buzzrouter-tunnel-1`, and do not change
+`server.usebeeline.app`.

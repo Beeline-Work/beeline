@@ -5,6 +5,7 @@ import {
   createAgentCommand,
   readAgentCommands,
   routeAgentResult,
+  type CommandRow,
 } from './agent-command.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type {
@@ -48,7 +49,13 @@ import {
 } from '@beeline/api-contract/surface-capabilities';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
-import { LiveHub, type LiveEvent } from './live.js';
+import { closeCornerState } from './corner-close.js';
+import {
+  LiveHub,
+  type CommittedMessageLiveRow,
+  type CommittedTurnLiveRow,
+  type LiveEvent,
+} from './live.js';
 import { CORNER_WAKE_MIN_INTERVAL_MS, CORNER_WAKE_TIMEOUT_MS, wakesCorner } from './corner-wake.js';
 import {
   restateSystemLine,
@@ -138,6 +145,9 @@ export class DaemonService {
     ) => Promise<{ token: string; expiresAt: number }>,
     private readonly mediaMaximumBytes: number = DEFAULT_MEDIA_MAXIMUM_BYTES,
     private readonly commandTransaction = false,
+    private readonly authorizedCommand?: CommandRow,
+    private readonly livePaintDiagnostics = false,
+    private readonly liveDiagnosticServerInstance?: string,
   ) {}
 
   /** When each corner last woke, so `CORNER_WAKE_MIN_INTERVAL_MS` can be held. */
@@ -157,7 +167,7 @@ export class DaemonService {
         : typeof candidate.cornerId === 'string'
           ? candidate.cornerId
           : undefined;
-    if (scopedRoom && name !== 'ensureAgentMembership')
+    if (scopedRoom && name !== 'ensureAgentMembership' && !this.commandTransaction)
       await this.access(scopedRoom, authenticatedAgentId);
     if (scopedRoom && isCornerOpenerOnly(name))
       await this.assertCornerOpener(scopedRoom, authenticatedAgentId);
@@ -171,10 +181,22 @@ export class DaemonService {
       'postAgentActivity',
       'createCorner',
       'postRoomEvent',
-      'stageAgentDelegation',
       'requestAgentGrant',
     ]);
+    if (
+      !this.commandTransaction &&
+      scopedRoom &&
+      name === 'postRoomMessage' &&
+      (!Array.isArray(candidate.mentionIds) || candidate.mentionIds.length === 0) &&
+      typeof candidate.replyToMessageId !== 'string'
+    )
+      return (await this.postRoomMessage(
+        input as Input<'postRoomMessage'>,
+        authenticatedAgentId,
+        true,
+      )) as Output<Name>;
     if (!this.commandTransaction && scopedRoom && turnWrites.has(name)) {
+      const writeStartedAt = Date.now();
       const events: LiveEvent[] = [];
       const buffered = new LiveHub();
       buffered.publish = (event) => {
@@ -242,6 +264,9 @@ export class DaemonService {
           this.roomGitHubToken,
           this.mediaMaximumBytes,
           true,
+          command,
+          this.livePaintDiagnostics,
+          this.liveDiagnosticServerInstance,
         );
         const result = await scoped.execute(name, input, authenticatedAgentId);
         if (name === 'requestAgentGrant') {
@@ -252,21 +277,16 @@ export class DaemonService {
         }
         if (name === 'postRoomMessage') {
           const resultId = (result as { id: string }).id;
-          await routeAgentResult(
-            db,
-            command,
-            resultId,
-            (candidate.delegateAgentIds ?? []) as string[],
-            candidate.replyToMessageId as string | undefined,
-          );
-          await db.query(
-            `UPDATE agent_commands SET state='complete',completed_at=now(),result_message_id=$2 WHERE id=$1`,
-            [command.id, resultId],
-          );
-          await db.query(
-            `DELETE FROM live_outputs WHERE room_id=$1 AND agent_id=$2 AND turn_id=$3 AND kind IN ('draft','thought')`,
-            [scopedRoom, authenticatedAgentId, requestId],
-          );
+          if (
+            (Array.isArray(candidate.mentionIds) && candidate.mentionIds.length > 0) ||
+            typeof candidate.replyToMessageId === 'string'
+          )
+            await routeAgentResult(
+              db,
+              command,
+              resultId,
+              candidate.replyToMessageId as string | undefined,
+            );
         } else if (name === 'postAgentTurnReceipt') {
           if (candidate.status === 'working')
             await db.query(
@@ -281,34 +301,25 @@ export class DaemonService {
         }
         return result;
       });
-      for (const event of events) this.live.publish(event);
+      for (const event of events) {
+        if (event.type !== 'invalidate' || !event.committedRow) {
+          this.live.publish(event);
+          continue;
+        }
+        const emittedAt = Date.now();
+        this.live.publish({
+          ...event,
+          trace: {
+            id: randomBytes(16).toString('hex'),
+            databaseAt: event.committedRow.row.created_at.getTime(),
+            emittedAt,
+            startedAt: event.committedRow.startedAt ?? writeStartedAt,
+          },
+        });
+      }
       return output;
     }
     switch (name) {
-      case 'stageAgentDelegation': {
-        const command = await authorizeCommandOutput(
-          this.database,
-          scopedRoom!,
-          authenticatedAgentId,
-          candidate.requestId,
-          candidate.generationId,
-        );
-        if (typeof candidate.targetAgentId !== 'string')
-          throw new Error('delegation target is required');
-        const target = await this.database.query(
-          `SELECT 1 FROM memberships m JOIN identities i ON i.id=m.identity_id AND i.kind='agent'
-          WHERE m.room_id=$1 AND m.identity_id=$2 AND m.removed_at IS NULL`,
-          [scopedRoom, candidate.targetAgentId],
-        );
-        if (!target.rowCount || candidate.targetAgentId === authenticatedAgentId)
-          throw new Error('delegation target is not an agent member');
-        await this.database.query(
-          `UPDATE agent_commands SET delegate_agent_ids=(SELECT jsonb_agg(DISTINCT value)
-          FROM jsonb_array_elements(delegate_agent_ids || $2::jsonb)) WHERE id=$1`,
-          [command.id, JSON.stringify([candidate.targetAgentId])],
-        );
-        return this.writeResult() as Output<Name>;
-      }
       case 'getAgentCommands':
         return (await readAgentCommands(
           this.database,
@@ -323,6 +334,12 @@ export class DaemonService {
           String(candidate.commandId),
           typeof candidate.generationId === 'string' ? candidate.generationId : '',
         );
+        this.live.publish({
+          type: 'invalidate',
+          roomId: scopedRoom!,
+          reason: 'turn',
+          agentId: authenticatedAgentId,
+        });
         return this.writeResult() as Output<Name>;
       case 'acknowledgeAgentCommand': {
         const acknowledged = await this.database.query(
@@ -1218,8 +1235,12 @@ export class DaemonService {
     ).rows[0]!;
     return { ...(row.corner_id ? { openedCornerId: row.corner_id } : {}), completed: row.complete };
   }
-  private async postRoomMessage(input: Input<'postRoomMessage'>, agentId: string) {
-    await this.access(input.roomId, agentId);
+  private async postRoomMessage(
+    input: Input<'postRoomMessage'>,
+    agentId: string,
+    atomicCommandWrite = false,
+  ) {
+    if (!this.commandTransaction && !atomicCommandWrite) await this.access(input.roomId, agentId);
     const messageId = id();
     const mentions = [...new Set(input.mentionIds ?? [])].filter((value) => value !== agentId);
     let agentMentionIds = new Set<string>();
@@ -1239,13 +1260,16 @@ export class DaemonService {
         ).rows[0]
       : undefined;
     if (input.replyToMessageId && !parent) throw new Error('reply parent is not in this room');
-    const command = await authorizeCommandOutput(
-      this.database,
-      input.roomId,
-      agentId,
-      input.requestId,
-      input.generationId,
-    );
+    const command = atomicCommandWrite
+      ? undefined
+      : (this.authorizedCommand ??
+        (await authorizeCommandOutput(
+          this.database,
+          input.roomId,
+          agentId,
+          input.requestId,
+          input.generationId,
+        )));
     let humanIds = new Set<string>();
     if (mentions.length) {
       const members = await this.database.query<{ identity_id: string; kind: 'human' | 'agent' }>(
@@ -1297,9 +1321,10 @@ export class DaemonService {
     // Turns are unthreaded by design. Count from the inbox item that woke this
     // agent, not the optional presentation reply parent; a human item starts a
     // fresh chain at zero.
-    const hopCount = command.agent_depth;
+    const hopCount = command?.agent_depth ?? 0;
     const persistedMentions = deliveredMentions;
-    await this.database.transaction(async (database) => {
+    let messageWriteStartedAt: number | undefined;
+    const saveCompatibilityReply = async (database: SqlDatabase) => {
       // Attachments queued this turn by beeline-agent attach_file ride on this
       // final reply; they are drained exactly once, here.
       const pending = (
@@ -1314,35 +1339,6 @@ export class DaemonService {
           [input.roomId, agentId, input.requestId, input.generationId],
         )
       ).rows;
-      await database.query(
-        `INSERT INTO messages(
-           id,room_id,author_id,text,presentation,request_id,legacy_event,mention_ids,
-           reply_to_message_id,root_message_id,agent_hop_count,attachments
-         ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10,$11,$12::jsonb)`,
-        [
-          messageId,
-          input.roomId,
-          agentId,
-          input.text,
-          // The daemon posts conversation (or a card); a system line is only
-          // ever phrased by the server (`system-line.ts`).
-          input.presentation === 'card' ? 'card' : 'message',
-          input.requestId ?? null,
-          JSON.stringify(input.tags ?? {}),
-          JSON.stringify(persistedMentions),
-          input.replyToMessageId ?? null,
-          rootMessageId,
-          hopCount,
-          JSON.stringify(
-            pending.map((row) => ({
-              url: row.url,
-              name: row.name,
-              mimeType: row.mime_type,
-              size: row.size,
-            })),
-          ),
-        ],
-      );
       if (pending.length)
         await database.query(
           `DELETE FROM agent_pending_attachments WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND generation_id=$4`,
@@ -1366,12 +1362,234 @@ export class DaemonService {
         if (settled.rowCount)
           await settleTurnFailureLine(database, input.roomId, input.requestId, agentId);
       }
+      const values = [
+        messageId,
+        input.roomId,
+        agentId,
+        input.text,
+        // The daemon posts conversation (or a card); a system line is only
+        // ever phrased by the server (`system-line.ts`).
+        input.presentation === 'card' ? 'card' : 'message',
+        input.requestId ?? null,
+        JSON.stringify(input.tags ?? {}),
+        JSON.stringify(persistedMentions),
+        input.replyToMessageId ?? null,
+        rootMessageId,
+        hopCount,
+        JSON.stringify(
+          pending.map((row) => ({
+            url: row.url,
+            name: row.name,
+            mimeType: row.mime_type,
+            size: row.size,
+          })),
+        ),
+      ];
+      if (this.commandTransaction) {
+        return (
+          await database.query<CommittedMessageLiveRow>(
+            `WITH inserted AS (
+               INSERT INTO messages(
+                 id,room_id,author_id,text,presentation,request_id,legacy_event,mention_ids,
+                 reply_to_message_id,root_message_id,agent_hop_count,attachments
+               ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10,$11,$12::jsonb)
+               RETURNING *
+             ), completed AS (
+               UPDATE agent_commands SET state='complete',completed_at=now(),result_message_id=inserted.id
+               FROM inserted WHERE agent_commands.id=$13
+             ), cleared AS (
+               DELETE FROM live_outputs
+               WHERE room_id=$2 AND agent_id=$3 AND turn_id=$6 AND kind IN ('draft','thought')
+             )
+             SELECT inserted.*,author.kind author_kind,author.name author_name,
+               author.handle author_handle,author.avatar author_avatar,author.face_id author_face
+             FROM inserted JOIN identities author ON author.id=inserted.author_id`,
+            [...values, command!.id],
+          )
+        ).rows[0]!;
+      }
+      return (
+        await database.query<CommittedMessageLiveRow>(
+          `WITH inserted AS (
+             INSERT INTO messages(
+               id,room_id,author_id,text,presentation,request_id,legacy_event,mention_ids,
+               reply_to_message_id,root_message_id,agent_hop_count,attachments
+             ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10,$11,$12::jsonb)
+             RETURNING *
+           )
+           SELECT inserted.*,author.kind author_kind,author.name author_name,
+             author.handle author_handle,author.avatar author_avatar,author.face_id author_face
+           FROM inserted JOIN identities author ON author.id=inserted.author_id`,
+          values,
+        )
+      ).rows[0]!;
+    };
+    let saved: CommittedMessageLiveRow;
+    let databaseAwaitResolvedAt: number | undefined;
+    let projectionCompletedAt: number | undefined;
+    if (atomicCommandWrite) {
+      type AtomicReplyResult = {
+        outcome:
+          | 'committed'
+          | 'authority_rejected'
+          | 'turn_cancelled'
+          | 'already_completed'
+          | 'result_conflict'
+          | 'write_failed';
+        row: (Omit<CommittedMessageLiveRow, 'created_at'> & { created_at: string }) | null;
+      };
+      // One autocommit statement owns the lock, generation/lease/cancellation
+      // decision, attachment drain, terminal turn/failure state, reply insert,
+      // command completion, and live-output cleanup. PostgreSQL commits the
+      // statement before query() resolves, so the live row remains authoritative.
+      messageWriteStartedAt = Date.now();
+      const query = await this.database.query<AtomicReplyResult>(
+        `WITH candidate AS MATERIALIZED (
+             SELECT command.*,
+               EXISTS(SELECT 1 FROM agent_turns turn
+                 WHERE turn.room_id=command.room_id AND turn.agent_id=command.agent_id
+                   AND turn.request_id=command.turn_request_id AND turn.status='cancelled') turn_cancelled
+             FROM agent_commands command
+             WHERE command.room_id=$2 AND command.agent_id=$3 AND command.turn_request_id=$6
+               AND command.action IN ('input','resume') AND command.generation_id=$11
+             ORDER BY command.created_at DESC,command.id DESC LIMIT 1 FOR UPDATE OF command
+           ), writable AS (
+             SELECT * FROM candidate
+             WHERE state='claimed' AND lease_expires_at>clock_timestamp() AND NOT turn_cancelled
+           ), pending AS (
+             DELETE FROM agent_pending_attachments attachment USING writable
+             WHERE attachment.room_id=$2 AND attachment.agent_id=$3
+               AND attachment.request_id=$6 AND attachment.generation_id=$11
+             RETURNING attachment.url,attachment.name,attachment.mime_type,attachment.size,
+               attachment.created_at,attachment.id
+           ), attachment_payload AS (
+             SELECT COALESCE(jsonb_agg(jsonb_build_object(
+               'url',url,'name',name,'mimeType',mime_type,'size',size::integer
+             ) ORDER BY created_at,id),'[]'::jsonb) attachments FROM pending
+           ), settled AS (
+             INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id)
+             SELECT room_id,turn_request_id,agent_id,'complete',$11 FROM writable
+             ON CONFLICT(room_id,request_id,agent_id) DO UPDATE SET
+               status='complete',created_at=now()
+             WHERE agent_turns.status<>'cancelled'
+             RETURNING 1
+           ), recovered AS (
+             UPDATE messages failure SET
+               text=COALESCE('@'||NULLIF(agent.handle,''),failure.system_event->'subject'->>'name')||' answered after a retry',
+               system_event=jsonb_set(
+                 jsonb_set(failure.system_event,'{subject,name}',
+                   to_jsonb(COALESCE('@'||NULLIF(agent.handle,''),failure.system_event->'subject'->>'name'))),
+                 '{verb}',to_jsonb('answered after a retry'::text)
+               ),
+               card=jsonb_set(failure.card,'{state}',to_jsonb('recovered'::text))
+             FROM settled,identities agent
+             WHERE agent.id=$3 AND failure.room_id=$2 AND failure.card_type='turn-failed'
+               AND failure.card->>'requestId'=$6 AND failure.card->>'agentId'=$3
+               AND failure.card->>'state'='failed'
+           ), inserted AS (
+             INSERT INTO messages(
+               id,room_id,author_id,text,presentation,request_id,legacy_event,mention_ids,
+               reply_to_message_id,root_message_id,agent_hop_count,attachments
+             ) SELECT $1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10,
+                 writable.agent_depth,attachment_payload.attachments
+               FROM writable,settled,attachment_payload
+             RETURNING *
+           ), completed AS (
+             UPDATE agent_commands command SET
+               state='complete',completed_at=now(),result_message_id=inserted.id
+             FROM inserted WHERE command.id=(SELECT id FROM writable)
+             RETURNING command.id
+           ), cleared AS (
+             DELETE FROM live_outputs output USING completed
+             WHERE output.room_id=$2 AND output.agent_id=$3 AND output.turn_id=$6
+               AND output.kind IN ('draft','thought')
+           ), inserted_public AS (
+             SELECT inserted.*,author.kind author_kind,author.name author_name,
+               author.handle author_handle,author.avatar author_avatar,author.face_id author_face
+             FROM inserted JOIN identities author ON author.id=inserted.author_id
+             CROSS JOIN completed
+           ), existing_public AS (
+             SELECT message.*,author.kind author_kind,author.name author_name,
+               author.handle author_handle,author.avatar author_avatar,author.face_id author_face
+             FROM candidate JOIN messages message ON message.id=candidate.result_message_id
+             JOIN identities author ON author.id=message.author_id
+             WHERE candidate.state='complete' AND message.text=$4
+           ), committed AS (
+             SELECT * FROM inserted_public UNION ALL SELECT * FROM existing_public
+           )
+           SELECT 'committed'::text outcome,to_jsonb(committed) row FROM committed
+           UNION ALL
+           SELECT CASE
+             WHEN NOT EXISTS(SELECT 1 FROM candidate) THEN 'authority_rejected'
+             WHEN (SELECT turn_cancelled FROM candidate) THEN 'turn_cancelled'
+             WHEN (SELECT state FROM candidate)='complete'
+               AND (SELECT result_message_id FROM candidate) IS NULL THEN 'already_completed'
+             WHEN (SELECT state FROM candidate)='complete' THEN 'result_conflict'
+             ELSE 'write_failed'
+           END outcome,NULL::jsonb row
+           WHERE NOT EXISTS(SELECT 1 FROM committed)
+           LIMIT 1`,
+        [
+          messageId,
+          input.roomId,
+          agentId,
+          input.text,
+          input.presentation === 'card' ? 'card' : 'message',
+          input.requestId ?? null,
+          JSON.stringify(input.tags ?? {}),
+          JSON.stringify(persistedMentions),
+          input.replyToMessageId ?? null,
+          rootMessageId,
+          input.generationId,
+        ],
+      );
+      if (this.livePaintDiagnostics) databaseAwaitResolvedAt = Date.now();
+      const result = query.rows[0];
+      if (!result || result.outcome === 'write_failed')
+        throw new Error('command output authority rejected');
+      if (result.outcome === 'authority_rejected')
+        throw new Error('command output authority rejected');
+      if (result.outcome === 'turn_cancelled') throw new Error('command turn cancelled');
+      if (result.outcome === 'already_completed') throw new Error('command already completed');
+      if (result.outcome === 'result_conflict') throw new Error('command result conflict');
+      if (!result.row) throw new Error('command output authority rejected');
+      saved = { ...result.row, created_at: new Date(result.row.created_at) };
+      if (this.livePaintDiagnostics) projectionCompletedAt = Date.now();
+    } else {
+      saved = await this.database.transaction(saveCompatibilityReply);
+    }
+    const emittedAt = Date.now();
+    this.live.publish({
+      type: 'invalidate',
+      roomId: input.roomId,
+      reason: 'message',
+      agentId,
+      messageId,
+      committedRow: {
+        type: 'message',
+        row: saved,
+        ...(messageWriteStartedAt ? { startedAt: messageWriteStartedAt } : {}),
+      },
+      ...(messageWriteStartedAt
+        ? {
+            trace: {
+              id: randomBytes(16).toString('hex'),
+              databaseAt: saved.created_at.getTime(),
+              emittedAt,
+              startedAt: messageWriteStartedAt,
+              ...(databaseAwaitResolvedAt ? { databaseAwaitResolvedAt } : {}),
+              ...(projectionCompletedAt ? { projectionCompletedAt } : {}),
+              ...(this.livePaintDiagnostics && this.liveDiagnosticServerInstance
+                ? { serverInstance: this.liveDiagnosticServerInstance }
+                : {}),
+            },
+          }
+        : {}),
     });
-    this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'message', agentId });
     return {
-      id: messageId,
-      createdAt: Math.floor(Date.now() / 1000),
-      mentionIds: persistedMentions,
+      id: saved.id,
+      createdAt: seconds(saved.created_at),
+      mentionIds: saved.mention_ids,
     };
   }
   /** An agent-claimed attachment queued by attach_file; stamped onto the agent's
@@ -1464,14 +1682,25 @@ export class DaemonService {
       input.status === 'failed' && typeof input.reason === 'string'
         ? input.reason.replace(/\s+/g, ' ').trim().slice(0, TURN_FAILURE_REASON_MAX) || null
         : null;
+    let committedTurn: CommittedTurnLiveRow | undefined;
     await this.database.transaction(async (database) => {
       if (input.heartbeat) {
-        await database.query(
-          `UPDATE agent_turns SET created_at=now()
-           WHERE room_id=$1 AND request_id=$2 AND agent_id=$3 AND status='working'
-             AND generation_id IS NOT DISTINCT FROM $4`,
-          [input.roomId, input.requestId, agentId, input.generationId ?? null],
-        );
+        committedTurn = (
+          await database.query<CommittedTurnLiveRow>(
+            `WITH written AS (
+               UPDATE agent_turns SET created_at=now()
+               WHERE room_id=$1 AND request_id=$2 AND agent_id=$3 AND status='working'
+                 AND generation_id IS NOT DISTINCT FROM $4
+               RETURNING room_id,request_id,agent_id,status,created_at,generation_id
+             )
+             SELECT written.*,requester.id requested_by FROM written
+             LEFT JOIN messages trigger ON trigger.id=written.request_id
+               AND (trigger.room_id=$1 OR trigger.room_id=(SELECT parent_id FROM rooms WHERE id=$1))
+             LEFT JOIN identities requester ON requester.id=trigger.author_id
+               AND requester.kind='human'`,
+            [input.roomId, input.requestId, agentId, input.generationId ?? null],
+          )
+        ).rows[0];
       } else {
         // `cancelled` is terminal and wins. The requester withdrew the question,
         // so the answer that arrives a moment later is an answer to nothing: a
@@ -1480,8 +1709,21 @@ export class DaemonService {
         // A refused write leaves `rowCount` at zero, which is also what keeps
         // the consequences below — the failure line, the settle — from running
         // over a turn the requester already stopped.
-        const written = await database.query(
-          `INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id,failure_reason) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(room_id,request_id,agent_id) DO UPDATE SET status=EXCLUDED.status,generation_id=EXCLUDED.generation_id,failure_reason=EXCLUDED.failure_reason,created_at=now() WHERE agent_turns.status<>'cancelled'`,
+        const written = await database.query<CommittedTurnLiveRow>(
+          `WITH written AS (
+             INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id,failure_reason)
+             VALUES($1,$2,$3,$4,$5,$6)
+             ON CONFLICT(room_id,request_id,agent_id) DO UPDATE SET
+               status=EXCLUDED.status,generation_id=EXCLUDED.generation_id,
+               failure_reason=EXCLUDED.failure_reason,created_at=now()
+             WHERE agent_turns.status<>'cancelled'
+             RETURNING room_id,request_id,agent_id,status,created_at,generation_id
+           )
+           SELECT written.*,requester.id requested_by FROM written
+           LEFT JOIN messages trigger ON trigger.id=written.request_id
+             AND (trigger.room_id=$1 OR trigger.room_id=(SELECT parent_id FROM rooms WHERE id=$1))
+           LEFT JOIN identities requester ON requester.id=trigger.author_id
+             AND requester.kind='human'`,
           [
             input.roomId,
             input.requestId,
@@ -1492,6 +1734,7 @@ export class DaemonService {
           ],
         );
         if (!written.rowCount) return;
+        committedTurn = written.rows[0];
       }
       if (input.status === 'failed') {
         await this.inscribeTurnFailure(database, input.roomId, input.requestId, agentId, reason);
@@ -1499,7 +1742,14 @@ export class DaemonService {
         await settleTurnFailureLine(database, input.roomId, input.requestId, agentId);
       }
     });
-    this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'turn', agentId });
+    this.live.publish({
+      type: 'invalidate',
+      roomId: input.roomId,
+      reason: 'turn',
+      agentId,
+      requestId: input.requestId,
+      ...(committedTurn ? { committedRow: { type: 'turn' as const, row: committedTurn } } : {}),
+    });
     return this.writeResult();
   }
   /**
@@ -1611,7 +1861,13 @@ export class DaemonService {
       return { ...row, inserted: Boolean(inserted.rowCount) };
     });
     if (activity.inserted)
-      this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'activity', agentId });
+      this.live.publish({
+        type: 'invalidate',
+        roomId: input.roomId,
+        reason: 'activity',
+        agentId,
+        messageId: activity.id,
+      });
     return { id: activity.id, createdAt: seconds(activity.created_at) };
   }
   private async permissionRequest(input: Input<'postPermissionRequest'>, agentId: string) {
@@ -2384,22 +2640,7 @@ export class DaemonService {
   }
   private async archiveCorner(cornerId: string, agentId: string) {
     const parentId = await this.database.transaction(async (database) => {
-      const corner = (
-        await database.query<{ parent_id: string }>(`SELECT parent_id FROM rooms WHERE id=$1`, [
-          cornerId,
-        ])
-      ).rows[0];
-      if (!corner) throw new Error('corner not found');
-      await database.query(`UPDATE rooms SET archived_at=now(),updated_at=now() WHERE id=$1`, [
-        cornerId,
-      ]);
-      await database.query(
-        `UPDATE corner_facts SET close_requested=true,
-           lifecycle=lifecycle||'{"lifecycle":"done","checks":"unknown"}'::jsonb,
-           updated_at=now() WHERE corner_id=$1`,
-        [cornerId],
-      );
-      return corner.parent_id;
+      return (await closeCornerState(database, cornerId)).parentId;
     });
     this.live.publish({ type: 'invalidate', roomId: cornerId, reason: 'corner', agentId });
     this.live.publish({ type: 'invalidate', roomId: parentId, reason: 'corner', agentId });
@@ -2641,7 +2882,6 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   getAgentConfiguration: true,
   getAgentPresence: true,
   getRequestCompletion: true,
-  stageAgentDelegation: true,
   getAgentCommands: true,
   claimAgentCommand: true,
   acknowledgeAgentCommand: true,

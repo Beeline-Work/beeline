@@ -7,6 +7,8 @@ import type {
   KnownMessageReference,
   RoomRepository,
   RoomRepositoryInput,
+  RoomViewAgentTurn,
+  RoomViewMessage,
   WritePermissionDecision,
 } from '@beeline/buzz-client';
 import type { MessageSubmitInput } from './rig-transport';
@@ -15,8 +17,28 @@ import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import type { RepoCandidate } from '@/buzz/room-repo-picker';
 import { MonolithPhoneOperationError } from './monolith-operation';
 
+export type LiveWireTrace = {
+  id: string;
+  databaseAt: number;
+  emittedAt: number;
+  startedAt?: number;
+  paintAck?: 'database-clock';
+};
+
 type LiveWireEvent =
-  | { type: 'invalidate'; roomId: string; reason: string }
+  | { type: 'invalidate'; roomId: string; reason: string; trace?: LiveWireTrace }
+  | { type: 'subscribed'; roomId: string }
+  | { type: 'message-delta'; roomId: string; message: RoomViewMessage; trace?: LiveWireTrace }
+  | { type: 'turn-delta'; roomId: string; turn: RoomViewAgentTurn; trace?: LiveWireTrace }
+  | {
+      type: 'trace-painted';
+      id: string;
+      databaseAt: number;
+      startedAt?: number;
+      serverReceivedAt?: number;
+      databaseClockAt?: number;
+      upperBoundMs: number;
+    }
   | { type: 'draft' | 'thought'; roomId: string; agentId: string; turnId: string; text: string }
   | { type: 'retract'; roomId: string; agentId: string; turnId: string; kind: 'draft' | 'thought' }
   | {
@@ -27,7 +49,10 @@ type LiveWireEvent =
       observedAt: number;
     };
 
-export type MonolithSurfaceEvent = { readonly monolithLive: LiveWireEvent };
+export type MonolithSurfaceEvent = {
+  readonly monolithLive: LiveWireEvent;
+  readonly acknowledgePaint?: () => void;
+};
 
 function eventId(): string {
   return [...getRandomBytes(32)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
@@ -313,6 +338,8 @@ export class MonolithRigTransport {
     );
     let socket: WebSocket | undefined;
     let closed = false;
+    let reconnect: ReturnType<typeof setTimeout> | undefined;
+    let reconnectDelayMs = 1_000;
     const poll = setInterval(
       () =>
         listener({
@@ -320,20 +347,58 @@ export class MonolithRigTransport {
         }),
       30_000,
     );
-    try {
-      const token = await monolithSession.authorization();
-      const url = this.baseUrl.replace(/^http/, 'ws') + '/v1/phone/live';
-      socket = new WebSocket(url, [`bearer.${token}`]);
-      socket.onopen = () => {
-        for (const roomId of roomIds) socket?.send(JSON.stringify({ type: 'subscribe', roomId }));
-      };
-      socket.onmessage = (message) => {
-        if (!closed) listener({ monolithLive: JSON.parse(String(message.data)) as LiveWireEvent });
-      };
-    } catch {}
+    const scheduleReconnect = () => {
+      if (closed || reconnect) return;
+      const delayMs = reconnectDelayMs;
+      reconnectDelayMs = Math.min(reconnectDelayMs * 2, 30_000);
+      reconnect = setTimeout(() => {
+        reconnect = undefined;
+        void connect();
+      }, delayMs);
+    };
+    const connect = async () => {
+      try {
+        const token = await monolithSession.authorization();
+        if (closed) return;
+        const url = this.baseUrl.replace(/^http/, 'ws') + '/v1/phone/live';
+        const next = new WebSocket(url, [`bearer.${token}`]);
+        socket = next;
+        next.onopen = () => {
+          if (closed || socket !== next) return;
+          reconnectDelayMs = 1_000;
+          for (const roomId of roomIds) next.send(JSON.stringify({ type: 'subscribe', roomId }));
+        };
+        next.onmessage = (message) => {
+          if (closed || socket !== next) return;
+          const live = JSON.parse(String(message.data)) as LiveWireEvent;
+          const trace = 'trace' in live ? live.trace : undefined;
+          listener({
+            monolithLive: live,
+            ...(live.type !== 'trace-painted' &&
+            (typeof trace?.startedAt === 'number' || trace?.paintAck === 'database-clock')
+              ? {
+                  acknowledgePaint: () => {
+                    if (!closed && socket === next && next.readyState === WebSocket.OPEN)
+                      next.send(JSON.stringify({ type: 'trace-paint', id: trace.id }));
+                  },
+                }
+              : {}),
+          });
+        };
+        next.onclose = () => {
+          if (socket !== next) return;
+          socket = undefined;
+          scheduleReconnect();
+        };
+      } catch {
+        scheduleReconnect();
+      }
+    };
+    await connect();
     return () => {
       closed = true;
       clearInterval(poll);
+      if (reconnect) clearTimeout(reconnect);
       socket?.close();
     };
   }
@@ -387,11 +452,7 @@ export class MonolithRigTransport {
     });
   }
   closeCorner(roomId: string) {
-    return this.operation('sendRoomMessage', {
-      roomId,
-      messageId: eventId(),
-      text: 'Close this corner.',
-    }).then(() => undefined);
+    return this.operation('requestCornerClose', { roomId }).then(() => undefined);
   }
   agentCommandsRead() {
     return Promise.resolve(null);

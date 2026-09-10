@@ -14,6 +14,7 @@ export type PhoneOperationMap = {
   listRoomSchedules: { input: RoomInput; output: RoomScheduleListResult };
   deleteRoomSchedule: { input: DeleteRoomScheduleInput; output: void };
   cancelAgentTurn: { input: CancelAgentTurnInput; output: void };
+  requestCornerClose: { input: RoomInput; output: void };
   decideWritePermission: { input: DecideWritePermissionInput; output: MessageWriteResult };
   decideAgentGrant: { input: DecideAgentGrantInput; output: AgentGrantDecisionResult };
   revokeAgentGrant: { input: RevokeAgentGrantInput; output: AgentGrantDecisionResult };

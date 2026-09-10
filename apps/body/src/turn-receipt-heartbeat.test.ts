@@ -23,15 +23,8 @@ describe('turn receipt heartbeat', () => {
       () => task.promise,
       vi.fn(),
     );
-    await vi.advanceTimersByTimeAsync(0);
-    expect(execute).toHaveBeenCalledWith(
-      'postAgentTurnReceipt',
-      expect.objectContaining({ status: 'working' }),
-    );
-    expect(execute.mock.calls[0]?.[1]).not.toHaveProperty('heartbeat');
-
     await vi.advanceTimersByTimeAsync(TURN_RECEIPT_HEARTBEAT_MS * 3);
-    expect(execute).toHaveBeenCalledTimes(4);
+    expect(execute).toHaveBeenCalledTimes(3);
     expect(execute).toHaveBeenLastCalledWith(
       'postAgentTurnReceipt',
       expect.objectContaining({ status: 'working', heartbeat: true }),
@@ -40,7 +33,7 @@ describe('turn receipt heartbeat', () => {
     task.resolve('done');
     await expect(running).resolves.toBe('done');
     await vi.advanceTimersByTimeAsync(TURN_RECEIPT_HEARTBEAT_MS);
-    expect(execute).toHaveBeenCalledTimes(4);
+    expect(execute).toHaveBeenCalledTimes(3);
   });
 
   it('drains an in-flight heartbeat before allowing a terminal receipt', async () => {
@@ -48,7 +41,7 @@ describe('turn receipt heartbeat', () => {
     const task = deferred<void>();
     const heartbeat = deferred<{ id: string; createdAt: number }>();
     const execute = vi.fn(async (_name, input: { heartbeat?: boolean }) =>
-      input.heartbeat ? heartbeat.promise : { id: 'initial', createdAt: 1 },
+      input.heartbeat ? heartbeat.promise : { id: 'unexpected', createdAt: 1 },
     );
     const running = withTurnReceiptHeartbeat(
       { execute } as unknown as Pick<DaemonApiClient, 'execute'>,

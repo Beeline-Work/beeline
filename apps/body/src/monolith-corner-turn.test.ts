@@ -1331,7 +1331,7 @@ describe('corner close-request polling cadence', () => {
     expect(closeReads).toBe(2);
   });
 
-  it('does not poll a connected live stream before the slow reconciliation sweep', async () => {
+  it('does not use the configured fast recovery cadence after push acknowledgement', async () => {
     let closeReads = 0;
     const execute = vi.fn(async (name: string) => {
       if (name === 'getAgentConfiguration') return { commands: [] };
@@ -1355,7 +1355,7 @@ describe('corner close-request polling cadence', () => {
     abort.abort();
     await running;
     await scheduler.dispose();
-    expect(closeReads).toBe(2);
+    expect(closeReads).toBe(1);
     expect(execute).not.toHaveBeenCalledWith('waitForCornerWake', expect.anything());
   });
 });
@@ -1496,6 +1496,13 @@ describe('thin monolith corner turn', () => {
               identityId: runtime.agent.publicKey,
               kind: 'agent',
               name: 'Bee',
+              role: 'member',
+            },
+            {
+              identityId: 'peer-agent',
+              kind: 'agent',
+              name: 'Goosy',
+              handle: 'goosy-2',
               role: 'member',
             },
           ],
@@ -1641,6 +1648,10 @@ describe('thin monolith corner turn', () => {
     expect(secondPrompt).not.toContain('corner row 1\n');
     expect(firstPrompt).toContain('Corner objective:\nImplement the widget');
     expect(secondPrompt).toContain('Corner objective:\nImplement the widget');
+    expect(firstPrompt).toContain('Room members, and the exact spelling that tags each one:');
+    expect(secondPrompt).toContain('Room members, and the exact spelling that tags each one:');
+    expect(firstPrompt).toContain('- @goosy-2 — Goosy (agent)');
+    expect(secondPrompt).toContain('- @goosy-2 — Goosy (agent)');
     expect(sessionNew).toHaveBeenCalledWith(
       expect.objectContaining({
         cwd: worktree,

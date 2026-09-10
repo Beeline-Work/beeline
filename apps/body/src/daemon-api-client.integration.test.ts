@@ -11,6 +11,7 @@ import { promisify } from 'node:util';
 import WebSocket from 'ws';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getPublicKey } from '@beeline/nostr';
+import type { AgentCommand } from '@beeline/api-contract/daemon';
 import { migrate } from '../../server/src/database.js';
 import { PgliteDatabase } from '../../server/src/test-support.js';
 import { TokenAuth } from '../../server/src/auth.js';
@@ -131,8 +132,9 @@ describe('daemon API client against the local monolith', () => {
       ],
     };
 
-    expect(agentReplyMentionIds('@codex what time is it?', roster, AGENT)).toEqual([peer]);
-    expect(agentReplyMentionIds('Please ask @Clockwork.', roster, AGENT)).toEqual([peer]);
+    expect(agentReplyMentionIds('@codex what time is it?', roster, AGENT)).toEqual([]);
+    expect(agentReplyMentionIds('Please ask @Clockwork.', roster, AGENT)).toEqual([]);
+    expect(agentReplyMentionIds('@codex-helper what time is it?', roster, AGENT)).toEqual([peer]);
     expect(agentReplyMentionIds('Mail codex@example.com', roster, AGENT)).toEqual([]);
     expect(agentReplyMentionIds('@Owner please review', roster, AGENT)).toEqual([HUMAN]);
     expect(agentReplyMentionIds('@a_lunchboxfortwo please review', roster, AGENT)).toEqual([HUMAN]);
@@ -628,8 +630,14 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       HUMAN,
     );
     // PGlite does not run the production Postgres LISTEN/NOTIFY listener.
-    // Deliver the committed invalidation that listener would rebroadcast.
+    // Deliver both committed invalidations that listener would rebroadcast.
     live.publish({ type: 'invalidate', roomId: ROOM, reason: 'test-commit' });
+    live.publish({
+      type: 'invalidate',
+      roomId: ROOM,
+      reason: 'postgres:agent_commands',
+      targetAgentId: result.runtime.agent.publicKey,
+    });
     await vi.waitFor(
       async () => {
         const room = await phone.readRoom(ROOM, HUMAN);
@@ -664,35 +672,33 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     let connected = false;
     let replies = Promise.resolve();
     let answered = 0;
+    const answer = (command: AgentCommand) => {
+      replies = replies.then(async () => {
+        await client.execute('claimAgentCommand', {
+          roomId: ROOM,
+          commandId: command.id,
+          generationId: 'generation-1',
+        });
+        await client.execute('postRoomMessage', {
+          roomId: ROOM,
+          requestId: command.turnRequestId,
+          generationId: 'generation-1',
+          text: 'Answered through push',
+        });
+        answered += 1;
+      });
+    };
     const disconnect = client.liveSubscribe(
       ROOM,
       activation.cursor,
       (items, cursor) => {
         client.updateLiveCursor(ROOM, cursor);
-        for (const item of items) {
-          if (!item.mentionIds.includes(AGENT)) continue;
-          replies = replies.then(async () => {
-            const page = await client.execute('getAgentCommands', { roomId: ROOM });
-            const command = page.commands.find((c) => c.sourceMessageId === item.id);
-            if (!command) return;
-            await client.execute('claimAgentCommand', {
-              roomId: ROOM,
-              commandId: command.id,
-              generationId: 'generation-1',
-            });
-            await client.execute('postRoomMessage', {
-              roomId: ROOM,
-              requestId: item.id,
-              generationId: 'generation-1',
-              text: 'Answered through push',
-            });
-            answered += 1;
-          });
-        }
       },
       (value) => {
         connected = value;
       },
+      undefined,
+      (commands) => commands.forEach(answer),
     );
     const state = async () =>
       (await phone.readRoom(ROOM, HUMAN))?.members.find(
@@ -700,8 +706,14 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       )?.presence?.status;
     const attempt = async () => {
       await phone.execute('sendRoomMessage', { roomId: ROOM, text: '@bee Hello' }, HUMAN);
-      // PGlite has no separate LISTEN connection; deliver the committed notification.
+      // PGlite has no separate LISTEN connection; deliver the two committed notifications.
       live.publish({ type: 'invalidate', roomId: ROOM, reason: 'postgres:messages' });
+      live.publish({
+        type: 'invalidate',
+        roomId: ROOM,
+        reason: 'postgres:agent_commands',
+        targetAgentId: AGENT,
+      });
     };
     try {
       await vi.waitFor(async () => {
@@ -728,6 +740,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       );
       await attempt();
       await vi.waitFor(() => expect(answered).toBe(2));
+      expect(operations.mock.calls.filter(([name]) => name === 'getAgentCommands')).toHaveLength(0);
       await replies;
       expect(await state()).toBe('online');
       const after = (
@@ -1628,6 +1641,12 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         }),
       );
       live.publish({ type: 'invalidate', roomId: ROOM, reason: 'test-commit' });
+      live.publish({
+        type: 'invalidate',
+        roomId: ROOM,
+        reason: 'postgres:agent_commands',
+        targetAgentId: AGENT,
+      });
       await vi.waitFor(() => expect(sessionPrompt).toHaveBeenCalled(), { timeout: 5_000 });
       const wirePrompt = sessionPrompt.mock.calls[0]![1];
       expect(wirePrompt).toContain('Post exactly: hello');
@@ -1791,6 +1810,12 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         OUTSIDER,
       );
       live.publish({ type: 'invalidate', roomId: ROOM, reason: 'test-commit' });
+      live.publish({
+        type: 'invalidate',
+        roomId: ROOM,
+        reason: 'postgres:agent_commands',
+        targetAgentId: AGENT,
+      });
       await vi.waitFor(() => expect(sessionPrompt).toHaveBeenCalled(), { timeout: 5_000 });
       expect(sessionPrompt.mock.calls[0]![1]).toContain('yo again');
       await vi.waitFor(async () => expect(await turns()).toBeGreaterThan(0), { timeout: 5_000 });

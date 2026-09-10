@@ -15,7 +15,7 @@ export function commandFixtureApi(
   let started = false,
     settled = objective === null,
     closed = false;
-  let notify: (() => void) | undefined;
+  let notify: ((commands: readonly AgentCommand[]) => void) | undefined;
   function add(source: InboxItem, reason = 'human_tag') {
     const fixture = source as InboxItem & {
       fixtureCommand?: boolean;
@@ -24,7 +24,7 @@ export function commandFixtureApi(
     };
     if (fixture.fixtureCommand === false || seen.has(source.id)) return;
     seen.add(source.id);
-    pending.set(source.id, {
+    const command: AgentCommand = {
       id: source.id,
       roomId,
       agentId,
@@ -36,8 +36,9 @@ export function commandFixtureApi(
       rootSourceMessageId: source.id,
       agentDepth: 0,
       source,
-    });
-    notify?.();
+    };
+    pending.set(source.id, command);
+    notify?.([command]);
   }
   if (objective)
     add(
@@ -56,7 +57,14 @@ export function commandFixtureApi(
     get(target, key) {
       if (key === 'liveSubscribe')
         return (...args: unknown[]) => {
-          notify = args[2] as () => void;
+          const onItems = args[2] as
+            | ((items: readonly InboxItem[], cursor?: string) => void)
+            | undefined;
+          notify = args[5] as ((commands: readonly AgentCommand[]) => void) | undefined;
+          args[2] = (items: readonly InboxItem[], cursor?: string) => {
+            for (const source of items) add(source);
+            onItems?.(items, cursor);
+          };
           return target.liveSubscribe?.(...(args as Parameters<DaemonApiClient['liveSubscribe']>));
         };
       if (key !== 'execute') {

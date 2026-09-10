@@ -139,7 +139,8 @@ describe('the corner line and the turn indicator are independent', () => {
     // Neither is nested in the other's condition, so a Room can show one, the
     // other, both, or neither.
     expect(chatSource).toContain('{!isCorner && !isArchived && cornerLiveBar && (');
-    expect(chatSource).toContain('{!isArchived && composerAck && (');
+    expect(chatSource).toContain('desktopExperience ? (');
+    expect(chatSource).toMatch(/\{!isArchived && composerAck && \(\s*<TurnProgressLine/);
     expect(chatSource).toContain('<TurnProgressLine');
     expect(chatSource).toContain('label={composerAck.label}');
   });

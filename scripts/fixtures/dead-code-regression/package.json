@@ -1,0 +1,5 @@
+{
+  "name": "dead-code-regression-fixture",
+  "private": true,
+  "type": "module"
+}

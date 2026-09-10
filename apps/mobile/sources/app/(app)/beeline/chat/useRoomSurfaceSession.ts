@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import { AppState } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import {
   KIND_AGENT_DRAFT,
@@ -16,13 +17,15 @@ import { loadBuzzIdentity, getEffectiveRelayUrl } from '@/auth/buzz-identity-sto
 import {
   displayRoomMessages,
   reconcileRoomView,
+  reconcileRoomMessageDelta,
+  reconcileRoomTurnDelta,
   type ChatDisplayMessage,
 } from '@/buzz/room-view-presentation';
 import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-storage';
 import { liveDraftRowId } from '@/buzz/draft-settle';
 import { createRoomOutbox, mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { BuzzRigTransport } from '@/sync/transport';
-import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
+import type { LiveWireTrace, MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 import {
   AGENT_TURN_FRESHNESS_MS,
   mergeAgentPresence,
@@ -32,6 +35,66 @@ import {
 import { ROOM_LABEL } from '@/buzz/vocabulary';
 
 const OUTBOX_CONFIRMATION_TIMEOUT_MS = 15_000;
+
+type ReceivedLiveTrace = LiveWireTrace & {
+  reason: string;
+  receivedAt: number;
+  acknowledgePaint?: () => void;
+};
+let remainingLiveTraceLogs = 32;
+let liveTraceRows: unknown[] = [];
+let liveTraceWrite = Promise.resolve();
+export const LIVE_TRACE_STORAGE_KEY = '@beeline/live-event-trace-v1';
+
+function logLiveTrace(phase: string, traces: readonly ReceivedLiveTrace[], at = Date.now()): void {
+  if (traces.length === 0 || remainingLiveTraceLogs <= 0) return;
+  remainingLiveTraceLogs -= 1;
+  const row = {
+    phase,
+    at,
+    events: traces.map(({ id, reason, databaseAt, emittedAt, startedAt, receivedAt }) => ({
+      id,
+      reason,
+      databaseAt,
+      emittedAt,
+      ...(typeof startedAt === 'number' ? { startedAt } : {}),
+      receivedAt,
+    })),
+  };
+  if (__DEV__) console.info(`[live-trace] ${JSON.stringify(row)}`);
+  liveTraceRows = [...liveTraceRows.slice(-127), row];
+  // One diagnostic write after the resulting paint, not one synchronous
+  // storage handoff at every socket/read phase. The trace must not perturb the
+  // render interval it exists to measure.
+  if (phase !== 'paint' && phase !== 'room-read-error') return;
+  const snapshot = JSON.stringify(liveTraceRows);
+  liveTraceWrite = liveTraceWrite
+    .then(() => AsyncStorage.setItem(LIVE_TRACE_STORAGE_KEY, snapshot))
+    .catch(() => undefined);
+}
+
+function logLivePaintAck(event: {
+  id: string;
+  databaseAt: number;
+  startedAt?: number;
+  serverReceivedAt?: number;
+  databaseClockAt?: number;
+  upperBoundMs: number;
+}): void {
+  if (remainingLiveTraceLogs <= 0) return;
+  remainingLiveTraceLogs -= 1;
+  const row = {
+    phase: 'server-paint-ack',
+    at: Date.now(),
+    event,
+  };
+  if (__DEV__) console.info(`[live-trace] ${JSON.stringify(row)}`);
+  liveTraceRows = [...liveTraceRows.slice(-127), row];
+  const snapshot = JSON.stringify(liveTraceRows);
+  liveTraceWrite = liveTraceWrite
+    .then(() => AsyncStorage.setItem(LIVE_TRACE_STORAGE_KEY, snapshot))
+    .catch(() => undefined);
+}
 
 function eventTag(event: { tags: string[][] }, name: string): string | undefined {
   return event.tags.find((tag) => tag[0] === name)?.[1];
@@ -113,11 +176,28 @@ export function useRoomSurfaceSession({
   const outboxRef = useRef<RoomOutbox | null>(null);
   const schedulerRef = useRef<SurfaceRefreshScheduler<RoomView> | null>(null);
   const reconciledViewRef = useRef<RoomView | null>(null);
-  const confirmationTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const agentPresencesRef = useRef(heartbeatPresences);
   const reconnectGraceRef = useRef(presenceReconnectGrace);
+  const pendingPaintTracesRef = useRef<readonly ReceivedLiveTrace[]>([]);
+  const deltaReconcilePendingRef = useRef(false);
   agentPresencesRef.current = heartbeatPresences;
   reconnectGraceRef.current = presenceReconnectGrace;
+
+  useEffect(() => {
+    const traces = pendingPaintTracesRef.current;
+    if (!roomSurface) return;
+    if (traces.length > 0) {
+      pendingPaintTracesRef.current = [];
+      logLiveTrace('paint', traces);
+      for (const trace of traces) trace.acknowledgePaint?.();
+    }
+    // The committed delta paints first. This post-paint signal then converges
+    // the entire Room without putting the full snapshot on the feedback path.
+    if (deltaReconcilePendingRef.current) {
+      deltaReconcilePendingRef.current = false;
+      schedulerRef.current?.signal();
+    }
+  }, [roomSurface]);
 
   const applyAgentPresence = useCallback((presence: RoomAgentPresence | undefined) => {
     if (!presence) return;
@@ -141,19 +221,12 @@ export function useRoomSurfaceSession({
     setFailedIds((current) => new Set(current).add(eventId));
   }, []);
 
-  const scheduleConfirmation = useCallback(
-    (eventId: string) => {
-      const previous = confirmationTimersRef.current.get(eventId);
-      if (previous) clearTimeout(previous);
-      const timer = setTimeout(() => {
-        const record = outboxRef.current?.get(eventId);
-        if (!record || record.status !== 'pending') return;
-        void markFailed(eventId);
-      }, OUTBOX_CONFIRMATION_TIMEOUT_MS);
-      confirmationTimersRef.current.set(eventId, timer);
-    },
-    [markFailed],
-  );
+  const scheduleConfirmation = useCallback((eventId: string) => {
+    schedulerRef.current?.signalUntil(
+      (view) => view.messages.some((message) => message.id === eventId),
+      OUTBOX_CONFIRMATION_TIMEOUT_MS,
+    );
+  }, []);
 
   const retryOutbox = useCallback(
     (eventId: string, retryTransport?: BuzzRigTransport | null) => {
@@ -182,9 +255,6 @@ export function useRoomSurfaceSession({
 
   const dismissOutbox = useCallback(
     (eventId: string) => {
-      const timer = confirmationTimersRef.current.get(eventId);
-      if (timer) clearTimeout(timer);
-      confirmationTimersRef.current.delete(eventId);
       void outboxRef.current?.remove(eventId);
       setFailedIds((current) => {
         const next = new Set(current);
@@ -216,6 +286,7 @@ export function useRoomSurfaceSession({
     let watchGeneration = 0;
     let watchKey = '';
     let hasPainted = false;
+    let pendingReadTraces: ReceivedLiveTrace[] = [];
 
     agentPresencesRef.current = {};
     reconnectGraceRef.current = {};
@@ -316,12 +387,6 @@ export function useRoomSurfaceSession({
         const next = new Set([...current].filter((id) => !authoritativeIds.has(id)));
         return next.size === current.size ? current : next;
       });
-      for (const id of authoritativeIds) {
-        const timer = confirmationTimersRef.current.get(id);
-        if (timer) clearTimeout(timer);
-        confirmationTimersRef.current.delete(id);
-      }
-
       if (fresh) {
         void mobileSurfaceCache.write(
           surfaceAddress(relayUrl, identityPubkey, `/room/${channelId}`),
@@ -345,9 +410,90 @@ export function useRoomSurfaceSession({
         (event: Parameters<LiveOverlayDecoder['decode']>[0] | MonolithSurfaceEvent) => {
           if (cancelled || generation !== watchGeneration) return;
           if ('monolithLive' in event) {
-            const live = (event as MonolithSurfaceEvent).monolithLive;
+            const surfaceEvent = event as MonolithSurfaceEvent;
+            const live = surfaceEvent.monolithLive;
+            if (live.type === 'trace-painted') {
+              logLivePaintAck(live);
+              return;
+            }
+            if (live.type === 'subscribed') {
+              if (hasPainted) scheduler?.force();
+              return;
+            }
+            if (live.type === 'message-delta' || live.type === 'turn-delta') {
+              if (live.roomId !== channelId) return;
+              const received = live.trace
+                ? {
+                    ...live.trace,
+                    reason: live.type,
+                    receivedAt: Date.now(),
+                    ...(surfaceEvent.acknowledgePaint
+                      ? { acknowledgePaint: surfaceEvent.acknowledgePaint }
+                      : {}),
+                  }
+                : undefined;
+              if (received) logLiveTrace('socket-receipt', [received], received.receivedAt);
+              const current = reconciledViewRef.current;
+              if (!current) {
+                scheduler?.force();
+                return;
+              }
+              const next =
+                live.type === 'message-delta'
+                  ? reconcileRoomMessageDelta(current, live.message)
+                  : reconcileRoomTurnDelta(current, live.turn);
+              if (next === current) {
+                received?.acknowledgePaint?.();
+                return;
+              }
+              reconciledViewRef.current = next;
+              hasPainted = true;
+              bindingsRef.current.observeRoomSurface();
+              if (received)
+                pendingPaintTracesRef.current = [
+                  ...pendingPaintTracesRef.current.slice(-15),
+                  received,
+                ];
+              deltaReconcilePendingRef.current = true;
+              setRoomSurface(next);
+              if (live.type === 'message-delta') {
+                void outboxRef.current?.reconcile(
+                  new Set(next.messages.map((message) => message.id)),
+                );
+                setFailedIds((failed) => {
+                  if (!failed.has(live.message.id)) return failed;
+                  const reconciled = new Set(failed);
+                  reconciled.delete(live.message.id);
+                  return reconciled;
+                });
+              }
+              return;
+            }
             if (live.type === 'invalidate') {
-              scheduler?.signal();
+              if (live.trace) {
+                const received = {
+                  ...live.trace,
+                  reason: live.reason,
+                  receivedAt: Date.now(),
+                  ...(surfaceEvent.acknowledgePaint
+                    ? { acknowledgePaint: surfaceEvent.acknowledgePaint }
+                    : {}),
+                };
+                pendingReadTraces = [...pendingReadTraces.slice(-15), received];
+                logLiveTrace('socket-receipt', [received], received.receivedAt);
+              }
+              // A claim has already committed its WORKING receipt before the
+              // server emits this invalidation. Give that receipt an immediate
+              // authoritative read instead of placing it behind ordinary
+              // surface coalescing, where a short turn can complete first.
+              if (['message', 'turn', 'activity', 'phone-write'].includes(live.reason)) {
+                // The committed-row delta follows this same-process hint. The
+                // periodic/reconnect read remains the lossless fallback.
+              } else if (live.reason === 'postgres:agent_turns') {
+                scheduler?.force();
+              } else {
+                scheduler?.signal();
+              }
             } else if (live.roomId !== channelId) {
               // Parent Room watches include corners for lifecycle invalidation,
               // but an ephemeral lane belongs exclusively to its emitting Room.
@@ -521,7 +667,20 @@ export function useRoomSurfaceSession({
         if (cached && !cancelled) applyView(cached, identity.publicKey, relayUrl, false);
 
         scheduler = new SurfaceRefreshScheduler({
-          fetch: () => nextRoomClient.room(channelId),
+          fetch: async () => {
+            const traces = pendingReadTraces;
+            pendingReadTraces = [];
+            logLiveTrace('room-read-start', traces);
+            try {
+              const view = await nextRoomClient.room(channelId);
+              logLiveTrace('room-read-end', traces);
+              pendingPaintTracesRef.current = traces;
+              return view;
+            } catch (error) {
+              logLiveTrace('room-read-error', traces);
+              throw error;
+            }
+          },
           apply: (view) => {
             applyView(view, identity.publicKey, relayUrl, true);
             const latest = view.messages.at(-1);
@@ -574,8 +733,6 @@ export function useRoomSurfaceSession({
       scheduler?.dispose();
       appStateSubscription?.remove();
       unsubscribe?.();
-      for (const timer of confirmationTimersRef.current.values()) clearTimeout(timer);
-      confirmationTimersRef.current.clear();
       outboxRef.current = null;
       schedulerRef.current = null;
       reconciledViewRef.current = null;

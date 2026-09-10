@@ -184,7 +184,7 @@ export function pendingGrantToolCall(call: { title?: string; content?: unknown }
  * The Room's members and the one @spelling that reaches each of them.
  *
  * Everywhere else the prompt names people by DISPLAY name — the transcript's
- * bylines, `Newest message from <name>` — and nothing in it ever carried a
+ * bylines, `Current task selected by the server from <name>` — and nothing in it ever carried a
  * handle. So a model with something to say to someone had no authoritative
  * spelling to write and had to guess one, or copy one out of the conversation,
  * where a handle retired releases ago still sits in its own old messages. A
@@ -204,14 +204,12 @@ export function roomMentionDirectory(roster: WorkspaceRoster, selfId: string): s
     const alias = handle || name;
     if (!alias) continue;
     const kind = member.kind === 'agent' ? 'agent' : 'person';
-    rows.push(
-      `- @${alias}${name && name !== alias ? ` — ${name}` : ''} (${kind})${member.kind === 'agent' ? ` — delegation agentId: ${member.identityId}` : ''}`,
-    );
+    rows.push(`- @${alias}${name && name !== alias ? ` — ${name}` : ''} (${kind})`);
   }
   if (!rows.length) return '';
   return [
     'Room members, and the exact spelling that tags each one:',
-    'Agent tags in your prose are display-only. To ask another agent to work, call delegate_to_agent with its exact agentId, then put the request in your final answer.',
+    'An exact agent tag assigns that agent work; use it only when you are asking that agent to act.',
     ...rows,
     'Write a tag exactly as spelled here. An @name spelled any other way is plain text: it reaches nobody, and nobody is told it was meant for them. Never invent a handle, shorten one, or copy an @name out of the conversation — old messages carry spellings that no longer exist.',
   ].join('\n');
@@ -230,7 +228,12 @@ export function agentReplyMentionIds(
   const aliases = new Map<string, { display: string; ids: Set<string> }>();
   for (const member of roster.members) {
     if (member.identityId === authorId) continue;
-    for (const raw of [member.name, member.handle, member.soul?.name]) {
+    // Agent tags are execution authority, so only the canonical handle shown
+    // in the current directory may resolve one. Human aliases remain a
+    // presentation/delivery compatibility surface.
+    const rawAliases =
+      member.kind === 'agent' ? [member.handle] : [member.name, member.handle, member.soul?.name];
+    for (const raw of rawAliases) {
       const display = raw?.trim().replace(/^@/, '');
       if (!display) continue;
       const key = display.toLocaleLowerCase();
@@ -243,7 +246,7 @@ export function agentReplyMentionIds(
   // handle. Prefer any real `a_<handle>` member above; otherwise route the
   // old spelling to the one canonical handle it can unambiguously name.
   for (const member of roster.members) {
-    if (member.identityId === authorId || !member.handle) continue;
+    if (member.identityId === authorId || member.kind === 'agent' || !member.handle) continue;
     const handle = member.handle.trim().replace(/^@/, '').toLocaleLowerCase();
     const canonical = aliases.get(handle);
     const legacy = `a_${handle}`;
@@ -901,14 +904,6 @@ export class MonolithRoomTurnLoop {
                     'Room conversation so far:',
                     'New in the Room since your last turn (the earlier conversation is already in this session):',
                   ),
-                  `Newest message from ${inboxItemAuthorName(item, this.agent.publicKey, names)}:`,
-                  roomMessagePrompt(
-                    '',
-                    inboxItemPromptBody(item, this.agent.publicKey),
-                    item.attachments,
-                    delivered,
-                    this.acceptsImages(),
-                  ),
                   grantDecision
                     ? [
                         'This is the answer to your grant request; your paused work resumes now.',
@@ -920,9 +915,17 @@ export class MonolithRoomTurnLoop {
                   [
                     'Write only the substantive Room message you want the human to read.',
                     'Do not repeat or paraphrase these instructions.',
-                    'If the newest message is only a nudge to respond, answer the most recent unanswered human message in the conversation instead of echoing the nudge.',
+                    'If the current task is only a nudge to respond, answer the most recent unanswered human message in the conversation instead of echoing the nudge.',
                     MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE,
                   ].join(' '),
+                  `Current task selected by the server from ${inboxItemAuthorName(item, this.agent.publicKey, names)}:`,
+                  roomMessagePrompt(
+                    '',
+                    inboxItemPromptBody(item, this.agent.publicKey),
+                    item.attachments,
+                    delivered,
+                    this.acceptsImages(),
+                  ),
                 ]
                   .filter(Boolean)
                   .join('\n\n');
@@ -1150,6 +1153,15 @@ export class MonolithRoomTurnLoop {
         context: this.commandContext,
         signal,
         pollMs: this.options.pollMs,
+        presence: {
+          ...(this.options.config.daemonReleaseVersion
+            ? { releaseVersion: this.options.config.daemonReleaseVersion }
+            : {}),
+          ...(this.options.config.daemonSourceSha
+            ? { sourceSha: this.options.config.daemonSourceSha }
+            : {}),
+          available: !this.options.config.modelUnavailable,
+        },
         onWake: (wake) => {
           this.wakeIntake = wake;
         },

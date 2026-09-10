@@ -68,7 +68,8 @@ export function validateServerCommand(
 /**
  * Targeted commands -> claim -> local session mechanics. Inputs remain durable
  * and unclaimed while a session is busy. Stops are claimed even during a prompt.
- * Live traffic is only a wakeup; it is never interpreted as conversational input.
+ * Live traffic carries server-authorized commands. Durable reads recover every
+ * second until push intake is acknowledged, then reconcile once per minute.
  */
 export async function runServerCommandIntake(options: {
   api: DaemonApiClient;
@@ -77,6 +78,7 @@ export async function runServerCommandIntake(options: {
   context: CommandExecutionContext;
   signal?: AbortSignal;
   pollMs?: number;
+  presence?: { releaseVersion?: string; sourceSha?: string; available?: boolean };
   run: (command: AgentCommand) => Promise<void>;
   stop: (requestId: string) => void;
   onWake?: (wake: (() => void) | undefined) => void;
@@ -89,28 +91,65 @@ export async function runServerCommandIntake(options: {
   if (first?.commandProtocol !== 1)
     throw new Error('server command protocol 1 is required; refusing intake');
   let busy: Promise<void> | undefined;
-  let wake: (() => void) | undefined;
-  let dirty = true;
-  let live = false;
-  const notify = () => {
-    dirty = true;
-    wake?.();
+  let wake: ((reconcile: boolean) => void) | undefined;
+  let pushIntakeAcknowledged = false;
+  let reconciliation: Promise<void> | undefined;
+  let reconciliationError: unknown;
+  let stopped = false;
+  const pending = new Map(first.commands.map((command) => [command.id, command]));
+  const claimed = new Set<string>();
+  const notify = (commands: readonly AgentCommand[] = []) => {
+    for (const command of commands) if (!claimed.has(command.id)) pending.set(command.id, command);
+    wake?.(false);
+  };
+  const requestReconciliation = () => {
+    if (reconciliation) return;
+    reconciliation = api
+      .execute('getAgentCommands', { roomId })
+      .then((page) => {
+        if (page.commandProtocol !== 1)
+          throw new Error('server command protocol changed; refusing intake');
+        if (!stopped) notify(page.commands);
+      })
+      .catch((error: unknown) => {
+        reconciliationError = error;
+        wake?.(false);
+      })
+      .finally(() => {
+        reconciliation = undefined;
+      });
   };
   options.onWake?.(notify);
-  const off = api.liveSubscribe?.(roomId, undefined, notify, (connected, capabilities) => {
-    live = connected && capabilities?.pushIntake === true;
-    notify();
-  });
-  let page = first;
+  const off = api.liveSubscribe?.(
+    roomId,
+    undefined,
+    undefined,
+    (connected, capabilities) => {
+      const acknowledged = connected && capabilities?.pushIntake === true;
+      if (pushIntakeAcknowledged !== acknowledged) {
+        pushIntakeAcknowledged = acknowledged;
+        // Re-arm the recovery timer at the cadence this connection proved it
+        // supports. A disconnect still reconciles immediately.
+        wake?.(!connected);
+      } else if (!connected) {
+        wake?.(true);
+      }
+    },
+    options.presence,
+    notify,
+  );
   try {
     while (!signal?.aborted) {
+      if (reconciliationError) throw reconciliationError;
       if (options.closed && (await options.closed())) return;
-      const seen = new Set<string>();
-      for (const command of page.commands) {
+      for (const command of [...pending.values()]) {
         validateServerCommand(command, roomId, agentId);
-        if (seen.has(command.id)) continue;
-        seen.add(command.id);
         if (busy && command.action !== 'stop') continue;
+        pending.delete(command.id);
+        // Reserve the id before the request yields. A slow reconciliation
+        // response may contain the same command snapshot while this claim is
+        // in flight; it must not put the command back into the local queue.
+        claimed.add(command.id);
         try {
           await api.execute('claimAgentCommand', {
             roomId,
@@ -118,6 +157,7 @@ export async function runServerCommandIntake(options: {
             generationId: context.generationId,
           });
         } catch (error) {
+          claimed.delete(command.id);
           options.onError?.(error);
           continue;
         }
@@ -132,7 +172,10 @@ export async function runServerCommandIntake(options: {
           await context.enter(command);
           busy = options
             .run(command)
-            .catch((error) => options.onError?.(error))
+            .catch((error) => {
+              claimed.delete(command.id);
+              options.onError?.(error);
+            })
             .finally(async () => {
               await context.leave();
               busy = undefined;
@@ -141,25 +184,29 @@ export async function runServerCommandIntake(options: {
         }
       }
       options.onPoll?.();
-      if (!dirty)
-        await new Promise<void>((resolve) => {
-          const done = () => {
-            clearTimeout(timer);
-            signal?.removeEventListener('abort', done);
-            wake = undefined;
-            resolve();
-          };
-          const timer = setTimeout(done, live ? 60_000 : (options.pollMs ?? 1_000));
-          wake = done;
-          signal?.addEventListener('abort', done, { once: true });
-        });
-      dirty = false;
+      const reconcile = await new Promise<boolean>((resolve) => {
+        const done = (needed: boolean) => {
+          if (timer) clearTimeout(timer);
+          signal?.removeEventListener('abort', aborted);
+          wake = undefined;
+          resolve(needed);
+        };
+        const aborted = () => done(false);
+        wake = done;
+        const timer = setTimeout(
+          () => done(true),
+          pushIntakeAcknowledged ? 60_000 : (options.pollMs ?? 1_000),
+        );
+        signal?.addEventListener('abort', aborted, { once: true });
+        if (pending.size && !busy) done(false);
+      });
       if (signal?.aborted) break;
-      page = await api.execute('getAgentCommands', { roomId });
-      if (page.commandProtocol !== 1)
-        throw new Error('server command protocol changed; refusing intake');
+      // The slow sweep is only a recovery net. Never make a command that
+      // already arrived over the acknowledged push path wait behind its GET.
+      if (reconcile) requestReconciliation();
     }
   } finally {
+    stopped = true;
     off?.();
     options.onWake?.(undefined);
     if (context.current) options.stop(context.current.turnRequestId);

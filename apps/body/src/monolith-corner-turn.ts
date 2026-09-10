@@ -1095,6 +1095,15 @@ export class MonolithCornerTurnLoop {
         context: this.commandContext,
         signal,
         pollMs: this.options.pollMs,
+        presence: {
+          ...(this.options.config.daemonReleaseVersion
+            ? { releaseVersion: this.options.config.daemonReleaseVersion }
+            : {}),
+          ...(this.options.config.daemonSourceSha
+            ? { sourceSha: this.options.config.daemonSourceSha }
+            : {}),
+          available: !this.options.config.modelUnavailable,
+        },
         onWake: (wake) => {
           this.wakeIntake = wake;
         },

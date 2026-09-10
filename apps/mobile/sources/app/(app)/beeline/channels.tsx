@@ -735,7 +735,9 @@ export default function BuzzChannels() {
                       {heading.name}
                     </Text>
                     <Text numberOfLines={1} style={styles.preview} testID={`room-preview-${item.room.id}`}>
-                      {preview.attribution === 'self' && <Text style={styles.previewSelf}>you: </Text>}
+                      {preview.attribution === 'self' && (
+                        <Text style={styles.previewSelf}>you: </Text>
+                      )}
                       {preview.attribution === 'other' && (
                         <Text style={styles.previewAuthor}>@{preview.handle}: </Text>
                       )}

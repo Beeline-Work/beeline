@@ -5,6 +5,7 @@ import {
   createAgentCommand,
   readAgentCommands,
   routeAgentResult,
+  type CommandRow,
 } from './agent-command.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type {
@@ -139,6 +140,7 @@ export class DaemonService {
     ) => Promise<{ token: string; expiresAt: number }>,
     private readonly mediaMaximumBytes: number = DEFAULT_MEDIA_MAXIMUM_BYTES,
     private readonly commandTransaction = false,
+    private readonly authorizedCommand?: CommandRow,
   ) {}
 
   /** When each corner last woke, so `CORNER_WAKE_MIN_INTERVAL_MS` can be held. */
@@ -158,7 +160,7 @@ export class DaemonService {
         : typeof candidate.cornerId === 'string'
           ? candidate.cornerId
           : undefined;
-    if (scopedRoom && name !== 'ensureAgentMembership')
+    if (scopedRoom && name !== 'ensureAgentMembership' && !this.commandTransaction)
       await this.access(scopedRoom, authenticatedAgentId);
     if (scopedRoom && isCornerOpenerOnly(name))
       await this.assertCornerOpener(scopedRoom, authenticatedAgentId);
@@ -242,6 +244,7 @@ export class DaemonService {
           this.roomGitHubToken,
           this.mediaMaximumBytes,
           true,
+          command,
         );
         const result = await scoped.execute(name, input, authenticatedAgentId);
         if (name === 'requestAgentGrant') {
@@ -252,20 +255,16 @@ export class DaemonService {
         }
         if (name === 'postRoomMessage') {
           const resultId = (result as { id: string }).id;
-          await routeAgentResult(
-            db,
-            command,
-            resultId,
-            candidate.replyToMessageId as string | undefined,
-          );
-          await db.query(
-            `UPDATE agent_commands SET state='complete',completed_at=now(),result_message_id=$2 WHERE id=$1`,
-            [command.id, resultId],
-          );
-          await db.query(
-            `DELETE FROM live_outputs WHERE room_id=$1 AND agent_id=$2 AND turn_id=$3 AND kind IN ('draft','thought')`,
-            [scopedRoom, authenticatedAgentId, requestId],
-          );
+          if (
+            (Array.isArray(candidate.mentionIds) && candidate.mentionIds.length > 0) ||
+            typeof candidate.replyToMessageId === 'string'
+          )
+            await routeAgentResult(
+              db,
+              command,
+              resultId,
+              candidate.replyToMessageId as string | undefined,
+            );
         } else if (name === 'postAgentTurnReceipt') {
           if (candidate.status === 'working')
             await db.query(
@@ -1200,7 +1199,7 @@ export class DaemonService {
     return { ...(row.corner_id ? { openedCornerId: row.corner_id } : {}), completed: row.complete };
   }
   private async postRoomMessage(input: Input<'postRoomMessage'>, agentId: string) {
-    await this.access(input.roomId, agentId);
+    if (!this.commandTransaction) await this.access(input.roomId, agentId);
     const messageId = id();
     const mentions = [...new Set(input.mentionIds ?? [])].filter((value) => value !== agentId);
     let agentMentionIds = new Set<string>();
@@ -1220,13 +1219,15 @@ export class DaemonService {
         ).rows[0]
       : undefined;
     if (input.replyToMessageId && !parent) throw new Error('reply parent is not in this room');
-    const command = await authorizeCommandOutput(
-      this.database,
-      input.roomId,
-      agentId,
-      input.requestId,
-      input.generationId,
-    );
+    const command =
+      this.authorizedCommand ??
+      (await authorizeCommandOutput(
+        this.database,
+        input.roomId,
+        agentId,
+        input.requestId,
+        input.generationId,
+      ));
     let humanIds = new Set<string>();
     if (mentions.length) {
       const members = await this.database.query<{ identity_id: string; kind: 'human' | 'agent' }>(
@@ -1280,7 +1281,7 @@ export class DaemonService {
     // fresh chain at zero.
     const hopCount = command.agent_depth;
     const persistedMentions = deliveredMentions;
-    await this.database.transaction(async (database) => {
+    const saved = await this.database.transaction(async (database) => {
       // Attachments queued this turn by beeline-agent attach_file ride on this
       // final reply; they are drained exactly once, here.
       const pending = (
@@ -1295,35 +1296,6 @@ export class DaemonService {
           [input.roomId, agentId, input.requestId, input.generationId],
         )
       ).rows;
-      await database.query(
-        `INSERT INTO messages(
-           id,room_id,author_id,text,presentation,request_id,legacy_event,mention_ids,
-           reply_to_message_id,root_message_id,agent_hop_count,attachments
-         ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10,$11,$12::jsonb)`,
-        [
-          messageId,
-          input.roomId,
-          agentId,
-          input.text,
-          // The daemon posts conversation (or a card); a system line is only
-          // ever phrased by the server (`system-line.ts`).
-          input.presentation === 'card' ? 'card' : 'message',
-          input.requestId ?? null,
-          JSON.stringify(input.tags ?? {}),
-          JSON.stringify(persistedMentions),
-          input.replyToMessageId ?? null,
-          rootMessageId,
-          hopCount,
-          JSON.stringify(
-            pending.map((row) => ({
-              url: row.url,
-              name: row.name,
-              mimeType: row.mime_type,
-              size: row.size,
-            })),
-          ),
-        ],
-      );
       if (pending.length)
         await database.query(
           `DELETE FROM agent_pending_attachments WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND generation_id=$4`,
@@ -1347,11 +1319,65 @@ export class DaemonService {
         if (settled.rowCount)
           await settleTurnFailureLine(database, input.roomId, input.requestId, agentId);
       }
+      const values = [
+        messageId,
+        input.roomId,
+        agentId,
+        input.text,
+        // The daemon posts conversation (or a card); a system line is only
+        // ever phrased by the server (`system-line.ts`).
+        input.presentation === 'card' ? 'card' : 'message',
+        input.requestId ?? null,
+        JSON.stringify(input.tags ?? {}),
+        JSON.stringify(persistedMentions),
+        input.replyToMessageId ?? null,
+        rootMessageId,
+        hopCount,
+        JSON.stringify(
+          pending.map((row) => ({
+            url: row.url,
+            name: row.name,
+            mimeType: row.mime_type,
+            size: row.size,
+          })),
+        ),
+      ];
+      if (this.commandTransaction) {
+        return (
+          await database.query<{ id: string; created_at: Date }>(
+            `WITH inserted AS (
+               INSERT INTO messages(
+                 id,room_id,author_id,text,presentation,request_id,legacy_event,mention_ids,
+                 reply_to_message_id,root_message_id,agent_hop_count,attachments
+               ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10,$11,$12::jsonb)
+               RETURNING id,created_at
+             ), completed AS (
+               UPDATE agent_commands SET state='complete',completed_at=now(),result_message_id=inserted.id
+               FROM inserted WHERE agent_commands.id=$13
+             ), cleared AS (
+               DELETE FROM live_outputs
+               WHERE room_id=$2 AND agent_id=$3 AND turn_id=$6 AND kind IN ('draft','thought')
+             )
+             SELECT id,created_at FROM inserted`,
+            [...values, command.id],
+          )
+        ).rows[0]!;
+      }
+      return (
+        await database.query<{ id: string; created_at: Date }>(
+          `INSERT INTO messages(
+             id,room_id,author_id,text,presentation,request_id,legacy_event,mention_ids,
+             reply_to_message_id,root_message_id,agent_hop_count,attachments
+           ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10,$11,$12::jsonb)
+           RETURNING id,created_at`,
+          values,
+        )
+      ).rows[0]!;
     });
     this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'message', agentId });
     return {
       id: messageId,
-      createdAt: Math.floor(Date.now() / 1000),
+      createdAt: seconds(saved.created_at),
       mentionIds: persistedMentions,
     };
   }

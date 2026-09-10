@@ -70,6 +70,10 @@ const MIGRATIONS = [
   `ALTER TABLE beeline_oidc_flows ADD COLUMN IF NOT EXISTS app_redirect_uri TEXT`,
   `ALTER TABLE beeline_oidc_flows ADD COLUMN IF NOT EXISTS app_state TEXT`,
   `ALTER TABLE beeline_oidc_flows ADD COLUMN IF NOT EXISTS device_code_hash CHAR(64)`,
+  `ALTER TABLE beeline_oidc_flows ADD COLUMN IF NOT EXISTS app_recovery_hash CHAR(64)`,
+  `ALTER TABLE beeline_oidc_flows ADD COLUMN IF NOT EXISTS native_cancelled_at TIMESTAMPTZ`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS beeline_oidc_flows_app_recovery_idx
+    ON beeline_oidc_flows (app_recovery_hash) WHERE app_recovery_hash IS NOT NULL`,
   `CREATE TABLE IF NOT EXISTS beeline_bind_tickets (
     ticket_hash CHAR(64) PRIMARY KEY,
     challenge TEXT NOT NULL,
@@ -336,6 +340,7 @@ interface FlowRow extends QueryResultRow {
   app_redirect_uri: string | null;
   app_state: string | null;
   device_code_hash: string | null;
+  app_recovery_hash: string | null;
   created_at: unknown;
   expires_at: unknown;
 }
@@ -351,6 +356,7 @@ export interface OidcFlow {
   appRedirectUri: string | null;
   appState: string | null;
   deviceCodeHash?: string | null;
+  appRecoveryHash?: string | null;
   createdAt: Date;
   expiresAt: Date;
 }
@@ -563,6 +569,7 @@ function flowFromRow(row: FlowRow): OidcFlow {
     appRedirectUri: row.app_redirect_uri,
     appState: row.app_state,
     deviceCodeHash: row.device_code_hash,
+    appRecoveryHash: row.app_recovery_hash,
     createdAt: asDate(row.created_at),
     expiresAt: asDate(row.expires_at),
   };
@@ -639,8 +646,8 @@ export class AuthStore {
     ]);
     await this.database.query(
       `INSERT INTO beeline_oidc_flows
-        (state_hash, community, issuer, audience, nonce, pkce_verifier, browser_session_hash, redirect_uri, app_redirect_uri, app_state, device_code_hash, created_at, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+        (state_hash, community, issuer, audience, nonce, pkce_verifier, browser_session_hash, redirect_uri, app_redirect_uri, app_state, device_code_hash, app_recovery_hash, created_at, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
       [
         stateHash,
         flow.community,
@@ -653,6 +660,7 @@ export class AuthStore {
         flow.appRedirectUri,
         flow.appState,
         flow.deviceCodeHash ?? null,
+        flow.appRecoveryHash ?? null,
         flow.createdAt,
         flow.expiresAt,
       ],
@@ -667,8 +675,9 @@ export class AuthStore {
     const result = await this.database.query<FlowRow>(
       `UPDATE beeline_oidc_flows
        SET consumed_at = $3
-       WHERE state_hash = $1 AND browser_session_hash = $2 AND consumed_at IS NULL AND expires_at >= $3
-       RETURNING community, issuer, audience, nonce, pkce_verifier, browser_session_hash, redirect_uri, app_redirect_uri, app_state, device_code_hash, created_at, expires_at`,
+       WHERE state_hash = $1 AND browser_session_hash = $2 AND consumed_at IS NULL
+         AND native_cancelled_at IS NULL AND expires_at >= $3
+       RETURNING community, issuer, audience, nonce, pkce_verifier, browser_session_hash, redirect_uri, app_redirect_uri, app_state, device_code_hash, app_recovery_hash, created_at, expires_at`,
       [stateHash, browserSessionHash, now],
     );
     return result.rows[0] ? flowFromRow(result.rows[0]) : null;
@@ -889,6 +898,61 @@ export class AuthStore {
         ticket.providerDisplayName ?? null,
       ],
     );
+  }
+
+  /** Finalize a native recovery transaction only while its initiating app still owns it. */
+  async createRecoveryTicket(
+    recoveryHash: string,
+    ticket: BindTicket,
+    now: Date,
+  ): Promise<boolean> {
+    return this.database.transaction(async (transaction) => {
+      const flow = await transaction.query<QueryResultRow>(
+        `SELECT state_hash FROM beeline_oidc_flows
+         WHERE app_recovery_hash = $1 AND consumed_at IS NOT NULL
+           AND native_cancelled_at IS NULL AND expires_at >= $2
+         FOR UPDATE`,
+        [recoveryHash, now],
+      );
+      if (flow.rowCount !== 1) return false;
+      const inserted = await transaction.query<QueryResultRow>(
+        `INSERT INTO beeline_bind_tickets
+          (ticket_hash, challenge, community, issuer, audience, subject, created_at, expires_at,
+           provider_login, provider_display_name)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         ON CONFLICT (ticket_hash) DO NOTHING
+         RETURNING ticket_hash`,
+        [
+          recoveryHash,
+          ticket.challenge,
+          ticket.community,
+          ticket.issuer,
+          ticket.audience,
+          ticket.subject,
+          ticket.createdAt,
+          ticket.expiresAt,
+          ticket.providerLogin ?? null,
+          ticket.providerDisplayName ?? null,
+        ],
+      );
+      return inserted.rowCount === 1;
+    });
+  }
+
+  /** Cancel pending or completed recovery without revealing whether the token existed. */
+  async cancelRecoveryTicket(recoveryHash: string, now: Date): Promise<void> {
+    await this.database.transaction(async (transaction) => {
+      await transaction.query(
+        `UPDATE beeline_oidc_flows SET native_cancelled_at = COALESCE(native_cancelled_at, $2)
+         WHERE app_recovery_hash = $1 AND expires_at >= $2`,
+        [recoveryHash, now],
+      );
+      await transaction.query(
+        `UPDATE beeline_bind_tickets SET consumed_at = COALESCE(consumed_at, $2)
+         WHERE ticket_hash = $1 AND expires_at >= $2`,
+        [recoveryHash, now],
+      );
+    });
   }
 
   async findTicket(ticketHash: string): Promise<BindTicket | null> {

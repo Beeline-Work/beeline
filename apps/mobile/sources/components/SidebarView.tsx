@@ -1,15 +1,18 @@
 import * as React from 'react';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { type Href, usePathname, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { type ChatListView } from '@beeline/buzz-client';
+import { type ChatListView, type WorkspaceListView } from '@beeline/buzz-client';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
+import { loadActiveCommunityId, saveActiveCommunityId } from '@/buzz/community-storage';
+import { compactRelativeTime } from '@/buzz/relative-time';
 import { useHeaderHeight } from '@/utils/responsive';
-import { ROOM_LABEL, ROOMS_LABEL } from '@/buzz/vocabulary';
+import { ROOM_LABEL, ROOMS_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { HullDeckMark } from '@/components/buzz/MonoHull';
+import { desktopRoomWorkLine } from '@/buzz/desktop-workbench-state';
 
 function selectedRoomId(pathname: string): string | null {
   const prefix = '/beeline/chat/';
@@ -28,51 +31,78 @@ const stylesheet = StyleSheet.create((theme) => ({
     borderRightColor: theme.colors.divider,
     backgroundColor: theme.colors.groupped.background,
   },
-  topControls: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+  workspaceBlock: {
+    paddingHorizontal: 12,
+    paddingBottom: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.colors.divider,
   },
-  heading: {
-    color: theme.colors.text,
-    fontSize: 13,
-    fontFamily: 'IBMPlexMono-SemiBold',
-    letterSpacing: 1.2,
+  eyebrow: { ...theme.buzz.type.sectionHead, color: theme.colors.textSecondary, marginBottom: 7 },
+  workspaceRow: { flexDirection: 'row', gap: 6 },
+  workspaceButton: {
+    minWidth: 34,
+    maxWidth: 150,
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+    borderRadius: 7,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.divider,
   },
-  homeButton: { padding: 6 },
-  list: { flex: 1 },
-  listContent: { paddingVertical: 8 },
-  roomRow: {
+  workspaceSelected: { backgroundColor: theme.colors.surfaceSelected },
+  workspaceText: { ...theme.buzz.type.meta, color: theme.colors.textSecondary },
+  workspaceTextSelected: { ...theme.buzz.type.bodyStrong, color: theme.colors.text },
+  searchWrap: {
+    marginHorizontal: 12,
+    marginVertical: 10,
+    minHeight: 36,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    minHeight: 48,
+    gap: 8,
+    paddingHorizontal: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.divider,
+    borderRadius: 8,
+    backgroundColor: theme.colors.surface,
+  },
+  search: {
+    ...theme.buzz.type.meta,
+    flex: 1,
+    color: theme.colors.text,
+    outlineStyle: 'none',
+  } as any,
+  shortcut: { ...theme.buzz.type.sectionHead, color: theme.colors.textSecondary },
+  list: { flex: 1 },
+  listContent: { paddingBottom: 8 },
+  roomRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 9,
+    minHeight: 64,
     marginHorizontal: 8,
     paddingHorizontal: 10,
-    paddingVertical: 8,
+    paddingVertical: 9,
     borderRadius: 8,
   },
   roomRowSelected: { backgroundColor: theme.colors.surfaceSelected },
   roomCopy: { flex: 1, minWidth: 0 },
-  roomTitle: { color: theme.colors.text, fontSize: 13, fontFamily: 'IBMPlexSans-Regular' },
-  roomTitleUnread: { fontFamily: 'IBMPlexSans-SemiBold' },
-  roomFact: {
-    marginTop: 2,
-    color: theme.colors.textSecondary,
-    fontSize: 11,
-    fontFamily: 'IBMPlexMono-Regular',
+  roomTitleLine: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  roomTitle: { ...theme.buzz.type.meta, flex: 1, color: theme.colors.text },
+  roomTitleUnread: { ...theme.buzz.type.bodyStrong },
+  roomTime: { ...theme.buzz.type.sectionHead, color: theme.colors.textSecondary },
+  unreadDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: theme.colors.textLink,
+    marginTop: 5,
   },
+  roomFact: { ...theme.buzz.type.meta, marginTop: 3, color: theme.colors.textSecondary },
+  roomWork: { ...theme.buzz.type.sectionHead, marginTop: 3, color: theme.colors.textLink },
   empty: {
+    ...theme.buzz.type.meta,
     paddingHorizontal: 18,
     paddingVertical: 24,
     color: theme.colors.textSecondary,
-    fontSize: 12,
-    fontFamily: 'IBMPlexMono-Regular',
-    lineHeight: 18,
   },
   settingsRow: {
     flexDirection: 'row',
@@ -83,15 +113,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: theme.colors.divider,
   },
-  settingsText: {
-    color: theme.colors.text,
-    fontSize: 13,
-    fontFamily: 'IBMPlexMono-SemiBold',
-    letterSpacing: 0.5,
-  },
+  settingsText: { ...theme.buzz.type.sectionHead, color: theme.colors.text },
 }));
 
-/** Persistent tablet navigation reads server paint rows directly and holds no global cache. */
+/** One server-backed desktop pane for Workspace and Room movement. */
 export const SidebarView = React.memo(function SidebarView() {
   const styles = stylesheet;
   const safeArea = useSafeAreaInsets();
@@ -99,76 +124,221 @@ export const SidebarView = React.memo(function SidebarView() {
   const router = useRouter();
   const pathname = usePathname();
   const activeRoomId = selectedRoomId(pathname);
+  const searchRef = React.useRef<TextInput>(null);
+  const [client, setClient] = React.useState<RoomViewClient | null>(null);
+  const [identityPubkey, setIdentityPubkey] = React.useState<string | null>(null);
+  const [workspaces, setWorkspaces] = React.useState<WorkspaceListView['workspaces']>([]);
+  const [workspaceId, setWorkspaceId] = React.useState<string | null>(null);
   const [surface, setSurface] = React.useState<ChatListView | null>(null);
+  const [query, setQuery] = React.useState('');
+  const [navigationError, setNavigationError] = React.useState<string | null>(null);
+  const [refreshNonce, setRefreshNonce] = React.useState(0);
 
   React.useEffect(() => {
     let cancelled = false;
+    setNavigationError(null);
     void (async () => {
       const identity = await loadBuzzIdentity();
       if (!identity) return;
-      const relayUrl = await getEffectiveRelayUrl();
-      const http = new RoomViewClient({ baseUrl: relayUrl, identity });
-      const workspaces = await http.workspaces();
-      const workspaceId = workspaces.workspaces[0]?.id;
-      if (!workspaceId) return;
-      const chats = await http.chats(workspaceId);
-      if (!cancelled) setSurface(chats);
-    })().catch(() => undefined);
+      const http = new RoomViewClient({ baseUrl: await getEffectiveRelayUrl(), identity });
+      const list = await http.workspaces();
+      const stored = await loadActiveCommunityId(identity.publicKey);
+      const selected = list.workspaces.some((workspace) => workspace.id === stored)
+        ? stored
+        : (list.workspaces[0]?.id ?? null);
+      if (cancelled) return;
+      setClient(http);
+      setIdentityPubkey(identity.publicKey);
+      setWorkspaces(list.workspaces);
+      setWorkspaceId(selected);
+    })().catch(() => {
+      if (!cancelled) setNavigationError(`Could not load ${WORKSPACE_LABEL.toLowerCase()}s.`);
+    });
     return () => {
       cancelled = true;
     };
-  }, [pathname]);
+  }, [refreshNonce]);
+
+  React.useEffect(() => {
+    if (!client || !workspaceId) return;
+    let cancelled = false;
+    setNavigationError(null);
+    void client
+      .chats(workspaceId)
+      .then((chats) => {
+        if (!cancelled) setSurface(chats);
+      })
+      .catch(() => {
+        if (!cancelled) setNavigationError(`Could not load ${ROOMS_LABEL.toLowerCase()}.`);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [client, pathname, workspaceId]);
+
+  const filteredChats = React.useMemo(() => {
+    const needle = query.trim().toLocaleLowerCase();
+    if (!needle) return surface?.chats ?? [];
+    return (surface?.chats ?? []).filter((item) =>
+      `${item.room.name} ${item.latestMessage?.text ?? ''}`.toLocaleLowerCase().includes(needle),
+    );
+  }, [query, surface?.chats]);
+  const openRoom = React.useCallback(
+    (roomId: string) => router.push(`/beeline/chat/${encodeURIComponent(roomId)}` as Href),
+    [router],
+  );
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const editing = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA';
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        searchRef.current?.focus();
+        return;
+      }
+      if (!editing && event.altKey && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+        event.preventDefault();
+        const index = Math.max(
+          0,
+          filteredChats.findIndex((item) => item.room.id === activeRoomId),
+        );
+        const delta = event.key === 'ArrowDown' ? 1 : -1;
+        const next = filteredChats[(index + delta + filteredChats.length) % filteredChats.length];
+        if (next) openRoom(next.room.id);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [activeRoomId, filteredChats, openRoom]);
+
+  const selectWorkspace = React.useCallback(
+    (nextId: string) => {
+      setWorkspaceId(nextId);
+      setSurface(null);
+      setQuery('');
+      if (identityPubkey) void saveActiveCommunityId(identityPubkey, nextId);
+      if (client) {
+        setNavigationError(null);
+        void client
+          .chats(nextId)
+          .then((chats) => {
+            setSurface(chats);
+            const firstRoom = chats.chats[0]?.room.id;
+            if (firstRoom) router.replace(`/beeline/chat/${encodeURIComponent(firstRoom)}` as Href);
+          })
+          .catch(() => setNavigationError(`Could not load ${ROOMS_LABEL.toLowerCase()}.`));
+      }
+    },
+    [client, identityPubkey, router],
+  );
 
   return (
-    <View style={[styles.container, { paddingTop: safeArea.top + headerHeight }]}>
-      <View style={styles.topControls}>
-        <Text style={styles.heading}>{ROOMS_LABEL.toUpperCase()}</Text>
-        <Pressable
-          accessibilityLabel={`Open ${ROOMS_LABEL}`}
-          accessibilityRole="button"
-          hitSlop={8}
-          onPress={() => router.navigate('/beeline/channels')}
-          style={styles.homeButton}
+    <View
+      style={[styles.container, { paddingTop: safeArea.top + headerHeight }]}
+      testID="desktop-navigation-pane"
+    >
+      <View style={styles.workspaceBlock}>
+        <Text style={styles.eyebrow}>{WORKSPACE_LABEL.toUpperCase()}</Text>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.workspaceRow}
         >
-          <Ionicons name="grid-outline" size={17} color={stylesheet.heading.color} />
-        </Pressable>
-      </View>
-      <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
-        {!surface?.chats.length ? (
-          <Text style={styles.empty}>
-            Your {ROOMS_LABEL} will appear here after the workspace connects.
-          </Text>
-        ) : (
-          surface.chats.map((item) => (
-            <Pressable
-              key={item.room.id}
-              accessibilityLabel={`Open ${ROOM_LABEL} ${item.room.name}`}
-              accessibilityRole="button"
-              onPress={() =>
-                router.push(`/beeline/chat/${encodeURIComponent(item.room.id)}` as Href)
-              }
-              style={({ pressed }) => [
-                styles.roomRow,
-                activeRoomId === item.room.id && styles.roomRowSelected,
-                pressed && styles.roomRowSelected,
-              ]}
-            >
-              {/* The server's own rollup of this Room's turn and its
-                  corners' signed receipts. Never a locally derived word. */}
-              <HullDeckMark state={item.agentState ?? 'idle'} />
-              <View style={styles.roomCopy}>
+          {workspaces.map((workspace) => {
+            const selected = workspace.id === workspaceId;
+            return (
+              <Pressable
+                key={workspace.id}
+                accessibilityRole="button"
+                accessibilityState={{ selected }}
+                onPress={() => selectWorkspace(workspace.id)}
+                style={[styles.workspaceButton, selected && styles.workspaceSelected]}
+                testID={`desktop-workspace-${workspace.id}`}
+              >
                 <Text
                   numberOfLines={1}
-                  style={[styles.roomTitle, item.unread && styles.roomTitleUnread]}
+                  style={[styles.workspaceText, selected && styles.workspaceTextSelected]}
                 >
-                  {item.room.name}
+                  {workspace.name}
                 </Text>
-                <Text numberOfLines={1} style={styles.roomFact}>
-                  {item.latestMessage?.text ?? 'No activity yet'}
-                </Text>
-              </View>
-            </Pressable>
-          ))
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      </View>
+      <View style={styles.searchWrap}>
+        <Ionicons name="search" size={14} color={stylesheet.roomTime.color} />
+        <TextInput
+          ref={searchRef}
+          value={query}
+          onChangeText={setQuery}
+          placeholder={`Search ${ROOMS_LABEL}`}
+          placeholderTextColor={stylesheet.roomTime.color}
+          style={styles.search}
+          testID="desktop-room-search"
+        />
+        <Text style={styles.shortcut}>⌘K</Text>
+      </View>
+      <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
+        {navigationError ? (
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setRefreshNonce((value) => value + 1)}
+          >
+            <Text style={styles.empty}>{navigationError} Select to retry.</Text>
+          </Pressable>
+        ) : !filteredChats.length ? (
+          <Text style={styles.empty}>
+            {surface
+              ? `No ${ROOMS_LABEL.toLowerCase()} match this search.`
+              : `Loading ${ROOMS_LABEL.toLowerCase()}…`}
+          </Text>
+        ) : (
+          filteredChats.map((item) => {
+            const workLine = desktopRoomWorkLine(item);
+            return (
+              <Pressable
+                key={item.room.id}
+                accessibilityLabel={`Open ${ROOM_LABEL} ${item.room.name}`}
+                accessibilityRole="button"
+                onPress={() => openRoom(item.room.id)}
+                style={({ pressed }) => [
+                  styles.roomRow,
+                  activeRoomId === item.room.id && styles.roomRowSelected,
+                  pressed && styles.roomRowSelected,
+                ]}
+                testID={`desktop-room-${item.room.id}`}
+              >
+                <HullDeckMark state={item.agentState ?? 'idle'} />
+                <View style={styles.roomCopy}>
+                  <View style={styles.roomTitleLine}>
+                    <Text
+                      numberOfLines={1}
+                      style={[styles.roomTitle, item.unread && styles.roomTitleUnread]}
+                    >
+                      {item.room.name}
+                    </Text>
+                    <Text style={styles.roomTime}>
+                      {item.latestMessage
+                        ? compactRelativeTime(item.latestMessage.createdAt, Date.now())
+                        : ''}
+                    </Text>
+                    {item.unread && <View accessibilityLabel="Unread" style={styles.unreadDot} />}
+                  </View>
+                  <Text numberOfLines={1} style={styles.roomFact}>
+                    {item.latestMessage?.text ?? 'No activity yet'}
+                  </Text>
+                  {workLine && (
+                    <Text numberOfLines={1} style={styles.roomWork}>
+                      {workLine}
+                    </Text>
+                  )}
+                </View>
+              </Pressable>
+            );
+          })
         )}
       </ScrollView>
       <Pressable

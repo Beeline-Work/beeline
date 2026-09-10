@@ -54,6 +54,14 @@ on:
         description: Which configuration to build
         required: true
         type: string
+      release_sha:
+        description: Immutable release source SHA
+        required: false
+        type: string
+      release_version:
+        description: Immutable release version
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -80,6 +88,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_sha || github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -93,7 +103,7 @@ jobs:
     name: DESKTOP BUILD (${{ matrix.label }})
     needs: icons
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: ${{ inputs.variant == 'production' && 15 || 60 }}
     strategy:
       # One platform's toolchain failing should not hide whether the other two
       # produce a bundle.
@@ -121,6 +131,8 @@ jobs:
       VARIANT: ${{ inputs.variant || 'preview' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_sha || github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -176,7 +188,7 @@ jobs:
         env:
           # app.config.js stamps the build with the commit it came from; the
           # checkout's git metadata would otherwise name a merge commit.
-          EXPO_PUBLIC_BEELINE_RELEASE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXPO_PUBLIC_BEELINE_RELEASE_SHA: ${{ inputs.release_sha || github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           config=()
@@ -260,7 +272,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: inputs.variant == 'production'
         with:
-          name: beeline-desktop-release-${{ matrix.label }}
+          name: beeline-desktop-release-${{ inputs.release_version }}-${{ inputs.release_sha }}-${{ matrix.label }}
           path: ${{ runner.temp }}/desktop-release/*
           if-no-files-found: error
           retention-days: 7

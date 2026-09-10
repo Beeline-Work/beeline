@@ -1,40 +1,32 @@
-# The one production release button. `gh workflow run unified-release.yml`
-# (no inputs) releases the current main head: one human version for one exact
-# SHA, every artifact built before the gate, then server -> daemon -> app
-# promotion, each confirmed, then the delivery report, npm publish, and the
-# optional store leg. The three legs are composite actions under
-# .github/actions/{server-leg,daemon-leg,mobile-ota-leg}, each called twice
-# (build, then promote). A merge to main never releases; the retry job
-# re-dispatches this same workflow with the same identity.
-#
-# Inputs:
-#   release_sha / release_version / retry_attempt — governor retry identity
-#   store_track — none (default) | internal | beta | production: after the
-#                 app is confirmed, build the store AAB/IPA on EAS from the
-#                 release SHA, upload the AAB to that Play track as a draft,
-#                 sync the Play listing, and submit the IPA to TestFlight.
-#                 A store failure fails only its own job; the delivery report
-#                 stays the authority on whether the release was delivered.
+# The one production release button. It plans from the last successful release,
+# runs only affected components, and carries every other immutable artifact into
+# one new release record. A merge to main never releases. A normal selective
+# release ceiling is 20 minutes from dispatch to the final result.
 name: Unified production release
 
 on:
   workflow_dispatch:
     inputs:
       release_sha:
-        description: Exact main sha for a governor retry
+        description: Exact current main SHA (required on a retry)
         type: string
         required: false
       release_version:
-        description: Existing vX.Y.Z assigned to that sha
+        description: Existing vX.Y.Z identity (required on a retry)
         type: string
         required: false
       retry_attempt:
-        description: Governor-managed attempt number (1-3)
+        description: Component-local retry attempt (1-3)
         type: string
         default: '1'
         required: true
+      selection:
+        description: auto, all, or a comma-separated component list
+        type: string
+        default: auto
+        required: true
       store_track:
-        description: Also build store binaries from the release SHA and upload them (Play track as draft, TestFlight)
+        description: Native build destination; none keeps builds off store tracks
         type: choice
         default: none
         options:
@@ -42,15 +34,13 @@ on:
           - internal
           - beta
           - production
-        required: false
+        required: true
 
 permissions:
   actions: write
-  contents: read
+  contents: write
   issues: write
 
-# One cancellation boundary owns every component. A newer main sha supersedes
-# the whole release, never one app/server/daemon leg in isolation.
 concurrency:
   group: unified-production-release
   cancel-in-progress: true
@@ -58,16 +48,30 @@ concurrency:
 jobs:
   initialize:
     runs-on: [self-hosted, beeline-prod-host]
+    timeout-minutes: 2
     outputs:
-      release_sha: ${{ steps.identity.outputs.release_sha }}
-      release_version: ${{ steps.identity.outputs.release_version }}
-      trigger_epoch: ${{ steps.trigger_clock.outputs.trigger_epoch }}
+      release_sha: ${{ steps.plan.outputs.release_sha }}
+      release_version: ${{ steps.plan.outputs.release_version }}
+      release_id: ${{ steps.plan.outputs.release_id }}
+      trigger_epoch: ${{ steps.clock.outputs.trigger_epoch }}
+      run_server: ${{ steps.plan.outputs.run_server }}
+      run_helper: ${{ steps.plan.outputs.run_helper }}
+      run_mobile_ota: ${{ steps.plan.outputs.run_mobile_ota }}
+      run_mobile_native: ${{ steps.plan.outputs.run_mobile_native }}
+      run_desktop: ${{ steps.plan.outputs.run_desktop }}
+      run_website: ${{ steps.plan.outputs.run_website }}
+      stage_server: ${{ steps.plan.outputs.stage_server }}
+      stage_helper: ${{ steps.plan.outputs.stage_helper }}
+      stage_mobile_ota: ${{ steps.plan.outputs.stage_mobile_ota }}
+      stage_mobile_native: ${{ steps.plan.outputs.stage_mobile_native }}
+      stage_desktop: ${{ steps.plan.outputs.stage_desktop }}
+      stage_website: ${{ steps.plan.outputs.stage_website }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Preserve the fix-to-phone clock from workflow creation
-        id: trigger_clock
+      - name: Record dispatch clock
+        id: clock
         uses: actions/github-script@v7
         with:
           script: |
@@ -75,190 +79,127 @@ jobs:
               owner: context.repo.owner, repo: context.repo.repo, run_id: context.runId,
             });
             core.setOutput('trigger_epoch', String(Math.floor(Date.parse(run.data.created_at) / 1000)));
-      - name: Locate latest unified release index
+      - name: Locate the last successful release index
         id: previous
         uses: actions/github-script@v7
         with:
           script: |
-            const artifacts = await github.rest.actions.listArtifactsForRepo({
+            const artifacts = await github.paginate(github.rest.actions.listArtifactsForRepo, {
               owner: context.repo.owner, repo: context.repo.repo,
               name: 'unified-release-index', per_page: 100,
             });
-            const latest = artifacts.data.artifacts
-              .filter((artifact) => !artifact.expired)
-              .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
-            if (latest?.workflow_run?.id) core.setOutput('run_id', String(latest.workflow_run.id));
-      - name: Download latest unified release index
+            for (const artifact of artifacts
+              .filter((candidate) => !candidate.expired && candidate.workflow_run?.id)
+              .sort((a, b) => b.created_at.localeCompare(a.created_at))) {
+              const run = await github.rest.actions.getWorkflowRun({
+                owner: context.repo.owner, repo: context.repo.repo,
+                run_id: artifact.workflow_run.id,
+              });
+              if (run.data.conclusion === 'success') {
+                core.setOutput('run_id', String(run.data.id));
+                break;
+              }
+            }
+      - name: Download the last successful release index
         if: steps.previous.outputs.run_id != ''
         uses: actions/download-artifact@v4
         with:
           name: unified-release-index
-          path: ${{ runner.temp }}/previous-release
+          path: ${{ runner.temp }}/previous
           run-id: ${{ steps.previous.outputs.run_id }}
           github-token: ${{ github.token }}
-      - name: Assign one human version to one main sha
-        id: identity
+      - name: Locate this identity's latest retry state
+        if: inputs.release_sha != '' && inputs.release_version != ''
+        id: retry_state
+        uses: actions/github-script@v7
+        env:
+          RELEASE_ID: ${{ inputs.release_version }}-${{ inputs.release_sha }}
+        with:
+          script: |
+            const name = `unified-release-state-${process.env.RELEASE_ID}`;
+            const artifacts = await github.paginate(github.rest.actions.listArtifactsForRepo, {
+              owner: context.repo.owner, repo: context.repo.repo, name, per_page: 100,
+            });
+            const artifact = artifacts
+              .filter((candidate) => candidate.name === name && !candidate.expired && candidate.workflow_run?.id)
+              .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+            if (artifact) core.setOutput('run_id', String(artifact.workflow_run.id));
+      - name: Download this identity's retry state
+        if: steps.retry_state.outputs.run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: unified-release-state-${{ inputs.release_version }}-${{ inputs.release_sha }}
+          path: ${{ runner.temp }}/retry
+          run-id: ${{ steps.retry_state.outputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: Assign identity and produce the inspectable release plan
+        id: plan
         env:
           REQUESTED_SHA: ${{ inputs.release_sha || '' }}
           REQUESTED_VERSION: ${{ inputs.release_version || '' }}
+          SELECTION: ${{ inputs.selection || 'auto' }}
+          STORE_TRACK: ${{ inputs.store_track || 'none' }}
         run: |
           set -euo pipefail
-          release_sha="${REQUESTED_SHA:-$GITHUB_SHA}"
           git fetch origin main
+          release_sha="${REQUESTED_SHA:-$(git rev-parse origin/main)}"
+          test -n "$release_sha" || { echo 'missing release identity' >&2; exit 1; }
           test "$(git rev-parse origin/main)" = "$release_sha" || {
-            echo "release $release_sha was superseded by current main" >&2
-            exit 1
+            echo "release SHA is not current main: $release_sha" >&2; exit 1;
           }
-          previous="$RUNNER_TEMP/previous-release/unified-release.json"
+          previous="$RUNNER_TEMP/previous/release-attempt.json"
+          [ -f "$previous" ] || previous="$RUNNER_TEMP/previous/unified-release.json"
+          retry="$RUNNER_TEMP/retry/release-attempt.json"
           if [ -n "$REQUESTED_VERSION" ]; then
             release_version="$REQUESTED_VERSION"
           elif [ -f "$previous" ]; then
-            release_version="$(node scripts/unified-release.mjs next-version --previous "$previous")"
+            release_version=$(node scripts/unified-release.mjs next-version --previous "$previous")
           else
             release_version=v0.0.1
           fi
-          args=(init --sha "$release_sha" --version "$release_version" --state "$RUNNER_TEMP/unified-release.json")
+          release_id="${release_version}-${release_sha}"
+          previous_sha=''
+          if [ -f "$previous" ]; then
+            previous_sha=$(node -e 'process.stdout.write(require(process.argv[1]).sourceSha)' "$previous")
+            git diff --name-only "$previous_sha" "$release_sha" > "$RUNNER_TEMP/release-paths.txt"
+          else
+            git ls-tree -r --name-only "$release_sha" > "$RUNNER_TEMP/release-paths.txt"
+          fi
+          args=(plan --version "$release_version" --sha "$release_sha"
+            --paths "$RUNNER_TEMP/release-paths.txt" --selection "$SELECTION"
+            --store-track "$STORE_TRACK" --state "$RUNNER_TEMP/unified-release.json"
+            --summary "$RUNNER_TEMP/release-plan.json")
           if [ -f "$previous" ]; then args+=(--previous "$previous"); fi
+          if [ -f "$retry" ]; then args+=(--retry "$retry"); fi
           node scripts/unified-release.mjs "${args[@]}"
-          echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
-          echo "release_version=$release_version" >> "$GITHUB_OUTPUT"
-      - name: Publish active release index
-        uses: actions/upload-artifact@v4
+          tee -a "$GITHUB_STEP_SUMMARY" < "$RUNNER_TEMP/release-plan.json"
+          {
+            echo "release_sha=$release_sha"
+            echo "release_version=$release_version"
+            echo "release_id=$release_id"
+            for component in server helper mobile-ota mobile-native desktop website; do
+              output="run_${component//-/_}"
+              value=$(node -e 'const p=require(process.argv[1]);process.stdout.write(String(p.retry[process.argv[2]]))' "$RUNNER_TEMP/release-plan.json" "$component")
+              echo "$output=$value"
+              stage=$(node -e 'const p=require(process.argv[1]);process.stdout.write(p.components[process.argv[2]].state)' "$RUNNER_TEMP/unified-release.json" "$component")
+              echo "stage_${component//-/_}=$stage"
+            done
+          } >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
         with:
-          name: unified-release-index
-          path: ${{ runner.temp }}/unified-release.json
-          overwrite: true
+          name: unified-release-plan-${{ steps.plan.outputs.release_id }}
+          path: |
+            ${{ runner.temp }}/unified-release.json
+            ${{ runner.temp }}/release-plan.json
+            ${{ runner.temp }}/release-paths.txt
+          if-no-files-found: error
           retention-days: 90
-      - uses: actions/upload-artifact@v4
-        with:
-          name: unified-release-init-${{ steps.identity.outputs.release_sha }}
-          path: ${{ runner.temp }}/unified-release.json
-          retention-days: 7
 
-  desktop_installers:
+  server:
     needs: initialize
-    uses: ./.github/workflows/desktop.yml
-    with:
-      variant: production
-
-  # These three jobs start together. The one self-hosted runner may serialize
-  # its two host-native builds, but neither waits behind the mobile export.
-  app_artifact:
-    needs: initialize
+    if: needs.initialize.outputs.run_server == 'true'
     runs-on: [self-hosted, beeline-prod-host]
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.initialize.outputs.release_sha }}
-          fetch-depth: 0
-      - uses: ./.github/actions/mobile-ota-leg
-        with:
-          phase: build
-          release_sha: ${{ needs.initialize.outputs.release_sha }}
-          release_version: ${{ needs.initialize.outputs.release_version }}
-          retry_attempt: ${{ inputs.retry_attempt }}
-          expo_token: ${{ secrets.EXPO_TOKEN }}
-
-  daemon_artifact:
-    needs: initialize
-    runs-on: [self-hosted, beeline-prod-host]
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.initialize.outputs.release_sha }}
-      - uses: ./.github/actions/daemon-leg
-        with:
-          phase: build
-          release_sha: ${{ needs.initialize.outputs.release_sha }}
-          release_version: ${{ needs.initialize.outputs.release_version }}
-
-  server_artifact:
-    needs: initialize
-    runs-on: [self-hosted, beeline-prod-host]
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.initialize.outputs.release_sha }}
-      - uses: ./.github/actions/server-leg
-        with:
-          phase: build
-          release_sha: ${{ needs.initialize.outputs.release_sha }}
-          release_version: ${{ needs.initialize.outputs.release_version }}
-
-  artifact_gate:
-    needs: [initialize, app_artifact, daemon_artifact, server_artifact]
-    runs-on: [self-hosted, beeline-prod-host]
-    outputs:
-      promotion_epoch: ${{ steps.clock.outputs.promotion_epoch }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.initialize.outputs.release_sha }}
-      - uses: actions/download-artifact@v4
-        with:
-          name: unified-release-init-${{ needs.initialize.outputs.release_sha }}
-          path: ${{ runner.temp }}/gate
-      - uses: actions/download-artifact@v4
-        with:
-          name: server-artifact-${{ needs.initialize.outputs.release_sha }}
-          path: ${{ runner.temp }}/gate/server
-      - uses: actions/download-artifact@v4
-        with:
-          name: daemon-artifact-${{ needs.initialize.outputs.release_sha }}
-          path: ${{ runner.temp }}/gate/daemon
-      - uses: actions/download-artifact@v4
-        with:
-          name: mobile-ota-candidate-${{ needs.initialize.outputs.release_sha }}
-          path: ${{ runner.temp }}/gate/app
-      - name: Open the one delivery gate only after every artifact exists
-        id: clock
-        env:
-          RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
-          RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
-          STATE: ${{ runner.temp }}/gate/unified-release.json
-        run: |
-          set -euo pipefail
-          node - "$RUNNER_TEMP/gate" "$RELEASE_VERSION" "$RELEASE_SHA" <<'NODE'
-          const fs = require('node:fs');
-          const path = require('node:path');
-          const [root, version, sourceSha] = process.argv.slice(2);
-          const artifacts = {
-            server: JSON.parse(fs.readFileSync(path.join(root, 'server/identity.json'))),
-            daemon: JSON.parse(fs.readFileSync(path.join(root, 'daemon/manifest.json'))),
-            app: JSON.parse(fs.readFileSync(path.join(root, 'app/mobile-ota-ledger.json'))),
-          };
-          const identities = {
-            server: artifacts.server,
-            daemon: { version: artifacts.daemon.version, sourceSha: artifacts.daemon.sourceCommit },
-            app: { version: artifacts.app.releaseVersion, sourceSha: artifacts.app.sourceSha },
-          };
-          for (const [component, identity] of Object.entries(identities)) {
-            if (identity.version !== version || identity.sourceSha !== sourceSha) {
-              throw new Error(`${component} artifact is ${identity.version}@${identity.sourceSha}; expected ${version}@${sourceSha}`);
-            }
-          }
-          NODE
-          for component in server daemon app; do
-            node scripts/unified-release.mjs mark-built --state "$STATE" --component "$component" \
-              --version "$RELEASE_VERSION" --sha "$RELEASE_SHA"
-          done
-          node scripts/unified-release.mjs assert-built --state "$STATE"
-          echo "promotion_epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: unified-release-built-${{ needs.initialize.outputs.release_sha }}
-          path: ${{ runner.temp }}/gate/unified-release.json
-          retention-days: 7
-
-  promote_server:
-    needs: [initialize, artifact_gate]
-    runs-on: [self-hosted, beeline-prod-host]
-    timeout-minutes: 20
-    # Do not cancel an active Fly rollout. Let it finish before deploying the
-    # newest queued release SHA.
+    timeout-minutes: 12
     concurrency:
       group: deploy-beeline-server
       cancel-in-progress: false
@@ -267,50 +208,66 @@ jobs:
         with:
           ref: ${{ needs.initialize.outputs.release_sha }}
       - uses: ./.github/actions/server-leg
+        if: needs.initialize.outputs.stage_server == 'pending'
+        with:
+          phase: build
+          release_sha: ${{ needs.initialize.outputs.release_sha }}
+          release_version: ${{ needs.initialize.outputs.release_version }}
+      - name: Checkpoint the server build
+        if: needs.initialize.outputs.stage_server == 'pending'
+        run: |
+          node -e 'const fs=require("node:fs");const [version,sourceSha,artifactRef]=process.argv.slice(1);fs.writeFileSync("checkpoint-server-built.json",JSON.stringify({component:"server",version,sourceSha,state:"built",artifactRef})+"\n")' \
+            "${{ needs.initialize.outputs.release_version }}" "${{ needs.initialize.outputs.release_sha }}" "server-artifact-${{ needs.initialize.outputs.release_id }}"
+      - uses: actions/upload-artifact@v4
+        if: needs.initialize.outputs.stage_server == 'pending'
+        with:
+          name: release-checkpoint-${{ needs.initialize.outputs.release_id }}-server-built
+          path: checkpoint-server-built.json
+          if-no-files-found: error
+      - uses: ./.github/actions/server-leg
+        if: contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_server)
         with:
           phase: promote
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}
-
-  confirm_server:
-    needs: [initialize, promote_server]
-    runs-on: [self-hosted, beeline-prod-host]
-    steps:
-      - uses: actions/checkout@v4
+      - name: Checkpoint the server promotion
+        if: contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_server)
+        run: |
+          node -e 'const fs=require("node:fs");const [version,sourceSha,artifactRef]=process.argv.slice(1);fs.writeFileSync("checkpoint-server-promoted.json",JSON.stringify({component:"server",version,sourceSha,state:"promoted",artifactRef})+"\n")' \
+            "${{ needs.initialize.outputs.release_version }}" "${{ needs.initialize.outputs.release_sha }}" "server-artifact-${{ needs.initialize.outputs.release_id }}"
+      - uses: actions/upload-artifact@v4
+        if: contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_server)
         with:
-          ref: ${{ needs.initialize.outputs.release_sha }}
-      - uses: actions/download-artifact@v4
-        with:
-          name: unified-release-built-${{ needs.initialize.outputs.release_sha }}
-          path: ${{ runner.temp }}/release
-      - name: Confirm monolith readiness and exact deployed image
-        env:
-          RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
-          RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
+          name: release-checkpoint-${{ needs.initialize.outputs.release_id }}-server-promoted
+          path: checkpoint-server-promoted.json
+          if-no-files-found: error
+      - name: Bounded exact server smoke check
         run: |
           set -euo pipefail
-          curl -fsS --max-time 30 https://server.usebeeline.app/readyz -o "$RUNNER_TEMP/server-ready.json"
-          node -e 'const r=require(process.argv[1]);if(r.ok!==true)process.exit(1)' "$RUNNER_TEMP/server-ready.json"
-          curl -fsS --max-time 30 https://server.usebeeline.app/version -o "$RUNNER_TEMP/server-version.json"
-          node - "$RUNNER_TEMP/server-version.json" "$RELEASE_VERSION" "$RELEASE_SHA" <<'NODE'
+          curl -fsS --max-time 20 https://server.usebeeline.app/readyz -o "$RUNNER_TEMP/ready.json"
+          curl -fsS --max-time 20 https://server.usebeeline.app/version -o "$RUNNER_TEMP/version.json"
+          node - "$RUNNER_TEMP/ready.json" "$RUNNER_TEMP/version.json" "${{ needs.initialize.outputs.release_version }}" "${{ needs.initialize.outputs.release_sha }}" <<'NODE'
           const fs = require('node:fs');
-          const [path, version, sourceSha] = process.argv.slice(2);
-          const deployed = JSON.parse(fs.readFileSync(path, 'utf8'));
-          if (deployed.version !== version || deployed.sourceSha !== sourceSha) {
-            throw new Error(`deployed server is ${deployed.version}@${deployed.sourceSha}; expected ${version}@${sourceSha}`);
-          }
+          const [readyPath, versionPath, version, sourceSha] = process.argv.slice(2);
+          const ready = JSON.parse(fs.readFileSync(readyPath));
+          const live = JSON.parse(fs.readFileSync(versionPath));
+          if (ready.ok !== true || live.version !== version || live.sourceSha !== sourceSha) process.exit(1);
           NODE
-          node scripts/unified-release.mjs confirm --state "$RUNNER_TEMP/release/unified-release.json" \
-            --component server --version "$RELEASE_VERSION" --sha "$RELEASE_SHA"
+      - name: Write server checkpoint
+        run: |
+          node -e 'const fs=require("node:fs");const [version,sourceSha,artifactRef]=process.argv.slice(1);fs.writeFileSync("checkpoint-server.json",JSON.stringify({component:"server",version,sourceSha,state:"checked",artifactRef})+"\n")' \
+            "${{ needs.initialize.outputs.release_version }}" "${{ needs.initialize.outputs.release_sha }}" "server-artifact-${{ needs.initialize.outputs.release_id }}"
       - uses: actions/upload-artifact@v4
         with:
-          name: unified-release-server-${{ needs.initialize.outputs.release_sha }}
-          path: ${{ runner.temp }}/release/unified-release.json
-          retention-days: 7
+          name: release-checkpoint-${{ needs.initialize.outputs.release_id }}-server
+          path: checkpoint-server.json
+          if-no-files-found: error
 
-  promote_daemon:
-    needs: [initialize, confirm_server]
+  helper:
+    needs: initialize
+    if: needs.initialize.outputs.run_helper == 'true'
     runs-on: [self-hosted, beeline-prod-host]
+    timeout-minutes: 12
     permissions:
       actions: read
       contents: write
@@ -320,53 +277,119 @@ jobs:
     concurrency:
       group: usebeeline-pages
       cancel-in-progress: false
-    # The daemon leg's confirm step waits up to 35 minutes: a busy helper may
-    # hold its restart for the whole drain deadline (`UPDATE_DRAIN_DEADLINE_MS`)
-    # before the forced restart, then systemd's restart backoff and the
-    # successor probe follow.
-    timeout-minutes: 55
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.initialize.outputs.release_sha }}
       - uses: ./.github/actions/daemon-leg
+        if: needs.initialize.outputs.stage_helper == 'pending'
+        with:
+          phase: build
+          release_sha: ${{ needs.initialize.outputs.release_sha }}
+          release_version: ${{ needs.initialize.outputs.release_version }}
+      - name: Checkpoint the helper build
+        if: needs.initialize.outputs.stage_helper == 'pending'
+        run: |
+          node -e 'const fs=require("node:fs");const [version,sourceSha,artifactRef]=process.argv.slice(1);fs.writeFileSync("checkpoint-helper-built.json",JSON.stringify({component:"helper",version,sourceSha,state:"built",artifactRef})+"\n")' \
+            "${{ needs.initialize.outputs.release_version }}" "${{ needs.initialize.outputs.release_sha }}" "daemon-artifact-${{ needs.initialize.outputs.release_id }}"
+      - uses: actions/upload-artifact@v4
+        if: needs.initialize.outputs.stage_helper == 'pending'
+        with:
+          name: release-checkpoint-${{ needs.initialize.outputs.release_id }}-helper-built
+          path: checkpoint-helper-built.json
+          if-no-files-found: error
+      - uses: ./.github/actions/daemon-leg
+        if: contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_helper)
         with:
           phase: promote
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}
           pages_manifest_url: ${{ vars.BEELINE_PAGES_MANIFEST_URL || 'https://beeline-work.github.io/beeline/dl/manifest.json' }}
-
-  confirm_daemon:
-    needs: [initialize, promote_daemon]
-    runs-on: [self-hosted, beeline-prod-host]
-    steps:
-      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        if: contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_helper)
         with:
-          ref: ${{ needs.initialize.outputs.release_sha }}
-      - uses: actions/download-artifact@v4
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+      - name: Publish the exact helper CLI package
+        if: contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_helper)
+        run: |
+          set -euo pipefail
+          npm install --global npm@^11.15.0
+          npm ci
+          npm run build -w @beeline/nostr
+          npm run build -w @beeline/api-contract
+          npm run build -w @beeline/buzz-client
+          npm run build -w @beeline/gate
+          npm run build -w @beeline/body
+          npm run build -w usebeeline
+          version="${{ needs.initialize.outputs.release_version }}"
+          npm version "${version#v}" --allow-same-version --no-git-tag-version --workspace usebeeline
+          npm view "usebeeline@${version#v}" version >/dev/null 2>&1 || npm publish --no-provenance --workspace usebeeline
+      - name: Checkpoint helper promotion
+        if: contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_helper)
+        run: |
+          node -e 'const fs=require("node:fs");const [version,sourceSha,artifactRef]=process.argv.slice(1);fs.writeFileSync("checkpoint-helper-promoted.json",JSON.stringify({component:"helper",version,sourceSha,state:"promoted",artifactRef})+"\n")' \
+            "${{ needs.initialize.outputs.release_version }}" "${{ needs.initialize.outputs.release_sha }}" "daemon-artifact-${{ needs.initialize.outputs.release_id }}"
+      - uses: actions/upload-artifact@v4
+        if: contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_helper)
         with:
-          name: unified-release-server-${{ needs.initialize.outputs.release_sha }}
-          path: ${{ runner.temp }}/release
-      - run: node scripts/unified-release.mjs confirm --state "$RUNNER_TEMP/release/unified-release.json" --component daemon --version "${{ needs.initialize.outputs.release_version }}" --sha "${{ needs.initialize.outputs.release_sha }}"
+          name: release-checkpoint-${{ needs.initialize.outputs.release_id }}-helper-promoted
+          path: checkpoint-helper-promoted.json
+          if-no-files-found: error
+      - name: Smoke the exact helper package and manifest
+        env:
+          MANIFEST_URL: ${{ vars.BEELINE_PAGES_MANIFEST_URL || 'https://beeline-work.github.io/beeline/dl/manifest.json' }}
+          RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
+          RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          curl -fsS --max-time 20 "$MANIFEST_URL" -o "$RUNNER_TEMP/live-helper-manifest.json"
+          node - "$RUNNER_TEMP/live-helper-manifest.json" "$RELEASE_VERSION" "$RELEASE_SHA" <<'NODE'
+          const manifest = require(process.argv[2]);
+          if (manifest.version !== process.argv[3] || manifest.sourceCommit !== process.argv[4]) process.exit(1);
+          NODE
+          npm view "usebeeline@${RELEASE_VERSION#v}" version >/dev/null
+      - name: Write helper checkpoint
+        run: |
+          node -e 'const fs=require("node:fs");const [version,sourceSha,artifactRef]=process.argv.slice(1);fs.writeFileSync("checkpoint-helper.json",JSON.stringify({component:"helper",version,sourceSha,state:"checked",artifactRef})+"\n")' \
+            "${{ needs.initialize.outputs.release_version }}" "${{ needs.initialize.outputs.release_sha }}" "daemon-artifact-${{ needs.initialize.outputs.release_id }}"
       - uses: actions/upload-artifact@v4
         with:
-          name: unified-release-daemon-${{ needs.initialize.outputs.release_sha }}
-          path: ${{ runner.temp }}/release/unified-release.json
-          retention-days: 7
+          name: release-checkpoint-${{ needs.initialize.outputs.release_id }}-helper
+          path: checkpoint-helper.json
+          if-no-files-found: error
 
-  promote_app:
-    needs: [initialize, confirm_daemon]
+  mobile_ota:
+    needs: initialize
+    if: needs.initialize.outputs.run_mobile_ota == 'true'
     runs-on: [self-hosted, beeline-prod-host]
-    timeout-minutes: 10
-    outputs:
-      production_group_id: ${{ steps.leg.outputs.production_group_id }}
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.initialize.outputs.release_sha }}
           fetch-depth: 0
       - uses: ./.github/actions/mobile-ota-leg
-        id: leg
+        if: needs.initialize.outputs.stage_mobile_ota == 'pending'
+        with:
+          phase: build
+          release_sha: ${{ needs.initialize.outputs.release_sha }}
+          release_version: ${{ needs.initialize.outputs.release_version }}
+          retry_attempt: ${{ inputs.retry_attempt }}
+          expo_token: ${{ secrets.EXPO_TOKEN }}
+      - name: Checkpoint the OTA build
+        if: needs.initialize.outputs.stage_mobile_ota == 'pending'
+        run: |
+          node -e 'const fs=require("node:fs");const [version,sourceSha,artifactRef]=process.argv.slice(1);fs.writeFileSync("checkpoint-mobile-ota-built.json",JSON.stringify({component:"mobile-ota",version,sourceSha,state:"built",artifactRef})+"\n")' \
+            "${{ needs.initialize.outputs.release_version }}" "${{ needs.initialize.outputs.release_sha }}" "mobile-ota-candidate-${{ needs.initialize.outputs.release_id }}"
+      - uses: actions/upload-artifact@v4
+        if: needs.initialize.outputs.stage_mobile_ota == 'pending'
+        with:
+          name: release-checkpoint-${{ needs.initialize.outputs.release_id }}-mobile-ota-built
+          path: checkpoint-mobile-ota-built.json
+          if-no-files-found: error
+      - uses: ./.github/actions/mobile-ota-leg
+        if: contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_mobile_ota)
         with:
           phase: promote
           release_sha: ${{ needs.initialize.outputs.release_sha }}
@@ -376,46 +399,233 @@ jobs:
           owner_pubkey: ${{ secrets.MOBILE_OTA_OWNER_PUBKEY }}
           receipt_token: ${{ secrets.MOBILE_OTA_RECEIPT_TOKEN }}
           receipt_origin: ${{ vars.MOBILE_OTA_RECEIPT_ORIGIN || 'https://usebeeline.app/push' }}
+      - name: Checkpoint OTA promotion
+        if: contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_mobile_ota)
+        run: |
+          node -e 'const fs=require("node:fs");const [version,sourceSha,artifactRef]=process.argv.slice(1);fs.writeFileSync("checkpoint-mobile-ota-promoted.json",JSON.stringify({component:"mobile-ota",version,sourceSha,state:"promoted",artifactRef})+"\n")' \
+            "${{ needs.initialize.outputs.release_version }}" "${{ needs.initialize.outputs.release_sha }}" "mobile-ota-promoted-${{ needs.initialize.outputs.release_id }}"
+      - uses: actions/upload-artifact@v4
+        if: contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_mobile_ota)
+        with:
+          name: release-checkpoint-${{ needs.initialize.outputs.release_id }}-mobile-ota-promoted
+          path: checkpoint-mobile-ota-promoted.json
+          if-no-files-found: error
+      - name: Locate promoted OTA evidence for a check-only retry
+        if: needs.initialize.outputs.stage_mobile_ota == 'promoted'
+        id: ota_promoted
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const name = `mobile-ota-promoted-${{ needs.initialize.outputs.release_id }}`;
+            const artifacts = await github.paginate(github.rest.actions.listArtifactsForRepo, {
+              owner: context.repo.owner, repo: context.repo.repo, name, per_page: 100,
+            });
+            const artifact = artifacts.filter((candidate) => candidate.name === name && !candidate.expired && candidate.workflow_run?.id)
+              .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+            if (!artifact) core.setFailed(`missing immutable artifact ${name}`);
+            else core.setOutput('run_id', String(artifact.workflow_run.id));
+      - uses: actions/download-artifact@v4
+        if: needs.initialize.outputs.stage_mobile_ota == 'promoted'
+        with:
+          name: mobile-ota-promoted-${{ needs.initialize.outputs.release_id }}
+          path: ${{ runner.temp }}/mobile-ota-resume
+          run-id: ${{ steps.ota_promoted.outputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: Require rollback evidence and write checkpoint
+        run: |
+          set -euo pipefail
+          ledger="$RUNNER_TEMP/mobile-ota-ledger.json"
+          [ -f "$ledger" ] || ledger="$RUNNER_TEMP/mobile-ota-resume/mobile-ota-ledger.json"
+          test -f "$ledger" || {
+            echo 'mobile OTA promotion produced no rollback ledger' >&2; exit 1;
+          }
+          node -e 'const fs=require("node:fs");const [version,sourceSha,artifactRef]=process.argv.slice(1);fs.writeFileSync("checkpoint-mobile-ota.json",JSON.stringify({component:"mobile-ota",version,sourceSha,state:"checked",artifactRef})+"\n")' \
+            "${{ needs.initialize.outputs.release_version }}" "${{ needs.initialize.outputs.release_sha }}" "mobile-ota-promoted-${{ needs.initialize.outputs.release_id }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-checkpoint-${{ needs.initialize.outputs.release_id }}-mobile-ota
+          path: checkpoint-mobile-ota.json
+          if-no-files-found: error
 
-  confirm_app:
-    needs: [initialize, artifact_gate, promote_app]
-    runs-on: [self-hosted, beeline-prod-host]
+  desktop_installers:
+    needs: initialize
+    if: needs.initialize.outputs.run_desktop == 'true'
+    uses: ./.github/workflows/desktop.yml
+    with:
+      variant: production
+      release_sha: ${{ needs.initialize.outputs.release_sha }}
+      release_version: ${{ needs.initialize.outputs.release_version }}
+
+  desktop_checkpoint:
+    needs: [initialize, desktop_installers]
+    if: needs.initialize.outputs.run_desktop == 'true' && needs.desktop_installers.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Write desktop checkpoint
+        run: |
+          node -e 'const fs=require("node:fs");const [version,sourceSha,artifactRef]=process.argv.slice(1);fs.writeFileSync("checkpoint-desktop.json",JSON.stringify({component:"desktop",version,sourceSha,state:"checked",artifactRef})+"\n")' \
+            "${{ needs.initialize.outputs.release_version }}" "${{ needs.initialize.outputs.release_sha }}" "beeline-desktop-release-${{ needs.initialize.outputs.release_id }}-*"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-checkpoint-${{ needs.initialize.outputs.release_id }}-desktop
+          path: checkpoint-desktop.json
+          if-no-files-found: error
+
+  website:
+    needs: initialize
+    if: needs.initialize.outputs.run_website == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      pages: write
+      id-token: write
+    environment: github-pages
+    concurrency:
+      group: usebeeline-pages-${{ needs.initialize.outputs.run_helper == 'true' && github.run_id || 'deploy' }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.initialize.outputs.release_sha }}
-      - uses: actions/download-artifact@v4
+      - uses: ./.github/actions/pages-leg
+        if: needs.initialize.outputs.run_helper != 'true'
         with:
-          name: unified-release-daemon-${{ needs.initialize.outputs.release_sha }}
-          path: ${{ runner.temp }}/release
-      - name: Confirm app promotion and both owner clocks
+          manifest_url: ${{ vars.BEELINE_PAGES_MANIFEST_URL || 'https://beeline-work.github.io/beeline/dl/manifest.json' }}
+      - uses: actions/upload-artifact@v4
+        if: needs.initialize.outputs.run_helper != 'true'
+        with:
+          name: website-${{ needs.initialize.outputs.release_id }}
+          path: ${{ runner.temp }}/usebeeline-pages
+          if-no-files-found: error
+      - name: Write website checkpoint
         run: |
-          node scripts/unified-release.mjs confirm --state "$RUNNER_TEMP/release/unified-release.json" \
-            --component app --version "${{ needs.initialize.outputs.release_version }}" \
-            --sha "${{ needs.initialize.outputs.release_sha }}"
-          now="$(date +%s)"
-          promotion_elapsed="$(( now - ${{ needs.artifact_gate.outputs.promotion_epoch }} ))"
-          fix_to_phone_elapsed="$(( now - ${{ needs.initialize.outputs.trigger_epoch }} ))"
-          test "$promotion_elapsed" -lt 600 || {
-            echo "aligned promotion took ${promotion_elapsed}s" >&2
-            exit 1
-          }
-          test "$fix_to_phone_elapsed" -lt 1200 || {
-            echo "fix-to-phone took ${fix_to_phone_elapsed}s" >&2
-            exit 1
-          }
+          node -e 'const fs=require("node:fs");const [version,sourceSha,artifactRef]=process.argv.slice(1);fs.writeFileSync("checkpoint-website.json",JSON.stringify({component:"website",version,sourceSha,state:"checked",artifactRef})+"\n")' \
+            "${{ needs.initialize.outputs.release_version }}" "${{ needs.initialize.outputs.release_sha }}" "website-${{ needs.initialize.outputs.release_id }}"
       - uses: actions/upload-artifact@v4
         with:
-          name: unified-release-app-${{ needs.initialize.outputs.release_sha }}
-          path: ${{ runner.temp }}/release/unified-release.json
-          retention-days: 7
+          name: release-checkpoint-${{ needs.initialize.outputs.release_id }}-website
+          path: checkpoint-website.json
+          if-no-files-found: error
 
-  delivery_report:
-    needs: [initialize, desktop_installers, confirm_app]
+  mobile_native:
+    needs: initialize
+    if: needs.initialize.outputs.run_mobile_native == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      EAS_CLI_VERSION: 22.2.0
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.initialize.outputs.release_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+      - name: Require native release credentials
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EXPO_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
+          EXPO_ASC_ISSUER_ID: ${{ secrets.EXPO_ASC_ISSUER_ID }}
+          EXPO_ASC_API_KEY_P8: ${{ secrets.EXPO_ASC_API_KEY_P8 }}
+        run: |
+          test -n "$EXPO_TOKEN" || { echo 'EXPO_TOKEN is required for a native release' >&2; exit 1; }
+          if [ "${{ inputs.store_track }}" != none ]; then
+            for name in EXPO_ASC_KEY_ID EXPO_ASC_ISSUER_ID EXPO_ASC_API_KEY_P8; do
+              test -n "${!name}" || { echo "$name is required for a store release" >&2; exit 1; }
+            done
+            key_path="$RUNNER_TEMP/AuthKey_${EXPO_ASC_KEY_ID}.p8"
+            echo "$EXPO_ASC_API_KEY_P8" | base64 -d > "$key_path"
+            chmod 600 "$key_path"
+            echo "EXPO_ASC_API_KEY_PATH=$key_path" >> "$GITHUB_ENV"
+          fi
+      - name: Build immutable Android and iOS store binaries
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EXPO_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
+          EXPO_ASC_ISSUER_ID: ${{ secrets.EXPO_ASC_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          npm ci
+          npx --yes "eas-cli@$EAS_CLI_VERSION" build --profile production --platform android --non-interactive --wait --json > "$RUNNER_TEMP/android-build.json" &
+          android_pid=$!
+          npx --yes "eas-cli@$EAS_CLI_VERSION" build --profile production-ci --platform ios --non-interactive --wait --json > "$RUNNER_TEMP/ios-build.json" &
+          ios_pid=$!
+          android_status=0; ios_status=0
+          wait "$android_pid" || android_status=$?
+          wait "$ios_pid" || ios_status=$?
+          test "$android_status" -eq 0 && test "$ios_status" -eq 0
+          node - "$RUNNER_TEMP/android-build.json" "$RUNNER_TEMP/ios-build.json" <<'NODE'
+          const fs = require('node:fs');
+          for (const path of process.argv.slice(2)) {
+            const raw = JSON.parse(fs.readFileSync(path));
+            const build = Array.isArray(raw) ? raw[0] : raw;
+            if (build?.status !== 'FINISHED' || !build?.id) throw new Error(`${path} has no finished immutable build`);
+          }
+          NODE
+      - name: Resolve the store-facing app version
+        id: native_version
+        working-directory: apps/mobile
+        run: echo "version=$(node scripts/check-release-version.cjs)" >> "$GITHUB_OUTPUT"
+      - name: Authenticate to Google Play
+        if: inputs.store_track != 'none'
+        id: play-auth
+        env:
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+        run: node scripts/play-token.mjs
+      - name: Upload Android to the selected Play track
+        if: inputs.store_track != 'none'
+        env:
+          ACCESS_TOKEN: ${{ steps.play-auth.outputs.access_token }}
+          TRACK: ${{ inputs.store_track }}
+        run: |
+          set -euo pipefail
+          archive=$(jq -r 'if type=="array" then .[0] else . end | .artifacts.applicationArchiveUrl // .artifacts.buildUrl' "$RUNNER_TEMP/android-build.json")
+          curl -fsSL "$archive" -o "$RUNNER_TEMP/beeline.aab"
+          AAB_PATH="$RUNNER_TEMP/beeline.aab" RELEASE_NAME="${{ steps.native_version.outputs.version }}" RELEASE_STATUS=draft bash scripts/play-publish.sh
+          METADATA_DIR=apps/mobile/fastlane/metadata/android LANGUAGE=en-US bash scripts/play-publish-listing.sh
+      - name: Submit iOS build to TestFlight for a selected store track
+        if: inputs.store_track != 'none'
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EXPO_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
+          EXPO_ASC_ISSUER_ID: ${{ secrets.EXPO_ASC_ISSUER_ID }}
+        run: |
+          build_id=$(jq -r 'if type=="array" then .[0] else . end | .id' "$RUNNER_TEMP/ios-build.json")
+          npx --yes "eas-cli@$EAS_CLI_VERSION" submit --platform ios --profile production --id "$build_id" --non-interactive --wait
+      - name: Preserve native build evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-native-${{ needs.initialize.outputs.release_id }}
+          path: |
+            ${{ runner.temp }}/android-build.json
+            ${{ runner.temp }}/ios-build.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Write native checkpoint
+        run: |
+          node -e 'const fs=require("node:fs");const [version,sourceSha,artifactRef]=process.argv.slice(1);fs.writeFileSync("checkpoint-mobile-native.json",JSON.stringify({component:"mobile-native",version,sourceSha,state:"checked",artifactRef})+"\n")' \
+            "${{ needs.initialize.outputs.release_version }}" "${{ needs.initialize.outputs.release_sha }}" "mobile-native-${{ needs.initialize.outputs.release_id }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-checkpoint-${{ needs.initialize.outputs.release_id }}-mobile-native
+          path: checkpoint-mobile-native.json
+          if-no-files-found: error
+
+  release_result:
+    if: always() && needs.initialize.result == 'success'
+    needs: [initialize, server, helper, mobile_ota, mobile_native, desktop_installers, desktop_checkpoint, website]
     runs-on: [self-hosted, beeline-prod-host]
+    timeout-minutes: 2
     permissions:
-      contents: write
       actions: write
+      contents: write
       issues: write
     steps:
       - uses: actions/checkout@v4
@@ -424,607 +634,180 @@ jobs:
           fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
-          name: unified-release-app-${{ needs.initialize.outputs.release_sha }}
+          name: unified-release-plan-${{ needs.initialize.outputs.release_id }}
           path: ${{ runner.temp }}/release
       - uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
-          name: mobile-ota-promoted-${{ needs.initialize.outputs.release_sha }}
-          path: ${{ runner.temp }}/mobile
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: beeline-desktop-release-*
-          path: ${{ runner.temp }}/desktop-release
+          pattern: release-checkpoint-${{ needs.initialize.outputs.release_id }}-*
+          path: ${{ runner.temp }}/checkpoints
           merge-multiple: true
-      - name: Refuse a mixed-version delivery report
+      - name: Merge checkpoints and classify the final attempt
+        id: result
         env:
-          RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
-          RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
+          TRIGGER_EPOCH: ${{ needs.initialize.outputs.trigger_epoch }}
+          SERVER_RESULT: ${{ needs.server.result }}
+          HELPER_RESULT: ${{ needs.helper.result }}
+          MOBILE_OTA_RESULT: ${{ needs.mobile_ota.result }}
+          MOBILE_NATIVE_RESULT: ${{ needs.mobile_native.result }}
+          DESKTOP_RESULT: ${{ needs.desktop_installers.result }}
+          WEBSITE_RESULT: ${{ needs.website.result }}
         run: |
           set -euo pipefail
-          curl -fsS --max-time 30 \
-            https://server.usebeeline.app/v1/releases/daemon-readiness \
-            -o "$RUNNER_TEMP/daemon-readiness.json"
-          curl -fsS --max-time 30 https://server.usebeeline.app/version -o "$RUNNER_TEMP/server-version.json"
-          node scripts/unified-release.mjs assert-daemons \
-            --status "$RUNNER_TEMP/daemon-readiness.json" \
-            --version "$RELEASE_VERSION" \
-            --sha "$RELEASE_SHA"
-          node - "$RUNNER_TEMP/daemon-readiness.json" "$RUNNER_TEMP/server-version.json" "$RUNNER_TEMP/mobile/mobile-ota-ledger.json" "$RUNNER_TEMP/observed.json" <<'NODE'
-          const fs = require('node:fs');
-          const [readinessPath, serverPath, mobilePath, outputPath] = process.argv.slice(2);
-          const readiness = JSON.parse(fs.readFileSync(readinessPath, 'utf8'));
-          const server = JSON.parse(fs.readFileSync(serverPath, 'utf8'));
-          const mobile = JSON.parse(fs.readFileSync(mobilePath, 'utf8'));
-          const daemons = readiness.daemons ?? [];
-          // assert-daemons above only proved at least one daemon converged; a
-          // stale, merely-informational laggard may still sort first in the
-          // list, so pick the daemon that actually matches this exact release.
-          const daemon = daemons.find(
-            (candidate) =>
-              candidate.state === 'ready' &&
-              candidate.version === process.env.RELEASE_VERSION &&
-              candidate.sha === process.env.RELEASE_SHA,
-          );
-          fs.writeFileSync(outputPath, JSON.stringify({
-            server: { version: server.version, sourceSha: server.sourceSha },
-            daemon: { version: daemon.version, sourceSha: daemon.sha },
-            app: { version: mobile.releaseVersion, sourceSha: mobile.sourceSha },
-          }));
-          NODE
           state="$RUNNER_TEMP/release/unified-release.json"
-          node scripts/unified-release.mjs confirm-delivery --state "$state" --version "$RELEASE_VERSION" --sha "$RELEASE_SHA"
-          node scripts/unified-release.mjs report --state "$state" \
-            --observed "$RUNNER_TEMP/observed.json" \
-            --version "$RELEASE_VERSION" \
-            --sha "$RELEASE_SHA" | tee "$RUNNER_TEMP/delivery-report.txt"
-      - name: Publish the one version delivery record
+          node - "$RUNNER_TEMP/checkpoints" "$RUNNER_TEMP/checkpoints.json" <<'NODE'
+          const fs = require('node:fs');
+          const [directory, output] = process.argv.slice(2);
+          const checkpoints = fs.existsSync(directory)
+            ? fs.readdirSync(directory).filter((name) => name.endsWith('.json')).map((name) => JSON.parse(fs.readFileSync(`${directory}/${name}`)))
+            : [];
+          fs.writeFileSync(output, JSON.stringify(checkpoints));
+          NODE
+          node scripts/unified-release.mjs apply-checkpoints --state "$state" --checkpoints "$RUNNER_TEMP/checkpoints.json" --summary "$RUNNER_TEMP/retry-plan.json"
+          incomplete=$(node -e 'const p=require(process.argv[1]);process.stdout.write(Object.entries(p.retry).filter(([,v])=>v).map(([k])=>k).join(","))' "$RUNNER_TEMP/retry-plan.json")
+          now=$(date +%s)
+          elapsed=$((now - TRIGGER_EPOCH))
+          if [ "$elapsed" -ge 1200 ]; then
+            failure_class=budget
+          elif [ -n "$incomplete" ]; then
+            failure_class="component:$incomplete"
+          else
+            failure_class=''
+          fi
+          if [ -n "$failure_class" ]; then
+            node scripts/unified-release.mjs finalize --state "$state" --outcome failure --failure-class "$failure_class"
+            {
+              echo "outcome=failure"
+              echo "failure_class=$failure_class"
+              echo "incomplete=$incomplete"
+            } >> "$GITHUB_OUTPUT"
+          else
+            {
+              echo "outcome=success"
+              echo "failure_class="
+              echo "incomplete="
+            } >> "$GITHUB_OUTPUT"
+          fi
+          cp "$state" "$RUNNER_TEMP/release-attempt.json"
+      - name: Publish immutable attempt state for component-local retry
         uses: actions/upload-artifact@v4
         with:
-          name: unified-release-index
-          path: ${{ runner.temp }}/release/unified-release.json
-          overwrite: true
+          name: unified-release-state-${{ needs.initialize.outputs.release_id }}
+          path: ${{ runner.temp }}/release-attempt.json
           retention-days: 90
-      - run: |
-          {
-            echo "## Unified delivery"
-            echo
-            cat "$RUNNER_TEMP/delivery-report.txt"
-          } >> "$GITHUB_STEP_SUMMARY"
-      # A GitHub Release is the changelog link the @system DM points to (no
-      # usebeeline.app/changelog exists today). Notes are generated from the
-      # exact sha range this release's ledger already recorded (`supersedes`
-      # in unified-release.json), not from `gh release create --generate-notes`,
-      # which needs a previous git TAG to diff against — one may not exist yet.
-      # `gh release create`/`notify` are both retried by a governor re-run of
-      # this same version+sha, so both are written to be no-ops on a repeat.
-      - name: Create the GitHub Release and DM each person that an update is out
+      - name: Download newly built stable desktop installers
+        if: steps.result.outputs.outcome == 'success' && needs.initialize.outputs.run_desktop == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          pattern: beeline-desktop-release-${{ needs.initialize.outputs.release_version }}-${{ needs.initialize.outputs.release_sha }}-*
+          path: ${{ runner.temp }}/desktop-release
+          merge-multiple: true
+      - name: Create the one GitHub release record and preserve stable desktop downloads
+        if: steps.result.outputs.outcome == 'success'
         env:
-          RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
+          GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
+          RUN_DESKTOP: ${{ needs.initialize.outputs.run_desktop }}
           BEELINE_RELEASE_NOTIFY_SECRET: ${{ secrets.BEELINE_RELEASE_NOTIFY_SECRET }}
         run: |
           set -euo pipefail
-          state="$RUNNER_TEMP/release/unified-release.json"
-          previous_sha=$(node -e "
-            const s = require(process.argv[1]);
-            process.stdout.write(s.supersedes?.sourceSha ?? '');
-          " "$state")
-          notes_file="$RUNNER_TEMP/release-notes.md"
-          if [ -n "$previous_sha" ] && git cat-file -e "${previous_sha}^{commit}" 2>/dev/null; then
-            git log --pretty='- %s (%h)' "${previous_sha}..${RELEASE_SHA}" > "$notes_file"
-          else
-            git log --pretty='- %s (%h)' -50 "${RELEASE_SHA}" > "$notes_file"
+          state="$RUNNER_TEMP/release-attempt.json"
+          mkdir -p "$RUNNER_TEMP/desktop-release"
+          if [ "$RUN_DESKTOP" != true ]; then
+            previous_version=$(node -e 'process.stdout.write(require(process.argv[1]).components.desktop.version)' "$state")
+            gh release download "$previous_version" --pattern 'Beeline-*' --dir "$RUNNER_TEMP/desktop-release"
           fi
-          [ -s "$notes_file" ] || echo '- No changes recorded for this range.' > "$notes_file"
+          previous_sha=$(node -e 'process.stdout.write(require(process.argv[1]).supersedes?.sourceSha ?? "")' "$state")
+          notes="$RUNNER_TEMP/release-notes.md"
+          git log --pretty='- %s (%h)' "${previous_sha:+${previous_sha}..}${RELEASE_SHA}" > "$notes"
+          [ -s "$notes" ] || echo '- No component changes required.' > "$notes"
+          assets=("$RUNNER_TEMP"/desktop-release/Beeline-*)
           if gh release view "$RELEASE_VERSION" >/dev/null 2>&1; then
-            echo "GitHub Release $RELEASE_VERSION already exists (governor retry); reusing it."
-            gh release upload "$RELEASE_VERSION" "$RUNNER_TEMP"/desktop-release/* --clobber
+            [ -e "${assets[0]}" ] && gh release upload "$RELEASE_VERSION" "${assets[@]}" --clobber
+          elif [ -e "${assets[0]}" ]; then
+            gh release create "$RELEASE_VERSION" --target "$RELEASE_SHA" --title "$RELEASE_VERSION" --notes-file "$notes" "${assets[@]}"
           else
-            gh release create "$RELEASE_VERSION" \
-              --target "$RELEASE_SHA" --title "$RELEASE_VERSION" --notes-file "$notes_file" \
-              "$RUNNER_TEMP"/desktop-release/*
+            gh release create "$RELEASE_VERSION" --target "$RELEASE_SHA" --title "$RELEASE_VERSION" --notes-file "$notes"
           fi
-          changelog_url="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${RELEASE_VERSION}"
-          echo "Changelog: $changelog_url" >> "$GITHUB_STEP_SUMMARY"
-          if [ -z "${BEELINE_RELEASE_NOTIFY_SECRET:-}" ]; then
-            echo "BEELINE_RELEASE_NOTIFY_SECRET is not configured; skipping the @system release DM." >&2
-          else
-            payload=$(node -e "
-              const [version, sha, changelogUrl] = process.argv.slice(1);
-              process.stdout.write(JSON.stringify({ version, sha, changelogUrl }));
-            " "$RELEASE_VERSION" "$RELEASE_SHA" "$changelog_url")
-            curl -fsS --max-time 60 -X POST https://server.usebeeline.app/v1/releases/notify \
-              -H "Authorization: Bearer $BEELINE_RELEASE_NOTIFY_SECRET" \
-              -H 'content-type: application/json' \
-              -d "$payload" -o "$RUNNER_TEMP/release-notify.json"
-            {
-              echo "@system release DM:"
-              echo '```json'
-              cat "$RUNNER_TEMP/release-notify.json"
-              echo '```'
-            } >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "${BEELINE_RELEASE_NOTIFY_SECRET:-}" ]; then
+            # shellcheck disable=SC2016
+            payload=$(node -e 'const [version,sha]=process.argv.slice(1);process.stdout.write(JSON.stringify({version,sha,changelogUrl:`https://github.com/${process.env.GITHUB_REPOSITORY}/releases/tag/${version}`}))' "$RELEASE_VERSION" "$RELEASE_SHA")
+            curl -fsS --max-time 30 -X POST https://server.usebeeline.app/v1/releases/notify \
+              -H "Authorization: Bearer $BEELINE_RELEASE_NOTIFY_SECRET" -H 'content-type: application/json' -d "$payload"
           fi
-      # Receipt-only bookkeeping (was the 15-minute mobile-ota-reconcile.yml
-      # cron). The delivery verdict above never depends on it: the owner
-      # device fetches the update when the app is next opened, so this waits a
-      # bounded three minutes for that receipt, records it in the cumulative
-      # delivery index when it arrives, and otherwise leaves the merge
-      # `published` for the next release's promote step to confirm (that step
-      # folds every unconfirmed merge into the new production group).
-      - uses: actions/download-artifact@v4
-        with:
-          name: mobile-ota-delivery-index
-          path: ${{ runner.temp }}/index
-      - name: Record the owner device receipt when it arrives within three minutes
-        id: receipt
-        continue-on-error: true
-        working-directory: apps/mobile
-        env:
-          DELIVERY_INDEX: ${{ runner.temp }}/index/mobile-ota-delivery-index.json
-          OWNER_PUBKEY: ${{ secrets.MOBILE_OTA_OWNER_PUBKEY }}
-          RECEIPT_TOKEN: ${{ secrets.MOBILE_OTA_RECEIPT_TOKEN }}
-          RECEIPT_ORIGIN: ${{ vars.MOBILE_OTA_RECEIPT_ORIGIN || 'https://usebeeline.app/push' }}
-          RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
-          RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
-        run: |
-          set -euo pipefail
-          readarray -t delivery < <(node scripts/ota-release.mjs delivery-target --index "$DELIVERY_INDEX")
-          group="${delivery[0]#group_id=}"
-          updates="${delivery[1]#update_ids=}"
-          confirmed=false
-          if [ -n "$group" ] && [ -n "$OWNER_PUBKEY" ] && [ -n "$RECEIPT_TOKEN" ]; then
-            deadline=$((SECONDS + 180))
-            while (( SECONDS < deadline )); do
-              if curl --fail --silent --show-error --max-time 15 \
-                -H "Authorization: Bearer $RECEIPT_TOKEN" \
-                "$RECEIPT_ORIGIN/update-receipts/$OWNER_PUBKEY" \
-                -o "$RUNNER_TEMP/owner-update-receipt.json"; then
-                result="$(node scripts/ota-release.mjs confirm --index "$DELIVERY_INDEX" \
-                  --receipt "$RUNNER_TEMP/owner-update-receipt.json" --group "$group" --update-ids "$updates" \
-                  --release-version "$RELEASE_VERSION" --sha "$RELEASE_SHA")"
-                echo "$result"
-                if node -e 'process.exit(JSON.parse(process.argv[1]).confirmed ? 0 : 1)' "$result"; then
-                  confirmed=true
-                  break
-                fi
-              else
-                echo "Owner receipt endpoint unavailable; retrying until the deadline." >&2
-              fi
-              sleep 20
-            done
-          fi
-          node scripts/ota-release.mjs list-undelivered --index "$DELIVERY_INDEX" \
-            --output "$RUNNER_TEMP/index/mobile-ota-undelivered.json"
-          {
-            echo
-            if [ "$confirmed" = true ]; then
-              echo "Owner device receipt: confirmed production group \`$group\` on the owner device."
-            else
-              echo "Owner device receipt: not yet reported for production group \`$group\`; the next release's promote step confirms it once the device has fetched an update."
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
-      - name: Store cumulative delivery index with the receipt result
+      - name: Finalize successful delivery after every selected promotion and record
+        if: steps.result.outputs.outcome == 'success'
+        run: node scripts/unified-release.mjs finalize --state "$RUNNER_TEMP/release-attempt.json" --outcome success
+      - name: Publish the one successful release index
+        if: steps.result.outputs.outcome == 'success'
         uses: actions/upload-artifact@v4
-        with:
-          name: mobile-ota-delivery-index
-          path: |
-            ${{ runner.temp }}/index/mobile-ota-delivery-index.json
-            ${{ runner.temp }}/index/mobile-ota-undelivered.json
-          if-no-files-found: error
-          retention-days: 90
-          overwrite: true
-
-  # Final job of a delivered release (was npm-publish.yml's workflow_run
-  # trigger). The npm trusted publisher for `usebeeline` must name THIS
-  # workflow file; there is no token in the repository.
-  npm_publish:
-    needs: [initialize, delivery_report]
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      actions: read
-      contents: read
-      id-token: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.initialize.outputs.release_sha }}
-      - uses: actions/download-artifact@v4
         with:
           name: unified-release-index
-          path: ${{ runner.temp }}/release
-      - uses: actions/setup-node@v4
+          path: ${{ runner.temp }}/release-attempt.json
+          overwrite: true
+          retention-days: 90
+      - name: Measure rolling release attempt reliability
+        id: reliability
+        continue-on-error: true
+        uses: actions/github-script@v7
         with:
-          node-version: '24'
-          registry-url: 'https://registry.npmjs.org'
-      - name: Install an OIDC-capable npm CLI
-        run: npm install --global npm@^11.15.0
-      - name: Install dependencies
-        run: npm ci
-      - name: Build package
-        run: |
-          npm run build -w @beeline/nostr
-          npm run build -w @beeline/api-contract
-          npm run build -w @beeline/buzz-client
-          npm run build -w @beeline/gate
-          npm run build -w @beeline/body
-          npm run build -w usebeeline
-      - name: Resolve publish version from the delivered release index
-        id: version
+          script: |
+            const runs = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner, repo: context.repo.repo,
+              workflow_id: 'unified-release.yml', event: 'workflow_dispatch', per_page: 20,
+            });
+            const completed = runs.data.workflow_runs.filter((run) => run.status === 'completed').slice(0, 20);
+            const failed = completed.filter((run) => run.conclusion !== 'success').length;
+            const rate = completed.length ? failed / completed.length : 0;
+            core.setOutput('sample', String(completed.length));
+            core.setOutput('failed', String(failed));
+            core.setOutput('rate', (rate * 100).toFixed(1));
+      - name: Surface release outcome, duration, and measured failure rate
         env:
-          RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
+          OUTCOME: ${{ steps.result.outputs.outcome }}
+          FAILURE_CLASS: ${{ steps.result.outputs.failure_class }}
+          SAMPLE: ${{ steps.reliability.outputs.sample }}
+          FAILED: ${{ steps.reliability.outputs.failed }}
+          RATE: ${{ steps.reliability.outputs.rate }}
         run: |
-          release_version=$(node -e "const r=require(process.argv[1]);if(!/^v[0-9]+\\.[0-9]+\\.[0-9]+$/.test(r.version)||r.sourceSha!==process.argv[2])process.exit(1);process.stdout.write(r.version.slice(1))" "$RUNNER_TEMP/release/unified-release.json" "$RELEASE_SHA")
-          npm version "$release_version" --allow-same-version --no-git-tag-version --workspace usebeeline
-          echo "value=$release_version" >> "$GITHUB_OUTPUT"
-      - name: Publish with provenance
+          node - "$RUNNER_TEMP/release-attempt.json" >> "$GITHUB_STEP_SUMMARY" <<'NODE'
+          const fs = require('node:fs');
+          const release = JSON.parse(fs.readFileSync(process.argv[2]));
+          console.log(`## Release ${release.delivery.state}: ${release.version}`);
+          console.log(`- Duration: ${release.delivery.durationSeconds}s`);
+          console.log(`- Selected: ${release.plan.selected.join(', ') || 'none'}`);
+          console.log(`- Carried: ${release.plan.carried.join(', ') || 'none'}`);
+          if (release.delivery.failureClass) console.log(`- Failure class: ${release.delivery.failureClass}`);
+          console.log('- Reliability target: fewer than 10% failed attempts over the rolling 20 release attempts.');
+          if (Number(process.env.SAMPLE) >= 10) console.log(`- Measured failure rate: ${process.env.RATE}% (${process.env.FAILED}/${process.env.SAMPLE}).`);
+          else console.log(`- Measured failure rate: insufficient sample (${process.env.SAMPLE}/10 attempts); one release cannot prove the target.`);
+          NODE
+      - name: Fail the attempt after preserving its classified record
+        if: steps.result.outputs.outcome != 'success'
         run: |
-          if npm view "usebeeline@${{ steps.version.outputs.value }}" version >/dev/null 2>&1; then
-            echo "usebeeline@${{ steps.version.outputs.value }} is already published"
-            exit 0
-          fi
-          npm publish --no-provenance --workspace usebeeline
-
-  # Store leg (was play-beta.yml + play-listing.yml + testflight.yml). Runs
-  # only when store_track is set, after the app is confirmed, from the exact
-  # release SHA. Signing: the AAB carries the EAS-managed upload key (the
-  # ANDROID_SIDELOAD_* repository secrets are sideload-only, see
-  # apps/mobile/android-signing/README.md); Play auth is a short-lived token
-  # minted from GOOGLE_PLAY_SERVICE_ACCOUNT_JSON (scripts/play-token.mjs).
-  # A failure here fails this job only.
-  store_android:
-    needs: [initialize, confirm_app]
-    if: contains(fromJSON('["internal","beta","production"]'), inputs.store_track)
-    name: Store Android (Play ${{ inputs.store_track }} draft + listing)
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-    concurrency:
-      group: play-release
-      cancel-in-progress: false
-    env:
-      PACKAGE_NAME: app.usebeeline
-      EAS_CLI_VERSION: 22.2.0
-      BUNDLETOOL_VERSION: 1.18.1
-      TRACK: ${{ inputs.store_track }}
-    steps:
-      - name: Require the release secrets
-        env:
-          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: |
-          if [ -z "$PLAY_SERVICE_ACCOUNT_JSON" ]; then
-            echo "GOOGLE_PLAY_SERVICE_ACCOUNT_JSON repository secret is not set; add the Play service account JSON key before releasing with store_track."
-            exit 1
-          fi
-          if [ -z "$EXPO_TOKEN" ]; then
-            echo "EXPO_TOKEN repository secret is not set; add an Expo access token before releasing with store_track."
-            exit 1
-          fi
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.initialize.outputs.release_sha }}
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: apps/mobile/package-lock.json
-      - name: Version check
-        id: version
-        working-directory: apps/mobile
-        run: |
-          version=$(node scripts/check-release-version.cjs)
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "Releasing app version $version"
-      - name: Play metadata is derived from the store package
-        run: node scripts/sync-play-metadata.mjs --check
-      - name: Install mobile dependencies
-        working-directory: apps/mobile
-        run: npm ci
-      - name: Build the AAB on EAS from the release SHA
-        id: build
-        working-directory: apps/mobile
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: |
-          set -euo pipefail
-          npx --yes "eas-cli@$EAS_CLI_VERSION" build --profile production --platform android \
-            --non-interactive --wait --json > "$RUNNER_TEMP/eas-build.json"
-          build=$(jq -c 'if type == "array" then .[0] else . end' "$RUNNER_TEMP/eas-build.json")
-          status=$(echo "$build" | jq -r '.status')
-          if [ "$status" != "FINISHED" ]; then
-            echo "EAS build ended with status $status"
-            echo "$build" | jq '.'
-            exit 1
-          fi
-          {
-            echo "id=$(echo "$build" | jq -r '.id')"
-            echo "app_version=$(echo "$build" | jq -r '.appVersion')"
-            echo "version_code=$(echo "$build" | jq -r '.appBuildVersion')"
-            echo "archive_url=$(echo "$build" | jq -r '.artifacts.applicationArchiveUrl // .artifacts.buildUrl')"
-          } >> "$GITHUB_OUTPUT"
-          echo "EAS build $(echo "$build" | jq -r '.id') finished: $(echo "$build" | jq -r '.appVersion') ($(echo "$build" | jq -r '.appBuildVersion'))"
-      - name: Download the AAB
-        env:
-          ARCHIVE_URL: ${{ steps.build.outputs.archive_url }}
-        run: |
-          set -euo pipefail
-          if [ -z "$ARCHIVE_URL" ] || [ "$ARCHIVE_URL" = "null" ]; then
-            echo "EAS build has no application archive URL"
-            exit 1
-          fi
-          curl -fsSL -o "$RUNNER_TEMP/beeline.aab" "$ARCHIVE_URL"
-          ls -l "$RUNNER_TEMP/beeline.aab"
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-      - name: Verify the AAB version and signer with bundletool
-        env:
-          EXPECTED_NAME: ${{ steps.version.outputs.version }}
-          EXPECTED_CODE: ${{ steps.build.outputs.version_code }}
-        run: |
-          set -euo pipefail
-          aab="$RUNNER_TEMP/beeline.aab"
-          bundletool="$RUNNER_TEMP/bundletool.jar"
-          curl -fsSL -o "$bundletool" \
-            "https://github.com/google/bundletool/releases/download/${BUNDLETOOL_VERSION}/bundletool-all-${BUNDLETOOL_VERSION}.jar"
-          aab_name=$(java -jar "$bundletool" dump manifest --bundle="$aab" --xpath=/manifest/@android:versionName)
-          aab_code=$(java -jar "$bundletool" dump manifest --bundle="$aab" --xpath=/manifest/@android:versionCode)
-          aab_package=$(java -jar "$bundletool" dump manifest --bundle="$aab" --xpath=/manifest/@package)
-          echo "Expected: $EXPECTED_NAME ($EXPECTED_CODE) $PACKAGE_NAME"
-          echo "AAB:      $aab_name ($aab_code) $aab_package"
-          if [ "$aab_name" != "$EXPECTED_NAME" ] || [ "$aab_code" != "$EXPECTED_CODE" ] || [ "$aab_package" != "$PACKAGE_NAME" ]; then
-            echo "The AAB does not carry the expected package, versionName and versionCode."
-            exit 1
-          fi
-          certs=$(keytool -printcert -jarfile "$aab")
-          echo "$certs" | grep -E '^Owner:' || true
-          if echo "$certs" | grep -q 'CN=Android Debug'; then
-            echo "The AAB is debug-signed."
-            exit 1
-          fi
-      - name: Upload the AAB artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: beeline-${{ steps.version.outputs.version }}-${{ steps.build.outputs.version_code }}.aab
-          path: ${{ runner.temp }}/beeline.aab
-          if-no-files-found: error
-      # Self-signed JWT flow: google-github-actions/auth exchanges the key through
-      # the IAM Service Account Credentials API, which is not enabled in the
-      # Beeline project. The Android Developer API accepts a token minted from the
-      # key alone (scripts/play-token.mjs); the token is masked, never printed.
-      - name: Authenticate to Google Play with the service account
-        id: gcp-auth
-        env:
-          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
-        run: node scripts/play-token.mjs
-      - name: Upload the AAB to the Play ${{ inputs.store_track }} track as a draft release
-        env:
-          ACCESS_TOKEN: ${{ steps.gcp-auth.outputs.access_token }}
-          AAB_PATH: ${{ runner.temp }}/beeline.aab
-          RELEASE_NAME: ${{ steps.version.outputs.version }}
-          RELEASE_STATUS: draft
-        run: bash scripts/play-publish.sh
-      - name: Sync the Play store listing
-        env:
-          ACCESS_TOKEN: ${{ steps.gcp-auth.outputs.access_token }}
-          METADATA_DIR: apps/mobile/fastlane/metadata/android
-          LANGUAGE: en-US
-        run: bash scripts/play-publish-listing.sh
-      - name: Store summary
-        if: always()
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-          VERSION_CODE: ${{ steps.build.outputs.version_code }}
-          BUILD_ID: ${{ steps.build.outputs.id }}
-          RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
-          OUTCOME: ${{ job.status }}
-        run: |
-          {
-            echo "## Play ${TRACK} draft: app ${VERSION:-?} (${VERSION_CODE:-?}) for ${RELEASE_VERSION} — ${OUTCOME}"
-            echo ""
-            echo "- Play Console: https://play.google.com/console/u/0/developers/-/app-list?search=${PACKAGE_NAME}"
-            echo "- EAS builds: https://expo.dev/accounts/-/projects/buzzy/builds"
-            echo "- EAS build id: ${BUILD_ID:-not started}"
-            echo "- The release itself is judged by the delivery report, not by this job."
-          } >> "$GITHUB_STEP_SUMMARY"
-
-  # iOS store leg (was testflight.yml). The `production-ci` profile is the
-  # store build with EAS-managed credentials (a hosted runner has no
-  # apps/mobile/credentials.json). eas-cli reads exactly EXPO_ASC_API_KEY_PATH,
-  # EXPO_ASC_KEY_ID, EXPO_ASC_ISSUER_ID to create or repair the App Store
-  # provisioning profile non-interactively, so the key is written BEFORE the
-  # build; the distribution certificate must already exist (one interactive
-  # `eas credentials --platform ios`, see apps/mobile/docs/store-submission.md).
-  store_ios:
-    needs: [initialize, confirm_app]
-    if: contains(fromJSON('["internal","beta","production"]'), inputs.store_track)
-    name: Store iOS (TestFlight)
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    concurrency:
-      group: testflight-release
-      cancel-in-progress: false
-    env:
-      EAS_CLI_VERSION: 22.2.0
-      ASC_APP_ID: '6803948500'
-    steps:
-      - name: Require the release secrets
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-          EXPO_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
-          EXPO_ASC_ISSUER_ID: ${{ secrets.EXPO_ASC_ISSUER_ID }}
-          EXPO_ASC_API_KEY_P8: ${{ secrets.EXPO_ASC_API_KEY_P8 }}
-        run: |
-          missing=0
-          for name in EXPO_TOKEN EXPO_ASC_KEY_ID EXPO_ASC_ISSUER_ID EXPO_ASC_API_KEY_P8; do
-            if [ -z "${!name}" ]; then
-              echo "$name repository secret is not set; add it before releasing with store_track."
-              missing=1
-            fi
-          done
-          exit "$missing"
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.initialize.outputs.release_sha }}
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: apps/mobile/package-lock.json
-      - name: Version check
-        id: version
-        working-directory: apps/mobile
-        run: |
-          version=$(node scripts/check-release-version.cjs)
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "Releasing app version $version"
-      - name: Install mobile dependencies
-        working-directory: apps/mobile
-        run: npm ci
-      - name: Write the App Store Connect API key
-        env:
-          EXPO_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
-          EXPO_ASC_API_KEY_P8: ${{ secrets.EXPO_ASC_API_KEY_P8 }}
-        run: |
-          set -euo pipefail
-          key_path="$RUNNER_TEMP/AuthKey_${EXPO_ASC_KEY_ID}.p8"
-          echo "$EXPO_ASC_API_KEY_P8" | base64 -d > "$key_path"
-          chmod 600 "$key_path"
-          if ! grep -q 'BEGIN PRIVATE KEY' "$key_path"; then
-            echo "EXPO_ASC_API_KEY_P8 did not decode to a PEM private key; store the base64 of the .p8 file."
-            exit 1
-          fi
-          echo "EXPO_ASC_API_KEY_PATH=$key_path" >> "$GITHUB_ENV"
-      - name: Build the iOS app on EAS from the release SHA
-        id: build
-        working-directory: apps/mobile
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-          EXPO_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
-          EXPO_ASC_ISSUER_ID: ${{ secrets.EXPO_ASC_ISSUER_ID }}
-          EXPECTED_VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          set -euo pipefail
-          build_status=0
-          npx --yes "eas-cli@$EAS_CLI_VERSION" build --profile production-ci --platform ios \
-            --non-interactive --wait --json > "$RUNNER_TEMP/eas-build.json" \
-            2> >(tee "$RUNNER_TEMP/eas-build.log" >&2) || build_status=$?
-          wait
-          if [ "$build_status" -ne 0 ]; then
-            if grep -q 'Credentials are not set up. Run this command again in interactive mode.' "$RUNNER_TEMP/eas-build.log"; then
-              echo "::error::EAS holds no iOS distribution certificate for the production-ci profile, and eas-cli $EAS_CLI_VERSION can only create one interactively. An operator must run once, from apps/mobile: eas credentials --platform ios (Build Credentials > production-ci > Distribution Certificate), then re-run this job."
-            fi
-            exit "$build_status"
-          fi
-          build=$(jq -c 'if type == "array" then .[0] else . end' "$RUNNER_TEMP/eas-build.json")
-          status=$(echo "$build" | jq -r '.status')
-          if [ "$status" != "FINISHED" ]; then
-            echo "EAS build ended with status $status"
-            echo "$build" | jq '.'
-            exit 1
-          fi
-          app_version=$(echo "$build" | jq -r '.appVersion')
-          if [ "$app_version" != "$EXPECTED_VERSION" ]; then
-            echo "EAS built app version $app_version; the checked-out package version is $EXPECTED_VERSION"
-            exit 1
-          fi
-          {
-            echo "id=$(echo "$build" | jq -r '.id')"
-            echo "build_number=$(echo "$build" | jq -r '.appBuildVersion')"
-          } >> "$GITHUB_OUTPUT"
-          echo "EAS build $(echo "$build" | jq -r '.id') finished: $app_version ($(echo "$build" | jq -r '.appBuildVersion'))"
-      - name: Upload to TestFlight
-        working-directory: apps/mobile
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-          EXPO_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
-          EXPO_ASC_ISSUER_ID: ${{ secrets.EXPO_ASC_ISSUER_ID }}
-          BUILD_ID: ${{ steps.build.outputs.id }}
-        run: |
-          npx --yes "eas-cli@$EAS_CLI_VERSION" submit --platform ios --profile production \
-            --id "$BUILD_ID" --non-interactive --wait
-      - name: Store summary
-        if: always()
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-          BUILD_NUMBER: ${{ steps.build.outputs.build_number }}
-          BUILD_ID: ${{ steps.build.outputs.id }}
-          RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
-          OUTCOME: ${{ job.status }}
-        run: |
-          {
-            echo "## TestFlight: app ${VERSION:-?} (${BUILD_NUMBER:-?}) for ${RELEASE_VERSION} — ${OUTCOME}"
-            echo ""
-            echo "- App Store Connect: https://appstoreconnect.apple.com/apps/${ASC_APP_ID}/testflight/ios"
-            echo "- EAS builds: https://expo.dev/accounts/-/projects/buzzy/builds"
-            echo "- EAS build id: ${BUILD_ID:-not started}"
-            echo "- The release itself is judged by the delivery report, not by this job."
-          } >> "$GITHUB_STEP_SUMMARY"
-
-  not_delivered:
-    if: always() && needs.delivery_report.result != 'success'
-    needs: [initialize, delivery_report]
-    runs-on: [self-hosted, beeline-prod-host]
-    steps:
-      - name: Report the aligned release as not delivered
-        env:
-          RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
-          RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
-        run: |
-          {
-            echo "## NOT DELIVERED: $RELEASE_VERSION"
-            echo
-            echo "The aligned release for \`${RELEASE_SHA}\` did not reach matching server, daemon, and OTA ledger confirmation."
-            echo "Any mixed-version state is explicitly not a delivery."
-          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Release failed (${{ steps.result.outputs.failure_class }}): ${{ steps.result.outputs.incomplete }}" >&2
+          exit 1
 
   retry:
     if: >-
-      always() &&
-      (inputs.retry_attempt || 1) < 3 &&
-      !(
-        needs.promote_server.result == 'success' &&
-        needs.confirm_server.result == 'success' &&
-        needs.promote_daemon.result == 'success' &&
-        needs.confirm_daemon.result == 'success' &&
-        needs.promote_app.result == 'success' &&
-        needs.confirm_app.result == 'success'
-      )
-    needs:
-      - initialize
-      - app_artifact
-      - daemon_artifact
-      - server_artifact
-      - artifact_gate
-      - promote_server
-      - confirm_server
-      - promote_daemon
-      - confirm_daemon
-      - promote_app
-      - confirm_app
-      - delivery_report
+      always() && needs.release_result.result == 'failure' &&
+      fromJSON(inputs.retry_attempt || '1') < 3
+    needs: [initialize, release_result]
     runs-on: [self-hosted, beeline-prod-host]
+    timeout-minutes: 2
     steps:
-      - name: Retry the whole release only if it is still current main
+      - name: Redispatch the same release identity; successful checkpoints stay complete
         uses: actions/github-script@v7
         env:
           RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
           RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
-          ATTEMPT: ${{ inputs.retry_attempt || 1 }}
+          ATTEMPT: ${{ inputs.retry_attempt || '1' }}
+          SELECTION: ${{ inputs.selection || 'auto' }}
           STORE_TRACK: ${{ inputs.store_track || 'none' }}
         with:
           script: |
-            const main = await github.rest.repos.getCommit({
-              owner: context.repo.owner, repo: context.repo.repo, ref: 'main',
-            });
-            if (main.data.sha !== process.env.RELEASE_SHA) {
-              core.notice('A newer main sha superseded this whole release; no stale retry dispatched.');
-              return;
-            }
             const attempt = Number(process.env.ATTEMPT);
-            await new Promise((resolve) => setTimeout(resolve, attempt * 30_000));
             await github.rest.actions.createWorkflowDispatch({
               owner: context.repo.owner, repo: context.repo.repo,
               workflow_id: 'unified-release.yml', ref: 'main',
@@ -1032,6 +815,7 @@ jobs:
                 release_sha: process.env.RELEASE_SHA,
                 release_version: process.env.RELEASE_VERSION,
                 retry_attempt: String(attempt + 1),
+                selection: process.env.SELECTION,
                 store_track: process.env.STORE_TRACK,
               },
             });

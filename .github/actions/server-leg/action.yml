@@ -25,7 +25,7 @@ runs:
       uses: actions/github-script@v7
       with:
         script: |
-          const name = `server-artifact-${{ inputs.release_sha }}`;
+          const name = `server-artifact-${{ inputs.release_version }}-${{ inputs.release_sha }}`;
           const artifacts = await github.paginate(github.rest.actions.listArtifactsForRepo, {
             owner: context.repo.owner, repo: context.repo.repo, name, per_page: 100,
           });
@@ -47,7 +47,7 @@ runs:
       if: inputs.phase == 'build' && steps.reuse.outputs.run_id != ''
       uses: actions/download-artifact@v4
       with:
-        name: server-artifact-${{ inputs.release_sha }}
+        name: server-artifact-${{ inputs.release_version }}-${{ inputs.release_sha }}
         path: ${{ runner.temp }}/server-release
         run-id: ${{ steps.reuse.outputs.run_id }}
         github-token: ${{ github.token }}
@@ -75,7 +75,7 @@ runs:
     - if: inputs.phase == 'build'
       uses: actions/upload-artifact@v4
       with:
-        name: server-artifact-${{ inputs.release_sha }}
+        name: server-artifact-${{ inputs.release_version }}-${{ inputs.release_sha }}
         path: ${{ runner.temp }}/server-release/identity.json
         if-no-files-found: error
         retention-days: 7

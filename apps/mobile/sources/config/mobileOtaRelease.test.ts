@@ -983,8 +983,9 @@ esac
       failures.map((failure) => failure[2]),
     );
     expect(unifiedWorkflow).toContain('createWorkflowDispatch');
-    expect(unifiedWorkflow).toContain('if (main.data.sha !== process.env.RELEASE_SHA)');
-    expect(unifiedWorkflow).toContain('A newer main sha superseded this whole release');
+    expect(unifiedWorkflow).toContain('release_sha: process.env.RELEASE_SHA');
+    expect(unifiedWorkflow).toContain('unified-release-state-${process.env.RELEASE_ID}');
+    expect(unifiedWorkflow).toContain('release SHA is not current main');
     expect(unifiedWorkflow).not.toContain('maxFailures < 3');
     expect(deliveryIndexScript).toContain("['merge-base', '--is-ancestor', lastTracked, head]");
     expect(deliveryIndexScript).toContain('`${rangeStart}..${head}`');
@@ -1117,11 +1118,11 @@ esac
     expect(result.stdout).toBe(
       `group_id=current\nupdate_ids=android,ios\nrelease_version=v0.0.2\nsource_sha=${'2'.repeat(40)}\n`,
     );
-    // Both receipt readers resolve their target this way: the promote leg's
-    // own check, and the delivery report's bounded receipt step.
+    // Receipt ownership stays in the selected OTA leg. The final release
+    // record consumes its immutable ledger and does not run another poll.
     expect(
       `${workflow}\n${unifiedWorkflow}`.match(/ota-release\.mjs delivery-target/g),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
 
     index.merges[1].state = 'confirmed';
     writeFileSync(indexPath, JSON.stringify(index));
@@ -1297,25 +1298,16 @@ esac
     expect(JSON.parse(readFileSync(indexPath, 'utf8')).merges[0].state).toBe('published');
   });
 
-  it('records the owner receipt inside the delivery report without gating the release on it', () => {
-    // The 15-minute receipt cron is gone. Its one durable job — writing the
-    // owner device receipt into the cumulative delivery index — is a bounded
-    // step of delivery_report, and it cannot change the release verdict: it
-    // runs after the report, is continue-on-error, and only ever confirms.
-    const deliveryJob = unifiedWorkflow.slice(
-      unifiedWorkflow.indexOf('\n  delivery_report:'),
-      unifiedWorkflow.indexOf('\n  npm_publish:'),
+  it('keeps owner receipt evidence inside the selected OTA leg', () => {
+    const otaJob = unifiedWorkflow.slice(
+      unifiedWorkflow.indexOf('\n  mobile_ota:'),
+      unifiedWorkflow.indexOf('\n  desktop_installers:'),
     );
-    expect(deliveryJob).toContain('MOBILE_OTA_OWNER_PUBKEY');
-    expect(deliveryJob).toContain('MOBILE_OTA_RECEIPT_TOKEN');
-    expect(deliveryJob).toContain('node scripts/ota-release.mjs confirm');
-    expect(deliveryJob).toContain('ota-release.mjs list-undelivered');
-    expect(deliveryJob).toContain('continue-on-error: true');
-    expect(deliveryJob).toContain('mobile-ota-delivery-index');
-    expect(deliveryJob).not.toContain('ota-release.mjs promote');
-    expect(deliveryJob.indexOf('unified-release.mjs report')).toBeLessThan(
-      deliveryJob.indexOf('Record the owner device receipt'),
-    );
+    expect(otaJob).toContain('MOBILE_OTA_OWNER_PUBKEY');
+    expect(otaJob).toContain('MOBILE_OTA_RECEIPT_TOKEN');
+    expect(otaJob).toContain('Require rollback evidence and write checkpoint');
+    expect(otaJob).toContain('mobile-ota-ledger.json');
+    expect(otaJob).toContain('phase: promote');
     // No cron survives anywhere in the release path.
     expect(unifiedWorkflow).not.toContain("cron: '*/15 * * * *'");
     expect(unifiedWorkflow).not.toContain('schedule:');
@@ -1323,21 +1315,14 @@ esac
     expect(workflow).not.toMatch(/branches: \[main\][\s\S]{0,120}paths:/);
   });
 
-  it('measures the aligned roll from its all-artifacts gate and enforces ten minutes', () => {
+  it('measures the selective release from dispatch and enforces twenty minutes', () => {
     expect(unifiedWorkflow).toContain('getWorkflowRun');
     expect(unifiedWorkflow).toContain("core.setOutput('trigger_epoch'");
-    expect(unifiedWorkflow).toContain('promotion_epoch=$(date +%s)');
-    expect(unifiedWorkflow).toContain(
-      'promotion_elapsed="$(( now - ${{ needs.artifact_gate.outputs.promotion_epoch }} ))"',
-    );
-    expect(unifiedWorkflow).toContain(
-      'fix_to_phone_elapsed="$(( now - ${{ needs.initialize.outputs.trigger_epoch }} ))"',
-    );
-    expect(unifiedWorkflow).toContain('test "$promotion_elapsed" -lt 600');
-    expect(unifiedWorkflow).toContain('test "$fix_to_phone_elapsed" -lt 1200');
+    expect(unifiedWorkflow).toContain('elapsed=$((now - TRIGGER_EPOCH))');
+    expect(unifiedWorkflow).toContain('if [ "$elapsed" -ge 1200 ]');
+    expect(unifiedWorkflow).toContain('failure_class=budget');
     expect(workflow).toContain('assert-promotion --ledger "$RUN_LEDGER" --index "$DELIVERY_INDEX"');
-    expect(unifiedWorkflow).toContain('Refuse a mixed-version delivery report');
-    expect(unifiedWorkflow).toContain('unified-release.mjs report');
+    expect(unifiedWorkflow).toContain('unified-release.mjs finalize');
   });
 
   it('runs validation beside candidate export and safely supersedes stale cumulative releases', () => {
@@ -1347,25 +1332,19 @@ esac
     expect(workflow).toContain('parallel_candidate_wall');
     expect(unifiedWorkflow).toMatch(/group: unified-production-release\s+cancel-in-progress: true/);
     expect(workflow).toContain('--before "${PUSH_BEFORE:-}"');
-    expect(unifiedWorkflow).toMatch(
-      /app_artifact:[\s\S]*?daemon_artifact:[\s\S]*?server_artifact:/,
-    );
+    expect(unifiedWorkflow).toMatch(/server:[\s\S]*?helper:[\s\S]*?mobile_ota:/);
+    expect(unifiedWorkflow).toContain("needs.initialize.outputs.run_mobile_ota == 'true'");
     expect(deliveryIndexScript).toContain("['merge-base', '--is-ancestor', lastTracked, head]");
   });
 
   it('promotes through the OTA ledger without an Actions device rehearsal', () => {
     expect(workflow).toContain('--status post-promote');
     expect(workflow).toContain('node scripts/ota-release.mjs promote');
-    expect(unifiedWorkflow.indexOf('promote_app:')).toBeLessThan(
-      unifiedWorkflow.indexOf('delivery_report:'),
+    expect(unifiedWorkflow.indexOf('mobile_ota:')).toBeLessThan(
+      unifiedWorkflow.indexOf('release_result:'),
     );
-    expect(unifiedWorkflow.indexOf('promote_server:')).toBeLessThan(
-      unifiedWorkflow.indexOf('promote_daemon:'),
-    );
-    expect(unifiedWorkflow.indexOf('promote_daemon:')).toBeLessThan(
-      unifiedWorkflow.indexOf('promote_app:'),
-    );
-    expect(unifiedWorkflow).toContain('unified-release.mjs confirm-delivery');
+    expect(unifiedWorkflow).toContain("needs.initialize.outputs.run_mobile_ota == 'true'");
+    expect(unifiedWorkflow).toContain('release-checkpoint-${{ needs.initialize.outputs.release_id }}-mobile-ota');
     expect(unifiedWorkflow).not.toMatch(
       /mobile-ota-post-promote|post_promote_rehearsal|emulator|Maestro/,
     );
@@ -2149,17 +2128,18 @@ esac
     });
   }, 60_000);
 
-  it('the delivery report relies on the ledger and server/daemon health, not Actions device work', () => {
+  it('the final release record relies on bounded component checks, not fleet or Actions device work', () => {
     expect(workflow).toContain('Store release ledger, timings, and promotion proof');
-    expect(unifiedWorkflow).toContain('unified-release.mjs confirm-delivery');
+    expect(unifiedWorkflow).toContain('unified-release.mjs apply-checkpoints');
+    expect(unifiedWorkflow).toContain('unified-release.mjs finalize');
     expect(unifiedWorkflow).not.toMatch(
       /mobile-ota-post-promote|post_promote_rehearsal|emulator|Maestro/,
     );
-    expect(daemonWorkflow).toContain('Confirm every daemon restarted READY on the exact release');
+    expect(daemonWorkflow).toContain('Record asynchronous fleet uptake without blocking the release');
     expect(serverWorkflow).toContain('Deploy the exact release SHA to the monolith');
     expect(serverWorkflow).toContain('test "$(git rev-parse HEAD)" = "$RELEASE_SHA"');
     expect(serverWorkflow).toContain('--build-arg "BEELINE_RELEASE_SHA=$RELEASE_SHA"');
-    expect(unifiedWorkflow).toContain('Confirm monolith readiness and exact deployed image');
+    expect(unifiedWorkflow).toContain('Bounded exact server smoke check');
     expect(unifiedWorkflow).toContain('https://server.usebeeline.app/readyz');
     expect(unifiedWorkflow).toContain('https://server.usebeeline.app/version');
   });

@@ -295,6 +295,12 @@ describe('RoomRosterSheet', () => {
     expect(renderer.root.findAllByProps({ testID: `remove-room-member-${OX}` })).toHaveLength(0);
   });
 
+  it('keeps add controls available in a corner', () => {
+    const renderer = render(sheet({ parentChannelId: 'parent-room' }));
+    expect(renderer.root.findAllByProps({ testID: 'room-roster-add-people' })).toHaveLength(2);
+    expect(renderer.root.findAllByProps({ testID: 'room-roster-add-agents' })).toHaveLength(2);
+  });
+
   it('gives a row no chevron and no detail when the viewer may not remove it', () => {
     const renderer = render(sheet({ canManage: false }));
     const agentRow = renderer.root.findAllByProps({ testID: `room-roster-agent-${OX}` }).at(-1)!;

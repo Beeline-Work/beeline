@@ -1,8 +1,8 @@
 import { type RoomViewMessage } from '@beeline/buzz-client';
 import { verifyEvent, type NostrEvent } from '@beeline/nostr';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const controls = vi.hoisted(() => ({ fetch: vi.fn() }));
+const controls = vi.hoisted(() => ({ fetch: vi.fn(), authorization: vi.fn() }));
 const mmkv = vi.hoisted(() => ({ stores: new Map<string, Map<string, string>>() }));
 
 vi.mock('expo-crypto', () => ({
@@ -16,7 +16,7 @@ vi.mock('@/buzz/runtime-config', () => ({
   }),
 }));
 vi.mock('@/auth/monolith-session', () => ({
-  monolithSession: { fetch: controls.fetch },
+  monolithSession: { fetch: controls.fetch, authorization: controls.authorization },
 }));
 vi.mock('react-native-mmkv', () => ({
   MMKV: class {
@@ -85,6 +85,112 @@ describe('monolith Room send path', () => {
       const input = JSON.parse(String(init.body)) as { messageId: string };
       return new Response(JSON.stringify({ messageId: input.messageId }), { status: 200 });
     });
+    controls.authorization.mockReset();
+    controls.authorization.mockResolvedValue('phone-session');
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it('reconnects and resubscribes after a server deployment closes the live socket', async () => {
+    vi.useFakeTimers();
+    const sockets: Array<{
+      sent: string[];
+      closed: boolean;
+      onopen?: () => void;
+      onmessage?: (event: { data: string }) => void;
+      onclose?: () => void;
+    }> = [];
+    class TestWebSocket {
+      sent: string[] = [];
+      closed = false;
+      onopen?: () => void;
+      onmessage?: (event: { data: string }) => void;
+      onclose?: () => void;
+      constructor(
+        readonly url: string,
+        readonly protocols: string[],
+      ) {
+        sockets.push(this);
+      }
+      send(value: string) {
+        this.sent.push(value);
+      }
+      close() {
+        this.closed = true;
+      }
+    }
+    vi.stubGlobal('WebSocket', TestWebSocket);
+    const received: unknown[] = [];
+    const stop = await new MonolithRigTransport(identity).surfaceSubscribe(
+      [{ '#h': [ROOM] }],
+      (event) => received.push(event),
+    );
+    expect(sockets).toHaveLength(1);
+    sockets[0]!.onopen?.();
+    expect(sockets[0]!.sent).toEqual([JSON.stringify({ type: 'subscribe', roomId: ROOM })]);
+
+    sockets[0]!.onclose?.();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(sockets).toHaveLength(2);
+    sockets[1]!.onopen?.();
+    expect(sockets[1]!.sent).toEqual([JSON.stringify({ type: 'subscribe', roomId: ROOM })]);
+    sockets[1]!.onmessage?.({
+      data: JSON.stringify({ type: 'invalidate', roomId: ROOM, reason: 'postgres:messages' }),
+    });
+    expect(received).toEqual([
+      { monolithLive: { type: 'invalidate', roomId: ROOM, reason: 'postgres:messages' } },
+    ]);
+
+    sockets[1]!.onclose?.();
+    stop();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(sockets).toHaveLength(2);
+  });
+
+  it('retries authorization and resets reconnect backoff after opening', async () => {
+    vi.useFakeTimers();
+    const sockets: Array<{
+      sent: string[];
+      onopen?: () => void;
+      onclose?: () => void;
+      close: () => void;
+    }> = [];
+    class TestWebSocket {
+      sent: string[] = [];
+      onopen?: () => void;
+      onclose?: () => void;
+      constructor(
+        readonly url: string,
+        readonly protocols: string[],
+      ) {
+        sockets.push(this);
+      }
+      send(value: string) {
+        this.sent.push(value);
+      }
+      close() {}
+    }
+    vi.stubGlobal('WebSocket', TestWebSocket);
+    controls.authorization.mockRejectedValueOnce(new Error('session refresh failed'));
+
+    const stop = await new MonolithRigTransport(identity).surfaceSubscribe(
+      [{ '#h': [ROOM] }],
+      () => {},
+    );
+    expect(sockets).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(sockets).toHaveLength(1);
+    sockets[0]!.onopen?.();
+    sockets[0]!.onclose?.();
+    await vi.advanceTimersByTimeAsync(999);
+    expect(sockets).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(sockets).toHaveLength(2);
+
+    stop();
   });
 
   it('stages a plain repo-less Room message before publishing it to the monolith', async () => {

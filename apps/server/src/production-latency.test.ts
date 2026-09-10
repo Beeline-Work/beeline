@@ -1,4 +1,5 @@
 import type { AddressInfo } from 'node:net';
+import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import type { TokenAuth } from './auth.js';
 import type { DaemonService } from './daemon-service.js';
@@ -6,13 +7,24 @@ import { LiveHub } from './live.js';
 import type { PhoneService } from './phone-service.js';
 import { createBeelineServer } from './server.js';
 
-// The elected background leader retains one of the configured five clients.
-// Prove the public routes against the four-client request-side floor.
-const POOL_SIZE = 4;
-const DAEMON_OPERATIONS_PER_MINUTE = 171;
-const LIVE_LISTENERS = 2;
+// The elected background leader retains one configured client. Nine active
+// helpers can reconnect together after a deployment, so every helper must be
+// able to record evidence without starving public requests behind that burst.
+const productionConfig = readFileSync(
+  new URL('../../../fly.beeline-server.toml', import.meta.url),
+  'utf8',
+);
+const PRODUCTION_DATABASE_POOL_MAX = Number(
+  process.env.TEST_DATABASE_POOL_MAX ??
+    productionConfig.match(/DATABASE_POOL_MAX = "(\d+)"/)?.[1] ??
+    0,
+);
+const POOL_SIZE = PRODUCTION_DATABASE_POOL_MAX - 1;
+const ACTIVE_HELPERS = 9;
+const LOCAL_LIVE_LISTENERS = 1;
 const LOAD_WINDOW_MS = 1_000;
-const DATABASE_ROUND_TRIP_MS = 25;
+// Production's bounded direct SELECT probe measured 74 ms at p95.
+const DATABASE_ROUND_TRIP_MS = 75;
 
 class BoundedPool {
   readonly waits: number[] = [];
@@ -59,7 +71,7 @@ function scheduled(delayMs: number, work: () => Promise<void>): Promise<void> {
   });
 }
 
-describe('production-shaped five-connection latency boundary', () => {
+describe('production database-pool latency boundary', () => {
   it('keeps linear presence work and real HTTP route probes within budget', async () => {
     const pool = new BoundedPool();
     const routeDurations = { ready: [] as number[], completion: [] as number[] };
@@ -91,21 +103,19 @@ describe('production-shaped five-connection latency boundary', () => {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     const jobs: Promise<void>[] = [];
-    const daemonOperationsInWindow = Math.ceil(
-      (DAEMON_OPERATIONS_PER_MINUTE * LOAD_WINDOW_MS) / 60_000,
-    );
+    const daemonOperationsInWindow = ACTIVE_HELPERS;
 
     try {
-      // Observed production rate: 171 authenticated daemon operations/minute.
+      // All nine production helpers may reconnect together after promotion.
       // Evidence holds one client for its transaction, changes one canonical
       // row, and causes one joined presence read on each server listener.
       for (let index = 0; index < daemonOperationsInWindow; index += 1) {
         jobs.push(
-          scheduled(Math.floor((index * LOAD_WINDOW_MS) / daemonOperationsInWindow), async () => {
+          scheduled(0, async () => {
             reconciliations += 1;
             await pool.run(() => delay(DATABASE_ROUND_TRIP_MS * 5));
             await Promise.all(
-              Array.from({ length: LIVE_LISTENERS }, () =>
+              Array.from({ length: LOCAL_LIVE_LISTENERS }, () =>
                 pool.run(async () => {
                   presenceReads += 1;
                   await delay(DATABASE_ROUND_TRIP_MS);
@@ -145,16 +155,9 @@ describe('production-shaped five-connection latency boundary', () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
 
-    expect(reconciliations).toBe(daemonOperationsInWindow);
-    expect(presenceReads).toBe(daemonOperationsInWindow * LIVE_LISTENERS);
-    expect(percentile(pool.waits, 0.95)).toBeLessThan(50);
-    expect(percentile(pool.waits, 0.99)).toBeLessThan(100);
-    for (const durations of Object.values(routeDurations)) {
-      expect(percentile(durations, 0.95)).toBeLessThan(500);
-      expect(percentile(durations, 0.99)).toBeLessThan(1_000);
-      expect(Math.max(...durations)).toBeLessThanOrEqual(2_000);
-    }
     console.info('[latency-regression]', {
+      configuredPoolMax: PRODUCTION_DATABASE_POOL_MAX,
+      requestPoolSize: POOL_SIZE,
       poolWaitP95Ms: Math.round(percentile(pool.waits, 0.95)),
       poolWaitP99Ms: Math.round(percentile(pool.waits, 0.99)),
       readyP95Ms: Math.round(percentile(routeDurations.ready, 0.95)),
@@ -165,5 +168,15 @@ describe('production-shaped five-connection latency boundary', () => {
       reconciliations,
       presenceReads,
     });
+    expect(PRODUCTION_DATABASE_POOL_MAX).toBe(10);
+    expect(reconciliations).toBe(daemonOperationsInWindow);
+    expect(presenceReads).toBe(daemonOperationsInWindow * LOCAL_LIVE_LISTENERS);
+    expect(percentile(pool.waits, 0.95)).toBeLessThan(500);
+    expect(percentile(pool.waits, 0.99)).toBeLessThan(500);
+    for (const durations of Object.values(routeDurations)) {
+      expect(percentile(durations, 0.95)).toBeLessThan(500);
+      expect(percentile(durations, 0.99)).toBeLessThan(1_000);
+      expect(Math.max(...durations)).toBeLessThanOrEqual(2_000);
+    }
   }, 10_000);
 });

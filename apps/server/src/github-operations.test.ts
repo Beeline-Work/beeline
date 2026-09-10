@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { generateKeyPair, exportPKCS8 } from 'jose';
-import { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
+import { GitHubAppClient, GitHubHttpError, GitHubOAuthClient } from '@beeline/auth/github';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { GitHubOperations } from './github-operations.js';
@@ -196,6 +196,136 @@ describe('GitHub phone operations', () => {
         )
       ).rows,
     ).toEqual([{ full_name: 'owner/beeline' }]);
+  });
+
+  async function boundInstallationOperations(
+    app: Pick<
+      GitHubAppClient,
+      'installationUrl' | 'userCanAccessInstallation' | 'installationAccount' | 'listRepositories'
+    >,
+    state = 'org-callback-state',
+  ) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request) =>
+        String(input) === 'https://github.test/token'
+          ? new Response(JSON.stringify({ access_token: 'secret-user-token' }), { status: 200 })
+          : new Response(JSON.stringify({ id: 42, login: 'owner', name: 'Owner' }), {
+              status: 200,
+            }),
+      ),
+    );
+    const oauth = new GitHubOAuthClient({
+      clientId: 'client',
+      clientSecret: 'secret',
+      authorizationEndpoint: 'https://github.test/authorize',
+      tokenEndpoint: 'https://github.test/token',
+      apiBaseUrl: 'https://api.github.test',
+    });
+    const operations = new GitHubOperations(database, oauth, app as GitHubAppClient, 'secret');
+    await operations.beginIdentity(HUMAN, {
+      redirectUri: 'beeline://github-callback',
+      state,
+    });
+    await operations.completeIdentity(HUMAN, { challenge: 'oauth-code', proof: state }, false);
+    const started = await operations.beginInstallation(HUMAN, {
+      redirectUri: 'beeline://github-installation',
+    });
+    return { operations, installState: new URL(started.url).searchParams.get('state')! };
+  }
+
+  const orgInstallationApp = (
+    access: 'throw-404' | 'deny' | 'allow',
+    accountType: 'User' | 'Organization' = 'Organization',
+  ) =>
+    ({
+      installationUrl: vi.fn(
+        (state: string) => `https://github.test/install?state=${encodeURIComponent(state)}`,
+      ),
+      userCanAccessInstallation: vi.fn(async () => {
+        if (access === 'throw-404') {
+          throw new GitHubHttpError('GitHub user installations', 404);
+        }
+        return access === 'allow';
+      }),
+      installationAccount: vi.fn(async () => ({
+        id: accountType === 'Organization' ? '84' : '42',
+        login: accountType === 'Organization' ? 'acme' : 'owner',
+        type: accountType,
+        repositorySelection: 'selected' as const,
+      })),
+      listRepositories: vi.fn(async () => [
+        {
+          id: 9,
+          installationId: 78,
+          name: 'widgets',
+          fullName: accountType === 'Organization' ? 'acme/widgets' : 'owner/widgets',
+          remote: 'https://github.com/acme/widgets.git',
+          defaultBranch: 'main',
+        },
+      ]),
+    }) as unknown as Pick<
+      GitHubAppClient,
+      'installationUrl' | 'userCanAccessInstallation' | 'installationAccount' | 'listRepositories'
+    >;
+
+  it('completes an organization installation even when the user-token listing cannot verify it', async () => {
+    const app = orgInstallationApp('throw-404');
+    const { operations, installState } = await boundInstallationOperations(app);
+
+    await expect(operations.completeInstallation(installState, 78)).resolves.toBe(
+      'beeline://github-installation?installed=1',
+    );
+    expect(
+      (
+        await database.query<{
+          account_type: string;
+          account_login: string;
+          status: string;
+        }>(
+          `SELECT account_type,account_login,status FROM github_installations WHERE installation_id=78`,
+        )
+      ).rows,
+    ).toEqual([{ account_type: 'Organization', account_login: 'acme', status: 'active' }]);
+    expect(
+      (
+        await database.query<{ full_name: string }>(
+          `SELECT full_name FROM github_repositories WHERE installation_id=78 AND active`,
+        )
+      ).rows,
+    ).toEqual([{ full_name: 'acme/widgets' }]);
+  });
+
+  it('refuses an organization installation the user listing definitively denies', async () => {
+    const app = orgInstallationApp('deny');
+    const { operations, installState } = await boundInstallationOperations(app, 'org-deny-state');
+
+    await expect(operations.completeInstallation(installState, 78)).rejects.toThrow(
+      'GitHub installation access denied',
+    );
+    expect(
+      (
+        await database.query(
+          `SELECT installation_id FROM github_installations WHERE installation_id=78`,
+        )
+      ).rows,
+    ).toEqual([]);
+  });
+
+  it('still refuses a user installation when the user-token listing throws', async () => {
+    const app = orgInstallationApp('throw-404', 'User');
+    const { operations, installState } = await boundInstallationOperations(app, 'user-404-state');
+
+    await expect(operations.completeInstallation(installState, 78)).rejects.toThrow(
+      'GitHub user installations failed: HTTP 404',
+    );
+    expect(
+      (
+        await database.query(
+          `SELECT installation_id FROM github_installations WHERE installation_id=78`,
+        )
+      ).rows,
+    ).toEqual([]);
   });
 
   it('reconciles installations missing from the monolith database via the App JWT listing', async () => {
@@ -887,7 +1017,7 @@ describe('GitHub phone operations', () => {
     // may take.
     async function bindOrgIdentity(
       database: PgliteDatabase,
-      userListings: 'confirmed' | 'user-only' | 'unavailable',
+      userListings: 'confirmed' | 'user-only' | 'unavailable' | 'unavailable-404',
     ) {
       const operations = operationsFor(database);
       const { fetchMock } = await bindIdentity(database);
@@ -917,6 +1047,11 @@ describe('GitHub phone operations', () => {
         if (userListings === 'unavailable' && url.includes('/user/installations'))
           return new Response(JSON.stringify({ message: 'unavailable' }), {
             status: 503,
+            headers: { 'content-type': 'application/json' },
+          });
+        if (userListings === 'unavailable-404' && url.includes('/user/installations'))
+          return new Response(JSON.stringify({ message: 'Not Found' }), {
+            status: 404,
             headers: { 'content-type': 'application/json' },
           });
         if (url === 'https://api.github.test/app/installations?per_page=100&page=1')
@@ -956,7 +1091,10 @@ describe('GitHub phone operations', () => {
           await database.query<{ installation_id: string | number; owner_id: string }>(
             `SELECT installation_id,owner_id FROM github_installations ORDER BY installation_id`,
           )
-        ).rows.map((row) => ({ installation_id: Number(row.installation_id), owner_id: row.owner_id })),
+        ).rows.map((row) => ({
+          installation_id: Number(row.installation_id),
+          owner_id: row.owner_id,
+        })),
       ).toEqual([
         { installation_id: 77, owner_id: HUMAN },
         { installation_id: 90, owner_id: HUMAN },
@@ -982,6 +1120,23 @@ describe('GitHub phone operations', () => {
       ).toEqual([]);
     });
 
+    it('claims an unclaimed organization installation when the user listing answers 404', async () => {
+      const { operations } = await bindOrgIdentity(database, 'unavailable-404');
+      // Production listing failure: a healthy token still cannot list org
+      // installs. 404 is unavailable, not a throw, and does not demand reconnect.
+      await expect(operations.refresh(HUMAN)).resolves.toEqual({});
+      expect(
+        (
+          await database.query<{ installation_id: string | number; owner_id: string }>(
+            `SELECT installation_id,owner_id FROM github_installations WHERE installation_id=90`,
+          )
+        ).rows.map((row) => ({
+          installation_id: Number(row.installation_id),
+          owner_id: row.owner_id,
+        })),
+      ).toEqual([{ installation_id: 90, owner_id: HUMAN }]);
+    });
+
     it('claims an unclaimed organization installation when the user listing is unavailable', async () => {
       const { operations } = await bindOrgIdentity(database, 'unavailable');
       // Expired token with no refresh grant: reconnect is already required,
@@ -996,7 +1151,10 @@ describe('GitHub phone operations', () => {
           await database.query<{ installation_id: string | number; owner_id: string }>(
             `SELECT installation_id,owner_id FROM github_installations WHERE installation_id=90`,
           )
-        ).rows.map((row) => ({ installation_id: Number(row.installation_id), owner_id: row.owner_id })),
+        ).rows.map((row) => ({
+          installation_id: Number(row.installation_id),
+          owner_id: row.owner_id,
+        })),
       ).toEqual([{ installation_id: 90, owner_id: HUMAN }]);
     });
 

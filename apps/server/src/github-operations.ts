@@ -314,7 +314,7 @@ export class GitHubOperations {
       let administered: Set<number> | undefined;
       try {
         administered = credential.token
-          ? new Set(await this.app.listUserInstallationIds(credential.token))
+          ? await this.listAdministeredInstallations(credential.token)
           : new Set<number>();
       } catch (error) {
         if (githubReconnectNeeded && error instanceof GitHubHttpError && error.status >= 500) {
@@ -327,7 +327,7 @@ export class GitHubOperations {
             ? await this.rotateUserCredential(credential, this.database)
             : undefined;
           if (rotated) {
-            administered = new Set(await this.app.listUserInstallationIds(rotated));
+            administered = await this.listAdministeredInstallations(rotated);
           } else {
             // Refresh is impossible (no/revoked refresh token): degrade to the stored
             // installations instead of surfacing a 503 to the repo picker.
@@ -1059,30 +1059,79 @@ export class GitHubOperations {
     );
     for (const repository of repositories) await this.storeRepository(repository, database);
   }
+  /**
+   * GET /user/installations is keyed to the OAuth lookup token's visibility:
+   * user-owned installations always appear, but an unscoped OAuth token
+   * generally cannot list ORGANIZATION installations. Production answered that
+   * listing with HTTP 404. Treat 404 as unavailable (same as the install
+   * callback), never as a throw that aborts refresh.
+   */
+  private async listAdministeredInstallations(token: string): Promise<Set<number> | undefined> {
+    try {
+      return new Set(await this.app.listUserInstallationIds(token));
+    } catch (error) {
+      if (error instanceof GitHubHttpError && error.status === 404) return undefined;
+      throw error;
+    }
+  }
+
+  /**
+   * GET /user/installations is keyed to the OAuth lookup token's visibility:
+   * user-owned installations always appear, but an unscoped OAuth token
+   * generally cannot list ORGANIZATION installations, so demanding a
+   * positive match here strands every org install behind an exception or a
+   * false negative. For an Organization target, GitHub's state-bound
+   * redirect — only the installing admin's browser receives it, bound to
+   * this flow's one-time state — is the authority; the listing still refuses
+   * when it definitively denies access, and its failures are logged rather
+   * than fatal. Canonical comment: apps/auth/src/server-context.ts.
+   */
+  private async userCanAdministerInstallation(
+    token: string,
+    installationId: number,
+    accountType: 'User' | 'Organization',
+  ): Promise<boolean | undefined> {
+    try {
+      return await this.app.userCanAccessInstallation(token, installationId);
+    } catch (error) {
+      if (accountType !== 'Organization') throw error;
+      console.warn(
+        `[server] GitHub installation listing unavailable for organization verification installation=${installationId}:`,
+        error instanceof Error ? error.message : String(error),
+      );
+      return undefined;
+    }
+  }
+
   private async assertInstallationAccess(
     viewerId: string,
     installationId: number,
     database: SqlDatabase = this.database,
   ) {
+    const account = await this.app.installationAccount(installationId);
     const credential = await this.userCredential(viewerId, database);
-    let token = credential?.token;
-    if (token) {
-      let accessible = await this.app
-        .userCanAccessInstallation(token, installationId)
-        .catch(() => false);
-      if (!accessible && credential?.refreshToken) {
-        // 401 from an expired user token: rotate once and retry.
-        const rotated = await this.rotateUserCredential(credential, database);
-        if (rotated) {
-          token = rotated;
-          accessible = await this.app
-            .userCanAccessInstallation(rotated, installationId)
-            .catch(() => false);
-        }
-      }
-      if (accessible) return;
+    if (!credential?.token) throw new Error('GitHub installation access denied');
+
+    let accessible: boolean | undefined;
+    try {
+      accessible = await this.userCanAdministerInstallation(
+        credential.token,
+        installationId,
+        account.type,
+      );
+    } catch (error) {
+      const shouldRotate =
+        Boolean(credential.refreshToken) &&
+        error instanceof GitHubHttpError &&
+        error.status === 401;
+      if (!shouldRotate) throw error;
+      const rotated = await this.rotateUserCredential(credential, database);
+      if (!rotated) throw new Error('GitHub installation access denied');
+      accessible = await this.userCanAdministerInstallation(rotated, installationId, account.type);
     }
-    throw new Error('GitHub installation access denied');
+
+    const accessConfirmed = account.type === 'User' ? accessible === true : accessible !== false;
+    if (!accessConfirmed) throw new Error('GitHub installation access denied');
   }
   private async userCredential(
     viewerId: string,

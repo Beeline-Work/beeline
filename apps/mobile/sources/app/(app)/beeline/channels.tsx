@@ -1,16 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  AppState,
-  FlatList,
-  Keyboard,
-  Linking,
-  Platform,
-  Text,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { FlatList, Keyboard, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import * as WebBrowser from 'expo-web-browser';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -29,12 +19,8 @@ import {
 } from '@beeline/buzz-client';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
-import { authSessionOptions } from '@/auth/auth-session';
-import {
-  githubInstallationRedirectUri,
-  githubRepositoryRefreshFeedback,
-  runGitHubInstallationSession,
-} from '@/auth/github-auth-session';
+import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
+import { useGitHubInstallationSession } from '@/auth/github-installation-host';
 import {
   loadActiveCommunityId,
   saveActiveCommunityId,
@@ -439,72 +425,27 @@ export default function BuzzChannels() {
     setRepoPickerError(null);
   }, []);
 
-  const handleRepositoryRefreshPhase = useCallback(
-    (phase: Parameters<typeof githubRepositoryRefreshFeedback>[0]) => {
-      const feedback = githubRepositoryRefreshFeedback(phase);
-      setRepoPickerNotice(feedback.notice);
-      setRepoPickerError(feedback.error);
+  const startGitHubInstallation = useCallback(
+    async (installationId?: number) => {
+      if (!transport) throw new Error('GitHub transport is unavailable');
+      return transport.githubInstallationStart(githubInstallationRedirectUri(), installationId);
     },
-    [],
+    [transport],
   );
-
-  // The New Room picker connects a NEW GitHub account/organization through
-  // the same state-bound install session the Room screen runs; the deck has
-  // no Room id, so the session returns to the deck itself.
-  const handleAddGitHubAccount = useCallback(async () => {
-    if (!transport) return;
-    setRepoPickerError(null);
-    setRepoPickerNotice(null);
-    try {
-      await runGitHubInstallationSession({
-        returnPath: '/beeline/channels',
-        startInstallation: () => transport.githubInstallationStart(githubInstallationRedirectUri()),
-        openAuthSession: (installationUrl, redirectUri) =>
-          WebBrowser.openAuthSessionAsync(
-            installationUrl,
-            redirectUri,
-            authSessionOptions(Platform.OS, redirectUri),
-          ),
-        subscribeToUrls: (listener) => Linking.addEventListener('url', ({ url }) => listener(url)),
-        subscribeToAppState: (listener) => AppState.addEventListener('change', listener),
-        refreshRepositories: () => loadRepoPicker(true),
-        onRefreshPhase: handleRepositoryRefreshPhase,
-      });
-    } catch (err) {
-      setRepoPickerError(`Could not connect GitHub: ${String(err)}`);
-    }
-  }, [handleRepositoryRefreshPhase, loadRepoPicker, transport]);
-
-  const handleManageGitHubInstallation = useCallback(
-    async (installation: GitHubInstallationAccess) => {
-      if (!transport) return;
-      setRepoPickerError(null);
-      setRepoPickerNotice(null);
-      try {
-        await runGitHubInstallationSession({
-          returnPath: '/beeline/channels',
-          startInstallation: () =>
-            transport.githubInstallationStart(
-              githubInstallationRedirectUri(),
-              installation.installationId,
-            ),
-          openAuthSession: (installationUrl, redirectUri) =>
-            WebBrowser.openAuthSessionAsync(
-              installationUrl,
-              redirectUri,
-              authSessionOptions(Platform.OS, redirectUri),
-            ),
-          subscribeToUrls: (listener) => Linking.addEventListener('url', ({ url }) => listener(url)),
-          subscribeToAppState: (listener) => AppState.addEventListener('change', listener),
-          refreshRepositories: () => loadRepoPicker(true),
-          onRefreshPhase: handleRepositoryRefreshPhase,
-        });
-      } catch (err) {
-        setRepoPickerError(`Could not connect GitHub: ${String(err)}`);
-      }
-    },
-    [handleRepositoryRefreshPhase, loadRepoPicker, transport],
-  );
+  const refreshGitHubRepositories = useCallback(() => loadRepoPicker(true), [loadRepoPicker]);
+  const resumeRepoPicker = useCallback(async () => {
+    setShowCreateRoom(true);
+    setShowRepoPicker(true);
+  }, []);
+  const { handleAddGitHubAccount, handleManageGitHubInstallation } = useGitHubInstallationSession({
+    ready: Boolean(transport && activeCommunityId),
+    returnPath: '/beeline/channels',
+    startInstallation: startGitHubInstallation,
+    refreshRepositories: refreshGitHubRepositories,
+    onError: setRepoPickerError,
+    onNotice: setRepoPickerNotice,
+    onColdResume: resumeRepoPicker,
+  });
 
   const handleSelectNoRepository = useCallback(() => {
     setPendingRepo(null);

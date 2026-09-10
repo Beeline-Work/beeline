@@ -12,6 +12,11 @@ type CodeHighlighterProps = {
   style?: TextStyle;
 };
 
+// React Native pays native-view and layout cost for every nested Text span.
+// Keep ordinary code highlighted, but render unusually large blocks as one
+// selectable, full-fidelity text node instead of building thousands of spans.
+const MAX_HIGHLIGHTED_CODE_CHARS = 20_000;
+
 /**
  * Map a highlight-token type to a syntax-palette colour.
  */
@@ -41,10 +46,21 @@ function tokenColor(token: HighlightToken): string | undefined {
  * numbers, and comments get coloured) which keeps the output clean.
  */
 export function CodeHighlighter({ code, language, style }: CodeHighlighterProps) {
-  const lines = useMemo(() => tokenizeCode(code, language), [code, language]);
+  const lines = useMemo(
+    () => (code.length <= MAX_HIGHLIGHTED_CODE_CHARS ? tokenizeCode(code, language) : null),
+    [code, language],
+  );
 
   // If the code is empty, render nothing meaningful.
   if (!code) return null;
+
+  if (!lines) {
+    return (
+      <Text selectable style={[styles.codeText, style]}>
+        {code}
+      </Text>
+    );
+  }
 
   return (
     <Text selectable style={[styles.codeText, style]}>

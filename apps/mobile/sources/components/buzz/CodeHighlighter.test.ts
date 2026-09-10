@@ -48,6 +48,19 @@ function tokenStrings(input: string, lang: string | null = 'typescript'): string
 }
 
 describe('tokenizeCode', () => {
+  it('keeps a long code block complete without one native span per plain character', () => {
+    const code = Array.from(
+      { length: 400 },
+      (_, index) =>
+        `export async function handler${index}(request: Request): Promise<Response> { return Response.json({ index: ${index}, path: request.url, ok: true }); }`,
+    ).join('\n');
+    const tokenized = tokenizeCode(code, 'typescript');
+    const spanCount = tokenized.reduce((count, line) => count + line.length, 0);
+
+    expect(flattenTokens(tokenized)).toBe(code);
+    expect(spanCount).toBeLessThan(code.length / 2);
+  });
+
   it('preserves full text through round-trip', () => {
     const code = `const x: number = 42;\n// a comment\nconsole.log("hello");`;
     expect(flattenTokens(tokenizeCode(code, 'typescript'))).toBe(code);
@@ -169,6 +182,25 @@ function renderedText(renderer: ReactTestRenderer): string {
 }
 
 describe('CodeHighlighter', () => {
+  it('keeps a lengthy code block selectable and complete without thousands of native spans', () => {
+    const code = Array.from(
+      { length: 400 },
+      (_, index) =>
+        `export async function handler${index}(request: Request): Promise<Response> { return Response.json({ index: ${index}, path: request.url, ok: true }); }`,
+    ).join('\n');
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        React.createElement(CodeHighlighter, { code, language: 'typescript' }),
+      );
+    });
+
+    expect(renderedText(renderer)).toBe(code);
+    const textNodes = renderer.root.findAllByType('Text');
+    expect(textNodes).toHaveLength(1);
+    expect(textNodes[0]!.props.selectable).toBe(true);
+  });
+
   it('renders code text', () => {
     let renderer!: ReactTestRenderer;
     act(() => {

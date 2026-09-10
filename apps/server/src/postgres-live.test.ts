@@ -124,13 +124,26 @@ describe('Postgres live fanout', () => {
       expect.objectContaining({ type: 'invalidate', roomId: ROOM, agentId: AUTHOR }),
     ]);
     expect(clientsB[0]!.payloads).toHaveLength(1);
-    expect(JSON.parse(clientsB[0]!.payloads[0]!)).toEqual({
-      table: 'messages',
-      operation: 'INSERT',
-      roomId: ROOM,
-      messageId: '1'.repeat(64),
-      agentId: AUTHOR,
-    });
+    expect(JSON.parse(clientsB[0]!.payloads[0]!)).toEqual(
+      expect.objectContaining({
+        table: 'messages',
+        operation: 'INSERT',
+        roomId: ROOM,
+        messageId: '1'.repeat(64),
+        agentId: AUTHOR,
+        traceId: expect.stringMatching(/^[0-9a-f]{32}$/),
+        databaseAt: expect.any(Number),
+      }),
+    );
+    expect(received[0]).toEqual(
+      expect.objectContaining({
+        trace: expect.objectContaining({
+          id: expect.stringMatching(/^[0-9a-f]{32}$/),
+          databaseAt: expect.any(Number),
+          emittedAt: expect.any(Number),
+        }),
+      }),
+    );
     expect(clientsB[0]!.payloads[0]).not.toContain('hello');
   });
 

@@ -22,7 +22,7 @@ import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-s
 import { liveDraftRowId } from '@/buzz/draft-settle';
 import { createRoomOutbox, mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { BuzzRigTransport } from '@/sync/transport';
-import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
+import type { LiveWireTrace, MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 import {
   AGENT_TURN_FRESHNESS_MS,
   mergeAgentPresence,
@@ -32,6 +32,27 @@ import {
 import { ROOM_LABEL } from '@/buzz/vocabulary';
 
 const OUTBOX_CONFIRMATION_TIMEOUT_MS = 15_000;
+
+type ReceivedLiveTrace = LiveWireTrace & { reason: string; receivedAt: number };
+let remainingLiveTraceLogs = 128;
+
+function logLiveTrace(phase: string, traces: readonly ReceivedLiveTrace[], at = Date.now()): void {
+  if (traces.length === 0 || remainingLiveTraceLogs <= 0) return;
+  remainingLiveTraceLogs -= 1;
+  console.info(
+    `[live-trace] ${JSON.stringify({
+      phase,
+      at,
+      events: traces.map(({ id, reason, databaseAt, emittedAt, receivedAt }) => ({
+        id,
+        reason,
+        databaseAt,
+        emittedAt,
+        receivedAt,
+      })),
+    })}`,
+  );
+}
 
 function eventTag(event: { tags: string[][] }, name: string): string | undefined {
   return event.tags.find((tag) => tag[0] === name)?.[1];
@@ -115,8 +136,16 @@ export function useRoomSurfaceSession({
   const reconciledViewRef = useRef<RoomView | null>(null);
   const agentPresencesRef = useRef(heartbeatPresences);
   const reconnectGraceRef = useRef(presenceReconnectGrace);
+  const pendingPaintTracesRef = useRef<readonly ReceivedLiveTrace[]>([]);
   agentPresencesRef.current = heartbeatPresences;
   reconnectGraceRef.current = presenceReconnectGrace;
+
+  useEffect(() => {
+    const traces = pendingPaintTracesRef.current;
+    if (!roomSurface || traces.length === 0) return;
+    pendingPaintTracesRef.current = [];
+    logLiveTrace('paint', traces);
+  }, [roomSurface]);
 
   const applyAgentPresence = useCallback((presence: RoomAgentPresence | undefined) => {
     if (!presence) return;
@@ -140,15 +169,12 @@ export function useRoomSurfaceSession({
     setFailedIds((current) => new Set(current).add(eventId));
   }, []);
 
-  const scheduleConfirmation = useCallback(
-    (eventId: string) => {
-      schedulerRef.current?.signalUntil(
-        (view) => view.messages.some((message) => message.id === eventId),
-        OUTBOX_CONFIRMATION_TIMEOUT_MS,
-      );
-    },
-    [],
-  );
+  const scheduleConfirmation = useCallback((eventId: string) => {
+    schedulerRef.current?.signalUntil(
+      (view) => view.messages.some((message) => message.id === eventId),
+      OUTBOX_CONFIRMATION_TIMEOUT_MS,
+    );
+  }, []);
 
   const retryOutbox = useCallback(
     (eventId: string, retryTransport?: BuzzRigTransport | null) => {
@@ -208,6 +234,7 @@ export function useRoomSurfaceSession({
     let watchGeneration = 0;
     let watchKey = '';
     let hasPainted = false;
+    let pendingReadTraces: ReceivedLiveTrace[] = [];
 
     agentPresencesRef.current = {};
     reconnectGraceRef.current = {};
@@ -333,6 +360,11 @@ export function useRoomSurfaceSession({
           if ('monolithLive' in event) {
             const live = (event as MonolithSurfaceEvent).monolithLive;
             if (live.type === 'invalidate') {
+              if (live.trace) {
+                const received = { ...live.trace, reason: live.reason, receivedAt: Date.now() };
+                pendingReadTraces = [...pendingReadTraces.slice(-15), received];
+                logLiveTrace('socket-receipt', [received], received.receivedAt);
+              }
               // A claim has already committed its WORKING receipt before the
               // server emits this invalidation. Give that receipt an immediate
               // authoritative read instead of placing it behind ordinary
@@ -515,7 +547,20 @@ export function useRoomSurfaceSession({
         if (cached && !cancelled) applyView(cached, identity.publicKey, relayUrl, false);
 
         scheduler = new SurfaceRefreshScheduler({
-          fetch: () => nextRoomClient.room(channelId),
+          fetch: async () => {
+            const traces = pendingReadTraces;
+            pendingReadTraces = [];
+            logLiveTrace('room-read-start', traces);
+            try {
+              const view = await nextRoomClient.room(channelId);
+              logLiveTrace('room-read-end', traces);
+              pendingPaintTracesRef.current = traces;
+              return view;
+            } catch (error) {
+              logLiveTrace('room-read-error', traces);
+              throw error;
+            }
+          },
           apply: (view) => {
             applyView(view, identity.publicKey, relayUrl, true);
             const latest = view.messages.at(-1);

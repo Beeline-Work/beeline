@@ -11,7 +11,7 @@ import {
   type PhoneService,
 } from './phone-service.js';
 import { DAEMON_OPERATION_NAMES, type DaemonService } from './daemon-service.js';
-import type { LiveEvent, LiveHub } from './live.js';
+import type { LiveEvent, LiveHub, LiveTrace } from './live.js';
 import type { ReviewAccess } from './review-access.js';
 import type { ReleaseNotifier } from './release-notify.js';
 import { isMediaId, mediaTtlHours } from './media-ttl.js';
@@ -222,10 +222,13 @@ export function createBeelineServer(options: ServerOptions): Server {
               let cursor = isInboxCursor(item.cursor) ? item.cursor : undefined;
               let replaying = false;
               let replayRequested = false;
+              let replayTrigger: { reason: string; trace: LiveTrace } | undefined;
               let commandsPushing = false;
               let commandsRequested = false;
-              const replay = async () => {
+              let commandTrigger: { reason: string; trace: LiveTrace } | undefined;
+              const replay = async (trigger?: { reason: string; trace: LiveTrace }) => {
                 replayRequested = true;
+                if (trigger) replayTrigger = trigger;
                 if (replaying) return;
                 replaying = true;
                 try {
@@ -241,12 +244,15 @@ export function createBeelineServer(options: ServerOptions): Server {
                       principal.identityId,
                     );
                     cursor = inbox.cursor ?? cursor;
+                    const currentTrigger = replayTrigger;
+                    replayTrigger = undefined;
                     client.send(
                       JSON.stringify({
                         type: 'inbox',
                         roomId,
                         items: inbox.items,
                         ...(cursor ? { cursor } : {}),
+                        ...(currentTrigger ? { trigger: currentTrigger } : {}),
                       }),
                     );
                   }
@@ -259,8 +265,9 @@ export function createBeelineServer(options: ServerOptions): Server {
                   replaying = false;
                 }
               };
-              const pushCommands = async () => {
+              const pushCommands = async (trigger?: { reason: string; trace: LiveTrace }) => {
                 commandsRequested = true;
+                if (trigger) commandTrigger = trigger;
                 if (commandsPushing) return;
                 commandsPushing = true;
                 try {
@@ -271,12 +278,15 @@ export function createBeelineServer(options: ServerOptions): Server {
                       { roomId },
                       principal.identityId,
                     );
+                    const currentTrigger = commandTrigger;
+                    commandTrigger = undefined;
                     client.send(
                       JSON.stringify({
                         type: 'commands',
                         roomId,
                         commandProtocol: page.commandProtocol,
                         commands: page.commands,
+                        ...(currentTrigger ? { trigger: currentTrigger } : {}),
                       }),
                     );
                   }
@@ -292,13 +302,17 @@ export function createBeelineServer(options: ServerOptions): Server {
               releases.set(
                 roomId,
                 options.live.subscribe(roomId, (event) => {
-                  void replay();
+                  const trigger =
+                    event.type === 'invalidate' && event.trace
+                      ? { reason: event.reason, trace: event.trace }
+                      : undefined;
+                  void replay(trigger);
                   if (
                     event.type === 'invalidate' &&
                     event.reason === 'postgres:agent_commands' &&
                     event.targetAgentId === principal.identityId
                   )
-                    void pushCommands();
+                    void pushCommands(trigger);
                 }),
               );
               const lifecycleId =

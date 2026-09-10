@@ -239,7 +239,20 @@ describe('daemon live command push', () => {
     live.publish({ type: 'presence', roomId, agentId, status: 'online', observedAt: 1 });
     live.publish({ type: 'draft', roomId, agentId, turnId: 'turn', text: 'draft' });
     live.publish({ type: 'thought', roomId, agentId, turnId: 'turn', text: 'thought' });
-    live.publish({ type: 'invalidate', roomId, reason: 'postgres:messages' });
+    const messageTrace = { id: 'trace-message', databaseAt: 50, emittedAt: 75 };
+    const replayed = nextSocketMessage(socket, 'inbox');
+    live.publish({
+      type: 'invalidate',
+      roomId,
+      reason: 'postgres:messages',
+      trace: messageTrace,
+    });
+    await expect(replayed).resolves.toEqual(
+      expect.objectContaining({
+        type: 'inbox',
+        trigger: { reason: 'postgres:messages', trace: messageTrace },
+      }),
+    );
     live.publish({
       type: 'invalidate',
       roomId,
@@ -250,13 +263,20 @@ describe('daemon live command push', () => {
     expect(commandCalls()).toBe(1);
 
     const pushed = nextSocketMessage(socket, 'commands');
+    const trace = { id: 'trace-command', databaseAt: 100, emittedAt: 125 };
     live.publish({
       type: 'invalidate',
       roomId,
       reason: 'postgres:agent_commands',
       targetAgentId: agentId,
+      trace,
     });
-    await pushed;
+    await expect(pushed).resolves.toEqual(
+      expect.objectContaining({
+        type: 'commands',
+        trigger: { reason: 'postgres:agent_commands', trace },
+      }),
+    );
     expect(commandCalls()).toBe(2);
   });
 });

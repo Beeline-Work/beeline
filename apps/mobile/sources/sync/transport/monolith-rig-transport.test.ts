@@ -138,10 +138,22 @@ describe('monolith Room send path', () => {
     sockets[1]!.onopen?.();
     expect(sockets[1]!.sent).toEqual([JSON.stringify({ type: 'subscribe', roomId: ROOM })]);
     sockets[1]!.onmessage?.({
-      data: JSON.stringify({ type: 'invalidate', roomId: ROOM, reason: 'postgres:messages' }),
+      data: JSON.stringify({
+        type: 'invalidate',
+        roomId: ROOM,
+        reason: 'postgres:messages',
+        trace: { id: 'trace-message', databaseAt: 100, emittedAt: 125 },
+      }),
     });
     expect(received).toEqual([
-      { monolithLive: { type: 'invalidate', roomId: ROOM, reason: 'postgres:messages' } },
+      {
+        monolithLive: {
+          type: 'invalidate',
+          roomId: ROOM,
+          reason: 'postgres:messages',
+          trace: { id: 'trace-message', databaseAt: 100, emittedAt: 125 },
+        },
+      },
     ]);
 
     sockets[1]!.onclose?.();

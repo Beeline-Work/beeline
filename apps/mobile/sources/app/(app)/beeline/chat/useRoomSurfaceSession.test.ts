@@ -27,6 +27,11 @@ const controls = vi.hoisted(() => ({
   identityPromise: null as Promise<{ publicKey: string; secretKey: Uint8Array } | null> | null,
   outboxFail: vi.fn(async (_eventId: string) => undefined),
   outboxGet: vi.fn((_eventId: string) => ({ status: 'pending' as const })),
+  traceSetItem: vi.fn(async (_key: string, _value: string) => undefined),
+}));
+
+vi.mock('@react-native-async-storage/async-storage', () => ({
+  default: { setItem: controls.traceSetItem },
 }));
 
 vi.mock('react-native', () => ({
@@ -388,6 +393,11 @@ describe('useRoomSurfaceSession', () => {
     expect(info).toHaveBeenCalledWith(expect.stringContaining('"phase":"socket-receipt","at":'));
     expect(info).toHaveBeenCalledWith(expect.stringContaining('"id":"trace-turn"'));
     expect(info).toHaveBeenCalledWith(expect.stringContaining('"reason":"postgres:agent_turns"'));
+    await vi.waitFor(() => expect(controls.traceSetItem).toHaveBeenCalled());
+    const [key, stored] = controls.traceSetItem.mock.calls.at(-1)!;
+    expect(key).toBe('@beeline/live-event-trace-v1');
+    expect(stored).toContain('"id":"trace-turn"');
+    expect(stored).not.toContain('room-a');
     info.mockRestore();
     await act(async () => renderer.unmount());
   });

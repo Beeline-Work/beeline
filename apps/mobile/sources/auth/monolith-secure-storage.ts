@@ -16,6 +16,14 @@ async function desktopInvoke<T>(
 
 type DesktopInvoke = typeof desktopInvoke;
 
+export function browserMonolithStorage(storage: Storage): MonolithSecureStorage {
+  return {
+    getItemAsync: async (key) => storage.getItem(key),
+    setItemAsync: async (key, value) => storage.setItem(key, value),
+    deleteItemAsync: async (key) => storage.removeItem(key),
+  };
+}
+
 function desktopSecureStorage(invoke: DesktopInvoke): MonolithSecureStorage {
   return {
     getItemAsync: (key) => invoke<string | null>('desktop_secure_get', { key }),
@@ -29,5 +37,11 @@ export async function monolithSecureStorage(
   invoke: DesktopInvoke = desktopInvoke,
 ): Promise<MonolithSecureStorage> {
   if (desktop) return desktopSecureStorage(invoke);
+  // Expo SecureStore's web shim calls a native host method that does not
+  // exist in an ordinary branch-preview browser. The legacy identity path
+  // already uses this same origin-scoped browser storage contract.
+  if (typeof window !== 'undefined' && typeof sessionStorage !== 'undefined') {
+    return browserMonolithStorage(sessionStorage);
+  }
   return import('expo-secure-store');
 }

@@ -19,7 +19,6 @@
   "components/ItemGroup.tsx": 3,
   "components/RoundButton.tsx": 2,
   "components/ShortcutHints.tsx": 2,
-  "components/SidebarView.tsx": 4,
   "components/UpdateReadyPrompt.tsx": 1,
   "components/buzz/ActivityTimeline.tsx": 1,
   "components/buzz/CodeHighlighter.tsx": 1,

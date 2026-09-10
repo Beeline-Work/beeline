@@ -13,6 +13,7 @@ import {
   TextInput,
   TouchableOpacity,
   Platform,
+  useWindowDimensions,
 } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import * as Clipboard from 'expo-clipboard';
@@ -78,6 +79,15 @@ import {
 } from '@/buzz/room-indicators';
 import { formatSettledLine, formatStoppedLine, type TurnVerb } from '@/buzz/turn-clock';
 import { TurnSettledLine } from '@/components/buzz/TurnProgressLine';
+import { DesktopRoomInspector } from '@/components/DesktopRoomInspector';
+import {
+  desktopComposerKeyAction,
+  desktopLayoutMode,
+  loadDesktopDraft,
+  loadDesktopInspectorOpen,
+  saveDesktopDraft,
+  saveDesktopInspectorOpen,
+} from '@/buzz/desktop-workbench-state';
 import { useRoomSendFrame } from '@/buzz/room-send-frame';
 import { liveDraftMessages, projectActiveTurnStream } from '@/buzz/live-turn-stream';
 import {
@@ -308,6 +318,9 @@ export default function BuzzChat() {
     returnTo?: string;
   }>();
   const decodedId = channelId ? decodeURIComponent(channelId) : '';
+  const { width: windowWidth } = useWindowDimensions();
+  const desktopExperience = Platform.OS === 'web';
+  const desktopMode = desktopLayoutMode(windowWidth);
   const routeParentChannelId = parent?.trim() || undefined;
   const routeCommunityId = communityId?.trim() || undefined;
   const routeChannelTitle = title?.trim() || undefined;
@@ -374,6 +387,12 @@ export default function BuzzChat() {
     bindingsRef: roomSurfaceBindingsRef,
   });
   const [inputText, setInputText] = useState('');
+  const loadedDraftForRef = useRef<string | null>(null);
+  const inspectorTriggerRef = useRef<React.ElementRef<typeof TouchableOpacity>>(null);
+  const [desktopInspectorOpen, setDesktopInspectorOpen] = useState(false);
+  const [desktopDeliveryState, setDesktopDeliveryState] = useState<
+    'sending' | 'delivered' | 'failed' | null
+  >(null);
   const [replyTarget, setReplyTarget] = useState<MessageReplyTarget | null>(null);
   const [composerHeight, setComposerHeight] = useState(COMPOSER_MIN_HEIGHT);
   const [inputSelection, setInputSelection] = useState({ start: 0, end: 0 });
@@ -452,6 +471,38 @@ export default function BuzzChat() {
   // receipt (API write + pickup + receipt + refetch). See
   // `selectComposerAckState`.
   const [pendingAck, setPendingAck] = useState<{ sentAt: number; requestId?: string } | null>(null);
+
+  useEffect(() => {
+    if (!desktopExperience || !decodedId) return;
+    let cancelled = false;
+    loadedDraftForRef.current = null;
+    inputTextRef.current = '';
+    setInputText('');
+    setDesktopDeliveryState(null);
+    void loadDesktopDraft(decodedId).then((draft) => {
+      if (cancelled) return;
+      loadedDraftForRef.current = decodedId;
+      inputTextRef.current = draft;
+      setInputText(draft);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [decodedId, desktopExperience]);
+
+  useEffect(() => {
+    if (!desktopExperience || loadedDraftForRef.current !== decodedId) return;
+    const timer = setTimeout(() => {
+      void saveDesktopDraft(decodedId, inputText);
+    }, 120);
+    return () => clearTimeout(timer);
+  }, [decodedId, desktopExperience, inputText]);
+
+  useEffect(() => {
+    if (!desktopExperience) return;
+    void loadDesktopInspectorOpen().then(setDesktopInspectorOpen);
+  }, [desktopExperience]);
+
   const cacheViewerPubkey = userPubkey;
   const isArchived = roomSurface?.room.archived ?? false;
   const parentChannelId = roomSurface?.parent?.id ?? routeParentChannelId;
@@ -1755,6 +1806,10 @@ export default function BuzzChat() {
     const timer = setTimeout(() => setSettledTurn(null), 6_000);
     return () => clearTimeout(timer);
   }, [settledTurn]);
+  useEffect(() => {
+    if (!desktopExperience || (!composerAck && !settledTurn)) return;
+    setDesktopDeliveryState((state) => (state === 'delivered' ? null : state));
+  }, [composerAck, desktopExperience, settledTurn]);
 
   useEffect(() => {
     // Only an explicit offline fact can age into dormancy. A five-second clock
@@ -1878,6 +1933,7 @@ export default function BuzzChat() {
 
     sendInFlightRef.current = true;
     setSending(true);
+    if (desktopExperience) setDesktopDeliveryState('sending');
     let preparedEvent: Awaited<ReturnType<BuzzRigTransport['composeMessage']>> | undefined;
     let preparedTransport: BuzzRigTransport | undefined;
     try {
@@ -1959,8 +2015,10 @@ export default function BuzzChat() {
       setInputSelection({ start: 0, end: 0 });
       setPendingAttachments([]);
       setReplyTarget(null);
+      if (desktopExperience) void saveDesktopDraft(decodedId, '');
       await activeOutbox.attempted(preparedEvent.id);
       await sendTransport.publishPreparedMessage(preparedEvent);
+      if (desktopExperience) setDesktopDeliveryState('delivered');
       // The write ack retires the local bridge: the server has STORED the
       // message, so "sending…" has nothing left to bridge. It used to outlive
       // the write by up to the whole first-token wait (tens of seconds) or
@@ -1981,6 +2039,7 @@ export default function BuzzChat() {
       scheduleOutboxConfirmation(preparedEvent.id);
     } catch (err) {
       console.warn('Send failed:', err);
+      if (desktopExperience) setDesktopDeliveryState('failed');
       // A publish failure already gets its own explicit modal below; the
       // local ack has nothing left to guess at and must not keep buzzing.
       setPendingAck(null);
@@ -2032,6 +2091,7 @@ export default function BuzzChat() {
     roomRepositoryResolved,
     roomRepoAccessIssue,
     roomSurface,
+    desktopExperience,
   ]);
 
   const pickPhoto = useCallback(async () => {
@@ -2770,6 +2830,71 @@ export default function BuzzChat() {
     [decodedId],
   );
 
+  const closeDesktopInspector = useCallback(() => {
+    setDesktopInspectorOpen(false);
+    void saveDesktopInspectorOpen(false);
+    requestAnimationFrame(() => inspectorTriggerRef.current?.focus());
+  }, []);
+
+  const toggleDesktopInspector = useCallback(() => {
+    setDesktopInspectorOpen((open) => {
+      const next = !open;
+      void saveDesktopInspectorOpen(next);
+      if (!next) requestAnimationFrame(() => inspectorTriggerRef.current?.focus());
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!desktopExperience || typeof window === 'undefined') return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'i') {
+        event.preventDefault();
+        toggleDesktopInspector();
+      } else if (
+        (event.metaKey || event.ctrlKey) &&
+        event.shiftKey &&
+        event.key.toLowerCase() === 'm'
+      ) {
+        event.preventDefault();
+        focusComposer();
+      } else if (event.key === 'Escape' && desktopInspectorOpen) {
+        event.preventDefault();
+        closeDesktopInspector();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [
+    closeDesktopInspector,
+    desktopExperience,
+    desktopInspectorOpen,
+    focusComposer,
+    toggleDesktopInspector,
+  ]);
+
+  const handleDesktopDrop = useCallback(
+    (event: React.DragEvent<HTMLElement>) => {
+      if (!desktopExperience || sending) return;
+      event.preventDefault();
+      const files = Array.from(event.dataTransfer.files).slice(
+        0,
+        MAX_MESSAGE_ATTACHMENTS - pendingAttachments.length,
+      );
+      if (!files.length) return;
+      setPendingAttachments((current) => [
+        ...current,
+        ...files.map((file) => ({
+          uri: URL.createObjectURL(file),
+          name: file.name || `file-${Date.now()}`,
+          mimeType: file.type || 'application/octet-stream',
+          size: file.size,
+        })),
+      ]);
+    },
+    [desktopExperience, pendingAttachments.length, sending],
+  );
+
   const clearSlashComposer = useCallback(() => {
     inputTextRef.current = '';
     setInputText('');
@@ -3144,127 +3269,128 @@ export default function BuzzChat() {
       viewerPubkey={userPubkey || undefined}
       viewerAvatarUrl={personProfileByPubkey.get(userPubkey)?.avatar}
     >
-      <KeyboardAvoidingView
-        style={styles.container}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'translate-with-padding'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
-      >
-        {/* Header. No surface of its own — the chrome sits on the same
-            obsidian as the transcript, parted only by a hairline. */}
-        <View
-          style={[styles.header, { minHeight: insets.top + 60, paddingTop: insets.top + 8 }]}
-          testID={isCorner ? 'corner-session-header' : undefined}
+      <View style={styles.desktopConversationFrame}>
+        <KeyboardAvoidingView
+          style={styles.container}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'translate-with-padding'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
         >
-          <TouchableOpacity
-            accessibilityLabel={
-              isCorner && cornerReturnTarget !== 'room-list'
-                ? `Back to this ${CORNER_LABEL}’s ${ROOM_LABEL}`
-                : 'Back to Rooms'
-            }
-            accessibilityRole="button"
-            hitSlop={HEADER_EDGE_HIT_SLOP}
-            onPress={handleBack}
-            style={styles.backButton}
-            testID="chat-back"
+          {/* Header. No surface of its own — the chrome sits on the same
+            obsidian as the transcript, parted only by a hairline. */}
+          <View
+            style={[styles.header, { minHeight: insets.top + 60, paddingTop: insets.top + 8 }]}
+            testID={isCorner ? 'corner-session-header' : undefined}
           >
-            <Text style={[styles.backText, isCorner && styles.cornerBackText]}>‹</Text>
-          </TouchableOpacity>
-          {/*
+            <TouchableOpacity
+              accessibilityLabel={
+                isCorner && cornerReturnTarget !== 'room-list'
+                  ? `Back to this ${CORNER_LABEL}’s ${ROOM_LABEL}`
+                  : 'Back to Rooms'
+              }
+              accessibilityRole="button"
+              hitSlop={HEADER_EDGE_HIT_SLOP}
+              onPress={handleBack}
+              style={styles.backButton}
+              testID="chat-back"
+            >
+              <Text style={[styles.backText, isCorner && styles.cornerBackText]}>‹</Text>
+            </TouchableOpacity>
+            {/*
             The agent that OPENED this corner, stated here once and never
             repeated on a message. It is history, not ownership: any member
             agent can be addressed in a corner and carry the branch on, so
             this mark says who started the work, not who owns it.
           */}
-          {isCorner && cornerAgentPubkey && (
-            <HeaderIdentitySlot testID="corner-header-agent">
-              <IdentityMark
-                kind="agent"
-                seed={cornerAgentDisplay?.avatarSeed ?? cornerAgentPubkey}
-                avatarUrl={cornerAgentDisplay?.avatarUrl}
-                face={cornerAgentDisplay?.face}
-                name={cornerAgentDisplay?.name ?? 'Agent'}
-                size={26}
-                alive={sessionState === 'working'}
-              />
-            </HeaderIdentitySlot>
-          )}
-          {isDirectMessage && !isReadOnlyDirectMessage && dmPeerPubkey && (
-            <HeaderIdentitySlot testID="direct-message-header-identity">
-              <IdentityMark
-                kind={dmPeerAgentDisplay || dmPeerIdentity?.kind === 'agent' ? 'agent' : 'human'}
-                seed={dmPeerAgentDisplay?.avatarSeed ?? dmPeerPubkey}
-                avatarUrl={
-                  dmPeerAgentDisplay?.avatarUrl ?? dmPeerIdentity?.avatar ?? dmPeerProfile?.avatar
-                }
-                face={dmPeerAgentDisplay?.face ?? dmPeerIdentity?.face ?? dmPeerProfile?.face}
-                name={displayRoomName}
-                size={26}
-              />
-            </HeaderIdentitySlot>
-          )}
-          <TouchableOpacity
-            accessibilityLabel={
-              isCorner
-                ? `${CORNER_LABEL} opened by ${cornerAgentDisplay?.name ?? 'Agent'}. View ${formatRoomParticipantTotal(roomParticipantTotal)}`
-                : `View ${formatRoomParticipantTotal(roomParticipantTotal)}`
-            }
-            accessibilityRole="button"
-            disabled={!participantsHydrated}
-            onPress={() => setRosterVisible(true)}
-            style={styles.headerCenter}
-            testID="room-participant-roster-trigger"
-          >
-            {displayHeaderTitle === null ? (
-              // The channel's own name has not landed yet. Neither "Room" nor
-              // a corner slug would be true, so show neither.
-              <View
-                accessibilityLabel="Loading name"
-                style={[styles.channelNameSkeleton, isCorner && styles.cornerChannelNameSkeleton]}
-                testID="chat-title-skeleton"
-              />
-            ) : (
-              <ChannelHeaderTitle
-                kind={headerTitleKind}
-                // A corner's name is its objective verbatim; let it wrap once
-                // rather than truncate to a slug fragment.
-                numberOfLines={isCorner ? 2 : 1}
-                title={displayHeaderTitle}
-              />
+            {isCorner && cornerAgentPubkey && (
+              <HeaderIdentitySlot testID="corner-header-agent">
+                <IdentityMark
+                  kind="agent"
+                  seed={cornerAgentDisplay?.avatarSeed ?? cornerAgentPubkey}
+                  avatarUrl={cornerAgentDisplay?.avatarUrl}
+                  face={cornerAgentDisplay?.face}
+                  name={cornerAgentDisplay?.name ?? 'Agent'}
+                  size={26}
+                  alive={sessionState === 'working'}
+                />
+              </HeaderIdentitySlot>
             )}
-            {!isCorner && roomRepository && (
-              <TouchableOpacity
-                accessibilityLabel={`Repo ${roomRepoChipLabel(roomRepository)}. ${
-                  canManageWorkspace ? 'View or change it' : 'View it'
-                }`}
-                accessibilityRole="button"
-                hitSlop={{ top: 6, bottom: 3, left: 12, right: 12 }}
-                onPress={() => setRoomActionsVisible(true)}
-                style={styles.repoChip}
-                testID="room-repo-chip"
-              >
-                <HeaderMetaCaps testID="room-repo-chip-text">
-                  {roomRepoChipLabel(roomRepository)}
+            {isDirectMessage && !isReadOnlyDirectMessage && dmPeerPubkey && (
+              <HeaderIdentitySlot testID="direct-message-header-identity">
+                <IdentityMark
+                  kind={dmPeerAgentDisplay || dmPeerIdentity?.kind === 'agent' ? 'agent' : 'human'}
+                  seed={dmPeerAgentDisplay?.avatarSeed ?? dmPeerPubkey}
+                  avatarUrl={
+                    dmPeerAgentDisplay?.avatarUrl ?? dmPeerIdentity?.avatar ?? dmPeerProfile?.avatar
+                  }
+                  face={dmPeerAgentDisplay?.face ?? dmPeerIdentity?.face ?? dmPeerProfile?.face}
+                  name={displayRoomName}
+                  size={26}
+                />
+              </HeaderIdentitySlot>
+            )}
+            <TouchableOpacity
+              accessibilityLabel={
+                isCorner
+                  ? `${CORNER_LABEL} opened by ${cornerAgentDisplay?.name ?? 'Agent'}. View ${formatRoomParticipantTotal(roomParticipantTotal)}`
+                  : `View ${formatRoomParticipantTotal(roomParticipantTotal)}`
+              }
+              accessibilityRole="button"
+              disabled={!participantsHydrated}
+              onPress={() => setRosterVisible(true)}
+              style={styles.headerCenter}
+              testID="room-participant-roster-trigger"
+            >
+              {displayHeaderTitle === null ? (
+                // The channel's own name has not landed yet. Neither "Room" nor
+                // a corner slug would be true, so show neither.
+                <View
+                  accessibilityLabel="Loading name"
+                  style={[styles.channelNameSkeleton, isCorner && styles.cornerChannelNameSkeleton]}
+                  testID="chat-title-skeleton"
+                />
+              ) : (
+                <ChannelHeaderTitle
+                  kind={headerTitleKind}
+                  // A corner's name is its objective verbatim; let it wrap once
+                  // rather than truncate to a slug fragment.
+                  numberOfLines={isCorner ? 2 : 1}
+                  title={displayHeaderTitle}
+                />
+              )}
+              {!isCorner && roomRepository && (
+                <TouchableOpacity
+                  accessibilityLabel={`Repo ${roomRepoChipLabel(roomRepository)}. ${
+                    canManageWorkspace ? 'View or change it' : 'View it'
+                  }`}
+                  accessibilityRole="button"
+                  hitSlop={{ top: 6, bottom: 3, left: 12, right: 12 }}
+                  onPress={() => setRoomActionsVisible(true)}
+                  style={styles.repoChip}
+                  testID="room-repo-chip"
+                >
+                  <HeaderMetaCaps testID="room-repo-chip-text">
+                    {roomRepoChipLabel(roomRepository)}
+                  </HeaderMetaCaps>
+                </TouchableOpacity>
+              )}
+              {isCorner ? (
+                <HeaderMetaRow>
+                  <Text numberOfLines={1} style={styles.cornerHeaderAgent}>
+                    {(cornerAgentDisplay?.name ?? 'AGENT').toUpperCase()}
+                  </Text>
+                  <HeaderMetaCaps>
+                    {participantsHydrated ? formatRoomParticipantTotal(roomParticipantTotal) : ''}
+                  </HeaderMetaCaps>
+                </HeaderMetaRow>
+              ) : (
+                <HeaderMetaCaps testID="room-header-meta">
+                  {participantsHydrated
+                    ? `${formatRoomParticipantTotal(roomParticipantTotal)}  ›`
+                    : 'LOADING MEMBERS'}
                 </HeaderMetaCaps>
-              </TouchableOpacity>
-            )}
-            {isCorner ? (
-              <HeaderMetaRow>
-                <Text numberOfLines={1} style={styles.cornerHeaderAgent}>
-                  {(cornerAgentDisplay?.name ?? 'AGENT').toUpperCase()}
-                </Text>
-                <HeaderMetaCaps>
-                  {participantsHydrated ? formatRoomParticipantTotal(roomParticipantTotal) : ''}
-                </HeaderMetaCaps>
-              </HeaderMetaRow>
-            ) : (
-              <HeaderMetaCaps testID="room-header-meta">
-                {participantsHydrated
-                  ? `${formatRoomParticipantTotal(roomParticipantTotal)}  ›`
-                  : 'LOADING MEMBERS'}
-              </HeaderMetaCaps>
-            )}
-          </TouchableOpacity>
-          {/* The trailing slot holds ONE control. There is no `+` beside it:
+              )}
+            </TouchableOpacity>
+            {/* The trailing slot holds ONE control. There is no `+` beside it:
               a Room's members have one way in (C83) — the `N members ›` line
               above opens the roster sheet, whose section heads carry the add
               control. The header copy led to the same picker and, opened from
@@ -3275,507 +3401,593 @@ export default function BuzzChat() {
               holding whatever destructive/rare actions the surface has. A
               corner's "close" belongs here, not as a permanent button sitting
               under the composer where the reader's thumb lives. */}
-          {isCorner && !viewerIsAgent && !isArchived && (
-            <TouchableOpacity
-              accessibilityLabel={`${CORNER_LABEL} actions`}
-              accessibilityRole="button"
-              hitSlop={HEADER_EDGE_HIT_SLOP}
-              onPress={() => setCornerActionsVisible(true)}
-              style={styles.roomActionsButton}
-              testID="corner-actions-menu"
-            >
-              <Text style={styles.roomActionsGlyph}>•••</Text>
-            </TouchableOpacity>
-          )}
-          {!parentChannelId &&
-            !isDirectMessage &&
-            !viewerIsAgent &&
-            !isArchived &&
-            lifecycleAction && (
+            {isCorner && !viewerIsAgent && !isArchived && (
               <TouchableOpacity
-                accessibilityLabel={`${ROOM_LABEL} actions`}
+                accessibilityLabel={`${CORNER_LABEL} actions`}
                 accessibilityRole="button"
                 hitSlop={HEADER_EDGE_HIT_SLOP}
-                onPress={() => {
-                  setMembershipError(null);
-                  setRenameEditing(false);
-                  setRenameError(null);
-                  setRoomActionsVisible(true);
-                }}
+                onPress={() => setCornerActionsVisible(true)}
                 style={styles.roomActionsButton}
-                testID="room-actions-menu"
+                testID="corner-actions-menu"
               >
                 <Text style={styles.roomActionsGlyph}>•••</Text>
               </TouchableOpacity>
             )}
-          {isArchived && (
-            <View style={styles.archivedBadge}>
-              <Text style={styles.archivedBadgeText}>□ ARCHIVED</Text>
-            </View>
-          )}
-        </View>
+            {!parentChannelId &&
+              !isDirectMessage &&
+              !viewerIsAgent &&
+              !isArchived &&
+              lifecycleAction && (
+                <TouchableOpacity
+                  accessibilityLabel={`${ROOM_LABEL} actions`}
+                  accessibilityRole="button"
+                  hitSlop={HEADER_EDGE_HIT_SLOP}
+                  onPress={() => {
+                    setMembershipError(null);
+                    setRenameEditing(false);
+                    setRenameError(null);
+                    setRoomActionsVisible(true);
+                  }}
+                  style={styles.roomActionsButton}
+                  testID="room-actions-menu"
+                >
+                  <Text style={styles.roomActionsGlyph}>•••</Text>
+                </TouchableOpacity>
+              )}
+            {desktopExperience && (
+              <TouchableOpacity
+                ref={inspectorTriggerRef}
+                accessibilityLabel={
+                  desktopInspectorOpen ? 'Close Room inspector' : 'Open Room inspector'
+                }
+                accessibilityRole="button"
+                accessibilityState={{ expanded: desktopInspectorOpen }}
+                hitSlop={HEADER_EDGE_HIT_SLOP}
+                onPress={toggleDesktopInspector}
+                style={styles.roomActionsButton}
+                testID="desktop-inspector-toggle"
+              >
+                <Text style={styles.roomActionsGlyph}>ⓘ</Text>
+              </TouchableOpacity>
+            )}
+            {isArchived && (
+              <View style={styles.archivedBadge}>
+                <Text style={styles.archivedBadgeText}>□ ARCHIVED</Text>
+              </View>
+            )}
+          </View>
 
-        {/* The corner's PR state, inscribed above the transcript: one line
+          {/* The corner's PR state, inscribed above the transcript: one line
             that links to GitHub, where review and merge happen. */}
-        {isCorner && (
-          <CornerStatusLine
-            lifecycle={roomSurface?.cornerLifecycle}
-            archived={isArchived}
-            onOpenPullRequest={(url) => {
-              void Linking.openURL(url).catch(() => {
-                Modal.alert('Could not open pull request', 'Open the PR from GitHub instead.');
-              });
-            }}
-          />
-        )}
+          {isCorner && (
+            <CornerStatusLine
+              lifecycle={roomSurface?.cornerLifecycle}
+              archived={isArchived}
+              onOpenPullRequest={(url) => {
+                void Linking.openURL(url).catch(() => {
+                  Modal.alert('Could not open pull request', 'Open the PR from GitHub instead.');
+                });
+              }}
+            />
+          )}
 
-        <FlatList
-          testID="chat-messages"
-          ref={flatListRef}
-          inverted={invertedMessages.length > 0}
-          data={invertedMessages}
-          keyExtractor={(item: ChatDisplayMessage) => item.id}
-          style={styles.messageList}
-          contentContainerStyle={[
-            styles.messageListContent,
-            invertedMessages.length === 0 && styles.messageListContentEmpty,
-          ]}
-          maintainVisibleContentPosition={{
-            // Anchor on the second-newest row (index 1), not the newest.
-            // The newest slot gets replaced on every send (optimistic id ->
-            // real event id) and on every agent stream token, which would
-            // otherwise destabilize the anchor. Mirrors sources/components/ChatList.tsx.
-            //
-            // autoscrollToTopThreshold: for an INVERTED list this is the
-            // auto-stick-to-visual-bottom threshold — contentOffset 0 is the
-            // visual bottom here, and this prop sticks the viewport to
-            // offset 0 (revealing new content, including a taller multi-line
-            // send) whenever the user is already within N units of it. The
-            // captain's scroll rule adds ONE JS-side scrollToOffset per new
-            // arrival (`buzz/room-scroll-follow.ts`) so a message received
-            // while reading older history still surfaces; a drag in progress
-            // is never interrupted.
-            minIndexForVisible: 1,
-            autoscrollToTopThreshold: 50,
-          }}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode={transcriptKeyboardDismissMode(Platform.OS)}
-          onScroll={(event) => {
-            isPinnedToTailRef.current = event.nativeEvent.contentOffset.y <= TAIL_PIN_THRESHOLD;
-          }}
-          scrollEventThrottle={100}
-          onScrollBeginDrag={() => {
-            userDraggingRef.current = true;
-          }}
-          onScrollEndDrag={() => {
-            userDraggingRef.current = false;
-          }}
-          onMomentumScrollBegin={() => {
-            userDraggingRef.current = true;
-          }}
-          onMomentumScrollEnd={() => {
-            userDraggingRef.current = false;
-          }}
-          renderItem={renderItem}
-          onScrollToIndexFailed={({ averageItemLength, index }) => {
-            // Variable-height ledger rows cannot provide getItemLayout. Jump
-            // near the target, let the list measure that window, then retry.
-            flatListRef.current?.scrollToOffset({
-              offset: averageItemLength * index,
-              animated: false,
-            });
-            setTimeout(() => {
-              flatListRef.current?.scrollToIndex({
-                index,
-                viewPosition: 0.5,
+          <FlatList
+            testID="chat-messages"
+            ref={flatListRef}
+            inverted={invertedMessages.length > 0}
+            data={invertedMessages}
+            keyExtractor={(item: ChatDisplayMessage) => item.id}
+            style={styles.messageList}
+            contentContainerStyle={[
+              styles.messageListContent,
+              invertedMessages.length === 0 && styles.messageListContentEmpty,
+            ]}
+            maintainVisibleContentPosition={{
+              // Anchor on the second-newest row (index 1), not the newest.
+              // The newest slot gets replaced on every send (optimistic id ->
+              // real event id) and on every agent stream token, which would
+              // otherwise destabilize the anchor. Mirrors sources/components/ChatList.tsx.
+              //
+              // autoscrollToTopThreshold: for an INVERTED list this is the
+              // auto-stick-to-visual-bottom threshold — contentOffset 0 is the
+              // visual bottom here, and this prop sticks the viewport to
+              // offset 0 (revealing new content, including a taller multi-line
+              // send) whenever the user is already within N units of it. The
+              // captain's scroll rule adds ONE JS-side scrollToOffset per new
+              // arrival (`buzz/room-scroll-follow.ts`) so a message received
+              // while reading older history still surfaces; a drag in progress
+              // is never interrupted.
+              minIndexForVisible: 1,
+              autoscrollToTopThreshold: 50,
+            }}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={transcriptKeyboardDismissMode(Platform.OS)}
+            onScroll={(event) => {
+              isPinnedToTailRef.current = event.nativeEvent.contentOffset.y <= TAIL_PIN_THRESHOLD;
+            }}
+            scrollEventThrottle={100}
+            onScrollBeginDrag={() => {
+              userDraggingRef.current = true;
+            }}
+            onScrollEndDrag={() => {
+              userDraggingRef.current = false;
+            }}
+            onMomentumScrollBegin={() => {
+              userDraggingRef.current = true;
+            }}
+            onMomentumScrollEnd={() => {
+              userDraggingRef.current = false;
+            }}
+            renderItem={renderItem}
+            onScrollToIndexFailed={({ averageItemLength, index }) => {
+              // Variable-height ledger rows cannot provide getItemLayout. Jump
+              // near the target, let the list measure that window, then retry.
+              flatListRef.current?.scrollToOffset({
+                offset: averageItemLength * index,
                 animated: false,
               });
-            }, 50);
-          }}
-          onEndReached={loadOlderTranscriptMessages}
-          onEndReachedThreshold={0.5}
-          ListEmptyComponent={
-            <View style={styles.emptyState}>
-              <EmptyLedgerState
-                variant={emptyLedgerVariant}
-                name={isDirectMessage ? displayRoomName : undefined}
-                objective={isCorner ? cornerObjective.join(' ') : undefined}
-                onPress={focusComposer}
-              />
-            </View>
-          }
-          ListFooterComponent={
-            // Inverted list: the footer is the visual TOP. The Room discussion
-            // a corner was opened out of belongs above the corner's own first
-            // line, and this is the slot that puts it there.
-            loadingOlderMessages ? (
-              <>
-                {loadingOlderMessages ? (
-                  <View style={styles.olderMessagesLoading} testID="older-messages-loading">
-                    <PixelLoader compact />
-                  </View>
-                ) : null}
-              </>
-            ) : null
-          }
-        />
+              setTimeout(() => {
+                flatListRef.current?.scrollToIndex({
+                  index,
+                  viewPosition: 0.5,
+                  animated: false,
+                });
+              }, 50);
+            }}
+            onEndReached={loadOlderTranscriptMessages}
+            onEndReachedThreshold={0.5}
+            ListEmptyComponent={
+              <View style={styles.emptyState}>
+                <EmptyLedgerState
+                  variant={emptyLedgerVariant}
+                  name={isDirectMessage ? displayRoomName : undefined}
+                  objective={isCorner ? cornerObjective.join(' ') : undefined}
+                  onPress={focusComposer}
+                />
+              </View>
+            }
+            ListFooterComponent={
+              // Inverted list: the footer is the visual TOP. The Room discussion
+              // a corner was opened out of belongs above the corner's own first
+              // line, and this is the slot that puts it there.
+              loadingOlderMessages ? (
+                <>
+                  {loadingOlderMessages ? (
+                    <View style={styles.olderMessagesLoading} testID="older-messages-loading">
+                      <PixelLoader compact />
+                    </View>
+                  ) : null}
+                </>
+              ) : null
+            }
+          />
 
-        {/* The Room's only active-corner affordance: one pinned line naming
+          {/* The Room's only active-corner affordance: one pinned line naming
             who is working and what on, gold and breathing while the work is
             live. Never a scroll element — see CornerLiveBar. */}
-        {!isCorner && !isArchived && cornerLiveBar && (
-          <CornerLiveBar
-            label={cornerLiveBar.label}
-            live={cornerLiveBar.live}
-            // A Room bar always acts. Corrupt/missing lifecycle data is
-            // explained by openCorner instead of disappearing in a guard.
-            onPress={() => openCorner(cornerLiveBar.cornerId)}
-          />
-        )}
-        {/* The ordinary per-turn indicator, independent of the line above: a
+          {!isCorner && !isArchived && cornerLiveBar && (
+            <CornerLiveBar
+              label={cornerLiveBar.label}
+              live={cornerLiveBar.live}
+              // A Room bar always acts. Corrupt/missing lifecycle data is
+              // explained by openCorner instead of disappearing in a guard.
+              onPress={() => openCorner(cornerLiveBar.cornerId)}
+            />
+          )}
+          {/* The ordinary per-turn indicator, independent of the line above: a
             Room can be thinking with no corner open, or hold an open corner
             with nothing being asked of it. Both may show at once; neither
             implies the other. */}
-        {!isArchived && agentsOffline && (
-          <View style={styles.agentOfflineHint} testID="agent-offline-hint">
-            <Text style={styles.agentOfflineHintTitle}>□ AGENT OFFLINE</Text>
-            <Text style={styles.agentOfflineHintText}>
-              Messages stay in this Room and will be answered when the Agent is back.
-            </Text>
-          </View>
-        )}
+          {!isArchived && agentsOffline && (
+            <View style={styles.agentOfflineHint} testID="agent-offline-hint">
+              <Text style={styles.agentOfflineHintTitle}>□ AGENT OFFLINE</Text>
+              <Text style={styles.agentOfflineHintText}>
+                Messages stay in this Room and will be answered when the Agent is back.
+              </Text>
+            </View>
+          )}
 
-        {/* P2: Archived channels are read-only */}
-        {isArchived ? (
-          <View style={[styles.archivedInputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-            <Text style={[styles.archivedInputText, isCorner && styles.cornerArchivedInputText]}>
-              {parentChannelId ? 'Corner' : ROOM_LABEL} archived (read-only)
-            </Text>
-          </View>
-        ) : isReadOnlyDirectMessage ? (
-          <View style={[styles.archivedInputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-            <Text style={styles.archivedInputText}>Announcements only · you can't reply here</Text>
-          </View>
-        ) : (
-          <View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-            {slashMenuVisible &&
-              (() => {
-                const mentionAgent = mentionSlashAgentPubkey
-                  ? agentByPubkey.get(mentionSlashAgentPubkey)
-                  : undefined;
-                const mentionAgentName = mentionSlashAgentPubkey
-                  ? resolveAgentDisplayIdentity(mentionSlashAgentPubkey, mentionAgent).name
-                  : undefined;
-                return (
-                  <SlashVerbPicker
-                    verbs={slashVerbs}
-                    query={currentSlashQuery ?? mentionSlash?.query ?? ''}
-                    highlightedIndex={highlightedSlashVerbIndex}
-                    onDismiss={dismissSlashMenu}
-                    onSelect={runSlashVerb}
-                    commands={mentionAgentCommands}
-                    agentName={mentionAgentName}
-                    agentLacksCommands={mentionAgentLacksCommands}
-                    onSelectCommand={insertAgentCommand}
-                  />
-                );
-              })()}
-            {mentionMenuVisible && (
-              <View
-                accessibilityLabel="Mention a Room participant"
-                style={styles.mentionMenu}
-                testID="mention-suggestions"
-              >
-                <Text style={styles.mentionMenuLabel}>MENTION</Text>
-                {mentionSuggestions.matches.map((participant, index) => {
-                  const selected = index === highlightedMentionIndex;
-                  const display = participant.agent
-                    ? resolveAgentDisplayIdentity(participant.pubkey, participant.agent)
+          {/* P2: Archived channels are read-only */}
+          {isArchived ? (
+            <View style={[styles.archivedInputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+              <Text style={[styles.archivedInputText, isCorner && styles.cornerArchivedInputText]}>
+                {parentChannelId ? 'Corner' : ROOM_LABEL} archived (read-only)
+              </Text>
+            </View>
+          ) : isReadOnlyDirectMessage ? (
+            <View style={[styles.archivedInputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+              <Text style={styles.archivedInputText}>
+                Announcements only · you can't reply here
+              </Text>
+            </View>
+          ) : (
+            <View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+              {slashMenuVisible &&
+                (() => {
+                  const mentionAgent = mentionSlashAgentPubkey
+                    ? agentByPubkey.get(mentionSlashAgentPubkey)
+                    : undefined;
+                  const mentionAgentName = mentionSlashAgentPubkey
+                    ? resolveAgentDisplayIdentity(mentionSlashAgentPubkey, mentionAgent).name
                     : undefined;
                   return (
+                    <SlashVerbPicker
+                      verbs={slashVerbs}
+                      query={currentSlashQuery ?? mentionSlash?.query ?? ''}
+                      highlightedIndex={highlightedSlashVerbIndex}
+                      onDismiss={dismissSlashMenu}
+                      onSelect={runSlashVerb}
+                      commands={mentionAgentCommands}
+                      agentName={mentionAgentName}
+                      agentLacksCommands={mentionAgentLacksCommands}
+                      onSelectCommand={insertAgentCommand}
+                    />
+                  );
+                })()}
+              {mentionMenuVisible && (
+                <View
+                  accessibilityLabel="Mention a Room participant"
+                  style={styles.mentionMenu}
+                  testID="mention-suggestions"
+                >
+                  <Text style={styles.mentionMenuLabel}>MENTION</Text>
+                  {mentionSuggestions.matches.map((participant, index) => {
+                    const selected = index === highlightedMentionIndex;
+                    const display = participant.agent
+                      ? resolveAgentDisplayIdentity(participant.pubkey, participant.agent)
+                      : undefined;
+                    return (
+                      <TouchableOpacity
+                        accessibilityLabel={`${participant.name}, @${participant.handle}, ${participant.kind}`}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected }}
+                        key={participant.pubkey}
+                        onPress={() => selectMention(participant)}
+                        style={[styles.mentionRow, selected && styles.mentionRowSelected]}
+                        testID={`mention-suggestion-${participant.handle}`}
+                      >
+                        {display ? (
+                          <IdentityMark
+                            kind="agent"
+                            seed={display.avatarSeed ?? participant.pubkey}
+                            avatarUrl={display.avatarUrl}
+                            face={display.face}
+                            name={display.name}
+                            size={28}
+                          />
+                        ) : (
+                          <IdentityMark
+                            kind="human"
+                            seed={participant.pubkey}
+                            avatarUrl={personProfileByPubkey.get(participant.pubkey)?.avatar}
+                            face={participant.face}
+                            name={participant.name}
+                            size={28}
+                          />
+                        )}
+                        <View style={styles.mentionIdentity}>
+                          <Text numberOfLines={1} style={styles.mentionName}>
+                            {participant.name}
+                          </Text>
+                          <Text numberOfLines={1} style={styles.mentionHandle}>
+                            @{participant.handle}
+                          </Text>
+                        </View>
+                        <Text style={styles.mentionKind}>
+                          {participant.kind === 'agent' ? 'AGENT' : 'PERSON'}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                  {mentionSuggestions.overflow > 0 && (
+                    <Text style={styles.mentionOverflow} testID="mention-suggestion-overflow">
+                      AND {mentionSuggestions.overflow} OTHERS
+                    </Text>
+                  )}
+                </View>
+              )}
+              {cornerOpenRepoPrompt && (
+                <View style={styles.repoPromptBanner} testID="corner-open-repo-prompt">
+                  <Text style={styles.repoPromptTitle}>
+                    {roomRepoAccessIssue
+                      ? roomRepoAccessIssue.reason === 'revoked'
+                        ? 'ACCESS TO THIS REPO WAS REVOKED'
+                        : 'THIS REPO ISN’T IN THE BEELINE INSTALLATION'
+                      : `THIS ${ROOM_LABEL.toUpperCase()} ISN’T LINKED TO A REPO`}
+                  </Text>
+                  <Text style={styles.repoPromptHint}>
+                    {roomRepoAccessIssue
+                      ? `${roomRepoAccessIssue.fullName} must be reconnected before a ${CORNER_LABEL} can open.`
+                      : `Pick one to open a ${CORNER_LABEL}.`}
+                  </Text>
+                  {roomRepoAccessIssue && (
                     <TouchableOpacity
-                      accessibilityLabel={`${participant.name}, @${participant.handle}, ${participant.kind}`}
                       accessibilityRole="button"
-                      accessibilityState={{ selected }}
-                      key={participant.pubkey}
-                      onPress={() => selectMention(participant)}
-                      style={[styles.mentionRow, selected && styles.mentionRowSelected]}
-                      testID={`mention-suggestion-${participant.handle}`}
+                      onPress={() => void handleReconnectRoomRepository()}
+                      style={styles.repoPromptConnect}
+                      testID="corner-open-repo-connect"
                     >
-                      {display ? (
-                        <IdentityMark
-                          kind="agent"
-                          seed={display.avatarSeed ?? participant.pubkey}
-                          avatarUrl={display.avatarUrl}
-                          face={display.face}
-                          name={display.name}
-                          size={28}
-                        />
-                      ) : (
-                        <IdentityMark
-                          kind="human"
-                          seed={participant.pubkey}
-                          avatarUrl={personProfileByPubkey.get(participant.pubkey)?.avatar}
-                          face={participant.face}
-                          name={participant.name}
-                          size={28}
-                        />
-                      )}
-                      <View style={styles.mentionIdentity}>
-                        <Text numberOfLines={1} style={styles.mentionName}>
-                          {participant.name}
-                        </Text>
-                        <Text numberOfLines={1} style={styles.mentionHandle}>
-                          @{participant.handle}
-                        </Text>
-                      </View>
-                      <Text style={styles.mentionKind}>
-                        {participant.kind === 'agent' ? 'AGENT' : 'PERSON'}
+                      <Text style={styles.repoPromptConnectText}>
+                        {roomRepoAccessIssue.reason === 'not_granted'
+                          ? 'Add this repo to the Beeline installation →'
+                          : `Connect ${roomRepoAccessIssue.fullName.split('/')[0]} →`}
                       </Text>
                     </TouchableOpacity>
-                  );
-                })}
-                {mentionSuggestions.overflow > 0 && (
-                  <Text style={styles.mentionOverflow} testID="mention-suggestion-overflow">
-                    AND {mentionSuggestions.overflow} OTHERS
-                  </Text>
-                )}
-              </View>
-            )}
-            {cornerOpenRepoPrompt && (
-              <View style={styles.repoPromptBanner} testID="corner-open-repo-prompt">
-                <Text style={styles.repoPromptTitle}>
-                  {roomRepoAccessIssue
-                    ? roomRepoAccessIssue.reason === 'revoked'
-                      ? 'ACCESS TO THIS REPO WAS REVOKED'
-                      : 'THIS REPO ISN’T IN THE BEELINE INSTALLATION'
-                    : `THIS ${ROOM_LABEL.toUpperCase()} ISN’T LINKED TO A REPO`}
-                </Text>
-                <Text style={styles.repoPromptHint}>
-                  {roomRepoAccessIssue
-                    ? `${roomRepoAccessIssue.fullName} must be reconnected before a ${CORNER_LABEL} can open.`
-                    : `Pick one to open a ${CORNER_LABEL}.`}
-                </Text>
-                {roomRepoAccessIssue && (
+                  )}
+                  {canManageWorkspace ? (
+                    <RepoPicker
+                      busy={roomRepoBusy}
+                      candidates={roomRepoCandidates}
+                      installations={githubInstallations}
+                      currentKey={null}
+                      error={roomRepoError}
+                      notice={roomRepoNotice}
+                      ownerGrant={ownerGrant}
+                      onAddAccount={() => void handleAddGitHubAccount()}
+                      onAskOwnerGrant={(fullName) => void handleAskOwnerGrant(fullName)}
+                      onCreateRepository={handleCreateGitHubRepository}
+                      onManageInstallation={(installation) =>
+                        void handleManageGitHubInstallation(installation)
+                      }
+                      onSelect={handleSelectRoomRepoCandidate}
+                      testIDPrefix="corner-open-repo-picker"
+                    />
+                  ) : (
+                    <Text style={styles.repoPromptHint}>Ask a {ROOM_LABEL} admin to link one.</Text>
+                  )}
                   <TouchableOpacity
+                    accessibilityLabel="Dismiss"
                     accessibilityRole="button"
-                    onPress={() => void handleReconnectRoomRepository()}
-                    style={styles.repoPromptConnect}
-                    testID="corner-open-repo-connect"
+                    onPress={() => setCornerOpenRepoPrompt(false)}
+                    style={styles.repoPromptDismiss}
+                    testID="corner-open-repo-prompt-dismiss"
                   >
-                    <Text style={styles.repoPromptConnectText}>
-                      {roomRepoAccessIssue.reason === 'not_granted'
-                        ? 'Add this repo to the Beeline installation →'
-                        : `Connect ${roomRepoAccessIssue.fullName.split('/')[0]} →`}
-                    </Text>
+                    <Text style={styles.repoPromptDismissText}>DISMISS</Text>
                   </TouchableOpacity>
-                )}
-                {canManageWorkspace ? (
-                  <RepoPicker
-                    busy={roomRepoBusy}
-                    candidates={roomRepoCandidates}
-                    installations={githubInstallations}
-                    currentKey={null}
-                    error={roomRepoError}
-                    notice={roomRepoNotice}
-                    ownerGrant={ownerGrant}
-                    onAddAccount={() => void handleAddGitHubAccount()}
-                    onAskOwnerGrant={(fullName) => void handleAskOwnerGrant(fullName)}
-                    onCreateRepository={handleCreateGitHubRepository}
-                    onManageInstallation={(installation) =>
-                      void handleManageGitHubInstallation(installation)
+                </View>
+              )}
+              {replyTarget && (
+                <View style={styles.replyComposerBanner} testID="reply-composer-banner">
+                  <View style={styles.replyComposerCopy}>
+                    <Text numberOfLines={1} style={styles.replyComposerLabel}>
+                      ↩ REPLYING TO {replyTarget.authorName.toUpperCase()}
+                    </Text>
+                    <Text numberOfLines={2} style={styles.replyComposerPreview}>
+                      {replyTarget.preview}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    accessibilityLabel="Cancel reply"
+                    accessibilityRole="button"
+                    onPress={() => setReplyTarget(null)}
+                    style={styles.replyComposerCancel}
+                    testID="reply-composer-cancel"
+                  >
+                    <Text style={styles.replyComposerCancelText}>×</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+              {pendingAttachments.map((attachment, index) => (
+                <View
+                  key={`${attachment.uri}:${index}`}
+                  style={styles.pendingAttachment}
+                  testID={`pending-chat-attachment-${index}`}
+                >
+                  <View style={styles.pendingAttachmentCopy}>
+                    <Text numberOfLines={1} style={styles.pendingAttachmentName}>
+                      {attachment.name}
+                    </Text>
+                    <Text style={styles.pendingAttachmentMeta}>
+                      {sending ? 'UPLOADING' : formatAttachmentSize(attachment.size)}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    accessibilityLabel={`Remove ${attachment.name}`}
+                    accessibilityRole="button"
+                    disabled={sending}
+                    onPress={() =>
+                      setPendingAttachments((current) =>
+                        current.filter((_, attachmentIndex) => attachmentIndex !== index),
+                      )
                     }
-                    onSelect={handleSelectRoomRepoCandidate}
-                    testIDPrefix="corner-open-repo-picker"
-                  />
-                ) : (
-                  <Text style={styles.repoPromptHint}>Ask a {ROOM_LABEL} admin to link one.</Text>
-                )}
-                <TouchableOpacity
-                  accessibilityLabel="Dismiss"
-                  accessibilityRole="button"
-                  onPress={() => setCornerOpenRepoPrompt(false)}
-                  style={styles.repoPromptDismiss}
-                  testID="corner-open-repo-prompt-dismiss"
-                >
-                  <Text style={styles.repoPromptDismissText}>DISMISS</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-            {replyTarget && (
-              <View style={styles.replyComposerBanner} testID="reply-composer-banner">
-                <View style={styles.replyComposerCopy}>
-                  <Text numberOfLines={1} style={styles.replyComposerLabel}>
-                    ↩ REPLYING TO {replyTarget.authorName.toUpperCase()}
-                  </Text>
-                  <Text numberOfLines={2} style={styles.replyComposerPreview}>
-                    {replyTarget.preview}
-                  </Text>
+                    style={styles.pendingAttachmentRemove}
+                    testID={`pending-chat-attachment-remove-${index}`}
+                  >
+                    <Text style={styles.pendingAttachmentRemoveText}>×</Text>
+                  </TouchableOpacity>
                 </View>
-                <TouchableOpacity
-                  accessibilityLabel="Cancel reply"
-                  accessibilityRole="button"
-                  onPress={() => setReplyTarget(null)}
-                  style={styles.replyComposerCancel}
-                  testID="reply-composer-cancel"
-                >
-                  <Text style={styles.replyComposerCancelText}>×</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-            {pendingAttachments.map((attachment, index) => (
-              <View
-                key={`${attachment.uri}:${index}`}
-                style={styles.pendingAttachment}
-                testID={`pending-chat-attachment-${index}`}
-              >
-                <View style={styles.pendingAttachmentCopy}>
-                  <Text numberOfLines={1} style={styles.pendingAttachmentName}>
-                    {attachment.name}
-                  </Text>
-                  <Text style={styles.pendingAttachmentMeta}>
-                    {sending ? 'UPLOADING' : formatAttachmentSize(attachment.size)}
-                  </Text>
-                </View>
-                <TouchableOpacity
-                  accessibilityLabel={`Remove ${attachment.name}`}
-                  accessibilityRole="button"
-                  disabled={sending}
-                  onPress={() =>
-                    setPendingAttachments((current) =>
-                      current.filter((_, attachmentIndex) => attachmentIndex !== index),
-                    )
-                  }
-                  style={styles.pendingAttachmentRemove}
-                  testID={`pending-chat-attachment-remove-${index}`}
-                >
-                  <Text style={styles.pendingAttachmentRemoveText}>×</Text>
-                </TouchableOpacity>
-              </View>
-            ))}
-            {/* Keep this in the composer stack, directly above the field. A
+              ))}
+              {/* Keep this in the composer stack, directly above the field. A
                 growing multiline field then takes room from the transcript,
                 never from the only live progress signal. */}
-            {!isArchived && composerAck && (
-              <TurnProgressLine
-                label={composerAck.label}
-                startedAt={composerAck.startedAt}
-                onStop={composerAck.stop ? () => void handleStopTurn(composerAck.stop!) : undefined}
-                testID="turn-progress-line"
-              />
-            )}
-            {!isArchived && !composerAck && settledTurn && (
-              <TurnSettledLine line={settledTurn.line} testID="turn-settled-line" />
-            )}
-            <View style={[styles.composer, composerFocused && styles.composerFocused]}>
-              <TouchableOpacity
-                accessibilityLabel="Attach photo or document"
-                accessibilityRole="button"
-                disabled={sending}
-                onPress={chooseAttachment}
-                style={styles.attachButton}
-                testID="chat-attach-button"
+              {desktopExperience ? (
+                <View
+                  style={styles.desktopStatusSlot}
+                  accessibilityLiveRegion="polite"
+                  testID="desktop-message-status"
+                >
+                  {desktopDeliveryState === 'sending' ? (
+                    <Text style={styles.desktopStatusText}>SENDING…</Text>
+                  ) : composerAck ? (
+                    <TurnProgressLine
+                      label={composerAck.label}
+                      startedAt={composerAck.startedAt}
+                      onStop={
+                        composerAck.stop ? () => void handleStopTurn(composerAck.stop!) : undefined
+                      }
+                      testID="turn-progress-line"
+                    />
+                  ) : desktopDeliveryState ? (
+                    <Text
+                      style={[
+                        styles.desktopStatusText,
+                        desktopDeliveryState === 'failed' && styles.desktopStatusFailed,
+                      ]}
+                    >
+                      {desktopDeliveryState === 'delivered'
+                        ? 'DELIVERED'
+                        : 'MESSAGE FAILED · RETRY FROM THE MESSAGE'}
+                    </Text>
+                  ) : settledTurn ? (
+                    <TurnSettledLine line={settledTurn.line} testID="turn-settled-line" />
+                  ) : null}
+                </View>
+              ) : (
+                <>
+                  {!isArchived && composerAck && (
+                    <TurnProgressLine
+                      label={composerAck.label}
+                      startedAt={composerAck.startedAt}
+                      onStop={
+                        composerAck.stop ? () => void handleStopTurn(composerAck.stop!) : undefined
+                      }
+                      testID="turn-progress-line"
+                    />
+                  )}
+                  {!isArchived && !composerAck && settledTurn && (
+                    <TurnSettledLine line={settledTurn.line} testID="turn-settled-line" />
+                  )}
+                </>
+              )}
+              <View
+                style={[styles.composer, composerFocused && styles.composerFocused]}
+                {...(desktopExperience
+                  ? ({
+                      onDragOver: (event: React.DragEvent<HTMLElement>) => event.preventDefault(),
+                      onDrop: handleDesktopDrop,
+                    } as any)
+                  : {})}
               >
-                <Text style={styles.attachButtonText}>＋</Text>
-              </TouchableOpacity>
-              <TextInput
-                ref={composerRef}
-                style={styles.input}
-                value={inputText}
-                onChangeText={(value) => {
-                  inputTextRef.current = value;
-                  setInputText(value);
-                }}
-                onContentSizeChange={(event) => {
-                  const contentHeight = Math.ceil(event.nativeEvent.contentSize.height);
-                  setComposerHeight(
-                    Math.min(COMPOSER_MAX_HEIGHT, Math.max(COMPOSER_MIN_HEIGHT, contentHeight)),
-                  );
-                }}
-                onFocus={() => setComposerFocused(true)}
-                onBlur={() => setComposerFocused(false)}
-                onKeyPress={(event) => {
-                  const action = mentionKeyboardAction(event.nativeEvent.key);
-                  // Printable keys must never be prevented by the mention
-                  // picker. In particular, `>` is ordinary composer text.
-                  if (slashMenuVisible) {
-                    if (!action) return;
+                <TouchableOpacity
+                  accessibilityLabel="Attach photo or document"
+                  accessibilityRole="button"
+                  disabled={sending}
+                  onPress={chooseAttachment}
+                  style={styles.attachButton}
+                  testID="chat-attach-button"
+                >
+                  <Text style={styles.attachButtonText}>＋</Text>
+                </TouchableOpacity>
+                <TextInput
+                  ref={composerRef}
+                  style={styles.input}
+                  value={inputText}
+                  onChangeText={(value) => {
+                    inputTextRef.current = value;
+                    setInputText(value);
+                  }}
+                  onContentSizeChange={(event) => {
+                    const contentHeight = Math.ceil(event.nativeEvent.contentSize.height);
+                    setComposerHeight(
+                      Math.min(COMPOSER_MAX_HEIGHT, Math.max(COMPOSER_MIN_HEIGHT, contentHeight)),
+                    );
+                  }}
+                  onFocus={() => setComposerFocused(true)}
+                  onBlur={() => setComposerFocused(false)}
+                  onKeyPress={(event) => {
+                    const action = mentionKeyboardAction(event.nativeEvent.key);
+                    // Printable keys must never be prevented by the mention
+                    // picker. In particular, `>` is ordinary composer text.
+                    if (slashMenuVisible) {
+                      if (!action) return;
+                      if (action === 'select') {
+                        event.preventDefault();
+                        selectHighlightedPaletteItem();
+                      } else if ((action === 'next' || action === 'previous') && paletteItemCount) {
+                        event.preventDefault();
+                        const direction = action === 'next' ? 1 : -1;
+                        setHighlightedSlashVerbIndex(
+                          (current) => (current + direction + paletteItemCount) % paletteItemCount,
+                        );
+                      } else {
+                        event.preventDefault();
+                        dismissSlashMenu();
+                      }
+                      return;
+                    }
+                    if (!mentionMenuVisible) {
+                      const desktopAction = desktopComposerKeyAction(
+                        Platform.OS,
+                        event.nativeEvent.key,
+                        Boolean((event.nativeEvent as unknown as { shiftKey?: boolean }).shiftKey),
+                      );
+                      if (desktopAction === 'send') {
+                        event.preventDefault();
+                        void handleSend();
+                      }
+                      return;
+                    }
+                    if (!mentionMenuVisible || !action) return;
                     if (action === 'select') {
                       event.preventDefault();
-                      selectHighlightedPaletteItem();
-                    } else if ((action === 'next' || action === 'previous') && paletteItemCount) {
+                      const selected = mentionSuggestions.matches[highlightedMentionIndex];
+                      if (selected) selectMention(selected);
+                    } else if (action === 'next' || action === 'previous') {
                       event.preventDefault();
                       const direction = action === 'next' ? 1 : -1;
-                      setHighlightedSlashVerbIndex(
-                        (current) => (current + direction + paletteItemCount) % paletteItemCount,
-                      );
+                      setHighlightedMentionIndex((current) => {
+                        const count = mentionSuggestions.matches.length;
+                        return (current + direction + count) % count;
+                      });
                     } else {
                       event.preventDefault();
-                      dismissSlashMenu();
+                      setDismissedMentionKey(mentionMenuKey);
                     }
-                    return;
+                  }}
+                  onSelectionChange={(event) => {
+                    const nextSelection = event.nativeEvent.selection;
+                    setInputSelection((current) =>
+                      current.start === nextSelection.start && current.end === nextSelection.end
+                        ? current
+                        : nextSelection,
+                    );
+                  }}
+                  placeholder={composerPlaceholder}
+                  placeholderTextColor={theme.buzz.dim}
+                  multiline
+                  returnKeyType="default"
+                  scrollEnabled={composerHeight >= COMPOSER_MAX_HEIGHT}
+                  submitBehavior="newline"
+                  testID="chat-input"
+                />
+                <TouchableOpacity
+                  style={[
+                    styles.sendButton,
+                    (slashMenuVisible
+                      ? !inputText.trim()
+                      : (!inputText.trim() && pendingAttachments.length === 0) || sending) &&
+                      styles.sendButtonDisabled,
+                  ]}
+                  onPress={
+                    slashMenuVisible
+                      ? () => {
+                          selectHighlightedPaletteItem();
+                        }
+                      : handleSend
                   }
-                  if (!mentionMenuVisible || !action) return;
-                  if (action === 'select') {
-                    event.preventDefault();
-                    const selected = mentionSuggestions.matches[highlightedMentionIndex];
-                    if (selected) selectMention(selected);
-                  } else if (action === 'next' || action === 'previous') {
-                    event.preventDefault();
-                    const direction = action === 'next' ? 1 : -1;
-                    setHighlightedMentionIndex((current) => {
-                      const count = mentionSuggestions.matches.length;
-                      return (current + direction + count) % count;
-                    });
-                  } else {
-                    event.preventDefault();
-                    setDismissedMentionKey(mentionMenuKey);
+                  disabled={
+                    slashMenuVisible
+                      ? !inputText.trim()
+                      : (!inputText.trim() && pendingAttachments.length === 0) || sending
                   }
-                }}
-                onSelectionChange={(event) => {
-                  const nextSelection = event.nativeEvent.selection;
-                  setInputSelection((current) =>
-                    current.start === nextSelection.start && current.end === nextSelection.end
-                      ? current
-                      : nextSelection,
-                  );
-                }}
-                placeholder={composerPlaceholder}
-                placeholderTextColor={theme.buzz.dim}
-                multiline
-                returnKeyType="default"
-                scrollEnabled={composerHeight >= COMPOSER_MAX_HEIGHT}
-                submitBehavior="newline"
-                testID="chat-input"
-              />
-              <TouchableOpacity
-                style={[
-                  styles.sendButton,
-                  (slashMenuVisible
-                    ? !inputText.trim()
-                    : (!inputText.trim() && pendingAttachments.length === 0) || sending) &&
-                    styles.sendButtonDisabled,
-                ]}
-                onPress={
-                  slashMenuVisible
-                    ? () => {
-                        selectHighlightedPaletteItem();
-                      }
-                    : handleSend
-                }
-                disabled={
-                  slashMenuVisible
-                    ? !inputText.trim()
-                    : (!inputText.trim() && pendingAttachments.length === 0) || sending
-                }
-                testID="chat-send"
-              >
-                <Text style={styles.sendButtonText}>⏎</Text>
-              </TouchableOpacity>
+                  testID="chat-send"
+                >
+                  <Text style={styles.sendButtonText}>⏎</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-          </View>
+          )}
+        </KeyboardAvoidingView>
+        {desktopExperience && desktopInspectorOpen && (
+          <DesktopRoomInspector
+            room={roomSurface}
+            client={roomClient}
+            overlay={desktopMode !== 'three-pane'}
+            onClose={closeDesktopInspector}
+            onOpenCorner={(cornerId) => openCorner(cornerId)}
+          />
         )}
-      </KeyboardAvoidingView>
+      </View>
 
       <AttachmentPickerSheet
         visible={attachmentPickerVisible}
@@ -4020,6 +4232,24 @@ const styles = StyleSheet.create((theme) => {
     container: {
       flex: 1,
       backgroundColor: groknight.bgTerminal,
+    },
+    desktopConversationFrame: {
+      flex: 1,
+      minWidth: 0,
+      flexDirection: 'row',
+      position: 'relative',
+    },
+    desktopStatusSlot: {
+      minHeight: 28,
+      justifyContent: 'center',
+    },
+    desktopStatusText: {
+      ...theme.buzz.type.machine,
+      paddingHorizontal: 14,
+      color: groknight.dim,
+    },
+    desktopStatusFailed: {
+      color: groknight.danger,
     },
     center: {
       alignItems: 'center',

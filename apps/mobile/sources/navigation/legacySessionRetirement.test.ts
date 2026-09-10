@@ -30,9 +30,9 @@ describe('legacy session retirement', () => {
   it('uses the server-indexed Beeline Room list in the persistent sidebar', () => {
     const sidebar = source('components/SidebarView.tsx');
     expect(sidebar).toContain('RoomViewClient');
-    expect(sidebar).toContain('http.chats(workspaceId)');
-    expect(sidebar).toContain('surface.chats.map');
-    expect(sidebar).toContain('router.push(`/beeline/chat/${encodeURIComponent(item.room.id)}`');
+    expect(sidebar).toMatch(/client\s*\.\s*chats\(workspaceId\)/);
+    expect(sidebar).toContain('filteredChats.map');
+    expect(sidebar).toContain('router.push(`/beeline/chat/${encodeURIComponent(roomId)}`');
     // The row's state mark reports the server's rollup of the Room turn and
     // its corners' signed receipts. It used to be pinned to `idle`, which
     // made the sidebar the one Room label that could never say working.

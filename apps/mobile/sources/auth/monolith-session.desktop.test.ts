@@ -37,7 +37,7 @@ vi.mock('@/buzz/runtime-config', () => ({
 }));
 
 import { MonolithSession } from './monolith-session';
-import { monolithSecureStorage } from './monolith-secure-storage';
+import { browserMonolithStorage, monolithSecureStorage } from './monolith-secure-storage';
 
 const tokens = {
   accessToken: 'access',
@@ -92,5 +92,20 @@ describe('packaged desktop monolith session storage', () => {
       key: 'buzzy.monolith.refresh.v1',
       value: tokens.refreshToken,
     });
+  });
+});
+
+describe('browser monolith session storage', () => {
+  it('persists the session through the origin storage API', async () => {
+    const values = new Map<string, string>();
+    const browser = browserMonolithStorage({
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+      removeItem: (key: string) => values.delete(key),
+    } as unknown as Storage);
+    await browser.setItemAsync('session', 'token');
+    expect(await browser.getItemAsync('session')).toBe('token');
+    await browser.deleteItemAsync('session');
+    expect(await browser.getItemAsync('session')).toBeNull();
   });
 });

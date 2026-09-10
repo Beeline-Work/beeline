@@ -1,4 +1,5 @@
 import { MMKV } from 'react-native-mmkv';
+import { webStringStorage } from '@/sync/browser-string-storage';
 import {
   SignedEventOutbox,
   SurfaceResponseCache,
@@ -10,8 +11,9 @@ import {
 import { stripRetiredAgentNotices } from './retired-agent-notices';
 import { isUnsignedMonolithMessage } from './unsigned-monolith-message';
 
-const responses = new MMKV({ id: 'buzz-surface-responses' });
-const mutations = new MMKV({ id: 'buzz-surface-outbox' });
+const browserStorage = typeof window !== 'undefined' && typeof localStorage !== 'undefined' ? localStorage : undefined;
+const responses = browserStorage ? webStringStorage(browserStorage, 'beeline.surface.') : new MMKV({ id: 'buzz-surface-responses' });
+const mutations = browserStorage ? webStringStorage(browserStorage, 'beeline.outbox.') : new MMKV({ id: 'buzz-surface-outbox' });
 const RESPONSE_PREFIX = 'surface.';
 const OUTBOX_PREFIX = 'outbox.';
 

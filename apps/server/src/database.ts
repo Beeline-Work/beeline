@@ -797,6 +797,11 @@ export async function migrate(database: SqlDatabase): Promise<void> {
     `CREATE INDEX CONCURRENTLY IF NOT EXISTS messages_room_cursor_idx ON messages (room_id,
      (${MESSAGE_CURSOR_MS_SQL}), id)`,
   );
+  await database.query(
+    `CREATE INDEX CONCURRENTLY IF NOT EXISTS messages_live_activity_idx
+     ON messages(room_id,author_id,created_at DESC,id DESC)
+     WHERE presentation='activity' AND durable_fact IS NULL`,
+  );
   await database.query(POSTGRES_LIVE_SCHEMA);
   await backfillCornerOwners(database);
   await backfillInheritedCornerMemberships(database);

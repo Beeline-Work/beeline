@@ -1101,6 +1101,12 @@ export class PhoneService {
            LEFT JOIN messages trigger ON trigger.id=turn.request_id AND trigger.room_id=turn.room_id
            LEFT JOIN identities requester ON requester.id=trigger.author_id AND requester.kind='human'
            ORDER BY turn.agent_id,turn.created_at DESC,turn.request_id DESC
+         ), projected_turn_rows AS (
+           SELECT agent_id,status,created_at FROM turn_rows
+           ORDER BY date_trunc('second',created_at) DESC,agent_id ASC
+           LIMIT ${ROOM_VIEW_AGENT_LIMIT}
+         ), active_turn_rows AS (
+           SELECT agent_id,created_at FROM projected_turn_rows WHERE status='working'
          ), transcript_rows AS (
            SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
              i.avatar author_avatar,i.face_id author_face
@@ -1119,6 +1125,8 @@ export class PhoneService {
            FROM authorized_room room
            JOIN messages m ON m.room_id=room.id
            JOIN identities i ON i.id=m.author_id
+           JOIN active_turn_rows turn ON turn.agent_id=m.author_id
+             AND date_trunc('second',m.created_at)>=date_trunc('second',turn.created_at)
            WHERE m.presentation='activity' AND m.durable_fact IS NULL
              AND (NOT EXISTS(
                SELECT 1 FROM legacy_room_events any_legacy WHERE any_legacy.room_id=$1

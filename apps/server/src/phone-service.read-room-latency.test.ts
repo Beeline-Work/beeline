@@ -119,6 +119,23 @@ describe('PhoneService.readRoom latency', () => {
         [`message-${index.toString().padStart(3, '0')}`, ROOM, VIEWER, `Message ${index}`, index],
       );
     }
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,activity,created_at)
+       SELECT 'historical-activity-' || series,$1,$2,'','activity','[]'::jsonb,
+         now() - interval '1 day' - series * interval '1 millisecond'
+       FROM generate_series(1,10000) series`,
+      [ROOM, '0'.repeat(64)],
+    );
+    await database.query(
+      `INSERT INTO agent_turns(room_id,request_id,agent_id,status,created_at)
+       VALUES($1,'message-179',$2,'working',now())`,
+      [ROOM, '0'.repeat(64)],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,activity,created_at)
+       VALUES('current-activity',$1,$2,'','activity','[]'::jsonb,now() + interval '1 second')`,
+      [ROOM, '0'.repeat(64)],
+    );
   }, 30_000);
 
   afterAll(async () => database.close());
@@ -150,12 +167,13 @@ describe('PhoneService.readRoom latency', () => {
     expect(view?.messages.length).toBe(30);
     expect(view?.members.length).toBe(31);
     expect(view?.corners.length).toBe(30);
-    expect(view?.messages.map((message) => message.id)).toEqual(
-      Array.from(
-        { length: 30 },
-        (_, index) => `message-${(150 + index).toString().padStart(3, '0')}`,
+    expect(view?.messages.map((message) => message.id)).toEqual([
+      ...Array.from(
+        { length: 29 },
+        (_, index) => `message-${(151 + index).toString().padStart(3, '0')}`,
       ),
-    );
+      'current-activity',
+    ]);
     expect(new Set(view?.members.map((member) => member.identity.pubkey))).toEqual(
       new Set([
         VIEWER,
@@ -185,6 +203,14 @@ describe('PhoneService.readRoom latency', () => {
       }),
     );
     const sorted = durations.toSorted((left, right) => left - right);
+    if (process.env.READ_ROOM_TRACE === '1') {
+      console.info(
+        JSON.stringify({
+          concurrency: 4,
+          durationsMs: sorted.map((duration) => Math.round(duration)),
+        }),
+      );
+    }
     expect(representative.spans).toHaveLength(4);
     expect(sorted.at(-1)).toBeLessThan(250);
   }, 10_000);

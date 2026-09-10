@@ -88,6 +88,51 @@ function textContent(node: any): string {
     .join('');
 }
 
+function mountWithInstallFlow() {
+  const submit = vi.fn();
+  const addAccount = vi.fn();
+  const manageInstallation = vi.fn();
+  function Harness() {
+    const [roomName, setRoomName] = useState('');
+    const [pendingRepo, select] = useState<any>(null);
+    const [showRepoPicker, show] = useState(true);
+    return (
+      <NewRoomDialog
+        visible
+        workspaceName="Workshop"
+        roomName={roomName}
+        setRoomName={setRoomName}
+        creatingRoom={false}
+        createRoom={() => submit(roomName.trim(), pendingRepo)}
+        onClose={() => {}}
+        pendingRepo={pendingRepo}
+        showRepoPicker={showRepoPicker}
+        handleToggleRepoPicker={() => show(!showRepoPicker)}
+        handleSelectNoRepository={() => {
+          select(null);
+          show(false);
+        }}
+        handleSelectRepoCandidate={(repo) => {
+          select(repo);
+          show(false);
+        }}
+        repoCandidates={[repo]}
+        repoInstallations={[]}
+        repoPickerError={null}
+        repoPickerNotice="Refreshing repositories…"
+        handleAddGitHubAccount={addAccount}
+        handleManageGitHubInstallation={manageInstallation}
+      />
+    );
+  }
+  let renderer!: ReactTestRenderer;
+  act(() => {
+    renderer = create(<Harness />);
+  });
+  const picker = () => renderer.root.findByType('RepoPicker').props;
+  return { renderer, picker, submit, addAccount, manageInstallation };
+}
+
 describe('New Room form', () => {
   it.each([
     { viewport: 'short', height: 320 },
@@ -177,5 +222,28 @@ describe('New Room form', () => {
     expect(submit).toHaveBeenLastCalledWith('work', null);
     act(() => renderer.unmount());
     windowHeight = 844;
+  });
+
+  it('hands the GitHub install flow to the repository picker', () => {
+    const { renderer, picker, addAccount, manageInstallation } = mountWithInstallFlow();
+    expect(picker().notice).toBe('Refreshing repositories…');
+    expect(picker().testIDPrefix).toBe('create-room-repo-picker');
+    expect(picker().error).toBeNull();
+    act(() => picker().onAddAccount());
+    expect(addAccount).toHaveBeenCalledTimes(1);
+    const installation = {
+      installationId: 78,
+      accountLogin: 'Beeline-Work',
+      status: 'active',
+    } as any;
+    act(() => picker().onManageInstallation(installation));
+    expect(manageInstallation).toHaveBeenCalledWith(installation);
+    // The picker is the only place this dialog surfaces install progress.
+    expect(
+      renderer.root
+        .findAllByType('Text')
+        .some((node: any) => textContent(node) === 'Refreshing repositories…'),
+    ).toBe(false);
+    act(() => renderer.unmount());
   });
 });

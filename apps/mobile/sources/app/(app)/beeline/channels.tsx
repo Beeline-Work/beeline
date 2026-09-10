@@ -19,6 +19,8 @@ import {
 } from '@beeline/buzz-client';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
+import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
+import { useGitHubInstallationSession } from '@/auth/github-installation-host';
 import {
   loadActiveCommunityId,
   saveActiveCommunityId,
@@ -112,6 +114,7 @@ export default function BuzzChannels() {
   const [repoCandidates, setRepoCandidates] = useState<RepoCandidate[]>([]);
   const [repoInstallations, setRepoInstallations] = useState<GitHubInstallationAccess[]>([]);
   const [repoPickerError, setRepoPickerError] = useState<string | null>(null);
+  const [repoPickerNotice, setRepoPickerNotice] = useState<string | null>(null);
   const [retryGeneration, setRetryGeneration] = useState(0);
   const [expandedRoomId, setExpandedRoomId] = useState<string | null>(null);
   const [cornersByRoom, setCornersByRoom] = useState<Record<string, readonly CornerListItem[]>>({});
@@ -424,6 +427,28 @@ export default function BuzzChannels() {
     setRepoPickerError(null);
   }, []);
 
+  const startGitHubInstallation = useCallback(
+    async (installationId?: number) => {
+      if (!transport) throw new Error('GitHub transport is unavailable');
+      return transport.githubInstallationStart(githubInstallationRedirectUri(), installationId);
+    },
+    [transport],
+  );
+  const refreshGitHubRepositories = useCallback(() => loadRepoPicker(true), [loadRepoPicker]);
+  const resumeRepoPicker = useCallback(async () => {
+    setShowCreateRoom(true);
+    setShowRepoPicker(true);
+  }, []);
+  const { handleAddGitHubAccount, handleManageGitHubInstallation } = useGitHubInstallationSession({
+    ready: Boolean(transport && activeCommunityId),
+    returnPath: '/beeline/channels',
+    startInstallation: startGitHubInstallation,
+    refreshRepositories: refreshGitHubRepositories,
+    onError: setRepoPickerError,
+    onNotice: setRepoPickerNotice,
+    onColdResume: resumeRepoPicker,
+  });
+
   const handleSelectNoRepository = useCallback(() => {
     setPendingRepo(null);
     setShowRepoPicker(false);
@@ -572,6 +597,11 @@ export default function BuzzChannels() {
           repoCandidates={repoCandidates}
           repoInstallations={repoInstallations}
           repoPickerError={repoPickerError}
+          repoPickerNotice={repoPickerNotice}
+          handleAddGitHubAccount={() => void handleAddGitHubAccount()}
+          handleManageGitHubInstallation={(installation) =>
+            void handleManageGitHubInstallation(installation)
+          }
         />
         {!!error && (
           <TouchableOpacity onPress={refreshNow} style={styles.errorBar}>

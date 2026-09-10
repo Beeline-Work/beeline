@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, Keyboard, Text, TouchableOpacity, View } from 'react-native';
+import { Keyboard, SectionList, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
@@ -38,6 +38,7 @@ import {
   roomRowName,
   roomRowNeedsAttention,
   roomRowPreview,
+  roomListSections,
 } from '@/buzz/room-list-row';
 import { formatRoomCornerCount } from '@/buzz/vocabulary';
 import { runRoomDeckComposeAction } from '@/buzz/room-deck-compose-actions';
@@ -133,6 +134,7 @@ export default function BuzzChannels() {
   const viewerIsAgent = chatList?.viewer.kind === 'agent';
   const canManageWorkspace =
     chatList?.workspace.role === 'owner' || chatList?.workspace.role === 'admin';
+  const chatSections = useMemo(() => roomListSections(chatList?.chats ?? []), [chatList?.chats]);
 
   const refreshNow = useCallback(() => {
     workspaceScheduler.current?.force();
@@ -606,16 +608,26 @@ export default function BuzzChannels() {
             <Text style={styles.error}>{error}</Text>
           </TouchableOpacity>
         )}
-        <FlatList
+        <SectionList
           testID="room-list"
-          data={chatList.chats}
+          sections={chatSections}
           keyExtractor={(item) => item.room.id}
+          stickySectionHeadersEnabled={false}
           refreshing={refreshing}
           onRefresh={() => {
             setRefreshing(true);
             refreshNow();
           }}
           contentContainerStyle={chatList.chats.length ? styles.list : styles.emptyList}
+          renderSectionHeader={({ section }) =>
+            section.title ? (
+              <View style={styles.sectionHeader}>
+                <Text accessibilityRole="header" style={styles.sectionHeaderText}>
+                  {section.title.toUpperCase()}
+                </Text>
+              </View>
+            ) : null
+          }
           ListEmptyComponent={
             // One quiet block in the upper third of the deck, not a hero in
             // the void: the FAB already anchors the bottom. Exactly one
@@ -856,6 +868,17 @@ const styles = StyleSheet.create((theme) => {
     // clear of the floating compose control without turning that control into
     // a visually separate footer cell.
     list: { paddingBottom: COMPOSE_FAB_CLEARANCE },
+    sectionHeader: {
+      paddingTop: hull.space.lg,
+      paddingBottom: hull.space.sm,
+      paddingHorizontal: hull.space.md,
+      backgroundColor: hull.bgTerminal,
+    },
+    sectionHeaderText: {
+      ...Typography.default('semiBold'),
+      ...hull.type.sectionHead,
+      color: hull.textMuted,
+    },
     emptyList: {
       flexGrow: 1,
       justifyContent: 'flex-start',

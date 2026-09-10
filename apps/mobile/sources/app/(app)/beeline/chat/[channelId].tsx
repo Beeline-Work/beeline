@@ -1735,12 +1735,17 @@ export default function BuzzChat() {
    *
    * The control is offered only to the asker (`viewerMayStopTurn`) and the
    * server refuses anyone else, so the two agree on one rule rather than the
-   * phone guessing at it. Nothing is decided locally: the stop's whole effect —
-   * the turn's `cancelled` receipt, the line naming who stopped it — comes back
-   * through the ordinary indexed read, which is what retires this very line.
+   * phone guessing at it. The press is acknowledged on this line immediately
+   * (`stoppingTurn`); the cancelled receipt is still what settles the durable
+   * "stopped" line and retires the control.
    */
+  const [stoppingTurn, setStoppingTurn] = useState<{
+    agentPubkey: string;
+    requestId: string;
+  } | null>(null);
   const handleStopTurn = useCallback(
     async (stop: { agentPubkey: string; requestId: string }) => {
+      setStoppingTurn(stop);
       try {
         await monolithPhoneOperation('cancelAgentTurn', {
           roomId: decodedId,
@@ -1749,12 +1754,33 @@ export default function BuzzChat() {
         });
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       } catch (err) {
+        setStoppingTurn((current) =>
+          current?.requestId === stop.requestId && current.agentPubkey === stop.agentPubkey
+            ? null
+            : current,
+        );
         // A turn that settled while the press was in the air is the ordinary
         // race, not a failure worth a dialog: the line is already gone.
         console.warn('Stopping the turn failed:', err);
       }
     },
     [decodedId],
+  );
+  useEffect(() => {
+    if (!stoppingTurn) return;
+    if (
+      !activeAgentTurn ||
+      activeAgentTurn.requestId !== stoppingTurn.requestId ||
+      activeAgentTurn.agentPubkey !== stoppingTurn.agentPubkey
+    ) {
+      setStoppingTurn(null);
+    }
+  }, [activeAgentTurn, stoppingTurn]);
+  const stoppingThisTurn = Boolean(
+    stoppingTurn &&
+      composerAck?.stop &&
+      stoppingTurn.requestId === composerAck.stop.requestId &&
+      stoppingTurn.agentPubkey === composerAck.stop.agentPubkey,
   );
 
   /** The settled "<Past> for Ns · done h:MM" line a finished turn leaves briefly. */
@@ -3766,6 +3792,7 @@ export default function BuzzChat() {
                     <TurnProgressLine
                       label={composerAck.label}
                       startedAt={composerAck.startedAt}
+                      stopping={stoppingThisTurn}
                       onStop={
                         composerAck.stop ? () => void handleStopTurn(composerAck.stop!) : undefined
                       }
@@ -3792,6 +3819,7 @@ export default function BuzzChat() {
                     <TurnProgressLine
                       label={composerAck.label}
                       startedAt={composerAck.startedAt}
+                      stopping={stoppingThisTurn}
                       onStop={
                         composerAck.stop ? () => void handleStopTurn(composerAck.stop!) : undefined
                       }

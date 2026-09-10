@@ -69,6 +69,7 @@ import {
   parseAgentAccessPolicy,
   senderMayAddressAgent,
 } from '@beeline/api-contract/agent-access';
+import { typedMentionHandles } from './message-mentions.js';
 
 type Input<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['input'];
 type Output<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['output'];
@@ -188,6 +189,7 @@ export class DaemonService {
       scopedRoom &&
       name === 'postRoomMessage' &&
       (!Array.isArray(candidate.mentionIds) || candidate.mentionIds.length === 0) &&
+      typedMentionHandles(String(candidate.text ?? '')).size === 0 &&
       typeof candidate.replyToMessageId !== 'string'
     )
       return (await this.postRoomMessage(
@@ -276,15 +278,12 @@ export class DaemonService {
           );
         }
         if (name === 'postRoomMessage') {
-          const resultId = (result as { id: string }).id;
-          if (
-            (Array.isArray(candidate.mentionIds) && candidate.mentionIds.length > 0) ||
-            typeof candidate.replyToMessageId === 'string'
-          )
+          const message = result as unknown as { id: string; mentionIds: string[] };
+          if (message.mentionIds.length > 0 || typeof candidate.replyToMessageId === 'string')
             await routeAgentResult(
               db,
               command,
-              resultId,
+              message.id,
               candidate.replyToMessageId as string | undefined,
             );
         } else if (name === 'postAgentTurnReceipt') {
@@ -1048,17 +1047,19 @@ export class DaemonService {
     await this.access(cornerId, agentId);
     const row = (
       await this.database.query<{
+        objective: string;
         feature_branch: string | null;
         request_id: string | null;
         close_requested: boolean;
         lifecycle: import('@beeline/api-contract/phone').CornerLifecycleView;
       }>(
-        `SELECT feature_branch,request_id,close_requested,lifecycle FROM corner_facts WHERE corner_id=$1`,
+        `SELECT objective,feature_branch,request_id,close_requested,lifecycle FROM corner_facts WHERE corner_id=$1`,
         [cornerId],
       )
     ).rows[0];
     return {
       cornerId,
+      objective: row?.objective ?? '',
       ...(row?.feature_branch ? { featureBranch: row.feature_branch } : {}),
       ...(row?.request_id ? { requestId: row.request_id } : {}),
       closeRequested: row?.close_requested ?? false,
@@ -1242,7 +1243,31 @@ export class DaemonService {
   ) {
     if (!this.commandTransaction && !atomicCommandWrite) await this.access(input.roomId, agentId);
     const messageId = id();
-    const mentions = [...new Set(input.mentionIds ?? [])].filter((value) => value !== agentId);
+    const mentions = new Set(input.mentionIds ?? []);
+    const typedHandles = typedMentionHandles(input.text);
+    if (typedHandles.size) {
+      const typedMembers = await this.database.query<{ identity_id: string; alias: string }>(
+        `SELECT membership.identity_id,
+           COALESCE(NULLIF(btrim(identity.handle),''),NULLIF(btrim(identity.name),'')) alias
+         FROM memberships membership
+         JOIN identities identity ON identity.id=membership.identity_id
+         WHERE membership.room_id=$1 AND membership.removed_at IS NULL
+           AND COALESCE(NULLIF(btrim(identity.handle),''),NULLIF(btrim(identity.name),'')) IS NOT NULL`,
+        [input.roomId],
+      );
+      const idsByHandle = new Map<string, string[]>();
+      for (const member of typedMembers.rows) {
+        const handle = member.alias.normalize('NFKC').toLocaleLowerCase();
+        const ids = idsByHandle.get(handle) ?? [];
+        ids.push(member.identity_id);
+        idsByHandle.set(handle, ids);
+      }
+      for (const handle of typedHandles) {
+        const ids = idsByHandle.get(handle);
+        if (ids?.length === 1) mentions.add(ids[0]!);
+      }
+    }
+    mentions.delete(agentId);
     let agentMentionIds = new Set<string>();
     let memberIds = new Set<string>();
     const parent = input.replyToMessageId
@@ -1271,13 +1296,13 @@ export class DaemonService {
           input.generationId,
         )));
     let humanIds = new Set<string>();
-    if (mentions.length) {
+    if (mentions.size) {
       const members = await this.database.query<{ identity_id: string; kind: 'human' | 'agent' }>(
         `SELECT membership.identity_id,identity.kind FROM memberships membership
          JOIN identities identity ON identity.id=membership.identity_id
          WHERE membership.room_id=$1 AND membership.removed_at IS NULL
            AND membership.identity_id=ANY($2::text[])`,
-        [input.roomId, mentions],
+        [input.roomId, [...mentions]],
       );
       memberIds = new Set(members.rows.map((row) => row.identity_id));
       agentMentionIds = new Set(
@@ -1289,7 +1314,7 @@ export class DaemonService {
     }
     // Mentions are server-validated against the Room roster: a member mention
     // (human or agent) becomes a real mention; an unknown name stays plain text.
-    const validatedMentions = mentions.filter((value) => memberIds.has(value));
+    const validatedMentions = [...mentions].filter((value) => memberIds.has(value));
     // A tag an agent writes reaches the person it names, exactly as a
     // human-authored one does: the same stored mention id, the same push
     // fan-out, the same highlight. There is no per-turn numeric cap. One kept

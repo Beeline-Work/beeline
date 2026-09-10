@@ -65,6 +65,18 @@ export function elapsedSeconds(startedAtMs: number, nowMs: number): number {
   return Math.max(0, Math.floor((nowMs - startedAtMs) / 1_000));
 }
 
+/** The live counter's last word: thinking, or stopping the moment the asker presses. */
+export type WorkingPhase = 'thinking' | 'stopping';
+
+/** `Ns · thinking` / `Ns · stopping` — one string for the counter and the spoken line. */
+export function formatWorkingCounter(
+  startedAtMs: number,
+  nowMs: number,
+  phase: WorkingPhase = 'thinking',
+): string {
+  return `${elapsedSeconds(startedAtMs, nowMs)}s \u00b7 ${phase}`;
+}
+
 /** Local wall clock as the settled line's "done h:MM" stamp. */
 export function formatDoneTime(whenMs: number): string {
   return new Date(whenMs)

@@ -83,7 +83,7 @@ describe('command intake mechanics', () => {
     });
     expect(run).not.toHaveBeenCalled();
   });
-  it('claims one live-pushed command without refetching commands', async () => {
+  it('claims one live-pushed command and forwards release identity without availability', async () => {
     const controller = new AbortController();
     let onState:
         | ((
@@ -114,12 +114,17 @@ describe('command intake mechanics', () => {
       ),
     } as unknown as DaemonApiClient;
     const run = vi.fn(async () => controller.abort());
+    const presence = {
+      releaseVersion: 'v0.0.68',
+      sourceSha: 'db2618408a205a3f319d26017a953725e7f13b61',
+    };
     const running = runServerCommandIntake({
       api,
       roomId: 'room',
       agentId: 'agent',
       context: await context(),
       signal: controller.signal,
+      presence,
       run,
       stop: vi.fn(),
     });
@@ -130,6 +135,14 @@ describe('command intake mechanics', () => {
     expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands')).toHaveLength(1);
     expect(execute.mock.calls.filter(([name]) => name === 'claimAgentCommand')).toHaveLength(1);
     expect(run).toHaveBeenCalledTimes(1);
+    expect(api.liveSubscribe).toHaveBeenCalledWith(
+      'room',
+      undefined,
+      undefined,
+      expect.any(Function),
+      presence,
+      expect.any(Function),
+    );
   });
   it('reconciles an unavailable live push at one second, not sixty seconds', async () => {
     vi.useFakeTimers();

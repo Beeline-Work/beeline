@@ -7,9 +7,12 @@ import {
   COMPONENT_PATH_RULES,
   RELEASE_BUDGET_MINUTES,
   RELEASE_COMPONENTS,
+  RELEASE_NOTIFY_TIMEOUT_MS,
+  RELEASE_NOTIFY_ENDPOINT,
   finalizeRelease,
   initializeRelease,
   markComponentStage,
+  notifyRelease,
   releasePlanSummary,
   retryPlan,
   selectReleaseComponents,
@@ -150,6 +153,38 @@ test('final manifest refuses absent artifacts and records outcome duration', () 
   assert.equal(state.state, 'delivered');
 });
 
+test('release notification timeout is a bounded warning', async () => {
+  const result = await notifyRelease({
+    version: 'v0.0.9',
+    sourceSha: NEW_SHA,
+    repository: 'lunchboxfortwo/beeline',
+    secret: 'secret',
+    timeoutMs: 10,
+    fetchImpl: (_url, { signal }) => new Promise((resolve, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    }),
+  });
+  assert.equal(RELEASE_NOTIFY_TIMEOUT_MS, 10_000);
+  assert.equal(RELEASE_NOTIFY_ENDPOINT, 'https://server.usebeeline.app/v1/releases/notify');
+  assert.deepEqual(result, { state: 'warning', detail: 'timed out after 10ms' });
+});
+
+test('release notification non-2xx is a warning', async () => {
+  const result = await notifyRelease({
+    version: 'v0.0.9', sourceSha: NEW_SHA, repository: 'lunchboxfortwo/beeline', secret: 'secret',
+    fetchImpl: async () => ({ ok: false, status: 503 }),
+  });
+  assert.deepEqual(result, { state: 'warning', detail: 'server returned HTTP 503' });
+});
+
+test('successful release notification is recorded', async () => {
+  const result = await notifyRelease({
+    version: 'v0.0.9', sourceSha: NEW_SHA, repository: 'lunchboxfortwo/beeline', secret: 'secret',
+    fetchImpl: async () => ({ ok: true, status: 204 }),
+  });
+  assert.deepEqual(result, { state: 'sent', detail: 'server returned HTTP 204' });
+});
+
 test('workflow is manual, selective, concurrent, bounded, and component-local on retry', () => {
   const source = readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8');
   const workflow = parse(source);
@@ -180,10 +215,20 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
 
 test('production endpoint, stable downloads, rollback evidence, green gates, and final record remain wired', () => {
   const release = readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8');
+  const workflow = parse(release);
   const rollback = readFileSync(new URL('../.github/workflows/mobile-ota-rollback.yml', import.meta.url), 'utf8');
   const checks = readFileSync(new URL('../.github/workflows/checks.yml', import.meta.url), 'utf8');
   const desktop = readFileSync(new URL('../.github/workflows/desktop.yml', import.meta.url), 'utf8');
   assert.match(release, /https:\/\/server\.usebeeline\.app\/readyz/);
+  assert.match(release, /unified-release\.mjs notify/);
+  const notification = workflow.jobs.release_result.steps.find((step) => step.id === 'notification');
+  assert.equal(notification['continue-on-error'], true);
+  const summary = workflow.jobs.release_result.steps.find((step) => step.name?.startsWith('Surface release outcome'));
+  assert.match(summary.env.NOTIFICATION_STATE, /steps\.notification\.outputs\.state/);
+  const genuineFailure = workflow.jobs.release_result.steps.find((step) => step.name?.startsWith('Fail the attempt'));
+  assert.equal(genuineFailure.if, "steps.result.outputs.outcome != 'success'");
+  assert.match(genuineFailure.run, /exit 1/);
+  assert.match(workflow.jobs.retry.if, /needs\.release_result\.result == 'failure'/);
   assert.match(release, /unified-release-index/);
   assert.match(release, /store_track:/);
   assert.match(rollback, /mobile-ota-rollback-/);

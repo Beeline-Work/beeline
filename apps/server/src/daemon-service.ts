@@ -1462,6 +1462,9 @@ export class DaemonService {
           | 'result_conflict'
           | 'write_failed';
         row: (Omit<CommittedMessageLiveRow, 'created_at'> & { created_at: string }) | null;
+        recovered_row:
+          | (Omit<CommittedMessageLiveRow, 'created_at'> & { created_at: string })
+          | null;
       };
       // One autocommit statement owns the lock, generation/lease/cancellation
       // decision, attachment drain, terminal turn/failure state, reply insert,
@@ -1511,9 +1514,15 @@ export class DaemonService {
              WHERE agent.id=$3 AND failure.room_id=$2 AND failure.card_type='turn-failed'
                AND failure.card->>'requestId'=$6 AND failure.card->>'agentId'=$3
                AND failure.card->>'state'='failed'
-             RETURNING failure.id
+             RETURNING failure.*
+           ), recovered_public AS (
+             SELECT recovered.*,author.kind author_kind,author.name author_name,
+               author.handle author_handle,author.avatar author_avatar,author.face_id author_face
+             FROM recovered JOIN identities author ON author.id=recovered.author_id
            ), recovery_barrier AS (
-             SELECT count(*) recovered_count FROM recovered
+             SELECT count(*) recovered_count,
+               (jsonb_agg(to_jsonb(recovered_public))->0) recovered_row
+             FROM recovered_public
            ), inserted AS (
              INSERT INTO messages(
                id,room_id,author_id,text,presentation,request_id,legacy_event,mention_ids,
@@ -1545,7 +1554,9 @@ export class DaemonService {
            ), committed AS (
              SELECT * FROM inserted_public UNION ALL SELECT * FROM existing_public
            )
-           SELECT 'committed'::text outcome,to_jsonb(committed) row FROM committed
+           SELECT 'committed'::text outcome,to_jsonb(committed) row,
+             (SELECT recovered_row FROM recovery_barrier) recovered_row
+           FROM committed
            UNION ALL
            SELECT CASE
              WHEN NOT EXISTS(SELECT 1 FROM candidate) THEN 'authority_rejected'
@@ -1554,7 +1565,7 @@ export class DaemonService {
                AND (SELECT result_message_id FROM candidate) IS NULL THEN 'already_completed'
              WHEN (SELECT state FROM candidate)='complete' THEN 'result_conflict'
              ELSE 'write_failed'
-           END outcome,NULL::jsonb row
+           END outcome,NULL::jsonb row,NULL::jsonb recovered_row
            WHERE NOT EXISTS(SELECT 1 FROM committed)
            LIMIT 1`,
         [
@@ -1582,6 +1593,20 @@ export class DaemonService {
       if (result.outcome === 'result_conflict') throw new Error('command result conflict');
       if (!result.row) throw new Error('command output authority rejected');
       saved = { ...result.row, created_at: new Date(result.row.created_at) };
+      if (result.recovered_row) {
+        const recovered = {
+          ...result.recovered_row,
+          created_at: new Date(result.recovered_row.created_at),
+        };
+        this.live.publish({
+          type: 'invalidate',
+          roomId: input.roomId,
+          reason: 'message',
+          agentId,
+          messageId: recovered.id,
+          committedRow: { type: 'message', row: recovered },
+        });
+      }
       if (this.livePaintDiagnostics) projectionCompletedAt = Date.now();
     } else {
       saved = await this.database.transaction(saveCompatibilityReply);

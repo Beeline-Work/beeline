@@ -35,7 +35,7 @@ import { ROOM_LABEL } from '@/buzz/vocabulary';
 const OUTBOX_CONFIRMATION_TIMEOUT_MS = 15_000;
 
 type ReceivedLiveTrace = LiveWireTrace & { reason: string; receivedAt: number };
-let remainingLiveTraceLogs = 16;
+let remainingLiveTraceLogs = 32;
 let liveTraceRows: unknown[] = [];
 let liveTraceWrite = Promise.resolve();
 export const LIVE_TRACE_STORAGE_KEY = '@beeline/live-event-trace-v1';

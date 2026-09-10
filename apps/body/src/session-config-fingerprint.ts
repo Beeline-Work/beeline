@@ -24,6 +24,8 @@ export interface SessionConfigInput {
   soul?: { readonly name: string; readonly instructions: string } | undefined;
   /** The name the session introduces itself by. */
   agentName?: string | undefined;
+  /** Merge authority baked into a corner session's Git workflow prompt. */
+  yoloMode?: boolean | undefined;
 }
 
 export function sessionConfigFingerprint(input: SessionConfigInput): string {
@@ -33,5 +35,6 @@ export function sessionConfigFingerprint(input: SessionConfigInput): string {
     input.soul?.name ?? '',
     input.soul?.instructions ?? '',
     input.agentName ?? '',
+    input.yoloMode ?? false,
   ]);
 }

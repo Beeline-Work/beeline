@@ -14,19 +14,14 @@ const execFileAsync = promisify(execFile);
  *
  *   - remote absent, or already contained in this worktree → nothing to do;
  *   - this worktree strictly behind → fast-forward;
- *   - the histories diverged → rebase this worktree's own commits on top.
+ *   - the histories diverged → rebase this worktree's own commits on top;
+ *   - that rebase conflicts → realign to the shared remote head.
  *
- * A rebase that cannot be resolved is not swallowed and is not force-pushed
- * over: it is aborted and raised as one sentence a turn failure can carry into
- * the corner, so the humans reading it learn that two agents pushed and the
- * branch needs a person. The alternative — pushing anyway — is the clobber
- * this exists to prevent.
+ * Realignment discards only this helper's unpushed local commits. The remote
+ * branch remains authoritative and is never force-pushed; the next turn can
+ * redo the fixed objective against the other helper's accepted work.
  */
-export type CornerBranchSync = 'unchanged' | 'fast-forwarded' | 'rebased';
-
-export class CornerBranchDivergedError extends Error {
-  override readonly name = 'CornerBranchDivergedError';
-}
+export type CornerBranchSync = 'unchanged' | 'fast-forwarded' | 'rebased' | 'realigned';
 
 export interface CornerBranchSyncInput {
   readonly worktreePath: string;
@@ -72,11 +67,10 @@ export async function syncCornerBranch(input: CornerBranchSyncInput): Promise<Co
   try {
     await git(behind ? ['merge', '--ff-only', remote] : ['rebase', remote]);
     return behind ? 'fast-forwarded' : 'rebased';
-  } catch (error) {
-    // Leaving a half-finished rebase behind would fail every later turn for a
-    // reason that has nothing to do with the work.
+  } catch {
     await git(['rebase', '--abort']).catch(() => undefined);
-    throw new CornerBranchDivergedError(divergedReason(input.featureBranch, error));
+    await git(['reset', '--hard', remote]);
+    return 'realigned';
   }
 }
 
@@ -90,19 +84,4 @@ async function contains(
     () => true,
     () => false,
   );
-}
-
-/** One line, inside the turn-failure reason budget, naming the branch and the fix. */
-export function divergedReason(featureBranch: string, error?: unknown): string {
-  const detail = String((error as { stderr?: string })?.stderr ?? '')
-    .split('\n')
-    .map((line) => line.trim())
-    .find((line) => /conflict|could not|error:/i.test(line));
-  return [
-    `could not rebase onto origin/${featureBranch}: another agent pushed to this corner's branch`,
-    detail ? ` (${detail})` : '',
-    '. Nothing was pushed; the branch needs a person.',
-  ]
-    .join('')
-    .slice(0, 200);
 }

@@ -313,6 +313,8 @@ export class MonolithRigTransport {
     );
     let socket: WebSocket | undefined;
     let closed = false;
+    let reconnect: ReturnType<typeof setTimeout> | undefined;
+    let reconnectDelayMs = 1_000;
     const poll = setInterval(
       () =>
         listener({
@@ -320,20 +322,45 @@ export class MonolithRigTransport {
         }),
       30_000,
     );
-    try {
-      const token = await monolithSession.authorization();
-      const url = this.baseUrl.replace(/^http/, 'ws') + '/v1/phone/live';
-      socket = new WebSocket(url, [`bearer.${token}`]);
-      socket.onopen = () => {
-        for (const roomId of roomIds) socket?.send(JSON.stringify({ type: 'subscribe', roomId }));
-      };
-      socket.onmessage = (message) => {
-        if (!closed) listener({ monolithLive: JSON.parse(String(message.data)) as LiveWireEvent });
-      };
-    } catch {}
+    const scheduleReconnect = () => {
+      if (closed || reconnect) return;
+      const delayMs = reconnectDelayMs;
+      reconnectDelayMs = Math.min(reconnectDelayMs * 2, 30_000);
+      reconnect = setTimeout(() => {
+        reconnect = undefined;
+        void connect();
+      }, delayMs);
+    };
+    const connect = async () => {
+      try {
+        const token = await monolithSession.authorization();
+        if (closed) return;
+        const url = this.baseUrl.replace(/^http/, 'ws') + '/v1/phone/live';
+        const next = new WebSocket(url, [`bearer.${token}`]);
+        socket = next;
+        next.onopen = () => {
+          if (closed || socket !== next) return;
+          reconnectDelayMs = 1_000;
+          for (const roomId of roomIds) next.send(JSON.stringify({ type: 'subscribe', roomId }));
+        };
+        next.onmessage = (message) => {
+          if (!closed && socket === next)
+            listener({ monolithLive: JSON.parse(String(message.data)) as LiveWireEvent });
+        };
+        next.onclose = () => {
+          if (socket !== next) return;
+          socket = undefined;
+          scheduleReconnect();
+        };
+      } catch {
+        scheduleReconnect();
+      }
+    };
+    await connect();
     return () => {
       closed = true;
       clearInterval(poll);
+      if (reconnect) clearTimeout(reconnect);
       socket?.close();
     };
   }

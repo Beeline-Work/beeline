@@ -1,10 +1,11 @@
 import { AddressInfo } from 'node:net';
+import WebSocket from 'ws';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SqlDatabase } from './database.js';
 import type { TokenAuth } from './auth.js';
 import type { PhoneService } from './phone-service.js';
 import type { DaemonService } from './daemon-service.js';
-import type { LiveHub } from './live.js';
+import { LiveHub } from './live.js';
 import { createBeelineServer } from './server.js';
 
 describe('server readiness', () => {
@@ -12,7 +13,11 @@ describe('server readiness', () => {
 
   afterEach(async () => {
     vi.unstubAllEnvs();
-    await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));
+    await Promise.all(
+      servers
+        .splice(0)
+        .map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
+    );
   });
 
   async function get(path: string, database: SqlDatabase): Promise<Response> {
@@ -80,9 +85,7 @@ describe('server readiness', () => {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const port = (server.address() as AddressInfo).port;
 
-    const response = await fetch(
-      `http://127.0.0.1:${port}/v1/releases/daemon-readiness`,
-    );
+    const response = await fetch(`http://127.0.0.1:${port}/v1/releases/daemon-readiness`);
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
@@ -105,7 +108,11 @@ describe('server readiness', () => {
     servers.push(server);
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const port = (server.address() as AddressInfo).port;
-    const body = JSON.stringify({ version: 'v0.0.42', sha: 'a'.repeat(40), changelogUrl: 'https://x.test' });
+    const body = JSON.stringify({
+      version: 'v0.0.42',
+      sha: 'a'.repeat(40),
+      changelogUrl: 'https://x.test',
+    });
 
     const noAuth = await fetch(`http://127.0.0.1:${port}/v1/releases/notify`, {
       method: 'POST',
@@ -140,7 +147,11 @@ describe('server readiness', () => {
     const response = await fetch(`http://127.0.0.1:${port}/v1/releases/notify`, {
       method: 'POST',
       headers: { authorization: 'Bearer correct-horse', 'content-type': 'application/json' },
-      body: JSON.stringify({ version: 'v0.0.42', sha: 'a'.repeat(40), changelogUrl: 'https://x.test' }),
+      body: JSON.stringify({
+        version: 'v0.0.42',
+        sha: 'a'.repeat(40),
+        changelogUrl: 'https://x.test',
+      }),
     });
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ notified: 3, skipped: 1 });
@@ -165,8 +176,107 @@ describe('server readiness', () => {
     const refused = await fetch(`http://127.0.0.1:${unconfiguredPort}/v1/releases/notify`, {
       method: 'POST',
       headers: { authorization: 'Bearer correct-horse', 'content-type': 'application/json' },
-      body: JSON.stringify({ version: 'v0.0.42', sha: 'a'.repeat(40), changelogUrl: 'https://x.test' }),
+      body: JSON.stringify({
+        version: 'v0.0.42',
+        sha: 'a'.repeat(40),
+        changelogUrl: 'https://x.test',
+      }),
     });
     expect(refused.status).toBe(403);
   });
 });
+
+describe('daemon live command push', () => {
+  const servers: ReturnType<typeof createBeelineServer>[] = [];
+  const sockets: WebSocket[] = [];
+
+  afterEach(async () => {
+    for (const socket of sockets.splice(0)) socket.terminate();
+    await Promise.all(
+      servers
+        .splice(0)
+        .map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
+    );
+  });
+
+  it('refreshes commands only for a command invalidation addressed to this agent', async () => {
+    const roomId = 'room-live';
+    const agentId = 'agent-live';
+    const live = new LiveHub();
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getRoomInbox') return { items: [], cursor: undefined };
+      if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [] };
+      throw new Error(`unexpected operation ${name}`);
+    });
+    const server = createBeelineServer({
+      database: { query: vi.fn(), transaction: vi.fn() },
+      auth: {
+        authenticateDaemon: vi.fn().mockResolvedValue(agentId),
+      } as unknown as TokenAuth,
+      phone: { canReadRoom: vi.fn().mockResolvedValue(true) } as unknown as PhoneService,
+      daemon: { execute } as unknown as DaemonService,
+      live,
+      mediaMaximumBytes: 1,
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/phone/live`, ['bearer.bdt_test']);
+    sockets.push(socket);
+    await new Promise<void>((resolve, reject) => {
+      socket.once('open', resolve);
+      socket.once('error', reject);
+    });
+    const subscribed = nextSocketMessage(socket, 'subscribed');
+    const initialCommands = nextSocketMessage(socket, 'commands');
+    socket.send(JSON.stringify({ type: 'subscribe', roomId }));
+    await Promise.all([subscribed, initialCommands]);
+
+    const commandCalls = () =>
+      execute.mock.calls.filter(([name]) => name === 'getAgentCommands').length;
+    expect(commandCalls()).toBe(1);
+
+    live.publish({ type: 'presence', roomId, agentId, status: 'online', observedAt: 1 });
+    live.publish({ type: 'draft', roomId, agentId, turnId: 'turn', text: 'draft' });
+    live.publish({ type: 'thought', roomId, agentId, turnId: 'turn', text: 'thought' });
+    live.publish({ type: 'invalidate', roomId, reason: 'postgres:messages' });
+    live.publish({
+      type: 'invalidate',
+      roomId,
+      reason: 'postgres:agent_commands',
+      targetAgentId: 'another-agent',
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(commandCalls()).toBe(1);
+
+    const pushed = nextSocketMessage(socket, 'commands');
+    live.publish({
+      type: 'invalidate',
+      roomId,
+      reason: 'postgres:agent_commands',
+      targetAgentId: agentId,
+    });
+    await pushed;
+    expect(commandCalls()).toBe(2);
+  });
+});
+
+function nextSocketMessage(socket: WebSocket, type: string): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    const onMessage = (raw: WebSocket.RawData) => {
+      const message = JSON.parse(raw.toString()) as Record<string, unknown>;
+      if (message.type !== type) return;
+      cleanup();
+      resolve(message);
+    };
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error(`websocket ${type} timeout`));
+    }, 3_000);
+    const cleanup = () => {
+      clearTimeout(timer);
+      socket.off('message', onMessage);
+    };
+    socket.on('message', onMessage);
+  });
+}

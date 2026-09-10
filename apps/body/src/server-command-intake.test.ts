@@ -169,6 +169,70 @@ describe('command intake mechanics', () => {
     expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands')).toHaveLength(2);
     expect(execute.mock.calls.filter(([name]) => name === 'claimAgentCommand')).toHaveLength(1);
   });
+  it('uses a sixty-second recovery sweep only after push intake is acknowledged', async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    let onState:
+      | ((
+          connected: boolean,
+          capabilities?: { pushIntake: boolean; connectionPresence: boolean },
+        ) => void)
+      | undefined;
+    const execute = vi.fn(async (name: string) =>
+      name === 'getAgentCommands' ? { commandProtocol: 1, commands: [] } : { id: 'ok' },
+    );
+    const api = {
+      execute,
+      liveSubscribe: vi.fn(
+        (
+          _roomId: string,
+          _cursor: string | undefined,
+          _onItems: unknown,
+          state: typeof onState,
+        ) => {
+          onState = state;
+          return vi.fn();
+        },
+      ),
+    } as unknown as DaemonApiClient;
+    const running = runServerCommandIntake({
+      api,
+      roomId: 'room',
+      agentId: 'agent',
+      context: await context(),
+      signal: controller.signal,
+      run: vi.fn(),
+      stop: vi.fn(),
+    });
+    for (let flush = 0; flush < 5 && !onState; flush += 1) await Promise.resolve();
+    expect(onState).toBeTypeOf('function');
+
+    await vi.advanceTimersByTimeAsync(999);
+    expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands')).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.waitFor(() =>
+      expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands')).toHaveLength(2),
+    );
+
+    onState?.(true, { pushIntake: true, connectionPresence: true });
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands')).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.waitFor(() =>
+      expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands')).toHaveLength(3),
+    );
+
+    onState?.(false);
+    await vi.waitFor(() =>
+      expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands')).toHaveLength(4),
+    );
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() =>
+      expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands')).toHaveLength(5),
+    );
+    controller.abort();
+    await running;
+  });
   it('processes a stop while an authorized input is running', async () => {
     const controller = new AbortController();
     let reads = 0,

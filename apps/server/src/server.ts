@@ -292,14 +292,13 @@ export function createBeelineServer(options: ServerOptions): Server {
               releases.set(
                 roomId,
                 options.live.subscribe(roomId, (event) => {
+                  void replay();
                   if (
                     event.type === 'invalidate' &&
-                    event.targetAgentId &&
-                    event.targetAgentId !== principal.identityId
+                    event.reason === 'postgres:agent_commands' &&
+                    event.targetAgentId === principal.identityId
                   )
-                    return;
-                  void replay();
-                  void pushCommands();
+                    void pushCommands();
                 }),
               );
               const lifecycleId =

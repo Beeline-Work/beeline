@@ -348,7 +348,7 @@ jobs:
           const manifest = require(process.argv[2]);
           if (manifest.version !== process.argv[3] || manifest.sourceCommit !== process.argv[4]) process.exit(1);
           NODE
-          npm view "usebeeline@${RELEASE_VERSION#v}" version >/dev/null
+          node scripts/npm-package-visibility.mjs usebeeline "${RELEASE_VERSION#v}"
       - name: Write helper checkpoint
         run: |
           node -e 'const fs=require("node:fs");const [version,sourceSha,artifactRef]=process.argv.slice(1);fs.writeFileSync("checkpoint-helper.json",JSON.stringify({component:"helper",version,sourceSha,state:"checked",artifactRef})+"\n")' \

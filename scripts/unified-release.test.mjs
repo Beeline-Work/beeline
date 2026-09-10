@@ -274,6 +274,8 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
   assert.match(source, /failure_class/);
   assert.match(source, /durationSeconds/);
   assert.match(source, /rolling [0-9]+ release attempts/);
+  assert.match(source, /node scripts\/npm-package-visibility\.mjs usebeeline "\$\{RELEASE_VERSION#v\}"/);
+  assert.equal(source.match(/npm publish/g)?.length, 1);
 });
 
 test('production endpoint, stable downloads, rollback evidence, green gates, and final record remain wired', () => {

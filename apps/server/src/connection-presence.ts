@@ -162,8 +162,12 @@ export class ConnectionPresence {
       return;
     const changed = await this.database.query(
       `UPDATE live_outputs p SET body=p.body || jsonb_build_object(
-         'status','offline','observedAt',GREATEST($4::bigint,(p.body->>'observedAt')::bigint+1)),updated_at=now()
+         'status','offline','observedAt',GREATEST($4::bigint,(p.body->>'observedAt')::bigint+1)),updated_at=clock_timestamp()
        WHERE p.agent_id=$1 AND p.kind='presence' AND p.body->>'status'='online'
+         AND (p.room_id,p.agent_id,p.turn_id,p.kind)=(
+           SELECT room_id,agent_id,turn_id,kind FROM live_outputs
+           WHERE agent_id=$1 AND kind='presence' ORDER BY updated_at DESC LIMIT 1
+         )
          AND (p.body->>'lifecycleId') IS NOT DISTINCT FROM $2::text
          AND COALESCE(p.body->>'evidenceNonce',p.body->>'lifecycleId',p.body->>'observedAt')=$7
          AND EXISTS(SELECT 1 FROM memberships WHERE identity_id=$1 AND room_id=$5 AND removed_at IS NULL)
@@ -194,15 +198,15 @@ export async function announceAgentLifecycle(
   const changed = await database.transaction(async (db) => {
     await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`presence:${agentId}`]);
     const previous = (
-      await db.query<{ body: Record<string, unknown> }>(
-        `SELECT body FROM live_outputs WHERE agent_id=$1 AND kind='presence'
+      await db.query<{ room_id: string; body: Record<string, unknown> }>(
+        `SELECT room_id,body FROM live_outputs WHERE agent_id=$1 AND kind='presence'
          ORDER BY updated_at DESC LIMIT 1`,
         [agentId],
       )
-    ).rows[0]?.body;
+    ).rows[0];
     const observedAt = Math.max(
       Math.floor(Date.now() / 1000),
-      Number(previous?.observedAt ?? 0) + 1,
+      Number(previous?.body.observedAt ?? 0) + 1,
     );
     const body = {
       status: metadata.available === false ? 'offline' : 'online',
@@ -212,18 +216,20 @@ export async function announceAgentLifecycle(
       ...(metadata.releaseVersion ? { releaseVersion: metadata.releaseVersion } : {}),
       ...(metadata.sourceSha ? { sourceSha: metadata.sourceSha } : {}),
     };
-    await db.query(
-      `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)
-         VALUES($1,$2,'presence','presence',$3::jsonb)
-         ON CONFLICT(room_id,agent_id,turn_id,kind) DO UPDATE SET body=EXCLUDED.body,updated_at=now()`,
-      [roomId, agentId, JSON.stringify(body)],
-    );
-    // All viewers, including other Rooms and corners, share the agent fact.
-    await db.query(
-      `UPDATE live_outputs SET body=$2::jsonb,updated_at=now()
-         WHERE agent_id=$1 AND kind='presence' AND body IS DISTINCT FROM $2::jsonb`,
-      [agentId, JSON.stringify(body)],
-    );
+    if (previous)
+      await db.query(
+        `UPDATE live_outputs SET body=$3::jsonb,updated_at=clock_timestamp()
+         WHERE room_id=$1 AND agent_id=$2 AND turn_id='presence' AND kind='presence'`,
+        [previous.room_id, agentId, JSON.stringify(body)],
+      );
+    else
+      await db.query(
+        `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body,updated_at)
+         VALUES($1,$2,'presence','presence',$3::jsonb,clock_timestamp())`,
+        [roomId, agentId, JSON.stringify(body)],
+      );
+    // Presence is an agent fact. Change one durable row; the PostgreSQL
+    // listener expands its one notification across current Room memberships.
     return true;
   });
   if (changed) await broadcastAgentPresence(database, live, agentId);
@@ -266,17 +272,21 @@ export async function recordAgentEvidence(
       observedAt,
       evidenceNonce: randomUUID(),
     };
-    await db.query(
-      `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)
-       VALUES($1,$2,'presence','presence',$3::jsonb)
-       ON CONFLICT(room_id,agent_id,turn_id,kind) DO UPDATE SET body=EXCLUDED.body,updated_at=now()`,
-      [targetRoom, agentId, JSON.stringify(body)],
-    );
-    await db.query(
-      `UPDATE live_outputs SET body=$2::jsonb,updated_at=now()
-       WHERE agent_id=$1 AND kind='presence' AND body IS DISTINCT FROM $2::jsonb`,
-      [agentId, JSON.stringify(body)],
-    );
+    if (previous)
+      await db.query(
+        `UPDATE live_outputs SET body=$3::jsonb,updated_at=clock_timestamp()
+         WHERE room_id=$1 AND agent_id=$2 AND turn_id='presence' AND kind='presence'`,
+        [previous.room_id, agentId, JSON.stringify(body)],
+      );
+    else
+      await db.query(
+        `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body,updated_at)
+         VALUES($1,$2,'presence','presence',$3::jsonb,clock_timestamp())`,
+        [targetRoom, agentId, JSON.stringify(body)],
+      );
+    // Do not rewrite the agent's historical Room copies. Doing so emits one
+    // PostgreSQL notification (and one listener read) per Room for every
+    // authenticated helper operation.
     return true;
   });
   if (changed) await broadcastAgentPresence(database, live, agentId);

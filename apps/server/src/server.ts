@@ -65,6 +65,30 @@ export interface ServerOptions {
    * delta is painted. Ordinary live delivery performs no extra query. */
   livePaintDiagnostics?: boolean;
   authHandler?: (request: IncomingMessage, response: ServerResponse) => void;
+  /** Exact browser origins allowed to call the bearer-authenticated HTTP API. */
+  webAppOrigins?: readonly string[];
+}
+
+function applyWebAppCors(
+  request: IncomingMessage,
+  response: ServerResponse,
+  options: ServerOptions,
+): boolean {
+  const origin = request.headers.origin;
+  if (typeof origin !== 'string' || !options.webAppOrigins?.includes(origin)) return false;
+
+  response.setHeader('access-control-allow-origin', origin);
+  response.setHeader('vary', 'Origin');
+  if (request.method !== 'OPTIONS') return false;
+
+  response.writeHead(204, {
+    'access-control-allow-methods': 'GET, POST, OPTIONS',
+    'access-control-allow-headers': 'authorization, content-type, x-file-name',
+    'access-control-max-age': '600',
+    'cache-control': 'private, no-store',
+  });
+  response.end();
+  return true;
 }
 
 function json(response: ServerResponse, status: number, body: unknown): void {
@@ -148,6 +172,7 @@ export function createBeelineServer(options: ServerOptions): Server {
     const url = exactPath(request.url);
     const method = request.method ?? 'GET';
     console.log('[req]', method, url.pathname);
+    if (url.pathname.startsWith('/v1/') && applyWebAppCors(request, response, options)) return;
     void route(request, response, options, invitePreview).catch((error) => {
       const message = error instanceof Error ? error.message : 'request failed';
       const status =

@@ -56,6 +56,7 @@ import {
   parseAgentAccessPolicy,
   senderMayAddressAgent,
 } from '@beeline/api-contract/agent-access';
+import { typedMentionHandles } from './message-mentions.js';
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
 import type { CommittedMessageLiveRow, CommittedTurnLiveRow, LiveEvent, LiveHub } from './live.js';
 import type { GitHubOperations } from './github-operations.js';
@@ -96,19 +97,6 @@ const DURABLE_KINDS = [0, 9, 9000, 9001, 9002, 9007, 9008, 30078, 39000, 39001, 
  */
 const CONNECT_RENAME_WINDOW_MS = 15 * 60 * 1_000;
 const SLOW_ROOM_READ_MS = 500;
-
-function mentionCodePointBefore(text: string, offset: number): string | undefined {
-  if (!offset) return undefined;
-  const last = text.charCodeAt(offset - 1);
-  const start = last >= 0xdc00 && last <= 0xdfff ? offset - 2 : offset - 1;
-  const codePoint = text.codePointAt(start);
-  return codePoint === undefined ? undefined : String.fromCodePoint(codePoint);
-}
-
-function mentionCodePointAt(text: string, offset: number): string | undefined {
-  const codePoint = text.codePointAt(offset);
-  return codePoint === undefined ? undefined : String.fromCodePoint(codePoint);
-}
 
 function normalizeAgentName(value: string): string {
   const name = value.trim().replace(/\s+/g, ' ');
@@ -2674,24 +2662,7 @@ export class PhoneService {
     ).rows[0]?.kind;
     if (authorKind !== 'human') return { mentionIds: [], noticeAgentIds: [] };
     const mentions = new Set<string>();
-    const tokenCharacter = /[\p{L}\p{M}\p{N}_.-]/u;
-    const typedHandles = new Set<string>();
-    const normalizedText = text.normalize('NFKC').toLocaleLowerCase();
-    for (const match of normalizedText.matchAll(
-      /@([\p{L}\p{M}\p{N}_]+(?:[.-][\p{L}\p{M}\p{N}_]+)*)/gu,
-    )) {
-      const offset = match.index ?? 0;
-      const before = mentionCodePointBefore(normalizedText, offset);
-      const punctuation = normalizedText.slice(offset + match[0].length).match(/^[.-]+/u)?.[0];
-      const afterPunctuation = punctuation
-        ? mentionCodePointAt(normalizedText, offset + match[0].length + punctuation.length)
-        : undefined;
-      if (
-        (!before || !tokenCharacter.test(before)) &&
-        (!afterPunctuation || !tokenCharacter.test(afterPunctuation))
-      )
-        typedHandles.add(match[1] ?? '');
-    }
+    const typedHandles = typedMentionHandles(text);
     const members = await this.database.query<{
       id: string;
       handle: string;

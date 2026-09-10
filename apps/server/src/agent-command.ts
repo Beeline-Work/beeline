@@ -256,10 +256,15 @@ export async function authorizeCommandOutput(
   const row =
     typeof requestId === 'string' && typeof generation === 'string'
       ? (
-          await db.query<CommandRow>(
-            `SELECT * FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3
- AND action IN ('input','resume') AND generation_id=$4
- ORDER BY created_at DESC,id DESC LIMIT 1 FOR UPDATE`,
+          await db.query<CommandRow & { turn_cancelled: boolean }>(
+            `SELECT command.*,
+               EXISTS(SELECT 1 FROM agent_turns turn
+                 WHERE turn.room_id=command.room_id AND turn.agent_id=command.agent_id
+                   AND turn.request_id=command.turn_request_id AND turn.status='cancelled') turn_cancelled
+             FROM agent_commands command
+             WHERE command.room_id=$1 AND command.agent_id=$2 AND command.turn_request_id=$3
+               AND command.action IN ('input','resume') AND command.generation_id=$4
+             ORDER BY command.created_at DESC,command.id DESC LIMIT 1 FOR UPDATE OF command`,
             [roomId, agentId, requestId, generation],
           )
         ).rows[0]
@@ -278,11 +283,7 @@ export async function authorizeCommandOutput(
     });
     throw new Error('command output authority rejected');
   }
-  const cancelled = await db.query(
-    `SELECT 1 FROM agent_turns WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND status='cancelled'`,
-    [roomId, agentId, requestId],
-  );
-  if (cancelled.rowCount) throw new Error('command turn cancelled');
+  if (row.turn_cancelled) throw new Error('command turn cancelled');
   return row;
 }
 

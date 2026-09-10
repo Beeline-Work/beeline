@@ -300,11 +300,13 @@ describe('phone committed-row live delivery', () => {
       .fn()
       .mockReturnValue(null),
     canReadRoom = vi.fn().mockResolvedValue(true),
+    livePaintDiagnostics = false,
+    databaseQuery = vi.fn(),
   ) {
     const roomId = 'room-live';
     const live = new LiveHub();
     const server = createBeelineServer({
-      database: { query: vi.fn(), transaction: vi.fn() },
+      database: { query: databaseQuery, transaction: vi.fn() },
       auth: { authenticatePhone: vi.fn().mockResolvedValue('viewer') } as unknown as TokenAuth,
       phone: {
         canReadRoom,
@@ -314,6 +316,7 @@ describe('phone committed-row live delivery', () => {
       } as unknown as PhoneService,
       daemon: {} as DaemonService,
       live,
+      livePaintDiagnostics,
       mediaMaximumBytes: 1,
     });
     servers.push(server);
@@ -568,6 +571,7 @@ describe('phone committed-row live delivery', () => {
       startedAt,
       databaseAt: startedAt,
       serverReceivedAt: expect.any(Number),
+      upperBoundMs: expect.any(Number),
     });
     const acknowledged = await paintAck;
     expect(acknowledged.serverReceivedAt as number).toBeGreaterThanOrEqual(startedAt);
@@ -594,6 +598,57 @@ describe('phone committed-row live delivery', () => {
     socket.off('message', onMessage);
     expect(unexpected).toBe(false);
     expect(read).not.toHaveBeenCalled();
+  });
+
+  it('takes one diagnostics-gated DB-clock sample after a cross-process paint', async () => {
+    const databaseAt = 1_000;
+    const databaseQuery = vi.fn().mockResolvedValue({
+      rows: [{ clock_at: new Date(databaseAt + 240) }],
+      rowCount: 1,
+    });
+    const delta = {
+      type: 'turn-delta' as const,
+      roomId: 'room-live',
+      turn: {
+        requestId: 'request',
+        agentId: 'agent',
+        status: 'working' as const,
+        createdAt: 1,
+      },
+    };
+    const { live, roomId, socket } = await connect(
+      vi.fn().mockResolvedValue(delta),
+      undefined,
+      undefined,
+      true,
+      databaseQuery,
+    );
+    const delivered = nextSocketMessage(socket, 'turn-delta');
+    live.publish({
+      type: 'invalidate',
+      roomId,
+      reason: 'postgres:agent_turns',
+      agentId: 'agent',
+      requestId: 'request',
+      trace: { id: 'database-clock-trace', databaseAt, emittedAt: databaseAt + 10 },
+    });
+    await expect(delivered).resolves.toMatchObject({
+      trace: { id: 'database-clock-trace', paintAck: 'database-clock' },
+    });
+
+    const painted = nextSocketMessage(socket, 'trace-painted');
+    socket.send(JSON.stringify({ type: 'trace-paint', id: 'database-clock-trace' }));
+    await expect(painted).resolves.toMatchObject({
+      type: 'trace-painted',
+      id: 'database-clock-trace',
+      databaseAt,
+      databaseClockAt: databaseAt + 240,
+      upperBoundMs: 240,
+    });
+    expect(databaseQuery).toHaveBeenCalledOnce();
+    socket.send(JSON.stringify({ type: 'trace-paint', id: 'database-clock-trace' }));
+    await expectNoSocketMessage(socket);
+    expect(databaseQuery).toHaveBeenCalledOnce();
   });
 
   it('never subscribes or projects a committed row for an unauthorized viewer', async () => {

@@ -535,6 +535,7 @@ describe('useRoomSurfaceSession', () => {
           startedAt: 1_000,
           databaseAt: 1_025,
           serverReceivedAt: 1_240,
+          upperBoundMs: 240,
         },
       });
     });

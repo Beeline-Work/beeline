@@ -263,6 +263,58 @@ describe('monolith Room send path', () => {
     stop();
   });
 
+  it('acknowledges a diagnostics-gated cross-machine trace without startedAt', async () => {
+    const sockets: Array<{
+      sent: string[];
+      readyState: number;
+      onopen?: () => void;
+      onmessage?: (event: { data: string }) => void;
+    }> = [];
+    class TestWebSocket {
+      static readonly OPEN = 1;
+      sent: string[] = [];
+      readyState = TestWebSocket.OPEN;
+      onopen?: () => void;
+      onmessage?: (event: { data: string }) => void;
+      constructor() {
+        sockets.push(this);
+      }
+      send(value: string) {
+        this.sent.push(value);
+      }
+      close() {
+        this.readyState = 3;
+      }
+    }
+    vi.stubGlobal('WebSocket', TestWebSocket);
+    const received: Array<{ acknowledgePaint?: () => void }> = [];
+    const stop = await new MonolithRigTransport(identity).surfaceSubscribe(
+      [{ '#h': [ROOM] }],
+      (event) => received.push(event as (typeof received)[number]),
+    );
+    sockets[0]!.onopen?.();
+    sockets[0]!.onmessage?.({
+      data: JSON.stringify({
+        type: 'turn-delta',
+        roomId: ROOM,
+        turn: { requestId: 'request', agentId: 'agent', status: 'working', createdAt: 1 },
+        trace: {
+          id: 'trace-database-clock',
+          databaseAt: 10,
+          emittedAt: 12,
+          paintAck: 'database-clock',
+        },
+      }),
+    });
+
+    expect(received[0]!.acknowledgePaint).toEqual(expect.any(Function));
+    received[0]!.acknowledgePaint?.();
+    expect(sockets[0]!.sent.at(-1)).toBe(
+      JSON.stringify({ type: 'trace-paint', id: 'trace-database-clock' }),
+    );
+    stop();
+  });
+
   it('stages a plain repo-less Room message before publishing it to the monolith', async () => {
     const transport = new MonolithRigTransport(identity);
     const publish = vi.spyOn(transport, 'publishPreparedMessage');

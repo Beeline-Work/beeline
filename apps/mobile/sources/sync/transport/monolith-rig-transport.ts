@@ -22,6 +22,7 @@ export type LiveWireTrace = {
   databaseAt: number;
   emittedAt: number;
   startedAt?: number;
+  paintAck?: 'database-clock';
 };
 
 type LiveWireEvent =
@@ -32,9 +33,11 @@ type LiveWireEvent =
   | {
       type: 'trace-painted';
       id: string;
-      startedAt: number;
       databaseAt: number;
-      serverReceivedAt: number;
+      startedAt?: number;
+      serverReceivedAt?: number;
+      databaseClockAt?: number;
+      upperBoundMs: number;
     }
   | { type: 'draft' | 'thought'; roomId: string; agentId: string; turnId: string; text: string }
   | { type: 'retract'; roomId: string; agentId: string; turnId: string; kind: 'draft' | 'thought' }
@@ -371,7 +374,8 @@ export class MonolithRigTransport {
           const trace = 'trace' in live ? live.trace : undefined;
           listener({
             monolithLive: live,
-            ...(live.type !== 'trace-painted' && typeof trace?.startedAt === 'number'
+            ...(live.type !== 'trace-painted' &&
+            (typeof trace?.startedAt === 'number' || trace?.paintAck === 'database-clock')
               ? {
                   acknowledgePaint: () => {
                     if (!closed && socket === next && next.readyState === WebSocket.OPEN)

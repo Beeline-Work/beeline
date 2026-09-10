@@ -13,29 +13,36 @@ const WORKSPACE = '11111111-1111-4111-8111-111111111118';
 const ROOM = '22222222-2222-4222-8222-222222222228';
 const REQUEST = 'c'.repeat(64);
 const GENERATION = 'latency-generation';
-const QUERY_DURATION_MS = 60;
+const QUERY_DURATION_MS = 206;
+const DELIVERY_AND_PAINT_BUDGET_MS = 174;
 
 type Timing = {
   messageWriteStartedAt?: number;
   messageWriteEndedAt?: number;
   messageWriteStartedAtWall?: number;
   messageWriteEndedAtWall?: number;
+  transactionQueries?: number;
+  messageWriteQueries?: number;
 };
 
 class DelayedDatabase implements SqlDatabase {
   constructor(
     private readonly database: SqlDatabase,
     private readonly timing: Timing,
+    private readonly insideTransaction = false,
   ) {}
 
   async query<Row extends QueryResultRow = QueryResultRow>(
     sql: string,
     values: unknown[] = [],
   ): Promise<QueryResult<Row>> {
+    if (this.insideTransaction)
+      this.timing.transactionQueries = (this.timing.transactionQueries ?? 0) + 1;
     const messageWrite = /INSERT INTO messages\(|WITH inserted AS \(\s*INSERT INTO messages\(/.test(
       sql,
     );
     if (messageWrite) {
+      this.timing.messageWriteQueries = (this.timing.messageWriteQueries ?? 0) + 1;
       this.timing.messageWriteStartedAt = performance.now();
       this.timing.messageWriteStartedAtWall = Date.now();
     }
@@ -50,7 +57,7 @@ class DelayedDatabase implements SqlDatabase {
 
   transaction<T>(work: (database: SqlDatabase) => Promise<T>): Promise<T> {
     return this.database.transaction((database) =>
-      work(new DelayedDatabase(database, this.timing)),
+      work(new DelayedDatabase(database, this.timing, true)),
     );
   }
 }
@@ -100,7 +107,7 @@ describe('agent reply completion latency', () => {
     const publish = vi.spyOn(live, 'publish');
     const daemon = new DaemonService(delayed, live);
 
-    await daemon.execute(
+    const first = await daemon.execute(
       'postRoomMessage',
       {
         roomId: ROOM,
@@ -131,10 +138,31 @@ describe('agent reply completion latency', () => {
     });
     if (committedEvent?.type !== 'invalidate' || !committedEvent.trace)
       throw new Error('committed trace missing');
-    expect(committedEvent.trace.startedAt!).toBeLessThanOrEqual(timing.messageWriteStartedAtWall!);
+    expect(committedEvent.trace.startedAt!).toBeGreaterThanOrEqual(
+      timing.messageWriteStartedAtWall! - 10,
+    );
+    expect(committedEvent.trace.startedAt!).toBeLessThanOrEqual(timing.messageWriteEndedAtWall!);
     expect(timing.messageWriteEndedAtWall!).toBeLessThanOrEqual(committedEvent.trace.emittedAt);
     expect(committedEvent.trace.databaseAt).toBeLessThanOrEqual(committedEvent.trace.emittedAt);
     expect(timing.messageWriteEndedAt).toBeDefined();
+    const writeToPublishMs = committedEvent.trace.emittedAt - committedEvent.trace.startedAt!;
+    const projectedUpperBoundMs = writeToPublishMs + DELIVERY_AND_PAINT_BUDGET_MS;
+    console.info(
+      JSON.stringify({
+        operation: 'atomic final reply',
+        queryDelayMs: QUERY_DURATION_MS,
+        explicitTransactionQueries: timing.transactionQueries ?? 0,
+        committingStatements: timing.messageWriteQueries,
+        writeToPublishMs,
+        deliveryAndPaintBudgetMs: DELIVERY_AND_PAINT_BUDGET_MS,
+        projectedUpperBoundMs,
+      }),
+    );
+    expect(projectedUpperBoundMs).toBeLessThan(500);
+    // The committing CTE is an autocommit statement: no explicit transaction
+    // and therefore no separate BEGIN/COMMIT network round trips.
+    expect(timing.transactionQueries ?? 0).toBe(0);
+    expect(timing.messageWriteQueries).toBe(1);
     expect(dispatchedAt - timing.messageWriteEndedAt!).toBeLessThan(QUERY_DURATION_MS);
     expect(
       (
@@ -144,6 +172,39 @@ describe('agent reply completion latency', () => {
         )
       ).rows[0],
     ).toEqual({ state: 'complete', result_message_id: expect.any(String) });
+    const retry = await daemon.execute(
+      'postRoomMessage',
+      {
+        roomId: ROOM,
+        requestId: REQUEST,
+        generationId: GENERATION,
+        text: 'Answer',
+        mentionIds: [],
+      },
+      AGENT,
+    );
+    expect(retry.id).toBe(first.id);
+    await expect(
+      daemon.execute(
+        'postRoomMessage',
+        {
+          roomId: ROOM,
+          requestId: REQUEST,
+          generationId: GENERATION,
+          text: 'Different answer',
+          mentionIds: [],
+        },
+        AGENT,
+      ),
+    ).rejects.toThrow('command result conflict');
+    expect(
+      (
+        await database.query<{ count: number }>(
+          `SELECT count(*)::integer count FROM messages WHERE request_id=$1 AND author_id=$2`,
+          [REQUEST, AGENT],
+        )
+      ).rows[0]?.count,
+    ).toBe(1);
   }, 10_000);
 
   it('commits a claimed turn in one representative database round trip', async () => {

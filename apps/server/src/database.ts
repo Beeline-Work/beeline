@@ -43,6 +43,7 @@ export interface SqlDatabase {
     values?: unknown[],
   ): Promise<QueryResult<Row>>;
   transaction<T>(work: (database: SqlDatabase) => Promise<T>): Promise<T>;
+  poolCounts?(): { total: number; idle: number; waiting: number };
 }
 
 export interface ClosableDatabase extends SqlDatabase {
@@ -67,6 +68,14 @@ export class PostgresDatabase implements ClosableDatabase {
     this.#pool.on('error', (error) => {
       console.error('postgres idle client error', error);
     });
+  }
+
+  poolCounts() {
+    return {
+      total: this.#pool.totalCount,
+      idle: this.#pool.idleCount,
+      waiting: this.#pool.waitingCount,
+    };
   }
 
   async query<Row extends QueryResultRow = QueryResultRow>(

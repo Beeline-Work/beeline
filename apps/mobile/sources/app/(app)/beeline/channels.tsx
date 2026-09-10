@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Keyboard, SectionList, Text, TouchableOpacity, View } from 'react-native';
+import { Keyboard, Platform, SectionList, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { Swipeable } from 'react-native-gesture-handler';
+import * as Haptics from 'expo-haptics';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -54,6 +56,7 @@ import {
 import { BuzzRigTransport } from '@/sync/transport';
 import type { RepoCandidate } from '@/buzz/room-repo-picker';
 import { Typography } from '@/constants/Typography';
+import { Modal } from '@/modal';
 
 const AGE_TICK_MS = 60_000;
 const COMPOSE_FAB_CLEARANCE = 80;
@@ -64,6 +67,8 @@ const EMPTY_PRIMARY_HEIGHT = 44;
 const ROW_HEIGHT = 64;
 /** The trailing brass unread/attention square — lit or reserved, never absent. */
 const ATTENTION_SQUARE = 7;
+const LEAVE_TILE_SIZE = 28;
+const LEAVE_TILE_HIT_SLOP = { top: 18, bottom: 18, left: 8, right: 8 };
 
 function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -134,12 +139,38 @@ export default function BuzzChannels() {
   const viewerIsAgent = chatList?.viewer.kind === 'agent';
   const canManageWorkspace =
     chatList?.workspace.role === 'owner' || chatList?.workspace.role === 'admin';
+  const canLeaveRooms = chatList?.workspace.role === 'member';
   const chatSections = useMemo(() => roomListSections(chatList?.chats ?? []), [chatList?.chats]);
 
   const refreshNow = useCallback(() => {
     workspaceScheduler.current?.force();
     chatScheduler.current?.force();
   }, []);
+
+  const swipeableRefs = useRef<Map<string, Swipeable | null>>(new Map());
+
+  const handleLeaveRoom = useCallback(async (item: ChatListItem) => {
+    swipeableRefs.current.get(item.room.id)?.close();
+    if (!transport) {
+      Modal.alert('Cannot leave yet', 'Connection is still starting. Try again.');
+      return;
+    }
+    const heading = roomRowName(item);
+    const title = `${heading.sigil}${heading.name}`;
+    const confirmed = await Modal.confirm(
+      `Leave ${title}?`,
+      'Other members keep their access.',
+      { cancelText: 'No', confirmText: 'Yes', destructive: true },
+    );
+    if (!confirmed) return;
+    try {
+      await transport.leaveRoom(item.room.id);
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      chatScheduler.current?.force();
+    } catch (reason) {
+      setError(`Could not leave ${ROOM_LABEL}: ${String(reason)}`);
+    }
+  }, [transport]);
 
   useEffect(() => {
     let cancelled = false;
@@ -680,63 +711,88 @@ export default function BuzzChannels() {
             const cornerCount = formatRoomCornerCount(item.cornerCount);
             const expanded = expandedRoomId === item.room.id;
             const corners = cornersByRoom[item.room.id];
-            return (
-              <View style={styles.roomCell}>
-                <View style={styles.row}>
-                  <TouchableOpacity
-                    accessibilityLabel={`${title}${attention ? ', needs you' : ''}`}
-                    testID={`room-${item.room.id}`}
-                    onPress={() => openRoom(item.room.id)}
-                    style={styles.rowMain}
-                  >
-                    <View style={styles.rowStateSlot} accessibilityElementsHidden>
-                      {attention && (
-                        <View
-                          style={styles.rowStateMark}
-                          testID={`room-attention-${item.room.id}`}
-                        />
-                      )}
-                    </View>
-                    <View style={styles.rowCopy}>
-                      <Text numberOfLines={1} style={styles.title}>
-                        <Text style={styles.sigil} testID={`room-sigil-${item.room.id}`}>
-                          {heading.sigil}
-                        </Text>
-                        {heading.name}
-                      </Text>
-                      <Text
-                        numberOfLines={1}
-                        style={styles.preview}
-                        testID={`room-preview-${item.room.id}`}
-                      >
-                        {preview.attribution === 'self' && (
-                          <Text style={styles.previewSelf}>you: </Text>
-                        )}
-                        {preview.attribution === 'other' && (
-                          <Text style={styles.previewAuthor}>@{preview.handle}: </Text>
-                        )}
-                        {preview.text}
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
-                  <View style={styles.gutter}>
-                    <Text style={styles.age}>{age}</Text>
-                  </View>
-                  <View style={styles.cornerToggleSlot}>
-                    {item.cornerCount > 0 && (
-                      <TouchableOpacity
-                        accessibilityLabel={`${expanded ? 'Hide' : 'Show'} ${cornerCount} in ${title}`}
-                        accessibilityRole="button"
-                        accessibilityState={{ expanded }}
-                        onPress={() => toggleRoomCorners(item.room.id)}
-                        style={styles.cornerToggle}
-                        testID={`room-corners-toggle-${item.room.id}`}
-                      >
-                        <Text style={styles.cornerToggleText}>{expanded ? '⌃' : '⌄'}</Text>
-                      </TouchableOpacity>
+            const row = (
+              <View style={styles.row}>
+                <TouchableOpacity
+                  accessibilityLabel={`${title}${attention ? ', needs you' : ''}`}
+                  testID={`room-${item.room.id}`}
+                  onPress={() => {
+                    swipeableRefs.current.get(item.room.id)?.close();
+                    openRoom(item.room.id);
+                  }}
+                  style={styles.rowMain}
+                >
+                  <View style={styles.rowStateSlot} accessibilityElementsHidden>
+                    {attention && (
+                      <View style={styles.rowStateMark} testID={`room-attention-${item.room.id}`} />
                     )}
                   </View>
+                  <View style={styles.rowCopy}>
+                    <Text numberOfLines={1} style={styles.title}>
+                      <Text style={styles.sigil} testID={`room-sigil-${item.room.id}`}>
+                        {heading.sigil}
+                      </Text>
+                      {heading.name}
+                    </Text>
+                    <Text numberOfLines={1} style={styles.preview} testID={`room-preview-${item.room.id}`}>
+                      {preview.attribution === 'self' && (
+                        <Text style={styles.previewSelf}>you: </Text>
+                      )}
+                      {preview.attribution === 'other' && (
+                        <Text style={styles.previewAuthor}>@{preview.handle}: </Text>
+                      )}
+                      {preview.text}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+                <View style={styles.gutter}>
+                  <Text style={styles.age}>{age}</Text>
                 </View>
+                <View style={styles.cornerToggleSlot}>
+                  {item.cornerCount > 0 && (
+                    <TouchableOpacity
+                      accessibilityLabel={`${expanded ? 'Hide' : 'Show'} ${cornerCount} in ${title}`}
+                      accessibilityRole="button"
+                      accessibilityState={{ expanded }}
+                      onPress={() => toggleRoomCorners(item.room.id)}
+                      style={styles.cornerToggle}
+                      testID={`room-corners-toggle-${item.room.id}`}
+                    >
+                      <Text style={styles.cornerToggleText}>{expanded ? '⌃' : '⌄'}</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+            );
+            return (
+              <View style={styles.roomCell}>
+                {canLeaveRooms && !item.directMessage && Platform.OS !== 'web' ? (
+                  <Swipeable
+                    ref={(ref) => {
+                      if (ref) swipeableRefs.current.set(item.room.id, ref);
+                      else swipeableRefs.current.delete(item.room.id);
+                    }}
+                    friction={1.35}
+                    overshootRight={false}
+                    renderRightActions={() => (
+                      <View style={styles.leaveTile}>
+                        <TouchableOpacity
+                          accessibilityLabel={`Leave ${title}`}
+                          accessibilityRole="button"
+                          hitSlop={LEAVE_TILE_HIT_SLOP}
+                          onPress={() => handleLeaveRoom(item)}
+                          style={styles.leaveTileButton}
+                          testID={`room-leave-action-${item.room.id}`}
+                        >
+                          <Text style={styles.leaveTileGlyph}>×</Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                    testID={`room-leave-swipe-${item.room.id}`}
+                  >
+                    {row}
+                  </Swipeable>
+                ) : row}
                 {expanded && (
                   <View style={styles.cornerDropdown} testID={`room-corners-${item.room.id}`}>
                     {cornerLoadingRoomId === item.room.id && !corners ? (
@@ -1041,6 +1097,28 @@ const styles = StyleSheet.create((theme) => {
       ...Typography.default('semiBold'),
       color: hull.steel,
       fontSize: 18,
+    },
+    leaveTile: {
+      width: LEAVE_TILE_SIZE,
+      height: ROW_HEIGHT,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginRight: 8,
+    },
+    leaveTileButton: {
+      width: LEAVE_TILE_SIZE,
+      height: LEAVE_TILE_SIZE,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: hull.radius,
+      backgroundColor: hull.bgRaised,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: hull.borderStrong,
+    },
+    leaveTileGlyph: {
+      ...Typography.default('semiBold'),
+      ...hull.type.bodyStrong,
+      color: hull.dialogDanger,
     },
     composeOverlay: {
       position: 'absolute',

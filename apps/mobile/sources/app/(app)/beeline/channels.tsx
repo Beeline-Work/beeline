@@ -845,7 +845,7 @@ const styles = StyleSheet.create((theme) => {
       backgroundColor: hull.bgTerminal,
     },
     sectionHeaderText: {
-      ...Typography.default('medium'),
+      ...Typography.default('semiBold'),
       ...hull.type.sectionHead,
       color: hull.textMuted,
     },

@@ -258,7 +258,9 @@ export async function announceAgentLifecycle(
     else
       await db.query(
         `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body,updated_at)
-         VALUES($1,$2,'presence','presence',$3::jsonb,clock_timestamp())`,
+         VALUES($1,$2,'presence','presence',$3::jsonb,clock_timestamp())
+         ON CONFLICT(room_id,agent_id,turn_id,kind) DO UPDATE SET
+           body=EXCLUDED.body,updated_at=EXCLUDED.updated_at`,
         [roomId, agentId, JSON.stringify(body)],
       );
     // Presence is an agent fact. Change one durable row; the PostgreSQL

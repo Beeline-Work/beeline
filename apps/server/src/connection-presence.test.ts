@@ -4,6 +4,7 @@ import { PgliteDatabase } from './test-support.js';
 import { ConnectionPresence, recordAgentEvidence } from './connection-presence.js';
 import { LiveHub } from './live.js';
 import { runMaintenance } from './background.js';
+import type { SqlDatabase } from './database.js';
 
 const ROOM = '22222222-2222-4222-8222-222222222222';
 const OTHER = '33333333-3333-4333-8333-333333333333';
@@ -234,6 +235,52 @@ describe('delivery-driven presence', () => {
       releaseVersion: 'v9',
       sourceSha: 'new-source',
     });
+  });
+
+  it('makes a first lifecycle announcement authoritative over a concurrent evidence insert', async () => {
+    await presence.stop();
+    let insertedEvidence = false;
+    const racingDatabase: SqlDatabase = {
+      query: database.query.bind(database),
+      transaction: async (work) =>
+        database.transaction(async (transaction) => {
+          const racingTransaction: SqlDatabase = {
+            transaction: transaction.transaction.bind(transaction),
+            query: async (sql, values) => {
+              if (
+                !insertedEvidence &&
+                sql.includes('INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body') &&
+                sql.includes("VALUES($1,$2,'presence','presence',$3::jsonb")
+              ) {
+                insertedEvidence = true;
+                await recordAgentEvidence(transaction, live, ROOM, AGENT);
+              }
+              return transaction.query(sql, values);
+            },
+          };
+          return work(racingTransaction);
+        }),
+    };
+    presence = new ConnectionPresence(racingDatabase, live, 50);
+
+    await presence.announce(ROOM, AGENT, {
+      lifecycleId: 'boot-authoritative',
+      releaseVersion: 'v10',
+      sourceSha: 'lifecycle-source',
+    });
+
+    expect(insertedEvidence).toBe(true);
+    expect(await body()).toMatchObject({
+      status: 'online',
+      lifecycleId: 'boot-authoritative',
+      releaseVersion: 'v10',
+      sourceSha: 'lifecycle-source',
+    });
+    const rows = await database.query(
+      `SELECT 1 FROM live_outputs WHERE agent_id=$1 AND kind='presence'`,
+      [AGENT],
+    );
+    expect(rows.rowCount).toBe(1);
   });
 
   it('retains lifecycle facts through maintenance and makes no idle writes', async () => {

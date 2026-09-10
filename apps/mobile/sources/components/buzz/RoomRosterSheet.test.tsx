@@ -284,6 +284,17 @@ describe('RoomRosterSheet', () => {
     expect(renderer.root.findAllByProps({ testID: 'room-roster-add-agents' })).toHaveLength(0);
   });
 
+  it('shows no add or remove controls in a direct message', () => {
+    const renderer = render(sheet({ isDirectMessage: true }));
+    expect(renderer.root.findAllByProps({ testID: 'room-roster-add-people' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'room-roster-add-agents' })).toHaveLength(0);
+
+    const agentRow = renderer.root.findAllByProps({ testID: `room-roster-agent-${OX}` }).at(-1)!;
+    expect(agentRow.props.disabled).toBe(true);
+    act(() => agentRow.props.onPress());
+    expect(renderer.root.findAllByProps({ testID: `remove-room-member-${OX}` })).toHaveLength(0);
+  });
+
   it('gives a row no chevron and no detail when the viewer may not remove it', () => {
     const renderer = render(sheet({ canManage: false }));
     const agentRow = renderer.root.findAllByProps({ testID: `room-roster-agent-${OX}` }).at(-1)!;

@@ -670,18 +670,21 @@ const styles = StyleSheet.create((theme) => ({
   entry: {
     width: '100%',
     minWidth: 0,
-    paddingVertical: theme.buzz.turnPaddingVertical,
   },
   // Turn separation: a hairline divider at the top of each opening turn (the
   // inverted list renders a cell's layout-bottom at its visual top), plus the
   // generous vertical padding above. Continuations of the same voice flow on
   // with no divider.
   entryOpens: {
+    paddingVertical: theme.buzz.turnPaddingVertical,
     marginBottom: theme.buzz.turnGap,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.buzz.turnDivider,
   },
-  entryContinued: { marginBottom: theme.buzz.continuationGap },
+  entryContinued: {
+    paddingVertical: theme.buzz.continuationPaddingVertical,
+    marginBottom: theme.buzz.continuationGap,
+  },
   byline: {
     flexDirection: 'row',
     alignItems: 'center',

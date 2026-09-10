@@ -376,18 +376,22 @@ describe('the ledger — a human turn is plain body text', () => {
         bodyTestID: 'steer-body',
       }),
     );
-    const gapOf = (renderer: ReactTestRenderer, id: string) =>
+    const spacingOf = (renderer: ReactTestRenderer, id: string) =>
       renderer.root
         .findByProps({ testID: `chat-message-${id}` })
         .props.style.filter(Boolean)
         .reduce(
-          (total: number, style: Record<string, number>) => total + (style.marginBottom ?? 0),
+          (total: number, style: Record<string, number>) =>
+            total + (style.paddingVertical ?? 0) * 2 + (style.marginBottom ?? 0),
           0,
         );
 
-    // `marginBottom` is the gap that lands *above* a row: the transcript list
-    // is inverted. A continuation keeps flowing; a new run opens a stanza.
-    expect(gapOf(continued, 'b2')).toBeLessThan(gapOf(opens, 'b1'));
+    // A continuation keeps flowing with compact padding; a new run opens a
+    // visibly wider stanza. Include padding in this assertion because equal
+    // row padding once overwhelmed the margin-only distinction.
+    expect(spacingOf(continued, 'b2')).toBe(12);
+    expect(spacingOf(opens, 'b1')).toBe(40);
+    expect(spacingOf(continued, 'b2')).toBeLessThan(spacingOf(opens, 'b1'));
     expect(renderedText(continued).join(' ')).toContain('And rerun the suite.');
   });
 });

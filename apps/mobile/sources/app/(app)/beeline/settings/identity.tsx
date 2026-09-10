@@ -71,10 +71,11 @@ import { defaultFaceForSeed } from '@/buzz/faces';
 import { authSessionOptions } from '@/auth/auth-session';
 import {
   clearPendingGitHubSignInState,
+  cancelPendingGitHubSignIn,
   githubSignInRedirectUri,
-  startGitHubSignInWebFlow,
   persistGitHubSignInState,
   resumeGitHubSignInCallback,
+  runResilientGitHubSignInSession,
 } from '@/auth/github-auth-session';
 import { GitHubAccountMismatchError, monolithSession } from '@/auth/monolith-session';
 import { markSignInInFlight, waitForAuthCallback } from '@/auth/onboarding-state';
@@ -370,21 +371,39 @@ export default function BuzzIdentitySettings() {
       const state = randomState();
       const redirectUri = githubSignInRedirectUri();
       const monolith = getBuzzRuntimeConfig().monolithEnabled;
-      const start = monolith
-        ? startGitHubSignInWebFlow(state)
-        : startGitHubBind(getBuzzRuntimeConfig().relayUrl, { redirectUri, state });
-      await persistGitHubSignInState(state, monolith ? 'reconnect' : 'signin');
-      const callbackUrl = await waitForAuthCallback({
-        redirectUri: start.redirectUri,
-        openAuthSession: () =>
-          WebBrowser.openAuthSessionAsync(
-            start.authorizationUrl,
-            start.redirectUri,
-            authSessionOptions(Platform.OS, start.redirectUri),
-          ),
-        subscribeToUrls: (listener) => Linking.addEventListener('url', ({ url }) => listener(url)),
-      });
-      const challenge = await resumeGitHubSignInCallback(callbackUrl);
+      const challenge = monolith
+        ? await runResilientGitHubSignInSession({
+            state,
+            recoveryToken: randomState(),
+            purpose: 'reconnect',
+            openAuthSession: (authorizationUrl, callbackUri) =>
+              WebBrowser.openAuthSessionAsync(
+                authorizationUrl,
+                callbackUri,
+                authSessionOptions(Platform.OS, callbackUri),
+              ),
+            subscribeToUrls: (listener) =>
+              Linking.addEventListener('url', ({ url }) => listener(url)),
+          })
+        : await (async () => {
+            const start = startGitHubBind(getBuzzRuntimeConfig().relayUrl, {
+              redirectUri,
+              state,
+            });
+            await persistGitHubSignInState(state);
+            const callbackUrl = await waitForAuthCallback({
+              redirectUri: start.redirectUri,
+              openAuthSession: () =>
+                WebBrowser.openAuthSessionAsync(
+                  start.authorizationUrl,
+                  start.redirectUri,
+                  authSessionOptions(Platform.OS, start.redirectUri),
+                ),
+              subscribeToUrls: (listener) =>
+                Linking.addEventListener('url', ({ url }) => listener(url)),
+            });
+            return resumeGitHubSignInCallback(callbackUrl);
+          })();
       if (monolith) {
         await monolithSession.reconnectGitHubTicket(challenge.ticket);
         await clearPendingGitHubSignInState();
@@ -406,8 +425,8 @@ export default function BuzzIdentitySettings() {
       setGitHubNotice(t('beelineIdentity.githubLinkedNotice'));
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (caught) {
-      await clearPendingGitHubSignInState().catch(() => undefined);
       if (getBuzzRuntimeConfig().monolithEnabled) {
+        await cancelPendingGitHubSignIn().catch(() => undefined);
         router.replace({
           pathname: '/beeline/settings/identity',
           params: {
@@ -416,6 +435,7 @@ export default function BuzzIdentitySettings() {
         });
         return;
       }
+      await clearPendingGitHubSignInState().catch(() => undefined);
       setError(
         `Could not link GitHub: ${caught instanceof Error ? caught.message : String(caught)}`,
       );

@@ -775,7 +775,11 @@ export function createAuthRouteContext(options: AuthServerOptions) {
 
   const issueBindChallenge = async (
     tenant: AuthTenant,
-    flow: { appRedirectUri: string | null; appState: string | null },
+    flow: {
+      appRedirectUri: string | null;
+      appState: string | null;
+      appRecoveryHash?: string | null;
+    },
     identity: {
       issuer: string;
       audience: string;
@@ -791,7 +795,7 @@ export function createAuthRouteContext(options: AuthServerOptions) {
     const challenge = randomToken();
     const issuedAt = now();
     const expiresAt = new Date(issuedAt.getTime() + ticketTtlMs);
-    await options.store.createTicket(sha256(ticket), {
+    const storedTicket = {
       challenge,
       community: tenant.community,
       issuer: identity.issuer,
@@ -804,7 +808,30 @@ export function createAuthRouteContext(options: AuthServerOptions) {
       boundPubkey: null,
       providerLogin: identity.login?.toLowerCase() ?? null,
       providerDisplayName: identity.displayName?.trim() || identity.login || null,
-    });
+    };
+    if (flow.appRecoveryHash) {
+      const created = await options.store.createRecoveryTicket(
+        flow.appRecoveryHash,
+        storedTicket,
+        issuedAt,
+      );
+      if (!created) {
+        const completion = nativeCompletion(flow, {
+          error: 'github_completion_cancelled',
+          message: 'GitHub authorization was canceled',
+        });
+        if (completion) return deliverNativeCompletion(reply, completion);
+        throw new ProtocolError(
+          410,
+          'github_completion_cancelled',
+          'GitHub authorization was canceled',
+        );
+      }
+      const completion = nativeCompletion(flow, { completed: 1 });
+      if (completion) return deliverNativeCompletion(reply, completion);
+      throw new ProtocolError(400, 'invalid_oauth_flow', 'Native recovery flow has no redirect');
+    }
+    await options.store.createTicket(sha256(ticket), storedTicket);
     noStore(reply);
     const bindChallenge = {
       protocol: 1,

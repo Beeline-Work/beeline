@@ -1,5 +1,7 @@
 import * as Linking from 'expo-linking';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import {
   OidcBindError,
   parseOidcBindCallback,
@@ -8,6 +10,7 @@ import {
   type OidcBindStart,
 } from '@beeline/buzz-client';
 import { getBuzzRuntimeConfig, type BuzzRuntimeConfig } from '@/buzz/runtime-config';
+import { isDesktopShell } from '@/utils/isDesktopShell';
 import { waitForAuthCallbackResult } from './onboarding-state';
 import { desktopAuthRedirectUri } from './desktop-auth-redirect';
 
@@ -19,9 +22,16 @@ export async function isPendingGitHubReconnect(): Promise<boolean> {
 
 const PENDING_SIGN_IN_STATE_KEY = 'buzzy.github-sign-in-state.v1';
 const PENDING_SIGN_IN_CALLBACK_KEY = 'buzzy.github-sign-in-callback.v1';
+const PENDING_SIGN_IN_RECOVERY_KEY = 'buzzy.github-sign-in-recovery.v1';
 const PENDING_INSTALLATION_RETURN_KEY = 'buzzy.github-installation-return.v1';
 const PENDING_INSTALLATION_COMPLETED_KEY = 'buzzy.github-installation-completed.v1';
 const STATE_RE = /^[A-Za-z0-9_-]{43}$/;
+
+async function githubAuthFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  if (!isDesktopShell()) return fetch(input, init);
+  const { fetch: desktopFetch } = await import('@tauri-apps/plugin-http');
+  return desktopFetch(input, init);
+}
 
 interface GitHubAuthBrowserResult {
   type: string;
@@ -65,7 +75,9 @@ interface GitHubInstallationSessionInput {
   returnPath: string;
   startInstallation(): Promise<string>;
   openAuthSession(installationUrl: string, redirectUri: string): Promise<GitHubAuthBrowserResult>;
-  subscribeToUrls(listener: (url: string) => void): GitHubAuthUrlSubscription;
+  subscribeToUrls(
+    listener: (url: string) => void,
+  ): GitHubAuthUrlSubscription | Promise<GitHubAuthUrlSubscription>;
   subscribeToAppState?: (listener: (state: string) => void) => GitHubAppStateSubscription;
   refreshRepositories?: () => Promise<void>;
   onRefreshPhase?: (phase: GitHubRepositoryRefreshPhase) => void;
@@ -121,12 +133,25 @@ export function githubSignInRedirectUri(): string {
 export function startGitHubSignInWebFlow(
   state: string,
   runtime: BuzzRuntimeConfig = getBuzzRuntimeConfig(),
+  recoveryToken?: string,
 ): OidcBindStart {
   const authBaseUrl = runtime.monolithEnabled ? runtime.monolithUrl : runtime.relayUrl;
-  return startGitHubBind(authBaseUrl, {
+  const start = startGitHubBind(authBaseUrl, {
     redirectUri: githubSignInRedirectUri(),
     state,
   });
+  if (recoveryToken !== undefined) {
+    if (!STATE_RE.test(recoveryToken)) {
+      throw new OidcBindError('invalid_state', 'GitHub recovery token must be 32 random bytes');
+    }
+    const authorization = new URL(start.authorizationUrl);
+    authorization.searchParams.set(
+      'app_recovery_challenge',
+      bytesToHex(sha256(utf8ToBytes(recoveryToken))),
+    );
+    start.authorizationUrl = authorization.toString();
+  }
+  return start;
 }
 
 export function githubInstallationRedirectUri(): string {
@@ -155,14 +180,21 @@ function validInstallationReturnPath(value: unknown): value is string {
 export async function persistGitHubSignInState(
   state: string,
   purpose: 'signin' | 'reconnect' = 'signin',
+  recoveryToken?: string,
 ): Promise<void> {
   if (!STATE_RE.test(state)) {
     throw new OidcBindError('invalid_state', 'GitHub app state must be 32 random bytes');
+  }
+  if (recoveryToken !== undefined && !STATE_RE.test(recoveryToken)) {
+    throw new OidcBindError('invalid_state', 'GitHub recovery token must be 32 random bytes');
   }
   await Promise.all([
     AsyncStorage.setItem(PENDING_GITHUB_PURPOSE_KEY, purpose),
     AsyncStorage.setItem(PENDING_SIGN_IN_STATE_KEY, state),
     AsyncStorage.removeItem(PENDING_SIGN_IN_CALLBACK_KEY),
+    recoveryToken
+      ? AsyncStorage.setItem(PENDING_SIGN_IN_RECOVERY_KEY, recoveryToken)
+      : AsyncStorage.removeItem(PENDING_SIGN_IN_RECOVERY_KEY),
   ]);
 }
 
@@ -171,7 +203,217 @@ export async function clearPendingGitHubSignInState(): Promise<void> {
     AsyncStorage.removeItem(PENDING_GITHUB_PURPOSE_KEY),
     AsyncStorage.removeItem(PENDING_SIGN_IN_STATE_KEY),
     AsyncStorage.removeItem(PENDING_SIGN_IN_CALLBACK_KEY),
+    AsyncStorage.removeItem(PENDING_SIGN_IN_RECOVERY_KEY),
   ]);
+}
+
+function authBaseUrl(runtime: BuzzRuntimeConfig): string {
+  return runtime.monolithEnabled ? runtime.monolithUrl : runtime.relayUrl;
+}
+
+function recoverySignal(callbackUrl: string, expectedState: string): boolean {
+  const url = new URL(callbackUrl);
+  if (!isCallbackFor(callbackUrl, githubSignInRedirectUri())) return false;
+  if (
+    url.searchParams.getAll('state').length !== 1 ||
+    url.searchParams.get('state') !== expectedState
+  ) {
+    throw new OidcBindError('state_mismatch', 'This GitHub callback does not match this sign-in.');
+  }
+  const keys = [...url.searchParams.keys()];
+  return keys.length === 2 && keys.includes('state') && url.searchParams.get('completed') === '1';
+}
+
+function challengeCallbackUrl(challenge: OidcBindChallenge, state: string): string {
+  const callback = new URL(githubSignInRedirectUri());
+  callback.searchParams.set('state', state);
+  for (const [name, value] of Object.entries(challenge)) {
+    callback.searchParams.set(name, String(value));
+  }
+  return callback.toString();
+}
+
+async function fetchGitHubRecoveryChallenge(
+  recoveryToken: string,
+  state: string,
+  runtime: BuzzRuntimeConfig,
+  fetchImpl: typeof fetch,
+): Promise<OidcBindChallenge | null> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3_000);
+  try {
+    const response = await fetchImpl(`${authBaseUrl(runtime)}/auth/github/completion`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ recoveryToken }),
+      signal: controller.signal,
+    });
+    if (response.status === 202) return null;
+    if (response.status === 410) {
+      throw new OidcBindError('ticket_expired', 'The GitHub completion expired', 410);
+    }
+    if (!response.ok) {
+      throw new OidcBindError(
+        'offline',
+        'Could not check GitHub sign-in completion',
+        response.status,
+      );
+    }
+    const challenge = (await response.json()) as OidcBindChallenge;
+    return parseOidcBindCallback(challengeCallbackUrl(challenge, state), state);
+  } catch (error) {
+    if (error instanceof OidcBindError) throw error;
+    throw new OidcBindError('offline', 'Could not check GitHub sign-in completion');
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function cancelGitHubRecovery(
+  recoveryToken: string,
+  runtime: BuzzRuntimeConfig,
+  fetchImpl: typeof fetch,
+): Promise<void> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3_000);
+  try {
+    const response = await fetchImpl(`${authBaseUrl(runtime)}/auth/github/completion/cancel`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ recoveryToken }),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new OidcBindError('offline', 'Could not cancel GitHub sign-in', response.status);
+    }
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/** Revoke a pending/recovered ticket before forgetting the only token that can burn it. */
+export async function cancelPendingGitHubSignIn(
+  runtime: BuzzRuntimeConfig = getBuzzRuntimeConfig(),
+  fetchImpl: typeof fetch = githubAuthFetch,
+): Promise<void> {
+  const recoveryToken = await AsyncStorage.getItem(PENDING_SIGN_IN_RECOVERY_KEY);
+  if (recoveryToken && STATE_RE.test(recoveryToken)) {
+    // Deliberately leave storage intact on failure. The next attempt must retry
+    // this revocation before it may replace the old token.
+    await cancelGitHubRecovery(recoveryToken, runtime, fetchImpl);
+  }
+  await clearPendingGitHubSignInState();
+}
+
+export async function recoverPendingGitHubBindChallenge(
+  runtime: BuzzRuntimeConfig = getBuzzRuntimeConfig(),
+  fetchImpl: typeof fetch = githubAuthFetch,
+): Promise<OidcBindChallenge | null> {
+  const [recoveryToken, state] = await Promise.all([
+    AsyncStorage.getItem(PENDING_SIGN_IN_RECOVERY_KEY),
+    AsyncStorage.getItem(PENDING_SIGN_IN_STATE_KEY),
+  ]);
+  if (!recoveryToken || !STATE_RE.test(recoveryToken) || !state || !STATE_RE.test(state))
+    return null;
+  const challenge = await fetchGitHubRecoveryChallenge(recoveryToken, state, runtime, fetchImpl);
+  if (challenge) {
+    await AsyncStorage.setItem(
+      PENDING_SIGN_IN_CALLBACK_KEY,
+      challengeCallbackUrl(challenge, state),
+    );
+  }
+  return challenge;
+}
+
+interface ResilientGitHubSessionInput {
+  state: string;
+  recoveryToken: string;
+  purpose?: 'signin' | 'reconnect';
+  runtime?: BuzzRuntimeConfig;
+  openAuthSession(authorizationUrl: string, redirectUri: string): Promise<GitHubAuthBrowserResult>;
+  subscribeToUrls(
+    listener: (url: string) => void,
+  ): GitHubAuthUrlSubscription | Promise<GitHubAuthUrlSubscription>;
+  fetchImpl?: typeof fetch;
+  recoveryWaitMs?: number;
+  recoveryPollMs?: number;
+  callbackGraceMs?: number;
+}
+
+/** Keep the deep link fast path, then recover the same one-use proof by app-held secret. */
+export async function runResilientGitHubSignInSession({
+  state,
+  recoveryToken,
+  purpose = 'signin',
+  runtime = getBuzzRuntimeConfig(),
+  openAuthSession,
+  subscribeToUrls,
+  fetchImpl = githubAuthFetch,
+  recoveryWaitMs = 5_000,
+  recoveryPollMs = 200,
+  callbackGraceMs,
+}: ResilientGitHubSessionInput): Promise<OidcBindChallenge> {
+  const previousRecoveryToken = await AsyncStorage.getItem(PENDING_SIGN_IN_RECOVERY_KEY);
+  if (
+    previousRecoveryToken &&
+    previousRecoveryToken !== recoveryToken &&
+    STATE_RE.test(previousRecoveryToken)
+  ) {
+    await cancelGitHubRecovery(previousRecoveryToken, runtime, fetchImpl);
+  }
+  const start = startGitHubSignInWebFlow(state, runtime, recoveryToken);
+  await persistGitHubSignInState(state, purpose, recoveryToken);
+  let callbackUrl: string | null = null;
+  try {
+    callbackUrl = await waitForAuthCallbackResult({
+      redirectUri: start.redirectUri,
+      openAuthSession: () => openAuthSession(start.authorizationUrl, start.redirectUri),
+      subscribeToUrls,
+      ...(callbackGraceMs === undefined ? {} : { callbackGraceMs }),
+    }).then((result) => result.url);
+  } catch (error) {
+    if (!(error instanceof OidcBindError) || error.code !== 'browser_canceled') {
+      await cancelGitHubRecovery(recoveryToken, runtime, fetchImpl).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  if (callbackUrl) {
+    try {
+      if (!recoverySignal(callbackUrl, state)) {
+        return resumeGitHubSignInCallback(callbackUrl);
+      }
+    } catch (error) {
+      await cancelGitHubRecovery(recoveryToken, runtime, fetchImpl).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  const deadline = Date.now() + recoveryWaitMs;
+  try {
+    do {
+      const recovered = await fetchGitHubRecoveryChallenge(
+        recoveryToken,
+        state,
+        runtime,
+        fetchImpl,
+      );
+      if (recovered) {
+        await AsyncStorage.setItem(
+          PENDING_SIGN_IN_CALLBACK_KEY,
+          challengeCallbackUrl(recovered, state),
+        );
+        return recovered;
+      }
+      if (Date.now() >= deadline) break;
+      await new Promise((resolve) => setTimeout(resolve, recoveryPollMs));
+    } while (Date.now() <= deadline);
+  } catch (error) {
+    await cancelGitHubRecovery(recoveryToken, runtime, fetchImpl).catch(() => undefined);
+    throw error;
+  }
+  await cancelGitHubRecovery(recoveryToken, runtime, fetchImpl).catch(() => undefined);
+  throw new OidcBindError('browser_canceled', 'Account authorization was canceled');
 }
 
 /** Reload the signed bind challenge if Expo Router remounted during callback handling. */
@@ -202,6 +444,11 @@ export async function resumeInitialGitHubSignIn(
 ): Promise<OidcBindChallenge | null> {
   const callbackUrl = await getInitialUrl();
   if (!callbackUrl || !isCallbackFor(callbackUrl, githubSignInRedirectUri())) return null;
+
+  const expectedState = await AsyncStorage.getItem(PENDING_SIGN_IN_STATE_KEY);
+  if (expectedState && recoverySignal(callbackUrl, expectedState)) {
+    return recoverPendingGitHubBindChallenge();
+  }
 
   return resumeGitHubSignInCallback(callbackUrl, nowSeconds);
 }

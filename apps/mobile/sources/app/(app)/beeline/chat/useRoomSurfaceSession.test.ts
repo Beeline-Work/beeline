@@ -190,6 +190,7 @@ import { cornerSummaries } from '@/buzz/room-view-presentation';
 import { selectPinnedCorner, isPinnedCornerLive } from '@/buzz/room-indicators';
 import { CornerLiveBar } from '@/components/buzz/CornerLiveBar';
 import {
+  LIVE_TRACE_STORAGE_KEY,
   useRoomSurfaceSession,
   type RoomSurfaceSessionBindings,
   type UseRoomSurfaceSessionResult,
@@ -420,6 +421,133 @@ describe('useRoomSurfaceSession', () => {
     expect(current.roomSurface).toEqual(full);
     expect(current.roomSurface?.messages).toHaveLength(1);
     expect(controls.schedulers[0]!.signalCalls).toBe(1);
+    await act(async () => renderer.unmount());
+  });
+
+  it('acknowledges every burst delta after its committed render and then reconciles', async () => {
+    controls.cached = roomView('room-a');
+    let current!: UseRoomSurfaceSessionResult;
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, {
+          channelId: 'room-a',
+          capture: (result: UseRoomSurfaceSessionResult) => (current = result),
+        }),
+      );
+    });
+    await flushEffects();
+    const acknowledgements: string[] = [];
+    const first = {
+      id: 'reply-one',
+      text: 'one',
+      createdAt: 1,
+      author: { pubkey: 'agent-a', kind: 'agent' as const, name: 'Greeter' },
+      presentation: 'message' as const,
+    };
+    const second = { ...first, id: 'reply-two', text: 'two', createdAt: 2 };
+
+    await act(async () => {
+      controls.subscriptions[0]!.emit({
+        monolithLive: {
+          type: 'message-delta',
+          roomId: 'room-a',
+          message: first,
+          trace: { id: 'trace-one', startedAt: 10, databaseAt: 11, emittedAt: 12 },
+        },
+        acknowledgePaint: () => acknowledgements.push('one'),
+      });
+      controls.subscriptions[0]!.emit({
+        monolithLive: {
+          type: 'message-delta',
+          roomId: 'room-a',
+          message: second,
+          trace: { id: 'trace-two', startedAt: 20, databaseAt: 21, emittedAt: 22 },
+        },
+        acknowledgePaint: () => acknowledgements.push('two'),
+      });
+      expect(acknowledgements).toEqual([]);
+    });
+
+    expect(current.roomSurface?.messages.map((message) => message.id)).toEqual([
+      'reply-one',
+      'reply-two',
+    ]);
+    expect(acknowledgements).toEqual(['one', 'two']);
+    expect(controls.schedulers[0]!.signalCalls).toBe(1);
+
+    const full = { ...roomView('room-a'), messages: [first, second] };
+    await act(async () => controls.schedulers[0]!.apply(full));
+    expect(current.roomSurface).toEqual(full);
+    await act(async () => renderer.unmount());
+  });
+
+  it('acknowledges an idempotent delta immediately because its row is already painted', async () => {
+    const reply = {
+      id: 'reply-existing',
+      text: 'done',
+      createdAt: 1,
+      author: { pubkey: 'agent-a', kind: 'agent' as const, name: 'Greeter' },
+      presentation: 'message' as const,
+    };
+    controls.cached = { ...roomView('room-a'), messages: [reply] };
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, { channelId: 'room-a', capture: () => undefined }),
+      );
+    });
+    await flushEffects();
+    const acknowledgePaint = vi.fn();
+
+    await act(async () => {
+      controls.subscriptions[0]!.emit({
+        monolithLive: {
+          type: 'message-delta',
+          roomId: 'room-a',
+          message: reply,
+          trace: { id: 'trace-existing', startedAt: 10, databaseAt: 11, emittedAt: 12 },
+        },
+        acknowledgePaint,
+      });
+    });
+
+    expect(acknowledgePaint).toHaveBeenCalledOnce();
+    expect(controls.schedulers[0]!.signalCalls).toBe(0);
+    await act(async () => renderer.unmount());
+  });
+
+  it('records the same-server pre-write-to-paint upper bound returned by the server', async () => {
+    controls.cached = roomView('room-a');
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, { channelId: 'room-a', capture: () => undefined }),
+      );
+    });
+    await flushEffects();
+
+    await act(async () => {
+      controls.subscriptions[0]!.emit({
+        monolithLive: {
+          type: 'trace-painted',
+          id: 'trace-bound',
+          startedAt: 1_000,
+          databaseAt: 1_025,
+          serverReceivedAt: 1_240,
+        },
+      });
+    });
+    await vi.waitFor(() =>
+      expect(controls.traceSetItem).toHaveBeenCalledWith(
+        LIVE_TRACE_STORAGE_KEY,
+        expect.stringContaining('"upperBoundMs":240'),
+      ),
+    );
+    const stored = String(controls.traceSetItem.mock.calls.at(-1)?.[1]);
+    expect(stored).toContain('"startedAt":1000');
+    expect(stored).toContain('"databaseAt":1025');
+    expect(stored).toContain('"serverReceivedAt":1240');
     await act(async () => renderer.unmount());
   });
 

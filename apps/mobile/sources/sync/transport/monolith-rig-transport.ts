@@ -21,6 +21,7 @@ export type LiveWireTrace = {
   id: string;
   databaseAt: number;
   emittedAt: number;
+  startedAt?: number;
 };
 
 type LiveWireEvent =
@@ -28,6 +29,13 @@ type LiveWireEvent =
   | { type: 'subscribed'; roomId: string }
   | { type: 'message-delta'; roomId: string; message: RoomViewMessage; trace?: LiveWireTrace }
   | { type: 'turn-delta'; roomId: string; turn: RoomViewAgentTurn; trace?: LiveWireTrace }
+  | {
+      type: 'trace-painted';
+      id: string;
+      startedAt: number;
+      databaseAt: number;
+      serverReceivedAt: number;
+    }
   | { type: 'draft' | 'thought'; roomId: string; agentId: string; turnId: string; text: string }
   | { type: 'retract'; roomId: string; agentId: string; turnId: string; kind: 'draft' | 'thought' }
   | {
@@ -38,7 +46,10 @@ type LiveWireEvent =
       observedAt: number;
     };
 
-export type MonolithSurfaceEvent = { readonly monolithLive: LiveWireEvent };
+export type MonolithSurfaceEvent = {
+  readonly monolithLive: LiveWireEvent;
+  readonly acknowledgePaint?: () => void;
+};
 
 function eventId(): string {
   return [...getRandomBytes(32)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
@@ -355,8 +366,20 @@ export class MonolithRigTransport {
           for (const roomId of roomIds) next.send(JSON.stringify({ type: 'subscribe', roomId }));
         };
         next.onmessage = (message) => {
-          if (!closed && socket === next)
-            listener({ monolithLive: JSON.parse(String(message.data)) as LiveWireEvent });
+          if (closed || socket !== next) return;
+          const live = JSON.parse(String(message.data)) as LiveWireEvent;
+          const trace = 'trace' in live ? live.trace : undefined;
+          listener({
+            monolithLive: live,
+            ...(live.type !== 'trace-painted' && typeof trace?.startedAt === 'number'
+              ? {
+                  acknowledgePaint: () => {
+                    if (!closed && socket === next && next.readyState === WebSocket.OPEN)
+                      next.send(JSON.stringify({ type: 'trace-paint', id: trace.id }));
+                  },
+                }
+              : {}),
+          });
         };
         next.onclose = () => {
           if (socket !== next) return;

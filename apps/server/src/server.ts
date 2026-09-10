@@ -220,6 +220,21 @@ export function createBeelineServer(options: ServerOptions): Server {
       principal: { identityId: string; kind: 'phone' | 'daemon' },
     ) => {
       const releases = new Map<string, () => void>();
+      const pendingPaintTraces = new Map<
+        string,
+        { readonly startedAt: number; readonly databaseAt: number }
+      >();
+      const rememberPaintTrace = (trace: LiveTrace | undefined) => {
+        if (typeof trace?.startedAt !== 'number') return;
+        pendingPaintTraces.set(trace.id, {
+          startedAt: trace.startedAt,
+          databaseAt: trace.databaseAt,
+        });
+        if (pendingPaintTraces.size > 64) {
+          const oldest = pendingPaintTraces.keys().next().value;
+          if (oldest) pendingPaintTraces.delete(oldest);
+        }
+      };
       client.on('message', (raw) => {
         void (async () => {
           let message: unknown;
@@ -230,6 +245,21 @@ export function createBeelineServer(options: ServerOptions): Server {
           }
           if (!message || typeof message !== 'object') return;
           const item = message as Record<string, unknown>;
+          if (item.type === 'trace-paint' && typeof item.id === 'string') {
+            const trace = pendingPaintTraces.get(item.id);
+            if (!trace || client.readyState !== client.OPEN) return;
+            pendingPaintTraces.delete(item.id);
+            client.send(
+              JSON.stringify({
+                type: 'trace-painted',
+                id: item.id,
+                startedAt: trace.startedAt,
+                databaseAt: trace.databaseAt,
+                serverReceivedAt: Date.now(),
+              }),
+            );
+            return;
+          }
           if (
             item.type === 'subscribe' &&
             typeof item.roomId === 'string' &&
@@ -381,6 +411,10 @@ export function createBeelineServer(options: ServerOptions): Server {
                   if (client.readyState === client.OPEN) client.send(JSON.stringify(event));
                   return;
                 }
+                // committedRow is process-local authority input. Strip it
+                // before every wire branch, including malformed/no-target
+                // invalidations, so only a projected public delta can leave.
+                const { committedRow, ...wireEvent } = event;
                 const target = event.messageId
                   ? ({ type: 'message' as const, messageId: event.messageId } as const)
                   : event.agentId && event.requestId
@@ -391,19 +425,43 @@ export function createBeelineServer(options: ServerOptions): Server {
                       } as const)
                     : undefined;
                 if (!target) {
-                  if (client.readyState === client.OPEN) client.send(JSON.stringify(event));
+                  if (client.readyState === client.OPEN) client.send(JSON.stringify(wireEvent));
                   return;
                 }
                 const trace = event.trace;
                 const fallback = {
-                  ...event,
+                  ...wireEvent,
                   reason: `delta-fallback:${event.reason}`,
                 };
                 // Begin every bounded row read immediately. Only delivery is
                 // serialized, preserving commit-notification order without a
                 // slow lookup preventing later reads from making progress.
-                const pendingDelta = withinLiveDeltaDeadline(
-                  options.phone.readLiveDelta(item.roomId as string, principal.identityId, target),
+                let projectionError: unknown;
+                let committedDelta;
+                try {
+                  committedDelta = committedRow
+                    ? options.phone.projectCommittedLiveDelta(item.roomId as string, committedRow)
+                    : undefined;
+                } catch (error) {
+                  projectionError = error;
+                }
+                // An internal row must agree with the Room-scoped bus key. A
+                // mismatch is neither serialized nor retried against attacker-
+                // controlled ids; the canonical PostgreSQL hint remains the
+                // independent recovery path for the real Room.
+                if (committedRow && !committedDelta && !projectionError) return;
+                const pendingDelta = (
+                  projectionError
+                    ? Promise.reject(projectionError)
+                    : committedDelta
+                      ? Promise.resolve(committedDelta)
+                      : withinLiveDeltaDeadline(
+                          options.phone.readLiveDelta(
+                            item.roomId as string,
+                            principal.identityId,
+                            target,
+                          ),
+                        )
                 ).then(
                   (delta) => ({ delta }) as const,
                   (error: unknown) => ({ error }) as const,
@@ -413,6 +471,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                     const result = await pendingDelta;
                     if (client.readyState !== client.OPEN) return;
                     if ('error' in result) throw result.error;
+                    rememberPaintTrace(trace);
                     client.send(
                       JSON.stringify(
                         result.delta ? { ...result.delta, ...(trace ? { trace } : {}) } : fallback,
@@ -424,7 +483,10 @@ export function createBeelineServer(options: ServerOptions): Server {
                       '[live] committed row delivery failed',
                       error instanceof Error ? error.message : String(error),
                     );
-                    if (client.readyState === client.OPEN) client.send(JSON.stringify(fallback));
+                    if (client.readyState === client.OPEN) {
+                      rememberPaintTrace(trace);
+                      client.send(JSON.stringify(fallback));
+                    }
                   });
               }),
             );
@@ -452,6 +514,7 @@ export function createBeelineServer(options: ServerOptions): Server {
         })();
       });
       client.on('close', () => {
+        pendingPaintTraces.clear();
         for (const release of releases.values()) release();
         releases.clear();
       });

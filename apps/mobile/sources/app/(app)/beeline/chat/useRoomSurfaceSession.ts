@@ -36,7 +36,11 @@ import { ROOM_LABEL } from '@/buzz/vocabulary';
 
 const OUTBOX_CONFIRMATION_TIMEOUT_MS = 15_000;
 
-type ReceivedLiveTrace = LiveWireTrace & { reason: string; receivedAt: number };
+type ReceivedLiveTrace = LiveWireTrace & {
+  reason: string;
+  receivedAt: number;
+  acknowledgePaint?: () => void;
+};
 let remainingLiveTraceLogs = 32;
 let liveTraceRows: unknown[] = [];
 let liveTraceWrite = Promise.resolve();
@@ -48,11 +52,12 @@ function logLiveTrace(phase: string, traces: readonly ReceivedLiveTrace[], at = 
   const row = {
     phase,
     at,
-    events: traces.map(({ id, reason, databaseAt, emittedAt, receivedAt }) => ({
+    events: traces.map(({ id, reason, databaseAt, emittedAt, startedAt, receivedAt }) => ({
       id,
       reason,
       databaseAt,
       emittedAt,
+      ...(typeof startedAt === 'number' ? { startedAt } : {}),
       receivedAt,
     })),
   };
@@ -62,6 +67,27 @@ function logLiveTrace(phase: string, traces: readonly ReceivedLiveTrace[], at = 
   // storage handoff at every socket/read phase. The trace must not perturb the
   // render interval it exists to measure.
   if (phase !== 'paint' && phase !== 'room-read-error') return;
+  const snapshot = JSON.stringify(liveTraceRows);
+  liveTraceWrite = liveTraceWrite
+    .then(() => AsyncStorage.setItem(LIVE_TRACE_STORAGE_KEY, snapshot))
+    .catch(() => undefined);
+}
+
+function logLivePaintAck(event: {
+  id: string;
+  startedAt: number;
+  databaseAt: number;
+  serverReceivedAt: number;
+}): void {
+  if (remainingLiveTraceLogs <= 0) return;
+  remainingLiveTraceLogs -= 1;
+  const row = {
+    phase: 'server-paint-ack',
+    at: Date.now(),
+    event: { ...event, upperBoundMs: event.serverReceivedAt - event.startedAt },
+  };
+  if (__DEV__) console.info(`[live-trace] ${JSON.stringify(row)}`);
+  liveTraceRows = [...liveTraceRows.slice(-127), row];
   const snapshot = JSON.stringify(liveTraceRows);
   liveTraceWrite = liveTraceWrite
     .then(() => AsyncStorage.setItem(LIVE_TRACE_STORAGE_KEY, snapshot))
@@ -161,6 +187,7 @@ export function useRoomSurfaceSession({
     if (traces.length > 0) {
       pendingPaintTracesRef.current = [];
       logLiveTrace('paint', traces);
+      for (const trace of traces) trace.acknowledgePaint?.();
     }
     // The committed delta paints first. This post-paint signal then converges
     // the entire Room without putting the full snapshot on the feedback path.
@@ -381,7 +408,12 @@ export function useRoomSurfaceSession({
         (event: Parameters<LiveOverlayDecoder['decode']>[0] | MonolithSurfaceEvent) => {
           if (cancelled || generation !== watchGeneration) return;
           if ('monolithLive' in event) {
-            const live = (event as MonolithSurfaceEvent).monolithLive;
+            const surfaceEvent = event as MonolithSurfaceEvent;
+            const live = surfaceEvent.monolithLive;
+            if (live.type === 'trace-painted') {
+              logLivePaintAck(live);
+              return;
+            }
             if (live.type === 'subscribed') {
               if (hasPainted) scheduler?.force();
               return;
@@ -389,7 +421,14 @@ export function useRoomSurfaceSession({
             if (live.type === 'message-delta' || live.type === 'turn-delta') {
               if (live.roomId !== channelId) return;
               const received = live.trace
-                ? { ...live.trace, reason: live.type, receivedAt: Date.now() }
+                ? {
+                    ...live.trace,
+                    reason: live.type,
+                    receivedAt: Date.now(),
+                    ...(surfaceEvent.acknowledgePaint
+                      ? { acknowledgePaint: surfaceEvent.acknowledgePaint }
+                      : {}),
+                  }
                 : undefined;
               if (received) logLiveTrace('socket-receipt', [received], received.receivedAt);
               const current = reconciledViewRef.current;
@@ -401,11 +440,18 @@ export function useRoomSurfaceSession({
                 live.type === 'message-delta'
                   ? reconcileRoomMessageDelta(current, live.message)
                   : reconcileRoomTurnDelta(current, live.turn);
-              if (next === current) return;
+              if (next === current) {
+                received?.acknowledgePaint?.();
+                return;
+              }
               reconciledViewRef.current = next;
               hasPainted = true;
               bindingsRef.current.observeRoomSurface();
-              if (received) pendingPaintTracesRef.current = [received];
+              if (received)
+                pendingPaintTracesRef.current = [
+                  ...pendingPaintTracesRef.current.slice(-15),
+                  received,
+                ];
               deltaReconcilePendingRef.current = true;
               setRoomSurface(next);
               if (live.type === 'message-delta') {
@@ -423,7 +469,14 @@ export function useRoomSurfaceSession({
             }
             if (live.type === 'invalidate') {
               if (live.trace) {
-                const received = { ...live.trace, reason: live.reason, receivedAt: Date.now() };
+                const received = {
+                  ...live.trace,
+                  reason: live.reason,
+                  receivedAt: Date.now(),
+                  ...(surfaceEvent.acknowledgePaint
+                    ? { acknowledgePaint: surfaceEvent.acknowledgePaint }
+                    : {}),
+                };
                 pendingReadTraces = [...pendingReadTraces.slice(-15), received];
                 logLiveTrace('socket-receipt', [received], received.receivedAt);
               }

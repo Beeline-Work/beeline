@@ -205,6 +205,64 @@ describe('monolith Room send path', () => {
     stop();
   });
 
+  it('acknowledges a traced delta only after paint and only on its originating socket', async () => {
+    const sockets: Array<{
+      sent: string[];
+      readyState: number;
+      onopen?: () => void;
+      onmessage?: (event: { data: string }) => void;
+      onclose?: () => void;
+    }> = [];
+    class TestWebSocket {
+      static readonly OPEN = 1;
+      sent: string[] = [];
+      readyState = TestWebSocket.OPEN;
+      onopen?: () => void;
+      onmessage?: (event: { data: string }) => void;
+      onclose?: () => void;
+      constructor(
+        readonly url: string,
+        readonly protocols: string[],
+      ) {
+        sockets.push(this);
+      }
+      send(value: string) {
+        this.sent.push(value);
+      }
+      close() {
+        this.readyState = 3;
+      }
+    }
+    vi.stubGlobal('WebSocket', TestWebSocket);
+    const received: Array<{ acknowledgePaint?: () => void; monolithLive: { type: string } }> = [];
+    const stop = await new MonolithRigTransport(identity).surfaceSubscribe(
+      [{ '#h': [ROOM] }],
+      (event) => received.push(event as (typeof received)[number]),
+    );
+    sockets[0]!.onopen?.();
+    const trace = { id: 'trace-direct', startedAt: 10, databaseAt: 11, emittedAt: 12 };
+    sockets[0]!.onmessage?.({
+      data: JSON.stringify({
+        type: 'message-delta',
+        roomId: ROOM,
+        message: { id: 'message', text: 'done' },
+        trace,
+      }),
+    });
+
+    expect(received).toHaveLength(1);
+    expect(received[0]!.acknowledgePaint).toEqual(expect.any(Function));
+    expect(sockets[0]!.sent).toEqual([JSON.stringify({ type: 'subscribe', roomId: ROOM })]);
+    received[0]!.acknowledgePaint?.();
+    expect(sockets[0]!.sent.at(-1)).toBe(JSON.stringify({ type: 'trace-paint', id: trace.id }));
+
+    sockets[0]!.onclose?.();
+    const sentBeforeStaleAck = sockets[0]!.sent.length;
+    received[0]!.acknowledgePaint?.();
+    expect(sockets[0]!.sent).toHaveLength(sentBeforeStaleAck);
+    stop();
+  });
+
   it('stages a plain repo-less Room message before publishing it to the monolith', async () => {
     const transport = new MonolithRigTransport(identity);
     const publish = vi.spyOn(transport, 'publishPreparedMessage');

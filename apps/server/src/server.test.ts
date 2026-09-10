@@ -294,16 +294,23 @@ describe('phone committed-row live delivery', () => {
     );
   });
 
-  async function connect(readLiveDelta: PhoneService['readLiveDelta']) {
+  async function connect(
+    readLiveDelta: PhoneService['readLiveDelta'],
+    projectCommittedLiveDelta: PhoneService['projectCommittedLiveDelta'] = vi
+      .fn()
+      .mockReturnValue(null),
+    canReadRoom = vi.fn().mockResolvedValue(true),
+  ) {
     const roomId = 'room-live';
     const live = new LiveHub();
     const server = createBeelineServer({
       database: { query: vi.fn(), transaction: vi.fn() },
       auth: { authenticatePhone: vi.fn().mockResolvedValue('viewer') } as unknown as TokenAuth,
       phone: {
-        canReadRoom: vi.fn().mockResolvedValue(true),
+        canReadRoom,
         liveDraftSnapshot: vi.fn().mockResolvedValue([]),
         readLiveDelta,
+        projectCommittedLiveDelta,
       } as unknown as PhoneService,
       daemon: {} as DaemonService,
       live,
@@ -321,7 +328,7 @@ describe('phone committed-row live delivery', () => {
     const subscribed = nextSocketMessage(socket, 'subscribed');
     socket.send(JSON.stringify({ type: 'subscribe', roomId }));
     await subscribed;
-    return { live, roomId, socket };
+    return { live, roomId, socket, port };
   }
 
   it.each([
@@ -348,6 +355,37 @@ describe('phone committed-row live delivery', () => {
       });
     },
   );
+
+  it('falls back to an authoritative invalidation when committed-row projection fails', async () => {
+    const read = vi.fn();
+    const project = vi.fn(() => {
+      throw new Error('projection failed');
+    });
+    const { live, roomId, socket } = await connect(
+      read as PhoneService['readLiveDelta'],
+      project as PhoneService['projectCommittedLiveDelta'],
+    );
+    const fallback = nextSocketMessage(socket, 'invalidate');
+
+    live.publish({
+      type: 'invalidate',
+      roomId,
+      reason: 'message',
+      messageId: 'message-fallback',
+      committedRow: {
+        type: 'message',
+        row: { room_id: roomId } as never,
+      },
+    });
+
+    await expect(fallback).resolves.toMatchObject({
+      type: 'invalidate',
+      roomId,
+      messageId: 'message-fallback',
+      reason: 'delta-fallback:message',
+    });
+    expect(read).not.toHaveBeenCalled();
+  });
 
   it('bounds a stalled lookup while preserving burst delivery order', async () => {
     const read = vi.fn(
@@ -393,6 +431,247 @@ describe('phone committed-row live delivery', () => {
     ]);
     expect(read).toHaveBeenCalledTimes(3);
   });
+
+  it('diagnoses the same-process committed-row delivery boundary', async () => {
+    const delta = {
+      type: 'message-delta' as const,
+      roomId: 'room-live',
+      message: {
+        id: 'message-diagnostic',
+        text: 'diagnostic',
+        createdAt: 1,
+        author: { pubkey: 'agent', kind: 'agent' as const, name: 'Greeter' },
+        presentation: 'message' as const,
+      },
+    };
+    const read = vi.fn(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 170));
+      return delta;
+    });
+    const project = vi.fn().mockReturnValue(delta);
+    const { live, roomId, socket } = await connect(
+      read as PhoneService['readLiveDelta'],
+      project as PhoneService['projectCommittedLiveDelta'],
+    );
+    const committedRow = {
+      type: 'message' as const,
+      row: { room_id: roomId, id: delta.message.id },
+    } as never;
+
+    const queriedDurations: number[] = [];
+    const directDurations: number[] = [];
+    for (let index = 0; index < 20; index += 1) {
+      const queriedMessage = nextSocketMessage(socket, 'message-delta');
+      const queriedStartedAt = performance.now();
+      live.publish({
+        type: 'invalidate',
+        roomId,
+        reason: 'postgres:messages',
+        messageId: delta.message.id,
+      });
+      await queriedMessage;
+      queriedDurations.push(performance.now() - queriedStartedAt);
+
+      const directMessage = nextSocketMessage(socket, 'message-delta');
+      const directStartedAt = performance.now();
+      live.publish({
+        type: 'invalidate',
+        roomId,
+        reason: 'message',
+        messageId: delta.message.id,
+        committedRow,
+      });
+      await directMessage;
+      directDurations.push(performance.now() - directStartedAt);
+    }
+    const percentile = (values: readonly number[], fraction: number) =>
+      values.toSorted((left, right) => left - right)[Math.ceil(values.length * fraction) - 1]!;
+
+    console.info(
+      JSON.stringify({
+        operation: 'same-process committed-row diagnostic',
+        trials: queriedDurations.length,
+        queriedP50Ms: Math.round(percentile(queriedDurations, 0.5)),
+        queriedP95Ms: Math.round(percentile(queriedDurations, 0.95)),
+        queriedMaxMs: Math.round(Math.max(...queriedDurations)),
+        directP50Ms: Math.round(percentile(directDurations, 0.5)),
+        directP95Ms: Math.round(percentile(directDurations, 0.95)),
+        directMaxMs: Math.round(Math.max(...directDurations)),
+        queryCount: read.mock.calls.length,
+      }),
+    );
+    expect(Math.min(...queriedDurations)).toBeGreaterThanOrEqual(160);
+    expect(Math.max(...directDurations)).toBeLessThan(25);
+    expect(read).toHaveBeenCalledTimes(20);
+    expect(project).toHaveBeenCalledTimes(20);
+  });
+
+  it('serializes only a public delta and drops a cross-Room committed row', async () => {
+    const delta = {
+      type: 'message-delta' as const,
+      roomId: 'room-live',
+      message: {
+        id: 'message-public',
+        text: 'public text',
+        createdAt: 1,
+        author: { pubkey: 'agent', kind: 'agent' as const, name: 'Greeter' },
+        presentation: 'message' as const,
+      },
+    };
+    const read = vi.fn().mockResolvedValue(null);
+    const project = vi.fn((eventRoom: string, committed: { row: { room_id: string } }) =>
+      committed.row.room_id === eventRoom ? delta : null,
+    );
+    const { live, roomId, socket, port } = await connect(
+      read as PhoneService['readLiveDelta'],
+      project as PhoneService['projectCommittedLiveDelta'],
+    );
+    const rawMarker = 'raw-committed-row-must-not-cross-wire';
+    const startedAt = Date.now();
+    const trace = {
+      id: 'same-clock-paint-proof',
+      startedAt,
+      databaseAt: startedAt,
+      emittedAt: Date.now(),
+    };
+    socket.send(JSON.stringify({ type: 'trace-paint', id: 'never-emitted-on-this-socket' }));
+    await expectNoSocketMessage(socket);
+    const publicMessage = nextSocketMessage(socket, 'message-delta');
+    live.publish({
+      type: 'invalidate',
+      roomId,
+      reason: 'message',
+      messageId: delta.message.id,
+      trace,
+      committedRow: {
+        type: 'message',
+        row: { room_id: roomId, text: rawMarker } as never,
+      },
+    });
+    const delivered = await publicMessage;
+    expect(delivered).toEqual({ ...delta, trace });
+    expect(JSON.stringify(delivered)).not.toContain(rawMarker);
+    expect(delivered).not.toHaveProperty('committedRow');
+    const otherSocket = new WebSocket(`ws://127.0.0.1:${port}/v1/phone/live`, ['bearer.phone']);
+    sockets.push(otherSocket);
+    await new Promise<void>((resolve, reject) => {
+      otherSocket.once('open', resolve);
+      otherSocket.once('error', reject);
+    });
+    otherSocket.send(JSON.stringify({ type: 'trace-paint', id: trace.id }));
+    await expectNoSocketMessage(otherSocket);
+    const paintAck = nextSocketMessage(socket, 'trace-painted');
+    socket.send(JSON.stringify({ type: 'trace-paint', id: trace.id }));
+    await expect(paintAck).resolves.toMatchObject({
+      type: 'trace-painted',
+      id: trace.id,
+      startedAt,
+      databaseAt: startedAt,
+      serverReceivedAt: expect.any(Number),
+    });
+    const acknowledged = await paintAck;
+    expect(acknowledged.serverReceivedAt as number).toBeGreaterThanOrEqual(startedAt);
+    expect((acknowledged.serverReceivedAt as number) - startedAt).toBeLessThan(100);
+    socket.send(JSON.stringify({ type: 'trace-paint', id: trace.id }));
+    await expectNoSocketMessage(socket);
+
+    let unexpected = false;
+    const onMessage = () => {
+      unexpected = true;
+    };
+    socket.on('message', onMessage);
+    live.publish({
+      type: 'invalidate',
+      roomId,
+      reason: 'message',
+      messageId: 'message-cross-room',
+      committedRow: {
+        type: 'message',
+        row: { room_id: 'another-room', text: rawMarker } as never,
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    socket.off('message', onMessage);
+    expect(unexpected).toBe(false);
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it('never subscribes or projects a committed row for an unauthorized viewer', async () => {
+    const read = vi.fn();
+    const project = vi.fn();
+    const roomId = 'room-live';
+    const live = new LiveHub();
+    const server = createBeelineServer({
+      database: { query: vi.fn(), transaction: vi.fn() },
+      auth: { authenticatePhone: vi.fn().mockResolvedValue('viewer') } as unknown as TokenAuth,
+      phone: {
+        canReadRoom: vi.fn().mockResolvedValue(false),
+        liveDraftSnapshot: vi.fn().mockResolvedValue([]),
+        readLiveDelta: read,
+        projectCommittedLiveDelta: project,
+      } as unknown as PhoneService,
+      daemon: {} as DaemonService,
+      live,
+      mediaMaximumBytes: 1,
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/phone/live`, ['bearer.phone']);
+    sockets.push(socket);
+    await new Promise<void>((resolve, reject) => {
+      socket.once('open', resolve);
+      socket.once('error', reject);
+    });
+    socket.send(JSON.stringify({ type: 'subscribe', roomId }));
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    let received = false;
+    socket.on('message', () => {
+      received = true;
+    });
+    live.publish({
+      type: 'invalidate',
+      roomId,
+      reason: 'message',
+      messageId: 'secret-message',
+      committedRow: {
+        type: 'message',
+        row: { room_id: roomId, text: 'raw-secret' } as never,
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(received).toBe(false);
+    expect(project).not.toHaveBeenCalled();
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it('strips a raw committed row even when an invalidation has no delta target', async () => {
+    const read = vi.fn();
+    const project = vi.fn();
+    const { live, roomId, socket } = await connect(
+      read as PhoneService['readLiveDelta'],
+      project as PhoneService['projectCommittedLiveDelta'],
+    );
+    const invalidation = nextSocketMessage(socket, 'invalidate');
+
+    live.publish({
+      type: 'invalidate',
+      roomId,
+      reason: 'message',
+      committedRow: {
+        type: 'message',
+        row: { room_id: roomId, text: 'raw-secret' } as never,
+      },
+    });
+
+    const delivered = await invalidation;
+    expect(delivered).toEqual({ type: 'invalidate', roomId, reason: 'message' });
+    expect(JSON.stringify(delivered)).not.toContain('raw-secret');
+    expect(project).not.toHaveBeenCalled();
+    expect(read).not.toHaveBeenCalled();
+  });
 });
 
 function nextSocketMessage(socket: WebSocket, type: string): Promise<Record<string, unknown>> {
@@ -428,6 +707,24 @@ function nextSocketMessages(socket: WebSocket, count: number): Promise<Record<st
       cleanup();
       reject(new Error(`websocket ${count}-message timeout`));
     }, 3_000);
+    const cleanup = () => {
+      clearTimeout(timer);
+      socket.off('message', onMessage);
+    };
+    socket.on('message', onMessage);
+  });
+}
+
+function expectNoSocketMessage(socket: WebSocket, durationMs = 25): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const onMessage = (raw: WebSocket.RawData) => {
+      cleanup();
+      reject(new Error(`unexpected websocket message: ${raw.toString()}`));
+    };
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, durationMs);
     const cleanup = () => {
       clearTimeout(timer);
       socket.off('message', onMessage);

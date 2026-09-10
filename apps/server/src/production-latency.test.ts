@@ -168,6 +168,7 @@ describe('production database-pool latency boundary', () => {
       reconciliations,
       presenceReads,
     });
+    expect(PRODUCTION_DATABASE_POOL_MAX).toBe(10);
     expect(reconciliations).toBe(daemonOperationsInWindow);
     expect(presenceReads).toBe(daemonOperationsInWindow * LOCAL_LIVE_LISTENERS);
     expect(percentile(pool.waits, 0.95)).toBeLessThan(500);

@@ -136,6 +136,7 @@ describe('monolith Room send path', () => {
     await vi.advanceTimersByTimeAsync(1_000);
     expect(sockets).toHaveLength(2);
     sockets[1]!.onopen?.();
+    expect(sockets[1]!.sent).toEqual([JSON.stringify({ type: 'subscribe', roomId: ROOM })]);
     sockets[1]!.onmessage?.({
       data: JSON.stringify({ type: 'invalidate', roomId: ROOM, reason: 'postgres:messages' }),
     });
@@ -143,10 +144,53 @@ describe('monolith Room send path', () => {
       { monolithLive: { type: 'invalidate', roomId: ROOM, reason: 'postgres:messages' } },
     ]);
 
-    stop();
     sockets[1]!.onclose?.();
+    stop();
     await vi.advanceTimersByTimeAsync(30_000);
     expect(sockets).toHaveLength(2);
+  });
+
+  it('retries authorization and resets reconnect backoff after opening', async () => {
+    vi.useFakeTimers();
+    const sockets: Array<{
+      sent: string[];
+      onopen?: () => void;
+      onclose?: () => void;
+      close: () => void;
+    }> = [];
+    class TestWebSocket {
+      sent: string[] = [];
+      onopen?: () => void;
+      onclose?: () => void;
+      constructor(
+        readonly url: string,
+        readonly protocols: string[],
+      ) {
+        sockets.push(this);
+      }
+      send(value: string) {
+        this.sent.push(value);
+      }
+      close() {}
+    }
+    vi.stubGlobal('WebSocket', TestWebSocket);
+    controls.authorization.mockRejectedValueOnce(new Error('session refresh failed'));
+
+    const stop = await new MonolithRigTransport(identity).surfaceSubscribe(
+      [{ '#h': [ROOM] }],
+      () => {},
+    );
+    expect(sockets).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(sockets).toHaveLength(1);
+    sockets[0]!.onopen?.();
+    sockets[0]!.onclose?.();
+    await vi.advanceTimersByTimeAsync(999);
+    expect(sockets).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(sockets).toHaveLength(2);
+
+    stop();
   });
 
   it('stages a plain repo-less Room message before publishing it to the monolith', async () => {

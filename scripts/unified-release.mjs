@@ -1,8 +1,10 @@
 #!/usr/bin/env node
-import { readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 
 export const RELEASE_COMPONENTS = ['server', 'helper', 'mobile-ota', 'mobile-native', 'desktop', 'website'];
 export const RELEASE_BUDGET_MINUTES = 20;
+export const RELEASE_NOTIFY_TIMEOUT_MS = 10_000;
+export const RELEASE_NOTIFY_ENDPOINT = 'https://server.usebeeline.app/v1/releases/notify';
 
 // Release-affecting paths belong in this inspectable table, beside drift tests,
 // rather than in scattered workflow conditionals.
@@ -237,6 +239,37 @@ export function releasePlanSummary(state) {
   };
 }
 
+export async function notifyRelease({
+  version,
+  sourceSha,
+  repository,
+  secret,
+  timeoutMs = RELEASE_NOTIFY_TIMEOUT_MS,
+  fetchImpl = fetch,
+}) {
+  validateReleaseIdentity(version, sourceSha);
+  if (!secret) return { state: 'skipped', detail: 'notification secret is not configured' };
+  const signal = AbortSignal.timeout(timeoutMs);
+  try {
+    const response = await fetchImpl(RELEASE_NOTIFY_ENDPOINT, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${secret}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        version,
+        sha: sourceSha,
+        changelogUrl: `https://github.com/${repository}/releases/tag/${version}`,
+      }),
+      signal,
+    });
+    if (!response.ok) return { state: 'warning', detail: `server returned HTTP ${response.status}` };
+    return { state: 'sent', detail: `server returned HTTP ${response.status}` };
+  } catch (error) {
+    if (signal.aborted) return { state: 'warning', detail: `timed out after ${timeoutMs}ms` };
+    const detail = error instanceof Error ? error.message.split(/\r?\n/, 1)[0] : String(error);
+    return { state: 'warning', detail: `delivery failed: ${detail}` };
+  }
+}
+
 function options(argv) {
   const parsed = { _: [] };
   for (let index = 0; index < argv.length; index += 1) {
@@ -248,7 +281,7 @@ function options(argv) {
 }
 function identityFromOptions(args) { return { version: args.version, sourceSha: args.sha }; }
 
-function main(argv) {
+async function main(argv) {
   const args = options(argv);
   const command = args._[0];
   if (command === 'next-version') {
@@ -268,6 +301,20 @@ function main(argv) {
     writeJson(args.state, state);
     if (args.summary) writeJson(args.summary, releasePlanSummary(state));
     else if (command === 'plan') console.log(JSON.stringify(releasePlanSummary(state)));
+    return;
+  }
+  if (command === 'notify') {
+    const result = await notifyRelease({
+      ...identityFromOptions(args),
+      repository: args.repository,
+      secret: process.env.BEELINE_RELEASE_NOTIFY_SECRET,
+    });
+    if (args.output) writeJson(args.output, result);
+    if (process.env.GITHUB_OUTPUT) {
+      appendFileSync(process.env.GITHUB_OUTPUT, `state=${result.state}\ndetail=${result.detail}\n`);
+    }
+    if (result.state === 'warning') console.error(`::warning title=Release notification not delivered::${result.detail}`);
+    else console.log(`Release notification ${result.state}: ${result.detail}`);
     return;
   }
   const state = readJson(args.state);
@@ -296,11 +343,11 @@ function main(argv) {
     console.log(`DELIVERED ${state.version} (${state.sourceSha}) in ${state.delivery.durationSeconds}s`);
     return;
   }
-  fail('Usage: unified-release.mjs <next-version|plan|init|mark-stage|apply-checkpoints|finalize|report>');
+  fail('Usage: unified-release.mjs <next-version|plan|init|mark-stage|apply-checkpoints|finalize|notify|report>');
 }
 
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
-  try { main(process.argv.slice(2)); }
+  try { await main(process.argv.slice(2)); }
   catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;

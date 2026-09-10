@@ -709,7 +709,6 @@ jobs:
           RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
           RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
           RUN_DESKTOP: ${{ needs.initialize.outputs.run_desktop }}
-          BEELINE_RELEASE_NOTIFY_SECRET: ${{ secrets.BEELINE_RELEASE_NOTIFY_SECRET }}
         run: |
           set -euo pipefail
           state="$RUNNER_TEMP/release-attempt.json"
@@ -730,12 +729,20 @@ jobs:
           else
             gh release create "$RELEASE_VERSION" --target "$RELEASE_SHA" --title "$RELEASE_VERSION" --notes-file "$notes"
           fi
-          if [ -n "${BEELINE_RELEASE_NOTIFY_SECRET:-}" ]; then
-            # shellcheck disable=SC2016
-            payload=$(node -e 'const [version,sha]=process.argv.slice(1);process.stdout.write(JSON.stringify({version,sha,changelogUrl:`https://github.com/${process.env.GITHUB_REPOSITORY}/releases/tag/${version}`}))' "$RELEASE_VERSION" "$RELEASE_SHA")
-            curl -fsS --max-time 30 -X POST https://server.usebeeline.app/v1/releases/notify \
-              -H "Authorization: Bearer $BEELINE_RELEASE_NOTIFY_SECRET" -H 'content-type: application/json' -d "$payload"
-          fi
+      - name: Notify clients without changing the authoritative release outcome
+        id: notification
+        if: steps.result.outputs.outcome == 'success'
+        continue-on-error: true
+        env:
+          RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
+          RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
+          BEELINE_RELEASE_NOTIFY_SECRET: ${{ secrets.BEELINE_RELEASE_NOTIFY_SECRET }}
+        run: >-
+          node scripts/unified-release.mjs notify
+          --version "$RELEASE_VERSION"
+          --sha "$RELEASE_SHA"
+          --repository "$GITHUB_REPOSITORY"
+          --output "$RUNNER_TEMP/release-notification.json"
       - name: Finalize successful delivery after every selected promotion and record
         if: steps.result.outputs.outcome == 'success'
         run: node scripts/unified-release.mjs finalize --state "$RUNNER_TEMP/release-attempt.json" --outcome success
@@ -770,6 +777,8 @@ jobs:
           SAMPLE: ${{ steps.reliability.outputs.sample }}
           FAILED: ${{ steps.reliability.outputs.failed }}
           RATE: ${{ steps.reliability.outputs.rate }}
+          NOTIFICATION_STATE: ${{ steps.notification.outputs.state || (steps.notification.outcome == 'failure' && 'warning') || 'not-attempted' }}
+          NOTIFICATION_DETAIL: ${{ steps.notification.outputs.detail || (steps.notification.outcome == 'failure' && 'notification step failed unexpectedly') || 'release result was not successful' }}
         run: |
           node - "$RUNNER_TEMP/release-attempt.json" >> "$GITHUB_STEP_SUMMARY" <<'NODE'
           const fs = require('node:fs');
@@ -778,6 +787,7 @@ jobs:
           console.log(`- Duration: ${release.delivery.durationSeconds}s`);
           console.log(`- Selected: ${release.plan.selected.join(', ') || 'none'}`);
           console.log(`- Carried: ${release.plan.carried.join(', ') || 'none'}`);
+          console.log(`- Notification: ${process.env.NOTIFICATION_STATE} (${process.env.NOTIFICATION_DETAIL})`);
           if (release.delivery.failureClass) console.log(`- Failure class: ${release.delivery.failureClass}`);
           console.log('- Reliability target: fewer than 10% failed attempts over the rolling 20 release attempts.');
           if (Number(process.env.SAMPLE) >= 10) console.log(`- Measured failure rate: ${process.env.RATE}% (${process.env.FAILED}/${process.env.SAMPLE}).`);

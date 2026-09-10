@@ -23,6 +23,8 @@ type Timing = {
   messageWriteEndedAtWall?: number;
   transactionQueries?: number;
   messageWriteQueries?: number;
+  queryCalls?: number;
+  transactionWrappers?: number;
 };
 
 class DelayedDatabase implements SqlDatabase {
@@ -36,6 +38,7 @@ class DelayedDatabase implements SqlDatabase {
     sql: string,
     values: unknown[] = [],
   ): Promise<QueryResult<Row>> {
+    this.timing.queryCalls = (this.timing.queryCalls ?? 0) + 1;
     if (this.insideTransaction)
       this.timing.transactionQueries = (this.timing.transactionQueries ?? 0) + 1;
     const messageWrite = /INSERT INTO messages\(|WITH inserted AS \(\s*INSERT INTO messages\(/.test(
@@ -55,10 +58,16 @@ class DelayedDatabase implements SqlDatabase {
     return result;
   }
 
-  transaction<T>(work: (database: SqlDatabase) => Promise<T>): Promise<T> {
-    return this.database.transaction((database) =>
+  async transaction<T>(work: (database: SqlDatabase) => Promise<T>): Promise<T> {
+    this.timing.transactionWrappers = (this.timing.transactionWrappers ?? 0) + 1;
+    // Production's remote database charges one network round trip for BEGIN
+    // and another for COMMIT in addition to the application statement.
+    await new Promise((resolve) => setTimeout(resolve, QUERY_DURATION_MS));
+    const result = await this.database.transaction((database) =>
       work(new DelayedDatabase(database, this.timing, true)),
     );
+    await new Promise((resolve) => setTimeout(resolve, QUERY_DURATION_MS));
+    return result;
   }
 }
 
@@ -274,12 +283,15 @@ describe('agent reply completion latency', () => {
       sourceMessageId: request,
       reason: 'human_tag',
     });
-    const delayed = new DelayedDatabase(database, {});
+    const timing: Timing = {};
+    const delayed = new DelayedDatabase(database, timing);
     const startedAt = performance.now();
 
     await claimAgentCommand(delayed, ROOM, AGENT, command!.id, `${GENERATION}-claim`);
 
     expect(performance.now() - startedAt).toBeLessThan(QUERY_DURATION_MS * 2);
+    expect(timing.transactionWrappers ?? 0).toBe(0);
+    expect(timing.queryCalls).toBe(1);
     expect(
       (
         await database.query<{ state: string; status: string }>(

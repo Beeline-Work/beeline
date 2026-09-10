@@ -255,6 +255,38 @@ export class PostgresLiveListener {
         }
         return;
       }
+      if (payload.kind === 'presence') {
+        const rows = await this.database.query<{
+          room_id: string;
+          body: Record<string, unknown>;
+        }>(
+          `SELECT membership.room_id,presence.body
+           FROM memberships membership
+           JOIN LATERAL(
+             SELECT body FROM live_outputs
+             WHERE agent_id=$1 AND kind='presence'
+             ORDER BY updated_at DESC LIMIT 1
+           ) presence ON true
+           WHERE membership.identity_id=$1 AND membership.room_id IS NOT NULL
+             AND membership.removed_at IS NULL`,
+          [payload.agentId],
+        );
+        for (const row of rows.rows) {
+          if (
+            (row.body.status !== 'online' && row.body.status !== 'offline') ||
+            typeof row.body.observedAt !== 'number'
+          )
+            continue;
+          this.live.publish({
+            type: 'presence',
+            roomId: row.room_id,
+            agentId: payload.agentId,
+            status: row.body.status,
+            observedAt: row.body.observedAt,
+          });
+        }
+        return;
+      }
       const row = (
         await this.database.query<{ body: Record<string, unknown> }>(
           `SELECT body FROM live_outputs
@@ -273,23 +305,6 @@ export class PostgresLiveListener {
           text: row.body.text,
         });
         return;
-      }
-      if (
-        payload.kind === 'presence' &&
-        (row.body.status === 'online' || row.body.status === 'offline') &&
-        typeof row.body.observedAt === 'number'
-      ) {
-        // The writer updates one durable presence row per affected Room, and
-        // PostgreSQL emits one notification for each changed row. Rebroadcast
-        // only that row here; expanding every notification back to every Room
-        // turns an R-Room update into R² work on every server machine.
-        this.live.publish({
-          type: 'presence',
-          roomId: payload.roomId,
-          agentId: payload.agentId,
-          status: row.body.status,
-          observedAt: row.body.observedAt,
-        });
       }
       return;
     }

@@ -11,6 +11,7 @@ type TestSurfaceEvent = NostrEvent | MonolithSurfaceEvent;
 const controls = vi.hoisted(() => ({
   cached: null as RoomView | null,
   schedulers: [] as Array<{
+    fetch(): Promise<RoomView>;
     apply(view: RoomView): void;
     error(error: unknown): void;
     disposed: boolean;
@@ -28,6 +29,7 @@ const controls = vi.hoisted(() => ({
   outboxFail: vi.fn(async (_eventId: string) => undefined),
   outboxGet: vi.fn((_eventId: string) => ({ status: 'pending' as const })),
   traceSetItem: vi.fn(async (_key: string, _value: string) => undefined),
+  roomResponse: null as RoomView | null,
 }));
 
 vi.mock('@react-native-async-storage/async-storage', () => ({
@@ -119,25 +121,41 @@ vi.mock('@/sync/transport', () => ({
   },
 }));
 
+vi.mock('@/sync/transport/room-view-client', async () => {
+  const { RoomViewHttpError } =
+    await vi.importActual<typeof import('@beeline/buzz-client')>('@beeline/buzz-client');
+  return {
+    RoomViewHttpError,
+    RoomViewClient: class {
+      async room() {
+        if (controls.roomResponse) return controls.roomResponse;
+        return new Promise<RoomView>(() => undefined);
+      }
+      async markRead() {}
+    },
+  };
+});
+
 vi.mock('@beeline/buzz-client', async () => {
   const actual =
     await vi.importActual<typeof import('@beeline/buzz-client')>('@beeline/buzz-client');
   return {
     ...actual,
-    RoomViewClient: class {
-      async room() {
-        return new Promise<RoomView>(() => undefined);
-      }
-    },
     SurfaceRefreshScheduler: class {
       private readonly options: {
+        fetch(): Promise<RoomView>;
         apply(view: RoomView): void;
         onError(error: unknown): void;
       };
       private readonly control: (typeof controls.schedulers)[number];
-      constructor(options: { apply(view: RoomView): void; onError(error: unknown): void }) {
+      constructor(options: {
+        fetch(): Promise<RoomView>;
+        apply(view: RoomView): void;
+        onError(error: unknown): void;
+      }) {
         this.options = options;
         this.control = {
+          fetch: () => this.options.fetch(),
           apply: (view) => this.options.apply(view),
           error: (error) => this.options.onError(error),
           disposed: false,
@@ -276,6 +294,7 @@ beforeEach(() => {
   controls.transportCount = 0;
   controls.replayEvents.length = 0;
   controls.identityPromise = null;
+  controls.roomResponse = null;
   controls.outboxFail.mockClear();
   controls.outboxGet.mockClear();
   vi.clearAllMocks();
@@ -390,12 +409,26 @@ describe('useRoomSurfaceSession', () => {
       });
     });
 
-    expect(info).toHaveBeenCalledWith(expect.stringContaining('"phase":"socket-receipt","at":'));
-    expect(info).toHaveBeenCalledWith(expect.stringContaining('"id":"trace-turn"'));
-    expect(info).toHaveBeenCalledWith(expect.stringContaining('"reason":"postgres:agent_turns"'));
+    expect(info).not.toHaveBeenCalled();
+    expect(controls.traceSetItem).not.toHaveBeenCalled();
+    controls.roomResponse = {
+      ...roomView('room-a'),
+      latestAgentTurns: [
+        {
+          requestId: 'request-a',
+          agentPubkey: 'agent-a',
+          status: 'working',
+          createdAt: Math.floor(Date.now() / 1_000),
+        },
+      ],
+    };
+    await act(async () => {
+      controls.schedulers[0]!.apply(await controls.schedulers[0]!.fetch());
+    });
     await vi.waitFor(() => expect(controls.traceSetItem).toHaveBeenCalled());
     const [key, stored] = controls.traceSetItem.mock.calls.at(-1)!;
     expect(key).toBe('@beeline/live-event-trace-v1');
+    expect(stored).toContain('"phase":"socket-receipt"');
     expect(stored).toContain('"id":"trace-turn"');
     expect(stored).not.toContain('room-a');
     info.mockRestore();

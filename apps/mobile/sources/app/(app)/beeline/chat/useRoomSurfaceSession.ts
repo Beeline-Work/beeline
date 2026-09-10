@@ -35,7 +35,7 @@ import { ROOM_LABEL } from '@/buzz/vocabulary';
 const OUTBOX_CONFIRMATION_TIMEOUT_MS = 15_000;
 
 type ReceivedLiveTrace = LiveWireTrace & { reason: string; receivedAt: number };
-let remainingLiveTraceLogs = 128;
+let remainingLiveTraceLogs = 16;
 let liveTraceRows: unknown[] = [];
 let liveTraceWrite = Promise.resolve();
 export const LIVE_TRACE_STORAGE_KEY = '@beeline/live-event-trace-v1';
@@ -54,8 +54,12 @@ function logLiveTrace(phase: string, traces: readonly ReceivedLiveTrace[], at = 
       receivedAt,
     })),
   };
-  console.info(`[live-trace] ${JSON.stringify(row)}`);
+  if (__DEV__) console.info(`[live-trace] ${JSON.stringify(row)}`);
   liveTraceRows = [...liveTraceRows.slice(-127), row];
+  // One diagnostic write after the resulting paint, not one synchronous
+  // storage handoff at every socket/read phase. The trace must not perturb the
+  // render interval it exists to measure.
+  if (phase !== 'paint' && phase !== 'room-read-error') return;
   const snapshot = JSON.stringify(liveTraceRows);
   liveTraceWrite = liveTraceWrite
     .then(() => AsyncStorage.setItem(LIVE_TRACE_STORAGE_KEY, snapshot))

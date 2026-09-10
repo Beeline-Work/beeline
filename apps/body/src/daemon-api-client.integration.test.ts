@@ -1391,6 +1391,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         await vi.waitFor(
           async () => {
             const restore = await client.execute('getCornerRestoreState', { cornerId });
+            expect(restore.objective).toContain(`create proof-${proofStamp}.txt`);
             branch = restore.featureBranch ?? '';
             expect(branch).toBeTruthy();
             await expect(access(worktree)).resolves.toBeUndefined();

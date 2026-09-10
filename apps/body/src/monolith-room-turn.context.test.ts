@@ -68,6 +68,11 @@ describe('monolith Room turn context', () => {
     } as BodyConfig;
     const conversationReads: Array<Record<string, unknown>> = [];
     const receipts: Array<Record<string, unknown>> = [];
+    const conversation = CONVERSATION.map((message) =>
+      message.id === 'row-250'
+        ? { ...message, body: '@greeter answer only the next integer after 10103' }
+        : message,
+    );
     let inboxReads = 0;
     const ask = (id: string, body: string) => ({
       id,
@@ -93,12 +98,16 @@ describe('monolith Room turn context', () => {
       if (name === 'getRoomInbox') {
         inboxReads += 1;
         if (inboxReads === 2) return { items: [ask('ask-1', 'first ask')], cursor: 'ask-1' };
-        if (inboxReads === 3) return { items: [ask('ask-2', 'second ask')], cursor: 'ask-2' };
+        if (inboxReads === 3)
+          return {
+            items: [ask('ask-2', '@greeter answer only the next integer after 30303')],
+            cursor: 'ask-2',
+          };
         return { items: [], cursor: 'latest' };
       }
       if (name === 'getRoomConversation') {
         conversationReads.push(input);
-        return { items: CONVERSATION, cursor: 'row-250' };
+        return { items: conversation, cursor: 'row-250' };
       }
       if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
       return { id: 'write-id', createdAt: 1 };
@@ -154,7 +163,7 @@ describe('monolith Room turn context', () => {
     // turn renders, which now ends on the newest row instead of row 200.
     expect(prompts[0]).toContain('Room conversation so far:');
     expect(prompts[0]).toContain('Captain: row 171');
-    expect(prompts[0]).toContain('Captain: row 250');
+    expect(prompts[0]).toContain('Captain: @greeter answer only the next integer after 10103');
     expect(prompts[0]).not.toContain('Captain: row 170');
     expect(prompts[0]).toContain('first ask');
 
@@ -162,15 +171,22 @@ describe('monolith Room turn context', () => {
     // overlap, and still carries the newest message in full.
     expect(prompts[1]).toContain('New in the Room since your last turn');
     expect(prompts[1]).not.toContain('Captain: row 171');
-    expect(prompts[1]).toContain('second ask');
-    const overlapRows = CONVERSATION.slice(-WARM_TRANSCRIPT_OVERLAP);
+    expect(prompts[1]).toContain('@greeter answer only the next integer after 30303');
+    const overlapRows = conversation.slice(-WARM_TRANSCRIPT_OVERLAP);
     for (const row of overlapRows) expect(prompts[1]).toContain(`Captain: ${row.body}`);
     expect(prompts[1]).not.toContain(
       `Captain: ${CONVERSATION.at(-WARM_TRANSCRIPT_OVERLAP - 1)!.body}`,
     );
+    expect(prompts[1]!.match(/after 30303/g)).toHaveLength(1);
+    expect(prompts[1]!.lastIndexOf('after 30303')).toBeGreaterThan(
+      prompts[1]!.lastIndexOf('after 10103'),
+    );
+    expect(prompts[1]!.trimEnd()).toMatch(
+      /Current task selected by the server from Captain:\n\n@greeter answer only the next integer after 30303$/,
+    );
     const rendered = (prompt: string) => prompt.match(/Captain: row \d+/g)?.length ?? 0;
-    expect(rendered(prompts[0]!)).toBe(80);
-    expect(rendered(prompts[1]!)).toBe(WARM_TRANSCRIPT_OVERLAP);
+    expect(rendered(prompts[0]!)).toBe(79);
+    expect(rendered(prompts[1]!)).toBe(WARM_TRANSCRIPT_OVERLAP - 1);
     expect(receipts.filter((receipt) => receipt.status === 'complete')).toHaveLength(2);
   }, 20_000);
 });

@@ -184,7 +184,7 @@ export function pendingGrantToolCall(call: { title?: string; content?: unknown }
  * The Room's members and the one @spelling that reaches each of them.
  *
  * Everywhere else the prompt names people by DISPLAY name — the transcript's
- * bylines, `Newest message from <name>` — and nothing in it ever carried a
+ * bylines, `Current task selected by the server from <name>` — and nothing in it ever carried a
  * handle. So a model with something to say to someone had no authoritative
  * spelling to write and had to guess one, or copy one out of the conversation,
  * where a handle retired releases ago still sits in its own old messages. A
@@ -904,14 +904,6 @@ export class MonolithRoomTurnLoop {
                     'Room conversation so far:',
                     'New in the Room since your last turn (the earlier conversation is already in this session):',
                   ),
-                  `Newest message from ${inboxItemAuthorName(item, this.agent.publicKey, names)}:`,
-                  roomMessagePrompt(
-                    '',
-                    inboxItemPromptBody(item, this.agent.publicKey),
-                    item.attachments,
-                    delivered,
-                    this.acceptsImages(),
-                  ),
                   grantDecision
                     ? [
                         'This is the answer to your grant request; your paused work resumes now.',
@@ -923,9 +915,17 @@ export class MonolithRoomTurnLoop {
                   [
                     'Write only the substantive Room message you want the human to read.',
                     'Do not repeat or paraphrase these instructions.',
-                    'If the newest message is only a nudge to respond, answer the most recent unanswered human message in the conversation instead of echoing the nudge.',
+                    'If the current task is only a nudge to respond, answer the most recent unanswered human message in the conversation instead of echoing the nudge.',
                     MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE,
                   ].join(' '),
+                  `Current task selected by the server from ${inboxItemAuthorName(item, this.agent.publicKey, names)}:`,
+                  roomMessagePrompt(
+                    '',
+                    inboxItemPromptBody(item, this.agent.publicKey),
+                    item.attachments,
+                    delivered,
+                    this.acceptsImages(),
+                  ),
                 ]
                   .filter(Boolean)
                   .join('\n\n');

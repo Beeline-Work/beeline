@@ -142,7 +142,7 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
                   >
                     {section.label} {section.options.length}
                   </Text>
-                  {canManage && (
+                  {canManage && !parentChannelId && !isDirectMessage && (
                     <TouchableOpacity
                       accessibilityLabel={`Add ${section.key}`}
                       hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}

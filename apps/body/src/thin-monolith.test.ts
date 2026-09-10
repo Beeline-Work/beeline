@@ -373,7 +373,7 @@ describe('monolith-only thin daemon', () => {
     }
   });
 
-  it('recovers a corner objective from the OLDEST page, not the newest one', async () => {
+  it('starts a corner from its authoritative objective fact without a transcript objective post', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'beeline-corner-objective-'));
     roots.push(root);
     const staged = await stageMonolithAgentRuntime({
@@ -393,11 +393,11 @@ describe('monolith-only thin daemon', () => {
       'Handoff from the parent Room: add a `--dry-run` flag to the importer CLI.',
       'It must print the plan it would apply and exit 0 without touching the database.',
     ].join(' ');
-    // The server answers the default window with the newest page; only the
-    // `earliest` window reaches back to the corner's opening message.
     const conversationReads: Array<Record<string, unknown>> = [];
     const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
-      if (name === 'getCornerRestoreState') return { cornerId: 'corner', lifecycle: {} };
+      if (name === 'getCornerRestoreState') {
+        return { cornerId: 'corner', objective: HANDOFF, closeRequested: false, lifecycle: {} };
+      }
       if (name === 'getRoomGitHubToken') return { token: 'gh-token' };
       if (name === 'getRoomRepositoryState') {
         return {
@@ -408,40 +408,7 @@ describe('monolith-only thin daemon', () => {
       }
       if (name === 'getRoomConversation') {
         conversationReads.push(input);
-        const items =
-          input.window === 'earliest'
-            ? [
-                {
-                  id: 'row-1',
-                  authorId: 'human',
-                  createdAt: 1,
-                  type: 'message',
-                  body: HANDOFF,
-                  mentionIds: [],
-                  attachments: [],
-                },
-                {
-                  id: 'row-2',
-                  authorId: 'agent',
-                  createdAt: 2,
-                  type: 'message',
-                  body: 'on it',
-                  mentionIds: [],
-                  attachments: [],
-                },
-              ]
-            : [
-                {
-                  id: 'row-249',
-                  authorId: 'agent',
-                  createdAt: 249,
-                  type: 'message',
-                  body: 'pushed the branch',
-                  mentionIds: [],
-                  attachments: [],
-                },
-              ];
-        return { items, cursor: 'c' };
+        return { items: [], cursor: 'c' };
       }
       throw new Error(`unexpected daemon operation: ${name}`);
     });
@@ -466,16 +433,10 @@ describe('monolith-only thin daemon', () => {
     ).startCorner({ cornerId: 'corner', parentRoomId: 'room' });
     error.mockRestore();
 
-    // The objective read is the one that asks for the OLDEST page. The second
-    // read is the start-failure report looking for the message that asked for
-    // this corner, so the agent says why it could not open it.
-    expect(conversationReads[0]).toEqual({ roomId: 'corner', limit: 200, window: 'earliest' });
-    expect(
-      conversationReads.filter((read) => (read as { window?: string }).window === 'earliest'),
-    ).toHaveLength(1);
-    // The objective was found. The failure that did happen is the clone, not a
-    // corner whose opening message fell off the far end of the page.
-    expect(failures.join('\n')).not.toContain('corner has no durable objective post');
+    // The only conversation read is the best-effort failure report after the
+    // deliberately bogus clone. Startup itself used the corner fact.
+    expect(conversationReads).toEqual([{ roomId: 'corner', limit: 50 }]);
+    expect(failures.join('\n')).not.toContain('corner has no authoritative objective fact');
     expect(failures.join('\n')).toContain('failed to start corner corner');
   });
 

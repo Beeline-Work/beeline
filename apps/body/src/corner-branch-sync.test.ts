@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { access, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -112,6 +112,100 @@ describe('a helper joining a corner it did not open', () => {
       .resolves.toBeTruthy();
     await expect(git(remote.slice('file://'.length), 'show-ref', '--verify', `refs/heads/${FEATURE}`))
       .resolves.toBeTruthy();
+  });
+
+  it('keeps the exact local ref when remote deletion fails, then retries successfully', async () => {
+    const { remote, scratch } = await remoteWithCornerBranch();
+    const supervisorRoot = await mkdtemp(resolve(tmpdir(), 'beeline-corner-close-retry-'));
+    roots.push(supervisorRoot);
+    const worktree = await materializeCornerWorktree({
+      cornerId: 'corner-retry',
+      remote,
+      targetBranch: 'main',
+      featureBranch: FEATURE,
+      token: 'unused',
+      supervisorRoot,
+      committer: { name: 'Helper', publicKey: 'a'.repeat(64) },
+    });
+    const bare = remote.slice('file://'.length);
+    const unavailable = resolve(scratch, 'remote-unavailable.git');
+    await rename(bare, unavailable);
+
+    await expect(
+      removeCornerWorktreeAndBranches({
+        ...worktree,
+        cornerId: 'corner-retry',
+        branch: FEATURE,
+        token: 'expired',
+      }),
+    ).rejects.toThrow();
+    await expect(access(worktree.path)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(git(worktree.gitCommonDir, 'show-ref', '--verify', `refs/heads/${FEATURE}`))
+      .resolves.toBeTruthy();
+
+    await rename(unavailable, bare);
+    await removeCornerWorktreeAndBranches({
+      ...worktree,
+      cornerId: 'corner-retry',
+      branch: FEATURE,
+      token: 'fresh',
+    });
+    await expect(git(worktree.gitCommonDir, 'show-ref', '--verify', `refs/heads/${FEATURE}`))
+      .rejects.toThrow();
+    await expect(git(bare, 'show-ref', '--verify', `refs/heads/${FEATURE}`)).rejects.toThrow();
+  });
+
+  it('deletes the local ref when the exact remote ref is already gone', async () => {
+    const { remote } = await remoteWithCornerBranch();
+    const supervisorRoot = await mkdtemp(resolve(tmpdir(), 'beeline-corner-close-absent-'));
+    roots.push(supervisorRoot);
+    const worktree = await materializeCornerWorktree({
+      cornerId: 'corner-absent',
+      remote,
+      targetBranch: 'main',
+      featureBranch: FEATURE,
+      token: 'unused',
+      supervisorRoot,
+      committer: { name: 'Helper', publicKey: 'a'.repeat(64) },
+    });
+    const bare = remote.slice('file://'.length);
+    await git(bare, 'update-ref', '-d', `refs/heads/${FEATURE}`);
+
+    await removeCornerWorktreeAndBranches({
+      ...worktree,
+      cornerId: 'corner-absent',
+      branch: FEATURE,
+      token: 'fresh',
+    });
+
+    await expect(access(worktree.path)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(git(worktree.gitCommonDir, 'show-ref', '--verify', `refs/heads/${FEATURE}`))
+      .rejects.toThrow();
+  });
+
+  it('treats a second cleanup after success as idempotent', async () => {
+    const { remote } = await remoteWithCornerBranch();
+    const supervisorRoot = await mkdtemp(resolve(tmpdir(), 'beeline-corner-close-twice-'));
+    roots.push(supervisorRoot);
+    const worktree = await materializeCornerWorktree({
+      cornerId: 'corner-twice',
+      remote,
+      targetBranch: 'main',
+      featureBranch: FEATURE,
+      token: 'unused',
+      supervisorRoot,
+      committer: { name: 'Helper', publicKey: 'a'.repeat(64) },
+    });
+    const cleanup = () =>
+      removeCornerWorktreeAndBranches({
+        ...worktree,
+        cornerId: 'corner-twice',
+        branch: FEATURE,
+        token: 'fresh',
+      });
+
+    await cleanup();
+    await expect(cleanup()).resolves.toBeUndefined();
   });
 
   it('cuts its first worktree from the corner branch, not from the target branch', async () => {

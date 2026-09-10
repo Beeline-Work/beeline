@@ -146,6 +146,10 @@ export async function runServerCommandIntake(options: {
         validateServerCommand(command, roomId, agentId);
         if (busy && command.action !== 'stop') continue;
         pending.delete(command.id);
+        // Reserve the id before the request yields. A slow reconciliation
+        // response may contain the same command snapshot while this claim is
+        // in flight; it must not put the command back into the local queue.
+        claimed.add(command.id);
         try {
           await api.execute('claimAgentCommand', {
             roomId,
@@ -153,10 +157,10 @@ export async function runServerCommandIntake(options: {
             generationId: context.generationId,
           });
         } catch (error) {
+          claimed.delete(command.id);
           options.onError?.(error);
           continue;
         }
-        claimed.add(command.id);
         if (command.action === 'stop') {
           options.stop(command.turnRequestId);
           await api.execute('acknowledgeAgentCommand', {

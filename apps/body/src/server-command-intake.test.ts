@@ -243,7 +243,8 @@ describe('command intake mechanics', () => {
           ) => void)
         | undefined,
       onCommands: ((commands: readonly AgentCommand[]) => void) | undefined,
-      finishRecovery: ((page: { commandProtocol: 1; commands: AgentCommand[] }) => void) | undefined;
+      finishRecovery: ((page: { commandProtocol: 1; commands: AgentCommand[] }) => void) | undefined,
+      finishClaim: ((result: { id: string }) => void) | undefined;
     let reads = 0;
     const claimDispatchedAt: number[] = [];
     const execute = vi.fn(async (name: string) => {
@@ -253,7 +254,12 @@ describe('command intake mechanics', () => {
           finishRecovery = resolve;
         });
       }
-      if (name === 'claimAgentCommand') claimDispatchedAt.push(Date.now());
+      if (name === 'claimAgentCommand') {
+        claimDispatchedAt.push(Date.now());
+        return new Promise<{ id: string }>((resolve) => {
+          finishClaim = resolve;
+        });
+      }
       return { id: 'ok' };
     });
     const api = {
@@ -279,7 +285,7 @@ describe('command intake mechanics', () => {
       agentId: 'agent',
       context: await context(),
       signal: controller.signal,
-      run: vi.fn(async () => controller.abort()),
+      run: vi.fn(async () => undefined),
       stop: vi.fn(),
     });
     await vi.waitFor(() => expect(onCommands).toBeTypeOf('function'));
@@ -292,7 +298,18 @@ describe('command intake mechanics', () => {
     await vi.waitFor(() => expect(claimDispatchedAt).toHaveLength(1));
     expect(claimDispatchedAt[0]! - pushedAt).toBeLessThan(500);
 
-    finishRecovery?.({ commandProtocol: 1, commands: [] });
+    // Representative loaded ordering: the stale recovery snapshot completes
+    // after push dispatch but before the claim response. It must not enqueue
+    // the command a second time.
+    finishRecovery?.({ commandProtocol: 1, commands: [command()] });
+    await Promise.resolve();
+    finishClaim?.({ id: 'ok' });
+    await vi.waitFor(() =>
+      expect(execute.mock.calls.filter(([name]) => name === 'claimAgentCommand')).toHaveLength(1),
+    );
+    await vi.advanceTimersByTimeAsync(1);
+    expect(execute.mock.calls.filter(([name]) => name === 'claimAgentCommand')).toHaveLength(1);
+    controller.abort();
     await running;
   });
   it('processes a stop while an authorized input is running', async () => {

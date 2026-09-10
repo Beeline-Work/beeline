@@ -23,6 +23,30 @@ import {
 export type ExpandedCornerRefreshAction =
   { kind: 'none' } | { kind: 'reload'; roomId: string } | { kind: 'drop'; roomId: string };
 
+export type RoomListSection = {
+  kind: 'rooms' | 'messages';
+  title?: 'Messages';
+  data: ChatListItem[];
+};
+
+/** Rooms lead the index; direct messages follow in their own newest-first section. */
+export function roomListSections(chats: readonly ChatListItem[]): RoomListSection[] {
+  const rooms = chats.filter((item) => !item.directMessage);
+  const messages = chats
+    .filter((item) => Boolean(item.directMessage))
+    .sort(
+      (left, right) =>
+        (right.latestMessage?.createdAt ?? right.room.updatedAt) -
+        (left.latestMessage?.createdAt ?? left.room.updatedAt),
+    );
+  return [
+    ...(rooms.length ? [{ kind: 'rooms' as const, data: rooms }] : []),
+    ...(messages.length
+      ? [{ kind: 'messages' as const, title: 'Messages' as const, data: messages }]
+      : []),
+  ];
+}
+
 export function expandedCornerRefreshAction(
   expandedRoomId: string | null,
   chats: readonly { readonly room: { readonly id: string }; readonly cornerCount: number }[],

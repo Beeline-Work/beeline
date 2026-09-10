@@ -31,6 +31,17 @@ function styleBlock(text: string, name: string): string {
 }
 
 describe('Room list layout contract', () => {
+  it('places DMs beneath Rooms under a conditional Messages heading', () => {
+    expect(source).toContain('<SectionList');
+    expect(source).toContain('sections={chatSections}');
+    expect(source).toContain('roomListSections(chatList?.chats ?? [])');
+    expect(source).toContain('section.title ? (');
+    expect(source).toContain('{section.title.toUpperCase()}');
+    expect(source).toContain('accessibilityRole="header"');
+    expect(styleBlock(source, 'sectionHeaderText')).toContain('...hull.type.sectionHead,');
+    expect(source).not.toContain('<FlatList');
+  });
+
   it('keeps the empty deck one quiet block with exactly one brass primary', () => {
     // Captain report C67: two full-width 100pt buttons under centred copy
     // shouted. The empty state sits in the upper third (the FAB anchors the

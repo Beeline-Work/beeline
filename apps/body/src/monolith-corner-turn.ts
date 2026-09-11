@@ -86,13 +86,35 @@ function isCornerChecksTurn(trigger: string, restates?: readonly string[]): bool
 
 export async function cornerHasUndeliveredRepositoryWork(
   worktreePath: string,
+  featureBranch?: string,
 ): Promise<boolean> {
-  return execFileAsync('git', ['-C', worktreePath, 'status', '--porcelain=v1', '--branch'])
-    .then(({ stdout }) => {
-      const [branch = '', ...changes] = stdout.trimEnd().split('\n');
-      return changes.some(Boolean) || /\[(?:ahead|gone)\b/.test(branch);
-    })
-    .catch(() => false);
+  return Boolean(await cornerUndeliveredRepositoryState(worktreePath, featureBranch));
+}
+
+async function cornerUndeliveredRepositoryState(
+  worktreePath: string,
+  featureBranch?: string,
+): Promise<string | undefined> {
+  try {
+    const [{ stdout: status }, ahead] = await Promise.all([
+      execFileAsync('git', ['-C', worktreePath, 'status', '--porcelain=v1']),
+      featureBranch
+        ? execFileAsync('git', [
+            '-C',
+            worktreePath,
+            'rev-list',
+            '--count',
+            `refs/remotes/origin/${featureBranch}..HEAD`,
+          ])
+            .then(({ stdout }) => Number.parseInt(stdout.trim(), 10) || 0)
+            .catch(() => 0)
+        : Promise.resolve(0),
+    ]);
+    const dirty = status.trimEnd();
+    return dirty || ahead > 0 ? `${dirty}\nahead:${ahead}` : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function oneLine(value: string): string {
@@ -324,6 +346,8 @@ export class MonolithCornerTurnLoop {
   private pinnedProviderOverride?: string;
   /** The merge authority baked into the current session. */
   private yoloMode = false;
+  /** Repository state already given a delivery reminder, until that state changes. */
+  private lastDeliveryNudgeState?: string;
   private turnIdentityInstructions = '';
   private busy = false;
   private forcedStop = false;
@@ -1001,11 +1025,19 @@ export class MonolithCornerTurnLoop {
               // work belongs to the objective and whether to retain or dispose
               // of it; the daemon never rewrites the worktree after a turn.
               const checksTurn = isCornerChecksTurn(trigger, restates);
+              const deliveryState =
+                !checksTurn && this.options.repository
+                  ? await cornerUndeliveredRepositoryState(
+                      this.options.worktreePath,
+                      this.options.repository.featureBranch,
+                    )
+                  : undefined;
               const needsDeliveryNudge =
-                !checksTurn &&
-                this.options.repository &&
-                (await cornerHasUndeliveredRepositoryWork(this.options.worktreePath));
+                deliveryState !== undefined && deliveryState !== this.lastDeliveryNudgeState;
+              let replyBeforeNudge = '';
               if (!explained && (needsDeliveryNudge || (checksTurn && this.yoloMode))) {
+                if (needsDeliveryNudge) this.lastDeliveryNudgeState = deliveryState;
+                replyBeforeNudge = durableReplyText(result.agentText);
                 await flushToolCalls(result.toolCalls, '');
                 result = await runPrompt(
                   checksTurn
@@ -1027,6 +1059,7 @@ export class MonolithCornerTurnLoop {
               let reply = durableReplyText(result.agentText);
               if (!reply && explained?.recoveredText)
                 reply = durableReplyText(explained.recoveredText);
+              if (!reply) reply = replyBeforeNudge;
               await flushToolCalls(result.toolCalls, reply);
               // A refusal the operator cannot read is a refusal that happens twice.
               for (const call of result.toolCalls) {

@@ -60,6 +60,17 @@ describe('corner merge instructions', () => {
     await writeFile(join(root, 'tracked.txt'), 'agent decides this change\n');
     expect(await cornerHasUndeliveredRepositoryWork(root)).toBe(true);
     expect(await readFile(join(root, 'tracked.txt'), 'utf8')).toBe('agent decides this change\n');
+
+    await execFileAsync('git', ['-C', root, 'add', 'tracked.txt']);
+    await execFileAsync('git', ['-C', root, 'commit', '-m', 'local delivery']);
+    await execFileAsync('git', [
+      '-C',
+      root,
+      'update-ref',
+      'refs/remotes/origin/feature/widget',
+      'HEAD~1',
+    ]);
+    expect(await cornerHasUndeliveredRepositoryWork(root, 'feature/widget')).toBe(true);
   });
 
   it('keeps delivery cleanup under agent control and the merge reminder behind yolo', () => {
@@ -238,6 +249,7 @@ describe('corner close-request polling cadence', () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-corner-immediate-'));
     roots.push(root);
     await execFileAsync('git', ['init', root]);
+    await writeFile(join(root, 'retained-agent-work.txt'), 'keep until the agent decides\n');
     const worktree = root;
     const gitCommonDir = join(root, '.git');
     const runtime = {
@@ -312,12 +324,26 @@ describe('corner close-request polling cadence', () => {
     const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
     vi.spyOn(acp, 'start').mockResolvedValue(undefined);
     vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: 'corner-session', raw: {} });
-    const sessionPrompt = vi.spyOn(acp, 'sessionPrompt').mockResolvedValue({
-      stopReason: 'end_turn',
-      updates: [],
-      agentText: 'Done.',
-      toolCalls: [],
-    });
+    const sessionPrompt = vi
+      .spyOn(acp, 'sessionPrompt')
+      .mockResolvedValueOnce({
+        stopReason: 'end_turn',
+        updates: [],
+        agentText: 'PR opened: https://github.com/acme/widgets/pull/7',
+        toolCalls: [],
+      })
+      .mockResolvedValueOnce({
+        stopReason: 'end_turn',
+        updates: [],
+        agentText: '',
+        toolCalls: [],
+      })
+      .mockResolvedValue({
+        stopReason: 'end_turn',
+        updates: [],
+        agentText: 'Done.',
+        toolCalls: [],
+      });
     const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
     const onCloseRequested = vi.fn(async () => undefined);
     await new MonolithCornerTurnLoop({
@@ -344,7 +370,18 @@ describe('corner close-request polling cadence', () => {
       createAcpClient: () => acp,
     }).run();
     await scheduler.dispose();
-    expect(sessionPrompt).toHaveBeenCalledTimes(2);
+    expect(sessionPrompt).toHaveBeenCalledTimes(3);
+    expect(sessionPrompt.mock.calls[1]?.[1]).toBe(CORNER_DELIVERY_NUDGE);
+    expect(execute).toHaveBeenCalledWith(
+      'postRoomMessage',
+      expect.objectContaining({
+        text: 'PR opened: https://github.com/acme/widgets/pull/7',
+      }),
+    );
+    expect(execute).not.toHaveBeenCalledWith(
+      'postAgentTurnReceipt',
+      expect.objectContaining({ status: 'failed' }),
+    );
     expect(onCloseRequested).toHaveBeenCalledOnce();
   });
 

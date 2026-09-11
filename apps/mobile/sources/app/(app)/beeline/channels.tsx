@@ -68,6 +68,13 @@ const EMPTY_PRIMARY_HEIGHT = 44;
 const ROW_HEIGHT = 64;
 /** The trailing brass unread/attention square — lit or reserved, never absent. */
 const ATTENTION_SQUARE = 7;
+/** The row's leading gutter, in order: slab padding, state column, gap. */
+const ROW_PADDING_LEFT = 16;
+const ROW_COPY_GAP = 12;
+/** Where a Room's copy starts. The corner tray indents to the same number so
+ *  its `└` sits on the Room title's left margin and the tree reads as one
+ *  stem under the name rather than a block floating off to its right. */
+const ROW_TEXT_INSET = ROW_PADDING_LEFT + ATTENTION_SQUARE + ROW_COPY_GAP;
 const LEAVE_TILE_SIZE = 28;
 const LEAVE_TILE_HIT_SLOP = { top: 18, bottom: 18, left: 8, right: 8 };
 
@@ -1059,8 +1066,8 @@ const styles = StyleSheet.create((theme) => {
       minHeight: ROW_HEIGHT,
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 12,
-      paddingLeft: 16,
+      gap: ROW_COPY_GAP,
+      paddingLeft: ROW_PADDING_LEFT,
       paddingVertical: 10,
     },
     // The row's leading unit: the STATE column, on every row. Its width is
@@ -1117,8 +1124,10 @@ const styles = StyleSheet.create((theme) => {
       fontSize: 16,
       lineHeight: 18,
     },
+    // Indented to the parent Room's text edge, not past it: the tray is the
+    // Room's own continuation, so it starts where the Room's name starts.
     cornerDropdown: {
-      paddingLeft: 68,
+      paddingLeft: ROW_TEXT_INSET,
       paddingRight: 16,
       paddingBottom: 8,
       borderTopWidth: StyleSheet.hairlineWidth,

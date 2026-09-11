@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo } from 'react';
-import { Linking, Text, View, type TextStyle } from 'react-native';
+import { Text, View, type TextStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { parseMarkdown, type MarkdownSpan } from '@/components/markdown/parseMarkdown';
 import { Typography } from '@/constants/Typography';
@@ -9,6 +9,7 @@ import {
   type ChannelReferenceIndex,
   type ChannelReferenceTarget,
 } from '@/buzz/channel-reference';
+import { openExternalUrl } from '@/utils/open-external-url';
 
 /**
  * A span split out of plain prose by `glossMentions` / `glossChannelReferences`
@@ -377,7 +378,7 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
   );
   const base = textStyle;
   const onLink = useCallback((url: string) => {
-    if (/^https?:\/\//i.test(url)) void Linking.openURL(url);
+    if (/^https?:\/\//i.test(url)) void openExternalUrl(url).catch(() => undefined);
   }, []);
   const first = blocks[0];
   const inlineHosted =

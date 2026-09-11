@@ -5266,7 +5266,7 @@ describe('monolith integration', () => {
     ).toBe(404);
   });
 
-  it('inscribes a failed turn as one system line, coalesces its retry, and settles it on success', async () => {
+  it('inscribes a failed turn once and does not retry its terminal command', async () => {
     const requestId = '8'.repeat(64);
     await operation('sendRoomMessage', {
       roomId: ROOM,
@@ -5310,49 +5310,36 @@ describe('monolith integration', () => {
         card: { requestId, agentId: AGENT, state: 'failed' },
       }),
     ]);
-    // A retry of the same request within ten minutes updates the same line in place.
-    const stack = `ACP session timed out after 120s\n    at AcpClient.request (/opt/acp.js:1:1)`;
-    await daemonOperation('postAgentTurnReceipt', { roomId: ROOM, requestId, status: 'working' });
-    await daemonOperation('postAgentTurnReceipt', {
+    expect(
+      (await daemonOperation('postAgentTurnReceipt', { roomId: ROOM, requestId, status: 'working' }))
+        .status,
+    ).toBe(403);
+    const repeated = await daemonOperation('postAgentTurnReceipt', {
       roomId: ROOM,
       requestId,
       status: 'failed',
-      reason: `${stack} ${'x'.repeat(400)}`,
+      reason: 'stale retry',
     });
-    const retried = (await lines()).rows;
-    expect(retried).toHaveLength(1);
-    expect(retried[0]!.id).toBe(first[0]!.id);
-    expect(
-      retried[0]!.text.startsWith(
-        '@bee could not answer · ACP session timed out after 120s at AcpClient.request',
-      ),
-    ).toBe(true);
-    expect(retried[0]!.text.length).toBeLessThanOrEqual('@bee could not answer · '.length + 200);
-    // A later durable reply settles the line instead of leaving a stale failure stamped in the transcript.
-    await daemonOperation('postRoomMessage', {
+    expect(repeated.status).toBe(403);
+    const lateReply = await daemonOperation('postRoomMessage', {
       roomId: ROOM,
       requestId,
       triggerMessageId: requestId,
       text: 'Not much!',
       mentionIds: [],
     });
-    expect((await lines()).rows).toEqual([
-      expect.objectContaining({
-        id: first[0]!.id,
-        text: '@bee answered after a retry',
-        card: { requestId, agentId: AGENT, state: 'recovered' },
-      }),
-    ]);
+    expect(lateReply.status).toBe(403);
+    expect((await lines()).rows).toEqual(first);
     const room = (await new PhoneService(database, origin).readRoom(ROOM, HUMAN))!;
     expect(room.messages).toContainEqual(
       expect.objectContaining({
         id: first[0]!.id,
         presentation: 'system',
-        text: '@bee answered after a retry',
+        text: '@bee could not answer · provider error 429 concurrency_limit',
       }),
     );
     expect(room.latestAgentTurns).toContainEqual(
-      expect.objectContaining({ requestId, agentPubkey: AGENT, status: 'complete' }),
+      expect.objectContaining({ requestId, agentPubkey: AGENT, status: 'failed' }),
     );
     // A failure with no human trigger (an unknown request id) carries no Room line.
     await daemonOperation('postAgentTurnReceipt', {
@@ -5362,7 +5349,7 @@ describe('monolith integration', () => {
       reason: 'ACP agent exited (code 1)',
     });
     expect((await lines()).rows).toHaveLength(1);
-    // A failure older than the coalescing window starts a fresh line.
+    // Aging the line does not revive the completed command.
     await database.query(`UPDATE messages SET created_at=now()-interval '11 minutes' WHERE id=$1`, [
       first[0]!.id,
     ]);

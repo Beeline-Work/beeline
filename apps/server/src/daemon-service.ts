@@ -285,7 +285,7 @@ export class DaemonService {
               `UPDATE agent_commands SET lease_expires_at=now()+interval '90 seconds' WHERE id=$1`,
               [command.id],
             );
-          else if (candidate.status !== 'failed')
+          else
             await db.query(`UPDATE agent_commands SET state=$2,completed_at=now() WHERE id=$1`, [
               command.id,
               candidate.status === 'cancelled' ? 'cancelled' : 'complete',

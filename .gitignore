@@ -8,6 +8,7 @@ dist/
 build/
 *.tsbuildinfo
 .turbo/
+.turbo-cache/
 
 # Logs
 *.log

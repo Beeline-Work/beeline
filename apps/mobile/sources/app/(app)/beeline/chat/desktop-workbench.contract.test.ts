@@ -32,6 +32,16 @@ describe('desktop workbench wiring', () => {
     expect(inspector).toContain('Shared actions such as closing the Corner');
   });
 
+  it('opens inspector links through the shared external URL boundary', () => {
+    // The desktop shell is a webview: Linking.openURL never reaches a
+    // browser, so the PR and artifact links in the inspector go through
+    // openExternalUrl (the Tauri opener there, Expo Linking elsewhere).
+    expect(inspector).toContain("import { openExternalUrl } from '@/utils/open-external-url'");
+    expect(inspector).not.toContain('Linking.openURL');
+    expect(inspector).toContain('openExternalUrl(detail.cornerLifecycle!.pr!.url)');
+    expect(inspector).toContain('openExternalUrl(artifact.url)');
+  });
+
   it('keeps the desktop frame and both pane widths persistent', () => {
     expect(navigator).toContain('usesPersistentDesktopFrame(desktopPlatform, isTablet)');
     expect(navigator).toContain("loadDesktopPaneWidth('navigation')");

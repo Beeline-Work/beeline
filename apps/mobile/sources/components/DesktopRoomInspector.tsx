@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Linking, PanResponder, Pressable, ScrollView, Text, View } from 'react-native';
+import { PanResponder, Pressable, ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { RoomView } from '@beeline/buzz-client';
 import type { RoomViewClient } from '@/sync/transport/room-view-client';
@@ -10,6 +10,7 @@ import {
   saveDesktopPaneWidth,
 } from '@/buzz/desktop-workbench-state';
 import { compactRelativeTime } from '@/buzz/relative-time';
+import { openExternalUrl } from '@/utils/open-external-url';
 
 type Props = {
   room: RoomView;
@@ -215,7 +216,9 @@ export function DesktopRoomInspector({ room, client, overlay, onClose, onOpenCor
                 {detail.cornerLifecycle?.branch ?? 'No branch reported'}
               </Text>
               {detail.cornerLifecycle?.pr && (
-                <Pressable onPress={() => void Linking.openURL(detail.cornerLifecycle!.pr!.url)}>
+                <Pressable
+                  onPress={() => void openExternalUrl(detail.cornerLifecycle!.pr!.url).catch(() => undefined)}
+                >
                   <Text style={styles.link}>Open PR #{detail.cornerLifecycle.pr.number} ↗</Text>
                 </Pressable>
               )}
@@ -229,7 +232,9 @@ export function DesktopRoomInspector({ room, client, overlay, onClose, onOpenCor
               {artifacts.map((artifact, index) => (
                 <Pressable
                   key={`${artifact.url}:${index}`}
-                  onPress={() => !artifact.expired && void Linking.openURL(artifact.url)}
+                  onPress={() =>
+                    !artifact.expired && void openExternalUrl(artifact.url).catch(() => undefined)
+                  }
                   style={styles.row}
                 >
                   <Text numberOfLines={1} style={styles.rowTitle}>

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Image, Linking, Platform, Pressable, ScrollView, Text, View } from 'react-native';
+import { Image, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { StyleSheet } from 'react-native-unistyles';
 import type { AttachmentReference } from '@beeline/buzz-client';
@@ -28,6 +28,7 @@ import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import { monolithSession } from '@/auth/monolith-session';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
+import { openExternalUrl } from '@/utils/open-external-url';
 import { ActivityTimeline } from '@/components/buzz/ActivityTimeline';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { ALIVE_RING_PAD } from '@/buzz/identity-mark';
@@ -511,7 +512,7 @@ function AttachmentCard({ attachment }: { attachment: AttachmentReference }) {
     };
   }, [image]);
   const open = () => {
-    void Linking.openURL(attachmentOpenUrl(attachment)).catch(() => {
+    void openExternalUrl(attachmentOpenUrl(attachment)).catch(() => {
       Modal.alert('Could not open attachment', 'The file link could not be opened on this device.');
     });
   };

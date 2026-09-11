@@ -54,10 +54,20 @@ So the scoping is now asserted on both representations:
   from `icon.png`.
 
 Regenerate with `bash scripts/generate-monochrome-assets.sh`, then
-`node scripts/generate-tauri-icons.mjs`. Note that the wordmark lockups and
-`favicon-active.ico` go through ImageMagick's SVG delegate, so their bytes vary
-with the local Inkscape and font versions; leave them alone unless their inputs
-actually changed.
+`node scripts/generate-tauri-icons.mjs`.
+
+Two byte-reproducibility traps, both of which produce a diff with no visible
+change to the artwork:
+
+- The wordmark lockups and `favicon-active.ico` go through ImageMagick's SVG
+  delegate, so their bytes vary with the local Inkscape and font versions.
+  Leave them alone unless their inputs actually changed.
+- `src-tauri/icons/` embeds deflate-compressed PNG payloads, and zlib's output
+  differs between Node builds — v22.22.1 ships zlib `1.3.1` and v22.23.2 ships
+  `1.3.1-e00f703`, which encode the same pixels to different bytes. `DESKTOP
+  ICONS` compares bytes, so regenerate with the Node build CI resolves
+  (`node-version: 22` in `.github/workflows/desktop.yml`) or the gate fails on
+  compression alone while the icon is correct.
 
 ## Earlier captures
 

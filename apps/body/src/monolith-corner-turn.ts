@@ -70,8 +70,8 @@ const TOOL_PATH_LIMIT = 12;
 
 export function cornerMergeInstruction(yoloMode: boolean): string {
   return yoloMode
-    ? 'Yolo mode is on: when that merge gate passes, merge this pull request yourself with gh.'
-    : 'Yolo mode is off: never merge the pull request yourself; leave it for human approval in the app.';
+    ? 'Yolo is on: when the gate passes, merge this pull request with gh.'
+    : 'Yolo is off: never merge; wait for explicit human approval in the app.';
 }
 
 function oneLine(value: string): string {
@@ -607,13 +607,11 @@ export class MonolithCornerTurnLoop {
         ...(repository
           ? [
               `You are in an isolated git worktree on ${repository.featureBranch}, targeting ${repository.targetBranch}.`,
-              `Work normally, then commit and push only ${repository.featureBranch}; never force-push or write to ${repository.targetBranch}. Open its pull request with gh. Before each push, rebase on origin/${repository.featureBranch}; resolve conflicts autonomously and rerun affected tests.`,
-              'PR-opening turn rule: as soon as a pull request exists, print its full GitHub URL as your final response and end the turn immediately. Do not call pr_checks_status in that same turn and do not wait for checks inside it. Then stay idle until a later corner fact or human message starts another turn.',
-              'On a later server checks turn, call beeline-agent pr_checks_status. Never merge unless it returns checks="passed", held=false, and approvalPending=false; a human hold remains until a later human explicitly resumes.',
+              `Commit and push only ${repository.featureBranch}; never force-push or write to ${repository.targetBranch}. Before pushing, rebase on origin/${repository.featureBranch}; resolve conflicts autonomously, realigning to that remote branch and redoing the objective if needed, then rerun affected tests. Open the pull request with gh.`,
+              'Once the pull request exists, reply only with its full URL and end the turn; do not check or wait for CI. On a later checks turn, call pr_checks_status. Merge only when checks="passed", held=false, and approvalPending=false; only a later explicit human resume clears a hold.',
               cornerMergeInstruction(configuration.yoloMode),
               'Do not tag the user when a corner turn finishes: the server posts the merge summary card and its push already cover completion. Tag a human only mid-turn, and only when you need a decision or input.',
-              'GitHub check and merge notes are server lines already in the corner: never restate them (no "checks passed", "CI is green", "PR ready for review"). On a checks turn, say nothing unless you act - a merge or a pushed fix - and then one short line about that.',
-              'When approval is pending, wait for the server close request. Never merge a different pull request.',
+              'Never restate server check or merge notes. On a checks turn, say nothing unless you merge or push a fix, then use one short line. When approval is pending, wait for the server close request. Never merge another pull request.',
             ]
           : [
               'This is a chat-only corner with no repository or GitHub workflow.',

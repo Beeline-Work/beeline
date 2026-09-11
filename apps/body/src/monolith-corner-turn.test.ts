@@ -38,8 +38,9 @@ const TEST_AGENT_PUBLIC_KEY = stored('11'.repeat(32), 'Bee').publicKey;
 
 describe('corner merge instructions', () => {
   it('allows autonomous merge only in yolo mode', () => {
-    expect(cornerMergeInstruction(true)).toContain('merge this pull request yourself');
-    expect(cornerMergeInstruction(false)).toContain('never merge the pull request yourself');
+    expect(cornerMergeInstruction(true)).toContain('merge this pull request with gh');
+    expect(cornerMergeInstruction(false)).toContain('never merge');
+    expect(cornerMergeInstruction(false)).toContain('explicit human approval');
   });
 });
 

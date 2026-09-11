@@ -215,7 +215,8 @@ conversation and nothing else.
 
 **A turn in progress and an open corner are two different facts, and they get
 two different lines.** A question being answered is transient and has nowhere
-to go, so it shows as one `beebee thinking…` line that disappears when the
+to go, so it shows as one line with the primary activity verb and elapsed seconds,
+without a redundant `thinking` suffix, that disappears when the
 reply lands — it navigates nowhere and cannot strand a reader in a dead
 channel. The one thing it admits is a **stop in its right-hand slot, offered to
 the person who asked and to nobody else** (`viewerMayStopTurn`): a question is
@@ -223,7 +224,7 @@ the asker's to take back, and a Room where anyone can silence anyone else's
 agent mid-sentence is a different product. Everyone else sees the line exactly
 as it was. The control is a brass square smaller than the 18pt mark beside it
 (hit slop keeps the 44pt target). A press dims it; once pressed it empties to a
-brass outline and the counter says `stopping` until the cancelled receipt lands,
+brass outline and the counter appends `· stopping` until the cancelled receipt lands,
 so the press is visible before the write returns. **A stop keeps what was
 already written** — the half-finished answer
 settles as an ordinary message and the conversation carries on from it, the way

@@ -1704,6 +1704,12 @@ export class PhoneService {
     code: string;
     agentPubkey: string;
     model: string;
+    /**
+     * The reasoning effort the connect wizard asked for. Absent from a harness
+     * with no effort axis, and from any CLI built before the wizard asked; both
+     * leave the agent on whatever effort its harness starts at.
+     */
+    effort?: string;
     avatarSeed?: string;
     /** Server event kinds this agent reacts to; only spent on the immediate, legacy join below. */
     eventSubscriptions?: readonly string[];
@@ -1733,6 +1739,7 @@ export class PhoneService {
       code: string;
       agentPubkey: string;
       model: string;
+      effort?: string;
       avatarSeed?: string;
       eventSubscriptions?: readonly string[];
       deferJoin?: boolean;
@@ -1760,6 +1767,7 @@ export class PhoneService {
       code: string;
       agentPubkey: string;
       model: string;
+      effort?: string;
       avatarSeed?: string;
       eventSubscriptions?: readonly string[];
       deferJoin?: boolean;
@@ -1836,10 +1844,10 @@ export class PhoneService {
       );
       if (!identityRow.rowCount) throw new Error('pairing key belongs to a person');
       await database.query(
-        `INSERT INTO agents(agent_id,owner_id,soul,selected_model)
-         VALUES($1,$2,$3::jsonb,$4)
+        `INSERT INTO agents(agent_id,owner_id,soul,selected_model,selected_effort)
+         VALUES($1,$2,$3::jsonb,$4,$5)
          ON CONFLICT(agent_id) DO UPDATE SET owner_id=EXCLUDED.owner_id,soul=EXCLUDED.soul,
-           selected_model=EXCLUDED.selected_model,selected_effort=NULL,
+           selected_model=EXCLUDED.selected_model,selected_effort=EXCLUDED.selected_effort,
            model_catalog='[]'::jsonb,commands='[]'::jsonb,schedule_ids='[]'::jsonb,
            yolo_mode=false,yolo_set_by=NULL,yolo_set_at=NULL,
            access_policy='{"type":"everyone"}'::jsonb,updated_at=now()`,
@@ -1852,6 +1860,7 @@ export class PhoneService {
             avatarSeed: input.avatarSeed || input.agentPubkey,
           }),
           input.model,
+          input.effort || null,
         ],
       );
       await database.query(
@@ -2340,7 +2349,11 @@ export class PhoneService {
     const id = input.messageId ?? messageId();
     if (!/^[0-9a-f]{64}$/.test(id)) throw new Error('messageId is invalid');
     const attachments = JSON.stringify(input.attachments ?? []);
-    const mentionResolution = await this.resolveMessageMentions(input.roomId, author, input.text);
+    const mentionResolution = await this.resolveMessageMentions(
+      input.roomId,
+      author,
+      input.text,
+    );
     const mentions = JSON.stringify(mentionResolution.mentionIds);
     const values = [id, input.roomId, author, input.text, attachments, mentions];
     return this.database.transaction(async (database) => {
@@ -2458,12 +2471,7 @@ export class PhoneService {
     await this.assertRoomIsWritable(input.roomId, author);
     const id = input.messageId ?? messageId();
     if (!/^[0-9a-f]{64}$/.test(id)) throw new Error('messageId is invalid');
-    const mentionResolution = await this.resolveMessageMentions(
-      input.roomId,
-      author,
-      input.text,
-      parent.rows[0].author_kind === 'agent' ? parent.rows[0].author_id : null,
-    );
+    const mentionResolution = await this.resolveMessageMentions(input.roomId, author, input.text);
     const mentionIds = new Set(mentionResolution.mentionIds);
     if (parent.rows[0].direct && parent.rows[0].author_kind === 'agent') {
       mentionIds.add(parent.rows[0].author_id);
@@ -2671,7 +2679,6 @@ export class PhoneService {
     roomId: string,
     author: string,
     text: string,
-    replyAgentId?: string | null,
   ): Promise<{ mentionIds: readonly string[]; noticeAgentIds: readonly string[] }> {
     const authorKind = (
       await this.database.query<{ kind: 'human' | 'agent' }>(
@@ -2735,12 +2742,6 @@ export class PhoneService {
       if (resolvedHandles.has(handle)) continue;
       const candidates = absentByHandle.get(handle);
       if (candidates?.length === 1) noticeAgentIds.add(candidates[0]!);
-    }
-    // An explicit reply addresses its parent agent without adding a visible
-    // @mention. Untagged top-level continuity is routed separately and must not
-    // produce an offline notice: no explicit address was left unanswered.
-    if (replyAgentId && noticeAgentIds.size === 0) {
-      noticeAgentIds.add(replyAgentId);
     }
     return { mentionIds: [...mentions], noticeAgentIds: [...noticeAgentIds] };
   }

@@ -229,6 +229,36 @@ describe('app-authorized agent connect', () => {
     expect(claimed?.agentPubkey).toBe(response.json<Record<string, string>>().agent_pubkey);
   });
 
+  it('carries the wizard reasoning effort into the claim, and nothing when it was not asked', async () => {
+    let claimed: Parameters<typeof state.agentPairingClaim>[0] | undefined;
+    state.agentPairingClaim = async (input) => {
+      claimed = input;
+      return seeded;
+    };
+
+    const chosen = await app.inject({
+      method: 'POST',
+      url: '/auth/agent/connect',
+      headers: { host: alphaTenant.host },
+      payload: { ...payload, effort: 'high' },
+    });
+    expect(chosen.statusCode).toBe(200);
+    expect(claimed).toMatchObject({ effort: 'high' });
+    expect(chosen.json<Record<string, string>>()).toMatchObject({ effort: 'high' });
+
+    // A harness with no effort axis, or a CLI built before the wizard asked.
+    claimed = undefined;
+    const unchosen = await app.inject({
+      method: 'POST',
+      url: '/auth/agent/connect',
+      headers: { host: alphaTenant.host },
+      payload,
+    });
+    expect(unchosen.statusCode).toBe(200);
+    expect(claimed).not.toHaveProperty('effort');
+    expect(unchosen.json<Record<string, string>>()).not.toHaveProperty('effort');
+  });
+
   it('accepts a self-configured pi with no provider, and still refuses an unknown one', async () => {
     // C96: the wizard skips provider, key and model for a harness that
     // enumerated models itself. This service stores no provider, so refusing

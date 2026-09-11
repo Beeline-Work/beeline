@@ -2277,7 +2277,7 @@ describe('monolith integration', () => {
     ).toEqual([]);
   });
 
-  it('projects a threaded human reply to its parent agent without inventing a mention', async () => {
+  it('does not route an untagged threaded human reply to its parent agent', async () => {
     await announceAgentLifecycle(database, new LiveHub(), ROOM, AGENT, {
       lifecycleId: 'routing-fixture',
     });
@@ -2321,10 +2321,10 @@ describe('monolith integration', () => {
           items: Array<{ id: string; replyToAuthorId?: string }>;
         }
       ).items,
-    ).toContainEqual(expect.objectContaining({ id: '5'.repeat(64), replyToAuthorId: AGENT }));
+    ).not.toContainEqual(expect.objectContaining({ id: '5'.repeat(64) }));
   });
 
-  it('notifies the direct parent agent even after a later agent answer', async () => {
+  it('does not notify an untagged direct parent agent', async () => {
     const peer = 'd'.repeat(64);
     const parentId = 'e'.repeat(64);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Peer')`, [peer]);
@@ -2352,12 +2352,7 @@ describe('monolith integration', () => {
       `SELECT author_id,text FROM messages WHERE room_id=$1 AND presentation='system'`,
       [ROOM],
     );
-    expect(notices.rows).toContainEqual(
-      expect.objectContaining({
-        author_id: AGENT,
-        text: expect.stringContaining('did not answer'),
-      }),
-    );
+    expect(notices.rows).toEqual([]);
   });
 
   it('notifies only an explicitly addressed agent on a direct reply', async () => {
@@ -2429,7 +2424,7 @@ describe('monolith integration', () => {
     expect(notices.rows).toEqual([]);
   });
 
-  it('accepts a direct reply from its parent agent after another agent replies', async () => {
+  it('routes a reply only to the explicitly tagged agent', async () => {
     const peer = 'c'.repeat(64);
     await database.query(
       `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Peer','peer')`,
@@ -2474,21 +2469,34 @@ describe('monolith integration', () => {
       },
       peerToken,
     );
-    const reply = 'b'.repeat(64);
+    const reply = '6'.repeat(64);
     await operation('sendRoomReply', {
       roomId: ROOM,
       messageId: reply,
       parentMessageId: parentId,
       text: 'Please continue the first answer.',
     });
+    expect(
+      (
+        await database.query<{ agent_id: string; reason: string }>(
+          `SELECT agent_id,reason FROM agent_commands WHERE source_message_id=$1`,
+          [reply],
+        )
+      ).rows,
+    ).toEqual([]);
 
-    const continued = await daemonOperation('postRoomMessage', {
-      roomId: ROOM,
-      requestId: reply,
-      triggerMessageId: reply,
-      text: 'Continuing the first answer.',
-    });
-    expect(continued.status).toBe(200);
+    const continued = await request(
+      '/v1/daemon/operations/postRoomMessage',
+      'POST',
+      {
+        roomId: ROOM,
+        requestId: reply,
+        triggerMessageId: reply,
+        text: 'Continuing the first answer.',
+      },
+      daemonToken,
+    );
+    expect(continued.status).toBe(403);
     const pileOn = await request(
       '/v1/daemon/operations/postRoomMessage',
       'POST',
@@ -2502,7 +2510,7 @@ describe('monolith integration', () => {
     );
     expect(pileOn.status).toBe(403);
 
-    const taggedReply = 'c'.repeat(64);
+    const taggedReply = '7'.repeat(64);
     const tagged = await operation('sendRoomReply', {
       roomId: ROOM,
       messageId: taggedReply,
@@ -2512,14 +2520,19 @@ describe('monolith integration', () => {
     expect(tagged.status).toBe(200);
     expect(
       (
-        await daemonOperation('postRoomMessage', {
-          roomId: ROOM,
-          requestId: taggedReply,
-          triggerMessageId: taggedReply,
-          text: 'The structurally addressed parent agent also answers.',
-        })
+        await request(
+          '/v1/daemon/operations/postRoomMessage',
+          'POST',
+          {
+            roomId: ROOM,
+            requestId: taggedReply,
+            triggerMessageId: taggedReply,
+            text: 'The structurally addressed parent agent must not answer.',
+          },
+          daemonToken,
+        )
       ).status,
-    ).toBe(200);
+    ).toBe(403);
     expect(
       (
         await daemonOperation(
@@ -5801,6 +5814,70 @@ describe('monolith integration', () => {
       'owner-device-token-12345678901234567890',
       expect.objectContaining({ text: '@bee opened a corner Ship the widget' }),
     );
+  });
+
+  it('returns the active corner when the same originating task is opened repeatedly', async () => {
+    const input = {
+      roomId: ROOM,
+      requestId: 'repeated-corner-open',
+      name: 'Ship widget',
+      objective: 'Ship the widget end to end',
+    };
+    const first = await daemonOperation('createCorner', input);
+    const second = await daemonOperation('createCorner', input);
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    const firstResult = (await first.json()) as { cornerId: string };
+    expect(await second.json()).toEqual(firstResult);
+
+    const stored = await database.query<{ corners: number; cards: number; commands: number }>(
+      `SELECT
+         (SELECT count(*)::integer FROM corner_facts WHERE request_id=$1) corners,
+         (SELECT count(*)::integer FROM messages
+          WHERE room_id=$2 AND card_type='daemon-fact' AND card->>'cornerId'=$3) cards,
+         (SELECT count(*)::integer FROM agent_commands
+          WHERE room_id=$4 AND reason='corner_objective') commands`,
+      [input.requestId, ROOM, firstResult.cornerId, firstResult.cornerId],
+    );
+    expect(stored.rows[0]).toEqual({ corners: 1, cards: 1, commands: 1 });
+  });
+
+  it('serializes concurrent opens for the same originating task', async () => {
+    const input = {
+      roomId: ROOM,
+      requestId: 'concurrent-corner-open',
+      name: 'Ship widget',
+      objective: 'Ship the widget end to end',
+    };
+    // Seed and claim the single command both retries are authorized to serve;
+    // the requests below then enter createCorner concurrently.
+    await daemonOperation('postAgentActivity', {
+      roomId: ROOM,
+      requestId: input.requestId,
+      activity: [],
+    });
+    const responses = await Promise.all([
+      request('/v1/daemon/operations/createCorner', 'POST', {
+        ...input,
+        generationId: 'fixture-generation',
+      }, daemonToken),
+      request('/v1/daemon/operations/createCorner', 'POST', {
+        ...input,
+        generationId: 'fixture-generation',
+      }, daemonToken),
+    ]);
+    expect(responses.map((response) => response.status)).toEqual([200, 200]);
+    const results = (await Promise.all(responses.map((response) => response.json()))) as Array<{
+      cornerId: string;
+    }>;
+    expect(results[1]).toEqual(results[0]);
+    const corners = await database.query<{ count: number }>(
+      `SELECT count(*)::integer count FROM rooms child
+       JOIN corner_facts fact ON fact.corner_id=child.id
+       WHERE child.parent_id=$1 AND fact.request_id=$2 AND child.archived_at IS NULL`,
+      [ROOM, input.requestId],
+    );
+    expect(corners.rows[0]!.count).toBe(1);
   });
 
   it('rejects an open-corner objective longer than 24 words, naming the count', async () => {

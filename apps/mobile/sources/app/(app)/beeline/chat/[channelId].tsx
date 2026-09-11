@@ -63,6 +63,11 @@ import { continuedSpeakerIds, ledgerSpeakerKey } from '@/buzz/ledger-attribution
 import { publishFailurePresentation } from '@/buzz/publish-failure';
 import { ledgerStamp } from '@/buzz/relative-time';
 import { foldSystemLines } from '@/buzz/system-lines';
+import {
+  advanceRoomHistoryCursor,
+  retainRoomHistoryCursor,
+  type RoomHistoryCursorState,
+} from '@/buzz/room-history-pagination';
 import { CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import {
   COMPOSER_ACK_BOUND_MS,
@@ -667,7 +672,12 @@ export default function BuzzChat() {
   const [visibleMessageCount, setVisibleMessageCount] = useState(INITIAL_MESSAGE_WINDOW);
   const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
   const loadingOlderMessagesRef = useRef(false);
-  const hasMoreHistoryRef = useRef(true);
+  const historyCursorStateRef = useRef<RoomHistoryCursorState | null>(null);
+  historyCursorStateRef.current = retainRoomHistoryCursor(
+    historyCursorStateRef.current,
+    decodedId,
+    roomSurface?.room.id === decodedId ? roomSurface.messages : undefined,
+  );
   const committedMessageIds = useMemo(
     () => new Set(cachedMessages.map((message) => message.id)),
     [cachedMessages],
@@ -693,7 +703,7 @@ export default function BuzzChat() {
   roomSurfaceBindingsRef.current = {
     resetTranscript: () => {
       roomMessageProjector.reset();
-      hasMoreHistoryRef.current = true;
+      historyCursorStateRef.current = null;
       setOlderPages([]);
       clearOptimistic();
       setVisibleMessageCount(INITIAL_MESSAGE_WINDOW);
@@ -762,15 +772,17 @@ export default function BuzzChat() {
       });
       return;
     }
-    const oldest = combinedMessages[0];
-    if (!hasMoreHistoryRef.current || !roomClient || !oldest || !cacheViewerPubkey) return;
+    const historyCursor = historyCursorStateRef.current;
+    if (!historyCursor?.before || !roomClient || !cacheViewerPubkey) return;
+    const requestedRoomId = decodedId;
     loadingOlderMessagesRef.current = true;
     setLoadingOlderMessages(true);
     void roomClient
-      .history(decodedId, { createdAt: oldest.timestamp, id: oldest.relayId ?? oldest.id })
+      .history(requestedRoomId, historyCursor.before)
       .then((page) => {
-        const fresh = page.messages.filter((message) => message.id !== oldest.id);
-        if (!page.nextBefore) hasMoreHistoryRef.current = false;
+        if (historyCursorStateRef.current?.roomId !== requestedRoomId) return;
+        historyCursorStateRef.current = advanceRoomHistoryCursor(requestedRoomId, page);
+        const fresh = page.messages;
         if (fresh.length === 0) return;
         setOlderPages(
           (current) =>
@@ -786,7 +798,6 @@ export default function BuzzChat() {
       });
   }, [
     cacheViewerPubkey,
-    combinedMessages,
     decodedId,
     foldedMessages,
     roomClient,
@@ -1898,6 +1909,9 @@ export default function BuzzChat() {
       const agentDisplay = isAgent
         ? resolveAgentDisplayIdentity(message.pubkey ?? 'unknown-agent', knownAgent)
         : undefined;
+      const canonicalAgentHandle = isAgent
+        ? (message.authorIdentity?.handle ?? knownAgent?.handle)
+        : undefined;
       const personName = message.pubkey
         ? personProfileByPubkey.get(message.pubkey)?.name
         : undefined;
@@ -1913,6 +1927,7 @@ export default function BuzzChat() {
             agentDisplay?.name ??
             personName ??
             fallbackMemberName(message.pubkey ?? '')),
+        ...(canonicalAgentHandle ? { authorHandle: canonicalAgentHandle } : {}),
         ...(message.pubkey ? { authorPubkey: message.pubkey } : {}),
         isAgent,
         preview: message.text.trim() || attachmentPreview || 'Attachment',
@@ -1965,7 +1980,9 @@ export default function BuzzChat() {
       }
       return;
     }
-    const text = replyTarget ? replyMessageText(rawText) : rawText;
+    const text = replyTarget
+      ? replyMessageText(rawText, replyTarget.isAgent ? replyTarget.authorHandle : undefined)
+      : rawText;
     const mentionedPubkeys = resolveComposerMentions(
       text,
       roomParticipants,
@@ -1975,11 +1992,10 @@ export default function BuzzChat() {
       text,
       selectedAgentMentionsRef.current,
     );
-    const mentionedAgent = replyTarget?.isAgent
-      ? replyTarget.authorPubkey
-      : (selectedMentionedAgent ??
-        mentionedPubkeys.find((pubkey) => roomAgents.some((agent) => agent.pubkey === pubkey)) ??
-        mentionedAgentPubkey(text, roomAgents));
+    const mentionedAgent =
+      selectedMentionedAgent ??
+      mentionedPubkeys.find((pubkey) => roomAgents.some((agent) => agent.pubkey === pubkey)) ??
+      mentionedAgentPubkey(text, roomAgents);
     // Resolve before attachment upload or cold transport creation so the ack
     // cannot wait on either. A corner (one agent, always addressed) or a
     // two-party Room (the sole other participant may speak naturally, per the

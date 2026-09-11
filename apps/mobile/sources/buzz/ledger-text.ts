@@ -100,7 +100,11 @@ const MACHINE_FENCE_MIN_LINES = 2;
 /** How much of a fenced block must be machine output before the whole block is. */
 const MACHINE_FENCE_RATIO = 0.5;
 
-function isMachineFence(body: string): boolean {
+function isMachineFence(open: string, body: string): boolean {
+  // A language-tagged fence is an explicit authorship signal. Code can quite
+  // legitimately contain `error:`, shell commands, or stack-frame fixtures;
+  // those tokens must not turn authored source into collapsed tool output.
+  if (/^```\s*\S+/.test(open.trim())) return false;
   const lines = body.split('\n').filter((line) => line.trim());
   if (lines.length < MACHINE_FENCE_MIN_LINES) return false;
   return lines.filter(isMachineLine).length / lines.length >= MACHINE_FENCE_RATIO;
@@ -162,7 +166,7 @@ export function splitLedgerText(text: string): LedgerText {
     if (FENCE.test(line.trim())) {
       if (fence) {
         const body = fence.body.join('\n');
-        if (isMachineFence(body)) machine.push(body.trim());
+        if (isMachineFence(fence.open, body)) machine.push(body.trim());
         else prose.push([fence.open, ...fence.body, '```'].join('\n'));
         fence = null;
         continue;
@@ -193,7 +197,7 @@ export function splitLedgerText(text: string): LedgerText {
   }
   if (fence) {
     const body = fence.body.join('\n');
-    if (isMachineFence(body)) machine.push(body.trim());
+    if (isMachineFence(fence.open, body)) machine.push(body.trim());
     else prose.push([fence.open, ...fence.body].join('\n'));
   }
   flushRun();

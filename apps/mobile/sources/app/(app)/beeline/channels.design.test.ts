@@ -217,6 +217,22 @@ describe('Room list layout contract', () => {
     expect(styleBlock(source, 'cornerToggleSlot')).toContain('width: 32');
   });
 
+  it('hangs the corner tray off the parent Room’s text edge', () => {
+    // The tray's `└` starts on the Room title's left margin, so one vertical
+    // line runs from the name down through its corners. That edge is derived
+    // from the row's own gutter rather than restated as a literal, so the two
+    // cannot drift apart when the row's padding, state column, or gap changes.
+    expect(source).toContain('const ROW_PADDING_LEFT = 16');
+    expect(source).toContain('const ROW_COPY_GAP = 12');
+    expect(source).toContain(
+      'const ROW_TEXT_INSET = ROW_PADDING_LEFT + ATTENTION_SQUARE + ROW_COPY_GAP',
+    );
+    expect(styleBlock(source, 'rowMain')).toContain('paddingLeft: ROW_PADDING_LEFT');
+    expect(styleBlock(source, 'rowMain')).toContain('gap: ROW_COPY_GAP');
+    expect(styleBlock(source, 'cornerDropdown')).toContain('paddingLeft: ROW_TEXT_INSET');
+    expect(source).toContain('└ {label}');
+  });
+
   it('reads one display-state resolver for both the dropdown list and its words', () => {
     // Daemon state, PR, and checks collapse in `corner-display-state.ts` and
     // nowhere else. A screen that re-derives any of the three can disagree with

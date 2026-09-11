@@ -74,6 +74,72 @@ export function cornerMergeInstruction(yoloMode: boolean): string {
     : 'Yolo is off: never merge; wait for explicit human approval in the app.';
 }
 
+export const CORNER_DELIVERY_NUDGE =
+  'Before ending this turn, inspect the repository state and finish delivering the work: commit and push the intended changes and open the pull request if one does not exist. Decide yourself whether any remaining dirty work belongs to the objective; do not discard it merely to make the worktree clean.';
+
+export const CORNER_YOLO_MERGE_NUDGE =
+  'Yolo is on. Check the server merge gate with pr_checks_status now and, if checks="passed", held=false, and approvalPending=false, merge this pull request with gh. Otherwise stop without merging.';
+
+function isCornerChecksTurn(trigger: string, restates?: readonly string[]): boolean {
+  return Boolean(restates) || /\b(?:passed|failed) a check\b/i.test(trigger);
+}
+
+export async function cornerHasUndeliveredRepositoryWork(
+  worktreePath: string,
+  featureBranch?: string,
+  targetBranch?: string,
+): Promise<boolean> {
+  return Boolean(
+    await cornerUndeliveredRepositoryState(worktreePath, featureBranch, targetBranch),
+  );
+}
+
+async function cornerUndeliveredRepositoryState(
+  worktreePath: string,
+  featureBranch?: string,
+  targetBranch?: string,
+): Promise<string | undefined> {
+  try {
+    const [{ stdout: status }, ahead] = await Promise.all([
+      execFileAsync('git', ['-C', worktreePath, 'status', '--porcelain=v1']),
+      featureBranch
+        ? firstResolvedRemoteRef(worktreePath, [featureBranch, targetBranch])
+            .then((remoteRef) =>
+              remoteRef
+                ? execFileAsync('git', [
+                    '-C',
+                    worktreePath,
+                    'rev-list',
+                    '--count',
+                    `${remoteRef}..HEAD`,
+                  ]).then(({ stdout }) => Number.parseInt(stdout.trim(), 10) || 0)
+                : 0,
+            )
+            .catch(() => 0)
+        : Promise.resolve(0),
+    ]);
+    const dirty = status.trimEnd();
+    return dirty || ahead > 0 ? `${dirty}\nahead:${ahead}` : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function firstResolvedRemoteRef(
+  worktreePath: string,
+  branches: readonly (string | undefined)[],
+): Promise<string | undefined> {
+  for (const branch of branches) {
+    if (!branch) continue;
+    const ref = `refs/remotes/origin/${branch}`;
+    const resolved = await execFileAsync('git', ['-C', worktreePath, 'rev-parse', '--verify', ref])
+      .then(() => true)
+      .catch(() => false);
+    if (resolved) return ref;
+  }
+  return undefined;
+}
+
 function oneLine(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
 }
@@ -301,6 +367,10 @@ export class MonolithCornerTurnLoop {
   private modelTakesImages?: boolean;
   /** The one provider re-pinned after an empty completion, until the session ends. */
   private pinnedProviderOverride?: string;
+  /** The merge authority baked into the current session. */
+  private yoloMode = false;
+  /** Repository state already given a delivery reminder, until that state changes. */
+  private lastDeliveryNudgeState?: string;
   private turnIdentityInstructions = '';
   private busy = false;
   private forcedStop = false;
@@ -444,6 +514,7 @@ export class MonolithCornerTurnLoop {
       agentName: self?.name ?? this.agent.name,
       yoloMode: configuration.yoloMode,
     });
+    this.yoloMode = configuration.yoloMode;
     await mkdir(this.options.worktreePath, { recursive: true });
     const selection =
       configuration.model || configuration.effort
@@ -908,7 +979,7 @@ export class MonolithCornerTurnLoop {
               // One prompt run. It is a closure because an empty completion
               // re-pins the session to another provider and runs it again
               // (C92) — against the NEW client and session id.
-              const runPrompt = async (): Promise<PromptResult> => {
+              const runPrompt = async (prompt = buildPrompt()): Promise<PromptResult> => {
                 activityAttempt += 1;
                 publishedToolCalls.clear();
                 observedToolCalls.clear();
@@ -923,7 +994,7 @@ export class MonolithCornerTurnLoop {
                 return this.client!.sessionPrompt(
                   this.sessionId!,
                   promptWithImages(
-                    buildPrompt(),
+                    prompt,
                     attachmentImageBlocks(delivered, this.acceptsImages()),
                   ),
                   120_000,
@@ -970,6 +1041,39 @@ export class MonolithCornerTurnLoop {
                   explained = await this.explainEmpty(result);
                 }
               }
+              // One bounded second chance to deliver repository work. Check
+              // turns get the narrower merge reminder instead: repeating the
+              // broad delivery instruction there could invite unrelated branch
+              // cleanup. The model remains the authority over whether dirty
+              // work belongs to the objective and whether to retain or dispose
+              // of it; the daemon never rewrites the worktree after a turn.
+              const checksTurn = isCornerChecksTurn(trigger, restates);
+              const deliveryState =
+                !checksTurn && this.options.repository
+                  ? await cornerUndeliveredRepositoryState(
+                      this.options.worktreePath,
+                      this.options.repository.featureBranch,
+                      this.options.repository.targetBranch,
+                    )
+                  : undefined;
+              const needsDeliveryNudge =
+                deliveryState !== undefined && deliveryState !== this.lastDeliveryNudgeState;
+              let replyBeforeNudge = '';
+              if (!explained && (needsDeliveryNudge || (checksTurn && this.yoloMode))) {
+                if (needsDeliveryNudge) this.lastDeliveryNudgeState = deliveryState;
+                replyBeforeNudge = durableReplyText(result.agentText);
+                await flushToolCalls(result.toolCalls, '');
+                // This is the same warm session: identity, soul and merge
+                // authority remain in its system prompt and need not be
+                // repeated in this focused follow-up.
+                result = await runPrompt(
+                  checksTurn
+                    ? CORNER_YOLO_MERGE_NUDGE
+                    : CORNER_DELIVERY_NUDGE,
+                );
+                trace.promptSettled();
+                explained = await this.explainEmpty(result);
+              }
               // The requester stopped this turn while it ran. What the model
               // had already written STAYS, as in a Room (`monolith-room-turn`
               // says why), and the tool narration settles with it — the work
@@ -982,6 +1086,7 @@ export class MonolithCornerTurnLoop {
               let reply = durableReplyText(result.agentText);
               if (!reply && explained?.recoveredText)
                 reply = durableReplyText(explained.recoveredText);
+              reply = [replyBeforeNudge, reply].filter(Boolean).join('\n\n');
               await flushToolCalls(result.toolCalls, reply);
               // A refusal the operator cannot read is a refusal that happens twice.
               for (const call of result.toolCalls) {

@@ -14,7 +14,7 @@ import {
 } from 'node:fs/promises';
 import { statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { resolve } from 'node:path';
+import { isAbsolute, relative, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   harvestWarmNodeModules,
@@ -97,9 +97,16 @@ async function worktree(spec: WorktreeSpec = {}): Promise<string> {
   for (const [path, entry] of Object.entries(packages)) {
     if (!path.includes('node_modules/')) continue;
     if ((entry as { link?: boolean }).link || omit.has(path)) continue;
-    await mkdir(resolve(root, path), { recursive: true });
+    // A lockfile path that escapes the checkout is NAMED by the fixture and
+    // never written by it: the escape case is about what the code refuses to
+    // do with such a path, and a fixture that resolved one would be reaching
+    // outside its own scratch root to prove it.
+    const target = resolve(root, path);
+    const inside = relative(root, target);
+    if (!inside || inside.startsWith('..') || isAbsolute(inside)) continue;
+    await mkdir(target, { recursive: true });
     await writeFile(
-      resolve(root, path, 'package.json'),
+      resolve(target, 'package.json'),
       JSON.stringify({ name: path.split('/').pop(), version: '1.0.0' }),
     );
   }

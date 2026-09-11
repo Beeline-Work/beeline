@@ -1694,7 +1694,7 @@ describe('thin monolith corner turn', () => {
     expect(sessionNew).toHaveBeenCalledWith(
       expect.objectContaining({
         systemPrompt: expect.stringContaining(
-          'GitHub check and merge notes are server lines already in the corner: never restate them',
+          'Never restate server check or merge notes',
         ),
       }),
     );

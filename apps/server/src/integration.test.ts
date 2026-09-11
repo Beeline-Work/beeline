@@ -445,7 +445,7 @@ describe('monolith integration', () => {
       (await operation('removeRoomMember', { roomId: created.id, memberId: aliceId })).status,
     ).toBe(204);
     await operation('addRoomMember', { roomId: created.id, memberId: aliceId });
-    expect((await operation('leaveRoom', { roomId: created.id }, aliceToken)).status).toBe(204);
+    expect((await operation('leaveRoom', { roomId: created.id }, aliceToken)).status).toBe(403);
     expect((await operation('deleteRoom', { roomId: created.id })).status).toBe(204);
     expect((await request(`/v1/phone/rooms/${created.id}`)).status).toBe(404);
     const chats = (await (await request(`/v1/phone/workspaces/${workspaceId}/chats`)).json()) as {
@@ -834,12 +834,15 @@ describe('monolith integration', () => {
     expect((await operation('leaveWorkspace', { workspaceId })).status).toBe(403);
   });
 
-  it('closes Rooms and DMs per viewer without changing membership or history', async () => {
+  it('leaves Rooms atomically while DM close stays non-destructive', async () => {
     const aliceToken = await phoneToken('chat-close-alice');
     const aliceId = createHash('sha256').update('github:chat-close-alice').digest('hex');
+    const adminToken = await phoneToken('chat-close-admin');
+    const adminId = createHash('sha256').update('github:chat-close-admin').digest('hex');
     const workspaceId = 'c105ed00-c105-4ed0-8105-c105ed00c105';
     await operation('createWorkspace', { workspaceId, name: 'Chat close' });
     await operation('addWorkspaceMember', { workspaceId, memberId: aliceId, role: 'member' });
+    await operation('addWorkspaceMember', { workspaceId, memberId: adminId, role: 'admin' });
     const room = (await (
       await operation('createRoom', { workspaceId, name: 'Preserved Room' })
     ).json()) as { id: string };
@@ -852,16 +855,65 @@ describe('monolith integration', () => {
       return view.chats.find((item) => item.room.id === roomId);
     };
 
-    expect((await operation('closeChat', { roomId: room.id })).status).toBe(204);
-    expect(await chat(undefined, room.id)).toMatchObject({ closed: true });
-    expect((await chat(aliceToken, room.id))?.closed).toBeUndefined();
-    expect((await operation('reopenChat', { roomId: room.id })).status).toBe(204);
-    expect((await chat(undefined, room.id))?.closed).toBeUndefined();
+    expect((await operation('closeChat', { roomId: room.id }, aliceToken)).status).toBe(400);
+    expect(await chat(aliceToken, room.id)).toBeDefined();
 
-    expect((await operation('closeChat', { roomId: room.id }, aliceToken)).status).toBe(204);
-    expect(await chat(aliceToken, room.id)).toMatchObject({ closed: true });
-    await operation('sendRoomMessage', { roomId: room.id, text: 'incoming reopens' });
-    expect((await chat(aliceToken, room.id))?.closed).toBeUndefined();
+    // Workspace role is authoritative for a top-level Room. Repairing a stale
+    // elevated Room role must not make an ordinary Workspace member unable to leave.
+    await database.query(
+      `UPDATE memberships SET role='admin' WHERE room_id=$1 AND identity_id=$2`,
+      [room.id, aliceId],
+    );
+    expect((await operation('leaveRoom', { roomId: room.id }, aliceToken)).status).toBe(204);
+    expect(await chat(aliceToken, room.id)).toBeUndefined();
+    expect(
+      (
+        await database.query<{ active: boolean }>(
+          `SELECT removed_at IS NULL active FROM memberships WHERE room_id=$1 AND identity_id=$2`,
+          [room.id, aliceId],
+        )
+      ).rows,
+    ).toEqual([{ active: false }]);
+    await operation('sendRoomMessage', { roomId: room.id, text: 'room traffic does not rejoin' });
+    expect(await chat(aliceToken, room.id)).toBeUndefined();
+
+    const failedRoom = (await (
+      await operation('createRoom', { workspaceId, name: 'Rollback Room' })
+    ).json()) as { id: string };
+    await database.query(`
+      CREATE FUNCTION fail_member_left_insert() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.card_type='member-left' THEN RAISE EXCEPTION 'forced member-left failure'; END IF;
+        RETURN NEW;
+      END $$;
+      CREATE TRIGGER fail_member_left_insert BEFORE INSERT ON messages
+      FOR EACH ROW EXECUTE FUNCTION fail_member_left_insert()
+    `);
+    const failedLeave = await operation('leaveRoom', { roomId: failedRoom.id }, aliceToken);
+    expect(failedLeave.status).toBe(503);
+    expect(await failedLeave.json()).toEqual({ error: 'forced member-left failure' });
+    await database.query(`
+      DROP TRIGGER fail_member_left_insert ON messages;
+      DROP FUNCTION fail_member_left_insert()
+    `);
+    expect(await chat(aliceToken, failedRoom.id)).toBeDefined();
+    expect(
+      (
+        await database.query<{ active: boolean }>(
+          `SELECT removed_at IS NULL active FROM memberships WHERE room_id=$1 AND identity_id=$2`,
+          [failedRoom.id, aliceId],
+        )
+      ).rows,
+    ).toEqual([{ active: true }]);
+
+    const ownerLeave = await operation('leaveRoom', { roomId: failedRoom.id });
+    expect(ownerLeave.status).toBe(403);
+    expect(await ownerLeave.json()).toEqual({ error: 'workspace managers cannot leave Rooms' });
+    const adminLeave = await operation('leaveRoom', { roomId: failedRoom.id }, adminToken);
+    expect(adminLeave.status).toBe(403);
+    expect(await adminLeave.json()).toEqual({ error: 'workspace managers cannot leave Rooms' });
+    expect(await chat(undefined, failedRoom.id)).toBeDefined();
+    expect(await chat(adminToken, failedRoom.id)).toBeDefined();
 
     const dm = (await (
       await operation('resolveDirectMessage', { workspaceId, participantId: aliceId })
@@ -882,14 +934,15 @@ describe('monolith integration', () => {
 
     const memberships = await database.query<{ identity_id: string }>(
       `SELECT identity_id FROM memberships
-       WHERE room_id IN ($1,$2) AND removed_at IS NULL ORDER BY room_id,identity_id`,
-      [room.id, dm.id],
+       WHERE room_id=$1 AND removed_at IS NULL ORDER BY identity_id`,
+      [dm.id],
     );
-    expect(memberships.rows).toHaveLength(4);
+    expect(memberships.rows).toHaveLength(2);
     const preserved = (await (
       await request(`/v1/phone/rooms/${room.id}`)
     ).json()) as { messages: Array<{ text: string }> };
     expect(preserved.messages.map((message) => message.text)).toContain('history stays');
+    expect(preserved.messages.map((message) => message.text)).toContain('room traffic does not rejoin');
   });
 
   it('lets a Workspace manager remove a person from the Workspace and every live Room', async () => {

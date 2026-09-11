@@ -183,6 +183,12 @@ it('resolves multiple natural tags and ignores human-only and unknown tags', asy
   );
   expect(await commands(A)).toHaveLength(1);
 });
+it('routes only the exact current spelling of an agent tag', async () => {
+  await send('@Hoots @ｈｏｏｔｓ @hoots-old');
+  expect(await commands(A)).toEqual([]);
+  await send('@hoots');
+  expect(await commands(A)).toHaveLength(1);
+});
 it('routes a direct message without redundant tags or a presence row', async () => {
   await db.query(`UPDATE rooms SET direct_participants=$2::jsonb WHERE id=$1`, [
     R,

@@ -270,8 +270,9 @@ state disappears at the first message, which is when the transcript starts
 burying it. It is prose in the secondary tone behind a brass `humanRail`
 hairline, the mark the ledger already gives a human's words, and it carries no
 box, no fill and no label: a box is for something the reader must act on, and
-this is only ever a reminder. It wraps once rather than truncating, and when
-there is no objective it renders nothing rather than a placeholder.
+this is only ever a reminder. It wraps to its full height rather than
+truncating, and when there is no objective it renders nothing rather than a
+placeholder.
 
 ## Index rows
 

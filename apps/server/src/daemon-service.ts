@@ -278,13 +278,7 @@ export class DaemonService {
         }
         if (name === 'postRoomMessage') {
           const message = result as unknown as { id: string; mentionIds: string[] };
-          if (message.mentionIds.length > 0 || typeof candidate.replyToMessageId === 'string')
-            await routeAgentResult(
-              db,
-              command,
-              message.id,
-              candidate.replyToMessageId as string | undefined,
-            );
+          if (message.mentionIds.length > 0) await routeAgentResult(db, command, message.id);
         } else if (name === 'postAgentTurnReceipt') {
           if (candidate.status === 'working')
             await db.query(

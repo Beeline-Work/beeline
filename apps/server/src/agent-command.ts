@@ -125,12 +125,11 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
       author_id: string;
       text: string;
       mention_ids: string[];
-      reply_author: string | null;
       direct_participants: string[] | null;
     }>(
-      `SELECT m.room_id,m.author_id,m.text,m.mention_ids,p.author_id reply_author,r.direct_participants
+      `SELECT m.room_id,m.author_id,m.text,m.mention_ids,r.direct_participants
  FROM messages m JOIN identities i ON i.id=m.author_id AND i.kind='human'
- JOIN rooms r ON r.id=m.room_id LEFT JOIN messages p ON p.id=m.reply_to_message_id
+ JOIN rooms r ON r.id=m.room_id
  WHERE m.id=$1`,
       [sourceId],
     )
@@ -138,7 +137,6 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
   if (!source) return;
   const targets = new Set([
     ...source.mention_ids,
-    ...(source.reply_author ? [source.reply_author] : []),
     ...(source.direct_participants ?? []),
   ]);
   targets.delete(source.author_id);
@@ -188,13 +186,11 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
       agentId: target,
       sourceMessageId: sourceId,
       reason:
-        source.reply_author === target
-          ? 'human_reply'
-          : source.direct_participants
-            ? 'direct_message'
-            : continuationAgent === target
-              ? 'human_continuation'
-              : 'human_tag',
+        source.direct_participants
+          ? 'direct_message'
+          : continuationAgent === target
+            ? 'human_continuation'
+            : 'human_tag',
     });
   }
 }
@@ -203,7 +199,6 @@ export async function routeAgentResult(
   db: SqlDatabase,
   parent: CommandRow,
   sourceId: string,
-  replyId?: string,
 ): Promise<void> {
   const source = (
     await db.query<{ mention_ids: string[] }>(
@@ -213,18 +208,6 @@ export async function routeAgentResult(
   ).rows[0];
   if (!source) return;
   const targets = new Set(source.mention_ids);
-  if (replyId) {
-    const reply = (
-      await db.query<{ author_id: string }>(
-        `SELECT m.author_id FROM messages m
-   JOIN identities i ON i.id=m.author_id AND i.kind='agent'
-   JOIN agent_commands c ON c.result_message_id=m.id AND c.root_command_id=$3
-   WHERE m.id=$1 AND m.room_id=$2`,
-        [replyId, parent.room_id, parent.root_command_id],
-      )
-    ).rows[0];
-    if (reply) targets.add(reply.author_id);
-  }
   targets.delete(parent.agent_id);
   for (const agentId of targets)
     await createAgentCommand(db, {
@@ -232,7 +215,7 @@ export async function routeAgentResult(
       agentId,
       sourceMessageId: sourceId,
       parent,
-      reason: source.mention_ids.includes(agentId) ? 'agent_tag' : 'agent_reply',
+      reason: 'agent_tag',
     });
 }
 

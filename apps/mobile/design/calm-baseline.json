@@ -30,7 +30,7 @@
   "components/buzz/HullDialog.tsx": 4,
   "components/buzz/Ledger.tsx": 7,
   "components/buzz/MonoHull.tsx": 4,
-  "components/buzz/MonoMarkdown.tsx": 3,
+  "components/buzz/MonoMarkdown.tsx": 2,
   "components/buzz/OwnerGrantNeededCard.tsx": 3,
   "components/buzz/RepoPicker.tsx": 12,
   "components/buzz/RoomContextPreamble.tsx": 3,

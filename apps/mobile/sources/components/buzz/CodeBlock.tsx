@@ -96,19 +96,17 @@ const styles = StyleSheet.create((theme) => ({
   },
   language: {
     ...Typography.mono(),
+    ...theme.buzz.type.machine,
     flexShrink: 1,
     color: theme.buzz.ledgerGhost,
-    fontSize: 9,
-    lineHeight: 12,
   },
   actions: { flexDirection: 'row', alignItems: 'center', flexShrink: 0 },
   action: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 8 },
   actionPressed: { opacity: 0.58 },
   actionText: {
     ...Typography.mono(),
+    ...theme.buzz.type.machine,
     color: theme.buzz.ledgerQuiet,
-    fontSize: 10,
-    lineHeight: 14,
   },
   expandedViewport: { maxHeight: EXPANDED_MAX_HEIGHT },
 }));

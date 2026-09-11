@@ -2,7 +2,13 @@ import { readFileSync } from 'node:fs';
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const desktop = vi.hoisted(() => ({ value: false }));
+
+vi.mock('@/utils/responsive', () => ({
+  useIsDesktop: () => desktop.value,
+}));
 
 vi.mock('./HullActionSheet', async () => {
   const ReactModule = await import('react');
@@ -13,6 +19,13 @@ vi.mock('./HullActionSheet', async () => {
     HullActionSheetModal: host('HullActionSheetModal'),
     HullActionSheetRow: host('HullActionSheetRow'),
   };
+});
+
+vi.mock('./HullDialog', async () => {
+  const ReactModule = await import('react');
+  const host = (name: string) => (props: any) =>
+    ReactModule.createElement(name, props, props.children);
+  return { HullDialog: host('HullDialog') };
 });
 
 const { AttachmentPickerSheet } = await import('./AttachmentPickerSheet');
@@ -27,6 +40,10 @@ const chatSource = readFileSync(
   'utf8',
 );
 
+afterEach(() => {
+  desktop.value = false;
+});
+
 describe('AttachmentPickerSheet', () => {
   it('presents photo and document choices in the branded bottom sheet', () => {
     expect(source).toContain('testID="attachment-picker-sheet"');
@@ -36,6 +53,27 @@ describe('AttachmentPickerSheet', () => {
     expect(source).toContain('<HullActionSheetCancel');
     expect(source).toContain('label="Photos"');
     expect(source).toContain('metadata="Choose up to 10"');
+  });
+
+  it('uses the centered Hull dialog only at the desktop breakpoint', () => {
+    desktop.value = true;
+    let renderer: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(
+        React.createElement(AttachmentPickerSheet, {
+          visible: true,
+          onClose: vi.fn(),
+          onPickDocument: vi.fn(),
+          onPickPhoto: vi.fn(),
+        }),
+      );
+    });
+
+    expect(renderer!.root.findByType('HullDialog' as any).props).toMatchObject({
+      title: 'Attach',
+      visible: true,
+    });
+    expect(renderer!.root.findAllByType('HullActionSheetModal' as any)).toHaveLength(0);
   });
 
   it('replaces the composer attachment alert while preserving both picker actions', () => {

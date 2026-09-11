@@ -47,8 +47,12 @@ describe('Chat header — one language for Room and Corner', () => {
     // "3 members" (singular "1 member") on every surface.
     expect(chatSource).not.toContain('IN THIS ROOM  ›');
     expect(chatSource).not.toContain("}' participants");
-    expect(chatSource).not.toContain('testID="room-header-meta"');
     expect(chatSource).not.toContain('testID="corner-header-meta"');
+    const directMessageMeta = chatSource.match(
+      /<HeaderMetaCaps testID="room-header-meta">[\s\S]*?<\/HeaderMetaCaps>/,
+    );
+    expect(directMessageMeta, 'missing Direct Message metadata').toBeTruthy();
+    expect(directMessageMeta![0]).not.toContain('formatRoomParticipantTotal');
     expect(chatSource.match(/testID="room-participant-roster-trigger"/g)).toHaveLength(2);
     expect(chatSource.match(/label="Members"/g)).toHaveLength(2);
     expect(

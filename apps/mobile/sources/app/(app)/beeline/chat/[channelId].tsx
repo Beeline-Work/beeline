@@ -3432,7 +3432,7 @@ export default function BuzzChat() {
                   </Text>
                 </HeaderMetaRow>
               ) : isDirectMessage ? (
-                <HeaderMetaCaps>DIRECT MESSAGE</HeaderMetaCaps>
+                <HeaderMetaCaps testID="room-header-meta">{'Direct message'}</HeaderMetaCaps>
               ) : null}
             </View>
             {/* The trailing slot holds ONE control. There is no `+` beside it:

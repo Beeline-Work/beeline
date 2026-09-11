@@ -356,7 +356,7 @@ describe('Members workspace management', () => {
     expect(mark.props.kind).toBe('agent');
     expect(mark.props.alive).toBeFalsy();
     expect(agentRow.findAllByType('Text' as any)[1].props.children).toBe(
-      '@clara · Sonnet · by @viewer',
+      'Sonnet · by @viewer',
     );
     expect(
       agentRow
@@ -434,26 +434,26 @@ describe('Members workspace management', () => {
     expect(texts.flat().join(' ')).not.toMatch(/⌬|ONLINE|OFFLINE|MEMBER\b/);
   });
 
-  it('keeps human display names and gives agents their handle with a model/owner line', async () => {
+  it('shows every handle once with role-only human and model-plus-owner agent subtitles', async () => {
     const renderer = await render();
     const agentRow = renderer.root.findByProps({ testID: `agent-${AGENT}-identity` });
     const agentTexts = agentRow
       .findAllByType('Text' as any)
       .map((node: any) => node.props.children);
-    expect(agentTexts).toEqual(['@clara', '@clara · Sonnet · by @viewer', '›']);
+    expect(agentTexts).toEqual(['@clara', 'Sonnet · by @viewer', '›']);
     expect(agentRow.findByType('IdentityMark' as any).props.alive).toBeFalsy();
     const personRow = renderer.root.findByProps({ testID: `member-${MEMBER}-identity` });
     expect(personRow.findAllByType('Text' as any).map((node: any) => node.props.children)).toEqual([
-      'Builder',
-      '@builder · member',
+      '@builder',
+      'member',
       '›',
     ]);
     // The viewer's own row has no detail, so no chevron.
     const selfRow = renderer.root.findByProps({ testID: `member-${VIEWER}-identity` });
     expect(selfRow.props.disabled).toBe(true);
     expect(selfRow.findAllByType('Text' as any).map((node: any) => node.props.children)).toEqual([
-      'Viewer',
-      '@viewer · owner',
+      '@viewer',
+      'owner',
     ]);
   });
 
@@ -474,7 +474,7 @@ describe('Members workspace management', () => {
     const agentRow = renderer.root.findByProps({ testID: `agent-${AGENT}-identity` });
     expect(agentRow.findAllByType('Text' as any).map((node: any) => node.props.children)).toEqual([
       '@clara',
-      '@clara · Sonnet',
+      'Sonnet',
       '›',
     ]);
 

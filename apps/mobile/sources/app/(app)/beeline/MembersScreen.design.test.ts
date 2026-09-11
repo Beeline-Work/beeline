@@ -3,6 +3,10 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const source = readFileSync(new URL('./MembersScreen.tsx', import.meta.url), 'utf8');
+const memberRow = readFileSync(
+  new URL('../../../components/buzz/MemberRosterRow.tsx', import.meta.url),
+  'utf8',
+);
 
 function styleBlock(text: string, name: string): string {
   const start = text.indexOf(`    ${name}: {`);
@@ -36,7 +40,7 @@ describe('Members page layout contract', () => {
     // inside the hit box, or the two visually disagree by half the glyph
     // width (captain report, second complaint on this page).
     expect(styleBlock(source, 'sectionHeadRow')).toContain('paddingRight: hull.space.sm');
-    expect(styleBlock(source, 'row')).toContain('paddingHorizontal: hull.space.sm');
+    expect(styleBlock(memberRow, 'row')).toContain('paddingHorizontal: hull.space.sm');
     expect(styleBlock(source, 'sectionAdd')).toContain("alignItems: 'flex-end'");
   });
 });

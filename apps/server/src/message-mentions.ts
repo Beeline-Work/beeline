@@ -1,3 +1,5 @@
+import type { SqlDatabase } from './database.js';
+
 const MENTION_TOKEN = /@([\p{L}\p{M}\p{N}_]+(?:[.-][\p{L}\p{M}\p{N}_]+)*)/gu;
 const TOKEN_CHARACTER = /[\p{L}\p{M}\p{N}_.-]/u;
 
@@ -28,4 +30,45 @@ export function typedMentionHandles(text: string): Set<string> {
       handles.add(match[1] ?? '');
   }
   return handles;
+}
+
+export interface ResolvedMessageMention {
+  readonly id: string;
+  readonly kind: 'human' | 'agent';
+  readonly handle: string;
+}
+
+/** Resolve exact typed handles against the Room's current membership. */
+export async function resolveCurrentMemberMentions(
+  database: SqlDatabase,
+  roomId: string,
+  text: string,
+  authorId?: string,
+): Promise<ResolvedMessageMention[]> {
+  const typedHandles = typedMentionHandles(text);
+  if (!typedHandles.size) return [];
+  const members = await database.query<{
+    id: string;
+    kind: 'human' | 'agent';
+    handle: string;
+  }>(
+    `SELECT identity.id,identity.kind,identity.handle
+     FROM memberships membership
+     JOIN identities identity ON identity.id=membership.identity_id
+     WHERE membership.room_id=$1 AND membership.removed_at IS NULL
+       AND identity.handle IS NOT NULL AND btrim(identity.handle)<>''`,
+    [roomId],
+  );
+  const byHandle = new Map<string, ResolvedMessageMention[]>();
+  for (const member of members.rows) {
+    if (member.id === authorId) continue;
+    const handle = member.handle.trim().replace(/^@/, '');
+    const candidates = byHandle.get(handle) ?? [];
+    candidates.push({ id: member.id, kind: member.kind, handle });
+    byHandle.set(handle, candidates);
+  }
+  return [...typedHandles].flatMap((handle) => {
+    const candidates = byHandle.get(handle);
+    return candidates?.length === 1 ? candidates : [];
+  });
 }

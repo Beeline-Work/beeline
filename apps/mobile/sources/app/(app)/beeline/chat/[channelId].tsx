@@ -5,7 +5,6 @@ import {
   Text,
   FlatList,
   Keyboard,
-  Linking,
   Pressable,
   ScrollView,
   Share,
@@ -86,6 +85,7 @@ import {
 import { formatSettledLine, formatStoppedLine, type TurnVerb } from '@/buzz/turn-clock';
 import { TurnSettledLine } from '@/components/buzz/TurnProgressLine';
 import { DesktopRoomInspector } from '@/components/DesktopRoomInspector';
+import { openExternalUrl } from '@/utils/open-external-url';
 import {
   desktopComposerKeyAction,
   desktopLayoutMode,
@@ -3044,7 +3044,7 @@ export default function BuzzChat() {
   ]);
 
   const handleOpenGitHubEvent = useCallback((url: string) => {
-    void Linking.openURL(url).catch(() => undefined);
+    void openExternalUrl(url).catch(() => undefined);
   }, []);
   // A name in a system line opens the roster, where that identity lives.
   const handleOpenSystemIdentity = useCallback(() => {
@@ -3431,7 +3431,7 @@ export default function BuzzChat() {
               ) : (
                 <HeaderMetaCaps testID="room-header-meta">
                   {isDirectMessage
-                    ? 'DIRECT MESSAGE'
+                    ? 'Direct message'
                     : participantsHydrated
                       ? `${formatRoomParticipantTotal(roomParticipantTotal)}  ›`
                       : 'LOADING MEMBERS'}
@@ -3518,7 +3518,7 @@ export default function BuzzChat() {
               lifecycle={roomSurface?.cornerLifecycle}
               archived={isArchived}
               onOpenPullRequest={(url) => {
-                void Linking.openURL(url).catch(() => {
+                void openExternalUrl(url).catch(() => {
                   Modal.alert('Could not open pull request', 'Open the PR from GitHub instead.');
                 });
               }}

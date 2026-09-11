@@ -49,6 +49,9 @@ vi.mock('@/buzz/chat-attachment', () => ({
   attachmentOpenUrl: (attachment: { url: string }) => attachment.url,
   formatAttachmentSize: (size: number) => `${size} B`,
 }));
+
+const openExternal = vi.hoisted(() => ({ openExternalUrl: vi.fn(async () => undefined) }));
+vi.mock('@/utils/open-external-url', () => openExternal);
 vi.mock('@/components/buzz/IdentityMark', async () => {
   const ReactModule = await import('react');
   return { IdentityMark: (props: any) => ReactModule.createElement('IdentityMark', props) };
@@ -110,6 +113,7 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 beforeEach(() => {
   ledgerEntryRender.mockClear();
+  openExternal.openExternalUrl.mockClear();
   resetProvisionalDrafts();
 });
 
@@ -575,6 +579,51 @@ describe('Room message variant components', () => {
     expect(text).toContain('receipt.png');
     expect(text).toContain('EXPIRED');
     expect(text).toContain('IMAGE/PNG');
+  });
+
+  it('opens a live attachment through the shared external URL boundary', () => {
+    // The desktop shell hosts the bundle in a webview where Linking.openURL
+    // cannot reach a browser; a live attachment card must route its tap
+    // through openExternalUrl like every other transcript link.
+    render(
+      <OrdinaryLedgerMessage
+        message={message({
+          id: 'with-file',
+          pubkey: 'ada',
+          attachments: [
+            {
+              url: 'https://server.example/v1/media/11111111-1111-4111-8111-111111111111',
+              thumbnailUrl: 'https://server.example/v1/media/thumb',
+              name: 'receipt.png',
+              mimeType: 'image/png',
+              size: 13,
+            },
+          ],
+        })}
+        personName="Ada"
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+    const card = render(
+      React.createElement(React.Fragment, null, ledgerEntryRender.mock.lastCall?.[0].attachments),
+    );
+    const open = card.root.findByProps({ testID: 'chat-attachment-receipt.png' });
+    expect(open.props.accessibilityRole).toBe('link');
+    act(() => open.props.onPress());
+    expect(openExternal.openExternalUrl).toHaveBeenCalledWith(
+      'https://server.example/v1/media/11111111-1111-4111-8111-111111111111',
+    );
   });
 
   it("gives the live draft lane the settled row's identity mark", () => {

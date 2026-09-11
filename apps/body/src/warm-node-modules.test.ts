@@ -235,10 +235,19 @@ describe('readWarmPlan', () => {
       JSON.stringify({ packages: { 'node_modules/left-pad': {}, [escape]: {} } }),
     );
 
-    // The precondition the whole case rests on: that package really is there,
-    // really is valid, and really is where the key resolves to.
+    // The preconditions the whole case rests on, asserted rather than counted
+    // on fingers: the key resolves to the planted package, that package is
+    // really there and really valid, it is genuinely OUTSIDE the checkout, and
+    // the fixture never created anything at that path — the lockfile entry is
+    // written after `worktree()` has run, so the helper never saw it.
     expect(resolve(root, escape)).toBe(resolve(outside, 'planted'));
+    expect(relative(root, resolve(root, escape)).startsWith('..')).toBe(true);
     expect((await stat(resolve(root, escape, 'package.json'))).isFile()).toBe(true);
+    expect(JSON.parse(await readFile(resolve(root, escape, 'package.json'), 'utf8'))).toMatchObject(
+      {
+        name: 'planted',
+      },
+    );
     expect(await missingInstalledPackages(root)).toContain(escape);
   });
 

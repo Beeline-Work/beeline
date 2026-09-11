@@ -12,7 +12,7 @@ primary_region = "iad"
   DATABASE_POOL_MAX = "10"
   MEDIA_MAX_BYTES = "26214400"
   PUBLIC_ORIGIN = "https://server.usebeeline.app"
-  BEELINE_WEB_APP_ORIGINS = "https://lunchboxfortwo-buzzy--beeline-desktop-web-workbench-final.expo.app"
+  BEELINE_WEB_APP_ORIGINS = "https://web.usebeeline.app"
 
 [http_service]
   internal_port = 8080

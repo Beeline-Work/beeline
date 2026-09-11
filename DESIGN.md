@@ -313,12 +313,25 @@ re-deriving it.
 `@handle:` attribution, the attention square, and the compose square all take
 the accent; nothing on the index pulses or spins. The Room's own corner life
 is reachable through the reserved `⌄` slot at the row's right edge, which
-expands the same set the corner count reports: only `live`, `needs-attention`,
-and `open` corners (`roomListCorners`). `merged`, `archived`, and `failed`
-corners are excluded outright rather than dimmed, so the count always equals
-what expanding reveals; they stay reachable through the `ALL CORNERS` link the
-dropdown ends with, which is the one place in the product a finished corner is
-recorded. Expanded corners hang off a 1px rail, not a nested container.
+expands the same set the corner count reports: every UNFINISHED corner, which
+is `live`, `needs-attention`, `open`, and `failed` alike, plus the idle ones
+that have not finished (`roomListCorners`). A failure is the most actionable
+row in the list and stays in it. Only `merged` and `archived` corners are
+excluded, outright rather than dimmed, so the count always equals what
+expanding reveals; they stay reachable through the full corner list, which is
+the one place in the product a finished corner is recorded. Expanded corners
+hang off a 1px rail, not a nested container.
+
+Inside the dropdown the accent marks the one row a person can act on now. Each
+row's state is resolved once, in
+`apps/mobile/sources/buzz/corner-display-state.ts`, which is the only place the
+three fact families a corner has — the daemon's five-state DTO, its pull
+request, and that PR's checks — are collapsed into a single answer. The daemon
+owns lifecycle; PR and checks narrate it, and resolve it only where the daemon
+has gone silent. A needs-you row takes brass on its state word and lifts its
+name to the primary tone, and the word itself becomes the AFFORDANCE — `REVIEW`,
+`REPLY`, `RETRY` — where every other row reads `WORKING` or `IDLE`, so the
+accent is never the only thing carrying the fact.
 
 **The plus is a brass square.** Compose is one 44pt brass square floating at
 the bottom right of the list — ink `+`, no shadow, no rounding, contrast with

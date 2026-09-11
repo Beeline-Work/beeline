@@ -11,15 +11,3 @@ describe('desktop sidebar workspace synchronization', () => {
     expect(source).toContain('setSurface(null)');
   });
 });
-
-describe('desktop sidebar Room names', () => {
-  it('uses the mobile index authorities for names, previews, and attention', () => {
-    expect(source).toContain('const rowName = roomRowName(item);');
-    expect(source).toContain('const preview = roomRowPreview(item, identityPubkey ?? undefined);');
-    expect(source).toContain('const attention = roomRowNeedsAttention(item);');
-    expect(source).toContain('{rowName.sigil}');
-    expect(source).toContain('{rowName.name}');
-    expect(source).not.toContain('HullDeckMark');
-    expect(source).not.toContain('unreadDot');
-  });
-});

@@ -47,10 +47,26 @@ describe('Room composer status layout', () => {
     expect(composer).toBeGreaterThan(progress);
   });
 
+  it('keeps the send arrow inset from the focus border', () => {
+    const sendButtonStyle = source.slice(
+      source.indexOf('    sendButton: {'),
+      source.indexOf('    sendButtonDisabled: {'),
+    );
+    expect(sendButtonStyle).toContain('marginRight: 4');
+  });
+
   it('uses a long-press wrapper to copy a complete turn', () => {
     expect(variants).toContain('onLongPress={onLongPress}');
     expect(variants).toContain('onCopy(message.text)');
     expect(source).toContain('copyEntireTurn(text, Clipboard.setStringAsync)');
+  });
+
+  it('keeps desktop transcript rows out of transform-based inversion', () => {
+    expect(source).toContain("const desktopTranscript = Platform.OS === 'web';");
+    expect(source).toContain('const transcriptMessages = desktopTranscript ? visibleMessages');
+    expect(source).toContain('inverted={!desktopTranscript && transcriptMessages.length > 0}');
+    expect(source).toContain('flatListRef.current?.scrollToEnd({ animated: false });');
+    expect(source).toContain('desktopTranscript && styles.messageListContentDesktop');
   });
 });
 

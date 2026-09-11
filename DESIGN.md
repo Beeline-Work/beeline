@@ -90,9 +90,13 @@ Plex Mono.
 Each run opens with the speaker's 26px face tile, then the name in the
 speaker's own signature hue — sentence case, medium weight, at body size — a
 quiet mono `agent` tag where applicable, and the mono HH:MM stamp pinned to
-the right. The name is never set in the 10px mono uppercase the design
-reserves for things it wants you to ignore: for a long time it was, and four
-voices read as one grey caption. Brass (#b08a4a) on the name marks the viewer
+the right. **The three written parts sit on one baseline.** They are set at two
+sizes in two faces, so centring them against each other floats the 10px mono
+half a line above the name's feet; the tile is a picture rather than a word, so
+it alone stays centred on the row. The name is never set in the 10px mono
+uppercase the design reserves for things it wants you to ignore: for a long
+time it was, and four voices read as one grey caption. Brass (#b08a4a) on the
+name marks the viewer
 alone: that accent is the ONLY thing distinguishing your own message, never
 weight, size, or geometry. There is no "YOU" caption and no dim-content trick.
 Tighter space within paragraphs and more space between turns make the

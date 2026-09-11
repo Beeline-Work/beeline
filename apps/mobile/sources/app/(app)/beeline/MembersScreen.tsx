@@ -96,11 +96,8 @@ function canAssignRole(viewerRole: WorkspaceRole, role: WorkspaceRole): boolean 
   return viewerRole === 'owner' || (viewerRole === 'admin' && role !== 'owner');
 }
 
-function memberMetaLine(
-  identity: { handle?: string; pubkey: string },
-  role: WorkspaceRole,
-): string {
-  return `@${identity.handle ?? fallbackMemberHandle(identity.pubkey)} · ${role}`;
+function memberHandle(identity: { handle?: string; pubkey: string }): string {
+  return `@${identity.handle ?? fallbackMemberHandle(identity.pubkey)}`;
 }
 
 function ownerByline(
@@ -114,12 +111,11 @@ function agentHandle(identity: { handle?: string; pubkey: string }): string {
   return `@${identity.handle ?? fallbackMemberHandle(identity.pubkey)}`;
 }
 
-/** Agent rows spend their three metadata slots on identity, runtime, and ownership. */
+/** The handle is already the row title, so agent metadata names only runtime and ownership. */
 function agentMetaLine(agent: WorkspaceView['agents'][number]): string {
-  const name = agentHandle(agent.identity);
   const model = agent.model ?? UNSET_VALUE;
   const owner = agent.owner ? ownerByline(agent.owner) : undefined;
-  return [name, model, owner].filter((part): part is string => part !== undefined).join(' · ');
+  return [model, owner].filter((part): part is string => part !== undefined).join(' · ');
 }
 
 const ROLE_LABELS: Record<WorkspaceRole, string> = {
@@ -860,10 +856,10 @@ export default function BuzzMembers() {
                     />
                     <View style={styles.rowCopy}>
                       <Text numberOfLines={1} style={styles.name}>
-                        {member.identity.name}
+                        {memberHandle(member.identity)}
                       </Text>
                       <Text numberOfLines={1} style={styles.detail}>
-                        {memberMetaLine(member.identity, member.role)}
+                        {member.role}
                       </Text>
                     </View>
                     {hasDetail && <Text style={styles.chevron}>{open ? '⌄' : '›'}</Text>}

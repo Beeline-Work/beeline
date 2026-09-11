@@ -75,11 +75,11 @@ test('shared protocol and shared UI paths fan out to their actual consumers', ()
   );
   assert.deepEqual(
     selectReleaseComponents(['apps/mobile/sources/components/Ledger.tsx']),
-    ['mobile-ota', 'desktop'],
+    ['mobile-ota', 'desktop', 'website'],
   );
   assert.deepEqual(
     selectReleaseComponents(['apps/mobile/app.config.js']),
-    ['mobile-ota', 'mobile-native', 'desktop'],
+    ['mobile-ota', 'mobile-native', 'desktop', 'website'],
   );
 });
 
@@ -96,6 +96,7 @@ test('routine auto selection catches lagging consumers from each published compo
   assert.deepEqual(selectReleaseComponentsFromPublishedInputs(pathsByComponent), [
     'mobile-ota',
     'desktop',
+    'website',
   ]);
   assert.equal(releaseVersionForSource(deliveredPrevious(), NEW_SHA), 'v0.0.9');
   assert.equal(releaseVersionForSource({ ...deliveredPrevious(), sourceSha: NEW_SHA }, NEW_SHA), 'v0.0.8');
@@ -162,8 +163,8 @@ test('routine CLI derives lagging consumers from real published git history', ()
     ], root);
     const state = JSON.parse(readFileSync(statePath, 'utf8'));
     const summary = JSON.parse(readFileSync(summaryPath, 'utf8'));
-    assert.deepEqual(state.plan.selected, ['mobile-ota', 'desktop']);
-    assert.deepEqual(summary.selected, ['mobile-ota', 'desktop']);
+    assert.deepEqual(state.plan.selected, ['mobile-ota', 'desktop', 'website']);
+    assert.deepEqual(summary.selected, ['mobile-ota', 'desktop', 'website']);
     assert.equal(state.components.server.sourceSha, releaseSha);
     assert.equal(state.components.helper.sourceSha, oldSha);
     assert.ok(state.plan.selected.every((component) => state.components[component].sourceSha === releaseSha));
@@ -203,8 +204,8 @@ test('routine same-head release supplements lagging shared UI consumers and retr
   });
 
   assert.equal(version, previous.version);
-  assert.deepEqual(selected, ['mobile-ota', 'desktop']);
-  assert.deepEqual(state.plan.selected, ['mobile-ota', 'desktop']);
+  assert.deepEqual(selected, ['mobile-ota', 'desktop', 'website']);
+  assert.deepEqual(state.plan.selected, ['mobile-ota', 'desktop', 'website']);
   assert.equal(state.components.server.sourceSha, NEW_SHA);
   assert.equal(state.components.helper.sourceSha, OLD_SHA);
   for (const component of selected) {
@@ -227,10 +228,11 @@ test('routine same-head release supplements lagging shared UI consumers and retr
     'mobile-ota': false,
     'mobile-native': false,
     desktop: true,
-    website: false,
+    website: true,
   });
 
   for (const stage of ['promoted', 'checked']) markComponentStage(retry, 'desktop', stage);
+  for (const stage of ['built', 'promoted', 'checked']) markComponentStage(retry, 'website', stage);
   finalizeRelease(retry);
   const noChanges = Object.fromEntries(RELEASE_COMPONENTS.map((component) => [component, []]));
   const noOp = initializeRelease({

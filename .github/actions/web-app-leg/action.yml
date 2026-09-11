@@ -1,0 +1,50 @@
+name: Publish the Expo web app
+description: Export the release app, deploy it to EAS Hosting production, and verify the canonical custom domain
+inputs:
+  expo_token:
+    description: Expo access token
+    required: true
+  release_sha:
+    description: Immutable release source SHA
+    required: true
+  release_version:
+    description: Immutable release version
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: npm
+    - shell: bash
+      run: npm ci
+    - shell: bash
+      run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client
+    - name: Install mobile dependencies
+      shell: bash
+      working-directory: apps/mobile
+      run: npm ci
+    - name: Export the production web bundle
+      shell: bash
+      working-directory: apps/mobile
+      env:
+        EXPO_PUBLIC_BEELINE_RELEASE_SHA: ${{ inputs.release_sha }}
+        EXPO_PUBLIC_BEELINE_RELEASE_VERSION: ${{ inputs.release_version }}
+        NODE_ENV: production
+      run: npx expo export --platform web --output-dir dist --clear
+    - name: Stamp the immutable release identity
+      shell: bash
+      env:
+        RELEASE_SHA: ${{ inputs.release_sha }}
+        RELEASE_VERSION: ${{ inputs.release_version }}
+      run: node -e 'require("node:fs").writeFileSync("apps/mobile/dist/beeline-web-release.json", JSON.stringify({version:process.env.RELEASE_VERSION,sourceSha:process.env.RELEASE_SHA})+"\n")'
+    - name: Deploy and promote the export to EAS Hosting production
+      shell: bash
+      working-directory: apps/mobile
+      env:
+        EXPO_TOKEN: ${{ inputs.expo_token }}
+      run: npx --yes eas-cli@22.2.0 deploy --prod --export-dir dist --non-interactive
+    - name: Verify the canonical web origin serves this release
+      shell: bash
+      run: node scripts/verify-web-deployment.mjs --expected-release apps/mobile/dist/beeline-web-release.json --attempts 20

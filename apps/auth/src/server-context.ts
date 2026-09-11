@@ -19,6 +19,7 @@ import {
   GitHubAppClient,
   GitHubOAuthClient,
   type GitHubIdentity,
+  type GitHubOrganizationMembership,
 } from './github.js';
 import {
   appSetupEnvBlock,
@@ -575,6 +576,20 @@ export function createAuthRouteContext(options: AuthServerOptions) {
         }
         return userInstallationIds;
       };
+      // Second opinion for an organization installation the user listing
+      // omits: GET /user/memberships/orgs/{org} speaks for the user's own
+      // token and says plainly whether they belong to the account that owns
+      // the install.
+      const membershipIn = async (login: string): Promise<GitHubOrganizationMembership> => {
+        try {
+          return await options.github!.app.organizationMembership(
+            decryptGitHubToken(sealedUserToken),
+            login,
+          );
+        } catch {
+          return 'unknown';
+        }
+      };
       for (const { installationId, account } of installations) {
         const known = await options.store.githubInstallation(community, installationId);
         if (!known) {
@@ -584,11 +599,29 @@ export function createAuthRouteContext(options: AuthServerOptions) {
           // follows the install-callback precedent — GitHub's state-bound
           // redirect is absent here, but an unavailable listing is logged
           // and proceeded with, while a definitive denial refuses.
+          //
+          // The listing's definitive answer is NOT the last word for an
+          // organization: GET /user/installations is keyed to one OAuth
+          // token's visibility and omits org installations outright (an org
+          // that restricts third-party access, or a member who is not an app
+          // manager, both read as a clean absence). Production stranded a
+          // real org install on exactly that silence. So an omitted
+          // organization gets the membership fallback, which can only ever
+          // ADD a claim: 'active' membership claims, and anything else —
+          // including GitHub declining to answer — leaves the prior outcome
+          // untouched.
           const administered = await administeredByUser();
-          if (administered !== 'unavailable') {
-            if (!administered.has(installationId)) continue;
-          } else if (account.type !== 'Organization') {
-            continue;
+          const listed = administered !== 'unavailable' && administered.has(installationId);
+          if (!listed) {
+            if (account.type !== 'Organization') continue;
+            // An unavailable listing already claims by precedent; only a
+            // definitive omission needs membership to speak.
+            if (
+              administered !== 'unavailable' &&
+              (await membershipIn(account.login)) !== 'active'
+            ) {
+              continue;
+            }
           }
         }
         // An already recorded installation refreshes through the same

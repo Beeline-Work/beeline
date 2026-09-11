@@ -117,6 +117,7 @@ import {
   type CornerStatus,
   type CornerSummary,
 } from '@/buzz/corners';
+import { cornerHeaderStateLabel, resolveCornerDisplayState } from '@/buzz/corner-display-state';
 import {
   directMessageHeaderName,
   fallbackMemberHandle,
@@ -334,6 +335,10 @@ export default function BuzzChat() {
   const routeChannelTitle = title?.trim() || undefined;
   const cornerReturnTarget = returnTo === 'room-list' ? returnTo : undefined;
   const insets = useSafeAreaInsets();
+  const readOnlyFooterInset =
+    Platform.OS === 'android'
+      ? { marginBottom: insets.bottom }
+      : { paddingBottom: Math.max(insets.bottom, 8) };
   const navigation = useNavigation();
   const flatListRef = useRef<FlatList<ChatDisplayMessage>>(null);
   const handledNotificationAnchorRef = useRef<string | null>(null);
@@ -1429,6 +1434,9 @@ export default function BuzzChat() {
   const canonicalCorner = isCorner
     ? cornerLifecycle.find((corner) => corner.id === decodedId)
     : undefined;
+  const canonicalCornerLifecycle = isCorner
+    ? roomSurface?.corners.find((corner) => corner.corner.id === decodedId)?.lifecycle
+    : undefined;
   const canonicalCornerStatus = canonicalCorner
     ? currentCornerStatus(canonicalCorner)
     : cornerLifecycleStatus;
@@ -1439,6 +1447,19 @@ export default function BuzzChat() {
       : canonicalCorner?.machineState === 'concluded' || canonicalCorner?.machineState === 'closed'
         ? 'done'
         : 'idle';
+  const cornerHeaderState = canonicalCorner
+    ? cornerHeaderStateLabel(
+        resolveCornerDisplayState({
+          ...(canonicalCorner.machineState ? { machineState: canonicalCorner.machineState } : {}),
+          ...(canonicalCorner.machineReason
+            ? { machineReason: canonicalCorner.machineReason }
+            : {}),
+          ...(canonicalCorner.stateAt === undefined ? {} : { stateAt: canonicalCorner.stateAt }),
+          ...(canonicalCornerLifecycle ? { lifecycle: canonicalCornerLifecycle } : {}),
+          archived: isArchived,
+        }),
+      )
+    : 'IDLE';
   // A notification may outlive the corner it names. Once server truth says the
   // target disappeared or finished, replace it with the parent Room carried by
   // the push instead of stranding the reader on an empty/read-only transcript.
@@ -3392,22 +3413,7 @@ export default function BuzzChat() {
                 />
               </HeaderIdentitySlot>
             )}
-            <TouchableOpacity
-              accessibilityLabel={
-                isCorner
-                  ? `${CORNER_LABEL} opened by ${cornerAgentDisplay?.name ?? 'Agent'}. View ${formatRoomParticipantTotal(roomParticipantTotal)}`
-                  : isDirectMessage
-                    ? displayRoomName
-                    : `View ${formatRoomParticipantTotal(roomParticipantTotal)}`
-              }
-              accessibilityRole="button"
-              disabled={!memberManagement.canOpenRoster}
-              onPress={() => {
-                if (memberManagement.canOpenRoster) setRosterVisible(true);
-              }}
-              style={styles.headerCenter}
-              testID="room-participant-roster-trigger"
-            >
+            <View style={styles.headerCenter}>
               {displayHeaderTitle === null ? (
                 // The channel's own name has not landed yet. Neither "Room" nor
                 // a corner slug would be true, so show neither.
@@ -3444,28 +3450,17 @@ export default function BuzzChat() {
               {isCorner ? (
                 <HeaderMetaRow>
                   <Text numberOfLines={1} style={styles.cornerHeaderAgent}>
-                    {(cornerAgentDisplay?.name ?? 'AGENT').toUpperCase()}
+                    {(cornerAgentDisplay?.name ?? 'AGENT').toUpperCase()} · {cornerHeaderState}
                   </Text>
-                  <HeaderMetaCaps>
-                    {participantsHydrated ? formatRoomParticipantTotal(roomParticipantTotal) : ''}
-                  </HeaderMetaCaps>
                 </HeaderMetaRow>
-              ) : (
-                <HeaderMetaCaps testID="room-header-meta">
-                  {isDirectMessage
-                    ? 'Direct message'
-                    : participantsHydrated
-                      ? `${formatRoomParticipantTotal(roomParticipantTotal)}  ›`
-                      : 'LOADING MEMBERS'}
-                </HeaderMetaCaps>
-              )}
-            </TouchableOpacity>
+              ) : isDirectMessage ? (
+                <HeaderMetaCaps testID="room-header-meta">{'Direct message'}</HeaderMetaCaps>
+              ) : null}
+            </View>
             {/* The trailing slot holds ONE control. There is no `+` beside it:
-              a Room's members have one way in (C83) — the `N members ›` line
-              above opens the roster sheet, whose section heads carry the add
-              control. The header copy led to the same picker and, opened from
-              here with no section in scope, could only report the Workspace
-              as empty.
+              a Room or corner's members have one way in — the Members row in
+              this overflow sheet opens the roster, whose section heads carry
+              the add control. This preserves the title and subtitle width.
 
               One overflow vocabulary: the same ••• the Room header carries,
               holding whatever destructive/rare actions the surface has. A
@@ -3670,13 +3665,13 @@ export default function BuzzChat() {
 
           {/* P2: Archived channels are read-only */}
           {isArchived ? (
-            <View style={[styles.archivedInputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+            <View style={[styles.archivedInputBar, readOnlyFooterInset]}>
               <Text style={[styles.archivedInputText, isCorner && styles.cornerArchivedInputText]}>
                 {parentChannelId ? 'Corner' : ROOM_LABEL} archived (read-only)
               </Text>
             </View>
           ) : isReadOnlyDirectMessage ? (
-            <View style={[styles.archivedInputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+            <View style={[styles.archivedInputBar, readOnlyFooterInset]}>
               <Text style={styles.archivedInputText}>
                 Announcements only · you can't reply here
               </Text>
@@ -4117,6 +4112,22 @@ export default function BuzzChat() {
         title={displayRoomName}
         visible={roomActionsVisible}
       >
+        {!isDirectMessage && (
+          <HullActionSheetRow
+            accessibilityLabel={`View ${formatRoomParticipantTotal(roomParticipantTotal)}`}
+            chevron="right"
+            disabled={!memberManagement.canOpenRoster}
+            label="Members"
+            metadata={
+              participantsHydrated ? formatRoomParticipantTotal(roomParticipantTotal) : 'Loading'
+            }
+            onPress={() => {
+              closeRoomActions();
+              setRosterVisible(true);
+            }}
+            testID="room-participant-roster-trigger"
+          />
+        )}
         {canManageWorkspace &&
           (renameEditing ? (
             <View style={styles.roomRenameEditor} testID="rename-room-editor">
@@ -4275,6 +4286,20 @@ export default function BuzzChat() {
         title={headerTitle ?? cornerAgentDisplay?.name ?? CORNER_LABEL}
         visible={cornerActionsVisible}
       >
+        <HullActionSheetRow
+          accessibilityLabel={`View ${formatRoomParticipantTotal(roomParticipantTotal)}`}
+          chevron="right"
+          disabled={!memberManagement.canOpenRoster}
+          label="Members"
+          metadata={
+            participantsHydrated ? formatRoomParticipantTotal(roomParticipantTotal) : 'Loading'
+          }
+          onPress={() => {
+            setCornerActionsVisible(false);
+            setRosterVisible(true);
+          }}
+          testID="room-participant-roster-trigger"
+        />
         <HullActionSheetRow
           accessibilityLabel={`Close ${CORNER_LABEL}`}
           description={`Ends the edit session and archives this ${CORNER_LABEL}. Unmerged work is lost.`}
@@ -4436,11 +4461,7 @@ const styles = StyleSheet.create((theme) => {
       lineHeight: 14,
       letterSpacing: 0.7,
     },
-    // The trailing slot holds exactly one thing — ••• on a live surface, the
-    // archived badge on a dead one — and both hang on the same axis: 12 of
-    // clear space off the title's own touch area (Material asks 8 between
-    // adjacent targets) and a glyph centred 34 from the right edge, mirroring
-    // the back chevron's 34 from the left.
+    // The title and its metadata keep a clear gap before the trailing action.
     roomActionsButton: {
       minWidth: 44,
       minHeight: 44,

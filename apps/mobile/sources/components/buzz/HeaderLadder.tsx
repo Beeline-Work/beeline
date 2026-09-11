@@ -5,8 +5,8 @@ import { StyleSheet } from 'react-native-unistyles';
 /**
  * One header language for both chat surfaces — the Room and its Corners share
  * this screen's top bar, and both must speak the same ladder: an identity mark
- * leading, the name at its own tier, and every piece of metadata (repo
- * binding, participant count, corner status) in one quiet meta voice on
+ * leading, the name at its own tier, and every piece of header metadata (repo
+ * binding and corner status) in one quiet meta voice on
  * the obsidian canvas.
  *
  * These are the shared primitives; neither branch of `[channelId].tsx`'s
@@ -46,7 +46,7 @@ export function HeaderMetaRow({
 }
 
 /** The one metadata voice: the `meta` type role, muted, single-line. Repo
- *  bindings, participant counts, and corner status all read through this
+ *  bindings and corner status both read through this
  *  token so the two headers can never drift apart again. */
 export function HeaderMetaCaps({
   children,

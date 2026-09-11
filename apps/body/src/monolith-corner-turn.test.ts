@@ -21,6 +21,7 @@ import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 import { SOUL_HOUSE_RULE } from './response-directives.js';
 import { attachFile, writeScratchFile } from './read-only-mcp.js';
 import { SessionScheduler } from './session-scheduler.js';
+import { sharedNpmCacheDir } from './warm-node-modules.js';
 
 const roots: string[] = [];
 const execFileAsync = promisify(execFile);
@@ -1751,9 +1752,13 @@ describe('thin monolith corner turn', () => {
         mcpServers: expect.arrayContaining([
           expect.objectContaining({
             name: 'buzz-dev-mcp',
+            // Exact, not a superset: this server's env carries this corner's
+            // own repository token and the shared package cache, and nothing
+            // else of the host's.
             env: [
               { name: 'GH_TOKEN', value: 'room-installation-token' },
               { name: 'GITHUB_TOKEN', value: 'room-installation-token' },
+              { name: 'npm_config_cache', value: sharedNpmCacheDir(root) },
             ],
           }),
           expect.objectContaining({ name: 'beeline-agent' }),

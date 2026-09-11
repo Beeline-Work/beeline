@@ -11,16 +11,15 @@ function codePointAt(text: string, offset: number): string | undefined {
   return [...text.slice(offset)][0];
 }
 
-/** Exact, normalized @handles written as standalone tokens. */
+/** Exact @handles written as standalone tokens. */
 export function typedMentionHandles(text: string): Set<string> {
-  const normalizedText = text.normalize('NFKC').toLocaleLowerCase();
   const handles = new Set<string>();
-  for (const match of normalizedText.matchAll(MENTION_TOKEN)) {
+  for (const match of text.matchAll(MENTION_TOKEN)) {
     const offset = match.index ?? 0;
-    const before = codePointBefore(normalizedText, offset);
-    const punctuation = normalizedText.slice(offset + match[0].length).match(/^[.-]+/u)?.[0];
+    const before = codePointBefore(text, offset);
+    const punctuation = text.slice(offset + match[0].length).match(/^[.-]+/u)?.[0];
     const afterPunctuation = punctuation
-      ? codePointAt(normalizedText, offset + match[0].length + punctuation.length)
+      ? codePointAt(text, offset + match[0].length + punctuation.length)
       : undefined;
     if (
       (!before || !TOKEN_CHARACTER.test(before)) &&

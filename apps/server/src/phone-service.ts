@@ -2718,13 +2718,13 @@ export class PhoneService {
       { id: string; kind: 'human' | 'agent'; member: boolean }[]
     >();
     for (const member of members.rows) {
-      const handle = member.handle.normalize('NFKC').toLocaleLowerCase();
+      const handle = member.handle;
       const candidates = candidatesByHandle.get(handle) ?? [];
       candidates.push({ id: member.id, kind: member.kind, member: true });
       candidatesByHandle.set(handle, candidates);
     }
     for (const agent of absentCornerAgents.rows) {
-      const handle = agent.handle.normalize('NFKC').toLocaleLowerCase();
+      const handle = agent.handle;
       const candidates = candidatesByHandle.get(handle) ?? [];
       candidates.push({ id: agent.id, kind: 'agent', member: false });
       candidatesByHandle.set(handle, candidates);

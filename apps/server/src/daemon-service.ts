@@ -1257,7 +1257,7 @@ export class DaemonService {
       );
       const idsByHandle = new Map<string, string[]>();
       for (const member of typedMembers.rows) {
-        const handle = member.alias.normalize('NFKC').toLocaleLowerCase();
+        const handle = member.alias;
         const ids = idsByHandle.get(handle) ?? [];
         ids.push(member.identity_id);
         idsByHandle.set(handle, ids);

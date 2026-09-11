@@ -284,6 +284,7 @@ describe('who an agent can tag, and how it is spelled', () => {
 
   it('resolves an agent only by its current canonical handle', () => {
     expect(agentReplyMentionIds('@goosy please help', ROSTER(AGENT_HEX), AGENT_HEX)).toEqual([]);
+    expect(agentReplyMentionIds('@GOOSY-2 please help', ROSTER(AGENT_HEX), AGENT_HEX)).toEqual([]);
     expect(agentReplyMentionIds('@Strategist please help', ROSTER(AGENT_HEX), AGENT_HEX)).toEqual(
       [],
     );

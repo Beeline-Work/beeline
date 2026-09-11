@@ -2605,9 +2605,29 @@ export class DaemonService {
         [input.roomId],
       )
     ).rows[0]!;
-    const cornerId = randomUUID();
+    let cornerId: string = randomUUID();
     const opener = await this.identity(agentId);
     await this.database.transaction(async (db) => {
+      // Opening a corner is idempotent for the originating task while that
+      // corner remains active. Locking the parent closes the read/insert race:
+      // a concurrent retry waits, sees the winner, and returns its id without
+      // creating another Room, command, or open card.
+      await db.query(`SELECT id FROM rooms WHERE id=$1 FOR UPDATE`, [input.roomId]);
+      const existing = (
+        await db.query<{ corner_id: string }>(
+          `SELECT child.id::text corner_id
+           FROM rooms child
+           JOIN corner_facts fact ON fact.corner_id=child.id
+           WHERE child.parent_id=$1 AND fact.request_id=$2 AND child.archived_at IS NULL
+           ORDER BY child.created_at,child.id
+           LIMIT 1`,
+          [input.roomId, input.requestId],
+        )
+      ).rows[0];
+      if (existing) {
+        cornerId = existing.corner_id;
+        return;
+      }
       await db.query(
         `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name,repository_key,repository_target_branch) VALUES($1,$2,$3,$4,$5,$6,$7)`,
         [

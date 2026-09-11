@@ -631,7 +631,7 @@ export default function BuzzChannels() {
       >
         <View style={styles.header}>
           {!isDesktop && <CommunityDrawerTrigger community={activeCommunity} />}
-          {activeCommunityId && (
+          {!isDesktop && activeCommunityId && (
             <TouchableOpacity
               accessibilityLabel={`${WORKSPACE_LABEL} members`}
               accessibilityRole="button"
@@ -948,7 +948,7 @@ export default function BuzzChannels() {
           }}
           />
         )}
-        {!viewerIsAgent && (
+        {!isDesktop && !viewerIsAgent && (
           <View
             pointerEvents="box-none"
             style={[styles.composeOverlay, { bottom: 16 + insets.bottom }]}

@@ -16,6 +16,8 @@ describe('desktop layout mode', () => {
     expect(sidebar).toContain('!isDesktop && styles.containerCompact');
     expect(channels).toContain('isDesktop ? (');
     expect(channels).toContain('testID="desktop-room-selection-empty"');
+    expect(channels).toContain('!isDesktop && activeCommunityId');
+    expect(channels).toContain('!isDesktop && !viewerIsAgent');
   });
 
   it('removes history chrome only at the desktop layout breakpoint', () => {
@@ -38,5 +40,12 @@ describe('desktop layout mode', () => {
     expect(messages).toContain('onPress={onLongPress}');
     expect(messages).toContain("if (Platform.OS === 'web') {");
     expect(messages).toContain('<Text style={styles.replyDesktopLabel}>REPLY</Text>');
+  });
+
+  it('keeps decorative compose glyph props out of the browser DOM', () => {
+    const composeMenu = source('components/buzz/RoomDeckComposeMenu.tsx');
+
+    expect(composeMenu).not.toContain('accessibilityElementsHidden');
+    expect(composeMenu).toContain('accessible={false}');
   });
 });

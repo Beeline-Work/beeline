@@ -2958,6 +2958,28 @@ export default function BuzzChat() {
     [desktopExperience, pendingAttachments.length, sending],
   );
 
+  const handleDesktopPaste = useCallback(
+    (event: React.ClipboardEvent<HTMLElement>) => {
+      if (!desktopExperience || sending) return;
+      const files = Array.from(event.clipboardData.files).slice(
+        0,
+        MAX_MESSAGE_ATTACHMENTS - pendingAttachments.length,
+      );
+      if (!files.length) return;
+      event.preventDefault();
+      setPendingAttachments((current) => [
+        ...current,
+        ...files.map((file) => ({
+          uri: URL.createObjectURL(file),
+          name: file.name || `clipboard-${Date.now()}`,
+          mimeType: file.type || 'application/octet-stream',
+          size: file.size,
+        })),
+      ]);
+    },
+    [desktopExperience, pendingAttachments.length, sending],
+  );
+
   const clearSlashComposer = useCallback(() => {
     inputTextRef.current = '';
     setInputText('');
@@ -3911,6 +3933,7 @@ export default function BuzzChat() {
                   ? ({
                       onDragOver: (event: React.DragEvent<HTMLElement>) => event.preventDefault(),
                       onDrop: handleDesktopDrop,
+                      onPaste: handleDesktopPaste,
                     } as any)
                   : {})}
               >

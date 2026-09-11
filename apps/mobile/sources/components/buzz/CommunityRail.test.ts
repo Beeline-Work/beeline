@@ -78,7 +78,12 @@ vi.mock('./IdentityMark', async () => {
   };
 });
 
-import { BuzzCommunityShell, CommunityDrawerTrigger } from './CommunityRail';
+import {
+  BuzzCommunityShell,
+  CommunityDrawerTrigger,
+  CommunityRail,
+  CommunitySwitcherTrigger,
+} from './CommunityRail';
 
 const originalConsoleError = console.error;
 
@@ -131,6 +136,53 @@ function renderShell(
 }
 
 describe('Workspace drawer', () => {
+  it('shows one attention mark on the current Workspace trigger when requested', () => {
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        React.createElement(CommunitySwitcherTrigger, {
+          community: { communityId: 'community-1', name: 'Night Shift' },
+          expanded: false,
+          onPress: vi.fn(),
+          attention: true,
+        }),
+      );
+    });
+
+    expect(
+      renderer.root.findAll(
+        (node) => node.type === 'View' && node.props.testID === 'workspace-attention',
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('renders the same picker as an in-column workspace list', () => {
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        React.createElement(CommunityRail, {
+          communities: [
+            { communityId: 'community-1', name: 'Night Shift' },
+            { communityId: 'community-2', name: 'Morning Watch' },
+          ],
+          activeCommunityId: 'community-1',
+          onSelect: vi.fn(),
+          onAdd: vi.fn(),
+          onSettings: vi.fn(),
+          presentation: 'column',
+        }),
+      );
+    });
+
+    expect(renderer.root.findByProps({ testID: 'community-rail-community-2' })).toBeDefined();
+    expect(
+      renderer.root.findAllByType('Text' as any).some((node) => node.props.children === 'Morning Watch'),
+    ).toBe(true);
+    expect(
+      renderer.root.findAllByType('Text' as any).some((node) => node.props.children === 'ADD WORKSPACE'),
+    ).toBe(true);
+  });
+
   it('is hidden by default and toggles from the active Workspace avatar', () => {
     const renderer = renderShell();
     expect(renderer.root.findAllByProps({ testID: 'community-drawer-overlay' })).toHaveLength(0);

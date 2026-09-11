@@ -17,7 +17,7 @@ import { useHeaderHeight, useIsDesktop } from '@/utils/responsive';
 import { ROOM_LABEL, ROOMS_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { roomRowName, roomRowNeedsAttention, roomRowPreview } from '@/buzz/room-list-row';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
-import { CommunityRail } from '@/components/buzz/CommunityRail';
+import { CommunityRail, CommunitySwitcherTrigger } from '@/components/buzz/CommunityRail';
 
 function selectedRoomId(pathname: string): string | null {
   const prefix = '/beeline/chat/';
@@ -32,13 +32,17 @@ function selectedRoomId(pathname: string): string | null {
 const stylesheet = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
-    flexDirection: 'row',
     borderRightWidth: StyleSheet.hairlineWidth,
     borderRightColor: theme.colors.divider,
     backgroundColor: theme.colors.groupped.background,
   },
-  containerCompact: { flexDirection: 'column' },
-  roomPane: { flex: 1, minWidth: 0 },
+  desktopWorkspaceHeader: {
+    paddingHorizontal: 12,
+    paddingBottom: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.colors.divider,
+  },
+  workspaceSwitcher: { flex: 1 },
   workspaceBlock: {
     paddingHorizontal: 12,
     paddingBottom: 10,
@@ -134,6 +138,8 @@ export const SidebarView = React.memo(function SidebarView() {
   const pathname = usePathname();
   const activeRoomId = selectedRoomId(pathname);
   const searchRef = React.useRef<TextInput>(null);
+  const switcherTriggerRef = React.useRef<any>(null);
+  const switcherPanelRef = React.useRef<any>(null);
   const workspaceIdRef = React.useRef<string | null>(null);
   const [client, setClient] = React.useState<RoomViewClient | null>(null);
   const [identityPubkey, setIdentityPubkey] = React.useState<string | null>(null);
@@ -143,6 +149,10 @@ export const SidebarView = React.memo(function SidebarView() {
   const [query, setQuery] = React.useState('');
   const [navigationError, setNavigationError] = React.useState<string | null>(null);
   const [refreshNonce, setRefreshNonce] = React.useState(0);
+  const [workspaceSwitcherOpen, setWorkspaceSwitcherOpen] = React.useState(false);
+  const [attentionWorkspaceIds, setAttentionWorkspaceIds] = React.useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
 
   React.useEffect(() => {
     let cancelled = false;
@@ -201,6 +211,28 @@ export const SidebarView = React.memo(function SidebarView() {
     });
   }, [identityPubkey, workspaces]);
 
+  React.useEffect(() => {
+    if (!client || !workspaces.length) return;
+    let cancelled = false;
+    void Promise.all(
+      workspaces.map(async (workspace) => {
+        const chats = await client.chats(workspace.id).catch(() => null);
+        return [
+          workspace.id,
+          Boolean(chats?.chats.some((item) => roomRowNeedsAttention(item))),
+        ] as const;
+      }),
+    ).then((results) => {
+      if (cancelled) return;
+      setAttentionWorkspaceIds(
+        new Set(results.filter(([, attention]) => attention).map(([id]) => id)),
+      );
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [client, pathname, workspaces]);
+
   const filteredChats = React.useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
     if (!needle) return surface?.chats ?? [];
@@ -208,6 +240,10 @@ export const SidebarView = React.memo(function SidebarView() {
       `${item.room.name} ${item.latestMessage?.text ?? ''}`.toLocaleLowerCase().includes(needle),
     );
   }, [query, surface?.chats]);
+  const activeWorkspace = workspaces.find((workspace) => workspace.id === workspaceId) ?? null;
+  const otherWorkspaceNeedsAttention = [...attentionWorkspaceIds].some(
+    (id) => id !== workspaceId,
+  );
   const openRoom = React.useCallback(
     (roomId: string) => router.push(`/beeline/chat/${encodeURIComponent(roomId)}` as Href),
     [router],
@@ -216,6 +252,11 @@ export const SidebarView = React.memo(function SidebarView() {
   React.useEffect(() => {
     if (typeof window === 'undefined') return;
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && workspaceSwitcherOpen) {
+        event.preventDefault();
+        setWorkspaceSwitcherOpen(false);
+        return;
+      }
       const target = event.target as HTMLElement | null;
       const editing = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA';
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
@@ -236,10 +277,23 @@ export const SidebarView = React.memo(function SidebarView() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activeRoomId, filteredChats, openRoom]);
+  }, [activeRoomId, filteredChats, openRoom, workspaceSwitcherOpen]);
+
+  React.useEffect(() => {
+    if (!isDesktop || !workspaceSwitcherOpen || typeof document === 'undefined') return;
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (switcherTriggerRef.current?.contains?.(target)) return;
+      if (switcherPanelRef.current?.contains?.(target)) return;
+      setWorkspaceSwitcherOpen(false);
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    return () => document.removeEventListener('mousedown', onPointerDown);
+  }, [isDesktop, workspaceSwitcherOpen]);
 
   const selectWorkspace = React.useCallback(
     (nextId: string) => {
+      setWorkspaceSwitcherOpen(false);
       workspaceIdRef.current = nextId;
       setWorkspaceId(nextId);
       setSurface(null);
@@ -262,56 +316,71 @@ export const SidebarView = React.memo(function SidebarView() {
 
   return (
     <View
-      style={[
-        styles.container,
-        !isDesktop && styles.containerCompact,
-        { paddingTop: safeArea.top + headerHeight },
-      ]}
+      style={[styles.container, { paddingTop: safeArea.top + headerHeight }]}
       testID="desktop-navigation-pane"
     >
       {isDesktop ? (
-        <CommunityRail
-          communities={workspaces.map(workspaceRailItem)}
-          activeCommunityId={workspaceId}
-          onSelect={(nextId) => {
-            if (nextId) selectWorkspace(nextId);
-          }}
-          onAdd={() => router.push('/beeline/community' as Href)}
-          onSettings={() => router.push('/beeline/settings' as Href)}
-          viewerPubkey={identityPubkey ?? undefined}
-        />
+        <View ref={switcherTriggerRef} style={styles.desktopWorkspaceHeader}>
+          <CommunitySwitcherTrigger
+            community={activeWorkspace ? workspaceRailItem(activeWorkspace) : null}
+            expanded={workspaceSwitcherOpen}
+            onPress={() => setWorkspaceSwitcherOpen((open) => !open)}
+            attention={otherWorkspaceNeedsAttention}
+          />
+        </View>
       ) : (
-      <View style={styles.workspaceBlock}>
-        <Text style={styles.eyebrow}>{WORKSPACE_LABEL.toUpperCase()}</Text>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.workspaceRow}
-        >
-          {workspaces.map((workspace) => {
-            const selected = workspace.id === workspaceId;
-            return (
-              <Pressable
-                key={workspace.id}
-                accessibilityRole="button"
-                accessibilityState={{ selected }}
-                onPress={() => selectWorkspace(workspace.id)}
-                style={[styles.workspaceButton, selected && styles.workspaceSelected]}
-                testID={`desktop-workspace-${workspace.id}`}
-              >
-                <Text
-                  numberOfLines={1}
-                  style={[styles.workspaceText, selected && styles.workspaceTextSelected]}
+        <View style={styles.workspaceBlock}>
+          <Text style={styles.eyebrow}>{WORKSPACE_LABEL.toUpperCase()}</Text>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.workspaceRow}
+          >
+            {workspaces.map((workspace) => {
+              const selected = workspace.id === workspaceId;
+              return (
+                <Pressable
+                  key={workspace.id}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  onPress={() => selectWorkspace(workspace.id)}
+                  style={[styles.workspaceButton, selected && styles.workspaceSelected]}
+                  testID={`desktop-workspace-${workspace.id}`}
                 >
-                  {workspace.name}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-      </View>
+                  <Text
+                    numberOfLines={1}
+                    style={[styles.workspaceText, selected && styles.workspaceTextSelected]}
+                  >
+                    {workspace.name}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </View>
       )}
-      <View style={styles.roomPane}>
+      {isDesktop && workspaceSwitcherOpen ? (
+        <View ref={switcherPanelRef} style={styles.workspaceSwitcher}>
+          <CommunityRail
+            communities={workspaces.map(workspaceRailItem)}
+            activeCommunityId={workspaceId}
+            onSelect={(nextId) => {
+              if (nextId) selectWorkspace(nextId);
+            }}
+            onAdd={() => {
+              setWorkspaceSwitcherOpen(false);
+              router.push('/beeline/community' as Href);
+            }}
+            onSettings={() => {
+              setWorkspaceSwitcherOpen(false);
+              router.push('/beeline/settings' as Href);
+            }}
+            viewerPubkey={identityPubkey ?? undefined}
+            presentation="column"
+          />
+        </View>
+      ) : (
+        <>
       <View style={styles.searchWrap}>
         <Ionicons name="search" size={14} color={stylesheet.roomTime.color} />
         <TextInput
@@ -401,17 +470,18 @@ export const SidebarView = React.memo(function SidebarView() {
           })
         )}
       </ScrollView>
-      </View>
       {!isDesktop && (
-      <Pressable
-        accessibilityLabel="Open Beeline settings"
-        accessibilityRole="button"
-        onPress={() => router.push('/beeline/settings' as Href)}
-        style={styles.settingsRow}
-      >
-        <Ionicons name="settings-outline" size={18} color={stylesheet.settingsText.color} />
-        <Text style={styles.settingsText}>SETTINGS</Text>
-      </Pressable>
+        <Pressable
+          accessibilityLabel="Open Beeline settings"
+          accessibilityRole="button"
+          onPress={() => router.push('/beeline/settings' as Href)}
+          style={styles.settingsRow}
+        >
+          <Ionicons name="settings-outline" size={18} color={stylesheet.settingsText.color} />
+          <Text style={styles.settingsText}>SETTINGS</Text>
+        </Pressable>
+      )}
+        </>
       )}
     </View>
   );

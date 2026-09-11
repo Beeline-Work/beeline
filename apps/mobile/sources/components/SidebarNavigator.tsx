@@ -26,7 +26,6 @@ import {
   usesPersistentDesktopFrame,
 } from './desktop-shell-policy';
 import { isDesktopPlatform } from '@/utils/platform';
-import { COMMUNITY_RAIL_WIDTH } from '@/components/buzz/CommunityRail';
 import {
   clampDesktopPaneWidth,
   DESKTOP_NAV_DEFAULT_WIDTH,
@@ -81,10 +80,8 @@ export const SidebarNavigator = React.memo(() => {
     if (!desktopPlatform) return;
     void loadDesktopPaneWidth('navigation').then(setStoredDrawerWidth);
   }, [desktopPlatform]);
-  const railWidth = isDesktop ? COMMUNITY_RAIL_WIDTH : 0;
   const fullDrawerWidth = isDesktopLayout
-    ? clampDesktopPaneWidth('navigation', Math.min(storedDrawerWidth, windowWidth - 440 - railWidth)) +
-      railWidth
+    ? clampDesktopPaneWidth('navigation', Math.min(storedDrawerWidth, windowWidth - 440))
     : DESKTOP_NAV_DEFAULT_WIDTH;
   const drawerWidth = showSidebar ? fullDrawerWidth : 0;
   const resizePan = React.useMemo(
@@ -93,7 +90,7 @@ export const SidebarNavigator = React.memo(() => {
         onStartShouldSetPanResponder: () => desktopPlatform && showSidebar,
         onMoveShouldSetPanResponder: (_, gesture) => desktopPlatform && Math.abs(gesture.dx) > 2,
         onPanResponderGrant: () => {
-          dragStartWidth.current = fullDrawerWidth - railWidth;
+          dragStartWidth.current = fullDrawerWidth;
         },
         onPanResponderMove: (_, gesture) =>
           setStoredDrawerWidth(
@@ -105,7 +102,7 @@ export const SidebarNavigator = React.memo(() => {
           void saveDesktopPaneWidth('navigation', width);
         },
       }),
-    [desktopPlatform, fullDrawerWidth, railWidth, showSidebar],
+    [desktopPlatform, fullDrawerWidth, showSidebar],
   );
 
   const drawerNavigationOptions = React.useMemo(() => {

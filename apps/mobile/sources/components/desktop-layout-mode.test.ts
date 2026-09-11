@@ -6,14 +6,17 @@ function source(relativePath: string): string {
 }
 
 describe('desktop layout mode', () => {
-  it('gives the navigation pane a workspace rail and one Room list', () => {
+  it('swaps one Room list with the mobile workspace picker in the same column', () => {
     const sidebar = source('components/SidebarView.tsx');
     const channels = source('app/(app)/beeline/channels.tsx');
 
+    expect(sidebar).toContain('<CommunitySwitcherTrigger');
     expect(sidebar).toContain('<CommunityRail');
     expect(sidebar).toContain('communities={workspaces.map(workspaceRailItem)}');
-    expect(sidebar).toContain('isDesktop ? (');
-    expect(sidebar).toContain('!isDesktop && styles.containerCompact');
+    expect(sidebar).toContain('presentation="column"');
+    expect(sidebar).toContain("event.key === 'Escape'");
+    expect(sidebar).toContain("document.addEventListener('mousedown', onPointerDown)");
+    expect(sidebar).toContain('attention={otherWorkspaceNeedsAttention}');
     expect(channels).toContain('isDesktop ? (');
     expect(channels).toContain('testID="desktop-room-selection-empty"');
     expect(channels).toContain('!isDesktop && activeCommunityId');
@@ -25,7 +28,7 @@ describe('desktop layout mode', () => {
 
     expect(navigator).toContain('const isDesktop = useIsDesktop();');
     expect(navigator).toContain('{!isDesktop && (');
-    expect(navigator).toContain('COMMUNITY_RAIL_WIDTH');
+    expect(navigator).not.toContain('COMMUNITY_RAIL_WIDTH');
   });
 
   it('reveals existing message actions on hover or focus without changing compact web', () => {
@@ -44,8 +47,11 @@ describe('desktop layout mode', () => {
 
   it('keeps decorative compose glyph props out of the browser DOM', () => {
     const composeMenu = source('components/buzz/RoomDeckComposeMenu.tsx');
+    const identityMark = source('components/buzz/IdentityMark.tsx');
 
     expect(composeMenu).not.toContain('accessibilityElementsHidden');
-    expect(composeMenu).toContain('accessible={false}');
+    expect(composeMenu).toContain('aria-hidden');
+    expect(identityMark).not.toContain('origin="50, 50"');
+    expect(identityMark).toContain('transform={`rotate(${rotation * 90} 50 50)`}');
   });
 });

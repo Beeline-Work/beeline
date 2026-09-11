@@ -16,8 +16,7 @@ import { WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { Typography } from '@/constants/Typography';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 
-export const COMMUNITY_RAIL_WIDTH = 72;
-const DRAWER_WIDTH = COMMUNITY_RAIL_WIDTH;
+const DRAWER_WIDTH = 72;
 const DRAWER_DURATION_MS = 180;
 
 export type CommunityRailItem = {
@@ -39,6 +38,7 @@ type CommunityRailProps = {
   viewerPubkey?: string;
   viewerAvatarUrl?: string;
   viewerFace?: string;
+  presentation?: 'rail' | 'column';
 };
 
 type RailButtonProps = {
@@ -50,6 +50,7 @@ type RailButtonProps = {
   exitArmed?: boolean;
   onExitPress?: () => void;
   testID?: string;
+  presentation?: 'rail' | 'column';
 };
 
 /**
@@ -68,9 +69,11 @@ function RailButton({
   exitArmed = false,
   onExitPress,
   testID,
+  presentation = 'rail',
 }: RailButtonProps) {
+  const column = presentation === 'column';
   return (
-    <View style={styles.railButtonSlot}>
+    <View style={[styles.railButtonSlot, column && styles.columnButtonSlot]}>
       {active && <View style={styles.selectionBar} />}
       <TouchableOpacity
         accessibilityRole="button"
@@ -79,7 +82,11 @@ function RailButton({
         testID={testID}
         onPress={onPress}
         onLongPress={onLongPress}
-        style={[styles.railButton, !active && styles.railButtonIdle]}
+        style={[
+          styles.railButton,
+          column && styles.columnButton,
+          !active && styles.railButtonIdle,
+        ]}
       >
         {children}
       </TouchableOpacity>
@@ -105,6 +112,7 @@ type RailCommandProps = {
   glyph?: string;
   children?: React.ReactNode;
   testID?: string;
+  presentation?: 'rail' | 'column';
 };
 
 /**
@@ -119,13 +127,15 @@ function RailCommand({
   glyph,
   children,
   testID,
+  presentation = 'rail',
 }: RailCommandProps) {
+  const column = presentation === 'column';
   return (
     <TouchableOpacity
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
       onPress={onPress}
-      style={styles.railCommand}
+      style={[styles.railCommand, column && styles.columnCommand]}
       testID={testID}
     >
       {glyph ? <Text style={styles.railCommandGlyph}>{glyph}</Text> : children}
@@ -146,8 +156,10 @@ export function CommunityRail({
   viewerPubkey,
   viewerAvatarUrl,
   viewerFace,
+  presentation = 'rail',
 }: CommunityRailProps) {
   const insets = useSafeAreaInsets();
+  const column = presentation === 'column';
   // Long-press arms ONE tile's exit affordance; any other tap dismisses it.
   const [exitArmedId, setExitArmedId] = useState<string | null>(null);
   const activeCommunity =
@@ -160,11 +172,18 @@ export function CommunityRail({
     // slides over, held apart by one hairline edge.
     <View
       accessibilityLabel={`${WORKSPACE_LABEL} switcher`}
-      style={[styles.rail, { paddingTop: Math.max(insets.top, 10) }]}
+      style={[
+        styles.rail,
+        column && styles.columnPicker,
+        { paddingTop: column ? 0 : Math.max(insets.top, 10) },
+      ]}
     >
       <ScrollView
         style={styles.communityScroll}
-        contentContainerStyle={styles.communityScrollContent}
+        contentContainerStyle={[
+          styles.communityScrollContent,
+          column && styles.columnScrollContent,
+        ]}
         showsVerticalScrollIndicator={false}
       >
         {communities.map((community) => {
@@ -197,16 +216,18 @@ export function CommunityRail({
                 onLeaveWorkspace?.(community.communityId);
               }}
               testID={`community-rail-${community.communityId}`}
+              presentation={presentation}
             >
               <IdentityMark
                 kind="workspace"
                 seed={community?.communityId ?? 'workspace-loading'}
                 avatarUrl={community?.avatar}
                 name={community?.name}
-                size={40}
+                size={column ? 34 : 40}
                 selected={active}
                 testID={`workspace-avatar-${community.communityId}`}
               />
+              {column && <Text style={styles.columnWorkspaceName}>{community.name}</Text>}
             </RailButton>
           );
         })}
@@ -218,9 +239,10 @@ export function CommunityRail({
       <RailCommand
         accessibilityLabel={`Create or join a ${WORKSPACE_LABEL}`}
         glyph="＋"
-        label="ADD"
+        label={column ? `ADD ${WORKSPACE_LABEL.toUpperCase()}` : 'ADD'}
         onPress={onAdd}
         testID="community-rail-add"
+        presentation={presentation}
       />
       {showsWorkspaceSettings && activeCommunity && (
         <RailCommand
@@ -229,6 +251,7 @@ export function CommunityRail({
           label="WORKSPACE"
           onPress={() => onWorkspaceSettings?.(activeCommunity.communityId)}
           testID={`workspace-settings-${activeCommunity.communityId}`}
+          presentation={presentation}
         />
       )}
       <View style={styles.railDivider} />
@@ -238,6 +261,7 @@ export function CommunityRail({
         label="YOU"
         onPress={onSettings}
         testID="community-rail-settings"
+        presentation={presentation}
       >
         {viewerPubkey ? (
           <IdentityMark
@@ -266,6 +290,12 @@ type CommunityDrawerTriggerProps = {
   community?: CommunityRailItem | null;
 };
 
+type CommunitySwitcherTriggerProps = CommunityDrawerTriggerProps & {
+  expanded: boolean;
+  onPress: () => void;
+  attention?: boolean;
+};
+
 /**
  * The Workspace identity *is* the switcher: one press target holding the mark,
  * the name, and a disclosure caret. Two adjacent targets doing the same thing
@@ -277,22 +307,40 @@ export function CommunityDrawerTrigger({ community }: CommunityDrawerTriggerProp
     throw new Error('CommunityDrawerTrigger must be rendered inside the Workspace shell.');
   }
   return (
+    <CommunitySwitcherTrigger
+      community={community}
+      expanded={drawer.drawerOpen}
+      onPress={drawer.openDrawer}
+    />
+  );
+}
+
+export function CommunitySwitcherTrigger({
+  community,
+  expanded,
+  onPress,
+  attention = false,
+}: CommunitySwitcherTriggerProps) {
+  return (
     <TouchableOpacity
       accessibilityLabel={`${community?.name ?? WORKSPACE_LABEL} — switch ${WORKSPACE_LABEL}`}
       accessibilityRole="button"
-      accessibilityState={{ expanded: drawer.drawerOpen }}
-      onPress={drawer.openDrawer}
+      accessibilityState={{ expanded }}
+      onPress={onPress}
       style={styles.drawerTrigger}
       testID="workspace-avatar-trigger"
     >
-      <IdentityMark
-        kind="workspace"
-        seed={community?.communityId ?? 'workspace-loading'}
-        avatarUrl={community?.avatar}
-        name={community?.name}
-        size={26}
-        testID="workspace-avatar-header"
-      />
+      <View style={styles.drawerTriggerMark}>
+        <IdentityMark
+          kind="workspace"
+          seed={community?.communityId ?? 'workspace-loading'}
+          avatarUrl={community?.avatar}
+          name={community?.name}
+          size={26}
+          testID="workspace-avatar-header"
+        />
+        {attention && <View style={styles.workspaceAttentionMark} testID="workspace-attention" />}
+      </View>
       <Text
         numberOfLines={1}
         style={styles.drawerTriggerName}
@@ -452,6 +500,11 @@ const styles = StyleSheet.create((theme) => {
       borderRightWidth: StyleSheet.hairlineWidth,
       borderRightColor: groknight.border,
     },
+    columnPicker: {
+      width: '100%',
+      alignItems: 'stretch',
+      borderRightWidth: 0,
+    },
     communityScroll: {
       flex: 1,
       width: '100%',
@@ -460,17 +513,33 @@ const styles = StyleSheet.create((theme) => {
       paddingVertical: 4,
       alignItems: 'center',
     },
+    columnScrollContent: { alignItems: 'stretch' },
     railButtonSlot: {
       width: DRAWER_WIDTH,
       height: 58,
       alignItems: 'center',
       justifyContent: 'center',
     },
+    columnButtonSlot: { width: '100%', alignItems: 'stretch' },
     railButton: {
       width: 48,
       height: 48,
       alignItems: 'center',
       justifyContent: 'center',
+    },
+    columnButton: {
+      width: '100%',
+      paddingHorizontal: 16,
+      flexDirection: 'row',
+      justifyContent: 'flex-start',
+      gap: 12,
+    },
+    columnWorkspaceName: {
+      ...Typography.default('semiBold'),
+      flex: 1,
+      color: groknight.textPrimary,
+      fontSize: 17,
+      lineHeight: 22,
     },
     /* Tone, not a box: an unselected Workspace mark sits one step back from the
      * one you are in. The rail is a quiet column you glance at, not a row of
@@ -519,6 +588,14 @@ const styles = StyleSheet.create((theme) => {
       justifyContent: 'center',
       gap: 3,
     },
+    columnCommand: {
+      width: '100%',
+      minHeight: 48,
+      paddingHorizontal: 16,
+      flexDirection: 'row',
+      justifyContent: 'flex-start',
+      gap: 12,
+    },
     /* A rail command is named, so its glyph does not also have to shout: the
      * mono micro-label under it carries the meaning and the glyph sits on the
      * same quiet tier as the rest of the chrome. */
@@ -561,6 +638,15 @@ const styles = StyleSheet.create((theme) => {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 8,
+    },
+    drawerTriggerMark: { position: 'relative' },
+    workspaceAttentionMark: {
+      position: 'absolute',
+      right: 0,
+      bottom: 0,
+      width: 7,
+      height: 7,
+      backgroundColor: groknight.selectedBorder,
     },
     drawerTriggerName: {
       ...Typography.default('semiBold'),

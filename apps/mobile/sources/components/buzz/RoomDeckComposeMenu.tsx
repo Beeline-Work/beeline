@@ -89,7 +89,7 @@ export function RoomDeckComposeMenu({
       >
         <Animated.View style={[styles.fabGlyph, glyphStyle]}>
           <Svg
-            accessible={false}
+            aria-hidden
             focusable={false}
             height={FAB_GLYPH_SIZE}
             viewBox="0 0 24 24"
@@ -158,7 +158,7 @@ function ComposeGlyph({ action }: { action: RoomDeckComposeAction }) {
 
   return (
     <Svg
-      accessible={false}
+      aria-hidden
       focusable={false}
       height={GLYPH_SIZE}
       testID={`room-deck-compose-glyph-${action}`}

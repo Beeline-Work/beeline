@@ -3,13 +3,12 @@ import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { ChannelMember } from '@beeline/buzz-client';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
-import { fallbackMemberHandle } from '@/buzz/member-display';
 import { normalizedRoomRole } from '@/buzz/room-management';
 import type { AgentPresentation } from '@/buzz/room-view-presentation';
 import { MEMBERS_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { Typography } from '@/constants/Typography';
 import { HullFloatingSurface, HullModal } from './HullDialog';
-import { IdentityMark } from './IdentityMark';
+import { MemberRosterRow } from './MemberRosterRow';
 
 export type RoomRosterParticipant = {
   pubkey: string;
@@ -19,6 +18,7 @@ export type RoomRosterParticipant = {
   agent?: AgentPresentation;
   /** Agents only: paint-ready metadata from the Workspace roster. */
   model?: string;
+  /** The owner's raw handle; the shared subtitle formatter owns the "by @" copy. */
   ownerHandle?: string;
   /** People only: the chosen face on record. An agent's assigned face rides
    *  on `agent` and is read through `resolveAgentDisplayIdentity`. */
@@ -166,10 +166,7 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
                     : participant.pubkey === userPubkey
                       ? 'You'
                       : participant.name;
-                  const handle =
-                    display?.handle ??
-                    participant.handle ??
-                    fallbackMemberHandle(participant.pubkey);
+                  const handle = display?.handle ?? participant.handle;
                   const targetRole = normalizedRoomRole(memberByPubkey.get(participant.pubkey));
                   const canRemove =
                     canManage &&
@@ -183,59 +180,48 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
                   // The ring means working, never merely present (C77).
                   const agentWorking =
                     participant.kind === 'agent' && Boolean(workingByPubkey[participant.pubkey]);
+                  const trailing = canRemove ? (
+                    <Text accessibilityElementsHidden style={styles.chevron}>
+                      {open ? '⌄' : '›'}
+                    </Text>
+                  ) : undefined;
                   return (
                     <View key={participant.pubkey}>
-                      <TouchableOpacity
-                        accessibilityLabel={`@${handle}, ${participant.kind}${
-                          participant.kind === 'agent'
-                            ? agentOnline
-                              ? ', online'
-                              : ', offline'
-                            : ''
-                        }, at ${handle}`}
-                        disabled={!canRemove}
-                        onPress={() => setOpenPubkey(open ? null : participant.pubkey)}
-                        style={styles.rosterRow}
-                        testID={`room-roster-${participant.kind}-${participant.pubkey}`}
-                      >
-                        {display ? (
-                          <IdentityMark
-                            kind="agent"
-                            seed={display.avatarSeed ?? participant.pubkey}
-                            avatarUrl={display.avatarUrl}
-                            face={display.face}
-                            name={display.name}
-                            size={38}
-                            alive={agentWorking}
-                          />
-                        ) : (
-                          <IdentityMark
-                            kind="human"
-                            seed={participant.pubkey}
-                            avatarUrl={personProfileByPubkey.get(participant.pubkey)?.avatar}
-                            face={participant.face}
-                            name={displayName}
-                            size={38}
-                          />
-                        )}
-                        <View style={styles.rosterIdentity}>
-                          <Text numberOfLines={1} style={styles.rosterName}>
-                            @{handle}
-                          </Text>
-                          <Text numberOfLines={1} style={styles.rosterMeta}>
-                            {participant.kind === 'agent'
-                              ? [participant.model ?? '—', participant.ownerHandle]
-                                  .filter(Boolean)
-                                  .join(' · ')
-                              : (targetRole ?? 'member')}
-                          </Text>
-                        </View>
-                        {canRemove && (
-                          <Text accessibilityElementsHidden style={styles.chevron}>
-                            {open ? '⌄' : '›'}
-                          </Text>
-                        )}
-                      </TouchableOpacity>
+                      {participant.kind === 'agent' ? (
+                        <MemberRosterRow
+                          alive={agentWorking}
+                          avatarUrl={display?.avatarUrl}
+                          disabled={!canRemove}
+                          divider="top"
+                          face={display?.face}
+                          handle={handle}
+                          kind="agent"
+                          model={participant.model}
+                          name={display?.name ?? participant.name}
+                          online={agentOnline}
+                          onPress={() => setOpenPubkey(open ? null : participant.pubkey)}
+                          ownerHandle={participant.ownerHandle}
+                          pubkey={participant.pubkey}
+                          seed={display?.avatarSeed}
+                          testID={`room-roster-agent-${participant.pubkey}`}
+                          trailing={trailing}
+                        />
+                      ) : (
+                        <MemberRosterRow
+                          avatarUrl={personProfileByPubkey.get(participant.pubkey)?.avatar}
+                          disabled={!canRemove}
+                          divider="top"
+                          face={participant.face}
+                          handle={handle}
+                          kind="human"
+                          name={displayName}
+                          onPress={() => setOpenPubkey(open ? null : participant.pubkey)}
+                          pubkey={participant.pubkey}
+                          role={targetRole ?? 'member'}
+                          testID={`room-roster-person-${participant.pubkey}`}
+                          trailing={trailing}
+                        />
+                      )}
                       {open && canRemove && (
                         <View
                           style={styles.rosterDetail}
@@ -327,18 +313,6 @@ const styles = StyleSheet.create((theme) => {
     },
     rosterSectionAddGlyph: { ...Typography.default(), ...hull.type.hero, color: hull.accent },
     rosterSectionLabelSpaced: { marginTop: hull.layout.sectionGap },
-    rosterRow: {
-      minHeight: hull.layout.row,
-      paddingHorizontal: hull.space.sm,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: hull.space.md,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderColor: hull.border,
-    },
-    rosterIdentity: { flex: 1, minWidth: 0 },
-    rosterName: { ...Typography.default(), ...hull.type.body, color: hull.textPrimary },
-    rosterMeta: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
     chevron: { ...Typography.default(), ...hull.type.hero, color: hull.textMuted },
     rosterDetail: {
       paddingHorizontal: hull.space.sm,

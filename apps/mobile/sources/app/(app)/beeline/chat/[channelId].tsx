@@ -1030,7 +1030,7 @@ export default function BuzzChat() {
         return {
           ...participant,
           ...(workspaceAgent?.model ? { model: workspaceAgent.model } : {}),
-          ...(ownerHandle ? { ownerHandle: `by @${ownerHandle}` } : {}),
+          ...(ownerHandle ? { ownerHandle } : {}),
         };
       }),
     );

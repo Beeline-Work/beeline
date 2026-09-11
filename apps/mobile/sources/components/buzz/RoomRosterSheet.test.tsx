@@ -97,7 +97,7 @@ const rosterSections = {
       kind: 'agent' as const,
       agent: { pubkey: OX, displayName: 'Ox', face: 'octopus' },
       model: 'Sonnet',
-      ownerHandle: 'by @ana',
+      ownerHandle: 'ana',
     },
   ],
 };
@@ -162,29 +162,39 @@ describe('RoomRosterSheet', () => {
     expect(renderSpy).toHaveBeenCalledTimes(2);
   });
 
-  it('shows handles once with role-only human and model-plus-owner agent subtitles', () => {
-    const renderer = render(sheet());
-    expect(
-      renderer.root.findAllByProps({ testID: 'room-roster-people-head' }).at(-1)!.props.children,
-    ).toEqual(['People', ' ', 1]);
-    expect(
-      renderer.root.findAllByProps({ testID: 'room-roster-agents-head' }).at(-1)!.props.children,
-    ).toEqual(['Agents', ' ', 1]);
+  it.each([
+    ['Room', null],
+    ['corner', 'parent-room'],
+  ])(
+    'shows shared human-role and agent-model/owner rows inside a %s',
+    (_surface, parentChannelId) => {
+      const renderer = render(sheet({ parentChannelId }));
+      expect(
+        renderer.root.findAllByProps({ testID: 'room-roster-people-head' }).at(-1)!.props.children,
+      ).toEqual(['People', ' ', 1]);
+      expect(
+        renderer.root.findAllByProps({ testID: 'room-roster-agents-head' }).at(-1)!.props.children,
+      ).toEqual(['Agents', ' ', 1]);
 
-    const agentRow = renderer.root.findAllByProps({ testID: `room-roster-agent-${OX}` }).at(-1)!;
-    const texts = agentRow.findAllByType('Text' as any).map((node: any) => node.props.children);
-    expect(texts[0]).toEqual(['@', 'ox']);
-    expect(texts[1]).toBe('Sonnet · by @ana');
-    // The gold ring is the only state mark: no status square, no kind word.
-    expect(agentRow.findByType('IdentityMark' as any).props.alive).toBe(true);
-    expect(texts.flat().join(' ')).not.toMatch(/AGENT|PERSON|ONLINE/);
-    expect(agentRow.props.accessibilityLabel).toBe('@ox, agent, online, at ox');
+      const agentRow = renderer.root.findAllByProps({ testID: `room-roster-agent-${OX}` }).at(-1)!;
+      const texts = agentRow.findAllByType('Text' as any).map((node: any) => node.props.children);
+      expect(texts[0]).toBe('@ox');
+      expect(texts[1]).toBe('Sonnet · by @ana');
+      // The gold ring is the only state mark: no status square, no kind word.
+      expect(agentRow.findByType('IdentityMark' as any).props.alive).toBe(true);
+      expect(texts.flat().join(' ')).not.toMatch(/AGENT|PERSON|ONLINE/);
+      expect(agentRow.props.accessibilityLabel).toBe('@ox, agent, online, at ox');
 
-    const personRow = renderer.root.findAllByProps({ testID: `room-roster-person-${ANA}` }).at(-1)!;
-    const personTexts = personRow.findAllByType('Text' as any).map((node: any) => node.props.children);
-    expect(personTexts[0]).toEqual(['@', 'ana']);
-    expect(personTexts[1]).toBe('admin');
-  });
+      const personRow = renderer.root
+        .findAllByProps({ testID: `room-roster-person-${ANA}` })
+        .at(-1)!;
+      const personTexts = personRow
+        .findAllByType('Text' as any)
+        .map((node: any) => node.props.children);
+      expect(personTexts[0]).toBe('@ana');
+      expect(personTexts[1]).toBe('admin');
+    },
+  );
 
   it('draws each agent its assigned creature, not one hashed from the key', () => {
     // The server hands out the animal, the name and the soul together; a

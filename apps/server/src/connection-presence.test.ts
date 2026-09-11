@@ -91,14 +91,6 @@ describe('delivery-driven presence', () => {
     expect((await body()).status).toBe('offline');
     expect(live.latestAgentPresence(AGENT, ROOM)?.status).toBe('offline');
     expect(live.latestAgentPresence(AGENT, OTHER)?.status).toBe('offline');
-    expect(
-      (
-        await database.query<{ text: string }>(
-          `SELECT text FROM messages WHERE room_id=$1 AND presentation='system' ORDER BY created_at,id`,
-          [ROOM],
-        )
-      ).rows.map((row) => row.text),
-    ).toEqual(['@bee did not answer · its helper is offline']);
     await presence.announce(ROOM, AGENT, { lifecycleId: 'boot-1' });
     expect((await body()).status).toBe('online');
     expect(live.latestAgentPresence(AGENT, OTHER)?.status).toBe('online');

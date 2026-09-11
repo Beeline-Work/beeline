@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { type Href, usePathname, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet } from 'react-native-unistyles';
@@ -13,9 +13,11 @@ import {
   subscribeActiveCommunityId,
 } from '@/buzz/community-storage';
 import { compactRelativeTime } from '@/buzz/relative-time';
-import { useHeaderHeight } from '@/utils/responsive';
+import { useHeaderHeight, useIsDesktop } from '@/utils/responsive';
 import { ROOM_LABEL, ROOMS_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { roomRowName, roomRowNeedsAttention, roomRowPreview } from '@/buzz/room-list-row';
+import { workspaceRailItem } from '@/buzz/room-view-presentation';
+import { CommunityRail } from '@/components/buzz/CommunityRail';
 
 function selectedRoomId(pathname: string): string | null {
   const prefix = '/beeline/chat/';
@@ -30,10 +32,13 @@ function selectedRoomId(pathname: string): string | null {
 const stylesheet = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
+    flexDirection: 'row',
     borderRightWidth: StyleSheet.hairlineWidth,
     borderRightColor: theme.colors.divider,
     backgroundColor: theme.colors.groupped.background,
   },
+  containerCompact: { flexDirection: 'column' },
+  roomPane: { flex: 1, minWidth: 0 },
   workspaceBlock: {
     paddingHorizontal: 12,
     paddingBottom: 10,
@@ -78,7 +83,7 @@ const stylesheet = StyleSheet.create((theme) => ({
   listContent: { paddingBottom: 8 },
   roomRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: 12,
     minHeight: 64,
     paddingHorizontal: 16,
@@ -86,9 +91,13 @@ const stylesheet = StyleSheet.create((theme) => ({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.colors.divider,
   },
+  roomRowCompact: { alignItems: 'center' },
   roomRowSelected: { backgroundColor: theme.colors.surfaceSelected },
-  roomStateSlot: { width: 7, height: 7 },
-  roomStateMark: { width: 7, height: 7, backgroundColor: theme.colors.textLink },
+  roomStateSlot: { width: 7, height: 7, marginTop: 7 },
+  roomStateSlotCompact: { marginTop: 0 },
+  roomStateMark: { width: 7, height: 7 },
+  roomStateNeedsYou: { backgroundColor: theme.colors.textLink },
+  roomStateWorking: { backgroundColor: theme.colors.textSecondary },
   roomCopy: { flex: 1, minWidth: 0 },
   roomTitleLine: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   roomTitle: { ...theme.buzz.type.bodyStrong, flex: 1, color: theme.colors.text },
@@ -120,6 +129,7 @@ export const SidebarView = React.memo(function SidebarView() {
   const styles = stylesheet;
   const safeArea = useSafeAreaInsets();
   const headerHeight = useHeaderHeight();
+  const isDesktop = useIsDesktop();
   const router = useRouter();
   const pathname = usePathname();
   const activeRoomId = selectedRoomId(pathname);
@@ -252,9 +262,25 @@ export const SidebarView = React.memo(function SidebarView() {
 
   return (
     <View
-      style={[styles.container, { paddingTop: safeArea.top + headerHeight }]}
+      style={[
+        styles.container,
+        !isDesktop && styles.containerCompact,
+        { paddingTop: safeArea.top + headerHeight },
+      ]}
       testID="desktop-navigation-pane"
     >
+      {isDesktop ? (
+        <CommunityRail
+          communities={workspaces.map(workspaceRailItem)}
+          activeCommunityId={workspaceId}
+          onSelect={(nextId) => {
+            if (nextId) selectWorkspace(nextId);
+          }}
+          onAdd={() => router.push('/beeline/community' as Href)}
+          onSettings={() => router.push('/beeline/settings' as Href)}
+          viewerPubkey={identityPubkey ?? undefined}
+        />
+      ) : (
       <View style={styles.workspaceBlock}>
         <Text style={styles.eyebrow}>{WORKSPACE_LABEL.toUpperCase()}</Text>
         <ScrollView
@@ -284,6 +310,8 @@ export const SidebarView = React.memo(function SidebarView() {
           })}
         </ScrollView>
       </View>
+      )}
+      <View style={styles.roomPane}>
       <View style={styles.searchWrap}>
         <Ionicons name="search" size={14} color={stylesheet.roomTime.color} />
         <TextInput
@@ -324,13 +352,27 @@ export const SidebarView = React.memo(function SidebarView() {
                 onPress={() => openRoom(item.room.id)}
                 style={({ pressed }) => [
                   styles.roomRow,
+                  !isDesktop && styles.roomRowCompact,
                   activeRoomId === item.room.id && styles.roomRowSelected,
                   pressed && styles.roomRowSelected,
                 ]}
                 testID={`desktop-room-${item.room.id}`}
               >
-                <View style={styles.roomStateSlot} accessibilityElementsHidden>
-                  {attention && <View style={styles.roomStateMark} />}
+                <View
+                  style={[styles.roomStateSlot, !isDesktop && styles.roomStateSlotCompact]}
+                  {...(Platform.OS === 'web'
+                    ? { 'aria-hidden': true }
+                    : { accessibilityElementsHidden: true })}
+                >
+                  {(attention || (isDesktop && item.agentState === 'working')) && (
+                    <View
+                      style={[
+                        styles.roomStateMark,
+                        attention ? styles.roomStateNeedsYou : styles.roomStateWorking,
+                      ]}
+                      testID={`desktop-room-state-${item.room.id}`}
+                    />
+                  )}
                 </View>
                 <View style={styles.roomCopy}>
                   <View style={styles.roomTitleLine}>
@@ -359,6 +401,8 @@ export const SidebarView = React.memo(function SidebarView() {
           })
         )}
       </ScrollView>
+      </View>
+      {!isDesktop && (
       <Pressable
         accessibilityLabel="Open Beeline settings"
         accessibilityRole="button"
@@ -368,6 +412,7 @@ export const SidebarView = React.memo(function SidebarView() {
         <Ionicons name="settings-outline" size={18} color={stylesheet.settingsText.color} />
         <Text style={styles.settingsText}>SETTINGS</Text>
       </Pressable>
+      )}
     </View>
   );
 });

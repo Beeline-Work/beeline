@@ -16,7 +16,8 @@ import { WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { Typography } from '@/constants/Typography';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 
-const DRAWER_WIDTH = 72;
+export const COMMUNITY_RAIL_WIDTH = 72;
+const DRAWER_WIDTH = COMMUNITY_RAIL_WIDTH;
 const DRAWER_DURATION_MS = 180;
 
 export type CommunityRailItem = {

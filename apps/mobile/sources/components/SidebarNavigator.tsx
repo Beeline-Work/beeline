@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Drawer } from 'expo-router/drawer';
-import { useIsTablet, useHeaderHeight } from '@/utils/responsive';
+import { useIsDesktop, useIsTablet, useHeaderHeight } from '@/utils/responsive';
 import { SidebarView } from './SidebarView';
 import { useWindowDimensions, View, Pressable, Platform, PanResponder } from 'react-native';
 import { useLocalSetting, useLocalSettingMutable } from '@/sync/storage';
@@ -26,6 +26,7 @@ import {
   usesPersistentDesktopFrame,
 } from './desktop-shell-policy';
 import { isDesktopPlatform } from '@/utils/platform';
+import { COMMUNITY_RAIL_WIDTH } from '@/components/buzz/CommunityRail';
 import {
   clampDesktopPaneWidth,
   DESKTOP_NAV_DEFAULT_WIDTH,
@@ -37,6 +38,7 @@ const TAURI_HEADER_CONTROL_LEFT = Math.ceil(92 / DEFAULT_APP_ZOOM);
 
 export const SidebarNavigator = React.memo(() => {
   const isTablet = useIsTablet();
+  const isDesktop = useIsDesktop();
   const inDesktopShell = isTauri();
   const desktopPlatform = isDesktopPlatform();
   const pathname = usePathname();
@@ -79,8 +81,10 @@ export const SidebarNavigator = React.memo(() => {
     if (!desktopPlatform) return;
     void loadDesktopPaneWidth('navigation').then(setStoredDrawerWidth);
   }, [desktopPlatform]);
+  const railWidth = isDesktop ? COMMUNITY_RAIL_WIDTH : 0;
   const fullDrawerWidth = isDesktopLayout
-    ? clampDesktopPaneWidth('navigation', Math.min(storedDrawerWidth, windowWidth - 440))
+    ? clampDesktopPaneWidth('navigation', Math.min(storedDrawerWidth, windowWidth - 440 - railWidth)) +
+      railWidth
     : DESKTOP_NAV_DEFAULT_WIDTH;
   const drawerWidth = showSidebar ? fullDrawerWidth : 0;
   const resizePan = React.useMemo(
@@ -89,7 +93,7 @@ export const SidebarNavigator = React.memo(() => {
         onStartShouldSetPanResponder: () => desktopPlatform && showSidebar,
         onMoveShouldSetPanResponder: (_, gesture) => desktopPlatform && Math.abs(gesture.dx) > 2,
         onPanResponderGrant: () => {
-          dragStartWidth.current = fullDrawerWidth;
+          dragStartWidth.current = fullDrawerWidth - railWidth;
         },
         onPanResponderMove: (_, gesture) =>
           setStoredDrawerWidth(
@@ -101,7 +105,7 @@ export const SidebarNavigator = React.memo(() => {
           void saveDesktopPaneWidth('navigation', width);
         },
       }),
-    [desktopPlatform, fullDrawerWidth, showSidebar],
+    [desktopPlatform, fullDrawerWidth, railWidth, showSidebar],
   );
 
   const drawerNavigationOptions = React.useMemo(() => {
@@ -184,6 +188,7 @@ const PersistentHeader = React.memo(() => {
   const router = useRouter();
   const [zenMode, setZenMode] = useLocalSettingMutable('zenMode');
   const inTauri = isTauri();
+  const isDesktop = useIsDesktop();
   const isMacTauri = inTauri && typeof navigator !== 'undefined' && /Mac/.test(navigator.platform);
 
   const routeHistory = useBrowserNavigationStore((s) => s.routeHistory);
@@ -234,11 +239,12 @@ const PersistentHeader = React.memo(() => {
       {...(inTauri ? { dataSet: { tauriDragRegion: 'true' } } : {})}
     >
       {/* Zen / Back / Forward buttons */}
-      <View
-        style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}
-        pointerEvents="auto"
-        {...(inTauri ? { dataSet: { tauriDragRegion: 'false' } } : {})}
-      >
+      {!isDesktop && (
+        <View
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}
+          pointerEvents="auto"
+          {...(inTauri ? { dataSet: { tauriDragRegion: 'false' } } : {})}
+        >
         <Pressable
           onPress={handleZenToggle}
           hitSlop={10}
@@ -286,7 +292,8 @@ const PersistentHeader = React.memo(() => {
             <Ionicons name="chevron-forward" size={20} color={theme.colors.header.tint} />
           </Pressable>
         )}
-      </View>
+        </View>
+      )}
     </View>
   );
 });

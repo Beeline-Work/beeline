@@ -126,6 +126,34 @@ describe('PhoneService agent connect pairing claim', () => {
     expect(memberships.rows).toEqual([{ room_id: null }, { room_id: ROOM }]);
   });
 
+  it('stores the reasoning effort the wizard chose, and none when it asked nothing', async () => {
+    const selectedEffort = async (): Promise<string | null> =>
+      (
+        await database.query<{ selected_effort: string | null }>(
+          `SELECT selected_effort FROM agents WHERE agent_id=$1`,
+          [AGENT],
+        )
+      ).rows[0]?.selected_effort ?? null;
+
+    await insertCode(new Date(Date.now() + 60_000));
+    await phone.claimAgentConnectPairing({
+      code: CODE,
+      agentPubkey: AGENT,
+      model: 'gpt-5.4',
+      effort: 'high',
+    });
+    expect(await selectedEffort()).toBe('high');
+
+    // Re-pairing the same key starts it over: a claim that asked no effort
+    // question leaves the agent on its harness's own, not the last pairing's.
+    await database.query(`DELETE FROM agent_pairing_codes WHERE code_hash=$1`, [
+      createHash('sha256').update(CODE).digest('hex'),
+    ]);
+    await insertCode(new Date(Date.now() + 60_000));
+    await phone.claimAgentConnectPairing({ code: CODE, agentPubkey: AGENT, model: 'gpt-5.4' });
+    expect(await selectedEffort()).toBeNull();
+  });
+
   it('returns a normally connected agent owner from server workspace and profile reads', async () => {
     await insertCode(new Date(Date.now() + 60_000));
     const claim = await phone.claimAgentConnectPairing({

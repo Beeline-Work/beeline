@@ -535,11 +535,9 @@ const styles = StyleSheet.create((theme) => {
       gap: 12,
     },
     columnWorkspaceName: {
-      ...Typography.default('semiBold'),
+      ...groknight.type.bodyStrong,
       flex: 1,
       color: groknight.textPrimary,
-      fontSize: 17,
-      lineHeight: 22,
     },
     /* Tone, not a box: an unselected Workspace mark sits one step back from the
      * one you are in. The rail is a quiet column you glance at, not a row of

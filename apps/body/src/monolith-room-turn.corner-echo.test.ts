@@ -162,6 +162,15 @@ describe('Room turn after open_corner', () => {
     expect(posted).toEqual([]);
   });
 
+  it('publishes the reply when the open_corner call failed: nothing else says why', async () => {
+    const { posted } = await runTurn('I could not open a corner: this Room has no repository.', [
+      { ...OPEN_CORNER, status: 'failed' },
+    ]);
+    expect(posted.map((message) => message.text)).toEqual([
+      'I could not open a corner: this Room has no repository.',
+    ]);
+  });
+
   it('keeps the announcement wording when no corner call happened in the turn', async () => {
     const { posted } = await runTurn('Opened corner earlier today; it is still working.', []);
     expect(posted.map((message) => message.text)).toEqual([

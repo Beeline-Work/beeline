@@ -453,11 +453,14 @@ describe('operator skills + MCP passthrough', () => {
     expect(isolatedText).not.toContain('enabled = true');
     // Native web search is enabled in the isolated codex home.
     expect(isolatedText).toContain('[features]\nstandalone_web_search = true');
-    // Claude Code gets its native WebSearch allowed through generated settings.
+    // Claude Code gets only its native web-read tools allowed through generated
+    // settings. Filesystem and command tools are not admitted here.
     const claudeSettings = JSON.parse(
       readFileSync(resolve(roomRoot, 'claude', 'settings.json'), 'utf8'),
     ) as { permissions: { allow: string[] } };
-    expect(claudeSettings.permissions.allow).toContain('WebSearch');
+    expect(claudeSettings.permissions.allow).toEqual(['WebSearch', 'WebFetch']);
+    expect(claudeSettings.permissions.allow).not.toContain('Read');
+    expect(claudeSettings.permissions.allow).not.toContain('Bash');
     expect(tomlChildTableNames(isolatedText, ['mcp_servers'])).toEqual(['project_tools']);
 
     // Writing through the session cannot reach the operator's real config.

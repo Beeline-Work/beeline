@@ -77,6 +77,15 @@ describe('top-level Room MCP permission policy', () => {
     expect(roomMcpPermissionDecision({ toolCall: { kind: 'other', title: 'WebSearch' } })).toBe(
       'reject',
     );
+    expect(
+      roomMcpPermissionDecision({
+        toolCall: {
+          kind: 'other',
+          title: 'WebFetch(https://example.com)',
+          rawInput: { url: 'https://example.com' },
+        },
+      }),
+    ).toBe('reject');
   });
 
   it('still refuses the host-brokered Trusty Squire surface', () => {

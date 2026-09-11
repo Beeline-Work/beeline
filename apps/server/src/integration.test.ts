@@ -834,6 +834,64 @@ describe('monolith integration', () => {
     expect((await operation('leaveWorkspace', { workspaceId })).status).toBe(403);
   });
 
+  it('closes Rooms and DMs per viewer without changing membership or history', async () => {
+    const aliceToken = await phoneToken('chat-close-alice');
+    const aliceId = createHash('sha256').update('github:chat-close-alice').digest('hex');
+    const workspaceId = 'c105ed00-c105-4ed0-8105-c105ed00c105';
+    await operation('createWorkspace', { workspaceId, name: 'Chat close' });
+    await operation('addWorkspaceMember', { workspaceId, memberId: aliceId, role: 'member' });
+    const room = (await (
+      await operation('createRoom', { workspaceId, name: 'Preserved Room' })
+    ).json()) as { id: string };
+    await operation('sendRoomMessage', { roomId: room.id, text: 'history stays' });
+
+    const chat = async (token: string | undefined, roomId: string) => {
+      const view = (await (
+        await request(`/v1/phone/workspaces/${workspaceId}/chats`, 'GET', undefined, token)
+      ).json()) as { chats: Array<{ room: { id: string }; closed?: boolean }> };
+      return view.chats.find((item) => item.room.id === roomId);
+    };
+
+    expect((await operation('closeChat', { roomId: room.id })).status).toBe(204);
+    expect(await chat(undefined, room.id)).toMatchObject({ closed: true });
+    expect((await chat(aliceToken, room.id))?.closed).toBeUndefined();
+    expect((await operation('reopenChat', { roomId: room.id })).status).toBe(204);
+    expect((await chat(undefined, room.id))?.closed).toBeUndefined();
+
+    expect((await operation('closeChat', { roomId: room.id }, aliceToken)).status).toBe(204);
+    expect(await chat(aliceToken, room.id)).toMatchObject({ closed: true });
+    await operation('sendRoomMessage', { roomId: room.id, text: 'incoming reopens' });
+    expect((await chat(aliceToken, room.id))?.closed).toBeUndefined();
+
+    const dm = (await (
+      await operation('resolveDirectMessage', { workspaceId, participantId: aliceId })
+    ).json()) as { id: string };
+    await operation('sendRoomMessage', { roomId: dm.id, text: 'dm history stays' });
+    await operation('closeChat', { roomId: dm.id });
+    expect(await chat(undefined, dm.id)).toMatchObject({ closed: true });
+    expect(
+      (
+        await operation('resolveDirectMessage', { workspaceId, participantId: aliceId })
+      ).status,
+    ).toBe(200);
+    expect((await chat(undefined, dm.id))?.closed).toBeUndefined();
+
+    await operation('closeChat', { roomId: dm.id });
+    await operation('sendRoomMessage', { roomId: dm.id, text: 'new dm' }, aliceToken);
+    expect((await chat(undefined, dm.id))?.closed).toBeUndefined();
+
+    const memberships = await database.query<{ identity_id: string }>(
+      `SELECT identity_id FROM memberships
+       WHERE room_id IN ($1,$2) AND removed_at IS NULL ORDER BY room_id,identity_id`,
+      [room.id, dm.id],
+    );
+    expect(memberships.rows).toHaveLength(4);
+    const preserved = (await (
+      await request(`/v1/phone/rooms/${room.id}`)
+    ).json()) as { messages: Array<{ text: string }> };
+    expect(preserved.messages.map((message) => message.text)).toContain('history stays');
+  });
+
   it('lets a Workspace manager remove a person from the Workspace and every live Room', async () => {
     const aliceToken = await phoneToken('alice');
     const aliceId = createHash('sha256').update('github:alice').digest('hex');
@@ -2166,7 +2224,7 @@ describe('monolith integration', () => {
     ).toEqual([]);
   });
 
-  it('projects a threaded human reply to its parent agent without inventing a mention', async () => {
+  it('does not route an untagged threaded human reply to its parent agent', async () => {
     await announceAgentLifecycle(database, new LiveHub(), ROOM, AGENT, {
       lifecycleId: 'routing-fixture',
     });
@@ -2210,10 +2268,10 @@ describe('monolith integration', () => {
           items: Array<{ id: string; replyToAuthorId?: string }>;
         }
       ).items,
-    ).toContainEqual(expect.objectContaining({ id: '5'.repeat(64), replyToAuthorId: AGENT }));
+    ).not.toContainEqual(expect.objectContaining({ id: '5'.repeat(64) }));
   });
 
-  it('notifies the direct parent agent even after a later agent answer', async () => {
+  it('does not notify an untagged direct parent agent', async () => {
     const peer = 'd'.repeat(64);
     const parentId = 'e'.repeat(64);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Peer')`, [peer]);
@@ -2241,12 +2299,7 @@ describe('monolith integration', () => {
       `SELECT author_id,text FROM messages WHERE room_id=$1 AND presentation='system'`,
       [ROOM],
     );
-    expect(notices.rows).toContainEqual(
-      expect.objectContaining({
-        author_id: AGENT,
-        text: expect.stringContaining('did not answer'),
-      }),
-    );
+    expect(notices.rows).toEqual([]);
   });
 
   it('notifies only an explicitly addressed agent on a direct reply', async () => {
@@ -2318,7 +2371,7 @@ describe('monolith integration', () => {
     expect(notices.rows).toEqual([]);
   });
 
-  it('accepts a direct reply from its parent agent after another agent replies', async () => {
+  it('routes a reply only to the explicitly tagged agent', async () => {
     const peer = 'c'.repeat(64);
     await database.query(
       `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Peer','peer')`,
@@ -2363,21 +2416,34 @@ describe('monolith integration', () => {
       },
       peerToken,
     );
-    const reply = 'b'.repeat(64);
+    const reply = '6'.repeat(64);
     await operation('sendRoomReply', {
       roomId: ROOM,
       messageId: reply,
       parentMessageId: parentId,
       text: 'Please continue the first answer.',
     });
+    expect(
+      (
+        await database.query<{ agent_id: string; reason: string }>(
+          `SELECT agent_id,reason FROM agent_commands WHERE source_message_id=$1`,
+          [reply],
+        )
+      ).rows,
+    ).toEqual([]);
 
-    const continued = await daemonOperation('postRoomMessage', {
-      roomId: ROOM,
-      requestId: reply,
-      triggerMessageId: reply,
-      text: 'Continuing the first answer.',
-    });
-    expect(continued.status).toBe(200);
+    const continued = await request(
+      '/v1/daemon/operations/postRoomMessage',
+      'POST',
+      {
+        roomId: ROOM,
+        requestId: reply,
+        triggerMessageId: reply,
+        text: 'Continuing the first answer.',
+      },
+      daemonToken,
+    );
+    expect(continued.status).toBe(403);
     const pileOn = await request(
       '/v1/daemon/operations/postRoomMessage',
       'POST',
@@ -2391,7 +2457,7 @@ describe('monolith integration', () => {
     );
     expect(pileOn.status).toBe(403);
 
-    const taggedReply = 'c'.repeat(64);
+    const taggedReply = '7'.repeat(64);
     const tagged = await operation('sendRoomReply', {
       roomId: ROOM,
       messageId: taggedReply,
@@ -2401,14 +2467,19 @@ describe('monolith integration', () => {
     expect(tagged.status).toBe(200);
     expect(
       (
-        await daemonOperation('postRoomMessage', {
-          roomId: ROOM,
-          requestId: taggedReply,
-          triggerMessageId: taggedReply,
-          text: 'The structurally addressed parent agent also answers.',
-        })
+        await request(
+          '/v1/daemon/operations/postRoomMessage',
+          'POST',
+          {
+            roomId: ROOM,
+            requestId: taggedReply,
+            triggerMessageId: taggedReply,
+            text: 'The structurally addressed parent agent must not answer.',
+          },
+          daemonToken,
+        )
       ).status,
-    ).toBe(200);
+    ).toBe(403);
     expect(
       (
         await daemonOperation(

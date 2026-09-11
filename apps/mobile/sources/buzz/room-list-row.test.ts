@@ -105,6 +105,20 @@ describe('Room list sections', () => {
       { kind: 'rooms', data: [chat('room-a', 1)] },
     ]);
   });
+
+  it('hides closed Rooms and DMs from the deck while retaining them in the source view', () => {
+    const closedRoom = { ...chat('closed-room', 3), closed: true };
+    const closedDm = { ...chat('closed-dm', 4, true), closed: true };
+    const openRoom = chat('open-room', 2);
+    const openDm = chat('open-dm', 1, true);
+    const source = [closedRoom, closedDm, openRoom, openDm];
+
+    expect(roomListSections(source).flatMap((section) => section.data)).toEqual([
+      openRoom,
+      openDm,
+    ]);
+    expect(source).toHaveLength(4);
+  });
 });
 
 describe('Room row presentation', () => {

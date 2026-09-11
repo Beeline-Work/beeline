@@ -321,6 +321,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS memberships_workspace_unique
 CREATE UNIQUE INDEX IF NOT EXISTS memberships_room_unique
   ON memberships(room_id, identity_id) WHERE room_id IS NOT NULL;
 
+-- Closing a chat is a per-person list preference. It never changes Room
+-- membership, message history, or the Room's shared archived state.
+CREATE TABLE IF NOT EXISTS chat_dismissals (
+  room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  dismissed_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (room_id, identity_id)
+);
+CREATE INDEX IF NOT EXISTS chat_dismissals_identity_idx
+  ON chat_dismissals(identity_id, dismissed_at DESC);
+
 CREATE TABLE IF NOT EXISTS agents (
   agent_id text PRIMARY KEY REFERENCES identities(id) ON DELETE CASCADE,
   owner_id text NOT NULL REFERENCES identities(id),

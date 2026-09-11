@@ -149,6 +149,21 @@ export default function BuzzChannels() {
 
   const swipeableRefs = useRef<Map<string, Swipeable | null>>(new Map());
 
+  const handleCloseChat = useCallback(async (item: ChatListItem) => {
+    swipeableRefs.current.get(item.room.id)?.close();
+    if (!transport) {
+      Modal.alert('Cannot close yet', 'Connection is still starting. Try again.');
+      return;
+    }
+    try {
+      await transport.closeChat(item.room.id);
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      chatScheduler.current?.force();
+    } catch (reason) {
+      setError(`Could not close chat: ${String(reason)}`);
+    }
+  }, [transport]);
+
   const handleLeaveRoom = useCallback(async (item: ChatListItem) => {
     swipeableRefs.current.get(item.room.id)?.close();
     if (!transport) {
@@ -766,7 +781,7 @@ export default function BuzzChannels() {
             );
             return (
               <View style={styles.roomCell}>
-                {canLeaveRooms && !item.directMessage && Platform.OS !== 'web' ? (
+                {!viewerIsAgent && Platform.OS !== 'web' ? (
                   <Swipeable
                     ref={(ref) => {
                       if (ref) swipeableRefs.current.set(item.room.id, ref);
@@ -775,20 +790,36 @@ export default function BuzzChannels() {
                     friction={1.35}
                     overshootRight={false}
                     renderRightActions={() => (
-                      <View style={styles.leaveTile}>
-                        <TouchableOpacity
-                          accessibilityLabel={`Leave ${title}`}
-                          accessibilityRole="button"
-                          hitSlop={LEAVE_TILE_HIT_SLOP}
-                          onPress={() => handleLeaveRoom(item)}
-                          style={styles.leaveTileButton}
-                          testID={`room-leave-action-${item.room.id}`}
-                        >
-                          <Text style={styles.leaveTileGlyph}>×</Text>
-                        </TouchableOpacity>
+                      <View style={styles.chatActions}>
+                        {canLeaveRooms && !item.directMessage && (
+                          <View style={styles.leaveTile}>
+                            <TouchableOpacity
+                              accessibilityLabel={`Leave ${title}`}
+                              accessibilityRole="button"
+                              hitSlop={LEAVE_TILE_HIT_SLOP}
+                              onPress={() => handleLeaveRoom(item)}
+                              style={styles.leaveTileButton}
+                              testID={`room-leave-action-${item.room.id}`}
+                            >
+                              <Text style={styles.leaveTileGlyph}>↪</Text>
+                            </TouchableOpacity>
+                          </View>
+                        )}
+                        <View style={styles.leaveTile}>
+                          <TouchableOpacity
+                            accessibilityLabel={`Close ${title}`}
+                            accessibilityRole="button"
+                            hitSlop={LEAVE_TILE_HIT_SLOP}
+                            onPress={() => handleCloseChat(item)}
+                            style={styles.leaveTileButton}
+                            testID={`chat-close-action-${item.room.id}`}
+                          >
+                            <Text style={styles.closeTileGlyph}>×</Text>
+                          </TouchableOpacity>
+                        </View>
                       </View>
                     )}
-                    testID={`room-leave-swipe-${item.room.id}`}
+                    testID={`chat-close-swipe-${item.room.id}`}
                   >
                     {row}
                   </Swipeable>
@@ -1098,6 +1129,9 @@ const styles = StyleSheet.create((theme) => {
       color: hull.steel,
       fontSize: 18,
     },
+    chatActions: {
+      flexDirection: 'row',
+    },
     leaveTile: {
       width: LEAVE_TILE_SIZE,
       height: ROW_HEIGHT,
@@ -1119,6 +1153,11 @@ const styles = StyleSheet.create((theme) => {
       ...Typography.default('semiBold'),
       ...hull.type.bodyStrong,
       color: hull.dialogDanger,
+    },
+    closeTileGlyph: {
+      ...Typography.default('semiBold'),
+      ...hull.type.bodyStrong,
+      color: hull.chrome,
     },
     composeOverlay: {
       position: 'absolute',

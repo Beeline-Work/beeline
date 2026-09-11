@@ -535,6 +535,7 @@ const styles = StyleSheet.create((theme) => {
       gap: 12,
     },
     columnWorkspaceName: {
+      ...Typography.ledger('semiBold'),
       ...groknight.type.bodyStrong,
       flex: 1,
       color: groknight.textPrimary,

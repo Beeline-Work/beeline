@@ -48,6 +48,7 @@ import { runRoomDeckComposeAction } from '@/buzz/room-deck-compose-actions';
 import { MEMBERS_LABEL, ROOM_LABEL, WORKSPACE_LABEL, ROOMS_LABEL } from '@/buzz/vocabulary';
 import { BuzzCommunityShell, CommunityDrawerTrigger } from '@/components/buzz/CommunityRail';
 import { DirectMessagePickerSheet } from '@/components/buzz/DirectMessagePickerSheet';
+import { ExitGlyph } from '@/components/buzz/ExitGlyph';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { NewRoomDialog } from '@/components/buzz/NewRoomDialog';
 import { MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
@@ -77,7 +78,6 @@ const ROW_COPY_GAP = 12;
  *  its `└` sits on the Room title's left margin and the tree reads as one
  *  stem under the name rather than a block floating off to its right. */
 const ROW_TEXT_INSET = ROW_PADDING_LEFT + ATTENTION_SQUARE + ROW_COPY_GAP;
-const LEAVE_TILE_SIZE = 28;
 const LEAVE_TILE_HIT_SLOP = { top: 18, bottom: 18, left: 8, right: 8 };
 
 function firstParam(value: string | string[] | undefined): string | undefined {
@@ -814,44 +814,44 @@ export default function BuzzChannels() {
                     renderRightActions={() => (
                       <View style={styles.chatActions}>
                         {!item.directMessage && canLeaveRooms && (
-                          <View style={styles.leaveTile}>
+                          <View style={styles.swipeAction}>
                             <TouchableOpacity
                               accessibilityLabel={`Leave ${title}`}
                               accessibilityRole="button"
                               hitSlop={LEAVE_TILE_HIT_SLOP}
                               onPress={() => handleLeaveRoom(item)}
-                              style={styles.leaveTileButton}
+                              style={styles.swipeActionButton}
                               testID={`room-leave-action-${item.room.id}`}
                             >
-                              <Text style={styles.closeTileGlyph}>×</Text>
+                              <ExitGlyph testID={`room-exit-glyph-${item.room.id}`} />
                             </TouchableOpacity>
                           </View>
                         )}
                         {!item.directMessage && canManageWorkspace && (
-                          <View style={styles.leaveTile}>
+                          <View style={styles.swipeAction}>
                             <TouchableOpacity
                               accessibilityLabel={`Cannot leave ${title}`}
                               accessibilityRole="button"
                               hitSlop={LEAVE_TILE_HIT_SLOP}
                               onPress={() => explainRoomLeaveConstraint(item)}
-                              style={styles.leaveTileButton}
+                              style={styles.swipeActionButton}
                               testID={`room-leave-constraint-${item.room.id}`}
                             >
-                              <Text style={styles.leaveTileGlyph}>!</Text>
+                              <ExitGlyph testID={`room-exit-glyph-${item.room.id}`} />
                             </TouchableOpacity>
                           </View>
                         )}
                         {item.directMessage && (
-                          <View style={styles.leaveTile}>
+                          <View style={styles.swipeAction}>
                             <TouchableOpacity
                               accessibilityLabel={`Close ${title}`}
                               accessibilityRole="button"
                               hitSlop={LEAVE_TILE_HIT_SLOP}
                               onPress={() => handleCloseChat(item)}
-                              style={styles.leaveTileButton}
+                              style={styles.swipeActionButton}
                               testID={`chat-close-action-${item.room.id}`}
                             >
-                              <Text style={styles.closeTileGlyph}>×</Text>
+                              <ExitGlyph testID={`dm-exit-glyph-${item.room.id}`} />
                             </TouchableOpacity>
                           </View>
                         )}
@@ -1190,32 +1190,18 @@ const styles = StyleSheet.create((theme) => {
     chatActions: {
       flexDirection: 'row',
     },
-    leaveTile: {
-      width: LEAVE_TILE_SIZE,
+    swipeAction: {
+      width: 26,
       height: ROW_HEIGHT,
       alignItems: 'center',
       justifyContent: 'center',
       marginRight: 8,
     },
-    leaveTileButton: {
-      width: LEAVE_TILE_SIZE,
-      height: LEAVE_TILE_SIZE,
+    swipeActionButton: {
+      width: 26,
+      height: 26,
       alignItems: 'center',
       justifyContent: 'center',
-      borderRadius: hull.radius,
-      backgroundColor: hull.bgRaised,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: hull.borderStrong,
-    },
-    leaveTileGlyph: {
-      ...Typography.default('semiBold'),
-      ...hull.type.bodyStrong,
-      color: hull.dialogDanger,
-    },
-    closeTileGlyph: {
-      ...Typography.default('semiBold'),
-      ...hull.type.bodyStrong,
-      color: hull.chrome,
     },
     composeOverlay: {
       position: 'absolute',

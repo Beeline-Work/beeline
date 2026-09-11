@@ -10,7 +10,6 @@ import {
 import { type SystemEvent } from '@beeline/api-contract/daemon';
 import {
   AcpClient,
-  AcpRequestTimeoutError,
   type AcpPermissionDecision,
   type AcpPermissionRequest,
   type McpServerWire,
@@ -942,29 +941,10 @@ export class MonolithRoomTurnLoop {
                 }
                 return result!;
               };
-              let result: PromptResult;
-              let providerRetried = false;
-              try {
-                result = await runPrompt();
-              } catch (error) {
-                const timedOutWithoutOutput =
-                  error instanceof AcpRequestTimeoutError &&
-                  error.method === 'session/prompt' &&
-                  error.inactivity;
-                if (!timedOutWithoutOutput) throw error;
-                const silent = this.servingProviders();
-                const next = await this.repinNextProvider(trace, error.message);
-                if (!next) throw error;
-                providerRetried = true;
-                console.warn(
-                  `[thin-core] monolith Room ${this.options.roomId} turn ${item.id}: ` +
-                    `${turnFailureReasonWithProvider(error.message, silent)}; retrying on ${next}`,
-                );
-                result = await runPrompt();
-              }
+              let result = await runPrompt();
               trace.promptSettled();
               let explained = await this.explainEmpty(result);
-              if (explained && !providerRetried && shouldRetryEmptyTurn(explained)) {
+              if (explained && shouldRetryEmptyTurn(explained)) {
                 const silent = this.servingProviders();
                 const next = await this.repinNextProvider(trace, explained.reason);
                 if (next) {

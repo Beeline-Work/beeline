@@ -243,6 +243,7 @@ import { HeaderIdentitySlot, HeaderMetaCaps, HeaderMetaRow } from '@/components/
 import { ChannelHeaderTitle } from '@/components/buzz/ChannelHeaderTitle';
 import type { ChannelHeaderKind } from '@/buzz/channel-header-title';
 import { roomMemberManagementState } from '@/buzz/room-member-management';
+import { useIsDesktop } from '@/utils/responsive';
 import {
   LEDGER_MARGINALIA_WIDTH,
   LedgerRoomUpdate,
@@ -301,6 +302,7 @@ function durableFactLine(message: ChatDisplayMessage): string {
 
 export default function BuzzChat() {
   const { theme } = useUnistyles();
+  const isDesktop = useIsDesktop();
   // `parent`/`title` are hints, not authority: every surface that opens a
   // corner already knows both, so passing them makes the header correct on the
   // first frame instead of one server round trip later. The screen's own reads
@@ -3231,6 +3233,7 @@ export default function BuzzChat() {
       return (
         <OrdinaryLedgerMessage
           message={item}
+          desktopLayout={isDesktop}
           announcementFeed={isReadOnlyDirectMessage}
           {...(knownAgent ? { agent: knownAgent } : {})}
           participantsHydrated={participantsHydrated}
@@ -3255,6 +3258,7 @@ export default function BuzzChat() {
     },
     [
       agentByPubkey,
+      isDesktop,
       handleWritePermission,
       handleGrantDecision,
       handleOpenSystemIdentity,

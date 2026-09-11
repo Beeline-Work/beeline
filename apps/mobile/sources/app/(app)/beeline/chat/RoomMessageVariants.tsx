@@ -580,14 +580,17 @@ function SwipeToReply({
   onLongPress,
   onPress,
   onReply,
+  isDesktop,
 }: {
   children: React.ReactNode;
   messageId: string;
   onLongPress(): void;
   onPress?(): void;
   onReply(): void;
+  isDesktop: boolean;
 }) {
   const swipeableRef = useRef<Swipeable | null>(null);
+  const [desktopActionsVisible, setDesktopActionsVisible] = useState(false);
   const message = (
     <Pressable
       accessibilityHint="Long press to copy the entire message"
@@ -601,6 +604,56 @@ function SwipeToReply({
       {children}
     </Pressable>
   );
+  if (isDesktop) {
+    return (
+      <View
+        style={styles.replyDesktopRow}
+        {...({
+          onMouseEnter: () => setDesktopActionsVisible(true),
+          onMouseLeave: () => setDesktopActionsVisible(false),
+        } as any)}
+      >
+        {message}
+        <View
+          accessibilityLabel="Message actions"
+          style={[
+            styles.replyDesktopActions,
+            desktopActionsVisible && styles.replyDesktopActionsVisible,
+          ]}
+          testID={`message-actions-${messageId}`}
+        >
+          <Pressable
+            accessibilityLabel="Copy message text"
+            accessibilityRole="button"
+            onFocus={() => setDesktopActionsVisible(true)}
+            onBlur={() => setDesktopActionsVisible(false)}
+            onPress={onLongPress}
+            style={({ pressed }) => [
+              styles.replyDesktopAction,
+              pressed && styles.replyDesktopPressed,
+            ]}
+            testID={`copy-button-${messageId}`}
+          >
+            <Text style={styles.replyDesktopGlyph}>⧉</Text>
+          </Pressable>
+          <Pressable
+            accessibilityLabel="Reply to message"
+            accessibilityRole="button"
+            onFocus={() => setDesktopActionsVisible(true)}
+            onBlur={() => setDesktopActionsVisible(false)}
+            onPress={onReply}
+            style={({ pressed }) => [
+              styles.replyDesktopAction,
+              pressed && styles.replyDesktopPressed,
+            ]}
+            testID={`reply-button-${messageId}`}
+          >
+            <Text style={styles.replyDesktopGlyph}>↩</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
   if (Platform.OS === 'web') {
     return (
       <View style={styles.replyDesktopRow}>
@@ -684,6 +737,7 @@ export interface OrdinaryLedgerMessageProps {
   onDismiss(eventId: string): void;
   /** Read-only @system DMs are a full-width announcement feed, not a chat. */
   announcementFeed?: boolean;
+  desktopLayout?: boolean;
 }
 
 export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
@@ -707,6 +761,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   onRetry,
   onDismiss,
   announcementFeed = false,
+  desktopLayout = false,
 }: OrdinaryLedgerMessageProps) {
   const isOwn = message.isUser;
   const indexedAuthor = message.authorIdentity;
@@ -932,6 +987,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
       onLongPress={() => onCopy(message.text)}
       {...(onTapOutsideComposer ? { onPress: onTapOutsideComposer } : {})}
       onReply={message.isAgentDraft ? () => undefined : () => onReply(message)}
+      isDesktop={desktopLayout}
     >
       {content}
     </SwipeToReply>
@@ -1110,16 +1166,25 @@ const styles = StyleSheet.create(() => ({
   outboxFailureActions: { flexDirection: 'row', gap: 8, marginTop: 6 },
   replySwipeContainer: { marginHorizontal: -ALIVE_RING_PAD },
   replySwipeChildren: { paddingHorizontal: ALIVE_RING_PAD },
-  replyDesktopRow: { flexDirection: 'row', alignItems: 'flex-start' },
+  replyDesktopRow: { position: 'relative', flexDirection: 'row', alignItems: 'flex-start' },
   replyDesktopMessage: { flex: 1, minWidth: 0 },
+  replyDesktopActions: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    flexDirection: 'row',
+    opacity: 0,
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
+    borderRadius: groknight.radius,
+    backgroundColor: groknight.bgTerminal,
+  },
+  replyDesktopActionsVisible: { opacity: 1 },
   replyDesktopAction: {
-    width: 54,
-    minHeight: 44,
-    marginBottom: 8,
+    width: 44,
+    height: 44,
     alignItems: 'center',
     justifyContent: 'center',
-    borderLeftWidth: 1,
-    borderLeftColor: groknight.borderStrong,
   },
   replyDesktopPressed: { backgroundColor: groknight.bgHighlight },
   replyDesktopGlyph: {

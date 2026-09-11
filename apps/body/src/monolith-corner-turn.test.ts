@@ -1676,7 +1676,7 @@ describe('thin monolith corner turn', () => {
           }),
           expect.objectContaining({ name: 'beeline-agent' }),
         ]),
-        systemPrompt: expect.stringContaining('On a later server checks turn'),
+        systemPrompt: expect.stringContaining('On a later checks turn, call pr_checks_status'),
       }),
     );
     expect(sessionNew).toHaveBeenCalledWith(

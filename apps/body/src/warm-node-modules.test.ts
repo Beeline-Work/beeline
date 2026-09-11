@@ -64,18 +64,21 @@ async function scratch(): Promise<string> {
 }
 
 interface WorktreeSpec {
-  /** Extra lockfile `packages` entries beyond the default single dependency. */
+  /** Extra lockfile `packages` entries beyond the default dependencies. */
   packages?: Record<string, unknown>;
   /** Package paths recorded in npm's hidden lockfile; defaults to all of them. */
   installed?: string[];
-  /** Additional `node_modules` trees to materialize, e.g. `apps/body/node_modules`. */
-  trees?: string[];
+  /** Lockfile package paths to leave UNWRITTEN, as a broken install would. */
+  omit?: string[];
 }
 
 /**
  * A checkout that looks like a finished `npm ci`: a lockfile, a dependency
  * with an executable and a nested dependency, a `.bin` symlink, a workspace
- * link, and npm's hidden lockfile agreeing with all of it.
+ * link, npm's hidden lockfile agreeing with all of it — and a real directory
+ * carrying a real `package.json` for every package the lockfile names, which
+ * is the part a metadata-only completeness check could not tell apart from a
+ * tree that has been gutted.
  */
 async function worktree(spec: WorktreeSpec = {}): Promise<string> {
   const root = await scratch();
@@ -90,11 +93,19 @@ async function worktree(spec: WorktreeSpec = {}): Promise<string> {
   await writeFile(resolve(root, 'package-lock.json'), JSON.stringify({ packages }));
   await mkdir(resolve(root, 'packages', 'tool'), { recursive: true });
 
+  const omit = new Set(spec.omit ?? []);
+  for (const [path, entry] of Object.entries(packages)) {
+    if (!path.includes('node_modules/')) continue;
+    if ((entry as { link?: boolean }).link || omit.has(path)) continue;
+    await mkdir(resolve(root, path), { recursive: true });
+    await writeFile(
+      resolve(root, path, 'package.json'),
+      JSON.stringify({ name: path.split('/').pop(), version: '1.0.0' }),
+    );
+  }
+
   await mkdir(resolve(root, 'node_modules', '.bin'), { recursive: true });
   await mkdir(resolve(root, 'node_modules', '@fixture'), { recursive: true });
-  await mkdir(resolve(root, 'node_modules', 'left-pad', 'node_modules', 'nested'), {
-    recursive: true,
-  });
   await writeFile(resolve(root, 'node_modules', 'left-pad', 'index.js'), 'module.exports = 1;\n');
   await writeFile(resolve(root, 'node_modules', 'left-pad', 'cli.js'), '#!/usr/bin/env node\n');
   await chmod(resolve(root, 'node_modules', 'left-pad', 'cli.js'), 0o755);
@@ -104,10 +115,6 @@ async function worktree(spec: WorktreeSpec = {}): Promise<string> {
   );
   await symlink('../left-pad/cli.js', resolve(root, 'node_modules', '.bin', 'left-pad'));
   await symlink('../../packages/tool', resolve(root, 'node_modules', '@fixture', 'tool'));
-  for (const tree of spec.trees ?? []) {
-    await mkdir(resolve(root, tree, 'sibling'), { recursive: true });
-    await writeFile(resolve(root, tree, 'sibling', 'index.js'), 'module.exports = 3;\n');
-  }
 
   const installed =
     spec.installed ?? Object.keys(packages).filter((path) => path.includes('node_modules/'));
@@ -141,7 +148,6 @@ describe('readWarmPlan', () => {
   it('names every tree an install materializes, nesting excluded', async () => {
     const root = await worktree({
       packages: { 'apps/body/node_modules/dep': { version: '1.0.0' } },
-      trees: ['apps/body/node_modules'],
     });
     const plan = await readWarmPlan(root);
     if (isPlanRefusal(plan)) throw new Error('refused');
@@ -239,6 +245,61 @@ describe('harvest', () => {
     );
   });
 
+  it('refuses a tree whose package directory is gone but whose metadata is not', async () => {
+    // The case a metadata-only check cannot see: npm's hidden lockfile still
+    // claims a finished install over a tree a corner has since gutted.
+    const store = await scratch();
+    const source = await worktree();
+    const before = await readFile(resolve(source, 'node_modules', '.package-lock.json'), 'utf8');
+    await rm(resolve(source, 'node_modules', 'left-pad'), { recursive: true, force: true });
+    expect(await readFile(resolve(source, 'node_modules', '.package-lock.json'), 'utf8')).toBe(
+      before,
+    );
+
+    expect(await missingInstalledPackages(source)).toEqual([
+      'node_modules/left-pad',
+      'node_modules/left-pad/node_modules/nested',
+    ]);
+    const outcome = await harvestWarmNodeModules({ worktreePath: source, storeRoot: store });
+    expect(outcome.reason).toBe('incomplete');
+    expect(outcome.detail).toContain('node_modules/left-pad');
+    expect(await readdir(store)).toEqual([]);
+  });
+
+  it('refuses a package directory that is present but empty', async () => {
+    const store = await scratch();
+    const source = await worktree();
+    // A build that cleaned a package, or an unpack that never finished: the
+    // directory survives, the package does not.
+    await rm(resolve(source, 'node_modules', 'left-pad', 'package.json'));
+
+    expect(await missingInstalledPackages(source)).toEqual(['node_modules/left-pad']);
+    expect((await harvestWarmNodeModules({ worktreePath: source, storeRoot: store })).reason).toBe(
+      'incomplete',
+    );
+    expect(await readdir(store)).toEqual([]);
+  });
+
+  it('refuses a copy that lost a package after its checkout was cleared', async () => {
+    const store = await scratch();
+    const source = await worktree();
+    const outcome = await harvestWarmNodeModules({
+      worktreePath: source,
+      storeRoot: store,
+      // Gut the STAGED copy, leaving the checkout it was read from intact:
+      // the bytes about to be published are what must be complete.
+      onCopied: async () => {
+        const staging = (await readdir(store)).find((name) => name.startsWith('.beeline-warm-'));
+        await rm(resolve(store, staging!, 'node_modules', 'left-pad'), {
+          recursive: true,
+          force: true,
+        });
+      },
+    });
+    expect(outcome.reason).toBe('changed');
+    expect(await readdir(store)).toEqual([]);
+  });
+
   it('refuses a checkout with no hidden lockfile at all', async () => {
     const store = await scratch();
     const source = await worktree();
@@ -252,6 +313,7 @@ describe('harvest', () => {
     const store = await scratch();
     const source = await worktree({
       packages: { 'apps/body/node_modules/dep': { version: '1.0.0' } },
+      omit: ['apps/body/node_modules/dep'],
     });
     const outcome = await harvestWarmNodeModules({ worktreePath: source, storeRoot: store });
     expect(outcome).toMatchObject({ reason: 'no-node-modules', detail: 'apps/body/node_modules' });
@@ -335,7 +397,6 @@ describe('seed', () => {
     const store = await scratch();
     const source = await worktree({
       packages: { 'apps/body/node_modules/dep': { version: '1.0.0' } },
-      trees: ['apps/body/node_modules'],
     });
     const harvested = await harvestWarmNodeModules({ worktreePath: source, storeRoot: store });
     expect(harvested.reason).toBe('stored');
@@ -354,9 +415,9 @@ describe('seed', () => {
     expect((await stat(linked)).ino).toBe((await stat(stored)).ino);
     expect(await readFile(linked, 'utf8')).toBe('module.exports = 1;\n');
     // Every tree the lockfile names, not only the root one.
-    expect(await readFile(resolve(fresh, 'apps/body/node_modules/sibling/index.js'), 'utf8')).toBe(
-      'module.exports = 3;\n',
-    );
+    expect(
+      JSON.parse(await readFile(resolve(fresh, 'apps/body/node_modules/dep/package.json'), 'utf8')),
+    ).toMatchObject({ name: 'dep' });
     // Symlinks are reproduced as symlinks, with their targets intact.
     expect(await readlink(resolve(fresh, 'node_modules', '.bin', 'left-pad'))).toBe(
       '../left-pad/cli.js',

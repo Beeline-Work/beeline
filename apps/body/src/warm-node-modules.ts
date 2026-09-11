@@ -38,12 +38,16 @@
  * by hand gets a tree built for another ABI, exactly as it would from a CI
  * cache restore, and `npm rebuild` is the same remedy.
  *
- * **Only a COMPLETE tree is stored.** A corner that installed with `--omit=dev`
- * or interrupted an install would otherwise poison every later corner on that
- * lockfile with a half tree that npm considers satisfied. {@link
- * harvestWarmNodeModules} compares npm's own hidden lockfile
- * (`node_modules/.package-lock.json`) against every non-optional entry the
- * repository lockfile requires and stores nothing when any of them is missing.
+ * **Only a COMPLETE tree is stored, and completeness is a filesystem fact.** A
+ * corner that installed with `--omit=dev`, interrupted an install, or deleted a
+ * package while debugging would otherwise poison every later corner on that
+ * lockfile with a half tree. npm's hidden lockfile
+ * (`node_modules/.package-lock.json`) says what the install intended and is
+ * checked first, but it is metadata that outlives the directories it
+ * describes — so {@link missingInstalledPackages} also requires every
+ * non-optional package the repository lockfile names to be on disk. The check
+ * is then run AGAIN over the staged copy, because the bytes about to be
+ * published are what have to be complete, not the tree they were read from.
  *
  * **Why the store is copied out and hardlinked in, not hardlinked both ways.**
  * Harvest COPIES (reflinked where the filesystem supports it), so the corner
@@ -209,13 +213,7 @@ export interface SeedOutcome {
 }
 
 export type HarvestReason =
-  | 'stored'
-  | 'already-warm'
-  | PlanFailure
-  | 'no-node-modules'
-  | 'incomplete'
-  | 'changed'
-  | 'failed';
+  'stored' | 'already-warm' | PlanFailure | 'no-node-modules' | 'incomplete' | 'changed' | 'failed';
 
 export interface HarvestOutcome {
   reason: HarvestReason;
@@ -342,7 +340,7 @@ export async function harvestWarmNodeModules(input: {
     // completeness check before the tearing. npm rewrites the hidden lockfile
     // on every install, so a staged copy that no longer matches the checkout
     // was taken across a change and is not a tree to hand anyone.
-    if (!(await stagedTreeStillMatches(input.worktreePath, staging, plan.key))) {
+    if (!(await stagedTreeIsPublishable(input.worktreePath, staging, plan.key))) {
       return { reason: 'changed', key: plan.key };
     }
     // First writer wins: `rename` onto a populated directory fails, which is
@@ -360,8 +358,17 @@ export async function harvestWarmNodeModules(input: {
   }
 }
 
-/** Whether the checkout is still, byte for byte, the install that was copied. */
-async function stagedTreeStillMatches(
+/**
+ * Whether the tree that was copied is still the install it was, and whether
+ * the copy itself is a complete one.
+ *
+ * The staged tree is what gets published, so it — not the checkout the check
+ * ran against before the copy started — is what has to be complete. The
+ * lockfile identity and the hidden-lockfile bytes catch an install that landed
+ * mid-copy; the completeness pass over the staging directory catches anything
+ * that went missing between the first check and the last file copied.
+ */
+async function stagedTreeIsPublishable(
   worktreePath: string,
   staging: string,
   key: string,
@@ -373,38 +380,92 @@ async function stagedTreeStillMatches(
     readFile(resolve(staging, hidden)).catch(() => undefined),
     readFile(resolve(worktreePath, hidden)).catch(() => undefined),
   ]);
-  return Boolean(copied && current && copied.equals(current));
+  if (!copied || !current || !copied.equals(current)) return false;
+  return (await missingInstalledPackages(worktreePath, staging)).length === 0;
 }
 
 /**
- * Every package the repository lockfile requires that npm's hidden lockfile
- * does not record as installed.
+ * Every package the repository lockfile requires that this tree does not
+ * actually have installed.
  *
- * npm writes `node_modules/.package-lock.json` to mirror the tree it actually
- * built, so this compares what was asked for against what was done. Entries
- * npm may legitimately skip are not required: workspace links (symlinks into
- * the checkout, not installs), `optional` dependencies, and anything
- * constrained to another `os`/`cpu`.
+ * Two questions, and BOTH have to be asked. npm writes
+ * `node_modules/.package-lock.json` to mirror the tree it built, which says
+ * what the install intended — but it is metadata, and metadata outlives the
+ * directory it describes. A corner that deletes a package (or a build that
+ * empties one) leaves the hidden lockfile claiming a complete install over a
+ * tree that no longer is, and a store filled from that claim would hand the
+ * same hole to every later corner on the lockfile. So the hidden lockfile is
+ * checked for the entry AND the filesystem is checked for the package.
+ *
+ * Entries npm may legitimately skip are not required: workspace links
+ * (symlinks into the checkout, not installs), `optional` dependencies, and
+ * anything constrained to another `os`/`cpu`.
+ *
+ * `treeRoot` is where `node_modules` lives, and defaults to the checkout. It
+ * is separate from `worktreePath` so that the STAGED copy — the bytes actually
+ * about to be published — can be held to the same bar as the tree it came
+ * from, rather than the store trusting a check made before the copy.
  */
-export async function missingInstalledPackages(worktreePath: string): Promise<string[]> {
+export async function missingInstalledPackages(
+  worktreePath: string,
+  treeRoot: string = worktreePath,
+): Promise<string[]> {
   const wanted = parseLockfilePackages(
     await readFile(resolve(worktreePath, 'package-lock.json')).catch(() => undefined),
   );
   const installed = parseLockfilePackages(
-    await readFile(resolve(worktreePath, 'node_modules', '.package-lock.json')).catch(
-      () => undefined,
-    ),
+    await readFile(resolve(treeRoot, 'node_modules', '.package-lock.json')).catch(() => undefined),
   );
   if (!wanted) return ['package-lock.json is unreadable'];
   if (!installed) return ['node_modules/.package-lock.json is absent'];
-  const missing: string[] = [];
+  const required: string[] = [];
   for (const [path, entry] of Object.entries(wanted)) {
     if (!path.includes('node_modules/')) continue;
     if (entry.link === true || entry.optional === true) continue;
     if (entry.os !== undefined || entry.cpu !== undefined) continue;
-    if (!(path in installed)) missing.push(path);
+    required.push(path);
   }
+  const missing: string[] = [];
+  await mapWithLimit(required, INTEGRITY_READ_CONCURRENCY, async (path) => {
+    if (!(path in installed) || !(await isInstalledPackage(resolve(treeRoot, path)))) {
+      missing.push(path);
+    }
+  });
   return missing.sort();
+}
+
+/**
+ * The minimum a path must be to count as an installed package: a directory
+ * carrying the `package.json` npm writes for every entry in a tree.
+ *
+ * Deliberately not a content integrity check. Verifying every file against the
+ * registry tarball would cost more than the install this whole module exists to
+ * skip, and it would still not make a mutable directory trustworthy. The bar
+ * this sets is the one that matters for the failure it guards: a package that
+ * was removed, emptied, or never unpacked is not installed, and a tree holding
+ * one is never published as a warm start for anybody else.
+ */
+async function isInstalledPackage(path: string): Promise<boolean> {
+  return stat(join(path, 'package.json')).then(
+    (info) => info.isFile(),
+    () => false,
+  );
+}
+
+/** Bounded fan-out: a large tree is thousands of entries, not a handful. */
+const INTEGRITY_READ_CONCURRENCY = 64;
+
+async function mapWithLimit<T>(
+  values: readonly T[],
+  limit: number,
+  visit: (value: T) => Promise<void>,
+): Promise<void> {
+  let cursor = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(limit, values.length) }, async () => {
+      while (cursor < values.length) await visit(values[cursor++]!);
+    }),
+  );
 }
 
 interface LockfilePackage {

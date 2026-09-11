@@ -72,6 +72,12 @@ async function warmStore(supervisorRoot: string): Promise<string> {
   const source = await scratch('beeline-warm-install-');
   await writeFile(resolve(source, 'package-lock.json'), LOCKFILE);
   await mkdir(resolve(source, 'node_modules', 'left-pad'), { recursive: true });
+  // A real package, because completeness is checked on disk and not only in
+  // npm's metadata: a directory without this is not an installed package.
+  await writeFile(
+    resolve(source, 'node_modules', 'left-pad', 'package.json'),
+    JSON.stringify({ name: 'left-pad', version: '1.0.0' }),
+  );
   await writeFile(resolve(source, 'node_modules', 'left-pad', 'index.js'), 'module.exports = 1;\n');
   await writeFile(
     resolve(source, 'node_modules', '.package-lock.json'),

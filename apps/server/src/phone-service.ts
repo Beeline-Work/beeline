@@ -758,6 +758,7 @@ export class PhoneService {
         unread: boolean;
         working: boolean;
         needs_you: boolean;
+        closed: boolean;
       }
     >(
       `
@@ -773,7 +774,18 @@ export class PhoneService {
           (lm_other.created_at,lm_other.id)>(mark.message_created_at,mark.message_id)
         )) unread,
         EXISTS(SELECT 1 FROM agent_turns t WHERE (t.room_id=r.id OR t.room_id IN (SELECT id FROM rooms WHERE parent_id=r.id AND archived_at IS NULL)) AND t.status='working') working,
-        EXISTS(SELECT 1 FROM permission_authority p WHERE (p.room_id=r.id OR p.room_id IN (SELECT id FROM rooms WHERE parent_id=r.id)) AND p.status='pending') needs_you
+        EXISTS(SELECT 1 FROM permission_authority p WHERE (p.room_id=r.id OR p.room_id IN (SELECT id FROM rooms WHERE parent_id=r.id)) AND p.status='pending') needs_you,
+        EXISTS(
+          SELECT 1 FROM chat_dismissals dismissal
+          WHERE dismissal.room_id=r.id AND dismissal.identity_id=$2
+            AND NOT EXISTS(
+              SELECT 1 FROM messages incoming
+              WHERE incoming.room_id=r.id
+                AND incoming.author_id IS DISTINCT FROM $2
+                AND incoming.presentation IN ('message','system','card')
+                AND incoming.created_at>dismissal.dismissed_at
+            )
+        ) closed
       FROM rooms r
       JOIN memberships member ON member.room_id=r.id AND member.identity_id=$2 AND member.removed_at IS NULL
       LEFT JOIN LATERAL (SELECT * FROM messages WHERE room_id=r.id AND presentation IN ('message','system') ORDER BY created_at DESC,id DESC LIMIT 1) lm ON true
@@ -799,6 +811,7 @@ export class PhoneService {
       },
       chats: rooms.rows.slice(0, 200).map((row) => ({
         room: roomHeader(row, this.publicOrigin),
+        ...(row.closed ? { closed: true } : {}),
         memberCount: Number(row.member_count),
         cornerCount: Number(row.corner_count),
         ...(row.latest_id &&
@@ -2073,6 +2086,12 @@ export class PhoneService {
       case 'leaveRoom':
         await this.leaveRoom((input as Input<'leaveRoom'>).roomId, viewerId);
         return undefined as Output<Name>;
+      case 'closeChat':
+        await this.closeChat((input as Input<'closeChat'>).roomId, viewerId);
+        return undefined as Output<Name>;
+      case 'reopenChat':
+        await this.reopenChat((input as Input<'reopenChat'>).roomId, viewerId);
+        return undefined as Output<Name>;
       case 'addRoomMember':
         return (await this.addRoomMember(
           input as Input<'addRoomMember'>,
@@ -3163,6 +3182,26 @@ export class PhoneService {
       });
     });
   }
+  private async closeChat(roomId: string, viewerId: string) {
+    await this.database.transaction(async (database) => {
+      await this.requireTopLevelChatMember(roomId, viewerId, database);
+      await database.query(
+        `INSERT INTO chat_dismissals(room_id,identity_id,dismissed_at) VALUES($1,$2,now())
+         ON CONFLICT (room_id,identity_id)
+         DO UPDATE SET dismissed_at=EXCLUDED.dismissed_at`,
+        [roomId, viewerId],
+      );
+    });
+  }
+  private async reopenChat(roomId: string, viewerId: string) {
+    await this.database.transaction(async (database) => {
+      await this.requireTopLevelChatMember(roomId, viewerId, database);
+      await database.query(
+        `DELETE FROM chat_dismissals WHERE room_id=$1 AND identity_id=$2`,
+        [roomId, viewerId],
+      );
+    });
+  }
   private async addRoomMember(input: Input<'addRoomMember'>, viewerId: string) {
     const room = await this.requireTopLevelRoom(input.roomId);
     await this.requireWorkspaceManager(room.workspace_id, viewerId);
@@ -3379,7 +3418,13 @@ export class PhoneService {
       `SELECT id FROM rooms WHERE workspace_id=$1 AND direct_participants=$2::jsonb`,
       [input.workspaceId, JSON.stringify(participants)],
     );
-    if (found.rows[0]) return { id: found.rows[0].id, created: false };
+    if (found.rows[0]) {
+      await this.database.query(
+        `DELETE FROM chat_dismissals WHERE room_id=$1 AND identity_id=$2`,
+        [found.rows[0].id, viewerId],
+      );
+      return { id: found.rows[0].id, created: false };
+    }
     const id = directMessageRoomId(input.workspaceId, participants as [string, string]);
     const created = await this.database.transaction(async (db) => {
       const inserted = await db.query(
@@ -4517,6 +4562,21 @@ export class PhoneService {
     );
     if (!row.rowCount) throw new Error('room manager required');
   }
+  private async requireTopLevelChatMember(
+    roomId: string,
+    identityId: string,
+    database = this.database,
+  ) {
+    const row = await database.query(
+      `SELECT 1 FROM rooms room
+       JOIN memberships membership ON membership.room_id=room.id
+         AND membership.identity_id=$2 AND membership.removed_at IS NULL
+       WHERE room.id=$1 AND room.parent_id IS NULL AND room.archived_at IS NULL
+       FOR SHARE OF room,membership`,
+      [roomId, identityId],
+    );
+    if (!row.rowCount) throw new Error('chat membership required');
+  }
   private async requireTopLevelRoom(roomId: string) {
     const room = (
       await this.database.query<{
@@ -4854,6 +4914,8 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'updateRoom',
   'deleteRoom',
   'leaveRoom',
+  'closeChat',
+  'reopenChat',
   'addRoomMember',
   'removeRoomMember',
   'resolveDirectMessage',

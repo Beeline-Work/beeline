@@ -360,6 +360,8 @@ export type AgentHistoryEntry = {
 
 export type ChatListItem = {
   readonly room: RoomViewHeader;
+  /** Hidden from the deck for this viewer until explicit reopen or newer incoming activity. */
+  readonly closed?: boolean;
   readonly latestMessage?: {
     readonly id: string;
     readonly text: string;

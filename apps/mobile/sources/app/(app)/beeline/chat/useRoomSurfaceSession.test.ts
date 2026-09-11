@@ -26,6 +26,7 @@ const controls = vi.hoisted(() => ({
   }>,
   replayEvents: [] as NostrEvent[],
   transportCount: 0,
+  reopenChat: vi.fn(async (_roomId: string) => undefined),
   identityPromise: null as Promise<{ publicKey: string; secretKey: Uint8Array } | null> | null,
   outboxFail: vi.fn(async (_eventId: string) => undefined),
   outboxGet: vi.fn((_eventId: string) => ({ status: 'pending' as const })),
@@ -119,6 +120,9 @@ vi.mock('@/sync/transport', () => ({
       };
     }
     async publishPreparedMessage() {}
+    async reopenChat(roomId: string) {
+      return controls.reopenChat(roomId);
+    }
   },
 }));
 
@@ -297,6 +301,7 @@ beforeEach(() => {
   controls.schedulers.length = 0;
   controls.subscriptions.length = 0;
   controls.transportCount = 0;
+  controls.reopenChat.mockClear();
   controls.replayEvents.length = 0;
   controls.identityPromise = null;
   controls.roomResponse = null;

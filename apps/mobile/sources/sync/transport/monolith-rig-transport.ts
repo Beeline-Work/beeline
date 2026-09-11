@@ -434,6 +434,12 @@ export class MonolithRigTransport {
   leaveRoom(roomId: string) {
     return this.operation('leaveRoom', { roomId }).then(() => undefined);
   }
+  closeChat(roomId: string) {
+    return this.operation('closeChat', { roomId }).then(() => undefined);
+  }
+  reopenChat(roomId: string) {
+    return this.operation('reopenChat', { roomId }).then(() => undefined);
+  }
   deleteRoom(roomId: string) {
     return this.operation('deleteRoom', { roomId }).then(() => undefined);
   }

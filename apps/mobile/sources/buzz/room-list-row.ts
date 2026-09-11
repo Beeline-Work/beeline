@@ -31,8 +31,9 @@ export type RoomListSection = {
 
 /** Rooms lead the index; direct messages follow in their own newest-first section. */
 export function roomListSections(chats: readonly ChatListItem[]): RoomListSection[] {
-  const rooms = chats.filter((item) => !item.directMessage);
-  const messages = chats
+  const visibleChats = chats.filter((item) => !item.closed);
+  const rooms = visibleChats.filter((item) => !item.directMessage);
+  const messages = visibleChats
     .filter((item) => Boolean(item.directMessage))
     .sort(
       (left, right) =>

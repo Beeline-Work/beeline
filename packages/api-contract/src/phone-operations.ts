@@ -27,6 +27,8 @@ export type PhoneOperationMap = {
   updateRoom: { input: UpdateRoomInput; output: void };
   deleteRoom: { input: RoomInput; output: void };
   leaveRoom: { input: RoomInput; output: void };
+  closeChat: { input: RoomInput; output: void };
+  reopenChat: { input: RoomInput; output: void };
   addRoomMember: { input: RoomMemberInput; output: MembershipResult };
   removeRoomMember: { input: RoomMemberInput; output: void };
   resolveDirectMessage: { input: ResolveDirectMessageInput; output: DirectMessageResult };

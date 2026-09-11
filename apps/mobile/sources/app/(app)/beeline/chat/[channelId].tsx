@@ -954,7 +954,12 @@ export default function BuzzChat() {
   // pairing command (captain report C74). Read once per open; the sheet
   // shows a loader until it lands and any failure inline.
   useEffect(() => {
-    if (!participantPickerVisible || !roomClient || !activeCommunityId) return;
+    if (
+      (!participantPickerVisible && !rosterVisible) ||
+      !roomClient ||
+      !activeCommunityId
+    )
+      return;
     let cancelled = false;
     setWorkspaceRoster(null);
     roomClient
@@ -968,7 +973,7 @@ export default function BuzzChat() {
     return () => {
       cancelled = true;
     };
-  }, [activeCommunityId, participantPickerVisible, roomClient]);
+  }, [activeCommunityId, participantPickerVisible, roomClient, rosterVisible]);
   const participantPickerCandidates = useMemo<MemberPickerCandidate[] | null>(() => {
     if (!workspaceRoster) return null;
     return [...workspaceRoster.members, ...workspaceRoster.agents]
@@ -1013,10 +1018,23 @@ export default function BuzzChat() {
       return kind === participantPickerKind;
     }).length;
   }, [participantPickerKind, userPubkey, workspaceRoster]);
-  const visibleRosterSections = useMemo(
-    () => sectionRoomParticipants(roomParticipants),
-    [roomParticipants],
-  );
+  const visibleRosterSections = useMemo(() => {
+    const workspaceAgents = new Map(
+      (workspaceRoster?.agents ?? []).map((agent) => [agent.identity.pubkey, agent]),
+    );
+    return sectionRoomParticipants(
+      roomParticipants.map((participant) => {
+        if (participant.kind !== 'agent') return participant;
+        const workspaceAgent = workspaceAgents.get(participant.pubkey);
+        const ownerHandle = workspaceAgent?.owner?.handle;
+        return {
+          ...participant,
+          ...(workspaceAgent?.model ? { model: workspaceAgent.model } : {}),
+          ...(ownerHandle ? { ownerHandle: `by @${ownerHandle}` } : {}),
+        };
+      }),
+    );
+  }, [roomParticipants, workspaceRoster]);
   const roomParticipantTotal = roomParticipants.length;
   const roomAgents = useMemo(
     () => roomParticipants.filter((participant) => participant.kind === 'agent'),

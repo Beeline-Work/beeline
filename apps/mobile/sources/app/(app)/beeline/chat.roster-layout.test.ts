@@ -21,12 +21,12 @@ describe('Room participant roster layout', () => {
   });
 
   it('marks agent state with the tile ring alone: no status square, no kind word (C76)', () => {
-    // The ring reads the working record (C77); presence is the lowercase word
-    // ending the meta line and the row's accessibility label.
+    // The ring reads the working record (C77); presence stays in the row's
+    // accessibility label without occupying its model-and-owner subtitle.
     expect(source).toContain('alive={agentWorking}');
     expect(source).not.toContain('alive={agentOnline}');
-    expect(source).toContain("' · online'");
-    expect(source).toContain("' · offline'");
+    expect(source).not.toContain("' · online'");
+    expect(source).not.toContain("' · offline'");
     expect(source).not.toContain('RosterPresenceLight');
     expect(source).not.toMatch(/'AGENT'|'PERSON'/);
     // Status is still announced once, through the row's accessibility label.

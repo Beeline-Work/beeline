@@ -17,6 +17,9 @@ export type RoomRosterParticipant = {
   handle: string;
   kind: 'person' | 'agent';
   agent?: AgentPresentation;
+  /** Agents only: paint-ready metadata from the Workspace roster. */
+  model?: string;
+  ownerHandle?: string;
   /** People only: the chosen face on record. An agent's assigned face rides
    *  on `agent` and is read through `resolveAgentDisplayIdentity`. */
   face?: string;
@@ -30,8 +33,8 @@ type RoomRosterSections = {
 /**
  * The Room's members, in the Members page's vocabulary so the two views read
  * as one: "Members" over two counted section heads, a 64pt row per identity
- * with its name at body size and one quiet `@handle · role` line that ends
- * in the agent's presence word. The gold ring on the tile means WORKING
+ * with its handle at body size and one quiet metadata line: a person's Room
+ * role, or an agent's model and owner. The gold ring on the tile means WORKING
  * (`workingByPubkey`, C77), never delivery availability, and there is no status
  * square beside the name (C76). A row whose viewer may remove it carries a
  * chevron and opens its one control in place; the list itself shows no
@@ -183,7 +186,7 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
                   return (
                     <View key={participant.pubkey}>
                       <TouchableOpacity
-                        accessibilityLabel={`${displayName}, ${participant.kind}${
+                        accessibilityLabel={`@${handle}, ${participant.kind}${
                           participant.kind === 'agent'
                             ? agentOnline
                               ? ', online'
@@ -217,15 +220,14 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
                         )}
                         <View style={styles.rosterIdentity}>
                           <Text numberOfLines={1} style={styles.rosterName}>
-                            {displayName}
+                            @{handle}
                           </Text>
                           <Text numberOfLines={1} style={styles.rosterMeta}>
-                            @{handle} · {targetRole ?? 'member'}
                             {participant.kind === 'agent'
-                              ? agentOnline
-                                ? ' · online'
-                                : ' · offline'
-                              : ''}
+                              ? [participant.model ?? '—', participant.ownerHandle]
+                                  .filter(Boolean)
+                                  .join(' · ')
+                              : (targetRole ?? 'member')}
                           </Text>
                         </View>
                         {canRemove && (

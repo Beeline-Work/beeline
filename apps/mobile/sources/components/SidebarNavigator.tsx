@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Drawer } from 'expo-router/drawer';
-import { useIsTablet, useHeaderHeight } from '@/utils/responsive';
+import { useIsDesktop, useIsTablet, useHeaderHeight } from '@/utils/responsive';
 import { SidebarView } from './SidebarView';
 import { useWindowDimensions, View, Pressable, Platform, PanResponder } from 'react-native';
 import { useLocalSetting, useLocalSettingMutable } from '@/sync/storage';
@@ -37,6 +37,7 @@ const TAURI_HEADER_CONTROL_LEFT = Math.ceil(92 / DEFAULT_APP_ZOOM);
 
 export const SidebarNavigator = React.memo(() => {
   const isTablet = useIsTablet();
+  const isDesktop = useIsDesktop();
   const inDesktopShell = isTauri();
   const desktopPlatform = isDesktopPlatform();
   const pathname = usePathname();
@@ -184,6 +185,7 @@ const PersistentHeader = React.memo(() => {
   const router = useRouter();
   const [zenMode, setZenMode] = useLocalSettingMutable('zenMode');
   const inTauri = isTauri();
+  const isDesktop = useIsDesktop();
   const isMacTauri = inTauri && typeof navigator !== 'undefined' && /Mac/.test(navigator.platform);
 
   const routeHistory = useBrowserNavigationStore((s) => s.routeHistory);
@@ -234,11 +236,12 @@ const PersistentHeader = React.memo(() => {
       {...(inTauri ? { dataSet: { tauriDragRegion: 'true' } } : {})}
     >
       {/* Zen / Back / Forward buttons */}
-      <View
-        style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}
-        pointerEvents="auto"
-        {...(inTauri ? { dataSet: { tauriDragRegion: 'false' } } : {})}
-      >
+      {!isDesktop && (
+        <View
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}
+          pointerEvents="auto"
+          {...(inTauri ? { dataSet: { tauriDragRegion: 'false' } } : {})}
+        >
         <Pressable
           onPress={handleZenToggle}
           hitSlop={10}
@@ -286,7 +289,8 @@ const PersistentHeader = React.memo(() => {
             <Ionicons name="chevron-forward" size={20} color={theme.colors.header.tint} />
           </Pressable>
         )}
-      </View>
+        </View>
+      )}
     </View>
   );
 });

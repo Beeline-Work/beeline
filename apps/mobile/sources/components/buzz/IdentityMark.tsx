@@ -157,7 +157,7 @@ function WorkspacePlate({
         strokeLinejoin="miter"
       />
       {detailed && (
-        <G rotation={rotation * 90} origin="50, 50">
+        <G transform={`rotate(${rotation * 90} 50 50)`}>
           {cells.map((cell, index) => {
             const fill = cellFill(cell, palette);
             return plateRects(cell, index).map(([x, y, width, height]) => (

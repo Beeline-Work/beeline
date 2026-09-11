@@ -58,6 +58,7 @@ import { BuzzRigTransport } from '@/sync/transport';
 import type { RepoCandidate } from '@/buzz/room-repo-picker';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
+import { useIsDesktop } from '@/utils/responsive';
 
 const AGE_TICK_MS = 60_000;
 const COMPOSE_FAB_CLEARANCE = 80;
@@ -108,6 +109,7 @@ function workspaceMembers(view: WorkspaceView | null): WorkspaceMemberDisplayIte
 
 export default function BuzzChannels() {
   const insets = useSafeAreaInsets();
+  const isDesktop = useIsDesktop();
   const params = useLocalSearchParams<{ communityId?: string | string[] }>();
   const requestedWorkspaceId = firstParam(params.communityId);
   const [identity, setIdentity] = useState<Identity | null>(null);
@@ -628,8 +630,8 @@ export default function BuzzChannels() {
         testID={refreshing ? 'room-list-refreshing' : 'room-list-idle'}
       >
         <View style={styles.header}>
-          <CommunityDrawerTrigger community={activeCommunity} />
-          {activeCommunityId && (
+          {!isDesktop && <CommunityDrawerTrigger community={activeCommunity} />}
+          {!isDesktop && activeCommunityId && (
             <TouchableOpacity
               accessibilityLabel={`${WORKSPACE_LABEL} members`}
               accessibilityRole="button"
@@ -673,7 +675,13 @@ export default function BuzzChannels() {
             <Text style={styles.error}>{error}</Text>
           </TouchableOpacity>
         )}
-        <SectionList
+        {isDesktop ? (
+          <View style={styles.center} testID="desktop-room-selection-empty">
+            <Text style={styles.emptyTitle}>Select a Room</Text>
+            <Text style={styles.emptyCopy}>Choose a Room or direct message from the sidebar.</Text>
+          </View>
+        ) : (
+          <SectionList
           testID="room-list"
           sections={chatSections}
           keyExtractor={(item) => item.room.id}
@@ -938,8 +946,9 @@ export default function BuzzChannels() {
               </View>
             );
           }}
-        />
-        {!viewerIsAgent && (
+          />
+        )}
+        {!isDesktop && !viewerIsAgent && (
           <View
             pointerEvents="box-none"
             style={[styles.composeOverlay, { bottom: 16 + insets.bottom }]}

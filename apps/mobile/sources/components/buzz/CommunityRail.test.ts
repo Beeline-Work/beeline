@@ -78,7 +78,12 @@ vi.mock('./IdentityMark', async () => {
   };
 });
 
-import { BuzzCommunityShell, CommunityDrawerTrigger } from './CommunityRail';
+import {
+  BuzzCommunityShell,
+  CommunityDrawerTrigger,
+  CommunityRail,
+  CommunitySwitcherTrigger,
+} from './CommunityRail';
 
 const originalConsoleError = console.error;
 
@@ -131,6 +136,89 @@ function renderShell(
 }
 
 describe('Workspace drawer', () => {
+  it('shows one attention mark on the current Workspace trigger when requested', () => {
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        React.createElement(CommunitySwitcherTrigger, {
+          community: { communityId: 'community-1', name: 'Night Shift' },
+          expanded: false,
+          onPress: vi.fn(),
+          attention: true,
+        }),
+      );
+    });
+
+    expect(
+      renderer.root.findAll(
+        (node) => node.type === 'View' && node.props.testID === 'workspace-attention',
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('replaces the current Workspace identity with the picker title while open', () => {
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        React.createElement(CommunitySwitcherTrigger, {
+          community: { communityId: 'community-1', name: 'Night Shift' },
+          expanded: true,
+          onPress: vi.fn(),
+          attention: true,
+          pickerTitle: 'Workspaces',
+        }),
+      );
+    });
+
+    expect(renderer.root.findByProps({ testID: 'workspace-picker-title' }).props.children).toBe(
+      'Workspaces',
+    );
+    expect(renderer.root.findAllByProps({ testID: 'workspace-avatar-header' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'workspace-attention' })).toHaveLength(0);
+    expect(
+      renderer.root.findByProps({ testID: 'workspace-avatar-trigger' }).props.accessibilityLabel,
+    ).toBe('Close Workspaces');
+  });
+
+  it('renders the same picker as an in-column workspace list', () => {
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        React.createElement(CommunityRail, {
+          communities: [
+            { communityId: 'community-1', name: 'Night Shift' },
+            { communityId: 'community-2', name: 'Morning Watch' },
+          ],
+          activeCommunityId: 'community-1',
+          onSelect: vi.fn(),
+          onAdd: vi.fn(),
+          onSettings: vi.fn(),
+          presentation: 'column',
+        }),
+      );
+    });
+
+    expect(renderer.root.findByProps({ testID: 'community-rail-community-2' })).toBeDefined();
+    expect(renderer.root.findByProps({ testID: 'workspace-tile-plate-community-1' })).toBeDefined();
+    expect(renderer.root.findByProps({ testID: 'workspace-tile-plate-community-2' })).toBeDefined();
+    expect(
+      renderer.root.findByProps({ testID: 'workspace-avatar-community-1' }).props.selected,
+    ).toBe(true);
+    expect(
+      renderer.root.findByProps({ testID: 'workspace-avatar-community-2' }).props.selected,
+    ).toBe(false);
+    expect(
+      renderer.root
+        .findAllByType('Text' as any)
+        .some((node) => node.props.children === 'Morning Watch'),
+    ).toBe(true);
+    expect(
+      renderer.root
+        .findAllByType('Text' as any)
+        .some((node) => node.props.children === 'ADD WORKSPACE'),
+    ).toBe(true);
+  });
+
   it('is hidden by default and toggles from the active Workspace avatar', () => {
     const renderer = renderShell();
     expect(renderer.root.findAllByProps({ testID: 'community-drawer-overlay' })).toHaveLength(0);
@@ -235,9 +323,8 @@ describe('Workspace drawer', () => {
 
     act(() => renderer.root.findByProps({ testID: 'workspace-avatar-trigger' }).props.onPress());
     expect(
-      renderer.root
-        .findAllByType('IdentityMark')
-        .find((node: any) => node.props.kind === 'human')!.props,
+      renderer.root.findAllByType('IdentityMark').find((node: any) => node.props.kind === 'human')!
+        .props,
     ).toMatchObject({
       seed: 'person-pubkey',
       avatarUrl: 'https://example.test/person.png',

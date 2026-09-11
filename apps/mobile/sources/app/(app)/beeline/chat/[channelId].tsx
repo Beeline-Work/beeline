@@ -325,6 +325,10 @@ export default function BuzzChat() {
   const routeChannelTitle = title?.trim() || undefined;
   const cornerReturnTarget = returnTo === 'room-list' ? returnTo : undefined;
   const insets = useSafeAreaInsets();
+  const readOnlyFooterInset =
+    Platform.OS === 'android'
+      ? { marginBottom: insets.bottom }
+      : { paddingBottom: Math.max(insets.bottom, 8) };
   const navigation = useNavigation();
   const flatListRef = useRef<FlatList<ChatDisplayMessage>>(null);
   const handledNotificationAnchorRef = useRef<string | null>(null);
@@ -3351,22 +3355,7 @@ export default function BuzzChat() {
                 />
               </HeaderIdentitySlot>
             )}
-            <TouchableOpacity
-              accessibilityLabel={
-                isCorner
-                  ? `${CORNER_LABEL} opened by ${cornerAgentDisplay?.name ?? 'Agent'}. View ${formatRoomParticipantTotal(roomParticipantTotal)}`
-                  : isDirectMessage
-                    ? displayRoomName
-                    : `View ${formatRoomParticipantTotal(roomParticipantTotal)}`
-              }
-              accessibilityRole="button"
-              disabled={!memberManagement.canOpenRoster}
-              onPress={() => {
-                if (memberManagement.canOpenRoster) setRosterVisible(true);
-              }}
-              style={styles.headerCenter}
-              testID="room-participant-roster-trigger"
-            >
+            <View style={styles.headerCenter}>
               {displayHeaderTitle === null ? (
                 // The channel's own name has not landed yet. Neither "Room" nor
                 // a corner slug would be true, so show neither.
@@ -3405,31 +3394,37 @@ export default function BuzzChat() {
                   <Text numberOfLines={1} style={styles.cornerHeaderAgent}>
                     {(cornerAgentDisplay?.name ?? 'AGENT').toUpperCase()}
                   </Text>
-                  <HeaderMetaCaps>
-                    {participantsHydrated ? formatRoomParticipantTotal(roomParticipantTotal) : ''}
-                  </HeaderMetaCaps>
                 </HeaderMetaRow>
-              ) : (
-                <HeaderMetaCaps testID="room-header-meta">
-                  {isDirectMessage
-                    ? 'DIRECT MESSAGE'
-                    : participantsHydrated
-                      ? `${formatRoomParticipantTotal(roomParticipantTotal)}  ›`
-                      : 'LOADING MEMBERS'}
-                </HeaderMetaCaps>
-              )}
-            </TouchableOpacity>
+              ) : isDirectMessage ? (
+                <HeaderMetaCaps>DIRECT MESSAGE</HeaderMetaCaps>
+              ) : null}
+            </View>
             {/* The trailing slot holds ONE control. There is no `+` beside it:
               a Room's members have one way in (C83) — the `N members ›` line
               above opens the roster sheet, whose section heads carry the add
-              control. The header copy led to the same picker and, opened from
-              here with no section in scope, could only report the Workspace
-              as empty.
+              control. Membership sits beside overflow as an explicit trailing
+              action on both Rooms and corners.
 
               One overflow vocabulary: the same ••• the Room header carries,
               holding whatever destructive/rare actions the surface has. A
               corner's "close" belongs here, not as a permanent button sitting
               under the composer where the reader's thumb lives. */}
+            {!isDirectMessage && memberManagement.canOpenRoster && (
+              <TouchableOpacity
+                accessibilityLabel={`View ${formatRoomParticipantTotal(roomParticipantTotal)}`}
+                accessibilityRole="button"
+                hitSlop={HEADER_EDGE_HIT_SLOP}
+                onPress={() => setRosterVisible(true)}
+                style={styles.roomMembersButton}
+                testID="room-participant-roster-trigger"
+              >
+                <HeaderMetaCaps testID="room-header-meta">
+                  {participantsHydrated
+                    ? formatRoomParticipantTotal(roomParticipantTotal)
+                    : 'LOADING'}
+                </HeaderMetaCaps>
+              </TouchableOpacity>
+            )}
             {isCorner && !viewerIsAgent && !isArchived && (
               <TouchableOpacity
                 accessibilityLabel={`${CORNER_LABEL} actions`}
@@ -3623,13 +3618,13 @@ export default function BuzzChat() {
 
           {/* P2: Archived channels are read-only */}
           {isArchived ? (
-            <View style={[styles.archivedInputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+            <View style={[styles.archivedInputBar, readOnlyFooterInset]}>
               <Text style={[styles.archivedInputText, isCorner && styles.cornerArchivedInputText]}>
                 {parentChannelId ? 'Corner' : ROOM_LABEL} archived (read-only)
               </Text>
             </View>
           ) : isReadOnlyDirectMessage ? (
-            <View style={[styles.archivedInputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+            <View style={[styles.archivedInputBar, readOnlyFooterInset]}>
               <Text style={styles.archivedInputText}>
                 Announcements only · you can't reply here
               </Text>
@@ -4388,15 +4383,18 @@ const styles = StyleSheet.create((theme) => {
       lineHeight: 14,
       letterSpacing: 0.7,
     },
-    // The trailing slot holds exactly one thing — ••• on a live surface, the
-    // archived badge on a dead one — and both hang on the same axis: 12 of
-    // clear space off the title's own touch area (Material asks 8 between
-    // adjacent targets) and a glyph centred 34 from the right edge, mirroring
-    // the back chevron's 34 from the left.
+    roomMembersButton: {
+      minHeight: 44,
+      marginLeft: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    // Overflow follows membership in the trailing action cluster. Both retain
+    // independent 44-point targets without opening a gap between related
+    // controls.
     roomActionsButton: {
       minWidth: 44,
       minHeight: 44,
-      marginLeft: 12,
       alignItems: 'center',
       justifyContent: 'center',
     },

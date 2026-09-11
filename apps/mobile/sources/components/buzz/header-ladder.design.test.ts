@@ -42,7 +42,7 @@ describe('Chat header — one language for Room and Corner', () => {
     expect(chatSource).not.toMatch(/<IdentityMark\s*\n\s*kind="workspace"/);
   });
 
-  it('phrases the Room count as "N members", with no location suffix', () => {
+  it('phrases the trailing membership action as "N members", with no location suffix', () => {
     // Owner trim (2026-08-23): "3 participants · IN THIS ROOM" became
     // "3 members" (singular "1 member") on every surface.
     expect(chatSource).not.toContain('IN THIS ROOM  ›');
@@ -54,7 +54,7 @@ describe('Chat header — one language for Room and Corner', () => {
     expect(meta![0]).toContain('formatRoomParticipantTotal(roomParticipantTotal)');
   });
 
-  it('keeps the repo and member lines on one left axis in the shared meta token', () => {
+  it('keeps the repo and membership action in the shared meta token', () => {
     const repoChip = chatSource.match(/repoChip:\s*\{[^}]*\}/);
     expect(repoChip, 'missing repo chip alignment style').toBeTruthy();
     expect(repoChip![0]).toContain("alignSelf: 'flex-start'");
@@ -63,24 +63,20 @@ describe('Chat header — one language for Room and Corner', () => {
       /<HeaderMetaCaps testID="room-header-meta">[\s\S]*?<\/HeaderMetaCaps>/,
     );
     expect(memberMeta, 'missing room member metadata').toBeTruthy();
-    expect(memberMeta![0]).toContain('`${formatRoomParticipantTotal(roomParticipantTotal)}  ›`');
-    expect(memberMeta![0]).not.toContain('`  ${formatRoomParticipantTotal(roomParticipantTotal)}');
+    expect(memberMeta![0]).toContain('formatRoomParticipantTotal(roomParticipantTotal)');
 
     const caps = ladderSource.match(/metaCaps:\s*\{[\s\S]*?\n\s*\},/);
     expect(caps, 'missing shared metadata font token').toBeTruthy();
     expect(caps![0]).toMatch(/\.\.\.theme\.buzz\.type\.meta/);
   });
 
-  it('keeps the Room’s members line bare, not parted into its own meta-row rung (C85)', () => {
-    // #884 wrapped the Room's members line in a HeaderMetaRow to part it from
-    // the repo chip by a rung of the ladder; the captain wanted the old,
-    // tighter spacing back. The corner's own HeaderMetaRow (its status row)
-    // is unrelated and stays.
-    const roomBranch = chatSource.match(
-      /\) : \(\n\s*<HeaderMetaCaps testID="room-header-meta">[\s\S]*?<\/HeaderMetaCaps>\n\s*\)\}/,
-    );
-    expect(roomBranch, 'Room members line should render bare, unwrapped').toBeTruthy();
-    expect(chatSource).not.toContain('paddingVertical: 4');
+  it('places membership immediately before overflow for Rooms and corners', () => {
+    const membership = chatSource.indexOf('testID="room-participant-roster-trigger"');
+    const cornerOverflow = chatSource.indexOf('testID="corner-actions-menu"');
+    const roomOverflow = chatSource.indexOf('testID="room-actions-menu"');
+    expect(membership).toBeGreaterThanOrEqual(0);
+    expect(cornerOverflow).toBeGreaterThan(membership);
+    expect(roomOverflow).toBeGreaterThan(cornerOverflow);
   });
 
   it('leads the Corner with the agent mark through the same slot', () => {
@@ -104,13 +100,13 @@ describe('Chat header — one language for Room and Corner', () => {
     expect(back![0]).toContain('marginRight: 12');
   });
 
-  it('parts the trailing control from the title column and keeps both edge targets over 48', () => {
-    // Material asks for 8dp between adjacent targets; the title column is a
-    // touchable of its own, so the overflow cannot sit flush against it.
+  it('parts trailing actions from the title column and keeps edge targets over 48', () => {
     const actions = chatSource.match(/roomActionsButton:\s*\{[\s\S]*?\n    \},/);
     expect(actions, 'missing roomActionsButton style').toBeTruthy();
-    expect(actions![0]).toContain('marginLeft: 12');
     expect(actions![0]).toContain('minWidth: 44');
+    const membership = chatSource.match(/roomMembersButton:\s*\{[\s\S]*?\n    \},/);
+    expect(membership![0]).toContain('marginLeft: 12');
+    expect(membership![0]).toContain('minHeight: 44');
     // The archived badge takes the same trailing axis.
     const badge = chatSource.match(/archivedBadge:\s*\{[\s\S]*?\n    \},/);
     expect(badge![0]).toContain('marginLeft: 12');
@@ -119,7 +115,7 @@ describe('Chat header — one language for Room and Corner', () => {
     expect(chatSource).toContain(
       'const HEADER_EDGE_HIT_SLOP = { top: 4, bottom: 4, left: 4, right: 4 } as const;',
     );
-    expect(chatSource.match(/hitSlop=\{HEADER_EDGE_HIT_SLOP\}/g)).toHaveLength(4);
+    expect(chatSource.match(/hitSlop=\{HEADER_EDGE_HIT_SLOP\}/g)).toHaveLength(5);
   });
 
   it('lets the corner’s agent name give before the facts beside it do', () => {
@@ -171,10 +167,10 @@ describe('Chat header — one language for Room and Corner', () => {
     expect(chatSource).not.toContain('corner-view-status');
     expect(chatSource).not.toContain('displayedCornerStatus');
     expect(chatSource).not.toContain('cornerHeaderState');
-    // The meta row still reads: agent name, then member count.
+    // The meta row keeps the opener name; membership moved beside overflow.
     const branch = chatSource.match(/isCorner \? \(\s*<HeaderMetaRow>[\s\S]*?<\/HeaderMetaRow>/);
     expect(branch, 'missing corner meta row branch').toBeTruthy();
     expect(branch![0]).toContain('cornerHeaderAgent');
-    expect(branch![0]).toContain('formatRoomParticipantTotal(roomParticipantTotal)');
+    expect(branch![0]).not.toContain('formatRoomParticipantTotal(roomParticipantTotal)');
   });
 });

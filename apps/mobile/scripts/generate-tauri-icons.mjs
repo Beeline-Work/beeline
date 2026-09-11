@@ -1,6 +1,9 @@
 #!/usr/bin/env node
-// Regenerates apps/mobile/src-tauri/icons from the one source of app identity,
-// sources/assets/images/icon.png. `tauri icon` would do the same job, but it
+// Regenerates apps/mobile/src-tauri/icons from the full-bleed render of the app
+// identity, sources/assets/images/icon-full-bleed.png. Desktop shells draw the
+// icon unmasked, so it takes the loop at its natural framing; the inset in
+// icon.png is an Android launcher treatment and would only shrink the mark in a
+// dock or title bar. `tauri icon` would do the same job, but it
 // needs the Rust toolchain installed just to reshape a PNG; this uses nothing
 // but node's zlib so the desktop icons can be refreshed from any checkout.
 //
@@ -17,7 +20,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const SOURCE = join(here, '..', 'sources', 'assets', 'images', 'icon.png');
+const SOURCE = join(here, '..', 'sources', 'assets', 'images', 'icon-full-bleed.png');
 const ICONS = join(here, '..', 'src-tauri', 'icons');
 
 const crcTable = Array.from({ length: 256 }, (_, n) => {

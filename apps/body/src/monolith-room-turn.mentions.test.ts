@@ -6,11 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AcpClient } from './acp.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
-import {
-  agentReplyMentionIds,
-  MonolithRoomTurnLoop,
-  roomMentionDirectory,
-} from './monolith-room-turn.js';
+import { MonolithRoomTurnLoop, roomMentionDirectory } from './monolith-room-turn.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 import { SessionScheduler } from './session-scheduler.js';
 
@@ -67,14 +63,14 @@ describe('who an agent can tag, and how it is spelled', () => {
     expect(directory).toContain('Never invent a handle');
   });
 
-  it('falls back to the display name for a member with no handle, and says nothing for an empty Room', () => {
+  it('omits a member with no handle and says nothing when no member is taggable', () => {
     const roster = {
       members: [
         { identityId: 'self', kind: 'agent' as const, name: 'Greeter', role: 'member' as const },
         { identityId: 'nameless', kind: 'human' as const, name: 'Ada', role: 'member' as const },
       ],
     };
-    expect(roomMentionDirectory(roster, 'self')).toContain('- @Ada (person)');
+    expect(roomMentionDirectory(roster, 'self')).toBe('');
     expect(roomMentionDirectory({ members: [] }, 'self')).toBe('');
   });
 
@@ -263,36 +259,10 @@ describe('who an agent can tag, and how it is spelled', () => {
     expect(prompts[0]).toContain('- @bananaman614305 (person)');
     expect(writes).toContainEqual(expect.objectContaining({ triggerMessageId: 'ask-1' }));
     expect(writes).toContainEqual(expect.objectContaining({ triggerMessageId: 'ask-2' }));
+    expect(
+      writes.every(
+        (write) => typeof write !== 'object' || write === null || !('mentionIds' in write),
+      ),
+    ).toBe(true);
   }, 20_000);
-
-  /**
-   * Defect 2, the daemon half. The resolver is NOT what dropped the correct
-   * handle: it returns both ids for the exact shape the Room saw. It does fix
-   * their ORDER — aliases are tried longest first, so the legacy `a_` spelling
-   * (16 characters) lands ahead of the correct handle (15) — which is why the
-   * server's since-removed one-human cap kept the wrong tag and threw away the
-   * right one.
-   */
-  it('resolves a mid-text handle after a newline alongside a legacy spelling', () => {
-    const text = [
-      '@a_lunchboxfortwo here is where things stand and what I still need from you.',
-      '@bananaman614305 you are up next; the checklist below is yours.',
-    ].join('\n');
-    expect(text.indexOf('@bananaman614305')).toBeGreaterThan(0);
-    expect(agentReplyMentionIds(text, ROSTER(AGENT_HEX), AGENT_HEX)).toEqual([CAPTAIN, PEER]);
-  });
-
-  it('resolves an agent only by its current canonical handle', () => {
-    expect(agentReplyMentionIds('@goosy please help', ROSTER(AGENT_HEX), AGENT_HEX)).toEqual([]);
-    expect(agentReplyMentionIds('@GOOSY-2 please help', ROSTER(AGENT_HEX), AGENT_HEX)).toEqual([]);
-    expect(agentReplyMentionIds('@Strategist please help', ROSTER(AGENT_HEX), AGENT_HEX)).toEqual(
-      [],
-    );
-    expect(agentReplyMentionIds('@a_goosy-2 please help', ROSTER(AGENT_HEX), AGENT_HEX)).toEqual(
-      [],
-    );
-    expect(agentReplyMentionIds('@goosy-2 please help', ROSTER(AGENT_HEX), AGENT_HEX)).toEqual([
-      OTHER_AGENT,
-    ]);
-  });
 });

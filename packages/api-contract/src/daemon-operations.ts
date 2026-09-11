@@ -367,7 +367,7 @@ export type PostRoomMessageInput = TurnOutputAuthority &
     /** The daemon never phrases a system line; the server does (`system-line.ts`). */
     readonly presentation?: 'message' | 'card';
     readonly tags?: Readonly<Record<string, string>>;
-    /** Validated peer addressing for monolith agent-to-agent turns. */
+    /** @deprecated Compatibility input. The server derives persisted mentions from `text`. */
     readonly mentionIds?: readonly string[];
     readonly replyToMessageId?: string;
     /** Inbox message that started this turn; independent of optional reply threading. */

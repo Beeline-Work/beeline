@@ -191,20 +191,18 @@ export function pendingGrantToolCall(call: { title?: string; content?: unknown }
  * guessed tag resolves to nobody, and nobody is told it was written.
  *
  * Built from the roster this turn was fetched with, so a newcomer is taggable
- * on the turn they arrive, and from the same alias fields `agentReplyMentionIds`
- * resolves against: the handle is canonical, the display name is the fallback
- * for a member who has none.
+ * on the turn they arrive. The server resolves tags in the final reply against
+ * current Room membership when it stores the message.
  */
 export function roomMentionDirectory(roster: WorkspaceRoster, selfId: string): string {
   const rows: string[] = [];
   for (const member of roster.members) {
     if (member.identityId === selfId) continue;
     const handle = member.handle?.trim().replace(/^@/, '');
+    if (!handle) continue;
     const name = member.name?.trim() ?? '';
-    const alias = handle || name;
-    if (!alias) continue;
     const kind = member.kind === 'agent' ? 'agent' : 'person';
-    rows.push(`- @${alias}${name && name !== alias ? ` — ${name}` : ''} (${kind})`);
+    rows.push(`- @${handle}${name && name !== handle ? ` — ${name}` : ''} (${kind})`);
   }
   if (!rows.length) return '';
   return [
@@ -213,64 +211,6 @@ export function roomMentionDirectory(roster: WorkspaceRoster, selfId: string): s
     ...rows,
     'Write a tag exactly as spelled here. An @name spelled any other way is plain text: it reaches nobody, and nobody is told it was meant for them. Never invent a handle, shorten one, or copy an @name out of the conversation — old messages carry spellings that no longer exist.',
   ].join('\n');
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-/** Resolve model-written @names into validated member ids (agents and humans) the server routes. */
-export function agentReplyMentionIds(
-  text: string,
-  roster: WorkspaceRoster,
-  authorId: string,
-): string[] {
-  const aliases = new Map<string, { display: string; ids: Set<string>; caseSensitive: boolean }>();
-  for (const member of roster.members) {
-    if (member.identityId === authorId) continue;
-    // Agent tags are execution authority, so only the canonical handle shown
-    // in the current directory may resolve one. Human aliases remain a
-    // presentation/delivery compatibility surface.
-    const rawAliases =
-      member.kind === 'agent' ? [member.handle] : [member.name, member.handle, member.soul?.name];
-    for (const raw of rawAliases) {
-      const display = raw?.trim().replace(/^@/, '');
-      if (!display) continue;
-      const caseSensitive = member.kind === 'agent';
-      const key = `${caseSensitive ? 'agent' : 'human'}:${
-        caseSensitive ? display : display.toLocaleLowerCase()
-      }`;
-      const entry = aliases.get(key) ?? { display, ids: new Set<string>(), caseSensitive };
-      entry.ids.add(member.identityId);
-      aliases.set(key, entry);
-    }
-  }
-  // Legacy imported membership profiles can carry `a_` ahead of a human
-  // handle. Prefer any real `a_<handle>` member above; otherwise route the
-  // old spelling to the one canonical handle it can unambiguously name.
-  for (const member of roster.members) {
-    if (member.identityId === authorId || member.kind === 'agent' || !member.handle) continue;
-    const handle = member.handle.trim().replace(/^@/, '').toLocaleLowerCase();
-    const canonical = aliases.get(`human:${handle}`);
-    const legacy = `a_${handle}`;
-    const legacyKey = `human:${legacy}`;
-    if (canonical && !aliases.has(legacyKey))
-      aliases.set(legacyKey, { ...canonical, display: legacy });
-  }
-  const mentioned: string[] = [];
-  for (const { display, ids, caseSensitive } of [...aliases.values()].sort(
-    (left, right) => right.display.length - left.display.length,
-  )) {
-    if (ids.size !== 1) continue;
-    const pattern = new RegExp(
-      `(^|[\\s([{])@${escapeRegExp(display)}(?=$|[\\s.,!?;:)\\]}])`,
-      caseSensitive ? 'u' : 'iu',
-    );
-    if (!pattern.test(text)) continue;
-    const identityId = [...ids][0]!;
-    if (!mentioned.includes(identityId)) mentioned.push(identityId);
-  }
-  return mentioned;
 }
 
 interface ActiveTurn {
@@ -1089,16 +1029,12 @@ export class MonolithRoomTurnLoop {
               if (openCornerCall && !isFailedToolCall(openCornerCall)) {
                 reply = stripCornerOpenEcho(reply);
               }
-              const mentionIds = reply
-                ? agentReplyMentionIds(reply, roster, this.agent.publicKey)
-                : [];
               await trace.measure('publish', () =>
                 stream.settle(
                   reply,
                   reply
                     ? {
                         triggerMessageId: item.id,
-                        mentionIds,
                       }
                     : {},
                 ),

@@ -56,7 +56,7 @@ import {
   parseAgentAccessPolicy,
   senderMayAddressAgent,
 } from '@beeline/api-contract/agent-access';
-import { typedMentionHandles } from './message-mentions.js';
+import { resolveCurrentMemberMentions, typedMentionHandles } from './message-mentions.js';
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
 import type { CommittedMessageLiveRow, CommittedTurnLiveRow, LiveEvent, LiveHub } from './live.js';
 import type { GitHubOperations } from './github-operations.js';
@@ -2661,21 +2661,12 @@ export class PhoneService {
       )
     ).rows[0]?.kind;
     if (authorKind !== 'human') return { mentionIds: [], noticeAgentIds: [] };
-    const mentions = new Set<string>();
+    const resolvedMembers = await resolveCurrentMemberMentions(this.database, roomId, text, author);
+    const mentions = new Set(resolvedMembers.map((member) => member.id));
     const typedHandles = typedMentionHandles(text);
-    const members = await this.database.query<{
-      id: string;
-      handle: string;
-      kind: 'human' | 'agent';
-    }>(
-      `SELECT identity.id,identity.handle,identity.kind
-       FROM memberships membership
-       JOIN identities identity ON identity.id=membership.identity_id
-       WHERE membership.room_id=$1 AND membership.removed_at IS NULL
-         AND identity.handle IS NOT NULL`,
-      [roomId],
+    const noticeAgentIds = new Set(
+      resolvedMembers.filter((member) => member.kind === 'agent').map((member) => member.id),
     );
-    const noticeAgentIds = new Set<string>();
     const directAgents = await this.database.query<{ id: string }>(
       `SELECT identity.id
        FROM rooms room
@@ -2713,27 +2704,18 @@ export class PhoneService {
        WHERE room.id=$1 AND room.parent_id IS NOT NULL AND room_membership.identity_id IS NULL`,
       [roomId],
     );
-    const candidatesByHandle = new Map<
-      string,
-      { id: string; kind: 'human' | 'agent'; member: boolean }[]
-    >();
-    for (const member of members.rows) {
-      const handle = member.handle;
-      const candidates = candidatesByHandle.get(handle) ?? [];
-      candidates.push({ id: member.id, kind: member.kind, member: true });
-      candidatesByHandle.set(handle, candidates);
-    }
+    const resolvedHandles = new Set(resolvedMembers.map((member) => member.handle));
+    const absentByHandle = new Map<string, string[]>();
     for (const agent of absentCornerAgents.rows) {
       const handle = agent.handle;
-      const candidates = candidatesByHandle.get(handle) ?? [];
-      candidates.push({ id: agent.id, kind: 'agent', member: false });
-      candidatesByHandle.set(handle, candidates);
+      const candidates = absentByHandle.get(handle) ?? [];
+      candidates.push(agent.id);
+      absentByHandle.set(handle, candidates);
     }
     for (const handle of typedHandles) {
-      const [candidate] = candidatesByHandle.get(handle) ?? [];
-      if ((candidatesByHandle.get(handle)?.length ?? 0) !== 1 || !candidate) continue;
-      if (candidate.member) mentions.add(candidate.id);
-      if (candidate.kind === 'agent') noticeAgentIds.add(candidate.id);
+      if (resolvedHandles.has(handle)) continue;
+      const candidates = absentByHandle.get(handle);
+      if (candidates?.length === 1) noticeAgentIds.add(candidates[0]!);
     }
     // An explicit reply addresses its parent agent without adding a visible
     // @mention. Untagged top-level continuity is routed separately and must not

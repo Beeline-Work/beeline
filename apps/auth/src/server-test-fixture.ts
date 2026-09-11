@@ -6,7 +6,11 @@ import { generateKeypair, nip98AuthHeader, signEvent, type Keypair } from '@beel
 import { exportJWK, generateKeyPair, SignJWT, type JWK, type KeyLike } from 'jose';
 import { afterEach, beforeEach, expect } from 'vitest';
 import { OidcClient } from './oidc.js';
-import { GitHubAppClient, GitHubOAuthClient } from './github.js';
+import {
+  GitHubAppClient,
+  GitHubOAuthClient,
+  type GitHubOrganizationMembership,
+} from './github.js';
 import { OIDC_BIND_KIND, OIDC_BIND_MARKER } from './protocol.js';
 import { buildAuthServer, type AuthTenant } from './server.js';
 import {
@@ -257,6 +261,8 @@ export const state: {
   githubDisplayName: string;
   githubUserInstallations: number[] | Error;
   githubAppInstallations: number[] | Error;
+  /** Org login → what the user's own token says about their membership. */
+  githubOrganizationMemberships: Record<string, GitHubOrganizationMembership>;
   githubAppInstallationDetail:
     | Array<{
         installationId: number;
@@ -293,6 +299,7 @@ export const state: {
   githubDisplayName: 'The Octocat',
   githubUserInstallations: [],
   githubAppInstallations: [],
+  githubOrganizationMemberships: {},
   githubAppInstallationDetail: undefined,
   githubAppRepositoryDetail: undefined,
   githubInstallationListCalls: 0,
@@ -321,6 +328,7 @@ export function useAuthServerFixture(): void {
     state.githubDisplayName = 'The Octocat';
     state.githubUserInstallations = [];
     state.githubAppInstallations = [];
+    state.githubOrganizationMemberships = {};
     state.githubAppInstallationDetail = undefined;
     state.githubAppRepositoryDetail = undefined;
     state.githubInstallationListCalls = 0;
@@ -377,6 +385,10 @@ export function useAuthServerFixture(): void {
             if (state.githubUserInstallations instanceof Error) throw state.githubUserInstallations;
             return state.githubUserInstallations;
           },
+          // The membership fallback: what the user's own token says about the
+          // organization that owns an installation the listing left out.
+          organizationMembership: async (_token: string, organization: string) =>
+            state.githubOrganizationMemberships[organization] ?? 'none',
           // The App JWT enumeration the server-side reconcile relies on.
           listInstallations: async () => {
             state.githubInstallationListCalls += 1;

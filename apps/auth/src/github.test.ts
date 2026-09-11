@@ -236,6 +236,43 @@ describe('GitHub-only account and repository access', () => {
     );
   });
 
+  it('reads the user own organization membership and never turns a refusal into a denial', async () => {
+    const { privateKey } = await generateKeyPair('RS256');
+    const privateKeyPem = await exportPKCS8(privateKey);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ state: 'active', role: 'member' }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ state: 'pending', role: 'member' }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 }))
+      // The App asks for no organization permissions, so GitHub may simply
+      // refuse this endpoint — 'unknown' keeps the caller on its old path.
+      .mockResolvedValueOnce(new Response(JSON.stringify({ message: 'Forbidden' }), { status: 403 }))
+      .mockResolvedValueOnce(new Response('not json', { status: 200 }))
+      .mockRejectedValueOnce(new Error('connection reset'));
+    vi.stubGlobal('fetch', fetchMock);
+    const app = new GitHubAppClient({ appId: '42', privateKey: privateKeyPem, slug: 'beeline' });
+
+    await expect(app.organizationMembership('user-token', 'acme')).resolves.toBe('active');
+    await expect(app.organizationMembership('user-token', 'acme')).resolves.toBe('pending');
+    await expect(app.organizationMembership('user-token', 'acme')).resolves.toBe('none');
+    await expect(app.organizationMembership('user-token', 'acme')).resolves.toBe('unknown');
+    await expect(app.organizationMembership('user-token', 'acme')).resolves.toBe('unknown');
+    await expect(app.organizationMembership('user-token', 'acme')).resolves.toBe('unknown');
+    expect(fetchMock.mock.calls[0]![0]).toBe('https://api.github.com/user/memberships/orgs/acme');
+    expect(fetchMock.mock.calls[0]![1]).toMatchObject({
+      headers: expect.objectContaining({ authorization: 'Bearer user-token' }),
+    });
+    // An organization login is path data, not a URL fragment to trust.
+    await app.organizationMembership('user-token', 'acme/../../app').catch(() => undefined);
+    expect(fetchMock.mock.calls.at(-1)![0]).toBe(
+      'https://api.github.com/user/memberships/orgs/acme%2F..%2F..%2Fapp',
+    );
+  });
+
   it('lists every installation of the App with its own JWT, skipping suspended ones', async () => {
     const { privateKey } = await generateKeyPair('RS256');
     const privateKeyPem = await exportPKCS8(privateKey);

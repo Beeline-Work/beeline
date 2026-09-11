@@ -53,7 +53,59 @@ function renderPicker(): ReactTestRenderer {
   return renderer;
 }
 
+const ORG_INSTALLATION = {
+  installationId: 7,
+  accountId: '1',
+  accountLogin: 'MoonScannerAI',
+  accountType: 'Organization' as const,
+  repositorySelection: 'selected' as const,
+  status: 'active' as const,
+  repositoryCount: 1,
+  manageUrl: 'https://github.com/organizations/MoonScannerAI/settings/installations/7',
+};
+
+/** Type a repository name into the picker's search field. */
+function searchFor(renderer: ReactTestRenderer, query: string): void {
+  act(() => {
+    renderer.root
+      .findByProps({ accessibilityLabel: 'Search repositories or paste a GitHub URL' })
+      .props.onChangeText(query);
+  });
+}
+
 describe('RepoPicker', () => {
+  it('says why a named organization repository is absent instead of showing an empty list', () => {
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        <RepoPicker candidates={[]} installations={[ORG_INSTALLATION]} onSelect={() => {}} />,
+      );
+    });
+    searchFor(renderer, 'MoonScannerAI/pulse');
+
+    expect(
+      renderer.root.findByProps({ testID: 'repo-picker-missing-reason' }).props.children,
+    ).toContain('only sees selected repositories');
+    act(() => renderer.unmount());
+  });
+
+  it('keeps quiet about a repository that is actually in the list', () => {
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        <RepoPicker
+          candidates={[{ key: 'github:1', name: 'MoonScannerAI/pulse' }]}
+          installations={[ORG_INSTALLATION]}
+          onSelect={() => {}}
+        />,
+      );
+    });
+    searchFor(renderer, 'MoonScannerAI/pulse');
+
+    expect(renderer.root.findAllByProps({ testID: 'repo-picker-missing-reason' })).toHaveLength(0);
+    act(() => renderer.unmount());
+  });
+
   it('renders a scrollable candidate list that shrinks inside the dialog body', () => {
     const renderer = renderPicker();
     const list = renderer.root.findByProps({ testID: 'repo-picker-list' });

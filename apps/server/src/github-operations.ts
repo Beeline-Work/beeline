@@ -312,6 +312,9 @@ export class GitHubOperations {
     let githubReconnectNeeded: boolean | undefined = credential?.reconnectNeeded;
     if (credential) {
       let administered: Set<number> | undefined;
+      // The token every later user-scoped question must use: a rotation below
+      // replaces it, and asking GitHub with the expired one answers nothing.
+      let userToken = credential.token;
       try {
         administered = credential.token
           ? await this.listAdministeredInstallations(credential.token)
@@ -327,6 +330,7 @@ export class GitHubOperations {
             ? await this.rotateUserCredential(credential, this.database)
             : undefined;
           if (rotated) {
+            userToken = rotated;
             administered = await this.listAdministeredInstallations(rotated);
           } else {
             // Refresh is impossible (no/revoked refresh token): degrade to the stored
@@ -356,10 +360,24 @@ export class GitHubOperations {
           // apps/auth/src/server-context.ts for the canonical comment). A
           // positively listed organization claims; an UNAVAILABLE listing
           // follows the install-callback precedent and claims an organization
-          // nobody else owns yet; a definitive answer without it (or no
-          // stored credential to ask with) refuses.
-          if (administered && !administered.has(installation.installationId)) continue;
-          if (!administered) {
+          // nobody else owns yet; a definitive answer without it falls back to
+          // MEMBERSHIP (below) before refusing, because the listing's silence
+          // about an org install is not evidence of anything.
+          const listed = Boolean(administered?.has(installation.installationId));
+          if (administered && !listed) {
+            // Membership is the user's own answer about their own account, so
+            // an active member claims an org install /user/installations left
+            // out. Anything else — 'none', an unaccepted invitation, GitHub
+            // declining to answer — keeps the refusal this listing implied.
+            const membership = userToken
+              ? await this.app.organizationMembership(userToken, installation.account.login)
+              : 'unknown';
+            if (membership !== 'active') continue;
+          }
+          if (!listed) {
+            // Whether discovered by the outage precedent or by membership, an
+            // installation another identity already owns stays theirs: this
+            // claim adds a viewer, it never steals a row.
             const owner = (
               await this.database.query<{ owner_id: string }>(
                 `SELECT owner_id FROM github_installations WHERE installation_id=$1`,

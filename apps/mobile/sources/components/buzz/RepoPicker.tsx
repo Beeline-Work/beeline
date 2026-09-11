@@ -11,6 +11,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { GitHubInstallationAccess } from '@beeline/buzz-client';
 import type { GitHubRepositoryLinkagePlan, RepoCandidate } from '@/buzz/room-repo-picker';
 import {
+  explainMissingRepo,
   filterRepoCandidates,
   GITHUB_REPOSITORY_SELECTION_INSTRUCTION,
   githubFullNameFromInput,
@@ -131,6 +132,15 @@ export const RepoPicker = memo(function RepoPicker({
           installation.accountLogin.toLowerCase() === pastedOwner.toLowerCase(),
       )
     : undefined;
+  // Named a repository that is not in the list? Say why before the user
+  // decides Beeline simply lost it — an org repo is usually one grant away.
+  const missing = useMemo(
+    () =>
+      pastedFullName && !exactCandidate
+        ? explainMissingRepo(pastedFullName, candidates, installations, { uncoveredOwners })
+        : null,
+    [candidates, exactCandidate, installations, pastedFullName, uncoveredOwners],
+  );
 
   const candidateRow = (candidate: RepoCandidate) => (
     <TouchableOpacity
@@ -206,6 +216,11 @@ export const RepoPicker = memo(function RepoPicker({
           testID={`${testIDPrefix}-connect-card`}
         >
           <Text style={styles.connectTitle}>{pastedFullName}</Text>
+          {missing && (
+            <Text style={styles.connectReason} testID={`${testIDPrefix}-missing-reason`}>
+              {missing.message}
+            </Text>
+          )}
           <Text style={styles.connectAction}>
             {ownerInstallation?.status === 'active'
               ? 'Add this repo to the Beeline installation →'
@@ -400,6 +415,8 @@ const styles = StyleSheet.create((theme) => {
       marginVertical: 8,
     },
     connectTitle: { ...Typography.mono(), color: groknight.textPrimary, fontSize: 12 },
+    // The secondary-caption role, not another raw size (DESIGN.md → Type).
+    connectReason: { ...groknight.type.meta, color: groknight.textMuted },
     connectAction: { ...Typography.default('semiBold'), color: groknight.accent, fontSize: 12 },
     instructionCard: {
       borderWidth: 1,

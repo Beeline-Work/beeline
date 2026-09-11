@@ -954,6 +954,10 @@ describe('GitHub installation, repositories, and token routes', () => {
       { installationId: 90, accountId: '789', login: 'Beeline-Work', type: 'Organization' },
     ];
     state.githubUserInstallations = [77];
+    // The membership fallback gets its say here too and answers plainly that
+    // this user is not in Beeline-Work (the fixture default), so the listing's
+    // denial stands.
+    state.githubOrganizationMemberships = {};
     state.roomTokenAuthority = async (_tenant, input) =>
       input.agentPubkey === agent.publicKey && input.roomId === 'room-1'
         ? { authorized: true, authorizedBy: owner.publicKey, fullName: 'acme/widget' }
@@ -1759,6 +1763,88 @@ describe('GitHub installation, repositories, and token routes', () => {
     await expect(
       store.githubInstallationsForPubkey(alphaTenant.community, identity.publicKey),
     ).resolves.toEqual([]);
+  });
+
+  it('claims an organization installation the user listing omits once membership confirms it', async () => {
+    const identity = generateKeypair();
+    await bindGitHubIdentity(identity, 'm'.repeat(43));
+    // The App serves installation 78 for the acme organization. GET
+    // /user/installations answers successfully and simply does not mention it
+    // — the org blindness that stranded a real install in production — so the
+    // user's own membership in acme is what claims it.
+    state.githubAppInstallations = [78];
+    state.githubUserInstallations = [];
+    state.githubOrganizationMemberships = { acme: 'active' };
+
+    const reposUrl = `https://alpha.example/auth/github/repos/${identity.publicKey}?refresh=1`;
+    const response = await app.inject({
+      method: 'GET',
+      url: `/auth/github/repos/${identity.publicKey}?refresh=1`,
+      headers: {
+        host: alphaTenant.host,
+        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, reposUrl, 'GET'),
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      installed: true,
+      installations: [{ installationId: 78, accountLogin: 'acme', accountType: 'Organization' }],
+      repositories: [{ installationId: 78, fullName: 'acme/widget' }],
+    });
+  });
+
+  it('leaves an omitted organization installation unclaimed when membership denies it', async () => {
+    const identity = generateKeypair();
+    await bindGitHubIdentity(identity, 'k'.repeat(43));
+    // Same omission, but GitHub says outright that this user is not in acme:
+    // the fallback adds claims, it never invents one.
+    state.githubAppInstallations = [78];
+    state.githubUserInstallations = [];
+    state.githubOrganizationMemberships = { acme: 'none' };
+
+    const reposUrl = `https://alpha.example/auth/github/repos/${identity.publicKey}?refresh=1`;
+    const response = await app.inject({
+      method: 'GET',
+      url: `/auth/github/repos/${identity.publicKey}?refresh=1`,
+      headers: {
+        host: alphaTenant.host,
+        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, reposUrl, 'GET'),
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ installed: false, installations: [], repositories: [] });
+    await expect(
+      store.githubInstallationsForPubkey(alphaTenant.community, identity.publicKey),
+    ).resolves.toEqual([]);
+  });
+
+  it('keeps an unverifiable membership from blocking the unavailable-listing precedent', async () => {
+    const identity = generateKeypair();
+    await bindGitHubIdentity(identity, 'j'.repeat(43));
+    // The listing itself is unavailable AND GitHub declines the membership
+    // question. That combination is exactly the install-callback precedent,
+    // so the organization install still claims.
+    state.githubAppInstallations = [78];
+    state.githubUserInstallations = new Error('GitHub user installations failed: HTTP 404');
+    state.githubOrganizationMemberships = { acme: 'unknown' };
+
+    const reposUrl = `https://alpha.example/auth/github/repos/${identity.publicKey}?refresh=1`;
+    const response = await app.inject({
+      method: 'GET',
+      url: `/auth/github/repos/${identity.publicKey}?refresh=1`,
+      headers: {
+        host: alphaTenant.host,
+        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, reposUrl, 'GET'),
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      installed: true,
+      installations: [{ installationId: 78, accountLogin: 'acme' }],
+    });
   });
 
   it('groups multiple installations, applies repository webhooks, and preserves revoked bindings', async () => {

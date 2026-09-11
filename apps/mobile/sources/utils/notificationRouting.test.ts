@@ -61,6 +61,25 @@ describe('getBuzzNotificationTargetFromData', () => {
       messageId: 'event-456',
     });
   });
+
+  it('prefers the corner when a retained message push names its parent as the channel', () => {
+    expect(
+      getBuzzNotificationTargetFromData({
+        type: 'mention',
+        target: 'message',
+        roomId: 'parent-room',
+        channelId: 'parent-room',
+        cornerId: 'corner-123',
+        messageId: 'event-456',
+      }),
+    ).toMatchObject({
+      target: 'message',
+      roomId: 'parent-room',
+      channelId: 'corner-123',
+      cornerId: 'corner-123',
+      messageId: 'event-456',
+    });
+  });
 });
 
 describe('navigateToBuzzNotificationResponse', () => {

@@ -270,7 +270,7 @@ describe('agent reply completion latency', () => {
     expect(event.trace).not.toHaveProperty('projectionCompletedAt');
   });
 
-  it('settles a failed-turn line in the atomic reply statement', async () => {
+  it('makes a failed receipt terminal for its command', async () => {
     const request = '9'.repeat(64);
     const generation = `${GENERATION}-recovery`;
     await database.query(
@@ -299,58 +299,19 @@ describe('agent reply completion latency', () => {
       },
       AGENT,
     );
-    await database.query(`CREATE TEMP TABLE atomic_message_order(sequence bigserial, operation text)`);
-    await database.query(
-      `CREATE FUNCTION pg_temp.record_atomic_message_order() RETURNS trigger AS $$
-       BEGIN
-         INSERT INTO atomic_message_order(operation) VALUES(TG_OP);
-         RETURN NEW;
-       END
-       $$ LANGUAGE plpgsql`,
-    );
-    await database.query(
-      `CREATE TRIGGER record_atomic_message_order AFTER INSERT OR UPDATE ON messages
-       FOR EACH ROW EXECUTE FUNCTION pg_temp.record_atomic_message_order()`,
-    );
-
-    const reply = await daemon.execute(
-      'postRoomMessage',
-      { roomId: ROOM, requestId: request, generationId: generation, text: 'Recovered reply' },
-      AGENT,
-    );
-
-    const rows = (
-      await database.query<{ id: string; text: string; state: string | null }>(
-        `SELECT id,text,card->>'state' state FROM messages
-         WHERE room_id=$1 AND (id=$2 OR (card_type='turn-failed' AND card->>'requestId'=$3))
-         ORDER BY id`,
-        [ROOM, reply.id, request],
-      )
-    ).rows;
-    expect(rows).toEqual(
-      expect.arrayContaining([
-        { id: reply.id, text: 'Recovered reply', state: null },
-        expect.objectContaining({ text: '@agent answered after a retry', state: 'recovered' }),
-      ]),
-    );
-    const committedMessages = publish.mock.calls
-      .map(([event]) => event)
-      .filter(
-        (event) => event.type === 'invalidate' && event.committedRow?.type === 'message',
-      );
-    expect(committedMessages).toHaveLength(2);
-    expect(committedMessages.map((event) => event.messageId)).toEqual([
-      rows.find((row) => row.state === 'recovered')!.id,
-      reply.id,
-    ]);
     expect(
-      (
-        await database.query<{ operation: string }>(
-          `SELECT operation FROM atomic_message_order ORDER BY sequence`,
-        )
-      ).rows.map((row) => row.operation),
-    ).toEqual(['UPDATE', 'INSERT']);
-    await database.query(`DROP TRIGGER record_atomic_message_order ON messages`);
+      (await database.query<{ state: string }>(`SELECT state FROM agent_commands WHERE id=$1`, [
+        command!.id,
+      ])).rows[0],
+    ).toEqual({ state: 'complete' });
+    await expect(
+      daemon.execute(
+        'postRoomMessage',
+        { roomId: ROOM, requestId: request, generationId: generation, text: 'Late reply' },
+        AGENT,
+      ),
+    ).rejects.toThrow('command already completed');
+    expect(publish).toHaveBeenCalled();
     expect(
       (
         await database.query<{ text: string; state: string }>(
@@ -359,7 +320,7 @@ describe('agent reply completion latency', () => {
           [ROOM, request],
         )
       ).rows,
-    ).toEqual([{ text: '@agent answered after a retry', state: 'recovered' }]);
+    ).toEqual([{ text: '@agent could not answer · temporary failure', state: 'failed' }]);
   });
 
   it('commits a claimed turn in one representative database round trip', async () => {

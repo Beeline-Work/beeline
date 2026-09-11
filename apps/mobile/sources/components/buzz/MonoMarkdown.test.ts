@@ -1,7 +1,7 @@
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
@@ -19,6 +19,9 @@ vi.mock('react-native', async () => {
 });
 
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn(async () => undefined) }));
+
+const openExternal = vi.hoisted(() => ({ openExternalUrl: vi.fn(async () => undefined) }));
+vi.mock('@/utils/open-external-url', () => openExternal);
 
 import { MonoMarkdown } from './MonoMarkdown';
 
@@ -490,6 +493,63 @@ describe('MonoMarkdown renders a resolved mention as a tappable member link', ()
       .findAllByType('Text')
       .find((node) => node.props.children === 'Ask @unknown for the result');
     expect(token?.props.onPress).toBeUndefined();
+  });
+});
+
+// ── URL links route through the shared external URL boundary ────────────────
+// The desktop shell hosts the same bundle in a webview where `Linking.openURL`
+// does not reach a browser; every transcript link opens through
+// `openExternalUrl`, which picks the Tauri opener there and Expo Linking
+// everywhere else. Only http(s) is an external destination — a custom scheme
+// like `beeline://` stays inert (deep links are routed by the app itself).
+describe('MonoMarkdown opens URL links through the shared external URL boundary', () => {
+  beforeEach(() => {
+    openExternal.openExternalUrl.mockClear();
+  });
+
+  it('routes an autolinked http(s) tap to openExternalUrl', () => {
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        React.createElement(MonoMarkdown, { markdown: 'see https://example.com now' }),
+      );
+    });
+    const link = renderer.root
+      .findAllByType('Text')
+      .find((node) => node.props.children === 'https://example.com');
+    expect(link?.props.onPress).toBeDefined();
+    act(() => link?.props.onPress());
+    expect(openExternal.openExternalUrl).toHaveBeenCalledWith('https://example.com');
+  });
+
+  it('routes a markdown-link tap with its target URL, not its label', () => {
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        React.createElement(MonoMarkdown, { markdown: '[docs](https://docs.example.com/guide)' }),
+      );
+    });
+    const link = renderer.root
+      .findAllByType('Text')
+      .find((node) => node.props.children === 'docs');
+    expect(link?.props.onPress).toBeDefined();
+    act(() => link?.props.onPress());
+    expect(openExternal.openExternalUrl).toHaveBeenCalledWith('https://docs.example.com/guide');
+  });
+
+  it('keeps a non-http custom scheme inert (never handed to the opener)', () => {
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        React.createElement(MonoMarkdown, { markdown: '[review](beeline://review/secret)' }),
+      );
+    });
+    const link = renderer.root
+      .findAllByType('Text')
+      .find((node) => node.props.children === 'review');
+    expect(link?.props.onPress).toBeDefined();
+    act(() => link?.props.onPress());
+    expect(openExternal.openExternalUrl).not.toHaveBeenCalled();
   });
 });
 

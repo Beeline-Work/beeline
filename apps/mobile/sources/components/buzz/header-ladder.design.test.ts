@@ -42,7 +42,7 @@ describe('Chat header — one language for Room and Corner', () => {
     expect(chatSource).not.toMatch(/<IdentityMark\s*\n\s*kind="workspace"/);
   });
 
-  it('phrases the trailing membership action as "N members", with no location suffix', () => {
+  it('phrases membership as "N members", with no location suffix', () => {
     // Owner trim (2026-08-23): "3 participants · IN THIS ROOM" became
     // "3 members" (singular "1 member") on every surface.
     expect(chatSource).not.toContain('IN THIS ROOM  ›');
@@ -70,13 +70,14 @@ describe('Chat header — one language for Room and Corner', () => {
     expect(caps![0]).toMatch(/\.\.\.theme\.buzz\.type\.meta/);
   });
 
-  it('places membership immediately before overflow for Rooms and corners', () => {
-    const membership = chatSource.indexOf('testID="room-participant-roster-trigger"');
+  it('places Room membership immediately before overflow', () => {
+    const roomMembership = chatSource.indexOf('style={styles.roomMembersButton}');
     const cornerOverflow = chatSource.indexOf('testID="corner-actions-menu"');
     const roomOverflow = chatSource.indexOf('testID="room-actions-menu"');
-    expect(membership).toBeGreaterThanOrEqual(0);
-    expect(cornerOverflow).toBeGreaterThan(membership);
+    expect(roomMembership).toBeGreaterThanOrEqual(0);
+    expect(cornerOverflow).toBeGreaterThan(roomMembership);
     expect(roomOverflow).toBeGreaterThan(cornerOverflow);
+    expect(chatSource).toContain('!isCorner && !isDirectMessage && memberManagement.canOpenRoster');
   });
 
   it('leads the Corner with the agent mark through the same slot', () => {
@@ -115,7 +116,7 @@ describe('Chat header — one language for Room and Corner', () => {
     expect(chatSource).toContain(
       'const HEADER_EDGE_HIT_SLOP = { top: 4, bottom: 4, left: 4, right: 4 } as const;',
     );
-    expect(chatSource.match(/hitSlop=\{HEADER_EDGE_HIT_SLOP\}/g)).toHaveLength(5);
+    expect(chatSource.match(/hitSlop=\{HEADER_EDGE_HIT_SLOP\}/g)).toHaveLength(6);
   });
 
   it('lets the corner’s agent name give before the facts beside it do', () => {
@@ -167,10 +168,12 @@ describe('Chat header — one language for Room and Corner', () => {
     expect(chatSource).not.toContain('corner-view-status');
     expect(chatSource).not.toContain('displayedCornerStatus');
     expect(chatSource).not.toContain('cornerHeaderState');
-    // The meta row keeps the opener name; membership moved beside overflow.
+    // Corners keep membership beside the opener name so their longer title
+    // retains the full header width.
     const branch = chatSource.match(/isCorner \? \(\s*<HeaderMetaRow>[\s\S]*?<\/HeaderMetaRow>/);
     expect(branch, 'missing corner meta row branch').toBeTruthy();
     expect(branch![0]).toContain('cornerHeaderAgent');
-    expect(branch![0]).not.toContain('formatRoomParticipantTotal(roomParticipantTotal)');
+    expect(branch![0]).toContain('formatRoomParticipantTotal(roomParticipantTotal)');
+    expect(branch![0]).toContain('testID="corner-header-meta"');
   });
 });

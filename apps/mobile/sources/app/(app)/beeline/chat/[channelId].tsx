@@ -3394,6 +3394,22 @@ export default function BuzzChat() {
                   <Text numberOfLines={1} style={styles.cornerHeaderAgent}>
                     {(cornerAgentDisplay?.name ?? 'AGENT').toUpperCase()}
                   </Text>
+                  <TouchableOpacity
+                    accessibilityLabel={`View ${formatRoomParticipantTotal(roomParticipantTotal)}`}
+                    accessibilityRole="button"
+                    disabled={!memberManagement.canOpenRoster}
+                    hitSlop={HEADER_EDGE_HIT_SLOP}
+                    onPress={() => {
+                      if (memberManagement.canOpenRoster) setRosterVisible(true);
+                    }}
+                    testID="room-participant-roster-trigger"
+                  >
+                    <HeaderMetaCaps testID="corner-header-meta">
+                      {participantsHydrated
+                        ? formatRoomParticipantTotal(roomParticipantTotal)
+                        : ''}
+                    </HeaderMetaCaps>
+                  </TouchableOpacity>
                 </HeaderMetaRow>
               ) : isDirectMessage ? (
                 <HeaderMetaCaps>DIRECT MESSAGE</HeaderMetaCaps>
@@ -3402,14 +3418,14 @@ export default function BuzzChat() {
             {/* The trailing slot holds ONE control. There is no `+` beside it:
               a Room's members have one way in (C83) — the `N members ›` line
               above opens the roster sheet, whose section heads carry the add
-              control. Membership sits beside overflow as an explicit trailing
-              action on both Rooms and corners.
+              control. Room membership sits beside overflow as an explicit
+              trailing action; a corner keeps its count beneath its longer title.
 
               One overflow vocabulary: the same ••• the Room header carries,
               holding whatever destructive/rare actions the surface has. A
               corner's "close" belongs here, not as a permanent button sitting
               under the composer where the reader's thumb lives. */}
-            {!isDirectMessage && memberManagement.canOpenRoster && (
+            {!isCorner && !isDirectMessage && memberManagement.canOpenRoster && (
               <TouchableOpacity
                 accessibilityLabel={`View ${formatRoomParticipantTotal(roomParticipantTotal)}`}
                 accessibilityRole="button"

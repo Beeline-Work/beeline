@@ -27,6 +27,24 @@ describe('desktop layout mode', () => {
     expect(channels).toContain('!isDesktop && !viewerIsAgent');
   });
 
+  it('groups the desktop index with the mobile section primitive and ordering', () => {
+    const sidebar = source('components/SidebarView.tsx');
+    const channels = source('app/(app)/beeline/channels.tsx');
+
+    expect(sidebar).toContain('roomListSections(filteredChats)');
+    expect(sidebar).toContain("section.kind === 'rooms' ? ROOMS_LABEL : 'Direct messages'");
+    expect(sidebar).toContain('<RoomListSectionHeader');
+    expect(channels).toContain('<RoomListSectionHeader title={section.title} />');
+  });
+
+  it('aligns the desktop Workspace identity with the conversation header', () => {
+    const sidebar = source('components/SidebarView.tsx');
+
+    expect(sidebar).toContain('paddingTop: 8');
+    expect(sidebar).toContain('paddingBottom: 8');
+    expect(sidebar).toContain('safeArea.top + (isDesktop ? 0 : headerHeight)');
+  });
+
   it('removes history chrome only at the desktop layout breakpoint', () => {
     const navigator = source('components/SidebarNavigator.tsx');
 

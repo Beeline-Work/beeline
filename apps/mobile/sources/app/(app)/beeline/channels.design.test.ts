@@ -7,6 +7,10 @@ const composeSource = readFileSync(
   new URL('../../../components/buzz/RoomDeckComposeMenu.tsx', import.meta.url),
   'utf8',
 );
+const sectionHeaderSource = readFileSync(
+  new URL('../../../components/buzz/RoomListSectionHeader.tsx', import.meta.url),
+  'utf8',
+);
 const roomViewSource = readFileSync(
   new URL('../../../../../../packages/api-contract/src/phone-types.ts', import.meta.url),
   'utf8',
@@ -35,10 +39,10 @@ describe('Room list layout contract', () => {
     expect(source).toContain('<SectionList');
     expect(source).toContain('sections={chatSections}');
     expect(source).toContain('roomListSections(chatList?.chats ?? [])');
-    expect(source).toContain('section.title ? (');
-    expect(source).toContain('{section.title.toUpperCase()}');
-    expect(source).toContain('accessibilityRole="header"');
-    expect(styleBlock(source, 'sectionHeaderText')).toContain('...hull.type.sectionHead,');
+    expect(source).toContain('section.title ? <RoomListSectionHeader title={section.title} /> : null');
+    expect(sectionHeaderSource).toContain('{title.toUpperCase()}');
+    expect(sectionHeaderSource).toContain('accessibilityRole="header"');
+    expect(styleBlock(sectionHeaderSource, 'sectionHeaderText')).toContain('...hull.type.sectionHead,');
     expect(source).not.toContain('<FlatList');
   });
 

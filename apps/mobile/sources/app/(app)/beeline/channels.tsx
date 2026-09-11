@@ -48,6 +48,7 @@ import { runRoomDeckComposeAction } from '@/buzz/room-deck-compose-actions';
 import { MEMBERS_LABEL, ROOM_LABEL, WORKSPACE_LABEL, ROOMS_LABEL } from '@/buzz/vocabulary';
 import { BuzzCommunityShell, CommunityDrawerTrigger } from '@/components/buzz/CommunityRail';
 import { DirectMessagePickerSheet } from '@/components/buzz/DirectMessagePickerSheet';
+import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { NewRoomDialog } from '@/components/buzz/NewRoomDialog';
 import { MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
 import {
@@ -693,13 +694,7 @@ export default function BuzzChannels() {
           }}
           contentContainerStyle={chatList.chats.length ? styles.list : styles.emptyList}
           renderSectionHeader={({ section }) =>
-            section.title ? (
-              <View style={styles.sectionHeader}>
-                <Text accessibilityRole="header" style={styles.sectionHeaderText}>
-                  {section.title.toUpperCase()}
-                </Text>
-              </View>
-            ) : null
+            section.title ? <RoomListSectionHeader title={section.title} /> : null
           }
           ListEmptyComponent={
             // One quiet block in the upper third of the deck, not a hero in
@@ -1019,17 +1014,6 @@ const styles = StyleSheet.create((theme) => {
     // clear of the floating compose control without turning that control into
     // a visually separate footer cell.
     list: { paddingBottom: COMPOSE_FAB_CLEARANCE },
-    sectionHeader: {
-      paddingTop: hull.space.lg,
-      paddingBottom: hull.space.sm,
-      paddingHorizontal: hull.space.md,
-      backgroundColor: hull.bgTerminal,
-    },
-    sectionHeaderText: {
-      ...Typography.default('semiBold'),
-      ...hull.type.sectionHead,
-      color: hull.textMuted,
-    },
     emptyList: {
       flexGrow: 1,
       justifyContent: 'flex-start',

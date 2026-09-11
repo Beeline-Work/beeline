@@ -5763,6 +5763,70 @@ describe('monolith integration', () => {
     );
   });
 
+  it('returns the active corner when the same originating task is opened repeatedly', async () => {
+    const input = {
+      roomId: ROOM,
+      requestId: 'repeated-corner-open',
+      name: 'Ship widget',
+      objective: 'Ship the widget end to end',
+    };
+    const first = await daemonOperation('createCorner', input);
+    const second = await daemonOperation('createCorner', input);
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    const firstResult = (await first.json()) as { cornerId: string };
+    expect(await second.json()).toEqual(firstResult);
+
+    const stored = await database.query<{ corners: number; cards: number; commands: number }>(
+      `SELECT
+         (SELECT count(*)::integer FROM corner_facts WHERE request_id=$1) corners,
+         (SELECT count(*)::integer FROM messages
+          WHERE room_id=$2 AND card_type='daemon-fact' AND card->>'cornerId'=$3) cards,
+         (SELECT count(*)::integer FROM agent_commands
+          WHERE room_id=$4 AND reason='corner_objective') commands`,
+      [input.requestId, ROOM, firstResult.cornerId, firstResult.cornerId],
+    );
+    expect(stored.rows[0]).toEqual({ corners: 1, cards: 1, commands: 1 });
+  });
+
+  it('serializes concurrent opens for the same originating task', async () => {
+    const input = {
+      roomId: ROOM,
+      requestId: 'concurrent-corner-open',
+      name: 'Ship widget',
+      objective: 'Ship the widget end to end',
+    };
+    // Seed and claim the single command both retries are authorized to serve;
+    // the requests below then enter createCorner concurrently.
+    await daemonOperation('postAgentActivity', {
+      roomId: ROOM,
+      requestId: input.requestId,
+      activity: [],
+    });
+    const responses = await Promise.all([
+      request('/v1/daemon/operations/createCorner', 'POST', {
+        ...input,
+        generationId: 'fixture-generation',
+      }, daemonToken),
+      request('/v1/daemon/operations/createCorner', 'POST', {
+        ...input,
+        generationId: 'fixture-generation',
+      }, daemonToken),
+    ]);
+    expect(responses.map((response) => response.status)).toEqual([200, 200]);
+    const results = (await Promise.all(responses.map((response) => response.json()))) as Array<{
+      cornerId: string;
+    }>;
+    expect(results[1]).toEqual(results[0]);
+    const corners = await database.query<{ count: number }>(
+      `SELECT count(*)::integer count FROM rooms child
+       JOIN corner_facts fact ON fact.corner_id=child.id
+       WHERE child.parent_id=$1 AND fact.request_id=$2 AND child.archived_at IS NULL`,
+      [ROOM, input.requestId],
+    );
+    expect(corners.rows[0]!.count).toBe(1);
+  });
+
   it('rejects an open-corner objective longer than 24 words, naming the count', async () => {
     const response = await daemonOperation('createCorner', {
       roomId: ROOM,

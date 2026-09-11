@@ -17,6 +17,8 @@ describe('desktop workbench wiring', () => {
     expect(room).toContain("saveDesktopDraft(decodedId, '')");
     expect(room).toContain('desktopComposerKeyAction(');
     expect(room).toContain('onDrop: handleDesktopDrop');
+    expect(room).toContain('onPaste: handleDesktopPaste');
+    expect(room).toContain('event.clipboardData.files');
     expect(room).toContain('testID="desktop-message-status"');
     expect(room).toContain("setDesktopDeliveryState('sending')");
     expect(room).toContain("setDesktopDeliveryState('delivered')");

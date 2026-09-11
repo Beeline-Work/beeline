@@ -29,6 +29,8 @@ describe('desktop workbench state', () => {
     expect(desktopLayoutMode(1280)).toBe('three-pane');
     expect(desktopLayoutMode(1024)).toBe('inspector-overlay');
     expect(desktopLayoutMode(800)).toBe('inspector-overlay');
+    expect(desktopLayoutMode(768)).toBe('inspector-overlay');
+    expect(desktopLayoutMode(767)).toBe('navigation-view');
     expect(desktopLayoutMode(600)).toBe('navigation-view');
   });
 

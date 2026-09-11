@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { LAYOUT_BREAKPOINTS } from '@/utils/layoutClass';
 
 export const DESKTOP_NAV_MIN_WIDTH = 240;
 export const DESKTOP_NAV_MAX_WIDTH = 360;
@@ -29,7 +30,7 @@ export function desktopRoomWorkLine(item: DesktopRoomAttention): string | null {
 
 export function desktopLayoutMode(width: number): DesktopLayoutMode {
   if (width >= 1180) return 'three-pane';
-  if (width >= 720) return 'inspector-overlay';
+  if (width >= LAYOUT_BREAKPOINTS.regular) return 'inspector-overlay';
   return 'navigation-view';
 }
 

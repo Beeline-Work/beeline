@@ -32,3 +32,11 @@ describe('desktop sidebar workspace synchronization', () => {
     expect(source).toContain('setSurface(null)');
   });
 });
+
+describe('desktop sidebar Room names', () => {
+  it('renders direct messages through the peer-aware row naming authority', () => {
+    expect(source).toContain('const rowName = roomRowName(item);');
+    expect(source).toContain('{rowName.sigil}');
+    expect(source).toContain('{rowName.name}');
+  });
+});

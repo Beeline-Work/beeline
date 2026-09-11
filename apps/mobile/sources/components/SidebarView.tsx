@@ -17,6 +17,7 @@ import { useHeaderHeight } from '@/utils/responsive';
 import { ROOM_LABEL, ROOMS_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { HullDeckMark } from '@/components/buzz/MonoHull';
 import { desktopRoomWorkLine } from '@/buzz/desktop-workbench-state';
+import { roomRowName } from '@/buzz/room-list-row';
 
 function selectedRoomId(pathname: string): string | null {
   const prefix = '/beeline/chat/';
@@ -91,6 +92,7 @@ const stylesheet = StyleSheet.create((theme) => ({
   roomCopy: { flex: 1, minWidth: 0 },
   roomTitleLine: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   roomTitle: { ...theme.buzz.type.meta, flex: 1, color: theme.colors.text },
+  roomSigil: { color: theme.colors.textLink },
   roomTitleUnread: { ...theme.buzz.type.bodyStrong },
   roomTime: { ...theme.buzz.type.sectionHead, color: theme.colors.textSecondary },
   unreadDot: {
@@ -319,10 +321,11 @@ export const SidebarView = React.memo(function SidebarView() {
         ) : (
           filteredChats.map((item) => {
             const workLine = desktopRoomWorkLine(item);
+            const rowName = roomRowName(item);
             return (
               <Pressable
                 key={item.room.id}
-                accessibilityLabel={`Open ${ROOM_LABEL} ${item.room.name}`}
+                accessibilityLabel={`Open ${item.directMessage ? 'direct message' : ROOM_LABEL} ${rowName.sigil}${rowName.name}`}
                 accessibilityRole="button"
                 onPress={() => openRoom(item.room.id)}
                 style={({ pressed }) => [
@@ -339,7 +342,8 @@ export const SidebarView = React.memo(function SidebarView() {
                       numberOfLines={1}
                       style={[styles.roomTitle, item.unread && styles.roomTitleUnread]}
                     >
-                      {item.room.name}
+                      <Text style={styles.roomSigil}>{rowName.sigil}</Text>
+                      {rowName.name}
                     </Text>
                     <Text style={styles.roomTime}>
                       {item.latestMessage

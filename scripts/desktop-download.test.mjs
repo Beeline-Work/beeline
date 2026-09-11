@@ -5,6 +5,7 @@ import test from 'node:test';
 
 import {
   DESKTOP_INSTALLERS,
+  initializeDesktopDownload,
   selectDesktopInstaller,
 } from '../relay-stack/web/desktop-download.mjs';
 
@@ -63,6 +64,79 @@ for (const [name, input, expected] of cases) {
     assert.equal(selectDesktopInstaller(input)?.platform, expected);
   });
 }
+
+function downloadControls({ open = false } = {}) {
+  let click;
+  let desktopMovedAfterStores = false;
+  const desktopDownload = {};
+  const primary = {
+    textContent: '',
+    href: '',
+    addEventListener(type, handler) {
+      if (type === 'click') click = handler;
+    },
+  };
+  const choices = {
+    open,
+    closest(selector) {
+      return selector === '.desktop-download' ? desktopDownload : undefined;
+    },
+  };
+  const stores = {
+    after(element) {
+      desktopMovedAfterStores = element === desktopDownload;
+    },
+  };
+  return {
+    primary,
+    choices,
+    click: () => click?.(),
+    desktopMovedAfterStores: () => desktopMovedAfterStores,
+    documentLike: {
+      querySelector(selector) {
+        if (selector === '[data-desktop-download]') return primary;
+        if (selector === '[data-desktop-choices]') return choices;
+        if (selector === '.hero-text > .stores') return stores;
+        return undefined;
+      },
+    },
+  };
+}
+
+test('mobile visitors keep desktop choices collapsed until they ask for them', async () => {
+  const controls = downloadControls({ open: true });
+  await initializeDesktopDownload(controls.documentLike, {
+    userAgent: 'Mozilla/5.0 (Linux; Android 15; Pixel 9) Mobile',
+    platform: 'Linux armv8l',
+  });
+
+  assert.equal(controls.primary.textContent, 'Choose a desktop download');
+  assert.equal(controls.primary.href, '#desktop-downloads');
+  assert.equal(controls.choices.open, false);
+  assert.equal(controls.desktopMovedAfterStores(), true);
+  controls.click();
+  assert.equal(controls.choices.open, true);
+});
+
+test('unknown desktop visitors still see the installer choices immediately', async () => {
+  const controls = downloadControls();
+  await initializeDesktopDownload(controls.documentLike, {
+    userAgent: 'ExampleBrowser/1.0',
+    platform: '',
+  });
+
+  assert.equal(controls.choices.open, true);
+});
+
+test('landing markup exposes one main flow and one accessible animation description', () => {
+  assert.match(html, /<main>[\s\S]*<\/main>/);
+  assert.match(html, /<figure class="stage-wrap" aria-labelledby="stage-caption">/);
+  assert.match(html, /<div class="stage" id="stage" aria-hidden="true" inert>/);
+  assert.match(html, /<figcaption class="sr-only" id="stage-caption">/);
+  assert.match(html, /a:focus-visible,summary:focus-visible/);
+  assert.match(html, /\.download-list a\{min-height:44px/);
+  assert.match(html, /footer a\{display:inline-flex;align-items:center;min-height:44px/);
+});
 
 test('the chooser contains only stable installable release assets', () => {
   assert.deepEqual(

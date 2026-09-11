@@ -1,4 +1,3 @@
-import * as Clipboard from 'expo-clipboard';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -24,7 +23,7 @@ export function CodeBlock({ code, language }: { code: string; language: string |
 
   const copyAll = useCallback(async () => {
     try {
-      await Clipboard.setStringAsync(code);
+      await (await import('expo-clipboard')).setStringAsync(code);
       setCopyState('copied');
     } catch {
       setCopyState('failed');
@@ -58,7 +57,7 @@ export function CodeBlock({ code, language }: { code: string; language: string |
             accessibilityLabel="Copy all code"
             accessibilityRole="button"
             hitSlop={8}
-            onPress={() => void copyAll()}
+            onPress={copyAll}
             style={({ pressed }) => [styles.action, pressed && styles.actionPressed]}
           >
             <Text accessibilityLiveRegion="polite" style={styles.actionText}>{copyLabel}</Text>

@@ -32,7 +32,7 @@ on:
       - 'apps/mobile/package-lock.json'
       - 'apps/mobile/app.config.js'
       - 'apps/mobile/scripts/generate-tauri-icons.mjs'
-      - 'apps/mobile/sources/assets/images/icon-full-bleed.png'
+      - 'apps/mobile/sources/assets/images/icon.png'
       - 'packages/api-contract/package.json'
       - 'packages/buzz-client/package.json'
       - 'scripts/clean-dist.mjs'
@@ -79,7 +79,7 @@ defaults:
     shell: bash
 
 jobs:
-  # icons/ is generated from sources/assets/images/icon-full-bleed.png. Regenerating is
+  # icons/ is generated from sources/assets/images/icon.png. Regenerating is
   # seconds of node, so prove the committed files still match the source
   # before spending three runners on a bundle that would ship a stale mark.
   icons:

@@ -58,7 +58,7 @@ export default {
         // "a new native build is shipping". `scripts/native-fingerprint.mjs`
         // (the NATIVE FINGERPRINT gate) fails a PR that changes native inputs
         // without bumping it.
-        runtimeVersion: "24",
+        runtimeVersion: "23",
         orientation: "default",
         icon: "./sources/assets/images/icon.png",
         scheme,

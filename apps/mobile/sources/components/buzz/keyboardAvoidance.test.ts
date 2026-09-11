@@ -17,19 +17,20 @@ describe('Buzz keyboard avoidance', () => {
       "behavior={Platform.OS === 'ios' ? 'padding' : 'translate-with-padding'}",
     );
     expect(chatSource).not.toContain("Platform.OS === 'ios' ? 'padding' : 'height'");
-    // The list is inverted (newest message at offset 0), so keyboard/composer
-    // growth never needs a manual keyboardHeight content-padding hack or a
-    // scrollToEnd simulation to keep the tail visible.
+    // Native keeps the list inverted (newest message at offset 0), so
+    // keyboard/composer growth never needs a keyboardHeight padding hack.
+    // Desktop deliberately uses chronological flow and scrollToEnd because
+    // React Native Web's transform-based inversion overlaps changed rows.
     expect(chatSource).toContain('inverted');
     // minIndexForVisible: 1 (not 0) — the newest slot is volatile (a fresh
     // send, then its optimistic-id -> real-id swap; an agent stream token),
     // so anchoring there instead of the row below it fights the reveal of
     // a just-sent message. autoscrollToTopThreshold makes offset 0 (visual
     // bottom, inverted) sticky instead, matching sources/components/ChatList.tsx.
-    expect(chatSource).toContain('minIndexForVisible: 1');
-    expect(chatSource).toContain('autoscrollToTopThreshold: 50');
+    expect(chatSource).toContain('minIndexForVisible: desktopTranscript ? 0 : 1');
+    expect(chatSource).toContain('...(desktopTranscript ? {} : { autoscrollToTopThreshold: 50 })');
     expect(chatSource).not.toContain('MESSAGE_LIST_PADDING');
-    expect(chatSource).not.toContain('scrollToLatestMessage');
+    expect(chatSource).toContain('flatListRef.current?.scrollToEnd({ animated: false });');
     expect(chatSource).not.toContain('handleMessageListLayout');
     expect(chatSource).not.toContain('handleMessageListContentSizeChange');
   });

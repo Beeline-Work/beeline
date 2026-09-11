@@ -243,9 +243,9 @@ type RoomMemberOption = RoomRosterParticipant;
 
 const COMPOSER_MIN_HEIGHT = 40;
 const COMPOSER_MAX_HEIGHT = 120;
-// Mirrors maintainVisibleContentPosition's autoscrollToTopThreshold: how
-// close to the visual bottom (offset 0 on this inverted list) counts as
-// "already reading the newest end" for the layout-change tail snap (C97).
+// How close to the visual bottom counts as "already reading the newest end"
+// for the layout-change tail snap (C97): offset 0 when native is inverted,
+// or content height minus viewport height on the ordinary desktop list.
 const TAIL_PIN_THRESHOLD = 50;
 // Open on the tail of a long transcript instead of the full history, then
 // page older messages in as the reader scrolls up.
@@ -666,6 +666,7 @@ export default function BuzzChat() {
   const [olderPages, setOlderPages] = useState<readonly (readonly RoomViewMessage[])[]>([]);
   const [visibleMessageCount, setVisibleMessageCount] = useState(INITIAL_MESSAGE_WINDOW);
   const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
+  const loadingOlderMessagesRef = useRef(false);
   const hasMoreHistoryRef = useRef(true);
   const committedMessageIds = useMemo(
     () => new Set(cachedMessages.map((message) => message.id)),
@@ -749,16 +750,21 @@ export default function BuzzChat() {
   );
 
   const loadOlderTranscriptMessages = useCallback(() => {
-    if (loadingOlderMessages) return;
+    if (loadingOlderMessagesRef.current) return;
     const visibleRowCount = visibleTranscriptWindow(foldedMessages, Number.MAX_SAFE_INTEGER).length;
     if (visibleMessageCount < visibleRowCount) {
+      loadingOlderMessagesRef.current = true;
       setVisibleMessageCount((count) =>
         Math.min(visibleRowCount, count + OLDER_MESSAGES_PAGE_SIZE),
       );
+      requestAnimationFrame(() => {
+        loadingOlderMessagesRef.current = false;
+      });
       return;
     }
     const oldest = combinedMessages[0];
     if (!hasMoreHistoryRef.current || !roomClient || !oldest || !cacheViewerPubkey) return;
+    loadingOlderMessagesRef.current = true;
     setLoadingOlderMessages(true);
     void roomClient
       .history(decodedId, { createdAt: oldest.timestamp, id: oldest.relayId ?? oldest.id })
@@ -774,13 +780,15 @@ export default function BuzzChat() {
         setVisibleMessageCount((count) => count + fresh.length);
       })
       .catch((err) => console.warn('Failed to load older messages:', err))
-      .finally(() => setLoadingOlderMessages(false));
+      .finally(() => {
+        loadingOlderMessagesRef.current = false;
+        setLoadingOlderMessages(false);
+      });
   }, [
     cacheViewerPubkey,
     combinedMessages,
     decodedId,
     foldedMessages,
-    loadingOlderMessages,
     roomClient,
     roomSurface,
     visibleMessageCount,
@@ -1472,22 +1480,29 @@ export default function BuzzChat() {
   // renderItem consumes this set; preserve its identity across commits that
   // did not change any run boundary so rows are not rebuilt for nothing.
   const continuedAttributionIds = useStable(rawContinuedAttributionIds, sameStringSet);
-  // Newest-first for the inverted FlatList; chronological visibleMessages
-  // above stays the source of truth for everything else that reads order.
+  // Native keeps the established inverted list. React Native Web implements
+  // `inverted` with scale transforms, which can leave variable-height rows at
+  // stale coordinates after a send. Desktop uses ordinary chronological flow.
+  const desktopTranscript = Platform.OS === 'web';
   const invertedMessages = useMemo(() => [...visibleMessages].reverse(), [visibleMessages]);
+  const transcriptMessages = desktopTranscript ? visibleMessages : invertedMessages;
   // Captain's rule (2026-09): a new message or live draft always brings the
   // viewport to the newest end — once per arrival, never mid-drag. The
-  // decision is one pure call (`buzz/room-scroll-follow.ts`); the actual
-  // scrollToOffset runs at most once per arrival, off the render path.
+  // decision is one pure call (`buzz/room-scroll-follow.ts`); the actual tail
+  // scroll runs at most once per arrival, off the render path.
   const userDraggingRef = useRef(false);
-  // Updated on every onScroll; offset 0 is the visual bottom of this
-  // inverted list, so "near 0" is "already reading the newest end".
+  // Updated on every onScroll; native's inverted list uses offset 0, while
+  // desktop compares the ordinary offset against the scrollable extent.
   const isPinnedToTailRef = useRef(true);
   const scrollToNewestMessage = useCallback(() => {
-    requestAnimationFrame(() =>
-      flatListRef.current?.scrollToOffset({ offset: 0, animated: false }),
-    );
-  }, []);
+    requestAnimationFrame(() => {
+      if (desktopTranscript) {
+        flatListRef.current?.scrollToEnd({ animated: false });
+        return;
+      }
+      flatListRef.current?.scrollToOffset({ offset: 0, animated: false });
+    });
+  }, [desktopTranscript]);
   const newestMessageId = combinedMessages.length
     ? combinedMessages[combinedMessages.length - 1].id
     : null;
@@ -1540,7 +1555,7 @@ export default function BuzzChat() {
 
     const messageId = notificationMessageId?.trim();
     if (!messageId) return;
-    const visibleIndex = invertedMessages.findIndex(
+    const visibleIndex = transcriptMessages.findIndex(
       (message) => message.id === messageId || message.relayId === messageId,
     );
     if (visibleIndex >= 0) {
@@ -1563,7 +1578,7 @@ export default function BuzzChat() {
     }
   }, [
     combinedMessages,
-    invertedMessages,
+    transcriptMessages,
     notificationMessageId,
     notificationResponseId,
     notificationTarget,
@@ -3454,36 +3469,40 @@ export default function BuzzChat() {
           <FlatList
             testID="chat-messages"
             ref={flatListRef}
-            inverted={invertedMessages.length > 0}
-            data={invertedMessages}
+            inverted={!desktopTranscript && transcriptMessages.length > 0}
+            data={transcriptMessages}
             keyExtractor={(item: ChatDisplayMessage) => item.id}
             style={styles.messageList}
             contentContainerStyle={[
               styles.messageListContent,
-              invertedMessages.length === 0 && styles.messageListContentEmpty,
+              desktopTranscript && styles.messageListContentDesktop,
+              transcriptMessages.length === 0 && styles.messageListContentEmpty,
             ]}
             maintainVisibleContentPosition={{
-              // Anchor on the second-newest row (index 1), not the newest.
-              // The newest slot gets replaced on every send (optimistic id ->
-              // real event id) and on every agent stream token, which would
-              // otherwise destabilize the anchor. Mirrors sources/components/ChatList.tsx.
-              //
-              // autoscrollToTopThreshold: for an INVERTED list this is the
-              // auto-stick-to-visual-bottom threshold — contentOffset 0 is the
-              // visual bottom here, and this prop sticks the viewport to
-              // offset 0 (revealing new content, including a taller multi-line
-              // send) whenever the user is already within N units of it. The
-              // captain's scroll rule adds ONE JS-side scrollToOffset per new
-              // arrival (`buzz/room-scroll-follow.ts`) so a message received
-              // while reading older history still surfaces; a drag in progress
-              // is never interrupted.
-              minIndexForVisible: 1,
-              autoscrollToTopThreshold: 50,
+              // Desktop anchors the oldest visible chronological row while an
+              // older page is prepended. Native anchors the second-newest row:
+              // index 0 is replaced during optimistic settlement and streams.
+              minIndexForVisible: desktopTranscript ? 0 : 1,
+              // Native offset 0 is the visual bottom; desktop follows the tail
+              // explicitly with scrollToEnd instead of enabling top autoscroll.
+              ...(desktopTranscript ? {} : { autoscrollToTopThreshold: 50 }),
             }}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode={transcriptKeyboardDismissMode(Platform.OS)}
             onScroll={(event) => {
-              isPinnedToTailRef.current = event.nativeEvent.contentOffset.y <= TAIL_PIN_THRESHOLD;
+              const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+              isPinnedToTailRef.current = desktopTranscript
+                ? contentOffset.y + layoutMeasurement.height >=
+                  contentSize.height - TAIL_PIN_THRESHOLD
+                : contentOffset.y <= TAIL_PIN_THRESHOLD;
+              if (
+                desktopTranscript &&
+                (!isPinnedToTailRef.current ||
+                  contentSize.height <= layoutMeasurement.height + TAIL_PIN_THRESHOLD) &&
+                contentOffset.y <= TAIL_PIN_THRESHOLD
+              ) {
+                loadOlderTranscriptMessages();
+              }
             }}
             scrollEventThrottle={100}
             onScrollBeginDrag={() => {
@@ -3514,7 +3533,7 @@ export default function BuzzChat() {
                 });
               }, 50);
             }}
-            onEndReached={loadOlderTranscriptMessages}
+            onEndReached={desktopTranscript ? undefined : loadOlderTranscriptMessages}
             onEndReachedThreshold={0.5}
             ListEmptyComponent={
               <View style={styles.emptyState}>
@@ -3526,18 +3545,19 @@ export default function BuzzChat() {
                 />
               </View>
             }
+            ListHeaderComponent={
+              desktopTranscript && loadingOlderMessages ? (
+                <View style={styles.olderMessagesLoading} testID="older-messages-loading">
+                  <PixelLoader compact />
+                </View>
+              ) : null
+            }
             ListFooterComponent={
-              // Inverted list: the footer is the visual TOP. The Room discussion
-              // a corner was opened out of belongs above the corner's own first
-              // line, and this is the slot that puts it there.
-              loadingOlderMessages ? (
-                <>
-                  {loadingOlderMessages ? (
-                    <View style={styles.olderMessagesLoading} testID="older-messages-loading">
-                      <PixelLoader compact />
-                    </View>
-                  ) : null}
-                </>
+              // Inverted native list: the footer is the visual top.
+              !desktopTranscript && loadingOlderMessages ? (
+                <View style={styles.olderMessagesLoading} testID="older-messages-loading">
+                  <PixelLoader compact />
+                </View>
               ) : null
             }
           />
@@ -4425,6 +4445,10 @@ const styles = StyleSheet.create((theme) => {
       paddingHorizontal: 12,
       paddingVertical: 12,
     },
+    messageListContentDesktop: {
+      flexGrow: 1,
+      justifyContent: 'flex-end',
+    },
     messageListContentEmpty: {
       flexGrow: 1,
     },
@@ -4948,6 +4972,7 @@ const styles = StyleSheet.create((theme) => {
     sendButton: {
       width: 40,
       height: 40,
+      marginRight: 4,
       alignItems: 'center',
       justifyContent: 'center',
     },

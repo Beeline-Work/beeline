@@ -485,6 +485,33 @@ describe('Room message variant components', () => {
     }
   });
 
+  it('offers a visible reply action on desktop', () => {
+    const onReply = vi.fn();
+    const row = message({ id: 'desktop-reply' });
+    const renderer = render(
+      <OrdinaryLedgerMessage
+        message={row}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onReply={onReply}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+
+    const reply = renderer.root.findByProps({ testID: 'reply-button-desktop-reply' });
+    expect(reply.props.accessibilityLabel).toBe('Reply to message');
+    act(() => reply.props.onPress());
+    expect(onReply).toHaveBeenCalledWith(row);
+  });
+
   // Attachment bytes are swept 24 hours after upload; the message that carried
   // them is kept. The row says what is gone instead of hanging on a dead URL.
   it('renders an expired attachment as a named placeholder, not an image or a link', () => {

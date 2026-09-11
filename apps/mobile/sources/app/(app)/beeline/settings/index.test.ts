@@ -123,6 +123,13 @@ function render(): ReactTestRenderer {
 }
 
 describe('Buzz global Settings', () => {
+  it('opens GitHub management through the cross-platform external URL boundary', () => {
+    const source = readFileSync(new URL('./index.tsx', import.meta.url), 'utf8');
+    expect(source).toContain("import { openExternalUrl } from '@/utils/open-external-url';");
+    expect(source).toContain('openExternalUrl(installation.manageUrl)');
+    expect(source).not.toContain('Linking.openURL(installation.manageUrl)');
+  });
+
   it('names the GitHub installation section precisely', () => {
     const renderer = render();
     const text = renderer.root

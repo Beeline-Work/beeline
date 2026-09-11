@@ -51,12 +51,12 @@ import {
   AGENT_REACHABLE_HORIZON_MS,
   MAX_ACCESS_ALLOWLIST_ENTRIES,
   agentAccessPolicyRecord,
-  accessNoticeBucket,
   isAgentAccessPolicy,
   parseAgentAccessPolicy,
   senderMayAddressAgent,
 } from '@beeline/api-contract/agent-access';
 import { resolveCurrentMemberMentions, typedMentionHandles } from './message-mentions.js';
+import { noteUnansweredMentions } from './unanswered-mentions.js';
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
 import type { CommittedMessageLiveRow, CommittedTurnLiveRow, LiveEvent, LiveHub } from './live.js';
 import type { GitHubOperations } from './github-operations.js';
@@ -2349,11 +2349,7 @@ export class PhoneService {
     const id = input.messageId ?? messageId();
     if (!/^[0-9a-f]{64}$/.test(id)) throw new Error('messageId is invalid');
     const attachments = JSON.stringify(input.attachments ?? []);
-    const mentionResolution = await this.resolveMessageMentions(
-      input.roomId,
-      author,
-      input.text,
-    );
+    const mentionResolution = await this.resolveMessageMentions(input.roomId, author, input.text);
     const mentions = JSON.stringify(mentionResolution.mentionIds);
     const values = [id, input.roomId, author, input.text, attachments, mentions];
     return this.database.transaction(async (database) => {
@@ -2374,7 +2370,13 @@ export class PhoneService {
         return { messageId: id };
       }
       await routeHumanMessage(database, id);
-      await this.noteUnansweredMentions(input.roomId, author, mentionResolution.noticeAgentIds, id);
+      await noteUnansweredMentions(
+        this.database,
+        input.roomId,
+        author,
+        mentionResolution.noticeAgentIds,
+        id,
+      );
       return { messageId: id };
     });
   }
@@ -2504,176 +2506,15 @@ export class PhoneService {
         return { messageId: id };
       }
       await routeHumanMessage(database, id);
-      await this.noteUnansweredMentions(input.roomId, author, mentionResolution.noticeAgentIds, id);
+      await noteUnansweredMentions(
+        this.database,
+        input.roomId,
+        author,
+        mentionResolution.noticeAgentIds,
+        id,
+      );
       return { messageId: id };
     });
-  }
-  /**
-   * Say out loud why a mentioned agent will not answer. ONE producer for every
-   * reason a mention lands and nothing happens.
-   *
-   * Silence is the failure this exists to end. A mention dropped by the agent's
-   * access policy, a mention nobody is alive to read, and a mention of an agent
-   * that is not in this corner all look identical in a Room, and all three look
-   * like a broken product. So the SERVER — which owns the policy, sees the
-   * helper's presence and knows the roster — inscribes one ordinary system line
-   * (`presentation='system'`, the one grammar in `system-line.ts`). The line
-   * mentions nobody, so it wakes no daemon and reaches a phone only where every
-   * message already does — a DM, which is where the person who was refused most
-   * needs to hear it.
-   *
-   * The reasons are ordered, not summed: an agent that is not in the corner is
-   * told that and nothing else, because its policy and its availability are beside
-   * the point. At most one line per (Room, agent, sender, reason) per
-   * `ACCESS_NOTICE_WINDOW_MS` — the id is derived from the window bucket, so a
-   * repeat inside it collides on the primary key and writes nothing. A chatty
-   * non-permitted member gets one explanation, not a storm.
-   *
-   * Never throws: a notice is a courtesy on top of a message that is already
-   * written, and must not fail the send.
-   *
-   * `afterMessageId` is the message the mentions rode in on: the line is its
-   * consequence, so it is stamped strictly past that message's second and can
-   * never render above it (see `orderingFloor` in `system-line.ts`).
-   */
-  private async noteUnansweredMentions(
-    roomId: string,
-    senderId: string,
-    mentionIds: readonly string[],
-    afterMessageId?: string,
-  ): Promise<void> {
-    if (!mentionIds.length) return;
-    try {
-      const sender = (
-        await this.database.query<{ kind: 'human' | 'agent'; handle: string | null }>(
-          `SELECT kind,handle FROM identities WHERE id=$1`,
-          [senderId],
-        )
-      ).rows[0];
-      if (!sender) return;
-      const agents = await this.database.query<{
-        agent_id: string;
-        agent_name: string;
-        agent_handle: string | null;
-        access_policy: unknown;
-        owner_id: string | null;
-        owner_handle: string | null;
-        member: boolean;
-        corner: boolean;
-        reachable: boolean;
-      }>(
-        // Reachability is a fact about the HELPER, not about this Room. A
-        // mention in a corner may rely on the same daemon's lifecycle fact
-        // in a top-level Room, so the presence lookup intentionally has no
-        // room filter.
-        `SELECT identity.id agent_id,COALESCE(NULLIF(identity.name,''),'The agent') agent_name,
-                identity.handle agent_handle,
-                a.access_policy,a.owner_id,owner.handle owner_handle,
-                EXISTS(SELECT 1 FROM rooms room WHERE room.id=$2 AND room.parent_id IS NOT NULL) corner,
-                EXISTS(
-                  SELECT 1 FROM memberships membership
-                  WHERE membership.room_id=$2 AND membership.identity_id=identity.id
-                    AND membership.removed_at IS NULL
-                ) member,
-                COALESCE((SELECT lo.body->>'status'='online'
-                    AND lo.updated_at >= now()-make_interval(secs => $3::double precision / 1000)
-                  FROM live_outputs lo
-                  WHERE lo.agent_id=identity.id AND lo.kind='presence'
-                  ORDER BY lo.updated_at DESC LIMIT 1),false) reachable
-         FROM identities identity
-         LEFT JOIN agents a ON a.agent_id=identity.id
-         LEFT JOIN identities owner ON owner.id=a.owner_id
-         WHERE identity.id=ANY($1::text[]) AND identity.kind='agent'`,
-        [[...mentionIds], roomId, AGENT_REACHABLE_HORIZON_MS],
-      );
-      const bucket = accessNoticeBucket(Date.now());
-      for (const agent of agents.rows) {
-        const phrase = this.unansweredMentionPhrase(agent, sender, senderId);
-        if (!phrase) continue;
-        await systemLine(this.database, {
-          roomId,
-          id: createHash('sha256')
-            .update(
-              `access-notice|${roomId}|${agent.agent_id}|${senderId}|${phrase.reason}|${bucket}`,
-            )
-            .digest('hex'),
-          subject: { kind: 'agent', id: agent.agent_id, name: agent.agent_name },
-          verb: phrase.verb,
-          ...(phrase.object ? { object: phrase.object } : {}),
-          consequence: phrase.consequence,
-          afterMessageId,
-        });
-      }
-    } catch (error) {
-      console.error('[server] could not inscribe an unanswered mention:', error);
-    }
-  }
-
-  /** The one reason this mention goes unanswered, or nothing when it will be. */
-  private unansweredMentionPhrase(
-    agent: {
-      agent_id: string;
-      agent_name: string;
-      agent_handle: string | null;
-      access_policy: unknown;
-      owner_id: string | null;
-      owner_handle: string | null;
-      member: boolean;
-      corner: boolean;
-      reachable: boolean;
-    },
-    sender: { kind: 'human' | 'agent'; handle: string | null },
-    senderId: string,
-  ):
-    | { reason: string; verb: string; consequence: string; object?: { text: string; id: string } }
-    | undefined {
-    // A corner is carried by its MEMBERS, so a mention of an agent that is not
-    // one resolves fine and then produces nothing at all — no turn, no message,
-    // no error.
-    if (!agent.member) {
-      return agent.corner
-        ? {
-            reason: 'not-a-member',
-            verb: 'could not be reached',
-            consequence: 'not a member of this corner',
-          }
-        : undefined;
-    }
-    // An agent is a server-validated Room member; the owner's cost policy gates
-    // people, and an agent-to-agent hop is capped elsewhere.
-    const permitted =
-      sender.kind !== 'human' ||
-      senderMayAddressAgent(
-        parseAgentAccessPolicy(agent.access_policy),
-        senderId,
-        agent.owner_id ?? undefined,
-      );
-    // A person is named by their @handle, never by a display name: the handle is
-    // the address the reader can actually use, and it is unique where a display
-    // name is not. A person with no handle is left unnamed rather than described.
-    const asked = personMention(sender.handle);
-    const object = asked ? { text: asked, id: senderId } : undefined;
-    const agentMention = systemIdentityMention({
-      id: agent.agent_id,
-      kind: 'agent',
-      name: agent.agent_name,
-      handle: agent.agent_handle,
-    });
-    if (!permitted) {
-      return {
-        reason: 'refused',
-        verb: 'did not answer',
-        ...(object ? { object } : {}),
-        consequence: `only ${personMention(agent.owner_handle) ?? 'the owner'} may address ${agentMention}. Ask the user for permission to access the agent in the members page`,
-      };
-    }
-    if (agent.reachable) return undefined;
-    return {
-      reason: 'unreachable',
-      verb: 'did not answer',
-      ...(object ? { object } : {}),
-      consequence: 'its helper is offline',
-    };
   }
   private async resolveMessageMentions(
     roomId: string,
@@ -3212,10 +3053,10 @@ export class PhoneService {
   private async reopenChat(roomId: string, viewerId: string) {
     await this.database.transaction(async (database) => {
       await this.requireTopLevelChatMember(roomId, viewerId, database);
-      await database.query(
-        `DELETE FROM chat_dismissals WHERE room_id=$1 AND identity_id=$2`,
-        [roomId, viewerId],
-      );
+      await database.query(`DELETE FROM chat_dismissals WHERE room_id=$1 AND identity_id=$2`, [
+        roomId,
+        viewerId,
+      ]);
     });
   }
   private async addRoomMember(input: Input<'addRoomMember'>, viewerId: string) {
@@ -3435,10 +3276,10 @@ export class PhoneService {
       [input.workspaceId, JSON.stringify(participants)],
     );
     if (found.rows[0]) {
-      await this.database.query(
-        `DELETE FROM chat_dismissals WHERE room_id=$1 AND identity_id=$2`,
-        [found.rows[0].id, viewerId],
-      );
+      await this.database.query(`DELETE FROM chat_dismissals WHERE room_id=$1 AND identity_id=$2`, [
+        found.rows[0].id,
+        viewerId,
+      ]);
       return { id: found.rows[0].id, created: false };
     }
     const id = directMessageRoomId(input.workspaceId, participants as [string, string]);

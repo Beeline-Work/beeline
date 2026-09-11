@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-contract/agent-access';
 import type { SqlDatabase } from './database.js';
 import type { LiveHub } from './live.js';
+import { noteUnansweredMentions } from './unanswered-mentions.js';
 
 export const DELIVERY_PICKUP_WINDOW_MS = 90_000;
 
@@ -193,8 +194,9 @@ export class ConnectionPresence {
           )))
     )
       return;
-    const changed = await this.database.query(
-      `UPDATE live_outputs p SET body=p.body || jsonb_build_object(
+    const changed = await this.database.transaction(async (database) => {
+      const result = await database.query(
+        `UPDATE live_outputs p SET body=p.body || jsonb_build_object(
          'status','offline','observedAt',GREATEST($4::bigint,(p.body->>'observedAt')::bigint+1)),updated_at=clock_timestamp()
        WHERE p.agent_id=$1 AND p.kind='presence' AND p.body->>'status'='online'
          AND (p.room_id,p.agent_id,p.turn_id,p.kind)=(
@@ -206,17 +208,27 @@ export class ConnectionPresence {
          AND EXISTS(SELECT 1 FROM memberships WHERE identity_id=$1 AND room_id=$5 AND removed_at IS NULL)
          AND NOT EXISTS(SELECT 1 FROM agent_turns t WHERE t.agent_id=$1 AND t.room_id=$5
            AND (t.request_id=$3 OR t.created_at >= $6::timestamptz))`,
-      [
-        delivery.agent_id,
-        delivery.lifecycle,
-        delivery.message_id,
-        Math.floor(Date.now() / 1000),
-        delivery.room_id,
-        delivery.created_at,
-        delivery.evidence_token,
-      ],
-    );
-    if (changed.rowCount) await broadcastAgentPresence(this.database, this.live, delivery.agent_id);
+        [
+          delivery.agent_id,
+          delivery.lifecycle,
+          delivery.message_id,
+          Math.floor(Date.now() / 1000),
+          delivery.room_id,
+          delivery.created_at,
+          delivery.evidence_token,
+        ],
+      );
+      if (result.rowCount)
+        await noteUnansweredMentions(
+          database,
+          delivery.room_id,
+          delivery.author_id,
+          [delivery.agent_id],
+          delivery.message_id,
+        );
+      return Boolean(result.rowCount);
+    });
+    if (changed) await broadcastAgentPresence(this.database, this.live, delivery.agent_id);
   }
 }
 

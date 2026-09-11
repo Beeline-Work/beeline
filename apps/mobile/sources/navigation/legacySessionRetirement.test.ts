@@ -31,7 +31,7 @@ describe('legacy session retirement', () => {
     const sidebar = source('components/SidebarView.tsx');
     expect(sidebar).toContain('RoomViewClient');
     expect(sidebar).toMatch(/client\s*\.\s*chats\(workspaceId\)/);
-    expect(sidebar).toContain('filteredChats.map');
+    expect(sidebar).toContain('filteredChatSections.map');
     expect(sidebar).toContain('router.push(`/beeline/chat/${encodeURIComponent(roomId)}`');
     expect(sidebar).not.toMatch(/MainView|SessionsList|ActiveSessionsGroupCompact/);
     expect(sidebar).not.toContain("router.push('/settings')");

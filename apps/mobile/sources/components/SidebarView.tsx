@@ -15,9 +15,15 @@ import {
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { useHeaderHeight, useIsDesktop } from '@/utils/responsive';
 import { ROOM_LABEL, ROOMS_LABEL, WORKSPACE_LABEL, WORKSPACES_LABEL } from '@/buzz/vocabulary';
-import { roomRowName, roomRowNeedsAttention, roomRowPreview } from '@/buzz/room-list-row';
+import {
+  roomListSections,
+  roomRowName,
+  roomRowNeedsAttention,
+  roomRowPreview,
+} from '@/buzz/room-list-row';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
 import { CommunityRail, CommunitySwitcherTrigger } from '@/components/buzz/CommunityRail';
+import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 
 function selectedRoomId(pathname: string): string | null {
   const prefix = '/beeline/chat/';
@@ -38,7 +44,8 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   desktopWorkspaceHeader: {
     paddingHorizontal: 12,
-    paddingBottom: 10,
+    paddingTop: 8,
+    paddingBottom: 8,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.colors.divider,
   },
@@ -240,6 +247,10 @@ export const SidebarView = React.memo(function SidebarView() {
       `${item.room.name} ${item.latestMessage?.text ?? ''}`.toLocaleLowerCase().includes(needle),
     );
   }, [query, surface?.chats]);
+  const filteredChatSections = React.useMemo(
+    () => roomListSections(filteredChats),
+    [filteredChats],
+  );
   const activeWorkspace = workspaces.find((workspace) => workspace.id === workspaceId) ?? null;
   const otherWorkspaceNeedsAttention = [...attentionWorkspaceIds].some((id) => id !== workspaceId);
   const openRoom = React.useCallback(
@@ -314,7 +325,10 @@ export const SidebarView = React.memo(function SidebarView() {
 
   return (
     <View
-      style={[styles.container, { paddingTop: safeArea.top + headerHeight }]}
+      style={[
+        styles.container,
+        { paddingTop: safeArea.top + (isDesktop ? 0 : headerHeight) },
+      ]}
       testID="desktop-navigation-pane"
     >
       {isDesktop ? (
@@ -408,11 +422,16 @@ export const SidebarView = React.memo(function SidebarView() {
                   : `Loading ${ROOMS_LABEL.toLowerCase()}…`}
               </Text>
             ) : (
-              filteredChats.map((item) => {
-                const rowName = roomRowName(item);
-                const preview = roomRowPreview(item, identityPubkey ?? undefined);
-                const attention = roomRowNeedsAttention(item);
-                return (
+              filteredChatSections.map((section) => (
+                <React.Fragment key={section.kind}>
+                  <RoomListSectionHeader
+                    title={section.kind === 'rooms' ? ROOMS_LABEL : 'Direct messages'}
+                  />
+                  {section.data.map((item) => {
+                    const rowName = roomRowName(item);
+                    const preview = roomRowPreview(item, identityPubkey ?? undefined);
+                    const attention = roomRowNeedsAttention(item);
+                    return (
                   <Pressable
                     key={item.room.id}
                     accessibilityLabel={`Open ${item.directMessage ? 'direct message' : ROOM_LABEL} ${rowName.sigil}${rowName.name}`}
@@ -465,8 +484,10 @@ export const SidebarView = React.memo(function SidebarView() {
                       </Text>
                     </View>
                   </Pressable>
-                );
-              })
+                    );
+                  })}
+                </React.Fragment>
+              ))
             )}
           </ScrollView>
           {!isDesktop && (

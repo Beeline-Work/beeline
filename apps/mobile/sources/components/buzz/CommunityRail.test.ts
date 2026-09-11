@@ -156,6 +156,30 @@ describe('Workspace drawer', () => {
     ).toHaveLength(1);
   });
 
+  it('replaces the current Workspace identity with the picker title while open', () => {
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        React.createElement(CommunitySwitcherTrigger, {
+          community: { communityId: 'community-1', name: 'Night Shift' },
+          expanded: true,
+          onPress: vi.fn(),
+          attention: true,
+          pickerTitle: 'Workspaces',
+        }),
+      );
+    });
+
+    expect(renderer.root.findByProps({ testID: 'workspace-picker-title' }).props.children).toBe(
+      'Workspaces',
+    );
+    expect(renderer.root.findAllByProps({ testID: 'workspace-avatar-header' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'workspace-attention' })).toHaveLength(0);
+    expect(
+      renderer.root.findByProps({ testID: 'workspace-avatar-trigger' }).props.accessibilityLabel,
+    ).toBe('Close Workspaces');
+  });
+
   it('renders the same picker as an in-column workspace list', () => {
     let renderer!: ReactTestRenderer;
     act(() => {
@@ -176,10 +200,20 @@ describe('Workspace drawer', () => {
 
     expect(renderer.root.findByProps({ testID: 'community-rail-community-2' })).toBeDefined();
     expect(
-      renderer.root.findAllByType('Text' as any).some((node) => node.props.children === 'Morning Watch'),
+      renderer.root.findByProps({ testID: 'workspace-avatar-community-1' }).props.selected,
     ).toBe(true);
     expect(
-      renderer.root.findAllByType('Text' as any).some((node) => node.props.children === 'ADD WORKSPACE'),
+      renderer.root.findByProps({ testID: 'workspace-avatar-community-2' }).props.selected,
+    ).toBe(false);
+    expect(
+      renderer.root
+        .findAllByType('Text' as any)
+        .some((node) => node.props.children === 'Morning Watch'),
+    ).toBe(true);
+    expect(
+      renderer.root
+        .findAllByType('Text' as any)
+        .some((node) => node.props.children === 'ADD WORKSPACE'),
     ).toBe(true);
   });
 
@@ -287,9 +321,8 @@ describe('Workspace drawer', () => {
 
     act(() => renderer.root.findByProps({ testID: 'workspace-avatar-trigger' }).props.onPress());
     expect(
-      renderer.root
-        .findAllByType('IdentityMark')
-        .find((node: any) => node.props.kind === 'human')!.props,
+      renderer.root.findAllByType('IdentityMark').find((node: any) => node.props.kind === 'human')!
+        .props,
     ).toMatchObject({
       seed: 'person-pubkey',
       avatarUrl: 'https://example.test/person.png',

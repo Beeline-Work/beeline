@@ -82,11 +82,7 @@ function RailButton({
         testID={testID}
         onPress={onPress}
         onLongPress={onLongPress}
-        style={[
-          styles.railButton,
-          column && styles.columnButton,
-          !active && styles.railButtonIdle,
-        ]}
+        style={[styles.railButton, column && styles.columnButton, !active && styles.railButtonIdle]}
       >
         {children}
       </TouchableOpacity>
@@ -223,7 +219,7 @@ export function CommunityRail({
                 seed={community?.communityId ?? 'workspace-loading'}
                 avatarUrl={community?.avatar}
                 name={community?.name}
-                size={column ? 34 : 40}
+                size={40}
                 selected={active}
                 testID={`workspace-avatar-${community.communityId}`}
               />
@@ -294,6 +290,7 @@ type CommunitySwitcherTriggerProps = CommunityDrawerTriggerProps & {
   expanded: boolean;
   onPress: () => void;
   attention?: boolean;
+  pickerTitle?: string;
 };
 
 /**
@@ -320,37 +317,49 @@ export function CommunitySwitcherTrigger({
   expanded,
   onPress,
   attention = false,
+  pickerTitle,
 }: CommunitySwitcherTriggerProps) {
+  const showingPickerTitle = expanded && pickerTitle;
   return (
     <TouchableOpacity
-      accessibilityLabel={`${community?.name ?? WORKSPACE_LABEL} — switch ${WORKSPACE_LABEL}`}
+      accessibilityLabel={
+        showingPickerTitle
+          ? `Close ${pickerTitle}`
+          : `${community?.name ?? WORKSPACE_LABEL} — switch ${WORKSPACE_LABEL}`
+      }
       accessibilityRole="button"
       accessibilityState={{ expanded }}
       onPress={onPress}
       style={styles.drawerTrigger}
       testID="workspace-avatar-trigger"
     >
-      <View style={styles.drawerTriggerMark}>
-        <IdentityMark
-          kind="workspace"
-          seed={community?.communityId ?? 'workspace-loading'}
-          avatarUrl={community?.avatar}
-          name={community?.name}
-          size={26}
-          testID="workspace-avatar-header"
-        />
-        {attention && <View style={styles.workspaceAttentionMark} testID="workspace-attention" />}
-      </View>
+      {!showingPickerTitle && (
+        <View style={styles.drawerTriggerMark}>
+          <IdentityMark
+            kind="workspace"
+            seed={community?.communityId ?? 'workspace-loading'}
+            avatarUrl={community?.avatar}
+            name={community?.name}
+            size={26}
+            testID="workspace-avatar-header"
+          />
+          {attention && <View style={styles.workspaceAttentionMark} testID="workspace-attention" />}
+        </View>
+      )}
       <Text
         numberOfLines={1}
         style={styles.drawerTriggerName}
         testID={
-          community ? `workspace-active-${community.communityId}` : 'workspace-active-loading'
+          showingPickerTitle
+            ? 'workspace-picker-title'
+            : community
+              ? `workspace-active-${community.communityId}`
+              : 'workspace-active-loading'
         }
       >
-        {community?.name ?? WORKSPACE_LABEL}
+        {showingPickerTitle || community?.name || WORKSPACE_LABEL}
       </Text>
-      <Text style={styles.drawerTriggerCaret}>⌄</Text>
+      <Text style={styles.drawerTriggerCaret}>{showingPickerTitle ? '⌃' : '⌄'}</Text>
     </TouchableOpacity>
   );
 }
@@ -513,14 +522,14 @@ const styles = StyleSheet.create((theme) => {
       paddingVertical: 4,
       alignItems: 'center',
     },
-    columnScrollContent: { alignItems: 'stretch' },
+    columnScrollContent: { alignItems: 'center' },
     railButtonSlot: {
       width: DRAWER_WIDTH,
       height: 58,
       alignItems: 'center',
       justifyContent: 'center',
     },
-    columnButtonSlot: { width: '100%', alignItems: 'stretch' },
+    columnButtonSlot: { width: '100%', alignItems: 'center' },
     railButton: {
       width: 48,
       height: 48,
@@ -528,17 +537,18 @@ const styles = StyleSheet.create((theme) => {
       justifyContent: 'center',
     },
     columnButton: {
-      width: '100%',
-      paddingHorizontal: 16,
-      flexDirection: 'row',
-      justifyContent: 'flex-start',
-      gap: 12,
+      width: DRAWER_WIDTH,
+      height: 58,
+      flexDirection: 'column',
+      gap: 3,
     },
     columnWorkspaceName: {
-      ...Typography.ledger('semiBold'),
-      ...groknight.type.bodyStrong,
-      flex: 1,
-      color: groknight.textPrimary,
+      ...Typography.default('semiBold'),
+      color: groknight.textMuted,
+      fontSize: 9,
+      lineHeight: 12,
+      letterSpacing: 0.6,
+      maxWidth: DRAWER_WIDTH,
     },
     /* Tone, not a box: an unselected Workspace mark sits one step back from the
      * one you are in. The rail is a quiet column you glance at, not a row of

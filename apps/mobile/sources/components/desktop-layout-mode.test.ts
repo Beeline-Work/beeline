@@ -17,6 +17,7 @@ describe('desktop layout mode', () => {
     expect(sidebar).toContain("event.key === 'Escape'");
     expect(sidebar).toContain("document.addEventListener('mousedown', onPointerDown)");
     expect(sidebar).toContain('attention={otherWorkspaceNeedsAttention}');
+    expect(sidebar).toContain('pickerTitle={WORKSPACES_LABEL}');
     expect(channels).toContain('isDesktop ? (');
     expect(channels).toContain('testID="desktop-room-selection-empty"');
     expect(channels).toContain('!isDesktop && activeCommunityId');

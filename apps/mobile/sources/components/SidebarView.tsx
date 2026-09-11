@@ -14,7 +14,7 @@ import {
 } from '@/buzz/community-storage';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { useHeaderHeight, useIsDesktop } from '@/utils/responsive';
-import { ROOM_LABEL, ROOMS_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
+import { ROOM_LABEL, ROOMS_LABEL, WORKSPACE_LABEL, WORKSPACES_LABEL } from '@/buzz/vocabulary';
 import { roomRowName, roomRowNeedsAttention, roomRowPreview } from '@/buzz/room-list-row';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
 import { CommunityRail, CommunitySwitcherTrigger } from '@/components/buzz/CommunityRail';
@@ -241,9 +241,7 @@ export const SidebarView = React.memo(function SidebarView() {
     );
   }, [query, surface?.chats]);
   const activeWorkspace = workspaces.find((workspace) => workspace.id === workspaceId) ?? null;
-  const otherWorkspaceNeedsAttention = [...attentionWorkspaceIds].some(
-    (id) => id !== workspaceId,
-  );
+  const otherWorkspaceNeedsAttention = [...attentionWorkspaceIds].some((id) => id !== workspaceId);
   const openRoom = React.useCallback(
     (roomId: string) => router.push(`/beeline/chat/${encodeURIComponent(roomId)}` as Href),
     [router],
@@ -326,6 +324,7 @@ export const SidebarView = React.memo(function SidebarView() {
             expanded={workspaceSwitcherOpen}
             onPress={() => setWorkspaceSwitcherOpen((open) => !open)}
             attention={otherWorkspaceNeedsAttention}
+            pickerTitle={WORKSPACES_LABEL}
           />
         </View>
       ) : (
@@ -381,106 +380,106 @@ export const SidebarView = React.memo(function SidebarView() {
         </View>
       ) : (
         <>
-      <View style={styles.searchWrap}>
-        <Ionicons name="search" size={14} color={stylesheet.roomTime.color} />
-        <TextInput
-          ref={searchRef}
-          value={query}
-          onChangeText={setQuery}
-          placeholder={`Search ${ROOMS_LABEL}`}
-          placeholderTextColor={stylesheet.roomTime.color}
-          style={styles.search}
-          testID="desktop-room-search"
-        />
-        <Text style={styles.shortcut}>⌘K</Text>
-      </View>
-      <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
-        {navigationError ? (
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => setRefreshNonce((value) => value + 1)}
-          >
-            <Text style={styles.empty}>{navigationError} Select to retry.</Text>
-          </Pressable>
-        ) : !filteredChats.length ? (
-          <Text style={styles.empty}>
-            {surface
-              ? `No ${ROOMS_LABEL.toLowerCase()} match this search.`
-              : `Loading ${ROOMS_LABEL.toLowerCase()}…`}
-          </Text>
-        ) : (
-          filteredChats.map((item) => {
-            const rowName = roomRowName(item);
-            const preview = roomRowPreview(item, identityPubkey ?? undefined);
-            const attention = roomRowNeedsAttention(item);
-            return (
+          <View style={styles.searchWrap}>
+            <Ionicons name="search" size={14} color={stylesheet.roomTime.color} />
+            <TextInput
+              ref={searchRef}
+              value={query}
+              onChangeText={setQuery}
+              placeholder={`Search ${ROOMS_LABEL}`}
+              placeholderTextColor={stylesheet.roomTime.color}
+              style={styles.search}
+              testID="desktop-room-search"
+            />
+            <Text style={styles.shortcut}>⌘K</Text>
+          </View>
+          <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
+            {navigationError ? (
               <Pressable
-                key={item.room.id}
-                accessibilityLabel={`Open ${item.directMessage ? 'direct message' : ROOM_LABEL} ${rowName.sigil}${rowName.name}`}
                 accessibilityRole="button"
-                onPress={() => openRoom(item.room.id)}
-                style={({ pressed }) => [
-                  styles.roomRow,
-                  !isDesktop && styles.roomRowCompact,
-                  activeRoomId === item.room.id && styles.roomRowSelected,
-                  pressed && styles.roomRowSelected,
-                ]}
-                testID={`desktop-room-${item.room.id}`}
+                onPress={() => setRefreshNonce((value) => value + 1)}
               >
-                <View
-                  style={[styles.roomStateSlot, !isDesktop && styles.roomStateSlotCompact]}
-                  {...(Platform.OS === 'web'
-                    ? { 'aria-hidden': true }
-                    : { accessibilityElementsHidden: true })}
-                >
-                  {(attention || (isDesktop && item.agentState === 'working')) && (
-                    <View
-                      style={[
-                        styles.roomStateMark,
-                        attention ? styles.roomStateNeedsYou : styles.roomStateWorking,
-                      ]}
-                      testID={`desktop-room-state-${item.room.id}`}
-                    />
-                  )}
-                </View>
-                <View style={styles.roomCopy}>
-                  <View style={styles.roomTitleLine}>
-                    <Text numberOfLines={1} style={styles.roomTitle}>
-                      <Text style={styles.roomSigil}>{rowName.sigil}</Text>
-                      {rowName.name}
-                    </Text>
-                    <Text style={styles.roomTime}>
-                      {item.latestMessage
-                        ? compactRelativeTime(item.latestMessage.createdAt, Date.now())
-                        : ''}
-                    </Text>
-                  </View>
-                  <Text numberOfLines={1} style={styles.roomFact}>
-                    {preview.attribution === 'self' && (
-                      <Text style={styles.previewSelf}>you: </Text>
-                    )}
-                    {preview.attribution === 'other' && (
-                      <Text style={styles.previewAuthor}>@{preview.handle}: </Text>
-                    )}
-                    {preview.text}
-                  </Text>
-                </View>
+                <Text style={styles.empty}>{navigationError} Select to retry.</Text>
               </Pressable>
-            );
-          })
-        )}
-      </ScrollView>
-      {!isDesktop && (
-        <Pressable
-          accessibilityLabel="Open Beeline settings"
-          accessibilityRole="button"
-          onPress={() => router.push('/beeline/settings' as Href)}
-          style={styles.settingsRow}
-        >
-          <Ionicons name="settings-outline" size={18} color={stylesheet.settingsText.color} />
-          <Text style={styles.settingsText}>SETTINGS</Text>
-        </Pressable>
-      )}
+            ) : !filteredChats.length ? (
+              <Text style={styles.empty}>
+                {surface
+                  ? `No ${ROOMS_LABEL.toLowerCase()} match this search.`
+                  : `Loading ${ROOMS_LABEL.toLowerCase()}…`}
+              </Text>
+            ) : (
+              filteredChats.map((item) => {
+                const rowName = roomRowName(item);
+                const preview = roomRowPreview(item, identityPubkey ?? undefined);
+                const attention = roomRowNeedsAttention(item);
+                return (
+                  <Pressable
+                    key={item.room.id}
+                    accessibilityLabel={`Open ${item.directMessage ? 'direct message' : ROOM_LABEL} ${rowName.sigil}${rowName.name}`}
+                    accessibilityRole="button"
+                    onPress={() => openRoom(item.room.id)}
+                    style={({ pressed }) => [
+                      styles.roomRow,
+                      !isDesktop && styles.roomRowCompact,
+                      activeRoomId === item.room.id && styles.roomRowSelected,
+                      pressed && styles.roomRowSelected,
+                    ]}
+                    testID={`desktop-room-${item.room.id}`}
+                  >
+                    <View
+                      style={[styles.roomStateSlot, !isDesktop && styles.roomStateSlotCompact]}
+                      {...(Platform.OS === 'web'
+                        ? { 'aria-hidden': true }
+                        : { accessibilityElementsHidden: true })}
+                    >
+                      {(attention || (isDesktop && item.agentState === 'working')) && (
+                        <View
+                          style={[
+                            styles.roomStateMark,
+                            attention ? styles.roomStateNeedsYou : styles.roomStateWorking,
+                          ]}
+                          testID={`desktop-room-state-${item.room.id}`}
+                        />
+                      )}
+                    </View>
+                    <View style={styles.roomCopy}>
+                      <View style={styles.roomTitleLine}>
+                        <Text numberOfLines={1} style={styles.roomTitle}>
+                          <Text style={styles.roomSigil}>{rowName.sigil}</Text>
+                          {rowName.name}
+                        </Text>
+                        <Text style={styles.roomTime}>
+                          {item.latestMessage
+                            ? compactRelativeTime(item.latestMessage.createdAt, Date.now())
+                            : ''}
+                        </Text>
+                      </View>
+                      <Text numberOfLines={1} style={styles.roomFact}>
+                        {preview.attribution === 'self' && (
+                          <Text style={styles.previewSelf}>you: </Text>
+                        )}
+                        {preview.attribution === 'other' && (
+                          <Text style={styles.previewAuthor}>@{preview.handle}: </Text>
+                        )}
+                        {preview.text}
+                      </Text>
+                    </View>
+                  </Pressable>
+                );
+              })
+            )}
+          </ScrollView>
+          {!isDesktop && (
+            <Pressable
+              accessibilityLabel="Open Beeline settings"
+              accessibilityRole="button"
+              onPress={() => router.push('/beeline/settings' as Href)}
+              style={styles.settingsRow}
+            >
+              <Ionicons name="settings-outline" size={18} color={stylesheet.settingsText.color} />
+              <Text style={styles.settingsText}>SETTINGS</Text>
+            </Pressable>
+          )}
         </>
       )}
     </View>

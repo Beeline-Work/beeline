@@ -211,9 +211,40 @@ describe('Room list layout contract', () => {
     expect(source).toContain('testID={`room-corners-${item.room.id}`}');
     expect(source).toContain('testID={`room-corner-${corner.corner.id}`}');
     expect(source).toContain("'room-list',");
-    expect(source).toContain('<Text style={styles.cornerStatus}>{status}</Text>');
+    expect(source).toContain('{display.word}');
     // The toggle slot is reserved on every row so the age column keeps one
     // straight right edge whether or not a Room has corners.
     expect(styleBlock(source, 'cornerToggleSlot')).toContain('width: 32');
+  });
+
+  it('reads one display-state resolver for both the dropdown list and its words', () => {
+    // Daemon state, PR, and checks collapse in `corner-display-state.ts` and
+    // nowhere else. A screen that re-derives any of the three can disagree with
+    // the count on the row above it.
+    expect(source).toContain(
+      "import { cornerDisplayState, unfinishedCornerDisplay } from '@/buzz/corner-display-state';",
+    );
+    expect(source).toContain('const display = cornerDisplayState(corner);');
+    expect(source).toContain('unfinishedCornerDisplay(corners).map((entry) => entry.item)');
+    // The old collapses: a raw lifecycle word as the status, and a filter that
+    // read `lifecycle` while the row's count read the daemon.
+    expect(source).not.toContain('cornerStatusWord');
+    expect(source).not.toContain("lifecycle.lifecycle !== 'done'");
+  });
+
+  it('spends brass on a needs-you corner and backs it with copy', () => {
+    // Brass on the index means the row is talking to you, and it is never the
+    // only signal (DESIGN.md, colour exception 1): the word itself changes to
+    // the affordance where every other row reads WORKING or IDLE.
+    expect(source).toContain('display.needsYou && styles.cornerStatusNeedsYou');
+    expect(source).toContain('display.needsYou && styles.cornerNameNeedsYou');
+    expect(styleBlock(source, 'cornerStatusNeedsYou')).toContain('color: hull.accent');
+    expect(styleBlock(source, 'cornerNameNeedsYou')).toContain('color: hull.textPrimary');
+    // Quiet rows keep the muted tones, so the accent stays rare inside the
+    // dropdown rather than becoming its default.
+    expect(styleBlock(source, 'cornerStatus')).toContain('color: hull.textMuted');
+    expect(styleBlock(source, 'cornerName')).toContain('color: hull.textSecondary');
+    // Needs-you is announced, never left to colour.
+    expect(source).toContain("display.needsYou ? ', needs you' : ''");
   });
 });

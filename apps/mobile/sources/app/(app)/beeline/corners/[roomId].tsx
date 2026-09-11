@@ -13,6 +13,7 @@ import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { cornerHref } from '@/buzz/corner-navigation';
+import { cornerDisplayState } from '@/buzz/corner-display-state';
 import { displayCornerTitle, displayRoomIndexTitle } from '@/buzz/room-list-row';
 import { CHANGES_LABEL, CORNER_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
@@ -163,6 +164,10 @@ export default function BuzzCorners() {
           contentContainerStyle={surface.corners.length ? undefined : styles.emptyContainer}
           renderItem={({ item }) => {
             const label = displayCornerTitle(surface.room.name, item.corner.name, item.corner.id);
+            // Same resolver as the Room-list dropdown. This screen used to map
+            // `lifecycle.lifecycle` onto a status with its own ternary, so the
+            // two surfaces could disagree about one corner.
+            const display = cornerDisplayState(item);
             return (
               <TouchableOpacity
                 testID={`corner-${item.corner.id}`}
@@ -187,15 +192,7 @@ export default function BuzzCorners() {
                       : (item.latestMessage?.text ?? 'No activity yet')}
                   </Text>
                 </View>
-                <CornerGlyph
-                  status={
-                    item.lifecycle.lifecycle === 'in-review'
-                      ? 'open'
-                      : item.lifecycle.lifecycle === 'done'
-                        ? 'archived'
-                        : null
-                  }
-                />
+                <CornerGlyph status={display.status} />
                 <Text style={styles.chevron}>›</Text>
               </TouchableOpacity>
             );

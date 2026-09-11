@@ -21,6 +21,7 @@ import type { AgentActivityItem } from '@/sync/transport';
 import type { DisplayableAgent } from '@/buzz/agent-display';
 import type { CornerStatus, CornerSummary } from '@/buzz/corners';
 import { cornerName } from '@/buzz/corners';
+import { remoteTerminalState } from '@/buzz/corner-display-state';
 
 export type AgentTurnStatus = 'working' | 'complete' | 'failed';
 export type CornerProcessState = 'live' | 'suspended' | 'waiting-for-slot';
@@ -503,28 +504,31 @@ export function mergeDisplayPages(
 
 export function cornerSummaries(view: Pick<RoomView, 'corners'>): CornerSummary[] {
   return view.corners.map((item) => {
-    const lifecycle = item.lifecycle.lifecycle;
+    // "Finished" is decided in exactly one place product-wide
+    // (`corner-display-state.ts`), so this adapter and the corner rows that
+    // read its output can never disagree about whether a corner is over.
+    const ended = remoteTerminalState(item.lifecycle);
     const machineState =
-      lifecycle === 'done'
-        ? item.lifecycle.outcome === 'landed'
-          ? 'concluded'
-          : 'closed'
-        : item.status === 'working'
-          ? 'working'
-          : item.status === 'waiting'
-            ? 'waiting'
-            : item.status === 'open'
-              ? 'open'
-              : item.status === 'concluded'
-                ? 'concluded'
-                : item.status === 'closed'
-                  ? 'closed'
-                  : 'idle';
+      ended ??
+      (item.status === 'working'
+        ? 'working'
+        : item.status === 'waiting'
+          ? 'waiting'
+          : item.status === 'open'
+            ? 'open'
+            : item.status === 'concluded'
+              ? 'concluded'
+              : item.status === 'closed'
+                ? 'closed'
+                : 'idle');
+    // `status` stays the COMPATIBILITY projection it has always been: a
+    // working corner reads `live` without the freshness lease, because every
+    // consumer re-derives through `currentCornerStatus` at paint time.
     const status =
       machineState === 'working'
         ? 'live'
-        : lifecycle === 'done'
-          ? item.lifecycle.outcome === 'landed'
+        : ended
+          ? ended === 'concluded'
             ? 'merged'
             : 'archived'
           : machineState === 'waiting'

@@ -32,6 +32,7 @@ import { workspaceRailItem, type WorkspaceMemberDisplayItem } from '@/buzz/room-
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { cornerHref } from '@/buzz/corner-navigation';
+import { cornerDisplayState, unfinishedCornerDisplay } from '@/buzz/corner-display-state';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { claimFirstLaunchLanding, welcomeRoomHref } from '@/buzz/welcome-landing';
 import {
@@ -74,12 +75,14 @@ function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
+/**
+ * The dropdown lists what the row's count promised. Both now read the daemon
+ * state through `resolveCornerDisplayState`; filtering on `lifecycle` alone
+ * used to leave a daemon-concluded corner listed under a count that had
+ * already dropped it.
+ */
 function openCornerItems(corners: readonly CornerListItem[]): CornerListItem[] {
-  return corners.filter((item) => item.lifecycle.lifecycle !== 'done');
-}
-
-function cornerStatusWord(item: CornerListItem): string {
-  return item.lifecycle.lifecycle;
+  return unfinishedCornerDisplay(corners).map((entry) => entry.item);
 }
 
 function workspaceMembers(view: WorkspaceView | null): WorkspaceMemberDisplayItem[] {
@@ -850,10 +853,15 @@ export default function BuzzChannels() {
                           corner.corner.name,
                           corner.corner.id,
                         );
-                        const status = cornerStatusWord(corner);
+                        // One resolver, three fact families: the daemon state
+                        // the Room row's count came from, the PR, and its
+                        // checks. The row never re-collapses them itself.
+                        const display = cornerDisplayState(corner);
                         return (
                           <TouchableOpacity
-                            accessibilityLabel={`Open ${label}, ${status}`}
+                            accessibilityLabel={`Open ${label}, ${display.word.toLowerCase()}${
+                              display.needsYou ? ', needs you' : ''
+                            }`}
                             accessibilityRole="button"
                             key={corner.corner.id}
                             onPress={() =>
@@ -869,8 +877,23 @@ export default function BuzzChannels() {
                             style={styles.cornerRow}
                             testID={`room-corner-${corner.corner.id}`}
                           >
-                            <Text style={styles.cornerName}>└ {label}</Text>
-                            <Text style={styles.cornerStatus}>{status}</Text>
+                            <Text
+                              style={[
+                                styles.cornerName,
+                                display.needsYou && styles.cornerNameNeedsYou,
+                              ]}
+                            >
+                              └ {label}
+                            </Text>
+                            <Text
+                              style={[
+                                styles.cornerStatus,
+                                display.needsYou && styles.cornerStatusNeedsYou,
+                              ]}
+                              testID={`room-corner-status-${corner.corner.id}`}
+                            >
+                              {display.word}
+                            </Text>
                             <Text style={styles.cornerChevron}>›</Text>
                           </TouchableOpacity>
                         );
@@ -1124,6 +1147,14 @@ const styles = StyleSheet.create((theme) => {
       fontSize: 8,
       letterSpacing: 0.35,
     },
+    // Brass on the index means the row is talking to you, and a corner waiting
+    // on a person is the one thing in this dropdown that is. It is never the
+    // only signal: the word itself changes to the affordance (REVIEW, REPLY,
+    // RETRY) where every other row reads WORKING or IDLE.
+    cornerStatusNeedsYou: { color: hull.accent },
+    // The name lifts out of the secondary tone with it, so the pair reads as
+    // one emphasized row rather than a loud chip beside a quiet title.
+    cornerNameNeedsYou: { color: hull.textPrimary },
     cornerChevron: {
       ...Typography.default('semiBold'),
       color: hull.steel,

@@ -81,25 +81,6 @@ export function sanitizeAgentReply(message: string): string {
   return lines.slice(1).join('\n').trim();
 }
 
-const CORNER_OPEN_ECHO =
-  /^(?:(?:ok(?:ay)?|done|sure|great|alright)[,.!:]?\s+)?(?:i(?:'ve| have|'ll| will|'m| am)?\s+)?(?:just\s+)?open(?:ed|ing)?\s+(?:up\s+)?(?:a\s+|the\s+|your\s+)?(?:new\s+|write(?:-enabled)?\s+|repository\s+)*corner\b/iu;
-const CORNER_OPEN_ECHO_MAX_CHARS = 320;
-
-/**
- * After a successful open_corner call the server's corner card already announces
- * the corner: drop the model's own "Opened corner <id> …" paragraph. Bounded to
- * the first paragraph, only when it starts as that announcement and stays short;
- * anything the model says after a blank line is kept.
- */
-export function stripCornerOpenEcho(message: string): string {
-  const visible = message.trim();
-  if (!visible) return '';
-  const paragraphs = visible.split(/\n\s*\n/);
-  const first = paragraphs[0]!.trim();
-  if (first.length > CORNER_OPEN_ECHO_MAX_CHARS || !CORNER_OPEN_ECHO.test(first)) return visible;
-  return paragraphs.slice(1).join('\n\n').trim();
-}
-
 /** Words a status line spends without saying anything the corner does not already show. */
 const STATUS_FILLER = new Set(
   (

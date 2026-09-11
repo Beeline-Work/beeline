@@ -19,9 +19,16 @@ import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
+import * as Notifications from 'expo-notifications';
 import { KeyboardAvoidingView, useKeyboardState } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useLocalSearchParams, useNavigation, router, type Href } from 'expo-router';
+import {
+  useFocusEffect,
+  useLocalSearchParams,
+  useNavigation,
+  router,
+  type Href,
+} from 'expo-router';
 import { loadBuzzIdentity, getEffectiveRelayUrl } from '@/auth/buzz-identity-storage';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
@@ -56,6 +63,7 @@ import {
   type ChannelReferenceTarget,
 } from '@/buzz/channel-reference';
 import { pushOpenBuzzChannelId, releaseOpenBuzzChannelId } from '@/buzz/open-room-tracker';
+import { dismissPresentedNotificationsForChannel } from '@/push/presented-notifications';
 import { afterInteractions } from '@/buzz/defer-interaction';
 import { buildTurnActivity } from '@/buzz/activity-timeline';
 import { cornerObjectiveItems } from '@/buzz/corner-context';
@@ -363,6 +371,13 @@ export default function BuzzChat() {
     pushOpenBuzzChannelId(decodedId || null);
     return () => releaseOpenBuzzChannelId(decodedId || null);
   }, [decodedId]);
+  useFocusEffect(
+    useCallback(() => {
+      void dismissPresentedNotificationsForChannel(decodedId, Notifications).catch((error) => {
+        console.log('Failed to dismiss notifications for opened conversation:', error);
+      });
+    }, [decodedId]),
+  );
 
   const {
     transport,

@@ -9,6 +9,7 @@ vi.mock('react-native', async () => {
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
   return {
+    Dimensions: { get: () => ({ width: 390, height: 844 }) },
     KeyboardAvoidingView: host('KeyboardAvoidingView'),
     Modal: host('Modal'),
     Platform: {
@@ -20,6 +21,7 @@ vi.mock('react-native', async () => {
     TextInput: host('TextInput'),
     TouchableOpacity: host('TouchableOpacity'),
     View: host('View'),
+    useWindowDimensions: () => ({ width: 390, height: 844 }),
   };
 });
 

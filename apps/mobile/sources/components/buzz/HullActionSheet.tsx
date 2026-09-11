@@ -3,6 +3,7 @@ import { Pressable, Switch, Text, View, type StyleProp, type ViewStyle } from 'r
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
+import { useIsDesktop } from '@/utils/responsive';
 import { HullFloatingSurface, HullModal } from './HullDialog';
 
 type HullActionSheetProps = {
@@ -217,18 +218,20 @@ export function HullActionSheetModal({
   visible,
 }: HullActionSheetModalProps) {
   const insets = useSafeAreaInsets();
+  const isDesktop = useIsDesktop();
   return (
     <HullModal
       accessibilityLabel={accessibilityLabel ?? 'Close action sheet'}
       contentStyle={styles.modalContent}
       dismissOnBackdrop={dismissOnBackdrop}
       onRequestClose={onClose}
-      placement="bottom"
+      placement={isDesktop ? 'center' : 'bottom'}
       scrimTestID={scrimTestID}
       testID={modalTestID}
       visible={visible}
     >
       <HullActionSheet
+        grip={!isDesktop}
         style={{ paddingBottom: Math.max(insets.bottom, 10) }}
         subtitle={subtitle}
         testID={testID}

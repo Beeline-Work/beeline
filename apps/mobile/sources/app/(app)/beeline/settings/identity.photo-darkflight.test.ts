@@ -59,6 +59,7 @@ vi.mock('react-native-svg', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: unknown) => ReactModule.createElement(name, props);
   return {
+    Dimensions: { get: () => ({ width: 390, height: 844 }) },
     Svg: host('Svg'),
     Path: host('Path'),
     Rect: host('Rect'),
@@ -160,6 +161,7 @@ vi.mock('react-native', async () => {
     TextInput: host('TextInput'),
     TouchableOpacity: host('TouchableOpacity'),
     View: host('View'),
+    useWindowDimensions: () => ({ width: 390, height: 844 }),
     StyleSheet: { create: (styles: unknown) => styles, flatten: (s: unknown) => s },
   };
 });

@@ -97,6 +97,7 @@ vi.mock('@/components/buzz/MonoHull', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: unknown) => ReactModule.createElement(name, props);
   return {
+    Dimensions: { get: () => ({ width: 390, height: 844 }) },
     HullSurface: host('HullSurface'),
     MonoButton: host('MonoButton'),
     PixelGateReveal: host('PixelGateReveal'),
@@ -140,6 +141,7 @@ vi.mock('react-native', async () => {
     TextInput: host('TextInput'),
     TouchableOpacity: host('TouchableOpacity'),
     View: host('View'),
+    useWindowDimensions: () => ({ width: 390, height: 844 }),
     StyleSheet: { create: (styles: unknown) => styles, flatten: (s: unknown) => s },
   };
 });

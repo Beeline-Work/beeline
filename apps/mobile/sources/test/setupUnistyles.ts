@@ -11,6 +11,9 @@ vi.mock('expo-modules-core', () => ({
 vi.mock('expo-constants', () => ({
   default: { expoConfig: { extra: { app: {} } } },
 }));
+vi.mock('react-native-device-info', () => ({
+  getDeviceType: () => 'Handset',
+}));
 
 const theme = { buzz: beelineThemes.obsidian };
 

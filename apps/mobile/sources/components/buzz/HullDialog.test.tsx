@@ -42,6 +42,7 @@ vi.mock('react-native', async () => {
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
   return {
+    Dimensions: { get: () => ({ width: 390, height: 844 }) },
     Modal: (props: any) => {
       modalRenderSpy();
       return ReactModule.createElement('Modal', props, props.children);
@@ -53,6 +54,7 @@ vi.mock('react-native', async () => {
       ReactModule.createElement('TextInput', props),
     ),
     View: host('View'),
+    useWindowDimensions: () => ({ width: 390, height: 844 }),
   };
 });
 

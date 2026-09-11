@@ -3302,14 +3302,16 @@ export default function BuzzChat() {
       return (
         <View style={[styles.container, { paddingTop: insets.top }]} testID="room-hydration-error">
           <View style={styles.hydrationErrorHeader}>
-            <TouchableOpacity
-              accessibilityLabel="Back to Rooms"
-              onPress={handleBack}
-              style={styles.backButton}
-              testID="chat-back"
-            >
-              <Text style={styles.backText}>‹</Text>
-            </TouchableOpacity>
+            {(!isDesktop || isCorner) && (
+              <TouchableOpacity
+                accessibilityLabel="Back to Rooms"
+                onPress={handleBack}
+                style={styles.backButton}
+                testID="chat-back"
+              >
+                <Text style={styles.backText}>‹</Text>
+              </TouchableOpacity>
+            )}
             <View style={styles.headerCenter}>
               <ChannelHeaderTitle
                 kind={headerTitleKind}
@@ -3370,20 +3372,22 @@ export default function BuzzChat() {
             style={[styles.header, { minHeight: insets.top + 60, paddingTop: insets.top + 8 }]}
             testID={isCorner ? 'corner-session-header' : undefined}
           >
-            <TouchableOpacity
-              accessibilityLabel={
-                isCorner && cornerReturnTarget !== 'room-list'
-                  ? `Back to this ${CORNER_LABEL}’s ${ROOM_LABEL}`
-                  : 'Back to Rooms'
-              }
-              accessibilityRole="button"
-              hitSlop={HEADER_EDGE_HIT_SLOP}
-              onPress={handleBack}
-              style={styles.backButton}
-              testID="chat-back"
-            >
-              <Text style={[styles.backText, isCorner && styles.cornerBackText]}>‹</Text>
-            </TouchableOpacity>
+            {(!isDesktop || isCorner) && (
+              <TouchableOpacity
+                accessibilityLabel={
+                  isCorner && cornerReturnTarget !== 'room-list'
+                    ? `Back to this ${CORNER_LABEL}’s ${ROOM_LABEL}`
+                    : 'Back to Rooms'
+                }
+                accessibilityRole="button"
+                hitSlop={HEADER_EDGE_HIT_SLOP}
+                onPress={handleBack}
+                style={styles.backButton}
+                testID="chat-back"
+              >
+                <Text style={[styles.backText, isCorner && styles.cornerBackText]}>‹</Text>
+              </TouchableOpacity>
+            )}
             {/*
             The agent that OPENED this corner, stated here once and never
             repeated on a message. It is history, not ownership: any member

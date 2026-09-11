@@ -11,6 +11,7 @@ import {
 } from '@/buzz/desktop-workbench-state';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { openExternalUrl } from '@/utils/open-external-url';
+import { MemberRosterRow } from '@/components/buzz/MemberRosterRow';
 
 type Props = {
   room: RoomView;
@@ -133,34 +134,37 @@ export function DesktopRoomInspector({ room, client, overlay, onClose, onOpenCor
         {!selectedCornerId ? (
           <>
             <Section title="MEMBERS">
-              {room.members.map((member) => (
-                <View key={member.identity.pubkey} style={styles.row}>
-                  <Text numberOfLines={1} style={styles.rowTitle}>
-                    {member.identity.name}
-                  </Text>
-                  <Text style={styles.meta}>
-                    {member.identity.kind === 'agent' ? 'AGENT' : member.role.toUpperCase()}
-                  </Text>
-                </View>
-              ))}
-            </Section>
-            <Section title="CONNECTED AGENTS">
-              {room.members
-                .filter(
-                  (member) =>
-                    member.identity.kind === 'agent' && member.presence?.status === 'online',
-                )
-                .map((member) => (
-                  <View key={member.identity.pubkey} style={styles.row}>
-                    <Text style={styles.online}>●</Text>
-                    <Text style={styles.rowTitle}>{member.identity.name}</Text>
-                    <Text style={styles.meta}>ONLINE</Text>
-                  </View>
-                ))}
-              {!room.members.some(
-                (member) =>
-                  member.identity.kind === 'agent' && member.presence?.status === 'online',
-              ) && <Text style={styles.empty}>No connected agents</Text>}
+              {room.members.map((member) =>
+                member.identity.kind === 'agent' ? (
+                  <MemberRosterRow
+                    avatarUrl={member.identity.avatar}
+                    disabled
+                    divider="top"
+                    face={member.identity.face}
+                    handle={member.identity.handle}
+                    key={member.identity.pubkey}
+                    kind="agent"
+                    name={member.identity.name}
+                    online={member.presence?.status === 'online'}
+                    pubkey={member.identity.pubkey}
+                    testID={`desktop-inspector-member-${member.identity.pubkey}`}
+                  />
+                ) : (
+                  <MemberRosterRow
+                    avatarUrl={member.identity.avatar}
+                    disabled
+                    divider="top"
+                    face={member.identity.face}
+                    handle={member.identity.handle}
+                    key={member.identity.pubkey}
+                    kind="human"
+                    name={member.identity.name}
+                    pubkey={member.identity.pubkey}
+                    role={member.role}
+                    testID={`desktop-inspector-member-${member.identity.pubkey}`}
+                  />
+                ),
+              )}
             </Section>
             <Section title="OPEN CORNERS">
               {room.corners
@@ -321,7 +325,6 @@ const stylesheet = StyleSheet.create((theme) => ({
   row: { minHeight: 30, flexDirection: 'row', alignItems: 'center', gap: 8 },
   rowTitle: { ...theme.buzz.type.meta, flex: 1, color: theme.colors.text },
   meta: { ...theme.buzz.type.sectionHead, color: theme.colors.textSecondary },
-  online: { ...theme.buzz.type.sectionHead, color: theme.colors.textLink },
   empty: { ...theme.buzz.type.meta, color: theme.colors.textSecondary },
   cornerRow: {
     paddingVertical: 9,

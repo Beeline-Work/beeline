@@ -834,6 +834,64 @@ describe('monolith integration', () => {
     expect((await operation('leaveWorkspace', { workspaceId })).status).toBe(403);
   });
 
+  it('closes Rooms and DMs per viewer without changing membership or history', async () => {
+    const aliceToken = await phoneToken('chat-close-alice');
+    const aliceId = createHash('sha256').update('github:chat-close-alice').digest('hex');
+    const workspaceId = 'c105ed00-c105-4ed0-8105-c105ed00c105';
+    await operation('createWorkspace', { workspaceId, name: 'Chat close' });
+    await operation('addWorkspaceMember', { workspaceId, memberId: aliceId, role: 'member' });
+    const room = (await (
+      await operation('createRoom', { workspaceId, name: 'Preserved Room' })
+    ).json()) as { id: string };
+    await operation('sendRoomMessage', { roomId: room.id, text: 'history stays' });
+
+    const chat = async (token: string | undefined, roomId: string) => {
+      const view = (await (
+        await request(`/v1/phone/workspaces/${workspaceId}/chats`, 'GET', undefined, token)
+      ).json()) as { chats: Array<{ room: { id: string }; closed?: boolean }> };
+      return view.chats.find((item) => item.room.id === roomId);
+    };
+
+    expect((await operation('closeChat', { roomId: room.id })).status).toBe(204);
+    expect(await chat(undefined, room.id)).toMatchObject({ closed: true });
+    expect((await chat(aliceToken, room.id))?.closed).toBeUndefined();
+    expect((await operation('reopenChat', { roomId: room.id })).status).toBe(204);
+    expect((await chat(undefined, room.id))?.closed).toBeUndefined();
+
+    expect((await operation('closeChat', { roomId: room.id }, aliceToken)).status).toBe(204);
+    expect(await chat(aliceToken, room.id)).toMatchObject({ closed: true });
+    await operation('sendRoomMessage', { roomId: room.id, text: 'incoming reopens' });
+    expect((await chat(aliceToken, room.id))?.closed).toBeUndefined();
+
+    const dm = (await (
+      await operation('resolveDirectMessage', { workspaceId, participantId: aliceId })
+    ).json()) as { id: string };
+    await operation('sendRoomMessage', { roomId: dm.id, text: 'dm history stays' });
+    await operation('closeChat', { roomId: dm.id });
+    expect(await chat(undefined, dm.id)).toMatchObject({ closed: true });
+    expect(
+      (
+        await operation('resolveDirectMessage', { workspaceId, participantId: aliceId })
+      ).status,
+    ).toBe(200);
+    expect((await chat(undefined, dm.id))?.closed).toBeUndefined();
+
+    await operation('closeChat', { roomId: dm.id });
+    await operation('sendRoomMessage', { roomId: dm.id, text: 'new dm' }, aliceToken);
+    expect((await chat(undefined, dm.id))?.closed).toBeUndefined();
+
+    const memberships = await database.query<{ identity_id: string }>(
+      `SELECT identity_id FROM memberships
+       WHERE room_id IN ($1,$2) AND removed_at IS NULL ORDER BY room_id,identity_id`,
+      [room.id, dm.id],
+    );
+    expect(memberships.rows).toHaveLength(4);
+    const preserved = (await (
+      await request(`/v1/phone/rooms/${room.id}`)
+    ).json()) as { messages: Array<{ text: string }> };
+    expect(preserved.messages.map((message) => message.text)).toContain('history stays');
+  });
+
   it('lets a Workspace manager remove a person from the Workspace and every live Room', async () => {
     const aliceToken = await phoneToken('alice');
     const aliceId = createHash('sha256').update('github:alice').digest('hex');

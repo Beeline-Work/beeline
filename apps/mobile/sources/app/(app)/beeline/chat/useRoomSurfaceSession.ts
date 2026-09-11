@@ -286,6 +286,7 @@ export function useRoomSurfaceSession({
     let watchGeneration = 0;
     let watchKey = '';
     let hasPainted = false;
+    let reopenedChat = false;
     let pendingReadTraces: ReceivedLiveTrace[] = [];
 
     agentPresencesRef.current = {};
@@ -684,6 +685,12 @@ export function useRoomSurfaceSession({
           },
           apply: (view) => {
             applyView(view, identity.publicKey, relayUrl, true);
+            if (!view.parent && !reopenedChat) {
+              reopenedChat = true;
+              void nextTransport.reopenChat(channelId).catch(() => {
+                reopenedChat = false;
+              });
+            }
             const latest = view.messages.at(-1);
             if (latest) void nextRoomClient.markRead(channelId, latest.id).catch(() => undefined);
           },

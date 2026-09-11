@@ -492,3 +492,169 @@ describe('MonoMarkdown renders a resolved mention as a tappable member link', ()
     expect(token?.props.onPress).toBeUndefined();
   });
 });
+
+// ── Pipe table: an aligned wrapping grid in the machine vocabulary ──────────
+import {
+  tableColumnWeights,
+  TABLE_MIN_COLUMN_WEIGHT,
+  TABLE_MAX_COLUMN_WEIGHT,
+} from './MonoMarkdown';
+
+describe('tableColumnWeights — one clamped flex weight per column', () => {
+  it('weights each column by its longest cell', () => {
+    expect(tableColumnWeights([['a', 'bbbbb'], ['ccc', 'b']])).toEqual([3, 5]);
+  });
+
+  it('clamps a huge column so it cannot squeeze the rest into slivers', () => {
+    expect(tableColumnWeights([['x'.repeat(500), 'ok']])).toEqual([
+      TABLE_MAX_COLUMN_WEIGHT,
+      TABLE_MIN_COLUMN_WEIGHT,
+    ]);
+  });
+
+  it('lifts every column to the minimum weight', () => {
+    expect(tableColumnWeights([['', ''], ['', '']])).toEqual([
+      TABLE_MIN_COLUMN_WEIGHT,
+      TABLE_MIN_COLUMN_WEIGHT,
+    ]);
+  });
+
+  it('reads a ragged row as trailing empty cells', () => {
+    expect(tableColumnWeights([['alpha', 'beta'], ['x']])).toEqual([5, 4]);
+  });
+
+  it('degrades an empty table to one minimum column', () => {
+    expect(tableColumnWeights([])).toEqual([TABLE_MIN_COLUMN_WEIGHT]);
+  });
+});
+
+describe('MonoMarkdown renders a pipe table as an aligned wrapping grid', () => {
+  type JsonNode = {
+    type?: string;
+    props?: { style?: unknown; children?: unknown };
+    children?: unknown;
+  };
+
+  function walkJson(node: unknown, visit: (element: JsonNode) => void): void {
+    if (Array.isArray(node)) {
+      node.forEach((child) => walkJson(child, visit));
+      return;
+    }
+    if (!node || typeof node !== 'object') return;
+    visit(node as JsonNode);
+    walkJson((node as JsonNode).children, visit);
+  }
+
+  function hasType(node: unknown, type: string): boolean {
+    let found = false;
+    walkJson(node, (element) => {
+      if (element.type === type) found = true;
+    });
+    return found;
+  }
+
+  /** The flex weight a grid cell carries in its style (inline, so it survives the mocked sheet). */
+  function flexOf(node: JsonNode): number | undefined {
+    const styles = Array.isArray(node.props?.style) ? node.props!.style : [node.props?.style];
+    for (const style of styles) {
+      if (style && typeof style === 'object' && typeof (style as { flex?: unknown }).flex === 'number') {
+        return (style as { flex: number }).flex;
+      }
+    }
+    return undefined;
+  }
+
+  function isCellView(node: unknown): boolean {
+    return (
+      !!node &&
+      typeof node === 'object' &&
+      (node as JsonNode).type === 'View' &&
+      flexOf(node as JsonNode) !== undefined
+    );
+  }
+
+  /** A grid row: a View whose every child is a flex-weighted cell View. */
+  function gridRows(node: unknown): JsonNode[][] {
+    const rows: JsonNode[][] = [];
+    const visit = (element: JsonNode) => {
+      const children = Array.isArray(element.children)
+        ? element.children
+        : element.children
+          ? [element.children]
+          : [];
+      if (children.length > 0 && children.every(isCellView)) rows.push(children as JsonNode[]);
+    };
+    walkJson(node, visit);
+    return rows;
+  }
+
+  function render(markdown: string): ReactTestRenderer {
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        React.createElement(MonoMarkdown, { markdown, textStyle: { fontSize: 16 } }),
+      );
+    });
+    return renderer;
+  }
+
+  const PIPE_TABLE = [
+    '| Asset | Consumer | Source |',
+    '|---|---|---|',
+    '| icon-adaptive.png | Android adaptive launcher icon | generate-monochrome-assets.sh |',
+    '| icon-ios.png | iOS home screen | cp icon.png |',
+  ].join('\n');
+
+  it('lays every row out as flex-weighted cells sharing one weight per column', () => {
+    const rows = gridRows(render(PIPE_TABLE).toJSON());
+    expect(rows).toHaveLength(3); // header + two body rows
+    for (const row of rows) expect(row).toHaveLength(3);
+    for (let column = 0; column < 3; column += 1) {
+      const weights = rows.map((row) => flexOf(row[column]!));
+      expect(new Set(weights).size).toBe(1); // aligned: one boundary set for the whole table
+    }
+  });
+
+  it('renders the header first and every cell verbatim, with no flattening join', () => {
+    const renderer = render(PIPE_TABLE);
+    const rows = gridRows(renderer.toJSON());
+    const flatten = (row: JsonNode[]) => row.map((cell) => collectText(cell)).join(' | ');
+    expect(flatten(rows[0]!)).toBe('Asset | Consumer | Source');
+    expect(flatten(rows[1]!)).toContain('icon-adaptive.png');
+    expect(flatten(rows[1]!)).toContain('Android adaptive launcher icon');
+    expect(flatten(rows[2]!)).toContain('cp icon.png');
+    expect(renderedText(renderer)).not.toContain('  |  ');
+  });
+
+  it('keeps the machine text: no horizontal scroll container anywhere in the tree', () => {
+    const renderer = render(PIPE_TABLE);
+    expect(hasType(renderer.toJSON(), 'ScrollView')).toBe(false);
+  });
+
+  it('pads a ragged row so every row shares the same column grid', () => {
+    const markdown = [
+      '| A | B | C |',
+      '|---|---|---|',
+      '| one | two |',
+      '| three | four | five |',
+    ].join('\n');
+    const rows = gridRows(render(markdown).toJSON());
+    expect(rows).toHaveLength(3);
+    expect(rows.every((row) => row.length === 3)).toBe(true);
+  });
+
+  it('renders a header-only table as a single row', () => {
+    const rows = gridRows(render('| A | B |\n|---|---|').toJSON());
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toHaveLength(2);
+  });
+
+  it('renders cell spans as their bare text — machine cells stay machine text', () => {
+    const renderer = render('| `npm test` | **ok** |\n|---|---|\n| a | b |');
+    const text = renderedText(renderer);
+    expect(text).toContain('npm test');
+    expect(text).toContain('ok');
+    expect(text).not.toContain('`');
+    expect(text).not.toContain('**');
+  });
+});

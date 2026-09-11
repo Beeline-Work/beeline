@@ -28,15 +28,27 @@ const fs = require('node:fs');
 const mark = require('./sources/buzz/beeline-mark.json');
 const brand = require('./sources/buzz/brand.json');
 
-for (const file of ['mark.svg', 'icon.svg', 'icon-adaptive.svg']) {
+// The launcher inset is a home-screen treatment. Android launcher sources must
+// carry it; every other surface must render the loop at its natural framing.
+// Checking both directions is what stops a future `cp icon.png favicon.png`
+// from quietly re-inseting the flat surfaces.
+const LAUNCHER_SOURCES = ['icon.svg', 'icon-adaptive.svg'];
+const FULL_BLEED_SOURCES = ['mark.svg', 'icon-full-bleed.svg'];
+
+for (const file of [...LAUNCHER_SOURCES, ...FULL_BLEED_SOURCES]) {
   const svg = fs.readFileSync(`sources/assets/images/${file}`, 'utf8');
-  const hasApprovedInset = file === 'mark.svg' || svg.includes(mark.transform);
-  if (!svg.includes(mark.path) || !hasApprovedInset || !svg.includes(brand.mark)) {
+  const wantsInset = LAUNCHER_SOURCES.includes(file);
+  if (svg.includes(mark.launcherTransform) !== wantsInset) {
+    throw new Error(
+      `${file} ${wantsInset ? 'lost the launcher inset' : 'must not carry the launcher inset'}`,
+    );
+  }
+  if (!svg.includes(mark.path) || !svg.includes(brand.mark)) {
     throw new Error(`${file} does not match beeline-mark.json / brand.json`);
   }
 }
 
-for (const file of ['icon.svg', 'icon-adaptive-background.svg']) {
+for (const file of ['icon.svg', 'icon-full-bleed.svg', 'icon-adaptive-background.svg']) {
   const svg = fs.readFileSync(`sources/assets/images/${file}`, 'utf8');
   if (!svg.toLowerCase().includes(process.env.CANONICAL_INK.toLowerCase())) {
     throw new Error(`${file} does not use the canonical Obsidian bgBase token`);
@@ -85,11 +97,19 @@ render_lockup() {
     "$destination"
 }
 
-# App icons: Expo consumes a 1024px source and emits every native density during
-# prebuild. Keep a distinct iOS file so app.config.js proves both platforms are
-# intentionally wired to this treatment.
+# Two framings, deliberately distinct:
+#
+#   icon.png            the launcher treatment — the loop inset by the
+#                       owner-approved 26%-larger margin, so it keeps breathing
+#                       room inside the Pixel launcher's mask.
+#   icon-full-bleed.png the loop at its natural framing on the same aubergine
+#                       field, for every surface that is drawn unmasked.
+#
+# Android launcher icons are the only consumers of the first. Do not collapse
+# these back into one file: the inset has twice leaked into the flat surfaces
+# by way of a `cp`, which is why the drift check above now asserts both ways.
 render_svg "$image_dir/icon.svg" 1024 "$image_dir/icon.png"
-cp "$image_dir/icon.png" "$image_dir/icon-ios.png"
+render_svg "$image_dir/icon-full-bleed.svg" 1024 "$image_dir/icon-full-bleed.png"
 
 # Android adaptive icon: flat aubergine background layer + brass loop foreground.
 rsvg-convert -w 1024 -h 1024 "$image_dir/icon-adaptive-background.svg" \
@@ -97,12 +117,17 @@ rsvg-convert -w 1024 -h 1024 "$image_dir/icon-adaptive-background.svg" \
 rsvg-convert -w 1024 -h 1024 "$image_dir/icon-adaptive.svg" \
   -o "$image_dir/icon-adaptive.png"
 
-# Favicon + splash share the app icon's framing: brass loop on the aubergine
-# field. The splash screens' backgroundColor in app.config.js must stay #14091A
-# so the opaque tile blends in.
-cp "$image_dir/icon.png" "$image_dir/favicon.png"
-cp "$image_dir/icon.png" "$image_dir/splash-android-light.png"
-cp "$image_dir/icon.png" "$image_dir/splash-android-dark.png"
+# iOS renders its icon on the home screen but masks it itself and expects the
+# artwork to reach the edges, so it takes the full-bleed render, not the
+# launcher one. Keeping a distinct file lets app.config.js prove the split.
+cp "$image_dir/icon-full-bleed.png" "$image_dir/icon-ios.png"
+
+# Favicon + splash are drawn unmasked on their surface background, so they take
+# the full-bleed framing too. The splash screens' backgroundColor in
+# app.config.js must stay #14091A so the opaque tile blends in.
+cp "$image_dir/icon-full-bleed.png" "$image_dir/favicon.png"
+cp "$image_dir/icon-full-bleed.png" "$image_dir/splash-android-light.png"
+cp "$image_dir/icon-full-bleed.png" "$image_dir/splash-android-dark.png"
 
 # Notification status-bar icon: white silhouette on transparent.
 render_notification_svg 512 "$image_dir/icon-notification.png"

@@ -486,7 +486,7 @@ jobs:
     needs: initialize
     if: needs.initialize.outputs.run_website == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       actions: read
       contents: read
@@ -504,6 +504,11 @@ jobs:
         if: needs.initialize.outputs.run_helper != 'true'
         with:
           manifest_url: ${{ vars.BEELINE_PAGES_MANIFEST_URL || 'https://beeline-work.github.io/beeline/dl/manifest.json' }}
+      - uses: ./.github/actions/web-app-leg
+        with:
+          expo_token: ${{ secrets.EXPO_TOKEN }}
+          release_sha: ${{ needs.initialize.outputs.release_sha }}
+          release_version: ${{ needs.initialize.outputs.release_version }}
       - uses: actions/upload-artifact@v4
         if: needs.initialize.outputs.run_helper != 'true'
         with:

@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import Svg, { G, Path } from 'react-native-svg';
+import Svg, { Path } from 'react-native-svg';
 import Animated, {
   Easing,
   ReduceMotion,
@@ -15,10 +15,11 @@ import { useUnistyles } from 'react-native-unistyles';
 const AnimatedPath = Animated.createAnimatedComponent(Path);
 
 // The original continuous-line loop — canonical geometry (see sources/assets/images/mark.svg,
-// do not redesign). The group transform places the path on its 240-unit canvas.
+// do not redesign). The path draws at its natural framing on the 240-unit canvas: the
+// launcher inset in beeline-mark.json is a home-screen treatment, and the sign-in mark
+// is not a home-screen icon, so it renders full-bleed like the favicon and splashes.
 const MARK_PATH = beelineMark.path;
 const MARK_VIEWBOX = beelineMark.viewBox;
-const MARK_TRANSFORM = beelineMark.transform;
 const MARK_FILL_RULE = beelineMark.fillRule as 'evenodd' | 'nonzero';
 
 export function BeelineMark({ size = 112, shimmer = false }: { size?: number; shimmer?: boolean }) {
@@ -52,19 +53,17 @@ export function BeelineMark({ size = 112, shimmer = false }: { size?: number; sh
       height={size}
       viewBox={MARK_VIEWBOX}
     >
-      <G transform={MARK_TRANSFORM}>
-        <Path
-          d={MARK_PATH}
-          fillRule={MARK_FILL_RULE}
-          fill={theme.buzz.brandMark}
-        />
-        <AnimatedPath
-          d={MARK_PATH}
-          fillRule={MARK_FILL_RULE}
-          fill={theme.buzz.textPrimary}
-          animatedProps={highlightProps}
-        />
-      </G>
+      <Path
+        d={MARK_PATH}
+        fillRule={MARK_FILL_RULE}
+        fill={theme.buzz.brandMark}
+      />
+      <AnimatedPath
+        d={MARK_PATH}
+        fillRule={MARK_FILL_RULE}
+        fill={theme.buzz.textPrimary}
+        animatedProps={highlightProps}
+      />
     </Svg>
   );
 }

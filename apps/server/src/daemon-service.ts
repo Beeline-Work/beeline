@@ -1244,10 +1244,15 @@ export class DaemonService {
     if (!this.commandTransaction && !atomicCommandWrite) await this.access(input.roomId, agentId);
     const messageId = id();
     const mentions = new Set(input.mentionIds ?? []);
+    const exactAgentMentions = new Set<string>();
     const typedHandles = typedMentionHandles(input.text);
     if (typedHandles.size) {
-      const typedMembers = await this.database.query<{ identity_id: string; alias: string }>(
-        `SELECT membership.identity_id,
+      const typedMembers = await this.database.query<{
+        identity_id: string;
+        alias: string;
+        kind: 'human' | 'agent';
+      }>(
+        `SELECT membership.identity_id,identity.kind,
            COALESCE(NULLIF(btrim(identity.handle),''),NULLIF(btrim(identity.name),'')) alias
          FROM memberships membership
          JOIN identities identity ON identity.id=membership.identity_id
@@ -1255,21 +1260,23 @@ export class DaemonService {
            AND COALESCE(NULLIF(btrim(identity.handle),''),NULLIF(btrim(identity.name),'')) IS NOT NULL`,
         [input.roomId],
       );
-      const idsByHandle = new Map<string, string[]>();
+      const membersByHandle = new Map<string, typeof typedMembers.rows>();
       for (const member of typedMembers.rows) {
         const handle = member.alias;
-        const ids = idsByHandle.get(handle) ?? [];
-        ids.push(member.identity_id);
-        idsByHandle.set(handle, ids);
+        const members = membersByHandle.get(handle) ?? [];
+        members.push(member);
+        membersByHandle.set(handle, members);
       }
       for (const handle of typedHandles) {
-        const ids = idsByHandle.get(handle);
-        if (ids?.length === 1) mentions.add(ids[0]!);
+        const members = membersByHandle.get(handle);
+        if (members?.length !== 1) continue;
+        const member = members[0]!;
+        mentions.add(member.identity_id);
+        if (member.kind === 'agent') exactAgentMentions.add(member.identity_id);
       }
     }
     mentions.delete(agentId);
     let agentMentionIds = new Set<string>();
-    let memberIds = new Set<string>();
     const parent = input.replyToMessageId
       ? (
           await this.database.query<{
@@ -1304,17 +1311,21 @@ export class DaemonService {
            AND membership.identity_id=ANY($2::text[])`,
         [input.roomId, [...mentions]],
       );
-      memberIds = new Set(members.rows.map((row) => row.identity_id));
       agentMentionIds = new Set(
-        members.rows.filter((row) => row.kind === 'agent').map((row) => row.identity_id),
+        members.rows
+          .filter((row) => row.kind === 'agent' && exactAgentMentions.has(row.identity_id))
+          .map((row) => row.identity_id),
       );
       humanIds = new Set(
         members.rows.filter((row) => row.kind === 'human').map((row) => row.identity_id),
       );
     }
-    // Mentions are server-validated against the Room roster: a member mention
-    // (human or agent) becomes a real mention; an unknown name stays plain text.
-    const validatedMentions = [...mentions].filter((value) => memberIds.has(value));
+    // Human ids are server-validated against the Room roster. Agent ids must
+    // additionally come from an exact tag parsed here; caller resolution is
+    // only a hint and cannot grant another helper work.
+    const validatedMentions = [...mentions].filter(
+      (value) => humanIds.has(value) || agentMentionIds.has(value),
+    );
     // A tag an agent writes reaches the person it names, exactly as a
     // human-authored one does: the same stored mention id, the same push
     // fan-out, the same highlight. There is no per-turn numeric cap. One kept

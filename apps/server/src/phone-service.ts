@@ -2462,7 +2462,6 @@ export class PhoneService {
       input.roomId,
       author,
       input.text,
-      parent.rows[0].author_kind === 'agent' ? parent.rows[0].author_id : null,
     );
     const mentionIds = new Set(mentionResolution.mentionIds);
     if (parent.rows[0].direct && parent.rows[0].author_kind === 'agent') {
@@ -2671,7 +2670,6 @@ export class PhoneService {
     roomId: string,
     author: string,
     text: string,
-    replyAgentId?: string | null,
   ): Promise<{ mentionIds: readonly string[]; noticeAgentIds: readonly string[] }> {
     const authorKind = (
       await this.database.query<{ kind: 'human' | 'agent' }>(
@@ -2735,12 +2733,6 @@ export class PhoneService {
       if (resolvedHandles.has(handle)) continue;
       const candidates = absentByHandle.get(handle);
       if (candidates?.length === 1) noticeAgentIds.add(candidates[0]!);
-    }
-    // An explicit reply addresses its parent agent without adding a visible
-    // @mention. Untagged top-level continuity is routed separately and must not
-    // produce an offline notice: no explicit address was left unanswered.
-    if (replyAgentId && noticeAgentIds.size === 0) {
-      noticeAgentIds.add(replyAgentId);
     }
     return { mentionIds: [...mentions], noticeAgentIds: [...noticeAgentIds] };
   }

@@ -819,6 +819,39 @@ describe('the ledger — the byline says who is talking', () => {
     expect(name.fontSize).toBe(16);
   });
 
+  it('sits the name, the role tag and the stamp on one baseline, tile centred', () => {
+    const renderer = render(
+      React.createElement(LedgerEntry, {
+        itemId: 'b1b',
+        luminous: true,
+        byline: {
+          name: 'Terra',
+          role: 'agent',
+          stamp: '11:38',
+          mark: { seed: 'agent-pubkey-terra', kind: 'agent' },
+        },
+        bodyText: 'Yes. The expiry bug is in the pairing store.',
+        bodyTestID: 'body',
+      }),
+    );
+    // The name is 16px prose and the tag and stamp are 10px mono: centring
+    // those against each other floats the small type off the name's feet, so
+    // the three words share a baseline instead.
+    const words = renderer.root.findByProps({ testID: 'chat-byline-name' }).parent!;
+    for (const testID of ['chat-byline-role', 'chat-byline-stamp']) {
+      expect(renderer.root.findByProps({ testID }).parent).toBe(words);
+    }
+    expect(merged(words).alignItems).toBe('baseline');
+
+    // The tile is a picture, not a word — it stays centred on the row, and it
+    // is still the byline's own first child.
+    const row = renderer.root.findByProps({ testID: 'chat-byline-mark' }).parent!;
+    expect(merged(row).alignItems).toBe('center');
+    expect(React.Children.toArray(row.props.children)[0]).toMatchObject({
+      props: { testID: 'chat-byline-mark' },
+    });
+  });
+
   it('gives a person and an agent each their own hue from the one palette', () => {
     const person = render(
       React.createElement(LedgerSteer, {

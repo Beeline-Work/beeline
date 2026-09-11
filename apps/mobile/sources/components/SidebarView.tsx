@@ -15,9 +15,7 @@ import {
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { useHeaderHeight } from '@/utils/responsive';
 import { ROOM_LABEL, ROOMS_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
-import { HullDeckMark } from '@/components/buzz/MonoHull';
-import { desktopRoomWorkLine } from '@/buzz/desktop-workbench-state';
-import { roomRowName } from '@/buzz/room-list-row';
+import { roomRowName, roomRowNeedsAttention, roomRowPreview } from '@/buzz/room-list-row';
 
 function selectedRoomId(pathname: string): string | null {
   const prefix = '/beeline/chat/';
@@ -80,30 +78,25 @@ const stylesheet = StyleSheet.create((theme) => ({
   listContent: { paddingBottom: 8 },
   roomRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 9,
+    alignItems: 'center',
+    gap: 12,
     minHeight: 64,
-    marginHorizontal: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 9,
-    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.colors.divider,
   },
   roomRowSelected: { backgroundColor: theme.colors.surfaceSelected },
+  roomStateSlot: { width: 7, height: 7 },
+  roomStateMark: { width: 7, height: 7, backgroundColor: theme.colors.textLink },
   roomCopy: { flex: 1, minWidth: 0 },
   roomTitleLine: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  roomTitle: { ...theme.buzz.type.meta, flex: 1, color: theme.colors.text },
+  roomTitle: { ...theme.buzz.type.bodyStrong, flex: 1, color: theme.colors.text },
   roomSigil: { color: theme.colors.textLink },
-  roomTitleUnread: { ...theme.buzz.type.bodyStrong },
   roomTime: { ...theme.buzz.type.sectionHead, color: theme.colors.textSecondary },
-  unreadDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: theme.colors.textLink,
-    marginTop: 5,
-  },
   roomFact: { ...theme.buzz.type.meta, marginTop: 3, color: theme.colors.textSecondary },
-  roomWork: { ...theme.buzz.type.sectionHead, marginTop: 3, color: theme.colors.textLink },
+  previewSelf: { color: theme.colors.textSecondary },
+  previewAuthor: { color: theme.colors.textLink },
   empty: {
     ...theme.buzz.type.meta,
     paddingHorizontal: 18,
@@ -320,8 +313,9 @@ export const SidebarView = React.memo(function SidebarView() {
           </Text>
         ) : (
           filteredChats.map((item) => {
-            const workLine = desktopRoomWorkLine(item);
             const rowName = roomRowName(item);
+            const preview = roomRowPreview(item, identityPubkey ?? undefined);
+            const attention = roomRowNeedsAttention(item);
             return (
               <Pressable
                 key={item.room.id}
@@ -335,13 +329,12 @@ export const SidebarView = React.memo(function SidebarView() {
                 ]}
                 testID={`desktop-room-${item.room.id}`}
               >
-                <HullDeckMark state={item.agentState ?? 'idle'} />
+                <View style={styles.roomStateSlot} accessibilityElementsHidden>
+                  {attention && <View style={styles.roomStateMark} />}
+                </View>
                 <View style={styles.roomCopy}>
                   <View style={styles.roomTitleLine}>
-                    <Text
-                      numberOfLines={1}
-                      style={[styles.roomTitle, item.unread && styles.roomTitleUnread]}
-                    >
+                    <Text numberOfLines={1} style={styles.roomTitle}>
                       <Text style={styles.roomSigil}>{rowName.sigil}</Text>
                       {rowName.name}
                     </Text>
@@ -350,16 +343,16 @@ export const SidebarView = React.memo(function SidebarView() {
                         ? compactRelativeTime(item.latestMessage.createdAt, Date.now())
                         : ''}
                     </Text>
-                    {item.unread && <View accessibilityLabel="Unread" style={styles.unreadDot} />}
                   </View>
                   <Text numberOfLines={1} style={styles.roomFact}>
-                    {item.latestMessage?.text ?? 'No activity yet'}
+                    {preview.attribution === 'self' && (
+                      <Text style={styles.previewSelf}>you: </Text>
+                    )}
+                    {preview.attribution === 'other' && (
+                      <Text style={styles.previewAuthor}>@{preview.handle}: </Text>
+                    )}
+                    {preview.text}
                   </Text>
-                  {workLine && (
-                    <Text numberOfLines={1} style={styles.roomWork}>
-                      {workLine}
-                    </Text>
-                  )}
                 </View>
               </Pressable>
             );

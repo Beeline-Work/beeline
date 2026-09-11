@@ -19,6 +19,7 @@ import {
   saveActiveCommunityId,
   savePersonalCommunityId,
   saveLastViewedChannel,
+  subscribeActiveCommunityId,
 } from './community-storage';
 
 describe('community navigation storage', () => {
@@ -42,6 +43,30 @@ describe('community navigation storage', () => {
     await expect(loadActiveCommunityId('pubkey-a')).resolves.toBeNull();
     asyncStorage.getItem.mockResolvedValueOnce('community-b');
     await expect(loadActiveCommunityId('pubkey-b')).resolves.toBe('community-b');
+  });
+
+  it('notifies only the matching identity after an active selection is durable', async () => {
+    const matching = vi.fn();
+    const other = vi.fn();
+    const unsubscribe = subscribeActiveCommunityId('notify-a', matching);
+    subscribeActiveCommunityId('notify-b', other);
+
+    await saveActiveCommunityId('notify-a', 'community-a');
+    expect(matching).toHaveBeenCalledWith('community-a');
+    expect(other).not.toHaveBeenCalled();
+
+    unsubscribe();
+    await saveActiveCommunityId('notify-a', null);
+    expect(matching).toHaveBeenCalledOnce();
+  });
+
+  it('replays a selection saved before a navigation surface subscribes', async () => {
+    await saveActiveCommunityId('late-subscriber', 'community-new');
+    const listener = vi.fn();
+
+    subscribeActiveCommunityId('late-subscriber', listener);
+
+    expect(listener).toHaveBeenCalledWith('community-new');
   });
 
   it('keeps the last channel independently for each community', async () => {

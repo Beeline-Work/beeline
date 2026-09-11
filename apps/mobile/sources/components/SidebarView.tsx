@@ -7,7 +7,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { type ChatListView, type WorkspaceListView } from '@beeline/buzz-client';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
-import { loadActiveCommunityId, saveActiveCommunityId } from '@/buzz/community-storage';
+import {
+  loadActiveCommunityId,
+  saveActiveCommunityId,
+  subscribeActiveCommunityId,
+} from '@/buzz/community-storage';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { useHeaderHeight } from '@/utils/responsive';
 import { ROOM_LABEL, ROOMS_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
@@ -125,6 +129,7 @@ export const SidebarView = React.memo(function SidebarView() {
   const pathname = usePathname();
   const activeRoomId = selectedRoomId(pathname);
   const searchRef = React.useRef<TextInput>(null);
+  const workspaceIdRef = React.useRef<string | null>(null);
   const [client, setClient] = React.useState<RoomViewClient | null>(null);
   const [identityPubkey, setIdentityPubkey] = React.useState<string | null>(null);
   const [workspaces, setWorkspaces] = React.useState<WorkspaceListView['workspaces']>([]);
@@ -150,6 +155,7 @@ export const SidebarView = React.memo(function SidebarView() {
       setClient(http);
       setIdentityPubkey(identity.publicKey);
       setWorkspaces(list.workspaces);
+      workspaceIdRef.current = selected;
       setWorkspaceId(selected);
     })().catch(() => {
       if (!cancelled) setNavigationError(`Could not load ${WORKSPACE_LABEL.toLowerCase()}s.`);
@@ -175,6 +181,20 @@ export const SidebarView = React.memo(function SidebarView() {
       cancelled = true;
     };
   }, [client, pathname, workspaceId]);
+
+  React.useEffect(() => {
+    if (!identityPubkey) return;
+    return subscribeActiveCommunityId(identityPubkey, (nextWorkspaceId) => {
+      if (!nextWorkspaceId || !workspaces.some((workspace) => workspace.id === nextWorkspaceId)) {
+        return;
+      }
+      if (workspaceIdRef.current === nextWorkspaceId) return;
+      workspaceIdRef.current = nextWorkspaceId;
+      setWorkspaceId(nextWorkspaceId);
+      setSurface(null);
+      setQuery('');
+    });
+  }, [identityPubkey, workspaces]);
 
   const filteredChats = React.useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
@@ -215,6 +235,7 @@ export const SidebarView = React.memo(function SidebarView() {
 
   const selectWorkspace = React.useCallback(
     (nextId: string) => {
+      workspaceIdRef.current = nextId;
       setWorkspaceId(nextId);
       setSurface(null);
       setQuery('');

@@ -317,6 +317,11 @@ export type CornerRestoreResult = {
   readonly closeRequested: boolean;
   /** Server-indexed GitHub facts retained across a helper restart. */
   readonly lifecycle?: CornerLifecycleView;
+  /** The latest manager merge request, bound to the exact PR revision it approved. */
+  readonly mergeApproval?: {
+    readonly pullRequestNumber: number;
+    readonly headSha: string;
+  };
 };
 export type RoomRepositoryStateResult = {
   readonly key?: string;

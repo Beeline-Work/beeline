@@ -369,6 +369,7 @@ export class GitHubAppClient {
     repositoryId: number,
     fullName: string,
     pullRequestNumber: number,
+    expectedHeadSha: string,
   ): Promise<void> {
     const token = await this.installationToken(installationId, {
       repositoryIds: [repositoryId],
@@ -383,7 +384,7 @@ export class GitHubAppClient {
       {
         method: 'PUT',
         headers: { ...githubHeaders(token.token), 'content-type': 'application/json' },
-        body: JSON.stringify({ merge_method: 'squash' }),
+        body: JSON.stringify({ merge_method: 'squash', sha: expectedHeadSha }),
       },
     );
     if (!response.ok) {

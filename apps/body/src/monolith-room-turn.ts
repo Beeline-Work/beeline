@@ -225,7 +225,7 @@ export function agentReplyMentionIds(
   roster: WorkspaceRoster,
   authorId: string,
 ): string[] {
-  const aliases = new Map<string, { display: string; ids: Set<string> }>();
+  const aliases = new Map<string, { display: string; ids: Set<string>; caseSensitive: boolean }>();
   for (const member of roster.members) {
     if (member.identityId === authorId) continue;
     // Agent tags are execution authority, so only the canonical handle shown
@@ -236,8 +236,11 @@ export function agentReplyMentionIds(
     for (const raw of rawAliases) {
       const display = raw?.trim().replace(/^@/, '');
       if (!display) continue;
-      const key = display.toLocaleLowerCase();
-      const entry = aliases.get(key) ?? { display, ids: new Set<string>() };
+      const caseSensitive = member.kind === 'agent';
+      const key = `${caseSensitive ? 'agent' : 'human'}:${
+        caseSensitive ? display : display.toLocaleLowerCase()
+      }`;
+      const entry = aliases.get(key) ?? { display, ids: new Set<string>(), caseSensitive };
       entry.ids.add(member.identityId);
       aliases.set(key, entry);
     }
@@ -248,16 +251,21 @@ export function agentReplyMentionIds(
   for (const member of roster.members) {
     if (member.identityId === authorId || member.kind === 'agent' || !member.handle) continue;
     const handle = member.handle.trim().replace(/^@/, '').toLocaleLowerCase();
-    const canonical = aliases.get(handle);
+    const canonical = aliases.get(`human:${handle}`);
     const legacy = `a_${handle}`;
-    if (canonical && !aliases.has(legacy)) aliases.set(legacy, { ...canonical, display: legacy });
+    const legacyKey = `human:${legacy}`;
+    if (canonical && !aliases.has(legacyKey))
+      aliases.set(legacyKey, { ...canonical, display: legacy });
   }
   const mentioned: string[] = [];
-  for (const { display, ids } of [...aliases.values()].sort(
+  for (const { display, ids, caseSensitive } of [...aliases.values()].sort(
     (left, right) => right.display.length - left.display.length,
   )) {
     if (ids.size !== 1) continue;
-    const pattern = new RegExp(`(^|[\\s([{])@${escapeRegExp(display)}(?=$|[\\s.,!?;:)\\]}])`, 'iu');
+    const pattern = new RegExp(
+      `(^|[\\s([{])@${escapeRegExp(display)}(?=$|[\\s.,!?;:)\\]}])`,
+      caseSensitive ? 'u' : 'iu',
+    );
     if (!pattern.test(text)) continue;
     const identityId = [...ids][0]!;
     if (!mentioned.includes(identityId)) mentioned.push(identityId);

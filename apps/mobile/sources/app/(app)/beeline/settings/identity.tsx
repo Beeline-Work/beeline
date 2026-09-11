@@ -80,6 +80,7 @@ import {
 import { GitHubAccountMismatchError, monolithSession } from '@/auth/monolith-session';
 import { markSignInInFlight, waitForAuthCallback } from '@/auth/onboarding-state';
 import { t } from '@/text';
+import { useIsDesktop } from '@/utils/responsive';
 
 const TYPED_CONFIRMATION = 'EXPORT';
 
@@ -136,6 +137,7 @@ function QrCode({ value }: { value: string }) {
 export default function BuzzIdentitySettings() {
   const { githubReconnect } = useLocalSearchParams<{ githubReconnect?: string }>();
   const { theme } = useUnistyles();
+  const isDesktop = useIsDesktop();
   const insets = useSafeAreaInsets();
   const [confirmationMethod, setConfirmationMethod] = useState<ConfirmationMethod>('checking');
   const [biometricLabel, setBiometricLabel] = useState('biometrics');
@@ -804,15 +806,17 @@ export default function BuzzIdentitySettings() {
               <Text style={styles.settingTitle}>Push notifications</Text>
               <Text style={styles.settingSubtitle}>{pushStatusLabelText}</Text>
             </View>
-            <Switch
-              accessibilityLabel="Push notifications"
-              disabled={pushEnabled === null || pushWorking}
-              onValueChange={(enabled) => void togglePush(enabled)}
-              testID="push-notifications-toggle"
-              thumbColor={theme.buzz.textPrimary}
-              trackColor={{ false: theme.buzz.bgRaised, true: theme.buzz.chrome }}
-              value={pushSwitchValue(pushEnabled, pushRegistration)}
-            />
+            {!(isDesktop && pushPermission?.status === 'unsupported') && (
+              <Switch
+                accessibilityLabel="Push notifications"
+                disabled={pushEnabled === null || pushWorking}
+                onValueChange={(enabled) => void togglePush(enabled)}
+                testID="push-notifications-toggle"
+                thumbColor={theme.buzz.textPrimary}
+                trackColor={{ false: theme.buzz.bgRaised, true: theme.buzz.chrome }}
+                value={pushSwitchValue(pushEnabled, pushRegistration)}
+              />
+            )}
           </View>
           {pushRegistrationFailed ? (
             <TouchableOpacity

@@ -31,12 +31,20 @@ function isX64({ userAgent = '', uaDataArchitecture = '', uaDataBitness = '' }) 
   );
 }
 
+function isMobilePlatform(input = {}) {
+  const userAgent = input.userAgent ?? '';
+  const platform = `${input.uaDataPlatform ?? ''} ${input.platform ?? ''}`.toLowerCase();
+  return (
+    input.uaDataMobile === true ||
+    /android|iphone|ipad|ipod|mobile/i.test(userAgent) ||
+    (/mac/i.test(platform) && Number(input.maxTouchPoints ?? 0) > 1)
+  );
+}
+
 export function selectDesktopInstaller(input = {}) {
   const userAgent = input.userAgent ?? '';
   const platform = `${input.uaDataPlatform ?? ''} ${input.platform ?? ''}`.toLowerCase();
-  const mobile = input.uaDataMobile === true || /android|iphone|ipad|ipod|mobile/i.test(userAgent);
-  const ipadDesktopMode = /mac/i.test(platform) && Number(input.maxTouchPoints ?? 0) > 1;
-  if (mobile || ipadDesktopMode) return undefined;
+  if (isMobilePlatform(input)) return undefined;
 
   if (/mac/i.test(platform) || /macintosh|mac os x/i.test(userAgent)) {
     return PRIMARY_INSTALLERS.macos;
@@ -78,11 +86,18 @@ export async function initializeDesktopDownload(
   const choices = documentLike?.querySelector('[data-desktop-choices]');
   if (!primary || !choices) return;
 
-  const installer = selectDesktopInstaller(await browserPlatformInput(navigatorLike));
+  const platformInput = await browserPlatformInput(navigatorLike);
+  const mobile = isMobilePlatform(platformInput);
+  const installer = selectDesktopInstaller(platformInput);
   if (!installer) {
     primary.textContent = 'Choose a desktop download';
     primary.href = '#desktop-downloads';
-    choices.open = true;
+    choices.open = !mobile;
+    if (mobile) {
+      const stores = documentLike?.querySelector('.hero-text > .stores');
+      const desktopDownload = choices.closest?.('.desktop-download');
+      stores?.after?.(desktopDownload);
+    }
     primary.addEventListener('click', () => {
       choices.open = true;
     });
